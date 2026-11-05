@@ -118,7 +118,7 @@ export interface MessageQuietHeldJob {
 
 export interface IMessageTriggerJobRepository {
     createManualSmsJob(job: MessageTriggerJobEntity, existingMessageLogId: number, transaction: Prisma.TransactionClient): Promise<MessageTriggerJobEntity>;
-    findDueQuietQueueJobs(now: Date, limit?: number): Promise<MessageDispatchSelectedJob[]>;
+    findDueQuietQueueJobs(eligibility: MessageDispatchBranchEligibility[], now: Date, limit?: number): Promise<MessageDispatchSelectedJob[]>;
     findQuietHeldJobs(branchId: string, transaction?: Prisma.TransactionClient): Promise<MessageQuietHeldJob[]>;
     readQuietHold(job: MessageTriggerJobEntity, transaction?: Prisma.TransactionClient): Promise<MessageQuietHold | null>;
     transitionQuietHold(job: MessageTriggerJobEntity, logId: number, acceptanceKey: string, fingerprint: string,

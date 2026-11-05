@@ -9,6 +9,7 @@ import { SchedulerLeaseService } from "./scheduler-lease.service";
 import { SmsRetryService, SmsRetryTimingPolicyUnavailableError } from "./sms-retry.service";
 import { SystemSettingService } from "./system-setting.service";
 import { SmsHistoryReconciliationService } from "./sms-history-reconciliation.service";
+import { parseMessageQuietHold } from "domain/message-policy-evaluator";
 import {
     isTransientPrismaConnectivityError,
     summarizePrismaError,
@@ -76,8 +77,18 @@ export class MessageRetrySchedulerService {
                 }
                 processedCount += 1;
                 try {
+                    const sourceId = Number(log.variables["retryOfLogId"]);
+                    const quietHeldRetry = log.provider === "aligo_sms" && log.branchId !== null
+                        && log.status === "pending" && log.providerAcceptanceState === "prepared"
+                        && log.providerCallStartedAt === null && log.providerAcceptedAt === null && log.aligoMid === null && Boolean(log.providerAcceptanceKey)
+                        && Boolean(log.providerAcceptanceFingerprint) && log.nextRetryAt !== null
+                        && Number.isSafeInteger(sourceId) && sourceId > 0 && sourceId !== log.id
+                        && ["manual", "automatic"].includes(log.variables["retryInvocation"] ?? "")
+                        && parseMessageQuietHold(log.variables) !== null;
+                    const manualQuietRetry = quietHeldRetry && log.variables["retryInvocation"] === "manual";
                     if (
-                        log.branchId
+                        !manualQuietRetry
+                        && log.branchId
                         && this.systemSettingService
                         && !(await this.systemSettingService.getMessageSettingsPolicyEnabled(
                             log.branchId,
@@ -101,6 +112,22 @@ export class MessageRetrySchedulerService {
                         this.logger.warn(
                             `[Retry] Skipped manually rejected SMS log ${log.id}; explicit retry required`,
                         );
+                        continue;
+                    }
+
+                    // Resume the already accepted local request, including
+                    // older holds whose conservative retrySafety is uncertain.
+                    // The service rechecks the source/acceptance association
+                    // under the branch lock before starting the provider.
+                    if (quietHeldRetry && (log.triggerJobId !== null || manualQuietRetry)) {
+                        try {
+                            await this.smsRetryService.retry(log, "automatic");
+                        } catch {
+                            // A held acceptance is still provider-unstarted. A
+                            // failed admission/read must not rewrite its stale
+                            // snapshot as another failed delivery attempt.
+                            this.logger.warn(`[Retry] Quiet admission unavailable for log ${log.id}; stored retry unchanged`);
+                        }
                         continue;
                     }
 

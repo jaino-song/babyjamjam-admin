@@ -756,7 +756,9 @@ export class SmsTriggerDeliveryService {
                                 providerAcceptanceKey: current.providerAcceptanceKey, providerAcceptanceFingerprint: current.providerAcceptanceFingerprint,
                                 updatedAt: current.updatedAt, variables: { equals: current.variables as Prisma.InputJsonValue } },
                             data: { status: "failed", nextRetryAt: null, errorMessage: QUIET_HOURS_CANCEL_REASON,
-                                variables: { ...variables, quietHoursDisposition: "CANCEL" } },
+                                variables: { ...variables, quietHoursDisposition: "CANCEL",
+                                    ...(job.templateKey === MANUAL_SMS_TEMPLATE_KEY
+                                        ? { manualQueueStatus: "canceled", manualQueueReason: QUIET_HOURS_CANCEL_REASON } : {}) } },
                         });
                         if (refused.count !== 1) throw new AgentAutomationDispatchUncertainError();
                         return { kind: "refused" as const, decision: finalDecision, canceledAt, durableCancellation: true as const };

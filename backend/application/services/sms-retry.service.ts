@@ -1,6 +1,5 @@
 import { normalizePhone } from "application/utils/normalize-phone";
 import { AligoDefaultSenderPolicyService } from "./aligo-default-sender-policy.service";
-import { isManualMessageTriggerJob } from "domain/constants/message-trigger-job-ownership";
 import { parseMessageQuietHold, type MessageQuietHold } from "domain/message-policy-evaluator";
 import { isSelectedMessageJobExpired } from "./message-trigger-recipes";
 import { MessageQuietHoursService, isQuietHoursCanceled, recordQuietHoursRefusal, runSmsQuietHoursAdmission, QUIET_HOURS_CANCEL_REASON, QUIET_HOURS_DEFER_REASON } from "./message-quiet-hours.service";
@@ -189,7 +188,7 @@ export class SmsRetryService {
         invocation: MessageRetryInvocation = "manual",
     ): Promise<MessageLogEntity | null> {
         if (isQuietHoursCanceled(sourceLog)) return sourceLog;
-        if (sourceLog.providerAcceptanceState === "prepared" && sourceLog.variables["quietHoursDisposition"] === "DEFER"
+        if (sourceLog.variables["quietHoursDisposition"] === "DEFER"
             && ["manual", "automatic"].includes(sourceLog.variables["retryInvocation"] ?? "")) {
             return this.resumeQuietRetry(sourceLog, invocation);
         }
@@ -436,16 +435,35 @@ export class SmsRetryService {
         const hold = parseMessageQuietHold(retry.variables);
         const sourceId = Number(retry.variables["retryOfLogId"]);
         if (!hold || !retry.branchId || !this.quietHours || !Number.isSafeInteger(sourceId) || sourceId <= 0) throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
+        if (retry.status !== "pending" || retry.providerAcceptanceState !== "prepared" || retry.providerCallStartedAt !== null
+            || retry.providerAcceptedAt !== null || retry.aligoMid !== null) return retry;
         if (!retry.nextRetryAt || retry.nextRetryAt.getTime() > Date.now()) return retry;
+        // Approval reads use the root client. Resolve them before taking a
+        // branch connection; an unavailable/revoked approval leaves the hold intact.
+        try {
+            await this.messageSenderApprovalService.ensureApproved(retry.branchId);
+        } catch {
+            return retry;
+        }
         const retryDelayMs = await this.getRetryDelayMs(retry.branchId);
-        const admitted = await this.quietHours.runAdmission(retry.branchId, retry.receiver, async (_decision, tx) => {
+        const resume = (transaction?: Prisma.TransactionClient, rulePolicy?: AutomaticRetryRulePolicy) => this.quietHours!.runAdmission(retry.branchId!, retry.receiver, async (_decision, tx) => {
             if (!tx) throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
             const current = await this.logRepository.findByIdInBranch(retry.branchId!, retry.id, tx);
             const source = await this.logRepository.findByIdInBranch(retry.branchId!, sourceId, tx);
-            if (!current || !source || current.providerAcceptanceState !== "prepared" || current.providerCallStartedAt !== null
+            if (!current || !source || current.status !== "pending" || current.provider !== "aligo_sms" || source.provider !== "aligo_sms"
+                || current.providerAcceptanceState !== "prepared" || current.providerCallStartedAt !== null
+                || current.providerAcceptedAt !== null || current.aligoMid !== null
                 || current.providerAcceptanceKey !== retry.providerAcceptanceKey || current.providerAcceptanceFingerprint !== retry.providerAcceptanceFingerprint
+                || current.variables["retryOfLogId"] !== String(sourceId)
+                || !["manual", "automatic"].includes(current.variables["retryInvocation"] ?? "")
+                || current.variables["retryInvocation"] !== retry.variables["retryInvocation"]
+                || current.triggerJobId !== retry.triggerJobId
                 || current.triggerJobId !== source.triggerJobId || current.receiver !== source.receiver || current.messageBody !== source.messageBody
-                || source.isProviderOutcomeUncertain() || source.status !== "failed" || source.isPartialProviderOutcome()) throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
+                || current.isPartialProviderOutcome() || current.isManualProviderRejection()
+                || (current.variables["retryInvocation"] === "automatic" && source.isManualProviderRejection())
+                || source.isProviderOutcomeUncertain() || source.variables["retrySafety"] === "uncertain"
+                || source.providerAcceptanceState === "accepted" || source.providerAcceptanceState === "reconciled_delivered"
+                || source.status !== "failed" || source.isPartialProviderOutcome()) throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
             const sender = this.defaultSender?.read();
             if (!sender || sender.availability !== "available" || sender.identityDigest !== current.variables["retrySenderIdentity"]) throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
             const identity = current.clientId != null && !current.variables["employeeId"]
@@ -456,19 +474,16 @@ export class SmsRetryService {
             const currentHold = parseMessageQuietHold(current.variables);
             if (!currentHold || !current.nextRetryAt || current.nextRetryAt.getTime() > Date.now()) return null;
             const explicitManual = current.variables["retryInvocation"] === "manual";
-            if (invocation === "automatic" && !explicitManual) {
-                const enabled = await this.systemSettingService!.getMessageSettingsPolicyEnabled(current.branchId!, "trigger-job-retry", async key => {
+            if (!explicitManual) {
+                const enabled = await this.systemSettingService!.getMessageSettingsPolicyEnabled(current.branchId!, "sms-retry", async key => {
                     const row = await tx.system_setting.findUnique({ where: { key } });
                     if (row && row.value !== "true" && row.value !== "false") throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
                     return row?.value ?? null;
                 });
                 if (!enabled) return null;
-                if (current.triggerJobId) {
-                    const linked = await tx.message_trigger_job.findFirst({ where: { id: current.triggerJobId, branchId: current.branchId }, include: { rule: true } });
-                    if (!linked || (!isManualMessageTriggerJob(linked) && linked.rule.retryOnFailure === false)) return null;
-                }
+                if (await this.supersedeForRulePolicy(tx, current, rulePolicy)) return null;
             }
-            const safeguard = invocation === "automatic" && !explicitManual ? await this.supersedeForSmsSafeguard(source, tx) : null;
+            const safeguard = !explicitManual ? await this.supersedeForSmsSafeguard(current, tx) : null;
             if (safeguard) return null;
             const authority = await this.verifyAutomaticRetryAuthority(tx, source);
             if (authority.kind === "invalid") return null;
@@ -521,7 +536,24 @@ export class SmsRetryService {
                     return { source, current, providerAttempt, explicitManual, ...(authority.kind === "valid" ? { snapshot: authority.snapshot } : {}) };
                 }, tx, currentHold.releaseAt);
             return result;
-        });
+        }, transaction);
+        let admitted: Awaited<ReturnType<typeof resume>> = null;
+        if (retry.variables["retryInvocation"] !== "manual") {
+            if (!retry.triggerJobId || !this.messageAutomationActivationService) return retry;
+            // The existing automatic retry boundary owns the branch transaction.
+            // Quiet admission and its final provider CAS reuse that transaction.
+            const boundary = await this.messageAutomationActivationService.runAutomaticRetryIfEnabled(
+                retry.branchId, retry.triggerJobId, (tx, rulePolicy) => resume(tx, rulePolicy),
+            );
+            if (boundary.applies) {
+                if (!boundary.allowed) return retry;
+                admitted = boundary.value ?? null;
+            } else {
+                admitted = await resume();
+            }
+        } else {
+            admitted = await resume();
+        }
         if (!admitted) return this.logRepository.findByIdInBranch(retry.branchId, retry.id);
         return this.sendRetryAttempt(admitted.source, { scheduledAtMs: null }, admitted.current, admitted.providerAttempt, admitted.explicitManual ? "manual" : invocation, retryDelayMs, admitted.snapshot);
     }

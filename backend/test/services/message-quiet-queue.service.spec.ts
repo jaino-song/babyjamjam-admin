@@ -1,4 +1,5 @@
 import { defaultMessageAutomationPolicy } from "domain/entities/system-setting.entity";
+import { ForbiddenException, ServiceUnavailableException } from "@nestjs/common";
 import * as evaluator from "domain/message-policy-evaluator";
 import { MessageTriggerJobEntity } from "domain/entities/message-trigger-job.entity";
 import { MessageTriggerRecipientType, MessageTriggerTemplateKey } from "domain/constants/message-trigger-catalog";
@@ -45,6 +46,8 @@ import { MessageQuietHoursService } from "application/services/message-quiet-hou
 import { MessageAutomationBranchLockService } from "application/services/message-automation-branch-lock.service";
 import { MessageDuplicateCheckService } from "application/services/message-duplicate-check.service";
 import { SmsRetryService } from "application/services/sms-retry.service";
+import { MessageRetrySchedulerService } from "application/services/message-retry-scheduler.service";
+import { MessageLogEntity } from "domain/entities/message-log.entity";
 import { SmsTriggerDeliveryService } from "application/services/sms-trigger-delivery.service";
 import { SmsProviderAcceptanceService } from "application/services/sms-provider-acceptance.service";
 import { AgentAutomationDeliveryGateService } from "application/services/agent-automation-delivery-gate.service";
@@ -60,7 +63,7 @@ import { MANUAL_SMS_TEMPLATE_KEY, isConfigurableSmsTriggerTemplate, isRetiredFix
 type Row = Record<string, unknown>;
 function memoryQueue() {
     const branchId = "88000000-0000-4000-8000-000000000001";
-    const tables: Record<string, Row[]> = { message_log: [], message_trigger_job: [], message_trigger_rule: [], system_setting: [],
+    const tables: Record<string, Row[]> = { message_log: [], message_trigger_job: [], message_trigger_rule: [], message_trigger_rule_branch_override: [], system_setting: [],
         client: [{ id: 7, branchId, name: "synthetic", phone: "01000000011", deletedAt: null }], employee: [] };
     let active = false;
     let commitFailure = false;
@@ -82,12 +85,17 @@ function memoryQueue() {
             if ("not" in predicate) return actual !== predicate["not"];
             if ("some" in predicate && key === "logs") return tables["message_log"]!.some(log => log["triggerJobId"] === row["id"] && matches(log, predicate["some"] as Row));
             if ("lt" in predicate) return Number(actual) < Number(predicate["lt"]);
+            if ("lte" in predicate) return actual != null && Number(actual) <= Number(predicate["lte"]);
             return true;
         }
         return value === undefined || row[key] === value;
     });
     const model = (name: string) => ({
-        findUnique: jest.fn(async ({ where }: { where: Row }) => structuredClone(tables[name]!.find(row => matches(row, where)) ?? null)),
+        findUnique: jest.fn(async ({ where, include }: { where: Row; include?: Row }) => {
+            const row = structuredClone(tables[name]!.find(row => matches(row, where)) ?? null);
+            if (row && include?.["rule"]) row["rule"] = structuredClone(tables["message_trigger_rule"]!.find(rule => rule["id"] === row["ruleId"]) ?? null);
+            return row;
+        }),
         findFirst: jest.fn(async ({ where }: { where: Row }) => structuredClone(tables[name]!.find(row => matches(row, where)) ?? null)),
         findMany: jest.fn(async ({ where = {}, include }: { where?: Row; include?: Row } = {}) => tables[name]!.filter(row => matches(row, where)).map(row => {
             const result = structuredClone(row);
@@ -121,19 +129,24 @@ function memoryQueue() {
     });
     const db = {
         message_log: model("message_log"), message_trigger_job: model("message_trigger_job"), message_trigger_rule: model("message_trigger_rule"),
+        message_trigger_rule_branch_override: model("message_trigger_rule_branch_override"),
         client: model("client"), employee: model("employee"), system_setting: model("system_setting"),
         $executeRaw: jest.fn(async () => 1),
-        $transaction: async <T>(work: (tx: Prisma.TransactionClient) => Promise<T>) => {
+        $transaction: jest.fn(async <T>(work: (tx: Prisma.TransactionClient) => Promise<T>) => {
             expect(active).toBe(false); active = true;
             const snapshot = structuredClone(tables);
             try { const result = await work(db as never); if (commitFailure) throw new Error("late commit failure"); return result; }
             catch (error) { for (const key of Object.keys(tables)) tables[key] = snapshot[key]!; throw error; }
             finally { active = false; }
-        },
+        }),
         $queryRaw: jest.fn(async (sql: Prisma.Sql) => {
             if (sql.sql.includes("SELECT ml.id")) return duplicateMatches;
             if (sql.sql.includes("WITH RECURSIVE ancestors")) return tables["message_log"]!.map(log => ({ id: log["id"] }));
             if (sql.sql.includes('FROM "user"')) return [...tables["client"]!.map(client => ({ phone: client["phone"], group_name: "CLIENT" })), ...tables["employee"]!.map(employee => ({ phone: employee["phone"], group_name: "CAREGIVER" }))];
+            if (sql.sql.includes("SELECT id, branch_id, is_active, template_key, target_client_status, retry_on_failure")) return tables["message_trigger_rule"]!.filter(rule => sql.values.includes(rule["id"] as string)).map(rule => ({
+                id: rule["id"], branch_id: rule["branchId"], is_active: rule["isActive"], template_key: rule["templateKey"],
+                target_client_status: rule["targetClientStatus"], retry_on_failure: rule["retryOnFailure"],
+            }));
             const row = tables["message_trigger_job"]!.find(job => sql.values.includes(job["id"] as string));
             if (!row) return [];
             if (sql.sql.includes("SET status = 'processing'")) {
@@ -156,7 +169,8 @@ function memoryQueue() {
     const jobs = new SbMessageTriggerJobRepository(db as never);
     const logs = new SbMessageLogRepository(db as never);
     const lock = new MessageAutomationBranchLockService(db as never);
-    const get = { execute: async (settingKey: string) => tables["system_setting"]!.find(row => row["key"] === settingKey)?.["value"] ?? null };
+    const readSetting = async (settingKey: string) => tables["system_setting"]!.find(row => row["key"] === settingKey)?.["value"] ?? null;
+    const get = { execute: readSetting, executeWithDefault: async (settingKey: string, fallback: string) => await readSetting(settingKey) ?? fallback };
     const update = { executeIfVersion: async (settingKey: string, value: string, expected: string, versionOf: (raw: string | null) => string) => {
         const row = tables["system_setting"]!.find(item => item["key"] === settingKey)!;
         if (versionOf(row["value"] as string) !== expected) return null;
@@ -165,7 +179,7 @@ function memoryQueue() {
     const settings = new SystemSettingService(get as never, update as never, undefined, undefined, undefined, jobs, logs, lock);
     const quiet = new MessageQuietHoursService(settings, logs, lock);
     const duplicates = new MessageDuplicateCheckService(logs, { getMessageSettingsPolicyEnabled: async () => false } as never, get as never);
-    const approval = { ensureApproved: async () => {}, getApprovedBranchIds: async () => new Set([branchId]) };
+    const approval = { ensureApproved: jest.fn(async () => { expect(active).toBe(false); }), getApprovedBranchIds: async () => new Set([branchId]) };
     const templates = { findByKey: jest.fn(() => { throw new Error("Automatic renderer must not run"); }) };
     const aligo = { sendSms: jest.fn(async (request: Row) => {
         expect(active).toBe(false);
@@ -175,12 +189,14 @@ function memoryQueue() {
     const gate = new AgentAutomationDeliveryGateService(db as never, lock, {} as never);
     const sms = new SmsTriggerDeliveryService(aligo as never, templates as never, logs, new SmsProviderAcceptanceService(logs), undefined, gate,
         undefined, settings, undefined, quiet, jobs, sender as never);
-    const retry = new SmsRetryService(logs, aligo as never, approval as never, new SmsProviderAcceptanceService(logs), undefined, undefined, sms, jobs, undefined, settings, quiet, sender as never);
+    const acceptance = new SmsProviderAcceptanceService(logs);
+    const activation = new MessageAutomationActivationService(db as never, lock, {} as never);
+    const retry = new SmsRetryService(logs, aligo as never, approval as never, acceptance, activation, undefined, sms, jobs, undefined, settings, quiet, sender as never);
     const core = new MessageTriggerService(db as never, new MessageTriggerDeliveryService(sms), approval as never, {} as never, jobs, logs,
-        templates as never, {} as never, settings, undefined, undefined, lock);
+        templates as never, {} as never, settings, undefined, activation, lock);
     const controller = new MessageDeliveryController(aligo as never, approval as never, db as never, duplicates, quiet, jobs, sender as never);
     const send = (extra = {}) => controller.sendSms({ branchId }, { receiver: "01000000011", message: "  synthetic {{literal}}\n", idempotencyKey: "body-key", ...extra }, "ignored-header");
-    return { branchId, db, tables, jobs, logs, settings, lock, core, sms, retry, controller, configuration, send, aligo, templates,
+    return { branchId, db, tables, jobs, logs, settings, lock, core, sms, retry, controller, configuration, send, aligo, templates, approval, acceptance, activation,
         newDuplicates: () => { duplicateMatches = [{ id: 999, sentAt: new Date(Date.now()) }]; },
         configure: (draft: typeof configuration) => { tables["system_setting"]![0]!["value"] = JSON.stringify(draft); },
         commitFailure: () => { commitFailure = true; }, logCasFailure: () => { logCasFailure = true; } };
@@ -381,14 +397,270 @@ describe("quiet queue release guards", () => {
         expect(held).toMatchObject({ id: 2, attempts: 1, providerAcceptanceState: "prepared", providerCallStartedAt: null, nextRetryAt: new Date("2026-11-04T23:00:00.000Z") });
         expect(f.aligo.sendSms).toHaveBeenCalledTimes(1);
         jest.mocked(Date.now).mockReturnValue(Date.parse("2026-11-04T23:00:00.000Z"));
-        const resumed = await f.retry.retry(held!, "automatic");
+        const scheduler = new MessageRetrySchedulerService(f.logs, f.retry, { holdsLease: () => true } as never, f.settings);
+        await scheduler.retryFailedMessages();
+        const resumed = await f.logs.findByIdInBranch(f.branchId, held!.id);
         expect(resumed).toMatchObject({ id: 2, status: "sent", attempts: 2 });
         expect(f.tables["message_log"]).toHaveLength(2); expect(f.aligo.sendSms).toHaveBeenCalledTimes(2);
     });
 });
 
+describe("quiet holds on manual-owned jobs", () => {
+    beforeEach(() => jest.useFakeTimers({ now: original }));
+    afterEach(() => { jest.useRealTimers(); jest.restoreAllMocks(); });
+
+    it.each([
+        { family: "agent", ruleId: "agent-sms:synthetic", dedupeKey: "agent-sms:synthetic", templateKey: MessageTriggerTemplateKey.INFO },
+        { family: "manual link", ruleId: "system:service_record_link", dedupeKey: "system:service_record_link:schedule:10:primary:manual:88000000-0000-4000-8000-000000000010", templateKey: MessageTriggerTemplateKey.SERVICE_RECORD_LINK },
+        { family: "manual service end", ruleId: "system:service_end_notice", dedupeKey: "system:service_end_notice:client:7:manual:88000000-0000-4000-8000-000000000010", templateKey: MessageTriggerTemplateKey.SERVICE_END_NOTICE },
+    ])("reads the current due time and claims a $family hold in the branch transaction", async ({ ruleId, dedupeKey, templateKey }) => {
+        const f = memoryQueue();
+        const held = MessageTriggerJobEntity.create({ branchId: f.branchId, ruleId, dedupeKey, templateKey,
+            scheduledFor: original, recipientType: MessageTriggerRecipientType.CLIENT,
+            payload: { memberId: "synthetic", recipientName: "synthetic", recipientPhone: "01000000011", templateVariables: {} } });
+        held.nextAttemptAt = release;
+        const persisted = await f.jobs.create(held);
+        await f.logs.save(MessageLogEntity.create({ branchId: f.branchId, provider: "aligo_sms", templateKey: "synthetic",
+            triggerJobId: persisted.id, receiver: "01000000011", messageBody: "synthetic", providerAcceptanceKey: `hold:${persisted.id}`,
+            providerAcceptanceFingerprint: "synthetic-fingerprint", providerAcceptanceState: "prepared",
+            variables: evaluator.messageQuietHoldVariables({ releaseAt: release, originalScheduledFor: original,
+                policyRevision: "synthetic-policy", reason: "message_quiet_hours:DEFER" }) }));
+        // Stop at the claim boundary: token/source/provider fences have their
+        // own suites. This regression proves all three ownership families can
+        // reach the existing token-minting repository claim after a quiet hold.
+        const claim = jest.spyOn(f.jobs, "claimPendingWithRuleFence").mockResolvedValue(null);
+        const readHold = jest.spyOn(f.jobs, "readQuietHold");
+        await f.core.dispatchPendingJobNow(persisted.id, { expectedBranchId: f.branchId });
+        expect(claim).not.toHaveBeenCalled();
+        jest.setSystemTime(release);
+        await f.core.dispatchPendingJobNow(persisted.id, { expectedBranchId: f.branchId });
+        expect(readHold).toHaveBeenLastCalledWith(expect.objectContaining({ id: persisted.id }), f.db);
+        expect(claim).toHaveBeenCalledTimes(1);
+        expect(claim).toHaveBeenCalledWith(persisted.id, f.branchId, f.db, expect.any(Date));
+        expect(f.aligo.sendSms).not.toHaveBeenCalled();
+        expect(f.tables["message_trigger_job"]![0]).toMatchObject({ status: "pending", scheduledFor: original, nextAttemptAt: release, attempts: 0 });
+    });
+});
+
+describe("quiet retry scheduler release", () => {
+    beforeEach(() => jest.useFakeTimers({ now: original }));
+    afterEach(() => { jest.useRealTimers(); jest.restoreAllMocks(); });
+
+    async function holdStandaloneRetry(retryEnabled = true) {
+        const f = memoryQueue();
+        const draft = MessageLogEntity.create({ branchId: f.branchId, provider: "aligo_sms", templateKey: "manual_sms",
+            receiver: "01000000011", clientId: 7, messageBody: "synthetic history retry", variables: {},
+            providerAcceptanceKey: "synthetic-source", providerAcceptanceFingerprint: "synthetic-fingerprint", providerAcceptanceState: "rejected" });
+        draft.status = "failed"; draft.attempts = 1;
+        const source = await f.logs.save(draft);
+        const held = (await f.retry.retry(source, "manual"))!;
+        const scheduler = new MessageRetrySchedulerService(f.logs, f.retry, { holdsLease: () => true } as never,
+            { getMessageSettingsPolicyEnabled: async () => retryEnabled } as never);
+        return { f, held, scheduler };
+    }
+
+    it.each([false, true])("resumes a standalone manual hold through the real scheduler once (legacy uncertain marker=%s)", async legacy => {
+        const { f, held, scheduler } = await holdStandaloneRetry(false);
+        const automaticBoundary = jest.spyOn(f.activation, "runAutomaticRetryIfEnabled");
+        f.approval.ensureApproved.mockClear();
+        expect(held).toMatchObject({ id: 2, triggerJobId: null, status: "pending", attempts: 1,
+            providerAcceptanceState: "prepared", providerCallStartedAt: null, nextRetryAt: release,
+            variables: { retrySafety: "quiet-deferred", retryInvocation: "manual", retryOfLogId: "1" } });
+        const acceptance = { providerAcceptanceKey: held.providerAcceptanceKey, providerAcceptanceFingerprint: held.providerAcceptanceFingerprint };
+        if (legacy) (f.tables["message_log"]![1]!["variables"] as Row)["retrySafety"] = "uncertain";
+        await scheduler.retryFailedMessages();
+        expect(f.aligo.sendSms).not.toHaveBeenCalled();
+        jest.setSystemTime(release);
+        await scheduler.retryFailedMessages();
+        expect(f.aligo.sendSms).toHaveBeenCalledTimes(1);
+        expect(f.tables["message_log"]).toHaveLength(2);
+        expect(f.tables["message_log"]![1]).toMatchObject({ ...acceptance, id: held.id, status: "sent", attempts: 2, nextRetryAt: null });
+        expect(f.approval.ensureApproved).toHaveBeenCalledTimes(1);
+        expect(automaticBoundary).not.toHaveBeenCalled();
+        await scheduler.retryFailedMessages();
+        expect(f.aligo.sendSms).toHaveBeenCalledTimes(1);
+    });
+
+    it.each(["started", "uncertain", "accepted", "bound accepted", "partial", "manual rejection", "source uncertain", "source accepted", "source manual rejection", "invalid metadata", "unrelated source"])("keeps %s retries away from the provider", async kind => {
+        const { f, scheduler } = ["bound accepted", "source manual rejection"].includes(kind) ? await holdAutomaticRetry() : await holdStandaloneRetry();
+        const row = f.tables["message_log"]![1]!;
+        const variables = row["variables"] as Row;
+        if (["started", "uncertain", "accepted"].includes(kind)) Object.assign(row, { providerAcceptanceState: kind, providerCallStartedAt: original });
+        if (kind === "bound accepted") Object.assign(row, { providerAcceptanceState: "accepted", providerCallStartedAt: original, providerAcceptedAt: original });
+        if (kind === "partial") variables["retrySafety"] = "partial";
+        if (kind === "manual rejection") variables["retrySafety"] = "manual-provider-rejected";
+        if (kind === "source uncertain" || kind === "source accepted") f.tables["message_log"]![0]!["providerAcceptanceState"] = kind === "source uncertain" ? "uncertain" : "accepted";
+        if (kind === "source manual rejection") (f.tables["message_log"]![0]!["variables"] as Row)["retrySafety"] = "manual-provider-rejected";
+        if (kind === "invalid metadata") variables["quietHoursReleaseAt"] = "invalid";
+        if (kind === "unrelated source") variables["retryOfLogId"] = "999";
+        jest.setSystemTime(release);
+        await scheduler.retryFailedMessages();
+        expect(f.aligo.sendSms).not.toHaveBeenCalled();
+        expect(f.tables["message_log"]).toHaveLength(2);
+    });
+
+    it.each(["started", "uncertain"])("cannot clear the safety marker once the provider is %s", async state => {
+        const { f, held } = await holdStandaloneRetry();
+        Object.assign(f.tables["message_log"]![1]!, { providerAcceptanceState: state, providerCallStartedAt: original });
+        const before = structuredClone(f.tables);
+        await expect(f.lock.runExclusive(f.branchId, tx => f.logs.transitionQuietRetry(held,
+            evaluator.parseMessageQuietHold(held.variables)!, false, tx))).rejects.toThrow("Quiet retry acceptance changed");
+        expect(f.tables).toEqual(before);
+    });
+
+    it.each(["revoked", "unavailable"])("leaves a due hold unchanged when current approval is %s", async kind => {
+        const { f, held, scheduler } = await holdStandaloneRetry(false);
+        const before = structuredClone(f.tables);
+        const begin = jest.spyOn(f.acceptance, "beginProviderCall");
+        f.approval.ensureApproved.mockClear().mockRejectedValue(kind === "unavailable" ? new ServiceUnavailableException() : new ForbiddenException());
+        f.db.$transaction.mockClear();
+        jest.setSystemTime(release);
+        await scheduler.retryFailedMessages();
+        expect(f.approval.ensureApproved).toHaveBeenCalledTimes(1);
+        expect(f.db.$transaction).not.toHaveBeenCalled();
+        expect(begin).not.toHaveBeenCalled(); expect(f.aligo.sendSms).not.toHaveBeenCalled();
+        expect(f.tables).toEqual(before);
+        expect((await f.logs.findByIdInBranch(f.branchId, held.id))!.attempts).toBe(1);
+    });
+
+    async function holdAutomaticRetry(global = false) {
+        const f = memoryQueue();
+        const ruleId = randomUUID();
+        const rule: Row = { id: ruleId, branchId: global ? null : f.branchId, isActive: true, deletedAt: null,
+            templateKey: "INFO", targetClientStatus: "all", retryOnFailure: true };
+        f.tables["message_trigger_rule"]!.push(rule);
+        const linked = await f.jobs.create(MessageTriggerJobEntity.create({ branchId: f.branchId, ruleId, clientId: 7,
+            templateKey: MessageTriggerTemplateKey.INFO, dedupeKey: "automatic:quiet-retry", scheduledFor: original,
+            recipientType: MessageTriggerRecipientType.CLIENT,
+            payload: { memberId: "", recipientName: "synthetic", recipientPhone: "01000000011", templateVariables: {} } }));
+        const draft = MessageLogEntity.create({ branchId: f.branchId, provider: "aligo_sms", templateKey: "INFO",
+            triggerJobId: linked.id, receiver: "01000000011", clientId: 7, messageBody: "automatic held body",
+            variables: {}, providerAcceptanceKey: "auto-source", providerAcceptanceFingerprint: "auto-source-fingerprint", providerAcceptanceState: "rejected" });
+        draft.status = "failed"; draft.attempts = 1;
+        const source = await f.logs.save(draft);
+        const pending = MessageLogEntity.create({ branchId: f.branchId, provider: "aligo_sms", templateKey: "INFO",
+            triggerJobId: linked.id, receiver: source.receiver, clientId: 7, messageBody: source.messageBody,
+            variables: { retryOfLogId: String(source.id), retryInvocation: "automatic", retrySafety: "uncertain" },
+            providerAcceptanceKey: "auto-held", providerAcceptanceFingerprint: "auto-held-fingerprint", providerAcceptanceState: "prepared" });
+        pending.attempts = 1;
+        const saved = await f.logs.save(pending);
+        await f.lock.runExclusive(f.branchId, tx => f.logs.transitionQuietRetry(saved, { releaseAt: release,
+            originalScheduledFor: original, policyRevision: "stored-version", reason: "message_quiet_hours:DEFER" }, false, tx,
+            undefined, "automatic", "a".repeat(64)));
+        const held = (await f.logs.findByIdInBranch(f.branchId, saved.id))!;
+        const scheduler = new MessageRetrySchedulerService(f.logs, f.retry, { holdsLease: () => true } as never, f.settings);
+        return { f, rule, held, scheduler };
+    }
+
+    it.each(["allowed", "target match", "branch off", "inactive", "global override off", "retry off", "target mismatch", "sms retry off", "activation missing"])("rechecks the existing automatic retry boundary: %s", async mode => {
+        const { f, rule, held, scheduler } = await holdAutomaticRetry(mode === "global override off");
+        const allowed = mode === "allowed" || mode === "target match";
+        if (mode === "branch off") f.tables["system_setting"]!.push({ key: `branch:${f.branchId}:message_policy:trigger-dispatch:enabled`, value: "false" });
+        if (mode === "inactive") rule["isActive"] = false;
+        if (mode === "global override off") {
+            f.db.message_trigger_rule_branch_override.findUnique.mockResolvedValue({ isActive: false });
+        }
+        if (mode === "retry off") rule["retryOnFailure"] = false;
+        if (mode === "target mismatch") { rule["targetClientStatus"] = "active"; f.tables["client"]![0]!["serviceStatus"] = "terminated"; }
+        if (mode === "target match") {
+            rule["targetClientStatus"] = "waiting";
+            Object.assign(f.tables["client"]![0]!, { serviceStatus: "waiting", startDate: new Date("2099-06-01"), endDate: new Date("2099-06-30"), bookingConfirmedAt: original });
+        }
+        if (mode === "sms retry off") f.tables["system_setting"]!.push({ key: `branch:${f.branchId}:message_policy:sms-retry:enabled`, value: "false" });
+        if (mode === "activation missing") Object.assign(f.retry, { messageAutomationActivationService: undefined });
+        // Ordinary SMS retry does not depend on the Core trigger-job-retry switch.
+        f.tables["system_setting"]!.push({ key: `branch:${f.branchId}:message_policy:trigger-job-retry:enabled`, value: "false" });
+        const sourceBefore = structuredClone(f.tables["message_log"]![0]);
+        const begin = jest.spyOn(f.acceptance, "beginProviderCall");
+        f.approval.ensureApproved.mockClear(); f.db.$transaction.mockClear();
+        jest.setSystemTime(release);
+        await scheduler.retryFailedMessages();
+        expect(f.aligo.sendSms).toHaveBeenCalledTimes(allowed ? 1 : 0);
+        expect(begin).toHaveBeenCalledTimes(allowed ? 1 : 0);
+        expect(f.approval.ensureApproved).toHaveBeenCalledTimes(mode === "sms retry off" ? 0 : 1);
+        // The fixture rejects nested root transactions and provider calls in a transaction.
+        expect(f.db.$transaction).toHaveBeenCalledTimes(["sms retry off", "activation missing"].includes(mode) ? 0 : 1);
+        expect(f.tables["message_log"]).toHaveLength(2);
+        expect(f.tables["message_log"]![0]).toEqual(sourceBefore);
+        const current = (await f.logs.findByIdInBranch(f.branchId, held.id))!;
+        expect(current.attempts).toBe(allowed ? 2 : 1);
+        if (mode === "retry off" || mode === "target mismatch") {
+            expect(current).toMatchObject({ status: "failed", nextRetryAt: null });
+            expect(current.errorMessage).toContain(mode === "retry off" ? "rule_retry_disabled" : "target_client_status_mismatch");
+        } else if (!allowed) expect(current).toMatchObject({ status: "pending", nextRetryAt: release });
+    });
+
+    it.each(["invocation", "job FK"])("rejects a changed current %s before using the captured eligibility", async kind => {
+        const { f, scheduler } = await holdAutomaticRetry();
+        const boundary = f.activation.runAutomaticRetryIfEnabled.bind(f.activation);
+        jest.spyOn(f.activation, "runAutomaticRetryIfEnabled").mockImplementation(async (branch, id, work) => {
+            if (kind === "invocation") (f.tables["message_log"]![1]!["variables"] as Row)["retryInvocation"] = "manual";
+            if (kind === "job FK") f.tables["message_log"]![1]!["triggerJobId"] = null;
+            return boundary(branch, id, work);
+        });
+        const begin = jest.spyOn(f.acceptance, "beginProviderCall");
+        jest.setSystemTime(release);
+        await scheduler.retryFailedMessages();
+        expect(begin).not.toHaveBeenCalled(); expect(f.aligo.sendSms).not.toHaveBeenCalled();
+        expect(f.tables["message_log"]![1]).toMatchObject({ status: "pending", attempts: 1, nextRetryAt: release });
+    });
+});
+
+describe("eligible quiet capacity before ordinary dispatch", () => {
+    beforeEach(() => jest.useFakeTimers({ now: release }));
+    afterEach(() => { jest.useRealTimers(); jest.restoreAllMocks(); });
+
+    it("passes only approved policies before allocating capacity, so 100 denied or automatic-OFF holds cannot starve ordinary work", async () => {
+        const f = memoryQueue();
+        const unapproved = randomUUID(); const automaticOff = randomUUID();
+        f.tables["system_setting"]!.push({ key: `branch:${automaticOff}:message_policy:trigger-dispatch:enabled`, value: "false" });
+        const badHolds = Array.from({ length: 100 }, (_, index) => MessageTriggerJobEntity.create({ branchId: index < 50 ? unapproved : automaticOff,
+            ruleId: randomUUID(), scheduledFor: original, recipientType: MessageTriggerRecipientType.CLIENT, templateKey: MessageTriggerTemplateKey.INFO,
+            dedupeKey: `bad-hold:${index}`, payload: { memberId: "", recipientName: "synthetic", recipientPhone: "01000000011", templateVariables: {} } }));
+        const ordinary = job(); Object.assign(ordinary, { branchId: f.branchId });
+        const maintenance = f.core as unknown as { hasTriggerSchema(): Promise<boolean>; reclaimStaleProcessingJobs(): Promise<void>;
+            recoverApprovedBranches(): Promise<void>; processStaleRuleRebuilds(): Promise<void>;
+            dispatchClaimedJob(job: MessageTriggerJobEntity, sent: Set<string>, approved: Set<string>): Promise<boolean> };
+        jest.spyOn(maintenance, "hasTriggerSchema").mockResolvedValue(true);
+        jest.spyOn(maintenance, "reclaimStaleProcessingJobs").mockResolvedValue();
+        jest.spyOn(maintenance, "recoverApprovedBranches").mockResolvedValue();
+        jest.spyOn(maintenance, "processStaleRuleRebuilds").mockResolvedValue();
+        jest.spyOn(f.jobs, "cancelOrphanedPending").mockResolvedValue(0);
+        jest.spyOn(f.jobs, "findDueDispatchBranchIds").mockResolvedValue([unapproved, automaticOff, f.branchId]);
+        jest.spyOn(f.approval, "getApprovedBranchIds").mockResolvedValue(new Set([automaticOff, f.branchId]));
+        jest.spyOn(f.settings, "getMessageSettingsPolicyEnabled").mockImplementation(async (branch, policy) => branch !== automaticOff || policy !== "trigger-dispatch");
+        const quiet = jest.spyOn(f.jobs, "findDueQuietQueueJobs").mockImplementation(async (eligibility, _now, limit) => {
+            expect(eligibility.map(policy => policy.branchId)).toEqual([automaticOff, f.branchId]);
+            return badHolds.filter(held => eligibility.some(policy => policy.branchId === held.branchId && policy.automaticEnabled)).slice(0, limit);
+        });
+        const ordinarySelection = jest.spyOn(f.jobs, "consumeDispatchSlotsAndFindDueJobs").mockResolvedValue([ordinary]);
+        jest.spyOn(f.logs, "findSentTriggerJobIdsSystemScope").mockResolvedValue(new Set());
+        const dispatch = jest.spyOn(maintenance, "dispatchClaimedJob").mockResolvedValue(true);
+        await f.core.dispatchDueJobs();
+        expect(quiet).toHaveBeenCalledWith(expect.any(Array), release, 100);
+        expect(ordinarySelection).toHaveBeenCalledWith(expect.any(Array), release, 100);
+        expect(dispatch).toHaveBeenCalledTimes(1); expect(dispatch.mock.calls[0]![0]).toBe(ordinary);
+    });
+
+    it("joins caller eligibility before quiet LIMIT, keeps branch round-robin and rejects empty capacity without SQL", async () => {
+        const f = memoryQueue(); f.db.$queryRaw.mockResolvedValue([]);
+        expect(await f.jobs.findDueQuietQueueJobs([], release)).toEqual([]);
+        expect(await f.jobs.findDueQuietQueueJobs([{ branchId: f.branchId, automaticEnabled: false, retryEnabled: false, intervalMinutes: 1 }], release, 0)).toEqual([]);
+        expect(f.db.$queryRaw).not.toHaveBeenCalled();
+        await f.jobs.findDueQuietQueueJobs([{ branchId: f.branchId, automaticEnabled: false, retryEnabled: false, intervalMinutes: 1 }], release, 100);
+        const query = f.db.$queryRaw.mock.calls[0]![0];
+        expect(query.values).toContain(f.branchId); expect(query.values).toContain(false);
+        expect(query.sql).toContain("INNER JOIN policy ON policy.branch_id = job.branch_id");
+        expect(query.sql.indexOf("policy.automatic_enabled OR")).toBeLessThan(query.sql.indexOf("LIMIT"));
+        expect(query.sql).toContain("PARTITION BY job.branch_id");
+        expect(query.sql).toContain("ORDER BY ordinal, due, branch_id, id LIMIT");
+        expect(query.sql).toContain("job.attempts = 0");
+        expect(query.values.at(-1)).toBe(100);
+    });
+});
+
 import { assertThrowawayTarget, closeIntegrityPrisma, createIntegrityPrisma, describeReal, type IntegrityPrisma } from "../integrity/helpers/real-db";
-import { createBranch, createClient } from "../integrity/helpers/factories";
+import { createBranch, createClient, createMessageTriggerRule } from "../integrity/helpers/factories";
 import { RowTracker } from "../integrity/helpers/tracker";
 import { SbSystemSettingRepository } from "infrastructure/database/repositories/sb.system-setting.repository";
 import { GetSettingUsecase, UpdateSettingUsecase } from "application/usecases/system-setting";
@@ -453,12 +725,49 @@ describeReal("quiet queue SQL selection, claim, and policy reconciliation", () =
         expect(selected).toHaveLength(1); expect(selected[0]!.dispatchSelection).toMatchObject({ expired: false, anchor: release });
         const runtimeKey = `branch:${f.branchId}:message_automation:last_dispatch_at`; policyKeys.push(runtimeKey);
         expect(await f.jobs.consumeDispatchSlotsAndFindDueJobs([{ branchId: f.branchId, automaticEnabled: true, retryEnabled: false, intervalMinutes: 1440, pastExpiryHours: 1 }], release)).toHaveLength(0);
-        expect((await f.jobs.findDueQuietQueueJobs(release)).some(job => job.id === f.jobId)).toBe(true);
+        expect((await f.jobs.findDueQuietQueueJobs([{ branchId: f.branchId, automaticEnabled: false, retryEnabled: false, intervalMinutes: 1440 }], release)).some(job => job.id === f.jobId)).toBe(true);
         expect((await f.jobs.findQuietHeldJobs(f.branchId))[0]!.hold.releaseAt).toEqual(release);
         await f.core.dispatchPendingJobNow(f.jobId, { expectedBranchId: f.branchId });
         expect(f.aligo.sendSms).toHaveBeenCalledTimes(1);
         expect(await handle.raw.message_log.count({ where: { branchId: f.branchId } })).toBe(1);
         expect(await handle.raw.message_trigger_job.findUniqueOrThrow({ where: { id: f.jobId } })).toMatchObject({ scheduledFor: source.scheduledFor, dedupeKey: source.dedupeKey, status: "sent" });
+    });
+    it("filters 100 unapproved and 100 automatic-OFF holds before the cap, retains manual-OFF, and round-robins 100 eligible rows", async () => {
+        const denied = await pgSlice(); const off = await pgSlice(); const first = await pgSlice(); const second = await pgSlice();
+        async function copyHolds(slice: typeof first, count: number, automaticRuleId?: string) {
+            const base = await handle.raw.message_trigger_job.findUniqueOrThrow({ where: { id: slice.jobId } });
+            const log = await handle.raw.message_log.findUniqueOrThrow({ where: { id: slice.logId } });
+            const jobs = Array.from({ length: count }, (_, index) => ({ ...base, id: randomUUID(),
+                ruleId: automaticRuleId ?? base.ruleId, templateKey: automaticRuleId ? "INFO" : base.templateKey,
+                dedupeKey: `quiet-cap:${slice.branchId}:${index}` }));
+            await handle.raw.message_trigger_job.createMany({ data: jobs.map(row => ({ ...row, payload: row.payload as Prisma.InputJsonValue })) });
+            const copiedLogs = await handle.raw.message_log.createManyAndReturn({ data: jobs.map((row, index) => {
+                const data = log;
+                return { ...data, id: undefined, triggerJobId: row.id, variables: data.variables as Prisma.InputJsonValue,
+                    carrierResults: data.carrierResults === null ? Prisma.DbNull : data.carrierResults as Prisma.InputJsonValue,
+                    templateKey: automaticRuleId ? "INFO" : data.templateKey,
+                    providerAcceptanceKey: `quiet-cap:${slice.branchId}:${index}` };
+            }), select: { id: true, triggerJobId: true } });
+            // Each synthetic private job keeps its own actual acceptance FK.
+            await handle.raw.$transaction(copiedLogs.map(copied => handle.raw.message_trigger_job.update({
+                where: { id: copied.triggerJobId! },
+                data: { payload: { ...base.payload as Prisma.InputJsonObject, existingMessageLogId: copied.id } },
+            })));
+        }
+        const offRule = await createMessageTriggerRule(handle.raw, tracker, { branchId: off.branchId, isActive: true, templateKey: "INFO" });
+        await copyHolds(denied, 100); await copyHolds(off, 100, offRule.id);
+        const policies = [off, first, second].map(slice => ({ branchId: slice.branchId,
+            automaticEnabled: slice !== off, retryEnabled: false, intervalMinutes: 1440 }));
+        const initial = await first.jobs.findDueQuietQueueJobs(policies, release, 100);
+        expect(initial.map(job => job.id).sort()).toEqual([off.jobId, first.jobId, second.jobId].sort());
+        await copyHolds(first, 100); await copyHolds(second, 100);
+        const capped = await first.jobs.findDueQuietQueueJobs(policies, release, 100);
+        expect(capped).toHaveLength(100); expect(capped.some(job => job.id === off.jobId)).toBe(true);
+        expect(capped.filter(job => job.branchId === first.branchId).length).toBeGreaterThanOrEqual(49);
+        expect(capped.filter(job => job.branchId === second.branchId).length).toBeGreaterThanOrEqual(49);
+        expect(capped.some(job => job.branchId === denied.branchId || job.ruleId === offRule.id)).toBe(false);
+        expect(new Set(capped.map(job => job.id)).size).toBe(100);
+        expect(await first.jobs.findDueQuietQueueJobs([], release)).toEqual([]);
     });
     it("the fresh claim-time helper cancels after 09:00 with an atomic terminal log and no provider", async () => {
         const f = await pgSlice(); jest.mocked(Date.now).mockReturnValue(Date.parse("2026-11-04T00:00:01.000Z"));
@@ -514,6 +823,27 @@ describeReal("quiet queue SQL selection, claim, and policy reconciliation", () =
 describe("manual batch and fresh duplicate release", () => {
     beforeEach(() => jest.spyOn(Date, "now").mockReturnValue(original.getTime()));
     afterEach(() => jest.restoreAllMocks());
+    it("replays a final-admission CANCEL truthfully and cannot revive it after OFF", async () => {
+        const f = memoryQueue();
+        const reservation = { triggerType: "scheduled" as const, scheduledDate: "2026-11-04", scheduledTime: "08:00" };
+        expect(await f.send(reservation)).toMatchObject({ outcome: "queued", items: [{ status: "queued" }] });
+        Object.assign(f.configuration.quietHours, { start: "07:00", end: "09:00", action: "CANCEL" });
+        f.configure(f.configuration);
+        jest.mocked(Date.now).mockReturnValue(release.getTime());
+        const id = f.tables["message_trigger_job"]![0]!["id"] as string;
+        const stalePending = (await f.jobs.findByIdInBranch(f.branchId, id))!;
+        await f.core.dispatchPendingJobNow(id, { expectedBranchId: f.branchId });
+        expect(f.tables["message_trigger_job"]![0]).toMatchObject({ status: "canceled", cancelReason: "message_quiet_hours:CANCEL", claimToken: null });
+        expect(f.tables["message_log"]![0]).toMatchObject({ status: "failed", providerCallStartedAt: null, nextRetryAt: null,
+            variables: { manualQueueStatus: "canceled", manualQueueReason: "message_quiet_hours:CANCEL" } });
+        expect(await f.send(reservation)).toMatchObject({ outcome: "canceled", items: [{ status: "canceled", reason: "message_quiet_hours:CANCEL" }] });
+        f.configuration.quietHours.enabled = false; f.configure(f.configuration);
+        jest.spyOn(f.jobs, "findByIdInBranch").mockResolvedValueOnce(stalePending);
+        await expect(f.core.dispatchPendingJobNow(id, { expectedBranchId: f.branchId })).rejects.toThrow("Invalid quiet hold association");
+        expect(await f.send(reservation)).toMatchObject({ outcome: "canceled", items: [{ reason: "message_quiet_hours:CANCEL" }] });
+        expect(f.tables["message_log"]).toHaveLength(1); expect(f.tables["message_trigger_job"]).toHaveLength(1);
+        expect(f.aligo.sendSms).not.toHaveBeenCalled();
+    });
     it.each(["DEFER", "CANCEL"] as const)("splits the complete mixed %s batch into deterministic ordinal jobs in one transaction", async action => {
         const f = memoryQueue(); f.configuration.quietHours.recipientGroups = ["CLIENT"]; f.configuration.quietHours.action = action; f.configure(f.configuration);
         f.tables["employee"]!.push({ id: 11, branchId: f.branchId, name: "synthetic employee", phone: "01000000022", deletedAt: null });

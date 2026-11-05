@@ -605,13 +605,23 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
               AND quiet.variables->>'quietHoursOriginalScheduledFor' = to_char(job.scheduled_for AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'))`;
     }
 
-    async findDueQuietQueueJobs(now: Date, limit = 100): Promise<MessageDispatchSelectedJob[]> {
+    async findDueQuietQueueJobs(eligibility: MessageDispatchBranchEligibility[], now: Date, limit = 100): Promise<MessageDispatchSelectedJob[]> {
+        if (eligibility.length === 0 || limit <= 0) return [];
+        const eligibleValues = Prisma.join(eligibility.map(branch => Prisma.sql`(
+            ${branch.branchId}::uuid, ${branch.automaticEnabled}::boolean
+        )`));
+        const manualJob = manualMessageTriggerJobPredicate({
+            templateKey: Prisma.sql`job.template_key`, ruleId: Prisma.sql`job.rule_id`, dedupeKey: Prisma.sql`job.dedupe_key`,
+        });
         const rows = await this.prisma.$queryRaw<Array<{ id: string }>>(Prisma.sql`
-            WITH ranked AS (
+            WITH policy(branch_id, automatic_enabled) AS (VALUES ${eligibleValues}),
+            ranked AS (
                 SELECT job.id, job.branch_id, COALESCE(job.next_attempt_at, job.scheduled_for) AS due,
                     row_number() OVER (PARTITION BY job.branch_id ORDER BY COALESCE(job.next_attempt_at, job.scheduled_for), job.id) AS ordinal
                 FROM message_trigger_job job
+                INNER JOIN policy ON policy.branch_id = job.branch_id
                 WHERE job.status = 'pending' AND job.attempts = 0 AND job.branch_id IS NOT NULL
+                  AND (policy.automatic_enabled OR ${manualJob})
                   AND job.claim_token IS NULL AND job.processing_deadline_at IS NULL
                   AND job.scheduled_for <= ${now} AND (job.next_attempt_at IS NULL OR job.next_attempt_at <= ${now})
                   AND ((job.template_key = 'MANUAL_SMS' AND job.rule_id = 'system:manual-sms:' || job.branch_id::text

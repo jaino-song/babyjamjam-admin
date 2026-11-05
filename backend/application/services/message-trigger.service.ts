@@ -2233,7 +2233,7 @@ export class MessageTriggerService {
             });
         }
         const quietJobs = typeof this.jobRepository.findDueQuietQueueJobs === "function"
-            ? await this.jobRepository.findDueQuietQueueJobs(now, 100) : [];
+            ? await this.jobRepository.findDueQuietQueueJobs(eligibility, now, 100) : [];
         const ordinaryJobs = await this.jobRepository.consumeDispatchSlotsAndFindDueJobs(eligibility, now, 100 - quietJobs.length);
         const jobs = [...quietJobs, ...ordinaryJobs.filter(job => !quietJobs.some(quiet => quiet.id === job.id))];
         const quietIds = new Set(quietJobs.map(job => job.id));
@@ -3833,8 +3833,13 @@ export class MessageTriggerService {
         if (job.templateKey === MANUAL_SMS_TEMPLATE_KEY && !this.messageAutomationBranchLockService) {
             throw new ServiceUnavailableException("Manual queue branch lock is unavailable");
         }
-        const claimed = automaticJob || job.templateKey === MANUAL_SMS_TEMPLATE_KEY
-            ? await this.messageAutomationBranchLockService!.runExclusive(job.branchId!, (transaction) => claim(transaction))
+        // Manual-owned agent/link/end jobs can also carry quiet holds. Read
+        // their current due time and claim under the same branch transaction
+        // as automatic jobs and policy reconciliation. Existing manual
+        // needs_setup resends keep their separate, non-pending claim path.
+        const claimed = (automaticJob || job.templateKey === MANUAL_SMS_TEMPLATE_KEY || !resend)
+            && job.branchId && this.messageAutomationBranchLockService
+            ? await this.messageAutomationBranchLockService.runExclusive(job.branchId, (transaction) => claim(transaction))
             : await claim();
         if (!claimed) {
             if (safeguardBlock) {

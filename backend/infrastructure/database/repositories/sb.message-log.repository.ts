@@ -61,7 +61,8 @@ export class SbMessageLogRepository implements IMessageLogRepository {
             triggerJobId: log.triggerJobId, provider: "aligo_sms", providerAcceptanceKey: log.providerAcceptanceKey,
             providerAcceptanceFingerprint: log.providerAcceptanceFingerprint, providerAcceptanceState: "prepared", providerCallStartedAt: null } });
         const variables = current?.variables && typeof current.variables === "object" && !Array.isArray(current.variables) ? current.variables : null;
-        if (!current || !variables || current.receiver !== log.receiver || current.messageBody !== log.messageBody
+        if (!current || !variables || current.status !== "pending" || current.providerAcceptedAt !== null || current.aligoMid !== null
+            || current.receiver !== log.receiver || current.messageBody !== log.messageBody
             || current.attempts !== log.attempts || !current.providerAcceptanceKey || !current.providerAcceptanceFingerprint
             || variables["retryOfLogId"] !== log.variables["retryOfLogId"]
             || (variables["quietHoursDisposition"] === "DEFER" && !parseMessageQuietHold(variables))) throw new Error("Quiet retry acceptance changed");
@@ -71,7 +72,11 @@ export class SbMessageLogRepository implements IMessageLogRepository {
             updatedAt: current.updatedAt, variables: { equals: current.variables as Prisma.InputJsonValue }, attempts: current.attempts },
             data: { status: cancel ? "failed" : "pending", nextRetryAt: cancel ? null : hold.releaseAt,
                 errorMessage: cancel ? reason ?? "message_quiet_hours:CANCEL" : null,
-                variables: { ...current.variables as Prisma.InputJsonObject, ...messageQuietHoldVariables(hold), quietHoursDisposition: cancel ? "CANCEL" : "DEFER", ...(invocation ? { retryInvocation: invocation } : {}), ...(senderIdentity ? { retrySenderIdentity: senderIdentity } : {}) } } });
+                variables: { ...current.variables as Prisma.InputJsonObject, ...messageQuietHoldVariables(hold), quietHoursDisposition: cancel ? "CANCEL" : "DEFER",
+                    // This CAS proves the provider has never started. A quiet
+                    // wait is safe to resume, unlike an uncertain submission.
+                    ...(!cancel ? { retrySafety: "quiet-deferred" } : {}),
+                    ...(invocation ? { retryInvocation: invocation } : {}), ...(senderIdentity ? { retrySenderIdentity: senderIdentity } : {}) } } });
         if (changed.count !== 1) throw new Error("Quiet retry CAS lost");
     }
 
