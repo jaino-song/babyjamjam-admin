@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import type { ComponentProps, CSSProperties, ReactNode, RefObject } from "react";
 import { ChevronDown, ChevronRight, FileCheck2, type LucideIcon } from "lucide-react";
@@ -12,7 +12,7 @@ import { cn } from "@/lib/utils";
 import { ListCardBody } from "./ListCardBody";
 import { ListCardHeader } from "./ListCardHeader";
 import { ListCardLoadMore } from "./ListCardLoadMore";
-import type { ContractRow, ListRow, MenuGroup, SectionRows } from "./mockup-data";
+import type { ContractRow, ListRow, MenuGroup } from "./mockup-data";
 
 const LIST_LOAD_MORE_BUTTON_SOURCE_COMPONENT = "ListLoadMoreButton";
 const LIST_LOAD_MORE_SENTINEL_SOURCE_COMPONENT = "ListLoadMoreSentinel";
@@ -758,31 +758,43 @@ export function ListCard({
   );
 }
 
-export function SectionedList({
+export function SectionedList<T = ListRow>({
   "data-component": dataComponent,
   sections,
   hideSectionHeader,
+  renderRow,
 }: {
   "data-component": string;
-  sections: SectionRows[];
-  hideSectionHeader?: (section: SectionRows) => boolean;
+  sections: { title: string; rows: T[] }[];
+  hideSectionHeader?: (section: { title: string; rows: T[] }) => boolean;
+  renderRow?: (row: T, index: number, dataComponent: string) => ReactNode;
 }) {
   return (
     <>
       {sections.map((section, sectionIndex) => (
         <div
           className="section-block"
-          key={section.title}
+          key={`${sectionIndex}-${section.title}`}
+          data-slot="section-block"
           data-component={`${dataComponent}_section-${sectionIndex + 1}`}
           data-source-component={SECTIONED_LIST_SOURCE_COMPONENT}
         >
-          {!hideSectionHeader?.(section) && <div className="section-header">{section.title}</div>}
+          {!hideSectionHeader?.(section) && (
+            <div
+              className="section-header"
+              data-slot="section-header"
+              data-component={`${dataComponent}_section-${sectionIndex + 1}_header`}
+            >{section.title}</div>
+          )}
           {section.rows.map((row, rowIndex) => (
-            <ClientLikeRow
-              key={`${section.title}-${row.name}`}
-              data-component={`${dataComponent}_section-${sectionIndex + 1}_row-${rowIndex + 1}`}
-              row={row}
-            />
+            <Fragment key={renderRow ? rowIndex : `${section.title}-${(row as ListRow).name}`}>
+              {renderRow ? renderRow(row, rowIndex, `${dataComponent}_section-${sectionIndex + 1}_row-${rowIndex + 1}`) : (
+                <ClientLikeRow
+                  data-component={`${dataComponent}_section-${sectionIndex + 1}_row-${rowIndex + 1}`}
+                  row={row as ListRow}
+                />
+              )}
+            </Fragment>
           ))}
         </div>
       ))}

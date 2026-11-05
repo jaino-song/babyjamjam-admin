@@ -33,6 +33,8 @@ export interface AnimatedSlotListProps<T> {
   slotClassName?: string | ((args: SlotClassNameArgs<T>) => string);
   onSlotClick?: (item: T, index: number) => void;
   getItemKey?: (item: T, index: number) => string;
+  /** Optional server-owned section header; absent metadata keeps a flat list. */
+  getItemGroup?: (item: T) => { id: string; label: string } | undefined;
   render: (args: { index: number; item: T | null; isLoading: boolean }) => React.ReactNode;
 
   /** Whether there are more items to load */
@@ -59,6 +61,7 @@ export function AnimatedSlotList<T>({
   slotClassName,
   onSlotClick,
   getItemKey,
+  getItemGroup,
   render,
   hasMore = false,
   onLoadMore,
@@ -179,7 +182,22 @@ export function AnimatedSlotList<T>({
         }
 
         const handleClick =
-          !isSlotLoading && item && onSlotClick ? () => onSlotClick(item, index) : undefined;
+          isInteractive && !isSlotLoading && item && onSlotClick
+            ? (event?: React.MouseEvent<HTMLDivElement>) => {
+                if (event?.defaultPrevented) return;
+                if (event && event.target instanceof Element) {
+                  const interactiveAncestor = event.target.closest(
+                    'button, input, select, textarea, a[href], label, summary, [role="button"], [role="link"], [role="switch"], [role="checkbox"], [role="radio"], [role="textbox"], [role="combobox"], [contenteditable="true"], [contenteditable=""]'
+                  );
+                  if (
+                    interactiveAncestor &&
+                    interactiveAncestor !== event.currentTarget &&
+                    event.currentTarget.contains(interactiveAncestor)
+                  ) return;
+                }
+                onSlotClick(item, index);
+              }
+            : undefined;
 
         const slot = (
           <div
@@ -201,6 +219,7 @@ export function AnimatedSlotList<T>({
                   "aria-pressed":
                     slotState.isActive === undefined ? undefined : Boolean(slotState.isActive),
                   onKeyDown: (event: React.KeyboardEvent<HTMLDivElement>) => {
+                    if (event.defaultPrevented || event.target !== event.currentTarget) return;
                     if (event.key === "Enter" || event.key === " ") {
                       if (event.key === " ") event.preventDefault();
                       handleClick();
@@ -213,16 +232,32 @@ export function AnimatedSlotList<T>({
           </div>
         );
 
-        return itemVariant === "card" ? (
-          <SelectableItemFrame
-            key={slotKey}
-            asChild
-            isSelected={Boolean(slotState.isActive)}
-            isInteractive={isInteractive}
-          >
-            {slot}
-          </SelectableItemFrame>
-        ) : React.cloneElement(slot, { key: slotKey });
+        const group = item ? getItemGroup?.(item) : undefined;
+        const previousItem = index > 0 ? items?.[index - 1] : undefined;
+        const previousGroup = previousItem ? getItemGroup?.(previousItem) : undefined;
+
+        return (
+          <React.Fragment key={slotKey}>
+            {group && group.id !== previousGroup?.id && !shouldHide ? (
+              <h3
+                data-component={dataComponent ? `${dataComponent}_group-${group.id}_heading` : undefined}
+                data-slot="group-heading"
+                className="px-2 pt-3 pb-1 text-sm font-semibold text-v3-text-muted"
+              >
+                {group.label}
+              </h3>
+            ) : null}
+            {itemVariant === "card" ? (
+              <SelectableItemFrame
+                asChild
+                isSelected={Boolean(slotState.isActive)}
+                isInteractive={isInteractive}
+              >
+                {slot}
+              </SelectableItemFrame>
+            ) : slot}
+          </React.Fragment>
+        );
       })}
 
       {hasMore || isFetchingMore ? (

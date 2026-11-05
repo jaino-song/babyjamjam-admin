@@ -1,18 +1,22 @@
 import { SERVICE_END_NOTICE_DEFAULT_CONTENT, SERVICE_END_NOTICE_SMS_TITLE } from './service-end-notice-message';
 
 export enum SystemTemplateKey {
+  GREETING = 'GREETING',
+  SERVICE_INFO = 'SERVICE_INFO',
+  PRICE_INFO = 'PRICE_INFO',
+  REMINDER = 'REMINDER',
+  THANKS = 'THANKS',
+  INFO = 'INFO',
+  CONTRACT_GUIDE = 'CONTRACT_GUIDE',
+  CONTRACT_REMINDER = 'CONTRACT_REMINDER',
+  MATERNAL_NOTICE = 'MATERNAL_NOTICE',
+  SERVICE_END_NOTICE = 'SERVICE_END_NOTICE',
+  SURVEY = 'SURVEY',
+  PROVIDER_NOTICE = 'PROVIDER_NOTICE',
+  SERVICE_RECORD_LINK = 'SERVICE_RECORD_LINK',
+  SERVICE_RECORD_REMINDER = 'SERVICE_RECORD_REMINDER',
   CAREGIVER_SERVICE_START_NOTICE = 'CAREGIVER_SERVICE_START_NOTICE',
   CAREGIVER_SERVICE_END_NOTICE = 'CAREGIVER_SERVICE_END_NOTICE',
-  PRICE_INFO = 'PRICE_INFO',
-  GREETING = 'GREETING',
-  THANKS = 'THANKS',
-  CONTRACT_REMINDER = 'CONTRACT_REMINDER',
-  SURVEY = 'SURVEY',
-  SERVICE_INFO = 'SERVICE_INFO',
-  SERVICE_RECORD_LINK = 'SERVICE_RECORD_LINK',
-  SERVICE_END_NOTICE = 'SERVICE_END_NOTICE',
-  REMINDER = 'REMINDER',
-  INFO = 'INFO',
 }
 
 export interface TemplateVariable {
@@ -29,7 +33,11 @@ export interface CustomVariable {
   required: boolean;
 }
 
+export type SystemTemplateGroup = 'mother' | 'provider';
+
 export interface TemplateContract {
+  group: SystemTemplateGroup;
+  groupLabel: string;
   key: SystemTemplateKey;
   name: string;
   description: string;
@@ -38,34 +46,11 @@ export interface TemplateContract {
 }
 
 export const SYSTEM_TEMPLATE_REGISTRY: Record<SystemTemplateKey, TemplateContract> = {
-  [SystemTemplateKey.CAREGIVER_SERVICE_START_NOTICE]: {
-    key: SystemTemplateKey.CAREGIVER_SERVICE_START_NOTICE,
-    name: '제공인력 서비스 시작 안내',
-    description: '실제 배정 일정 기준 제공인력 서비스 시작 안내',
-    requiredVariables: [
-      { key: 'employeeName', label: '제공인력명', type: 'string', required: true },
-      { key: 'clientName', label: '고객명', type: 'string', required: true },
-      { key: 'serviceStartDate', label: '배정 시작일', type: 'string', required: true },
-      { key: 'branchName', label: '지점명', type: 'string', required: true },
-    ],
-    defaultContent: '{{employeeName}} 관리사님, {{clientName}} 고객님의 서비스가 {{serviceStartDate}}에 시작됩니다. 배정 일정과 근무 안내를 확인해 주세요. - {{branchName}}',
-  },
-  [SystemTemplateKey.CAREGIVER_SERVICE_END_NOTICE]: {
-    key: SystemTemplateKey.CAREGIVER_SERVICE_END_NOTICE,
-    name: '제공인력 서비스 종료 안내',
-    description: '실제 배정 일정 기준 제공인력 서비스 종료 안내',
-    requiredVariables: [
-      { key: 'employeeName', label: '제공인력명', type: 'string', required: true },
-      { key: 'clientName', label: '고객명', type: 'string', required: true },
-      { key: 'serviceEndDate', label: '배정 종료일', type: 'string', required: true },
-      { key: 'branchName', label: '지점명', type: 'string', required: true },
-    ],
-    defaultContent: '{{employeeName}} 관리사님, {{clientName}} 고객님의 서비스가 {{serviceEndDate}}에 종료됩니다. 마무리 안내를 확인해 주세요. - {{branchName}}',
-  },
-
   [SystemTemplateKey.PRICE_INFO]: {
     key: SystemTemplateKey.PRICE_INFO,
-    name: '비용 안내',
+    name: '서비스 비용 안내',
+    group: 'mother',
+    groupLabel: '산모 대상',
     description: '정부지원 바우처 서비스 비용 및 입금 계좌 안내',
     requiredVariables: [
       {
@@ -168,7 +153,9 @@ export const SYSTEM_TEMPLATE_REGISTRY: Record<SystemTemplateKey, TemplateContrac
 
   [SystemTemplateKey.GREETING]: {
     key: SystemTemplateKey.GREETING,
-    name: '인사(소개)',
+    name: '첫 인사',
+    group: 'mother',
+    groupLabel: '산모 대상',
     description: '초기 문의 시 업체 소개 및 연락처/사이트 안내',
     requiredVariables: [],
     defaultContent: `[사회서비스 제공자 품질평가 A등급]
@@ -195,7 +182,9 @@ blog.naver.com/imirae-incheon`,
 
   [SystemTemplateKey.THANKS]: {
     key: SystemTemplateKey.THANKS,
-    name: '예약 완료(입금 확인)',
+    name: '입금 확인 및 예약 완료 안내',
+    group: 'mother',
+    groupLabel: '산모 대상',
     description: '입금 확인 후 예약 완료 및 감사 안내',
     requiredVariables: [
       {
@@ -217,6 +206,8 @@ blog.naver.com/imirae-incheon`,
   [SystemTemplateKey.CONTRACT_REMINDER]: {
     key: SystemTemplateKey.CONTRACT_REMINDER,
     name: '계약서 작성 요청',
+    group: 'mother',
+    groupLabel: '산모 대상',
     description: '서비스 계약서 미완료 산모에게 계약서 작성 및 서명 요청',
     requiredVariables: [
       {
@@ -241,6 +232,8 @@ blog.naver.com/imirae-incheon`,
   [SystemTemplateKey.SERVICE_END_NOTICE]: {
     key: SystemTemplateKey.SERVICE_END_NOTICE,
     name: SERVICE_END_NOTICE_SMS_TITLE,
+    group: 'mother',
+    groupLabel: '산모 대상',
     description: '서비스 종료 후 바우처 산모에게 본인부담금 영수증 다운로드 링크를 안내',
     requiredVariables: [
       { key: 'name', label: '산모님 성함', type: 'string', required: true },
@@ -252,6 +245,8 @@ blog.naver.com/imirae-incheon`,
   [SystemTemplateKey.SURVEY]: {
     key: SystemTemplateKey.SURVEY,
     name: '모니터링 설문',
+    group: 'mother',
+    groupLabel: '산모 대상',
     description: '서비스 이용 모니터링 설문 링크 발송',
     requiredVariables: [
       {
@@ -278,7 +273,9 @@ blog.naver.com/imirae-incheon`,
 
   [SystemTemplateKey.SERVICE_INFO]: {
     key: SystemTemplateKey.SERVICE_INFO,
-    name: '서비스 안내',
+    name: '서비스 내용 안내',
+    group: 'mother',
+    groupLabel: '산모 대상',
     description: '산후관리서비스 진행 전 주요 안내사항 전달',
     requiredVariables: [
       {
@@ -306,7 +303,9 @@ blog.naver.com/imirae-incheon`,
 
   [SystemTemplateKey.SERVICE_RECORD_LINK]: {
     key: SystemTemplateKey.SERVICE_RECORD_LINK,
-    name: '제공기록지 작성 링크',
+    name: '제공기록지 작성 요청',
+    group: 'provider',
+    groupLabel: '제공인력 대상',
     description: '서비스 시작일 오후 3시에 제공인력에게 발송되는 제공기록지 작성 링크 SMS',
     requiredVariables: [
       {
@@ -355,6 +354,8 @@ blog.naver.com/imirae-incheon`,
   [SystemTemplateKey.REMINDER]: {
     key: SystemTemplateKey.REMINDER,
     name: '리마인드',
+    group: 'mother',
+    groupLabel: '산모 대상',
     description: '상담/예약 진행 중 고객 리마인드 및 안심 메시지',
     requiredVariables: [
       {
@@ -382,7 +383,9 @@ blog.naver.com/imirae-incheon`,
 
   [SystemTemplateKey.INFO]: {
     key: SystemTemplateKey.INFO,
-    name: '정보 요청',
+    name: '산모 정보 요청',
+    group: 'mother',
+    groupLabel: '산모 대상',
     description: '서비스 전 산모/아기 기본 정보 작성 요청',
     requiredVariables: [],
     defaultContent: `[사회서비스 제공자 품질평가 A등급]
@@ -405,6 +408,75 @@ blog.naver.com/imirae-incheon`,
         
 아기의 건강과 엄마의 안정을 위해 최선을 다하겠습니다. 감사합니다.`,
   },
+
+  [SystemTemplateKey.CONTRACT_GUIDE]: {
+    key: SystemTemplateKey.CONTRACT_GUIDE,
+    name: '계약서 작성 안내',
+    group: 'mother',
+    groupLabel: '산모 대상',
+    description: '',
+    requiredVariables: [],
+    defaultContent: '',
+  },
+
+  [SystemTemplateKey.MATERNAL_NOTICE]: {
+    key: SystemTemplateKey.MATERNAL_NOTICE,
+    name: '산모님 안내문',
+    group: 'mother',
+    groupLabel: '산모 대상',
+    description: '',
+    requiredVariables: [],
+    defaultContent: '',
+  },
+
+  [SystemTemplateKey.PROVIDER_NOTICE]: {
+    key: SystemTemplateKey.PROVIDER_NOTICE,
+    name: '제공인력 안내문',
+    group: 'provider',
+    groupLabel: '제공인력 대상',
+    description: '',
+    requiredVariables: [],
+    defaultContent: '',
+  },
+
+  [SystemTemplateKey.SERVICE_RECORD_REMINDER]: {
+    key: SystemTemplateKey.SERVICE_RECORD_REMINDER,
+    name: '제공기록지 미작성 알림',
+    group: 'provider',
+    groupLabel: '제공인력 대상',
+    description: '',
+    requiredVariables: [],
+    defaultContent: '',
+  },
+  [SystemTemplateKey.CAREGIVER_SERVICE_START_NOTICE]: {
+    group: 'provider',
+    groupLabel: '제공인력 대상',
+    key: SystemTemplateKey.CAREGIVER_SERVICE_START_NOTICE,
+    name: '제공인력 서비스 시작 안내',
+    description: '실제 배정 일정 기준 제공인력 서비스 시작 안내',
+    requiredVariables: [
+      { key: 'employeeName', label: '제공인력명', type: 'string', required: true },
+      { key: 'clientName', label: '고객명', type: 'string', required: true },
+      { key: 'serviceStartDate', label: '배정 시작일', type: 'string', required: true },
+      { key: 'branchName', label: '지점명', type: 'string', required: true },
+    ],
+    defaultContent: '{{employeeName}} 관리사님, {{clientName}} 고객님의 서비스가 {{serviceStartDate}}에 시작됩니다. 배정 일정과 근무 안내를 확인해 주세요. - {{branchName}}',
+  },
+  [SystemTemplateKey.CAREGIVER_SERVICE_END_NOTICE]: {
+    group: 'provider',
+    groupLabel: '제공인력 대상',
+    key: SystemTemplateKey.CAREGIVER_SERVICE_END_NOTICE,
+    name: '제공인력 서비스 종료 안내',
+    description: '실제 배정 일정 기준 제공인력 서비스 종료 안내',
+    requiredVariables: [
+      { key: 'employeeName', label: '제공인력명', type: 'string', required: true },
+      { key: 'clientName', label: '고객명', type: 'string', required: true },
+      { key: 'serviceEndDate', label: '배정 종료일', type: 'string', required: true },
+      { key: 'branchName', label: '지점명', type: 'string', required: true },
+    ],
+    defaultContent: '{{employeeName}} 관리사님, {{clientName}} 고객님의 서비스가 {{serviceEndDate}}에 종료됩니다. 마무리 안내를 확인해 주세요. - {{branchName}}',
+  },
+
 };
 
 export function isCaregiverSystemTemplateKey(key: unknown): key is SystemTemplateKey.CAREGIVER_SERVICE_START_NOTICE | SystemTemplateKey.CAREGIVER_SERVICE_END_NOTICE {

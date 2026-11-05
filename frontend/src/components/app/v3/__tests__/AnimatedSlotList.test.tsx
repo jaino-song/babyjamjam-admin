@@ -1,4 +1,6 @@
 import { fireEvent, render, screen } from "@testing-library/react";
+import { Switch } from "@/components/ui/switch";
+
 import { AnimatedSlotList } from "../AnimatedSlotList";
 
 describe("AnimatedSlotList", () => {
@@ -159,5 +161,143 @@ describe("AnimatedSlotList", () => {
     expect(indicatorDuringFetch).toBe(indicatorBeforeFetch);
     expect(indicatorDuringFetch).toHaveAttribute("data-state", "loading");
     expect(indicatorDuringFetch).toHaveClass("opacity-100", "delay-200");
+  });
+});
+
+
+describe("AnimatedSlotList nested interactions", () => {
+  it.each(["card", "unstyled"] as const)("keeps actual Switch pointer and keyboard actions separate in %s rows", (itemVariant) => {
+    const onSlotClick = jest.fn();
+    const onCheckedChange = jest.fn();
+    render(
+      <AnimatedSlotList
+        items={[{ id: "synthetic-switch" }]}
+        isLoading={false}
+        itemVariant={itemVariant}
+        onSlotClick={onSlotClick}
+        render={() => <Switch aria-label="합성 스위치" onCheckedChange={onCheckedChange} />}
+      />,
+    );
+    const control = screen.getByRole("switch", { name: "합성 스위치" });
+    const thumb = control.querySelector('[data-slot="switch-thumb"]');
+    expect(thumb).not.toBeNull();
+
+    fireEvent.click(control);
+    expect(control).toHaveAttribute("aria-checked", "true");
+    expect(onCheckedChange).toHaveBeenNthCalledWith(1, true);
+    fireEvent.click(thumb!);
+    expect(control).toHaveAttribute("aria-checked", "false");
+    expect(onCheckedChange).toHaveBeenNthCalledWith(2, false);
+    expect(onSlotClick).not.toHaveBeenCalled();
+
+    control.focus();
+    expect(control).toHaveFocus();
+    // Exercise bubbled Enter without imposing a toggle contract on Radix.
+    fireEvent.keyDown(control, { key: "Enter" });
+    fireEvent.keyUp(control, { key: "Enter" });
+    expect(onSlotClick).not.toHaveBeenCalled();
+
+    expect(fireEvent.keyDown(control, { key: " " })).toBe(true);
+    fireEvent.keyUp(control, { key: " " });
+    // JSDOM has no native Space activation. Dispatch its resulting button click.
+    fireEvent.click(control, { detail: 0 });
+    expect(control).toHaveAttribute("aria-checked", "true");
+    expect(onCheckedChange).toHaveBeenNthCalledWith(3, true);
+    expect(onSlotClick).not.toHaveBeenCalled();
+  });
+
+  it("preserves nested button, SVG and anchor actions without selecting the row", () => {
+    const onSlotClick = jest.fn();
+    const onAction = jest.fn();
+    const onNavigate = jest.fn();
+    render(
+      <AnimatedSlotList
+        items={[{ id: "synthetic-actions" }]}
+        isLoading={false}
+        onSlotClick={onSlotClick}
+        render={() => <>
+          <button type="button" onClick={onAction}>
+            <span>합성 버튼</span>
+            <svg aria-label="합성 아이콘"><path d="M0 0h1" /></svg>
+          </button>
+          <a href="#synthetic-destination" onClick={onNavigate}><span>합성 링크</span></a>
+        </>}
+      />,
+    );
+    fireEvent.click(screen.getByText("합성 버튼"));
+    const icon = screen.getByLabelText("합성 아이콘");
+    fireEvent.click(icon.firstChild!);
+    expect(onAction).toHaveBeenCalledTimes(2);
+    expect(onAction.mock.calls[0][0].defaultPrevented).toBe(false);
+    const link = screen.getByRole("link", { name: "합성 링크" });
+    expect(fireEvent.click(screen.getByText("합성 링크"))).toBe(true);
+    expect(link).toHaveAttribute("href", "#synthetic-destination");
+    expect(onNavigate).toHaveBeenCalledTimes(1);
+    expect(onSlotClick).not.toHaveBeenCalled();
+  });
+
+  it.each(["card", "unstyled"] as const)("selects the correct item/index from the %s row and its ordinary body", (itemVariant) => {
+    const onSlotClick = jest.fn();
+    const items = [{ id: "synthetic-first" }, { id: "synthetic-second" }];
+    render(
+      <AnimatedSlotList
+        items={items}
+        isLoading={false}
+        itemVariant={itemVariant}
+        onSlotClick={onSlotClick}
+        render={({ item }) => <span>{item?.id}</span>}
+      />,
+    );
+    const row = screen.getByRole("button", { name: "synthetic-second" });
+    fireEvent.click(row);
+    fireEvent.click(screen.getByText("synthetic-second"));
+    row.focus();
+    expect(row).toHaveFocus();
+    expect(fireEvent.keyDown(row, { key: "Enter" })).toBe(true);
+    expect(fireEvent.keyDown(row, { key: " " })).toBe(false);
+    expect(onSlotClick).toHaveBeenCalledTimes(4);
+    for (let call = 1; call <= 4; call += 1) {
+      expect(onSlotClick).toHaveBeenNthCalledWith(call, items[1], 1);
+    }
+  });
+
+  it.each(["card", "unstyled"] as const)("does not select explicitly noninteractive %s rows", (itemVariant) => {
+    const onSlotClick = jest.fn();
+    render(
+      <AnimatedSlotList
+        items={[{ id: "synthetic-disabled" }]}
+        isLoading={false}
+        itemVariant={itemVariant}
+        getSlotState={() => ({ isInteractive: false })}
+        onSlotClick={onSlotClick}
+        render={() => "합성 비활성 행"}
+      />,
+    );
+    const row = screen.getByText("합성 비활성 행");
+    fireEvent.click(row);
+    fireEvent.keyDown(row, { key: "Enter" });
+    fireEvent.keyDown(row, { key: " " });
+    expect(row).not.toHaveAttribute("role");
+    expect(row).not.toHaveAttribute("tabindex");
+    expect(onSlotClick).not.toHaveBeenCalled();
+  });
+
+  it("honors prevented pointer and row keyboard events", () => {
+    const onSlotClick = jest.fn();
+    render(
+      <div onKeyDownCapture={(event) => event.preventDefault()}>
+        <AnimatedSlotList
+          items={[{ id: "synthetic-prevented" }]}
+          isLoading={false}
+          onSlotClick={onSlotClick}
+          render={() => <span onClick={(event) => event.preventDefault()}>합성 취소</span>}
+        />
+      </div>,
+    );
+    fireEvent.click(screen.getByText("합성 취소"));
+    const row = screen.getByRole("button", { name: "합성 취소" });
+    fireEvent.keyDown(row, { key: "Enter" });
+    fireEvent.keyDown(row, { key: " " });
+    expect(onSlotClick).not.toHaveBeenCalled();
   });
 });

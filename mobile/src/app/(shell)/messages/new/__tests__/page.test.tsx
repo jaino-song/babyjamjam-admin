@@ -340,6 +340,14 @@ describe("NewMessagePage", () => {
       data: [
         mockUseSystemTemplate("GREETING").data,
         mockUseSystemTemplate("SERVICE_INFO").data,
+        ...[
+          ["INFO", "정보 수집"], ["PRICE_INFO", "금액 및 계좌번호"],
+          ["REMINDER", "상담 후 리마인더"], ["THANKS", "예약 완료"],
+          ["SURVEY", "모니터링 설문"], ["CONTRACT_REMINDER", "계약서 작성 요청"],
+        ].map(([templateKey, name]) => ({
+          id: `system-${templateKey}`, templateKey, name, content: "",
+          requiredVariables: [], customVariables: [], updatedAt: "2026-06-04T00:00:00.000Z",
+        })),
         {
           id: "system-service-end-notice",
           templateKey: "SERVICE_END_NOTICE",
@@ -1073,7 +1081,7 @@ describe("NewMessagePage", () => {
     }
   });
 
-  it("includes the remaining frontend fallback templates in the template dropdown", async () => {
+  it("includes successful server-provided supported templates in the template dropdown", async () => {
     renderPage();
 
     await openTemplateSelect();

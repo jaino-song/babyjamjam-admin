@@ -17,18 +17,22 @@ import { z } from "zod";
 // string while Raw* variants retain Date for backend-reference parity.
 
 export const SYSTEM_TEMPLATE_KEYS = [
-  "CAREGIVER_SERVICE_START_NOTICE",
-  "CAREGIVER_SERVICE_END_NOTICE",
-  'PRICE_INFO',
   'GREETING',
-  'THANKS',
-  'CONTRACT_REMINDER',
-  'SURVEY',
   'SERVICE_INFO',
-  'SERVICE_RECORD_LINK',
-  'SERVICE_END_NOTICE',
+  'PRICE_INFO',
   'REMINDER',
+  'THANKS',
   'INFO',
+  'CONTRACT_GUIDE',
+  'CONTRACT_REMINDER',
+  'MATERNAL_NOTICE',
+  'SERVICE_END_NOTICE',
+  'SURVEY',
+  'PROVIDER_NOTICE',
+  'SERVICE_RECORD_LINK',
+  'SERVICE_RECORD_REMINDER',
+  'CAREGIVER_SERVICE_START_NOTICE',
+  'CAREGIVER_SERVICE_END_NOTICE',
 ] as const;
 
 export type SystemTemplateKey = (typeof SYSTEM_TEMPLATE_KEYS)[number];
@@ -50,18 +54,22 @@ export type SystemTemplateDeliveryMode = (typeof SYSTEM_TEMPLATE_DELIVERY_MODES)
  * delivery path a compile-time error instead of silently falling back to SMS.
  */
 export const SYSTEM_TEMPLATE_DELIVERY_MODES_BY_KEY = {
+  GREETING: "sms",
+  SERVICE_INFO: "sms",
+  PRICE_INFO: "sms",
+  REMINDER: "sms",
+  THANKS: "sms",
+  INFO: "sms",
+  CONTRACT_GUIDE: "sms",
+  CONTRACT_REMINDER: "sms",
+  MATERNAL_NOTICE: "sms",
+  SERVICE_END_NOTICE: "receipt-link",
+  SURVEY: "sms",
+  PROVIDER_NOTICE: "sms",
+  SERVICE_RECORD_LINK: "service-feedback-link",
+  SERVICE_RECORD_REMINDER: "sms",
   CAREGIVER_SERVICE_START_NOTICE: "sms",
   CAREGIVER_SERVICE_END_NOTICE: "sms",
-  PRICE_INFO: "sms",
-  GREETING: "sms",
-  THANKS: "sms",
-  CONTRACT_REMINDER: "sms",
-  SURVEY: "sms",
-  SERVICE_INFO: "sms",
-  SERVICE_RECORD_LINK: "service-feedback-link",
-  SERVICE_END_NOTICE: "receipt-link",
-  REMINDER: "sms",
-  INFO: "sms",
 } satisfies Record<SystemTemplateKey, SystemTemplateDeliveryMode>;
 
 /**
@@ -96,7 +104,15 @@ export interface CustomVariable {
   required: boolean;
 }
 
-export interface SystemTemplateContract {
+export type SystemTemplateGroup = 'mother' | 'provider';
+
+/** Optional for compatibility with older server responses. */
+export interface SystemTemplatePresentation {
+  group?: SystemTemplateGroup;
+  groupLabel?: string;
+}
+
+export interface SystemTemplateContract extends SystemTemplatePresentation {
   key: SystemTemplateKey;
   name: string;
   description: string;
@@ -122,13 +138,13 @@ export interface SystemTemplateRecord {
   updatedAt: string;
 }
 
-export interface RawSystemTemplate extends RawSystemTemplateRecord {
+export interface RawSystemTemplate extends RawSystemTemplateRecord, SystemTemplatePresentation {
   name: string;
   description: string;
   requiredVariables: TemplateVariable[];
 }
 
-export interface SystemTemplate extends SystemTemplateRecord {
+export interface SystemTemplate extends SystemTemplateRecord, SystemTemplatePresentation {
   name: string;
   description: string;
   requiredVariables: TemplateVariable[];

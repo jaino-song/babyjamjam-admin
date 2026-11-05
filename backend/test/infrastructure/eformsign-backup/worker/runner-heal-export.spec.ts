@@ -73,7 +73,7 @@ describe("BJJ-456 QF3: an export that keeps serving wrong bytes does not shut ou
         for (let attempt = 0; attempt < 3; attempt += 1) await tryRun(h);
 
         expect(outage.hits).toBeGreaterThanOrEqual(1);
-        expect(await localState()).toEqual({ state: "blocked", reasonCode: "integrity-repeated" });
+        expect(await localState()).toEqual({ state: "blocked", reasonCode: "drive-unavailable" });
         await expect(fs.lstat(path.join(h.archive, lost.localKey))).rejects.toMatchObject({ code: "ENOENT" });
         fakes.drive.clearFaults();
         h.api.clearRequests();
@@ -98,7 +98,7 @@ describe("BJJ-456 QF3: an export that keeps serving wrong bytes does not shut ou
         const lost = await lostCopy(true);
         fakes.drive.addFault({ route: "*", action: driveFaults.status(503, "backendError") });
         for (let attempt = 0; attempt < 3; attempt += 1) await tryRun(h);
-        expect(await localState()).toEqual({ state: "blocked", reasonCode: "integrity-repeated" });
+        expect(await localState()).toEqual({ state: "blocked", reasonCode: "drive-unavailable" });
         fakes.drive.clearFaults();
         h.api.docs = [];
         h.api.clearRequests();
@@ -115,7 +115,7 @@ describe("BJJ-456 QF3: an export that keeps serving wrong bytes does not shut ou
         const lost = await lostCopy(true);
         fakes.drive.addFault({ route: "*", action: driveFaults.status(503, "backendError") });
         for (let attempt = 0; attempt < 3; attempt += 1) await tryRun(h);
-        expect(await localState()).toEqual({ state: "blocked", reasonCode: "integrity-repeated" });
+        expect(await localState()).toEqual({ state: "blocked", reasonCode: "drive-unavailable" });
         fakes.drive.clearFaults();
         if (carried) h.api.docs = [];
         h.api.clearRequests();
@@ -188,7 +188,7 @@ describe("BJJ-456 QF3: an export that keeps serving wrong bytes does not shut ou
         expect(outage.hits).toBeGreaterThanOrEqual(1);
         expect(h.api.artifactRequests()).toEqual([]);
         expect((await ledgerState()).gaps.length).toBe(lost.gapsBefore);
-        expect((await localState()).state).toBe("blocked");
+        expect(await localState()).toEqual({ state: "blocked", reasonCode: "drive-unavailable" });
         fakes.drive.clearFaults();
 
         await runOnce(h);
@@ -248,6 +248,57 @@ describe("BJJ-456 QF3: an export that keeps serving wrong bytes does not shut ou
             expect((await ledgerState()).gaps.length).toBe(lost.gapsBefore);
         }, 240_000);
 
+    it.each([["snapshot", false], ["carry", true]] as const)(
+        "should refresh an exhausted blocked entry to the current archive or Drive outage once, then heal without export (%s, BJJ-523/BJJ-524)",
+        async (_name, carried) => {
+            const lost = await exhaustedWithDriveBack(carried);
+            for (const file of await stagedBins()) await fs.rm(path.join(h.control, file));
+            const transitions = async (): Promise<number> => (await records("destination_transition")).filter((record) => !isDrive(record)).length;
+            const beforeArchive = await transitions();
+            const away = await swapArchive(h);
+            const outage = fakes.drive.addFault({ route: "download", action: driveFaults.status(503, "backendError") });
+
+            const archiveDown = await runOnce(h);
+
+            expect(await localState()).toEqual({ state: "blocked", reasonCode: "archive-unavailable" });
+            expect(await transitions()).toBe(beforeArchive + 1);
+            expect(archiveDown.counts!.blocked).toBe(1);
+            expect(archiveDown.reasonCodes).toContain("archive-unavailable");
+            expect(outage.hits).toBe(0);
+            const stillArchiveDown = await runOnce(h);
+            expect(await transitions()).toBe(beforeArchive + 1);
+            expect(stillArchiveDown.counts!.blocked).toBe(1);
+            expect(stillArchiveDown.reasonCodes).toEqual(archiveDown.reasonCodes);
+            expect(h.api.artifactRequests()).toEqual([]);
+            expect((await ledgerState()).gaps.length).toBe(lost.gapsBefore);
+            await swapBack(h, away);
+
+            const driveDown = await runOnce(h);
+
+            expect(outage.hits).toBeGreaterThanOrEqual(1);
+            expect(await localState()).toEqual({ state: "blocked", reasonCode: "drive-unavailable" });
+            expect(await transitions()).toBe(beforeArchive + 2);
+            expect(driveDown.counts!.blocked).toBe(1);
+            expect(driveDown.reasonCodes).toContain("drive-unavailable");
+            expect(driveDown.reasonCodes).not.toContain("archive-unavailable");
+            const stillDriveDown = await runOnce(h);
+            expect(await transitions()).toBe(beforeArchive + 2);
+            expect(stillDriveDown.counts!.blocked).toBe(1);
+            expect(stillDriveDown.reasonCodes).toEqual(driveDown.reasonCodes);
+            expect(h.api.artifactRequests()).toEqual([]);
+            expect((await ledgerState()).gaps.length).toBe(lost.gapsBefore);
+            fakes.drive.clearFaults();
+            const downloadsBefore = fakes.drive.downloads;
+
+            await runOnce(h);
+
+            expect(await localState()).toEqual({ state: "verified", reasonCode: null });
+            expect(await fs.readFile(path.join(h.archive, lost.localKey))).toEqual(lost.pdf);
+            expect(fakes.drive.downloads - downloadsBefore).toBe(1);
+            expect(h.api.artifactRequests()).toEqual([]);
+            expect((await ledgerState()).gaps.length).toBe(lost.gapsBefore);
+        }, 240_000);
+
     it("should publish an exhausted entry's usable staged copy without downloading it from Drive again (QF4 L1)", async () => {
         const lost = await exhaustedThenArchiveOutage(false);
         expect(await stagedBins()).toHaveLength(1);
@@ -268,9 +319,9 @@ describe("BJJ-456 QF3: an export that keeps serving wrong bytes does not shut ou
 
         const summary = await runOnce(h);
 
-        expect(await localState()).toEqual({ state: "blocked", reasonCode: "integrity-repeated" });
+        expect(await localState()).toEqual({ state: "blocked", reasonCode: "drive-unavailable" });
         expect(summary.counts!.blocked).toBe(1);
-        expect(summary.reasonCodes).toContain("integrity-repeated");
+        expect(summary.reasonCodes).toContain("drive-unavailable");
         expect((await ledgerState()).gaps.length).toBe(lost.gapsBefore);
     }, 240_000);
 
@@ -317,17 +368,19 @@ describe("BJJ-456 QF3: an export that keeps serving wrong bytes does not shut ou
             expect((await ledgerState()).gaps.length).toBe(lost.gapsBefore);
         }, 240_000);
 
-    it("should stay blocked integrity-repeated, asking the export no more, while Drive cannot be asked", async () => {
+    it("should stay blocked drive-unavailable, asking the export no more, while Drive cannot be asked", async () => {
         await lostCopy(true);
         fakes.drive.addFault({ route: "*", action: driveFaults.status(503, "backendError") });
         for (let attempt = 0; attempt < 3; attempt += 1) await tryRun(h);
-        expect(await localState()).toEqual({ state: "blocked", reasonCode: "integrity-repeated" });
+        expect(await localState()).toEqual({ state: "blocked", reasonCode: "drive-unavailable" });
         h.api.clearRequests();
+        const transitionsBefore = (await records("destination_transition")).filter((record) => !isDrive(record)).length;
 
         await tryRun(h);
         await tryRun(h);
 
-        expect(await localState()).toEqual({ state: "blocked", reasonCode: "integrity-repeated" });
+        expect(await localState()).toEqual({ state: "blocked", reasonCode: "drive-unavailable" });
+        expect((await records("destination_transition")).filter((record) => !isDrive(record))).toHaveLength(transitionsBefore);
         expect(h.api.artifactRequests()).toEqual([]);
     }, 240_000);
 

@@ -1,4 +1,12 @@
 import { test, expect, type Page, type Route } from "@playwright/test";
+import type { OutOfPocketPriceInfo } from "@babyjamjam/shared";
+import type { AvailableClientArea } from "../src/hooks/useVoucherData";
+import type { BranchHolidayYear } from "../src/services/holidays";
+import type { DashboardStats } from "../src/hooks/useDashboardStats";
+import type { ClientListSummary } from "../src/features/clients/types";
+import type { EformsignDocumentJobSummary, ConsultationInquiryListResponse } from "../src/services/api";
+import type { ClientActionRequiredAlert } from "../src/hooks/useClientAlerts";
+import type { Notification as AppNotification } from "../src/hooks/usePushNotification";
 import { AgentTaskSchema, type AgentCapabilityMeta, type AgentTask } from "@babyjamjam/shared/agent";
 
 const shellEnabled = ["1", "true"].includes((process.env.NEXT_PUBLIC_AGENT_SHELL_ENABLED ?? "").toLowerCase());
@@ -69,14 +77,64 @@ async function setupRoutes(page: Page, options: { task?: boolean } = {}) {
     const latestTask = makeTask(2, "김철수");
     await page.route("**/api/auth/me", (route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(authResponse) }));
     await page.route("**/auth/me", (route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(authResponse) }));
-    // The protected layout mounts DocumentJobsProvider, which polls the eformsign job summary on every page.
-    // This spec runs on a fake, unsigned session, so an unmocked call is rejected by the real backend and the
-    // client treats that 401 (plus the failed refresh) as an ended session and redirects to /login.
-    await page.route("**/api/eformsign-docs/jobs/summary", (route) => route.fulfill({
-        status: 200,
-        contentType: "application/json",
-        body: JSON.stringify({ activeCount: 0, requiresAttentionCount: 0, failedCount: 0, unresolvedCount: 0, unresolvedJobIds: [] }),
-    }));
+    // These UI-only reads must stay isolated from the real backend under mock auth.
+    // Match exact paths and GET only; auth refresh and every mutation remain unmocked.
+    const workspaceReadFixtures = [
+        { pathname: "/api/clients/stats", json: { activeClients: 0, contractsNotSent: 0, contractsPendingSignature: 0, upcomingThisMonth: 0, upcomingNextMonth: 0 } satisfies DashboardStats },
+        { pathname: "/api/clients/list-summary", json: {
+            total: 0,
+            byTab: { all: 0, pre_booking: 0, waiting: 0, replacement_requested: 0, active: 0, completed: 0, terminated: 0 },
+            dueDate: { thisMonth: 0, nextMonth: 0 },
+            serviceEnd: { count: 0, from: "2026-11-01", to: "2026-11-07" },
+        } satisfies ClientListSummary },
+        { pathname: "/api/eformsign-docs/jobs/summary", json: { activeCount: 0, requiresAttentionCount: 0, failedCount: 0, unresolvedCount: 0, unresolvedJobIds: [] } satisfies EformsignDocumentJobSummary },
+        { pathname: "/api/consultation-inquiries", json: { data: [], total: 0, page: 1, limit: 1, totalPages: 0 } satisfies ConsultationInquiryListResponse },
+        { pathname: "/api/clients/alerts", json: [] satisfies ClientActionRequiredAlert[] },
+        { pathname: "/api/notifications", json: [] satisfies AppNotification[] },
+        { pathname: "/api/notifications/unread/count", json: { count: 0 } satisfies { count: number } },
+        { pathname: "/api/voucher-price-infos/years", json: [] satisfies number[] },
+        { pathname: "/api/area-templates/available-areas", json: [] satisfies AvailableClientArea[] },
+        { pathname: "/api/out-of-pocket-price-infos", json: [] satisfies OutOfPocketPriceInfo[] },
+    ];
+    for (const fixture of workspaceReadFixtures) {
+        await page.route((url) => url.pathname === fixture.pathname, async (route) => {
+            if (route.request().method() !== "GET") {
+                await route.fallback();
+                return;
+            }
+            await route.fulfill({ status: 200, json: fixture.json });
+        });
+    }
+    // Only fixture branches used by the E2E server/auth storage are isolated here.
+    const holidayFixturePaths = [
+        "/api/branches/e2e-branch/holidays",
+        "/api/branches/20000000-0000-4000-8000-000000000001/holidays",
+    ];
+    await page.route((url) => holidayFixturePaths.includes(url.pathname), async (route) => {
+        if (route.request().method() !== "GET") {
+            await route.fallback();
+            return;
+        }
+        const year = Number(new URL(route.request().url()).searchParams.get("year"));
+        if (!Number.isInteger(year) || year < 1) {
+            await route.fallback();
+            return;
+        }
+        await route.fulfill({ status: 200, json: {
+            year, revision: 0, supported: false, synced: false,
+            lastSyncedAt: null, holidays: [], inactiveOverrides: [],
+        } satisfies BranchHolidayYear });
+    });
+    // Realtime delivery is outside these mocked chat cases. An open SSE would block
+    // networkidle; abort leaves the real 3s retry/auth-me probe on existing auth,
+    // without contacting the real stream or mocking auth refresh.
+    await page.route((url) => url.pathname === "/api/realtime/events", async (route) => {
+        if (route.request().method() !== "GET") {
+            await route.fallback();
+            return;
+        }
+        await route.abort("failed");
+    });
     await page.route("**/api/ai/chat/history**", (route) => route.fulfill({
         status: 200,
         contentType: "application/json",
@@ -171,12 +229,12 @@ test.describe("Release A flag coexistence", () => {
         await page.goto("/chat");
 
         if (!shellEnabled) {
-            await expect(page.getByText("AI 어시스턴트")).toBeVisible();
+            await expect(page.locator('[data-component="desktop_chat_page_header"]').getByRole("heading", { level: 1, name: "새 대화", exact: true })).toBeVisible();
             await expect(page.getByText("고객 검색, 제공인력 관리, 계약서 발송 등을 도와드립니다.")).toBeVisible();
             return;
         }
 
-        await expect(page.getByText("AI 운영 코파일럿")).toBeVisible();
+        await expect(page.locator('[data-component="desktop_chat_agent-shell_thread_header"]').getByRole("heading", { level: 1, name: "새 대화", exact: true })).toBeVisible();
         await expect(page.getByText("홍길동 조회")).toBeVisible();
 
         const input = page.getByLabel("질문 입력");
@@ -189,6 +247,7 @@ test.describe("Release A flag coexistence", () => {
 
         await page.getByRole("button", { name: "홍길동 조회", exact: true }).click();
         await expect(page.getByText("복원된 조회")).toBeVisible();
+        await expect(page.locator('[data-component="desktop_chat_agent-shell_thread_header"]').getByRole("heading", { level: 1, name: "홍길동 조회", exact: true })).toBeVisible();
         await expect(page.getByRole("button", { name: "지점 바꾸기" })).toBeVisible();
 
         await page.getByRole("button", { name: "홍길동 조회 삭제" }).click();
@@ -208,18 +267,30 @@ test.describe("Release A flag coexistence", () => {
 
         await page.setViewportSize({ width: 390, height: 844 });
         await expect(page.getByLabel("질문 입력")).toBeVisible();
+        const workspace = page.locator('[data-component="desktop_chat_agent-shell"]');
         const sidebar = page.locator('[data-component="desktop_chat_agent-shell_sidebar"]');
-        await expect(sidebar).toHaveAttribute("aria-hidden", "true");
+        const drawer = page.getByRole("dialog", { name: "대화 목록", exact: true });
+        const menu = page.getByRole("button", { name: "사이드바 열기" });
+        await expect(sidebar).toHaveCount(0);
+        await expect(drawer).toHaveCount(0);
         await expect(page.getByRole("button", { name: "전송" })).toHaveAccessibleName("전송");
-        await page.getByRole("button", { name: "사이드바 열기" }).click();
-        await expect(sidebar).toHaveAttribute("aria-hidden", "false");
-        await page.getByRole("button", { name: "사이드바 닫기" }).click();
+        await menu.click();
+        await expect(drawer).toBeVisible();
+        await expect(drawer.locator('[data-component="desktop_chat_agent-shell_sidebar"]')).toBeVisible();
+        await expect.poll(() => drawer.evaluate((element) => element.contains(document.activeElement))).toBe(true);
+        await expect(workspace).toHaveJSProperty("inert", true);
+        await expect(workspace.locator('xpath=ancestor-or-self::*[@aria-hidden="true"]')).not.toHaveCount(0);
+        await drawer.getByRole("button", { name: "사이드바 닫기" }).click();
+        await expect(drawer).toHaveCount(0);
+        await expect(sidebar).toHaveCount(0);
+        await expect(workspace).toHaveJSProperty("inert", false);
+        await expect(menu).toBeFocused();
     });
 
     test("uses the real Release A backend stream", async ({ page }) => {
         test.skip(!runAgentRealE2E, "Run with RUN_AGENT_REAL_E2E=1 against the real backend");
         await page.goto("/chat");
-        await expect(page.getByText("AI 운영 코파일럿")).toBeVisible();
+        await expect(page.locator('[data-component="desktop_chat_agent-shell_thread_header"]').getByRole("heading", { level: 1, name: "새 대화", exact: true })).toBeVisible();
 
         const input = page.getByLabel("질문 입력");
         await input.fill("홍길동 산모 찾아줘");
@@ -232,7 +303,7 @@ test.describe("Release A flag coexistence", () => {
         test.skip(!runAgentE2E || runAgentRealE2E || !shellEnabled, "Run with RUN_AGENT_E2E=1 and NEXT_PUBLIC_AGENT_SHELL_ENABLED=1");
         const routes = await setupRoutes(page);
         await page.goto("/chat");
-        await expect(page.getByText("AI 운영 코파일럿")).toBeVisible();
+        await expect(page.locator('[data-component="desktop_chat_agent-shell_thread_header"]').getByRole("heading", { level: 1, name: "새 대화", exact: true })).toBeVisible();
 
         const input = page.getByLabel("질문 입력");
         await input.fill("조합중 입력");
@@ -245,24 +316,45 @@ test.describe("Release A flag coexistence", () => {
 
         await page.setViewportSize({ width: 390, height: 844 });
         const menu = page.getByRole("button", { name: "사이드바 열기" });
+        const workspace = page.locator('[data-component="desktop_chat_agent-shell"]');
         const sidebar = page.locator('[data-component="desktop_chat_agent-shell_sidebar"]');
+        const drawer = page.getByRole("dialog", { name: "대화 목록", exact: true });
+        await expect(sidebar).toHaveCount(0);
+        await expect(drawer).toHaveCount(0);
         await menu.focus();
         await menu.click();
-        await expect(sidebar).toHaveAttribute("aria-hidden", "false");
-        await expect.poll(() => page.evaluate(() => document.activeElement?.getAttribute("data-component"))).toBe("desktop_chat_agent-shell_sidebar");
-        await expect(sidebar).toHaveJSProperty("inert", false);
+        await expect(drawer).toBeVisible();
+        await expect(drawer.locator('[data-component="desktop_chat_agent-shell_sidebar"]')).toBeVisible();
+        await expect.poll(() => drawer.evaluate((element) => element.contains(document.activeElement))).toBe(true);
+        await expect(workspace).toHaveJSProperty("inert", true);
+        await expect(workspace.locator('xpath=ancestor-or-self::*[@aria-hidden="true"]')).not.toHaveCount(0);
 
-        await page.getByRole("button", { name: "사이드바 닫기" }).click();
-        await expect(sidebar).toHaveAttribute("aria-hidden", "true");
-        await expect.poll(() => page.evaluate(() => document.activeElement?.getAttribute("aria-label"))).toBe("사이드바 열기");
-        await expect(sidebar).toHaveJSProperty("inert", true);
+        await page.keyboard.press("Escape");
+        await expect(drawer).toHaveCount(0);
+        await expect(sidebar).toHaveCount(0);
+        await expect(menu).toBeFocused();
+        await expect(workspace).toHaveJSProperty("inert", false);
+        await expect(workspace.locator('xpath=ancestor-or-self::*[@aria-hidden="true"]')).toHaveCount(0);
+
+        // The conditional Sheet must open and close again at the same 390px viewport.
+        await menu.click();
+        await expect(drawer).toBeVisible();
+        await expect.poll(() => drawer.evaluate((element) => element.contains(document.activeElement))).toBe(true);
+        await expect(workspace).toHaveJSProperty("inert", true);
+        await expect(workspace.locator('xpath=ancestor-or-self::*[@aria-hidden="true"]')).not.toHaveCount(0);
+        await drawer.getByRole("button", { name: "사이드바 닫기" }).click();
+        await expect(drawer).toHaveCount(0);
+        await expect(sidebar).toHaveCount(0);
+        await expect(menu).toBeFocused();
+        await expect(workspace).toHaveJSProperty("inert", false);
+        await expect(workspace.locator('xpath=ancestor-or-self::*[@aria-hidden="true"]')).toHaveCount(0);
     });
 
     test("shows the latest server draft after a task revision conflict", async ({ page }) => {
         test.skip(!runAgentE2E || runAgentRealE2E || !shellEnabled, "Run with RUN_AGENT_E2E=1 and NEXT_PUBLIC_AGENT_SHELL_ENABLED=1");
         const routes = await setupRoutes(page, { task: true });
         await page.goto("/chat");
-        await expect(page.getByText("AI 운영 코파일럿")).toBeVisible();
+        await expect(page.locator('[data-component="desktop_chat_agent-shell_thread_header"]').getByRole("heading", { level: 1, name: "새 대화", exact: true })).toBeVisible();
 
         const input = page.getByLabel("질문 입력");
         await input.fill("초안 충돌");

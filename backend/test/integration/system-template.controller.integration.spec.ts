@@ -64,6 +64,8 @@ describe("SystemTemplateController (Integration)", () => {
             id: overrides.id ?? "template-id-1",
             templateKey,
             name: registry.name,
+            group: registry.group,
+            groupLabel: registry.groupLabel,
             description: registry.description,
             content: overrides.content ?? "Hello {{name}}",
             requiredVariables: registry.requiredVariables,
