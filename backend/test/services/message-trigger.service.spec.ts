@@ -800,7 +800,7 @@ describe("MessageTriggerService", () => {
             expect(job).not.toHaveProperty("dispatchSelection");
             expect(fx.jobRepository.consumeDispatchSlotsAndFindDueJobs).toHaveBeenCalledWith([
                 expect.objectContaining({ branchId, pastExpiryHours: hours === null ? 24 : 48 }),
-            ], at21, 100);
+            ], at21, 100, []);
         });
 
         it.each([
@@ -964,7 +964,7 @@ describe("MessageTriggerService", () => {
             expect(fx.jobRepository.consumeDispatchSlotsAndFindDueJobs).toHaveBeenCalledWith([
                 { branchId: "disabled", automaticEnabled: false, retryEnabled: true, intervalMinutes: 7, pastExpiryHours: 24 },
                 { branchId, automaticEnabled: true, retryEnabled: true, intervalMinutes: 7, pastExpiryHours: 24 },
-            ], at21, 100);
+            ], at21, 100, []);
             expect(fx.deliveryService.sendJob).not.toHaveBeenCalled();
         });
 
@@ -2760,7 +2760,7 @@ describe("MessageTriggerService", () => {
         messageSenderApprovalService.getApprovedBranchIds.mockResolvedValue(new Set());
         await service.dispatchDueJobs();
         expect(messageSenderApprovalService.getApprovedBranchIds).toHaveBeenCalledWith([branchId]);
-        expect(jobRepository.consumeDispatchSlotsAndFindDueJobs).toHaveBeenCalledWith([], expect.any(Date), 100);
+        expect(jobRepository.consumeDispatchSlotsAndFindDueJobs).toHaveBeenCalledWith([], expect.any(Date), 100, []);
         expect(jobRepository.claimPendingWithRuleFence).not.toHaveBeenCalled();
         expect(deliveryService.sendJob).not.toHaveBeenCalled();
         expect(job.status).toBe("pending");
@@ -2780,6 +2780,66 @@ describe("MessageTriggerService", () => {
         expect(deliveryService.sendJob).toHaveBeenCalledWith(job);
         expect(job.status).toBe("sent");
         expect(jobRepository.update).toHaveBeenCalledWith(job);
+    });
+
+    describe("Phase9 selected quiet jobs do not consume ordinary cadence", () => {
+        const now = new Date("2026-11-05T12:00:00.000Z");
+        beforeEach(() => jest.useFakeTimers().setSystemTime(now));
+        afterEach(() => jest.useRealTimers());
+
+        it("forwards only selected quiet IDs and still dispatches an unselected quiet candidate", async () => {
+            const fx = createDispatchService();
+            const selected = createJob({ id: "quiet-selected" });
+            const unselected = createJob({ id: "quiet-unselected" });
+            const quietSelector = jest.fn().mockResolvedValue([selected]);
+            Object.assign(fx.jobRepository, { findDueQuietQueueJobs: quietSelector });
+            fx.jobRepository.consumeDispatchSlotsAndFindDueJobs.mockResolvedValue([unselected]);
+
+            await fx.service.dispatchDueJobs();
+
+            expect(quietSelector).toHaveBeenCalledWith(expect.any(Array), now, 100);
+            expect(fx.jobRepository.consumeDispatchSlotsAndFindDueJobs).toHaveBeenCalledWith(
+                expect.any(Array), now, 99, [selected.id],
+            );
+            expect(fx.deliveryService.sendJob.mock.calls.map(([job]) => job.id)).toEqual([selected.id, unselected.id]);
+            expect([selected.status, unselected.status]).toEqual(["sent", "sent"]);
+        });
+
+        it.each([99, 100])("dispatches 100 distinct jobs when %s quiet jobs take the first slots", async quietCount => {
+            const fx = createDispatchService();
+            const quietJobs = Array.from({ length: quietCount }, (_, index) => createJob({ id: `quiet-${index}` }));
+            const ordinary = createJob({ id: "ordinary" });
+            Object.assign(fx.jobRepository, { findDueQuietQueueJobs: jest.fn().mockResolvedValue(quietJobs) });
+            fx.jobRepository.consumeDispatchSlotsAndFindDueJobs.mockImplementation(async (
+                _eligibility: unknown, _now: Date, limit: number, excludedJobIds: readonly string[] = [],
+            ) => [...quietJobs, ordinary].filter(job => !excludedJobIds.includes(job.id)).slice(0, limit));
+
+            await fx.service.dispatchDueJobs();
+
+            expect(fx.jobRepository.consumeDispatchSlotsAndFindDueJobs).toHaveBeenCalledTimes(1);
+            expect(fx.jobRepository.consumeDispatchSlotsAndFindDueJobs).toHaveBeenCalledWith(
+                expect.any(Array), now, 100 - quietCount, quietJobs.map(job => job.id),
+            );
+            const sentIds = fx.deliveryService.sendJob.mock.calls.map(([job]) => job.id);
+            expect(sentIds).toHaveLength(100);
+            expect(new Set(sentIds).size).toBe(100);
+            expect(sentIds.filter(id => id === ordinary.id)).toHaveLength(quietCount === 99 ? 1 : 0);
+            expect(quietJobs.every(job => job.status === "sent")).toBe(true);
+            expect(ordinary.status).toBe(quietCount === 99 ? "sent" : "pending");
+        });
+
+        it("retains the consumer dedupe if ordinary selection returns a selected quiet job", async () => {
+            const fx = createDispatchService();
+            const quiet = createJob({ id: "quiet" });
+            const ordinary = createJob({ id: "ordinary" });
+            Object.assign(fx.jobRepository, { findDueQuietQueueJobs: jest.fn().mockResolvedValue([quiet]) });
+            fx.jobRepository.consumeDispatchSlotsAndFindDueJobs.mockResolvedValue([quiet, ordinary]);
+
+            await fx.service.dispatchDueJobs();
+
+            expect(fx.deliveryService.sendJob.mock.calls.map(([job]) => job.id)).toEqual([quiet.id, ordinary.id]);
+            expect(fx.jobRepository.claimPendingWithRuleFence).toHaveBeenCalledTimes(2);
+        });
     });
 
     it("cancels a queued automatic service-end notice when the client was already notified", async () => {

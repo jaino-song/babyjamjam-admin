@@ -641,6 +641,7 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
 
     async consumeDispatchSlotsAndFindDueJobs(
         eligibility: MessageDispatchBranchEligibility[], now: Date, limit = 100,
+        excludedJobIds: readonly string[] = [],
     ): Promise<MessageDispatchSelectedJob[]> {
         if (eligibility.length === 0 || limit <= 0) return [];
         const eligibleValues = Prisma.join(eligibility.map((branch) => Prisma.sql`(
@@ -651,7 +652,11 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
         const manualJob = manualMessageTriggerJobPredicate({
             templateKey: Prisma.sql`job.template_key`, ruleId: Prisma.sql`job.rule_id`, dedupeKey: Prisma.sql`job.dedupe_key`,
         });
+        const excludedJobs = excludedJobIds.length > 0
+            ? Prisma.sql`AND job.id NOT IN (${Prisma.join(excludedJobIds)})`
+            : Prisma.empty;
         // Eligibility is applied before both branch selection and the job limit.
+        // Selected quiet jobs must not rank or consume an ordinary cadence slot.
         // Rank one job per branch first, then the second per branch, etc. Oldest
         // consumed cadence slots lead so >100 active branches rotate across ticks.
         // The INSERT conflict predicate is the cross-process cadence CAS.
@@ -667,6 +672,7 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
                 FROM "message_trigger_job" AS job
                 INNER JOIN policy ON policy.branch_id = job.branch_id
                 WHERE job.status = 'pending' AND job.scheduled_for <= ${now}
+                  ${excludedJobs}
                   AND (job.next_attempt_at IS NULL OR job.next_attempt_at <= ${now})
                   AND (policy.automatic_enabled OR ${manualJob})
                   AND (policy.retry_enabled OR (job.attempts = 0 AND (

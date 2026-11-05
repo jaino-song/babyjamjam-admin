@@ -2234,7 +2234,9 @@ export class MessageTriggerService {
         }
         const quietJobs = typeof this.jobRepository.findDueQuietQueueJobs === "function"
             ? await this.jobRepository.findDueQuietQueueJobs(eligibility, now, 100) : [];
-        const ordinaryJobs = await this.jobRepository.consumeDispatchSlotsAndFindDueJobs(eligibility, now, 100 - quietJobs.length);
+        const ordinaryJobs = await this.jobRepository.consumeDispatchSlotsAndFindDueJobs(
+            eligibility, now, 100 - quietJobs.length, quietJobs.map(job => job.id),
+        );
         const jobs = [...quietJobs, ...ordinaryJobs.filter(job => !quietJobs.some(quiet => quiet.id === job.id))];
         const quietIds = new Set(quietJobs.map(job => job.id));
         // The repository applies these before LIMIT. Keep the snapshot check at
