@@ -31,6 +31,7 @@ import {
   Briefcase,
   Bell,
   Workflow,
+  Archive,
 } from "lucide-react";
 import {
   useContractClientCandidate,
@@ -80,6 +81,7 @@ import {
 } from "@/components/app/v3";
 import { ContractStatsBar } from "@/components/app/contracts/ContractStatsBar";
 import { ContractLinkConfirmationsNotice } from "@/components/app/contracts/ContractLinkConfirmationsNotice";
+import { ContractBackupManager } from "@/components/app/contracts/ContractBackupManager";
 import { ContractAutomationsManager } from "@/components/app/contracts/ContractAutomationsManager";
 import type { StatusType } from "@/components/app/v3";
 import { isBranchContextAligned, useActiveBranchId } from "@/features/system-templates/branch-context";
@@ -426,6 +428,7 @@ const NAV_SECTIONS = [
   { id: "documents", label: "전자문서 목록", icon: FileText, disabled: true },
   { id: "notifications", label: "알림 설정", icon: Bell, disabled: true },
   { id: "automations", label: "자동화", icon: Workflow },
+  { id: "backup", label: "전자문서 백업", icon: Archive },
 ] as const;
 
 type SectionId = (typeof NAV_SECTIONS)[number]["id"];
@@ -753,6 +756,8 @@ export default function ContractsPage() {
           activeId={activeSection}
           onSelect={(id) => {
             setRegisterClientDocumentId(null);
+            setSelectedDocId(null);
+            setSelectedServiceRecordDocId(null);
             setActiveSection(id as SectionId);
           }}
         />
@@ -1127,6 +1132,12 @@ export default function ContractsPage() {
                   <DetailEmptyState icon={Bell} message="아직 준비중입니다" />
                 </DetailPanel>
               </SplitLayout>
+            </section>
+          ) : null}
+
+          {activeSection === "backup" ? (
+            <section data-component="desktop_contracts_sections_section-content_backup-section" className="flex flex-1 min-h-0 flex-col">
+              <ContractBackupManager dataComponent="desktop_contracts_sections_section-content_backup-section_manager" />
             </section>
           ) : null}
 
