@@ -406,6 +406,33 @@ describe("SbMessageTriggerJobRepository", () => {
         expect(messageTriggerJobModel.findMany).not.toHaveBeenCalled();
     });
 
+    // Phase7 C5: query-builder contract only; actual PostgreSQL classifications live under describeReal below.
+    it("Phase7 C5 binds only CARE wait templates and a JSON string predecessor before LIMIT", async () => {
+        queryRaw.mockResolvedValue([]);
+        const selectedAt = new Date("2026-11-05T12:06:00Z");
+        await repository.consumeDispatchSlotsAndFindDueJobs([
+            { branchId: "33000000-0000-4000-8000-000000000001", automaticEnabled: true, retryEnabled: false, intervalMinutes: 1, pastExpiryHours: 24 },
+        ], selectedAt, 100);
+        const query = queryRaw.mock.calls[0][0] as Prisma.Sql;
+        const sql = getSqlText(query);
+        const eligible = sql.slice(sql.indexOf("eligible AS MATERIALIZED"), sql.indexOf("branches AS MATERIALIZED"));
+        expect(eligible).toContain("job.attempts = 0");
+        expect(eligible).toContain("job.next_attempt_at IS NULL OR job.next_attempt_at <=");
+        expect(eligible).toContain("job.status = 'pending' AND job.scheduled_for <=");
+        expect(eligible).toContain("jsonb_typeof(job.payload #> '{catchUp,predecessorDedupeKey}') = 'string'");
+        expect(eligible).toContain("length(btrim(job.payload #>> '{catchUp,predecessorDedupeKey}',");
+        expect(query.values).toEqual(expect.arrayContaining([false, selectedAt, 100,
+            "CAREGIVER_SERVICE_START_NOTICE", "CAREGIVER_SERVICE_END_NOTICE"]));
+        expect(query.values).not.toContain("SERVICE_INFO");
+        const trimCharacters = query.values.find(value => typeof value === "string" && value.includes("\ufeff")) as string;
+        expect(trimCharacters).toBeDefined();
+        for (let code = 0; code <= 0xffff; code++) {
+            const character = String.fromCharCode(code);
+            expect(trimCharacters.includes(character)).toBe(character.trim().length === 0);
+        }
+        expect(sql.indexOf("jsonb_typeof")).toBeLessThan(sql.indexOf("LIMIT"));
+    });
+
     describe("TIME-1 adapter contracts", () => {
         const policy = [{ branchId: "branch-1", automaticEnabled: true, retryEnabled: false, intervalMinutes: 7 }];
         it("binds eligibility, branch round robin and cadence CAS before the final limit", async () => {
@@ -2781,6 +2808,66 @@ describeReal("TIME-1 real PostgreSQL cadence and reclaim fences", () => {
         } finally {
             await closeIntegrityPrisma(handle);
         }
+    });
+
+    // Phase7 C5 real SQL: Main executes this existing throwaway-DB guard on the committed candidate.
+    it.each([false, true])("Phase7 C5 SQL admits due unattempted CARE waits with retry=%s and preserves failure policy", async retryEnabled => {
+        const due = new Date("2026-11-05T12:06:00Z");
+        const careRule = await handle.raw.message_trigger_rule.create({ data: {
+            branchId: branches[0]!, name: "C5 CARE fixture", eventType: "SERVICE_START", offsetType: "SAME_DAY",
+            recipientType: "PRIMARY_EMPLOYEE", templateKey: "CAREGIVER_SERVICE_START_NOTICE",
+        } });
+        rules.push(careRule.id);
+        const payload = { memberId: "c5", recipientName: "Fixture", recipientPhone: "01000000011", templateVariables: {},
+            catchUp: { batchId: "client:7:2026-11-05T12:00:00.000Z", sequence: 2, intervalMinutes: 3,
+                originalScheduledFor: "2026-11-05T00:00:00.000Z", predecessorDedupeKey: `${fixture}-completed-secondary` } };
+        const base = { ruleId: careRule.id, scheduledFor: new Date("2026-11-05T12:03:00Z"), nextAttemptAt: due,
+            attempts: 0, recipientType: "PRIMARY_EMPLOYEE", templateKey: "CAREGIVER_SERVICE_START_NOTICE", payload };
+        const start = await seed(0, `c5-start-${retryEnabled}`, base);
+        const end = await seed(0, `c5-end-${retryEnabled}`, { ...base, templateKey: "CAREGIVER_SERVICE_END_NOTICE" });
+        const transient = MessageTriggerJobEntity.create({ branchId: branches[0]!, ruleId: careRule.id,
+            scheduledFor: new Date("2026-11-05T12:03:00Z"), recipientType: MessageTriggerRecipientType.PRIMARY_EMPLOYEE,
+            templateKey: MessageTriggerTemplateKey.CAREGIVER_SERVICE_START_NOTICE, dedupeKey: "c5-actual-failure", payload });
+        transient.defer("transient", "synthetic provider rejection");
+        expect(transient.attempts).toBe(1);
+        const failure = await seed(0, `c5-failure-${retryEnabled}`, { ...base, attempts: transient.attempts });
+        const policy = [{ branchId: branches[0]!, automaticEnabled: true, retryEnabled, intervalMinutes: 1, pastExpiryHours: 24 }];
+        expect(await repository.consumeDispatchSlotsAndFindDueJobs(policy, new Date("2026-11-05T12:05:59.999Z"))).toEqual([]);
+        expect(await handle.raw.system_setting.findUnique({ where: { key: key(branches[0]!) } })).toBeNull();
+        const selected = await repository.consumeDispatchSlotsAndFindDueJobs(policy, due);
+        expect(selected.map(row => row.id).sort()).toEqual((retryEnabled ? [start.id, end.id, failure.id] : [start.id, end.id]).sort());
+        expect(await handle.raw.message_trigger_job.findUnique({ where: { id: start.id } })).toMatchObject({
+            status: "pending", scheduledFor: new Date("2026-11-05T12:03:00Z"), nextAttemptAt: due, attempts: 0, dedupeKey: start.dedupeKey, payload,
+        });
+        expect(await handle.raw.message_trigger_job.findUnique({ where: { id: failure.id } })).toMatchObject({ attempts: 1, status: "pending", nextAttemptAt: due });
+    });
+
+    it("Phase7 C5 SQL refuses malformed/nonCARE/future/canceled/cross-branch wait exceptions with retry OFF", async () => {
+        const due = new Date("2026-11-05T12:06:00Z");
+        const careRule = await handle.raw.message_trigger_rule.create({ data: {
+            branchId: branches[0]!, name: "C5 negative CARE fixture", eventType: "SERVICE_START", offsetType: "SAME_DAY",
+            recipientType: "PRIMARY_EMPLOYEE", templateKey: "CAREGIVER_SERVICE_START_NOTICE",
+        } }); rules.push(careRule.id);
+        const payload = (predecessorDedupeKey: Prisma.InputJsonValue | null) => ({ memberId: "c5", recipientName: "Fixture", recipientPhone: "01000000011", templateVariables: {},
+            catchUp: { batchId: "client:7:2026-11-05T12:00:00.000Z", sequence: 2, intervalMinutes: 3,
+                originalScheduledFor: "2026-11-05T00:00:00.000Z", predecessorDedupeKey } });
+        const base = { ruleId: careRule.id, scheduledFor: new Date("2026-11-05T12:03:00Z"), nextAttemptAt: due, attempts: 0,
+            recipientType: "PRIMARY_EMPLOYEE", templateKey: "CAREGIVER_SERVICE_START_NOTICE", payload: payload("completed-secondary") };
+        for (const [index, predecessor] of [12, {}, null, "", " \t\n\r\v\f\u00a0\u3000\ufeff"].entries()) {
+            await seed(0, `c5-malformed-${index}`, { ...base, payload: payload(predecessor) });
+        }
+        await seed(0, "c5-no-metadata", { ...base, payload: {} });
+        await seed(0, "c5-client", { ...base, templateKey: "SERVICE_INFO", recipientType: "CLIENT" });
+        await seed(0, "c5-future-eligibility", { ...base, nextAttemptAt: new Date("2026-11-05T12:06:00.001Z") });
+        await seed(0, "c5-future-canonical", { ...base, scheduledFor: new Date("2026-11-05T12:06:00.001Z") });
+        await seed(0, "c5-canceled", { ...base, status: "canceled", canceledAt: due });
+        await seed(1, "c5-cross-branch", { ...base, ruleId: rules[1]! });
+        const fresh = await seed(0, "c5-fresh-client", { scheduledFor: new Date("2026-11-05T12:03:00Z") });
+        const selected = await repository.consumeDispatchSlotsAndFindDueJobs([
+            { branchId: branches[0]!, automaticEnabled: true, retryEnabled: false, intervalMinutes: 1, pastExpiryHours: 24 },
+        ], due);
+        expect(selected.map(row => row.id)).toEqual([fresh.id]);
+        expect(await handle.raw.system_setting.findUnique({ where: { key: key(branches[1]!) } })).toBeNull();
     });
 
     it("has one concurrent cadence winner, refuses 21:06:59.999 and admits exactly 21:07", async () => {

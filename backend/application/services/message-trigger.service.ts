@@ -2236,7 +2236,14 @@ export class MessageTriggerService {
         const eligibleJobs = jobs.filter((job) => {
             const branch = job.branchId ? byBranch.get(job.branchId) : undefined;
             return branch && (branch.automaticEnabled || !this.isAutomaticMessageJob(job))
-                && (branch.retryEnabled || (job.attempts === 0 && job.nextAttemptAt === null));
+                && (branch.retryEnabled || (job.attempts === 0 && (job.nextAttemptAt === null || (
+                    // A CARE predecessor wait has not attempted delivery. Its
+                    // canonical schedule stays fixed; nextAttemptAt is only eligibility.
+                    job.status === "pending" && job.scheduledFor <= now && job.nextAttemptAt <= now
+                    && isCaregiverTriggerTemplate(job.templateKey)
+                    && typeof job.payload.catchUp?.predecessorDedupeKey === "string"
+                    && job.payload.catchUp.predecessorDedupeKey.trim().length > 0
+                ))));
         });
         if (eligibleJobs.length > 0) {
             const sentIds = await this.messageLogRepository.findSentTriggerJobIdsSystemScope(

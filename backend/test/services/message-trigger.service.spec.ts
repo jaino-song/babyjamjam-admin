@@ -577,6 +577,56 @@ describe("MessageTriggerService", () => {
         };
     };
 
+    // Phase7 C5: inspect the actual consumer independently of repository eligibility.
+    describe("Phase7 C5 retry classification at the consumer", () => {
+        const due = new Date("2026-11-05T12:06:00Z");
+        beforeEach(() => jest.useFakeTimers().setSystemTime(due));
+        afterEach(() => jest.useRealTimers());
+        it.each([
+            ["START wait", false, "start", "predecessor", 0, 1],
+            ["END wait", false, "end", "predecessor", 0, 1],
+            ["failure OFF", false, "start", "predecessor", 1, 0],
+            ["failure ON", true, "start", "predecessor", 1, 1],
+            ["CLIENT", false, "client", "predecessor", 0, 0],
+            ["assignment", false, "assignment", "predecessor", 0, 0],
+            ["agent", false, "agent", "predecessor", 0, 0],
+            ["ordinary END", false, "ordinaryEnd", "predecessor", 0, 0],
+            ["link", false, "link", "predecessor", 0, 0],
+            ["numeric key", false, "start", 12, 0, 0],
+            ["object key", false, "start", {}, 0, 0],
+            ["null key", false, "start", null, 0, 0],
+            ["empty key", false, "start", "", 0, 0],
+            ["whitespace key", false, "start", " \t\n\r\v\f\u00a0\u3000\ufeff", 0, 0],
+        ])("keeps %s classification", async (_label, retry, kind, predecessor, attempts, expected) => {
+            const settings = { getMessageSettingsPolicyEnabled: jest.fn(async (_branch: string, key: string) => key !== "trigger-job-retry" || retry === true) };
+            const fx = createDispatchService(settings);
+            const templates = { start: MessageTriggerTemplateKey.CAREGIVER_SERVICE_START_NOTICE, end: MessageTriggerTemplateKey.CAREGIVER_SERVICE_END_NOTICE,
+                client: MessageTriggerTemplateKey.SERVICE_INFO, assignment: MessageTriggerTemplateKey.EMPLOYEE_ASSIGNED,
+                link: MessageTriggerTemplateKey.SERVICE_RECORD_LINK, agent: MessageTriggerTemplateKey.CLIENT_GREETING,
+                ordinaryEnd: MessageTriggerTemplateKey.SERVICE_END_NOTICE };
+            const job = createJob({ scheduledFor: new Date("2026-11-05T12:03:00Z"), templateKey: templates[kind as keyof typeof templates] });
+            if (kind === "agent") Object.assign(job, { ruleId: `${"agent_sms:"}fixture` });
+            job.nextAttemptAt = due; job.attempts = Number(attempts);
+            Object.assign(job.payload, { catchUp: { predecessorDedupeKey: predecessor } });
+            fx.jobRepository.consumeDispatchSlotsAndFindDueJobs.mockResolvedValue([job]);
+            const reached = jest.spyOn(fx.service as unknown as { dispatchClaimedJob: () => Promise<boolean> }, "dispatchClaimedJob").mockResolvedValue(true);
+            await fx.service.dispatchDueJobs(); expect(reached).toHaveBeenCalledTimes(Number(expected));
+            expect(job.attempts).toBe(Number(attempts)); expect(job.nextAttemptAt).toEqual(due);
+        });
+        it.each(["future wait", "future canonical", "canceled", "cross branch"])("does not admit %s as a due unattempted wait", async (change) => {
+            const fx = createDispatchService({ getMessageSettingsPolicyEnabled: jest.fn(async (_branch: string, key: string) => key !== "trigger-job-retry") });
+            const job = createJob({ scheduledFor: new Date("2026-11-05T12:03:00Z"), templateKey: MessageTriggerTemplateKey.CAREGIVER_SERVICE_START_NOTICE });
+            job.nextAttemptAt = due; Object.assign(job.payload, { catchUp: { predecessorDedupeKey: "predecessor" } });
+            if (change === "future wait") job.nextAttemptAt = new Date("2026-11-05T12:06:00.001Z");
+            if (change === "future canonical") job.scheduledFor = new Date("2026-11-05T12:06:00.001Z");
+            if (change === "canceled") job.status = "canceled";
+            if (change === "cross branch") job.branchId = "another-branch";
+            fx.jobRepository.consumeDispatchSlotsAndFindDueJobs.mockResolvedValue([job]);
+            const reached = jest.spyOn(fx.service as unknown as { dispatchClaimedJob: () => Promise<boolean> }, "dispatchClaimedJob").mockResolvedValue(true);
+            await fx.service.dispatchDueJobs(); expect(reached).not.toHaveBeenCalled();
+        });
+    });
+
     describe("TIME-3 branch past expiry", () => {
         const at21 = new Date("2026-11-03T12:00:00.000Z");
         const settings = (hours = 24) => ({

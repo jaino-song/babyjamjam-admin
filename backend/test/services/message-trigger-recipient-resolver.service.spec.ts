@@ -677,3 +677,88 @@ describe("Phase7 C4b stable mixed replay after CARE catalog deactivation", () =>
     });
 
 });
+
+// Phase7 C5: reproduce the immutable Round2 scheduler proof through the existing real collaborators.
+function c5Scheduler(f: Awaited<ReturnType<typeof c4TimingFixture>>, jobs: MessageTriggerJobEntity[], retryEnabled: boolean) {
+    const runtime = f.core as unknown as Record<string, unknown>;
+    runtime["reclaimStaleProcessingJobs"] = jest.fn(async () => undefined);
+    runtime["recoverApprovedBranches"] = jest.fn(async () => undefined);
+    runtime["processStaleRuleRebuilds"] = jest.fn(async () => undefined);
+    runtime["messageLogRepository"] = { findSentTriggerJobIdsSystemScope: jest.fn(async () => new Set()) };
+    Object.assign(runtime["messageSenderApprovalService"] as object, { getApprovedBranchIds: jest.fn(async () => new Set([branchId])) });
+    (f.settings.getMessageSettingsPolicyEnabled as jest.Mock).mockImplementation(async (_branch: string, policy?: string) => policy !== "trigger-job-retry" || retryEnabled);
+    Object.assign(f.jobRepository, { cancelOrphanedPending: jest.fn(async () => undefined),
+        findDueDispatchBranchIds: jest.fn(async () => [branchId]), consumeDispatchSlotsAndFindDueJobs: jest.fn(async () => jobs) });
+    // SQL selection has its own adapter and real-DB tests; intentionally expose every supplied row to the consumer.
+    const reached = jest.fn(async () => true);
+    runtime["dispatchClaimedJob"] = reached;
+    return reached;
+}
+describe("Phase7 C5 exact Round2 operational-wait reproduction", () => {
+    beforeEach(() => { jest.useFakeTimers(); jest.setSystemTime(new Date("2026-11-05T12:00:00Z")); });
+    afterEach(() => jest.useRealTimers());
+    it("original mixed replay retains CLIENT identity and actual permit", async () => {
+        const f = await c4TimingFixture(true); await f.sync();
+        const client = structuredClone(f.jobs.find(row => row.ruleId === "child-client")!);
+        f.complete(f.jobs.find(row => row.ruleId === "child-secondary")!);
+        jest.setSystemTime(new Date("2026-11-05T12:01:00Z")); await f.sync();
+        const clients = f.jobs.filter(row => row.ruleId === "child-client");
+        expect(clients).toHaveLength(1); expect(clients[0]).toMatchObject({ id: client.id, dedupeKey: client.dedupeKey, scheduledFor: new Date("2026-11-05T12:03:00Z") });
+        jest.setSystemTime(new Date("2026-11-05T12:04:00Z"));
+        expect(await f.send(timingJobCopy(clients[0]!))).toBe(true); expect(f.aligo.sendSms).toHaveBeenCalledTimes(1);
+    });
+    it("original CARE wait preserves canonical time and obtains final permit", async () => {
+        const f = await c4TimingFixture(); await f.sync();
+        const primary = timingJobCopy(f.jobs.find(row => row.ruleId === "child-primary")!);
+        jest.setSystemTime(new Date("2026-11-05T12:03:00Z")); expect(await f.postpone(primary)).toBe(true);
+        expect(primary).toMatchObject({ scheduledFor: new Date("2026-11-05T12:03:00Z"), nextAttemptAt: new Date("2026-11-05T12:06:00Z"), attempts: 0 });
+        f.complete(f.jobs.find(row => row.ruleId === "child-secondary")!);
+        jest.setSystemTime(new Date("2026-11-05T12:06:00Z")); expect(await f.postpone(primary)).toBe(false);
+        expect(await f.send(primary)).toBe(true); expect(f.aligo.sendSms).toHaveBeenCalledTimes(1);
+    });
+    it.each([[true, true], [false, true], [false, false]])("actual scheduler retry=%s wait=%s resumes unattempted CARE", async (retryEnabled, wait) => {
+        const f = await c4TimingFixture(); await f.sync();
+        const primary = timingJobCopy(f.jobs.find(row => row.ruleId === "child-primary")!);
+        const identity = { time: primary.scheduledFor, key: primary.dedupeKey, digest: agentAutomationConcreteJobDigest(primary) };
+        jest.setSystemTime(new Date("2026-11-05T12:03:00Z")); if (wait) expect(await f.postpone(primary)).toBe(true);
+        f.complete(f.jobs.find(row => row.ruleId === "child-secondary")!);
+        jest.setSystemTime(new Date("2026-11-05T12:06:00Z")); expect(await f.postpone(primary)).toBe(false);
+        const reached = c5Scheduler(f, [primary], retryEnabled);
+        await f.core.dispatchDueJobs(); expect(reached).toHaveBeenCalledTimes(1);
+        expect({ time: primary.scheduledFor, key: primary.dedupeKey, digest: agentAutomationConcreteJobDigest(primary) }).toEqual(identity);
+        expect(primary.attempts).toBe(0);
+        expect(await f.send(primary)).toBe(true); expect(f.aligo.sendSms).toHaveBeenCalledTimes(1);
+    });
+});
+
+describe("Phase7 C5 actual CARE failure and sealed-wait controls", () => {
+    beforeEach(() => { jest.useFakeTimers(); jest.setSystemTime(new Date("2026-11-05T12:00:00Z")); });
+    afterEach(() => jest.useRealTimers());
+    it.each([false, true])("keeps actual transient failure retry policy=%s", async retryEnabled => {
+        const f = await c4TimingFixture(); await f.sync();
+        const primary = timingJobCopy(f.jobs.find(row => row.ruleId === "child-primary")!);
+        f.complete(f.jobs.find(row => row.ruleId === "child-secondary")!);
+        jest.setSystemTime(new Date("2026-11-05T12:03:00Z"));
+        primary.defer("transient", "synthetic provider rejection", 3 * 60_000);
+        expect(primary.attempts).toBe(1); expect(primary.nextAttemptAt).toEqual(new Date("2026-11-05T12:06:00Z"));
+        jest.setSystemTime(new Date("2026-11-05T12:06:00Z"));
+        const reached = c5Scheduler(f, [primary], retryEnabled); await f.core.dispatchDueJobs();
+        expect(reached).toHaveBeenCalledTimes(retryEnabled ? 1 : 0);
+        if (retryEnabled) expect(await f.send(primary)).toBe(true);
+        expect(f.aligo.sendSms).toHaveBeenCalledTimes(retryEnabled ? 1 : 0);
+    });
+    it.each([false, true])("resumes a sealed unattempted wait with retry OFF, sourceChanged=%s", async sourceChanged => {
+        const f = await c4TimingFixture(false, true); await f.sync();
+        const primary = timingJobCopy(f.jobs.find(row => row.ruleId === "child-primary")!);
+        const seal = structuredClone(primary.payload.agentAutomationSeal);
+        jest.setSystemTime(new Date("2026-11-05T12:03:00Z")); expect(await f.postpone(primary)).toBe(true);
+        f.complete(f.jobs.find(row => row.ruleId === "child-secondary")!);
+        jest.setSystemTime(new Date("2026-11-05T12:06:00Z"));
+        const reached = c5Scheduler(f, [primary], false); await f.core.dispatchDueJobs(); expect(reached).toHaveBeenCalledTimes(1);
+        if (sourceChanged) f.schedule.primaryEmployee.phone = "01000000099";
+        expect(await f.send(primary)).toBe(!sourceChanged);
+        expect(f.aligo.sendSms).toHaveBeenCalledTimes(sourceChanged ? 0 : 1);
+        expect(primary.payload.agentAutomationSeal).toEqual(seal);
+        expect(primary.scheduledFor).toEqual(new Date("2026-11-05T12:03:00Z")); expect(primary.attempts).toBe(0);
+    });
+});

@@ -490,7 +490,15 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
                 WHERE job.status = 'pending' AND job.scheduled_for <= ${now}
                   AND (job.next_attempt_at IS NULL OR job.next_attempt_at <= ${now})
                   AND (policy.automatic_enabled OR ${manualJob})
-                  AND (policy.retry_enabled OR (job.attempts = 0 AND job.next_attempt_at IS NULL))
+                  AND (policy.retry_enabled OR (job.attempts = 0 AND (
+                      job.next_attempt_at IS NULL OR (
+                          -- Unattempted CARE predecessor waits are operational eligibility, not failure retries.
+                          -- The trim character set matches JavaScript String.trim at the consumer.
+                          job.template_key IN (${MessageTriggerTemplateKey.CAREGIVER_SERVICE_START_NOTICE}, ${MessageTriggerTemplateKey.CAREGIVER_SERVICE_END_NOTICE})
+                          AND jsonb_typeof(job.payload #> '{catchUp,predecessorDedupeKey}') = 'string'
+                          AND length(btrim(job.payload #>> '{catchUp,predecessorDedupeKey}', ${" \t\n\r\v\f\u00a0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a\u2028\u2029\u202f\u205f\u3000\ufeff"})) > 0
+                      )
+                  )))
                   AND ${ordinaryAutomationJobSql({ ruleId: Prisma.sql`job.rule_id`, dedupeKey: Prisma.sql`job.dedupe_key`, payload: Prisma.sql`job.payload` })}
             ),
             branches AS MATERIALIZED (
