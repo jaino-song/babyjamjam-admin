@@ -49,10 +49,9 @@ export function findMissingServiceRecordAlerts(
             const projection = resolveServiceRecordScheduleProjection(source, calendar);
             if (projection.blockingReasons.length > 0) continue;
             // The UI keeps projected indexes after filtering by schedule; it never
-            // renumbers later entries into slots 1 and 2.
-            const first = projection.entries.find((entry) => entry.scheduleId === active.scheduleId && entry.sessionIndex === 1);
+            // renumbers later entries into slots 1 and 2. Only slot 2 needs a planned date.
             const second = projection.entries.find((entry) => entry.scheduleId === active.scheduleId && entry.sessionIndex === 2);
-            if (!first || !second) continue;
+            if (!second) continue;
             const written = assignmentSessions.some((session) => session.scheduleId === active.scheduleId
                 && (session.sessionIndex === 1 || session.sessionIndex === 2)
                 && validDate(session.serviceDate)

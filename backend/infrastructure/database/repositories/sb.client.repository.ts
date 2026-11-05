@@ -289,7 +289,7 @@ export class SbClientRepository implements IClientRepository {
                         })),
                     },
                     assignmentSessions: localDays.flatMap((day) => day.scheduleId === null ? [] : [{
-                        scheduleId: day.scheduleId, sessionIndex: day.sessionIndex, serviceDate: alertDate(day.serviceDate) ?? "",
+                        scheduleId: day.scheduleId, sessionIndex: day.caseSessionIndex ?? day.sessionIndex, serviceDate: alertDate(day.serviceDate) ?? "",
                     }]),
                 });
             }

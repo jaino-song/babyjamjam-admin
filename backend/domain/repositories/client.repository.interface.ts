@@ -272,7 +272,7 @@ export interface ServiceRecordAlertCandidate {
         sessions: Array<Pick<ServiceRecordEditSourceDay,
             "sessionIndex" | "serviceDate" | "scheduleId" | "employeeId" | "ambiguous">>;
     };
-    /** Original assignment-local indexes, including drafts and legacy rows without a case link. */
+    /** Effective UI indexes (caseSessionIndex ?? sessionIndex), including drafts and legacy rows without a case link. */
     assignmentSessions: Array<{ scheduleId: number; sessionIndex: number; serviceDate: string }>;
 }
 

@@ -60,7 +60,7 @@ describe("branch-scoped service record alert sources", () => {
         expect(await repository.findServiceRecordAlertCandidates(branchId)).toEqual([]);
     });
 
-    it("retains canonical index normalization and ambiguity separately from local record indexes", async () => {
+    it("normalizes UI record indexes while retaining canonical ambiguity", async () => {
         const day = { id: "day-1", branchId, serviceRecordCaseId: "case-1", scheduleId: 55,
             sessionIndex: 1, caseSessionIndex: 3, serviceDate: date("2026-09-09"), employeeId: 9 };
         db.service_record_day.findMany.mockResolvedValue([day, { ...day, id: "day-2", sessionIndex: 2 }]);
@@ -69,7 +69,7 @@ describe("branch-scoped service record alert sources", () => {
             { sessionIndex: 3, serviceDate: "2026-09-09", scheduleId: 55, employeeId: 9, ambiguous: true },
             { sessionIndex: 3, serviceDate: "2026-09-09", scheduleId: 55, employeeId: 9, ambiguous: true },
         ]);
-        expect(result!.assignmentSessions.map((row) => row.sessionIndex)).toEqual([1, 2]);
+        expect(result!.assignmentSessions.map((row) => row.sessionIndex)).toEqual([3, 3]);
     });
 
     it("preserves persisted planned-vector JSON without interpreting or replacing its provenance", async () => {
