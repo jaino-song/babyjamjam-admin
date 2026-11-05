@@ -30,6 +30,7 @@ import {
     CONFIGURABLE_SMS_TRIGGER_TEMPLATE_KEYS,
     EVENT_OFFSET_OPTIONS,
     MESSAGE_TRIGGER_TEMPLATE_CATALOG,
+    MANUAL_SMS_TEMPLATE_KEY,
     MessageTriggerEventType,
     MessageTriggerOffsetType,
     MessageTriggerRecipientType,
@@ -5567,6 +5568,136 @@ describe("MessageTriggerService", () => {
         expect(unsentJob.attempts).toBe(1);
         expect(unsentJob.nextAttemptAt).toBeInstanceOf(Date);
         expect(jobRepository.reclaimWithClaimFence).toHaveBeenCalledTimes(2);
+    });
+
+    describe("reclaim of an unattempted manual reservation or quiet hold", () => {
+        const createReclaimFixture = () => {
+            const fx = createDispatchService();
+            const job = Object.assign(createJob({
+                id: "manual-reservation", status: "processing", attempts: 0,
+                scheduledFor: new Date("2026-11-05T12:00:00.000Z"),
+            }), {
+                templateKey: MANUAL_SMS_TEMPLATE_KEY,
+                claimToken: "claim-manual-reservation",
+                processingDeadlineAt: new Date("2026-11-05T12:05:00.000Z"),
+            });
+            job.payload.existingMessageLogId = 17;
+            const snapshot = {
+                status: job.status, claimToken: job.claimToken,
+                updatedAt: job.updatedAt, processingDeadlineAt: job.processingDeadlineAt,
+            };
+            const acceptance = {
+                id: 17, branchId: job.branchId, triggerJobId: job.id, provider: "aligo_sms",
+                providerAcceptanceState: "prepared", providerCallStartedAt: null as Date | null,
+                providerAcceptanceKey: "acceptance-reservation",
+                providerAcceptanceFingerprint: "reservation-fingerprint",
+            };
+            const findFirst = jest.fn(async ({ where }: { where: Record<string, unknown> }) =>
+                Object.entries(where).every(([key, value]) => acceptance[key as keyof typeof acceptance] === value)
+                    ? acceptance : null);
+            Object.assign(fx.prisma, { message_log: { findFirst } });
+            const readQuietHold = jest.fn().mockResolvedValue(null);
+            Object.assign(fx.jobRepository, { readQuietHold });
+            fx.jobRepository.findStaleProcessingSystemScope.mockResolvedValue([job]);
+            return { ...fx, job, snapshot, acceptance, findFirst, readQuietHold };
+        };
+
+        it("reclaims a captured unheld manual reservation with its null retry marker and original content intact", async () => {
+            const fx = createReclaimFixture();
+            const payload = structuredClone(fx.job.payload);
+            const scheduledFor = fx.job.scheduledFor;
+            const dedupeKey = fx.job.dedupeKey;
+
+            await fx.service.dispatchDueJobs();
+
+            expect(fx.readQuietHold).toHaveBeenCalledWith(fx.job);
+            expect(fx.findFirst).toHaveBeenCalledWith({ where: {
+                branchId: fx.job.branchId, triggerJobId: fx.job.id, id: 17,
+                provider: "aligo_sms", providerAcceptanceState: "prepared", providerCallStartedAt: null,
+            } });
+            expect(fx.jobRepository.reclaimWithClaimFence).toHaveBeenCalledWith(fx.job, fx.snapshot);
+            expect(fx.jobRepository.reclaimWithClaimFence).toHaveBeenCalledTimes(1);
+            expect(fx.job.status).toBe("pending");
+            expect(fx.job.nextAttemptAt).toBeNull();
+            expect(fx.job.attempts).toBe(0);
+            expect(fx.job.payload).toEqual(payload);
+            expect(fx.job.scheduledFor).toBe(scheduledFor);
+            expect(fx.job.dedupeKey).toBe(dedupeKey);
+            expect(fx.job.claimToken).toBeNull();
+            expect(fx.job.processingDeadlineAt).toBeNull();
+            expect(fx.jobRepository.update).not.toHaveBeenCalled();
+            expect(fx.deliveryService.prepareJob).not.toHaveBeenCalled();
+            expect(fx.deliveryService.sendPreparedJob).not.toHaveBeenCalled();
+            expect(fx.deliveryService.sendJob).not.toHaveBeenCalled();
+        });
+
+        it.each([false, true])("retains a genuine hold release time (existing retry marker=%s)", async existing => {
+            const fx = createReclaimFixture();
+            // Exercise the hold condition independently of the manual-template condition.
+            fx.job.templateKey = MessageTriggerTemplateKey.CLIENT_GREETING;
+            const releaseAt = new Date("2026-11-05T23:00:00.000Z");
+            const nextAttemptAt = existing ? new Date("2026-11-05T23:05:00.000Z") : null;
+            fx.job.nextAttemptAt = nextAttemptAt;
+            fx.readQuietHold.mockResolvedValue({ releaseAt });
+
+            await fx.service.dispatchDueJobs();
+
+            expect(fx.job.status).toBe("pending");
+            expect(fx.job.nextAttemptAt).toBe(nextAttemptAt ?? releaseAt);
+            expect(fx.job.attempts).toBe(0);
+            expect(fx.jobRepository.reclaimWithClaimFence).toHaveBeenCalledWith(fx.job, fx.snapshot);
+            expect(fx.deliveryService.sendJob).not.toHaveBeenCalled();
+        });
+
+        it.each(["missing", "missing key", "missing fingerprint", "started", "uncertain", "dispatching"])(
+            "refuses an unsafe manual reservation: %s", async condition => {
+                const fx = createReclaimFixture();
+                if (condition === "missing") fx.acceptance.id = 18;
+                if (condition === "missing key") fx.acceptance.providerAcceptanceKey = "";
+                if (condition === "missing fingerprint") fx.acceptance.providerAcceptanceFingerprint = "";
+                if (condition === "started") fx.acceptance.providerCallStartedAt = new Date("2026-11-05T12:01:00.000Z");
+                if (condition === "uncertain") {
+                    fx.messageLogRepository.findUncertainTriggerJobIdsSystemScope.mockResolvedValue(new Set([fx.job.id]));
+                }
+                if (condition === "dispatching") {
+                    fx.job.status = "dispatching";
+                    fx.snapshot.status = "dispatching";
+                }
+
+                await fx.service.dispatchDueJobs();
+
+                expect(fx.job.status).toBe("failed");
+                expect(fx.job.cancelReason).toContain("불확실");
+                expect(fx.job.nextAttemptAt).toBeNull();
+                expect(fx.job.attempts).toBe(0);
+                expect(fx.jobRepository.reclaimWithClaimFence).toHaveBeenCalledWith(fx.job, fx.snapshot);
+                if (condition === "started") {
+                    expect(fx.findFirst).toHaveBeenCalledWith({ where: expect.objectContaining({
+                        providerAcceptanceState: "prepared", providerCallStartedAt: null,
+                    }) });
+                }
+                if (condition === "uncertain" || condition === "dispatching") {
+                    expect(fx.findFirst).not.toHaveBeenCalled();
+                }
+                expect(fx.jobRepository.update).not.toHaveBeenCalled();
+                expect(fx.deliveryService.sendPreparedJob).not.toHaveBeenCalled();
+                expect(fx.deliveryService.sendJob).not.toHaveBeenCalled();
+            },
+        );
+
+        it("does not overwrite a newer holder or clear the stale claim when the reclaim fence refuses", async () => {
+            const fx = createReclaimFixture();
+            fx.jobRepository.reclaimWithClaimFence.mockResolvedValue(false);
+
+            await fx.service.dispatchDueJobs();
+
+            expect(fx.jobRepository.reclaimWithClaimFence).toHaveBeenCalledWith(fx.job, fx.snapshot);
+            expect(fx.job.claimToken).toBe(fx.snapshot.claimToken);
+            expect(fx.job.processingDeadlineAt).toBe(fx.snapshot.processingDeadlineAt);
+            expect(fx.jobRepository.update).not.toHaveBeenCalled();
+            expect(fx.deliveryService.sendPreparedJob).not.toHaveBeenCalled();
+            expect(fx.deliveryService.sendJob).not.toHaveBeenCalled();
+        });
     });
 
     it("does not requeue a stale dispatch-authorized job after a worker crash", async () => {

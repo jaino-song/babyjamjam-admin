@@ -5321,7 +5321,7 @@ export class MessageTriggerService {
                         job.markFailed(SMS_PROVIDER_ACCEPTANCE_UNCERTAIN_REASON);
                     } else {
                         job.status = "pending";
-                        job.nextAttemptAt = job.nextAttemptAt ?? hold?.releaseAt ?? job.scheduledFor;
+                        job.nextAttemptAt = job.nextAttemptAt ?? hold?.releaseAt ?? null;
                     }
                 } else {
                     const policy = await this.getDispatchTimingPolicy(job.branchId);
