@@ -1,18 +1,16 @@
 <div align="center">
   <img src="./frontend/public/assets/icon-512.png" alt="BabyJamJam logo" width="104" />
 
-  <h1>BabyJamJam Operations Platform</h1>
+  <h1>BabyJamJam — AI-powered Postpartum Care Operations Platform</h1>
 
-  <p><strong>아가잼잼 산모·신생아 건강관리 운영 플랫폼</strong></p>
+  <p><strong>AI 기반 산모·신생아 건강관리 운영 플랫폼</strong></p>
 
   <p>
-    A branch aware operations platform for maternal and newborn home care providers in South Korea.
-    It brings client intake, workforce coordination, contracts, service records, pricing,
-    communications, document workflows, and AI assisted administration into one product system.
+    Client intake, caregiver scheduling, contracts, and service records for South Korean
+    postpartum care providers — with branch-scoped access and AI-assisted administration.
   </p>
 
   <p>
-    <img src="https://img.shields.io/badge/status-active-1f6feb" alt="Status: active" />
     <img src="https://img.shields.io/badge/Node.js-20%2B-339933" alt="Node.js 20+" />
     <img src="https://img.shields.io/badge/pnpm-10-F69220" alt="pnpm 10" />
     <img src="https://img.shields.io/badge/TypeScript-5-3178C6" alt="TypeScript 5" />
@@ -45,14 +43,29 @@
 
 ## Platform overview
 
-BabyJamJam is the operational system of record for organizations that coordinate maternal and
-newborn home care services. The platform supports the complete service lifecycle from the first
-consultation through client registration, caregiver assignment, contract execution, service record
-collection, communications, and administrative follow up.
+I built BabyJamJam to connect the operational work behind in-home postpartum and newborn care:
+registering a client, assigning caregivers, managing service dates, issuing contracts, and collecting
+service records. These workflows share client, caregiver, and branch context across the platform.
+
+**AI-powered Postpartum Care Operations Platform** describes the product’s scope. Its AI features
+support administrative chat and tool-assisted operational lookups within application access controls.
+They complement the scheduling, document, and care-record workflows described below.
+
+### What I built
+
+| Product problem | Implementation you can inspect |
+|---|---|
+| Bring consultation inquiries into client operations | [Consultation intake](backend/interface/controllers/consultation-inquiry.controller.ts) and [client management](backend/interface/controllers/client.controller.ts) |
+| Coordinate caregivers and service dates | [Caregiver assignments and schedules](backend/application/services/employee-schedule.service.ts) with primary/secondary employees and date ranges |
+| Connect signed documents to service delivery | [eformsign contract workflows](backend/application/services/eformsign-doc.service.ts) and [service-record entry](backend/application/services/service-record-entry.service.ts) |
+| Let administrators query operational data through AI | [Administrative chat](backend/interface/controllers/agent.controller.ts) and [branch-scoped read capabilities](backend/application/agent/extended-read-agent-capabilities.provider.ts) |
+| Keep access tied to the selected branch | [Tenant guard](backend/infrastructure/tenant/tenant.guard.ts) checking branch selection, active status, and membership |
+
+These links show implementation paths. They do not establish a deployment’s current behavior or
+measured business outcomes.
 
 The repository is organized as a pnpm workspace with one API service, two Next.js applications, a
-Kotlin Multiplatform client, and a shared package that centralizes contracts and governance across
-the web products.
+Kotlin Multiplatform client, and shared packages for web contracts, governance, and service-record UI.
 
 ### Product principles
 
@@ -138,7 +151,8 @@ the workspace package rather than being duplicated between the desktop and mobil
 ├── mobile/                   Mobile first administration PWA
 ├── native/                   Kotlin Multiplatform Android and iOS clients
 ├── packages/
-│   └── shared/               Shared types, schemas, utilities, UI contracts, and ESLint rules
+│   ├── shared/               Shared types, schemas, utilities, UI contracts, and ESLint rules
+│   └── service-record-ui/    Shared service-record UI package
 ├── docs/
 │   ├── conventions/          Engineering conventions
 │   ├── design-system/        Glint governance, component manifest, and debt baseline
@@ -160,6 +174,7 @@ the workspace package rather than being duplicated between the desktop and mobil
 | `mobile` | Mobile operations teams | Mobile optimized administration, field workflows, client and employee access, messaging, notifications, and service operations | Next.js PWA |
 | `native` | Android and iOS users | Native authentication, networking, notifications, and platform specific experiences backed by shared Kotlin code | Kotlin Multiplatform, Jetpack Compose, SwiftUI |
 | `packages/shared` | Web application developers | Shared API plumbing, types, Zod schemas, status contracts, date and business utilities, and custom ESLint rules | TypeScript package |
+| `packages/service-record-ui` | Web application developers | Shared service-record UI | TypeScript package |
 
 ## Technology stack
 
