@@ -714,7 +714,7 @@ describeReal("C1 quiet cancellation atomic SQL (real PostgreSQL)", () => {
         const ruleId = `agent-sms:quiet-c1:${index}`;
         await createMessageTriggerRule(handle.raw, tracker, { id: ruleId, branchId: id.branch, templateKey: "SERVICE_INFO" });
         const job = manualJob("agent");
-        Object.assign(job, { id: id.job, branchId: id.branch, ruleId, clientId: id.client, claimToken: "claim-quiet-c1" });
+        Object.assign(job, { id: id.job, branchId: id.branch, ruleId, clientId: id.client, claimToken: "claim-quiet-c1", dedupeKey: `quiet-c1:${id.job}` });
         job.payload = { ...job.payload, clientId: id.client };
         await createMessageTriggerJob(handle.raw, tracker, { ruleId }, { id: job.id, branchId: id.branch, clientId: id.client,
             status: "dispatching", claimToken: job.claimToken, processingDeadlineAt: null, scheduledFor: job.scheduledFor,
