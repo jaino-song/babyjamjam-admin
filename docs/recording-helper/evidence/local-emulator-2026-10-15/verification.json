@@ -1,0 +1,32 @@
+{
+  "sourceCommit": "2daff5d3e5f1b57ce4e5332be2c277d9582cc546",
+  "baselineCommit": "61b9b2c0418f12a793e0c8e89d4f974ac6479909",
+  "apkSha256": "becf713fbe1f5a39fcba1551f4e421380288d341f47b8a027a992ced7c34c0f5",
+  "jvmTests": {
+    "tests": 14,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  "lintIssues": [
+    {
+      "severity": "Warning",
+      "id": "AndroidGradlePluginVersion"
+    },
+    {
+      "severity": "Warning",
+      "id": "UnusedResources"
+    },
+    {
+      "severity": "Warning",
+      "id": "MissingApplicationIcon"
+    }
+  ],
+  "reportEvents": 20,
+  "capSnapshots": 2,
+  "maxEntries": 200,
+  "reportPrivacyAndBounds": "PASS",
+  "actualGalaxy": "NOT_RUN",
+  "providerLoadingAndGrantReleaseFailureInjection": "NOT_RUN",
+  "fontScaleRestored": 1.0
+}

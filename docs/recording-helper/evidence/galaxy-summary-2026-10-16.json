@@ -1,0 +1,26 @@
+{
+  "sourceCommit": "e8251f2ed715cddf25acfe1ba789611a75987f14",
+  "apkSha256": "e7287507dce07467e34658d7436d878afde6284f463e11fb93a50de355204e78",
+  "device": {
+    "model": "SM-F971N",
+    "sdk": 37,
+    "release": "17"
+  },
+  "schemaVersion": 2,
+  "eventCount": 8,
+  "kindCounts": {
+    "MANUAL_SCAN": 6,
+    "SAMPLE": 1,
+    "READ_PROBE": 1
+  },
+  "maxEntriesPerEvent": 200,
+  "entryCapReachedEvents": 7,
+  "providerLoadingEvents": 0,
+  "truncationMarker": null,
+  "successfulReadProbes": 1,
+  "rawReportSha256": "127880ccc08b0bbd2011d8361ad637c00e0ddab9daaa0bad1448e6aa3fcbcb30",
+  "rawReportCommitted": false,
+  "reportValidation": "PASS",
+  "callDuringAfterObservation": "NOT_RUN",
+  "phoneReboot": "NOT_RUN"
+}
