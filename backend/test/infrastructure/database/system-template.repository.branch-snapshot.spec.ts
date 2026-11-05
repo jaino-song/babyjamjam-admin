@@ -187,7 +187,7 @@ describe("the four create-only templates on an old ten-key branch snapshot", () 
     it("preserves all frozen bodies and exposes four empty defaults without writing the snapshot", async () => {
         const { repository, tx } = setup([], newKeys);
         const templates = await repository.findAllByBranch(branchId);
-        expect(templates).toHaveLength(14);
+        expect(templates).toHaveLength(16);
         for (const template of templates) {
             expect(template.content).toBe(newKeys.includes(template.templateKey) ? "" : `frozen-${template.templateKey}`);
         }
