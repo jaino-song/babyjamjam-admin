@@ -1,3 +1,7 @@
+import { SmsRetryService } from "application/services/sms-retry.service";
+import { SmsTriggerDeliveryService } from "application/services/sms-trigger-delivery.service";
+import { MessageQuietHoursService } from "application/services/message-quiet-hours.service";
+import { MessageAutomationBranchLockService } from "application/services/message-automation-branch-lock.service";
 import { ContextIdFactory } from "@nestjs/core";
 import { SchedulerLeaseModule } from "module/scheduler-lease.module";
 import { Test } from "@nestjs/testing";
@@ -69,6 +73,7 @@ describe("MessageDeliveryController", () => {
                 update: jest.fn().mockResolvedValue({}),
             },
         };
+        Object.assign(prismaService, { $executeRaw: jest.fn().mockResolvedValue(1) });
         duplicateHistory = jest.fn().mockResolvedValue([]);
         duplicateEnabled = jest.fn().mockResolvedValue(true);
         duplicateService = new MessageDuplicateCheckService(
@@ -81,6 +86,14 @@ describe("MessageDeliveryController", () => {
             messageSenderApprovalService as unknown as MessageSenderApprovalService,
             prismaService as unknown as PrismaService,
             duplicateService,
+            new MessageQuietHoursService(
+                new SystemSettingService({ execute: jest.fn().mockResolvedValue(null) } as never, {} as never),
+                {} as IMessageLogRepository,
+                new MessageAutomationBranchLockService({
+                    $transaction: async (work: (tx: unknown) => Promise<unknown>) => work(prismaService),
+                    $executeRaw: jest.fn().mockResolvedValue(1),
+                } as never),
+            ),
         );
     });
 
@@ -1484,6 +1497,13 @@ describe("MessageDeliveryModule production duplicate-check wiring", () => {
             const service = await module.select(MessageModule).resolve(MessageDuplicateCheckService, contextId, { strict: true });
             expect(controller).toBeInstanceOf(MessageDeliveryController);
             expect(service).toBeInstanceOf(MessageDuplicateCheckService);
+            const quiet = await module.select(MessageModule).resolve(MessageQuietHoursService, contextId, { strict: true });
+            expect(quiet).toBeInstanceOf(MessageQuietHoursService);
+            expect((controller as unknown as { quietHours: MessageQuietHoursService }).quietHours).toBe(quiet);
+            const trigger = await module.select(MessageModule).resolve(SmsTriggerDeliveryService, contextId, { strict: true });
+            const retry = await module.select(MessageModule).resolve(SmsRetryService, contextId, { strict: true });
+            expect((trigger as unknown as { quietHours: MessageQuietHoursService }).quietHours).toBe(quiet);
+            expect((retry as unknown as { quietHours: MessageQuietHoursService }).quietHours).toBe(quiet);
             expect((controller as unknown as { duplicateCheck: MessageDuplicateCheckService }).duplicateCheck).toBe(service);
             expect(unexpectedResource).not.toHaveBeenCalled();
         } finally { await module.close(); }

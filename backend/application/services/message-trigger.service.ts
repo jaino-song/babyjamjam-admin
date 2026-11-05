@@ -4693,6 +4693,9 @@ export class MessageTriggerService {
                 : await this.deliveryService.sendJob(job);
             if (sent) {
                 job.markSent();
+            } else if (job.status === "canceled") {
+                // A final policy cancellation is terminal, including retry eligibility.
+                job.nextAttemptAt = null;
             } else if (job.status === "processing" || job.status === "dispatching") {
                 job.markFailed("Provider disabled or delivery failed");
             }

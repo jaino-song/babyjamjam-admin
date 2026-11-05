@@ -1,3 +1,4 @@
+import { MessageQuietHoursService, MessageQuietHoursUnavailableError, QUIET_HOURS_CANCEL_REASON, QUIET_HOURS_DEFER_REASON } from "application/services/message-quiet-hours.service";
 import { MessageDuplicateCheckService } from "application/services/message-duplicate-check.service";
 import { MessageDuplicateCheckDto } from "interface/dto/message-duplicate-check.dto";
 import {
@@ -82,6 +83,7 @@ export class MessageDeliveryController {
         private readonly messageSenderApprovalService: MessageSenderApprovalService,
         private readonly prisma: PrismaService,
         private readonly duplicateCheck: MessageDuplicateCheckService,
+        private readonly quietHours?: MessageQuietHoursService,
     ) {}
 
     @Post("sms/duplicate-check")
@@ -191,10 +193,26 @@ export class MessageDeliveryController {
             );
         }
 
+        let admitted = false;
         try {
-            await this.markProviderCallStarted(pendingLog.row);
+            if (!this.quietHours) throw new MessageQuietHoursUnavailableError();
+            admitted = await this.quietHours.runAdmission(branchId, resolvedDto.receiver, async (decision, transaction) => {
+                if (decision.action !== "ALLOW") {
+                    if (!transaction) throw new MessageQuietHoursUnavailableError();
+                    const refused = await transaction.message_log.updateMany({
+                        where: { id: pendingLog.id, branchId, providerAcceptanceState: "prepared" },
+                        data: { status: "failed", nextRetryAt: null,
+                            errorMessage: decision.action === "CANCEL" ? QUIET_HOURS_CANCEL_REASON : QUIET_HOURS_DEFER_REASON,
+                            variables: { ...this.smsRecordVariables(pendingLog.row), quietHoursDisposition: decision.action } },
+                    });
+                    if (refused.count !== 1) throw new ConflictException(this.smsProblemBody("MESSAGE_SEND_ALREADY_REQUESTED", "UNKNOWN", this.safeOperationId(pendingLog.id)));
+                    return false;
+                }
+                await this.markProviderCallStarted(pendingLog.row, transaction);
+                return true;
+            });
         } catch (error) {
-            if (error instanceof ConflictException) {
+            if (error instanceof ConflictException || error instanceof MessageQuietHoursUnavailableError) {
                 throw error;
             }
             this.logger.error(
@@ -209,6 +227,8 @@ export class MessageDeliveryController {
                 { cause: error },
             );
         }
+
+        if (!admitted) throw new ServiceUnavailableException(this.smsProblemBody("MESSAGE_SEND_NOT_STARTED", "NOT_APPLIED", this.safeOperationId(pendingLog.id)));
 
         const result = await this.aligoService.sendSms({
             receiver: resolvedDto.receiver,
@@ -431,9 +451,9 @@ export class MessageDeliveryController {
         }
     }
 
-    private async markProviderCallStarted(row: SmsMessageLogRecord): Promise<void> {
+    private async markProviderCallStarted(row: SmsMessageLogRecord, transaction?: Prisma.TransactionClient): Promise<void> {
         const startedAt = new Date(Date.now());
-        const messageLogModel = this.prisma.message_log as typeof this.prisma.message_log & {
+        const messageLogModel = (transaction ?? this.prisma).message_log as typeof this.prisma.message_log & {
             updateMany?: (args: { where: Record<string, unknown>; data: Record<string, unknown> }) => Promise<{ count: number }>;
         };
         if (typeof messageLogModel.updateMany !== "function") {

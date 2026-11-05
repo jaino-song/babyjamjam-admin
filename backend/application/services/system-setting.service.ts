@@ -257,9 +257,9 @@ export class SystemSettingService {
         return { configuration: { ...configuration, pastRuleOrder: ruleOrder }, warnings };
     }
 
-    async getMessageAutomationPolicyConfig(branchId: string) {
-        const stored = await this.readMessagePolicy(branchId);
-        return { version: stored.version, ...await this.effectivePolicyOrder(branchId, stored.configuration, stored.configuration.pastRuleOrder, false) };
+    async getMessageAutomationPolicyConfig(branchId: string, transaction?: Prisma.TransactionClient) {
+        const stored = await this.readMessagePolicy(branchId, transaction);
+        return { version: stored.version, ...await this.effectivePolicyOrder(branchId, stored.configuration, stored.configuration.pastRuleOrder, false, transaction) };
     }
 
     private validatePolicyDraft(expectedVersion: unknown, configuration: unknown): MessageAutomationPolicyConfiguration {

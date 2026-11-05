@@ -1,3 +1,4 @@
+import { MessageQuietHoursService } from "application/services/message-quiet-hours.service";
 import { CaregiverTemplateResolverService } from "application/services/caregiver-template-resolver.service";
 import { MessageTriggerRecipientResolverService } from "application/services/message-trigger-recipient-resolver.service";
 import { MessageTriggerRuleGroupController } from "interface/controllers/message-trigger-rule-group.controller";
@@ -66,6 +67,7 @@ import { BranchManagerGuard } from "infrastructure/auth/branch-manager.guard";
     ],
     controllers: [MessageController, MessageTriggerController, MessageTriggerRuleGroupController],
     providers: [
+        MessageQuietHoursService,
         CaregiverTemplateResolverService,
         MessageTriggerRecipientResolverService,
         MessageTriggerRuleGroupService,
@@ -108,6 +110,7 @@ import { BranchManagerGuard } from "infrastructure/auth/branch-manager.guard";
         { provide: CLIENT_AUTOMATION_IMPACT, useExisting: ClientAutomationImpactService },
     ],
     exports: [
+        MessageQuietHoursService,
         MessageDuplicateCheckService,
         MessageService,
         MessageTriggerService,

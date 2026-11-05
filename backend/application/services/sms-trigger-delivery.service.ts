@@ -1,3 +1,4 @@
+import { MessageQuietHoursService, isQuietHoursCanceled, recordQuietHoursRefusal, runSmsQuietHoursAdmission, QUIET_HOURS_CANCEL_REASON, QUIET_HOURS_DEFER_REASON } from "./message-quiet-hours.service";
 import { MessageTriggerRecipientType } from "domain/constants/message-trigger-catalog";
 import { isCaregiverTriggerTemplate } from "domain/constants/message-trigger-catalog";
 import { CaregiverTemplateResolverService } from "./caregiver-template-resolver.service";
@@ -227,6 +228,8 @@ export class SmsTriggerDeliveryService {
         // Mandatory Nest dependency; timing never falls back after a failed read.
         private readonly systemSettingService?: SystemSettingService,
         private readonly caregiverTemplates?: CaregiverTemplateResolverService,
+        // Required Nest provider; direct legacy builders must prove validated quiet-OFF.
+        private readonly quietHours?: MessageQuietHoursService,
     ) {}
 
     /**
@@ -643,6 +646,12 @@ export class SmsTriggerDeliveryService {
             ? await this.acceptanceService.prepare(pendingAttempt)
             : await this.logRepository.save(pendingAttempt)) ?? pendingAttempt;
 
+        if (isQuietHoursCanceled(persistedAttempt)) {
+            job.cancel(QUIET_HOURS_CANCEL_REASON);
+            job.nextAttemptAt = null;
+            return false;
+        }
+
         // A duplicate dispatch converges on the existing durable row. Never
         // cross the provider boundary again once that row is started,
         // uncertain, or already has a result.
@@ -658,9 +667,35 @@ export class SmsTriggerDeliveryService {
             );
         }
 
-        const attempt = (this.acceptanceService
-            ? await this.acceptanceService.beginProviderCall(persistedAttempt)
-            : this.beginProviderCallWithoutBoundary(persistedAttempt)) ?? persistedAttempt;
+        const attempt = await runSmsQuietHoursAdmission(this.quietHours, this.systemSettingService, job.branchId, snapshot.receiver,
+            async (decision, transaction) => {
+                if (decision.action !== "ALLOW") {
+                    if (!transaction) throw new AgentAutomationDispatchUncertainError();
+                    const refused = await transaction.message_log.updateMany({
+                        where: { id: persistedAttempt.id, branchId: job.branchId, providerAcceptanceState: "prepared",
+                            providerAcceptanceKey: persistedAttempt.providerAcceptanceKey,
+                            providerAcceptanceFingerprint: persistedAttempt.providerAcceptanceFingerprint },
+                        data: { status: "failed", nextRetryAt: null,
+                            errorMessage: decision.action === "CANCEL" ? QUIET_HOURS_CANCEL_REASON : QUIET_HOURS_DEFER_REASON,
+                            variables: { ...persistedAttempt.variables, quietHoursDisposition: decision.action } },
+                    });
+                    if (refused.count !== 1) throw new AgentAutomationDispatchUncertainError();
+                    recordQuietHoursRefusal(persistedAttempt, decision);
+                    if (decision.action === "CANCEL") {
+                        job.cancel(QUIET_HOURS_CANCEL_REASON);
+                        job.nextAttemptAt = null;
+                    } else {
+                        // Interim refusal only: Task9 owns attempt-free pending/claim release.
+                        job.markFailed("message_quiet_hours:DEFER");
+                        job.nextAttemptAt = null;
+                    }
+                    return null;
+                }
+                return (this.acceptanceService
+                    ? await this.acceptanceService.beginProviderCall(persistedAttempt, transaction)
+                    : this.beginProviderCallWithoutBoundary(persistedAttempt)) ?? persistedAttempt;
+            });
+        if (!attempt) return false;
 
         try {
             const result = await this.aligoService.sendSms({

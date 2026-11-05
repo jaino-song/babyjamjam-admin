@@ -64,7 +64,8 @@ export function isAgentSmsJob(job: Pick<SmsSafeguardJob, "ruleId" | "dedupeKey">
 /**
  * An admin's own send (admin 즉시 발송, manual service-record-link and
  * service-end-notice jobs): the only SMS that bypasses all three automation
- * levels. Agent jobs match the ownership "manual" matchers but are automatic.
+ * levels. This exception never exempts the mandatory final quiet-hours gate.
+ * Agent jobs match the ownership "manual" matchers but are automatic.
  */
 export function isAdminDirectSendJob(
     job: Pick<SmsSafeguardJob, "templateKey" | "ruleId" | "dedupeKey">,

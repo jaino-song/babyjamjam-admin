@@ -1,3 +1,4 @@
+import { MessageQuietHoursService, isQuietHoursCanceled, recordQuietHoursRefusal, runSmsQuietHoursAdmission, QUIET_HOURS_CANCEL_REASON, QUIET_HOURS_DEFER_REASON } from "./message-quiet-hours.service";
 import { BadRequestException, ConflictException, Inject, Injectable, Logger, NotFoundException, Optional, ServiceUnavailableException } from "@nestjs/common";
 import type { Prisma } from "@prisma/client";
 import { codeOnlyProblemBody, problemBody } from "application/utils/problem-bodies";
@@ -108,6 +109,7 @@ export class SmsRetryService {
         private readonly smsAutomationSafeguard?: SmsAutomationSafeguardService,
         // Nest injection is mandatory; legacy direct callers fail closed at timing lookup.
         private readonly systemSettingService?: SystemSettingService,
+        private readonly quietHours?: MessageQuietHoursService,
     ) {}
 
     async getRetryDelayMs(branchId: string | null): Promise<number> {
@@ -156,7 +158,7 @@ export class SmsRetryService {
         }
 
         const family = await this.logRepository.findRetryFamilyInBranch(branchId, sourceLog.id);
-        if (family.some((log) => log.id !== sourceLog.id && isRetryFamilyBlocker(log))) {
+        if (family.some((log) => isQuietHoursCanceled(log) || (log.id !== sourceLog.id && isRetryFamilyBlocker(log)))) {
             throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
         }
 
@@ -179,6 +181,7 @@ export class SmsRetryService {
         sourceLog: MessageLogEntity,
         invocation: MessageRetryInvocation = "manual",
     ): Promise<MessageLogEntity | null> {
+        if (isQuietHoursCanceled(sourceLog)) return sourceLog;
         if (sourceLog.templateKey === SERVICE_RECORD_LINK_SMS_LOG_TEMPLATE_KEY) {
             const client = await this.logRepository.findServiceRecordLinkClientState(sourceLog);
             if (client && getEffectiveClientServiceStatus(client.serviceStatus, client.startDate, client.endDate, client.bookingConfirmedAt) === "pre_booking") {
@@ -278,9 +281,8 @@ export class SmsRetryService {
                         return { kind: "terminal", log: retryLog };
                     }
 
-                    const providerAttempt = this.acceptanceService
-                        ? await this.acceptanceService.beginProviderCall(retryLog, transaction)
-                        : this.beginProviderCallWithoutBoundary(retryLog);
+                    const providerAttempt = await this.admitRetry(sourceLog, retryLog, transaction);
+                    if (!providerAttempt) return { kind: "terminal", log: retryLog };
                     if (!this.acceptanceService) {
                         await this.logRepository.update(providerAttempt, transaction);
                     }
@@ -371,11 +373,35 @@ export class SmsRetryService {
             }
         }
 
-        const providerAttempt = this.acceptanceService
-            ? await this.acceptanceService.beginProviderCall(retryLog)
-            : this.beginProviderCallWithoutBoundary(retryLog);
+        const providerAttempt = await this.admitRetry(sourceLog, retryLog);
+        if (!providerAttempt) return retryLog;
 
         return this.sendRetryAttempt(sourceLog, schedule, retryLog, providerAttempt, invocation, retryDelayMs);
+    }
+
+    private async admitRetry(source: MessageLogEntity, retry: MessageLogEntity, transaction?: Prisma.TransactionClient): Promise<MessageLogEntity | null> {
+        return runSmsQuietHoursAdmission(this.quietHours, this.systemSettingService, retry.branchId, retry.receiver,
+            async (decision, tx) => {
+                if (decision.action !== "ALLOW") {
+                    if (!tx) throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
+                    const refused = await tx.message_log.updateMany({
+                        where: { id: retry.id, branchId: retry.branchId, providerAcceptanceState: "prepared",
+                            providerAcceptanceKey: retry.providerAcceptanceKey,
+                            providerAcceptanceFingerprint: retry.providerAcceptanceFingerprint },
+                        data: { status: "failed", nextRetryAt: null,
+                            errorMessage: decision.action === "CANCEL" ? QUIET_HOURS_CANCEL_REASON : QUIET_HOURS_DEFER_REASON,
+                            variables: { ...retry.variables, quietHoursDisposition: decision.action } },
+                    });
+                    if (refused.count !== 1) throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
+                    recordQuietHoursRefusal(source, decision);
+                    recordQuietHoursRefusal(retry, decision);
+                    await this.logRepository.update(source, tx);
+                    return null;
+                }
+                return this.acceptanceService
+                    ? this.acceptanceService.beginProviderCall(retry, tx)
+                    : this.beginProviderCallWithoutBoundary(retry);
+            }, transaction);
     }
 
     /**
