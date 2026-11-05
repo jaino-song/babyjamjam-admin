@@ -622,7 +622,7 @@ export interface SendMessageDeliverySmsRequest {
   duplicateDecision?: MessageDeliverySmsDuplicateDecision;
 }
 
-export interface SendMessageDeliverySmsResponse {
+export interface SendMessageDeliverySmsSentResponse {
   provider: "aligo_sms";
   triggerType: MessageDeliveryTriggerType;
   request: {
@@ -641,6 +641,16 @@ export interface SendMessageDeliverySmsResponse {
     msgType?: MessageDeliveryProviderSmsType;
   };
 }
+
+export interface SendMessageDeliverySmsQueueResponse {
+  provider: "aligo_sms";
+  triggerType: MessageDeliveryTriggerType;
+  request: { senderPhone?: string; receiver: string; msgType: MessageDeliverySmsType; testMode: boolean; idempotencyKey: string };
+  outcome: "queued" | "deferred" | "canceled" | "mixed";
+  items: Array<{ jobId: string; messageLogId: number; recipientPhone: string; status: "queued" | "deferred" | "canceled"; scheduledAt: string; reason: string | null }>;
+}
+
+export type SendMessageDeliverySmsResponse = SendMessageDeliverySmsSentResponse | SendMessageDeliverySmsQueueResponse;
 
 export const MESSAGE_SENDER_APPROVAL_STATUSES = [
   "not_requested",

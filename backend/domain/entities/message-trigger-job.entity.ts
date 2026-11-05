@@ -1,11 +1,12 @@
 import {
     MessageTriggerRecipientType,
-    MessageTriggerTemplateKey,
+    type MessageTriggerJobTemplateKey,
 } from "domain/constants/message-trigger-catalog";
 import {
     TRIGGER_JOB_MAX_ATTEMPTS,
     TRIGGER_JOB_RETRY_DELAY_MS,
 } from "domain/constants/message-automation-policy";
+import type { MessageQuietHold } from "domain/message-policy-evaluator";
 import type { AgentAutomationJobSeal, AgentAutomationTaskCommitReference } from "./agent-automation-consent";
 import type { ServiceRecordRevisionDispatchContext } from "@babyjamjam/shared/types/service-record";
 
@@ -41,6 +42,8 @@ export interface CaregiverSourceSnapshot {
 }
 
 export interface MessageTriggerJobPayload {
+    existingMessageLogId?: number;
+    origin?: "ADMIN_DIRECT";
     caregiverSourceSnapshot?: CaregiverSourceSnapshot;
     /** Private server-derived authority. Presence is not proof without terminal-record validation. */
     agentAutomationSeal?: AgentAutomationJobSeal;
@@ -82,6 +85,9 @@ export interface MessageTriggerJobPayload {
 }
 
 export class MessageTriggerJobEntity {
+    /** Validated repository projection; never source payload or public input. */
+    quietHold?: MessageQuietHold;
+
     constructor(
         public readonly id: string,
         public branchId: string | null,
@@ -95,7 +101,7 @@ export class MessageTriggerJobEntity {
         public employeeScheduleId: number | null,
         public recipientType: MessageTriggerRecipientType,
         public recipientPhone: string | null,
-        public templateKey: MessageTriggerTemplateKey,
+        public templateKey: MessageTriggerJobTemplateKey,
         public dedupeKey: string,
         public payload: MessageTriggerJobPayload,
         public attempts: number,
@@ -116,7 +122,7 @@ export class MessageTriggerJobEntity {
         employeeScheduleId?: number | null;
         recipientType: MessageTriggerRecipientType;
         recipientPhone?: string | null;
-        templateKey: MessageTriggerTemplateKey;
+        templateKey: MessageTriggerJobTemplateKey;
         dedupeKey: string;
         payload: MessageTriggerJobPayload;
     }): MessageTriggerJobEntity {
@@ -158,7 +164,7 @@ export class MessageTriggerJobEntity {
         employeeScheduleId: number | null,
         recipientType: MessageTriggerRecipientType,
         recipientPhone: string | null,
-        templateKey: MessageTriggerTemplateKey,
+        templateKey: MessageTriggerJobTemplateKey,
         dedupeKey: string,
         payload: MessageTriggerJobPayload,
         createdAt: Date,

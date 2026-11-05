@@ -1714,7 +1714,10 @@ describe("SbMessageTriggerJobRepository", () => {
                 status: { in: ["pending", "processing", "needs_setup"] },
                 clientId: null,
                 employeeScheduleId: null,
-                NOT: { ruleId: { startsWith: "agent-sms:" } },
+                NOT: [
+                    { ruleId: { startsWith: "agent-sms:" } },
+                    { ruleId: { startsWith: "system:manual-sms:" } },
+                ],
             },
             data: {
                 status: "canceled",
@@ -2824,6 +2827,41 @@ describeReal("TIME-1 real PostgreSQL cadence and reclaim fences", () => {
             await handle.raw.branch.deleteMany({ where: { id: { in: branches } } });
         } finally {
             await closeIntegrityPrisma(handle);
+        }
+    });
+
+    it("orphan cleanup cancels ordinary live orphans while preserving manual/agent holders, terminal jobs and other branches", async () => {
+        const manualRule = await handle.raw.message_trigger_rule.create({ data: {
+            id: `system:manual-sms:${branches[0]!}`, branchId: branches[0]!, name: "Manual orphan regression",
+            eventType: "CLIENT_CREATED", offsetType: "IMMEDIATE", recipientType: "CLIENT", templateKey: "MANUAL_SMS",
+            isActive: false, groupId: null, retryOnFailure: false,
+        } });
+        rules.push(manualRule.id);
+        const agentRule = await handle.raw.message_trigger_rule.create({ data: {
+            id: `agent-sms:${fixture}`, branchId: branches[0]!, name: "Agent orphan regression",
+            eventType: "CLIENT_CREATED", offsetType: "IMMEDIATE", recipientType: "CLIENT", templateKey: "SERVICE_INFO",
+        } });
+        rules.push(agentRule.id);
+        const manual = await seed(0, "orphan-manual", { ruleId: manualRule.id, templateKey: "MANUAL_SMS",
+            recipientType: "PRIMARY_EMPLOYEE", payload: { origin: "ADMIN_DIRECT", employeeId: 8 }, nextAttemptAt: at21 });
+        const agent = await seed(0, "orphan-agent", { ruleId: agentRule.id });
+        const terminal = await seed(0, "orphan-terminal", { status: "sent" });
+        const otherBranch = await seed(1, "orphan-other-branch");
+        const orphans = await Promise.all((["pending", "processing", "needs_setup"] as const)
+            .map(status => seed(0, `orphan-${status}`, { status })));
+
+        expect(await repository.cancelOrphanedPending("Related client or schedule deleted", branches[0])).toBe(3);
+        for (const row of [manual, agent, terminal, otherBranch]) {
+            expect(await handle.raw.message_trigger_job.findUniqueOrThrow({ where: { id: row.id } })).toEqual(row);
+        }
+        for (const row of orphans) {
+            expect(await handle.raw.message_trigger_job.findUniqueOrThrow({ where: { id: row.id } }))
+                .toMatchObject({ status: "canceled", cancelReason: "Related client or schedule deleted", claimToken: null });
+        }
+        expect(await repository.cancelOrphanedPending("Related client or schedule deleted")).toBe(1);
+        expect(await handle.raw.message_trigger_job.findUniqueOrThrow({ where: { id: otherBranch.id } })).toMatchObject({ status: "canceled" });
+        for (const row of [manual, agent, terminal]) {
+            expect(await handle.raw.message_trigger_job.findUniqueOrThrow({ where: { id: row.id } })).toEqual(row);
         }
     });
 

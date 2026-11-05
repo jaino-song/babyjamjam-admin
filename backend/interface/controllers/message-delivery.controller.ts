@@ -1,7 +1,13 @@
+import { AligoDefaultSenderPolicyService } from "application/services/aligo-default-sender-policy.service";
+import { MESSAGE_TRIGGER_JOB_REPOSITORY, type IMessageTriggerJobRepository } from "domain/repositories/message-trigger-job.repository.interface";
+import { MessageTriggerJobEntity } from "domain/entities/message-trigger-job.entity";
+import { MANUAL_SMS_TEMPLATE_KEY, MANUAL_SMS_RULE_PREFIX, MessageTriggerRecipientType } from "domain/constants/message-trigger-catalog";
+import { messageQuietHoldVariables } from "domain/message-policy-evaluator";
 import { MessageQuietHoursService, MessageQuietHoursUnavailableError, QUIET_HOURS_CANCEL_REASON, QUIET_HOURS_DEFER_REASON } from "application/services/message-quiet-hours.service";
 import { MessageDuplicateCheckService } from "application/services/message-duplicate-check.service";
 import { MessageDuplicateCheckDto } from "interface/dto/message-duplicate-check.dto";
 import {
+    Inject,
     BadGatewayException,
     BadRequestException,
     Body,
@@ -84,6 +90,8 @@ export class MessageDeliveryController {
         private readonly prisma: PrismaService,
         private readonly duplicateCheck: MessageDuplicateCheckService,
         private readonly quietHours?: MessageQuietHoursService,
+        @Inject(MESSAGE_TRIGGER_JOB_REPOSITORY) private readonly jobs?: IMessageTriggerJobRepository,
+        private readonly defaultSender?: AligoDefaultSenderPolicyService,
     ) {}
 
     @Post("sms/duplicate-check")
@@ -106,8 +114,8 @@ export class MessageDeliveryController {
         }
     }
 
-    private smsSchedule(dto: SendSmsMessageDto) {
-        if (dto.triggerType === "scheduled") this.assertScheduledAtLeastTenMinutesAhead(dto.scheduledDate, dto.scheduledTime);
+    private smsSchedule(dto: SendSmsMessageDto, validateLead = true) {
+        if (validateLead && dto.triggerType === "scheduled") this.assertScheduledAtLeastTenMinutesAhead(dto.scheduledDate, dto.scheduledTime);
         return {
             scheduledDate: dto.triggerType === "scheduled" ? dto.scheduledDate?.replace(/-/g, "") : undefined,
             scheduledTime: dto.triggerType === "scheduled" ? dto.scheduledTime?.replace(":", "") : undefined,
@@ -135,6 +143,7 @@ export class MessageDeliveryController {
         const triggerType = dto.triggerType ?? "immediate";
         const branchId = tenant.branchId ?? "";
         this.assertBranchContext(branchId, expectedBranchId);
+        const effectiveRequestKey = (dto.idempotencyKey ?? requestId)?.trim() || randomUUID();
         const resolvedDto = await this.resolveSmsRecipients(branchId, dto);
         this.logger.log(
             `[SMS] Request received: branchId=${branchId || "unknown"}, triggerType=${triggerType}, recipientCount=${this.countSmsRecipients(resolvedDto.receiver)}`,
@@ -149,14 +158,22 @@ export class MessageDeliveryController {
             throw error;
         }
 
-        const { scheduledDate, scheduledTime } = this.smsSchedule(dto);
+        const { scheduledDate, scheduledTime } = this.smsSchedule(dto, !this.jobs);
+        let knownExisting: SmsMessageLogRecord | null | undefined;
+        if (this.jobs) {
+            const queued = await this.enqueueOrReplay(branchId, resolvedDto, triggerType, scheduledDate, scheduledTime, effectiveRequestKey, existing => { knownExisting = existing; });
+            if (queued) return queued;
+        } else if (triggerType === "scheduled") {
+            throw new MessageQuietHoursUnavailableError();
+        }
         const pendingLog = await this.createPendingSmsLog(
             branchId,
             resolvedDto,
             triggerType,
             scheduledDate,
             scheduledTime,
-            dto.idempotencyKey ?? requestId,
+            effectiveRequestKey,
+            knownExisting,
         ).catch((error) => {
             if (error instanceof ConflictException || error instanceof ServiceUnavailableException) {
                 throw error;
@@ -355,6 +372,109 @@ export class MessageDeliveryController {
         };
     }
 
+    private async enqueueOrReplay(branchId: string, dto: SendSmsMessageDto, triggerType: string,
+        scheduledDate: string | undefined, scheduledTime: string | undefined, requestKey: string, onImmediate: (existing: SmsMessageLogRecord | null) => void) {
+        if (!this.jobs || !this.quietHours) throw new MessageQuietHoursUnavailableError();
+        const fingerprint = this.smsFingerprint(branchId, dto, triggerType, scheduledDate, scheduledTime);
+        const rootKey = buildSmsProviderAcceptanceKey("manual", `${branchId}:${requestKey}`);
+        const keyFor = (ordinal: number) => ordinal === 0 ? rootKey : buildSmsProviderAcceptanceKey("manual", `${rootKey}:ordinal:${ordinal}`);
+        const replay = async (known?: Awaited<ReturnType<typeof this.prisma.message_log.findUnique>> | null) => {
+            const first = known === undefined ? await this.prisma.message_log.findUnique({ where: { providerAcceptanceKey: keyFor(0) } }) : known;
+            if (!first) return null;
+            if (first.providerAcceptanceFingerprint !== fingerprint) throw new ConflictException(this.smsProblemBody("MESSAGE_REQUEST_KEY_CONFLICT", "NOT_APPLIED"));
+            const variables = this.smsRecordVariables(first);
+            if (variables["manualQueueMode"] !== "internal") return null;
+            const count = Number(variables["manualQueueCount"]);
+            if (!Number.isSafeInteger(count) || count < 1 || count !== new Set(dto.receiver.split(",")).size) throw new MessageQuietHoursUnavailableError();
+            const logs = await this.prisma.message_log.findMany({ where: { branchId, providerAcceptanceKey: { in: Array.from({ length: count }, (_, ordinal) => keyFor(ordinal)) } }, orderBy: { id: "asc" } });
+            if (logs.length !== count || logs.some(log => log.providerAcceptanceFingerprint !== fingerprint || !log.triggerJobId)) throw new MessageQuietHoursUnavailableError();
+            return this.manualQueueResponse(dto, triggerType, requestKey, logs);
+        };
+        const first = await this.prisma.message_log.findUnique({ where: { providerAcceptanceKey: keyFor(0) } });
+        const existing = await replay(first);
+        if (existing) return existing;
+        if (first) { onImmediate(first); return null; }
+        if (triggerType === "scheduled") this.assertScheduledAtLeastTenMinutesAhead(dto.scheduledDate, dto.scheduledTime);
+        const scheduledFor = triggerType === "scheduled" ? parseKstSchedule(dto.scheduledDate, dto.scheduledTime) : new Date(Date.now());
+        if (!scheduledFor) throw new BadRequestException(this.smsProblemBody("REQUEST_INVALID", "NOT_APPLIED"));
+        await this.duplicateCheck.assertCanSend(branchId, dto.receiver, dto.message, fingerprint, dto.duplicateDecision);
+        try {
+            return await this.quietHours.runAdmission(branchId, dto.receiver, async (decision, transaction) => {
+                if (triggerType !== "scheduled" && decision.action === "ALLOW") { onImmediate(null); return null; }
+                if (!transaction) throw new MessageQuietHoursUnavailableError();
+                const phones = [...new Set(dto.receiver.split(","))].sort();
+                if (!phones.length) throw new BadRequestException(this.smsProblemBody("REQUEST_INVALID", "NOT_APPLIED"));
+                const sender = this.defaultSender?.read();
+                if (!sender || sender.availability !== "available") throw new MessageQuietHoursUnavailableError();
+                // Validate the complete batch before the first ledger/job write.
+                const recipients = [];
+                for (const receiver of phones) recipients.push(await this.resolveSmsRecipients(branchId,
+                    { ...dto, receiver, clientId: phones.length === 1 ? dto.clientId : null, employeeId: phones.length === 1 ? dto.employeeId : null }, transaction));
+                const logs = [];
+                for (let ordinal = 0; ordinal < recipients.length; ordinal++) {
+                    const recipient = recipients[ordinal]!;
+                    logs.push(await this.quietHours!.runAdmission(branchId, recipient.receiver, async (current, tx, revision) => {
+                        if (!tx || (current.action === "DEFER" && !revision)) throw new MessageQuietHoursUnavailableError();
+                        const status = current.action === "DEFER" ? "deferred" : current.action === "CANCEL" ? "canceled" : "queued";
+                        const due = current.action === "DEFER" ? current.reevaluateAt : scheduledFor;
+                        const variables = { origin: "ADMIN_DIRECT", manualQueueMode: "internal", manualQueueCount: String(recipients.length),
+                            manualQueueOrdinal: String(ordinal), manualQueueStatus: status, manualQueueScheduledAt: due.toISOString(),
+                            manualQueueRequestKey: requestKey, manualQueueSenderIdentity: sender.identityDigest,
+                            manualQueueFingerprintInput: JSON.stringify({ branchId, receiver: dto.receiver, message: dto.message,
+                                recipientName: dto.recipientName ?? null, title: dto.title?.trim() || null, clientId: dto.clientId ?? null,
+                                employeeId: dto.employeeId ?? null, msgType: dto.msgType ?? "AUTO", triggerType,
+                                scheduledDate: scheduledDate ?? null, scheduledTime: scheduledTime ?? null, testMode: dto.testMode === true }),
+                            title: dto.title ?? "", employeeId: recipient.employeeId ?? null,
+                            triggerType, msgType: dto.msgType ?? "AUTO", testMode: dto.testMode ? "true" : "false",
+                            duplicateDecision: dto.duplicateDecision ? JSON.stringify(dto.duplicateDecision) : null,
+                            ...(current.action === "DEFER" ? messageQuietHoldVariables({ releaseAt: due, originalScheduledFor: scheduledFor,
+                                policyRevision: revision!, reason: QUIET_HOURS_DEFER_REASON }) : current.action === "CANCEL" ? { quietHoursDisposition: "CANCEL" } : {}) };
+                        const log = await tx.message_log.create({ data: { branchId, provider: "aligo_sms", templateKey: "manual_sms",
+                            receiver: recipient.receiver, recipientPhone: recipient.receiver, recipientName: recipient.recipientName ?? null,
+                            clientId: recipient.clientId ?? null, messageBody: dto.message, variables,
+                            status: current.action === "CANCEL" ? "failed" : "pending", attempts: 0, nextRetryAt: null,
+                            errorMessage: current.action === "CANCEL" ? QUIET_HOURS_CANCEL_REASON : null,
+                            providerAcceptanceKey: keyFor(ordinal), providerAcceptanceFingerprint: fingerprint,
+                            providerAcceptanceState: "prepared", providerCallStartedAt: null } });
+                        const job = MessageTriggerJobEntity.create({ branchId, ruleId: MANUAL_SMS_RULE_PREFIX + branchId,
+                            scheduledFor, clientId: recipient.clientId ?? null,
+                            recipientType: recipient.employeeId ? MessageTriggerRecipientType.PRIMARY_EMPLOYEE : MessageTriggerRecipientType.CLIENT,
+                            recipientPhone: recipient.receiver, templateKey: MANUAL_SMS_TEMPLATE_KEY,
+                            dedupeKey: `manual-sms:${branchId}:${keyFor(ordinal)}`,
+                            payload: { origin: "ADMIN_DIRECT", existingMessageLogId: log.id, clientId: recipient.clientId,
+                                employeeId: recipient.employeeId, memberId: String(recipient.clientId ?? recipient.employeeId),
+                                recipientName: recipient.recipientName ?? "", recipientPhone: recipient.receiver, messageBody: dto.message,
+                                templateVariables: { senderIdentityDigest: sender.identityDigest, title: dto.title ?? "", msgType: dto.msgType ?? "AUTO", testMode: dto.testMode ? "true" : "false" } } });
+                        if (current.action === "DEFER") job.nextAttemptAt = due;
+                        if (current.action === "CANCEL") job.cancel(QUIET_HOURS_CANCEL_REASON);
+                        const saved = await this.jobs!.createManualSmsJob(job, log.id, tx);
+                        return { ...log, triggerJobId: saved.id };
+                    }, transaction, scheduledFor));
+                }
+                return this.manualQueueResponse(dto, triggerType, requestKey, logs);
+            }, undefined, scheduledFor);
+        } catch (error) {
+            if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
+                const result = await replay();
+                if (result) return result;
+            }
+            throw error;
+        }
+    }
+
+    private manualQueueResponse(dto: SendSmsMessageDto, triggerType: string, requestKey: string,
+        logs: Array<{ id: number; triggerJobId: string | null; recipientPhone: string | null; variables: Prisma.JsonValue }>) {
+        const items = logs.map(log => {
+            const v = this.smsRecordVariables(log);
+            return { jobId: log.triggerJobId!, messageLogId: log.id, recipientPhone: log.recipientPhone!,
+                status: v["manualQueueStatus"] as "queued" | "deferred" | "canceled", scheduledAt: String(v["manualQueueScheduledAt"]),
+                reason: typeof v["manualQueueReason"] === "string" ? v["manualQueueReason"] : v["manualQueueStatus"] === "deferred" ? QUIET_HOURS_DEFER_REASON : v["manualQueueStatus"] === "canceled" ? QUIET_HOURS_CANCEL_REASON : null };
+        });
+        const status = items[0]!.status;
+        return { provider: "aligo_sms" as const, triggerType, request: { receiver: dto.receiver, msgType: dto.msgType ?? "AUTO", testMode: dto.testMode === true, idempotencyKey: requestKey },
+            outcome: items.every(item => item.status === status) ? status : "mixed" as const, items };
+    }
+
     private async createPendingSmsLog(
         branchId: string,
         dto: SendSmsMessageDto,
@@ -362,6 +482,7 @@ export class MessageDeliveryController {
         scheduledDate?: string,
         scheduledTime?: string,
         requestId?: string,
+        knownExisting?: SmsMessageLogRecord | null,
     ): Promise<{ row: SmsMessageLogRecord; created: boolean; id: number }> {
         // A caller-provided idempotency key (or HTTP Idempotency-Key header)
         // scopes duplicate manual requests. Without one, each intentional
@@ -377,7 +498,7 @@ export class MessageDeliveryController {
             findUnique?: (args: { where: { providerAcceptanceKey: string } }) => Promise<SmsMessageLogRecord | null>;
         };
         if (typeof messageLogModel.findUnique === "function") {
-            const existing = await messageLogModel.findUnique({ where: { providerAcceptanceKey } });
+            const existing = knownExisting === undefined ? await messageLogModel.findUnique({ where: { providerAcceptanceKey } }) : knownExisting;
             if (existing) {
                 if (existing.providerAcceptanceFingerprint !== providerAcceptanceFingerprint) {
                     throw new ConflictException(
@@ -393,7 +514,7 @@ export class MessageDeliveryController {
 
         // An existing durable identity always keeps its original replay/conflict
         // outcome. Only a new request reaches the fresh gate, before admission.
-        await this.duplicateCheck.assertCanSend(branchId, dto.receiver, dto.message,
+        if (knownExisting === undefined) await this.duplicateCheck.assertCanSend(branchId, dto.receiver, dto.message,
             providerAcceptanceFingerprint, dto.duplicateDecision);
 
         const data = {
@@ -492,6 +613,7 @@ export class MessageDeliveryController {
     private async resolveSmsRecipients(
         branchId: string,
         dto: SendSmsMessageDto,
+        transaction?: Prisma.TransactionClient,
     ): Promise<SendSmsMessageDto> {
         if (!branchId) {
             throw new BadRequestException(this.smsProblemBody("REQUEST_INVALID", "NOT_APPLIED"));
@@ -517,7 +639,7 @@ export class MessageDeliveryController {
             if (normalizedReceivers.length !== 1) {
                 throw new BadRequestException(this.smsProblemBody("REQUEST_INVALID", "NOT_APPLIED"));
             }
-            const client = await this.prisma.client.findFirst({
+            const client = await (transaction ?? this.prisma).client.findFirst({
                 where: { id: dto.clientId, branchId, deletedAt: null },
                 select: { id: true, name: true, phone: true },
             });
@@ -533,7 +655,7 @@ export class MessageDeliveryController {
             if (normalizedReceivers.length !== 1) {
                 throw new BadRequestException(this.smsProblemBody("REQUEST_INVALID", "NOT_APPLIED"));
             }
-            const employeeModel = (this.prisma as PrismaService & { employee?: PrismaService["employee"] }).employee;
+            const employeeModel = ((transaction ?? this.prisma) as PrismaService & { employee?: PrismaService["employee"] }).employee;
             const employee = employeeModel && await employeeModel.findFirst({
                 where: { id: dto.employeeId, branchId, deletedAt: null },
                 select: { id: true, name: true, phone: true },
@@ -548,8 +670,8 @@ export class MessageDeliveryController {
             recipients.push({ id: employee.id, name: employee.name, phone, kind: "employee" });
         } else {
             for (const phone of normalizedReceivers) {
-                const client = await this.findClientByPhone(branchId, phone);
-                const employee = await this.findEmployeeByPhone(branchId, phone);
+                const client = await this.findClientByPhone(branchId, phone, transaction);
+                const employee = await this.findEmployeeByPhone(branchId, phone, transaction);
                 if (client && employee) {
                     throw new BadRequestException(this.smsProblemBody("REQUEST_INVALID", "NOT_APPLIED"));
                 }
@@ -576,15 +698,15 @@ export class MessageDeliveryController {
         };
     }
 
-    private async findClientByPhone(branchId: string, phone: string): Promise<{ id: number; name: string | null } | null> {
-        const client = await this.prisma.client.findFirst({
+    private async findClientByPhone(branchId: string, phone: string, transaction?: Prisma.TransactionClient): Promise<{ id: number; name: string | null } | null> {
+        const client = await (transaction ?? this.prisma).client.findFirst({
             where: { branchId, phone, deletedAt: null },
             select: { id: true, name: true, phone: true },
         });
         if (client && normalizePhone(client.phone) === phone) {
             return { id: client.id, name: client.name };
         }
-        const clientModel = this.prisma.client as typeof this.prisma.client & {
+        const clientModel = (transaction ?? this.prisma).client as Prisma.TransactionClient["client"] & {
             findMany?: (args: { where: { branchId: string; deletedAt: null }; select: { id: true; name: true; phone: true } }) => Promise<Array<{ id: number; name: string | null; phone: string | null }>>;
         };
         if (typeof clientModel.findMany !== "function") return null;
@@ -593,8 +715,8 @@ export class MessageDeliveryController {
         return match ? { id: match.id, name: match.name } : null;
     }
 
-    private async findEmployeeByPhone(branchId: string, phone: string): Promise<{ id: number; name: string | null } | null> {
-        const employeeModel = (this.prisma as PrismaService & { employee?: PrismaService["employee"] }).employee;
+    private async findEmployeeByPhone(branchId: string, phone: string, transaction?: Prisma.TransactionClient): Promise<{ id: number; name: string | null } | null> {
+        const employeeModel = ((transaction ?? this.prisma) as PrismaService & { employee?: PrismaService["employee"] }).employee;
         if (!employeeModel) return null;
         const employee = await employeeModel.findFirst({
             where: { branchId, phone, deletedAt: null },

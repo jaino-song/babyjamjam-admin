@@ -27,7 +27,7 @@ import {
     StoredMessageSettingsPolicyId,
 } from "domain/constants/message-settings-policy";
 
-import { validateMessageAutomationPolicy, evaluateMessageQuietHours } from "domain/message-policy-evaluator";
+import { validateMessageAutomationPolicy, evaluateMessageQuietHours, evaluateHeldMessageQuietHours, parseMessageQuietHold } from "domain/message-policy-evaluator";
 import { MESSAGE_TRIGGER_TEMPLATE_CATALOG } from "domain/constants/message-trigger-catalog";
 import { isRuleActiveForBranch } from "domain/utils/message-trigger-rule-activation";
 import { IMessageTriggerRuleRepository, MESSAGE_TRIGGER_RULE_REPOSITORY } from "domain/repositories/message-trigger-rule.repository.interface";
@@ -293,6 +293,42 @@ export class SystemSettingService {
             this.messagePolicyKey(branchId), raw, expectedVersion ?? "absent", value => this.policyVersion(value), audit, transaction,
         );
         if (!entity) throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
+        if (!effective.configuration.quietHours.enabled
+            || JSON.stringify(stored.configuration.quietHours) === JSON.stringify(effective.configuration.quietHours)) {
+            return { version: this.policyVersion(entity.value), ...effective, entity };
+        }
+        if (!this.policyJobs || !this.policyLogs) throw new ServiceUnavailableException("Message policy reconciliation is unavailable");
+        try {
+            const population = await this.policyJobs.findPolicyPreviewCandidates(branchId, transaction);
+            const held = population.length ? await this.policyJobs.findQuietHeldJobs(branchId, transaction) : [];
+            const candidates = await this.policyLogs.resolvePolicyRecipientGroups(branchId,
+                held.map(({ job, hold }) => ({ dueAt: hold.releaseAt, recipientGroups: [], recipientPhone: job.recipientPhone, quietHold: hold })), transaction);
+            const now = new Date(Date.now());
+            for (let index = 0; index < held.length; index++) {
+                const item = held[index]!;
+                const candidate = candidates[index];
+                if (!candidate || candidate.recipientPhone !== item.job.recipientPhone) throw new ServiceUnavailableException("Held recipient state is unavailable");
+                const decision = evaluateHeldMessageQuietHours(effective.configuration.quietHours, candidate.recipientGroups, now, item.hold.releaseAt);
+                if (decision.action !== "ALLOW") await this.policyJobs.transitionQuietHold(item.job, item.logId,
+                    item.acceptanceKey, item.fingerprint, decision, this.policyVersion(entity.value), transaction);
+            }
+            const retryPopulation = await this.policyLogs.findPolicyPreviewCandidates(branchId, transaction);
+            const retries = retryPopulation.some(candidate => candidate.quietHold) ? await this.policyLogs.findQuietHeldRetries(branchId, transaction) : [];
+            const retryCandidates = await this.policyLogs.resolvePolicyRecipientGroups(branchId,
+                retries.map(log => ({ dueAt: log.nextRetryAt!, recipientGroups: [], recipientPhone: log.recipientPhone ?? log.receiver })), transaction);
+            for (let index = 0; index < retries.length; index++) {
+                const log = retries[index]!;
+                const hold = parseMessageQuietHold(log.variables)!;
+                const candidate = retryCandidates[index];
+                if (!candidate) throw new ServiceUnavailableException("Held retry recipient state is unavailable");
+                const decision = evaluateHeldMessageQuietHours(effective.configuration.quietHours, candidate.recipientGroups, now, hold.releaseAt);
+                if (decision.action !== "ALLOW") await this.policyLogs.transitionQuietRetry(log,
+                    decision.action === "DEFER" ? { ...hold, releaseAt: decision.reevaluateAt, policyRevision: this.policyVersion(entity.value) } : hold,
+                    decision.action === "CANCEL", transaction);
+            }
+        } catch (cause) {
+            throw new ServiceUnavailableException("Held message reconciliation is unavailable", { cause });
+        }
         return { version: this.policyVersion(entity.value), ...effective, entity };
     }
 
@@ -332,7 +368,9 @@ export class SystemSettingService {
             let reevaluateAt: Date | null = null;
             for (const candidate of candidates) {
                 const at = new Date(Math.max(now.getTime(), candidate.dueAt.getTime()));
-                const decision = evaluateMessageQuietHours(effective.configuration.quietHours, candidate.recipientGroups, at);
+                const decision = candidate.quietHold
+                    ? evaluateHeldMessageQuietHours(effective.configuration.quietHours, candidate.recipientGroups, now, candidate.quietHold.releaseAt)
+                    : evaluateMessageQuietHours(effective.configuration.quietHours, candidate.recipientGroups, at);
                 if (decision.action === "CANCEL") canceledCount++;
                 if (decision.action === "DEFER") {
                     deferredCount++;

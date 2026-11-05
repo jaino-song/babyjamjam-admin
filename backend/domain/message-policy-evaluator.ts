@@ -64,6 +64,43 @@ export interface MessagePolicyPreviewCandidate {
     dueAt: Date;
     recipientGroups: MessagePolicyRecipientGroup[];
     recipientPhone: string | null;
+    quietHold?: MessageQuietHold;
+}
+
+/** Internal log projection. Callers must separately verify the persisted association. */
+export interface MessageQuietHold {
+    releaseAt: Date;
+    originalScheduledFor: Date;
+    policyRevision: string;
+    reason: string;
+}
+
+export const QUIET_HOURS_OPERATIONAL_KEYS = ["quietHoursDisposition", "quietHoursReleaseAt", "quietHoursOriginalScheduledFor", "quietHoursPolicyRevision", "quietHoursReason"] as const;
+
+export function parseMessageQuietHold(variables: unknown): MessageQuietHold | null {
+    if (!variables || typeof variables !== "object" || Array.isArray(variables)) return null;
+    const v = variables as Record<string, unknown>;
+    const iso = (value: unknown): Date | null => {
+        if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(value)) return null;
+        const date = new Date(value);
+        return Number.isFinite(date.getTime()) && date.toISOString() === value ? date : null;
+    };
+    const releaseAt = iso(v["quietHoursReleaseAt"]);
+    const originalScheduledFor = iso(v["quietHoursOriginalScheduledFor"]);
+    if (v["quietHoursDisposition"] !== "DEFER" || !releaseAt || !originalScheduledFor
+        || releaseAt < originalScheduledFor || typeof v["quietHoursPolicyRevision"] !== "string"
+        || !v["quietHoursPolicyRevision"].trim() || v["quietHoursReason"] !== "message_quiet_hours:DEFER") return null;
+    return { releaseAt, originalScheduledFor, policyRevision: v["quietHoursPolicyRevision"], reason: v["quietHoursReason"] };
+}
+
+export function messageQuietHoldVariables(hold: MessageQuietHold): Record<string, string> {
+    return { quietHoursDisposition: "DEFER", quietHoursReleaseAt: hold.releaseAt.toISOString(),
+        quietHoursOriginalScheduledFor: hold.originalScheduledFor.toISOString(),
+        quietHoursPolicyRevision: hold.policyRevision, quietHoursReason: hold.reason };
+}
+
+export function publicMessageVariables<T>(variables: Record<string, T>): Record<string, T> {
+    return Object.fromEntries(Object.entries(variables).filter(([key]) => !QUIET_HOURS_OPERATIONAL_KEYS.some(operational => operational === key) && !["manualQueueMode", "manualQueueCount", "manualQueueOrdinal", "manualQueueStatus", "manualQueueScheduledAt", "manualQueueRequestKey", "manualQueueFingerprintInput", "manualQueueSenderIdentity", "manualQueueReason", "retryInvocation", "retrySenderIdentity"].includes(key)));
 }
 export type MessageQuietHoursDecision =
     | { action: "ALLOW"; reevaluateAt: null }
@@ -88,4 +125,18 @@ export function evaluateMessageQuietHours(
     const dayStart = Date.UTC(local.getUTCFullYear(), local.getUTCMonth(), local.getUTCDate());
     const endDay = start > end && minute >= start ? 24 * 60 * MINUTE : 0;
     return { action: "DEFER", reevaluateAt: new Date(dayStart + endDay + end * MINUTE - KST_OFFSET) };
+}
+
+/** CANCEL tests the current ban; DEFER also tests the previously promised release. */
+export function evaluateHeldMessageQuietHours(
+    quiet: MessageAutomationPolicyConfiguration["quietHours"], groups: readonly MessagePolicyRecipientGroup[],
+    now: Date, releaseAt: Date,
+): MessageQuietHoursDecision {
+    const current = evaluateMessageQuietHours(quiet, groups, now);
+    if (current.action === "CANCEL") return current;
+    const due = evaluateMessageQuietHours(quiet, groups, new Date(Math.max(now.getTime(), releaseAt.getTime())));
+    if (due.action === "CANCEL") return due;
+    const end = Math.max(releaseAt.getTime(), current.action === "DEFER" ? current.reevaluateAt.getTime() : 0,
+        due.action === "DEFER" ? due.reevaluateAt.getTime() : 0);
+    return end > releaseAt.getTime() ? { action: "DEFER", reevaluateAt: new Date(end) } : { action: "ALLOW", reevaluateAt: null };
 }

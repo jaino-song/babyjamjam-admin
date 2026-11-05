@@ -82,6 +82,11 @@ function boundaryFixture() {
             }),
         },
         message_log: {
+            findMany: jest.fn(async () => []),
+            findFirst: jest.fn(async ({ where }: { where: { id: number } }) => {
+                const log = logs.find(candidate => candidate.id === where.id);
+                return log ? structuredClone(log) : null;
+            }),
             findUnique: jest.fn(async ({ where }: { where: { id: number } }) => {
                 const log = logs.find(candidate => candidate.id === where.id);
                 return log ? structuredClone(log) : null;
@@ -138,7 +143,7 @@ function manualJob(kind: "agent" | "admin" | "automatic") {
 }
 function triggerService(f: ReturnType<typeof boundaryFixture>, withGuard = true) {
     const gate = new AgentAutomationDeliveryGateService(f.db as never, f.lock, {} as never);
-    return new SmsTriggerDeliveryService(f.aligo as never, {} as never, f.repository, f.acceptance, undefined, gate, undefined, f.settings, undefined, withGuard ? f.quiet : undefined);
+    return new SmsTriggerDeliveryService(f.aligo as never, {} as never, f.repository, f.acceptance, undefined, gate, undefined, f.settings, undefined, withGuard ? f.quiet : undefined, new SbMessageTriggerJobRepository(f.db as never));
 }
 function retryFixture(f: ReturnType<typeof boundaryFixture>, automatic = false, withGuard = true) {
     const source = MessageLogEntity.create({ branchId: "branch-a", provider: "aligo_sms", templateKey: "client_greeting_sms", receiver: PHONE,
@@ -242,12 +247,13 @@ describe("NIGHT-1 final SMS/LMS admission", () => {
         await expect(manualController(f).sendSms({ branchId: "branch-a" }, { receiver: PHONE, message: "합성 본문" })).rejects.toBeInstanceOf(ServiceUnavailableException);
         expect(f.events).toEqual(["lock", "policy", "cas", "commit"]); expect(f.aligo.sendSms).not.toHaveBeenCalled();
     });
-    it("DEFER is an honest intermediate refusal with no provider start or release-queue claim", async () => {
+    it("DEFER atomically holds attempt zero until 08:00 without starting the provider", async () => {
         const f = boundaryFixture(); f.policy.quietHours.action = "DEFER";
         const job = manualJob("agent"); f.store(job);
         expect(await triggerService(f).sendJob(job)).toBe(false);
-        expect(job).toMatchObject({ status: "failed", nextAttemptAt: null, cancelReason: "message_quiet_hours:DEFER" });
-        expect(f.logs[0]).toMatchObject({ status: "failed", attempts: 0, nextRetryAt: null, providerAcceptanceState: "prepared", providerCallStartedAt: null, variables: expect.objectContaining({ quietHoursDisposition: "DEFER" }) });
+        expect(job).toMatchObject({ status: "pending", attempts: 0, nextAttemptAt: new Date("2026-11-03T23:00:00.000Z"), claimToken: null, processingDeadlineAt: null });
+        expect(job.scheduledFor.toISOString()).toBe("2026-11-03T12:00:00.000Z");
+        expect(f.logs[0]).toMatchObject({ status: "pending", attempts: 0, nextRetryAt: null, providerAcceptanceState: "prepared", providerCallStartedAt: null, variables: expect.objectContaining({ quietHoursDisposition: "DEFER", quietHoursReleaseAt: "2026-11-03T23:00:00.000Z", quietHoursOriginalScheduledFor: "2026-11-03T12:00:00.000Z" }) });
         expect(f.aligo.sendSms).not.toHaveBeenCalled();
     });
 });
@@ -461,7 +467,7 @@ describe("NIGHT-1 final-boundary failures and serialization", () => {
             return SystemSettingEntity.create(key, value);
         });
         const writer = new SystemSettingService({ execute: f.execute } as never, { executeIfVersion } as never, undefined, undefined,
-            undefined, undefined, { countFutureProviderReservations: async () => 0 } as never, f.lock);
+            undefined, { findPolicyPreviewCandidates: async () => [] } as never, { countFutureProviderReservations: async () => 0, findPolicyPreviewCandidates: async () => [], resolvePolicyRecipientGroups: async (_branch: string, candidates: unknown[]) => candidates } as never, f.lock);
         const current = await writer.getMessageAutomationPolicyConfig("branch-a");
         const write = writer.setMessageAutomationPolicyConfig("branch-a", current.version, next);
         await writerEntered;
@@ -549,7 +555,7 @@ describe("C1 terminal cancellation concurrency and crash recovery", () => {
             Object.assign(f.policy, JSON.parse(value)); return SystemSettingEntity.create(key, value);
         });
         const writer = new SystemSettingService({ execute: f.execute } as never, { executeIfVersion } as never,
-            undefined, undefined, undefined, undefined, undefined, f.lock);
+            undefined, undefined, undefined, { findPolicyPreviewCandidates: async () => [] } as never, f.repository, f.lock);
         const current = await writer.getMessageAutomationPolicyConfig("branch-a");
         const off = structuredClone(current.configuration); off.quietHours.enabled = false;
         const first = manualJob("agent"); const duplicate = manualJob("agent"); f.store(first);
@@ -724,7 +730,7 @@ describeReal("C1 quiet cancellation atomic SQL (real PostgreSQL)", () => {
         const lock = new MessageAutomationBranchLockService(handle.service);
         const settingsRepository = new SbSystemSettingRepository(handle.service);
         const settings = new SystemSettingService(new GetSettingUsecase(settingsRepository), new UpdateSettingUsecase(settingsRepository),
-            undefined, undefined, undefined, undefined, repository, lock);
+            undefined, undefined, undefined, new SbMessageTriggerJobRepository(handle.service), repository, lock);
         const quiet = new MessageQuietHoursService(settings, repository, lock);
         const gate = new AgentAutomationDeliveryGateService(handle.service, lock, {} as never);
         const aligo = { sendSms: jest.fn(async (request: { receiver: string }) => {

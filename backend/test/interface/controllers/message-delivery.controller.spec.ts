@@ -1,3 +1,6 @@
+import { defaultMessageAutomationPolicy } from "domain/entities/system-setting.entity";
+import { MessageTriggerJobEntity } from "domain/entities/message-trigger-job.entity";
+import type { IMessageTriggerJobRepository } from "domain/repositories/message-trigger-job.repository.interface";
 import { SmsRetryService } from "application/services/sms-retry.service";
 import { SmsTriggerDeliveryService } from "application/services/sms-trigger-delivery.service";
 import { MessageQuietHoursService } from "application/services/message-quiet-hours.service";
@@ -17,7 +20,6 @@ import type { IMessageLogRepository } from "domain/repositories/message-log.repo
 import { plainToInstance } from "class-transformer";
 import { validate } from "class-validator";
 import { SendSmsMessageDto } from "interface/dto/message-delivery.dto";
-import { Prisma } from "@prisma/client";
 import type { Request, Response } from "express";
 import { normalizeApiError, PROBLEM_CATALOG } from "@babyjamjam/shared/errors/problem-details";
 import { mapHttpProblem, sendProblemResponse } from "infrastructure/filters/problem-response";
@@ -34,6 +36,7 @@ import { MessageDeliveryController } from "interface/controllers/message-deliver
 
 describe("MessageDeliveryController", () => {
     let controller: MessageDeliveryController;
+    let queueJobs: { createManualSmsJob: jest.Mock };
     let duplicateHistory: jest.Mock;
     let duplicateEnabled: jest.Mock;
     let duplicateService: MessageDuplicateCheckService;
@@ -73,6 +76,12 @@ describe("MessageDeliveryController", () => {
                 update: jest.fn().mockResolvedValue({}),
             },
         };
+        queueJobs = { createManualSmsJob: jest.fn(async (job: MessageTriggerJobEntity, logId: number, transaction: unknown) => {
+            expect(transaction).toBe(prismaService);
+            expect(job.payload.existingMessageLogId).toBe(logId);
+            return Object.assign(job, { id: "88000000-0000-4000-8000-000000000042" });
+        }) };
+        Object.assign(prismaService.message_log, { findUnique: jest.fn().mockResolvedValue(null) });
         Object.assign(prismaService, { $executeRaw: jest.fn().mockResolvedValue(1) });
         duplicateHistory = jest.fn().mockResolvedValue([]);
         duplicateEnabled = jest.fn().mockResolvedValue(true);
@@ -94,6 +103,8 @@ describe("MessageDeliveryController", () => {
                     $executeRaw: jest.fn().mockResolvedValue(1),
                 } as never),
             ),
+            queueJobs as unknown as IMessageTriggerJobRepository,
+            { read: () => ({ availability: "available", identityDigest: "a".repeat(64) }) } as never,
         );
     });
 
@@ -163,91 +174,42 @@ describe("MessageDeliveryController", () => {
         expect(prismaService.message_log.create).not.toHaveBeenCalled();
     });
 
-    it("should normalize scheduled fields for the Aligo request and response payload", async () => {
-        jest.spyOn(Date, "now").mockReturnValue(new Date("2026-03-09T11:00:00.000Z").getTime());
-        aligoService.sendSms.mockResolvedValue({
-            request: {
-                senderPhone: "0212345678",
-                receiver: "01012345678",
-                msgType: "LMS",
-                scheduledDate: "20260309",
-                scheduledTime: "2015",
-                testModeYn: "Y",
-            },
-            response: {
-                result_code: 1,
-                message: "성공적으로 전송요청 하였습니다.",
-                msg_id: 321,
-                success_cnt: 1,
-                error_cnt: 0,
-                msg_type: "LMS",
-            },
-        });
-
-        const result = await controller.sendSms(
-            { branchId: "org-1" },
-            {
-                receiver: "010-1234-5678",
-                recipientName: "김산모",
-                message: "장문 테스트 메시지",
-                title: "안내",
-                triggerType: "scheduled",
-                scheduledDate: "2026-03-09",
-                scheduledTime: "20:15",
-                testMode: true,
-            },
-        );
-
-        expect(aligoService.sendSms).toHaveBeenCalledWith({
-            receiver: "01012345678",
-            message: "장문 테스트 메시지",
-            recipientName: "테스트 수신자",
-            title: "안내",
-            msgType: undefined,
-            scheduledDate: "20260309",
-            scheduledTime: "2015",
-            testMode: true,
-        });
-        expect(result).toEqual({
-            provider: "aligo_sms",
-            triggerType: "scheduled",
-            request: {
-                senderPhone: "0212345678",
-                receiver: "01012345678",
-                msgType: "LMS",
-                scheduledAt: "202603092015",
-                testMode: true,
-            },
-            result: {
-                resultCode: 1,
-                message: "성공적으로 전송요청 하였습니다.",
-                msgId: 321,
-                successCount: 1,
-                errorCount: 0,
-                msgType: "LMS",
-            },
-        });
-        expect(prismaService.message_log.create).toHaveBeenCalledWith({
-            data: expect.objectContaining({
-                branchId: "org-1",
-                provider: "aligo_sms",
-                templateKey: "안내",
-                receiver: "01012345678",
-                status: "pending",
-                attempts: 0,
-            }),
-        });
-        expect(prismaService.message_log.update).toHaveBeenCalledWith({
-            where: { id: 42 },
-            data: expect.objectContaining({
-                receiver: "01012345678",
-                recipientPhone: "01012345678",
-                status: "pending",
-                aligoMid: "321",
-                errorMessage: null,
-                attempts: 1,
-            }),
-        });
+    it("normalizes a future request into one internal job/log and a truthful queue response", async () => {
+        jest.spyOn(Date, "now").mockReturnValue(Date.parse("2026-03-09T11:00:00.000Z"));
+        prismaService.message_log.create.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => ({ id: 42, ...data }));
+        const result = await controller.sendSms({ branchId: "org-1" }, { receiver: "010-1234-5678", recipientName: "김산모",
+            message: "장문 테스트 메시지", title: "안내", triggerType: "scheduled", scheduledDate: "2026-03-09", scheduledTime: "20:15",
+            testMode: true, idempotencyKey: "schedule-key" });
+        expect(aligoService.sendSms).not.toHaveBeenCalled();
+        expect(result).toEqual({ provider: "aligo_sms", triggerType: "scheduled", outcome: "queued",
+            request: { receiver: "01012345678", msgType: "AUTO", testMode: true, idempotencyKey: "schedule-key" },
+            items: [{ jobId: "88000000-0000-4000-8000-000000000042", messageLogId: 42, recipientPhone: "01012345678",
+                status: "queued", scheduledAt: "2026-03-09T11:15:00.000Z", reason: null }] });
+        expect(result).not.toHaveProperty("result");
+        expect(prismaService.message_log.create).toHaveBeenCalledWith({ data: expect.objectContaining({
+            branchId: "org-1", provider: "aligo_sms", templateKey: "manual_sms", receiver: "01012345678", status: "pending",
+            attempts: 0, providerAcceptanceState: "prepared", providerCallStartedAt: null, nextRetryAt: null,
+        }) });
+        expect(queueJobs.createManualSmsJob).toHaveBeenCalledWith(expect.objectContaining({ templateKey: "MANUAL_SMS",
+            scheduledFor: new Date("2026-03-09T11:15:00.000Z"), ruleId: "system:manual-sms:org-1", attempts: 0,
+            payload: expect.objectContaining({ existingMessageLogId: 42, origin: "ADMIN_DIRECT", messageBody: "장문 테스트 메시지" }) }), 42, prismaService);
+        expect(prismaService.message_log.update).not.toHaveBeenCalled();
+        const stored = { id: 42, ...prismaService.message_log.create.mock.calls[0]![0].data,
+            triggerJobId: "88000000-0000-4000-8000-000000000042" };
+        Object.assign(prismaService.message_log, { findUnique: jest.fn(async () => stored), findMany: jest.fn(async () => [stored]) });
+        const policy = defaultMessageAutomationPolicy(); policy.quietHours.enabled = true; policy.quietHours.action = "CANCEL";
+        const replay = new MessageDeliveryController(aligoService as never, messageSenderApprovalService as never, prismaService as never, duplicateService,
+            new MessageQuietHoursService(new SystemSettingService({ execute: async () => JSON.stringify(policy) } as never, {} as never), {} as never,
+                new MessageAutomationBranchLockService({ $transaction: async () => { throw new Error("Replay must not enter a new policy admission"); } } as never)),
+            queueJobs as never, { read: () => ({ availability: "available", identityDigest: "a".repeat(64) }) } as never);
+        jest.mocked(Date.now).mockReturnValue(Date.parse("2026-03-10T13:30:00.000Z"));
+        const repeated = { receiver: "010-1234-5678", recipientName: "김산모", message: "장문 테스트 메시지", title: "안내",
+            triggerType: "scheduled" as const, scheduledDate: "2026-03-09", scheduledTime: "20:15", testMode: true, idempotencyKey: "schedule-key" };
+        expect(await replay.sendSms({ branchId: "org-1" }, repeated, "different-header")).toEqual(result);
+        await expect(replay.sendSms({ branchId: "org-1" }, { ...repeated, message: "changed" }, "different-header")).rejects.toThrow(ConflictException);
+        expect(prismaService.message_log.create).toHaveBeenCalledTimes(1);
+        expect(queueJobs.createManualSmsJob).toHaveBeenCalledTimes(1);
+        expect(aligoService.sendSms).not.toHaveBeenCalled();
     });
 
     describe("carrier check scheduling", () => {
@@ -260,43 +222,21 @@ describe("MessageDeliveryController", () => {
             msg_type: "LMS" as const,
         };
 
-        it("schedules the carrier check 30 minutes after the reserved time (Asia/Seoul) for a reserved send", async () => {
-            jest.spyOn(Date, "now").mockReturnValue(new Date("2026-03-09T11:00:00.000Z").getTime());
-            aligoService.sendSms.mockResolvedValue({
-                request: {
-                    senderPhone: "0212345678",
-                    receiver: "01012345678",
-                    msgType: "LMS",
-                    scheduledDate: "20260309",
-                    scheduledTime: "2015",
-                    testModeYn: "N",
-                },
-                response: acceptedResponse,
-            });
-
-            await controller.sendSms(
-                { branchId: "org-1" },
-                {
-                    receiver: "010-1234-5678",
-                    message: "장문 테스트 메시지",
-                    title: "안내",
-                    triggerType: "scheduled",
-                    scheduledDate: "2026-03-09",
-                    scheduledTime: "20:15",
-                },
-            );
-
-            expect(prismaService.message_log.update).toHaveBeenCalledWith({
-                where: { id: 42 },
-                data: expect.objectContaining({
-                    status: "pending",
-                    providerAcceptanceState: "accepted",
-                    carrierCheckDueAt: new Date("2026-03-09T20:45:00+09:00"),
-                    carrierCheckedAt: null,
-                    carrierResultState: null,
-                    carrierResults: Prisma.DbNull,
-                }),
-            });
+        it("keeps a future internal queue provider-unstarted, without a premature carrier check", async () => {
+            jest.spyOn(Date, "now").mockReturnValue(Date.parse("2026-03-09T11:00:00.000Z"));
+            prismaService.message_log.create.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => ({ id: 42, ...data }));
+            const result = await controller.sendSms({ branchId: "org-1" }, { receiver: "010-1234-5678", message: "장문 테스트 메시지", title: "안내",
+                triggerType: "scheduled", scheduledDate: "2026-03-09", scheduledTime: "20:15", idempotencyKey: "carrier-queue" });
+            expect(result).toMatchObject({ outcome: "queued" });
+            expect(aligoService.sendSms).not.toHaveBeenCalled();
+            expect(prismaService.message_log.update).not.toHaveBeenCalled();
+            expect(prismaService.message_log.create).toHaveBeenCalledWith({ data: expect.objectContaining({
+                status: "pending", providerAcceptanceState: "prepared", providerCallStartedAt: null, attempts: 0,
+            }) });
+            const data = prismaService.message_log.create.mock.calls[0]![0].data;
+            expect(data).not.toHaveProperty("carrierCheckDueAt");
+            expect(data.variables).not.toHaveProperty("scheduledDate");
+            expect(data.variables).not.toHaveProperty("scheduledTime");
         });
 
         it("schedules the carrier check 30 minutes after acceptance for an immediate send", async () => {

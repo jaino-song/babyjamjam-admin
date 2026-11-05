@@ -1,3 +1,5 @@
+import { publicMessageVariables } from "domain/message-policy-evaluator";
+import { MANUAL_SMS_TEMPLATE_KEY, MANUAL_SMS_RULE_PREFIX } from "domain/constants/message-trigger-catalog";
 import { agentAutomationCoverageScope } from "application/agent/agent-automation-coverage";
 import { parseAgentAutomationTaskCommitReference } from "application/agent/agent-automation-storage.schema";
 import type { MessageTriggerRuleGroupPreviewResponse } from "@babyjamjam/shared/types/message";
@@ -72,7 +74,7 @@ import { MessageTriggerJobEntity } from "domain/entities/message-trigger-job.ent
 import { MessageLogEntity, isLandedRetryAttempt, isRetryFamilyBlocker } from "domain/entities/message-log.entity";
 import { TriggerJobDeferredError } from "domain/errors/trigger-job-deferred.error";
 import { agentBindingHash } from "domain/repositories/agent-linked-action.types";
-import { agentAutomationSourcePayload } from "./agent-automation-job-binding";
+import { agentAutomationConcreteJobDigest, agentAutomationSourcePayload } from "./agent-automation-job-binding";
 import {
     MESSAGE_TRIGGER_RULE_REPOSITORY,
     IMessageTriggerRuleRepository,
@@ -712,7 +714,8 @@ export class MessageTriggerService {
     }
 
     private async resolvePersistedRules(branchId: string, transaction?: Prisma.TransactionClient) {
-        return this.automationSources.resolvePersistedRules(branchId, transaction);
+        const result = await this.automationSources.resolvePersistedRules(branchId, transaction);
+        return { ...result, rules: result.rules.filter(rule => rule.id !== MANUAL_SMS_RULE_PREFIX + branchId) };
     }
 
     async ensureDefaultRulesForBranch(branchId: string): Promise<void> {
@@ -756,7 +759,7 @@ export class MessageTriggerService {
                 offsetDays: rule?.offsetDays ?? 0,
                 recipientType: job.recipientType,
                 recipientPhone: job.recipientPhone,
-                templateKey: job.templateKey,
+                templateKey: job.templateKey === MANUAL_SMS_TEMPLATE_KEY ? MessageTriggerTemplateKey.INFO : job.templateKey,
                 status: job.status,
                 scheduledFor: job.scheduledFor,
                 sentAt: job.sentAt,
@@ -893,7 +896,7 @@ export class MessageTriggerService {
                 clientId: log.clientId,
                 recipientPhone: log.recipientPhone ?? log.receiver,
                 messageBody: log.messageBody,
-                variables: log.variables,
+                variables: publicMessageVariables(log.variables),
                 status: log.status,
                 resentByLogId: null,
                 retryBlockedByLogId: null,
@@ -1059,7 +1062,7 @@ export class MessageTriggerService {
                 clientId: log.clientId,
                 recipientPhone: log.recipientPhone ?? log.receiver,
                 messageBody: log.messageBody,
-                variables: log.variables,
+                variables: publicMessageVariables(log.variables),
                 status: log.status,
                 resentByLogId: null,
                 retryBlockedByLogId: null,
@@ -1278,7 +1281,7 @@ export class MessageTriggerService {
                     clientId: log.clientId,
                     recipientPhone: log.recipientPhone ?? log.receiver,
                     messageBody: log.messageBody,
-                    variables: log.variables,
+                    variables: publicMessageVariables(log.variables),
                     status: log.status,
                     resentByLogId: null,
                     retryBlockedByLogId: null,
@@ -2196,11 +2199,11 @@ export class MessageTriggerService {
         return !(await this.jobRepository.hasActiveJobsBefore(branchId, rule.id, rule.updatedAt));
     }
 
-    private async getDispatchTimingPolicy(branchId: string | null) {
+    private async getDispatchTimingPolicy(branchId: string | null, transaction?: Prisma.TransactionClient) {
         if (!branchId || !this.systemSettingService) {
             throw new ServiceUnavailableException("Message automation policy is not configured");
         }
-        return (await this.systemSettingService.getMessageAutomationPolicyConfig(branchId)).configuration;
+        return (await this.systemSettingService.getMessageAutomationPolicyConfig(branchId, transaction)).configuration;
     }
 
     async dispatchDueJobs(): Promise<void> {
@@ -2229,7 +2232,11 @@ export class MessageTriggerService {
                 pastExpiryHours: policy.pastExpiryHours,
             });
         }
-        const jobs = await this.jobRepository.consumeDispatchSlotsAndFindDueJobs(eligibility, now, 100);
+        const quietJobs = typeof this.jobRepository.findDueQuietQueueJobs === "function"
+            ? await this.jobRepository.findDueQuietQueueJobs(now, 100) : [];
+        const ordinaryJobs = await this.jobRepository.consumeDispatchSlotsAndFindDueJobs(eligibility, now, 100 - quietJobs.length);
+        const jobs = [...quietJobs, ...ordinaryJobs.filter(job => !quietJobs.some(quiet => quiet.id === job.id))];
+        const quietIds = new Set(quietJobs.map(job => job.id));
         // The repository applies these before LIMIT. Keep the snapshot check at
         // the consumer boundary too; claim/provider fences recheck live state.
         const byBranch = new Map(eligibility.map((branch) => [branch.branchId, branch]));
@@ -2237,7 +2244,7 @@ export class MessageTriggerService {
         for (const job of jobs) {
             const branch = job.branchId ? byBranch.get(job.branchId) : undefined;
             if (!branch || !(branch.automaticEnabled || !this.isAutomaticMessageJob(job))) continue;
-            if (branch.retryEnabled || (job.attempts === 0 && (job.nextAttemptAt === null || (
+            if (quietIds.has(job.id) || branch.retryEnabled || (job.attempts === 0 && (job.nextAttemptAt === null || (
                 // Canonical mixed slots wait operationally without attempting delivery.
                 job.status === "pending" && job.scheduledFor <= now && job.nextAttemptAt <= now
                 && typeof job.payload.catchUp?.predecessorDedupeKey === "string"
@@ -3632,6 +3639,7 @@ export class MessageTriggerService {
                 branchId,
                 provider: "aligo_sms",
                 status: "pending",
+                triggerJobId: null,
                 variables: {
                     path: ["triggerType"],
                     equals: "scheduled",
@@ -3777,6 +3785,16 @@ export class MessageTriggerService {
         let processingDeadlineAt!: Date;
         let pastExpiryHours!: number;
         const claim = async (transaction?: Prisma.TransactionClient): Promise<string | null> => {
+            if (typeof this.jobRepository.readQuietHold === "function" && job.branchId) {
+                const current = transaction
+                    ? await transaction.message_trigger_job.findFirst({ where: { id: job.id, branchId: job.branchId, status: "pending" } })
+                    : null;
+                const hold = await this.jobRepository.readQuietHold(job, transaction);
+                if (hold || job.templateKey === MANUAL_SMS_TEMPLATE_KEY) {
+                    if (!current || Math.max(current.scheduledFor.getTime(), current.nextAttemptAt?.getTime() ?? 0) > Date.now()) return null;
+                    job.quietHold = hold ?? undefined;
+                }
+            }
             if (!skipSafeguard) {
                 const decision = await this.smsAutomationSafeguard!.check(job, transaction);
                 if (!decision.allowed) {
@@ -3800,7 +3818,7 @@ export class MessageTriggerService {
                     return null;
                 }
             }
-            const timingPolicy = await this.getDispatchTimingPolicy(job.branchId);
+            const timingPolicy = await this.getDispatchTimingPolicy(job.branchId, transaction);
             pastExpiryHours = timingPolicy.pastExpiryHours;
             processingDeadlineAt = new Date(Date.now() + timingPolicy.processingReclaimMinutes * 60_000);
             if (resend) {
@@ -3812,7 +3830,10 @@ export class MessageTriggerService {
                 ? this.jobRepository.claimPendingWithRuleFence(job.id, job.branchId, transaction, processingDeadlineAt)
                 : this.jobRepository.claimPendingWithRuleFence(job.id, job.branchId, undefined, processingDeadlineAt);
         };
-        const claimed = automaticJob
+        if (job.templateKey === MANUAL_SMS_TEMPLATE_KEY && !this.messageAutomationBranchLockService) {
+            throw new ServiceUnavailableException("Manual queue branch lock is unavailable");
+        }
+        const claimed = automaticJob || job.templateKey === MANUAL_SMS_TEMPLATE_KEY
             ? await this.messageAutomationBranchLockService!.runExclusive(job.branchId!, (transaction) => claim(transaction))
             : await claim();
         if (!claimed) {
@@ -3828,6 +3849,9 @@ export class MessageTriggerService {
         // The SQL claim returns the immutable attempt token. A claim without
         // one is not safe to deliver: the pre-provider fence fails closed.
         const claimToken = claimed;
+        if (typeof this.jobRepository.readQuietHold === "function") {
+            job.quietHold = await this.jobRepository.readQuietHold(job) ?? undefined;
+        }
         job.claimToken = claimToken;
         job.processingDeadlineAt = processingDeadlineAt;
         // The resend claim keeps the setup reason on the in-flight row: a
@@ -3867,8 +3891,23 @@ export class MessageTriggerService {
                 return true;
             }
             linkClient = schedule.client;
-        } else if (!resend && isSelectedMessageJobExpired(job, pastExpiryHours, new Date())) {
-            job.cancel(pastExpiryHours === 24 ? EXPIRED_PENDING_JOB_CANCEL_REASON : `기존 발송 예정 ${pastExpiryHours}시간 경과`);
+        } else if (!resend && isSelectedMessageJobExpired(job, pastExpiryHours, new Date(Date.now()), job.quietHold?.releaseAt)) {
+            if (job.quietHold) {
+                if (!this.messageAutomationBranchLockService || !job.branchId) throw new ServiceUnavailableException("Quiet expiry lock is unavailable");
+                await this.messageAutomationBranchLockService.runExclusive(job.branchId, async transaction => {
+                    const current = await this.jobRepository.findByIdInBranch(job.branchId!, job.id, transaction);
+                    if (!current || current.status !== "processing" || current.claimToken !== claimToken
+                        || agentAutomationConcreteJobDigest(current) !== agentAutomationConcreteJobDigest(job)) throw new AgentAutomationDispatchUncertainError();
+                    const log = await transaction.message_log.findFirst({ where: { branchId: job.branchId, triggerJobId: job.id,
+                        provider: "aligo_sms", providerAcceptanceState: "prepared", providerCallStartedAt: null,
+                        variables: { path: ["quietHoursDisposition"], equals: "DEFER" } } });
+                    if (!log || !log.providerAcceptanceKey || !log.providerAcceptanceFingerprint) throw new AgentAutomationDispatchUncertainError();
+                    await this.jobRepository.transitionQuietHold(current, log.id, log.providerAcceptanceKey, log.providerAcceptanceFingerprint,
+                        { action: "CANCEL", reevaluateAt: null }, job.quietHold!.policyRevision, transaction, "expired_after_quiet");
+                });
+                job.claimToken = null; job.processingDeadlineAt = null;
+            }
+            job.cancel(job.quietHold ? "expired_after_quiet" : pastExpiryHours === 24 ? EXPIRED_PENDING_JOB_CANCEL_REASON : `기존 발송 예정 ${pastExpiryHours}시간 경과`);
             await this.persistTriggerJobStatus(job, "persist expired trigger job");
             return true;
         }
@@ -4134,6 +4173,11 @@ export class MessageTriggerService {
             );
             if (revisionFence.kind !== "allow") {
                 return revisionFence;
+            }
+
+            if (job.quietHold && job.templateKey === MessageTriggerTemplateKey.SERVICE_RECORD_LINK) {
+                const link = await this.fenceServiceRecordLinkTokenBeforeProviderSend(job, transaction);
+                if (link.kind !== "allow") return { kind: "stale", reason: "stale_link" };
             }
 
             // Verify that the claim is still processing and owned by this
@@ -4425,7 +4469,7 @@ export class MessageTriggerService {
         transaction: Prisma.TransactionClient,
     ): Promise<PreProviderSendFenceResult> {
         if (job.templateKey !== MessageTriggerTemplateKey.SERVICE_RECORD_LINK) return { kind: "allow" };
-        const stale = { kind: "stale" as const, reason: SERVICE_RECORD_LINK_REVOKED_CANCEL_REASON };
+        const stale = { kind: "stale" as const, reason: job.quietHold ? "stale_link" : SERVICE_RECORD_LINK_REVOKED_CANCEL_REASON };
         const linkToken = this.readServiceRecordLinkToken(job);
         if (!linkToken || !job.branchId || job.employeeScheduleId === null) return stale;
 
@@ -4437,6 +4481,11 @@ export class MessageTriggerService {
               AND "schedule_id" = ${job.employeeScheduleId}
               AND "active" = true
               AND "revoked_at" IS NULL
+              ${job.quietHold ? Prisma.sql`AND "expires_at" > ${new Date(Date.now())}
+                AND "employee_id" = ${job.payload.employeeId ?? -1}
+                AND EXISTS (SELECT 1 FROM employee_schedule schedule WHERE schedule.id = ${job.employeeScheduleId}
+                    AND schedule.branch_id = ${job.branchId}::uuid AND schedule.primary_employee_id = ${job.payload.employeeId ?? -1}
+                    AND schedule.replaced = false AND schedule.terminated_at IS NULL)` : Prisma.empty}
         `);
         return rows.length > 0 ? { kind: "allow" } : stale;
     }
@@ -4674,6 +4723,11 @@ export class MessageTriggerService {
         error: TriggerJobDeferredError,
         resend: boolean,
     ): Promise<void> {
+        if (job.ruleId.startsWith(MANUAL_SMS_RULE_PREFIX)) {
+            job.markFailed(error.message);
+            job.nextAttemptAt = null;
+            return;
+        }
         if (resend) {
             job.markNeedsSetup(error.message);
             return;
@@ -5253,8 +5307,21 @@ export class MessageTriggerService {
                 // the claim token so a newer owner is never overwritten.
                 job.markNeedsSetup(job.cancelReason);
             } else {
-                const policy = await this.getDispatchTimingPolicy(job.branchId);
-                job.defer("transient", "Reclaimed stale processing job", policy.triggerRetryIntervalMinutes * 60_000);
+                const hold = typeof this.jobRepository.readQuietHold === "function" ? await this.jobRepository.readQuietHold(job) : null;
+                if (job.attempts === 0 && (hold || job.templateKey === MANUAL_SMS_TEMPLATE_KEY)) {
+                    const prepared = await this.prisma.message_log.findFirst({ where: { branchId: job.branchId, triggerJobId: job.id,
+                        provider: "aligo_sms", providerAcceptanceState: "prepared", providerCallStartedAt: null,
+                        ...(job.payload.existingMessageLogId ? { id: job.payload.existingMessageLogId } : {}) } });
+                    if (!prepared || !prepared.providerAcceptanceKey || !prepared.providerAcceptanceFingerprint) {
+                        job.markFailed(SMS_PROVIDER_ACCEPTANCE_UNCERTAIN_REASON);
+                    } else {
+                        job.status = "pending";
+                        job.nextAttemptAt = job.nextAttemptAt ?? hold?.releaseAt ?? job.scheduledFor;
+                    }
+                } else {
+                    const policy = await this.getDispatchTimingPolicy(job.branchId);
+                    job.defer("transient", "Reclaimed stale processing job", policy.triggerRetryIntervalMinutes * 60_000);
+                }
             }
             if (await this.jobRepository.reclaimWithClaimFence(job, snapshot)) {
                 job.claimToken = null;

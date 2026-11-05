@@ -1,4 +1,4 @@
-import type { MessagePolicyPreviewCandidate } from "domain/message-policy-evaluator";
+import type { MessageQuietHold, MessagePolicyPreviewCandidate } from "domain/message-policy-evaluator";
 import { CarrierResultState, MessageLogEntity } from "domain/entities/message-log.entity";
 import type { Prisma } from "@prisma/client";
 
@@ -68,10 +68,12 @@ export interface SmsDuplicateHistoryMatch {
 }
 
 export interface IMessageLogRepository {
+    findQuietHeldRetries(branchId: string, transaction?: Prisma.TransactionClient): Promise<MessageLogEntity[]>;
+    transitionQuietRetry(log: MessageLogEntity, hold: MessageQuietHold, cancel: boolean, transaction: Prisma.TransactionClient, reason?: "expired_after_quiet" | "stale_link" | "duplicate_at_release", invocation?: MessageRetryInvocation, senderIdentity?: string): Promise<void>;
     /** Full physical-phone/body history, independent of UI pages and associations. */
-    findSmsDuplicateMatches(query: SmsDuplicateHistoryQuery): Promise<SmsDuplicateHistoryMatch[]>;
+    findSmsDuplicateMatches(query: SmsDuplicateHistoryQuery, transaction?: Prisma.TransactionClient): Promise<SmsDuplicateHistoryMatch[]>;
     /** Full branch-scoped, read-only policy population; no UI page limit. */
-    findPolicyPreviewCandidates(branchId: string): Promise<MessagePolicyPreviewCandidate[]>;
+    findPolicyPreviewCandidates(branchId: string, transaction?: Prisma.TransactionClient): Promise<MessagePolicyPreviewCandidate[]>;
     countFutureProviderReservations(branchId: string, now: Date, transaction?: Prisma.TransactionClient): Promise<number>;
     resolvePolicyRecipientGroups(branchId: string, candidates: MessagePolicyPreviewCandidate[], transaction?: Prisma.TransactionClient): Promise<MessagePolicyPreviewCandidate[]>;
 
@@ -106,7 +108,7 @@ export interface IMessageLogRepository {
         invocation: MessageRetryInvocation,
         transaction?: Prisma.TransactionClient,
     ): Promise<MessageRetryStartResult>;
-    findByIdInBranch(branchId: string, id: number): Promise<MessageLogEntity | null>;
+    findByIdInBranch(branchId: string, id: number, transaction?: Prisma.TransactionClient): Promise<MessageLogEntity | null>;
     /** Root and all descendants, including a child source's siblings, restricted to one branch. */
     findRetryFamilyInBranch(branchId: string, id: number): Promise<MessageLogEntity[]>;
     findRetryFamiliesInBranch(branchId: string, ids: number[]): Promise<Map<number, MessageLogEntity[]>>;

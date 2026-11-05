@@ -1,7 +1,7 @@
 import { Inject, Injectable, ServiceUnavailableException } from "@nestjs/common";
 import type { Prisma } from "@prisma/client";
 import { codeOnlyProblemBody } from "application/utils/problem-bodies";
-import { evaluateMessageQuietHours, validateMessageAutomationPolicy, type MessageQuietHoursDecision } from "domain/message-policy-evaluator";
+import { evaluateHeldMessageQuietHours, evaluateMessageQuietHours, validateMessageAutomationPolicy, type MessageQuietHoursDecision } from "domain/message-policy-evaluator";
 import { MESSAGE_LOG_REPOSITORY, type IMessageLogRepository } from "domain/repositories/message-log.repository.interface";
 import type { MessageLogEntity } from "domain/entities/message-log.entity";
 import { MessageAutomationBranchLockService } from "./message-automation-branch-lock.service";
@@ -18,13 +18,13 @@ export function isQuietHoursCanceled(log: MessageLogEntity): boolean {
     return log.variables["quietHoursDisposition"] === "CANCEL";
 }
 
-/** Task8 refuses DEFER without claiming a durable queue or release time (Task9). */
+/** Terminal refusal bookkeeping; durable DEFER uses the fenced repository transitions. */
 export function recordQuietHoursRefusal(log: MessageLogEntity, decision: Exclude<MessageQuietHoursDecision, { action: "ALLOW" }>): void {
     log.markRetrySuperseded(decision.action === "CANCEL" ? QUIET_HOURS_CANCEL_REASON : QUIET_HOURS_DEFER_REASON);
     log.variables = { ...log.variables, quietHoursDisposition: decision.action };
 }
 
-type AdmissionWork<T> = (decision: MessageQuietHoursDecision, transaction?: Prisma.TransactionClient) => Promise<T>;
+type AdmissionWork<T> = (decision: MessageQuietHoursDecision, transaction?: Prisma.TransactionClient, policyRevision?: string | null) => Promise<T>;
 
 /** Fresh policy and provider-start CAS share the policy writer's branch lock. */
 @Injectable()
@@ -35,11 +35,13 @@ export class MessageQuietHoursService {
         private readonly branchLock: MessageAutomationBranchLockService,
     ) {}
 
-    async runAdmission<T>(branchId: string, receiver: string, work: AdmissionWork<T>, transaction?: Prisma.TransactionClient): Promise<T> {
+    async runAdmission<T>(branchId: string, receiver: string, work: AdmissionWork<T>, transaction?: Prisma.TransactionClient, dueAt?: Date, heldReleaseAt?: Date): Promise<T> {
         return this.branchLock.runExclusive(branchId, async tx => {
             let decision: MessageQuietHoursDecision;
+            let policyRevision: string | null = null;
             try {
-                const { configuration } = await this.settings.getMessageAutomationPolicyConfig(branchId, tx);
+                const { configuration, version } = await this.settings.getMessageAutomationPolicyConfig(branchId, tx);
+                policyRevision = version;
                 const policy = validateMessageAutomationPolicy(configuration);
                 const phones = [...new Set(receiver.split(",").map(phone => phone.trim()).filter(Boolean))];
                 if (!phones.length) throw new MessageQuietHoursUnavailableError();
@@ -54,14 +56,16 @@ export class MessageQuietHoursService {
                 const now = new Date(Date.now());
                 decision = { action: "ALLOW", reevaluateAt: null };
                 for (const candidate of candidates) {
-                    const evaluated = evaluateMessageQuietHours(policy.quietHours, candidate.recipientGroups, now);
+                    const evaluated = heldReleaseAt
+                        ? evaluateHeldMessageQuietHours(policy.quietHours, candidate.recipientGroups, now, heldReleaseAt)
+                        : evaluateMessageQuietHours(policy.quietHours, candidate.recipientGroups, dueAt && dueAt > now ? dueAt : now);
                     if (evaluated.action !== "ALLOW") {
                         decision = evaluated;
                         break;
                     }
                 }
             } catch { throw new MessageQuietHoursUnavailableError(); }
-            return work(decision, tx);
+            return work(decision, tx, policyRevision);
         }, transaction);
     }
 }
@@ -69,9 +73,9 @@ export class MessageQuietHoursService {
 /** Old direct builders may proceed only with an explicitly schema-validated OFF policy. Nest requires the service. */
 export async function runSmsQuietHoursAdmission<T>(service: MessageQuietHoursService | undefined,
     settings: SystemSettingService | undefined, branchId: string | null, receiver: string,
-    work: AdmissionWork<T>, transaction?: Prisma.TransactionClient): Promise<T> {
+    work: AdmissionWork<T>, transaction?: Prisma.TransactionClient, heldReleaseAt?: Date): Promise<T> {
     if (!branchId) throw new MessageQuietHoursUnavailableError();
-    if (service) return service.runAdmission(branchId, receiver, work, transaction);
+    if (service) return service.runAdmission(branchId, receiver, work, transaction, undefined, heldReleaseAt);
     try {
         if (!settings) throw new MessageQuietHoursUnavailableError();
         const { configuration } = await settings.getMessageAutomationPolicyConfig(branchId, transaction);

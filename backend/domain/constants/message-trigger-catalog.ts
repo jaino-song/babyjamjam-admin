@@ -54,6 +54,11 @@ export enum MessageTriggerTemplateKey {
     SERVICE_END_NOTICE = "SERVICE_END_NOTICE",
 }
 
+/** Reserved job identity, never an automatic template or public setting. */
+export const MANUAL_SMS_TEMPLATE_KEY = "MANUAL_SMS";
+export type MessageTriggerJobTemplateKey = MessageTriggerTemplateKey | typeof MANUAL_SMS_TEMPLATE_KEY;
+export const MANUAL_SMS_RULE_PREFIX = "system:manual-sms:";
+
 /**
  * Persisted rules and jobs may still contain these keys. Keep the wire values
  * readable, but never expose or deliver them as active templates.
@@ -66,11 +71,9 @@ export const RETIRED_FIXED_EVENT_TEMPLATE_KEYS = [
 ] as const;
 
 export function isRetiredFixedEventTemplate(
-    templateKey: MessageTriggerTemplateKey,
+    templateKey: unknown,
 ): boolean {
-    return RETIRED_FIXED_EVENT_TEMPLATE_KEYS.includes(
-        templateKey as (typeof RETIRED_FIXED_EVENT_TEMPLATE_KEYS)[number],
-    );
+    return RETIRED_FIXED_EVENT_TEMPLATE_KEYS.some(key => key === templateKey);
 }
 
 /** Templates whose variables and recipient can be produced by the generic rule engine. */
@@ -88,9 +91,9 @@ export const CONFIGURABLE_SMS_TRIGGER_TEMPLATE_KEYS: readonly MessageTriggerTemp
 ];
 
 export function isConfigurableSmsTriggerTemplate(
-    templateKey: MessageTriggerTemplateKey,
+    templateKey: unknown,
 ): boolean {
-    return CONFIGURABLE_SMS_TRIGGER_TEMPLATE_KEYS.includes(templateKey);
+    return CONFIGURABLE_SMS_TRIGGER_TEMPLATE_KEYS.some(key => key === templateKey);
 }
 
 export const AGENT_SMS_RULE_ID_PREFIX = "agent-sms:";
@@ -380,4 +383,9 @@ export function isCompatibleMessageTriggerTemplate(params: {
 
 export function isCaregiverTriggerTemplate(key: unknown): key is MessageTriggerTemplateKey.CAREGIVER_SERVICE_START_NOTICE | MessageTriggerTemplateKey.CAREGIVER_SERVICE_END_NOTICE {
     return key === MessageTriggerTemplateKey.CAREGIVER_SERVICE_START_NOTICE || key === MessageTriggerTemplateKey.CAREGIVER_SERVICE_END_NOTICE;
+}
+
+/** Safe lookup keeps private job keys out of the public template registry. */
+export function findMessageTriggerTemplate(key: unknown): MessageTriggerTemplateCatalogItem | undefined {
+    return Object.values(MESSAGE_TRIGGER_TEMPLATE_CATALOG).find(item => item.key === key);
 }

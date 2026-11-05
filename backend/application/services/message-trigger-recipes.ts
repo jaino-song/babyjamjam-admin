@@ -304,13 +304,16 @@ export function isSelectedMessageJobExpired(
     job: MessageDispatchSelectedJob,
     pastExpiryHours: number,
     now: Date,
+    quietReleaseAt?: Date,
 ): boolean {
     const selection = job.dispatchSelection;
+    const anchor = Math.max(job.scheduledFor.getTime(), quietReleaseAt?.getTime() ?? job.scheduledFor.getTime());
+    if (!Number.isFinite(anchor)) return true;
     if (selection?.expired === true
-        && selection.anchor.getTime() === job.scheduledFor.getTime()
+        && selection.anchor.getTime() === anchor
         && selection.pastExpiryHours === pastExpiryHours
         && selection.selectedAt.getTime() <= now.getTime()) return true;
     // A false or stale SQL decision, and entity-only legacy adapters, always
     // use the fresh claim-time cutoff. Equality retains the existing expiry.
-    return job.scheduledFor.getTime() <= now.getTime() - pastExpiryHours * 3_600_000;
+    return anchor <= now.getTime() - pastExpiryHours * 3_600_000;
 }
