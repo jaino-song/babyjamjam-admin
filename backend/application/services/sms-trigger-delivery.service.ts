@@ -65,6 +65,8 @@ import { SmsTriggerDeliverySkipError, SmsTriggerPayloadEnricherRegistry } from "
 import { buildAutomationRetrySealVariables } from "./automation-retry-seal";
 import { classifySmsProviderOutcome, classifySmsProviderRejection, countSmsRecipients } from "./sms-provider-outcome.service";
 
+const MANUAL_RECIPIENT_CHANGED_REASON = "메시지 발송 건너뜀: Manual recipient changed";
+
 export interface SmsTemplateDeliveryConfig {
     smsLogTemplateKey: string;
     automationKey: string;
@@ -699,6 +701,7 @@ export class SmsTriggerDeliveryService {
                 | { kind: "ready"; attempt: MessageLogEntity }
                 | { kind: "held"; hold: MessageQuietHold }
                 | { kind: "duplicate" }
+                | { kind: "recipient-canceled" }
                 | { kind: "refused"; decision: { action: "CANCEL"; reevaluateAt: null }; canceledAt: Date | null; durableCancellation?: true }
             > => {
                 if (!transaction) {
@@ -775,7 +778,7 @@ export class SmsTriggerDeliveryService {
                         : this.beginProviderCallWithoutBoundary(persistedAttempt)) ?? persistedAttempt };
                 };
                 if (job.templateKey === MANUAL_SMS_TEMPLATE_KEY) {
-                    await this.validateManualInlineSource(job, transaction);
+                    if (!await this.validateManualInlineSource(job, transaction)) return { kind: "recipient-canceled" as const };
                     const duplicatesEnabled = await this.systemSettingService!.getMessageSettingsPolicyEnabled(job.branchId!, "duplicate-send-confirmation", async key => {
                         const stored = await transaction.system_setting.findUnique({ where: { key } });
                         if (stored && stored.value !== "true" && stored.value !== "false") throw new AgentAutomationDispatchUncertainError();
@@ -805,6 +808,10 @@ export class SmsTriggerDeliveryService {
                 // transaction so its actual clock is sampled immediately before CAS.
                 return runSmsQuietHoursAdmission(this.quietHours, this.systemSettingService, job.branchId, snapshot.receiver, finish, transaction, currentHold?.releaseAt);
             });
+        if (admission.kind === "recipient-canceled") {
+            this.applyManualRecipientCancellation(job);
+            return false;
+        }
         if (admission.kind === "duplicate") {
             job.cancel("duplicate_at_release"); job.nextAttemptAt = null; job.claimToken = null; job.processingDeadlineAt = null;
             persistedAttempt.markRetrySuperseded("duplicate_at_release");
@@ -934,7 +941,9 @@ export class SmsTriggerDeliveryService {
             throw new Error(`SMS trigger job ${job.id} is missing branchId`);
         }
         const payload = job.payload;
-        if (job.templateKey === MANUAL_SMS_TEMPLATE_KEY) await this.validateManualInlineSource(job, transaction);
+        if (job.templateKey === MANUAL_SMS_TEMPLATE_KEY && !await this.validateManualInlineSource(job, transaction)) {
+            throw new SmsTriggerDeliverySkipError("Manual recipient changed");
+        }
         const baseVariables: Record<string, string> = {
             name: payload.recipientName,
             employeeName: payload.recipientName,
@@ -1000,13 +1009,23 @@ export class SmsTriggerDeliveryService {
         });
     }
 
-    private async validateManualInlineSource(job: MessageTriggerJobEntity, transaction?: Prisma.TransactionClient): Promise<void> {
+    private applyManualRecipientCancellation(job: MessageTriggerJobEntity): void {
+        job.cancel(MANUAL_RECIPIENT_CHANGED_REASON);
+        job.nextAttemptAt = null;
+        job.claimToken = null;
+        job.processingDeadlineAt = null;
+    }
+
+    private async validateManualInlineSource(job: MessageTriggerJobEntity, transaction?: Prisma.TransactionClient): Promise<boolean> {
         if (!transaction) {
             if (!this.quietHours) throw new AgentAutomationDispatchUncertainError();
-            return this.quietHours.runAdmission(job.branchId!, job.recipientPhone!, async (_decision, tx) => {
+            const valid = await this.quietHours.runAdmission(job.branchId!, job.recipientPhone!, async (_decision, tx) => {
                 if (!tx) throw new AgentAutomationDispatchUncertainError();
                 return this.validateManualInlineSource(job, tx);
             });
+            // 실패 결과는 트랜잭션 밖에서 전달해 terminal job/log 쓰기를 롤백하지 않는다.
+            if (!valid) this.applyManualRecipientCancellation(job);
+            return valid;
         }
         const holder = await transaction.message_trigger_rule.findFirst({ where: { id: job.ruleId, branchId: job.branchId,
             templateKey: MANUAL_SMS_TEMPLATE_KEY, isActive: false, groupId: null, deletedAt: null, retryOnFailure: false, jobsStale: false } });
@@ -1040,7 +1059,36 @@ export class SmsTriggerDeliveryService {
         const identity = job.payload.employeeId != null
             ? await transaction.employee.findFirst({ where: { id: job.payload.employeeId, branchId: job.branchId!, deletedAt: null }, select: { phone: true } })
             : job.clientId != null ? await transaction.client.findFirst({ where: { id: job.clientId, branchId: job.branchId!, deletedAt: null }, select: { phone: true } }) : null;
-        if (!identity || normalizePhone(identity.phone) !== job.recipientPhone) throw new SmsTriggerDeliverySkipError("Manual recipient changed");
+        if (identity && normalizePhone(identity.phone) === job.recipientPhone) return true;
+        const current = await transaction.message_trigger_job.findFirst({ where: { id: job.id, branchId: job.branchId } });
+        if (!current || !this.matchesQuietCancellationJob(job, current) || current.status !== job.status
+            || !["processing", "dispatching"].includes(current.status) || !job.claimToken || !job.processingDeadlineAt
+            || current.claimToken !== job.claimToken || current.processingDeadlineAt?.getTime() !== job.processingDeadlineAt.getTime()
+            || job.processingDeadlineAt.getTime() <= Date.now() || current.attempts !== 0
+            || log.status !== "pending" || log.attempts !== 0 || log.providerAcceptedAt !== null || log.aligoMid !== null) {
+            throw new AgentAutomationDispatchUncertainError();
+        }
+        const canceledJob = await transaction.message_trigger_job.updateMany({
+            where: { id: job.id, branchId: job.branchId, status: current.status, claimToken: job.claimToken,
+                processingDeadlineAt: job.processingDeadlineAt, updatedAt: current.updatedAt, attempts: 0,
+                ruleId: current.ruleId, templateKey: current.templateKey, dedupeKey: current.dedupeKey,
+                clientId: current.clientId, employeeScheduleId: current.employeeScheduleId,
+                recipientType: current.recipientType, recipientPhone: current.recipientPhone,
+                scheduledFor: current.scheduledFor, payload: { equals: current.payload as Prisma.InputJsonValue } },
+            data: { status: "canceled", cancelReason: MANUAL_RECIPIENT_CHANGED_REASON, canceledAt: new Date(Date.now()),
+                nextAttemptAt: null, claimToken: null, processingDeadlineAt: null },
+        });
+        if (canceledJob.count !== 1) throw new AgentAutomationDispatchUncertainError();
+        const canceledLog = await transaction.message_log.updateMany({
+            where: { id: log.id, branchId: job.branchId, triggerJobId: job.id, status: "pending", attempts: 0,
+                providerAcceptanceKey: log.providerAcceptanceKey, providerAcceptanceFingerprint: log.providerAcceptanceFingerprint,
+                providerAcceptanceState: "prepared", providerCallStartedAt: null, providerAcceptedAt: null, aligoMid: null,
+                updatedAt: log.updatedAt, variables: { equals: log.variables as Prisma.InputJsonValue } },
+            data: { status: "failed", nextRetryAt: null, errorMessage: MANUAL_RECIPIENT_CHANGED_REASON,
+                variables: { ...v, quietHoursDisposition: "CANCEL", manualQueueStatus: "canceled", manualQueueReason: MANUAL_RECIPIENT_CHANGED_REASON } },
+        });
+        if (canceledLog.count !== 1) throw new AgentAutomationDispatchUncertainError();
+        return false;
     }
 
     private async resolveSystemTemplate(

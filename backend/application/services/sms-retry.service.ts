@@ -968,6 +968,11 @@ export class SmsRetryService {
         const hasTime = rawTime !== undefined && rawTime !== null;
 
         if (!hasDate && !hasTime) {
+            // 내부 큐 예약은 job의 due 시각에 이미 실행되므로 제공자 예약 필드가 없다.
+            if (log.templateKey === "manual_sms" && log.triggerJobId
+                && log.variables["origin"] === "ADMIN_DIRECT" && log.variables["manualQueueMode"] === "internal") {
+                return { scheduledAtMs: null };
+            }
             return isExplicitlyScheduled ? null : { scheduledAtMs: null };
         }
         if (!hasDate || !hasTime || typeof rawDate !== "string" || typeof rawTime !== "string") {

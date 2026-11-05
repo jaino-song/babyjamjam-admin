@@ -241,6 +241,121 @@ describe("private manual queue through actual controls", () => {
         expect(f.tables["message_log"]).toHaveLength(0); expect(f.tables["message_trigger_job"]).toHaveLength(0);
         expect(f.aligo.sendSms).not.toHaveBeenCalled();
     });
+    it.each(["07:00", "08:00"])("explicitly retries an internally scheduled %s manual rejection without provider reservation fields", async scheduledTime => {
+        const f = memoryQueue();
+        const reservation = { triggerType: "scheduled" as const, scheduledDate: "2026-11-04", scheduledTime };
+        await f.send(reservation);
+        const log = f.tables["message_log"]![0]!;
+        const provenance = structuredClone(log["variables"] as Row);
+        expect(log["variables"]).toMatchObject({ triggerType: "scheduled", manualQueueMode: "internal" });
+        expect(log["variables"]).not.toHaveProperty("scheduledDate");
+        const reject = (request: Row) => ({ request, response: { result_code: -99, message: "temporary rejection", msg_id: 0, success_cnt: 0, error_cnt: 1 } });
+        f.aligo.sendSms.mockImplementationOnce(async request => reject(request));
+        jest.mocked(Date.now).mockReturnValue(release.getTime());
+        await f.core.dispatchPendingJobNow(log["triggerJobId"] as string, { expectedBranchId: f.branchId });
+        expect(f.tables["message_log"]![0]).toMatchObject({ status: "failed", providerAcceptanceState: "rejected", nextRetryAt: null });
+        const retried = await f.retry.retryById(f.branchId, log["id"] as number);
+        expect(retried).toMatchObject({ status: "sent", providerAcceptanceState: "accepted", variables: { retryOfLogId: "1" } });
+        if (scheduledTime === "07:00") expect(retried.variables).toMatchObject({ quietHoursDisposition: "DEFER",
+            quietHoursReleaseAt: provenance["quietHoursReleaseAt"], quietHoursOriginalScheduledFor: provenance["quietHoursOriginalScheduledFor"] });
+        expect(f.tables["message_log"]).toHaveLength(2);
+        expect(f.aligo.sendSms).toHaveBeenCalledTimes(2);
+        for (const [request] of f.aligo.sendSms.mock.calls) {
+            expect(request).not.toHaveProperty("scheduledDate");
+            expect(request).not.toHaveProperty("scheduledTime");
+        }
+    });
+    it.each(["client changed", "client deleted", "employee changed", "employee deleted"])("atomically terminates the acceptance and same-key replay when %s", async mode => {
+        const f = memoryQueue();
+        const employee = mode.startsWith("employee");
+        if (employee) f.tables["employee"]!.push({ id: 8, branchId: f.branchId, name: "synthetic employee", phone: "01000000033", deletedAt: null });
+        const request = employee ? { employeeId: 8, receiver: "01000000033" } : {};
+        await f.send(request);
+        const row = f.tables[employee ? "employee" : "client"]![0]!;
+        if (mode.endsWith("deleted")) row["deletedAt"] = release;
+        else row["phone"] = "01000000044";
+        jest.mocked(Date.now).mockReturnValue(release.getTime());
+        const id = f.tables["message_trigger_job"]![0]!["id"] as string;
+        await f.core.dispatchPendingJobNow(id, { expectedBranchId: f.branchId });
+        const reason = "메시지 발송 건너뜀: Manual recipient changed";
+        expect(f.tables["message_trigger_job"]![0]).toMatchObject({ status: "canceled", cancelReason: reason, nextAttemptAt: null, claimToken: null, processingDeadlineAt: null });
+        expect(f.tables["message_log"]![0]).toMatchObject({ status: "failed", errorMessage: reason, nextRetryAt: null, attempts: 0,
+            providerAcceptanceState: "prepared", providerCallStartedAt: null,
+            variables: { quietHoursDisposition: "CANCEL", manualQueueStatus: "canceled", manualQueueReason: reason } });
+        f.configuration.quietHours.enabled = false; f.configure(f.configuration);
+        // Replay still passes the controller's existing current-recipient validation.
+        Object.assign(row, { phone: employee ? "01000000033" : "01000000011", deletedAt: null });
+        expect(await f.send(request)).toMatchObject({ outcome: "canceled", items: [{ status: "canceled", reason }] });
+        await f.core.dispatchPendingJobNow(id, { expectedBranchId: f.branchId });
+        expect(f.tables["message_log"]).toHaveLength(1);
+        expect(f.aligo.sendSms).not.toHaveBeenCalled();
+    });
+    it.each(["legacy", "incomplete internal schedule"])("retains historical schedule refusal for %s", async mode => {
+        const f = memoryQueue();
+        await f.send({ triggerType: "scheduled", scheduledDate: "2026-11-04", scheduledTime: "08:00" });
+        f.aligo.sendSms.mockImplementationOnce(async request => ({ request,
+            response: { result_code: -99, message: "temporary rejection", msg_id: 0, success_cnt: 0, error_cnt: 1 } }));
+        jest.mocked(Date.now).mockReturnValue(release.getTime());
+        const log = f.tables["message_log"]![0]!;
+        await f.core.dispatchPendingJobNow(log["triggerJobId"] as string, { expectedBranchId: f.branchId });
+        const variables = f.tables["message_log"]![0]!["variables"] as Row;
+        if (mode === "legacy") delete variables["manualQueueMode"];
+        else variables["scheduledDate"] = "20261104";
+        const refused = await f.retry.retryById(f.branchId, log["id"] as number);
+        expect(refused).toMatchObject({ status: "failed", nextRetryAt: null,
+            errorMessage: "예약 발송 일시 형식이 올바르지 않아 재시도하지 않았습니다. 예약일과 예약시간을 확인해 주세요." });
+        expect(f.tables["message_log"]).toHaveLength(1);
+        expect(f.aligo.sendSms).toHaveBeenCalledTimes(1);
+    });
+    it("persists recipient cancellation when identity changes after preparation", async () => {
+        const f = memoryQueue(); await f.send();
+        const sendPrepared = f.sms.sendPreparedJob.bind(f.sms);
+        jest.spyOn(f.sms, "sendPreparedJob").mockImplementation(async (claimed, preparation) => {
+            f.tables["client"]![0]!["phone"] = "01000000044";
+            return sendPrepared(claimed, preparation);
+        });
+        jest.mocked(Date.now).mockReturnValue(release.getTime());
+        await f.core.dispatchPendingJobNow(f.tables["message_trigger_job"]![0]!["id"] as string, { expectedBranchId: f.branchId });
+        const reason = "메시지 발송 건너뜀: Manual recipient changed";
+        expect(f.tables["message_trigger_job"]![0]).toMatchObject({ status: "canceled", cancelReason: reason, claimToken: null, processingDeadlineAt: null });
+        expect(f.tables["message_log"]![0]).toMatchObject({ status: "failed", providerCallStartedAt: null,
+            variables: { manualQueueStatus: "canceled", manualQueueReason: reason } });
+        f.tables["client"]![0]!["phone"] = "01000000011";
+        expect(await f.send()).toMatchObject({ outcome: "canceled", items: [{ reason }] });
+        expect(f.aligo.sendSms).not.toHaveBeenCalled();
+    });
+    it.each(["log CAS", "commit"])("rolls recipient cancellation back on %s failure without mutating the claimed entity", async mode => {
+        const f = memoryQueue(); await f.send();
+        jest.mocked(Date.now).mockReturnValue(release.getTime());
+        const id = f.tables["message_trigger_job"]![0]!["id"] as string;
+        await f.lock.runExclusive(f.branchId, tx => f.jobs.claimPendingWithRuleFence(id, f.branchId, tx, new Date("2026-11-03T23:20:00.000Z")));
+        const claimed = (await f.jobs.findByIdInBranch(f.branchId, id))!;
+        f.tables["client"]![0]!["phone"] = "01000000044";
+        const before = structuredClone(f.tables);
+        const beforeEntity = structuredClone(claimed);
+        if (mode === "log CAS") f.logCasFailure(); else f.commitFailure();
+        await expect(f.sms.resolveDeliverySnapshot(claimed)).rejects.toThrow();
+        expect(f.tables).toEqual(before);
+        expect(structuredClone(claimed)).toEqual(beforeEntity);
+        expect(f.aligo.sendSms).not.toHaveBeenCalled();
+    });
+    it.each(["claim", "deadline", "provider started", "provider accepted"])("preserves the stored recipient cancellation state after %s changes", async mode => {
+        const f = memoryQueue(); await f.send();
+        jest.mocked(Date.now).mockReturnValue(release.getTime());
+        const id = f.tables["message_trigger_job"]![0]!["id"] as string;
+        await f.lock.runExclusive(f.branchId, tx => f.jobs.claimPendingWithRuleFence(id, f.branchId, tx, new Date("2026-11-03T23:20:00.000Z")));
+        const claimed = (await f.jobs.findByIdInBranch(f.branchId, id))!;
+        f.tables["client"]![0]!["phone"] = "01000000044";
+        const log = f.tables["message_log"]![0]!;
+        if (mode === "claim") f.tables["message_trigger_job"]![0]!["claimToken"] = "another-worker";
+        if (mode === "deadline") f.tables["message_trigger_job"]![0]!["processingDeadlineAt"] = release;
+        if (mode === "provider started") Object.assign(log, { providerAcceptanceState: "started", providerCallStartedAt: release });
+        if (mode === "provider accepted") Object.assign(log, { providerAcceptanceState: "accepted", providerAcceptedAt: release, aligoMid: "91" });
+        const before = structuredClone(f.tables);
+        await expect(f.sms.resolveDeliverySnapshot(claimed)).rejects.toThrow();
+        expect(f.tables).toEqual(before);
+        expect(f.aligo.sendSms).not.toHaveBeenCalled();
+    });
     it.each([false, true])("preserves the employee manual hold through orphan cleanup and rechecks changed identity=%s at release", async changed => {
         const f = memoryQueue();
         f.tables["employee"]!.push({ id: 8, branchId: f.branchId, name: "synthetic employee", phone: "01000000033", deletedAt: null });
