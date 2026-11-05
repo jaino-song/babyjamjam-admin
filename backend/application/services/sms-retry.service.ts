@@ -188,9 +188,15 @@ export class SmsRetryService {
         invocation: MessageRetryInvocation = "manual",
     ): Promise<MessageLogEntity | null> {
         if (isQuietHoursCanceled(sourceLog)) return sourceLog;
-        if (sourceLog.variables["quietHoursDisposition"] === "DEFER"
-            && ["manual", "automatic"].includes(sourceLog.variables["retryInvocation"] ?? "")) {
-            return this.resumeQuietRetry(sourceLog, invocation);
+        if (sourceLog.variables["quietHoursDisposition"] === "DEFER") {
+            if (sourceLog.status === "pending" && sourceLog.providerAcceptanceState === "prepared"
+                && sourceLog.providerCallStartedAt === null && sourceLog.providerAcceptedAt === null && sourceLog.aligoMid === null
+                && ["manual", "automatic"].includes(sourceLog.variables["retryInvocation"] ?? "")) {
+                return this.resumeQuietRetry(sourceLog, invocation);
+            }
+            // 실제 거절 이후에는 안정된 quiet 이력을 보존한 채 기존 재시도 경로를 따른다.
+            // 그 외 pending/시작됨/불확실/수락됨 상태를 새 시도로 되살리지 않는다.
+            if (sourceLog.status !== "failed" || sourceLog.providerAcceptanceState !== "rejected") return sourceLog;
         }
         if (invocation === "automatic" && sourceLog.variables["origin"] === "ADMIN_DIRECT"
             && sourceLog.variables["manualQueueMode"] === "internal") return sourceLog;
