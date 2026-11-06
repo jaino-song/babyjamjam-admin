@@ -261,6 +261,7 @@ export function MessagesSettingsPage(): ReactElement {
       queryKey: MESSAGE_AUTOMATION_POLICIES_QUERY_KEY,
     }),
   });
+  const displayConfiguration = configQuery.isError || !persisted?.permissions.canRead ? undefined : configuration;
   const items = useMemo(
     () =>
       buildSettingsListItems({
@@ -278,7 +279,7 @@ export function MessagesSettingsPage(): ReactElement {
         clientAutoRegistration:
           clientRegistration.policy?.clientAutoRegistration ?? false,
         policyActivations: policiesQuery.data?.policyActivations,
-        quietHoursEnabled: configQuery.isError ? undefined : configuration?.quietHours.enabled,
+        configuration: displayConfiguration,
         canWriteConfiguration: canWriteConfig,
       }),
     [
@@ -288,8 +289,7 @@ export function MessagesSettingsPage(): ReactElement {
       policiesQuery.data?.policyActivations,
       triggerRulesQuery.data,
       canWriteConfig,
-      configQuery.isError,
-      configuration?.quietHours,
+      displayConfiguration,
     ],
   );
   const selectedItem = useMemo(
@@ -387,7 +387,7 @@ export function MessagesSettingsPage(): ReactElement {
       if (!configuration || !persisted?.permissions.canRead || configQuery.isError || !branchId) return <p role="alert">메시지 설정을 불러올 수 없습니다. 다시 불러온 뒤 편집해 주세요.</p>;
       return <div data-component={`${detailBase}_configuration`} className="flex flex-col gap-3">
         <DetailContent data-component={`${detailBase}_detail-content`} item={selectedItem} />
-        <PastTriggerPolicyDetail key={`${branchId}-${selectedItem.id}`} data-component={`${detailBase}_configuration_editor`} itemId={selectedItem.id} configuration={configuration} branchId={branchId} version={persisted.version} canWrite={canWriteConfig} dirty={dirty} isPending={saveConfig.isPending} error={configError} onChange={changeConfig} onSave={requestSaveConfig} onCancel={cancelConfig} />
+        <PastTriggerPolicyDetail key={`${branchId}-${selectedItem.id}`} data-component={`${detailBase}_configuration_editor`} itemId={selectedItem.id} configuration={configuration} branchId={branchId} version={draftState?.branchId === branchId ? draftState.expectedVersion : persisted.version} canWrite={canWriteConfig} dirty={dirty} isPending={saveConfig.isPending} error={configError} onChange={changeConfig} onSave={requestSaveConfig} onCancel={cancelConfig} />
       </div>;
     }
 
