@@ -9,9 +9,8 @@ import { createProblemDetails } from "@babyjamjam/shared";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { StrictMode, Suspense, startTransition, useLayoutEffect, useState, type ComponentProps, type ReactNode } from "react";
 
-import type { MessageLogRecord } from "@/features/message-triggers/types";
+import type { MessageDeliverySmsDuplicateCheckResponse, SendMessageDeliverySmsQueueResponse } from "@babyjamjam/shared/types/message";
 import { messageTriggerKeys } from "@/features/message-triggers/hooks/keys";
-import { useMessageHistory } from "@/features/message-triggers/hooks/use-message-triggers";
 import { serviceRecordsApi } from "@/features/service-records/api/service-records.api";
 import { useToast } from "@/hooks/use-toast";
 import type { Client } from "@/lib/client/types";
@@ -115,18 +114,11 @@ jest.mock(
   }),
 );
 
-// Mock the message-delivery history hook (aliased in TemplateSendForm as useMessageHistory).
-jest.mock(
-  "@/features/message-triggers/hooks/use-message-triggers",
-  () => ({
-    useMessageHistory: jest.fn(),
-  }),
-);
-
 // Mock the API module — only sendSms is exercised here.
 jest.mock("@/services/api", () => ({
   messageDeliveryApi: {
     sendSms: jest.fn(),
+    checkSmsDuplicate: jest.fn(),
   },
   eformsignApi: {
     sendReceiptLink: jest.fn(),
@@ -146,7 +138,7 @@ jest.mock("@/features/service-records/api/service-records.api", () => ({
 // ---------------------------------------------------------------------------
 // Typed references to mocks
 // ---------------------------------------------------------------------------
-const mockedUseMessageHistory = jest.mocked(useMessageHistory);
+const mockedCheckDuplicate = jest.mocked(messageDeliveryApi.checkSmsDuplicate);
 const mockedUseQuery = jest.mocked(useQuery);
 const mockedUseQueryClient = jest.mocked(useQueryClient);
 const mockedUseToast = jest.mocked(useToast);
@@ -159,49 +151,12 @@ const mockedSendReceiptLink = jest.mocked(eformsignApi.sendReceiptLink);
 // Helpers
 // ---------------------------------------------------------------------------
 
-function buildHistoryRecord(
-  overrides: Partial<MessageLogRecord> = {},
-): MessageLogRecord {
-  return {
-    id: 1,
-    provider: "aligo_sms",
-    templateKey: "SERVICE_INFO",
-    triggerJobId: null,
-    receiver: "010-1111-1111",
-    clientId: null,
-    recipientPhone: "010-1111-1111",
-    messageBody: "안내 메시지입니다.",
-    variables: {},
-    status: "sent",
-    aligoMid: "mid-1",
-    errorMessage: null,
-    attempts: 1,
-    lastAttemptAt: new Date().toISOString(),
-    nextRetryAt: null,
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
-    ruleId: null,
-    ruleName: null,
-    eventType: null,
-    offsetType: null,
-    offsetDays: 0,
-    scheduledFor: null,
-    recipientType: null,
-    recipientName: null,
-    clientName: null,
-    employeeName: null,
-    ...overrides,
-  };
+const CHECKED_AT = "2026-11-06T12:00:00.000Z";
+function duplicatePreflight(matchIds: number[] = []): MessageDeliverySmsDuplicateCheckResponse {
+  return { checkedAt: CHECKED_AT, matchIds, latestSentAt: matchIds.length ? "2026-11-06T11:30:00.000Z" : null, payloadHash: "a".repeat(64) };
 }
-
-/** Default mock: empty history, no-op refetch. */
-function mockEmptyHistory() {
-  const refetch = jest.fn().mockResolvedValue({ data: [] });
-  mockedUseMessageHistory.mockReturnValue({
-    data: [],
-    refetch,
-  } as unknown as ReturnType<typeof useMessageHistory>);
-  return refetch;
+function mockEmptyPreflight() {
+  mockedCheckDuplicate.mockResolvedValue(duplicatePreflight());
 }
 
 /** Build a success response for sendSms. */
@@ -331,6 +286,7 @@ async function queueRecipient(phone: string, name = "") {
 
 beforeEach(() => {
   jest.clearAllMocks();
+  mockedCheckDuplicate.mockReset();
   document.cookie = "selected_branch_id=branch-a; path=/";
   // The draft scope is module-level state: the first mount of the form for a branch resets the
   // shared form store, wiping what a test seeded before rendering. Settle the scope here, before
@@ -365,7 +321,7 @@ beforeEach(() => {
     voucherDuration: "",
     area: "",
   });
-  mockEmptyHistory();
+  mockEmptyPreflight();
 });
 
 afterEach(() => {
@@ -904,16 +860,8 @@ describe("A: partial-failure send keeps only failed recipients in queue", () => 
   });
 
   it("fences an async duplicate lookup from sending after a branch switch", async () => {
-    let resolveHistory!: (value: { data: MessageLogRecord[] }) => void;
-    const refetch = jest.fn().mockImplementation(
-      () => new Promise<{ data: MessageLogRecord[] }>((resolve) => {
-        resolveHistory = resolve;
-      }),
-    );
-    mockedUseMessageHistory.mockReturnValue({
-      data: [],
-      refetch,
-    } as unknown as ReturnType<typeof useMessageHistory>);
+    let resolveHistory!: (value: MessageDeliverySmsDuplicateCheckResponse) => void;
+    mockedCheckDuplicate.mockImplementation(() => new Promise((resolve) => { resolveHistory = resolve; }));
 
     renderInfoForm();
     await queueRecipient("01011111111");
@@ -927,7 +875,7 @@ describe("A: partial-failure send keeps only failed recipients in queue", () => 
     await waitFor(() => expect(screen.getByRole("button", { name: /확인 중/ })).toBeDisabled());
 
     document.cookie = "selected_branch_id=branch-b; path=/";
-    resolveHistory({ data: [] });
+    resolveHistory(duplicatePreflight());
 
     await waitFor(() => {
       expect(mockedSendSms).not.toHaveBeenCalled();
@@ -944,55 +892,20 @@ describe("A: partial-failure send keeps only failed recipients in queue", () => 
 // After the fix: every queued recipient with a matching recent "sent" history
 // record appears in the confirm dialog list.
 // ---------------------------------------------------------------------------
-describe("C: duplicate-send confirm dialog lists all duplicates (not just the first)", () => {
-  it("sends immediately without a history lookup when duplicate confirmation is disabled", async () => {
-    const refetch = jest.fn().mockResolvedValue({ data: [buildHistoryRecord()] });
-    mockedUseMessageHistory.mockReturnValue({ data: [buildHistoryRecord()], refetch } as never);
-    mockedUseQuery.mockReturnValue({
-      data: { policyActivations: { "duplicate-send-confirmation": false } },
-    } as unknown as ReturnType<typeof useQuery>);
+describe("C: server duplicate confirmation lists every matched recipient", () => {
+  it("uses server preflight even when an obsolete local activation cache says OFF", async () => {
+    mockedUseQuery.mockReturnValue({ data: { policyActivations: { "duplicate-send-confirmation": false } } } as never);
     mockedSendSms.mockResolvedValue(buildSendSuccess());
     renderInfoForm();
     await queueRecipient("01011111111");
-
     fireEvent.click(screen.getByRole("button", { name: /즉시 발송/ }));
-
     await waitFor(() => expect(mockedSendSms).toHaveBeenCalledTimes(1));
-    expect(refetch).not.toHaveBeenCalled();
-    expect(
-      document.querySelector('[data-component="desktop_messages_sections_duplicate-send-confirm-dialog"]'),
-    ).not.toBeInTheDocument();
+    expect(mockedCheckDuplicate).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole("button", { name: "전송" })).not.toBeInTheDocument();
   });
 
   it("shows one confirm-recent entry per duplicate recipient and pluralizes the description", async () => {
-    const message = "안내 메시지입니다.";
-
-    // History records that match BOTH queued recipients.
-    const historyForRecipient1 = buildHistoryRecord({
-      id: 101,
-      receiver: "010-1111-1111",
-      recipientPhone: "010-1111-1111",
-      messageBody: message,
-      status: "sent",
-      lastAttemptAt: new Date(Date.now() - 60 * 60 * 1000).toISOString(), // 1h ago
-    });
-    const historyForRecipient2 = buildHistoryRecord({
-      id: 102,
-      receiver: "010-2222-2222",
-      recipientPhone: "010-2222-2222",
-      messageBody: message,
-      status: "sent",
-      lastAttemptAt: new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString(), // 2h ago
-    });
-
-    // refetch returns both matching history records.
-    const refetch = jest
-      .fn()
-      .mockResolvedValue({ data: [historyForRecipient1, historyForRecipient2] });
-    mockedUseMessageHistory.mockReturnValue({
-      data: [historyForRecipient1, historyForRecipient2],
-      refetch,
-    } as unknown as ReturnType<typeof useMessageHistory>);
+    mockedCheckDuplicate.mockImplementation(async (payload) => duplicatePreflight(payload.receiver === "010-1111-1111" ? [101] : [102]));
 
     renderInfoForm();
 
@@ -1290,12 +1203,7 @@ describe("D: editing the message body updates the active recipient snapshot", ()
 
   it("uses the edited body for duplicate confirmation and the confirmed send", async () => {
     const latestMessage = "중복 확인에 사용할 최신 메시지";
-    const historyRecord = buildHistoryRecord({
-      messageBody: latestMessage,
-      lastAttemptAt: new Date(Date.now() - 60 * 60 * 1000).toISOString(),
-    });
-    const refetch = jest.fn().mockResolvedValue({ data: [historyRecord] });
-    mockedUseMessageHistory.mockReturnValue({ data: [historyRecord], refetch } as never);
+    mockedCheckDuplicate.mockResolvedValue(duplicatePreflight([77]));
     const view = render(
       <TemplateSendForm
         templateId="builtin:info"
@@ -1339,7 +1247,7 @@ describe("Phase2a SMS outcome state machine", () => {
     for (const testCase of cases) {
       cleanup();
       jest.clearAllMocks();
-      mockEmptyHistory();
+      mockEmptyPreflight();
       useFormStore.setState({ clientId: null, name: "", phone: "" });
       renderInfoForm();
       await queueRecipient("01011111111");
@@ -1446,9 +1354,7 @@ describe("Phase2a SMS outcome state machine", () => {
     ).toHaveTextContent("작업 상태를 확인해 주세요"));
   });
   it("guards same-tick submit and duplicate confirmation re-entry", async () => {
-    const record = buildHistoryRecord({ messageBody: "안내 메시지입니다." });
-    const refetch = jest.fn().mockResolvedValue({ data: [record] });
-    mockedUseMessageHistory.mockReturnValue({ data: [record], refetch } as never);
+    mockedCheckDuplicate.mockResolvedValue(duplicatePreflight([81]));
     renderInfoForm();
     await queueRecipient("01011111111");
     mockedSendSms.mockResolvedValue(buildSendSuccess());
@@ -1457,7 +1363,7 @@ describe("Phase2a SMS outcome state machine", () => {
     fireEvent.click(submitButton);
     fireEvent.click(submitButton);
     await waitFor(() => expect(screen.getByRole("button", { name: "전송" })).toBeInTheDocument());
-    expect(refetch).toHaveBeenCalledTimes(1);
+    expect(mockedCheckDuplicate).toHaveBeenCalledTimes(1);
     expect(mockedSendSms).not.toHaveBeenCalled();
     const approve = screen.getByRole("button", { name: "전송" });
     fireEvent.click(approve);
@@ -1465,18 +1371,17 @@ describe("Phase2a SMS outcome state machine", () => {
     await waitFor(() => expect(mockedSendSms).toHaveBeenCalledTimes(1));
   });
   it("does not send after editing while duplicate lookup is pending", async () => {
-    let resolveRefetch!: (value: { data: MessageLogRecord[] }) => void;
-    const refetch = jest.fn().mockImplementation(() => new Promise((resolve) => { resolveRefetch = resolve; }));
-    mockedUseMessageHistory.mockReturnValue({ data: [], refetch } as never);
+    let resolveRefetch!: (value: MessageDeliverySmsDuplicateCheckResponse) => void;
+    mockedCheckDuplicate.mockImplementation(() => new Promise((resolve) => { resolveRefetch = resolve; }));
     renderInfoForm();
     await queueRecipient("01011111111");
     const submitButton = screen.getByRole("button", { name: /즉시 발송/ });
     fireEvent.click(submitButton);
-    await waitFor(() => expect(refetch).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(mockedCheckDuplicate).toHaveBeenCalledTimes(1));
     fireEvent.change(screen.getByTestId("autocomplete-휴대 전화번호"), {
       target: { value: "01022222222" },
     });
-    await act(async () => resolveRefetch({ data: [] }));
+    await act(async () => resolveRefetch(duplicatePreflight()));
     await waitFor(() => expect(submitButton).toBeEnabled());
     expect(mockedSendSms).not.toHaveBeenCalled();
   });
@@ -1514,20 +1419,16 @@ describe("Phase2a SMS outcome state machine", () => {
   });
 
   it("invalidates a pending duplicate lookup across an SMS mode roundtrip", async () => {
-    const record = buildHistoryRecord();
-    let resolveLookup!: (value: { data: MessageLogRecord[] }) => void;
-    const refetch = jest.fn().mockImplementation(
-      () => new Promise((resolve) => { resolveLookup = resolve; }),
-    );
-    mockedUseMessageHistory.mockReturnValue({ data: [], refetch } as never);
+    let resolveLookup!: (value: MessageDeliverySmsDuplicateCheckResponse) => void;
+    mockedCheckDuplicate.mockImplementation(() => new Promise((resolve) => { resolveLookup = resolve; }));
     const view = render(modeForm("sms"));
     await queueRecipient("01011111111");
     fireEvent.click(screen.getByRole("button", { name: /즉시 발송/ }));
-    await waitFor(() => expect(refetch).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(mockedCheckDuplicate).toHaveBeenCalledTimes(1));
 
     view.rerender(modeForm("service-feedback-link"));
     view.rerender(modeForm("sms"));
-    await act(async () => resolveLookup({ data: [record] }));
+    await act(async () => resolveLookup(duplicatePreflight([83])));
 
     await waitFor(() => expect(screen.getByRole("button", { name: /즉시 발송/ })).toBeEnabled());
     expect(screen.queryByRole("button", { name: "전송" })).not.toBeInTheDocument();
@@ -1535,9 +1436,7 @@ describe("Phase2a SMS outcome state machine", () => {
   });
 
   it("discards a pending duplicate confirmation when leaving SMS", async () => {
-    const record = buildHistoryRecord();
-    const refetch = jest.fn().mockResolvedValue({ data: [record] });
-    mockedUseMessageHistory.mockReturnValue({ data: [record], refetch } as never);
+    mockedCheckDuplicate.mockResolvedValue(duplicatePreflight([84]));
     const view = render(modeForm("sms"));
     await queueRecipient("01011111111");
     fireEvent.click(screen.getByRole("button", { name: /즉시 발송/ }));
@@ -1655,4 +1554,156 @@ describe("Phase2a SMS outcome state machine", () => {
     expect(mockedSendSms).toHaveBeenCalledTimes(1);
   });
 
+});
+
+
+describe("D4 server preflight, draft keys, and queue outcomes", () => {
+  it("carries the exact server acknowledgement only after explicit approval", async () => {
+    const preflight = duplicatePreflight([501, 502]);
+    mockedCheckDuplicate.mockResolvedValue(preflight);
+    mockedSendSms.mockResolvedValue(buildSendSuccess());
+    renderInfoForm();
+    await queueRecipient("01011111111");
+    fireEvent.click(screen.getByRole("button", { name: /즉시 발송/ }));
+    await screen.findByRole("button", { name: "전송" });
+    expect(mockedSendSms).not.toHaveBeenCalled();
+    const [preflightPayload, branch] = mockedCheckDuplicate.mock.calls[0];
+    expect(branch).toBe("branch-a");
+    expect(preflightPayload).toEqual({ receiver: "010-1111-1111", message: "안내 메시지입니다.", msgType: "AUTO", triggerType: "immediate", idempotencyKey: expect.any(String) });
+    expect(preflightPayload).not.toHaveProperty("duplicateDecision");
+    fireEvent.click(screen.getByRole("button", { name: "전송" }));
+    await waitFor(() => expect(mockedSendSms).toHaveBeenCalledTimes(1));
+    expect(mockedSendSms.mock.calls[0]).toEqual([{ ...preflightPayload, duplicateDecision: { confirmed: true, checkedAt: CHECKED_AT, matchIds: [501, 502], payloadHash: "a".repeat(64) } }, "branch-a"]);
+  });
+
+  it("cancels the confirmation with zero send requests", async () => {
+    mockedCheckDuplicate.mockResolvedValue(duplicatePreflight([501]));
+    renderInfoForm();
+    await queueRecipient("01011111111");
+    fireEvent.click(screen.getByRole("button", { name: /즉시 발송/ }));
+    await screen.findByRole("button", { name: "전송" });
+    fireEvent.click(screen.getByRole("button", { name: "취소" }));
+    await waitFor(() => expect(screen.queryByRole("button", { name: "전송" })).not.toBeInTheDocument());
+    expect(mockedSendSms).not.toHaveBeenCalled();
+  });
+
+  it.each(["body", "title", "recipient", "identity"])("clears the confirmation after a bound %s edit", async (edit) => {
+    mockedCheckDuplicate.mockResolvedValue(duplicatePreflight([501]));
+    const view = renderInfoForm();
+    await queueRecipient("01011111111");
+    fireEvent.click(screen.getByRole("button", { name: /즉시 발송/ }));
+    await screen.findByRole("button", { name: "전송" });
+    if (edit === "body" || edit === "title") view.rerender(<TemplateSendForm templateId="builtin:info" templateName={edit === "title" ? "다른 제목" : "서비스 안내"} message={edit === "body" ? "새 본문" : "안내 메시지입니다."} />);
+    else if (edit === "identity") fireEvent.click(screen.getAllByRole("button", { name: "기존 고객 선택" })[0]);
+    else fireEvent.change(screen.getByTestId("autocomplete-휴대 전화번호"), { target: { value: "01022222222" } });
+    await waitFor(() => expect(screen.queryByRole("button", { name: "전송" })).not.toBeInTheDocument());
+    expect(mockedSendSms).not.toHaveBeenCalled();
+  });
+
+  it("keeps a same-draft retry key and generates new keys for edits and a later draft", async () => {
+    const problem = createProblemDetails({ code: "VALIDATION_FAILED", requestId: "retry-key", status: 422, outcome: "NOT_APPLIED" });
+    mockedSendSms.mockRejectedValue({ isAxiosError: true, response: { status: 422, data: problem } });
+    const view = renderInfoForm();
+    await queueRecipient("01011111111");
+    const submit = async (count: number) => {
+      fireEvent.click(screen.getByRole("button", { name: /즉시 발송/ }));
+      await waitFor(() => expect(mockedSendSms).toHaveBeenCalledTimes(count));
+      await waitFor(() => expect(screen.queryByRole("button", { name: /발송 중|확인 중/ })).not.toBeInTheDocument());
+    };
+    await submit(1);
+    const key = mockedSendSms.mock.calls[0][0].idempotencyKey;
+    expect(key).toEqual(expect.any(String));
+    await submit(2);
+    expect(mockedSendSms.mock.calls[1][0].idempotencyKey).toBe(key);
+    view.rerender(<TemplateSendForm templateId="builtin:info" templateName="서비스 안내" message="새 본문" />);
+    await submit(3);
+    const editedKey = mockedSendSms.mock.calls[2][0].idempotencyKey;
+    expect(editedKey).not.toBe(key);
+    mockedSendSms.mockResolvedValue(buildSendSuccess());
+    await submit(4);
+    expect(mockedSendSms.mock.calls[3][0].idempotencyKey).toBe(editedKey);
+    await queueRecipient("01011111111");
+    await submit(5);
+    expect(mockedSendSms.mock.calls[4][0].idempotencyKey).not.toBe(editedKey);
+  });
+
+  it("captures each batch payload/key/branch and preserves a newer editor during an in-flight request", async () => {
+    let finish!: (value: ReturnType<typeof buildSendSuccess>) => void;
+    mockedSendSms.mockReturnValue(new Promise((resolve) => { finish = resolve; }));
+    const view = renderInfoForm();
+    await queueRecipient("01011111111");
+    fireEvent.click(screen.getByRole("button", { name: /즉시 발송/ }));
+    await waitFor(() => expect(mockedSendSms).toHaveBeenCalledTimes(1));
+    const captured = JSON.parse(JSON.stringify(mockedSendSms.mock.calls[0])) as typeof mockedSendSms.mock.calls[number];
+    view.rerender(<TemplateSendForm templateId="builtin:info" templateName="변경한 제목" message="편집 중인 새 본문" />);
+    fireEvent.change(screen.getByTestId("autocomplete-휴대 전화번호"), { target: { value: "01022222222" } });
+    await act(async () => finish(buildSendSuccess()));
+    expect(mockedSendSms.mock.calls[0]).toEqual(captured);
+    expect(captured).toEqual([expect.objectContaining({ receiver: "010-1111-1111", message: "안내 메시지입니다.", idempotencyKey: expect.any(String) }), "branch-a"]);
+    expect(screen.getByTestId("autocomplete-휴대 전화번호")).toHaveValue("01022222222");
+    expect(mockedSendSms).toHaveBeenCalledTimes(1);
+  });
+
+  it("refreshes a server conflict and requires a new explicit acknowledgement", async () => {
+    const fresh = { ...duplicatePreflight([502]), payloadHash: "b".repeat(64) };
+    mockedCheckDuplicate.mockResolvedValueOnce(duplicatePreflight([501])).mockResolvedValue(fresh);
+    mockedSendSms.mockRejectedValueOnce({ isAxiosError: true, response: { status: 409, data: { code: "REQUEST_CONFLICT" } } }).mockResolvedValue(buildSendSuccess());
+    renderInfoForm();
+    await queueRecipient("01011111111");
+    fireEvent.click(screen.getByRole("button", { name: /즉시 발송/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "전송" }));
+    await waitFor(() => expect(mockedCheckDuplicate).toHaveBeenCalledTimes(2));
+    const approve = await screen.findByRole("button", { name: "전송" });
+    await waitFor(() => expect(approve).toBeEnabled());
+    expect(mockedSendSms).toHaveBeenCalledTimes(1);
+    fireEvent.click(approve);
+    await waitFor(() => expect(mockedSendSms).toHaveBeenCalledTimes(2));
+    expect(mockedSendSms.mock.calls[1][0].duplicateDecision).toEqual({ confirmed: true, checkedAt: CHECKED_AT, matchIds: [502], payloadHash: "b".repeat(64) });
+    expect(mockedSendSms.mock.calls[1][0].idempotencyKey).toBe(mockedSendSms.mock.calls[0][0].idempotencyKey);
+  });
+
+  it("fails closed when server preflight fails", async () => {
+    mockedCheckDuplicate.mockRejectedValue(new Error("private provider detail"));
+    renderInfoForm();
+    await queueRecipient("01011111111");
+    fireEvent.click(screen.getByRole("button", { name: /즉시 발송/ }));
+    await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("중복 발송 여부를 확인하지 못했어요"));
+    expect(mockedSendSms).not.toHaveBeenCalled();
+    expect(screen.getByRole("status")).not.toHaveTextContent("private provider detail");
+  });
+
+  it.each(["queued", "deferred", "canceled", "mixed"] as const)("reports the literal %s queue result and counts", async (outcome) => {
+    const statuses = outcome === "mixed" ? ["queued", "deferred", "canceled"] as const : [outcome];
+    const response: SendMessageDeliverySmsQueueResponse = {
+      provider: "aligo_sms", triggerType: "immediate",
+      request: { receiver: "010-1111-1111", msgType: "AUTO", testMode: false, idempotencyKey: "server-key" }, outcome,
+      items: statuses.map((status, index) => ({ jobId: `job-${index}`, messageLogId: 601 + index, recipientPhone: `0101111111${index}`, status, scheduledAt: "2026-11-07T00:00:00.000Z", reason: status === "queued" ? null : `quiet-hours-${status}` })),
+    };
+    mockedSendSms.mockResolvedValue(response);
+    renderInfoForm();
+    await queueRecipient("01011111111");
+    fireEvent.click(screen.getByRole("button", { name: /즉시 발송/ }));
+    const labels = { queued: "발송 대기", deferred: "심야 보류", canceled: "취소" };
+    await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent(`${labels[statuses[0]]} 1건`));
+    for (const item of response.items) {
+      expect(screen.getByRole("status")).toHaveTextContent(item.recipientPhone);
+      expect(screen.getByRole("status")).toHaveTextContent(item.scheduledAt);
+      if (item.reason) expect(screen.getByRole("status")).toHaveTextContent(item.reason);
+    }
+    expect(screen.getByRole("status")).not.toHaveTextContent("발송 요청 1건을 접수했어요");
+    expect(mockedSendSms).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    { outcome: "queued", items: [] },
+    { outcome: "deferred", items: [{ jobId: "job", messageLogId: 1, recipientPhone: "01011111111", status: "queued", scheduledAt: "2026-11-07T00:00:00.000Z", reason: null }] },
+    { outcome: "queued", items: [{ jobId: "job", messageLogId: 1, recipientPhone: "01011111111", status: "queued", scheduledAt: "invalid", reason: null }] },
+  ])("locks a malformed queue envelope %#", async (malformed) => {
+    mockedSendSms.mockResolvedValue({ provider: "aligo_sms", triggerType: "immediate", request: { receiver: "01011111111", msgType: "AUTO", testMode: false, idempotencyKey: "k" }, ...malformed } as never);
+    renderInfoForm();
+    await queueRecipient("01011111111");
+    fireEvent.click(screen.getByRole("button", { name: /즉시 발송/ }));
+    await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("작업 상태를 확인해 주세요"));
+    expect(screen.getByRole("button", { name: /즉시 발송/ })).toBeDisabled();
+  });
 });
