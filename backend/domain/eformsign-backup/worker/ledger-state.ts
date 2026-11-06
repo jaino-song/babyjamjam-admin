@@ -9,7 +9,7 @@ import {
 } from "./drive-layout";
 import {
     driveBindingFields, knownGapSchema, type DriveBindingFields, type KnownGap, type LedgerBodies, type LedgerRecord,
-    LEDGER_RECORD_VERSION,
+    LEDGER_RECORD_VERSION, LEDGER_BODY_SCHEMAS,
 } from "./ledger-records";
 import {
     artifactTypeField, count, driveFileId, hex64, identifier, isoUtc, isoWithOffset, opaqueId, reasonCodeField,
@@ -20,6 +20,12 @@ import {
     JUDGED_HISTORICAL_COVERAGES, JUDGED_SNAPSHOT_STATUSES,
     type JudgedHistoricalCoverage, type JudgedSnapshotStatus,
 } from "./snapshot-status";
+import {
+    manualExecutionScopeSchema, manualSelectedCandidateSchema, manualDocumentResultSchema, manualAggregateResultSchema,
+    manualSelectionDigest, manualDocumentResultDigest, manualAggregateResultDigest, buildManualAggregateResult,
+    validateManualDocumentResult, sameManualValue,
+    type ManualExecutionScope, type ManualSelectedCandidate, type ManualDocumentResult, type ManualAggregateResult,
+} from "./manual-protocol";
 import { WorkerError, type WorkerReasonCode } from "./worker-error";
 
 /**
@@ -49,6 +55,7 @@ export interface Installation {
 }
 
 export interface RunState {
+    executionScope?: ManualExecutionScope;
     runId: string;
     scheduledFor: string | null;
     startedAt: string;
@@ -138,7 +145,19 @@ export interface PublishedFile { sha256: string; at: string }
 export interface PublishedCompletion extends PublishedFile { sequence: number }
 export interface TailDiscard { byteLength: number; quarantineName: string; at: string }
 
+export interface ManualAttemptState {
+    scope: ManualExecutionScope;
+    candidates: Map<string, ManualSelectedCandidate>;
+    ordinals: Map<number, string>;
+    ready: LedgerBodies["manual_selection_ready"] | null;
+    results: Map<string, { payload: ManualDocumentResult; digest: string }>;
+    aggregate: { payload: ManualAggregateResult; digest: string } | null;
+    delivery: "pending" | "acknowledged" | "rejected" | null;
+    rejectionReason: LedgerBodies["manual_result_rejected"]["reason"] | null;
+}
+
 export interface LedgerState {
+    manualAttempts?: Map<string, ManualAttemptState>;
     lastSeq: number;
     lastAt: string | null;
     installation: Installation | null;
@@ -193,8 +212,9 @@ export function emptyLedgerState(): LedgerState {
 function cloneState(state: LedgerState): LedgerState {
     return {
         ...state,
+        ...(state.manualAttempts === undefined ? {} : { manualAttempts: new Map([...state.manualAttempts].map(([key, attempt]) => [key, cloneManualAttempt(attempt)])) }),
         installation: state.installation && { ...state.installation, drive: state.installation.drive && { ...state.installation.drive } },
-        runs: new Map([...state.runs].map(([key, run]) => [key, { ...run, reasonCodes: [...run.reasonCodes] }])),
+        runs: new Map([...state.runs].map(([key, run]) => [key, { ...run, ...(run.executionScope === undefined ? {} : { executionScope: { ...run.executionScope } }), reasonCodes: [...run.reasonCodes] }])),
         snapshots: new Map(state.snapshots),
         candidates: new Map(state.candidates),
         artifacts: new Map(state.artifacts),
@@ -407,6 +427,111 @@ function applyDriveBound(draft: LedgerState, body: LedgerBodies["drive_bound"]):
     installation.drive = { ...body, status: "pending" };
 }
 
+type ManualRecord = Extract<LedgerRecord, { type: `manual_${string}` }>;
+
+function newManualAttempt(scope: ManualExecutionScope): ManualAttemptState {
+    return { scope: { ...scope }, candidates: new Map(), ordinals: new Map(), ready: null,
+        results: new Map(), aggregate: null, delivery: null, rejectionReason: null };
+}
+
+function cloneManualAttempt(attempt: ManualAttemptState): ManualAttemptState {
+    return {
+        ...attempt, scope: { ...attempt.scope }, ordinals: new Map(attempt.ordinals),
+        candidates: new Map([...attempt.candidates].map(([key, candidate]) => [key, manualSelectedCandidateSchema.parse(candidate)])),
+        ready: attempt.ready && { ...attempt.ready },
+        results: new Map([...attempt.results].map(([key, result]) => [key, { digest: result.digest, payload: manualDocumentResultSchema.parse(result.payload) }])),
+        aggregate: attempt.aggregate && { digest: attempt.aggregate.digest, payload: manualAggregateResultSchema.parse(attempt.aggregate.payload) },
+    };
+}
+
+function manualSelection(attempt: ManualAttemptState, ready: LedgerBodies["manual_selection_ready"]) {
+    return { jobId: attempt.scope.jobId, companyId: attempt.scope.companyId, branchId: attempt.scope.branchId,
+        scopeRevision: ready.scopeRevision, policyRevision: ready.policyRevision, candidates: [...attempt.candidates.values()] };
+}
+
+/** Shared invariant checker for journal transitions and strict checkpoint reconstruction. */
+function applyManualRecord(draft: LedgerState, raw: ManualRecord): void {
+    const checked = LEDGER_BODY_SCHEMAS[raw.type].safeParse(raw.body);
+    if (!checked.success) fail("ledger-inconsistent");
+    const record = { ...raw, body: checked.data } as ManualRecord;
+    const body = record.body;
+    const runId = "payload" in body ? body.payload.runId : body.runId;
+    const run = draft.runs.get(runId);
+    const attempt = draft.manualAttempts?.get(runId);
+    if (!run?.executionScope || !attempt || !sameManualValue(run.executionScope, attempt.scope)) fail("ledger-inconsistent");
+    const callback = record.type === "manual_result_acknowledged" || record.type === "manual_result_rejected";
+    if (!callback && run.status !== "open") fail("ledger-inconsistent");
+    switch (record.type) {
+        case "manual_candidate_selected": {
+            const candidate = record.body.candidate;
+            const known = attempt.candidates.get(candidate.documentId);
+            if (known) {
+                if (!sameManualValue(known, candidate)) fail("ledger-inconsistent");
+                return;
+            }
+            if (attempt.ready !== null || attempt.ordinals.has(candidate.ordinal)) fail("ledger-inconsistent");
+            attempt.candidates.set(candidate.documentId, candidate);
+            attempt.ordinals.set(candidate.ordinal, candidate.documentId);
+            return;
+        }
+        case "manual_selection_ready": {
+            const ready = record.body;
+            if (attempt.ready !== null) {
+                if (!sameManualValue(attempt.ready, ready)) fail("ledger-inconsistent");
+                return;
+            }
+            if (ready.candidateCount !== attempt.candidates.size || ready.selectionDigest !== attempt.scope.selectionDigest
+                || ready.selectionDigest !== manualSelectionDigest(manualSelection(attempt, ready))) fail("ledger-inconsistent");
+            attempt.ready = ready;
+            return;
+        }
+        case "manual_document_result": {
+            const { payload, digest } = record.body;
+            const candidate = attempt.candidates.get(payload.documentId);
+            if (!attempt.ready || !candidate || !sameManualValue(payload.scope, attempt.scope)
+                || payload.observedAtSequence > draft.lastSeq || digest !== manualDocumentResultDigest(payload)) fail("ledger-inconsistent");
+            validateManualDocumentResult(candidate, payload);
+            const known = attempt.results.get(payload.documentId);
+            if (known) {
+                if (!sameManualValue(known, record.body)) fail("ledger-inconsistent");
+                return;
+            }
+            if (attempt.aggregate !== null || [...attempt.results.values()].some((r) => r.payload.receiptId === payload.receiptId)) fail("ledger-inconsistent");
+            attempt.results.set(payload.documentId, record.body);
+            return;
+        }
+        case "manual_result_ready": {
+            const { payload, digest } = record.body;
+            if (!attempt.ready || !sameManualValue(payload.scope, attempt.scope)
+                || digest !== manualAggregateResultDigest(payload)) fail("ledger-inconsistent");
+            const derived = buildManualAggregateResult({ receiptId: payload.receiptId, runId, scope: attempt.scope,
+                selection: manualSelection(attempt, attempt.ready), results: [...attempt.results.values()].map((r) => r.payload),
+                status: payload.status, reasons: payload.reasons });
+            if (!sameManualValue(derived, payload)) fail("ledger-inconsistent");
+            if (attempt.aggregate !== null) {
+                if (!sameManualValue(attempt.aggregate, record.body)) fail("ledger-inconsistent");
+                return;
+            }
+            if ([...attempt.results.values()].some((r) => r.payload.receiptId === payload.receiptId)) fail("ledger-inconsistent");
+            attempt.aggregate = record.body;
+            attempt.delivery = "pending";
+            return;
+        }
+        case "manual_result_acknowledged":
+        case "manual_result_rejected": {
+            const callbackBody = record.body;
+            if (!attempt.aggregate || callbackBody.receiptId !== attempt.aggregate.payload.receiptId
+                || callbackBody.digest !== attempt.aggregate.digest) fail("ledger-inconsistent");
+            const next = record.type === "manual_result_acknowledged" ? "acknowledged" : "rejected";
+            const reason = record.type === "manual_result_rejected" ? record.body.reason : null;
+            if (attempt.delivery !== "pending" && (attempt.delivery !== next || attempt.rejectionReason !== reason)) fail("ledger-inconsistent");
+            attempt.delivery = next;
+            attempt.rejectionReason = reason;
+            return;
+        }
+    }
+}
+
 function applyRecord(draft: LedgerState, record: LedgerRecord): void {
     if (record.v !== LEDGER_RECORD_VERSION) fail("ledger-schema");
     if (record.seq !== draft.lastSeq + 1) fail("ledger-seq-gap");
@@ -422,13 +547,28 @@ function applyRecord(draft: LedgerState, record: LedgerRecord): void {
             break;
         case "run_started": {
             if (draft.runs.has(record.body.runId)) fail("ledger-inconsistent");
+            const scope = record.body.executionScope === undefined ? undefined : manualExecutionScopeSchema.safeParse(record.body.executionScope);
+            if (scope !== undefined && !scope.success) fail("ledger-inconsistent");
             draft.runs.set(record.body.runId, {
                 runId: record.body.runId, scheduledFor: record.body.scheduledFor, startedAt: record.body.startedAt,
                 status: "open", snapshotId: null, sequence: null, finishedAt: null,
                 snapshotStatus: null, historicalCoverage: null, reasonCodes: [], counts: null,
+                ...(record.body.executionScope === undefined ? {} : { executionScope: scope !== undefined && scope.success ? scope.data : undefined }),
             });
+            if (record.body.executionScope !== undefined) {
+                draft.manualAttempts ??= new Map();
+                draft.manualAttempts.set(record.body.runId, newManualAttempt(draft.runs.get(record.body.runId)!.executionScope!));
+            }
             break;
         }
+        case "manual_candidate_selected":
+        case "manual_selection_ready":
+        case "manual_document_result":
+        case "manual_result_ready":
+        case "manual_result_acknowledged":
+        case "manual_result_rejected":
+            applyManualRecord(draft, record);
+            break;
         case "snapshot_bound": {
             const { body } = record;
             const run = draft.runs.get(body.runId);
@@ -595,6 +735,7 @@ const installationSchema = z.strictObject({
     drive: z.strictObject({ ...driveBindingFields, status: z.enum(["pending", "ready"]) }).nullable().default(null),
 });
 const runSchema = z.strictObject({
+    executionScope: manualExecutionScopeSchema.optional(),
     runId: runIdField,
     scheduledFor: isoWithOffset.nullable(),
     startedAt: isoUtc,
@@ -638,7 +779,16 @@ const candidateSchema = z.strictObject({
         artifactType: artifactTypeField, artifactIdentity: hex64, sha256: hex64, byteLength: count,
     })).max(2),
 });
+const manualAttemptJsonSchema = z.strictObject({
+    runId: runIdField, scope: manualExecutionScopeSchema, candidates: z.array(manualSelectedCandidateSchema),
+    ready: LEDGER_BODY_SCHEMAS.manual_selection_ready.nullable(),
+    results: z.array(LEDGER_BODY_SCHEMAS.manual_document_result),
+    aggregate: LEDGER_BODY_SCHEMAS.manual_result_ready.nullable(),
+    delivery: z.enum(["pending", "acknowledged", "rejected"]).nullable(),
+    rejectionReason: LEDGER_BODY_SCHEMAS.manual_result_rejected.shape.reason.nullable(),
+});
 const stateJsonSchema = z.strictObject({
+    manualAttempts: z.array(manualAttemptJsonSchema).min(1).optional(),
     schemaVersion: z.literal(1),
     lastSeq: count,
     lastAt: isoUtc.nullable(),
@@ -678,6 +828,12 @@ const stateJsonSchema = z.strictObject({
 /** Plain, canonical-JSON-safe object (arrays instead of Map/Set, `null` instead of `undefined`). */
 export function ledgerStateToJson(state: LedgerState): z.infer<typeof stateJsonSchema> {
     return {
+        ...(state.manualAttempts === undefined ? {} : { manualAttempts: [...state.manualAttempts].map(([runId, original]) => {
+            const attempt = cloneManualAttempt(original);
+            return { runId, scope: attempt.scope, candidates: [...attempt.candidates.values()],
+                ready: attempt.ready, results: [...attempt.results.values()], aggregate: attempt.aggregate,
+                delivery: attempt.delivery, rejectionReason: attempt.rejectionReason };
+        }) }),
         schemaVersion: 1,
         lastSeq: state.lastSeq,
         lastAt: state.lastAt,
@@ -685,6 +841,7 @@ export function ledgerStateToJson(state: LedgerState): z.infer<typeof stateJsonS
         sequenceFloor: state.sequenceFloor,
         runs: [...state.runs.values()].map((run) => ({
             ...run, reasonCodes: [...run.reasonCodes], counts: run.counts && { ...run.counts },
+            ...(run.executionScope === undefined ? {} : { executionScope: { ...run.executionScope } }),
         })),
         snapshots: [...state.snapshots.values()].map((snapshot) => ({ ...snapshot, counts: { ...snapshot.counts } })),
         candidates: [...state.candidates.values()].map((candidate) => ({
@@ -724,7 +881,7 @@ export function ledgerStateFromJson(value: unknown): LedgerState {
     const parsed = stateJsonSchema.safeParse(value);
     if (!parsed.success) throw new WorkerError("ledger-schema");
     const json = parsed.data;
-    return {
+    const state: LedgerState = {
         lastSeq: json.lastSeq,
         lastAt: json.lastAt,
         installation: json.installation,
@@ -749,4 +906,49 @@ export function ledgerStateFromJson(value: unknown): LedgerState {
         driveRecordsPending: new Map(json.driveRecordsPending.map((pending) => [driveStateKey(pending.destinationRevision, pending.relativeKey), pending.sha256])),
         driveRetiredIds: new Set(json.driveRetiredIds.map((retired) => driveStateKey(retired.destinationRevision, retired.fileId))),
     };
+    if (new Set(json.runs.map((run) => run.runId)).size !== json.runs.length) fail("ledger-inconsistent");
+    const manualRuns = json.runs.filter((run) => run.executionScope !== undefined);
+    if (manualRuns.length !== (json.manualAttempts?.length ?? 0)) fail("ledger-inconsistent");
+    if (json.manualAttempts !== undefined) {
+        state.manualAttempts = new Map();
+        for (const entry of json.manualAttempts) {
+            const run = state.runs.get(entry.runId);
+            if (!run?.executionScope || state.manualAttempts.has(entry.runId)
+                || !sameManualValue(run.executionScope, entry.scope)
+                || new Set(entry.candidates.map((c) => c.documentId)).size !== entry.candidates.length
+                || new Set(entry.candidates.map((c) => c.ordinal)).size !== entry.candidates.length
+                || new Set(entry.results.map((r) => r.payload.documentId)).size !== entry.results.length) fail("ledger-inconsistent");
+            const attempt = newManualAttempt(entry.scope);
+            state.manualAttempts.set(entry.runId, attempt);
+            // Validate all immutable observations while the reconstructed run is open. Only delivery may follow finish.
+            const validation: LedgerState = { ...state, lastSeq: json.lastSeq - 1,
+                runs: new Map([[entry.runId, { ...run, status: "open" }]]) };
+            const apply = (record: ManualRecord) => applyManualRecord(validation, record);
+            const envelope = { v: LEDGER_RECORD_VERSION, seq: json.lastSeq, at: run.startedAt } as const;
+            for (const candidate of entry.candidates) apply({ ...envelope, type: "manual_candidate_selected", body: { runId: entry.runId, candidate } });
+            if (entry.ready) {
+                if (entry.ready.runId !== entry.runId) fail("ledger-inconsistent");
+                apply({ ...envelope, type: "manual_selection_ready", body: entry.ready });
+            }
+            for (const result of entry.results) {
+                if (result.payload.runId !== entry.runId) fail("ledger-inconsistent");
+                apply({ ...envelope, type: "manual_document_result", body: result });
+            }
+            if (entry.aggregate) {
+                if (entry.aggregate.payload.runId !== entry.runId) fail("ledger-inconsistent");
+                apply({ ...envelope, type: "manual_result_ready", body: entry.aggregate });
+            }
+            if (entry.delivery === "acknowledged" || entry.delivery === "rejected") {
+                if (!entry.aggregate) fail("ledger-inconsistent");
+                const body = { runId: entry.runId, receiptId: entry.aggregate.payload.receiptId, digest: entry.aggregate.digest };
+                if (entry.delivery === "acknowledged") apply({ ...envelope, type: "manual_result_acknowledged", body });
+                else {
+                    if (entry.rejectionReason === null) fail("ledger-inconsistent");
+                    apply({ ...envelope, type: "manual_result_rejected", body: { ...body, reason: entry.rejectionReason } });
+                }
+            }
+            if (attempt.delivery !== entry.delivery || attempt.rejectionReason !== entry.rejectionReason) fail("ledger-inconsistent");
+        }
+    }
+    return state;
 }
