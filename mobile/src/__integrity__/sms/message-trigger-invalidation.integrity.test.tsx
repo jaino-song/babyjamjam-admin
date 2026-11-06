@@ -252,7 +252,7 @@ jest.mock("next/navigation", () => ({
 
 jest.mock("@/hooks/useGetAuthUser", () => ({
     useGetAuthUser: () => ({
-        data: { role: "user", branchRole: "manager" },
+        data: { branchId: "branch-1", role: "user", branchRole: "manager" },
         isPending: false,
         isLoading: false,
         isFetching: false,
@@ -338,13 +338,19 @@ invariant(
             isSuccess: true,
         });
         apiMock.post.mockReset();
-        apiMock.post.mockResolvedValue({
-            data: {
-                provider: "aligo_sms",
-                triggerType: "immediate",
-                request: { receiver: "010-1234-5678", msgType: "SMS", testMode: false },
-                result: { resultCode: 1, message: "accepted", successCount: 1, errorCount: 0, msgType: "SMS" },
-            },
+        apiMock.post.mockImplementation(async (endpoint: string) => {
+            if (endpoint === "/message-deliveries/sms/duplicate-check") {
+                return { data: { checkedAt: new Date().toISOString(), matchIds: [], latestSentAt: null, payloadHash: "integrity-no-duplicate-current-payload" } };
+            }
+            if (endpoint === "/message-deliveries/sms") {
+                return { data: {
+                    provider: "aligo_sms",
+                    triggerType: "immediate",
+                    request: { receiver: "010-1234-5678", msgType: "SMS", testMode: false },
+                    result: { resultCode: 1, message: "accepted", successCount: 1, errorCount: 0, msgType: "SMS" },
+                } };
+            }
+            throw new Error(`Unexpected manual SMS endpoint: ${endpoint}`);
         });
 
         const queryClient = freshQueryClient();
@@ -359,6 +365,13 @@ invariant(
         await waitFor(() => {
             expect(screen.getByText("메시지 발송 요청이 접수되었습니다.")).toBeInTheDocument();
         });
+
+        expect(apiMock.post).toHaveBeenCalledTimes(2);
+        expect(apiMock.post).toHaveBeenNthCalledWith(1, "/message-deliveries/sms/duplicate-check", expect.objectContaining({ receiver: expect.any(String), message: "테스트 발송 본문", idempotencyKey: expect.any(String) }), { params: { expectedBranchId: "branch-1" } });
+        expect(apiMock.post).toHaveBeenNthCalledWith(2, "/message-deliveries/sms", expect.objectContaining({ receiver: expect.any(String), message: "테스트 발송 본문", idempotencyKey: expect.any(String) }), { params: { expectedBranchId: "branch-1" } });
+        const preflightPayload = apiMock.post.mock.calls[0][1];
+        expect(apiMock.post.mock.calls[1][1]).toEqual(preflightPayload);
+        expect(apiMock.post.mock.calls.filter(([endpoint]) => endpoint === "/message-deliveries/sms")).toHaveLength(1);
 
         const touchedAllLogs = isInvalidated(queryClient, CLIENT_HISTORY_KEY_ALL);
         const touchedHistory = isInvalidated(queryClient, messageTriggerKeys.history());
