@@ -23,6 +23,8 @@ describe("SYSTEM_TEMPLATE_REGISTRY", () => {
             ["PROVIDER_NOTICE", "제공인력 안내문", "provider", "제공인력 대상"],
             ["SERVICE_RECORD_LINK", "제공기록지 작성 요청", "provider", "제공인력 대상"],
             ["SERVICE_RECORD_REMINDER", "제공기록지 미작성 알림", "provider", "제공인력 대상"],
+            ["CAREGIVER_SERVICE_START_NOTICE", "제공인력 서비스 시작 안내", "provider", "제공인력 대상"],
+            ["CAREGIVER_SERVICE_END_NOTICE", "제공인력 서비스 종료 안내", "provider", "제공인력 대상"],
         ]);
     });
 

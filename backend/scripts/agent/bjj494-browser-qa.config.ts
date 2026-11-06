@@ -8,6 +8,7 @@ export const QA_BACKEND_ORIGIN = "http://127.0.0.1:63101";
 export const APPROVED_ENV_PATHS = [
     "/Users/jaino/Development/babyjamjam-admin/bjj494-browser-qa/frontend/.env.local",
     "/Users/jaino/Development/babyjamjam-admin/service-record-followups/frontend/.env.local",
+    "/Users/jaino/Development/babyjamjam-admin/message-policy-integration/frontend/.env.local",
 ] as const;
 const KEY = "DEVELOPMENT_API_BASE_URL";
 const RECOVERY = ".env.bjj494-browser-qa.recovery.json";

@@ -113,6 +113,7 @@
   --v3-text: 214 25% 28%;
   --v3-text-muted: 214 10% 55%;
   --v3-border: 214 20% 92%;
+  --v3-selectable-border: 214 16% 82%;
 
   /* Status surfaces — one semantic triple per state: tinted surface, matching
      line, readable text. Single source for StatusBadge and Toaster, so a
@@ -214,6 +215,7 @@
   /* V3 Colors - Dark Mode */
   --v3-primary: 214 100% 50%;
   --v3-primary-light: 214 30% 20%;
+  --v3-selectable-border: 214 16% 42%;
   --v3-dim-white: 220 15% 15%;
 }
 
@@ -301,6 +303,7 @@
   --color-v3-text: hsl(var(--v3-text));
   --color-v3-text-muted: hsl(var(--v3-text-muted));
   --color-v3-border: hsl(var(--v3-border));
+  --color-v3-selectable-border: hsl(var(--v3-selectable-border));
   --color-v3-dim-white: hsl(var(--v3-dim-white));
 
   /* Status surfaces (defined in :root). The warning and danger lines carry

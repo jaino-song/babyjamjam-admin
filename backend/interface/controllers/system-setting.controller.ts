@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Optional, Param, Post, Put, Request, UseGuards } from "@nestjs/common";
+import { Body, Controller, Get, HttpCode, Optional, Param, Post, Put, Request, UseGuards } from "@nestjs/common";
 import { BranchManagerGuard } from "infrastructure/auth/branch-manager.guard";
 import { JwtGuard } from "infrastructure/auth/jwt.guard";
 import { OwnerGuard } from "infrastructure/auth/owner.guard";
@@ -17,6 +17,7 @@ import {
     MessageSenderApprovalResponseDto,
 } from "interface/dto/message-sender-approval.dto";
 import {
+    UpdateMessageAutomationPolicyConfigDto,
     MessageAutomationPastTriggerConfigDto,
     MessageAutomationPoliciesResponseDto,
     MessageSettingsPolicyActivationResponseDto,
@@ -101,14 +102,42 @@ export class SystemSettingController {
         @CurrentTenant() tenant?: { branchId?: string; globalRole?: string; branchRole?: string },
     ): Promise<MessageAutomationPoliciesResponseDto> {
         const branchId = tenant?.branchId ?? "";
-        const [pastTriggerConfig, policyActivations] = await Promise.all([
-            this.systemSettingService.getMessageAutomationPastTriggerConfig(branchId),
+        const [policy, policyActivations] = await Promise.all([
+            this.systemSettingService.getMessageAutomationPolicyConfig(branchId),
             this.systemSettingService.getMessageSettingsPolicyActivations(branchId),
         ]);
         const canManageActivation = tenant?.globalRole === "owner"
             || tenant?.branchRole === "admin"
             || tenant?.branchRole === "manager";
-        return MessageAutomationPoliciesResponseDto.from(pastTriggerConfig, policyActivations, canManageActivation);
+        return MessageAutomationPoliciesResponseDto.from({
+            sendIntervalMinutes: policy.configuration.pastSendIntervalMinutes, ruleOrder: policy.configuration.pastRuleOrder,
+        }, policyActivations, canManageActivation, policy.configuration);
+    }
+
+    private messagePolicyPermissions(tenant: SettingsTenant) {
+        return { canRead: true, canWrite: tenant.globalRole === "owner" || tenant.branchRole === "admin" || tenant.branchRole === "manager" };
+    }
+
+    @Get("message-automation-policies/config")
+    @UseGuards(TenantGuard)
+    async getMessageAutomationPolicyConfig(@CurrentTenant() tenant: SettingsTenant) {
+        return { ...await this.systemSettingService.getMessageAutomationPolicyConfig(tenant.branchId ?? ""),
+            permissions: this.messagePolicyPermissions(tenant) };
+    }
+
+    @Put("message-automation-policies/config")
+    @UseGuards(TenantGuard, BranchManagerGuard)
+    async updateMessageAutomationPolicyConfig(@CurrentTenant() tenant: SettingsTenant, @Body() dto: UpdateMessageAutomationPolicyConfigDto) {
+        const result = await runWithAdminAuditActor({ userId: tenant.userId, globalRole: tenant.globalRole, branchRole: tenant.branchRole },
+            () => this.systemSettingService.setMessageAutomationPolicyConfig(tenant.branchId ?? "", dto.expectedVersion, dto.configuration));
+        return { ...result, permissions: this.messagePolicyPermissions(tenant) };
+    }
+
+    @Post("message-automation-policies/config/preview")
+    @HttpCode(200)
+    @UseGuards(TenantGuard)
+    async previewMessageAutomationPolicyConfig(@CurrentTenant() tenant: SettingsTenant, @Body() dto: UpdateMessageAutomationPolicyConfigDto) {
+        return this.systemSettingService.previewMessageAutomationPolicyConfig(tenant.branchId ?? "", dto.expectedVersion, dto.configuration);
     }
 
     @Put("message-policy-activations/:policyId")
@@ -151,7 +180,11 @@ export class SystemSettingController {
                 ruleOrder: dto.ruleOrder,
             },
         ));
-        return MessageAutomationPastTriggerConfigDto.from(JSON.parse(entity.value));
+        const configuration = JSON.parse(entity.value);
+        return MessageAutomationPastTriggerConfigDto.from({
+            sendIntervalMinutes: configuration.pastSendIntervalMinutes,
+            ruleOrder: configuration.pastRuleOrder,
+        });
     }
 
     @Get("contract-automation-policies")

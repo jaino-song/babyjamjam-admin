@@ -1,3 +1,4 @@
+import type { CaregiverTemplateLifecycleAction, CaregiverTemplateLifecycleResult } from "domain/entities/branch-system-template-snapshot";
 import type { Prisma } from "@prisma/client";
 import { BadRequestException, Injectable } from "@nestjs/common";
 import { SystemTemplateWithRegistryDto } from "application/dto/system-template-with-registry.dto";
@@ -14,7 +15,7 @@ import {
     ValidateTemplateContentUseCase,
 } from "application/usecases/system-template";
 import { codeOnlyProblemBody } from "application/utils/problem-bodies";
-import { SYSTEM_TEMPLATE_REGISTRY, SystemTemplateKey, CustomVariable } from "domain/constants/system-template-registry";
+import { SYSTEM_TEMPLATE_REGISTRY, SystemTemplateKey, CustomVariable, isCaregiverSystemTemplateKey } from "domain/constants/system-template-registry";
 import { SystemTemplateEntity, VariableValidationResult } from "domain/entities/system-template.entity";
 import { SystemTemplateVersionEntity } from "domain/entities/system-template-version.entity";
 
@@ -73,6 +74,14 @@ export class SystemTemplateService {
             customVariables,
         );
         return result.template;
+    }
+
+    updateCaregiverLifecycle(branchId: string, key: string, action: CaregiverTemplateLifecycleAction, userId: string): Promise<CaregiverTemplateLifecycleResult> {
+        const templateKey = this.toKey(key);
+        if (!isCaregiverSystemTemplateKey(templateKey) || !["activate", "disable", "delete", "restore"].includes(action)) {
+            throw new BadRequestException(codeOnlyProblemBody("REQUEST_INVALID"));
+        }
+        return this.updateBranchUseCase.lifecycle(branchId, templateKey, action, userId);
     }
 
     validate(key: string, content: string): Promise<VariableValidationResult> {

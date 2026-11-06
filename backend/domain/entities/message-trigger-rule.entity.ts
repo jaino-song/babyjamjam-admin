@@ -33,10 +33,12 @@ export class MessageTriggerRuleEntity {
         public sendTime = "09:00",
         public targetClientStatus: MessageTriggerTargetClientStatus = DEFAULT_MESSAGE_TRIGGER_TARGET_CLIENT_STATUS,
         public retryOnFailure = DEFAULT_MESSAGE_TRIGGER_RETRY_ON_FAILURE,
+        public groupId: string | null = null,
     ) {}
 
     static create(params: {
         branchId?: string;
+        groupId?: string | null;
         name: string;
         isActive?: boolean;
         eventType: MessageTriggerEventType;
@@ -69,6 +71,7 @@ export class MessageTriggerRuleEntity {
             params.sendTime ?? "09:00",
             params.targetClientStatus ?? DEFAULT_MESSAGE_TRIGGER_TARGET_CLIENT_STATUS,
             params.retryOnFailure ?? DEFAULT_MESSAGE_TRIGGER_RETRY_ON_FAILURE,
+            params.groupId ?? null,
         );
     }
 
@@ -89,6 +92,7 @@ export class MessageTriggerRuleEntity {
         sendTime = "09:00",
         targetClientStatus: MessageTriggerTargetClientStatus = DEFAULT_MESSAGE_TRIGGER_TARGET_CLIENT_STATUS,
         retryOnFailure = DEFAULT_MESSAGE_TRIGGER_RETRY_ON_FAILURE,
+        groupId: string | null = null,
     ): MessageTriggerRuleEntity {
         return new MessageTriggerRuleEntity(
             id,
@@ -108,6 +112,7 @@ export class MessageTriggerRuleEntity {
             sendTime,
             targetClientStatus,
             retryOnFailure,
+            groupId,
         );
     }
 

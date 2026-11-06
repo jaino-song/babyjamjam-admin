@@ -129,3 +129,12 @@ export function deriveAvailableTemplates(
       template.allowedRecipientTypes.includes(recipientType),
   );
 }
+
+/** Modes follow the current server catalog, including BOTH only when both roles are eligible. */
+export function deriveRecipientModesFromTemplates(templates: TriggerTemplateCatalogItem[], eventType: TriggerEventType): import("@babyjamjam/shared/types/message").MessageTriggerRecipientMode[] {
+  const recipients = deriveRecipientTypesFromTemplates(templates, eventType).filter((role) => eventType !== "CLIENT_CREATED" || role === "CLIENT");
+  return [...recipients, ...(recipients.includes("PRIMARY_EMPLOYEE") && recipients.includes("SECONDARY_EMPLOYEE") ? ["BOTH_EMPLOYEES" as const] : [])];
+}
+export function expandRecipientMode(mode: import("@babyjamjam/shared/types/message").MessageTriggerRecipientMode): TriggerRecipientType[] {
+  return mode === "BOTH_EMPLOYEES" ? ["PRIMARY_EMPLOYEE", "SECONDARY_EMPLOYEE"] : [mode];
+}

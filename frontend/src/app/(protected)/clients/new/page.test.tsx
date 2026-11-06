@@ -212,6 +212,33 @@ describe("NewClientPage inline field messages", () => {
     expect((await screen.findByLabelText("계약 상태")).tagName).toBe("SELECT");
     expectNoFieldMessageBelowControl(document.body);
   });
+  it("toggles service flags with pressed semantics without submitting the wizard", async () => {
+    await renderPage();
+    fireEvent.change(screen.getByLabelText(/이름/), { target: { value: "홍길동" } });
+    fireEvent.change(screen.getByLabelText(/연락처/), { target: { value: "01012345678" } });
+    await waitFor(() => expect(screen.getByRole("button", { name: "다음" })).toBeEnabled());
+    fireEvent.click(screen.getByRole("button", { name: "다음" }));
+    const flags = document.querySelectorAll<HTMLButtonElement>('[data-slot="form-chip"]');
+    expect(flags).toHaveLength(3);
+    for (const flag of flags) {
+      expect(flag.tagName).toBe("BUTTON");
+      expect(flag).toHaveAttribute("type", "button");
+      const wasSelected = flag.getAttribute("aria-pressed") === "true";
+      expect(flag).toHaveClass("border-2", wasSelected ? "border-v3-primary" : "border-v3-selectable-border");
+      flag.focus();
+      expect(document.activeElement).toBe(flag);
+      fireEvent.click(flag);
+      expect(flag).toHaveAttribute("aria-pressed", String(!wasSelected));
+      expect(flag).toHaveAttribute("data-selected", String(!wasSelected));
+      expect(flag).toHaveClass(!wasSelected ? "border-v3-primary" : "border-v3-selectable-border");
+      fireEvent.click(flag);
+      expect(flag).toHaveAttribute("aria-pressed", String(wasSelected));
+      expect(flag.className).not.toContain("!border");
+    }
+    expect(screen.getByRole("switch", { name: "토요일" })).toBeInTheDocument();
+    expect(mockCreateClient).not.toHaveBeenCalled();
+  });
+
   it("offers the weekend and holiday service switches on the service step and sends them on create", async () => {
     await renderPage();
     fireEvent.change(screen.getByLabelText(/이름/), { target: { value: "홍길동" } });

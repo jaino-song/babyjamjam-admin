@@ -1,4 +1,4 @@
-import { AGENT_SMS_RULE_ID_PREFIX, AGENT_SMS_RETRY_DEDUPE_KEY_PREFIX } from "./message-trigger-catalog";
+import { AGENT_SMS_RULE_ID_PREFIX, AGENT_SMS_RETRY_DEDUPE_KEY_PREFIX, MANUAL_SMS_RULE_PREFIX } from "./message-trigger-catalog";
 import { SERVICE_RECORD_LINK_MANUAL_DEDUPE_PATTERN, SERVICE_RECORD_LINK_RULE_ID } from "./service-record-link-message";
 import { SERVICE_END_NOTICE_MANUAL_DEDUPE_PATTERN, SERVICE_END_NOTICE_RULE_ID } from "./service-end-notice-message";
 
@@ -20,6 +20,7 @@ export const MANUAL_MESSAGE_JOB_MATCHERS: readonly ManualJobMatcher[] = [
     // Rule-level only: the system row itself is always the manual rule, regardless
     // of any branch SERVICE_END_NOTICE rule's template key.
     { kind: "rule-id", ruleId: SERVICE_END_NOTICE_RULE_ID },
+    { kind: "rule-prefix", prefix: MANUAL_SMS_RULE_PREFIX },
 ];
 
 interface JobOwnership {

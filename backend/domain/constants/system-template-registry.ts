@@ -15,6 +15,8 @@ export enum SystemTemplateKey {
   PROVIDER_NOTICE = 'PROVIDER_NOTICE',
   SERVICE_RECORD_LINK = 'SERVICE_RECORD_LINK',
   SERVICE_RECORD_REMINDER = 'SERVICE_RECORD_REMINDER',
+  CAREGIVER_SERVICE_START_NOTICE = 'CAREGIVER_SERVICE_START_NOTICE',
+  CAREGIVER_SERVICE_END_NOTICE = 'CAREGIVER_SERVICE_END_NOTICE',
 }
 
 export interface TemplateVariable {
@@ -446,4 +448,37 @@ blog.naver.com/imirae-incheon`,
     requiredVariables: [],
     defaultContent: '',
   },
+  [SystemTemplateKey.CAREGIVER_SERVICE_START_NOTICE]: {
+    group: 'provider',
+    groupLabel: '제공인력 대상',
+    key: SystemTemplateKey.CAREGIVER_SERVICE_START_NOTICE,
+    name: '제공인력 서비스 시작 안내',
+    description: '실제 배정 일정 기준 제공인력 서비스 시작 안내',
+    requiredVariables: [
+      { key: 'employeeName', label: '제공인력명', type: 'string', required: true },
+      { key: 'clientName', label: '고객명', type: 'string', required: true },
+      { key: 'serviceStartDate', label: '배정 시작일', type: 'string', required: true },
+      { key: 'branchName', label: '지점명', type: 'string', required: true },
+    ],
+    defaultContent: '{{employeeName}} 관리사님, {{clientName}} 고객님의 서비스가 {{serviceStartDate}}에 시작됩니다. 배정 일정과 근무 안내를 확인해 주세요. - {{branchName}}',
+  },
+  [SystemTemplateKey.CAREGIVER_SERVICE_END_NOTICE]: {
+    group: 'provider',
+    groupLabel: '제공인력 대상',
+    key: SystemTemplateKey.CAREGIVER_SERVICE_END_NOTICE,
+    name: '제공인력 서비스 종료 안내',
+    description: '실제 배정 일정 기준 제공인력 서비스 종료 안내',
+    requiredVariables: [
+      { key: 'employeeName', label: '제공인력명', type: 'string', required: true },
+      { key: 'clientName', label: '고객명', type: 'string', required: true },
+      { key: 'serviceEndDate', label: '배정 종료일', type: 'string', required: true },
+      { key: 'branchName', label: '지점명', type: 'string', required: true },
+    ],
+    defaultContent: '{{employeeName}} 관리사님, {{clientName}} 고객님의 서비스가 {{serviceEndDate}}에 종료됩니다. 마무리 안내를 확인해 주세요. - {{branchName}}',
+  },
+
 };
+
+export function isCaregiverSystemTemplateKey(key: unknown): key is SystemTemplateKey.CAREGIVER_SERVICE_START_NOTICE | SystemTemplateKey.CAREGIVER_SERVICE_END_NOTICE {
+  return key === SystemTemplateKey.CAREGIVER_SERVICE_START_NOTICE || key === SystemTemplateKey.CAREGIVER_SERVICE_END_NOTICE;
+}

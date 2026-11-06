@@ -175,8 +175,11 @@ describeE2E("message-automation cron claim concurrency + stale reclaim (real DB)
             }
             await prisma.client.deleteMany({ where: { id: { in: [orphanClientId].filter((id): id is number => id !== undefined) } } }).catch(() => undefined);
         }
-        await harnessB?.close();
-        await harnessA?.close();
+        try {
+            await harnessB?.close();
+        } finally {
+            await harnessA?.close();
+        }
     });
 
     async function createDueJob(overrides: Partial<Prisma.message_trigger_jobUncheckedCreateInput> = {}) {
@@ -208,11 +211,13 @@ describeE2E("message-automation cron claim concurrency + stale reclaim (real DB)
         return job;
     }
 
-    /** Force `updatedAt` into the stale past (@updatedAt ignores the client lib; raw SQL does not). */
+    /** Expire a captured claim deadline too; retain NULL for legacy fallback coverage. */
     async function makeStale(jobId: string, minutesAgo = STALE_UPDATE_DELAY_MINUTES): Promise<void> {
         await harnessA.prisma.$executeRaw`
             UPDATE "message_trigger_job"
-            SET "updated_at" = ${new Date(Date.now() - minutesAgo * 60_000)}
+            SET "updated_at" = ${new Date(Date.now() - minutesAgo * 60_000)},
+                "processing_deadline_at" = CASE WHEN "processing_deadline_at" IS NULL THEN NULL
+                    ELSE ${new Date(Date.now() - 60_000)} END
             WHERE "id" = ${jobId}`;
     }
 
@@ -234,6 +239,7 @@ describeE2E("message-automation cron claim concurrency + stale reclaim (real DB)
             stubA.reset();
             stubB.reset();
 
+            await harnessA.prepareFreshDispatchWindow();
             await Promise.all([harnessA.tick.dispatch(), harnessB.tick.dispatch()]);
 
             const callsA = stubA.sendCalls.length;
@@ -281,6 +287,7 @@ describeE2E("message-automation cron claim concurrency + stale reclaim (real DB)
 
         const beforeTick = Date.now();
         const stubCallsBefore = stubA.sendCalls.length;
+        await harnessA.prepareFreshDispatchWindow();
         await harnessA.tick.dispatch();
 
         const row = await jobRow(job.id);
@@ -291,7 +298,7 @@ describeE2E("message-automation cron claim concurrency + stale reclaim (real DB)
         expect(deferredRow.status).toBe("pending");
         expect(deferredRow.attempts).toBe(1); // 0 + 1
         expect(deferredRow.nextAttemptAt).not.toBeNull();
-        expect(deferredRow.claimToken).not.toBeNull();
+        expect(deferredRow.claimToken).toBeNull();
         expect(deferredRow.cancelReason).toBeNull();
         const nextAttemptAtMs = deferredRow.nextAttemptAt?.getTime() ?? 0;
         const delayMs = nextAttemptAtMs - beforeTick;
@@ -304,6 +311,7 @@ describeE2E("message-automation cron claim concurrency + stale reclaim (real DB)
 
         // Backdate → the deferred job is due again and dispatches exactly once.
         await harnessA.backdate(job.id, new Date(Date.now() - 60_000));
+        await harnessA.prepareFreshDispatchWindow();
         await harnessA.tick.dispatch();
         const sentRow = await jobRow(job.id);
         expect(sentRow?.status).toBe("sent");
@@ -324,16 +332,18 @@ describeE2E("message-automation cron claim concurrency + stale reclaim (real DB)
 
         const stubCallsBefore = stubA.sendCalls.length;
         const stubBCallsBefore = stubB.sendCalls.length;
+        await harnessA.prepareFreshDispatchWindow();
         await harnessA.tick.dispatch();
         const row = await jobRow(job.id);
         expect(row?.status).toBe("failed");
         expect(row?.cancelReason).toBe(SMS_PROVIDER_ACCEPTANCE_UNCERTAIN_REASON);
-        // The claim token survives as the CAS fence; the row is simply terminal.
-        expect(row?.claimToken).toBe(`e2e-stale-dispatching:${RUN}`);
+        // Reclaim atomically invalidates the old owner token and leaves a terminal row.
+        expect(row?.claimToken).toBeNull();
 
         // Time passes; later ticks must never touch the row again.
         for (let extra = 0; extra < 3; extra += 1) {
             await harnessA.backdate(job.id, new Date(Date.now() - 60_000));
+            await harnessA.prepareFreshDispatchWindow();
             await harnessA.tick.dispatch();
         }
         const finalRow = await jobRow(job.id);
@@ -357,6 +367,7 @@ describeE2E("message-automation cron claim concurrency + stale reclaim (real DB)
         await makeStale(job.id);
         const stubCallsBefore = stubA.sendCalls.length;
 
+        await harnessA.prepareFreshDispatchWindow();
         await harnessA.tick.dispatch();
 
         const row = await jobRow(job.id);
@@ -365,10 +376,11 @@ describeE2E("message-automation cron claim concurrency + stale reclaim (real DB)
         expect(row?.cancelReason).toBe("수동 재전송 남음 (e2e)");
         expect(row?.attempts).toBe(0);
         expect(row?.nextAttemptAt).toBeNull();
-        expect(row?.claimToken).toBe(`e2e-stale-resend:${RUN}`);
+        expect(row?.claimToken).toBeNull();
 
         // The re-setup row is never automatically re-sent.
         await harnessA.backdate(job.id, new Date(Date.now() - 60_000));
+        await harnessA.prepareFreshDispatchWindow();
         await harnessA.tick.dispatch();
         expect((await jobRow(job.id))?.status).toBe("needs_setup");
         expect(stubA.sendCalls.length - stubCallsBefore).toBe(0);
@@ -390,6 +402,7 @@ describeE2E("message-automation cron claim concurrency + stale reclaim (real DB)
         expect(orphanedRow?.status).toBe("pending");
         const stubCallsBefore = stubA.sendCalls.length;
 
+        await harnessA.prepareFreshDispatchWindow();
         await harnessA.tick.dispatch();
 
         const row = await jobRow(job.id);
@@ -415,6 +428,7 @@ describeE2E("message-automation cron claim concurrency + stale reclaim (real DB)
         await makeStale(job.id);
         const stubCallsBefore = stubA.sendCalls.length;
 
+        await harnessA.prepareFreshDispatchWindow();
         await harnessA.tick.dispatch();
 
         // Entity contract (domain/entities/message-trigger-job.entity.ts defer):

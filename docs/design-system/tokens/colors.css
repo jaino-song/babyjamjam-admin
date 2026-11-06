@@ -33,6 +33,7 @@
 
   /* Lines + focus */
   --border: hsl(214 20% 92%);             /* was --v3-border */
+  --selectable-border: hsl(214 16% 82%);  /* --v3-selectable-border: selectable card/chip frames */
   --input: hsl(214 20% 92%);
   --ring: hsl(214 100% 75%);
 
@@ -117,6 +118,7 @@
   --muted-foreground: hsl(215 20% 65%);
 
   --border: hsl(217 32% 18%);
+  --selectable-border: hsl(214 16% 42%);
   --input: hsl(217 32% 18%);
   --ring: hsl(217 91% 60%);
 

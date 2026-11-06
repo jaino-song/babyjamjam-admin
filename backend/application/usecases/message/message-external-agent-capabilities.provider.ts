@@ -108,7 +108,7 @@ const AutomationRuleMutableSchema = z.object({
 const AutomationRuleBaseSchema = AutomationRuleMutableSchema.extend({
     isActive: z.boolean().default(true),
     offsetDays: z.number().int().nonnegative().max(365).default(0),
-    sendTime: AutomationRuleMutableSchema.shape.sendTime.default("09:00"),
+    sendTime: AutomationRuleMutableSchema.shape.sendTime.optional(),
 });
 const AUTOMATION_RULE_MUTABLE_KEYS = Object.keys(AutomationRuleMutableSchema.shape);
 const AutomationRuleUpdateSchema = AutomationRuleMutableSchema.partial().extend({ id: z.string().min(1).max(200) }).superRefine((value, context) => {
@@ -364,15 +364,31 @@ export class MessageExternalAgentCapabilitiesProvider implements AgentCapability
             meta: { ...common, domain: "automation", name: "automation.create", description: "Create a message automation rule after strong approval", risk: "external-side-effect", renderer: "action-proposal", flagKey: "agent.capability.automation.create" } as CapabilityDefinition["meta"],
             inputSchema: AutomationRuleBaseSchema, outputSchema: AutomationRuleOutputSchema,
             formFields: AUTOMATION_RULE_FIELDS,
+            canonicalizeInput: async (context, rawInput) => {
+                const input = AutomationRuleBaseSchema.parse(rawInput);
+                validateMessageTriggerRule(input);
+                return {
+                    ...input,
+                    sendTime: input.sendTime ?? await this.messageTriggerService.getDefaultRuleSendTime(context.principal.branchId),
+                };
+            },
             inspect: async (_context, rawInput) => {
                 const input = AutomationRuleBaseSchema.parse(rawInput);
                 validateMessageTriggerRule(input);
-                return { title: "메시지 자동화 생성", summary: `${input.name} 규칙을 ${input.isActive ? "활성" : "비활성"} 상태로 생성합니다.`, provider: "Message automation scheduler", estimatedCost: "활성 규칙이 발송하는 각 문자에 SMS/LMS 요금이 발생할 수 있습니다." };
+                if (input.sendTime === undefined) {
+                    throw new BadRequestException("Automation creation send time is not bound; review a new proposal");
+                }
+                return { title: "메시지 자동화 생성", summary: `${input.name} 규칙을 ${input.isActive ? "활성" : "비활성"} 상태로 생성합니다. 발송 시각: ${input.sendTime} (KST).`, provider: "Message automation scheduler", estimatedCost: "활성 규칙이 발송하는 각 문자에 SMS/LMS 요금이 발생할 수 있습니다." };
             },
             execute: async (context, rawInput) => {
                 const input = AutomationRuleBaseSchema.parse(rawInput);
                 try {
                     validateMessageTriggerRule(input);
+                    // Legacy proposals never reviewed a concrete time. Do not resolve a
+                    // mutable default here, even if this action was already approved.
+                    if (input.sendTime === undefined) {
+                        throw new AgentActionCertainFailureError("Automation creation send time is not bound; review a new proposal");
+                    }
                     return await this.prisma.$transaction(async (transaction) => {
                         const rule = await this.messageTriggerService.createRule(context.principal.branchId, input, transaction);
                         const result = { status: "created", id: rule.id, isActive: rule.isActive };

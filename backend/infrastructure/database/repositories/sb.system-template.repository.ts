@@ -4,12 +4,16 @@ import {
   CustomVariable,
   SYSTEM_TEMPLATE_REGISTRY,
   SystemTemplateKey,
+  isCaregiverSystemTemplateKey,
 } from 'domain/constants/system-template-registry';
 import {
   BRANCH_SYSTEM_TEMPLATE_SNAPSHOT_VERSION,
   BranchSystemTemplateSnapshot,
   BranchSystemTemplateSnapshotEntry,
   BranchSystemTemplateSnapshotError,
+  parseBranchSystemTemplateSnapshot,
+  CaregiverTemplateLifecycleAction,
+  CaregiverTemplateLifecycleResult,
 } from 'domain/entities/branch-system-template-snapshot';
 import { SystemTemplateEntity } from 'domain/entities/system-template.entity';
 import { SystemTemplateVersionEntity } from 'domain/entities/system-template-version.entity';
@@ -37,103 +41,7 @@ type GlobalSystemTemplateRow = {
   customVariables: Prisma.JsonValue | null;
 };
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-function readCustomVariables(
-  value: unknown,
-  branchId: string,
-  templateKey: SystemTemplateKey,
-): CustomVariable[] {
-  if (!Array.isArray(value)) {
-    throw new BranchSystemTemplateSnapshotError(branchId, templateKey, 'custom variables are invalid');
-  }
-
-  return value.map((item) => {
-    if (
-      !isRecord(item)
-      || typeof item['key'] !== 'string'
-      || item['key'].length === 0
-      || typeof item['label'] !== 'string'
-      || item['label'].length === 0
-      || typeof item['required'] !== 'boolean'
-    ) {
-      throw new BranchSystemTemplateSnapshotError(branchId, templateKey, 'custom variables are invalid');
-    }
-    return {
-      key: item['key'],
-      label: item['label'],
-      required: item['required'],
-    };
-  });
-}
-
-function readSnapshotEntry(
-  value: unknown,
-  branchId: string,
-  templateKey: SystemTemplateKey,
-): BranchSystemTemplateSnapshotEntry {
-  if (!isRecord(value)) {
-    throw new BranchSystemTemplateSnapshotError(branchId, templateKey);
-  }
-
-  const { content, id, createdAt, updatedAt } = value;
-  if (
-    typeof content !== 'string'
-    || typeof id !== 'string'
-    || id.length === 0
-    || typeof createdAt !== 'string'
-    || Number.isNaN(new Date(createdAt).getTime())
-    || typeof updatedAt !== 'string'
-    || Number.isNaN(new Date(updatedAt).getTime())
-  ) {
-    throw new BranchSystemTemplateSnapshotError(branchId, templateKey);
-  }
-
-  return {
-    content,
-    customVariables: readCustomVariables(value['customVariables'], branchId, templateKey),
-    id,
-    createdAt,
-    updatedAt,
-  };
-}
-
-function parseSnapshot(
-  value: Prisma.JsonValue | null,
-  branchId: string,
-): BranchSystemTemplateSnapshot | null {
-  if (value === null) return null;
-  if (!isRecord(value)) {
-    throw new BranchSystemTemplateSnapshotError(branchId);
-  }
-
-  if (
-    value['version'] !== BRANCH_SYSTEM_TEMPLATE_SNAPSHOT_VERSION
-    || typeof value['createdAt'] !== 'string'
-    || Number.isNaN(new Date(value['createdAt']).getTime())
-    || typeof value['createdBy'] !== 'string'
-    || value['createdBy'].length === 0
-    || !isRecord(value['templates'])
-  ) {
-    throw new BranchSystemTemplateSnapshotError(branchId);
-  }
-
-  const templates: Partial<Record<SystemTemplateKey, BranchSystemTemplateSnapshotEntry>> = {};
-  for (const [rawKey, entry] of Object.entries(value['templates'])) {
-    if (!SYSTEM_TEMPLATE_KEYS.includes(rawKey as SystemTemplateKey)) continue;
-    const key = rawKey as SystemTemplateKey;
-    templates[key] = readSnapshotEntry(entry, branchId, key);
-  }
-
-  return {
-    version: BRANCH_SYSTEM_TEMPLATE_SNAPSHOT_VERSION,
-    createdAt: value['createdAt'],
-    createdBy: value['createdBy'],
-    templates,
-  };
-}
+const parseSnapshot = parseBranchSystemTemplateSnapshot;
 
 function customVariablesEqual(left: CustomVariable[], right: CustomVariable[]): boolean {
   return JSON.stringify(left) === JSON.stringify(right);
@@ -199,20 +107,7 @@ function createSnapshotEntry(
 }
 
 function cloneSnapshot(snapshot: BranchSystemTemplateSnapshot): BranchSystemTemplateSnapshot {
-  const templates: Partial<Record<SystemTemplateKey, BranchSystemTemplateSnapshotEntry>> = {};
-  for (const [rawKey, entry] of Object.entries(snapshot.templates)) {
-    if (!entry || !SYSTEM_TEMPLATE_KEYS.includes(rawKey as SystemTemplateKey)) continue;
-    templates[rawKey as SystemTemplateKey] = {
-      ...entry,
-      customVariables: cloneCustomVariables(entry.customVariables),
-    };
-  }
-  return {
-    version: BRANCH_SYSTEM_TEMPLATE_SNAPSHOT_VERSION,
-    createdAt: snapshot.createdAt,
-    createdBy: snapshot.createdBy,
-    templates,
-  };
+  return structuredClone(snapshot);
 }
 
 @Injectable()
@@ -236,8 +131,8 @@ export class SbSystemTemplateRepository implements ISystemTemplateRepository {
     return rows.map((row) => SystemTemplateMapper.toDomain(row));
   }
 
-  async findBranchSnapshot(branchId: string): Promise<BranchSystemTemplateSnapshot | null> {
-    const branch = await this.prisma.branch.findUnique({
+  async findBranchSnapshot(branchId: string, transaction?: Prisma.TransactionClient): Promise<BranchSystemTemplateSnapshot | null> {
+    const branch = await (transaction ?? this.prisma).branch.findUnique({
       where: { id: branchId },
       select: { id: true, systemTemplateSnapshot: true },
     });
@@ -264,7 +159,11 @@ export class SbSystemTemplateRepository implements ISystemTemplateRepository {
       // A key added to the registry after the branch froze its snapshot is
       // not part of the frozen set; it resolves like an unfrozen branch.
       const entry = parseSnapshot(branch.systemTemplateSnapshot, branchId)?.templates[key];
-      if (entry) return entryToEntity(key, entry);
+      if (entry) {
+        if (entry.state === 'disabled' || entry.state === 'deleted') throw new BranchSystemTemplateSnapshotError(branchId, key, entry.state);
+        return entryToEntity(key, entry);
+      }
+      if (isCaregiverSystemTemplateKey(key)) return defaultTemplateEntity(key);
 
       const row = await transaction.system_template.findUnique({ where: { templateKey: key } });
       return row ? SystemTemplateMapper.toDomain(row) : null;
@@ -299,6 +198,7 @@ export class SbSystemTemplateRepository implements ISystemTemplateRepository {
       return SYSTEM_TEMPLATE_KEYS.map((key) => {
         const entry = snapshot?.templates[key];
         if (entry) return entryToEntity(key, entry);
+        if (isCaregiverSystemTemplateKey(key)) return defaultTemplateEntity(key);
         const row = rowsByKey.get(key);
         return row
           ? globalRowToEntity(row)
@@ -345,7 +245,7 @@ export class SbSystemTemplateRepository implements ISystemTemplateRepository {
       // global/default template an unfrozen branch would see.
       const currentTemplate = snapshotEntry
         ? entryToEntity(key, snapshotEntry)
-        : (globalRowsByKey.get(key)
+        : (!isCaregiverSystemTemplateKey(key) && globalRowsByKey.get(key)
           ? globalRowToEntity(globalRowsByKey.get(key)!)
           : defaultTemplateEntity(key));
       const effectiveCustomVariables = customVariables ?? currentTemplate.customVariables ?? [];
@@ -369,12 +269,13 @@ export class SbSystemTemplateRepository implements ISystemTemplateRepository {
           templates: Object.fromEntries(
             SYSTEM_TEMPLATE_KEYS.map((templateKey) => [
               templateKey,
-              createSnapshotEntry(templateKey, globalRowsByKey.get(templateKey), snapshotAt),
+              createSnapshotEntry(templateKey, isCaregiverSystemTemplateKey(templateKey) ? undefined : globalRowsByKey.get(templateKey), snapshotAt),
             ]),
           ) as BranchSystemTemplateSnapshot['templates'],
         } satisfies BranchSystemTemplateSnapshot;
 
       nextSnapshot.templates[key] = {
+        ...snapshotEntry,
         content,
         customVariables: cloneCustomVariables(effectiveCustomVariables),
         id: currentTemplate.id || `default:${key}`,
@@ -401,6 +302,35 @@ export class SbSystemTemplateRepository implements ISystemTemplateRepository {
       maxWait: 5_000,
       timeout: 15_000,
     });
+  }
+
+  async updateCaregiverTemplateLifecycle(
+    branchId: string, key: SystemTemplateKey, action: CaregiverTemplateLifecycleAction, userId: string,
+    transaction: Prisma.TransactionClient,
+  ): Promise<CaregiverTemplateLifecycleResult> {
+    if (!isCaregiverSystemTemplateKey(key) || !['activate', 'disable', 'delete', 'restore'].includes(action)) {
+      throw new BranchSystemTemplateSnapshotError(branchId, key, 'unsupported lifecycle');
+    }
+    const rows = await transaction.$queryRaw<BranchSnapshotRow[]>(Prisma.sql`
+      SELECT id, system_template_snapshot FROM "branch" WHERE id = ${branchId}::uuid FOR UPDATE
+    `);
+    if (!rows[0]) throw new BranchSystemTemplateSnapshotError(branchId, key, 'branch not found');
+    const now = new Date();
+    const snapshot = parseSnapshot(rows[0].system_template_snapshot, branchId) ?? {
+      version: 2 as const, createdAt: now.toISOString(), createdBy: userId, templates: {},
+    };
+    const entry = snapshot.templates[key] ?? createSnapshotEntry(key, undefined, now);
+    const state = entry.state ?? 'active';
+    if ((state === 'deleted' && action !== 'restore' && action !== 'delete') || (action === 'restore' && state !== 'deleted')) {
+      throw new BranchSystemTemplateSnapshotError(branchId, key, 'explicit restore is required for deleted templates');
+    }
+    const nextState = action === 'delete' ? 'deleted' : action === 'disable' ? 'disabled' : 'active';
+    const { deletedAt: previousDeletedAt, ...content } = entry;
+    const deletedAt = nextState === 'deleted' ? previousDeletedAt ?? now.toISOString() : undefined;
+    snapshot.version = 2;
+    snapshot.templates[key] = { ...content, state: nextState, updatedAt: now.toISOString(), ...(deletedAt ? { deletedAt } : {}) };
+    await transaction.branch.update({ where: { id: branchId }, data: { systemTemplateSnapshot: snapshot as unknown as Prisma.InputJsonValue } });
+    return { key, state: nextState, deletedAt: deletedAt ?? null, snapshotVersion: 2 };
   }
 
   async save(

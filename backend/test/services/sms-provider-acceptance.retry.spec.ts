@@ -1,3 +1,4 @@
+import { SystemSettingService } from "application/services/system-setting.service";
 import { ConflictException } from "@nestjs/common";
 import { AligoService } from "application/services/aligo.service";
 import { MessageSenderApprovalService } from "application/services/message-sender-approval.service";
@@ -135,7 +136,7 @@ describe("SMS provider acceptance and retry boundary", () => {
             repository as unknown as IMessageLogRepository,
             provider as unknown as AligoService,
             { ensureApproved: jest.fn().mockResolvedValue(undefined) } as unknown as MessageSenderApprovalService,
-            acceptance,
+            acceptance,undefined, undefined, undefined, undefined, undefined, new SystemSettingService({ execute: jest.fn().mockResolvedValue(null) } as never, {} as never),
         );
 
         await acceptance.reconcile({
@@ -170,7 +171,7 @@ describe("SMS provider acceptance and retry boundary", () => {
             repository as unknown as IMessageLogRepository,
             provider as unknown as AligoService,
             { ensureApproved: jest.fn().mockResolvedValue(undefined) } as unknown as MessageSenderApprovalService,
-            acceptance,
+            acceptance,undefined, undefined, undefined, undefined, undefined, new SystemSettingService({ execute: jest.fn().mockResolvedValue(null) } as never, {} as never),
         );
 
         await acceptance.reconcile({
@@ -201,7 +202,7 @@ describe("SMS provider acceptance and retry boundary", () => {
             repository as unknown as IMessageLogRepository,
             provider as unknown as AligoService,
             { ensureApproved: jest.fn().mockResolvedValue(undefined) } as unknown as MessageSenderApprovalService,
-            acceptance,
+            acceptance,undefined, undefined, undefined, undefined, undefined, new SystemSettingService({ execute: jest.fn().mockResolvedValue(null) } as never, {} as never),
         );
 
         await expect(acceptance.reconcile({
@@ -337,7 +338,7 @@ describe("SMS partial acceptance survives process restart as a durable resend ba
             repository as unknown as IMessageLogRepository,
             provider as unknown as AligoService,
             { ensureApproved: jest.fn().mockResolvedValue(undefined) } as unknown as MessageSenderApprovalService,
-            acceptance,
+            acceptance,undefined, undefined, undefined, undefined, undefined, new SystemSettingService({ execute: jest.fn().mockResolvedValue(null) } as never, {} as never),
         );
         const scheduler = new MessageRetrySchedulerService(
             repository as unknown as IMessageLogRepository,

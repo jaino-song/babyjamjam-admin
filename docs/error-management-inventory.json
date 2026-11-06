@@ -77855,6 +77855,163 @@
       "review_task": "bjj-494-error-inventory",
       "spec_mapping_status": "mapped-em-v1",
       "spec_mapping_note": "Known editor refusals use AgentActionQuestionError/CertainFailureError; unknown failures retain their identity for coordinator uncertainty/reconciliation. Spec-ID references and the existing provider spec are evidence pointers, not a complete coverage or compliance claim."
+    },
+    {
+      "id": "owner-2b2ca7f0441d",
+      "path": "backend/application/services/message-duplicate-check.service.ts",
+      "root": "backend/application/",
+      "classification": "migrated",
+      "reason": "Introduced by the message-policy formal plan Task 4.2 / DUP-1; discovered unowned by the raw-error intake gate, which matches exception-class imports and throws independently of body sanitization. On-contract: lookup/configuration failures throw ServiceUnavailableException(codeOnlyProblemBody DEPENDENCY_UNAVAILABLE) 503 with an internal cause; a missing or stale required confirmation throws ConflictException(codeOnlyProblemBody REQUEST_CONFLICT) 409 with fresh checkedAt, matchIds, latestSentAt and payloadHash. The actual HTTP mapHttpProblem path preserves those fresh 409 fields and excludes the private 503 diagnostic. Existing catalog codes only; registration adds no raw-body debt or exception exemption.",
+      "seams": [
+        {
+          "line": 2,
+          "kinds": [
+            "raw_http_exception"
+          ]
+        },
+        {
+          "line": 20,
+          "kinds": [
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 36,
+          "kinds": [
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 43,
+          "kinds": [
+            "catch_boundary"
+          ]
+        },
+        {
+          "line": 44,
+          "kinds": [
+            "raw_http_exception",
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 55,
+          "kinds": [
+            "raw_http_exception",
+            "throw_or_reject"
+          ]
+        }
+      ],
+      "discovery_task_id": "message-policy-task4.2-dup-1",
+      "spec_ids": [
+        "EM-CAT-01",
+        "EM-STATE-01",
+        "EM-ARCH-01"
+      ],
+      "public_codes": [
+        "REQUEST_CONFLICT",
+        "DEPENDENCY_UNAVAILABLE"
+      ],
+      "outcome_evidence": "Both fresh refusals are NOT_APPLIED with recovery action NONE and retry mode NEVER. The service/controller specs cover duplicate-check write/provider counts of 0 and fresh send-gate refusal before acceptance admission (0) or provider transport (0); the controller spec invokes the actual mapHttpProblem serializer. Existing durable replay may report UNKNOWN at the controller boundary and is unchanged by this owner registration.",
+      "consumer_paths": [
+        "backend/interface/controllers/message-delivery.controller.ts"
+      ],
+      "test_evidence": [
+        "backend/test/services/message-duplicate-check.service.spec.ts",
+        "backend/test/interface/controllers/message-delivery.controller.spec.ts"
+      ],
+      "followup_task": "Message-policy Task 10 / Task 11 duplicate-confirmation desktop/mobile wiring remains pending.",
+      "review_task": "message-duplicate-error-owner (independent CODE review pending)",
+      "spec_mapping_status": "mapped-em-v1",
+      "spec_mapping_note": "Task 4.2 / DUP-1 coded refusal ownership only; inventory is not sanitization proof, consumer completion, review PASS, or a raw-body debt/cap change."
+    },
+    {
+      "id": "owner-7cd3f903482a",
+      "path": "backend/application/services/message-quiet-hours.service.ts",
+      "root": "backend/application/",
+      "classification": "migrated",
+      "reason": "Introduced by approved message-policy Task 8.1 / NIGHT-1. The existing intake gate flags the ServiceUnavailableException import and coded refusal class. Policy/recipient read failures and missing mandatory quiet admission fail closed with the existing MESSAGE_SEND_NOT_STARTED problem code, NOT_APPLIED and no automatic retry. The actual mapHttpProblem test excludes internal diagnostic text and phone data. This on-contract owner registration grants no raw-body exception, debt-cap change or release approval.",
+      "seams": [
+        {
+          "line": 1,
+          "kinds": [
+            "raw_http_exception"
+          ]
+        },
+        {
+          "line": 13,
+          "kinds": [
+            "raw_http_exception"
+          ]
+        },
+        {
+          "line": 45,
+          "kinds": [
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 51,
+          "kinds": [
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 63,
+          "kinds": [
+            "throw_or_reject",
+            "catch_boundary"
+          ]
+        },
+        {
+          "line": 73,
+          "kinds": [
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 76,
+          "kinds": [
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 78,
+          "kinds": [
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 79,
+          "kinds": [
+            "throw_or_reject",
+            "catch_boundary"
+          ]
+        }
+      ],
+      "discovery_task_id": "message-policy-task8.1-night-1",
+      "spec_ids": [
+        "EM-CAT-01",
+        "EM-STATE-01",
+        "EM-ARCH-01"
+      ],
+      "public_codes": [
+        "MESSAGE_SEND_NOT_STARTED"
+      ],
+      "outcome_evidence": "Fresh quiet-policy refusal precedes provider-start CAS and provider transport. Actual HTTP mapHttpProblem execution verifies NOT_APPLIED, NONE/NEVER recovery and sanitized public body. CANCEL persists terminal/no-retry disposition. Task8 DEFER is an intermediate refusal only; Task9 owns durable attempt-free deferral and queue responses.",
+      "consumer_paths": [
+        "backend/interface/controllers/message-delivery.controller.ts",
+        "backend/application/services/sms-trigger-delivery.service.ts",
+        "backend/application/services/sms-retry.service.ts"
+      ],
+      "test_evidence": [
+        "backend/test/services/message-quiet-hours.service.spec.ts",
+        "backend/test/interface/controllers/message-delivery.controller.spec.ts"
+      ],
+      "followup_task": "Task9 durable DEFER/queue and Task10/11 UI integration remain pending.",
+      "review_task": "message-policy-phase8-quiet-gate (independent CODE and phase review pending)",
+      "spec_mapping_status": "mapped-em-v1",
+      "spec_mapping_note": "Task8 coded-refusal ownership only; not independent review PASS, real-provider proof, queue completion or a baseline/debt/scanner change."
     }
   ]
 }

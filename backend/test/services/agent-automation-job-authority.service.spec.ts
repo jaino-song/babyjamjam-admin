@@ -1,3 +1,4 @@
+import { SystemSettingService } from "application/services/system-setting.service";
 import { AgentAutomationJobAuthorityService, type CanonicalAutomationRenderer } from "application/services/agent-automation-job-authority.service";
 import { buildClientMessageRecipe, type ClientTriggerSource } from "application/services/message-trigger-recipes";
 import { SmsTriggerDeliveryService } from "application/services/sms-trigger-delivery.service";
@@ -240,7 +241,7 @@ describe("AgentAutomationJobAuthorityService.checkAutomaticJob grandfathered com
         const delivery = new SmsTriggerDeliveryService(
             {} as never,
             systemTemplateService as never,
-            {} as never,
+            {} as never,undefined, undefined, undefined, undefined, new SystemSettingService({ execute: jest.fn().mockResolvedValue(null) } as never, {} as never),
         );
         const render: CanonicalAutomationRenderer = (job, transaction) => delivery.resolveCanonicalDeliverySnapshot(job, transaction);
         return { render, getByKeyForBranch };
@@ -364,7 +365,7 @@ describe("Real AgentAutomationAuthorityService + real ClientAutomationImpactServ
         return new SmsTriggerDeliveryService(
             {} as never,
             { getByKeyForBranch: jest.fn().mockResolvedValue({ content: SERVICE_END_NOTICE_DEFAULT_CONTENT }) } as never,
-            {} as never,
+            {} as never,undefined, undefined, undefined, undefined, new SystemSettingService({ execute: jest.fn().mockResolvedValue(null) } as never, {} as never),
         );
     }
 
