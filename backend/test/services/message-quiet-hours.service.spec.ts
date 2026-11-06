@@ -50,6 +50,12 @@ function boundaryFixture() {
     const rows = [{ branchId: "branch-a", phone: PHONE, group_name: "CLIENT" }];
     const events: string[] = [];
     let stored: MessageTriggerJobEntity | null = null;
+    let manualLog: Record<string, any> | null = null;
+    const matches = (value: Record<string, any>, where: Record<string, any>) => Object.entries(where).every(([key, expected]) => {
+        if (expected && typeof expected === "object" && "equals" in expected) return JSON.stringify(value[key]) === JSON.stringify(expected.equals);
+        if (expected instanceof Date) return value[key] instanceof Date && value[key].getTime() === expected.getTime();
+        return value[key] === expected;
+    });
     let beforeLock: (() => Promise<void>) | undefined;
     let transactionTail = Promise.resolve();
     const db = {
@@ -70,10 +76,17 @@ function boundaryFixture() {
             return rows.filter(row => sql.values.includes(row.branchId));
         }),
         system_setting: { findUnique: jest.fn(async () => ({ value: "true" })) },
-        client: { findFirst: jest.fn(async () => ({ id: 7, name: "합성 고객", phone: PHONE, smsAutomationEnabled: true, deletedAt: null })) },
-        employee: { findFirst: jest.fn(async () => null) },
-        message_trigger_rule: { findFirst: jest.fn(async () => ({ id: "rule-auto", isActive: true, branchId: "branch-a" })) },
+        client: { findFirst: jest.fn(async () => ({ id: 7, name: "합성 고객", phone: PHONE, smsAutomationEnabled: true, deletedAt: null })),
+            findMany: jest.fn(async () => [{ id: 7, name: "합성 고객", phone: PHONE }]) },
+        employee: { findFirst: jest.fn(async () => null), findMany: jest.fn(async () => []) },
+        message_trigger_rule: { findFirst: jest.fn(async () => ({ id: "rule-auto", isActive: true, branchId: "branch-a" })),
+            upsert: jest.fn(async ({ create }: { create: object }) => ({ ...create, deletedAt: null, jobsStale: false })) },
         message_trigger_job: {
+            create: jest.fn(async ({ data }: { data: object }) => {
+                expect(active).toBe(true);
+                stored = { ...structuredClone(data), id: "55000000-0000-4000-8000-000000000042", createdAt: new Date(NIGHT), updatedAt: new Date(NIGHT) } as MessageTriggerJobEntity;
+                return structuredClone(stored);
+            }),
             findUnique: jest.fn(async () => stored ? { ...structuredClone(stored), rule: { id: "rule-auto" } } : null),
             findFirst: jest.fn(async () => stored ? structuredClone(stored) : null),
             updateMany: jest.fn(async ({ data }: { data: Partial<MessageTriggerJobEntity> }) => {
@@ -84,16 +97,30 @@ function boundaryFixture() {
         message_log: {
             findMany: jest.fn(async () => []),
             findFirst: jest.fn(async ({ where }: { where: { id: number } }) => {
+                if (manualLog && matches(manualLog, where)) return structuredClone(manualLog);
                 const log = logs.find(candidate => candidate.id === where.id);
                 return log ? structuredClone(log) : null;
             }),
-            findUnique: jest.fn(async ({ where }: { where: { id: number } }) => {
+            findUnique: jest.fn(async ({ where }: { where: { id?: number; providerAcceptanceKey?: string } }) => {
+                if (manualLog && matches(manualLog, where)) return structuredClone(manualLog);
                 const log = logs.find(candidate => candidate.id === where.id);
                 return log ? structuredClone(log) : null;
             }),
-            create: jest.fn(async ({ data }: { data: object }) => ({ ...data, id: 42 })),
+            create: jest.fn(async ({ data }: { data: object }) => {
+                manualLog = { triggerJobId: null, providerAcceptedAt: null, providerReconciledAt: null,
+                    providerReconciledBy: null, providerReconciliationReason: null, aligoMid: null,
+                    ...structuredClone(data), id: 42, createdAt: new Date(NIGHT), updatedAt: new Date(NIGHT) };
+                return structuredClone(manualLog);
+            }),
             update: jest.fn(async ({ data }: { data: object }) => ({ ...data, id: 42 })),
-            updateMany: jest.fn(async () => { expect(active).toBe(true); events.push("cas"); return { count: 1 }; }),
+            updateMany: jest.fn(async (args?: { where: Record<string, any>; data: object }) => {
+                expect(active).toBe(true); events.push("cas");
+                if (manualLog) {
+                    if (!args || !matches(manualLog, args.where)) return { count: 0 };
+                    Object.assign(manualLog, structuredClone(args.data));
+                }
+                return { count: 1 };
+            }),
         },
     };
     const execute = jest.fn(async () => { events.push("policy"); return JSON.stringify(policy); });
@@ -123,14 +150,16 @@ function boundaryFixture() {
     }) };
     const approval = { ensureApproved: jest.fn(async () => {}) };
     return { db, policy, rows, events, execute, settings, lock, repository, logs, save, update, quiet, acceptance, aligo, approval,
-        store: (job: MessageTriggerJobEntity) => { stored = structuredClone(job); },
+        store: (job: MessageTriggerJobEntity) => { stored = structuredClone(job); }, manualLog: () => structuredClone(manualLog),
         setBeforeLock: (callback: () => Promise<void>) => { beforeLock = callback; }, active: () => active };
 }
 
 function manualController(f: ReturnType<typeof boundaryFixture>, quiet: MessageQuietHoursService | undefined = f.quiet) {
     const duplicates = new MessageDuplicateCheckService(f.repository,
         { getMessageSettingsPolicyEnabled: async () => false } as never, {} as never);
-    return new MessageDeliveryController(f.aligo as never, f.approval as never, f.db as never, duplicates, quiet);
+    return new MessageDeliveryController(f.aligo as never, f.approval as never, f.db as never, duplicates, quiet,
+        new SbMessageTriggerJobRepository(f.db as never),
+        { read: () => ({ availability: "available", provider: "aligo", mode: "stub", version: 1, identityDigest: "a".repeat(64) }) } as never);
 }
 function manualJob(kind: "agent" | "admin" | "automatic") {
     const job = MessageTriggerJobEntity.create({ branchId: "branch-a", ruleId: kind === "agent" ? "agent-sms:test" : kind === "admin" ? "system:service_record_link" : "rule-auto",
@@ -193,8 +222,13 @@ describe("NIGHT-1 final SMS/LMS admission", () => {
             if (path === "controller") {
                 const result = manualController(f).sendSms({ branchId: "branch-a" }, { receiver: PHONE, message: "합성 본문", msgType: "LMS" });
                 if (mode === "CANCEL") {
-                    await expect(result).rejects.toBeInstanceOf(ServiceUnavailableException);
-                    expect(f.db.message_log.updateMany).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ status: "failed", nextRetryAt: null, errorMessage: "message_quiet_hours:CANCEL", variables: expect.objectContaining({ quietHoursDisposition: "CANCEL" }) }) }));
+                    await expect(result).resolves.toMatchObject({ outcome: "canceled", items: [{ messageLogId: 42, status: "canceled" }] });
+                    expect(f.manualLog()).toMatchObject({ status: "failed", attempts: 0, nextRetryAt: null, providerCallStartedAt: null,
+                        errorMessage: "message_quiet_hours:CANCEL", variables: expect.objectContaining({ quietHoursDisposition: "CANCEL" }) });
+                    expect(await f.db.message_trigger_job.findFirst()).toMatchObject({ status: "canceled", attempts: 0, nextAttemptAt: null, cancelReason: "message_quiet_hours:CANCEL" });
+                    expect(f.db.message_log.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+                        where: expect.objectContaining({ id: 42, branchId: "branch-a", triggerJobId: null, providerAcceptanceState: "prepared", providerCallStartedAt: null }),
+                        data: { triggerJobId: "55000000-0000-4000-8000-000000000042" } }));
                 } else await result;
             } else if (path === "agent" || path === "admin") {
                 const job = manualJob(path); f.store(job);
@@ -244,8 +278,8 @@ describe("NIGHT-1 final SMS/LMS admission", () => {
         const f = boundaryFixture(); jest.mocked(Date.now).mockReturnValue(Date.parse("2026-11-03T12:59:00Z"));
         f.policy.quietHours.enabled = false;
         f.setBeforeLock(async () => { f.policy.quietHours.enabled = true; jest.mocked(Date.now).mockReturnValue(Date.parse("2026-11-03T13:00:00Z")); });
-        await expect(manualController(f).sendSms({ branchId: "branch-a" }, { receiver: PHONE, message: "합성 본문" })).rejects.toBeInstanceOf(ServiceUnavailableException);
-        expect(f.events).toEqual(["lock", "policy", "cas", "commit"]); expect(f.aligo.sendSms).not.toHaveBeenCalled();
+        await expect(manualController(f).sendSms({ branchId: "branch-a" }, { receiver: PHONE, message: "합성 본문" })).resolves.toMatchObject({ outcome: "canceled" });
+        expect(f.events).toEqual(["lock", "policy", "lock", "policy", "cas", "commit"]); expect(f.aligo.sendSms).not.toHaveBeenCalled();
     });
     it("DEFER atomically holds attempt zero until 08:00 without starting the provider", async () => {
         const f = boundaryFixture(); f.policy.quietHours.action = "DEFER";
@@ -412,14 +446,15 @@ describe("NIGHT-1 final-boundary failures and serialization", () => {
         await expect(send).rejects.toBeInstanceOf(MessageQuietHoursUnavailableError);
         expect(f.aligo.sendSms).not.toHaveBeenCalled(); expect(f.repository.claimProviderAttempt).not.toHaveBeenCalled();
     });
-    it("serializes a canceled manual request through the actual public problem mapper", async () => {
+    it("serializes a canceled manual queue outcome without private operational metadata", async () => {
         const f = boundaryFixture();
-        const error = await manualController(f).sendSms({ branchId: "branch-a" }, { receiver: PHONE, message: "합성 본문" }).catch((error: unknown) => error);
-        const problem = mapHttpProblem(error, { method: "POST", headers: {}, url: "/message-deliveries/sms" } as Request,
-            { locals: { errorRequestId: "quiet-cancel" }, getHeader: () => undefined } as unknown as Response);
-        expect(problem).toMatchObject({ code: "MESSAGE_SEND_NOT_STARTED", status: 503, outcome: "NOT_APPLIED", operationId: "42", recovery: { action: "NONE", retry: { mode: "NEVER" } } });
-        expect(JSON.stringify(problem)).not.toContain(PHONE);
-        expect(JSON.stringify(problem)).not.toContain("message_quiet_hours");
+        const result = await manualController(f).sendSms({ branchId: "branch-a" }, { receiver: PHONE, message: "합성 본문" });
+        const response = JSON.parse(JSON.stringify(result));
+        expect(response).toMatchObject({ provider: "aligo_sms", triggerType: "immediate", outcome: "canceled",
+            items: [{ jobId: "55000000-0000-4000-8000-000000000042", messageLogId: 42, recipientPhone: PHONE,
+                status: "canceled", scheduledAt: NIGHT, reason: "message_quiet_hours:CANCEL" }] });
+        expect(response).not.toHaveProperty("result");
+        expect(JSON.stringify(response)).not.toMatch(/manualRecipientBindings|manualQueueSenderIdentity|quietHoursPolicyRevision|합성 본문/);
         expect(f.aligo.sendSms).not.toHaveBeenCalled();
     });
     it("lost provider-start CAS still refuses an otherwise allowed policy", async () => {
@@ -475,7 +510,7 @@ describe("NIGHT-1 final-boundary failures and serialization", () => {
         await Promise.resolve(); await Promise.resolve();
         expect(f.aligo.sendSms).not.toHaveBeenCalled();
         jest.mocked(Date.now).mockReturnValue(Date.parse("2026-11-03T13:00:00Z")); release();
-        await write; await expect(send).rejects.toBeInstanceOf(ServiceUnavailableException);
+        await write; await expect(send).resolves.toMatchObject({ outcome: "canceled" });
         expect(f.aligo.sendSms).not.toHaveBeenCalled();
         expect(f.execute).toHaveBeenLastCalledWith("branch:branch-a:message_automation:policy", f.db);
     });

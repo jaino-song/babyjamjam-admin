@@ -1850,15 +1850,18 @@ describe("TIME-2 branch SMS retry timing", () => {
         expect(result?.nextRetryAt).toEqual(new Date("2026-11-03T21:03:00+09:00"));
     });
     it("preserves state if the generic catch cannot resolve a fresh validated interval", async () => {
-        const settings = policy(1);
-        const read = settings.getMessageAutomationPolicyConfig.bind(settings);
-        jest.spyOn(settings, "getMessageAutomationPolicyConfig").mockImplementationOnce(read).mockRejectedValueOnce(new Error("read unavailable"));
-        const h = retryHarness(settings);
+        const h = retryHarness();
+        const read = h.retry.getRetryDelayMs.bind(h.retry);
+        // Quiet admission also reads configuration. Fail the recovery timing
+        // lookup itself, after the initial validated timing and failed admission.
+        const timing = jest.spyOn(h.retry, "getRetryDelayMs").mockImplementationOnce(read).mockRejectedValueOnce(new Error("read unavailable"));
         h.logs.startRetryAttempt.mockRejectedValue(new Error("admission unavailable"));
         const stored = { status: h.source.status, due: h.source.nextRetryAt, attempts: h.source.attempts };
         await h.scheduler().retryFailedMessages();
         expect({ status: h.source.status, due: h.source.nextRetryAt, attempts: h.source.attempts }).toEqual(stored);
         expect(h.logs.update).not.toHaveBeenCalled();
+        expect(h.logs.startRetryAttempt).toHaveBeenCalledTimes(1);
+        expect(timing).toHaveBeenCalledTimes(2);
         expect(h.aligo.sendSms).not.toHaveBeenCalled();
     });
     it("requires the timing settings dependency in Nest for both services", () => {
