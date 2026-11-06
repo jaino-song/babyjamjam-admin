@@ -87,6 +87,8 @@ export async function* executionChunks<T>(source: AsyncIterable<T>, fence?: Exec
                 // Like native for-await, a failed producer pull does not close the iterator.
                 // Explicit fence cancellation is still handled below, including sync throws.
                 pullFailed = true;
+                // next() can abort and throw before awaitExecutionSignal is entered.
+                checkExecutionSignal(fence);
                 throw error;
             }
             checkExecutionSignal(fence);
