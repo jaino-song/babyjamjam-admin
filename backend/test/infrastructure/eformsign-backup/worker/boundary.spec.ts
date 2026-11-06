@@ -45,6 +45,7 @@ const ALLOWED_BARE: Array<string | RegExp> = [
     "infrastructure/eformsign-backup/execution-effect-fence",
 ];
 const MANUAL_DELIVERY_STORE = "infrastructure/eformsign-backup/worker/manual-delivery-store.ts";
+const WORKER_CLI = "infrastructure/eformsign-backup/worker/cli.ts";
 const FORBIDDEN_UNLINK = /(^|[^A-Za-z0-9_$])(unlink|unlinkSync|rmdir|rmdirSync|rmSync|rm)\s*\(|\.(unlink|rmdir|rm)\b|\b(unlink|rmdir|rmSync)\b/;
 const FORBIDDEN_EXCEPTIONS = /\b(BadRequest|NotFound|Conflict|Forbidden|Unauthorized|InternalServerError|ServiceUnavailable|BadGateway|Http)Exception\b/;
 
@@ -113,6 +114,22 @@ const RAW_PROCESS_PATTERNS = [
  * the text as written, so a regex literal that fools the stripper cannot hide an access.
  */
 function processViolations(raw: string, file?: string): string[] {
+    if (file === WORKER_CLI) {
+        // Command data cannot name the process binding. Mask only exact, unescaped AST tokens;
+        // comments, regexes, templates and every other spelling remain visible to both scans.
+        const sf = ts.createSourceFile("cli.ts", raw, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+        const spans: Array<{ start: number; end: number }> = [];
+        const visit = (node: ts.Node): void => {
+            if (ts.isStringLiteral(node) && node.text === "process-pending") {
+                const start = node.getStart(sf);
+                const token = raw.slice(start, node.end);
+                if (token === '"process-pending"' || token === "'process-pending'") spans.push({ start, end: node.end });
+            }
+            ts.forEachChild(node, visit);
+        };
+        visit(sf);
+        for (const { start, end } of spans) raw = raw.slice(0, start) + " ".repeat(end - start) + raw.slice(end);
+    }
     const source = stripComments(raw);
     const hits: string[] = [];
     for (const match of source.matchAll(/(?<![\w$])process(?![\w$])/g)) {
@@ -986,6 +1003,71 @@ describe("T-WRK-14: worker runtime boundary (static scan)", () => {
         for (const [file, source] of scanned) for (const hit of processViolations(source, file)) offenders.push(`${file}: ${hit}`);
         expect(offenders).toEqual([]);
         expect(ALLOWED_PROCESS_MEMBERS).not.toContain("env");
+    });
+
+    it("should allow only exact quoted command literals in the CLI, including the command type", () => {
+        for (const good of [
+            "const command = 'process-pending';",
+            'const command = "process-pending";',
+            'type Command = "run" | "process-pending";',
+        ]) {
+            expect(processViolations(good, WORKER_CLI)).toEqual([]);
+            expect(processViolations(good)).not.toEqual([]);
+            expect(processViolations(good, MANUAL_DELIVERY_STORE)).not.toEqual([]);
+            expect(processViolations(good, `${WORKER_CLI}.other`)).not.toEqual([]);
+            expect(processViolations(`${good}\nprocess.env.SECRET;`, WORKER_CLI)).not.toEqual([]);
+        }
+        expect(processViolations('const command = "process-pending"; process.stdout.write(command);', WORKER_CLI)).toEqual([]);
+    });
+
+    it("should account for all eight exact command literals in the full CLI source", () => {
+        const source = scanned.get(WORKER_CLI)!;
+        const sf = ts.createSourceFile("cli.ts", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+        const literals: ts.StringLiteral[] = [];
+        const visit = (node: ts.Node): void => {
+            if (ts.isStringLiteral(node) && node.text === "process-pending") literals.push(node);
+            ts.forEachChild(node, visit);
+        };
+        visit(sf);
+        expect(literals).toHaveLength(8);
+        expect(literals.filter(node => ts.isLiteralTypeNode(node.parent))).toHaveLength(1);
+        expect([...source.matchAll(/['"]process-pending['"]/g)]).toHaveLength(8);
+        expect(processViolations(source, WORKER_CLI)).toEqual([]);
+        expect(processViolations(source)).not.toEqual([]);
+        for (const bad of [
+            "process.env.SECRET;",
+            'const re = /^https?:\\/\\//; process.env.SECRET;',
+            'const re = /x\\/*/; process.env.SECRET; /* phantom close */',
+        ]) expect(processViolations(`${source}\n${bad}`, WORKER_CLI)).not.toEqual([]);
+        for (const node of literals) {
+            expect(["'process-pending'", '"process-pending"']).toContain(node.getText(sf));
+            const changed = source.slice(0, node.getStart(sf)) + '"process"' + source.slice(node.end);
+            expect(processViolations(changed, WORKER_CLI)).not.toEqual([]);
+        }
+    });
+
+    it("should retain CLI process and raw comment/regex denials beside permitted command data", () => {
+        const good = 'const command = "process-pending";';
+        for (const bad of [
+            'const name = "process";', 'const name = "process.env";',
+            'const name = "process" + "-pending";', 'const name = `process-pending`;',
+            'const name = `process-${"pending"}`;', 'const name = `${process}-pending`;', 'const name = "process\\u002dpending";',
+            'const name = "process\\x2dpending";', 'const processPending = process;',
+            'process.env.SECRET;', 'process["env"];', 'process.cwd();',
+            'const p = process;', 'const { env } = process;', 'globalThis.process.env.SECRET;',
+            'const re = /process-pending/;',
+            '// "process-pending" globalThis', '/* "process-pending" global */',
+            'const re = /^https?:\\/\\//; const command = "process-pending"; process.env.SECRET;',
+            'const re = /x\\/*/; const command = "process-pending"; process.env.SECRET; /* phantom close */',
+        ]) {
+            expect(processViolations(bad)).not.toEqual([]);
+            expect(processViolations(`${good}\n${bad}`, WORKER_CLI)).not.toEqual([]);
+            expect(processViolations(`${good}\n${bad}`)).not.toEqual([]);
+        }
+        // The command-data exception cannot alter the separate loader/Reflect guards.
+        for (const bad of ['Reflect.get(process, "env");', 'const load = require; load(name);', 'const k = "pro" + "cess"; target[k];']) {
+            expect(loaderViolations(`${good}\n${bad}`, WORKER_CLI)).not.toEqual([]);
+        }
     });
 
     it("should refuse every way of reaching process.env (the check itself can fail)", () => {

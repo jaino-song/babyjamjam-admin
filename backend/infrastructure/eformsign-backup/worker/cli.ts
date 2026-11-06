@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import path from "node:path";
 
 import { z } from "zod";
@@ -12,6 +12,9 @@ import { ExportClient, readTokenFile } from "./export-client";
 import { assertSupportedFilesystem, createRealFsProbe, type FsProbe } from "./fs-probe";
 import { LedgerStore, type LedgerFaultPoint } from "./ledger-store";
 import { lockGuard, verifyLockHeld } from "./lock";
+import { ManualControlClient } from "./manual-control-client";
+import { ManualDeliveryStore, type ManualDeliveryStoreOptions } from "./manual-delivery-store";
+import { processPending, type ManualBindingPort, type ManualPendingSummary } from "./manual-pending";
 import { LocalDestination } from "./local-destination";
 import { controlMarkerWriter } from "./runner-common";
 import { WorkerRunner } from "./runner";
@@ -24,8 +27,8 @@ import {
     type RunnerFault, type VerifySummary, type WorkerRunnerPort,
 } from "./runner-types";
 
-export type WorkerCommand = "init" | "run" | "verify" | "recover" | "inspect" | "drive-setup";
-const COMMANDS: readonly WorkerCommand[] = ["init", "run", "verify", "recover", "inspect", "drive-setup"];
+export type WorkerCommand = "init" | "run" | "verify" | "recover" | "inspect" | "drive-setup" | "process-pending";
+const COMMANDS: readonly WorkerCommand[] = ["init", "run", "verify", "recover", "inspect", "drive-setup", "process-pending"];
 
 /** Everything a test may replace. Production passes nothing and gets the real clock, uuid source, `/proc/locks`, fetch and stdio. */
 export interface WorkerEnvironment {
@@ -40,10 +43,13 @@ export interface WorkerEnvironment {
     runnerFault?: RunnerFault;
     ledgerFault?: (point: LedgerFaultPoint) => void;
     archiveFault?: (point: ArchiveFaultPoint) => void;
+    /** Synthetic orchestration tests only; production always uses the Linux FD-anchored store. */
+    manualBindingStoreFactory?: (options: ManualDeliveryStoreOptions) => ManualBindingPort;
 }
 
 export interface OpenedWorker {
     runner: WorkerRunnerPort;
+    processPending(maxJobs?: number): Promise<ManualPendingSummary>;
     close(): Promise<void>;
 }
 
@@ -66,7 +72,7 @@ class DisabledRunner implements WorkerRunnerPort {
 const LOCK_NAME = "worker.lock";
 
 /** The commands that may talk to Drive, and so read the Drive secret files. `init` and `inspect` never do. */
-const DRIVE_COMMANDS: ReadonlySet<WorkerCommand> = new Set(["run", "drive-setup", "recover", "verify"]);
+const DRIVE_COMMANDS: ReadonlySet<WorkerCommand> = new Set(["run", "drive-setup", "recover", "verify", "process-pending"]);
 const DRIVE_CLIENT_FILE_MAX_BYTES = 4096;
 const DRIVE_REFRESH_TOKEN_MAX_BYTES = 1024;
 const DRIVE_REFRESH_TOKEN_PATTERN = /^[A-Za-z0-9_\-/.]{20,512}$/;
@@ -113,8 +119,8 @@ async function openDriveFor(command: WorkerCommand, config: WorkerConfig, clock:
  * `drive-setup`), the ledger. A failure at any step leaves the earlier ones unopened.
  */
 export async function openWorker(config: WorkerConfig, command: WorkerCommand, environment: WorkerEnvironment = {}): Promise<OpenedWorker> {
-    if (!config.enabled && (command === "run" || command === "verify" || command === "recover")) {
-        return { runner: new DisabledRunner(), close: async () => undefined };
+    if (!config.enabled && (command === "run" || command === "verify" || command === "recover" || command === "process-pending")) {
+        return { runner: new DisabledRunner(), processPending: async () => ({ outcome: "disabled", counts: { claimed: 0, acknowledged: 0, pending: 0, rejected: 0 } }), close: async () => undefined };
     }
     const probe = environment.probe ?? createRealFsProbe();
     const clock: Clock = environment.clock ?? { now: () => new Date() };
@@ -122,6 +128,7 @@ export async function openWorker(config: WorkerConfig, command: WorkerCommand, e
 
     const lockPath = path.join(controlPath, LOCK_NAME);
     const held = command === "inspect" ? null : await verifyLockHeld(lockPath, probe);
+    const freshLock = held === null ? null : lockGuard(lockPath, probe, held);
     await assertSupportedFilesystem(probe, controlPath, "control-unavailable");
     if (command !== "inspect") {
         try {
@@ -131,9 +138,10 @@ export async function openWorker(config: WorkerConfig, command: WorkerCommand, e
             if (!(error instanceof WorkerError) || error.reasonCode !== "archive-unavailable") throw error;
         }
     }
+    const token = command === "run" || command === "process-pending" ? await readTokenFile(config.tokenFile) : null;
     const exportClient = command === "run"
         ? new ExportClient({
-            baseUrl: config.exportBaseUrl, token: await readTokenFile(config.tokenFile), companyId: config.companyId,
+            baseUrl: config.exportBaseUrl, token: token!, companyId: config.companyId,
             requestTimeoutMs: config.requestTimeoutMs, ...(environment.fetchImpl === undefined ? {} : { fetchImpl: environment.fetchImpl }),
         })
         : null;
@@ -147,7 +155,7 @@ export async function openWorker(config: WorkerConfig, command: WorkerCommand, e
         now: () => clock.now().toISOString(),
         writeMarker: controlMarkerWriter,
         // Every ledger write re-proves the lock: the path must still be the inode verified above, still locked by this pid.
-        ...(held === null ? {} : { beforeWrite: lockGuard(lockPath, probe, held) }),
+        ...(freshLock === null ? {} : { beforeWrite: freshLock }),
     });
     const deps: RunnerDependencies = {
         config,
@@ -171,7 +179,22 @@ export async function openWorker(config: WorkerConfig, command: WorkerCommand, e
         ...(environment.compactionThreshold === undefined ? {} : { compactionThreshold: environment.compactionThreshold }),
         ...(environment.runnerFault === undefined ? {} : { runnerFault: environment.runnerFault }),
     };
-    return { runner: new WorkerRunner(deps), close: () => deps.ledger.close() };
+    try {
+        const runner = new WorkerRunner(deps);
+        let manual: ((maxJobs?: number) => Promise<ManualPendingSummary>) = async () => { throw new WorkerError("internal"); };
+        if (command === "process-pending") {
+            const installationId = deps.ledger.state.installation?.installationId;
+            if (deps.ledger.status !== "ok" || !installationId) throw new WorkerError("not-initialized");
+            const credentialFingerprint = createHash("sha256").update(token!, "utf8").digest("hex");
+            const client = new ManualControlClient({ baseUrl: config.exportBaseUrl, token: token!, companyId: config.companyId,
+                requestTimeoutMs: config.requestTimeoutMs, ...(environment.fetchImpl === undefined ? {} : { fetchImpl: environment.fetchImpl }) });
+            const storeOptions = { controlPath, companyId: config.companyId, installationId, credentialFingerprint, beforeWrite: freshLock! };
+            const bindings = environment.manualBindingStoreFactory?.(storeOptions) ?? new ManualDeliveryStore(storeOptions);
+            manual = (maxJobs) => processPending({ deps: { ...deps, credentialFingerprint }, runner, client, bindings, lockGuard: freshLock!,
+                ...(maxJobs === undefined ? {} : { maxJobs }) });
+        }
+        return { runner, processPending: manual, close: () => deps.ledger.close() };
+    } catch (error) { await deps.ledger.close(); throw error; }
 }
 
 // ---- argv ----------------------------------------------------------------------------------------------------------
@@ -184,6 +207,7 @@ interface ParsedArgs {
     installationId: string | null;
     rebind: boolean;
     driveRootFolderId: string | null;
+    maxJobs: number;
 }
 
 function usage(): never {
@@ -201,6 +225,7 @@ function parseArgs(args: readonly string[]): ParsedArgs {
     let installationId: string | null = null;
     let rebind = false;
     let driveRootFolderId: string | null = null;
+    let maxJobs = 1;
     for (let index = 1; index < args.length; index++) {
         const flag = args[index]!;
         if (seen.has(flag)) usage();
@@ -229,12 +254,15 @@ function parseArgs(args: readonly string[]): ParsedArgs {
         } else if (flag === "--drive-root-folder-id") {
             if (command !== "recover" || !driveFileId.safeParse(value).success) usage();
             driveRootFolderId = value;
+        } else if (flag === "--max-jobs") {
+            if (command !== "process-pending" || !/^(?:[1-9]|1[0-9]|20)$/.test(value)) usage();
+            maxJobs = Number(value);
         } else {
             usage();
         }
     }
     if (configPath === null || (command === "recover" && installationId === null)) usage();
-    return { command, configPath, scheduledFor, all, installationId, rebind, driveRootFolderId };
+    return { command, configPath, scheduledFor, all, installationId, rebind, driveRootFolderId, maxJobs };
 }
 
 // ---- exit codes ------------------------------------------------------------------------------------------------------
@@ -274,6 +302,12 @@ type LogLine = {
 async function execute(parsed: ParsedArgs, worker: OpenedWorker, emit: (line: LogLine) => void): Promise<void> {
     const { runner } = worker;
     switch (parsed.command) {
+        case "process-pending": {
+            const summary = await worker.processPending(parsed.maxJobs);
+            if (summary.outcome === "disabled") emit({ event: "disabled" });
+            else emit({ event: "manual_runs_processed", counts: summary.counts });
+            return;
+        }
         case "init":
             await runner.init();
             emit({ event: "initialized" });
