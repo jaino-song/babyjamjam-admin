@@ -928,7 +928,8 @@ class RunExecution {
     private async blockedMayRetry(entry: DestinationEntry, job: ArtifactJob, staged: boolean): Promise<boolean> {
         const code = entry.reasonCode;
         if (code === "integrity-repeated" || code === "source-removed") return false;
-        if (code === "archive-unavailable" && !this.archiveOk) return false;
+        // Selected crash recovery must still acquire missing staged bytes for an independent, ready Drive destination.
+        if (code === "archive-unavailable" && !this.archiveOk) return this.manual !== null && this.drive !== null && this.deps.drive?.kind === "ready";
         if (code === "control-space" && !staged && !(await controlHasStagingRoom(this.deps, job.byteLength))) return false;
         return true;
     }
