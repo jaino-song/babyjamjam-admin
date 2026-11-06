@@ -6,6 +6,8 @@ import {
     UUID_V4_PATTERN, driveStateKey, isDriveDestinationIdentity, integrityErrorCount, integrityRetryDecision, parseCompletionName, parseManifestKey, runInventorySchema, runKey,
     type ArchiveArtifactType, type DestinationEntry, type Installation, type LedgerState, type RunCounts, type WorkerReasonCode,
 } from "domain/eformsign-backup/worker";
+import { beforeExecutionEffect, executionChunks } from "../execution-effect-fence";
+import type { ManualRunScope } from "./manual-run-scope";
 import { readOutbox, writeOutbox } from "./drive-outbox";
 import { DriveTransferError, type DriveFailure } from "./drive-client";
 import type { DriveDestination, DriveNodeLedger, DriveStep } from "./drive-destination";
@@ -61,6 +63,7 @@ interface ArchiveCompletion {
 
 /** What the Drive phase needs from the run that owns it. */
 export interface DriveRunHost {
+    manual?: ManualRunScope;
     archiveOk(): boolean;
     archiveLost(): void;
     /** The manifest bytes the local side publishes for this candidate. */
@@ -201,7 +204,7 @@ export class DriveRunPhase {
     private async ensureGate(): Promise<boolean> {
         if (this.gate !== "unchecked") return this.gate === "open";
         this.gate = "closed";
-        const root = await this.destination!.checkRoot();
+        const root = await this.destination!.checkRoot(this.host.manual?.effect());
         if (!root.ok) {
             if ("conflict" in root) this.closeGate("drive-root-changed", true);
             else {
@@ -256,7 +259,8 @@ export class DriveRunPhase {
 
     private entries(): DestinationEntry[] {
         return [...this.state.destinations.values()].filter((entry) => entry.destinationIdentity === this.dl.destinationIdentity
-            && entry.destinationRevision === this.revision);
+            && entry.destinationRevision === this.revision
+            && (!this.host.manual || this.host.manual.allowedArtifacts.has(entry.artifactIdentity)));
     }
 
     /** `transferring` / `verifying` Drive entries: ask Drive what is there under the reserved id and settle them from that. */
@@ -272,6 +276,15 @@ export class DriveRunPhase {
     private async recoverEntry(entry: DestinationEntry): Promise<void> {
         const id = entry.artifactIdentity;
         const info = this.state.artifacts.get(id);
+        if (this.host.manual && info) {
+            const candidate = this.host.manual.options.selection.candidates.find((c) => c.documentId === info.documentId)!;
+            const artifact = candidate.artifacts.find((a) => a.artifactIdentity === id)!;
+            await this.processManualRecovery(entry, { documentId: info.documentId, artifactType: artifact.artifactType,
+                fileType: artifact.artifactType === "document" ? "document" : "audit_trail", artifactIdentity: id,
+                sha256: artifact.sha256, byteLength: artifact.byteLength, relativeKey: artifactKey({ companyId: this.deps.config.companyId,
+                    documentId: info.documentId, artifactType: artifact.artifactType, sha256: artifact.sha256 }) });
+            return;
+        }
         let relativeKey = entry.relativeKey;
         if (relativeKey === null && info !== undefined) {
             try {
@@ -317,6 +330,7 @@ export class DriveRunPhase {
                 await this.processJob(job);
             }
         }
+        if (this.host.manual) return;
         for (const entry of this.entries()) {
             if (!open(entry) || inSnapshot.has(entry.artifactIdentity)) continue;
             const info = this.state.artifacts.get(entry.artifactIdentity);
@@ -398,10 +412,62 @@ export class DriveRunPhase {
         }
     }
 
+    private async processManualRecovery(entry: DestinationEntry, job: DriveJob): Promise<void> {
+        const manual = this.host.manual!;
+        await beforeExecutionEffect(manual.effect(job.documentId));
+        manual.begin("drive", job.documentId);
+        try {
+            if (await this.freshRemote(job)) {
+                if (entry.state === "transferring") await this.dl.transition(job.artifactIdentity, "verifying", { relativeKey: job.relativeKey });
+                await this.dl.transition(job.artifactIdentity, "verified", { relativeKey: job.relativeKey });
+            } else if (this.dl.entryOf(job.artifactIdentity)?.state === entry.state) {
+                await this.dl.transition(job.artifactIdentity, "retry_wait", { reasonCode: "crashed", attempts: entry.attempts + 1,
+                    nextRetryAt: this.now(), relativeKey: job.relativeKey });
+                await this.dl.transition(job.artifactIdentity, "pending");
+            }
+        } finally { manual.observe("drive", job.artifactIdentity, this.dl.entryOf(job.artifactIdentity)); }
+    }
+
+    /** A ledger `verified` bit is never a proof for this manual attempt. */
+    private async freshRemote(job: DriveJob): Promise<boolean> {
+        const manual = this.host.manual!;
+        if (!(await this.ready())) return false;
+        const node = this.state.driveNodes.get(driveStateKey(this.revision, job.relativeKey));
+        if (!node || node.kind !== "file") return false;
+        const checked = await this.destination!.verifyRemote(node.fileId, { name: driveNameOf(job.relativeKey),
+            parentFileId: node.parentFileId, sha256: job.sha256, byteLength: job.byteLength, mimeType: driveMimeOf(job.relativeKey) },
+        {}, manual.effect(job.documentId));
+        if (!checked.ok) {
+            if ("failure" in checked) await this.applyFailure(job, checked.failure);
+            else await this.recordIntegrityError(job);
+            return false;
+        }
+        if (checked.value !== "ok") {
+            await this.recordIntegrityError(job);
+            return false;
+        }
+        manual.driveProof.add(job.artifactIdentity);
+        return true;
+    }
+
     private async processJob(job: DriveJob): Promise<void> {
+        const manual = this.host.manual;
+        await beforeExecutionEffect(manual?.effect(job.documentId));
+        manual?.begin("drive", job.documentId);
+        try { await this.processJobEffects(job); }
+        finally { manual?.observe("drive", job.artifactIdentity, this.dl.entryOf(job.artifactIdentity)); }
+    }
+
+    private async processJobEffects(job: DriveJob): Promise<void> {
         const id = job.artifactIdentity;
         if (this.destination === null) return;
-        const entry = this.dl.entryOf(id);
+        let entry = this.dl.entryOf(id);
+        if (this.host.manual && entry?.state === "verified") {
+            if (await this.freshRemote(job)) return;
+            // A failure to ask says nothing about the old verified entry; never count it this attempt.
+            if (this.dl.entryOf(id)?.state === "verified") return;
+            entry = this.dl.entryOf(id);
+        }
         if (entry?.state === "verified" || entry?.state === "transferring" || entry?.state === "verifying") return;
         if (entry?.state === "retry_wait" && Date.parse(entry.nextRetryAt ?? "") > this.deps.clock.now().getTime()) return;
         if (entry?.state === "blocked" && entry.reasonCode === "integrity-repeated") return;
@@ -466,7 +532,7 @@ export class DriveRunPhase {
     private async stagedHashOk(job: DriveJob): Promise<boolean> {
         const hash = createHash("sha256");
         let seen = 0;
-        for await (const chunk of this.archive.openStaged(this.staging, job.artifactIdentity)) {
+        for await (const chunk of executionChunks(this.archive.openStaged(this.staging, job.artifactIdentity), this.host.manual?.effect(job.documentId))) {
             hash.update(chunk);
             seen += chunk.byteLength;
         }
@@ -495,8 +561,11 @@ export class DriveRunPhase {
         if (local?.state !== "verified") return false;
         let bytes: Buffer | null;
         try {
+            await beforeExecutionEffect(this.host.manual?.effect(job.documentId));
             if (await this.archive.reverify(job.relativeKey, job.sha256, job.byteLength) !== "ok") return false;
+            await beforeExecutionEffect(this.host.manual?.effect(job.documentId));
             bytes = await this.archive.readArchiveFile(job.relativeKey);
+            await beforeExecutionEffect(this.host.manual?.effect(job.documentId));
         } catch (error) {
             if (!(error instanceof WorkerError)) throw error;
             this.host.archiveLost();
@@ -514,10 +583,11 @@ export class DriveRunPhase {
         await this.dl.transition(id, "transferring", { relativeKey: job.relativeKey });
         const nodes = this.nodes();
         const archive = this.archive;
+        const effect = this.host.manual?.effect(job.documentId);
         const staging = this.staging;
         const open = (offset: number): AsyncIterable<Uint8Array> => (async function* (): AsyncGenerator<Uint8Array> {
             let position = 0;
-            for await (const chunk of archive.openStaged(staging, id)) {
+            for await (const chunk of executionChunks(archive.openStaged(staging, id), effect)) {
                 const end = position + chunk.byteLength;
                 if (end > offset) yield position >= offset ? chunk : chunk.subarray(offset - position);
                 position = end;
@@ -525,11 +595,11 @@ export class DriveRunPhase {
         })();
         let result: DriveStep<{ fileId: string }>;
         try {
-            const parent = await destination.ensureFolderChain(job.relativeKey, nodes);
+            const parent = await destination.ensureFolderChain(job.relativeKey, nodes, effect);
             result = parent.ok
                 ? await destination.uploadArtifact({
                     relativeKey: job.relativeKey, sha256: job.sha256, byteLength: job.byteLength, artifactIdentity: id, freshId: fresh,
-                }, parent.value, nodes, open)
+                }, parent.value, nodes, open, effect)
                 : parent;
         } catch (error) {
             if (!(error instanceof WorkerError) || error.reasonCode !== "artifact-integrity") throw error;
@@ -548,6 +618,7 @@ export class DriveRunPhase {
         await this.deps.runnerFault?.("drive-after-upload-before-verifying");
         await this.dl.transition(id, "verifying", { relativeKey: job.relativeKey });
         await this.dl.transition(id, "verified", { relativeKey: job.relativeKey });
+        this.host.manual?.driveProof.add(id);
         await this.deps.runnerFault?.("drive-after-verified");
     }
 
@@ -595,7 +666,8 @@ export class DriveRunPhase {
         // asked, including a phase with no usable destination at all (unreadable secret files, A8).
         const destination = this.destination;
         if (destination === null || !(await this.ready())) return { unavailable: this.halted?.code ?? this.closedAs?.code ?? this.phaseFailure ?? "drive-unavailable" };
-        const got = await destination.download(node.fileId);
+        if (this.host.manual && !this.host.manual.driveProof.has(job.artifactIdentity) && !(await this.freshRemote(job))) return false;
+        const got = await destination.download(node.fileId, this.host.manual?.effect(job.documentId));
         if (!got.ok) {
             if (!("failure" in got)) return { unavailable: "drive-conflict" };
             if (this.classifyAbsent(got.failure)) {
@@ -663,10 +735,11 @@ export class DriveRunPhase {
     }
 
     /** One record to Drive. `queued`: its bytes live in the outbox, so a failure here is retried by a later run. */
-    private async push(relativeKey: string, bytes: Uint8Array, queued: boolean): Promise<{ ok: true } | { ok: false; reasonCode: WorkerReasonCode }> {
+    private async push(relativeKey: string, bytes: Uint8Array, queued: boolean, documentId?: string): Promise<{ ok: true } | { ok: false; reasonCode: WorkerReasonCode }> {
+        await beforeExecutionEffect(this.host.manual?.effect(documentId));
         if (queued) await this.queue(relativeKey, bytes);
         if (!(await this.ready())) return { ok: false, reasonCode: this.phaseFailure ?? "drive-unavailable" };
-        const published = await this.destination!.publishJson(relativeKey, bytes, this.nodes());
+        const published = await this.destination!.publishJson(relativeKey, bytes, this.nodes(), this.host.manual?.effect(documentId));
         if (!published.ok) {
             const reasonCode = await this.recordFailure(published);
             return { ok: false, reasonCode };
@@ -701,6 +774,16 @@ export class DriveRunPhase {
      */
     async publishRecords(): Promise<void> {
         if (this.destination === null) return;
+        if (this.host.manual) {
+            for (const candidate of this.work) {
+                if (!candidate.artifacts.some((a) => this.host.manual!.driveProof.has(a.artifactIdentity))) continue;
+                const manifest = this.host.manifestOf(candidate);
+                const pushed = await this.push(manifest.key, manifest.bytes, !this.host.locallyPublished(manifest.key), candidate.documentId);
+                if (pushed.ok) this.host.manual.driveManifests.add(candidate.documentId);
+                else { this.manifestFailures.set(candidate.documentId, pushed.reasonCode); this.host.manual.driveFailures.set(candidate.documentId, pushed.reasonCode); }
+            }
+            return;
+        }
         const { config } = this.deps;
         const handled = new Set<string>();
 

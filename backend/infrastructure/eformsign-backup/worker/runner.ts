@@ -12,10 +12,11 @@ import {
     ARCHIVE_MARKER_FILE, controlMarkerWriter, isTerminalReason, ledgerDriveNodes, nowIso, parseMarker, readArchiveMarker, requireInstallation,
 } from "./runner-common";
 import { executeRun } from "./runner-run";
+import { hasManualRunOptions } from "./manual-run-scope";
 import {
     LOCAL_DESTINATION_REVISION, localDestinationIdentity,
     type DriveSetupSummary, type InitSummary, type InspectSummary, type RecoverSummary, type RunSummary, type RunnerDependencies,
-    type VerifySummary, type WorkerRunnerPort,
+    type VerifySummary, type WorkerRunnerPort, type RunOptions,
 } from "./runner-types";
 
 export { controlMarkerWriter };
@@ -69,7 +70,8 @@ export class WorkerRunner implements WorkerRunnerPort {
         return { outcome: "finished", installationId };
     }
 
-    async run(options: { scheduledFor?: string | null } = {}): Promise<RunSummary> {
+    async run(options: RunOptions = {}): Promise<RunSummary> {
+        if (hasManualRunOptions(options)) return executeRun(this.deps, options);
         await this.refuseHalfInstalled();
         return executeRun(this.deps, options);
     }

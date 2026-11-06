@@ -3,12 +3,15 @@ import { promises as fs } from "node:fs";
 
 import { EXPORT_ARTIFACT_MAX_BYTES } from "domain/eformsign-backup/export/constants";
 import { artifactIdentity } from "domain/eformsign-backup/source-evidence";
+import { buildManualAggregateResult, manualAggregateResultDigest, manualDocumentResultDigest, type ManualAggregateResult, type ManualDocumentResult, type ManualSelection } from "domain/eformsign-backup/worker/manual-protocol";
 import {
     WorkerError, actionForExportError, artifactKey, buildCompletion, buildManifest, buildRunInventory, completionContentDigest,
     completionSchema, integrityErrorCount, integrityRetryDecision, judgeHistoricalCoverage, judgeSnapshotStatus, manifestKey,
     destinationKey, driveStateKey, nextRetryAt, nextSnapshotSequence, parseCompletionName, parseManifestKey, runKey, toArchiveArtifactType,
     type ArchiveArtifactType, type DestinationEntry, type ExportAction, type Manifest, type RunCounts, type WorkerReasonCode,
 } from "domain/eformsign-backup/worker";
+import { beforeExecutionEffect, awaitExecutionSignal, executionChunks, isExecutionFencedError, ExecutionFencedError, type ExecutionEffectFence } from "../execution-effect-fence";
+import { boundedManualReasons, legacyManualReasons, prepareManualRun, type ManualRunScope } from "./manual-run-scope";
 import { DEFAULT_COMPACTION_THRESHOLD } from "./ledger-store";
 import { artifactIdentityDerives, listManifestFiles, parseManifestBytes, type ManifestFile } from "./restore";
 import { readManifestHistory, type ManifestHistory, type ManifestSource } from "./runner-manifest-sources";
@@ -21,7 +24,7 @@ import {
     controlHasStagingRoom, countOrphanTemps, isArchiveSide, isTerminalReason, nowIso, requireInstallation,
 } from "./runner-common";
 import { DriveRunPhase, type DriveBuiltRecord, type DriveCompletionContext, type DriveHeal, type DriveRunHost } from "./runner-drive";
-import { type RunSummary, type RunnerDependencies } from "./runner-types";
+import { ZERO_COUNTS, type RunOptions, type RunSummary, type RunnerDependencies } from "./runner-types";
 
 const OPAQUE_ID = /^[^\u0000-\u001f\u007f]{1,512}$/u;
 
@@ -180,7 +183,7 @@ class RunExecution {
     private totalCandidates = 0;
     private includedCandidates = 0;
     /** The Google Drive destination of this run; `null` without a `drive` block or a ready binding (the run is then exactly the local one). */
-    private readonly drive: DriveRunPhase | null;
+    private drive: DriveRunPhase | null = null;
     /** The archive keys (manifests, completion) this run wrote locally, and the completion it built; the Drive phase reads them (A2.6). */
     private readonly localPublished = new Set<string>();
     private localCompletion: DriveBuiltRecord | null = null;
@@ -190,12 +193,20 @@ class RunExecution {
     constructor(
         private readonly deps: RunnerDependencies,
         private readonly archive: LocalDestination,
-        private readonly staging: StagingRoot,
+        private stagingRoot: StagingRoot | null,
         private readonly scheduledFor: string | null,
+        private readonly manual: ManualRunScope | null = null,
     ) {
         this.dl = new DestinationLedger(deps, requireInstallation(deps));
-        this.drive = DriveRunPhase.forRun(deps, this.dl.installation, archive, staging, this.driveHost());
+        if (stagingRoot) this.drive = DriveRunPhase.forRun(deps, this.dl.installation, archive, stagingRoot, this.driveHost());
     }
+
+    private get staging(): StagingRoot {
+        if (!this.stagingRoot) throw new WorkerError("internal");
+        return this.stagingRoot;
+    }
+    private effect(documentId?: string): ExecutionEffectFence | undefined { return this.manual?.effect(documentId); }
+    private async guard(documentId?: string): Promise<void> { await beforeExecutionEffect(this.effect(documentId)); }
 
     private get state() { return this.deps.ledger.state; }
     private get companyId(): string { return this.deps.config.companyId; }
@@ -209,6 +220,7 @@ class RunExecution {
     }
 
     async execute(): Promise<RunSummary> {
+        if (this.manual) return this.executeManual();
         this.history = await readManifestHistory(this.deps.config.control.path, this.state.lastSeq, this.dl.installation);
         const check = await this.archive.checkArchive(0);
         if (!check.ok) this.archiveLost();
@@ -234,23 +246,128 @@ class RunExecution {
         return summary;
     }
 
+    /** Only control accounting is allowed once a manual fence stops execution. */
+    private async startManual(): Promise<void> {
+        const manual = this.manual!;
+        this.startedAt = this.now();
+        await this.deps.ledger.append("run_started", { runId: this.runId, scheduledFor: null, startedAt: this.startedAt,
+            executionScope: manual.options.executionScope }, this.startedAt);
+        for (const candidate of manual.options.selection.candidates) {
+            await this.deps.ledger.append("manual_candidate_selected", { runId: this.runId, candidate }, this.now());
+        }
+        await this.deps.ledger.append("manual_selection_ready", { runId: this.runId,
+            scopeRevision: manual.options.selection.scopeRevision, policyRevision: manual.options.selection.policyRevision,
+            candidateCount: manual.options.selection.candidates.length, selectionDigest: manual.options.executionScope.selectionDigest }, this.now());
+    }
+
+    private async executeManual(): Promise<RunSummary> {
+        this.runId = this.deps.uuid();
+        let started = false;
+        let stopped: string | null = null;
+        let failed = false;
+        try {
+            await this.guard();
+            await assertSameInstallation(this.archive, this.dl.installation);
+            await assertLedgerRoom(this.deps);
+            const staging = await this.archive.ensureStaging(this.deps.config.control.path, this.effect());
+            if (!staging.ok) throw new WorkerError(staging.reasonCode);
+            this.stagingRoot = staging.root;
+            await this.startManual();
+            started = true;
+            await this.guard();
+            const check = await this.archive.checkArchive(0);
+            if (!check.ok) this.archiveLost();
+            const view = this.manual!.options.snapshot;
+            const sequence = nextSnapshotSequence(this.state, await this.archiveMaxSequence());
+            await this.deps.ledger.append("snapshot_bound", { runId: this.runId, snapshotId: view.snapshotId, sequence,
+                scopeRevision: view.scopeRevision, policyRevision: view.policyRevision, counts: { ...view.counts } }, this.now());
+            this.snapshotId = view.snapshotId;
+            for (const candidate of this.manual!.candidates()) await this.observe(view.snapshotId, candidate);
+            this.drive = DriveRunPhase.forRun(this.deps, this.dl.installation, this.archive, this.staging, this.driveHost());
+            await this.recoverInterrupted();
+            await this.drive?.recoverInterrupted();
+            await this.processCandidates();
+            await this.drive?.processWork(this.work);
+            // Fixed manifest sources only. No completion, inventory, history scan or outbox catch-up.
+            for (const candidate of this.work) {
+                if (!this.archiveOk || !candidate.artifacts.some((a) => this.manual!.localProof.has(a.artifactIdentity))) continue;
+                const written = await this.writeManifest(candidate);
+                if (!written.ok) {
+                    this.refuseManifest(written.reasonCode);
+                    this.manifestRefusals.set(candidate.documentId, written.reasonCode);
+                    this.manual!.localFailures.set(candidate.documentId, written.reasonCode);
+                    continue;
+                }
+                await this.fault("after-manifest-before-record");
+                await this.recordManifest(written);
+                this.manual!.localManifests.add(candidate.documentId);
+            }
+            await this.drive?.publishRecords();
+        } catch (error) {
+            if (isExecutionFencedError(error)) stopped = error.reason;
+            else {
+                // Control failures preserve the open journal; no receipt or finish can be fabricated.
+                if (error instanceof WorkerError && (error.reasonCode.startsWith("ledger-") || error.reasonCode.startsWith("control-")
+                    || ["forbidden-transition", "recovery-required", "not-initialized"].includes(error.reasonCode))) throw error;
+                failed = true;
+                stopped = error instanceof WorkerError ? error.reasonCode : "internal";
+            }
+        }
+        if (!started) await this.startManual();
+        return this.finishManual(stopped, failed);
+    }
+
+    private async finishManual(stopped: string | null, failed: boolean): Promise<RunSummary> {
+        const manual = this.manual!;
+        const binding = this.dl.installation.drive;
+        const configured = this.deps.config.drive !== undefined;
+        const driveFailure = this.drive?.phaseFailure ?? (configured && (!binding || binding.status !== "ready" || !this.deps.drive)
+            ? "drive-not-configured" : this.deps.drive?.kind === "unavailable" ? this.deps.drive.reason : null);
+        const results = manual.results({ runId: this.runId, uuid: this.deps.uuid, observedAtSequence: this.deps.ledger.lastSeq,
+            localIdentity: this.dl.destinationIdentity, localRevision: this.dl.destinationRevision,
+            driveIdentity: binding?.destinationIdentity ?? null, driveRevision: binding?.destinationRevision ?? null,
+            driveConfigured: configured, localFailure: this.archiveOk ? null : "archive-unavailable", driveFailure, stopped });
+        for (const result of results) {
+            await this.deps.ledger.append("manual_document_result", { payload: result, digest: manualDocumentResultDigest(result) }, this.now());
+        }
+        const reasons = boundedManualReasons(["coverage-unverified", ...(stopped ? [stopped] : []), ...this.reasons,
+            ...results.flatMap((r) => [...r.reasons, ...r.local.reasons, ...r.drive.reasons])]);
+        const input = { receiptId: this.deps.uuid(), runId: this.runId, scope: manual.options.executionScope,
+            selection: manual.options.selection, results, reasons };
+        const provisional = buildManualAggregateResult({ ...input, status: "unverified" });
+        const aggregate = buildManualAggregateResult({ ...input, status: failed ? "failed" : stopped ? "blocked"
+            : provisional.counts.attention > 0 ? "partial" : "unverified" });
+        const digest = manualAggregateResultDigest(aggregate);
+        await this.deps.ledger.append("manual_result_ready", { payload: aggregate, digest }, this.now());
+        const counts = manualArtifactCounts(manual.options.selection, results);
+        const snapshot = this.snapshotId === null ? undefined : this.state.snapshots.get(this.snapshotId);
+        const summary = manualSummary(aggregate, digest, this.snapshotId, snapshot?.sequence ?? null, counts);
+        await this.deps.ledger.append("run_finished", { runId: this.runId, finishedAt: this.now(), snapshotStatus: summary.snapshotStatus!,
+            historicalCoverage: "unverified", reasonCodes: summary.reasonCodes, counts }, this.now());
+        return summary;
+    }
+
     // ---- step 4a: crash recovery ---------------------------------------------------------------------------------
 
     private async recoverInterrupted(): Promise<void> {
         for (const entry of [...this.state.destinations.values()]) {
             if (entry.destinationIdentity !== this.dl.destinationIdentity || entry.destinationRevision !== this.dl.destinationRevision) continue;
+            if (this.manual && !this.manual.allowedArtifacts.has(entry.artifactIdentity)) continue;
             if (entry.state === "transferring" || entry.state === "verifying") await this.recoverEntry(entry);
         }
     }
 
     private async recoverEntry(entry: DestinationEntry): Promise<void> {
         const id = entry.artifactIdentity;
+        const documentId = this.state.artifacts.get(id)?.documentId;
+        await this.guard(documentId);
+        if (documentId) this.manual?.begin("local", documentId);
         if (!this.archiveOk) {
             await this.dl.transition(id, "blocked", { reasonCode: "archive-unavailable", relativeKey: entry.relativeKey });
             return;
         }
         const info = this.state.artifacts.get(id);
-        let relativeKey = entry.relativeKey;
+        let relativeKey = this.manual ? null : entry.relativeKey;
         if (relativeKey === null && info !== undefined) {
             try {
                 relativeKey = artifactKey({ companyId: this.companyId, documentId: info.documentId, artifactType: info.artifactType, sha256: info.sha256 });
@@ -259,7 +376,9 @@ class RunExecution {
         let found: "ok" | "missing" | "mismatch" = "missing";
         if (relativeKey !== null && info !== undefined && info.byteLength !== null) {
             try {
+                await this.guard(documentId);
                 found = await this.archive.reverify(relativeKey, info.sha256, info.byteLength);
+                await this.guard(documentId);
             } catch (error) {
                 if (!(error instanceof WorkerError)) throw error;
                 this.archiveLost();
@@ -272,6 +391,8 @@ class RunExecution {
             if (!(await this.manifestFirst(id, relativeKey))) return;
             if (entry.state === "transferring") await this.dl.transition(id, "verifying", { relativeKey });
             await this.dl.transition(id, "verified", { relativeKey });
+            this.manual?.localProof.add(id);
+            this.manual?.observe("local", id, this.dl.entryOf(id));
             return;
         }
         if (found === "mismatch" && relativeKey !== null) {
@@ -292,7 +413,8 @@ class RunExecution {
     /** Renames a damaged final file aside. `false` means the archive could not be used for it. */
     private async quarantine(relativeKey: string): Promise<boolean> {
         try {
-            await this.archive.quarantineCorrupt(relativeKey, this.runId);
+            const documentId = this.work.find((c) => c.artifacts.some((a) => a.relativeKey === relativeKey))?.documentId;
+            await this.archive.quarantineCorrupt(relativeKey, this.runId, this.effect(documentId));
             return true;
         } catch (error) {
             if (!(error instanceof WorkerError)) throw error;
@@ -303,7 +425,7 @@ class RunExecution {
 
     private async finishOpenRuns(): Promise<void> {
         for (const run of [...this.state.runs.values()]) {
-            if (run.status !== "open") continue;
+            if (run.status !== "open" || run.executionScope !== undefined) continue;
             const at = this.now();
             await this.deps.ledger.append("run_finished", {
                 runId: run.runId, finishedAt: at, snapshotStatus: "failed", historicalCoverage: judgeHistoricalCoverage(this.state),
@@ -384,6 +506,7 @@ class RunExecution {
      * flock keeps any other writer out, so the first listing is still what the archive holds when the second reader asks.
      */
     private async completionFiles(): Promise<Awaited<ReturnType<LocalDestination["listCompletions"]>>> {
+        await this.guard();
         this.completionListing ??= await this.archive.listCompletions(this.companyId);
         return this.completionListing;
     }
@@ -475,9 +598,14 @@ class RunExecution {
 
     private async processCandidates(): Promise<void> {
         for (const candidate of this.work) {
-            for (const job of candidate.artifacts) await this.processArtifact(job, "snapshot");
+            for (const job of candidate.artifacts) {
+                await this.guard(job.documentId);
+                this.manual?.begin("local", job.documentId);
+                try { await this.processArtifact(job, "snapshot"); }
+                finally { this.manual?.observe("local", job.artifactIdentity, this.dl.entryOf(job.artifactIdentity)); }
+            }
         }
-        await this.carryOver();
+        if (!this.manual) await this.carryOver();
     }
 
     /**
@@ -651,7 +779,7 @@ class RunExecution {
     private async stagedHashes(job: ArtifactJob): Promise<boolean> {
         const hash = createHash("sha256");
         let seen = 0;
-        for await (const chunk of this.archive.openStaged(this.staging, job.artifactIdentity)) {
+        for await (const chunk of executionChunks(this.archive.openStaged(this.staging, job.artifactIdentity), this.effect(job.documentId))) {
             hash.update(chunk);
             seen += chunk.byteLength;
         }
@@ -659,6 +787,7 @@ class RunExecution {
     }
 
     private async stagedUsable(job: ArtifactJob): Promise<boolean> {
+        await this.guard(job.documentId);
         const staged = this.state.staged.get(job.artifactIdentity);
         if (staged === undefined || staged.sha256 !== job.sha256 || staged.byteLength !== job.byteLength) return false;
         try {
@@ -680,7 +809,14 @@ class RunExecution {
         if (entry?.state === "verified") {
             await this.reuseVerified(job, entry);
             entry = this.dl.entryOf(id);
-            if (entry?.state === "verified") return;
+            if (entry?.state === "verified") {
+                // A historical local bit cannot prevent an independent Drive attempt while the archive is unavailable.
+                if (this.manual && !this.manual.localProof.has(id) && this.drive && this.deps.drive?.kind === "ready"
+                    && !(await this.stagedUsable(job)) && !this.stopDownloads && await controlHasStagingRoom(this.deps, job.byteLength)) {
+                    await this.download(job, true);
+                }
+                return;
+            }
         }
         const state = entry?.state ?? null;
         if (entry !== undefined && state === "retry_wait" && Date.parse(entry.nextRetryAt ?? "") > this.deps.clock.now().getTime()) return;
@@ -774,9 +910,11 @@ class RunExecution {
      * replaces an earlier one; the operator decides when it goes (README).
      */
     private async setStagingAside(job: ArtifactJob): Promise<void> {
+        await this.guard(job.documentId);
         const source = `${this.staging.path}/${job.artifactIdentity}.bin`;
         let target = `${source}.corrupt-${this.runId}`;
         for (let n = 2; await fs.lstat(target).then(() => true, () => false); n++) target = `${source}.corrupt-${this.runId}-${n}`;
+        await this.guard(job.documentId);
         try {
             await fs.rename(source, target);
             const dir = await fs.open(this.staging.path, "r");
@@ -798,16 +936,18 @@ class RunExecution {
     /** A verified entry is only reused after the file is found again with the right hash (contract step 8). */
     private async reuseVerified(job: ArtifactJob, entry: DestinationEntry): Promise<void> {
         if (!this.archiveOk) return;
-        const relativeKey = entry.relativeKey ?? job.relativeKey;
+        const relativeKey = this.manual ? job.relativeKey : entry.relativeKey ?? job.relativeKey;
         let found: "ok" | "missing" | "mismatch";
         try {
+            await this.guard(job.documentId);
             found = await this.archive.reverify(relativeKey, job.sha256, job.byteLength);
+            await this.guard(job.documentId);
         } catch (error) {
             if (!(error instanceof WorkerError)) throw error;
             this.archiveLost();
             return;
         }
-        if (found === "ok") return;
+        if (found === "ok") { this.manual?.localProof.add(job.artifactIdentity); return; }
         if (found === "mismatch" && !(await this.quarantine(relativeKey))) return;
         await this.dl.transition(job.artifactIdentity, "integrity_error", { reasonCode: "artifact-integrity", relativeKey });
     }
@@ -820,8 +960,8 @@ class RunExecution {
     }
 
     /** Downloads into staging. `false` when the artifact ended in another state (the caller stops with it). */
-    private async download(job: ArtifactJob): Promise<boolean> {
-        const client = this.deps.exportClient;
+    private async download(job: ArtifactJob, preserveLocalVerified = false): Promise<boolean> {
+        const client = this.manual?.options.exportPort ?? this.deps.exportClient;
         if (client === null || this.snapshotId === null) throw new WorkerError("internal");
         // A staged file that is not usable (wrong size, or no record of it) would make the staging name conflict.
         const leftover = await fs.lstat(`${this.staging.path}/${job.artifactIdentity}.bin`).catch(() => null);
@@ -831,16 +971,21 @@ class RunExecution {
             if (staged !== null) await this.setStagingAside(job); // same size, other bytes: set aside and ask once more
             let stream: AsyncIterable<Uint8Array>;
             try {
-                stream = await client.openArtifact(this.snapshotId, { artifactIdentity: job.artifactIdentity, sha256: job.sha256, byteLength: job.byteLength });
+                await this.guard(job.documentId);
+                stream = await awaitExecutionSignal(this.effect(job.documentId), client.openArtifact(this.snapshotId, { artifactIdentity: job.artifactIdentity, sha256: job.sha256, byteLength: job.byteLength }));
+                await this.guard(job.documentId);
             } catch (error) {
-                await this.onDownloadError(job, error);
+                if (isExecutionFencedError(error)) throw error;
+                if (preserveLocalVerified) this.manualAcquisitionFailure(job, error);
+                else await this.onDownloadError(job, error);
                 return false;
             }
-            staged = await this.archive.stageArtifact(this.staging, this.input(job), stream);
+            staged = await this.archive.stageArtifact(this.staging, this.input(job), stream, this.effect(job.documentId));
         }
         if (staged === null || !staged.ok) {
             if (staged === null) throw new WorkerError("internal");
-            await this.onStageFailure(job, staged.reasonCode);
+            if (preserveLocalVerified) this.manualAcquisitionFailure(job, new WorkerError(staged.reasonCode));
+            else await this.onStageFailure(job, staged.reasonCode);
             return false;
         }
         await this.fault("after-staged-before-staging_verified");
@@ -849,7 +994,19 @@ class RunExecution {
         return true;
     }
 
+    /** Acquisition for Drive never rewrites an old local proof as an integrity failure during an archive outage. */
+    private manualAcquisitionFailure(job: ArtifactJob, error: unknown): void {
+        if (isExecutionFencedError(error)) throw error;
+        if (error instanceof WorkerError && (error.reasonCode.startsWith("control-") || error.reasonCode.startsWith("ledger-"))) throw error;
+        if (!(error instanceof WorkerError) && !(error instanceof ExportFailure)) throw new WorkerError("internal");
+        const code = error instanceof ExportFailure
+            ? actionForExportError({ httpStatus: error.httpStatus, code: error.code, stage: "download" }).reasonCode
+            : error instanceof WorkerError ? error.reasonCode : "internal";
+        this.manual!.localFailures.set(job.documentId, code);
+    }
+
     private async onDownloadError(job: ArtifactJob, error: unknown): Promise<void> {
+        if (isExecutionFencedError(error)) throw error;
         if (error instanceof ExportFailure) {
             await this.applyAction(job, actionForExportError({ httpStatus: error.httpStatus, code: error.code, stage: "download" }), error.retryAfterSeconds);
             return;
@@ -934,14 +1091,16 @@ class RunExecution {
             await this.dl.transition(id, "blocked", { reasonCode: "archive-unavailable", relativeKey: job.relativeKey });
             return "done";
         }
-        const result = await this.archive.publishArtifact(this.input(job), this.archive.openStaged(this.staging, id));
+        const result = await this.archive.publishArtifact(this.input(job), this.archive.openStaged(this.staging, id), this.effect(job.documentId));
         if (!result.ok) return this.onPublishFailure(job, result.reasonCode);
         const relativeKey = result.relativeKey;
         await this.fault("after-publish-before-verifying");
         await this.dl.transition(id, "verifying", { relativeKey });
         let found: "ok" | "missing" | "mismatch";
         try {
+            await this.guard(job.documentId);
             found = await this.archive.reverify(relativeKey, job.sha256, job.byteLength);
+            await this.guard(job.documentId);
         } catch (error) {
             if (!(error instanceof WorkerError)) throw error;
             this.archiveLost();
@@ -951,6 +1110,7 @@ class RunExecution {
         if (found === "ok") {
             await this.fault("after-verifying-before-verified");
             await this.dl.transition(id, "verified", { relativeKey });
+            this.manual?.localProof.add(id);
             await this.fault("after-verified");
             return "done";
         }
@@ -1014,7 +1174,7 @@ class RunExecution {
         // A staged file that is still there is not usable (otherwise nothing would be staged again): it would make the name conflict.
         const leftover = await fs.lstat(`${this.staging.path}/${job.artifactIdentity}.bin`).catch(() => null);
         if (leftover !== null) await this.setStagingAside(job);
-        const staged = await this.archive.stageArtifact(this.staging, this.input(job), source);
+        const staged = await this.archive.stageArtifact(this.staging, this.input(job), source, this.effect(job.documentId));
         if (!staged.ok) {
             if (staged.reasonCode === "control-unavailable" || staged.reasonCode === "control-space") throw new WorkerError(staged.reasonCode);
             return { ok: false, reasonCode: staged.reasonCode };
@@ -1025,6 +1185,7 @@ class RunExecution {
 
     private driveHost(): DriveRunHost {
         return {
+            ...(this.manual ? { manual: this.manual } : {}),
             archiveOk: () => this.archiveOk,
             archiveLost: () => this.archiveLost(),
             manifestOf: (candidate) => {
@@ -1073,7 +1234,7 @@ class RunExecution {
      */
     private async writeManifest(source: ManifestSource): Promise<{ ok: true; key: string; sha256: string } | { ok: false; reasonCode: WorkerReasonCode }> {
         const { manifest, key } = this.manifestOf(source);
-        const published = await this.archive.publishJson(key, manifest.bytes);
+        const published = await this.archive.publishJson(key, manifest.bytes, this.effect(source.documentId));
         return published.ok ? { ok: true, key, sha256: manifest.sha256 } : { ok: false, reasonCode: published.reasonCode };
     }
 
@@ -1099,7 +1260,8 @@ class RunExecution {
      * ledger has a destination entry for is a ledger failure; nothing is guessed, and no bytes are published on it.
      */
     private manifestSourceFor(artifactIdentity: string): ManifestSource {
-        const found = this.history?.find(artifactIdentity) ?? "invalid";
+        const found = this.manual ? this.work.find((c) => c.artifacts.some((a) => a.artifactIdentity === artifactIdentity)) ?? "invalid"
+            : this.history?.find(artifactIdentity) ?? "invalid";
         if (found === "invalid" || found === null) throw new WorkerError("ledger-inconsistent");
         const info = this.state.artifacts.get(artifactIdentity);
         const artifact = found.artifacts.find((candidate) => candidate.artifactIdentity === artifactIdentity);
@@ -1603,7 +1765,28 @@ class RunExecution {
 }
 
 /** `run` (contract section 3). Anything that is not the control side's fault ends as a recorded outcome, never a throw. */
-export async function executeRun(deps: RunnerDependencies, options: { scheduledFor?: string | null }): Promise<RunSummary> {
+export async function executeRun(deps: RunnerDependencies, options: RunOptions): Promise<RunSummary> {
+    const manual = prepareManualRun(options, deps.config.companyId);
+    if (manual) {
+        if (manual.options.selection.candidates.length === 0) return {
+            outcome: "disabled", runId: null, snapshotId: null, sequence: null, snapshotStatus: null,
+            historicalCoverage: null, reasonCodes: [], counts: null,
+        };
+        // A backend attempt owns exactly one worker run, even across process crashes.
+        for (const [runId, attempt] of deps.ledger.state.manualAttempts ?? []) {
+            const scope = manual.options.executionScope;
+            if (attempt.scope.jobId !== scope.jobId || attempt.scope.attemptId !== scope.attemptId) continue;
+            if (attempt.scope.companyId !== scope.companyId || attempt.scope.branchId !== scope.branchId
+                || attempt.scope.selectionDigest !== scope.selectionDigest) throw new WorkerError("ledger-inconsistent");
+            if (!attempt.aggregate) throw new ExecutionFencedError("uncertain");
+            const run = deps.ledger.state.runs.get(runId);
+            if (!run) throw new WorkerError("ledger-inconsistent");
+            return manualSummary(attempt.aggregate.payload, attempt.aggregate.digest, run.snapshotId, run.sequence, run.counts ?? manualArtifactCounts(manual.options.selection, [...attempt.results.values()].map((r) => r.payload)));
+        }
+        const installed = requireInstallation(deps);
+        const destination = deps.createDestination({ dev: installed.archiveDev, ino: installed.archiveIno });
+        return new RunExecution(deps, destination, null, null, manual).execute();
+    }
     const installation = requireInstallation(deps);
     const archive = deps.createDestination({ dev: installation.archiveDev, ino: installation.archiveIno });
     await assertSameInstallation(archive, installation);
@@ -1612,4 +1795,28 @@ export async function executeRun(deps: RunnerDependencies, options: { scheduledF
     const staging = await archive.ensureStaging(deps.config.control.path);
     if (!staging.ok) throw new WorkerError(staging.reasonCode);
     return new RunExecution(deps, archive, staging.root, options.scheduledFor ?? null).execute();
+}
+
+function manualSummary(aggregate: ManualAggregateResult, digest: string, snapshotId: string | null, sequence: number | null, counts: RunCounts): RunSummary {
+    return { outcome: "finished", runId: aggregate.runId, snapshotId, sequence,
+        snapshotStatus: aggregate.status === "unverified" ? "partial" : aggregate.status, historicalCoverage: "unverified",
+        reasonCodes: legacyManualReasons(aggregate.reasons), counts: { ...counts },
+        manualReceipt: { runId: aggregate.runId, receiptId: aggregate.receiptId, digest } };
+}
+
+function manualArtifactCounts(selection: ManualSelection, results: readonly ManualDocumentResult[]): RunCounts {
+    const counts: RunCounts = { ...ZERO_COUNTS, candidates: selection.candidates.length,
+        included: selection.candidates.filter((c) => c.classification === "included").length };
+    for (const result of results) {
+        for (const [side, observations] of [["local", result.local.artifacts], ["drive", result.drive.artifacts]] as const) {
+            for (const artifact of observations) {
+                if (artifact.state === "verified") counts[side === "local" ? "verified" : "driveVerified"]++;
+                else if (artifact.state === "blocked" && side === "local" && isTerminalReason(artifact.reasonCode)) counts.terminalUnavailable++;
+                else if (artifact.state === "blocked") counts[side === "local" ? "blocked" : "driveBlocked"]++;
+                else if (artifact.state === "retry_wait") counts[side === "local" ? "retryWait" : "driveRetryWait"]++;
+                else if (artifact.state === "integrity_error") counts[side === "local" ? "integrityError" : "driveIntegrityError"]++;
+            }
+        }
+    }
+    return counts;
 }
