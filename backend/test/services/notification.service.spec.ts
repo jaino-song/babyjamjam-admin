@@ -539,6 +539,34 @@ describe("NotificationService", () => {
             }
         });
 
+        it("stores missing-record content and renders that same body with HTML escaping in daily mail", async () => {
+            const bodies = [
+                '<김산모> 산모님의 서비스 제공기록지가 작성되지 않고 있어요. 이관리 관리사님께 확인이 필요해 보여요.',
+                '박산모 산모님의 서비스 제공기록지가 작성되지 않고 있어요. 최관리 관리사님께 확인이 필요해 보여요.',
+            ];
+            const items = bodies.map((body, index) => ({ title: "제공기록지 미작성", body, data: {
+                type: "daily-summary-item", category: "service-record-missing", clientId: 10 + index,
+                scheduleId: 55 + index, url: `/dashboard?clientId=${10 + index}`,
+            } }));
+            await service.sendDailyDigestToBranchUsers(branchId, branchName, [{
+                key: "missingServiceRecords", label: "제공기록지 미작성",
+                description: "제공기록지 작성 확인이 필요한 산모가 2명 있어요.",
+                count: 2, unit: "명", url: "/dashboard", details: bodies, notificationItems: items,
+            }], digestContext);
+            for (const item of items) {
+                expect(sendNotificationUsecase.execute).toHaveBeenCalledWith(branchId, { userId: "user-1", ...item });
+            }
+            const [mail] = emailPort.send.mock.calls[0] as [{ html: string; text: string }];
+            for (const body of bodies) {
+                expect(mail.text.split(body)).toHaveLength(2);
+                const escaped = body.replace(/</g, "&lt;").replace(/>/g, "&gt;");
+                expect(mail.html.split(escaped)).toHaveLength(2);
+            }
+            expect(mail.html).toContain("&lt;김산모&gt; 산모님의 서비스 제공기록지가 작성되지 않고 있어요.");
+            expect(mail.html).toContain("이관리 관리사님께 확인이 필요해 보여요.");
+            expect(mail.html).not.toContain("<김산모>");
+        });
+
         it("should resolve recipients from the branch, never from the global role list", async () => {
             await service.sendDailyDigestToBranchUsers(branchId, branchName, sections, digestContext);
 

@@ -208,6 +208,7 @@ describe("ClientService", () => {
     });
 
     const createMockClientRepository = (): jest.Mocked<IClientRepository> => ({
+        findServiceRecordAlertCandidates: jest.fn().mockResolvedValue([]),
         findById: jest.fn(),
         findByIdForUpdate: jest.fn(),
         findAll: jest.fn(),
