@@ -7,7 +7,6 @@ import {
   type FieldKind,
 } from "@babyjamjam/shared/utils/field-validation-message";
 
-
 import { useState, useMemo, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { Check, ChevronLeft } from "lucide-react";
@@ -20,6 +19,7 @@ import { useOutOfPocketPriceInfos, useVoucherPriceInfos, useVoucherYears } from 
 import { api } from "@/lib/api/client";
 import type { CreateClientDto, ServiceStatus } from "@/lib/client/types";
 import { SERVICE_STATUS_OPTIONS } from "@/lib/client/types";
+import { formatVoucherDurationLabel } from "@/lib/client/voucher-duration-label";
 import { EmployeeAutocomplete } from "@/components/app/clients/EmployeeAutocomplete";
 import { EmployeeFormDialog } from "@/components/app/employees/EmployeeFormDialog";
 import { FormField } from "@/components/auth/form-field";
@@ -222,7 +222,7 @@ export default function NewClientPage() {
       }));
     }
 
-    return availableDurations.map((duration) => ({ value: String(duration), label: `${duration}일` }));
+    return availableDurations.map((duration) => ({ value: String(duration), label: formatVoucherDurationLabel(duration, availableDurations) }));
   }, [availableDurations, outOfPocketPriceInfos, store.voucherClient]);
 
   const isDurationSelectLocked = store.voucherClient

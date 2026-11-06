@@ -46,6 +46,14 @@ import {
 
 export { ServiceRecordScheduleValidationError } from "@babyjamjam/shared/utils/service-record-schedule";
 
+/** Only observed fields used by persisted/legacy schedule projection. */
+export type ServiceRecordScheduleProjectionSource = Pick<ServiceRecordEditSource,
+    "caseId" | "caseVersion" | "requiredSessionCount" | "startDate" | "endDate"
+    | "plannedSessions" | "assignments" | "client"> & {
+    sessions: Array<Pick<ServiceRecordEditSourceDay,
+        "sessionIndex" | "serviceDate" | "scheduleId" | "employeeId" | "ambiguous">>;
+};
+
 interface DraftSessionChange {
     sessionIndex: number;
     [key: string]: ServiceRecordEditJsonValue | number;
@@ -209,7 +217,7 @@ function reasonFromError(error: unknown, fallbackSessionIndex?: number): Service
 }
 
 /** The client's stored service-day toggles (a missing flag means "not offered"). */
-export function storedServiceDays(source: ServiceRecordEditSource): ServiceDayPolicy {
+export function storedServiceDays(source: ServiceRecordScheduleProjectionSource): ServiceDayPolicy {
     return {
         saturday: source.client.allowSaturdayService ?? false,
         sunday: source.client.allowSundayService ?? false,
@@ -273,7 +281,7 @@ function resumeMarkerJson(marker: ServiceRecordEditResumeReplan): ServiceRecordE
     };
 }
 
-function assignmentById(source: ServiceRecordEditSource, assignmentId: string): ServiceRecordEditSourceAssignment | null {
+function assignmentById(source: ServiceRecordScheduleProjectionSource, assignmentId: string): ServiceRecordEditSourceAssignment | null {
     return source.assignments.find((assignment) => assignment.id === assignmentId) ?? null;
 }
 
@@ -296,7 +304,7 @@ function assignmentById(source: ServiceRecordEditSource, assignmentId: string): 
  *    MISSING_ASSIGNMENT_PROVENANCE.
  */
 function assignmentForSession(
-    source: ServiceRecordEditSource,
+    source: ServiceRecordScheduleProjectionSource,
     scheduleId: number | null,
     employeeId: number | null,
     serviceDate: string,
@@ -337,7 +345,7 @@ function assignmentForSession(
  * that only wrote sessions inside its own range has not started a backfill.
  */
 function currentBackfill(
-    source: ServiceRecordEditSource,
+    source: ServiceRecordScheduleProjectionSource,
 ): { assignment: ServiceRecordEditSourceAssignment; fromIndex: number } | null {
     const current = source.assignments.filter((assignment) =>
         Boolean(assignment.id) && assignment.scheduleId !== null && !assignment.replaced);
@@ -355,14 +363,14 @@ function currentBackfill(
     return fromIndex === null ? null : { assignment, fromIndex };
 }
 
-function provenanceVersion(raw: unknown, source: ServiceRecordEditSource): string {
+function provenanceVersion(raw: unknown, source: ServiceRecordScheduleProjectionSource): string {
     if (typeof raw === "string" && raw.length > 0) return raw;
     if (typeof raw === "number" && Number.isInteger(raw)) return String(raw);
     return `case-${source.caseVersion}`;
 }
 
 function sourceAssignmentEntry(
-    source: ServiceRecordEditSource,
+    source: ServiceRecordScheduleProjectionSource,
     sessionIndex: number,
     serviceDate: string,
     originalDate: string,
@@ -434,7 +442,7 @@ function isSuccessorOf(
  * block, and the vector's dates are never changed here.
  */
 function backfillWriter(
-    source: ServiceRecordEditSource,
+    source: ServiceRecordScheduleProjectionSource,
     entry: SharedPlannedSession,
 ): ServiceRecordEditSourceAssignment | null {
     const rows = source.sessions.filter((session) => session.sessionIndex === entry.sessionIndex);
@@ -473,7 +481,7 @@ function attributedTo(entry: SharedPlannedSession, writer: ServiceRecordEditSour
  * ones and overlap their ranges. Everything else keeps its vector owner.
  */
 function reattributedBackfill(
-    source: ServiceRecordEditSource,
+    source: ServiceRecordScheduleProjectionSource,
     entries: SharedPlannedSession[],
 ): SharedPlannedSession[] {
     let nearest: ServiceRecordEditSourceAssignment | null = null;
@@ -492,7 +500,7 @@ function reattributedBackfill(
 }
 
 function persistedDayReasons(
-    source: ServiceRecordEditSource,
+    source: ServiceRecordScheduleProjectionSource,
     entries: SharedPlannedSession[],
 ): ServiceRecordEditPreviewBlockingReason[] {
     const blockingReasons: ServiceRecordEditPreviewBlockingReason[] = [];
@@ -553,7 +561,7 @@ const storedPeriod: AssignmentPeriodOf = storedAssignmentPeriod;
  * service-record-period-ownership.policy).
  */
 function assignmentRangeReasons(
-    source: ServiceRecordEditSource,
+    source: ServiceRecordScheduleProjectionSource,
     entries: SharedPlannedSession[],
     periodOf: AssignmentPeriodOf = storedPeriod,
 ): ServiceRecordEditPreviewBlockingReason[] {
@@ -614,7 +622,7 @@ function assignmentRangeReasons(
     return blockingReasons;
 }
 
-function plannedArray(source: ServiceRecordEditSource): ServiceRecordEditJsonValue[] | null {
+function plannedArray(source: ServiceRecordScheduleProjectionSource): ServiceRecordEditJsonValue[] | null {
     const raw = source.plannedSessions;
     if (raw === null) return null;
     if (Array.isArray(raw)) return raw;
@@ -627,7 +635,7 @@ function plannedArray(source: ServiceRecordEditSource): ServiceRecordEditJsonVal
 }
 
 function projectPersisted(
-    source: ServiceRecordEditSource,
+    source: ServiceRecordScheduleProjectionSource,
     rawEntries: ServiceRecordEditJsonValue[],
     calendar: KrBusinessDayCalendar,
 ): CanonicalProjection {
@@ -700,7 +708,7 @@ function projectPersisted(
     }
 }
 
-function projectLegacy(source: ServiceRecordEditSource, calendar: KrBusinessDayCalendar): CanonicalProjection {
+function projectLegacy(source: ServiceRecordScheduleProjectionSource, calendar: KrBusinessDayCalendar): CanonicalProjection {
     const expected = source.requiredSessionCount;
     if (typeof expected !== "number" || !Number.isInteger(expected) || expected <= 0) {
         return {
@@ -710,7 +718,7 @@ function projectLegacy(source: ServiceRecordEditSource, calendar: KrBusinessDayC
         };
     }
     const blockingReasons: ServiceRecordEditPreviewBlockingReason[] = [];
-    const byIndex = new Map<number, ServiceRecordEditSourceDay[]>();
+    const byIndex = new Map<number, ServiceRecordScheduleProjectionSource["sessions"]>();
     for (const session of source.sessions) {
         if (!Number.isInteger(session.sessionIndex) || session.sessionIndex < 1 || session.sessionIndex > expected) {
             blockingReasons.push(reason(
@@ -784,7 +792,7 @@ function projectLegacy(source: ServiceRecordEditSource, calendar: KrBusinessDayC
 
 /** Resolve the source's persisted vector, or a complete uniquely-owned legacy projection. */
 export function resolveServiceRecordScheduleProjection(
-    source: ServiceRecordEditSource,
+    source: ServiceRecordScheduleProjectionSource,
     calendar: KrBusinessDayCalendar,
 ): CanonicalProjection {
     const persisted = plannedArray(source);
