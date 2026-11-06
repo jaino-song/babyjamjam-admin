@@ -2,30 +2,27 @@ import { EventEmitter } from 'node:events';
 import { ArgumentsHost, ExecutionContext, HttpException, INestApplication, UnauthorizedException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Test } from '@nestjs/testing';
-import type { Response } from 'express';
+import { json, type NextFunction, type Request, type Response } from 'express';
 import request from 'supertest';
 import { EformsignManualBackupService } from 'application/services/eformsign-manual-backup.service';
 import { EformsignBackupExportService } from 'application/services/eformsign-backup-export.service';
 import { ManualBackupControlError, type ManualBackupControlCode } from 'domain/eformsign-backup/manual-backup-control';
 import { ExportError, EXPORT_ERRORS, type ExportErrorCode } from 'domain/eformsign-backup/export';
 import { JwtGuard } from 'infrastructure/auth/jwt.guard';
-import { BranchManagerGuard } from 'infrastructure/auth/branch-manager.guard';
-import { EformsignBackupExportGuard, type EformsignBackupExportRequest } from 'infrastructure/auth/eformsign-backup-export.guard';
-import { TenantGuard } from 'infrastructure/tenant/tenant.guard';
-import { TenantContext } from 'infrastructure/tenant/tenant.context';
+import type { EformsignBackupExportRequest } from 'infrastructure/auth/eformsign-backup-export.guard';
 import { PrismaService } from 'infrastructure/database/prisma.service';
 import { SbEformsignBackupRunRepository } from 'infrastructure/database/repositories/sb.eformsign-backup-run.repository';
 import { SbEformsignBackupExportCredentialRepository } from 'infrastructure/database/repositories/sb.eformsign-backup-export-credential.repository';
-import { EformsignManualBackupController } from 'interface/controllers/eformsign-manual-backup.controller';
 import { EformsignManualBackupWorkerController } from 'interface/controllers/eformsign-manual-backup-worker.controller';
 import { EformsignManualBackupFilter } from 'interface/filters/eformsign-manual-backup.filter';
+import { EformsignBackupExportModule } from 'module/eformsign-backup-export.module';
 
 const A = '10000000-0000-4000-8000-000000000001';
 const USER = '10000000-0000-4000-8000-000000000010';
 const ID = '20000000-0000-4000-8000-000000000001';
 const STAFF = '/eformsign-backups/runs';
 const MACHINE = '/internal/eformsign-backup/v1/manual-runs';
-const uuid = /^[0-9a-f-]{36}$/;
+const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const scope = { period: 'all', start: '', end: '', kind: 'all', contractStages: ['created'], recordStages: ['created'] };
 
 describe('manual HTTP boundaries (repository isolated; native fixture proves real sessions)', () => {
@@ -38,18 +35,15 @@ describe('manual HTTP boundaries (repository isolated; native fixture proves rea
     };
     beforeAll(async () => {
         const module = await Test.createTestingModule({
-            controllers: [EformsignManualBackupController, EformsignManualBackupWorkerController],
-            providers: [EformsignManualBackupService, JwtGuard, TenantGuard, BranchManagerGuard, TenantContext, EformsignBackupExportGuard,
-                { provide: PrismaService, useValue: { branch: { findUnique: async () => ({ isActive: true }) },
-                    user_branch: { findFirst: async ({ where }: { where: { userId: string } }) => ({ branch: { isActive: true }, role: where.userId === USER ? 'manager' : 'user' }) } } },
-                { provide: ConfigService, useValue: { get: (key: string) => key === 'EFORMSIGN_COMPANY_ID' ? 'company' : undefined } },
-                { provide: SbEformsignBackupRunRepository, useValue: repository },
-                { provide: EformsignBackupExportService, useValue: {} },
-                { provide: SbEformsignBackupExportCredentialRepository, useValue: {
-                    findActiveByTokenHash: async () => ({ id: 'credential', principalId: 'worker', companyIds: ['company'] }), touchLastUsed: async () => undefined,
-                } },
-            ],
-        }).overrideGuard(JwtGuard).useValue({
+            imports: [EformsignBackupExportModule],
+        }).overrideProvider(PrismaService).useValue({ branch: { findUnique: async () => ({ isActive: true }) },
+            user_branch: { findFirst: async ({ where }: { where: { userId: string } }) => ({ branch: { isActive: true }, role: where.userId === USER ? 'manager' : 'user' }) } })
+            .overrideProvider(ConfigService).useValue({ get: (key: string) => key === 'EFORMSIGN_COMPANY_ID' ? 'company' : undefined })
+            .overrideProvider(SbEformsignBackupRunRepository).useValue(repository)
+            .overrideProvider(EformsignBackupExportService).useValue({})
+            .overrideProvider(SbEformsignBackupExportCredentialRepository).useValue({
+                findActiveByTokenHash: async () => ({ id: 'credential', principalId: 'worker', companyIds: ['company'] }), touchLastUsed: async () => undefined,
+            }).overrideGuard(JwtGuard).useValue({
             canActivate(ctx: ExecutionContext) {
                 const req = ctx.switchToHttp().getRequest();
                 const role = req.headers['x-test-role'];
@@ -60,7 +54,21 @@ describe('manual HTTP boundaries (repository isolated; native fixture proves rea
                 return true;
             },
         }).compile();
-        app = module.createNestApplication({ logger: false }); await app.init();
+        app = module.createNestApplication({ logger: false });
+        // Match main.ts: the explicit parser is installed before module configure.
+        app.use(json({ limit: '1mb' }));
+        app.use((req: Request, _res: Response, next: NextFunction) => {
+            // Exercise errors reaching the same pre-controller boundary without
+            // changing production controllers or parser policy.
+            const kind = req.headers['x-test-error'];
+            if (kind === 'control') next(new ManualBackupControlError('RUN_ACTIVE'));
+            else if (kind === 'export') next(new ExportError('UNAUTHORIZED'));
+            else if (kind === 'http') next(new HttpException('PRIVATE_TOKEN', 403));
+            else if (kind === 'unknown') next(new Error('PRIVATE_TOKEN'));
+            else if (kind === 'syntax') next(new SyntaxError('PRIVATE_TOKEN'));
+            else next();
+        });
+        await app.init();
     });
     afterAll(async () => { await app.close(); });
     beforeEach(() => { jest.clearAllMocks(); });
@@ -70,6 +78,41 @@ describe('manual HTTP boundaries (repository isolated; native fixture proves rea
         expect(res.headers['cache-control']).toBe('no-store');
         expect(res.headers['x-request-id']).toBe(res.body.requestId);
     }
+    it.each([STAFF, STAFF + '/' + ID + '/documents?limit=1', MACHINE, MACHINE + '/claim/nested'])
+    ('sanitizes malformed JSON at %s with and without credentials before guards run', async path => {
+        const sentinel = 'PRIVATE_BODY_TOKEN_DO_NOT_REFLECT_7b14';
+        for (const authenticated of [false, true]) {
+            const req = request(app.getHttpServer()).post(path).set('Content-Type', 'application/json');
+            if (authenticated) req.set('x-test-role', 'owner').set('Authorization', 'Bearer ebx_' + 'A'.repeat(43));
+            const res = await req.send('{"private":"' + sentinel + '","scope":INVALID}');
+            errorBody(res, 400, 'INVALID_REQUEST');
+            expect(Object.keys(res.body).sort()).toEqual(['code', 'requestId']);
+            expect(JSON.stringify({ body: res.body, headers: res.headers })).not.toContain(sentinel);
+        }
+        expect(repository.expireStale).not.toHaveBeenCalled();
+        expect(repository.readSourceForRequest).not.toHaveBeenCalled();
+        expect(repository.claimNext).not.toHaveBeenCalled();
+    });
+    it.each<[string, number, string]>([
+        ['control', 409, 'RUN_ACTIVE'], ['export', 401, 'UNAUTHORIZED'], ['http', 403, 'FORBIDDEN'],
+        ['unknown', 503, 'SERVICE_UNAVAILABLE'], ['syntax', 503, 'SERVICE_UNAVAILABLE'],
+    ])('preserves safe mapping for %s errors reached before controllers', async (kind, status, code) => {
+        for (const path of [STAFF, MACHINE]) {
+            const res = await request(app.getHttpServer()).post(path).set('x-test-error', kind);
+            errorBody(res, status, code);
+            expect(res.text).not.toContain('PRIVATE_TOKEN');
+        }
+    });
+    it.each(['/unrelated-api', STAFF + '-other', MACHINE + '-other', '/internal/eformsign-backup/v1/snapshots'])
+    ('preserves default parser errors outside the exact manual prefix segments at %s', async path => {
+        const res = await request(app.getHttpServer()).post(path).set('Content-Type', 'application/json').send('{"scope":');
+        expect(res.status).toBe(400);
+        expect(res.body).toEqual({ statusCode: 400, error: 'Bad Request', message: expect.any(String) });
+        expect(res.body.code).toBeUndefined();
+        expect(res.body.requestId).toBeUndefined();
+        expect(res.headers['cache-control']).toBeUndefined();
+        expect(res.headers['x-request-id']).toBeUndefined();
+    });
     it('covers staff guard failures with the safe filter', async () => {
         errorBody(await request(app.getHttpServer()).get(STAFF), 401, 'UNAUTHORIZED');
         for (const role of ['viewer', 'admin-only', 'pending']) errorBody(await request(app.getHttpServer()).get(STAFF).set('x-test-role', role), 403, 'FORBIDDEN');

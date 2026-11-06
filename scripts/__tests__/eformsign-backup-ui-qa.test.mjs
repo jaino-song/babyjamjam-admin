@@ -1,10 +1,11 @@
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
+import { once } from 'node:events';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 
-import { buildFixtureArgs, isIdleNativeRootEntries } from '../eformsign-backup-ui-qa.mjs';
+import { buildFixtureArgs, isIdleNativeRootEntries, proof, equalProof, descendant } from '../eformsign-backup-ui-qa.mjs';
 import { parseArgs, TARGET } from '../../backend/scripts/eformsign-backup-qa.mjs';
 
 const source = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
@@ -76,4 +77,81 @@ test('idle native root requires its owner marker and only optional native histor
   ]) {
     assert.equal(isIdleNativeRootEntries(['owner.json', 'native.log', name]), false);
   }
+});
+
+const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
+function parentPid(pid) {
+  const result = spawnSync('/bin/ps', ['-p', String(pid), '-o', 'ppid='], { encoding: 'utf8', timeout: 1000 });
+  assert.equal(result.status, 0, result.stderr);
+  return Number(result.stdout.trim());
+}
+async function waitFor(check) {
+  const deadline = Date.now() + 5000;
+  while (!check()) {
+    assert.ok(Date.now() < deadline, 'owned process transition timed out');
+    await pause(20);
+  }
+}
+
+test('detached manager retains readiness identity and permits owned stop after its launcher exits', async () => {
+  const parent = spawn(process.execPath, ['--input-type=module', '-e', `
+    import { spawn } from 'node:child_process';
+    const child = spawn(process.execPath, ['--input-type=module', '-e', 'setInterval(() => {}, 1000)'], {
+      detached: true, stdio: 'ignore', cwd: ${JSON.stringify(source)},
+    });
+    child.unref();
+    process.send({ pid: child.pid });
+    process.once('message', () => process.disconnect());
+  `], { cwd: source, stdio: ['ignore', 'ignore', 'pipe', 'ipc'] });
+  let pid;
+  let expected;
+  try {
+    [{ pid }] = await once(parent, 'message');
+    expected = proof(pid);
+    assert.equal(parentPid(pid), parent.pid);
+    assert.equal(descendant(pid, parent.pid), true);
+    equalProof(pid, expected);
+    const exited = once(parent, 'exit');
+    parent.send('exit');
+    const [code] = await exited;
+    assert.equal(code, 0);
+    await waitFor(() => parentPid(pid) !== parent.pid);
+    // PID, UID, start time, command and cwd remain identical after reparenting.
+    assert.deepEqual(proof(pid), expected);
+    equalProof(pid, expected);
+    assert.equal(descendant(pid, parent.pid), false);
+    // The same identity gate used by readiness/control must permit owned stop.
+    equalProof(pid, expected);
+    process.kill(pid, 'SIGTERM');
+    await waitFor(() => spawnSync('/bin/ps', ['-p', String(pid)], { stdio: 'ignore' }).status !== 0);
+    pid = undefined;
+  } finally {
+    // Both handles originate in this test; no fixture or deployment is touched.
+    if (parent.exitCode === null && parent.signalCode === null) {
+      const exited = once(parent, 'exit'); parent.kill('SIGTERM'); await exited;
+    }
+    if (pid) {
+      process.kill(pid, 'SIGTERM');
+      await waitFor(() => spawnSync('/bin/ps', ['-p', String(pid)], { stdio: 'ignore' }).status !== 0);
+    }
+  }
+});
+
+test('persistent identity mismatches and wrong live child lineage remain rejected', () => {
+  const expected = proof(process.pid);
+  equalProof(process.pid, expected);
+  assert.throws(() => equalProof(process.ppid, expected), /PROCESS_IDENTITY_CHANGED|UID_REFUSED/);
+  for (const changed of [
+    { ...expected, pid: process.pid + 1 },
+    { ...expected, identity: expected.identity.replace(/^\s*\d+/, String(process.getuid() + 1)) },
+    { ...expected, identity: expected.identity.replace(/\d\d:\d\d:\d\d/, '99:99:99') },
+    { ...expected, identity: expected.identity + ' unrelated-command' },
+    { ...expected, cwd: source + '/unrelated' },
+  ]) assert.throws(() => equalProof(process.pid, changed), { message: 'PROCESS_IDENTITY_CHANGED' });
+  assert.throws(() => equalProof(1, expected), { message: 'PID_REFUSED' });
+  assert.throws(() => equalProof(99999999, expected), { message: 'IDENTITY_COMMAND_FAILED' });
+  assert.equal(descendant(process.pid, process.ppid), true);
+  const wrongParent = [{ pid: 90, ppid: 80 }, { pid: 80, ppid: 1 }, { pid: 70, ppid: 1 }];
+  assert.equal(descendant(90, 70, wrongParent), false);
+  assert.equal(descendant(90, 70, [{ pid: 90, ppid: 80 }, { pid: 80, ppid: 90 }]), false);
 });

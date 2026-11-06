@@ -1,5 +1,6 @@
-import { Module } from "@nestjs/common";
+import { Module, NestModule } from "@nestjs/common";
 import { ConfigModule, ConfigService } from "@nestjs/config";
+import { HttpAdapterHost } from "@nestjs/core";
 import { EformsignManualBackupService } from "application/services/eformsign-manual-backup.service";
 import { SbEformsignBackupRunRepository } from "infrastructure/database/repositories/sb.eformsign-backup-run.repository";
 import { JwtGuard } from "infrastructure/auth/jwt.guard";
@@ -8,6 +9,7 @@ import { TenantGuard } from "infrastructure/tenant/tenant.guard";
 import { TenantModule } from "infrastructure/tenant/tenant.module";
 import { EformsignManualBackupController } from "interface/controllers/eformsign-manual-backup.controller";
 import { EformsignManualBackupWorkerController } from "interface/controllers/eformsign-manual-backup-worker.controller";
+import { manualBackupErrorBoundary } from "interface/filters/eformsign-manual-backup.filter";
 
 import { EformsignBackupExportService } from "application/services/eformsign-backup-export.service";
 import { EformsignBackupExportGuard } from "infrastructure/auth/eformsign-backup-export.guard";
@@ -39,4 +41,12 @@ import { EformsignBackupExportController } from "interface/controllers/eformsign
         },
     ],
 })
-export class EformsignBackupExportModule {}
+export class EformsignBackupExportModule implements NestModule {
+    constructor(private readonly adapterHost: HttpAdapterHost) {}
+
+    configure(): void {
+        // configure runs after body-parser registration and before Nest's final
+        // error handler. Use the adapter to preserve Express's four-arg arity.
+        this.adapterHost.httpAdapter.use(manualBackupErrorBoundary);
+    }
+}

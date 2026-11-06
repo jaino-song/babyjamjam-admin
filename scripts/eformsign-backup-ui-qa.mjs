@@ -8,7 +8,7 @@ import { createRequire, Module } from 'node:module';
 
 const ENTRY = fileURLToPath(import.meta.url);
 const SOURCE = path.dirname(path.dirname(ENTRY));
-const UI = '/Users/jaino/Development/babyjamjam-admin/eformsign-backup-product-wiring-v5';
+const UI = '/Users/jaino/Development/babyjamjam-admin/eformsign-backup-review-fixes-v6';
 const ROOT = '/Users/jaino/Development/.task-evidence/eformsign-backup-execution-20261106/ui-qa-synced-runtime';
 const FIXTURE = '/Users/jaino/Development/.task-evidence/eformsign-backup-execution-20261106/qa-fixture-synced-runtime';
 const FIXEDCONNECTION = '/Users/jaino/Development/.task-evidence/eformsign-backup-execution-20261106/private-ui-postgres-synced/connection.json';
@@ -86,18 +86,20 @@ async function root(create = false) {
   required(entries.every(name => allowed.includes(name)), 'UNKNOWN_ROOT_REFUSED');
   for (const name of entries) if (name !== 'manager.sock') await privatePath(path.join(ROOT, name));
 }
-function proof(pid) {
+export function proof(pid) {
   required(Number.isInteger(pid) && pid > 1, 'PID_REFUSED');
-  const identity = command('/bin/ps', ['-p', String(pid), '-o', 'uid=,ppid=,lstart=,command=']);
+  // A detached manager is reparented when deploy exits; PPID is live lineage,
+  // not persistent identity. Keep the PID and every stable process attribute.
+  const identity = command('/bin/ps', ['-p', String(pid), '-o', 'uid=,lstart=,command=']);
   const cwd = command('/usr/sbin/lsof', ['-a', '-p', String(pid), '-d', 'cwd', '-Fn']).split('\n').find(s => s.startsWith('n'))?.slice(1);
   required(identity.trim().split(/\s+/)[0] === String(process.getuid()), 'UID_REFUSED');
-  return { identity, cwd };
+  return { pid, identity, cwd };
 }
 function fixtureProof(pid) {
   return { identity: command('/bin/ps', ['-p', String(pid), '-o', 'uid=,lstart=,command=']).trim(),
     cwd: command('/usr/sbin/lsof', ['-a', '-p', String(pid), '-d', 'cwd', '-Fn']).split('\n').find(s => s.startsWith('n'))?.slice(1) };
 }
-function equalProof(pid, expected) { required(JSON.stringify(proof(pid)) === JSON.stringify(expected), 'PROCESS_IDENTITY_CHANGED'); }
+export function equalProof(pid, expected) { required(JSON.stringify(proof(pid)) === JSON.stringify(expected), 'PROCESS_IDENTITY_CHANGED'); }
 function listeners(port) {
   const result = spawnSync('/usr/sbin/lsof', ['-nP', `-iTCP:${port}`, '-sTCP:LISTEN', '-Fpn'], { env: cleanEnv(), encoding: 'utf8', timeout: 5000 });
   required(result.status === 0 || result.status === 1, 'LISTENER_PROBE_FAILED');
@@ -113,7 +115,7 @@ function processTree() {
     const [pid, ppid, uid] = line.trim().split(/\s+/).map(Number); return { pid, ppid, uid };
   });
 }
-function descendant(pid, ancestor, tree = processTree()) {
+export function descendant(pid, ancestor, tree = processTree()) {
   const seen = new Set();
   while (pid > 1 && !seen.has(pid)) {
     if (pid === ancestor) return true;
