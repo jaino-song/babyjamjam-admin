@@ -33,6 +33,10 @@ import {
   InfoRow,
   type SplitLayoutMode,
 } from "@/components/app/v3";
+import { useActiveBranchId, isBranchContextAligned } from "@/features/system-templates/branch-context";
+import { FormSection } from "@/components/app/ui/form-section";
+import { messagePolicyApi } from "@/services/settings";
+import type { CreateMessageTriggerRuleGroupDto, MessageTriggerRecipientMode, MessageTriggerRuleGroupPreviewResponse } from "@babyjamjam/shared/types/message";
 import { Switch } from "@/components/ui/switch";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
@@ -48,7 +52,8 @@ import {
 } from "@/services/api";
 import { useToast } from "@/hooks/use-toast";
 import {
-  useMessageTriggerRules,
+  useMessageTriggerRuleGroups,
+  useMessageTriggerGroupMutations,
   useMessageTriggerTemplates,
   useCreateMessageTriggerRule,
   useUpdateMessageTriggerRule,
@@ -61,6 +66,8 @@ import {
   CONFIGURABLE_SMS_TRIGGER_TEMPLATE_KEYS,
   MESSAGE_TRIGGER_AUTOMATIC_VARIABLE_KEYS,
   deriveAvailableTemplates,
+  deriveRecipientModesFromTemplates,
+  expandRecipientMode,
   deriveEventTypesFromTemplates,
   deriveRecipientTypesFromTemplates,
   getChannelTemplates,
@@ -139,14 +146,14 @@ const RECIPIENT_LABELS: Record<TriggerRecipientType, string> = {
 
 const RECIPIENT_TYPE_ORDER = Object.keys(RECIPIENT_LABELS) as TriggerRecipientType[];
 
-function getDefaultFormState(isActive = true): RuleFormState {
+function getDefaultFormState(isActive = true, sendTime = "09:00"): RuleFormState {
   return {
     name: "",
     isActive,
     eventType: "SERVICE_START",
     offsetType: "BEFORE_DAYS",
     offsetDays: 7,
-    sendTime: "09:00",
+    sendTime,
     recipientType: "CLIENT",
     templateKey: "SERVICE_INFO",
     targetClientStatus: DEFAULT_MESSAGE_TRIGGER_TARGET_CLIENT_STATUS,
@@ -404,6 +411,29 @@ function getTemplateOptionPresentation(
   };
 }
 
+const PREVIEW_ANCHOR_LABELS = {
+  "client.createdAt": "고객 등록일", "client.startDate": "고객 서비스 시작일", "client.endDate": "고객 서비스 종료일",
+  "employee_schedule.startDate": "배정 시작일", "employee_schedule.endDate": "배정 종료일",
+} as const;
+const PREVIEW_OUTCOME_LABELS = { ready: "발송 가능", skip: "발송 대상에서 제외", needs_setup: "설정 확인 필요", unavailable: "정보 확인 불가" } as const;
+const PREVIEW_REASON_LABELS: Record<string, string> = {
+  recipient_phone_conflict: "같은 전화번호에 서로 다른 본문이 있어 확인이 필요합니다.", template_unavailable: "템플릿 내용을 확인할 수 없습니다.",
+  source_unavailable: "수신자 정보를 확인할 수 없습니다.", schedule_unavailable: "배정 일정을 확인할 수 없습니다.",
+  rule_unavailable: "발송 규칙을 확인할 수 없습니다.", group_unavailable: "발송 규칙을 확인할 수 없습니다.",
+  "anchor 없음": "기준 날짜가 없습니다.", "자격 미충족": "발송 조건을 충족하지 않습니다.", "전화번호 없음": "전화번호가 없습니다.",
+  "동일 제공인력 중복 제외": "같은 제공인력이므로 중복 대상에서 제외합니다.", "배정 없음": "배정 일정이 없습니다.",
+};
+function formatPreviewReason(reason: string | null) {
+  if (reason === null) return "없음";
+  return PREVIEW_REASON_LABELS[reason] ?? "발송 조건과 수신자 정보를 확인해 주세요.";
+}
+function formatPreviewTime(value: string | null) {
+  if (!value) return "발송 시각 없음";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "발송 시각 확인 필요";
+  return `${new Intl.DateTimeFormat("ko-KR", { timeZone: "Asia/Seoul", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).format(date)} (한국 시간)`;
+}
+
 export function TriggerRulesManager({
   dataComponent,
   channel = "sms",
@@ -411,6 +441,14 @@ export function TriggerRulesManager({
   dataComponent: string;
   channel?: TriggerMessageChannel;
 }) {
+  const branchId = useActiveBranchId();
+  const currentBranchRef = useRef(branchId); currentBranchRef.current = branchId;
+  const groupMutations = useMessageTriggerGroupMutations(branchId);
+  const defaultTimeQuery = useQuery({ queryKey: ["settings", "message-automation-config", branchId], queryFn: () => messagePolicyApi.getConfiguration(branchId!), enabled: !!branchId });
+  const [recipientMode, setRecipientMode] = useState<MessageTriggerRecipientMode>("CLIENT");
+  const [recipientTemplates, setRecipientTemplates] = useState<Partial<Record<TriggerRecipientType, TriggerTemplateKey>>>({ CLIENT: "SERVICE_INFO" });
+  const [groupPreview, setGroupPreview] = useState<MessageTriggerRuleGroupPreviewResponse | null>(null);
+  const [groupError, setGroupError] = useState<string | null>(null);
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const [selectedRuleId, setSelectedRuleId] = useState<RuleSelection>(null);
@@ -424,6 +462,7 @@ export function TriggerRulesManager({
   const [isParentActivationPending, setIsParentActivationPending] = useState(false);
   const parentActivationPendingRef = useRef(false);
   const newRuleDefaultIsActiveRef = useRef(true);
+  const newRuleDefaultSendTimeRef = useRef("09:00");
   const previousSelectedRuleRef = useRef<RuleSelection>(null);
   const component = (suffix: string) => `${dataComponent}_${suffix}`;
   const isCompactSplitLayout = splitLayoutMode === "compact";
@@ -436,7 +475,7 @@ export function TriggerRulesManager({
     isError: isRulesQueryError,
     isFetching: isRulesQueryFetching,
     refetch: refetchMessageTriggerRules,
-  } = useMessageTriggerRules();
+  } = useMessageTriggerRuleGroups(branchId);
   // A paused load with no data has not started: it reads as loading, never as "no rules".
   const isLoading = isRulesQueryLoading || (isRulesQueryPaused && rulesQueryData === undefined);
   const isRulesLoadFailed = isRulesQueryError && rulesQueryData === undefined;
@@ -448,7 +487,15 @@ export function TriggerRulesManager({
   const deleteMutation = useDeleteMessageTriggerRule();
 
   const rules = useMemo(
-    () => (Array.isArray(rulesQueryData) ? rulesQueryData : []),
+    () => rulesQueryData ? [
+      ...rulesQueryData.groups.map((group): MessageTriggerRule => ({
+        ...group.rules[0], ...group,
+        id: group.id, groupId: group.id,
+        recipientType: expandRecipientMode(group.recipientMode)[0],
+        templateKey: group.recipientTemplates[expandRecipientMode(group.recipientMode)[0]]!,
+      })),
+      ...rulesQueryData.standaloneRules,
+    ] : [],
     [rulesQueryData],
   );
 
@@ -544,6 +591,8 @@ export function TriggerRulesManager({
     effectiveSelectedRuleId !== "new"
       ? rules.find((rule) => rule.id === effectiveSelectedRuleId) ?? null
       : null;
+  const selectedGroup = rulesQueryData?.groups.find((group) => group.id === effectiveSelectedRuleId);
+  const isGroupEditor = effectiveSelectedRuleId === "new" || !!selectedGroup;
   const isSelectedDedicatedRule = Boolean(
     selectedRule
     && !CONFIGURABLE_SMS_TRIGGER_TEMPLATE_KEYS.includes(selectedRule.templateKey),
@@ -560,6 +609,19 @@ export function TriggerRulesManager({
   const isTemplateCatalogFailed = !hasTemplateCatalog && templateQuery.isError === true;
   // Loading (isLoading, or paused before its first load) is every other no-data state.
   const isTemplateCatalogLoading = !hasTemplateCatalog && !isTemplateCatalogFailed;
+  useEffect(() => {
+    setSelectedRuleId(null); setGroupPreview(null); setGroupError(null);
+    setRecipientMode("CLIENT"); setRecipientTemplates({ CLIENT: "SERVICE_INFO" });
+  }, [branchId]);
+  useEffect(() => {
+    setGroupPreview(null); setGroupError(null);
+    if (selectedGroup) {
+      setRecipientMode(selectedGroup.recipientMode);
+      setRecipientTemplates({ ...selectedGroup.recipientTemplates });
+    } else if (effectiveSelectedRuleId === "new") {
+      setRecipientMode("CLIENT"); setRecipientTemplates({ CLIENT: "SERVICE_INFO" });
+    }
+  }, [effectiveSelectedRuleId, selectedGroup]);
   const selectedSystemTemplateKey = SMS_TRIGGER_TO_SYSTEM_TEMPLATE[formState.templateKey] ?? "";
   const { data: selectedSystemTemplate } = useSystemTemplate(selectedSystemTemplateKey);
 
@@ -645,16 +707,53 @@ export function TriggerRulesManager({
     const recipientTypes = isSelectedDedicatedRule && selectedRule
       ? [selectedRule.recipientType]
       : getRecipientTypesForEvent(formState.eventType);
+    if (isGroupEditor) return deriveRecipientModesFromTemplates(automaticChannelTemplates, formState.eventType).map((mode) => ({ value: mode, label: mode === "BOTH_EMPLOYEES" ? "주보조 모두" : mode === "PRIMARY_EMPLOYEE" ? "주제공인력" : mode === "SECONDARY_EMPLOYEE" ? "보조제공인력" : "고객" }));
     return recipientTypes.map((recipientType) => ({
         value: recipientType,
         label: RECIPIENT_LABELS[recipientType],
       }));
-  }, [getRecipientTypesForEvent, formState.eventType, isSelectedDedicatedRule, selectedRule]);
+  }, [getRecipientTypesForEvent, formState.eventType, isSelectedDedicatedRule, selectedRule, isGroupEditor, automaticChannelTemplates]);
 
+  useEffect(() => {
+    if (!isGroupEditor || !hasTemplateCatalog) return;
+    const modes = deriveRecipientModesFromTemplates(automaticChannelTemplates, formState.eventType);
+    if (!modes.includes(recipientMode) && modes.length > 0) { const mode = modes[0]; setRecipientMode(mode); setRecipientTemplates({}); setFormState((current) => ({ ...current, recipientType: expandRecipientMode(mode)[0] })); }
+  }, [automaticChannelTemplates, formState.eventType, hasTemplateCatalog, isGroupEditor, recipientMode]);
   const availableTemplates = useMemo<TriggerTemplateCatalogItem[]>(
     () => deriveAvailableTemplates(automaticChannelTemplates, formState.eventType, formState.recipientType),
     [automaticChannelTemplates, formState.eventType, formState.recipientType],
   );
+  const expandedRecipients = expandRecipientMode(recipientMode);
+  const isGroupMappingValid = expandedRecipients.every((role) => {
+    const key = recipientTemplates[role];
+    return !!key && deriveAvailableTemplates(automaticChannelTemplates, formState.eventType, role).some((template) => template.key === key);
+  }) && deriveRecipientModesFromTemplates(automaticChannelTemplates, formState.eventType).includes(recipientMode);
+  const groupDraft = (): CreateMessageTriggerRuleGroupDto => {
+    const dto = normalizeDto(formState);
+    return { name: dto.name, eventType: dto.eventType, offsetType: dto.offsetType, offsetDays: dto.offsetDays, sendTime: dto.sendTime,
+      targetClientStatus: dto.targetClientStatus, retryOnFailure: dto.retryOnFailure, isActive: dto.isActive,
+      recipientMode, recipientTemplates: Object.fromEntries(expandedRecipients.map((role) => [role, recipientTemplates[role]])),
+    };
+  };
+  const previewInput = () => ({ draft: groupDraft() });
+  const latestPreviewInput = useRef("");
+  latestPreviewInput.current = JSON.stringify(previewInput());
+  const validGroupPreview = isGroupMappingValid && !!formState.name.trim()
+    && /^([01]\d|2[0-3]):[0-5]\d$/.test(formState.sendTime ?? "")
+    && (!["BEFORE_DAYS", "AFTER_DAYS"].includes(formState.offsetType) || Number(formState.offsetDays) >= 1)
+;
+  useEffect(() => { setGroupPreview(null); }, [formState, recipientMode, recipientTemplates]);
+  const handleGroupPreview = async () => {
+    if (isRuleEditingBlocked || !validGroupPreview || !branchId || !isBranchContextAligned(branchId)) return;
+    const input = previewInput(); const capturedBranch = branchId; const identity = JSON.stringify(input);
+    setGroupError(null);
+    try {
+      const result = await groupMutations.preview.mutateAsync(input);
+      if (currentBranchRef.current === capturedBranch && latestPreviewInput.current === identity) setGroupPreview(result);
+    } catch (error) {
+      if (currentBranchRef.current === capturedBranch && latestPreviewInput.current === identity) setGroupError(getUserErrorMessage(error, "미리보기를 불러오지 못했어요."));
+    }
+  };
   const selectedTemplate = useMemo(() => {
     return visibleTemplates.find((template) => template.key === formState.templateKey) ?? null;
   }, [formState.templateKey, visibleTemplates]);
@@ -729,7 +828,7 @@ export function TriggerRulesManager({
       setFormState((current) => {
         const isEnteringNewDraft = previousSelectedRuleRef.current !== "new";
         const next = isEnteringNewDraft
-          ? getDefaultFormState(newRuleDefaultIsActiveRef.current)
+          ? getDefaultFormState(newRuleDefaultIsActiveRef.current, newRuleDefaultSendTimeRef.current)
           : current;
         return isTriggerDispatchAvailable && triggerDispatchActive === true
           ? next
@@ -805,24 +904,25 @@ export function TriggerRulesManager({
       title: rule.name,
       subtitle: `${rule.branchId === null ? "시스템 자동화 · " : ""}${rule.id === SERVICE_RECORD_LINK_RULE_ID
         ? "서비스 시작 1일 전 12:00 (한국 시간) · 늦게 등록되면 즉시 발송 · 주 담당 제공인력"
-        : getRuleSummary(toFormState(rule))}`,
+        : `${getRuleSummary(toFormState(rule))}${rule.groupId ? ` · ${rulesQueryData?.groups.find((group) => group.id === rule.id)?.recipientMode === "BOTH_EMPLOYEES" ? "주보조 모두" : RECIPIENT_LABELS[rule.recipientType]}` : ""}${rule.recipientType !== "CLIENT" && ["SERVICE_START", "SERVICE_END"].includes(rule.eventType) ? " · 배정 일정 기준" : ""}`}`,
       active: isTriggerDispatchOff ? false : rule.isActive,
       icon: getRuleIcon(rule.eventType),
       rule,
     }));
-  }, [filteredRules, isTriggerDispatchOff]);
+  }, [filteredRules, isTriggerDispatchOff, rulesQueryData]);
 
   const hasChanges = useMemo(() => {
     if (effectiveSelectedRuleId === "new") {
       return !!formState.name.trim();
     }
     if (!selectedRule) return false;
+    if (selectedGroup && (recipientMode !== selectedGroup.recipientMode || JSON.stringify(Object.fromEntries(expandedRecipients.map((role) => [role, recipientTemplates[role]]))) !== JSON.stringify(selectedGroup.recipientTemplates))) return true;
     return JSON.stringify(normalizeDto(formState)) !== JSON.stringify(
       normalizeDto(toFormState(selectedRule, isTriggerDispatchOff ? false : undefined)),
     );
-  }, [effectiveSelectedRuleId, formState, isTriggerDispatchOff, selectedRule]);
+  }, [effectiveSelectedRuleId, formState, isTriggerDispatchOff, selectedRule, selectedGroup, recipientMode, recipientTemplates, expandedRecipients]);
 
-  const isSaving = createMutation.isPending || updateMutation.isPending;
+  const isSaving = createMutation.isPending || updateMutation.isPending || groupMutations.create.isPending || groupMutations.update.isPending;
   const isDetailPendingSelection =
     !isLoading &&
     effectiveSelectedRuleId === null &&
@@ -834,6 +934,7 @@ export function TriggerRulesManager({
 
   const invalidateMessageAutomationCaches = async () => {
     await Promise.all([
+      queryClient.invalidateQueries({ queryKey: ["message-trigger-rule-groups", branchId] }),
       queryClient.invalidateQueries({ queryKey: messageTriggerKeys.all }),
       queryClient.invalidateQueries({ queryKey: messageTriggerKeys.upcoming() }),
       queryClient.invalidateQueries({ queryKey: messageTriggerKeys.history() }),
@@ -855,6 +956,7 @@ export function TriggerRulesManager({
 
   const handleCreateNew = () => {
     if (isRuleEditingBlocked) return;
+    if (!defaultTimeQuery.data || defaultTimeQuery.isError) { toast({ variant: "destructive", description: "새 규칙의 기본 설정을 불러온 뒤 다시 시도해 주세요." }); return; }
     if (!isTriggerDispatchAvailable) {
       void refreshMessageAutomationState();
       toast({ variant: "destructive", description: PARENT_DISABLED_RETRY_MESSAGE });
@@ -863,9 +965,10 @@ export function TriggerRulesManager({
     setIsRuleDetailDismissed(false);
     const isActive = triggerDispatchActive === true;
     newRuleDefaultIsActiveRef.current = isActive;
+    newRuleDefaultSendTimeRef.current = defaultTimeQuery.data.configuration.defaultRuleSendTime;
     setStatusFilter(isActive ? "active" : "inactive");
     setSelectedRuleId("new");
-    setFormState(getDefaultFormState(isActive));
+    setFormState(getDefaultFormState(isActive, newRuleDefaultSendTimeRef.current));
   };
 
   const handleRuleSelect = (ruleId: string) => {
@@ -883,6 +986,7 @@ export function TriggerRulesManager({
     }
 
     if (checked && isTriggerDispatchOff) {
+      if (rule.groupId) { toast({ variant: "destructive", description: "설정에서 이 지점의 자동 발송을 먼저 켜 주세요." }); return; }
       if (!isAdminOrOwner) {
         toast({
           variant: "destructive",
@@ -897,7 +1001,10 @@ export function TriggerRulesManager({
     }
 
     try {
-      if (rule.branchId === null) {
+      const group = rulesQueryData?.groups.find((item) => item.id === rule.id);
+      if (group) {
+        await groupMutations.update.mutateAsync({ id: group.id, draft: { name: group.name, recipientMode: group.recipientMode, recipientTemplates: group.recipientTemplates, expectedVersion: group.version, eventType: group.eventType, offsetType: group.offsetType, offsetDays: group.offsetDays, sendTime: group.sendTime, targetClientStatus: group.targetClientStatus, retryOnFailure: group.retryOnFailure, isActive: checked } });
+      } else if (rule.branchId === null) {
         await branchActivationMutation.mutateAsync({ id: rule.id, dto: { isActive: checked } });
       } else {
         const dto = normalizeDto({
@@ -906,6 +1013,7 @@ export function TriggerRulesManager({
         });
         await updateMutation.mutateAsync({ id: rule.id, dto });
       }
+      if (!group) await queryClient.invalidateQueries({ queryKey: ["message-trigger-rule-groups", branchId] });
       if (effectiveSelectedRuleId === rule.id) {
         setFormState((current) => ({ ...current, isActive: checked }));
       }
@@ -930,7 +1038,7 @@ export function TriggerRulesManager({
       await parentActivationMutation.mutateAsync(rule.id);
       await invalidateMessageAutomationCaches();
       const [rulesResult, policiesResult] = await refreshMessageAutomationState();
-      const refreshedRules = rulesResult?.data;
+      const refreshedRules = rulesResult?.data?.standaloneRules;
       const refreshedPolicies = policiesResult?.data;
       if (
         rulesResult?.isError === true ||
@@ -988,7 +1096,7 @@ export function TriggerRulesManager({
   };
 
   const handleSave = async () => {
-    if (isRuleEditingBlocked || isSelectedSystemRule) return;
+    if (isRuleEditingBlocked || isSelectedSystemRule || !branchId || !isBranchContextAligned(branchId)) return;
     if (!isTriggerDispatchAvailable) {
       await refreshMessageAutomationState();
       toast({ variant: "destructive", description: PARENT_DISABLED_RETRY_MESSAGE });
@@ -1025,8 +1133,18 @@ export function TriggerRulesManager({
       return;
     }
 
+    if (isGroupEditor && !isGroupMappingValid) { setGroupError("각 수신 대상의 발송 템플릿을 선택해 주세요."); return; }
+    const capturedBranch = branchId;
     try {
-      if (selectedRuleId === "new" || !selectedRule) {
+      if (isGroupEditor) {
+        const saved = selectedGroup
+          ? await groupMutations.update.mutateAsync({ id: selectedGroup.id, draft: { ...groupDraft(), expectedVersion: selectedGroup.version } })
+          : await groupMutations.create.mutateAsync(groupDraft());
+        if (currentBranchRef.current !== capturedBranch) return;
+        if (!saved.isActive) setStatusFilter("inactive");
+        setSelectedRuleId(saved.id); setGroupError(null);
+        toast({ variant: "success", description: "발송 규칙을 저장했어요" });
+      } else if (selectedRuleId === "new" || !selectedRule) {
         const created = await createMutation.mutateAsync({
           ...dto,
           isActive: triggerDispatchActive === true ? dto.isActive : false,
@@ -1038,6 +1156,7 @@ export function TriggerRulesManager({
         toast({ variant: "success", description: "발송 규칙을 만들었어요" });
       } else {
         await updateMutation.mutateAsync({ id: selectedRule.id, dto });
+        await queryClient.invalidateQueries({ queryKey: ["message-trigger-rule-groups", branchId] });
         toast({ variant: "success", description: "발송 규칙을 저장했어요" });
       }
     } catch (error) {
@@ -1045,6 +1164,8 @@ export function TriggerRulesManager({
         await showParentDisabledConflict();
         return;
       }
+      if (currentBranchRef.current !== capturedBranch) return;
+      setGroupError(getErrorStatus(error) === 409 ? "다른 곳에서 규칙이 변경됐어요. 초안을 보존했으니 새로고침 후 확인해 주세요." : getUserErrorMessage(error, "발송 규칙을 저장하지 못했어요"));
       toast({ variant: "destructive", description: "발송 규칙을 저장하지 못했어요" });
     }
   };
@@ -1053,7 +1174,8 @@ export function TriggerRulesManager({
     if (isRuleEditingBlocked || isSelectedSystemRule) return;
     if (!selectedRule || selectedRule.isDefault) return;
     try {
-      await deleteMutation.mutateAsync(selectedRule.id);
+      if (selectedGroup) await groupMutations.remove.mutateAsync(selectedGroup.id);
+      else { await deleteMutation.mutateAsync(selectedRule.id); await queryClient.invalidateQueries({ queryKey: ["message-trigger-rule-groups", branchId] }); }
       setSelectedRuleId(null);
       toast({ variant: "success", description: "발송 규칙을 삭제했어요" });
     } catch {
@@ -1178,6 +1300,7 @@ export function TriggerRulesManager({
                               disabled={
                                 isRuleEditingBlocked ||
                                 item.rule.isLockedByGlobal === true ||
+                                groupMutations.update.isPending ||
                                 updateMutation.isPending ||
                                 branchActivationMutation.isPending ||
                                 parentActivationMutation.isPending ||
@@ -1186,6 +1309,7 @@ export function TriggerRulesManager({
                                 (isTriggerDispatchOff && !isAdminOrOwner)
                               }
                               onClick={(event) => event.stopPropagation()}
+                              onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") event.stopPropagation(); }}
                               onCheckedChange={(checked) => {
                                 void handleRuleActiveToggle(item.rule, checked);
                               }}
@@ -1277,7 +1401,7 @@ export function TriggerRulesManager({
                     size="sm"
                     width="sm"
                     onClick={handleSave}
-                    disabled={!hasChanges || isSaving || isRuleEditingBlocked || !hasTemplateCatalog || unsupportedRequiredCustomVariables.length > 0 || !isTriggerDispatchAvailable}
+                    disabled={!hasChanges || isSaving || (isGroupEditor && !isGroupMappingValid) || isRuleEditingBlocked || !hasTemplateCatalog || unsupportedRequiredCustomVariables.length > 0 || !isTriggerDispatchAvailable}
                     data-component={component("trigger-rules-save")}
                   >
                     {isSaving ? "저장 중..." : "저장"}
@@ -1383,19 +1507,24 @@ export function TriggerRulesManager({
                           <TitleSelectMolecule
                             id="trigger-rule-recipient"
                             label="수신 대상"
-                            value={formState.recipientType}
+                            value={isGroupEditor ? recipientMode : formState.recipientType}
                             options={recipientOptions}
                             disabled={isSelectedDedicatedRule}
-                            onValueChange={(value) =>
-                              setFormState((current) => ({
-                                ...current,
-                                recipientType: value as TriggerRecipientType,
-                              }))
-                            }
+                            onValueChange={(value) => {
+                              if (isGroupEditor) { const mode = value as MessageTriggerRecipientMode; setRecipientMode(mode); setRecipientTemplates({}); setFormState((current) => ({ ...current, recipientType: expandRecipientMode(mode)[0] })); }
+                              else setFormState((current) => ({ ...current, recipientType: value as TriggerRecipientType }));
+                            }}
                             dataComponent={component("trigger-rules-recipient")}
                             triggerDataComponent={component("trigger-rules-recipient-select")}
                           />
                         ) : null}
+
+                        {isGroupEditor ? <FormSection title="대상별 발송 템플릿" data-component={component("trigger-rules-role-templates")}>
+                          {recipientMode !== "CLIENT" && ["SERVICE_START", "SERVICE_END"].includes(formState.eventType) ? <p>제공인력 발송은 배정 일정 기준입니다.</p> : null}
+                          {expandedRecipients.map((role) => <TitleSelectMolecule key={role} id={`trigger-template-${role}`} label={`${role === "CLIENT" ? "고객" : role === "PRIMARY_EMPLOYEE" ? "주제공인력" : "보조제공인력"} 템플릿`} value={recipientTemplates[role] ?? ""} options={deriveAvailableTemplates(automaticChannelTemplates, formState.eventType, role).map((template) => ({ value: template.key, label: template.name }))} onValueChange={(value) => setRecipientTemplates((current) => ({ ...current, [role]: value as TriggerTemplateKey }))} dataComponent={component(`trigger-rules-template-${role}`)} />)}
+                          {!isGroupMappingValid ? <p role="alert">각 수신 대상의 발송 템플릿을 선택해 주세요.</p> : null}
+                          {groupError ? <p role="alert">{groupError}</p> : null}
+                        </FormSection> : null}
 
                         <TitleSelectMolecule
                           id="trigger-rule-target-client-status"
@@ -1482,12 +1611,10 @@ export function TriggerRulesManager({
                               value: template.key,
                             }))}
                             disabled={isSelectedDedicatedRule}
-                            onValueChange={(value) =>
-                              setFormState((current) => ({
-                                ...current,
-                                templateKey: value as TriggerTemplateKey,
-                              }))
-                            }
+                            onValueChange={(value) => {
+                              setFormState((current) => ({ ...current, templateKey: value as TriggerTemplateKey }));
+                              if (isGroupEditor) setRecipientTemplates((current) => ({ ...current, ...Object.fromEntries(expandedRecipients.filter((role) => deriveAvailableTemplates(automaticChannelTemplates, formState.eventType, role).some((template) => template.key === value)).map((role) => [role, value as TriggerTemplateKey])) }));
+                            }}
                             dataComponent={component("trigger-rules-template")}
                             triggerDataComponent={component("trigger-rules-template-select")}
                           />
@@ -1615,17 +1742,34 @@ export function TriggerRulesManager({
                   {
                     key: "preview",
                     className: "flex min-h-0 justify-center",
-                    children: (
+                    children: isGroupEditor ? (
+                      <FormSection title="실제 수신자 미리보기" description="현재 지점의 고객과 배정 일정을 기준으로 초안을 확인합니다. 발송이나 예약을 만들지 않습니다." data-component={component("trigger-rules-server-preview")}>
+                        <Button data-component={component("trigger-rules-server-preview_action")} type="button" variant="neutral" disabled={isRuleEditingBlocked || !validGroupPreview || groupMutations.preview.isPending} onClick={() => void handleGroupPreview()}>수신자 미리보기</Button>
+                        {!isGroupMappingValid ? <p role="alert">각 수신 대상의 발송 템플릿을 선택해 주세요.</p> : null}
+                        {groupError ? <p role="alert">{groupError}</p> : null}
+                        {groupPreview ? <div data-component={component("trigger-rules-server-preview_result")}>
+                          <p>{groupPreview.complete ? "미리보기 완료" : "대상이 많거나 일부 정보를 확인할 수 없어 미리보기가 완전하지 않습니다"} · 발송 가능 {groupPreview.count}건</p>
+                          {groupPreview.complete && groupPreview.recipients.length === 0 ? <p>현재 조건에 해당하는 고객이나 배정 일정이 없습니다.</p> : null}
+                          {groupPreview.recipients.map((recipient, index) => <InfoCard key={`${recipient.ruleId}-${recipient.employeeScheduleId}-${recipient.recipientType}-${index}`} title={`${RECIPIENT_LABELS[recipient.recipientType]} · ${recipient.recipientName ?? "수신자 없음"}`} data-component={component(`trigger-rules-server-preview_result_recipient-${index}`)}>
+                            <InfoRow label="수신자" value={`${recipient.recipientName ?? "없음"} · ${recipient.recipientPhone ?? "번호 없음"}`} />
+
+                            <InfoRow label="템플릿" value={visibleTemplates.find((template) => template.key === recipient.templateKey)?.name ?? "템플릿 확인 필요"} />
+                            <InfoRow label="본문" value={recipient.body ?? "없음"} />
+                            <InfoRow label="건수" value={`${recipient.count}건`} />
+                            <InfoRow label="발송 시각" value={formatPreviewTime(recipient.scheduledFor)} />
+                            <InfoRow label="기준" value={`${PREVIEW_ANCHOR_LABELS[recipient.anchorSource]} · ${recipient.anchorDate ?? "기준 날짜 없음"}`} />
+                            <InfoRow label="상태" value={PREVIEW_OUTCOME_LABELS[recipient.outcome]} />
+                            <InfoRow label="사유" value={formatPreviewReason(recipient.reason)} />
+                          </InfoCard>)}
+                        </div> : null}
+                      </FormSection>
+                    ) : (
                       <MessagePhonePreview
                         className="h-full min-h-0 overflow-hidden py-0"
                         content={selectedTemplateMessage}
                         templateName={selectedTemplate?.name ?? "발송 템플릿"}
                         headline={selectedTemplate?.name ?? "발송 템플릿"}
-                        subtitle={
-                          selectedTemplate?.description ??
-                          selectedSystemTemplate?.description ??
-                          "선택한 발송 템플릿 미리보기입니다."
-                        }
+                        subtitle={selectedTemplate?.description ?? selectedSystemTemplate?.description ?? "선택한 발송 템플릿 미리보기입니다."}
                         dataComponentPrefix={component("phone-preview")}
                         panelDataComponent={component("template-preview-phone-panel")}
                       />

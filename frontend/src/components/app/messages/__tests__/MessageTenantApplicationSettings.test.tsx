@@ -1,11 +1,22 @@
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { useGetAuthUser } from "@/hooks/useGetAuthUser";
 import { settingsApi, type MessageAutomationPoliciesResponse } from "@/services/api";
 import type { MessageTriggerRule } from "@/features/message-triggers/types";
 
+import { messagePolicyApi, type MessageAutomationPolicyConfigResponse } from "@/services/settings";
 import { MessageTenantApplicationSettings } from "../MessageTenantApplicationSettings";
+
+jest.mock("@/features/system-templates/branch-context", () => ({ useActiveBranchId: () => "branch-1", isBranchContextAligned: () => true }));
+jest.mock("@/services/settings", () => ({ messagePolicyApi: { getConfiguration: jest.fn(), saveConfiguration: jest.fn(), previewConfiguration: jest.fn() } }));
+const mockedPolicyApi = jest.mocked(messagePolicyApi);
+const BASE_CONFIG: MessageAutomationPolicyConfigResponse = {
+  version: null, permissions: { canRead: true, canWrite: true }, warnings: [],
+  configuration: { schemaVersion: 1, dispatchCheckIntervalMinutes: 1, defaultRuleSendTime: "09:00", triggerRetryIntervalMinutes: 5, processingReclaimMinutes: 10, smsRetryIntervalMinutes: 5, pastExpiryHours: 24, pastSendIntervalMinutes: 1, pastRuleOrder: [], duplicateWindowHours: 72, quietHours: { enabled: false, start: "22:00", end: "08:00", recipientGroups: ["CLIENT", "CAREGIVER", "STAFF"], action: "DEFER", timezone: "Asia/Seoul" } },
+};
+let configResponse = JSON.parse(JSON.stringify(BASE_CONFIG)) as MessageAutomationPolicyConfigResponse;
+let configReadError = false;
 
 jest.mock("@tanstack/react-query", () => ({
   useQuery: jest.fn(),
@@ -237,9 +248,11 @@ function mockSettingsQueries(
     rulesRefetch?: jest.Mock;
   } = {},
 ) {
+  configResponse = { ...configResponse, configuration: { ...configResponse.configuration, pastSendIntervalMinutes: automationPolicies.pastTriggerConfig.sendIntervalMinutes, pastRuleOrder: [...automationPolicies.pastTriggerConfig.ruleOrder] } };
   mockedUseQuery.mockImplementation(((queryOptions: unknown) => {
     const queryKey = getQueryKey(queryOptions);
 
+    if (queryKey?.[1] === "message-automation-config") return { data: configReadError ? undefined : configResponse, isLoading: false, isError: configReadError, refetch: jest.fn() } as unknown as ReturnType<typeof useQuery>;
     if (queryKey?.[0] === "settings" && queryKey[1] === "message-sender-approval") {
       if (options.approval === "paused") {
         return { ...PAUSED_QUERY_RESULT, refetch: options.approvalRefetch ?? jest.fn() } as unknown as ReturnType<typeof useQuery>;
@@ -316,6 +329,10 @@ function mockSettingsQueries(
 
 beforeEach(() => {
   jest.clearAllMocks();
+  configResponse = JSON.parse(JSON.stringify(BASE_CONFIG)) as MessageAutomationPolicyConfigResponse; configReadError = false;
+  mockedPolicyApi.saveConfiguration.mockImplementation(async (input) => ({ ...configResponse, version: "version-2", configuration: input.configuration }));
+  mockedPolicyApi.previewConfiguration.mockResolvedValue({ version: null, deferredCount: 3, canceledCount: 0, reevaluateAt: "2026-11-07T23:00:00.000Z", futureProviderReservations: 0, canEnableQuietHours: true, warnings: [] });
+  jest.spyOn(window, "confirm").mockReturnValue(true);
   mockedUseGetAuthUser.mockReturnValue({
     data: {
       id: "user-1",
@@ -324,6 +341,7 @@ beforeEach(() => {
       role: "admin",
     },
   } as unknown as ReturnType<typeof useGetAuthUser>);
+  mockSetQueryData.mockImplementation((key: unknown[], value: unknown) => { if (key[1] === "message-automation-config" && typeof value !== "function") configResponse = value as MessageAutomationPolicyConfigResponse; });
   mockedUseQueryClient.mockReturnValue({
     invalidateQueries: mockInvalidateQueries,
     setQueryData: mockSetQueryData,
@@ -434,7 +452,7 @@ describe("MessageTenantApplicationSettings", () => {
     fireEvent.click(screen.getAllByText("API 지난 루틴 정책")[0]);
 
     expect(screen.getByText("API 지난 루틴 미실행")).toBeInTheDocument();
-    expect(screen.getByText("전송 간격")).toBeInTheDocument();
+    expect(screen.getByText("늦은 등록 자동 전송 간격 (분)")).toBeInTheDocument();
     const intervalInput = screen.getByRole("spinbutton", { name: "늦은 등록 자동 전송 간격" });
     expect(intervalInput).toHaveValue(1);
     expect(screen.getByRole("button", { name: "저장" })).toBeDisabled();
@@ -448,10 +466,10 @@ describe("MessageTenantApplicationSettings", () => {
     fireEvent.click(screen.getByRole("button", { name: "저장" }));
 
     await waitFor(() => {
-      expect(mockedSettingsApi.updateMessageAutomationPastTriggerConfig).toHaveBeenCalledWith({
-        sendIntervalMinutes: 10,
-        ruleOrder: DEFAULT_TRIGGER_RULES.map((rule) => rule.id),
-      });
+      expect(mockedPolicyApi.saveConfiguration).toHaveBeenCalledWith({ expectedVersion: null, configuration: expect.objectContaining({
+        pastSendIntervalMinutes: 10,
+        pastRuleOrder: DEFAULT_TRIGGER_RULES.map((rule) => rule.id),
+      }) }, "branch-1");
     });
 
     fireEvent.click(screen.getAllByText("중복 전송 확인")[0]);
@@ -517,15 +535,15 @@ describe("MessageTenantApplicationSettings", () => {
     fireEvent.click(screen.getByRole("button", { name: "저장" }));
 
     await waitFor(() => {
-      expect(mockedSettingsApi.updateMessageAutomationPastTriggerConfig).toHaveBeenCalledWith({
-        sendIntervalMinutes: 2,
-        ruleOrder: [
+      expect(mockedPolicyApi.saveConfiguration).toHaveBeenCalledWith({ expectedVersion: null, configuration: expect.objectContaining({
+        pastSendIntervalMinutes: 2,
+        pastRuleOrder: [
           DEFAULT_TRIGGER_RULES[0].id,
           DEFAULT_TRIGGER_RULES[1].id,
           inactiveReminder.id,
           DEFAULT_TRIGGER_RULES[3].id,
         ],
-      });
+      }) }, "branch-1");
     });
   });
 
@@ -564,10 +582,10 @@ describe("MessageTenantApplicationSettings", () => {
     fireEvent.click(screen.getByRole("button", { name: "저장" }));
 
     await waitFor(() => {
-      expect(mockedSettingsApi.updateMessageAutomationPastTriggerConfig).toHaveBeenCalledWith({
-        sendIntervalMinutes: 2,
-        ruleOrder: [manualOnlyRule.id, DEFAULT_TRIGGER_RULES[0].id, automaticReceiptRule.id],
-      });
+      expect(mockedPolicyApi.saveConfiguration).toHaveBeenCalledWith({ expectedVersion: null, configuration: expect.objectContaining({
+        pastSendIntervalMinutes: 2,
+        pastRuleOrder: [manualOnlyRule.id, DEFAULT_TRIGGER_RULES[0].id, automaticReceiptRule.id],
+      }) }, "branch-1");
     });
   });
 
@@ -599,15 +617,15 @@ describe("MessageTenantApplicationSettings", () => {
     fireEvent.click(screen.getByRole("button", { name: "저장" }));
 
     await waitFor(() => {
-      expect(mockedSettingsApi.updateMessageAutomationPastTriggerConfig).toHaveBeenCalledWith({
-        sendIntervalMinutes: 1,
-        ruleOrder: [
+      expect(mockedPolicyApi.saveConfiguration).toHaveBeenCalledWith({ expectedVersion: null, configuration: expect.objectContaining({
+        pastSendIntervalMinutes: 1,
+        pastRuleOrder: [
           DEFAULT_TRIGGER_RULES[0].id,
           DEFAULT_TRIGGER_RULES[3].id,
           inactiveReminder.id,
           DEFAULT_TRIGGER_RULES[1].id,
         ],
-      });
+      }) }, "branch-1");
     });
   });
 
@@ -988,5 +1006,145 @@ describe("MessageTenantApplicationSettings", () => {
       fireEvent.click(within(alert).getByRole("button", { name: "다시 시도" }));
       expect(rulesRefetch).toHaveBeenCalledTimes(1);
     });
+  });
+});
+
+describe("canonical policy draft", () => {
+  const policies: MessageAutomationPoliciesResponse = {
+    ...DEFAULT_AUTOMATION_POLICIES,
+    policies: [
+      { id: "trigger-dispatch", title: "메시지 자동 발송", description: "지점 자동 발송", active: false, requiresApproval: true, rows: [] },
+      { id: "trigger-job-retry", title: "자동 작업 재시도", description: "재시도", active: true, requiresApproval: false, rows: [] },
+      ...DEFAULT_AUTOMATION_POLICIES.policies,
+    ],
+  };
+  const numericFields = [
+    ["메시지 자동 발송", "자동 작업 확인 간격", 1, 1440],
+    ["자동 작업 재시도", "자동 작업 재시도 간격", 1, 1440],
+    ["자동 작업 재시도", "처리 중 작업 회수 시간", 10, 1440],
+    ["SMS 재시도 규칙", "문자 재시도 간격", 1, 1440],
+    ["지난 자동 전송 처리 규칙", "지난 자동 전송 유효 시간", 1, 720],
+    ["지난 자동 전송 처리 규칙", "늦은 등록 자동 전송 간격", 1, 1440],
+    ["중복 전송 확인", "중복 확인 범위", 1, 720],
+  ] as const;
+  function open(title: string) {
+    mockSettingsQueries(true, policies);
+    const view = render(<MessageTenantApplicationSettings />);
+    fireEvent.click(screen.getAllByText(title)[0]);
+    return view;
+  }
+  it.each([[false, false, 7], [false, true, 7], [true, false, 6], [true, true, 6]] as const)("retains conditional items approved=%s manager=%s", (approved, manager, count) => {
+    mockSettingsQueries(approved, { ...policies, canManageActivation: manager });
+    const { container } = render(<MessageTenantApplicationSettings />);
+    const list = container.querySelector('[data-component="desktop_messages_sections_split-layout_list-panel-2"]')!;
+    expect(within(list as HTMLElement).getByText(`${count}개`)).toBeInTheDocument();
+    expect(within(list as HTMLElement).getAllByText("심야 시간 메세지 전송 금지")).toHaveLength(1);
+    expect(screen.queryByText("제공기록지 전송 자동화 규칙")).not.toBeInTheDocument();
+    expect(screen.queryByText("메시지 발송 기능 신청") !== null).toBe(!approved);
+  });
+  it.each(numericFields)("validates literal bounds for %s / %s without writes", (title, label, min, max) => {
+    open(title);
+    const input = screen.getByRole("spinbutton", { name: label });
+    for (const invalid of [min - 1, max + 1]) {
+      fireEvent.change(input, { target: { value: String(invalid) } });
+      expect(screen.getByRole("button", { name: "저장" })).toBeDisabled();
+      expect(screen.getByRole("alert")).toHaveTextContent(`${min}~${max}`);
+    }
+    for (const valid of [min, max]) {
+      fireEvent.change(input, { target: { value: String(valid) } });
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+      expect(input).toHaveValue(valid);
+    }
+    expect(mockedPolicyApi.saveConfiguration).not.toHaveBeenCalled();
+    expect(mockedSettingsApi.updateMessagePolicyActivation).not.toHaveBeenCalled();
+  });
+  it("edits the eighth time field locally and cancels to the persisted time", () => {
+    open("메시지 자동 발송");
+    fireEvent.change(screen.getByLabelText("새 규칙 기본 발송 시각"), { target: { value: "25:00" } });
+    expect(screen.getByRole("button", { name: "저장" })).toBeDisabled();
+    fireEvent.change(screen.getByLabelText("새 규칙 기본 발송 시각"), { target: { value: "14:37" } });
+    expect(screen.getByText("14:37 (한국 시간)")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "변경 취소" }));
+    expect(screen.getByLabelText("새 규칙 기본 발송 시각")).toHaveValue("09:00");
+    expect(mockedPolicyApi.saveConfiguration).not.toHaveBeenCalled();
+  });
+  it("persists a full configuration with null CAS and keeps activation separate", async () => {
+    open("메시지 자동 발송");
+    fireEvent.change(screen.getByLabelText("자동 작업 확인 간격"), { target: { value: "7" } });
+    expect(screen.getByText("7분")).toBeInTheDocument();
+    expect(mockedPolicyApi.saveConfiguration).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "저장" }));
+    await waitFor(() => expect(mockedPolicyApi.saveConfiguration).toHaveBeenCalledWith({ expectedVersion: null, configuration: { ...BASE_CONFIG.configuration, dispatchCheckIntervalMinutes: 7 } }, "branch-1"));
+    expect(mockedSettingsApi.updateMessagePolicyActivation).not.toHaveBeenCalled();
+    expect(configResponse.version).toBe("version-2");
+    expect(screen.getByRole("switch", { name: "메시지 자동 발송 활성화" })).not.toBeChecked();
+  });
+  it("restores the persisted value after ordinary failure", async () => {
+    mockedPolicyApi.saveConfiguration.mockRejectedValue({ response: { status: 503 } });
+    open("메시지 자동 발송");
+    fireEvent.change(screen.getByLabelText("자동 작업 확인 간격"), { target: { value: "7" } });
+    fireEvent.click(screen.getByRole("button", { name: "저장" }));
+    await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("저장하지 못했어요"));
+    expect(screen.getByLabelText("자동 작업 확인 간격")).toHaveValue(1);
+  });
+  it.each([true, false])("preserves newer pending edits after save success=%s", async (success) => {
+    let resolve!: (value: MessageAutomationPolicyConfigResponse) => void;
+    let reject!: (error: unknown) => void;
+    mockedPolicyApi.saveConfiguration.mockReturnValue(new Promise((yes, no) => { resolve = yes; reject = no; }));
+    open("메시지 자동 발송");
+    fireEvent.change(screen.getByLabelText("자동 작업 확인 간격"), { target: { value: "7" } });
+    fireEvent.click(screen.getByRole("button", { name: "저장" }));
+    await waitFor(() => expect(mockedPolicyApi.saveConfiguration).toHaveBeenCalledTimes(1));
+    fireEvent.change(screen.getByLabelText("자동 작업 확인 간격"), { target: { value: "8" } });
+    await act(async () => { if (success) resolve({ ...BASE_CONFIG, version: "saved-7", configuration: { ...BASE_CONFIG.configuration, dispatchCheckIntervalMinutes: 7 } }); else reject({ response: { status: 503 } }); });
+    expect(screen.getByLabelText("자동 작업 확인 간격")).toHaveValue(8);
+    fireEvent.click(screen.getByRole("button", { name: "변경 취소" }));
+    expect(screen.getByLabelText("자동 작업 확인 간격")).toHaveValue(success ? 7 : 1);
+  });
+  it("retains a conflicting draft and sends no overwrite", async () => {
+    mockedPolicyApi.saveConfiguration.mockRejectedValue({ response: { status: 409 } });
+    open("메시지 자동 발송");
+    fireEvent.change(screen.getByLabelText("자동 작업 확인 간격"), { target: { value: "7" } });
+    fireEvent.click(screen.getByRole("button", { name: "저장" }));
+    await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("새로고침"));
+    expect(screen.getByLabelText("자동 작업 확인 간격")).toHaveValue(7);
+    expect(mockedPolicyApi.saveConfiguration).toHaveBeenCalledTimes(1);
+    expect(configResponse.version).toBeNull();
+  });
+  it("confirms dirty selection and guards page unload", () => {
+    open("메시지 자동 발송");
+    fireEvent.change(screen.getByLabelText("자동 작업 확인 간격"), { target: { value: "7" } });
+    jest.mocked(window.confirm).mockReturnValue(false);
+    fireEvent.click(screen.getAllByText("중복 전송 확인")[0]);
+    expect(window.confirm).toHaveBeenCalled();
+    expect(screen.getByLabelText("자동 작업 확인 간격")).toHaveValue(7);
+    const event = new Event("beforeunload", { cancelable: true });
+    window.dispatchEvent(event);
+    expect(event.defaultPrevented).toBe(true);
+    expect(mockedPolicyApi.saveConfiguration).not.toHaveBeenCalled();
+  });
+  it("validates quiet targets/time and previews literal server impact without a write", async () => {
+    const { container } = open("심야 시간 메세지 전송 금지");
+    fireEvent.click(screen.getAllByRole("switch", { name: "심야 시간 메세지 전송 금지 활성화" })[0]);
+    for (const target of ["고객", "제공인력", "직원"]) fireEvent.click(screen.getByRole("button", { name: target }));
+    expect(screen.getByRole("button", { name: "저장" })).toBeDisabled();
+    expect(screen.getByRole("alert")).toHaveTextContent("한 개 이상");
+    fireEvent.click(screen.getByRole("button", { name: "직원" }));
+    fireEvent.change(screen.getByLabelText("심야 종료 시각"), { target: { value: "22:00" } });
+    expect(screen.getByRole("alert")).toHaveTextContent("달라야");
+    fireEvent.change(screen.getByLabelText("심야 종료 시각"), { target: { value: "08:00" } });
+    fireEvent.click(screen.getByRole("button", { name: "발송 취소" }));
+    fireEvent.click(screen.getByRole("button", { name: "영향 미리보기" }));
+    await waitFor(() => expect(screen.getByText("3건")).toBeInTheDocument());
+    expect(mockedPolicyApi.previewConfiguration).toHaveBeenCalledWith({ expectedVersion: null, configuration: { ...BASE_CONFIG.configuration, quietHours: { ...BASE_CONFIG.configuration.quietHours, enabled: true, recipientGroups: ["STAFF"], action: "CANCEL" } } }, "branch-1");
+    expect(mockedPolicyApi.saveConfiguration).not.toHaveBeenCalled();
+    expect(container.querySelector('[data-slot="save-note"], [data-slot="dirty-state"], [data-slot="footer-note"]')).toBeNull();
+  });
+  it("disables edits on unavailable config without reporting OFF as saved", () => {
+    configReadError = true;
+    open("심야 시간 메세지 전송 금지");
+    expect(screen.getByRole("button", { name: "저장" })).toBeDisabled();
+    expect(screen.getByText("설정을 불러오지 못했습니다")).toBeInTheDocument();
+    expect(mockedPolicyApi.saveConfiguration).not.toHaveBeenCalled();
   });
 });
