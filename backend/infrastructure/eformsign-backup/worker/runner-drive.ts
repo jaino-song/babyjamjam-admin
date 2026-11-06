@@ -560,18 +560,25 @@ export class DriveRunPhase {
         const local = this.state.destinations.get(destinationKey(job.artifactIdentity, this.installation.destinationIdentity, this.installation.destinationRevision));
         if (local?.state !== "verified") return false;
         let bytes: Buffer | null;
+        let intact: boolean;
         try {
             await beforeExecutionEffect(this.host.manual?.effect(job.documentId));
-            if (await this.archive.reverify(job.relativeKey, job.sha256, job.byteLength) !== "ok") return false;
+            if (await this.archive.reverify(job.relativeKey, job.sha256, job.byteLength) !== "ok") {
+                this.host.manual?.rejectProof("local", job.artifactIdentity, "integrity_error", "artifact-integrity");
+                return false;
+            }
             await beforeExecutionEffect(this.host.manual?.effect(job.documentId));
             bytes = await this.archive.readArchiveFile(job.relativeKey);
+            // The read can contradict the preceding recheck. Revoke proof before any later fence or staging effect.
+            intact = bytes !== null && (!this.host.manual || (bytes.byteLength === job.byteLength && sha256Of(bytes) === job.sha256));
+            if (!intact) this.host.manual?.rejectProof("local", job.artifactIdentity, "integrity_error", "artifact-integrity");
             await beforeExecutionEffect(this.host.manual?.effect(job.documentId));
         } catch (error) {
             if (!(error instanceof WorkerError)) throw error;
             this.host.archiveLost();
             return false;
         }
-        if (bytes === null) return false;
+        if (bytes === null || !intact) return false;
         return (await this.host.restage(job, once(bytes))).ok;
     }
 

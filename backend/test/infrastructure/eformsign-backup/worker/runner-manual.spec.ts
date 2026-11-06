@@ -253,6 +253,106 @@ describe("selected manual archive engine", () => {
         if (!repaired) await expect(fs.lstat(path.join(r.h.archive, key))).rejects.toMatchObject({ code: "ENOENT" });
         else expect(await fs.readFile(path.join(r.h.archive, key))).not.toEqual(Buffer.alloc(artifact.byteLength));
     });
+    it.each([
+        ["transferring", "mismatch", "lease-lost"], ["transferring", "missing", "source-changed"],
+        ["verifying", "mismatch", "source-changed"], ["verifying", "missing", "lease-lost"],
+    ] as const)("revokes recovered %s local proof on %s before the following %s fence", async (state, contradiction, reason) => {
+        const r = current = await rig();
+        const prior = await r.claim();
+        const artifact = prior.selection.candidates[0]!.artifacts[0]!;
+        const key = artifactKey({ companyId: "C001", documentId: "A", artifactType: artifact.artifactType, sha256: artifact.sha256 });
+        const faultPoint = state === "transferring" ? "after-publish-before-verifying" : "after-verifying-before-verified";
+        r.deps.runnerFault = point => { if (point === faultPoint) throw new ExecutionFencedError("uncertain"); };
+        await r.runner.run(prior);
+        r.deps.runnerFault = undefined;
+        const options = await r.claim([pairDoc("A"), pairDoc("B")], 2);
+        const reverify = LocalDestination.prototype.reverify;
+        let checks = 0;
+        let contradicted = false;
+        jest.spyOn(LocalDestination.prototype, "reverify").mockImplementation(async function (this: LocalDestination, ...args) {
+            if (args[0] === key && ++checks === 2) {
+                if (contradiction === "mismatch") await fs.writeFile(path.join(r.h.archive, key), Buffer.alloc(artifact.byteLength));
+                else await fs.rm(path.join(r.h.archive, key));
+                const found = await reverify.apply(this, args);
+                expect(found).toBe(contradiction);
+                contradicted = true;
+                return found;
+            }
+            return reverify.apply(this, args);
+        });
+        options.fence.assertActive = jest.fn(async () => { if (contradicted) throw new ExecutionFencedError(reason); });
+        const quarantine = jest.spyOn(LocalDestination.prototype, "quarantineCorrupt");
+        const summary = await r.runner.run(options);
+        expect(checks).toBe(2);
+        expect(summary).toMatchObject({ snapshotStatus: "blocked", counts: { verified: 0 } });
+        const latest = [...r.deps.ledger.state.manualAttempts!.values()].at(-1)!;
+        expect(latest.results.get("A")!.payload.local.artifacts.find(a => a.artifactIdentity === artifact.artifactIdentity))
+            .toMatchObject({ state: "integrity_error", reasonCode: "artifact-integrity" });
+        expect(latest.results.get("B")!.payload.local.reasons).toContain("not-attempted");
+        expect(latest.aggregate!.payload).toMatchObject({ status: "blocked", counts: { localVerified: 0, attention: 2 } });
+        expect(summary.manualReceipt!.digest).toBe(manualAggregateResultDigest(latest.aggregate!.payload));
+        expect(options.exportPort.openArtifact).not.toHaveBeenCalled();
+        expect(quarantine).not.toHaveBeenCalled();
+    });
+    it.each([
+        ["reverify-mismatch", false], ["reverify-missing", false], ["read-missing", false], ["read-mismatch", false], ["read-length", false],
+        ["reverify-mismatch", true], ["reverify-missing", true], ["read-missing", true], ["read-mismatch", true], ["read-length", true],
+    ] as const)("revokes local proof when Drive restaging finds %s (fenced: %s)", async (contradiction, fenced) => {
+        const r = current = await rig(true);
+        r.fakes!.drive.setQuotaExceeded(true);
+        const prior = await r.claim();
+        await r.runner.run(prior);
+        r.fakes!.drive.setQuotaExceeded(false);
+        const artifact = prior.selection.candidates[0]!.artifacts[0]!;
+        const key = artifactKey({ companyId: "C001", documentId: "A", artifactType: artifact.artifactType, sha256: artifact.sha256 });
+        await fs.rm(path.join(r.h.control, "staging", `${artifact.artifactIdentity}.bin`));
+        const options = await r.claim([pairDoc("A")], 2);
+        const reverify = LocalDestination.prototype.reverify;
+        const read = LocalDestination.prototype.readArchiveFile;
+        let checks = 0;
+        let contradicted = false;
+        async function damage() {
+            if (contradiction.endsWith("missing")) await fs.rm(path.join(r.h.archive, key));
+            else await fs.writeFile(path.join(r.h.archive, key), Buffer.alloc(artifact.byteLength + (contradiction === "read-length" ? 1 : 0)));
+        }
+        jest.spyOn(LocalDestination.prototype, "reverify").mockImplementation(async function (this: LocalDestination, ...args) {
+            if (args[0] === key && ++checks === 2 && contradiction.startsWith("reverify")) {
+                await damage();
+                const found = await reverify.apply(this, args);
+                expect(found).toBe(contradiction.endsWith("missing") ? "missing" : "mismatch");
+                contradicted = true;
+                return found;
+            }
+            return reverify.apply(this, args);
+        });
+        jest.spyOn(LocalDestination.prototype, "readArchiveFile").mockImplementation(async function (this: LocalDestination, ...args) {
+            if (args[0] === key && contradiction.startsWith("read")) {
+                await damage();
+                const bytes = await read.apply(this, args);
+                contradicted = true;
+                return bytes;
+            }
+            return read.apply(this, args);
+        });
+        options.fence.assertActive = jest.fn(async () => { if (fenced && contradicted) throw new ExecutionFencedError("lease-lost"); });
+        const upload = jest.spyOn(DriveDestination.prototype, "uploadArtifact");
+        const manifest = jest.spyOn(LocalDestination.prototype, "publishJson");
+        const summary = await r.runner.run(options);
+        expect(checks).toBe(2);
+        expect(contradicted).toBe(true);
+        expect(summary).toMatchObject({ snapshotStatus: fenced ? "blocked" : "partial", counts: { verified: 1, driveVerified: fenced ? 0 : 1 } });
+        const latest = [...r.deps.ledger.state.manualAttempts!.values()].at(-1)!;
+        const result = latest.results.get("A")!.payload;
+        expect(result.local.state).toBe(fenced ? "blocked" : "partial");
+        expect(result.local.artifacts.find(a => a.artifactIdentity === artifact.artifactIdentity))
+            .toMatchObject({ state: "integrity_error", reasonCode: "artifact-integrity" });
+        expect(latest.aggregate!.payload).toMatchObject({ status: fenced ? "blocked" : "partial", counts: { localVerified: 0, attention: 1 } });
+        expect(summary.manualReceipt!.digest).toBe(manualAggregateResultDigest(latest.aggregate!.payload));
+        expect(options.exportPort.openArtifact).not.toHaveBeenCalled();
+        expect(upload.mock.calls.every(([input]) => input.artifactIdentity !== artifact.artifactIdentity)).toBe(true);
+        if (fenced) { expect(upload).not.toHaveBeenCalled(); expect(manifest).not.toHaveBeenCalled(); }
+        else expect(manifest).toHaveBeenCalled();
+    });
     it.each(["mismatch", "missing", "conflict", "download-corruption", "download-missing"] as const)("revokes earlier Drive proof after contradictory %s evidence", async contradiction => {
         const r = current = await rig(true);
         await r.runner.run(await r.claim());
