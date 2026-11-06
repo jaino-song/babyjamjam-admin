@@ -1,6 +1,6 @@
 import { normalizePhone } from "application/utils/normalize-phone";
 import { AligoDefaultSenderPolicyService } from "./aligo-default-sender-policy.service";
-import { parseMessageQuietHold, type MessageQuietHold } from "domain/message-policy-evaluator";
+import { parseMessageQuietHold, publicMessageVariables, type MessageQuietHold } from "domain/message-policy-evaluator";
 import { isSelectedMessageJobExpired } from "./message-trigger-recipes";
 import { MessageQuietHoursService, isQuietHoursCanceled, recordQuietHoursRefusal, runSmsQuietHoursAdmission, QUIET_HOURS_CANCEL_REASON, QUIET_HOURS_DEFER_REASON } from "./message-quiet-hours.service";
 import { BadRequestException, ConflictException, Inject, Injectable, Logger, NotFoundException, Optional, ServiceUnavailableException } from "@nestjs/common";
@@ -182,7 +182,12 @@ export class SmsRetryService {
             throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
         }
 
-        return retryLog;
+        // Project only the public response. Persisted retry/resume provenance
+        // stays on the original entity; keep the response's class and fields.
+        return Object.assign(MessageLogEntity.create({
+            provider: retryLog.provider, templateKey: retryLog.templateKey,
+            receiver: retryLog.receiver, messageBody: retryLog.messageBody, variables: {},
+        }), retryLog, { variables: publicMessageVariables(retryLog.variables) });
     }
 
     async retry(

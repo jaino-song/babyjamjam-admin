@@ -100,7 +100,7 @@ export function messageQuietHoldVariables(hold: MessageQuietHold): Record<string
 }
 
 export function publicMessageVariables<T>(variables: Record<string, T>): Record<string, T> {
-    return Object.fromEntries(Object.entries(variables).filter(([key]) => !QUIET_HOURS_OPERATIONAL_KEYS.some(operational => operational === key) && !["manualQueueMode", "manualQueueCount", "manualQueueOrdinal", "manualQueueStatus", "manualQueueScheduledAt", "manualQueueRequestKey", "manualQueueFingerprintInput", "manualQueueSenderIdentity", "manualQueueReason", "retryInvocation", "retrySenderIdentity"].includes(key)));
+    return Object.fromEntries(Object.entries(variables).filter(([key]) => !QUIET_HOURS_OPERATIONAL_KEYS.some(operational => operational === key) && !["manualRecipientBindings", "manualQueueMode", "manualQueueCount", "manualQueueOrdinal", "manualQueueStatus", "manualQueueScheduledAt", "manualQueueRequestKey", "manualQueueFingerprintInput", "manualQueueSenderIdentity", "manualQueueReason", "retryInvocation", "retrySenderIdentity"].includes(key)));
 }
 export type MessageQuietHoursDecision =
     | { action: "ALLOW"; reevaluateAt: null }
