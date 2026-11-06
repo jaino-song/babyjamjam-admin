@@ -762,7 +762,7 @@ describe("A: partial-failure send keeps only failed recipients in queue", () => 
       '[data-component="desktop_messages_sections_template-send-form_feedback"]',
     );
 
-    expect(feedback?.textContent).toContain("1건 발송 요청을 접수했어요");
+    expect(feedback?.textContent).toContain("메시지 발송 요청 1건을 접수했어요");
     expect(feedback?.textContent).toContain("작업 상태를 확인해 주세요");
     expect(submitButton).toBeDisabled();
 
@@ -813,7 +813,7 @@ describe("A: partial-failure send keeps only failed recipients in queue", () => 
     const feedback = document.querySelector(
       '[data-component="desktop_messages_sections_template-send-form_feedback"]',
     );
-    expect(feedback?.textContent).toContain("1건 발송 요청을 접수했어요");
+    expect(feedback?.textContent).toContain("메시지 발송 요청 1건을 접수했어요");
     expect(feedback?.textContent).toContain("작업 상태를 확인해 주세요");
     expect(screen.getByRole("button", { name: /즉시 발송/ })).toBeDisabled();
 
@@ -1268,11 +1268,10 @@ describe("Phase2a SMS outcome state machine", () => {
       if (testCase.response) mockedSendSms.mockResolvedValueOnce(testCase.response as never);
       else mockedSendSms.mockRejectedValueOnce(testCase.error);
       fireEvent.click(submitButton);
-      await waitFor(() => expect(submitButton).toBeDisabled());
-      const feedback = document.querySelector(
-        '[data-component="desktop_messages_sections_template-send-form_feedback"]',
-      );
-      expect(feedback).toHaveTextContent("작업 상태를 확인해 주세요");
+      // Disabled also describes preflight/sending; wait for the terminal outcome itself.
+      const feedback = await screen.findByRole("status");
+      await waitFor(() => expect(feedback).toHaveTextContent("작업 상태를 확인해 주세요"));
+      expect(submitButton).toBeDisabled();
       expect(feedback).not.toHaveTextContent("Bearer");
       expect(feedback).not.toHaveTextContent("SELECT");
       expect(feedback).not.toHaveTextContent("provider secret");
@@ -1354,9 +1353,9 @@ describe("Phase2a SMS outcome state machine", () => {
       : Promise.reject({ isAxiosError: true, response: { status: 422, data: notApplied } }));
     const submitButton = screen.getByRole("button", { name: /즉시 발송/ });
     fireEvent.click(submitButton);
-    await waitFor(() => expect(submitButton).toBeDisabled());
-    const feedback = document.querySelector('[data-component="desktop_messages_sections_template-send-form_feedback"]');
-    expect(feedback).toHaveTextContent("작업 상태를 확인해 주세요");
+    const feedback = await screen.findByRole("status");
+    await waitFor(() => expect(feedback).toHaveTextContent("작업 상태를 확인해 주세요"));
+    expect(submitButton).toBeDisabled();
     expect(feedback).not.toHaveTextContent("수정한 뒤 다시 시도해 주세요");
     view.rerender(<TemplateSendForm templateId="builtin:service-feedback-link" templateName="제공기록지 작성 링크" message="안내 메시지입니다." deliveryMode="service-feedback-link" />);
     view.rerender(<TemplateSendForm templateId="builtin:info" templateName="서비스 안내" message="안내 메시지입니다." />);
@@ -1606,7 +1605,13 @@ describe("D4 server preflight, draft keys, and queue outcomes", () => {
     fireEvent.click(screen.getByRole("button", { name: /즉시 발송/ }));
     await screen.findByRole("button", { name: "전송" });
     if (edit === "body" || edit === "title") view.rerender(<TemplateSendForm templateId="builtin:info" templateName={edit === "title" ? "다른 제목" : "서비스 안내"} message={edit === "body" ? "새 본문" : "안내 메시지입니다."} />);
-    else if (edit === "identity") fireEvent.click(screen.getAllByRole("button", { name: "기존 고객 선택" })[0]);
+    else if (edit === "identity") {
+      // An asynchronous identity update can complete while the modal owns focus.
+      await act(async () => {
+        useFormStore.setState({ clientId: 42, name: "검수고객" });
+      });
+      expect(useFormStore.getState()).toEqual(expect.objectContaining({ clientId: 42, name: "검수고객" }));
+    }
     else fireEvent.change(screen.getByTestId("autocomplete-휴대 전화번호"), { target: { value: "01022222222" } });
     await waitFor(() => expect(screen.queryByRole("button", { name: "전송" })).not.toBeInTheDocument());
     expect(mockedSendSms).not.toHaveBeenCalled();
