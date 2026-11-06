@@ -305,7 +305,8 @@ test.describe("list skeleton parity", () => {
     const approvalReady = new Promise<void>((resolve) => (releaseApproval = resolve));
     const policiesReady = new Promise<void>((resolve) => (releasePolicies = resolve));
 
-    const branchId = "branch-1";
+    // Match the existing browser E2E identity used by useGetAuthUser.
+    const branchId = "e2e-branch";
     await page.route("**/api/auth/me", async (route) => {
       await route.fulfill({
         status: 200,
