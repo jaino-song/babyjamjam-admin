@@ -5,6 +5,7 @@ import { MANUAL_BACKUP_SCOPE_REVISION, manualBackupSnapshotId } from "domain/efo
 import { artifactKey, ledgerStateToJson, WorkerError } from "domain/eformsign-backup/worker";
 import { manualSelectionDigest, manualAggregateResultDigest, manualDocumentResultDigest, type ManualSelection } from "domain/eformsign-backup/worker/manual-protocol";
 import { ExecutionFencedError } from "infrastructure/eformsign-backup/execution-effect-fence";
+import type { DriveFailure } from "infrastructure/eformsign-backup/worker/drive-client";
 import { DriveDestination } from "infrastructure/eformsign-backup/worker/drive-destination";
 import { ExportClient } from "infrastructure/eformsign-backup/worker/export-client";
 import { LedgerStore } from "infrastructure/eformsign-backup/worker/ledger-store";
@@ -201,6 +202,109 @@ describe("selected manual archive engine", () => {
         const attempt = [...r.deps.ledger.state.manualAttempts!.values()][1]!;
         expect(attempt.aggregate!.payload.counts.localVerified).toBe(0);
         expect(options.exportPort.openArtifact).not.toHaveBeenCalled();
+    });
+    it.each(["mismatch", "missing", "conflict", "download-corruption", "download-missing"] as const)("revokes earlier Drive proof after contradictory %s evidence", async contradiction => {
+        const r = current = await rig(true);
+        await r.runner.run(await r.claim());
+        const artifact = attemptOf(r).candidates.get("A")!.artifacts[0]!;
+        const key = artifactKey({ companyId: "C001", documentId: "A", artifactType: artifact.artifactType, sha256: artifact.sha256 });
+        const binding = r.deps.ledger.state.installation!.drive!;
+        const nodeOf = () => r.deps.ledger.state.driveNodes.get(`${binding.destinationRevision}|${key}`)!;
+        // Two previous repairs make the next contradiction exhaust the integrity budget.
+        for (const attempt of [2, 3]) {
+            r.fakes!.drive.corrupt(nodeOf().fileId);
+            await r.runner.run(await r.claim([pairDoc("A")], attempt));
+        }
+        const node = nodeOf();
+        await fs.rm(path.join(r.h.archive, key));
+        await fs.rm(path.join(r.h.control, "staging", `${artifact.artifactIdentity}.bin`));
+        const verify = DriveDestination.prototype.verifyRemote;
+        let checks = 0;
+        jest.spyOn(DriveDestination.prototype, "verifyRemote").mockImplementation(async function (this: DriveDestination, ...args) {
+            if (args[0] === node.fileId && ++checks === 2) {
+                if (contradiction === "conflict") return { ok: false, conflict: "mismatch" };
+                if (contradiction === "mismatch") r.fakes!.drive.corrupt(node.fileId);
+                if (contradiction === "missing") r.fakes!.drive.trash(node.fileId);
+            }
+            return verify.apply(this, args);
+        });
+        const download = DriveDestination.prototype.download;
+        jest.spyOn(DriveDestination.prototype, "download").mockImplementation(async function (this: DriveDestination, ...args) {
+            if (args[0] === node.fileId) {
+                if (contradiction === "download-corruption") r.fakes!.drive.corrupt(node.fileId);
+                if (contradiction === "download-missing") r.fakes!.drive.addFault({ route: "download", times: 1,
+                    match: (request) => request.id === node.fileId, action: { type: "status", status: 404, reason: "notFound" } });
+            }
+            return download.apply(this, args);
+        });
+        const summary = await r.runner.run(await r.claim([pairDoc("A")], 4));
+        expect(checks).toBe(contradiction.startsWith("download-") ? 1 : 2);
+        expect(summary.counts).toMatchObject({ verified: 2, driveVerified: 1, driveBlocked: 1 });
+        const latest = [...r.deps.ledger.state.manualAttempts!.values()].at(-1)!;
+        const result = latest.results.get("A")!.payload;
+        expect(result.local.state).toBe("verified");
+        expect(result.drive.state).toBe("partial");
+        expect(result.drive.artifacts.find((a) => a.artifactIdentity === artifact.artifactIdentity)).toMatchObject({ state: "blocked", reasonCode: "integrity-repeated" });
+        expect([...r.deps.ledger.state.destinations.values()].find((e) => e.artifactIdentity === artifact.artifactIdentity
+            && e.destinationIdentity === binding.destinationIdentity)).toMatchObject({ state: "blocked", reasonCode: "integrity-repeated" });
+        expect(latest.aggregate!.payload).toMatchObject({ status: "partial", counts: { driveVerified: 0, attention: 1 } });
+        expect(latest.aggregate!.digest).toBe(manualAggregateResultDigest(latest.aggregate!.payload));
+    });
+    it.each([
+        ["timeout", { kind: "timeout", httpStatus: null, reason: null, retryAfterSeconds: null }, "network-timeout", false],
+        ["rate limit", { kind: "http", httpStatus: 429, reason: null, retryAfterSeconds: 30 }, "rate-limited", false],
+        ["permission", { kind: "http", httpStatus: 403, reason: "forbidden", retryAfterSeconds: null }, "drive-permission", true],
+        ["quota", { kind: "http", httpStatus: 403, reason: "storageQuotaExceeded", retryAfterSeconds: null }, "drive-quota", true],
+        ["token", { kind: "token-rejected", httpStatus: 400, reason: "invalid_grant", retryAfterSeconds: null }, "drive-token-invalid", true],
+    ] satisfies Array<[string, DriveFailure, string, boolean]>)("journals cached Drive %s verification failure without changing historical verified entries", async (_label, failure, reason, halts) => {
+        const r = current = await rig(true);
+        await r.runner.run(await r.claim());
+        const binding = r.deps.ledger.state.installation!.drive!;
+        const before = JSON.stringify([...r.deps.ledger.state.destinations.values()].filter((e) => e.destinationIdentity === binding.destinationIdentity));
+        const remote = jest.spyOn(DriveDestination.prototype, "verifyRemote").mockResolvedValue({ ok: false, failure });
+        const options = await r.claim([pairDoc("A")], 2);
+        const summary = await r.runner.run(options);
+        expect(summary.manualReceipt).toBeDefined();
+        expect(summary.counts).toMatchObject({ verified: 2, driveVerified: 0 });
+        expect(summary.reasonCodes).toContain(reason);
+        expect(remote).toHaveBeenCalledTimes(halts ? 1 : 2);
+        expect(JSON.stringify([...r.deps.ledger.state.destinations.values()].filter((e) => e.destinationIdentity === binding.destinationIdentity))).toBe(before);
+        const latest = [...r.deps.ledger.state.manualAttempts!.values()].at(-1)!;
+        const result = latest.results.get("A")!.payload;
+        expect(result.local.state).toBe("verified");
+        expect(result.drive.state).not.toBe("verified");
+        expect(result.drive.reasons).toContain(reason);
+        expect(result.drive.artifacts.some((a) => a.reasonCode === reason && a.state !== "verified")).toBe(true);
+        expect(latest.aggregate!.payload).toMatchObject({ status: "partial", counts: { driveVerified: 0, attention: 1 } });
+        expect(latest.aggregate!.digest).toBe(manualAggregateResultDigest(latest.aggregate!.payload));
+        expect(options.exportPort.openArtifact).not.toHaveBeenCalled();
+    });
+    it.each(["failure-after-proof", "proof-after-failure"] as const)("uses the latest fresh cached Drive evidence for %s", async order => {
+        const r = current = await rig(true);
+        await r.runner.run(await r.claim());
+        const artifact = attemptOf(r).candidates.get("A")!.artifacts[0]!;
+        const key = artifactKey({ companyId: "C001", documentId: "A", artifactType: artifact.artifactType, sha256: artifact.sha256 });
+        const binding = r.deps.ledger.state.installation!.drive!;
+        const node = r.deps.ledger.state.driveNodes.get(`${binding.destinationRevision}|${key}`)!;
+        await fs.rm(path.join(r.h.archive, key));
+        await fs.rm(path.join(r.h.control, "staging", `${artifact.artifactIdentity}.bin`));
+        let checks = 0;
+        const verify = DriveDestination.prototype.verifyRemote;
+        jest.spyOn(DriveDestination.prototype, "verifyRemote").mockImplementation(async function (this: DriveDestination, ...args) {
+            if (args[0] === node.fileId && ++checks === (order === "failure-after-proof" ? 2 : 1)) {
+                return { ok: false, failure: { kind: "timeout", httpStatus: null, reason: null, retryAfterSeconds: null } };
+            }
+            return verify.apply(this, args);
+        });
+        const summary = await r.runner.run(await r.claim([pairDoc("A")], 2));
+        expect(checks).toBe(2);
+        const recovered = order === "proof-after-failure";
+        expect(summary.counts).toMatchObject({ verified: 2, driveVerified: recovered ? 2 : 1, driveRetryWait: recovered ? 0 : 1 });
+        const latest = [...r.deps.ledger.state.manualAttempts!.values()].at(-1)!;
+        const result = latest.results.get("A")!.payload;
+        expect(result.drive.state).toBe(recovered ? "verified" : "partial");
+        expect(result.drive.reasons).toEqual(recovered ? [] : ["network-timeout"]);
+        expect(latest.aggregate!.payload.counts.driveVerified).toBe(recovered ? 1 : 0);
     });
     it.each(["local", "drive"] as const)("corrupt %s cache is checked and only selected identities are repaired", async side => {
         const r = current = await rig(true);
