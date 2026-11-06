@@ -2,7 +2,7 @@ import { promises as fs } from "node:fs";
 
 import { artifactIdentity } from "domain/eformsign-backup/source-evidence";
 import { artifactKey, runKey } from "domain/eformsign-backup/worker";
-import { ExecutionFencedError, type ExecutionEffectFence } from "infrastructure/eformsign-backup/execution-effect-fence";
+import { executionChunks, ExecutionFencedError, type ExecutionEffectFence } from "infrastructure/eformsign-backup/execution-effect-fence";
 import { LocalArtifactArchive, type ArchiveFaultPoint } from "infrastructure/eformsign-backup/local-artifact-archive";
 import { publishBytesNoClobber } from "infrastructure/eformsign-backup/worker/atomic-file";
 
@@ -21,6 +21,15 @@ function authority(): { controller: AbortController; fence: ExecutionEffectFence
     return { controller, fence: { signal: controller.signal, assertActive: async () => undefined } };
 }
 
+async function bounded<T>(pending: Promise<T>): Promise<T> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+        return await Promise.race([pending, new Promise<never>((_resolve, reject) => {
+            timer = setTimeout(() => reject(new Error("archive settlement guard")), 500);
+        })]);
+    } finally { clearTimeout(timer); }
+}
+
 describe("local effect fences", () => {
     let base: string;
     let fixture: ArchiveFixture;
@@ -30,6 +39,114 @@ describe("local effect fences", () => {
     function primitive(fault?: (point: ArchiveFaultPoint) => void): LocalArtifactArchive {
         return new LocalArtifactArchive({ rootPath: fixture.root, expectedDevice: fixture.dev, expectedInode: fixture.ino, maxBytes: pdf.length }, fault);
     }
+    describe.each([false, true])("producer failures (fenced=%s)", fenced => {
+        it.each([
+            ["reject", "never"], ["reject", "reject"], ["reject", "throw"],
+            ["throw", "never"], ["throw", "reject"], ["throw", "throw"],
+        ] as const)("fails safely after next %s without invoking return %s", async (pullFailure, cleanupFailure) => {
+            const { controller, fence } = authority();
+            const sourceError = new Error("private producer detail");
+            let finishCleanup: ((value: IteratorResult<Uint8Array>) => void) | undefined;
+            const returned = jest.fn((): Promise<IteratorResult<Uint8Array>> => {
+                if (cleanupFailure === "throw") throw new Error("private cleanup detail");
+                if (cleanupFailure === "reject") return Promise.reject(new Error("private cleanup detail"));
+                return new Promise(resolve => { finishCleanup = resolve; });
+            });
+            let pulls = 0;
+            const next = jest.fn((): Promise<IteratorResult<Uint8Array>> => {
+                if (++pulls === 1) return Promise.resolve({ done: false, value: pdf.subarray(0, 10) });
+                if (pullFailure === "throw") throw sourceError;
+                return Promise.reject(sourceError);
+            });
+            const source = { [Symbol.asyncIterator]: () => ({ next, return: returned }) };
+            const unhandled = jest.fn();
+            process.on("unhandledRejection", unhandled);
+            const opened = jest.spyOn(fs, "open");
+            const writes = jest.fn();
+            const archive = primitive(point => { if (point === "write") writes(); });
+            const before = await snapshotTree(base);
+            const pending = archive.archive(claim, source, fenced ? { effectFence: fence } : undefined);
+            try {
+                await expect(bounded(pending))
+                    .resolves.toEqual({ ok: false, error: "ARCHIVE_FAILED" });
+                expect(next).toHaveBeenCalledTimes(2);
+                expect(writes).toHaveBeenCalledTimes(1);
+                expect(returned).not.toHaveBeenCalled();
+                expect(await snapshotTree(base)).toEqual(before);
+                expect(opened).toHaveBeenCalled();
+                for (const result of opened.mock.results) {
+                    if (result.type === "return") {
+                        const handle = await result.value;
+                        await expect(handle.stat()).rejects.toMatchObject({ code: "EBADF" });
+                    }
+                }
+                controller.abort("late private reason");
+                await new Promise<void>(resolve => setImmediate(resolve));
+                expect(next).toHaveBeenCalledTimes(2);
+                expect(returned).not.toHaveBeenCalled();
+                expect(unhandled).not.toHaveBeenCalled();
+            } finally {
+                finishCleanup?.({ done: true, value: undefined });
+                try { await pending; }
+                finally { process.off("unhandledRejection", unhandled); }
+            }
+        });
+        it.each(["reject", "throw"])("preserves the original next %s error", async failure => {
+            const error = new Error("private producer detail");
+            const returned = jest.fn(async (): Promise<IteratorResult<number>> => { throw new Error("private cleanup detail"); });
+            const iterator = executionChunks({ [Symbol.asyncIterator]: () => ({
+                next: (): Promise<IteratorResult<number>> => {
+                    if (failure === "throw") throw error;
+                    return Promise.reject(error);
+                }, return: returned,
+            }) }, fenced ? authority().fence : undefined);
+            await expect(bounded(iterator.next())).rejects.toBe(error);
+            expect(returned).not.toHaveBeenCalled();
+        });
+    });
+    it.each([false, true])("preserves consumer body failure through rejecting cleanup (fenced=%s)", async fenced => {
+        const error = new Error("consumer body failure");
+        const returned = jest.fn(async (): Promise<IteratorResult<number>> => { throw new Error("private cleanup detail"); });
+        const next = jest.fn(async () => ({ done: false as const, value: 1 }));
+        const pending = (async () => {
+            for await (const value of executionChunks({ [Symbol.asyncIterator]: () => ({ next, return: returned }) },
+                fenced ? authority().fence : undefined)) {
+                expect(value).toBe(1);
+                throw error;
+            }
+        })();
+        await expect(bounded(pending)).rejects.toBe(error);
+        expect(next).toHaveBeenCalledTimes(1);
+        expect(returned).toHaveBeenCalledTimes(1);
+    });
+    it.each([false, true])("awaits source cleanup on consumer break (fenced=%s)", async fenced => {
+        let cleanupStarted!: () => void;
+        const started = new Promise<void>(resolve => { cleanupStarted = resolve; });
+        let finishCleanup!: (value: IteratorResult<number>) => void;
+        const cleanup = new Promise<IteratorResult<number>>(resolve => { finishCleanup = resolve; });
+        const returned = jest.fn(() => { cleanupStarted(); return cleanup; });
+        const next = jest.fn(async () => ({ done: false as const, value: 1 }));
+        let settled = false;
+        const pending = (async () => {
+            for await (const value of executionChunks({ [Symbol.asyncIterator]: () => ({ next, return: returned }) },
+                fenced ? authority().fence : undefined)) {
+                expect(value).toBe(1);
+                break;
+            }
+            settled = true;
+        })();
+        try {
+            await bounded(started);
+            expect(settled).toBe(false);
+            finishCleanup({ done: true, value: undefined });
+            await bounded(pending);
+            expect(returned).toHaveBeenCalledTimes(1);
+            expect(next).toHaveBeenCalledTimes(1);
+        } finally {
+            finishCleanup({ done: true, value: undefined });
+            await pending;
+        }
+    });
     it.each(["created", "reused"] as const)("archives actual bytes with an active fence (%s)", async disposition => {
         const archive = primitive();
         const artifactId = artifactIdentity(claim);

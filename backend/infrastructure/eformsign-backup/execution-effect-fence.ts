@@ -61,11 +61,16 @@ export async function awaitExecutionSignal<T>(
 
 /** Stops pulls and invokes return without waiting for a source stuck inside next(). */
 export async function* executionChunks<T>(source: AsyncIterable<T>, fence?: ExecutionEffectFence): AsyncGenerator<T> {
+    if (!fence) {
+        for await (const chunk of source) yield chunk;
+        return;
+    }
     checkExecutionSignal(fence);
     const iterator = source[Symbol.asyncIterator]();
     let finished = false;
     let returned = false;
     let fenced = false;
+    let pullFailed = false;
     const cancel = (): void => {
         if (returned) return;
         returned = true;
@@ -75,7 +80,15 @@ export async function* executionChunks<T>(source: AsyncIterable<T>, fence?: Exec
     try {
         while (true) {
             checkExecutionSignal(fence);
-            const next = await awaitExecutionSignal(fence, iterator.next(), cancel);
+            let next: IteratorResult<T>;
+            try {
+                next = await awaitExecutionSignal(fence, iterator.next(), cancel);
+            } catch (error) {
+                // Like native for-await, a failed producer pull does not close the iterator.
+                // Explicit fence cancellation is still handled below, including sync throws.
+                pullFailed = true;
+                throw error;
+            }
             checkExecutionSignal(fence);
             if (next.done) { finished = true; return; }
             yield next.value;
@@ -86,7 +99,7 @@ export async function* executionChunks<T>(source: AsyncIterable<T>, fence?: Exec
     } finally {
         if (!finished) {
             if (fenced || fence?.signal.aborted) cancel();
-            else if (!returned) {
+            else if (!pullFailed && !returned) {
                 returned = true;
                 // Capture synchronous throws as well as asynchronous cleanup failures. The race
                 // keeps a rejection handler attached if cleanup ignores an abort after it starts.
