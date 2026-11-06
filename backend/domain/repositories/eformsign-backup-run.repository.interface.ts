@@ -67,8 +67,11 @@ export interface EformsignBackupRunRepository {
     heartbeat(identity: ManualBackupLeaseIdentity): Promise<boolean>;
     findClaimed(identity: ManualBackupLeaseIdentity): Promise<ManualBackupRunRecord | null>;
     listClaimedDocuments(identity: ManualBackupLeaseIdentity, afterOrdinal: number, limit: number): Promise<ManualBackupPage<ManualBackupDocumentRecord>>;
+    findClaimedDocument(identity: ManualBackupLeaseIdentity, documentId: string): Promise<ManualBackupDocumentRecord | null>;
+    findForDelivery(identity: ManualBackupLeaseIdentity): Promise<ManualBackupRunRecord | null>;
+    listDeliveryDocuments(identity: ManualBackupLeaseIdentity, afterOrdinal: number, limit: number): Promise<ManualBackupPage<ManualBackupDocumentRecord>>;
     readClaimedSource(identity: ManualBackupLeaseIdentity, documentId: string, options?: ManualBackupClaimedSourceOptions): Promise<ManualBackupClaimedSource | null>;
-    writeDocumentResults(identity: ManualBackupLeaseIdentity, results: readonly ManualBackupDocumentResult[]): Promise<boolean>;
+    writeDocumentResults(identity: ManualBackupLeaseIdentity, results: readonly ManualBackupDocumentResult[], workerRunId?: string): Promise<boolean>;
     finish(identity: ManualBackupLeaseIdentity, input: ManualBackupFinishInput): Promise<boolean>;
     expireStale(companyId: string): Promise<number>;
 }

@@ -228,6 +228,52 @@ export class SbEformsignBackupRunRepository implements EformsignBackupRunReposit
             return page(rows.map(documentRecord), limit);
         }, TX_OPTIONS));
     }
+    findClaimedDocument(rawIdentity: ManualBackupLeaseIdentity, documentId: string): Promise<ManualBackupDocumentRecord | null> {
+        assertBackupLease(rawIdentity); assertBackupText(documentId, 4096);
+        const identity = { ...rawIdentity };
+        return runSystemScope(() => this.prisma.$transaction(async tx => {
+            const run = await this.lockLease(tx, identity); if (!run) return null;
+            const row = await tx.eformsign_backup_run_document.findFirst({ where: { runId: run.id, branchId: run.branchId, documentId } });
+            return row && await this.liveSourceLease(tx, identity) ? documentRecord(row) : null;
+        }, TX_OPTIONS));
+    }
+    findForDelivery(rawIdentity: ManualBackupLeaseIdentity): Promise<ManualBackupRunRecord | null> {
+        assertBackupLease(rawIdentity);
+        const identity = { ...rawIdentity };
+        return runSystemScope(() => this.prisma.$transaction(async tx => {
+            const run = await this.lockDelivery(tx, identity);
+            return run && await this.deliveryLease(tx, identity) ? runRecord(run) : null;
+        }, TX_OPTIONS));
+    }
+    listDeliveryDocuments(rawIdentity: ManualBackupLeaseIdentity, afterOrdinal: number, limit: number): Promise<ManualBackupPage<ManualBackupDocumentRecord>> {
+        assertBackupLease(rawIdentity); assertBackupPage(afterOrdinal, limit);
+        const identity = { ...rawIdentity };
+        return runSystemScope(() => this.prisma.$transaction(async tx => {
+            const run = await this.lockDelivery(tx, identity);
+            if (!run) return { items: [], hasMore: false };
+            const rows = await tx.eformsign_backup_run_document.findMany({ where: { runId: run.id, branchId: run.branchId, ordinal: { gt: afterOrdinal } }, orderBy: { ordinal: "asc" }, take: limit + 1 });
+            return await this.deliveryLease(tx, identity) ? page(rows.map(documentRecord), limit) : { items: [], hasMore: false };
+        }, TX_OPTIONS));
+    }
+    private async lockDelivery(tx: Tx, identity: ManualBackupLeaseIdentity): Promise<eformsign_backup_run | null> {
+        const locked = await tx.$queryRaw<Array<{ id: string }>>`
+            SELECT id FROM public.eformsign_backup_run WHERE id = ${identity.runId}::uuid
+            AND company_id = ${identity.companyId} AND lease_owner_principal_id = ${identity.principalId}
+            AND lease_token = ${identity.leaseToken}::uuid FOR UPDATE`;
+        if (!locked.length || !await this.deliveryLease(tx, identity)) return null;
+        return tx.eformsign_backup_run.findFirst({ where: { id: identity.runId, companyId: identity.companyId,
+            leaseOwnerPrincipalId: identity.principalId, leaseToken: identity.leaseToken } });
+    }
+    private async deliveryLease(tx: Tx, identity: ManualBackupLeaseIdentity): Promise<boolean> {
+        const rows = await tx.$queryRaw<Array<{ id: string }>>`
+            SELECT id FROM public.eformsign_backup_run WHERE id = ${identity.runId}::uuid
+            AND company_id = ${identity.companyId} AND lease_owner_principal_id = ${identity.principalId}
+            AND lease_token = ${identity.leaseToken}::uuid AND (
+                (status = 'running' AND lease_expires_at > clock_timestamp()) OR
+                (status IN ('partial', 'blocked', 'failed', 'unverified') AND report_hash IS NOT NULL
+                    AND worker_run_id IS NOT NULL AND result IS NOT NULL AND finished_at IS NOT NULL))`;
+        return rows.length === 1;
+    }
     readClaimedSource(rawIdentity: ManualBackupLeaseIdentity, documentId: string, rawOptions?: ManualBackupClaimedSourceOptions): Promise<ManualBackupClaimedSource | null> {
         assertBackupLease(rawIdentity); assertBackupText(documentId, 4096);
         let options: ManualBackupClaimedSourceOptions | undefined;
@@ -305,9 +351,11 @@ export class SbEformsignBackupRunRepository implements EformsignBackupRunReposit
             AND lease_token = ${identity.leaseToken}::uuid AND status = 'running' AND lease_expires_at > clock_timestamp()`;
         return rows.length === 1;
     }
-    async writeDocumentResults(rawIdentity: ManualBackupLeaseIdentity, results: readonly ManualBackupDocumentResult[]): Promise<boolean> {
+    async writeDocumentResults(rawIdentity: ManualBackupLeaseIdentity, results: readonly ManualBackupDocumentResult[], rawWorkerRunId?: string): Promise<boolean> {
         assertBackupLease(rawIdentity);
         const identity = { ...rawIdentity };
+        if (rawWorkerRunId !== undefined) assertBackupUuid(rawWorkerRunId);
+        const workerRunId = rawWorkerRunId;
         requireBackupInput(Array.isArray(results) && results.length >= 1 && results.length <= 100);
         const ids = new Set<string>();
         const copied = results.map(item => {
@@ -325,6 +373,11 @@ export class SbEformsignBackupRunRepository implements EformsignBackupRunReposit
                 const old = byId.get(item.documentId)?.outcome;
                 return old !== null && canonicalBackupJson(old) !== canonicalBackupJson(item.outcome);
             })) return false;
+            // Validate the whole batch before binding; the parent lock makes disjoint batches atomic too.
+            if (run.workerRunId !== null && run.workerRunId !== workerRunId) return false;
+            if (run.workerRunId === null && workerRunId !== undefined) {
+                await tx.eformsign_backup_run.update({ where: { id: run.id, branchId: run.branchId, companyId: identity.companyId }, data: { workerRunId } });
+            }
             for (const item of copied) {
                 await tx.eformsign_backup_run_document.updateMany({ where: { runId: run.id, branchId: run.branchId, documentId: item.documentId, outcome: { equals: Prisma.DbNull } }, data: { outcome: item.outcome } });
             }
@@ -351,6 +404,7 @@ export class SbEformsignBackupRunRepository implements EformsignBackupRunReposit
             if (run.status !== "running") return run.status === input.status && run.reportHash === input.reportHash
                 && run.workerRunId === input.workerRunId && run.failureCode === (input.failureCode ?? null)
                 && canonicalBackupJson(run.result) === canonicalBackupJson(input.result);
+            if (run.workerRunId !== null && run.workerRunId !== input.workerRunId) return false;
             if ((input.status === "partial" || input.status === "unverified") && await tx.eformsign_backup_run_document.count({ where: { runId: run.id, branchId: run.branchId, outcome: { equals: Prisma.DbNull } } }) > 0) return false;
             // The final mutation itself checks expiration against the DB clock, after all lock waits and reads.
             const changed = await tx.$executeRaw`
@@ -360,7 +414,8 @@ export class SbEformsignBackupRunRepository implements EformsignBackupRunReposit
                 failure_code = ${input.failureCode ?? null}
                 WHERE id = ${identity.runId}::uuid AND branch_id = ${run.branchId}::uuid AND company_id = ${identity.companyId}
                 AND lease_owner_principal_id = ${identity.principalId} AND lease_token = ${identity.leaseToken}::uuid
-                AND status = 'running' AND lease_expires_at > clock_timestamp()`;
+                AND status = 'running' AND lease_expires_at > clock_timestamp()
+                AND (worker_run_id IS NULL OR worker_run_id = ${input.workerRunId})`;
             return changed === 1;
         });
     }

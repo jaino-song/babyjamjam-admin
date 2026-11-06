@@ -45,7 +45,7 @@ try {
         return result.status ?? 1;
     }
     receipt.generateExitCode = child(["exec", "prisma", "generate"]);
-    if (receipt.generateExitCode === 0) receipt.testExitCode = child(["exec", "jest", "--runInBand", "--runTestsByPath", "test/prisma/manual-backup-runs.real-db.spec.ts", "test/prisma/manual-backup-live-source.real-db.spec.ts"]);
+    if (receipt.generateExitCode === 0) receipt.testExitCode = child(["exec", "jest", "--runInBand", "--runTestsByPath", "test/prisma/manual-backup-runs.real-db.spec.ts", "test/prisma/manual-backup-live-source.real-db.spec.ts", "test/prisma/manual-backup-delivery.real-db.spec.ts"]);
     console.log(JSON.stringify(receipt));
     process.exitCode = receipt.generateExitCode || receipt.testExitCode || 0;
 } catch {
