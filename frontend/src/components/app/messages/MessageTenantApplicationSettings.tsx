@@ -1,7 +1,7 @@
 "use client";
 
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { getUserErrorMessage } from "@babyjamjam/shared";
 import {
@@ -266,7 +266,6 @@ function configurationErrors(config: MessageAutomationPolicyConfiguration): stri
 export function MessageTenantApplicationSettings() {
   const branchId = useActiveBranchId();
   const branchRef = useRef(branchId);
-  branchRef.current = branchId;
   const configKey = ["settings", "message-automation-config", branchId] as const;
   const configQuery = useQuery({ queryKey: configKey, queryFn: () => messagePolicyApi.getConfiguration(branchId!), enabled: !!branchId });
   const [draft, setDraft] = useState<{ branchId: string; configuration: MessageAutomationPolicyConfiguration } | null>(null);
@@ -274,7 +273,11 @@ export function MessageTenantApplicationSettings() {
   const [impact, setImpact] = useState<MessageAutomationPolicyPreviewResponse | null>(null);
   const persisted = configQuery.data;
   const configuration = draft?.branchId === branchId ? draft.configuration : persisted?.configuration;
-  const configurationRef = useRef(configuration); configurationRef.current = configuration;
+  const configurationRef = useRef(configuration);
+  useLayoutEffect(() => {
+    branchRef.current = branchId;
+    configurationRef.current = configuration;
+  }, [branchId, configuration]);
   const dirty = !!configuration && JSON.stringify(configuration) !== JSON.stringify(persisted?.configuration);
   const errors = configuration ? configurationErrors(configuration) : [];
   const editable = !!branchId && !!persisted?.permissions.canWrite && !configQuery.isError;
@@ -463,10 +466,9 @@ export function MessageTenantApplicationSettings() {
       ),
     [isTriggerDispatchAvailable, triggerDispatchActive, triggerRulesData],
   );
-  const retroactiveRuleOrderIds = configuration?.pastRuleOrder ?? [];
   const retroactiveTriggerOrderItems = useMemo(
-    () => getOrderedTriggerRules(activeSmsTriggerRules, retroactiveRuleOrderIds),
-    [activeSmsTriggerRules, retroactiveRuleOrderIds],
+    () => getOrderedTriggerRules(activeSmsTriggerRules, configuration?.pastRuleOrder ?? []),
+    [activeSmsTriggerRules, configuration?.pastRuleOrder],
   );
   const moveRetroactiveRuleOrder = (ruleId: string, direction: -1 | 1) => {
     const ids = retroactiveTriggerOrderItems.map((item) => item.id);

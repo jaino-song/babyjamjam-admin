@@ -852,20 +852,27 @@ describe("TriggerRulesManager", () => {
 
     const recipientTrigger = screen.getByLabelText("수신 대상");
     fireEvent.click(recipientTrigger);
-    fireEvent.click(screen.getByRole("option", { name: "주 담당 제공인력" }));
+    expect(screen.getByRole("option", { name: "고객" })).toBeInTheDocument();
+    expect(screen.queryByRole("option", { name: "주제공인력" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("option", { name: "고객" }));
+    fireEvent.click(eventTrigger);
+    fireEvent.click(screen.getByRole("option", { name: "서비스 시작" }));
+    fireEvent.click(recipientTrigger);
+    fireEvent.click(screen.getByRole("option", { name: "주제공인력" }));
 
     const templateTrigger = screen.getByLabelText("발송 템플릿");
     fireEvent.click(templateTrigger);
     const options = screen.getAllByRole("option");
     expect(options).toHaveLength(allSmsTriggerTemplates.length);
-    expect(screen.getByRole("option", { name: "리마인드" })).not.toHaveAttribute("aria-disabled");
-    expect(screen.getByRole("option", { name: "서비스 안내 · 선택한 이벤트·수신 대상과 맞지 않음" }))
+    expect(screen.getByRole("option", { name: "비용 안내" })).not.toHaveAttribute("aria-disabled");
+    expect(screen.getByRole("option", { name: "리마인드 · 선택한 이벤트와 맞지 않음" })).toHaveAttribute("aria-disabled", "true");
+    expect(screen.getByRole("option", { name: "서비스 안내 · 선택한 수신 대상과 맞지 않음" }))
       .toHaveAttribute("aria-disabled", "true");
     expect(screen.getByRole("option", { name: "수동 영수증 안내 · 선택한 이벤트·수신 대상과 맞지 않음" }))
       .toHaveAttribute("aria-disabled", "true");
   });
 
-  it("reconciles an incompatible selected template while keeping the full catalog visible", async () => {
+  it("requires a compatible recipient mapping while keeping the full common catalog visible", () => {
     mockSettingsQueries({ providerEnabled: true, senderApproved: true });
     mockedUseMessageTriggerTemplates.mockReturnValue({
       data: allSmsTriggerTemplates,
@@ -876,15 +883,16 @@ describe("TriggerRulesManager", () => {
 
     const recipientTrigger = screen.getByLabelText("수신 대상");
     fireEvent.click(recipientTrigger);
-    fireEvent.click(screen.getByRole("option", { name: "주 담당 제공인력" }));
+    fireEvent.click(screen.getByRole("option", { name: "주제공인력" }));
 
-    await waitFor(() => {
-      expect(screen.getByLabelText("발송 템플릿")).toHaveTextContent("비용 안내");
-    });
-
+    expect(screen.getByLabelText("주제공인력 템플릿")).not.toHaveTextContent("비용 안내");
+    expect(screen.getByRole("button", { name: "저장" })).toBeDisabled();
     fireEvent.click(screen.getByLabelText("발송 템플릿"));
     expect(screen.getAllByRole("option")).toHaveLength(allSmsTriggerTemplates.length);
     expect(screen.getByRole("option", { name: "비용 안내" })).not.toHaveAttribute("aria-disabled");
+    fireEvent.click(screen.getByRole("option", { name: "비용 안내" }));
+    expect(screen.getByLabelText("발송 템플릿")).toHaveTextContent("비용 안내");
+    expect(screen.getByLabelText("주제공인력 템플릿")).toHaveTextContent("비용 안내");
   });
 
   it("keeps a selected dedicated template displayed with its disabled reason while editing", () => {
