@@ -23,7 +23,7 @@ describe("final quiet admission settings transaction", () => {
     });
 });
 
-import { ConflictException, HttpException, ServiceUnavailableException } from "@nestjs/common";
+import { ConflictException, HttpException } from "@nestjs/common";
 import type { Request, Response } from "express";
 import { MessageQuietHoursService, MessageQuietHoursUnavailableError, runSmsQuietHoursAdmission } from "application/services/message-quiet-hours.service";
 import { MessageAutomationBranchLockService } from "application/services/message-automation-branch-lock.service";
