@@ -6,6 +6,7 @@ import { MessageRetrySchedulerService } from "application/services/message-retry
 import { SmsCarrierCheckService } from "application/services/sms-carrier-check.service";
 import { MessageAutomationIntentService } from "application/services/message-automation-intent.service";
 import { defaultMessageAutomationPolicy } from "domain/entities/system-setting.entity";
+import { publicMessageVariables, type MessageQuietHoursDecision, type MessageQuietHold } from "domain/message-policy-evaluator";
 import { createLegacyAutomationDeliveryGate } from "../fixtures/legacy-automation-delivery-gate";
 import { ConflictException, ForbiddenException, Logger, NotFoundException } from "@nestjs/common";
 import { AligoService } from "application/services/aligo.service";
@@ -27,6 +28,7 @@ describe("SmsRetryService", () => {
         findRetryFamilyInBranch: jest.fn().mockResolvedValue([]),
         hasNewerServiceRecordSmsInBranch: jest.fn().mockResolvedValue(false),
         update: jest.fn(),
+        transitionQuietRetry: jest.fn(),
         findServiceRecordLinkClientState: jest.fn().mockResolvedValue(null),
     });
     const createMockAligoService = () => ({
@@ -130,6 +132,79 @@ describe("SmsRetryService", () => {
         expect(result!.variables["manualRecipientBindings"]).toBe(snapshot);
         expect(source.variables["manualRecipientBindings"]).toBe(snapshot);
         expect(aligoService.sendSms).toHaveBeenCalledTimes(1);
+    });
+
+    it("excludes recipient bindings from the shared public history variables without changing template fields", () => {
+        const variables = { recipientName: "합성 고객", title: "안내", optionalTemplateValue: null,
+            manualRecipientBindings: JSON.stringify({ version: 1, branchId: "branch-a", recipients: [{ kind: "CLIENT", id: 7, phone: "01012345678" }] }),
+            quietHoursDisposition: "DEFER", quietHoursReleaseAt: "2026-11-03T23:00:00.000Z",
+            quietHoursOriginalScheduledFor: "2026-11-03T13:00:00.000Z", quietHoursPolicyRevision: "private-revision", quietHoursReason: "message_quiet_hours:DEFER",
+            manualQueueMode: "internal", manualQueueSenderIdentity: "private-sender", retryInvocation: "manual", retrySenderIdentity: "private-retry-sender" };
+        const before = structuredClone(variables);
+
+        expect(publicMessageVariables(variables)).toEqual({ recipientName: "합성 고객", title: "안내", optionalTemplateValue: null });
+        expect(variables).toEqual(before);
+    });
+
+    it("projects a newly deferred public retry while retaining internal binding and hold provenance", async () => {
+        const source = createSmsRetryLog("manual_sms");
+        const snapshot = JSON.stringify({ version: 1, branchId: source.branchId,
+            recipients: [{ kind: "CLIENT", id: 7, phone: source.receiver }] });
+        const releaseAt = new Date("2026-11-03T23:00:00.000Z");
+        nowSpy.mockReturnValue(Date.parse("2026-11-03T13:00:00.000Z"));
+        source.providerAcceptanceState = "rejected";
+        source.variables = { recipientName: "합성 고객", title: "안내", triggerType: "immediate", msgType: "LMS",
+            retrySafety: "provider-rejected", manualRecipientBindings: snapshot,
+            quietHoursDisposition: "DEFER", quietHoursReleaseAt: releaseAt.toISOString(),
+            quietHoursOriginalScheduledFor: "2026-11-03T12:00:00.000Z", quietHoursPolicyRevision: "private-revision", quietHoursReason: "message_quiet_hours:DEFER" };
+        const sourceBefore = structuredClone(source);
+        const transaction = { client: { findMany: jest.fn(async () => [{ id: 7, phone: source.receiver }]) },
+            employee: { findMany: jest.fn(async () => []) } };
+        let storedRetry: MessageLogEntity | undefined;
+        logRepository.findByIdInBranch.mockImplementation(async (_branch: string, id: number) => id === source.id ? source : storedRetry);
+        logRepository.startRetryAttempt.mockImplementation(async (_source: MessageLogEntity, draft: MessageLogEntity) => {
+            storedRetry = Object.assign(createSmsRetryLog("manual_sms", 78), draft, { id: 78 });
+            return { kind: "started", log: storedRetry };
+        });
+        logRepository.transitionQuietRetry.mockImplementation(async (log: MessageLogEntity, hold: MessageQuietHold, cancel: boolean,
+            tx: typeof transaction, reason: unknown, invocation: string, senderIdentity: string) => {
+            expect(tx).toBe(transaction); expect(cancel).toBe(false); expect(reason).toBeUndefined();
+            expect(log).toBe(storedRetry);
+            // The repository updates persistence, not the caller's entity.
+            storedRetry = Object.assign(createSmsRetryLog("manual_sms", log.id), log, { nextRetryAt: hold.releaseAt,
+                variables: { ...log.variables, quietHoursDisposition: "DEFER", quietHoursReleaseAt: hold.releaseAt.toISOString(),
+                    quietHoursOriginalScheduledFor: hold.originalScheduledFor.toISOString(), quietHoursPolicyRevision: hold.policyRevision,
+                    quietHoursReason: hold.reason, retrySafety: "quiet-deferred", retryInvocation: invocation, retrySenderIdentity: senderIdentity } });
+        });
+        Object.assign(service, { quietHours: { runAdmission: async (_branch: string, _receiver: string,
+            work: (decision: MessageQuietHoursDecision, tx: typeof transaction, revision: string) => Promise<unknown>) =>
+            work({ action: "DEFER", reevaluateAt: releaseAt }, transaction, "private-revision") },
+            defaultSender: { read: () => ({ availability: "available", identityDigest: "private-sender" }) } });
+
+        const result = await service.retryById(source.branchId!, source.id);
+
+        expect(logRepository.startRetryAttempt).toHaveBeenCalledTimes(1);
+        expect(logRepository.transitionQuietRetry).toHaveBeenCalledTimes(1);
+        expect(result).toBeInstanceOf(MessageLogEntity);
+        expect(Object.getPrototypeOf(result)).toBe(Object.getPrototypeOf(storedRetry));
+        expect(result).not.toBe(storedRetry);
+        expect(result.variables).toEqual({ recipientName: "합성 고객", title: "안내", triggerType: "immediate", msgType: "LMS",
+            retrySafety: "quiet-deferred", retryOfLogId: "77", retryAttempt: "2" });
+        expect(result).toMatchObject({ id: 78, status: "pending", attempts: 1, nextRetryAt: releaseAt,
+            providerAcceptanceState: "prepared", providerCallStartedAt: null });
+        expect(result).toEqual(expect.objectContaining({ ...storedRetry, variables: result.variables }));
+        expect(result.canRetry()).toBe(true);
+        expect(source).toEqual(sourceBefore);
+        expect(storedRetry?.variables).toMatchObject({ manualRecipientBindings: snapshot, quietHoursDisposition: "DEFER",
+            quietHoursReleaseAt: "2026-11-03T23:00:00.000Z", quietHoursOriginalScheduledFor: "2026-11-03T12:00:00.000Z",
+            quietHoursPolicyRevision: "private-revision", quietHoursReason: "message_quiet_hours:DEFER",
+            retryInvocation: "manual", retrySenderIdentity: "private-sender" });
+        if (!storedRetry) throw new Error("Expected a persisted deferred retry");
+        const heldVariables = structuredClone(storedRetry.variables);
+        expect(await service.retry(storedRetry, "automatic")).toBe(storedRetry);
+        expect(storedRetry.variables).toEqual(heldVariables);
+        expect(aligoService.sendSms).not.toHaveBeenCalled();
+        expect(logRepository.update).not.toHaveBeenCalled();
     });
 
     it.each([undefined, "invalid-json", "null", JSON.stringify({ version: 2, recipients: [] })])(
