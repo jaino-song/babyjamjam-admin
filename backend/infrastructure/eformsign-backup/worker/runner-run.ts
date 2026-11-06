@@ -942,6 +942,8 @@ class RunExecution {
         try {
             await this.guard(job.documentId);
             found = await this.archive.reverify(relativeKey, job.sha256, job.byteLength);
+            // Record contradictory evidence before the next fence can stop control accounting.
+            if (found !== "ok") this.manual?.rejectProof("local", job.artifactIdentity, "integrity_error", "artifact-integrity");
             await this.guard(job.documentId);
         } catch (error) {
             if (!(error instanceof WorkerError)) throw error;
@@ -949,8 +951,6 @@ class RunExecution {
             return;
         }
         if (found === "ok") { this.manual?.localProof.add(job.artifactIdentity); return; }
-        // A contradictory recheck supersedes recovery proof before quarantine can fail or fence execution.
-        this.manual?.rejectProof("local", job.artifactIdentity, "integrity_error", "artifact-integrity");
         if (found === "mismatch" && !(await this.quarantine(relativeKey))) return;
         await this.dl.transition(job.artifactIdentity, "integrity_error", { reasonCode: "artifact-integrity", relativeKey });
     }
