@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useMemo, type ReactNode } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { MessageSquareText, type LucideIcon } from "lucide-react";
 import {
   MESSAGE_EVENT_LABELS,
@@ -18,7 +18,6 @@ import {
 import { Switch } from "@/components/ui/switch";
 import { QueryErrorState } from "@/components/app/ui/QueryErrorState";
 import {
-  useMessageTriggerRules,
   useUpdateMessageTriggerRuleBranchActivation,
   useUpdateMessageTriggerRule,
 } from "@/features/message-triggers/hooks/use-message-triggers";
@@ -26,6 +25,9 @@ import type {
   MessageTriggerRule,
   TriggerEventType,
 } from "@/features/message-triggers/types";
+import type { MessageTriggerRuleGroupView, MessageTriggerRuleGroupList } from "@babyjamjam/shared/types/message";
+import { messageRuleGroupsApi } from "@/services/api";
+import { useGetAuthUser } from "@/hooks/useGetAuthUser";
 import { fetchAllMessageLogs } from "@/lib/messages/logs";
 import "@/components/app/mobile-redesign/redesign.css";
 
@@ -52,6 +54,7 @@ interface BaseTriggerDisplayRow {
 interface LiveTriggerDisplayRow extends BaseTriggerDisplayRow {
   kind: "live";
   rule: MessageTriggerRule;
+  group?: MessageTriggerRuleGroupView;
 }
 
 type TriggerDisplayRow = LiveTriggerDisplayRow;
@@ -141,6 +144,7 @@ export function MessageTriggerList({
   "data-component": dataComponent,
   canManage,
   onEdit,
+  onEditGroup,
   onCreate,
   selectedId = null,
   beforeItems,
@@ -148,11 +152,18 @@ export function MessageTriggerList({
   "data-component": string;
   canManage: boolean;
   onEdit?: (rule: MessageTriggerRule) => void;
+  onEditGroup?: (group: MessageTriggerRuleGroupView) => void;
   onCreate?: () => void;
   selectedId?: string | null;
   beforeItems?: ReactNode;
 }) {
   const sub = (suffix: string) => `${dataComponent}_${suffix}`;
+  const branchId = useGetAuthUser().data?.branchId ?? null;
+  const queryClient = useQueryClient();
+  const groupMutation = useMutation({
+    mutationFn: (captured: { group: MessageTriggerRuleGroupView; branchId: string }) => { const { group } = captured; return messageRuleGroupsApi.update(group.id, { name: group.name, recipientMode: group.recipientMode, eventType: group.eventType, offsetType: group.offsetType, offsetDays: group.offsetDays, sendTime: group.sendTime, targetClientStatus: group.targetClientStatus, retryOnFailure: group.retryOnFailure, isActive: !group.isActive, recipientTemplates: group.recipientTemplates, expectedVersion: group.version }, captured.branchId); },
+    onSuccess: (_data, captured) => { void queryClient.invalidateQueries({ queryKey: ["message-trigger-rule-groups", captured.branchId] }); },
+  });
   const {
     data: rulesResponse,
     isError: isRulesError,
@@ -160,7 +171,7 @@ export function MessageTriggerList({
     isPaused: isRulesPaused,
     refetch: refetchRules,
     isFetching: isRulesFetching,
-  } = useMessageTriggerRules();
+  } = useQuery<MessageTriggerRuleGroupList>({ queryKey: ["message-trigger-rule-groups", branchId], queryFn: () => messageRuleGroupsApi.list(branchId!), enabled: Boolean(branchId) });
   const isRulesLoadPending = isRulesLoading || (isRulesPaused && rulesResponse === undefined);
   const updateRuleMutation = useUpdateMessageTriggerRule();
   const branchActivationMutation = useUpdateMessageTriggerRuleBranchActivation();
@@ -170,12 +181,13 @@ export function MessageTriggerList({
     isError: isLogsError,
     isLoading: isLogsLoading,
   } = useQuery<MessageLogRecord[]>({
-    queryKey: ["messages", "logs", "all"],
+    queryKey: ["messages", "logs", "all", branchId],
     queryFn: () => fetchAllMessageLogs<MessageLogRecord>(),
+    enabled: Boolean(branchId),
   });
 
   const rules = useMemo<MessageTriggerRule[]>(() => (
-    Array.isArray(rulesResponse) ? rulesResponse : []
+    rulesResponse?.standaloneRules ?? []
   ), [rulesResponse]);
 
   const logs = useMemo<MessageLogRecord[]>(() => (
@@ -185,28 +197,27 @@ export function MessageTriggerList({
   const monthLabel = useMemo(() => getMonthLabel(), []);
 
   const displayRows = useMemo<TriggerDisplayRow[]>(() => {
-    return [...rules].sort(compareTriggerRules).map((rule) => {
-      const matchingLogs = logs.filter((log) => (
-        isCurrentMonthLog(log) && matchesTriggerLog(log, rule)
-      ));
-
-      return {
-        kind: "live",
-        rule,
-        title: getRuleTitle(rule),
-        timingLabel: `${getRuleTimingLabel(rule)} · ${MESSAGE_RECIPIENT_LABELS[rule.recipientType]}`,
-        channelLabel: "SMS",
-        icon: MessageSquareText,
-        tone: "primary",
-        monthlyCount: isLogsLoading || isLogsError ? null : matchingLogs.length,
-        failedCount: isLogsLoading || isLogsError
-          ? null
-          : matchingLogs.filter((log) => log.status === "failed").length,
-      };
+    const standalone: TriggerDisplayRow[] = [...rules].sort(compareTriggerRules).map((rule) => {
+      const matchingLogs = logs.filter((log) => isCurrentMonthLog(log) && matchesTriggerLog(log, rule));
+      return { kind: "live", rule, title: getRuleTitle(rule), timingLabel: `${getRuleTimingLabel(rule)} · ${MESSAGE_RECIPIENT_LABELS[rule.recipientType]}`, channelLabel: "SMS", icon: MessageSquareText, tone: "primary", monthlyCount: isLogsLoading || isLogsError ? null : matchingLogs.length, failedCount: isLogsLoading || isLogsError ? null : matchingLogs.filter((log) => log.status === "failed").length };
     });
-  }, [isLogsError, isLogsLoading, logs, rules]);
+    const groups: TriggerDisplayRow[] = (rulesResponse?.groups ?? []).flatMap((group) => {
+      const first = group.rules[0];
+      if (!first) return [];
+      const rule: MessageTriggerRule = { ...first, id: group.id, name: group.name, isActive: group.isActive, branchId: group.branchId };
+      const matching = logs.filter((log) => isCurrentMonthLog(log) && group.rules.some((child) => matchesTriggerLog(log, child)));
+      const recipient = group.recipientMode === "BOTH_EMPLOYEES" ? "주보조모두" : MESSAGE_RECIPIENT_LABELS[group.recipientMode];
+      const anchor = group.recipientMode !== "CLIENT" && (group.eventType === "SERVICE_START" || group.eventType === "SERVICE_END") ? " · 배정 일정 기준" : "";
+      return [{ kind: "live" as const, rule, group, title: group.name, timingLabel: `${getRuleTimingLabel(rule)} · ${recipient}${anchor}`, channelLabel: "SMS" as const, icon: MessageSquareText, tone: "primary" as const, monthlyCount: isLogsLoading || isLogsError ? null : matching.length, failedCount: isLogsLoading || isLogsError ? null : matching.filter((log) => log.status === "failed").length }];
+    });
+    return [...groups, ...standalone];
+  }, [isLogsError, isLogsLoading, logs, rules, rulesResponse]);
 
   const handleToggle = useCallback((row: TriggerDisplayRow) => {
+    if (row.group) {
+      if (branchId) groupMutation.mutate({ group: row.group, branchId });
+      return;
+    }
     const nextActive = !row.rule.isActive;
 
     if (row.rule.branchId === null) {
@@ -221,9 +232,9 @@ export function MessageTriggerList({
       id: row.rule.id,
       dto: { isActive: nextActive },
     });
-  }, [branchActivationMutation, updateRuleMutation]);
+  }, [branchActivationMutation, updateRuleMutation, groupMutation, branchId]);
 
-  const isTogglePending = updateRuleMutation.isPending || branchActivationMutation.isPending;
+  const isTogglePending = groupMutation.isPending || updateRuleMutation.isPending || branchActivationMutation.isPending;
 
   return (
     <SettingsListCard
@@ -235,6 +246,7 @@ export function MessageTriggerList({
       onAction={canManage ? onCreate : undefined}
     >
       {beforeItems}
+      {groupMutation.isError ? <p role="alert">자동 전송 규칙을 저장하지 못했습니다. 최신 정보를 다시 불러와 주세요.</p> : null}
       {!isRulesLoading && isRulesError ? (
         <QueryErrorState
           dataComponent={sub("items_error")}
@@ -275,7 +287,7 @@ export function MessageTriggerList({
                 : onEdit
                 ? isSystemRule
                   ? undefined
-                  : () => onEdit(row.rule)
+                  : () => row.group ? onEditGroup?.(row.group) : onEdit(row.rule)
                 : () => handleToggle(row)}
               isDisabled={!canManage || (!onEdit && (isTogglePending || row.rule.isLockedByGlobal === true))}
               showChevron={Boolean(canManage && onEdit && !isSystemRule)}

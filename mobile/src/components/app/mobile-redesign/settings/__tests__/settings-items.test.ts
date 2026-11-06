@@ -19,6 +19,7 @@ import {
   getAutomationPolicyIcon,
   getOrderedTriggerRules,
   TENANT_APPLICATION_ITEM_ID,
+  QUIET_HOURS_POLICY_ITEM_ID,
 } from "../settings-items";
 
 const unapproved: MessageSenderApprovalResponse = {
@@ -86,6 +87,7 @@ describe("buildSettingsListItems", () => {
       "custom-policy",
       CLIENT_REGISTRATION_POLICY_ITEM_ID,
       DUPLICATE_SEND_POLICY_ITEM_ID,
+      QUIET_HOURS_POLICY_ITEM_ID,
     ]);
     expect(items[1]).toMatchObject({
       title: policies[0].title,
