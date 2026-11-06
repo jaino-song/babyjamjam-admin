@@ -10,6 +10,7 @@ import { ExportClient } from "infrastructure/eformsign-backup/worker/export-clie
 import { LedgerStore } from "infrastructure/eformsign-backup/worker/ledger-store";
 import { LocalDestination } from "infrastructure/eformsign-backup/worker/local-destination";
 import { WorkerRunner, controlMarkerWriter } from "infrastructure/eformsign-backup/worker/runner";
+import { DestinationLedger } from "infrastructure/eformsign-backup/worker/runner-common";
 import type { ManualRunOptions, RunnerDependencies } from "infrastructure/eformsign-backup/worker/runner-types";
 
 import { probeFor, snapshotTree } from "./helpers/destination-support";
@@ -387,6 +388,53 @@ describe("selected manual archive engine", () => {
         expect(duplicate.counts).toMatchObject({ candidates: 1, included: 1, verified: 2 });
         expect(r.deps.ledger.lastSeq).toBe(seq);
         expect(options.exportPort.openArtifact).toHaveBeenCalledTimes(opened);
+    });
+
+    it.each(["transferring", "verifying"] as const)("selected crash recovery from %s during archive outage still acquires missing bytes for Drive", async state => {
+        const r = current = await rig(true);
+        const prior = await r.claim([pairDoc("A"), pairDoc("B")]);
+        const at = r.h.clock.now().toISOString();
+        const runId = runIdOf(700);
+        const snapshotId = "interrupted-snapshot";
+        await r.deps.ledger.append("run_started", { runId, scheduledFor: null, startedAt: at }, at);
+        await r.deps.ledger.append("snapshot_bound", { runId, snapshotId, sequence: 1,
+            scopeRevision: prior.selection.scopeRevision, policyRevision: prior.selection.policyRevision, counts: prior.snapshot.counts }, at);
+        const local = new DestinationLedger(r.deps, r.deps.ledger.state.installation!);
+        for (const candidate of prior.selection.candidates) {
+            await r.deps.ledger.append("candidate_observed", { snapshotId, ordinal: candidate.ordinal, documentId: candidate.documentId,
+                classification: candidate.classification, metadataRevision: candidate.metadataRevision, artifacts: candidate.artifacts }, at);
+            for (const artifact of candidate.artifacts) {
+                const relativeKey = artifactKey({ companyId: "C001", documentId: candidate.documentId, artifactType: artifact.artifactType, sha256: artifact.sha256 });
+                await local.transition(artifact.artifactIdentity, "pending");
+                await local.transition(artifact.artifactIdentity, "transferring", { relativeKey });
+                if (state === "verifying") {
+                    await r.deps.ledger.append("staging_verified", { artifactIdentity: artifact.artifactIdentity,
+                        sha256: artifact.sha256, byteLength: artifact.byteLength }, at);
+                    await local.transition(artifact.artifactIdentity, "verifying", { relativeKey });
+                }
+                await expect(fs.lstat(path.join(r.h.control, "staging", `${artifact.artifactIdentity}.bin`))).rejects.toMatchObject({ code: "ENOENT" });
+            }
+        }
+        const bIds = new Set(prior.selection.candidates[1]!.artifacts.map(a => a.artifactIdentity));
+        const bEntries = () => [...r.deps.ledger.state.destinations.values()].filter(entry => bIds.has(entry.artifactIdentity));
+        const bBefore = JSON.stringify(bEntries());
+        jest.spyOn(LocalDestination.prototype, "checkArchive").mockResolvedValue({ ok: false, reasonCode: "archive-unavailable" });
+        const options = await r.claim([pairDoc("A")], 2);
+        const summary = await r.runner.run(options);
+        expect(summary.counts).toMatchObject({ verified: 0, driveVerified: 2 });
+        expect(options.exportPort.openArtifact).toHaveBeenCalledTimes(2);
+        const selectedIds = options.selection.candidates[0]!.artifacts.map(a => a.artifactIdentity);
+        expect((options.exportPort.openArtifact as jest.Mock).mock.calls.map(([, artifact]) => artifact.artifactIdentity)).toEqual(selectedIds);
+        expect(options.exportPort.createSnapshot).not.toHaveBeenCalled();
+        expect(options.exportPort.getSnapshot).not.toHaveBeenCalled();
+        expect(options.exportPort.listCandidates).not.toHaveBeenCalled();
+        const result = attemptOf(r).results.get("A")!.payload;
+        expect(result.local.state).toBe("blocked");
+        expect(result.local.reasons).toContain("archive-unavailable");
+        expect(result.drive.state).toBe("verified");
+        expect(JSON.stringify(bEntries())).toBe(bBefore);
+        expect(r.deps.ledger.state.runs.get(runId)!.status).toBe("open");
+        expect(r.deps.ledger.state.completions.size).toBe(0);
     });
 
     it("a stale local verified bit during archive outage cannot prevent independent Drive acquisition", async () => {
