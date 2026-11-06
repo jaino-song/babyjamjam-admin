@@ -4,6 +4,7 @@ import path from "node:path";
 import { createRequire } from "node:module";
 import { performance } from "node:perf_hooks";
 import type { INestApplication } from "@nestjs/common";
+import { WorkerError } from "domain/eformsign-backup/worker/worker-error";
 import type { EmailPort } from "domain/ports/email.port";
 import {
     A, B, COMPANY, USERS, RECORD_TEMPLATE, TEMPLATE, demand, seed, cleanup,
@@ -43,6 +44,47 @@ interface FixtureOptions {
     capability: string; nonce: string; nativeOnly: boolean; manifest: { path: string; digest: string };
 }
 type Json = Record<string, unknown>;
+export function assertPublicManualRun(run: Json): void {
+    const keys = ["id", "status", "scope", "cut", "createdAt", "startedAt", "finishedAt", "summary", "coverage", "backupComplete", "failureCode"];
+    demand(Object.keys(run).length === keys.length && Object.keys(run).every(k => keys.includes(k)), "PUBLIC_RUN_FIELDS_ORACLE");
+    demand(run["coverage"] === "unverified" && run["backupComplete"] === false, "PUBLIC_RUN_FIELDS_ORACLE");
+    const summary = run["summary"] as Json;
+    demand(summary && Object.keys(summary).sort().join() === "attention,drive,local,metadataOnly,saved,target", "PUBLIC_RUN_FIELDS_ORACLE");
+    for (const key of ["local", "drive"]) {
+        const result = summary[key] as Json;
+        demand(result && Object.keys(result).sort().join() === "saved,state", "PUBLIC_RUN_FIELDS_ORACLE");
+    }
+}
+export function assertPublicManualDocument(document: Json): void {
+    const keys = ["documentId", "ordinal", "kind", "currentMilestone", "documentCreatedAt", "classification", "local", "drive"];
+    demand(Object.keys(document).length === keys.length && Object.keys(document).every(k => keys.includes(k)), "PUBLIC_DOCUMENT_FIELDS_ORACLE");
+    for (const key of ["local", "drive"]) demand(["verified", "partial", "blocked", "unverified", "metadata_only", "not_required"].includes(String(document[key])), "PUBLIC_DOCUMENT_FIELDS_ORACLE");
+}
+export function assertNativeDocumentObservations(profile: Profile, documents: readonly Json[]): void {
+    // C1 reports unconfigured Drive as not_required before evaluating metadata
+    // eligibility; aggregate Drive remains excluded for every native scope.
+    demand(documents.every(d => d["local"] === (profile === "basic" ? "verified" : "metadata_only")
+        && d["drive"] === "not_required"), "PRODUCT_OBSERVATION_ORACLE");
+}
+export async function assertNativeLocalArtifacts(session: string, profile: Profile, documents: readonly string[]): Promise<void> {
+    for (const document of documents) {
+        const artifactRoot = path.join(session, "archive", "eformsign", COMPANY, document, "artifacts");
+        if (profile === "basic") {
+            for (const type of ["document", "audit_trail"]) {
+                const expected = buildMinimalPdf(`backup-qa ${document} ${type}`);
+                const digest = createHash("sha256").update(expected).digest("hex");
+                // Mirror file types use underscores; C1 archive keys use hyphens.
+                const archiveType = type === "audit_trail" ? "audit-trail" : type;
+                const actual = await fs.readFile(path.join(artifactRoot, archiveType, `${digest}.pdf`))
+                    .catch(() => { throw new Error("LOCAL_ARTIFACT_ORACLE"); });
+                demand(actual.equals(expected), "LOCAL_ARTIFACT_ORACLE");
+            }
+        } else {
+            const entries = await fs.readdir(artifactRoot).catch((error: NodeJS.ErrnoException) => { if (error.code === "ENOENT") return []; throw error; });
+            demand(entries.length === 0, "METADATA_ONLY_LOCAL_ORACLE");
+        }
+    }
+}
 interface AuthRows { sessions: string[]; refresh: string[] }
 // Frozen ea7513ab: AuthController.login returns { success:false, message } on
 // invalid credentials (POST's default 201), before AuthService issues a session.
@@ -60,6 +102,50 @@ export function authFailureCode(error: unknown): string | undefined {
 export function sourceFailureCode(error: unknown): string | undefined {
     const codes = ["MACHINE_GUARD_ORACLE", "MACHINE_COMPANY_ORACLE", "MACHINE_SNAPSHOT_ORACLE", "MACHINE_COUNTS_ORACLE", "MACHINE_PAGE_ORACLE", "FROZEN_EXPORT_ORACLE", "FROZEN_STAGE_ORACLE", "SOURCE_COUNTS_ORACLE", "FROZEN_DATE_ORACLE", "METADATA_ARTIFACT_ORACLE"];
     return error instanceof Error && codes.includes(error.message) ? error.message : undefined;
+}
+export function phaseFailureCode(error: unknown): string {
+    const codes = [
+    "CLAIM_LIMIT",
+    "EXERCISE_TIMEOUT",
+    "FOREIGN_BRANCH",
+    "FOREIGN_CANDIDATE",
+    "FOREIGN_COUNTER",
+    "FOREIGN_CREDENTIAL",
+    "FOREIGN_DOCUMENT",
+    "FOREIGN_FILE",
+    "FOREIGN_MEMBERSHIP",
+    "FOREIGN_REFRESH",
+    "FOREIGN_RESULT",
+    "FOREIGN_ROWS",
+    "FOREIGN_RUN",
+    "FOREIGN_SESSION",
+    "FOREIGN_SNAPSHOT",
+    "FOREIGN_USER",
+    "LOCAL_ARTIFACT_ORACLE",
+    "MANUAL_ERROR_ORACLE",
+    "MANUAL_RENEWED_ORACLE",
+    "MANUAL_STALE_ORACLE",
+    "METADATA_ONLY_LOCAL_ORACLE",
+    "NATIVE_PAGINATION_REQUIRED",
+    "PRODUCT_BRANCH_ORACLE",
+    "PRODUCT_COVERAGE_ORACLE",
+    "PRODUCT_DOCUMENTS_FAILED",
+    "PRODUCT_DRIVE_ORACLE",
+    "PRODUCT_GET_FAILED",
+    "PRODUCT_IDEMPOTENCY_ORACLE",
+    "PRODUCT_OBSERVATION_ORACLE",
+    "PRODUCT_PAGINATION_ORACLE",
+    "PRODUCT_PHASE_UNKNOWN",
+    "PRODUCT_POST_FAILED",
+    "PRODUCT_ROUTES_UNAVAILABLE",
+    "PRODUCT_SELECTION_ORACLE",
+    "PRODUCT_SUMMARY_ORACLE",
+    "PROFILE_NOT_SEEDED",
+    "PUBLIC_DOCUMENT_FIELDS_ORACLE",
+    "PUBLIC_RUN_FIELDS_ORACLE",
+    "SESSION_LIMIT"
+];
+    return error instanceof Error && codes.includes(error.message) ? error.message : "NATIVE_PHASE_FAILED";
 }
 function sendSafe(message: unknown): void {
     if (process.connected) process.send?.(message as object, () => undefined);
@@ -131,8 +217,11 @@ export async function createFixture(options: FixtureOptions) {
     let base = "";
     let ownerToken = "";
     let available = false;
+    let workerHttp = { operation: "none", status: 0 };
     let queue: Promise<unknown> = Promise.resolve();
     let stage = "database";
+    let phaseStage: "routeprobe" | "consumer-init" | "manual-negative" | "manual-stale" | "basic" | "pagination" | "kst" | "cleanup" = "routeprobe";
+    let phaseStep: "routeprobe" | "consumer-init" | "manual-negative" | "manual-stale" | "post" | "idempotency" | "selectB" | "crossbranchread" | "restoreA" | "capture" | "consume" | "readresults" | "artifactcheck" | "cleanup" = "routeprobe";
     const started = performance.now();
     const record = async (rows: unknown) => {
         const bytes = JSON.stringify(rows);
@@ -143,8 +232,11 @@ export async function createFixture(options: FixtureOptions) {
     const capture = () => {
         captureQueue = captureQueue.then(async () => {
             if (!seeded) return;
+            const previousStep = phaseStep;
+            if (stage === "phase") phaseStep = "capture";
             await assertOtherTablesEmpty(db);
             await record(await attributableRows(db, options.profile, seeded.credentialId, seeded.accounts.map(a => a.email)));
+            phaseStep = previousStep;
         });
         return captureQueue;
     };
@@ -152,16 +244,24 @@ export async function createFixture(options: FixtureOptions) {
         await capture();
         try { return await request(...args); } finally { await capture(); }
     };
-    async function close() {
-        if (closed) return;
+    let closing: Promise<void> | undefined;
+    function close(): Promise<void> {
+        if (closing) return closing;
         closed = true;
-        // Stop new claims and finish the one consumer before closing HTTP and touching rows.
-        await consumer?.close();
-        await app?.close();
-        await captureQueue;
-        if (seeded) await cleanup(db, options.profile, seeded, record);
-        await db.$disconnect();
-        unchanged();
+        closing = (async () => {
+            let resourcesClosed = true;
+            try {
+                // Always close HTTP and DB even if worker close fails. Only proven
+                // resource closure and attributable rows permit scoped cleanup.
+                try { await consumer?.close(); } catch { resourcesClosed = false; }
+                try { await app?.close(); } catch { resourcesClosed = false; }
+                try { await captureQueue; } catch { resourcesClosed = false; }
+                if (resourcesClosed && seeded) await cleanup(db, options.profile, seeded, record);
+                demand(resourcesClosed, "NATIVE_CLEANUP_FAILED");
+                unchanged();
+            } finally { await db.$disconnect(); }
+        })();
+        return closing;
     }
     async function login(account: PrivateCredentials, expectedUser: string, owner = false) {
         const key = createHash("sha256").update(`post:login:identity:127.0.0.1:${account.email.trim().toLowerCase()}`).digest("hex");
@@ -195,6 +295,7 @@ export async function createFixture(options: FixtureOptions) {
         if (owner) {
             demand(login.json["requiresBranchSelection"] === true, "OWNER_BRANCH_SELECTION_MISSING");
             demand((await http(base, "/__qa__/manager-proof", login.json["accessToken"] as string)).status === 403, "UNSELECTED_JWT_ORACLE");
+            demand((await http(base, "/eformsign-backups/runs", login.json["accessToken"] as string)).status === 403, "UNSELECTED_JWT_ORACLE");
         }
         const select = await http(base, "/auth/select-branch", login.json["accessToken"] as string, { branchId: A });
         demand(select.status === 201 && select.json["success"] === true && typeof select.json["accessToken"] === "string" && select.json["accessToken"].length > 0
@@ -207,14 +308,19 @@ export async function createFixture(options: FixtureOptions) {
     async function authOracle() {
         demand(seeded);
         demand((await http(base, "/__qa__/manager-proof")).status === 401, "NO_JWT_ORACLE");
+        demand((await http(base, "/eformsign-backups/runs")).status === 401, "NO_JWT_ORACLE");
         ownerToken = await login(seeded.accounts[0]!, USERS[0]!, true);
         const proof = await http(base, "/__qa__/manager-proof", ownerToken);
         demand(proof.status === 200 && proof.json["branchId"] === A && proof.json["userId"] === USERS[0], "OWNER_ORACLE");
+        demand((await http(base, "/eformsign-backups/runs", ownerToken)).status === 200, "OWNER_ORACLE");
         const viewer = await login(seeded.accounts[1]!, USERS[1]!);
         demand((await http(base, "/__qa__/manager-proof", viewer)).status === 403, "VIEWER_ORACLE");
+        demand((await http(base, "/eformsign-backups/runs", viewer)).status === 403, "VIEWER_ORACLE");
         const admin = await login(seeded.accounts[2]!, USERS[2]!);
         const spoof = await http(base, "/__qa__/manager-proof", admin, undefined, { "X-Branch-Id": B });
         demand(spoof.status === 200 && spoof.json["branchId"] === A && spoof.json["userId"] === USERS[2], "SPOOF_ORACLE");
+        const manual = await http(base, "/eformsign-backups/runs", admin, undefined, { "X-Branch-Id": B });
+        demand(manual.status === 200 && Array.isArray(manual.json["items"]) && manual.json["items"].length === 0, "SPOOF_ORACLE");
         demand((await http(base, "/auth/select-branch", admin, { branchId: B })).status === 403, "SELECT_B_ORACLE");
         const afterDenied = await http(base, "/__qa__/manager-proof", admin);
         demand(afterDenied.status === 200 && afterDenied.json["branchId"] === A && afterDenied.json["userId"] === USERS[2], "SELECT_B_ORACLE");
@@ -280,19 +386,38 @@ export async function createFixture(options: FixtureOptions) {
         if (!available) return { success: false, code: "PRODUCT_ROUTES_UNAVAILABLE" };
         demand(consumer && performance.now() - started < 30 * 60_000, "SESSION_LIMIT");
         demand(profile !== "pagination" || options.profile === "pagination", "PROFILE_NOT_SEEDED");
+        phaseStage = profile;
+        phaseStep = "post";
         const intent = exerciseIntent(profile);
         const requestKey = randomUUID(); // One key per intent, reused for transport retry only.
         const posted = await http(base, "/eformsign-backups/runs", ownerToken, { scope: intent.scope, requestKey });
         demand(posted.status === 202 && typeof posted.json["id"] === "string", "PRODUCT_POST_FAILED");
         const id = posted.json["id"] as string;
+        assertPublicManualRun(posted.json);
+        phaseStep = "idempotency";
+        const duplicate = await http(base, "/eformsign-backups/runs", ownerToken, { scope: intent.scope, requestKey });
+        demand(duplicate.status === 202 && duplicate.json["id"] === id, "PRODUCT_IDEMPOTENCY_ORACLE");
+        phaseStep = "selectB";
+        const switched = await http(base, "/auth/select-branch", ownerToken, { branchId: B });
+        demand(switched.status === 201 && typeof switched.json["accessToken"] === "string", "PRODUCT_BRANCH_ORACLE");
+        const branchB = switched.json["accessToken"] as string;
+        phaseStep = "crossbranchread";
+        for (const suffix of ["", "/documents"]) demand((await http(base, `/eformsign-backups/runs/${id}${suffix}`, branchB)).status === 404, "PRODUCT_BRANCH_ORACLE");
+        phaseStep = "restoreA";
+        const restored = await http(base, "/auth/select-branch", branchB, { branchId: A });
+        demand(restored.status === 201 && typeof restored.json["accessToken"] === "string", "PRODUCT_BRANCH_ORACLE");
+        ownerToken = restored.json["accessToken"] as string;
         let run = posted;
         const deadline = performance.now() + 90_000;
         while (["queued", "running"].includes(String(run.json["status"]))) {
             demand(performance.now() < deadline, "EXERCISE_TIMEOUT");
+            phaseStep = "consume";
             await consumer.consume();
+            phaseStep = "readresults";
             run = await http(base, `/eformsign-backups/runs/${encodeURIComponent(id)}`, ownerToken);
             demand(run.status === 200, "PRODUCT_GET_FAILED");
         }
+        phaseStep = "readresults";
         const documents: Json[] = [];
         const pages: number[] = [];
         let cursor: string | null = null;
@@ -300,6 +425,7 @@ export async function createFixture(options: FixtureOptions) {
             const page = await http(base, `/eformsign-backups/runs/${encodeURIComponent(id)}/documents${cursor ? `?cursor=${encodeURIComponent(cursor)}` : "?limit=100"}`, ownerToken);
             demand(page.status === 200 && Array.isArray(page.json["items"]), "PRODUCT_DOCUMENTS_FAILED");
             const items = page.json["items"] as Json[];
+            items.forEach(assertPublicManualDocument);
             documents.push(...items); pages.push(items.length);
             cursor = page.json["nextCursor"] as string | null;
             demand(cursor === null || typeof cursor === "string");
@@ -307,24 +433,53 @@ export async function createFixture(options: FixtureOptions) {
         demand(JSON.stringify(documents.map(d => d["documentId"])) === JSON.stringify(intent.ids), "PRODUCT_SELECTION_ORACLE");
         if (profile === "pagination") demand(JSON.stringify(pages) === "[100,21]", "PRODUCT_PAGINATION_ORACLE");
         const summary = run.json["summary"] as Json;
+        assertPublicManualRun(run.json);
         demand(summary["saved"] === intent.saved && summary["metadataOnly"] === intent.metadataOnly && summary["target"] === intent.ids.length, "PRODUCT_SUMMARY_ORACLE");
         demand(run.json["backupComplete"] === false && run.json["coverage"] === "unverified", "PRODUCT_COVERAGE_ORACLE");
-        // Server summaries alone are insufficient: verify the actual C1 local bytes, without returning paths.
-        for (const document of intent.ids) {
-            const artifactRoot = path.join(options.session, "archive", "eformsign", COMPANY, document, "artifacts");
-            if (profile === "basic") {
-                for (const type of ["document", "audit_trail"]) {
-                    const expected = buildMinimalPdf(`backup-qa ${document} ${type}`);
-                    const digest = createHash("sha256").update(expected).digest("hex");
-                    demand((await fs.readFile(path.join(artifactRoot, type, `${digest}.pdf`))).equals(expected), "LOCAL_ARTIFACT_ORACLE");
-                }
-            } else {
-                const entries = await fs.readdir(artifactRoot).catch((error: NodeJS.ErrnoException) => { if (error.code === "ENOENT") return []; throw error; });
-                demand(entries.length === 0, "METADATA_ONLY_LOCAL_ORACLE");
-            }
-        }
+        demand((summary["drive"] as Json)["state"] === "excluded", "PRODUCT_DRIVE_ORACLE");
+        assertNativeDocumentObservations(profile, documents);
+        phaseStep = "artifactcheck";
+        // Verify actual C1 bytes as well as the public summary.
+        await assertNativeLocalArtifacts(options.session, profile, intent.ids);
+        phaseStep = "capture";
         await capture();
         return { success: true, selected: documents.length, saved: intent.saved, metadataOnly: intent.metadataOnly, pages, nativeOnly: true, killedWorkerRecovery: "unproven" };
+    }
+    async function manualOracle() {
+        phaseStage = "manual-negative"; phaseStep = "manual-negative";
+        demand(seeded);
+        const expectSafe = (result: Awaited<ReturnType<typeof http>>, status: number, code: string) => {
+            demand(result.status === status && result.json["code"] === code
+                && Object.keys(result.json).sort().join() === "code,requestId"
+                && typeof result.json["requestId"] === "string" && /^[0-9a-f-]{36}$/.test(result.json["requestId"]), "MANUAL_ERROR_ORACLE");
+        };
+        const intent = exerciseIntent("basic");
+        const body = { scope: intent.scope, requestKey: randomUUID() };
+        expectSafe(await http(base, "/eformsign-backups/runs", ownerToken, { ...body, companyId: COMPANY }), 400, "INVALID_REQUEST");
+        expectSafe(await http(base, "/eformsign-backups/runs?limit=101", ownerToken), 400, "INVALID_REQUEST");
+        expectSafe(await http(base, "/eformsign-backups/runs/not-a-uuid", ownerToken), 400, "INVALID_REQUEST");
+        expectSafe(await http(base, "/internal/eformsign-backup/v1/manual-runs/claim", seeded.token, { companyId: "forbidden-company" }), 404, "NOT_FOUND");
+        phaseStage = "manual-stale"; phaseStep = "manual-stale";
+        const queued = await http(base, "/eformsign-backups/runs", ownerToken, body);
+        demand(queued.status === 202 && typeof queued.json["id"] === "string", "MANUAL_STALE_ORACLE");
+        const id = queued.json["id"] as string;
+        const claimed = await http(base, "/internal/eformsign-backup/v1/manual-runs/claim", seeded.token, { companyId: COMPANY });
+        demand(claimed.status === 200 && typeof claimed.json["leaseToken"] === "string", "MANUAL_STALE_ORACLE");
+        const renewed = await http(base, `/internal/eformsign-backup/v1/manual-runs/${id}/renew`, seeded.token,
+            { companyId: COMPANY, leaseToken: claimed.json["leaseToken"] });
+        demand(renewed.status === 200, "MANUAL_STALE_ORACLE");
+        const active = await http(base, `/eformsign-backups/runs/${id}`, ownerToken);
+        demand(active.status === 200 && active.json["status"] === "running", "MANUAL_RENEWED_ORACLE");
+        assertPublicManualRun(active.json);
+        const changed = await db.$executeRaw`UPDATE public.eformsign_backup_run
+            SET lease_expires_at = clock_timestamp() - interval '1 second'
+            WHERE id = ${id}::uuid AND company_id = ${COMPANY} AND branch_id = ${A}::uuid AND status = 'running'`;
+        demand(changed === 1, "MANUAL_STALE_ORACLE");
+        const listed = await http(base, "/eformsign-backups/runs", ownerToken);
+        demand(listed.status === 200, "MANUAL_STALE_ORACLE");
+        const expired = await http(base, `/eformsign-backups/runs/${id}`, ownerToken);
+        demand(expired.status === 200 && expired.json["status"] === "blocked" && expired.json["failureCode"] === "WORKER_LEASE_EXPIRED", "MANUAL_STALE_ORACLE");
+        assertPublicManualRun(expired.json);
     }
     try {
         await assertOtherTablesEmpty(db, true);
@@ -335,6 +490,15 @@ export async function createFixture(options: FixtureOptions) {
         const module = await Test.createTestingModule({ imports: [FixtureModule] }).overrideProvider(EMAIL_PORT).useValue(email.adapter).compile();
         unchanged();
         app = module.createNestApplication({ logger: false });
+        // Only fixed operation names and numeric statuses: never record URLs,
+        // request/response bodies, authority headers or private lease material.
+        app.use("/internal/eformsign-backup/v1/manual-runs", (req: import("express").Request, res: import("express").Response, next: import("express").NextFunction) => {
+            const operation = req.path.split("/").at(-1) ?? "";
+            if (["claim", "renew", "candidates", "validate", "artifact", "document-results", "finish"].includes(operation)) {
+                res.once("finish", () => { workerHttp = { operation, status: res.statusCode }; });
+            }
+            next();
+        });
         app.use("/__qa__/control", (req: import("express").Request, res: import("express").Response) => {
             if (req.method !== "POST" || !capabilityMatches(options.capability, req.headers["x-qa-capability"]) || req.headers["x-qa-nonce"] !== options.nonce) { res.status(403).json({ code: "CONTROL_REFUSED" }); return; }
             const action = req.headers["x-qa-action"];
@@ -347,7 +511,8 @@ export async function createFixture(options: FixtureOptions) {
                     return;
                 }
                 demand(!closed && performance.now() - started < 30 * 60_000, "SESSION_LIMIT");
-                const result = action === "exercise" ? await exercise(profile as Profile) : { ready: true, backendOnly: true, nativeOnly: options.nativeOnly, productRoutes: available, claims: consumer?.claims ?? 0, pid: process.pid };
+                consumer?.assertHealthy();
+                const result = action === "exercise" ? await exercise(profile as Profile) : { ready: true, backendOnly: true, nativeOnly: options.nativeOnly, productRoutes: available, healthy: consumer?.healthy ?? false, claims: consumer?.claims ?? 0, pid: process.pid };
                 await capture();
                 res.json({ ...result, nonce: options.nonce });
             }).catch(() => { if (!res.headersSent) res.status(503).json({ code: "CONTROL_FAILED" }); });
@@ -371,19 +536,31 @@ export async function createFixture(options: FixtureOptions) {
         const counts = await sourceOracle();
         stage = "phase";
         const routeProbe = await http(base, "/eformsign-backups/runs?limit=1", ownerToken);
-        demand([200, 404].includes(routeProbe.status), "PRODUCT_PHASE_UNKNOWN");
+        demand(routeProbe.status === 200, "PRODUCT_PHASE_UNKNOWN");
         available = routeProbe.status === 200;
-        if (available && !options.nativeOnly) {
+        if (available) {
             const { createConsumer } = await import("./eformsign-backup-fixture-worker");
+            phaseStage = "consumer-init"; phaseStep = "consumer-init";
             consumer = await createConsumer(options.session, base, seeded.token, capture);
-            consumer.start();
+            if (options.nativeOnly) {
+                demand(options.profile === "pagination", "NATIVE_PAGINATION_REQUIRED");
+                await manualOracle();
+                for (const profile of ["basic", "pagination", "kst"] as const) await exercise(profile);
+            } else consumer.start();
         }
         demand(email.count() === 0, "EMAIL_ATTEMPTED");
         unchanged();
         return { base, counts, available, close, exercise, settle: () => queue };
     } catch (error) {
-        try { await close(); sendSafe({ stage: "failed-clean", failureStage: stage, authFailure: authFailureCode(error), sourceFailure: sourceFailureCode(error) }); } catch { /* Retain row/session evidence; the parent records failure. */ }
-        await db.$disconnect();
+        const diagnostic = { failureStage: stage, phaseStage, phaseStep, phaseFailure: phaseFailureCode(error), workerHttp,
+            workerResponseInvalid: error instanceof WorkerError && error.reasonCode === "export-response-invalid",
+            workerExportUnavailable: error instanceof WorkerError && error.reasonCode === "export-unavailable",
+            workerControlUnavailable: error instanceof WorkerError && error.reasonCode === "control-unavailable",
+            workerLedgerInconsistent: error instanceof WorkerError && error.reasonCode === "ledger-inconsistent",
+            workerLockNotHeld: error instanceof WorkerError && error.reasonCode === "lock-not-held", authFailure: authFailureCode(error), sourceFailure: sourceFailureCode(error) };
+        let cleanupComplete = false;
+        try { await close(); cleanupComplete = true; } catch { /* Retain evidence; report only fixed codes and flags. */ }
+        sendSafe({ stage: cleanupComplete ? "failed-clean" : "failed", ...diagnostic, cleanupComplete, retained: !cleanupComplete });
         throw error;
     }
 }
@@ -402,8 +579,7 @@ async function childMain(): Promise<void> {
         if (booting) return;
         if (closing) return;
         closing = (async () => {
-            await fixture?.settle();
-            await fixture?.close();
+            try { await fixture?.settle(); } finally { await fixture?.close(); }
             if (process.connected) await new Promise<void>(resolve => process.send!({ stage: "closed" }, () => resolve()));
             if (process.connected) process.disconnect();
         })().catch(() => { process.exitCode = 1; if (process.connected) process.disconnect(); }).finally(finished);

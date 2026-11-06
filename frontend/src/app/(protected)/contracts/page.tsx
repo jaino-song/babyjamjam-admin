@@ -1,6 +1,5 @@
 "use client";
 
-
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { EformsignDocClientSummary } from "@babyjamjam/shared/types/eformsign";
@@ -81,7 +80,8 @@ import {
 } from "@/components/app/v3";
 import { ContractStatsBar } from "@/components/app/contracts/ContractStatsBar";
 import { ContractLinkConfirmationsNotice } from "@/components/app/contracts/ContractLinkConfirmationsNotice";
-import { ContractBackupManager } from "@/components/app/contracts/ContractBackupManager";
+import { ConnectedContractBackupManager as ContractBackupManager } from "@/components/app/contracts/ContractBackupManager";
+import { useEformsignBackupAccess } from "@/hooks/useEformsignBackups";
 import { ContractAutomationsManager } from "@/components/app/contracts/ContractAutomationsManager";
 import type { StatusType } from "@/components/app/v3";
 import { isBranchContextAligned, useActiveBranchId } from "@/features/system-templates/branch-context";
@@ -558,7 +558,7 @@ export default function ContractsPage() {
   const statsHasData = isStatsBranchContextReady && statusCounts !== undefined;
   const isStatsRefreshing = isStatsBranchContextReady && statusCountsQuery.isFetching;
   const isServiceRecordListLoading = isInitialLoading;
-
+  const backupAccess = useEformsignBackupAccess();
   // Search happens server-side (it is part of the query key), so what the
   // server returns is what renders — total_rows/hasNextPage describe the
   // searched set and pagination stops when the matches run out.
@@ -752,7 +752,7 @@ export default function ContractsPage() {
       >
         <SectionNav
           data-component="desktop_contracts_sections_section-nav"
-          items={NAV_SECTIONS}
+          items={NAV_SECTIONS.filter(item => item.id !== 'backup' || backupAccess.isManager)}
           activeId={activeSection}
           onSelect={(id) => {
             setRegisterClientDocumentId(null);
@@ -1135,7 +1135,7 @@ export default function ContractsPage() {
             </section>
           ) : null}
 
-          {activeSection === "backup" ? (
+          {activeSection === "backup" && backupAccess.isManager ? (
             <section data-component="desktop_contracts_sections_section-content_backup-section" className="flex flex-1 min-h-0 flex-col">
               <ContractBackupManager dataComponent="desktop_contracts_sections_section-content_backup-section_manager" />
             </section>

@@ -78,8 +78,8 @@ export function documentScopeSummary(scope: DocumentMilestoneScope): string {
   const stages = groups.every(g => g.stages.every(s => g.selected.some(id => id === s.id))) ? '전체 단계' : groups.map(g => `${g.name} ${g.stages.filter(s => g.selected.some(id => id === s.id)).map(s => s.label).join(', ') || '선택 없음'}`).join(' · ');
   return `${period} · ${kind} · ${stages}`;
 }
-export type BackupRunState = 'running' | 'partial' | 'blocked' | 'failed' | 'unverified';
-export const BACKUP_RUN_LABELS: Record<BackupRunState, string> = { running: '진행 중', partial: '확인 필요', blocked: '중단', failed: '실패', unverified: '검증 전' };
+export type BackupRunState = 'queued' | 'running' | 'partial' | 'blocked' | 'failed' | 'unverified';
+export const BACKUP_RUN_LABELS: Record<BackupRunState, string> = { queued: '대기 중', running: '진행 중', partial: '확인 필요', blocked: '중단', failed: '실패', unverified: '검증 전' };
 export interface BackupDestinationResult {
   readonly state: 'stored' | 'partial' | 'failed' | 'unverified' | 'excluded';
   readonly saved?: number;
@@ -91,7 +91,7 @@ export interface BackupRunView {
   readonly finishedAt?: string;
   readonly trigger: 'manual' | 'scheduled';
   readonly state: BackupRunState;
-  readonly counts: { readonly target: number; readonly saved: number; readonly attention: number };
+  readonly counts: { readonly target: number; readonly saved: number; readonly attention: number; readonly metadataOnly?: number };
   readonly local: BackupDestinationResult;
   readonly drive: BackupDestinationResult;
   readonly missingDocuments: readonly { readonly id: string; readonly title: string; readonly reason: string }[];

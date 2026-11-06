@@ -10,12 +10,14 @@ import {
 import { Button } from '@/components/ui/button';
 import { StatusBadge } from '@/components/app/ui/status-badge';
 import { FormHelperText } from '@/components/app/ui/form-section';
+import { useEformsignBackups } from '@/hooks/useEformsignBackups';
+import { backupErrorMessage, backupIsTerminal, type BackupRun, type BackupDocument } from '@/lib/eformsign-backup-api';
 import {
   DocumentMilestoneFilterDialog, DocumentMilestoneScopeSummary,
 } from '@/components/app/ui/DocumentMilestoneFilterDialog';
 import {
   BACKUP_RUN_LABELS, cloneDocumentScope, defaultDocumentScope, runNeedsAttention,
-  type BackupDestinationResult, type BackupViewSource, type DocumentMilestoneScope,
+  type BackupDestinationResult, type BackupViewSource, type DocumentMilestoneScope, type BackupRunView,
 } from '@/lib/eformsign-backup-view';
 
 export interface ContractBackupManagerProps {
@@ -23,6 +25,39 @@ export interface ContractBackupManagerProps {
   source?: BackupViewSource;
   onRequestRun?: (scope: DocumentMilestoneScope) => void | Promise<void>;
   onDownload?: (runId: string) => void | Promise<void>;
+  selectedRunId?: string | null;
+  onSelectRun?: (id: string | null) => void;
+  detailState?: 'loading' | 'ready' | 'error';
+  hasMore?: boolean;
+  onLoadMore?: () => void;
+  isFetchingMore?: boolean;
+}
+
+function connectedRun(run: BackupRun, documents: readonly BackupDocument[] = []): BackupRunView {
+  const attention = backupIsTerminal(run) ? documents.filter(d =>
+    !['verified', 'metadata_only'].includes(d.local) || !['verified', 'metadata_only', 'not_required'].includes(d.drive)) : [];
+  const reasons = { excluded_by_policy: '문서 정보 보관 확인', policy_pending: '문서 상태 확인', unknown_template: '문서 종류 확인',
+    inaccessible: '문서 조회 확인', included: '로컬/Drive 보관 확인' };
+  return { id: run.id, startedAt: run.startedAt ?? run.createdAt, finishedAt: run.finishedAt ?? undefined,
+    trigger: 'manual', state: run.status, counts: run.summary, local: run.summary.local, drive: run.summary.drive,
+    missingDocuments: attention.map(d => ({ id: d.documentId, title: d.documentId,
+      reason: d.classification ? reasons[d.classification] : '문서 종류 확인' })),
+    timeline: [
+      { id: 'request', at: run.createdAt, text: '백업 요청', tone: 'info' as const },
+      ...(run.startedAt ? [{ id: 'start', at: run.startedAt, text: '백업 실행 시작', tone: 'info' as const }] : []),
+      ...(run.finishedAt ? [{ id: 'finish', at: run.finishedAt, text: '실행 종료', tone: 'info' as const }] : []),
+    ] };
+}
+
+export function ConnectedContractBackupManager({ dataComponent }: Pick<ContractBackupManagerProps, 'dataComponent'>) {
+  const backup = useEformsignBackups();
+  const source: BackupViewSource = backup.state === 'ready' ? { state: 'ready', runs: backup.runs.map(run =>
+    connectedRun(backup.run?.id === run.id ? backup.run : run, backup.run?.id === run.id ? backup.documents : [])),
+  capabilities: { requestRun: backup.requestReady, download: backup.downloadReady } } : { state: backup.state };
+  return <ContractBackupView key={backup.identity ?? 'unavailable'} dataComponent={dataComponent}
+    owner="ConnectedContractBackupManager" source={source} onRequestRun={backup.requestRun} onDownload={backup.download}
+    selectedRunId={backup.selectedId} onSelectRun={backup.selectRun} detailState={backup.detailState}
+    hasMore={backup.hasMore} onLoadMore={backup.loadMore} isFetchingMore={backup.isFetchingMore} />;
 }
 
 const UNAVAILABLE: BackupViewSource = { state: 'unavailable' };
@@ -48,9 +83,14 @@ function destinationText(result: BackupDestinationResult): string {
   ].filter(Boolean).join(' · ');
 }
 
-export function ContractBackupManager({
+export function ContractBackupManager(props: ContractBackupManagerProps) {
+  return <ContractBackupView {...props} owner="ContractBackupManager" />;
+}
+
+function ContractBackupView({
   dataComponent, source = UNAVAILABLE, onRequestRun, onDownload,
-}: ContractBackupManagerProps) {
+  selectedRunId, onSelectRun, detailState, hasMore, onLoadMore, isFetchingMore, owner,
+}: ContractBackupManagerProps & { owner: 'ContractBackupManager' | 'ConnectedContractBackupManager' }) {
   const [scope, setScope] = useState(defaultDocumentScope);
   const [filterOpen, setFilterOpen] = useState(false);
   const [tab, setTab] = useState('all');
@@ -60,7 +100,10 @@ export function ContractBackupManager({
   const runs = source.state === 'ready' ? source.runs : [];
   // Document scope applies to a future request. It never filters recorded runs.
   const visible = tab === 'attention' ? runs.filter(runNeedsAttention) : runs;
-  const { selectedId, setSelectedId, setSplitLayoutMode } = useSplitLayoutSelection(visible.map(run => run.id));
+  const localSelection = useSplitLayoutSelection(visible.map(run => run.id));
+  const selectedId = selectedRunId === undefined ? localSelection.selectedId : selectedRunId;
+  const setSelectedId = (id: string | null) => { localSelection.setSelectedId(id); onSelectRun?.(id); };
+  const { setSplitLayoutMode } = localSelection;
   const selected = visible.find(run => run.id === selectedId);
   const split = `${dataComponent}_split-layout`;
   const list = `${split}_track_panel_list-panel`;
@@ -77,8 +120,8 @@ export function ContractBackupManager({
     try {
       if (kind === 'run') await onRequestRun?.(cloneDocumentScope(scope));
       else if (selected) await onDownload?.(selected.id);
-    } catch {
-      setActionError(kind === 'run' ? '백업을 요청하지 못했습니다' : '결과를 내려받지 못했습니다');
+    } catch (error) {
+      setActionError(kind === 'run' ? backupErrorMessage(error) : '결과를 내려받지 못했습니다');
     } finally {
       pendingRef.current = false;
       setPending(null);
@@ -89,7 +132,7 @@ export function ContractBackupManager({
     : source.state === 'error' ? '이력을 불러오지 못했습니다' : '이력이 없습니다';
 
   return (
-    <section data-component={dataComponent} data-slot="contract-backup-manager" className="flex h-full min-h-0 min-w-0 flex-1 flex-col">
+    <section data-component={dataComponent} data-slot="contract-backup-manager" data-source-component={owner} className="flex h-full min-h-0 min-w-0 flex-1 flex-col">
       <SplitLayout
         data-component={split} hasSelection={Boolean(selected)}
         onBack={() => setSelectedId(null)} onModeChange={setSplitLayoutMode}
@@ -147,6 +190,7 @@ export function ContractBackupManager({
             data-component={`${list}_content_runs`} itemDataComponent={`${list}_content_runs_item`}
             items={source.state === 'loading' ? undefined : visible}
             isLoading={source.state === 'loading'} loadingCount={1}
+            hasMore={hasMore} onLoadMore={onLoadMore} isFetchingMore={isFetchingMore}
             getItemKey={run => run.id} onSlotClick={run => setSelectedId(run.id)}
             getSlotState={({ item, isLoading }) => ({
               isActive: !isLoading && item?.id === selected?.id,
@@ -203,8 +247,12 @@ export function ContractBackupManager({
               <InfoCard data-component={`${body}_storage`} title="저장 위치별 결과">
                 <InfoRow data-component={`${body}_storage_body_local`} label="로컬 보관함" value={destinationText(selected.local)} />
                 <InfoRow data-component={`${body}_storage_body_drive`} label="Google Drive" value={destinationText(selected.drive)} />
+                {selected.counts.metadataOnly !== undefined ? <InfoRow data-component={`${body}_storage_body_metadata-only`} label="문서 정보만" value={`${selected.counts.metadataOnly}건`} /> : null}
                 <InfoRow data-component={`${body}_storage_body_finished`} label="종료 시각" value={selected.finishedAt ? displayTime(selected.finishedAt) : '확인 전'} />
               </InfoCard>
+              {detailState && detailState !== 'ready' ? <FormHelperText data-component={`${body}_detail-state`} tone={detailState === 'error' ? 'error' : 'default'}>
+                {detailState === 'error' ? '결과를 불러오지 못했습니다' : '결과 불러오는 중'}
+              </FormHelperText> : null}
               {selected.missingDocuments.length ? (
                 <InfoCard data-component={`${body}_attention`} title="확인 필요한 문서">
                   {selected.missingDocuments.map((document, index) => (

@@ -65,7 +65,9 @@ export class EformsignManualBackupService {
             const ctx = parseManualControl(manualStaffContextSchema, context);
             const input = parseManualControl(manualPageSchema, query);
             const cursor = input.cursor ? this.decode(manualRunCursorSchema, input.cursor) : undefined;
-            const page = await this.repository.listForBranch({ companyId: this.company(), branchId: ctx.branchId, limit: input.limit,
+            const companyId = this.company();
+            await this.repository.expireStale(companyId);
+            const page = await this.repository.listForBranch({ companyId, branchId: ctx.branchId, limit: input.limit,
                 ...(cursor ? { cursor: { id: cursor.id, createdAt: new Date(cursor.createdAt) } } : {}) });
             const last = page.items[page.items.length - 1];
             return { items: page.items.map(toManualStaffRun), nextCursor: page.hasMore && last
@@ -78,9 +80,10 @@ export class EformsignManualBackupService {
     listRunDocuments(context: ManualBackupStaffContext, id: string, query: unknown) {
         return this.perform(async () => {
             const input = parseManualControl(manualPageSchema, query);
-            const run = await this.staffRun(context, id);
             const cursor = input.cursor ? this.decode(manualDocumentCursorSchema, input.cursor) : undefined;
-            if (cursor && cursor.runId !== run.id) throw new ManualBackupControlError("INVALID_REQUEST");
+            const runId = parseManualControl(manualControlUuidSchema, id);
+            if (cursor && cursor.runId !== runId) throw new ManualBackupControlError("INVALID_REQUEST");
+            const run = await this.staffRun(context, runId);
             const page = await this.repository.listDocumentsForBranch({ companyId: run.companyId, branchId: run.branchId,
                 runId: run.id, afterOrdinal: cursor?.afterOrdinal ?? 0, limit: input.limit });
             const last = page.items[page.items.length - 1];
@@ -102,7 +105,9 @@ export class EformsignManualBackupService {
                 const { executionScope } = await this.fixed(identity, run, false);
                 const snapshot: ExportSnapshotView = { snapshotId: manualBackupSnapshotId(executionScope), status: "ready", companyId,
                     scopeRevision: MANUAL_BACKUP_SCOPE_REVISION, policyRevision: EXPORT_POLICY_REVISION,
-                    createdAt: run.createdAt.toISOString(), readyAt: run.snapshotAt.toISOString(), expiresAt: null,
+                    // The source cut precedes persistence of the queued run. C3
+                    // requires snapshot creation <= readiness, even with a real DB clock.
+                    createdAt: run.snapshotAt.toISOString(), readyAt: run.createdAt.toISOString(), expiresAt: null,
                     counts: { ...run.sourceCounts }, coverage: { status: "unverified", reasonCode: "collection-receipt-unavailable" }, backupComplete: false };
                 return { executionScope, snapshot, leaseToken: run.leaseToken, leaseExpiresAt: run.leaseExpiresAt.toISOString(),
                     leaseDurationMs: MANUAL_BACKUP_LEASE_DURATION_MS };
@@ -294,7 +299,10 @@ export class EformsignManualBackupService {
     }
     private async staffRun(context: ManualBackupStaffContext, id: string): Promise<ManualBackupRunRecord> {
         const ctx = parseManualControl(manualStaffContextSchema, context);
-        const run = await this.repository.findForBranch(this.company(), ctx.branchId, parseManualControl(manualControlUuidSchema, id));
+        const runId = parseManualControl(manualControlUuidSchema, id);
+        const companyId = this.company();
+        await this.repository.expireStale(companyId);
+        const run = await this.repository.findForBranch(companyId, ctx.branchId, runId);
         if (!run) throw new ManualBackupControlError("NOT_FOUND");
         return run;
     }

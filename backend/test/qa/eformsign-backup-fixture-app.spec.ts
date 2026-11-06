@@ -1,11 +1,28 @@
-import { assertLoginFailureContract, authFailureCode, sourceFailureCode, capabilityMatches, refusalEmail, scrubEnvironment } from "./eformsign-backup-fixture-app";
-import { A, B, USERS, documentId, frozenDocuments, exerciseIntent } from "./eformsign-backup-fixture-data";
+import { createHash } from "node:crypto";
+import { buildMinimalPdf } from "../infrastructure/eformsign-backup/worker/helpers/pdf-fixture-minimal";
+import { openWorker } from "infrastructure/eformsign-backup/worker/cli";
+import { promises as fs } from "node:fs";
+import { FixtureConsumer, createConsumer } from "./eformsign-backup-fixture-worker";
+import { assertNativeLocalArtifacts, assertPublicManualRun, assertPublicManualDocument, assertLoginFailureContract, authFailureCode, sourceFailureCode, phaseFailureCode, capabilityMatches, refusalEmail, scrubEnvironment } from "./eformsign-backup-fixture-app";
+import { A, B, COMPANY, USERS, documentId, frozenDocuments, exerciseIntent } from "./eformsign-backup-fixture-data";
 
 // Loading the generated client discovers backend/.env, even without a connection.
 // Ordinary fixture helper imports must never initialize that loader.
+jest.mock("infrastructure/eformsign-backup/worker/cli", () => ({ openWorker: jest.fn() }));
 jest.mock("@prisma/client", () => { throw new Error("INERT_IMPORT_LOADED_PRISMA"); });
 
 describe("inert backup fixture helpers (no credentials or database)", () => {
+    it("rejects private run fields and object-shaped observations", () => {
+        const run = { id: "synthetic", status: "queued", scope: null, cut: "time", createdAt: "time", startedAt: null, finishedAt: null,
+            summary: { target: 0, saved: 0, attention: 0, metadataOnly: 0, local: { state: "unverified", saved: 0 }, drive: { state: "excluded", saved: 0 } },
+            coverage: "unverified", backupComplete: false, failureCode: null };
+        expect(() => assertPublicManualRun(run)).not.toThrow();
+        expect(() => assertPublicManualRun({ ...run, leaseToken: "canary" })).toThrow("PUBLIC_RUN_FIELDS_ORACLE");
+        const document = { documentId: "synthetic", ordinal: 1, kind: "contract", currentMilestone: null,
+            documentCreatedAt: "time", classification: null, local: "metadata_only", drive: "not_required" };
+        expect(() => assertPublicManualDocument(document)).not.toThrow();
+        expect(() => assertPublicManualDocument({ ...document, local: { state: "verified" } })).toThrow("PUBLIC_DOCUMENT_FIELDS_ORACLE");
+    });
     it("accepts canonical failed-login HTTP 201 independently of localized messages", () => {
         const rows = { sessions: ["session-b", "session-a"], refresh: ["refresh-a"] };
         for (const message of ["synthetic rejection", "다른 언어의 실패 메시지"]) {
@@ -112,5 +129,92 @@ describe("inert backup fixture helpers (no credentials or database)", () => {
             expect(process.env["DATABASE_URL"]).toBe(process.env["DIRECT_URL"]);
             expect(process.env["JWT_SECRET"]!.length).toBeGreaterThan(40);
         } finally { for (const key of Object.keys(process.env)) delete process.env[key]; Object.assign(process.env, previous); }
+    });
+});
+
+describe("native failure lifecycle", () => {
+    it("checks both actual C1 archive keys against the frozen mirror PDF bytes", async () => {
+        const document = documentId(9);
+        const pdf = buildMinimalPdf(`backup-qa ${document} document`);
+        const audit = buildMinimalPdf(`backup-qa ${document} audit_trail`);
+        const expected = new Map<string, Buffer<ArrayBuffer>>(([ ["document", pdf], ["audit-trail", audit] ] as const).map(([type, bytes]) => {
+            const buffer = Buffer.from(bytes);
+            const digest = createHash("sha256").update(buffer).digest("hex");
+            return [`/synthetic/session/archive/eformsign/${COMPANY}/${document}/artifacts/${type}/${digest}.pdf`, buffer] as const;
+        }));
+        const read = jest.spyOn(fs, "readFile").mockImplementation(async file => {
+            const bytes = expected.get(String(file));
+            if (!bytes) throw new Error("unexpected synthetic artifact key");
+            return bytes;
+        });
+        try {
+            await expect(assertNativeLocalArtifacts("/synthetic/session", "basic", [document])).resolves.toBeUndefined();
+            expect(read).toHaveBeenCalledTimes(2);
+            read.mockResolvedValue(Buffer.from("wrong bytes"));
+            await expect(assertNativeLocalArtifacts("/synthetic/session", "basic", [document])).rejects.toThrow("LOCAL_ARTIFACT_ORACLE");
+            read.mockRejectedValue(new Error("private path must be discarded"));
+            await expect(assertNativeLocalArtifacts("/synthetic/session", "basic", [document])).rejects.toThrow("LOCAL_ARTIFACT_ORACLE");
+        } finally { read.mockRestore(); }
+    });
+    it("connects the real C3 consumer to the mounted machine API prefix", async () => {
+        const mkdir = jest.spyOn(fs, "mkdir").mockResolvedValue(undefined);
+        const write = jest.spyOn(fs, "writeFile").mockResolvedValue(undefined);
+        const init = { runner: { init: async () => undefined }, close: jest.fn(async () => undefined) };
+        const worker = { processPending: jest.fn(), close: jest.fn(async () => undefined) };
+        jest.mocked(openWorker).mockReset();
+        jest.mocked(openWorker).mockResolvedValueOnce(init as unknown as Awaited<ReturnType<typeof openWorker>>);
+        jest.mocked(openWorker).mockResolvedValueOnce(worker as unknown as Awaited<ReturnType<typeof openWorker>>);
+        try {
+            const consumer = await createConsumer("/synthetic/session", "http://127.0.0.1:12345", "synthetic-token");
+            try {
+                for (const [config] of jest.mocked(openWorker).mock.calls) {
+                    expect(config.exportBaseUrl).toBe("http://127.0.0.1:12345/internal/eformsign-backup/v1");
+                }
+            } finally { await consumer.close(); }
+            expect(worker.close).toHaveBeenCalledTimes(1);
+        } finally { mkdir.mockRestore(); write.mockRestore(); }
+    });
+    it("classifies only exact phase codes and discards untrusted private text", () => {
+        expect(phaseFailureCode(new Error("PRODUCT_BRANCH_ORACLE"))).toBe("PRODUCT_BRANCH_ORACLE");
+        expect(phaseFailureCode(new Error("FOREIGN_RUN"))).toBe("FOREIGN_RUN");
+        for (const error of [new Error("secret-token /private/path"), new Error("PRODUCT_BRANCH_ORACLE secret"), "PRODUCT_BRANCH_ORACLE", { message: "PRODUCT_BRANCH_ORACLE" }]) {
+            expect(phaseFailureCode(error)).toBe("NATIVE_PHASE_FAILED");
+        }
+    });
+    async function rejectingConsumer(closeFailure = false) {
+        const original = new Error("synthetic consume failure");
+        const closeError = new Error("synthetic resource close failure");
+        const resourceClose = jest.fn(async () => { if (closeFailure) throw closeError; });
+        const initClose = jest.fn(async () => undefined);
+        jest.mocked(openWorker).mockReset();
+        jest.mocked(openWorker).mockResolvedValueOnce({ runner: { init: async () => undefined }, close: initClose } as unknown as Awaited<ReturnType<typeof openWorker>>);
+        jest.mocked(openWorker).mockResolvedValueOnce({ processPending: async () => { throw original; }, close: resourceClose } as unknown as Awaited<ReturnType<typeof openWorker>>);
+        const consumer = new FixtureConsumer({} as ConstructorParameters<typeof FixtureConsumer>[0], {});
+        await consumer.initialize();
+        expect(initClose).toHaveBeenCalledTimes(1);
+        await expect(consumer.consume()).rejects.toBe(original);
+        expect(consumer.healthy).toBe(false);
+        expect(() => consumer.assertHealthy()).toThrow(original);
+        return { consumer, original, closeError, resourceClose };
+    }
+    it("closes once after rejected work, preserves failed health and lets cleanup continue", async () => {
+        const { consumer, original, resourceClose } = await rejectingConsumer();
+        const cleanup = jest.fn();
+        await consumer.close(); cleanup();
+        await consumer.close();
+        expect(resourceClose).toHaveBeenCalledTimes(1);
+        expect(cleanup).toHaveBeenCalledTimes(1);
+        expect(consumer.healthy).toBe(false);
+        expect(() => consumer.assertHealthy()).toThrow(original);
+        await expect(consumer.consume()).rejects.toBe(original);
+    });
+    it("never suppresses resource-close failure or treats it as proven cleanup", async () => {
+        const { consumer, closeError, resourceClose } = await rejectingConsumer(true);
+        const cleanup = jest.fn();
+        await expect(consumer.close().then(cleanup)).rejects.toBe(closeError);
+        await expect(consumer.close()).rejects.toBe(closeError);
+        expect(resourceClose).toHaveBeenCalledTimes(1);
+        expect(cleanup).not.toHaveBeenCalled();
+        expect(consumer.healthy).toBe(false);
     });
 });

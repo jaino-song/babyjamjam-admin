@@ -23,6 +23,7 @@ export function nativeEnvironment(lockPath: string): WorkerEnvironment {
     };
     return {
         out: () => undefined, err: () => undefined,
+        clock: { now: () => new Date() },
         probe: {
             async statfs() { return { type: FS_TYPE_EXT4, bavail: 1_000_000, bsize: 4096, ffree: 1_000_000 }; },
             async readProcLocks() {
@@ -43,6 +44,9 @@ export class FixtureConsumer {
     private worker: OpenedWorker | null = null;
     private busy: Promise<void> = Promise.resolve();
     private stopped = false;
+    private failure: unknown;
+    private failed = false;
+    private closing: Promise<void> | undefined;
     private claimed = 0;
     private readonly started = performance.now();
     private timer: ReturnType<typeof setInterval> | undefined;
@@ -68,14 +72,27 @@ export class FixtureConsumer {
             this.claimed += summary.counts.claimed;
             demand(this.claimed <= 8, "CLAIM_LIMIT");
             await this.capture();
+        }).catch(error => {
+            this.failed = true; this.failure = error; this.stopped = true;
+            throw error;
         });
         return this.busy;
     }
-    async close(): Promise<void> {
+    close(): Promise<void> {
+        if (this.closing) return this.closing;
         this.stopped = true;
         if (this.timer) clearInterval(this.timer);
-        try { await this.busy; } finally { await this.worker?.close(); this.worker = null; }
+        this.closing = (async () => {
+            // consume retains the original rejection and failed health. Teardown
+            // suppresses only that duplicate; worker.close failures still reject.
+            await this.busy.catch(() => undefined);
+            await this.worker?.close();
+            this.worker = null;
+        })();
+        return this.closing;
     }
+    get healthy(): boolean { return !this.failed; }
+    assertHealthy(): void { if (this.failed) throw this.failure; }
     get claims(): number { return this.claimed; }
 }
 
@@ -89,7 +106,7 @@ export async function createConsumer(session: string, baseUrl: string, token: st
     await fs.writeFile(lock, "", { mode: 0o600, flag: "wx" });
     await fs.writeFile(tokenFile, token, { mode: 0o600, flag: "wx" });
     const config: WorkerConfig = {
-        schemaVersion: 1, enabled: true, companyId: COMPANY, exportBaseUrl: baseUrl, tokenFile,
+        schemaVersion: 1, enabled: true, companyId: COMPANY, exportBaseUrl: `${baseUrl}/internal/eformsign-backup/v1`, tokenFile,
         control: { path: control, reserveBytes: 64 * 1024 * 1024, reserveInodes: 1000 },
         archive: { path: archive, archiveId: "12000000-0000-4000-8000-000000000001", reserveBytes: 64 * 1024 * 1024, reserveInodes: 1000, requireMountPoint: false },
         requestTimeoutMs: 20_000,

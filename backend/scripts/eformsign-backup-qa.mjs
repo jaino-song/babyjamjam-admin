@@ -1,4 +1,4 @@
-import { constants, promises as fs } from "node:fs";
+import { constants, promises as fs, readFileSync, lstatSync } from "node:fs";
 import { randomBytes, randomUUID, createHash } from "node:crypto";
 import { spawn, spawnSync, fork } from "node:child_process";
 import { createRequire, Module } from "node:module";
@@ -11,14 +11,124 @@ const backend = path.resolve(path.dirname(entry), "..");
 const worktree = path.dirname(backend);
 const require = createRequire(path.join(backend, "package.json"));
 export const TARGET = Object.freeze({
-    connection: "/Users/jaino/Development/.task-evidence/eformsign-backup-execution-20261106/private-ui-postgres/connection.json",
+    connection: "/Users/jaino/Development/.task-evidence/eformsign-backup-execution-20261106/private-ui-postgres-synced/connection.json",
     password: "/Users/jaino/Development/.task-evidence/eformsign-backup-execution-20261106/private-test-postgres/password",
-    ownership: "/Users/jaino/Development/.task-evidence/eformsign-backup-execution-20261106/private-ui-postgres/ownership.json",
-    root: "/Users/jaino/Development/.task-evidence/eformsign-backup-execution-20261106/qa-fixture-runtime",
+    ownership: "/Users/jaino/Development/.task-evidence/eformsign-backup-execution-20261106/private-ui-postgres-synced/ownership.json",
+    root: "/Users/jaino/Development/.task-evidence/eformsign-backup-execution-20261106/qa-fixture-synced-runtime",
     qaEnv: "/Users/jaino/Development/babyjamjam-admin/eformsign-backup-ui-connection/frontend/.env.local",
-    database: "backup_exec_throwaway_ui_20261106", host: "127.0.0.1", port: 63241, user: "backup_test_owner",
+    database: "backup_exec_throwaway_ui_synced_20261107", host: "127.0.0.1", port: 63241, user: "backup_test_owner",
 });
 const OWNED = ["scripts/eformsign-backup-qa.mjs", "test/qa/eformsign-backup-fixture-app.ts", "test/qa/eformsign-backup-fixture-data.ts", "test/qa/eformsign-backup-fixture-worker.ts", "test/scripts/eformsign-backup-qa.spec.ts", "test/qa/eformsign-backup-fixture-app.spec.ts"];
+export const NATIVE_OWNED_PATHS = Object.freeze([
+    "backend/application/services/eformsign-manual-backup.service.ts",
+    "backend/interface/controllers/eformsign-manual-backup-worker.controller.ts",
+    "backend/interface/controllers/eformsign-manual-backup.controller.ts",
+    "backend/interface/filters/eformsign-manual-backup.filter.ts",
+    "backend/module/eformsign-backup-export.module.ts",
+    "backend/test/application/eformsign-manual-backup-staff-expiry.spec.ts",
+    "backend/test/integration/eformsign-manual-backup-http.spec.ts",
+    "backend/test/qa/eformsign-backup-fixture-app.spec.ts",
+    "backend/test/qa/eformsign-backup-fixture-app.ts",
+    "backend/test/qa/eformsign-backup-fixture-worker.ts",
+    "frontend/src/app/(protected)/contracts/page.tsx",
+    "frontend/src/app/api/eformsign-backups/runs/[runId]/documents/route.ts",
+    "frontend/src/app/api/eformsign-backups/runs/[runId]/route.ts",
+    "frontend/src/app/api/eformsign-backups/runs/__tests__/route.test.ts",
+    "frontend/src/app/api/eformsign-backups/runs/route.ts",
+    "frontend/src/components/app/contracts/ContractBackupManager.tsx",
+    "frontend/src/components/app/contracts/__tests__/ConnectedContractBackupManager.test.tsx",
+    "frontend/src/hooks/__tests__/useEformsignBackups.test.tsx",
+    "frontend/src/hooks/useEformsignBackups.ts",
+    "frontend/src/lib/__tests__/eformsign-backup-api.test.ts",
+    "frontend/src/lib/eformsign-backup-api.ts",
+    "frontend/src/lib/eformsign-backup-view.ts",
+    "frontend/src/services/eformsign-backups.ts",
+    "scripts/__tests__/eformsign-backup-ui-qa.test.mjs",
+    "scripts/eformsign-backup-ui-qa.mjs",
+    "backend/scripts/eformsign-backup-qa.mjs",
+    "backend/test/scripts/eformsign-backup-qa.spec.ts"
+]);
+export const TABLE_INVENTORY = Object.freeze([
+    "admin_audit_event",
+    "agent_action",
+    "agent_feedback",
+    "agent_message",
+    "agent_session",
+    "agent_task",
+    "agent_task_event",
+    "agent_trace",
+    "area",
+    "auth_email_outbox",
+    "auth_flow_state",
+    "auth_rate_limit",
+    "auth_refresh_token",
+    "auth_session",
+    "auth_token",
+    "bank_account_info",
+    "branch",
+    "branch_holiday_override",
+    "call_ingest_token",
+    "call_record",
+    "chat_feedback",
+    "chat_message",
+    "chat_session",
+    "client",
+    "client_draft",
+    "consultation_inquiry",
+    "doc_template",
+    "document",
+    "document_category",
+    "eformsign_backup_collection_page",
+    "eformsign_backup_collection_run",
+    "eformsign_backup_export_candidate",
+    "eformsign_backup_export_credential",
+    "eformsign_backup_export_snapshot",
+    "eformsign_backup_run",
+    "eformsign_backup_run_document",
+    "eformsign_dispatch_intent",
+    "eformsign_doc",
+    "eformsign_doc_file",
+    "eformsign_document_job",
+    "eformsign_webhook_event",
+    "employee",
+    "employee_schedule",
+    "end_date_review_item",
+    "holiday_calendar_revision",
+    "holiday_change_event",
+    "holiday_year_snapshot",
+    "legacy_chat_confirmation_intent",
+    "message",
+    "message_log",
+    "message_template",
+    "message_trigger_job",
+    "message_trigger_rule",
+    "message_trigger_rule_branch_override",
+    "message_trigger_rule_group",
+    "notification",
+    "out_of_pocket_price_info",
+    "public_holiday",
+    "push_subscription",
+    "receipt_link_token",
+    "schedule_change_request",
+    "scheduler_lease",
+    "service_record",
+    "service_record_assignment",
+    "service_record_case",
+    "service_record_day",
+    "service_record_day_edit_log",
+    "service_record_edit_draft",
+    "service_record_revision",
+    "service_record_revision_document_state",
+    "service_record_snapshot_chunk",
+    "service_record_token",
+    "system_setting",
+    "system_template",
+    "system_template_version",
+    "user",
+    "user_branch",
+    "voucher_price_info",
+    "voucher_price_info_2025"
+]);
 const schemaSource = "prisma/schema.prisma";
 const migrationSource = "prisma/migrations/20261106020000_add_manual_eformsign_backup_runs/migration.sql";
 const verificationSource = "prisma/scripts/verify-manual-eformsign-backup-runs.sql";
@@ -30,6 +140,56 @@ export const POLICY_ARTIFACTS = Object.freeze({
     "domain/constants/eformsign-doc-status.constants.ts": "08cbef806877dcb250dd0adcac5202810952682d616d1c66e46194e9a9c134bf",
     "domain/utils/eformsign-status-code.ts": "bb72a75905e9decf1e3e4ef965a9e410d13eac3ff518ebb0d1c797eb1af7b8aa",
 });
+export const NATIVE_PHASE_STAGES = Object.freeze(["routeprobe", "consumer-init", "manual-negative", "manual-stale", "basic", "pagination", "kst", "cleanup"]);
+export const NATIVE_PHASE_STEPS = Object.freeze(["routeprobe", "consumer-init", "manual-negative", "manual-stale", "post", "idempotency", "selectB", "crossbranchread", "restoreA", "capture", "consume", "readresults", "artifactcheck", "cleanup"]);
+export const NATIVE_PHASE_FAILURES = Object.freeze([
+    "CLAIM_LIMIT",
+    "EXERCISE_TIMEOUT",
+    "FOREIGN_BRANCH",
+    "FOREIGN_CANDIDATE",
+    "FOREIGN_COUNTER",
+    "FOREIGN_CREDENTIAL",
+    "FOREIGN_DOCUMENT",
+    "FOREIGN_FILE",
+    "FOREIGN_MEMBERSHIP",
+    "FOREIGN_REFRESH",
+    "FOREIGN_RESULT",
+    "FOREIGN_ROWS",
+    "FOREIGN_RUN",
+    "FOREIGN_SESSION",
+    "FOREIGN_SNAPSHOT",
+    "FOREIGN_USER",
+    "LOCAL_ARTIFACT_ORACLE",
+    "MANUAL_ERROR_ORACLE",
+    "MANUAL_RENEWED_ORACLE",
+    "MANUAL_STALE_ORACLE",
+    "METADATA_ONLY_LOCAL_ORACLE",
+    "NATIVE_PAGINATION_REQUIRED",
+    "PRODUCT_BRANCH_ORACLE",
+    "PRODUCT_COVERAGE_ORACLE",
+    "PRODUCT_DOCUMENTS_FAILED",
+    "PRODUCT_DRIVE_ORACLE",
+    "PRODUCT_GET_FAILED",
+    "PRODUCT_IDEMPOTENCY_ORACLE",
+    "PRODUCT_OBSERVATION_ORACLE",
+    "PRODUCT_PAGINATION_ORACLE",
+    "PRODUCT_PHASE_UNKNOWN",
+    "PRODUCT_POST_FAILED",
+    "PRODUCT_ROUTES_UNAVAILABLE",
+    "PRODUCT_SELECTION_ORACLE",
+    "PRODUCT_SUMMARY_ORACLE",
+    "PROFILE_NOT_SEEDED",
+    "PUBLIC_DOCUMENT_FIELDS_ORACLE",
+    "PUBLIC_RUN_FIELDS_ORACLE",
+    "SESSION_LIMIT"
+]);
+export function safeNativePhase(message) {
+    return {
+        phaseStage: NATIVE_PHASE_STAGES.includes(message?.phaseStage) ? message.phaseStage : "routeprobe",
+        phaseStep: NATIVE_PHASE_STEPS.includes(message?.phaseStep) ? message.phaseStep : "routeprobe",
+        phaseFailure: NATIVE_PHASE_FAILURES.includes(message?.phaseFailure) ? message.phaseFailure : "NATIVE_PHASE_FAILED",
+    };
+}
 const markerFile = path.join(TARGET.root, "owner.json");
 const lockFile = path.join(TARGET.root, "operation.json");
 const processFile = path.join(TARGET.root, "process.json");
@@ -309,10 +469,10 @@ async function readonlyBaseline(connection, sources) {
     demand(await read("SELECT count(*)=0 FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname NOT IN ('pg_catalog','information_schema') AND n.nspname NOT LIKE 'pg_toast%' AND pg_get_userbyid(c.relowner) <> current_user") === "t", "FOREIGN_OBJECT_OWNER");
     demand(await read("SELECT count(*)=0 FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname NOT IN ('pg_catalog','information_schema') AND pg_get_userbyid(p.proowner) <> current_user") === "t", "FOREIGN_ROUTINE_OWNER");
     const tableNames = (await read("SELECT tablename FROM pg_tables WHERE schemaname='public' ORDER BY tablename")).split("\n");
-    demand(tableNames.length === 78 && tableNames.every(n => /^[a-z_][a-z0-9_]*$/.test(n)), "TABLE_INVENTORY_CHANGED");
+    demand(JSON.stringify(tableNames) === JSON.stringify(TABLE_INVENTORY), "TABLE_INVENTORY_CHANGED");
     const counts = await read(tableNames.map(n => `SELECT count(*)=0 FROM public."${n}"`).join(" UNION ALL "));
-    demand(counts.split("\n").length === 78 && counts.split("\n").every(value => value === "t"), "BASELINE_NOT_EMPTY");
-    report({ code: "CLEAN_BASELINE_VERIFIED", tables: 78, allTablesEmpty: true, schemaAndCopiesMatch: true, ownersMatch: true, otherDatabaseSessions: 0, activeRecordsAbsent: true });
+    demand(counts.split("\n").length === 79 && counts.split("\n").every(value => value === "t"), "BASELINE_NOT_EMPTY");
+    report({ code: "CLEAN_BASELINE_VERIFIED", tables: 79, allTablesEmpty: true, schemaAndCopiesMatch: true, ownersMatch: true, otherDatabaseSessions: 0, activeRecordsAbsent: true });
 }
 async function ensurePrivateClient() {
     const directory = path.join(TARGET.root, "client-runtime");
@@ -390,17 +550,36 @@ function git(args) {
     const result = spawnSync("/usr/bin/git", args, { cwd: worktree, env: cleanEnv(), encoding: "utf8", timeout: 5000, maxBuffer: 4 * 1024 * 1024 });
     demand(result.status === 0, "GIT_IDENTITY_FAILED"); return result.stdout.trimEnd();
 }
+export function validateNativeChanges(records, paths = NATIVE_OWNED_PATHS) {
+    demand(records.every(record => typeof record.path === "string" && paths.includes(record.path)
+        && [" M", "M ", "MM", "A ", "AM", "??"].includes(record.status)), "FOREIGN_WIP_REFUSED");
+}
+function nativeSourceDigest(records) {
+    validateNativeChanges(records);
+    const digest = createHash("sha256");
+    for (const record of [...records].sort((a, b) => a.path.localeCompare(b.path))) {
+        const file = path.join(worktree, record.path);
+        const stat = lstatSync(file);
+        demand(stat.isFile() && !stat.isSymbolicLink(), "FOREIGN_WIP_REFUSED");
+        digest.update(record.path + "\0" + record.status + "\0");
+        digest.update(readFileSync(file)); digest.update("\0");
+    }
+    return digest.digest("hex");
+}
 export function candidateIdentity(options) {
     const head = git(["rev-parse", "HEAD"]);
-    const dirty = git(["status", "--porcelain", "--untracked-files=all"]) !== "";
+    const status = git(["status", "--porcelain=v1", "-z", "--untracked-files=all"]);
+    const dirty = status !== "";
     if (options.candidate !== undefined) demand(options.candidate === head, "CANDIDATE_MISMATCH");
     const nativeOnly = ["self-test", "client-probe"].includes(options.mode);
+    let sourceDigest;
     if (nativeOnly) {
-        const changes = git(["status", "--porcelain", "--untracked-files=all"]).split("\n").filter(Boolean).map(line => line.slice(3));
-        demand(changes.every(file => OWNED.some(owned => file === `backend/${owned}`)), "FOREIGN_WIP_REFUSED");
+        const records = status.split("\0").filter(Boolean).map(line => ({ status: line.slice(0, 2), path: line.slice(3) }));
+        if (options.mode === "self-test") sourceDigest = nativeSourceDigest(records);
+        else validateNativeChanges(records, OWNED.map(file => `backend/${file}`));
     }
     if (["start", "readiness", "exercise"].includes(options.mode) || (options.candidate !== undefined && !nativeOnly)) demand(!dirty && options.candidate === head, "CLEAN_CANDIDATE_REQUIRED");
-    return { head, dirty, nativeOnly, worktree };
+    return { head, dirty, nativeOnly, worktree, ...(sourceDigest ? { nativeSourceDigest: sourceDigest } : {}) };
 }
 async function sourceIdentity() {
     const schema = await fs.readFile(path.join(backend, schemaSource));
@@ -459,7 +638,7 @@ async function emptyDatabase(db, schemaAbsent = false) {
         return;
     }
     const tables = await db.$queryRawUnsafe("SELECT tablename FROM pg_tables WHERE schemaname='public'");
-    demand(tables.length === 78, "TABLE_INVENTORY_CHANGED");
+    demand(JSON.stringify(tables.map(t => t.tablename).sort()) === JSON.stringify(TABLE_INVENTORY), "TABLE_INVENTORY_CHANGED");
     for (const { tablename } of tables) {
         const rows = await db.$queryRawUnsafe(`SELECT count(*) AS n FROM public."${tablename.replaceAll('"', '""')}"`);
         demand(rows[0].n === 0n, "BASELINE_NOT_EMPTY");
@@ -524,6 +703,7 @@ async function prepare(connection, identity, sources) {
         await runQuiet(process.execPath, [prisma, "db", "execute", "--file", path.join(TARGET.root, "migration.sql"), "--schema", path.join(TARGET.root, "schema.prisma")], TARGET.root, env);
         await runQuiet(process.execPath, [prisma, "db", "execute", "--file", path.join(backend, verificationSource), "--schema", path.join(TARGET.root, "schema.prisma")], TARGET.root, env);
         await objectOwners(connection.db);
+        await emptyDatabase(connection.db);
         const ddl = await fingerprint(connection, TARGET.root);
         await write(path.join(TARGET.root, "schema.sql"), ddl, true);
         marker.fingerprint = hash(ddl); marker.phase = "prepared"; await write(markerFile, marker);
@@ -636,7 +816,7 @@ async function runSession(options, connection, identity, sources, marker) {
         cwd: session, env: cleanEnv({ NODE_PATH: backend, TS_NODE_PROJECT: path.join(backend, "tsconfig.json") }),
         execArgv: ["-r", require.resolve("ts-node/register")], stdio: ["ignore", "pipe", "pipe", "ipc"],
     });
-    let discardedBytes = 0; let cleanClosed = false; let ready;
+    let discardedBytes = 0; let cleanClosed = false; let ready; let phaseFailure;
     child.stdout.on("data", b => { discardedBytes += b.length; }); child.stderr.on("data", b => { discardedBytes += b.length; });
     const exited = new Promise(resolve => child.once("exit", (code, signal) => resolve({ code, signal })));
     // Child exit can race an IPC send even while connected is still true. Always handle its callback/error event.
@@ -656,8 +836,16 @@ async function runSession(options, connection, identity, sources, marker) {
             normalCredentialRejection: message.normalCredentialRejection === true,
             identityCounterOne: message.identityCounterOne === true,
         });
-        if (message?.stage === "closed") cleanClosed = true;
-        if (message?.stage === "failed-clean") cleanClosed = true;
+        if (message?.failureStage === "phase" && ["failed", "failed-clean"].includes(message.stage)) {
+            phaseFailure = safeNativePhase(message);
+            report({ code: "NATIVE_PHASE_FAILURE", ...phaseFailure, cleanupComplete: message.cleanupComplete === true, retained: message.cleanupComplete !== true,
+                workerOperation: ["claim", "renew", "candidates", "validate", "artifact", "document-results", "finish"].includes(message.workerHttp?.operation) ? message.workerHttp.operation : "none",
+                workerStatus: Number.isInteger(message.workerHttp?.status) && message.workerHttp.status >= 100 && message.workerHttp.status <= 599 ? message.workerHttp.status : null,
+                workerResponseInvalid: message.workerResponseInvalid === true, workerExportUnavailable: message.workerExportUnavailable === true,
+                workerControlUnavailable: message.workerControlUnavailable === true, workerLedgerInconsistent: message.workerLedgerInconsistent === true,
+                workerLockNotHeld: message.workerLockNotHeld === true });
+        }
+        if (message?.stage === "closed" || (message?.stage === "failed-clean" && message.cleanupComplete === true)) cleanClosed = true;
         if (message?.stage === "stopping") stop();
     });
     const startingRecord = { pid: process.pid, childPid: child.pid, uid: process.getuid(), entry, root: TARGET.root, worktree, ownerNonce: marker.ownerNonce, nonce, port: null, phase: "starting", candidate: identity, sources };
@@ -675,10 +863,11 @@ async function runSession(options, connection, identity, sources, marker) {
                         const authCodes = ["LOGIN_FAILURE_CONTRACT_ORACLE", "REAL_LOGIN_FAILED", "REAL_RATE_LIMIT_ORACLE", "OWNER_BRANCH_SELECTION_MISSING", "REAL_BRANCH_SELECTION_FAILED", "REAL_ME_FAILED", "NO_JWT_ORACLE", "UNSELECTED_JWT_ORACLE", "OWNER_ORACLE", "VIEWER_ORACLE", "SPOOF_ORACLE", "SELECT_B_ORACLE"];
                         const sourceCodes = ["MACHINE_GUARD_ORACLE", "MACHINE_COMPANY_ORACLE", "MACHINE_SNAPSHOT_ORACLE", "MACHINE_COUNTS_ORACLE", "MACHINE_PAGE_ORACLE", "FROZEN_EXPORT_ORACLE", "FROZEN_STAGE_ORACLE", "SOURCE_COUNTS_ORACLE", "FROZEN_DATE_ORACLE", "METADATA_ARTIFACT_ORACLE"];
                         reject(new Error(stage === "AUTH" && authCodes.includes(message.authFailure) ? message.authFailure
-                            : stage === "SOURCE" && sourceCodes.includes(message.sourceFailure) ? message.sourceFailure : `APP_${stage}_FAILED`));
+                            : stage === "SOURCE" && sourceCodes.includes(message.sourceFailure) ? message.sourceFailure
+                                : stage === "PHASE" ? safeNativePhase(message).phaseFailure : `APP_${stage}_FAILED`));
                     }
                 });
-                child.once("exit", () => { clearTimeout(timer); reject(new Error("APP_START_FAILED")); });
+                child.once("exit", () => { clearTimeout(timer); reject(new Error(phaseFailure?.phaseFailure ?? "APP_START_FAILED")); });
             }),
         ]);
         demand(Number.isInteger(ready.port) && ready.port > 0 && ready.port < 65536, "CHILD_PROTOCOL_FAILED");
@@ -697,13 +886,16 @@ async function runSession(options, connection, identity, sources, marker) {
         marker.phase = "prepared";
         marker.history.push({ candidate: identity, helpers: sources.helpers, reason: "clean-teardown", nativeOnly: options.mode === "self-test" });
         await write(markerFile, marker);
-        report({ code: options.mode === "self-test" ? "NATIVE_SELF_TEST_PASSED" : "CLOSED", exit: result.code, discardedBytes, counts: ready.counts, productRoutes: ready.productRoutes === true, phaseCode: ready.productRoutes ? "PRODUCT_ROUTES_PRESENT" : "PRODUCT_ROUTES_UNAVAILABLE", backendOnly: true, nativeOnly: true, formalReadiness: false, killedWorkerRecovery: "unproven" });
+        await objectOwners(connection.db);
+        demand(hash(await fingerprint(connection, TARGET.root)) === marker.fingerprint, "FULL_SCHEMA_CHANGED");
+        if (options.mode === "self-test") demand(JSON.stringify(candidateIdentity(options)) === JSON.stringify(identity), "NATIVE_SOURCE_CHANGED");
+        report({ code: options.mode === "self-test" ? "NATIVE_SELF_TEST_PASSED" : "CLOSED", exit: result.code, discardedBytes, counts: ready.counts, productRoutes: ready.productRoutes === true, phaseCode: ready.productRoutes ? "PRODUCT_ROUTES_PRESENT" : "PRODUCT_ROUTES_UNAVAILABLE", backendOnly: true, nativeOnly: true, formalReadiness: false, nativeSourceDigest: identity.nativeSourceDigest, killedWorkerRecovery: "unproven" });
     } catch (error) {
         stop();
         const timer = setTimeout(() => child.kill("SIGTERM"), 5000);
         const hard = setTimeout(() => child.kill("SIGKILL"), 15_000);
         await exited; clearTimeout(timer); clearTimeout(hard);
-        if (cleanClosed) {
+        try { if (cleanClosed) {
             await emptyDatabase(connection.db);
             if (ready?.port) demand(!(await listening(ready.port)), "LISTENER_REMAINS");
             await removeSession(session);
@@ -713,6 +905,9 @@ async function runSession(options, connection, identity, sources, marker) {
             marker.phase = "prepared";
             marker.history.push({ candidate: identity, reason: "failed-but-clean-teardown" });
             await write(markerFile, marker);
+        }
+        } catch {
+            report({ code: "NATIVE_CLEANUP_FAILED", ...(phaseFailure ?? {}), cleanupComplete: false, retained: true });
         }
         // Leave phase/session/row evidence in place; never attempt a reset after interruption.
         throw error;
@@ -750,7 +945,12 @@ export async function main(args) {
         await write(markerFile, marker);
         if (options.mode === "prepare") report({ code: "PREPARED", schemaVerified: true, candidate: identity.head });
         else await runSession(options, connection, identity, sources, marker);
-    } finally { await connection?.db.$disconnect(); if (release) await release(); }
+    } finally {
+        try { await connection?.db.$disconnect(); } finally {
+            if (release) await release();
+            if (options.mode === "self-test") demand(JSON.stringify(candidateIdentity(options)) === JSON.stringify(identity), "NATIVE_SOURCE_CHANGED");
+        }
+    }
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === entry) {

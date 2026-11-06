@@ -61,7 +61,7 @@ describe("backup QA strict CLI (hermetic)", () => {
         expect(probe(`const args=${argsSource}; let n=0; const variants=[['bogus',...args.slice(1)],[...args,'--profile','basic','--profile','kst'],[...args,'--extra','x'],[...args,'--port','3001'],[...args,'--candidate','abc'],[...args,'--port'],[...args,'--root','relative']]; for(const a of variants){try{qa.parseArgs(a)}catch{n++}} console.log(n);`)).toBe("7");
     });
     it("rejects relative, traversal, other-worktree and repeated credential paths", () => {
-        expect(probe(`const args=${argsSource}; let n=0; for(const value of ['relative','/tmp/connection.json',qa.TARGET.connection.replace('/private-ui-postgres/','/private-ui-postgres/../private-ui-postgres/'),qa.TARGET.connection+'\u0000']){const a=[...args];a[2]=value;try{qa.parseArgs(a)}catch{n++}} console.log(n);`)).toBe("4");
+        expect(probe(`const args=${argsSource}; let n=0; for(const value of ['relative','/tmp/connection.json',qa.TARGET.connection.replace('/private-ui-postgres-synced/','/private-ui-postgres-synced/../private-ui-postgres-synced/'),qa.TARGET.connection+'\u0000']){const a=[...args];a[2]=value;try{qa.parseArgs(a)}catch{n++}} console.log(n);`)).toBe("4");
     });
     it("checks the entire descriptor before any password read", () => {
         expect(probe(`const d={host:qa.TARGET.host,port:qa.TARGET.port,user:qa.TARGET.user,database:qa.TARGET.database,passwordFile:qa.TARGET.password};const o={host:d.host,port:d.port,database:d.database,createdByThisTask:true};qa.validateDescriptor(d,o);let n=0;for(const change of [{host:'remote'},{port:63237},{database:'backup_exec_throwaway_other'},{user:'postgres'},{passwordFile:'/tmp/p'},{extra:true}]){try{qa.validateDescriptor({...d,...change},o)}catch{n++}}try{qa.validateDescriptor(d,{...o,createdByThisTask:false})}catch{n++}console.log(n);`)).toBe("7");
@@ -83,5 +83,17 @@ describe("backup QA strict CLI (hermetic)", () => {
     });
     it("survives a real child disconnect racing its stop message (EPIPE regression)", () => {
         expect(probe("const {spawn}=await import('node:child_process');for(let n=0;n<5;n++){const child=spawn(process.execPath,['-e',\"process.send('failed');process.disconnect()\"],{env:{PATH:'/usr/bin:/bin'},stdio:['ignore','ignore','ignore','ipc']});child.on('message',()=>qa.safeChildSend(child,'stop'));await new Promise(resolve=>child.once('exit',resolve));qa.safeChildSend(child,'stop');}console.log('closed-without-raw-error');" )).toBe("closed-without-raw-error");
+    });
+});
+
+describe("V5 native-only scope and safe diagnostics", () => {
+    it("pins the new target and exact 79 table names", () => {
+        expect(probe("console.log(qa.TARGET.database,qa.TARGET.connection.endsWith('/private-ui-postgres-synced/connection.json'),qa.TARGET.root.endsWith('/qa-fixture-synced-runtime'),qa.TABLE_INVENTORY.length,new Set(qa.TABLE_INVENTORY).size,qa.TABLE_INVENTORY.includes('admin_audit_event'));" )).toBe("backup_exec_throwaway_ui_synced_20261107 true true 79 79 true");
+    });
+    it("accepts exactly the 27 owned paths and rejects foreign changes, renames and deletions", () => {
+        expect(probe("for(const path of qa.NATIVE_OWNED_PATHS)qa.validateNativeChanges([{path,status:' M'}]);let n=0;for(const path of ['backend/test/qa/eformsign-backup-fixture-data.ts','backend/prisma/schema.prisma','backend/.env','package.json','pnpm-lock.yaml','backend/infrastructure/auth/jwt.guard.ts','unknown']){try{qa.validateNativeChanges([{path,status:' M'}])}catch{n++}}for(const status of ['R ',' R','C ',' D','D ','UU']){try{qa.validateNativeChanges([{path:qa.NATIVE_OWNED_PATHS[0],status}])}catch{n++}}console.log(Object.isFrozen(qa.NATIVE_OWNED_PATHS),qa.NATIVE_OWNED_PATHS.length,new Set(qa.NATIVE_OWNED_PATHS).size,n);" )).toBe("true 27 27 13");
+    });
+    it("validates each phase field independently and never reflects an unknown error", () => {
+        expect(probe("console.log(JSON.stringify(qa.safeNativePhase({phaseStage:'basic',phaseStep:'consume',phaseFailure:'PRODUCT_BRANCH_ORACLE'})));console.log(JSON.stringify(qa.safeNativePhase({phaseStage:'secret-path',phaseStep:'secret-token',phaseFailure:'PRODUCT_BRANCH_ORACLE secret'})));" )).toBe('{"phaseStage":"basic","phaseStep":"consume","phaseFailure":"PRODUCT_BRANCH_ORACLE"}\n{"phaseStage":"routeprobe","phaseStep":"routeprobe","phaseFailure":"NATIVE_PHASE_FAILED"}');
     });
 });
