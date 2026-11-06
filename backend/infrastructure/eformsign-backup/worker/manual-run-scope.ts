@@ -87,6 +87,7 @@ export class ManualRunScope {
     readonly localManifests = new Set<string>();
     readonly driveManifests = new Set<string>();
     private readonly observations = { local: new Map<string, ArtifactObservation>(), drive: new Map<string, ArtifactObservation>() };
+    private readonly proofFailures = { local: new Map<string, ArtifactObservation>(), drive: new Map<string, ArtifactObservation>() };
     private readonly attempted = { local: new Set<string>(), drive: new Set<string>() };
 
     constructor(readonly options: ManualRunOptions) {
@@ -106,9 +107,17 @@ export class ManualRunScope {
     }
 
     begin(side: Side, documentId: string): void { this.attempted[side].add(documentId); }
+    /** A later failed check supersedes proof, even when the historical ledger entry must stay verified. */
+    rejectProof(side: Side, identity: string, state: "retry_wait" | "blocked" | "integrity_error", reasonCode: WorkerReasonCode): void {
+        (side === "local" ? this.localProof : this.driveProof).delete(identity);
+        const observation = { artifactIdentity: identity, state, reasonCode };
+        this.proofFailures[side].set(identity, observation);
+        this.observations[side].set(identity, observation);
+    }
     observe(side: Side, identity: string, entry: DestinationEntry | undefined): void {
         const proof = side === "local" ? this.localProof : this.driveProof;
-        this.observations[side].set(identity, { artifactIdentity: identity,
+        const failure = !proof.has(identity) && entry?.state === "verified" ? this.proofFailures[side].get(identity) : undefined;
+        this.observations[side].set(identity, failure ?? { artifactIdentity: identity,
             state: proof.has(identity) ? "verified" : entry?.state === "verified" ? null : entry?.state ?? null,
             reasonCode: proof.has(identity) ? null : entry?.reasonCode ?? null });
     }

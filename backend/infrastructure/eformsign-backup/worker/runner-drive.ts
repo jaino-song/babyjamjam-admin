@@ -625,6 +625,7 @@ export class DriveRunPhase {
     /** `transferring -> verifying -> integrity_error` (the table allows it only from verifying); the next try takes a fresh id. */
     private async recordIntegrityError(job: { artifactIdentity: string; relativeKey: string | null }): Promise<void> {
         const id = job.artifactIdentity;
+        this.host.manual?.rejectProof("drive", id, "integrity_error", "artifact-integrity");
         if (this.dl.entryOf(id)?.state === "transferring") await this.dl.transition(id, "verifying", { relativeKey: job.relativeKey });
         await this.dl.transition(id, "integrity_error", { reasonCode: "artifact-integrity", relativeKey: job.relativeKey });
     }
@@ -634,14 +635,17 @@ export class DriveRunPhase {
         const id = job.artifactIdentity;
         const attempts = (this.dl.entryOf(id)?.attempts ?? 0) + 1;
         const classified = this.classify(failure, attempts);
+        const historicalVerified = this.host.manual !== undefined && this.dl.entryOf(id)?.state === "verified";
+        this.host.manual?.rejectProof("drive", id, classified.retry ? "retry_wait" : "blocked", classified.reasonCode);
+        // An unavailable check does not establish corruption of the previously verified shared copy.
         if (classified.retry) {
-            await this.dl.transition(id, "retry_wait", { reasonCode: classified.reasonCode, nextRetryAt: classified.nextRetryAt, attempts, relativeKey: job.relativeKey });
+            if (!historicalVerified) await this.dl.transition(id, "retry_wait", { reasonCode: classified.reasonCode, nextRetryAt: classified.nextRetryAt, attempts, relativeKey: job.relativeKey });
             if (TRANSIENT_REASONS.has(classified.reasonCode)) {
                 this.streak += 1;
                 if (this.streak >= TRANSIENT_STOP) this.halt(classified.reasonCode, false);
             }
         } else {
-            await this.dl.transition(id, "blocked", { reasonCode: classified.reasonCode, relativeKey: job.relativeKey });
+            if (!historicalVerified) await this.dl.transition(id, "blocked", { reasonCode: classified.reasonCode, relativeKey: job.relativeKey });
             if (HALTING_REASONS.has(classified.reasonCode)) this.halt(classified.reasonCode, true);
         }
     }
@@ -671,7 +675,7 @@ export class DriveRunPhase {
         if (!got.ok) {
             if (!("failure" in got)) return { unavailable: "drive-conflict" };
             if (this.classifyAbsent(got.failure)) {
-                await this.dl.transition(job.artifactIdentity, "integrity_error", { reasonCode: "artifact-integrity", relativeKey: job.relativeKey });
+                await this.recordIntegrityError(job);
                 return false;
             }
             return { unavailable: this.classify(got.failure, 1).reasonCode };
@@ -679,7 +683,7 @@ export class DriveRunPhase {
         const staged = await this.host.restage(job, guardTransfer(got.value));
         if (staged.ok) return true;
         if (staged.reasonCode === "artifact-integrity" || staged.reasonCode === "pdf-shape") {
-            await this.dl.transition(job.artifactIdentity, "integrity_error", { reasonCode: "artifact-integrity", relativeKey: job.relativeKey });
+            await this.recordIntegrityError(job);
             return false;
         }
         return { unavailable: staged.reasonCode };
