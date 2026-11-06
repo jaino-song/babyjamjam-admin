@@ -305,7 +305,14 @@ test.describe("list skeleton parity", () => {
     const approvalReady = new Promise<void>((resolve) => (releaseApproval = resolve));
     const policiesReady = new Promise<void>((resolve) => (releasePolicies = resolve));
 
-    await mockAuthUser(page);
+    const branchId = "branch-1";
+    await page.route("**/api/auth/me", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ id: "owner-1", name: "관리자", role: "owner", branchId }),
+      });
+    });
     await page.route("**/api/settings/message-sender-approval**", async (route) => {
       await approvalReady;
       await route.fulfill({
@@ -320,7 +327,7 @@ test.describe("list skeleton parity", () => {
         }),
       });
     });
-    await page.route("**/api/settings/message-automation-policies**", async (route) => {
+    await page.route((url) => url.pathname === "/api/settings/message-automation-policies", async (route) => {
       await policiesReady;
       await route.fulfill({
         status: 200,
@@ -348,16 +355,52 @@ test.describe("list skeleton parity", () => {
       });
     });
 
+    // Keep the canonical read distinct from the legacy policy list. A wildcard
+    // over both endpoints gives /config the wrong envelope and crashes the list.
+    await page.route((url) => url.pathname === "/api/settings/message-automation-policies/config", async (route) => {
+      expect(route.request().method()).toBe("GET");
+      expect(new URL(route.request().url()).searchParams.get("expectedBranchId")).toBe(branchId);
+      await policiesReady;
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          version: "skeleton-settings-v1",
+          permissions: { canRead: true, canWrite: true },
+          warnings: [],
+          configuration: {
+            schemaVersion: 1,
+            dispatchCheckIntervalMinutes: 7,
+            defaultRuleSendTime: "10:10",
+            triggerRetryIntervalMinutes: 7,
+            processingReclaimMinutes: 10,
+            smsRetryIntervalMinutes: 7,
+            pastExpiryHours: 96,
+            pastSendIntervalMinutes: 7,
+            pastRuleOrder: [],
+            duplicateWindowHours: 96,
+            quietHours: { enabled: true, start: "21:00", end: "08:00", recipientGroups: ["CLIENT", "CAREGIVER", "STAFF"], action: "DEFER", timezone: "Asia/Seoul" },
+          },
+        }),
+      });
+    });
+    const canonicalRequest = page.waitForRequest((request) => new URL(request.url()).pathname === "/api/settings/message-automation-policies/config");
+
     await page.goto("/messages/settings", { waitUntil: "domcontentloaded", timeout: 120_000 });
 
+    await canonicalRequest;
     const container = '[data-component$="_settings-list_items"]';
     await expect(page.locator('[data-source-component="SettingsRowsSkeleton"]').first()).toBeVisible({ timeout: 60_000 });
     const loading = await rowRects(page, `${container} > div`);
 
+    const canonicalResponse = page.waitForResponse((response) => new URL(response.url()).pathname === "/api/settings/message-automation-policies/config" && response.status() === 200);
     releaseApproval();
     releasePolicies();
+    await canonicalResponse;
     await expect(page.locator('[data-source-component="SettingsRowsSkeleton"]')).toHaveCount(0);
     await expect(page.locator(`${container} > div > button`).first()).toBeVisible();
+    await expect(page.getByRole("switch", { name: "심야 시간 메세지 전송 금지 활성화" })).toBeChecked();
+    await expect(page.locator(`${container} > [data-source-component="SettingsListItem"]`)).toHaveCount(5);
     const loaded = await rowRects(page, `${container} > div`);
 
     expectSameFootprint(loading, loaded);
