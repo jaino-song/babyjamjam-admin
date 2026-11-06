@@ -268,11 +268,12 @@ export function MessageTenantApplicationSettings() {
   const branchRef = useRef(branchId);
   const configKey = ["settings", "message-automation-config", branchId] as const;
   const configQuery = useQuery({ queryKey: configKey, queryFn: () => messagePolicyApi.getConfiguration(branchId!), enabled: !!branchId });
-  const [draft, setDraft] = useState<{ branchId: string; configuration: MessageAutomationPolicyConfiguration } | null>(null);
+  const [draft, setDraft] = useState<{ branchId: string; expectedVersion: string | null; lineage: object; configuration: MessageAutomationPolicyConfiguration } | null>(null);
   const [configErrorResult, setConfigError] = useState<{ branchId: string; message: string } | null>(null);
   const [impactResult, setImpact] = useState<{ branchId: string; configuration: MessageAutomationPolicyConfiguration; value: MessageAutomationPolicyPreviewResponse } | null>(null);
   const persisted = configQuery.data;
-  const configuration = draft?.branchId === branchId ? draft.configuration : persisted?.configuration;
+  const activeDraft = draft?.branchId === branchId ? draft : null;
+  const configuration = activeDraft?.configuration ?? persisted?.configuration;
   const configError = configErrorResult?.branchId === branchId ? configErrorResult.message : null;
   const impact = impactResult?.branchId === branchId && JSON.stringify(impactResult.configuration) === JSON.stringify(configuration)
     ? impactResult.value
@@ -286,8 +287,16 @@ export function MessageTenantApplicationSettings() {
   const errors = configuration ? configurationErrors(configuration) : [];
   const editable = !!branchId && !!persisted?.permissions.canWrite && !configQuery.isError;
   const editConfiguration = (update: (current: MessageAutomationPolicyConfiguration) => MessageAutomationPolicyConfiguration) => {
-    if (!editable || !configuration || !branchId) return;
-    setDraft({ branchId, configuration: update(configuration) });
+    if (!editable || !configuration || !persisted || !branchId) return;
+    setDraft((current) => {
+      const origin = current?.branchId === branchId ? current : null;
+      return {
+        branchId,
+        expectedVersion: origin ? origin.expectedVersion : persisted.version,
+        lineage: origin ? origin.lineage : {},
+        configuration: update(origin?.configuration ?? configuration),
+      };
+    });
     setImpact(null); setConfigError(null);
   };
   useEffect(() => {
@@ -559,21 +568,26 @@ export function MessageTenantApplicationSettings() {
   };
 
   const saveConfiguration = useMutation({
-    mutationFn: async (input: { branchId: string; expectedVersion: string | null; configuration: MessageAutomationPolicyConfiguration }) => {
+    mutationFn: async (input: { branchId: string; expectedVersion: string | null; lineage: object; configuration: MessageAutomationPolicyConfiguration }) => {
       if (!isBranchContextAligned(input.branchId)) throw new Error("지점이 변경되어 저장할 수 없어요.");
       return messagePolicyApi.saveConfiguration({ expectedVersion: input.expectedVersion, configuration: input.configuration }, input.branchId);
     },
     onSuccess: (saved, submitted) => {
       queryClient.setQueryData<MessageAutomationPolicyConfigResponse>(["settings", "message-automation-config", submitted.branchId], saved);
       if (branchRef.current !== submitted.branchId) return;
-      setDraft((current) => current?.branchId === submitted.branchId && JSON.stringify(current.configuration) === JSON.stringify(submitted.configuration) ? null : current);
+      setDraft((current) => {
+        if (current?.branchId !== submitted.branchId || current.lineage !== submitted.lineage) return current;
+        return JSON.stringify(current.configuration) === JSON.stringify(submitted.configuration)
+          ? null
+          : { ...current, expectedVersion: saved.version };
+      });
       setConfigError(null); setImpact(null);
       void queryClient.invalidateQueries({ queryKey: MESSAGE_AUTOMATION_POLICIES_QUERY_KEY });
     },
     onError: (error, submitted) => {
       if (branchRef.current !== submitted.branchId) return;
       const status = (error as { response?: { status?: number } }).response?.status;
-      if (status !== 409) setDraft((current) => current?.branchId === submitted.branchId && JSON.stringify(current.configuration) === JSON.stringify(submitted.configuration) ? null : current);
+      if (status !== 409) setDraft((current) => current?.branchId === submitted.branchId && current.lineage === submitted.lineage && JSON.stringify(current.configuration) === JSON.stringify(submitted.configuration) ? null : current);
       setConfigError({ branchId: submitted.branchId, message: status === 409 ? "다른 곳에서 설정이 변경됐어요. 변경 내용을 확인하고 새로고침해 주세요." : "설정을 저장하지 못했어요. 다시 시도해 주세요." });
     },
   });
@@ -586,7 +600,7 @@ export function MessageTenantApplicationSettings() {
   const configFooter = <div data-component={footerBase} className="ml-auto flex gap-3">
     <Button data-component={`${footerBase}_cancel`} type="button" variant="neutral" disabled={!dirty} onClick={() => { setDraft(null); setConfigError(null); setImpact(null); }}>변경 취소</Button>
     <Button data-component={`${footerBase}_save`} type="button" variant="positive" disabled={!editable || !dirty || errors.length > 0 || saveConfiguration.isPending || (selectedItem?.id === PAST_TRIGGER_POLICY_ID && isTriggerRulesLoadFailed)} onClick={() => {
-      if (configuration && persisted && branchId && errors.length === 0) saveConfiguration.mutate({ branchId, expectedVersion: persisted.version, configuration: JSON.parse(JSON.stringify(configuration)) as MessageAutomationPolicyConfiguration });
+      if (configuration && activeDraft && branchId && errors.length === 0) saveConfiguration.mutate({ branchId, expectedVersion: activeDraft.expectedVersion, lineage: activeDraft.lineage, configuration: JSON.parse(JSON.stringify(configuration)) as MessageAutomationPolicyConfiguration });
     }}>{saveConfiguration.isPending ? "저장 중..." : "저장"}</Button>
   </div>;
   const renderConfigFields = (policyId: string) => {
@@ -609,7 +623,7 @@ export function MessageTenantApplicationSettings() {
         <FormField label="금지 시간에 발생한 메시지" data-component={`${base}_action`}><div className="flex gap-2">{(["DEFER", "CANCEL"] as const).map((action) => <FormChip data-component={`${base}_action_${action}`} type="button" key={action} selected={configuration.quietHours.action === action} aria-pressed={configuration.quietHours.action === action} disabled={!editable} onClick={() => editConfiguration((current) => ({ ...current, quietHours: { ...current.quietHours, action } }))}>{action === "DEFER" ? "금지 종료 후 순서대로 전송" : "발송 취소"}</FormChip>)}</div></FormField>
         <InfoRow data-component={`${base}_summary`} label="적용" value={configuration.quietHours.enabled ? `매일 ${configuration.quietHours.start}~${configuration.quietHours.end} (한국 시간), ${configuration.quietHours.recipientGroups.map((group) => RECIPIENT_GROUP_LABELS[group]).join("·")} SMS/LMS ${configuration.quietHours.action === "DEFER" ? "종료 후 순서대로 전송" : "발송 취소"}` : "심야 전송 제한 꺼짐"} />
         <p>SMS/LMS에만 적용합니다. 직원은 이 지점 소속 사용자입니다. 기존 보류 건은 설정을 끄거나 대상을 해제해도 바로 발송되지 않으며 다시 평가합니다.</p>
-        <Button data-component={`${base}_preview`} type="button" variant="neutral" disabled={!branchId || errors.length > 0 || previewConfiguration.isPending} onClick={() => { if (branchId && persisted) previewConfiguration.mutate({ branchId, expectedVersion: persisted.version, configuration: JSON.parse(JSON.stringify(configuration)) as MessageAutomationPolicyConfiguration }); }}>영향 미리보기</Button>
+        <Button data-component={`${base}_preview`} type="button" variant="neutral" disabled={!branchId || errors.length > 0 || previewConfiguration.isPending} onClick={() => { if (branchId && persisted) previewConfiguration.mutate({ branchId, expectedVersion: activeDraft ? activeDraft.expectedVersion : persisted.version, configuration: JSON.parse(JSON.stringify(configuration)) as MessageAutomationPolicyConfiguration }); }}>영향 미리보기</Button>
         {impact ? <InfoCard title="설정 영향" data-component={`${base}_impact`}><InfoRow label="보류" value={`${impact.deferredCount}건`} /><InfoRow label="취소" value={`${impact.canceledCount}건`} /><InfoRow label="재평가 시각" value={impact.reevaluateAt ?? "없음"} /><InfoRow label="예약된 공급자 전송" value={`${impact.futureProviderReservations}건`} /></InfoCard> : null}
       </> : null}
       {errors.map((error) => <p role="alert" key={error}>{error}</p>)}
