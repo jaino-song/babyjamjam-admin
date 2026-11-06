@@ -156,16 +156,18 @@ export class SbMessageLogRepository implements IMessageLogRepository {
             const recipientGroup: MessagePolicyRecipientGroup | null = recipientType === "CLIENT" ? "CLIENT"
                 : ["PRIMARY_EMPLOYEE", "SECONDARY_EMPLOYEE"].includes(String(recipientType)) ? "CAREGIVER"
                     : row.clientId != null ? "CLIENT" : variables["employeeId"] != null ? "CAREGIVER" : null;
-            return { dueAt: row.nextRetryAt!, recipientPhone: row.recipientPhone ?? row.receiver,
+            return { dueAt: row.nextRetryAt!, recipientPhone: /[,;\n]/.test(row.receiver) ? row.receiver : row.recipientPhone ?? row.receiver,
                 recipientGroups: recipientGroup ? [recipientGroup] : [] };
-        }), ...held.map(log => ({ dueAt: log.nextRetryAt!, recipientGroups: [], recipientPhone: log.recipientPhone ?? log.receiver,
+        }), ...held.map(log => ({ dueAt: log.nextRetryAt!, recipientGroups: [],
+            recipientPhone: /[,;\n]/.test(log.receiver) ? log.receiver : log.recipientPhone ?? log.receiver,
             quietHold: parseMessageQuietHold(log.variables)! }))];
     }
 
     async resolvePolicyRecipientGroups(branchId: string, candidates: MessagePolicyPreviewCandidate[], transaction?: Prisma.TransactionClient): Promise<MessagePolicyPreviewCandidate[]> {
-        const numbers = [...new Set(candidates.flatMap(candidate => koreanPhoneStoredDigitCandidates(
-            normalizeKoreanPhoneLookupKey(candidate.recipientPhone),
-        )))];
+        const candidatePhones = candidates.map(candidate => [...new Set((candidate.recipientPhone ?? "").split(/[,;\n]/)
+            .map(phone => phone.trim()).filter(Boolean).map(normalizeKoreanPhoneLookupKey).filter(Boolean))]);
+        const lookupKeys = [...new Set(candidatePhones.flat())];
+        const numbers = [...new Set(lookupKeys.flatMap(koreanPhoneStoredDigitCandidates))];
         if (!numbers.length) return candidates;
         // A single exact-number batch, branch fenced, with no arbitrary 500-user
         // scan. Union STAFF even when a customer/caregiver identity already exists.
@@ -187,9 +189,10 @@ export class SbMessageLogRepository implements IMessageLogRepository {
             current.add(row.group_name);
             groups.set(phone, current);
         }
-        return candidates.map(candidate => ({ ...candidate,
+        // candidatePhones is mapped from candidates in the same order; neither array is mutated.
+        return candidates.map((candidate, index) => ({ ...candidate,
             recipientGroups: [...new Set([...candidate.recipientGroups,
-                ...groups.get(normalizeKoreanPhoneLookupKey(candidate.recipientPhone)) ?? []])],
+                ...candidatePhones[index]!.flatMap(phone => [...(groups.get(phone) ?? [])])])],
         }));
     }
 

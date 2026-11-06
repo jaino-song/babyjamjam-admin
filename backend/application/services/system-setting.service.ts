@@ -315,7 +315,8 @@ export class SystemSettingService {
             const retryPopulation = await this.policyLogs.findPolicyPreviewCandidates(branchId, transaction);
             const retries = retryPopulation.some(candidate => candidate.quietHold) ? await this.policyLogs.findQuietHeldRetries(branchId, transaction) : [];
             const retryCandidates = await this.policyLogs.resolvePolicyRecipientGroups(branchId,
-                retries.map(log => ({ dueAt: log.nextRetryAt!, recipientGroups: [], recipientPhone: log.recipientPhone ?? log.receiver })), transaction);
+                retries.map(log => ({ dueAt: log.nextRetryAt!, recipientGroups: [],
+                    recipientPhone: /[,;\n]/.test(log.receiver) ? log.receiver : log.recipientPhone ?? log.receiver })), transaction);
             for (let index = 0; index < retries.length; index++) {
                 const log = retries[index]!;
                 const hold = parseMessageQuietHold(log.variables)!;

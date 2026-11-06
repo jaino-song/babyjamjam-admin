@@ -5,10 +5,12 @@ import { GetSettingUsecase } from "application/usecases/system-setting/get-setti
 import { UpdateSettingUsecase } from "application/usecases/system-setting/update-setting.usecase";
 import { AdminAuditEventWriter } from "application/services/admin-audit-event.service";
 import { SystemSettingService } from "application/services/system-setting.service";
+import { MessageAutomationBranchLockService } from "application/services/message-automation-branch-lock.service";
 import { describeReal, assertThrowawayTarget, createIntegrityPrisma, closeIntegrityPrisma, IntegrityPrisma } from "../integrity/helpers/real-db";
 import { SbSystemSettingRepository } from "infrastructure/database/repositories/sb.system-setting.repository";
 import { PrismaService } from "infrastructure/database/prisma.service";
 import { MessagePolicyRecipientGroup, SystemSettingEntity } from "domain/entities/system-setting.entity";
+import { messageQuietHoldVariables } from "domain/message-policy-evaluator";
 
 const retryPreviewPolicy = (group: MessagePolicyRecipientGroup, action: "DEFER" | "CANCEL") => ({
     schemaVersion: 1, dispatchCheckIntervalMinutes: 1, defaultRuleSendTime: "09:00",
@@ -18,12 +20,15 @@ const retryPreviewPolicy = (group: MessagePolicyRecipientGroup, action: "DEFER" 
 });
 
 // Keep the repository projection, exact-phone resolver, service and evaluator real;
-// no pending jobs are needed to isolate the retry's contribution to the preview.
-const createRetryPreviewService = (prisma: PrismaService) => {
+// no pending jobs are needed to isolate the retry's contribution to preview/save.
+const createRetryPreviewService = (
+    prisma: PrismaService,
+    logs = new SbMessageLogRepository(prisma),
+) => {
     const settings = new SbSystemSettingRepository(prisma);
     const jobs = { findPolicyPreviewCandidates: async () => [] } as unknown as NonNullable<ConstructorParameters<typeof SystemSettingService>[5]>;
     return new SystemSettingService(new GetSettingUsecase(settings), new UpdateSettingUsecase(settings),
-        undefined, undefined, undefined, jobs, new SbMessageLogRepository(prisma));
+        undefined, undefined, undefined, jobs, logs, new MessageAutomationBranchLockService(prisma));
 };
 
 describe("SbSystemSettingRepository", () => {
@@ -276,6 +281,140 @@ describe("SbMessageLogRepository retry preview recipient identity", () => {
         expect(prisma.$queryRaw.mock.calls[1]?.[0].values).toContain(branchId);
     });
 
+    it("previews a held two-recipient batch at 22:40 using all phones and retaining its original 08:00 anchor", async () => {
+        const previewAt = new Date("2026-11-03T13:40:00Z");
+        const releaseAt = new Date("2026-11-03T23:00:00Z");
+        const quietHold = { releaseAt, originalScheduledFor: new Date("2026-11-03T13:30:00Z"),
+            policyRevision: "original-policy", reason: "message_quiet_hours:DEFER" };
+        const receiver = "01012345678, +82 10-2345-6789";
+        const source = { id: 701, branchId, provider: "aligo_sms", templateKey: "manual_sms", triggerJobId: null,
+            receiver, recipientPhone: "01012345678", clientId: null, recipientName: null, messageBody: "Held batch fixture",
+            variables: { sourceMarker: "unchanged" }, status: "failed", attempts: 1, nextRetryAt: null,
+            aligoMid: null, errorMessage: null, lastAttemptAt: null, createdAt: previewAt, updatedAt: previewAt,
+            providerAcceptanceState: "rejected" };
+        const held = { ...source, id: 702, status: "pending", attempts: 0, nextRetryAt: releaseAt,
+            providerAcceptanceState: "prepared", providerAcceptanceKey: "batch-hold-key", providerAcceptanceFingerprint: "batch-fingerprint",
+            variables: { retryOfLogId: String(source.id), retryInvocation: "manual", ...messageQuietHoldVariables(quietHold) } };
+        const prisma = {
+            message_log: {
+                findMany: jest.fn().mockImplementation(({ where }) => Promise.resolve(where.providerAcceptanceState === "prepared" ? [held] : [])),
+                findFirst: jest.fn().mockResolvedValue(source),
+            },
+            system_setting: { findUnique: jest.fn().mockResolvedValue(null) },
+            $queryRaw: jest.fn().mockImplementation((sql: Prisma.Sql) => Promise.resolve(sql.sql.includes("COUNT(*)")
+                ? [{ count: 0n }] : [{ phone: "01023456789", group_name: "CLIENT" }])),
+        };
+        const repository = new SbMessageLogRepository(prisma as unknown as PrismaService);
+        const expected = [{ dueAt: releaseAt, recipientPhone: receiver, recipientGroups: [], quietHold }];
+        await expect(repository.findPolicyPreviewCandidates(branchId)).resolves.toEqual(expected);
+        await expect(repository.resolvePolicyRecipientGroups(branchId, expected)).resolves.toEqual([
+            { ...expected[0], recipientGroups: ["CLIENT"] },
+        ]);
+        const service = createRetryPreviewService(prisma as unknown as PrismaService);
+        await expect(service.previewMessageAutomationPolicyConfig(branchId, null, retryPreviewPolicy("CLIENT", "CANCEL"), previewAt))
+            .resolves.toMatchObject({ deferredCount: 0, canceledCount: 1, reevaluateAt: null });
+        await expect(service.previewMessageAutomationPolicyConfig(branchId, null, retryPreviewPolicy("CLIENT", "DEFER"), previewAt))
+            .resolves.toMatchObject({ deferredCount: 0, canceledCount: 0, reevaluateAt: null });
+        const later = retryPreviewPolicy("CLIENT", "DEFER");
+        later.quietHours.start = "23:00";
+        later.quietHours.end = "09:00";
+        await expect(service.previewMessageAutomationPolicyConfig(branchId, null, later, previewAt))
+            .resolves.toMatchObject({ deferredCount: 1, canceledCount: 0, reevaluateAt: "2026-11-04T00:00:00.000Z" });
+        await expect(repository.findPolicyPreviewCandidates(branchId)).resolves.toEqual(expected);
+        expect(held.nextRetryAt).toBe(releaseAt);
+        expect(held.variables).toEqual({ retryOfLogId: "701", retryInvocation: "manual", ...messageQuietHoldVariables(quietHold) });
+        expect(source.variables).toEqual({ sourceMarker: "unchanged" });
+    });
+
+    it.each([",", ";", "\n"].flatMap(delimiter => [
+        { delimiter, recipientPhone: "01012345678" }, { delimiter, recipientPhone: null },
+    ]))("cancels exactly one held batch on save for delimiter $delimiter and index $recipientPhone", async ({ delimiter, recipientPhone }) => {
+        const saveAt = new Date("2026-11-03T13:40:00Z"); // 22:40 KST
+        const releaseAt = new Date("2026-11-03T23:00:00Z"); // original 08:00 KST
+        const quietHold = { releaseAt, originalScheduledFor: new Date("2026-11-03T13:30:00Z"),
+            policyRevision: "original-policy", reason: "message_quiet_hours:DEFER" };
+        const receiver = `01012345678${delimiter} +82 10-2345-6789`;
+        const source = { id: 711, branchId, provider: "aligo_sms", templateKey: "manual_sms", triggerJobId: null,
+            receiver, recipientPhone, clientId: null, recipientName: null, messageBody: "Held batch save fixture",
+            variables: { sourceMarker: "unchanged" }, status: "failed", attempts: 1, nextRetryAt: null,
+            aligoMid: null, errorMessage: null, lastAttemptAt: null, createdAt: saveAt, updatedAt: saveAt,
+            providerAcceptanceState: "rejected", providerCallStartedAt: null, providerAcceptedAt: null };
+        const held = { ...source, id: 712, status: "pending", attempts: 0, nextRetryAt: releaseAt,
+            providerAcceptanceState: "prepared", providerAcceptanceKey: "batch-save-key", providerAcceptanceFingerprint: "batch-save-fingerprint",
+            variables: { payloadMarker: "unchanged", retryOfLogId: String(source.id), retryInvocation: "manual", ...messageQuietHoldVariables(quietHold) } };
+        const sourceBefore = structuredClone(source);
+        const heldBefore = structuredClone(held);
+        const key = `branch:${branchId}:message_automation:policy`;
+        const setting = { key, value: JSON.stringify(retryPreviewPolicy("CAREGIVER", "DEFER")), updatedAt: saveAt };
+        const groups = [{ phone: "01012345678", group_name: "CAREGIVER" }, { phone: "01023456789", group_name: "CLIENT" }];
+        const query = (sql: Prisma.Sql) => Promise.resolve(sql.sql.includes("COUNT(*)") ? [{ count: 0n }]
+            : sql.sql.includes("group_name") ? groups.filter(row => (sql.values[1] as string[]).includes(row.phone)) : []);
+        const findMany = ({ where }: Prisma.message_logFindManyArgs) => Promise.resolve(where?.providerAcceptanceState === "prepared" ? [held] : []);
+        const findFirst = ({ where }: Prisma.message_logFindFirstArgs) => Promise.resolve(where?.id === source.id ? source : held);
+        const tx = {
+            message_log: { findMany: jest.fn(findMany), findFirst: jest.fn(findFirst), updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
+            system_setting: { findUnique: jest.fn().mockResolvedValue(setting),
+                update: jest.fn().mockImplementation(({ data }) => Promise.resolve({ ...setting, ...data })) },
+            $queryRaw: jest.fn(query), $executeRaw: jest.fn().mockResolvedValue(1),
+        };
+        const prisma = {
+            message_log: { findMany: jest.fn(findMany), findFirst: jest.fn(findFirst), updateMany: jest.fn() },
+            system_setting: { findUnique: jest.fn().mockResolvedValue(setting), update: jest.fn() },
+            $queryRaw: jest.fn(query),
+            $transaction: jest.fn(async (work: (transaction: Prisma.TransactionClient) => Promise<unknown>) => work(tx as unknown as Prisma.TransactionClient)),
+        };
+        const repository = new SbMessageLogRepository(prisma as unknown as PrismaService);
+        const resolve = jest.spyOn(repository, "resolvePolicyRecipientGroups");
+        const transition = jest.spyOn(repository, "transitionQuietRetry");
+        const service = createRetryPreviewService(prisma as unknown as PrismaService, repository);
+        const clock = jest.spyOn(Date, "now").mockReturnValue(saveAt.getTime());
+        try {
+            const { version } = await service.getMessageAutomationPolicyConfig(branchId);
+            const policy = retryPreviewPolicy("CLIENT", "CANCEL");
+            await expect(service.previewMessageAutomationPolicyConfig(branchId, version, policy, saveAt))
+                .resolves.toMatchObject({ deferredCount: 0, canceledCount: 1, reevaluateAt: null });
+            expect(held).toEqual(heldBefore);
+            resolve.mockClear();
+            prisma.message_log.findMany.mockClear();
+            prisma.message_log.findFirst.mockClear();
+            prisma.system_setting.findUnique.mockClear();
+            prisma.$queryRaw.mockClear();
+            await expect(service.setMessageAutomationPolicyConfig(branchId, version, policy))
+                .resolves.toMatchObject({ configuration: policy });
+            expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+            expect(tx.$executeRaw).toHaveBeenCalledTimes(1);
+            expect(tx.system_setting.update).toHaveBeenCalledTimes(1);
+            expect(resolve).toHaveBeenLastCalledWith(branchId, [{ dueAt: releaseAt, recipientGroups: [], recipientPhone: receiver }], tx);
+            expect(transition).toHaveBeenCalledTimes(1);
+            expect(transition).toHaveBeenCalledWith(expect.objectContaining({ id: held.id, receiver, recipientPhone,
+                messageBody: held.messageBody, variables: held.variables, nextRetryAt: releaseAt }), quietHold, true, tx);
+            expect(tx.message_log.updateMany).toHaveBeenCalledTimes(1);
+            expect(tx.message_log.updateMany).toHaveBeenCalledWith({
+                where: { id: held.id, branchId, triggerJobId: null, providerAcceptanceKey: held.providerAcceptanceKey,
+                    providerAcceptanceFingerprint: held.providerAcceptanceFingerprint, providerAcceptanceState: "prepared", providerCallStartedAt: null,
+                    updatedAt: held.updatedAt, variables: { equals: held.variables }, attempts: 0 },
+                data: { status: "failed", nextRetryAt: null, errorMessage: "message_quiet_hours:CANCEL",
+                    variables: { ...held.variables, quietHoursDisposition: "CANCEL" } },
+            });
+            expect(tx.$queryRaw).toHaveBeenCalledWith(expect.objectContaining({ values: [branchId, expect.arrayContaining(["01012345678", "01023456789"]),
+                branchId, expect.any(Array), branchId, expect.any(Array)] }));
+            expect(prisma.message_log.findMany).not.toHaveBeenCalled();
+            expect(prisma.message_log.findFirst).not.toHaveBeenCalled();
+            expect(prisma.message_log.updateMany).not.toHaveBeenCalled();
+            expect(prisma.system_setting.findUnique).not.toHaveBeenCalled();
+            expect(prisma.system_setting.update).not.toHaveBeenCalled();
+            expect(prisma.$queryRaw).not.toHaveBeenCalled();
+            expect(source).toEqual(sourceBefore);
+            expect(held).toEqual(heldBefore);
+            // The sole CAS above is cancellation; no provider-start/acceptance fields are written.
+            expect([source, held].filter(log => log.providerCallStartedAt !== null || log.providerAcceptedAt !== null || log.aligoMid !== null)).toHaveLength(0);
+        } finally {
+            clock.mockRestore();
+            transition.mockRestore();
+            resolve.mockRestore();
+        }
+    });
+
     it.each([
         { label: "legacy primary type with contextual client", triggerJob: null, clientId: 7, variables: { recipientType: "PRIMARY_EMPLOYEE" }, groups: ["CAREGIVER"] },
         { label: "legacy secondary type with contextual client", triggerJob: null, clientId: 7, variables: { recipientType: "SECONDARY_EMPLOYEE" }, groups: ["CAREGIVER"] },
@@ -404,6 +543,127 @@ describeReal("policy settings real PostgreSQL transaction proof", () => {
             await handle.raw.user_branch.deleteMany({ where: { userId: user.id } });
             await handle.raw.user.delete({ where: { id: user.id } });
             await handle.raw.branch.deleteMany({ where: { id: { in: [branchA.id, branchB.id] } } });
+        }
+    });
+
+    it.each(["01012345678", null])("resolves real batch groups, previews and saves one cancellation with recipientPhone=%s", async recipientPhone => {
+        const branchA = randomUUID();
+        const branchB = randomUUID();
+        const userA = randomUUID();
+        const userB = randomUUID();
+        const branchIds = [branchA, branchB];
+        const userIds = [userA, userB];
+        const policyKey = `branch:${branchA}:message_automation:policy`;
+        const firstPhone = "01012345678";
+        const secondPhone = "01023456789";
+        const receiver = `${firstPhone}, +82 10-2345-6789`;
+        const previewAt = new Date("2026-11-03T13:40:00Z");
+        const releaseAt = new Date("2026-11-03T23:00:00Z");
+        const quietHold = { releaseAt, originalScheduledFor: new Date("2026-11-03T13:30:00Z"),
+            policyRevision: "original-policy", reason: "message_quiet_hours:DEFER" };
+        try {
+            await handle.raw.branch.createMany({ data: branchIds.map((id, index) => ({ id, name: "Batch groups fixture", slug: `${prefix}-batch-${index}` })) });
+            await handle.raw.user.createMany({ data: [
+                { id: userA, phone: "+82 10-2345-6789" }, { id: userB, phone: firstPhone },
+            ] });
+            await handle.raw.user_branch.createMany({ data: [
+                { branchId: branchA, userId: userA }, { branchId: branchB, userId: userB },
+            ] });
+            await handle.raw.client.createMany({ data: [
+                { branchId: branchA, name: "Batch client", phone: secondPhone, voucherClient: false },
+                { branchId: branchB, name: "Foreign duplicate client", phone: firstPhone, voucherClient: false },
+                { branchId: branchA, name: "Deleted duplicate client", phone: firstPhone, voucherClient: false, deletedAt: previewAt },
+            ] });
+            await handle.raw.employee.createMany({ data: [
+                { branchId: branchA, name: "Batch caregiver", phone: firstPhone, grade: "fixture", workArea: [] },
+                { branchId: branchB, name: "Foreign duplicate caregiver", phone: secondPhone, grade: "fixture", workArea: [] },
+                { branchId: branchA, name: "Deleted duplicate caregiver", phone: secondPhone, grade: "fixture", workArea: [], deletedAt: previewAt },
+            ] });
+            const repository = new SbMessageLogRepository(handle.service);
+            const individual = await repository.resolvePolicyRecipientGroups(branchA, [
+                { dueAt: releaseAt, recipientPhone: firstPhone, recipientGroups: [] },
+                { dueAt: releaseAt, recipientPhone: secondPhone, recipientGroups: [] },
+            ]);
+            expect(individual[0]?.recipientGroups).toEqual(["CAREGIVER"]);
+            expect(individual[1]?.recipientGroups.slice().sort()).toEqual(["CLIENT", "STAFF"]);
+            const invalid = [null, "", " , ;\n ", "malformed; + ;\n"].map(recipientPhone => (
+                { dueAt: releaseAt, recipientPhone, recipientGroups: [] }));
+            const lookup = jest.spyOn(handle.service, "$queryRaw");
+            try {
+                await expect(repository.resolvePolicyRecipientGroups(branchA, invalid)).resolves.toBe(invalid);
+                expect(lookup).not.toHaveBeenCalled();
+            } finally {
+                lookup.mockRestore();
+            }
+            const source = await handle.raw.message_log.create({ data: {
+                branchId: branchA, provider: "aligo_sms", templateKey: "manual_sms", receiver, recipientPhone,
+                messageBody: "Held batch fixture", variables: { sourceMarker: "unchanged" }, status: "failed", attempts: 1,
+                providerAcceptanceState: "rejected",
+            } });
+            const held = await handle.raw.message_log.create({ data: {
+                branchId: branchA, provider: "aligo_sms", templateKey: "manual_sms", receiver, recipientPhone,
+                messageBody: source.messageBody, status: "pending", attempts: 0, nextRetryAt: releaseAt,
+                providerAcceptanceState: "prepared", providerAcceptanceKey: `${prefix}-batch-held`, providerAcceptanceFingerprint: "batch-fingerprint",
+                variables: { retryOfLogId: String(source.id), retryInvocation: "manual", ...messageQuietHoldVariables(quietHold) },
+            } });
+            const candidates = await repository.findPolicyPreviewCandidates(branchA);
+            expect(candidates).toEqual([{ dueAt: releaseAt, recipientPhone: receiver, recipientGroups: [], quietHold }]);
+            const resolved = await repository.resolvePolicyRecipientGroups(branchA, candidates);
+            expect(resolved).toEqual([{ ...candidates[0], recipientGroups: resolved[0]!.recipientGroups }]);
+            expect(resolved[0]?.recipientGroups.slice().sort()).toEqual(["CAREGIVER", "CLIENT", "STAFF"]);
+            await expect(createRetryPreviewService(handle.service)
+                .previewMessageAutomationPolicyConfig(branchA, null, retryPreviewPolicy("CLIENT", "CANCEL"), previewAt))
+                .resolves.toMatchObject({ deferredCount: 0, canceledCount: 1, reevaluateAt: null });
+            await expect(createRetryPreviewService(handle.service)
+                .previewMessageAutomationPolicyConfig(branchA, null, retryPreviewPolicy("CLIENT", "DEFER"), previewAt))
+                .resolves.toMatchObject({ deferredCount: 0, canceledCount: 0, reevaluateAt: null });
+            expect(await handle.raw.message_log.findUnique({ where: { id: source.id } })).toEqual(source);
+            expect(await handle.raw.message_log.findUnique({ where: { id: held.id } })).toEqual(held);
+            await handle.raw.system_setting.create({ data: { key: policyKey, value: JSON.stringify(retryPreviewPolicy("CAREGIVER", "DEFER")) } });
+            const service = createRetryPreviewService(handle.service, repository);
+            const { version } = await service.getMessageAutomationPolicyConfig(branchA);
+            const policy = retryPreviewPolicy("CLIENT", "CANCEL");
+            await expect(service.previewMessageAutomationPolicyConfig(branchA, version, policy, previewAt))
+                .resolves.toMatchObject({ deferredCount: 0, canceledCount: 1, reevaluateAt: null });
+            const resolve = jest.spyOn(repository, "resolvePolicyRecipientGroups");
+            const transition = jest.spyOn(repository, "transitionQuietRetry");
+            const clock = jest.spyOn(Date, "now").mockReturnValue(previewAt.getTime());
+            try {
+                await expect(service.setMessageAutomationPolicyConfig(branchA, version, policy))
+                    .resolves.toMatchObject({ configuration: policy });
+                expect(transition).toHaveBeenCalledTimes(1);
+                const transaction = transition.mock.calls[0]![3];
+                expect(transaction).toBeDefined();
+                expect(transaction).not.toBe(handle.service);
+                expect(transition).toHaveBeenCalledWith(expect.objectContaining({ id: held.id, receiver, recipientPhone,
+                    variables: held.variables, nextRetryAt: releaseAt }), quietHold, true, transaction);
+                expect(resolve).toHaveBeenLastCalledWith(branchA,
+                    [{ dueAt: releaseAt, recipientGroups: [], recipientPhone: receiver }], transaction);
+                expect(await handle.raw.system_setting.findUnique({ where: { key: policyKey } }))
+                    .toMatchObject({ value: JSON.stringify(policy) });
+                expect(await handle.raw.message_log.findUnique({ where: { id: source.id } })).toEqual(source);
+                expect(await handle.raw.message_log.findUnique({ where: { id: held.id } })).toEqual({
+                    ...held, status: "failed", nextRetryAt: null, errorMessage: "message_quiet_hours:CANCEL", updatedAt: expect.any(Date),
+                    variables: { ...held.variables as Prisma.JsonObject, quietHoursDisposition: "CANCEL" },
+                });
+                expect(await handle.raw.message_log.count({ where: { branchId: branchA } })).toBe(2);
+                expect(await handle.raw.message_log.count({ where: { branchId: branchA, errorMessage: "message_quiet_hours:CANCEL" } })).toBe(1);
+                expect(await handle.raw.message_log.count({ where: { branchId: branchA, OR: [
+                    { providerCallStartedAt: { not: null } }, { providerAcceptedAt: { not: null } }, { aligoMid: { not: null } },
+                ] } })).toBe(0);
+            } finally {
+                clock.mockRestore();
+                transition.mockRestore();
+                resolve.mockRestore();
+            }
+        } finally {
+            await handle.raw.system_setting.deleteMany({ where: { key: policyKey } });
+            await handle.raw.message_log.deleteMany({ where: { branchId: { in: branchIds } } });
+            await handle.raw.employee.deleteMany({ where: { branchId: { in: branchIds } } });
+            await handle.raw.client.deleteMany({ where: { branchId: { in: branchIds } } });
+            await handle.raw.user_branch.deleteMany({ where: { userId: { in: userIds } } });
+            await handle.raw.user.deleteMany({ where: { id: { in: userIds } } });
+            await handle.raw.branch.deleteMany({ where: { id: { in: branchIds } } });
         }
     });
 
