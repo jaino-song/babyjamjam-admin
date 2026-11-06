@@ -14,7 +14,7 @@ import {
     type ManualExecutionScope, type ManualSelectedCandidate, type ManualDocumentResult, type ManualAggregateResult,
 } from "domain/eformsign-backup/worker/manual-protocol";
 import { hex64, identifier, isoUtc } from "domain/eformsign-backup/worker/schema-fields";
-import { WorkerError } from "domain/eformsign-backup/worker/worker-error";
+import { isWorkerReasonCode, WorkerError } from "domain/eformsign-backup/worker/worker-error";
 import { validateExportBaseUrl, type ExportClientOptions, type ArtifactRequest, type SnapshotView } from "./export-client";
 
 const SMALL_JSON = 64 * 1024;
@@ -55,6 +55,27 @@ export class ManualControlFailure extends Error {
     constructor(readonly httpStatus: number, readonly code: string) { super(code); this.name = "ManualControlFailure"; }
 }
 function invalid(): never { throw new WorkerError("export-response-invalid"); }
+function responseFailure(error: unknown): WorkerError | ManualControlFailure {
+    try {
+        if (error instanceof ManualControlFailure) {
+            const status = error.httpStatus;
+            const code = error.code;
+            if (status === 0 && (code === "NETWORK" || code === "ABORTED")) return new ManualControlFailure(0, code);
+            if (Number.isInteger(status) && status >= 100 && status <= 599
+                && (code === "UNKNOWN_ERROR" || knownCodes.has(code))) return new ManualControlFailure(status, code);
+        }
+        if (error instanceof WorkerError) {
+            const reason = error.reasonCode;
+            if (isWorkerReasonCode(reason)) return new WorkerError(reason);
+        }
+    } catch { /* Even classification can invoke a throwing accessor or Proxy trap. */ }
+    return new WorkerError("export-response-invalid");
+}
+function responseStatus(response: Response): number {
+    const status = response.status;
+    if (!Number.isInteger(status) || status < 100 || status > 599) invalid();
+    return status;
+}
 function parse<T>(schema: z.ZodType<T>, value: unknown): T {
     try { const result = schema.safeParse(JSON.parse(canonicalJson(value))); if (result.success) return result.data; } catch { /* No accessor details. */ }
     return invalid();
@@ -63,21 +84,28 @@ function encode(value: unknown): string {
     try { const body = canonicalJson(value); if (Buffer.byteLength(body) <= SMALL_JSON) return body; } catch { /* Code only. */ }
     return invalid();
 }
+const cancelledResponses = new WeakSet<Response>();
 /** Cancellation is issued once and never awaited: hostile transports may never settle cleanup. */
-function cancellation(reader: ReadableStreamDefaultReader<Uint8Array>): () => void {
+function cancellation(reader: ReadableStreamDefaultReader<Uint8Array>, response: Response): () => void {
     let issued = false;
     return () => {
         if (issued) return;
         issued = true;
+        cancelledResponses.add(response);
         try { void Promise.resolve(reader.cancel()).catch(() => undefined); } catch { /* Discard transport details. */ }
         try { reader.releaseLock(); } catch { /* A pending read may still own the lock. */ }
     };
 }
 function cancelBody(response: Response): void {
-    try { void Promise.resolve(response.body?.cancel()).catch(() => undefined); } catch { /* Code only. */ }
+    try {
+        if (cancelledResponses.has(response)) return;
+        cancelledResponses.add(response);
+        void Promise.resolve(response.body?.cancel()).catch(() => undefined);
+    } catch { /* Even a malformed response or throwing body accessor is never reflected. */ }
 }
 function bodyReader(response: Response, reason: "export-response-invalid" | "artifact-integrity"): ReadableStreamDefaultReader<Uint8Array> {
-    try { const reader = response.body?.getReader(); if (reader) return reader; } catch { /* Locked or malformed success body. */ }
+    try { const reader = response.body?.getReader(); if (reader) return reader; }
+    catch { cancelBody(response); invalid(); }
     cancelBody(response);
     throw new WorkerError(reason);
 }
@@ -199,9 +227,9 @@ export class ManualControlClient {
             body, signal: life.controller.signal,
         }).then(response => { if (life.controller.signal.aborted) cancelBody(response); return response; }));
     }
-    private async readJson(response: Response, limit: number, life: RequestLifetime): Promise<unknown> {
-        const reader = bodyReader(response, "export-response-invalid");
-        const cancel = cancellation(reader);
+    private async readJson(response: Response, limit: number, life: RequestLifetime,
+        reader = bodyReader(response, "export-response-invalid")): Promise<unknown> {
+        const cancel = cancellation(reader, response);
         let complete = false;
         try {
             const parts: Buffer[] = []; let total = 0;
@@ -220,40 +248,47 @@ export class ManualControlClient {
             else reader.releaseLock();
         }
     }
-    private async failure(response: Response, life: RequestLifetime): Promise<never> {
+    private async failure(response: Response, status: number, life: RequestLifetime): Promise<never> {
+        // Metadata access is outside the malformed-error-JSON fallback. A throwing body/getReader
+        // accessor must reach the public sanitizing catch, rather than become a server error code.
+        const reader = bodyReader(response, "export-response-invalid");
         let code = "UNKNOWN_ERROR";
         try {
-            const parsed = errorSchema.safeParse(await this.readJson(response, SMALL_JSON, life));
+            const parsed = errorSchema.safeParse(await this.readJson(response, SMALL_JSON, life, reader));
             if (parsed.success && knownCodes.has(parsed.data.code)) code = parsed.data.code;
         } catch (error) {
-            if (error instanceof ManualControlFailure) throw error;
+            const safe = responseFailure(error);
+            if (safe instanceof ManualControlFailure) throw safe;
         }
-        throw new ManualControlFailure(response.status, code);
+        throw new ManualControlFailure(status, code);
     }
     private async json<T>(path: string, body: string, schema: z.ZodType<T>, limit: number, signal?: AbortSignal): Promise<T> {
         const life = new RequestLifetime(signal, this.timeout);
+        let response: Response | undefined;
         try {
-            const response = await this.send(path, body, life);
-            if (response.status < 200 || response.status >= 300) return await this.failure(response, life);
+            response = await this.send(path, body, life);
+            const status = responseStatus(response);
+            if (status < 200 || status >= 300) return await this.failure(response, status, life);
             return parse(schema, await this.readJson(response, limit, life));
-        } catch (error) { life.abort(); throw error; } finally { life.dispose(); }
+        } catch (error) { life.abort(); if (response) cancelBody(response); throw responseFailure(error); } finally { life.dispose(); }
     }
     private async artifact(path: string, body: string, expected: ArtifactRequest, signal?: AbortSignal): Promise<AsyncIterable<Uint8Array>> {
         const life = new RequestLifetime(signal, this.timeout);
-        let response: Response;
+        let response: Response | undefined;
         let reader: ReadableStreamDefaultReader<Uint8Array>;
         try {
             response = await this.send(path, body, life);
-            if (response.status < 200 || response.status >= 300) return await this.failure(response, life);
-            if (response.status !== 200 || response.headers.get("content-length") !== String(expected.byteLength)
+            const status = responseStatus(response);
+            if (status < 200 || status >= 300) return await this.failure(response, status, life);
+            if (status !== 200 || response.headers.get("content-length") !== String(expected.byteLength)
                 || response.headers.get("x-artifact-identity") !== expected.artifactIdentity
                 || response.headers.get("x-content-sha256") !== expected.sha256 || !response.body) {
                 cancelBody(response); throw new WorkerError("artifact-integrity");
             }
             reader = bodyReader(response, "artifact-integrity");
-        } catch (error) { life.abort(); life.dispose(); throw error; }
+        } catch (error) { life.abort(); if (response) cancelBody(response); life.dispose(); throw responseFailure(error); }
         life.clearTimer();
-        const cancel = cancellation(reader);
+        const cancel = cancellation(reader, response);
         const hash = createHash("sha256");
         let total = 0; let ended = false; let reading = false;
         const cleanup = (abort: boolean) => {
@@ -285,7 +320,7 @@ export class ManualControlClient {
                     if (total > expected.byteLength) throw new WorkerError("artifact-integrity");
                     hash.update(chunk.value);
                     return { done: false, value: chunk.value };
-                } catch (error) { cleanup(true); throw error; }
+                } catch (error) { cleanup(true); throw responseFailure(error); }
                 finally { reading = false; life.clearTimer(); }
             },
             return: async () => { cleanup(true); return { done: true, value: undefined }; },

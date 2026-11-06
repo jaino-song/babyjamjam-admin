@@ -1,9 +1,10 @@
-import { promises as fs } from "node:fs";
+import nodeFs, { linkSync, readdirSync, renameSync, symlinkSync, promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { EXPORT_POLICY_REVISION } from "domain/eformsign-backup/export/constants";
 import { MANUAL_BACKUP_LEASE_DURATION_MS, MANUAL_BACKUP_SCOPE_REVISION, manualBackupSnapshotId } from "domain/eformsign-backup/manual-backup-constants";
 import { canonicalJson } from "domain/eformsign-backup/source-evidence";
+import { WorkerError } from "domain/eformsign-backup/worker/worker-error";
 import { ManualDeliveryStore, type ManualDeliveryBinding, type ManualDeliveryStoreOptions } from "infrastructure/eformsign-backup/worker/manual-delivery-store";
 
 const id = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
@@ -18,6 +19,7 @@ function binding(job = 1, attempt = 1): ManualDeliveryBinding {
     leaseToken: id(3), leaseDurationMs: MANUAL_BACKUP_LEASE_DURATION_MS, leaseExpiresAtUTC: at,
     installationId: "installation-1", credentialFingerprint: h("f"), createdAtUTC: at };
 }
+const describeLinux = process.platform === "linux" ? describe : describe.skip;
 let root: string;
 let serial = 0;
 beforeAll(async () => { root = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), "manual-delivery-C3A-"))); await fs.chmod(root, 0o700); });
@@ -39,7 +41,20 @@ async function tree(dir: string): Promise<unknown> {
     return result;
 }
 
-describe("ManualDeliveryStore durable positive paths", () => {
+describe("ManualDeliveryStore platform boundary", () => {
+    (process.platform === "linux" ? it.skip : it)("fails closed before any I/O or guard on unsupported platforms, with a pure constructor", async () => {
+        const beforeWrite = jest.fn(async () => undefined);
+        const open = jest.spyOn(fs, "open"); const lstat = jest.spyOn(fs, "lstat"); const mkdir = jest.spyOn(fs, "mkdir");
+        const s = store(path.join(root, "not-created"), { beforeWrite });
+        await expect(s.put(binding())).rejects.toMatchObject({ reasonCode: "unsupported-filesystem" });
+        await expect(s.list()).rejects.toMatchObject({ reasonCode: "unsupported-filesystem" });
+        await expect(s.remove(binding())).rejects.toMatchObject({ reasonCode: "unsupported-filesystem" });
+        expect(open).not.toHaveBeenCalled(); expect(lstat).not.toHaveBeenCalled(); expect(mkdir).not.toHaveBeenCalled();
+        expect(beforeWrite).not.toHaveBeenCalled();
+    });
+});
+
+describeLinux("ManualDeliveryStore durable positive paths", () => {
     it("lists a missing namespace without mkdir, guards or writes", async () => {
         const dir = await control(); const beforeWrite = jest.fn(async () => undefined); const s = store(dir, { beforeWrite });
         expect(await s.list()).toEqual([]); expect(await fs.readdir(dir)).toEqual([]); expect(beforeWrite).not.toHaveBeenCalled();
@@ -87,7 +102,7 @@ describe("ManualDeliveryStore durable positive paths", () => {
     });
 });
 
-describe("ManualDeliveryStore exact lock boundaries", () => {
+describeLinux("ManualDeliveryStore exact lock boundaries", () => {
     it("rejects a first proof failure with zero owned mutations", async () => {
         const dir = await control(); const beforeWrite = jest.fn(async () => { throw new Error("private-lock-proof"); });
         await expect(store(dir, { beforeWrite }).put(binding())).rejects.toThrow("control-unavailable");
@@ -135,13 +150,13 @@ describe("ManualDeliveryStore exact lock boundaries", () => {
                 const result = await (original as any)(...args); held = false; return result;
             }) as typeof fs.mkdir);
         } else if (mutation === "unlink") {
-            const original = fs.unlink.bind(fs);
-            jest.spyOn(fs, "unlink").mockImplementation(async file => { await original(file); held = false; });
+            const nodeFsUnlink = nodeFs.unlinkSync.bind(nodeFs);
+            jest.spyOn(nodeFs, "unlinkSync").mockImplementation(file => { nodeFsUnlink(file); held = false; });
         } else {
             const original = fs.open.bind(fs);
             jest.spyOn(fs, "open").mockImplementation(async (...args) => {
                 const handle = await original(...args);
-                if (String(args[0]) === path.dirname(name(dir))) {
+                if (await fs.realpath(String(args[0])) === path.dirname(name(dir))) {
                     const sync = handle.sync.bind(handle);
                     jest.spyOn(handle, "sync").mockImplementation(async () => { await sync(); held = false; });
                 }
@@ -164,7 +179,7 @@ describe("ManualDeliveryStore exact lock boundaries", () => {
     });
 });
 
-describe("ManualDeliveryStore unsafe namespace refusal", () => {
+describeLinux("ManualDeliveryStore unsafe namespace refusal", () => {
     it.each([
         (b: any) => { b.extra = "secret"; }, (b: any) => { b.leaseToken = "bad"; }, (b: any) => { b.version = 2; },
         (b: any) => { b.leaseDurationMs = 1; }, (b: any) => { b.createdAtUTC = "bad"; }, (b: any) => { b.leaseExpiresAtUTC = "bad"; },
@@ -238,7 +253,7 @@ describe("ManualDeliveryStore unsafe namespace refusal", () => {
             let close: jest.SpyInstance | undefined; let once = false;
             const spy = jest.spyOn(fs, "open").mockImplementation(async (...args) => {
                 const handle = await originalOpen(...args);
-                if (String(args[0]) === file && !once) {
+                if (await fs.realpath(String(args[0])) === file && !once) {
                     once = true; close = jest.spyOn(handle, "close");
                     if (fault === "replace") { await fs.rename(file, `${file}-old`); await fs.writeFile(file, canonicalJson(binding()), { mode: 0o600 }); }
                     else {
@@ -260,7 +275,7 @@ describe("ManualDeliveryStore unsafe namespace refusal", () => {
         const dir = await control(); await seed(dir); const file = name(dir); const original = fs.lstat.bind(fs);
         jest.spyOn(fs, "lstat").mockImplementation((async (...args: any[]) => {
             const stat = await (original as any)(...args);
-            if (String(args[0]) === file) Object.defineProperty(stat, "uid", { value: process.getuid!() + 1 });
+            if (await fs.realpath(String(args[0])) === file) Object.defineProperty(stat, "uid", { value: process.getuid!() + 1 });
             return stat;
         }) as typeof fs.lstat);
         await expect(store(dir).list()).rejects.toThrow("control-unavailable");
@@ -274,7 +289,7 @@ describe("ManualDeliveryStore unsafe namespace refusal", () => {
     });
 });
 
-describe("ManualDeliveryStore actual atomic fault seams", () => {
+describeLinux("ManualDeliveryStore actual atomic fault seams", () => {
     it.each(["write", "file-sync", "publish", "cleanup", "directory-sync"] as const)("retains existing binding under %s failure and never clobbers", async point => {
         const dir = await control(); await seed(dir); const before = await fs.readFile(name(dir)); const inode = (await fs.stat(name(dir))).ino;
         const s = store(dir, { fault: p => { if (p === point) throw new Error(`synthetic private error ${dir}`); } });
@@ -292,5 +307,129 @@ describe("ManualDeliveryStore actual atomic fault seams", () => {
         const dir = await control(); const s = store(dir, { fault: () => { throw Object.assign(new Error(`private ${dir}`), { code: "ENOSPC" }); } });
         const error = await s.put(binding()).catch(e => e); expect(error.reasonCode).toBe("control-space");
         expect(JSON.stringify(error, Object.getOwnPropertyNames(error))).not.toContain(dir); expect(await store(dir).list()).toEqual([]);
+    });
+});
+
+describeLinux("ManualDeliveryStore pinned descriptor regressions", () => {
+    it("publishes only inside the original pinned job when the actual publish fault redirects the job path", async () => {
+        const dir = await control(); const file = name(dir); const job = path.dirname(file); const retained = `${job}-retained`;
+        const outside = path.join(root, `outside-${++serial}`); await fs.mkdir(outside, { mode: 0o755 });
+        let temp!: string;
+        const s = store(dir, { fault: point => {
+            if (point !== "publish") return;
+            renameSync(job, retained);
+            temp = readdirSync(retained).find(entry => entry.startsWith(".atomic-"))!;
+            // The attack creates the matching helper temp leaf outside before redirecting the path.
+            linkSync(path.join(retained, temp), path.join(outside, temp));
+            symlinkSync(outside, job);
+        } });
+        await expect(s.put(binding())).rejects.toThrow("control-unavailable");
+        expect(await fs.readdir(outside)).toEqual([temp]);
+        expect(await fs.lstat(path.join(outside, path.basename(file))).catch(() => null)).toBeNull();
+        expect(await fs.readdir(retained)).toEqual([path.basename(file)]);
+        expect(await fs.readFile(path.join(retained, path.basename(file)), "utf8")).toBe(canonicalJson(binding()));
+        expect((await fs.stat(retained)).mode & 0o7777).toBe(0o700);
+        expect((await fs.stat(path.join(retained, path.basename(file)))).mode & 0o7777).toBe(0o600);
+    });
+    it.each(["root", "namespace"] as const)("keeps publication pinned when %s is replaced at the helper publish point", async level => {
+        const dir = await control(); const file = name(dir);
+        const target = level === "root" ? dir : path.join(dir, "manual-delivery");
+        const retained = `${target}-retained`; const outside = path.join(root, `outside-${++serial}`);
+        await fs.mkdir(outside, { mode: 0o755 });
+        await expect(store(dir, { fault: point => {
+            if (point === "publish") { renameSync(target, retained); symlinkSync(outside, target); }
+        } }).put(binding())).rejects.toThrow("control-unavailable");
+        expect(await fs.readdir(outside)).toEqual([]);
+        const evidence = path.join(retained, path.relative(target, file));
+        expect(await fs.readFile(evidence, "utf8")).toBe(canonicalJson(binding()));
+        expect(await fs.readdir(path.dirname(evidence))).toEqual([path.basename(evidence)]);
+    });
+    it.each(["root", "namespace", "job"] as const)("refuses list/remove after %s is redirected during the binding open, without reading or deleting outside", async level => {
+        for (const operation of ["list", "remove"] as const) {
+            const dir = await control(); await seed(dir); const file = name(dir);
+            const target = level === "root" ? dir : level === "namespace" ? path.join(dir, "manual-delivery") : path.dirname(file);
+            const retained = `${target}-retained`; const outside = path.join(root, `outside-${++serial}`);
+            await fs.mkdir(outside, { mode: 0o755 });
+            const outsideFile = path.join(outside, path.relative(target, file));
+            await fs.mkdir(path.dirname(outsideFile), { recursive: true, mode: 0o700 });
+            await fs.writeFile(outsideFile, canonicalJson({ ...binding(), leaseToken: id(88) }), { mode: 0o600 });
+            const before = await tree(outside); const original = fs.open.bind(fs); let attacked = false;
+            const spy = jest.spyOn(fs, "open").mockImplementation(async (...args) => {
+                if (!attacked && await fs.realpath(String(args[0])) === file) {
+                    attacked = true; await fs.rename(target, retained); await fs.symlink(outside, target);
+                }
+                return original(...args);
+            });
+            try {
+                const s = store(dir);
+                await expect(operation === "list" ? s.list() : s.remove(binding())).rejects.toThrow("control-unavailable");
+            } finally { spy.mockRestore(); }
+            expect(attacked).toBe(true); expect(await tree(outside)).toEqual(before);
+            expect(await fs.readFile(path.join(retained, path.relative(target, file)), "utf8")).toBe(canonicalJson(binding()));
+        }
+    });
+    it("preserves a valid lease changed in place by the second removal guard on the same inode", async () => {
+        const dir = await control(); await seed(dir); const file = name(dir); const inode = (await fs.lstat(file)).ino;
+        const changed = { ...binding(), leaseToken: id(77) }; let guards = 0;
+        const s = store(dir, { beforeWrite: async () => {
+            if (++guards === 2) await fs.writeFile(file, canonicalJson(changed));
+        } });
+        await expect(s.remove(binding())).rejects.toThrow("control-unavailable");
+        expect(guards).toBe(2); expect((await fs.lstat(file)).ino).toBe(inode);
+        expect(await fs.readFile(file, "utf8")).toBe(canonicalJson(changed));
+        await s.remove(changed); expect(await s.list()).toEqual([]);
+    });
+    it.each(["code-getter", "reason-getter", "proxy", "revoked-proxy", "ENOSPC"])("sanitizes %s guard failures without poisoning the next queued operation", async kind => {
+        const dir = await control(); const secret = "synthetic-private-classification-detail";
+        let error: unknown;
+        if (kind === "code-getter") error = Object.defineProperty(new WorkerError("control-space"), "code", { get() { throw new Error(secret); } });
+        if (kind === "reason-getter") error = Object.defineProperty(new WorkerError("control-space"), "reasonCode", { get() { throw new Error(secret); } });
+        if (kind === "proxy") error = new Proxy({}, { get() { throw new Error(secret); }, getPrototypeOf() { throw new Error(secret); } });
+        if (kind === "revoked-proxy") { const proxy = Proxy.revocable({}, {}); proxy.revoke(); error = proxy.proxy; }
+        if (kind === "ENOSPC") error = { code: "ENOSPC", message: secret };
+        let fail = true;
+        const s = store(dir, { beforeWrite: async () => { if (fail) { fail = false; throw error; } } });
+        const failed = s.put(binding()).catch(value => value);
+        const next = s.put(binding());
+        const result = await failed;
+        expect(result).toMatchObject({ reasonCode: kind === "ENOSPC" ? "control-space" : "control-unavailable" });
+        expect(result).not.toBe(error); expect(JSON.stringify(result, Object.getOwnPropertyNames(result))).not.toContain(secret);
+        await next; expect(await s.list()).toEqual([binding()]);
+    });
+    it("holds every directory descriptor through helper cleanup and closes every acquired handle on success and refusal", async () => {
+        const original = fs.open.bind(fs);
+        const handles: { close: jest.SpyInstance; fd: number }[] = [];
+        jest.spyOn(fs, "open").mockImplementation(async (...args) => {
+            const handle = await original(...args); handles.push({ close: jest.spyOn(handle, "close"), fd: handle.fd }); return handle;
+        });
+        const dir = await control();
+        const s = store(dir, { fault: point => {
+            if (point === "cleanup") {
+                // Root, namespace, job and helper directory must still be open at cleanup.
+                expect(handles.filter(h => !h.close.mock.calls.length)).toHaveLength(4);
+            }
+        } });
+        await s.put(binding()); await s.list(); await s.remove(binding());
+        await expect(store(await control(), { beforeWrite: async () => { throw new Error("lost"); } }).put(binding())).rejects.toThrow("control-unavailable");
+        for (const handle of handles) expect(handle.close).toHaveBeenCalledTimes(1);
+    });
+    it("closes the synchronous removal descriptor after a failed final read and after a successful retry", async () => {
+        const dir = await control(); await seed(dir); const before = await fs.readFile(name(dir));
+        const open = nodeFs.openSync.bind(nodeFs); const read = nodeFs.readSync.bind(nodeFs); const close = nodeFs.closeSync.bind(nodeFs);
+        const opened: number[] = []; const closed: number[] = []; let fail = true;
+        jest.spyOn(nodeFs, "openSync").mockImplementation((...args) => {
+            const fd = open(...args); if (String(args[0]).startsWith("/proc/self/fd/")) opened.push(fd); return fd;
+        });
+        // File readSync has multiple overloads; forward the untouched native arguments in this fault seam.
+        jest.spyOn(nodeFs, "readSync").mockImplementation((...args: any[]) => {
+            if (opened.includes(args[0]) && fail) { fail = false; throw new Error("synthetic private sync read"); }
+            return (read as any)(...args);
+        });
+        jest.spyOn(nodeFs, "closeSync").mockImplementation(fd => { if (opened.includes(fd)) closed.push(fd); close(fd); });
+        const s = store(dir);
+        await expect(s.remove(binding())).rejects.toThrow("control-unavailable");
+        expect(await fs.readFile(name(dir))).toEqual(before); expect(closed).toEqual(opened); expect(opened).toHaveLength(1);
+        await s.remove(binding()); expect(await s.list()).toEqual([]);
+        expect(opened).toHaveLength(2); expect(closed).toEqual(opened);
     });
 });

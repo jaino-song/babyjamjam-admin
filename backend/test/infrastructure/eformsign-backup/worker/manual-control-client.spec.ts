@@ -6,6 +6,7 @@ import { MANUAL_CONTROL_CODES } from "domain/eformsign-backup/manual-backup-cont
 import { MANUAL_BACKUP_LEASE_DURATION_MS, MANUAL_BACKUP_SCOPE_REVISION, manualBackupSnapshotId } from "domain/eformsign-backup/manual-backup-constants";
 import { canonicalJson } from "domain/eformsign-backup/source-evidence";
 import { manualDocumentResultDigest, manualAggregateResultDigest, type ManualDocumentResult, type ManualAggregateResult, type ManualSelectedCandidate } from "domain/eformsign-backup/worker/manual-protocol";
+import { WorkerError } from "domain/eformsign-backup/worker/worker-error";
 import { ManualControlClient, ManualControlFailure } from "infrastructure/eformsign-backup/worker/manual-control-client";
 
 const id = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
@@ -292,7 +293,7 @@ describe("ManualControlClient abort and stream ownership", () => {
                 const c = client(async () => response);
                 try {
                     const operation = isArtifact ? c.openArtifact(lease, "doc", artifact, controller.signal).then(collect) : c.claim(controller.signal);
-                    await expect(operation).rejects.toMatchObject({ reasonCode: isArtifact ? "artifact-integrity" : "export-response-invalid" });
+                    await expect(operation).rejects.toMatchObject({ reasonCode: isArtifact && !locked ? "artifact-integrity" : "export-response-invalid" });
                     expect(remove).toHaveBeenCalledTimes(1);
                 } finally { if (reader) { await reader.cancel(); reader.releaseLock(); } }
             }
@@ -316,5 +317,76 @@ describe("ManualControlClient abort and stream ownership", () => {
         const mutable = clone(artifact); const c = client(async () => new Response(PDF, { headers: artifactHeaders() }));
         const operation = c.openArtifact(lease, "doc", mutable); mutable.sha256 = h("0"); mutable.byteLength = 1;
         expect(await collect(await operation)).toEqual(PDF);
+    });
+});
+
+describe("ManualControlClient unexpected response metadata", () => {
+    const operations = [
+        (c: ManualControlClient) => c.claim(),
+        (c: ManualControlClient) => c.renew(lease),
+        (c: ManualControlClient) => c.listCandidates(lease, { afterOrdinal: 0, limit: 1 }),
+        (c: ManualControlClient) => c.validate(lease),
+        (c: ManualControlClient) => c.writeDocumentResults(lease, [{ payload: result, digest: manualDocumentResultDigest(result) }]),
+        (c: ManualControlClient) => c.finish(lease, aggregate, manualAggregateResultDigest(aggregate)),
+        (c: ManualControlClient) => c.openArtifact(lease, "doc", artifact),
+    ];
+    it.each(["status", "body"] as const)("sanitizes an actual Response throwing %s getter for every public operation", async property => {
+        for (const operation of operations) {
+            const response = new Response(PDF, { headers: artifactHeaders() });
+            Object.defineProperty(response, property, { get() { throw new Error(`private ${TOKEN} ${lease.leaseToken}`); } });
+            const error = await operation(client(async () => response)).catch(value => value);
+            expect(error).toBeInstanceOf(WorkerError); expect(error.reasonCode).toBe("export-response-invalid");
+            expect(error.message).toBe("export-response-invalid"); expect(error.cause).toBeUndefined();
+            expect(JSON.stringify(error, Object.getOwnPropertyNames(error))).not.toContain(TOKEN);
+            expect(JSON.stringify(error, Object.getOwnPropertyNames(error))).not.toContain(lease.leaseToken);
+        }
+    });
+    it.each(["headers", "header-get", "getReader"])("sanitizes artifact %s metadata failures and cancels once with rejected cleanup consumed", async property => {
+        const unhandled: unknown[] = []; const listener = (value: unknown) => unhandled.push(value); process.on("unhandledRejection", listener);
+        const cancel = jest.fn(() => Promise.reject(new Error(TOKEN)));
+        try {
+            const response = new Response(new ReadableStream<Uint8Array>({ cancel }), { headers: artifactHeaders() });
+            if (property === "headers") Object.defineProperty(response, "headers", { get() { throw new Error(TOKEN); } });
+            if (property === "header-get") Object.defineProperty(response, "headers", { value: { get() { throw new Error(TOKEN); } } });
+            if (property === "getReader") Object.defineProperty(response.body!, "getReader", { get() { throw new Error(TOKEN); } });
+            const error = await client(async () => response).openArtifact(lease, "doc", artifact).catch(value => value);
+            expect(error).toMatchObject({ reasonCode: "export-response-invalid", message: "export-response-invalid" });
+            expect(error.cause).toBeUndefined(); expect(cancel).toHaveBeenCalledTimes(1);
+            await new Promise(resolve => setImmediate(resolve)); expect(unhandled).toEqual([]);
+        } finally { process.off("unhandledRejection", listener); }
+    });
+    it.each(["code-getter", "status-getter", "reason-getter", "unknown-reason", "proxy", "revoked-proxy"])("makes the error classifier nonthrowing for %s", async kind => {
+        let hostile: unknown;
+        if (kind === "code-getter") hostile = Object.defineProperty(new ManualControlFailure(409, "LEASE_LOST"), "code", { get() { throw new Error(TOKEN); } });
+        if (kind === "status-getter") hostile = Object.defineProperty(new ManualControlFailure(409, "LEASE_LOST"), "httpStatus", { get() { throw new Error(TOKEN); } });
+        if (kind === "reason-getter") hostile = Object.defineProperty(new WorkerError("artifact-integrity"), "reasonCode", { get() { throw new Error(TOKEN); } });
+        if (kind === "unknown-reason") hostile = Object.defineProperty(new WorkerError("artifact-integrity"), "reasonCode", { value: TOKEN });
+        if (kind === "proxy") hostile = new Proxy({}, { getPrototypeOf() { throw new Error(TOKEN); } });
+        if (kind === "revoked-proxy") { const p = Proxy.revocable({}, {}); p.revoke(); hostile = p.proxy; }
+        for (const isArtifact of [false, true]) {
+            const response = new Response(PDF, { headers: artifactHeaders() });
+            Object.defineProperty(response, "status", { get() { throw hostile; } });
+            const c = client(async () => response);
+            const error = await (isArtifact ? c.openArtifact(lease, "doc", artifact) : c.claim()).catch(value => value);
+            expect(error).not.toBe(hostile); expect(error).toMatchObject({ reasonCode: "export-response-invalid" });
+            expect(JSON.stringify(error, Object.getOwnPropertyNames(error))).not.toContain(TOKEN);
+        }
+    });
+    it("validates status values, creates fresh known errors, and sanitizes failure-response metadata", async () => {
+        for (const status of [NaN, -1, 600, "200"]) {
+            const response = json(null); Object.defineProperty(response, "status", { value: status });
+            await expect(client(async () => response).claim()).rejects.toThrow("export-response-invalid");
+        }
+        const response = json({ code: "LEASE_LOST" }, 409);
+        Object.defineProperty(response, "body", { get() { throw new Error(TOKEN); } });
+        await expect(client(async () => response).claim()).rejects.toThrow("export-response-invalid");
+        for (const original of [new WorkerError("artifact-integrity"), new ManualControlFailure(409, "LEASE_LOST")]) {
+            Object.defineProperty(original, "cause", { value: TOKEN }); Object.defineProperty(original, "message", { value: TOKEN });
+            const bad = json(null); Object.defineProperty(bad, "status", { get() { throw original; } });
+            const error = await client(async () => bad).claim().catch(value => value);
+            expect(error).not.toBe(original); expect(error.cause).toBeUndefined();
+            expect(JSON.stringify(error, Object.getOwnPropertyNames(error))).not.toContain(TOKEN);
+            expect(error.message).toBe(original instanceof WorkerError ? "artifact-integrity" : "LEASE_LOST");
+        }
     });
 });

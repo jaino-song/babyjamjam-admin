@@ -1,4 +1,4 @@
-import { constants, fstatSync, lstatSync, promises as fs, type Stats } from "node:fs";
+import { closeSync, constants, fstatSync, lstatSync, openSync, readSync, unlinkSync, promises as fs, type Stats } from "node:fs";
 import type { FileHandle } from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
@@ -27,11 +27,24 @@ export interface ManualDeliveryStoreOptions {
     beforeWrite: () => Promise<void>; fault?: AtomicPublishOptions["fault"];
 }
 interface Identity { dev: number; ino: number }
-interface Directory { name: string; handle: FileHandle; identity: Identity }
+interface Directory { name: string; entryPath: string; anchor: string; handle: FileHandle; identity: Identity }
 interface RecordFile { binding: ManualDeliveryBinding; bytes: Buffer; identity: Identity; name: string }
 interface Context { directories: Directory[] }
 function unavailable(): never { throw new WorkerError("control-unavailable"); }
-function code(error: unknown): unknown { return error !== null && typeof error === "object" && "code" in error ? error.code : null; }
+function code(error: unknown): unknown {
+    try { return error !== null && typeof error === "object" ? Reflect.get(error, "code") : null; } catch { return null; }
+}
+function storeFailure(error: unknown): WorkerError {
+    // Classification itself is untrusted: Proxy traps, instanceof and reason accessors can throw.
+    try {
+        const errorCode = error !== null && typeof error === "object" ? Reflect.get(error, "code") : null;
+        if (errorCode === "ENOSPC" || (error instanceof WorkerError && error.reasonCode === "control-space")) {
+            return new WorkerError("control-space");
+        }
+    } catch { /* Always fall back to a fresh closed error, never a foreign object. */ }
+    return new WorkerError("control-unavailable");
+}
+function requireLinux(): void { if (process.platform !== "linux") throw new WorkerError("unsupported-filesystem"); }
 function same(a: Identity, b: Identity): boolean { return a.dev === b.dev && a.ino === b.ino; }
 function privateEntry(stat: Stats, mode: number): boolean {
     return typeof process.getuid === "function" && stat.uid === process.getuid() && (stat.mode & 0o7777) === mode;
@@ -57,7 +70,8 @@ function lstatOrNullSync(name: string): Stats | null {
 function sorted(values: string[]): string[] { return values.sort((a, b) => a < b ? -1 : a > b ? 1 : 0); }
 
 /**
- * Owner-only outbox evidence. The caller supplies the existing ledger/lock guard; this library takes no lock.
+ * Linux-only owner-only outbox evidence, anchored through pinned /proc/self/fd directory handles.
+ * The caller supplies the existing ledger/lock guard; this library takes no lock.
  * Publication is one guarded private-control operation. A mid-helper lock loss may leave valid evidence;
  * the post-guard refuses success and no artifact work is authorized by this class.
  */
@@ -84,15 +98,18 @@ export class ManualDeliveryStore {
         } catch { unavailable(); }
     }
     async put(value: ManualDeliveryBinding): Promise<void> {
+        requireLinux();
         // Deliberately before the first await/queue boundary: caller mutation cannot redirect a capability.
         const binding = this.binding(value);
         const bytes = Buffer.from(canonicalJson(binding), "utf8");
         return this.serialize(context => this.putRecord(context, binding, bytes));
     }
     list(): Promise<ManualDeliveryBinding[]> {
+        if (process.platform !== "linux") return Promise.reject(new WorkerError("unsupported-filesystem"));
         return this.serialize(async context => (await this.scan(context)).map(r => r.binding));
     }
     async remove(value: ManualDeliveryBinding): Promise<void> {
+        requireLinux();
         const binding = this.binding(value);
         const bytes = Buffer.from(canonicalJson(binding), "utf8");
         return this.serialize(async context => {
@@ -105,13 +122,11 @@ export class ManualDeliveryStore {
             const directory = await this.directory(context, path.dirname(name), false);
             if (!directory) unavailable();
             await this.guard(context);
-            const fresh = await this.readFile(name);
+            const fresh = await this.readFile(context, name);
             if (!same(record.identity, fresh.identity) || !fresh.bytes.equals(bytes)) unavailable();
             await this.guard(context);
             // Recheck the exact entry after the asynchronous lock proof, immediately before unlink.
-            const entry = lstatSync(name);
-            if (!entry.isFile() || !privateEntry(entry, 0o600) || !same(entry, record.identity)) unavailable();
-            await fs.unlink(name);
+            this.removeExact(context, record, bytes);
             await this.guard(context);
             await this.sync(context, directory);
         });
@@ -134,9 +149,7 @@ export class ManualDeliveryStore {
                 await this.revalidate(context);
                 return result;
             } catch (error) {
-                if (error instanceof WorkerError && error.reasonCode === "control-space") throw new WorkerError("control-space");
-                if (code(error) === "ENOSPC") throw new WorkerError("control-space");
-                return unavailable();
+                throw storeFailure(error);
             } finally {
                 for (const directory of context.directories.reverse()) {
                     try { await directory.handle.close(); } catch { /* Never expose filesystem details. */ }
@@ -149,26 +162,32 @@ export class ManualDeliveryStore {
     private async directory(context: Context, name: string, create: boolean): Promise<Directory | null> {
         const opened = context.directories.find(d => d.name === name);
         if (opened) { await this.checkDirectory(opened); return opened; }
-        let entry = await lstatOrNull(name);
+        const parent = context.directories.find(d => d.name === path.dirname(name));
+        if (name !== this.controlPath && !parent) unavailable();
+        // Configured paths are only used to pin/compare the root. Every descendant lookup is
+        // relative to a pinned parent; a renamed ancestor cannot redirect a later syscall.
+        const entryPath = parent ? `${parent.anchor}/${path.basename(name)}` : name;
+        let entry = await lstatOrNull(entryPath);
         if (!entry && create) {
-            const parent = context.directories.find(d => d.name === path.dirname(name));
             if (!parent) unavailable();
             await this.guard(context);
-            await fs.mkdir(name, { mode: 0o700 });
+            await fs.mkdir(entryPath, { mode: 0o700 });
             await this.guard(context);
             // Once a directory is created, loss of the next proof preserves it as private evidence.
             await this.sync(context, parent);
-            entry = await fs.lstat(name);
+            entry = await fs.lstat(entryPath);
         }
         if (!entry) { if (name === this.controlPath) unavailable(); return null; }
         if (!entry.isDirectory() || entry.isSymbolicLink() || !privateEntry(entry, 0o700)) unavailable();
         const prior = this.pinned.get(name);
         if (prior && !same(prior, entry)) unavailable();
-        const handle = await fs.open(name, DIRECTORY_FLAGS);
+        const handle = await fs.open(entryPath, DIRECTORY_FLAGS);
         try {
             const stat = await handle.stat();
             if (!stat.isDirectory() || !privateEntry(stat, 0o700) || !same(stat, entry)) unavailable();
-            const directory = { name, handle, identity: { dev: stat.dev, ino: stat.ino } };
+            // Keep the final dot: the unchanged atomic helper opens the final directory with
+            // O_NOFOLLOW. Only the proc ancestor follows a descriptor, never an untrusted leaf.
+            const directory = { name, entryPath, anchor: `/proc/self/fd/${handle.fd}/.`, handle, identity: { dev: stat.dev, ino: stat.ino } };
             await this.checkDirectory(directory);
             this.pinned.set(name, directory.identity);
             context.directories.push(directory);
@@ -176,7 +195,7 @@ export class ManualDeliveryStore {
         } catch (error) { await handle.close(); throw error; }
     }
     private async checkDirectory(directory: Directory): Promise<void> {
-        const entry = await fs.lstat(directory.name);
+        const entry = await fs.lstat(directory.entryPath);
         const stat = await directory.handle.stat();
         if (!entry.isDirectory() || entry.isSymbolicLink() || !stat.isDirectory()
             || !privateEntry(entry, 0o700) || !privateEntry(stat, 0o700)
@@ -186,27 +205,66 @@ export class ManualDeliveryStore {
         for (const directory of context.directories) await this.checkDirectory(directory);
     }
     private async guard(context: Context): Promise<void> {
+        this.checkHierarchy(context);
         await this.beforeWrite();
         // No asynchronous filesystem work between the fresh lock proof and the owned mutation.
         // Still detect a root/descendant replacement made during the caller's awaited proof.
+        this.checkHierarchy(context);
+    }
+    private checkHierarchy(context: Context): void {
         for (const directory of context.directories) {
-            const entry = lstatSync(directory.name);
+            const entry = lstatSync(directory.entryPath);
             const stat = fstatSync(directory.handle.fd);
             if (!entry.isDirectory() || entry.isSymbolicLink() || !stat.isDirectory()
                 || !privateEntry(entry, 0o700) || !privateEntry(stat, 0o700)
                 || !same(entry, directory.identity) || !same(stat, directory.identity)) unavailable();
         }
     }
+    private recordPath(context: Context, name: string): string {
+        const directory = context.directories.find(d => d.name === path.dirname(name));
+        if (!directory) unavailable();
+        return `${directory.anchor}/${path.basename(name)}`;
+    }
+    private removeExact(context: Context, record: RecordFile, expected: Buffer): void {
+        const file = this.recordPath(context, record.name);
+        const entry = lstatSync(file);
+        if (!entry.isFile() || !privateEntry(entry, 0o600) || !same(entry, record.identity)
+            || entry.size <= 0 || entry.size > MAX_BYTES) unavailable();
+        const fd = openSync(file, FILE_FLAGS);
+        try {
+            const initial = fstatSync(fd);
+            if (!initial.isFile() || !privateEntry(initial, 0o600) || !same(initial, entry) || initial.size !== entry.size) unavailable();
+            const buffer = Buffer.alloc(entry.size + 1);
+            let filled = 0;
+            while (filled < buffer.length) {
+                const count = readSync(fd, buffer, filled, buffer.length - filled, filled);
+                if (count === 0) break;
+                filled += count;
+            }
+            const final = fstatSync(fd);
+            const current = lstatSync(file);
+            if (filled !== entry.size || final.size !== entry.size || current.size !== entry.size
+                || !same(final, entry) || !same(current, entry) || !final.isFile() || !current.isFile()
+                || !privateEntry(final, 0o600) || !privateEntry(current, 0o600)) unavailable();
+            const bytes = buffer.subarray(0, filled);
+            const binding = this.binding(JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)));
+            if (this.fileName(binding) !== record.name || canonicalJson(binding) !== bytes.toString("utf8") || !bytes.equals(expected)) unavailable();
+            this.checkHierarchy(context);
+            // No awaited callback or async filesystem gap after the final full capability comparison.
+            unlinkSync(file);
+        } finally { closeSync(fd); }
+    }
     private async sync(context: Context, directory: Directory): Promise<void> {
         await this.guard(context);
         await directory.handle.sync();
         await this.guard(context);
     }
-    private async readFile(name: string): Promise<RecordFile> {
-        const entry = await fs.lstat(name);
+    private async readFile(context: Context, name: string): Promise<RecordFile> {
+        const file = this.recordPath(context, name);
+        const entry = await fs.lstat(file);
         if (!entry.isFile() || entry.isSymbolicLink() || !privateEntry(entry, 0o600)
             || entry.size <= 0 || entry.size > MAX_BYTES) unavailable();
-        const handle = await fs.open(name, FILE_FLAGS);
+        const handle = await fs.open(file, FILE_FLAGS);
         try {
             const initial = await handle.stat();
             if (!initial.isFile() || !privateEntry(initial, 0o600) || !same(entry, initial) || initial.size !== entry.size) unavailable();
@@ -219,8 +277,8 @@ export class ManualDeliveryStore {
                 filled += bytesRead;
             }
             const final = await handle.stat();
-            const current = await fs.lstat(name);
-            if (filled !== entry.size || final.size !== entry.size || !same(final, entry) || !same(current, entry)
+            const current = await fs.lstat(file);
+            if (filled !== entry.size || final.size !== entry.size || current.size !== entry.size || !same(final, entry) || !same(current, entry)
                 || !current.isFile() || !privateEntry(current, 0o600) || !privateEntry(final, 0o600)) unavailable();
             const bytes = buffer.subarray(0, filled);
             const binding = this.binding(JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)));
@@ -232,14 +290,14 @@ export class ManualDeliveryStore {
         const namespace = await this.directory(context, path.join(this.controlPath, NAMESPACE), false);
         if (!namespace) return [];
         const records: RecordFile[] = [];
-        for (const job of sorted(await fs.readdir(namespace.name))) {
+        for (const job of sorted(await fs.readdir(namespace.anchor))) {
             safeParse(runIdField, job);
             const directory = await this.directory(context, path.join(namespace.name, job), false);
             if (!directory) unavailable();
-            for (const file of sorted(await fs.readdir(directory.name))) {
+            for (const file of sorted(await fs.readdir(directory.anchor))) {
                 if (!file.startsWith(`${job}.attempt-`) || !file.endsWith(".json")
                     || !/^[1-9][0-9]*$/.test(file.slice(job.length + 9, -5))) unavailable();
-                records.push(await this.readFile(path.join(directory.name, file)));
+                records.push(await this.readFile(context, path.join(directory.name, file)));
             }
         }
         return records;
@@ -257,20 +315,21 @@ export class ManualDeliveryStore {
         await this.sync(context, context.directories[0]!);
         await this.sync(context, namespace);
         // Prevalidate the final file's owner/mode/inode before the shared helper could reuse it.
-        const entry = await lstatOrNull(name);
+        const file = this.recordPath(context, name);
+        const entry = await lstatOrNull(file);
         if (entry) {
-            const fresh = await this.readFile(name);
+            const fresh = await this.readFile(context, name);
             if (!existing || !same(existing.identity, fresh.identity) || !fresh.bytes.equals(bytes)) unavailable();
         } else if (existing) unavailable();
         await this.guard(context);
-        const guardedEntry = lstatOrNullSync(name);
+        const guardedEntry = lstatOrNullSync(file);
         if (guardedEntry && (!existing || !guardedEntry.isFile() || !privateEntry(guardedEntry, 0o600)
             || !same(guardedEntry, existing.identity))) unavailable();
         if (!guardedEntry && existing) unavailable();
-        await publishBytesNoClobber(directory.name, path.basename(name), bytes, { fault: this.fault, ioReasonCode: "control-unavailable" });
+        await publishBytesNoClobber(directory.anchor, path.basename(name), bytes, { fault: this.fault, ioReasonCode: "control-unavailable" });
         // This is deliberately an awaited guard, never an asynchronous `fault` callback.
         await this.guard(context);
-        const published = await this.readFile(name);
+        const published = await this.readFile(context, name);
         if (!published.bytes.equals(bytes) || (existing && !same(published.identity, existing.identity))) unavailable();
     }
 }
