@@ -15,10 +15,10 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json();
-    const expectedBranchId = request.nextUrl.searchParams.get("expectedBranchId")?.trim();
+    const expectedBranchId = request.nextUrl.searchParams.get("expectedBranchId");
     const response = await serverAPIClient.post("/message-deliveries/sms", body, {
-      headers: getAuthHeaders(token),
-      ...(expectedBranchId ? { params: { expectedBranchId } } : {}),
+      headers: { ...getAuthHeaders(token), ...(request.headers.has("Idempotency-Key") ? { "Idempotency-Key": request.headers.get("Idempotency-Key")! } : {}) },
+      ...(expectedBranchId !== null ? { params: { expectedBranchId } } : {}),
     });
 
     if (response.status >= 400) {

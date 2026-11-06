@@ -7,7 +7,7 @@ import {
 
 
 import { isAxiosError } from "axios";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQueryClient } from "@tanstack/react-query";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Calendar, Loader2, Send, X } from "lucide-react";
 
@@ -16,13 +16,12 @@ import { ClientAutocomplete, type ClientAutocompleteLabelMessage } from "@/compo
 import { TwoButtonModal } from "@/components/app/ui/TwoButtonModal";
 import { StatusBadge } from "@/components/app/ui/status-badge";
 import { Button } from "@/components/ui/button";
-import { filterHistoryRecordsByChannel } from "@/features/message-triggers/channel";
 import { messageTriggerKeys } from "@/features/message-triggers/hooks/keys";
-import { useMessageHistory } from "@/features/message-triggers/hooks/use-message-triggers";
 import type { MessageLogRecord } from "@/features/message-triggers/types";
 import { serviceRecordsApi } from "@/features/service-records/api/service-records.api";
 import { useToast } from "@/hooks/use-toast";
-import { eformsignApi, messageDeliveryApi, settingsApi } from "@/services/api";
+import { eformsignApi, messageDeliveryApi } from "@/services/api";
+import type { MessageDeliverySmsDuplicateCheckResponse, SendMessageDeliverySmsRequest, SendMessageDeliverySmsQueueResponse } from "@babyjamjam/shared/types/message";
 import type { Client } from "@/lib/client/types";
 import {
   formatKoreanPhoneNumber,
@@ -73,15 +72,16 @@ interface RecipientQueueItem {
 
 interface DuplicateSendMatch {
   recipient: RecipientQueueItem;
-  record: MessageLogRecord;
+  preflight: MessageDeliverySmsDuplicateCheckResponse;
 }
 
-type SmsAttemptClassification = "accepted" | "not-applied" | "blocked";
+type SmsAttemptClassification = "accepted" | "not-applied" | "blocked" | "duplicate";
 
 interface SmsAttemptResult {
   recipient: RecipientQueueItem;
   classification: SmsAttemptClassification;
   normalized?: NormalizedApiError;
+  queue?: SendMessageDeliverySmsQueueResponse;
 }
 
 interface SmsSubmissionSnapshot {
@@ -92,6 +92,9 @@ interface SmsSubmissionSnapshot {
   requiresRecipientName: boolean;
   deliveryMode: TemplateMessageDeliveryMode;
   deliveryGeneration: number;
+  branchId: string | null;
+  editorIdentity: string;
+  payloads: SendMessageDeliverySmsRequest[];
 }
 
 type SubmissionGuard = "idle" | "checking" | "awaiting-confirm" | "sending";
@@ -213,7 +216,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function isStrictSmsSuccess(value: unknown): boolean {
-  if (!isRecord(value) || !isRecord(value.result)) return false;
+  if (!isRecord(value) || "outcome" in value || !isRecord(value.result)) return false;
 
   const { resultCode, successCount, errorCount } = value.result;
   return typeof resultCode === "number"
@@ -225,6 +228,42 @@ function isStrictSmsSuccess(value: unknown): boolean {
     && typeof errorCount === "number"
     && Number.isInteger(errorCount)
     && errorCount === 0;
+}
+
+function isStrictSmsQueueResponse(value: unknown): value is SendMessageDeliverySmsQueueResponse {
+  if (!isRecord(value) || value.provider !== "aligo_sms" || !["immediate", "scheduled"].includes(String(value.triggerType))
+    || !isRecord(value.request) || typeof value.request.receiver !== "string"
+    || !["AUTO", "SMS", "LMS"].includes(String(value.request.msgType))
+    || typeof value.request.testMode !== "boolean" || typeof value.request.idempotencyKey !== "string" || !value.request.idempotencyKey
+    || !["queued", "deferred", "canceled", "mixed"].includes(String(value.outcome))
+    || "result" in value || !Array.isArray(value.items) || value.items.length === 0) return false;
+  const statuses = new Set<string>();
+  for (const item of value.items) {
+    if (!isRecord(item) || typeof item.jobId !== "string" || !item.jobId
+      || typeof item.messageLogId !== "number" || !Number.isSafeInteger(item.messageLogId) || item.messageLogId <= 0
+      || typeof item.recipientPhone !== "string" || !item.recipientPhone
+      || !["queued", "deferred", "canceled"].includes(String(item.status))
+      || typeof item.scheduledAt !== "string" || Number.isNaN(Date.parse(item.scheduledAt))
+      || (item.reason !== null && typeof item.reason !== "string")) return false;
+    statuses.add(String(item.status));
+  }
+  return value.outcome === "mixed" ? statuses.size > 1 : statuses.size === 1 && statuses.has(String(value.outcome));
+}
+
+function isDuplicateConflict(error: unknown): boolean {
+  return isAxiosError(error) && error.response?.status === 409
+    && isRecord(error.response.data) && error.response.data.code === "REQUEST_CONFLICT";
+}
+
+function describeSmsOutcomes(attempts: SmsAttemptResult[]): string {
+  const accepted = attempts.filter((attempt) => attempt.classification === "accepted");
+  const queues = accepted.flatMap((attempt) => attempt.queue?.items ?? []);
+  if (queues.length === 0) return `메시지 발송 요청 ${accepted.length}건을 접수했어요`;
+  const labels = { queued: "발송 대기", deferred: "심야 보류", canceled: "취소" } as const;
+  const counts = (["queued", "deferred", "canceled"] as const).map((status) => `${labels[status]} ${queues.filter((item) => item.status === status).length}건`);
+  const sent = accepted.filter((attempt) => !attempt.queue).length;
+  if (sent) counts.unshift(`발송 요청 접수 ${sent}건`);
+  return `${counts.join(" · ")}. ${queues.map((item) => `${item.recipientPhone}: ${labels[item.status]} · ${item.scheduledAt}${item.reason ? ` · ${item.reason}` : ""}`).join(" / ")}`;
 }
 
 function normalizeSmsFailure(error: unknown): NormalizedApiError {
@@ -309,15 +348,9 @@ export function TemplateSendForm({
   const smsLookupIdRef = useRef(0);
   const smsLookupGenerationRef = useRef<number | null>(null);
   const smsSendIdRef = useRef(0);
+  const requestKeysRef = useRef(new Map<string, { signature: string; key: string }>());
   const serviceSendIdRef = useRef(0);
   const receiptSendIdRef = useRef(0);
-  const { data: historyData = [], refetch: refetchHistory } = useMessageHistory();
-  const { data: messagePolicies } = useQuery({
-    queryKey: ["settings", "message-automation-policies"],
-    queryFn: settingsApi.getMessageAutomationPolicies,
-  });
-  const duplicateSendConfirmationEnabled =
-    messagePolicies?.policyActivations?.["duplicate-send-confirmation"] ?? true;
   const {
     clientId,
     name,
@@ -384,10 +417,6 @@ export function TemplateSendForm({
   const recipientPhone = useMemo(
     () => normalizeKoreanPhoneLookupKey(phone),
     [phone],
-  );
-  const smsHistoryData = useMemo(
-    () => filterHistoryRecordsByChannel(historyData, "sms"),
-    [historyData],
   );
   const formattedRecipientPhone = recipientPhone ? formatKoreanPhoneNumber(recipientPhone) : "";
   const normalizedEmployeePhone = normalizeKoreanPhoneLookupKey(employeePhone);
@@ -634,6 +663,7 @@ export function TemplateSendForm({
   };
 
   const handleRemoveQueuedRecipient = (itemToRemove: RecipientQueueItem) => {
+    requestKeysRef.current.delete(itemToRemove.id);
     setRecipientQueue((currentQueue) => currentQueue.filter((item) => item.id !== itemToRemove.id));
 
     if (itemToRemove.phone === recipientPhone) {
@@ -735,15 +765,12 @@ export function TemplateSendForm({
 
   useLayoutEffect(() => {
     if (isPreparedLinkDelivery) return;
-    latestSmsSnapshotRef.current = {
-      recipients: getRecipientsForSubmit().map((recipient) => ({ ...recipient })),
-      templateId,
-      templateName,
-      message,
-      requiresRecipientName,
-      deliveryMode,
-      deliveryGeneration: deliveryGenerationRef.current,
-    };
+    latestSmsSnapshotRef.current = createSmsSubmissionSnapshot(getRecipientsForSubmit());
+    if (duplicateSubmissionRef.current && !isSmsSubmissionSnapshotCurrent(duplicateSubmissionRef.current)) {
+      duplicateSubmissionRef.current = null;
+      setDuplicateSendCandidates(null);
+      if (submissionGuardRef.current === "awaiting-confirm") submissionGuardRef.current = "idle";
+    }
   });
 
   const getBranchContextError = () => {
@@ -766,7 +793,8 @@ export function TemplateSendForm({
     return true;
   };
 
-  const sendMessages = async (recipients: RecipientQueueItem[]) => {
+  const sendMessages = async (submittedSnapshot: SmsSubmissionSnapshot, confirmations: DuplicateSendMatch[] = []) => {
+    const { recipients } = submittedSnapshot;
     if (smsOutcomeLockedRef.current) {
       submissionGuardRef.current = "idle";
       return;
@@ -796,21 +824,21 @@ export function TemplateSendForm({
     setIsSmsSending(true);
     setFeedback(null);
     setDuplicateSendCandidates(null);
-    const submittedSnapshot = createSmsSubmissionSnapshot(recipients);
 
     try {
       const settled = await Promise.allSettled(
-        recipients.map((recipient) => (
-          messageDeliveryApi.sendSms({
-            receiver: recipient.formattedPhone,
-            message: recipient.message,
-            msgType: "AUTO",
-            triggerType: "immediate",
-            ...(recipient.clientId ? { clientId: recipient.clientId } : {}),
-            ...(requiresRecipientName && recipient.name ? { recipientName: recipient.name } : {}),
-            ...(getTextByteLength(recipient.message) > SMS_BYTE_LIMIT ? { title: getLmsTitle(templateName) } : {}),
-          }, capturedBranchId ?? undefined)
-        )),
+        submittedSnapshot.payloads.map((payload, index) => {
+          const preflight = confirmations.find((match) => match.recipient.id === recipients[index].id)?.preflight;
+          return messageDeliveryApi.sendSms({
+            ...payload,
+            ...(preflight ? { duplicateDecision: {
+              confirmed: true,
+              checkedAt: preflight.checkedAt,
+              matchIds: [...preflight.matchIds],
+              payloadHash: preflight.payloadHash,
+            } } : {}),
+          }, submittedSnapshot.branchId ?? undefined);
+        }),
       );
 
       if (!mountedRef.current) return;
@@ -818,6 +846,7 @@ export function TemplateSendForm({
       const attempts: SmsAttemptResult[] = settled.map((result, index) => {
         const recipient = recipients[index];
         if (result.status === "fulfilled") {
+          if (isStrictSmsQueueResponse(result.value)) return { recipient, classification: "accepted", queue: result.value };
           return isStrictSmsSuccess(result.value)
             ? { recipient, classification: "accepted" }
             : {
@@ -828,6 +857,7 @@ export function TemplateSendForm({
         }
 
         const normalized = normalizeSmsFailure(result.reason);
+        if (isDuplicateConflict(result.reason)) return { recipient, classification: "duplicate", normalized };
         return {
           recipient,
           classification: normalized.verified && normalized.outcome === "NOT_APPLIED"
@@ -837,11 +867,14 @@ export function TemplateSendForm({
         };
       });
 
+      const duplicateAttempts = attempts.filter((attempt) => attempt.classification === "duplicate");
+      const acceptedSummaryText = describeSmsOutcomes(attempts);
       const acceptedRecipients = attempts
         .filter((attempt) => attempt.classification === "accepted")
         .map((attempt) => attempt.recipient);
       const notAppliedAttempts = attempts.filter((attempt) => attempt.classification === "not-applied");
       const blockedAttempts = attempts.filter((attempt) => attempt.classification === "blocked");
+      for (const recipient of acceptedRecipients) requestKeysRef.current.delete(recipient.id);
       const acceptedPhones = new Set(acceptedRecipients.map((recipient) => recipient.phone));
       const submissionStillCurrent = isSmsSubmissionSnapshotCurrent(submittedSnapshot);
 
@@ -859,9 +892,7 @@ export function TemplateSendForm({
         const safeFailureMessage = withSmsStatusCheckGuidance(
           firstBlocked?.message ?? "문자 발송 결과를 확인할 수 없어요.",
         );
-        const acceptedSummary = acceptedRecipients.length > 0
-          ? `${acceptedRecipients.length}건 발송 요청을 접수했어요. `
-          : "";
+        const acceptedSummary = acceptedRecipients.length > 0 ? `${acceptedSummaryText} ` : "";
         smsLockedFeedbackRef.current = {
           tone: "error",
           message: `${acceptedSummary}${safeFailureMessage}`,
@@ -870,9 +901,7 @@ export function TemplateSendForm({
         if (submissionStillCurrent) setFeedback(smsLockedFeedbackRef.current);
       } else if (notAppliedAttempts.length > 0) {
         const firstNotApplied = notAppliedAttempts[0]?.normalized;
-        const acceptedSummary = acceptedRecipients.length > 0
-          ? `${acceptedRecipients.length}건 발송 요청을 접수했어요. `
-          : "";
+        const acceptedSummary = acceptedRecipients.length > 0 ? `${acceptedSummaryText} ` : "";
         if (submissionStillCurrent) {
           setFeedback({
             tone: "error",
@@ -880,17 +909,39 @@ export function TemplateSendForm({
             requestId: firstNotApplied?.problem?.requestId,
           });
         }
+      } else if (duplicateAttempts.length > 0) {
+        if (submissionStillCurrent) {
+          // A conflict never reuses the previous acknowledgement or silently resends.
+          setFeedback({ tone: "error", message: `${acceptedRecipients.length ? `${acceptedSummaryText} ` : ""}중복 기록이 변경됐어요. 다시 확인한 뒤 전송해 주세요.` });
+        }
       } else {
         if (submissionStillCurrent) {
-          setFeedback({ tone: "success", message: `메시지 발송 요청 ${acceptedRecipients.length}건을 접수했어요` });
+          setFeedback({ tone: "success", message: acceptedSummaryText });
           setRecipientQueue([]);
           handleClearRecipient({ clearFeedback: false });
         }
       }
+      if (duplicateAttempts.length > 0 && blockedAttempts.length === 0 && submissionStillCurrent) {
+        const retrySnapshot = createSmsSubmissionSnapshot(duplicateAttempts.map((attempt) => attempt.recipient));
+        // Keep only the still pending recipients when some requests were accepted.
+        const lookupId = ++smsLookupIdRef.current;
+        try {
+          const fresh = await findDuplicateBeforeSend(retrySnapshot, lookupId);
+          if (mountedRef.current && acceptedRecipients.length === 0 && notAppliedAttempts.length === 0 && isSmsSubmissionSnapshotCurrent(submittedSnapshot) && fresh.length > 0) {
+            duplicateSubmissionRef.current = retrySnapshot;
+            setDuplicateSendCandidates(fresh);
+            submissionGuardRef.current = "awaiting-confirm";
+          }
+        } catch {
+          if (mountedRef.current && isSmsSubmissionSnapshotCurrent(submittedSnapshot)) setFeedback({ tone: "error", message: "중복 발송 여부를 다시 확인하지 못했어요. 다시 확인해 주세요." });
+        }
+      }
     } finally {
       if (smsSendIdRef.current === sendId) {
-        duplicateSubmissionRef.current = null;
-        submissionGuardRef.current = "idle";
+        if (submissionGuardRef.current !== "awaiting-confirm") {
+          duplicateSubmissionRef.current = null;
+          submissionGuardRef.current = "idle";
+        }
         if (mountedRef.current) {
           setIsSmsSending(false);
         }
@@ -899,38 +950,18 @@ export function TemplateSendForm({
   };
 
   const findDuplicateBeforeSend = async (
-    recipients: RecipientQueueItem[],
+    snapshot: SmsSubmissionSnapshot,
     lookupId: number,
   ): Promise<DuplicateSendMatch[]> => {
-    smsLookupGenerationRef.current = deliveryGenerationRef.current;
+    smsLookupGenerationRef.current = snapshot.deliveryGeneration;
     setIsCheckingDuplicate(true);
     try {
-      const result = await refetchHistory();
-      const latestHistory = filterHistoryRecordsByChannel(result.data ?? historyData, "sms");
-
-      const matches: DuplicateSendMatch[] = [];
-      for (const recipient of recipients) {
-        const record = findRecentDuplicateSend(latestHistory, {
-          receiver: recipient.formattedPhone,
-          message: recipient.message,
-        });
-        if (record) matches.push({ recipient, record });
-      }
-      return matches;
-    } catch (error) {
-      const normalized = normalizeSmsFailure(error);
-      if (normalized.canceled) {
-        throw error;
-      }
-      const matches: DuplicateSendMatch[] = [];
-      for (const recipient of recipients) {
-        const record = findRecentDuplicateSend(smsHistoryData, {
-          receiver: recipient.formattedPhone,
-          message: recipient.message,
-        });
-        if (record) matches.push({ recipient, record });
-      }
-      return matches;
+      const results = await Promise.all(snapshot.payloads.map((payload) =>
+        messageDeliveryApi.checkSmsDuplicate(payload, snapshot.branchId ?? undefined),
+      ));
+      return results.flatMap((preflight, index) => preflight.matchIds.length > 0
+        ? [{ recipient: snapshot.recipients[index], preflight }]
+        : []);
     } finally {
       if (smsLookupIdRef.current === lookupId) {
         smsLookupGenerationRef.current = null;
@@ -947,6 +978,26 @@ export function TemplateSendForm({
     requiresRecipientName,
     deliveryMode,
     deliveryGeneration: deliveryGenerationRef.current,
+    branchId: capturedBranchId,
+    editorIdentity: JSON.stringify([phone, name, selectedClientId, clientId]),
+    payloads: recipients.map((recipient) => {
+      const payload: SendMessageDeliverySmsRequest = {
+        receiver: recipient.formattedPhone,
+        message: recipient.message,
+        msgType: "AUTO",
+        triggerType: "immediate",
+        ...(recipient.clientId !== null ? { clientId: recipient.clientId } : {}),
+        ...(requiresRecipientName && recipient.name ? { recipientName: recipient.name } : {}),
+        ...(getTextByteLength(recipient.message) > SMS_BYTE_LIMIT ? { title: getLmsTitle(templateName) } : {}),
+      };
+      const signature = JSON.stringify([capturedBranchId, templateId, templateName, payload]);
+      let entry = requestKeysRef.current.get(recipient.id);
+      if (!entry || entry.signature !== signature) {
+        entry = { signature, key: crypto.randomUUID() };
+        requestKeysRef.current.set(recipient.id, entry);
+      }
+      return { ...payload, idempotencyKey: entry.key };
+    }),
   });
 
   const isSmsSubmissionSnapshotCurrent = (snapshot: SmsSubmissionSnapshot) => {
@@ -957,6 +1008,9 @@ export function TemplateSendForm({
       && latest !== null
       && latest.deliveryMode === "sms"
       && latest.deliveryGeneration === deliveryGenerationRef.current
+      && snapshot.branchId === latest.branchId
+      && isBranchContextAligned(snapshot.branchId)
+      && snapshot.editorIdentity === latest.editorIdentity
       && snapshot.templateId === latest.templateId
       && snapshot.templateName === latest.templateName
       && snapshot.message === latest.message
@@ -1108,16 +1162,11 @@ export function TemplateSendForm({
     }
 
     const snapshot = createSmsSubmissionSnapshot(recipients);
-    if (!duplicateSendConfirmationEnabled) {
-      submissionGuardRef.current = "sending";
-      await sendMessages(snapshot.recipients);
-      return;
-    }
     submissionGuardRef.current = "checking";
     const lookupId = ++smsLookupIdRef.current;
     let duplicates: DuplicateSendMatch[];
     try {
-      duplicates = await findDuplicateBeforeSend(snapshot.recipients, lookupId);
+      duplicates = await findDuplicateBeforeSend(snapshot, lookupId);
     } catch (error) {
       if (smsLookupIdRef.current === lookupId && submissionGuardRef.current === "checking") {
         submissionGuardRef.current = "idle";
@@ -1148,7 +1197,7 @@ export function TemplateSendForm({
     }
 
     submissionGuardRef.current = "sending";
-    await sendMessages(snapshot.recipients);
+    await sendMessages(snapshot);
   };
 
   const handleConfirmDuplicateSend = async () => {
@@ -1170,7 +1219,7 @@ export function TemplateSendForm({
     }
 
     submissionGuardRef.current = "sending";
-    await sendMessages(snapshot.recipients);
+    await sendMessages(snapshot, duplicateSendCandidates ?? []);
   };
 
   const activeDuplicateSendCandidates = !isPreparedLinkDelivery
@@ -1344,7 +1393,7 @@ export function TemplateSendForm({
                 )}
                 <span className="flex min-w-0 shrink-0 items-center gap-[calc(4px*var(--glint-ui-scale,1))] text-[0.78rem] font-semibold text-v3-text-muted">
                   <Calendar className="h-[calc(12px*var(--glint-ui-scale,1))] w-[calc(12px*var(--glint-ui-scale,1))] shrink-0" />
-                  최근 전송 {formatDuplicateSentAt(getHistoryTimestamp(match.record))}
+                  최근 전송 {match.preflight.latestSentAt ? formatDuplicateSentAt(match.preflight.latestSentAt) : "기록 확인됨"}
                 </span>
               </div>
             ))}
