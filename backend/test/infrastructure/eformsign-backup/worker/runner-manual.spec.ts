@@ -204,6 +204,55 @@ describe("selected manual archive engine", () => {
         expect(attempt.aggregate!.payload.counts.localVerified).toBe(0);
         expect(options.exportPort.openArtifact).not.toHaveBeenCalled();
     });
+    it.each([
+        ["transferring", "mismatch", false], ["transferring", "missing", false],
+        ["verifying", "mismatch", false], ["verifying", "missing", false],
+        ["transferring", "mismatch", true], ["transferring", "missing", true],
+        ["verifying", "mismatch", true], ["verifying", "missing", true],
+    ] as const)("revokes recovered local proof from %s after %s (reacquisition succeeds: %s)", async (state, contradiction, repaired) => {
+        const r = current = await rig();
+        const prior = await r.claim();
+        const artifact = prior.selection.candidates[0]!.artifacts[0]!;
+        const key = artifactKey({ companyId: "C001", documentId: "A", artifactType: artifact.artifactType, sha256: artifact.sha256 });
+        const local = new DestinationLedger(r.deps, r.deps.ledger.state.installation!);
+        const faultPoint = state === "transferring" ? "after-publish-before-verifying" : "after-verifying-before-verified";
+        r.deps.runnerFault = point => { if (point === faultPoint) throw new ExecutionFencedError("uncertain"); };
+        await r.runner.run(prior);
+        expect(local.entryOf(artifact.artifactIdentity)!.state).toBe(state);
+        r.deps.runnerFault = undefined;
+        await fs.rm(path.join(r.h.control, "staging", `${artifact.artifactIdentity}.bin`));
+        const reverify = LocalDestination.prototype.reverify;
+        let checks = 0;
+        jest.spyOn(LocalDestination.prototype, "reverify").mockImplementation(async function (this: LocalDestination, ...args) {
+            if (args[0] === key && ++checks === 2) {
+                if (contradiction === "mismatch") await fs.writeFile(path.join(r.h.archive, key), Buffer.alloc(artifact.byteLength));
+                else await fs.rm(path.join(r.h.archive, key));
+            }
+            return reverify.apply(this, args);
+        });
+        const quarantine = jest.spyOn(LocalDestination.prototype, "quarantineCorrupt");
+        const options = await r.claim([pairDoc("A")], 2);
+        const open = options.exportPort.openArtifact;
+        options.exportPort.openArtifact = jest.fn(async (...args) => {
+            if (!repaired && args[1].artifactIdentity === artifact.artifactIdentity) throw new WorkerError("network-timeout");
+            return open(...args);
+        });
+        const summary = await r.runner.run(options);
+        expect(checks).toBe(repaired ? 3 : 2);
+        expect(quarantine).toHaveBeenCalledTimes(contradiction === "mismatch" ? 1 : 0);
+        expect(summary.counts).toMatchObject({ verified: repaired ? 2 : 1 });
+        const latest = [...r.deps.ledger.state.manualAttempts!.values()].at(-1)!;
+        const result = latest.results.get("A")!.payload;
+        expect(result.local.state).toBe(repaired ? "verified" : "partial");
+        expect(result.local.artifacts.find(a => a.artifactIdentity === artifact.artifactIdentity)).toMatchObject({
+            state: repaired ? "verified" : "retry_wait", reasonCode: repaired ? null : "network-timeout",
+        });
+        expect(latest.aggregate!.payload).toMatchObject({ status: repaired ? "unverified" : "partial",
+            counts: { localVerified: repaired ? 1 : 0, attention: repaired ? 0 : 1 } });
+        expect(latest.aggregate!.digest).toBe(manualAggregateResultDigest(latest.aggregate!.payload));
+        if (!repaired) await expect(fs.lstat(path.join(r.h.archive, key))).rejects.toMatchObject({ code: "ENOENT" });
+        else expect(await fs.readFile(path.join(r.h.archive, key))).not.toEqual(Buffer.alloc(artifact.byteLength));
+    });
     it.each(["mismatch", "missing", "conflict", "download-corruption", "download-missing"] as const)("revokes earlier Drive proof after contradictory %s evidence", async contradiction => {
         const r = current = await rig(true);
         await r.runner.run(await r.claim());
