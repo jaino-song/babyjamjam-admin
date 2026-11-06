@@ -62,9 +62,11 @@ describe("MessageDeliveryController", () => {
                     name: "테스트 수신자",
                     phone: where.phone ?? "01012345678",
                 })),
+                findMany: jest.fn().mockResolvedValue([]),
             },
             employee: {
                 findFirst: jest.fn().mockResolvedValue(null),
+                findMany: jest.fn().mockResolvedValue([]),
             },
             message_log: {
                 create: jest.fn().mockResolvedValue({
@@ -110,6 +112,34 @@ describe("MessageDeliveryController", () => {
 
     afterEach(() => {
         jest.restoreAllMocks();
+    });
+
+    it("captures only server-resolved mixed batch bindings before the first provider call and preserves them on rejection", async () => {
+        prismaService.client.findFirst.mockImplementation(async ({ where }: { where: { phone: string } }) =>
+            where.phone === "01012345678" ? { id: 7, name: "client", phone: "010-1234-5678" } : null);
+        prismaService.employee!.findFirst.mockImplementation(async ({ where }: { where: { phone: string } }) =>
+            where.phone === "01088889999" ? { id: 12, name: "employee", phone: "+82 10-8888-9999" } : null);
+        prismaService.client.findMany!.mockResolvedValue([{ id: 7, name: "client", phone: "010-1234-5678" }]);
+        prismaService.employee!.findMany!.mockResolvedValue([{ id: 12, name: "employee", phone: "+82 10-8888-9999" }]);
+        prismaService.message_log.create.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => ({ id: 42, ...data }));
+        const snapshot = JSON.stringify({ version: 1, branchId: "org-1", recipients: [
+            { kind: "CAREGIVER", id: 12, phone: "01088889999" }, { kind: "CLIENT", id: 7, phone: "01012345678" },
+        ] });
+        aligoService.sendSms.mockImplementation(async request => {
+            expect(prismaService.message_log.create).toHaveBeenCalledWith({ data: expect.objectContaining({
+                clientId: null, receiver: "01088889999,01012345678",
+                variables: expect.objectContaining({ manualRecipientBindings: snapshot, employeeId: null }),
+            }) });
+            return { request: { ...request, senderPhone: "0212345678", msgType: "SMS" as const, testModeYn: "N" as const },
+                response: { result_code: -101, message: "rejected", success_cnt: 0, error_cnt: 2 } };
+        });
+        const request = { receiver: "010-8888-9999,01012345678,01088889999", message: "batch",
+            manualRecipientBindings: JSON.stringify({ version: 1, branchId: "forged", recipients: [{ kind: "CLIENT", id: 999, phone: "01088889999" }] }) };
+        await expect(controller.sendSms({ branchId: "org-1" }, request)).rejects.toMatchObject({ response: { code: "MESSAGE_SEND_REJECTED" } });
+        expect(aligoService.sendSms).toHaveBeenCalledTimes(1);
+        expect(prismaService.message_log.update).toHaveBeenCalledWith({ where: { id: 42 }, data: expect.objectContaining({
+            variables: expect.objectContaining({ manualRecipientBindings: snapshot, retrySafety: "manual-provider-rejected" }),
+        }) });
     });
 
     it("should reject scheduled requests that are less than 10 minutes ahead in KST", async () => {
@@ -176,6 +206,7 @@ describe("MessageDeliveryController", () => {
 
     it("normalizes a future request into one internal job/log and a truthful queue response", async () => {
         jest.spyOn(Date, "now").mockReturnValue(Date.parse("2026-03-09T11:00:00.000Z"));
+        prismaService.client.findMany!.mockResolvedValue([{ id: 1, name: "테스트 수신자", phone: "01012345678" }]);
         prismaService.message_log.create.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => ({ id: 42, ...data }));
         const result = await controller.sendSms({ branchId: "org-1" }, { receiver: "010-1234-5678", recipientName: "김산모",
             message: "장문 테스트 메시지", title: "안내", triggerType: "scheduled", scheduledDate: "2026-03-09", scheduledTime: "20:15",
@@ -224,6 +255,7 @@ describe("MessageDeliveryController", () => {
 
         it("keeps a future internal queue provider-unstarted, without a premature carrier check", async () => {
             jest.spyOn(Date, "now").mockReturnValue(Date.parse("2026-03-09T11:00:00.000Z"));
+            prismaService.client.findMany!.mockResolvedValue([{ id: 1, name: "테스트 수신자", phone: "01012345678" }]);
             prismaService.message_log.create.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => ({ id: 42, ...data }));
             const result = await controller.sendSms({ branchId: "org-1" }, { receiver: "010-1234-5678", message: "장문 테스트 메시지", title: "안내",
                 triggerType: "scheduled", scheduledDate: "2026-03-09", scheduledTime: "20:15", idempotencyKey: "carrier-queue" });

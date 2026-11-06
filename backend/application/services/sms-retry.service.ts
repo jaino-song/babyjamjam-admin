@@ -71,6 +71,8 @@ interface RetrySchedule {
     scheduledAtMs: number | null;
 }
 
+type ManualRecipientBinding = { kind: "CLIENT" | "CAREGIVER"; id: number; phone: string };
+
 type AutomaticRetryBoundary =
     | { kind: "terminal"; log: MessageLogEntity }
     | { kind: "claimed"; log: null }
@@ -270,6 +272,7 @@ export class SmsRetryService {
                     if (retryAuthority.kind === "valid") {
                         this.applyAuthorizedSnapshot(retryDraft, retryAuthority.snapshot);
                     }
+                    await this.checkQuietRetryBeforeStart(sourceLog, transaction);
                     const retryStart = await this.logRepository.startRetryAttempt(
                         sourceLog,
                         retryDraft,
@@ -359,6 +362,7 @@ export class SmsRetryService {
         }
 
         const retryDelayMs = await this.getRetryDelayMs(sourceLog.branchId);
+        await this.checkQuietRetryBeforeStart(sourceLog);
         const retryStart = await this.logRepository.startRetryAttempt(
             sourceLog,
             this.createRetryAttempt(sourceLog, retryDelayMs),
@@ -403,6 +407,11 @@ export class SmsRetryService {
             async (decision, tx, revision) => {
                 if (decision.action === "DEFER") {
                     if (!tx || !revision) throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
+                    const storedSource = await this.logRepository.findByIdInBranch(source.branchId!, source.id, tx);
+                    const storedRetry = await this.logRepository.findByIdInBranch(retry.branchId!, retry.id, tx);
+                    if (!storedSource || !storedRetry) throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
+                    await this.assertQuietRetryRecipients(source, storedSource, tx);
+                    await this.assertQuietRetryRecipients(storedSource, storedRetry, tx);
                     const old = parseMessageQuietHold(retry.variables);
                     const job = retry.triggerJobId ? await tx.message_trigger_job.findFirst({ where: { id: retry.triggerJobId, branchId: retry.branchId } }) : null;
                     const hold: MessageQuietHold = { releaseAt: new Date(Math.max(old?.releaseAt.getTime() ?? 0, decision.reevaluateAt.getTime())),
@@ -472,11 +481,7 @@ export class SmsRetryService {
                 || source.status !== "failed" || source.isPartialProviderOutcome()) throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
             const sender = this.defaultSender?.read();
             if (!sender || sender.availability !== "available" || sender.identityDigest !== current.variables["retrySenderIdentity"]) throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
-            const identity = current.clientId != null && !current.variables["employeeId"]
-                ? await tx.client.findFirst({ where: { id: current.clientId, branchId: current.branchId!, deletedAt: null }, select: { phone: true } })
-                : Number(current.variables["employeeId"]) > 0 ? await tx.employee.findFirst({ where: { id: Number(current.variables["employeeId"]), branchId: current.branchId!, deletedAt: null }, select: { phone: true } }) : null;
-            if (identity && normalizePhone(identity.phone) !== normalizePhone(current.receiver)) throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
-            if ((current.clientId != null || Number(current.variables["employeeId"]) > 0) && !identity) throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
+            await this.assertQuietRetryRecipients(source, current, tx);
             const currentHold = parseMessageQuietHold(current.variables);
             if (!currentHold || !current.nextRetryAt || current.nextRetryAt.getTime() > Date.now()) return null;
             const explicitManual = current.variables["retryInvocation"] === "manual";
@@ -532,6 +537,20 @@ export class SmsRetryService {
             const result = await runSmsQuietHoursAdmission(this.quietHours, this.systemSettingService, current.branchId, current.receiver,
                 async (decision, finalTx) => {
                     if (!finalTx) throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
+                    // Re-read provenance and EVERY current owner at the final acquired
+                    // admission boundary, immediately before any transition/provider CAS.
+                    const finalCurrent = await this.logRepository.findByIdInBranch(current.branchId!, current.id, finalTx);
+                    const finalSource = await this.logRepository.findByIdInBranch(current.branchId!, source.id, finalTx);
+                    if (!finalCurrent || !finalSource
+                        || finalCurrent.variables["manualRecipientBindings"] !== current.variables["manualRecipientBindings"]
+                        || finalSource.variables["manualRecipientBindings"] !== source.variables["manualRecipientBindings"]
+                        || finalCurrent.receiver !== current.receiver || finalSource.receiver !== source.receiver
+                        || finalCurrent.clientId !== current.clientId || finalSource.clientId !== source.clientId
+                        || finalCurrent.variables["employeeId"] !== current.variables["employeeId"]
+                        || finalSource.variables["employeeId"] !== source.variables["employeeId"]) {
+                        throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
+                    }
+                    await this.assertQuietRetryRecipients(finalSource, finalCurrent, finalTx);
                     if (decision.action !== "ALLOW") {
                         await this.logRepository.transitionQuietRetry(current, decision.action === "DEFER"
                             ? { ...currentHold, releaseAt: new Date(Math.max(currentHold.releaseAt.getTime(), decision.reevaluateAt.getTime())) } : currentHold,
@@ -562,6 +581,79 @@ export class SmsRetryService {
         }
         if (!admitted) return this.logRepository.findByIdInBranch(retry.branchId, retry.id);
         return this.sendRetryAttempt(admitted.source, { scheduledAtMs: null }, admitted.current, admitted.providerAttempt, admitted.explicitManual ? "manual" : invocation, retryDelayMs, admitted.snapshot);
+    }
+
+    /** Reject invalid batch provenance before creating a retry ledger row. */
+    private async checkQuietRetryBeforeStart(source: MessageLogEntity, transaction?: Prisma.TransactionClient): Promise<void> {
+        await runSmsQuietHoursAdmission(this.quietHours, this.systemSettingService, source.branchId, source.receiver,
+            async (decision, tx) => {
+                if (decision.action !== "DEFER") return;
+                if (!tx) throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
+                const stored = await this.logRepository.findByIdInBranch(source.branchId!, source.id, tx);
+                if (!stored) throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
+                await this.assertQuietRetryRecipients(source, stored, tx);
+            }, transaction);
+    }
+
+    private async assertQuietRetryRecipients(source: MessageLogEntity, current: MessageLogEntity, tx: Prisma.TransactionClient): Promise<void> {
+        const conflict = () => new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
+        if (!source.branchId || source.branchId !== current.branchId || source.receiver !== current.receiver
+            || source.clientId !== current.clientId || source.variables["employeeId"] !== current.variables["employeeId"]
+            || source.variables["manualRecipientBindings"] !== current.variables["manualRecipientBindings"]) throw conflict();
+        const phones = source.receiver.split(",").map(phone => normalizePhone(phone));
+        if (!phones.length || phones.some(phone => !phone) || new Set(phones).size !== phones.length) throw conflict();
+        const employeeValue = source.variables["employeeId"];
+        const employeeId = employeeValue == null || employeeValue === "" ? null : Number(employeeValue);
+        if ((source.clientId !== null && (!Number.isSafeInteger(source.clientId) || source.clientId <= 0))
+            || (employeeId !== null && (!Number.isSafeInteger(employeeId) || employeeId <= 0))) throw conflict();
+        const raw = source.variables["manualRecipientBindings"];
+        let bindings: ManualRecipientBinding[];
+        if (raw !== undefined) {
+            if (typeof raw !== "string" || (source.clientId !== null && employeeId !== null)) throw conflict();
+            let snapshot: unknown;
+            try { snapshot = JSON.parse(raw); } catch { throw conflict(); }
+            if (!snapshot || typeof snapshot !== "object" || Array.isArray(snapshot)) throw conflict();
+            const value = snapshot as Record<string, unknown>;
+            if (Object.keys(value).length !== 3 || value["version"] !== 1 || value["branchId"] !== source.branchId
+                || !Array.isArray(value["recipients"]) || value["recipients"].length !== phones.length) throw conflict();
+            bindings = [];
+            for (const entry of value["recipients"] as unknown[]) {
+                if (!entry || typeof entry !== "object" || Array.isArray(entry)) throw conflict();
+                const member = entry as Record<string, unknown>;
+                if (Object.keys(member).length !== 3 || (member["kind"] !== "CLIENT" && member["kind"] !== "CAREGIVER")
+                    || typeof member["id"] !== "number" || !Number.isSafeInteger(member["id"]) || member["id"] <= 0
+                    || typeof member["phone"] !== "string" || !member["phone"] || normalizePhone(member["phone"]) !== member["phone"]
+                    || !phones.includes(member["phone"])) throw conflict();
+                bindings.push({ kind: member["kind"], id: member["id"], phone: member["phone"] });
+            }
+            if (new Set(bindings.map(binding => binding.phone)).size !== phones.length
+                || new Set(bindings.map(binding => `${binding.kind}:${binding.id}`)).size !== phones.length) throw conflict();
+            if ((source.clientId !== null || employeeId !== null) && (bindings.length !== 1
+                || bindings[0]!.kind !== (source.clientId !== null ? "CLIENT" : "CAREGIVER")
+                || bindings[0]!.id !== (source.clientId ?? employeeId))) throw conflict();
+        } else {
+            // Historical single-ID logs carry real original authority. An unbound
+            // legacy batch has no historical owners to recover from today's rows.
+            if (phones.length !== 1 || (source.clientId === null && employeeId === null)) throw conflict();
+            // A legacy caregiver log may retain a contextual clientId; its
+            // original employeeId remains the recipient, as before.
+            const identity = employeeId !== null
+                ? await tx.employee.findFirst({ where: { id: employeeId, branchId: source.branchId, deletedAt: null }, select: { phone: true } })
+                : await tx.client.findFirst({ where: { id: source.clientId!, branchId: source.branchId, deletedAt: null }, select: { phone: true } });
+            if (!identity || normalizePhone(identity.phone) !== phones[0]) throw conflict();
+            return;
+        }
+        const [clients, employees] = await Promise.all([
+            tx.client.findMany({ where: { branchId: source.branchId, deletedAt: null }, select: { id: true, phone: true } }),
+            tx.employee.findMany({ where: { branchId: source.branchId, deletedAt: null }, select: { id: true, phone: true } }),
+        ]);
+        for (const binding of bindings) {
+            const owners = [
+                ...clients.filter(owner => normalizePhone(owner.phone) === binding.phone).map(owner => ({ kind: "CLIENT", id: owner.id })),
+                ...employees.filter(owner => normalizePhone(owner.phone) === binding.phone).map(owner => ({ kind: "CAREGIVER", id: owner.id })),
+            ];
+            if (owners.length !== 1 || owners[0]!.kind !== binding.kind || owners[0]!.id !== binding.id) throw conflict();
+        }
     }
 
     /**

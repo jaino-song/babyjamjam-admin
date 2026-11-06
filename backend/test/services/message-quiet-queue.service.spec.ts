@@ -202,7 +202,7 @@ function memoryQueue() {
         templates as never, {} as never, settings, undefined, activation, lock);
     const controller = new MessageDeliveryController(aligo as never, approval as never, db as never, duplicates, quiet, jobs, sender as never);
     const send = (extra = {}) => controller.sendSms({ branchId }, { receiver: "01000000011", message: "  synthetic {{literal}}\n", idempotencyKey: "body-key", ...extra }, "ignored-header");
-    return { branchId, db, tables, jobs, logs, settings, lock, core, sms, retry, controller, configuration, send, aligo, templates, approval, acceptance, activation, sender,
+    return { branchId, db, tables, jobs, logs, settings, lock, core, sms, retry, controller, configuration, send, aligo, templates, approval, acceptance, activation, sender, quiet,
         newDuplicates: () => { duplicateMatches = [{ id: 999, sentAt: new Date(Date.now()) }]; },
         configure: (draft: typeof configuration) => { tables["system_setting"]![0]!["value"] = JSON.stringify(draft); },
         afterPrepared: (hook: (row: Row) => void) => { afterPrepared = hook; },
@@ -257,6 +257,9 @@ describe("manual final admission queue conversion", () => {
                     quietHoursPolicyRevision: expect.any(String), title: "  final title  ", msgType: "LMS", testMode: "true",
                     employeeId: ordinal === 0 ? null : 11 } });
             expect(log["triggerJobId"]).toBe(source["id"]);
+            expect(JSON.parse((log["variables"] as Row)["manualRecipientBindings"] as string)).toEqual({
+                version: 1, branchId: f.branchId, recipients: [{ kind: ordinal === 0 ? "CLIENT" : "CAREGIVER", id: ordinal === 0 ? 7 : 11, phone }],
+            });
             expect(log["variables"]).not.toHaveProperty("scheduledDate"); expect(log["variables"]).not.toHaveProperty("scheduledTime");
             const input = JSON.parse((log["variables"] as Row)["manualQueueFingerprintInput"] as string) as Row;
             expect(input).toMatchObject({ receiver: prepared["receiver"], message: prepared["messageBody"], title: "final title", testMode: true });
@@ -353,6 +356,21 @@ describe("manual final admission queue conversion", () => {
         await expect(f.send(request)).rejects.toThrow();
         expect(f.tables["message_log"]).toEqual([prepared]); expect(f.db.message_log.updateMany).not.toHaveBeenCalled();
         expect(f.tables["message_trigger_job"]).toHaveLength(0); expect(f.aligo.sendSms).not.toHaveBeenCalled();
+    });
+
+    it.each(["replacement", "same-kind ambiguity", "cross-kind ambiguity"])("does not retarget a prepared batch after %s", async kind => {
+        const f = memoryQueue(); const request = batch(f); let prepared!: Row;
+        f.afterPrepared(row => {
+            prepared = row;
+            const owner = f.tables["employee"]![0]!;
+            if (kind === "replacement") owner["id"] = 99;
+            if (kind === "same-kind ambiguity") f.tables["employee"]!.push({ ...owner, id: 99 });
+            if (kind === "cross-kind ambiguity") f.tables["client"]!.push({ ...owner, id: 99 });
+            jest.mocked(Date.now).mockReturnValue(quietStart.getTime());
+        });
+        await expect(f.send(request)).rejects.toMatchObject({ response: { code: "REQUEST_CONFLICT" } });
+        expect(f.tables["message_log"]).toEqual([prepared]); expect(f.tables["message_trigger_job"]).toHaveLength(0);
+        expect(f.db.message_log.updateMany).not.toHaveBeenCalled(); expect(f.aligo.sendSms).not.toHaveBeenCalled();
     });
 });
 
@@ -800,6 +818,167 @@ describe("quiet holds on manual-owned jobs", () => {
     });
 });
 
+describe("original manual batch identity across quiet retry", () => {
+    const beforeQuiet = new Date("2026-11-03T12:59:59.000Z");
+    beforeEach(() => jest.useFakeTimers({ now: beforeQuiet }));
+    afterEach(() => { jest.useRealTimers(); jest.restoreAllMocks(); });
+
+    async function rejectedBatch(mixed = true) {
+        const f = memoryQueue();
+        f.tables[mixed ? "employee" : "client"]!.push({ id: 11, branchId: f.branchId, name: "second",
+            phone: "+82 10-0000-0022", deletedAt: null });
+        f.aligo.sendSms.mockImplementation(async request => ({ request,
+            response: { result_code: -101, message: "rejected", msg_id: 0, success_cnt: 0, error_cnt: 2 } }));
+        await expect(f.send({ receiver: "01000000022,01000000011,01000000022",
+            manualRecipientBindings: "caller-forgery" })).rejects.toMatchObject({ response: { code: "MESSAGE_SEND_REJECTED" } });
+        const source = (await f.logs.findByIdInBranch(f.branchId, 1))!;
+        expect(JSON.parse(source.variables["manualRecipientBindings"]!)).toEqual({ version: 1, branchId: f.branchId, recipients: [
+            { kind: mixed ? "CAREGIVER" : "CLIENT", id: 11, phone: "01000000022" }, { kind: "CLIENT", id: 7, phone: "01000000011" },
+        ] });
+        f.aligo.sendSms.mockClear();
+        jest.setSystemTime(original);
+        return { f, source };
+    }
+
+    async function heldBatch(mixed = true) {
+        const { f, source } = await rejectedBatch(mixed);
+        const held = await f.retry.retryById(f.branchId, source.id);
+        expect(held).toMatchObject({ status: "pending", providerAcceptanceState: "prepared", providerCallStartedAt: null,
+            nextRetryAt: release, variables: { retryInvocation: "manual", quietHoursDisposition: "DEFER",
+                manualRecipientBindings: source.variables["manualRecipientBindings"] } });
+        expect(f.aligo.sendSms).not.toHaveBeenCalled();
+        return { f, source, held };
+    }
+
+    it.each(["client", "employee", "employee with client context"])("preserves a legacy single %s without a batch snapshot", async kind => {
+        const f = memoryQueue(); jest.setSystemTime(original);
+        const employee = kind !== "client";
+        if (employee) f.tables["employee"]!.push({ id: 11, branchId: f.branchId, phone: "01000000022", deletedAt: null });
+        const draft = MessageLogEntity.create({ branchId: f.branchId, provider: "aligo_sms", templateKey: "manual_sms",
+            receiver: employee ? "01000000022" : "01000000011", messageBody: "legacy single",
+            ...(!employee || kind === "employee with client context" ? { clientId: 7 } : {}),
+            variables: employee ? { employeeId: "11" } : {}, providerAcceptanceState: "rejected",
+            providerAcceptanceKey: "legacy-single", providerAcceptanceFingerprint: "legacy-single-fingerprint" });
+        draft.status = "failed"; draft.attempts = 1;
+        const source = await f.logs.save(draft);
+        const held = await f.retry.retryById(f.branchId, source.id);
+        expect(held).toMatchObject({ nextRetryAt: release, providerCallStartedAt: null });
+        jest.setSystemTime(release);
+        expect(await f.retry.retry(held, "manual")).toMatchObject({ id: held.id, status: "sent" });
+        expect(f.aligo.sendSms).toHaveBeenCalledTimes(1);
+        expect((f.tables["message_log"]![1]!["variables"] as Row)["manualRecipientBindings"]).toBeUndefined();
+    });
+
+    it.each([false, true])("releases the unchanged original batch once (mixed=%s), ignoring owners in another branch", async mixed => {
+        const { f, source, held } = await heldBatch(mixed);
+        f.tables["client"]!.push({ id: 99, branchId: "other-branch", phone: "01000000022", deletedAt: null });
+        f.aligo.sendSms.mockImplementation(async request => ({ request,
+            response: { result_code: 1, message: "accepted", msg_id: 91, success_cnt: 2, error_cnt: 0 } }));
+        const begin = jest.spyOn(f.acceptance, "beginProviderCall");
+        jest.setSystemTime(release);
+        const result = await f.retry.retry(held, "manual");
+        expect(result).toMatchObject({ id: held.id, status: "sent", receiver: "01000000022,01000000011",
+            variables: { manualRecipientBindings: source.variables["manualRecipientBindings"] } });
+        expect(begin).toHaveBeenCalledTimes(1);
+        expect(begin).toHaveBeenCalledWith(expect.objectContaining({ id: held.id }), f.db);
+        expect(f.aligo.sendSms).toHaveBeenCalledTimes(1);
+        expect(f.tables["message_log"]).toHaveLength(2);
+        await f.retry.retry(result!, "manual");
+        expect(f.aligo.sendSms).toHaveBeenCalledTimes(1);
+    });
+
+    const invalidProvenance = ["missing", "malformed", "object", "version", "branch", "missing member", "extra member",
+        "duplicate phone", "duplicate identity", "invalid kind", "invalid id", "unnormalized phone", "forged identity"] as const;
+    function corrupt(f: ReturnType<typeof memoryQueue>, kind: typeof invalidProvenance[number], row: Row) {
+        const variables = row["variables"] as Row;
+        const snapshot = JSON.parse(variables["manualRecipientBindings"] as string) as { version: number; branchId: string; recipients: Row[] };
+        if (kind === "missing") { delete variables["manualRecipientBindings"]; return; }
+        if (kind === "malformed") { variables["manualRecipientBindings"] = "{"; return; }
+        if (kind === "object") { variables["manualRecipientBindings"] = snapshot; return; }
+        if (kind === "version") snapshot.version = 2;
+        if (kind === "branch") snapshot.branchId = "other-branch";
+        if (kind === "missing member") snapshot.recipients.pop();
+        if (kind === "extra member") snapshot.recipients.push({ kind: "CLIENT", id: 99, phone: "01000000099" });
+        if (kind === "duplicate phone") snapshot.recipients[1] = { ...snapshot.recipients[0]! };
+        if (kind === "duplicate identity") snapshot.recipients[0] = { kind: "CLIENT", id: 7, phone: "01000000022" };
+        if (kind === "invalid kind") snapshot.recipients[0]!["kind"] = "STAFF";
+        if (kind === "invalid id") snapshot.recipients[0]!["id"] = -1;
+        if (kind === "unnormalized phone") snapshot.recipients[0]!["phone"] = "010-0000-0022";
+        if (kind === "forged identity") snapshot.recipients[0]!["id"] = 99;
+        variables["manualRecipientBindings"] = JSON.stringify(snapshot);
+        expect(f.aligo.sendSms).not.toHaveBeenCalled();
+    }
+
+    it.each(invalidProvenance)("refuses %s original provenance at hold without any ledger/entity write", async kind => {
+        const { f, source } = await rejectedBatch();
+        corrupt(f, kind, f.tables["message_log"]![0]!);
+        const current = (await f.logs.findByIdInBranch(f.branchId, source.id))!;
+        const before = structuredClone(f.tables);
+        const start = jest.spyOn(f.logs, "startRetryAttempt");
+        const begin = jest.spyOn(f.acceptance, "beginProviderCall");
+        await expect(f.retry.retryById(f.branchId, current.id)).rejects.toMatchObject({ response: { code: "REQUEST_CONFLICT" } });
+        expect(start).not.toHaveBeenCalled(); expect(begin).not.toHaveBeenCalled(); expect(f.aligo.sendSms).not.toHaveBeenCalled();
+        expect(f.tables).toEqual(before);
+    });
+
+    it.each([...invalidProvenance, "source mismatch"] as const)("refuses %s held provenance without a provider CAS or entity write", async kind => {
+        const { f, held } = await heldBatch();
+        if (kind === "source mismatch") {
+            const snapshot = JSON.parse((f.tables["message_log"]![1]!["variables"] as Row)["manualRecipientBindings"] as string) as Row;
+            (f.tables["message_log"]![1]!["variables"] as Row)["manualRecipientBindings"] = JSON.stringify({ ...snapshot, branchId: "other-branch" });
+        } else {
+            // Equal corruption on both rows must fail schema/identity checks too.
+            for (const row of f.tables["message_log"]!) corrupt(f, kind, row);
+        }
+        const before = structuredClone(f.tables);
+        const begin = jest.spyOn(f.acceptance, "beginProviderCall");
+        f.db.message_log.updateMany.mockClear(); f.db.message_log.update.mockClear(); f.db.message_log.create.mockClear();
+        jest.setSystemTime(release);
+        await expect(f.retry.retry(held, "manual")).rejects.toMatchObject({ response: { code: "REQUEST_CONFLICT" } });
+        expect(begin).not.toHaveBeenCalled(); expect(f.aligo.sendSms).not.toHaveBeenCalled();
+        expect(f.db.message_log.updateMany).not.toHaveBeenCalled(); expect(f.db.message_log.update).not.toHaveBeenCalled();
+        expect(f.db.message_log.create).not.toHaveBeenCalled(); expect(f.tables).toEqual(before);
+    });
+
+    it.each(["changed phone", "deleted", "other branch", "same-kind ambiguity", "cross-kind ambiguity", "reassigned owner"])(
+        "rejects %s at fresh release without writes", async kind => {
+            const { f, held } = await heldBatch();
+            const owner = f.tables["employee"]![0]!;
+            if (kind === "changed phone") owner["phone"] = "01000000099";
+            if (kind === "deleted") owner["deletedAt"] = original;
+            if (kind === "other branch") owner["branchId"] = "other-branch";
+            if (kind === "same-kind ambiguity") f.tables["employee"]!.push({ ...owner, id: 12 });
+            if (kind === "cross-kind ambiguity") f.tables["client"]!.push({ ...owner, id: 12 });
+            if (kind === "reassigned owner") owner["id"] = 12;
+            const before = structuredClone(f.tables); const begin = jest.spyOn(f.acceptance, "beginProviderCall");
+            f.db.message_log.updateMany.mockClear();
+            jest.setSystemTime(release);
+            await expect(f.retry.retry(held, "manual")).rejects.toMatchObject({ response: { code: "REQUEST_CONFLICT" } });
+            expect(begin).not.toHaveBeenCalled(); expect(f.aligo.sendSms).not.toHaveBeenCalled();
+            expect(f.db.message_log.updateMany).not.toHaveBeenCalled(); expect(f.tables).toEqual(before);
+        });
+
+    it.each(["owner", "source snapshot", "retry snapshot"])("rechecks %s inside FINAL admission after the outer resume read", async kind => {
+        const { f, held } = await heldBatch();
+        const before = structuredClone(f.tables);
+        let locks = 0;
+        f.db.$executeRaw.mockImplementation(async () => {
+            if (++locks === 2) {
+                if (kind === "owner") f.tables["employee"]![0]!["id"] = 99;
+                else (f.tables["message_log"]![kind === "source snapshot" ? 0 : 1]!["variables"] as Row)["manualRecipientBindings"] = "{}";
+            }
+            return 1;
+        });
+        const begin = jest.spyOn(f.acceptance, "beginProviderCall");
+        f.db.message_log.updateMany.mockClear(); f.db.message_log.update.mockClear(); f.db.message_log.create.mockClear();
+        jest.setSystemTime(release);
+        await expect(f.retry.retry(held, "manual")).rejects.toMatchObject({ response: { code: "REQUEST_CONFLICT" } });
+        expect(locks).toBe(2); expect(begin).not.toHaveBeenCalled(); expect(f.aligo.sendSms).not.toHaveBeenCalled();
+        expect(f.db.message_log.updateMany).not.toHaveBeenCalled(); expect(f.db.message_log.update).not.toHaveBeenCalled();
+        expect(f.db.message_log.create).not.toHaveBeenCalled(); expect(f.tables).toEqual(before);
+    });
+});
+
 describe("quiet retry scheduler release", () => {
     beforeEach(() => jest.useFakeTimers({ now: original }));
     afterEach(() => { jest.useRealTimers(); jest.restoreAllMocks(); });
@@ -1108,7 +1287,13 @@ describe("eligible quiet capacity before ordinary dispatch", () => {
         const dispatch = jest.spyOn(maintenance, "dispatchClaimedJob").mockResolvedValue(true);
         await f.core.dispatchDueJobs();
         expect(quiet).toHaveBeenCalledWith(expect.any(Array), release, 100);
-        expect(ordinarySelection).toHaveBeenCalledWith(expect.any(Array), release, 100);
+        expect(ordinarySelection).toHaveBeenCalledTimes(1);
+        const ordinaryArgs: readonly unknown[] = ordinarySelection.mock.calls[0]!;
+        expect(ordinaryArgs.slice(0, 3)).toEqual([expect.any(Array), release, 100]);
+        expect(ordinaryArgs.length).toBeGreaterThanOrEqual(3);
+        expect(ordinaryArgs.length).toBeLessThanOrEqual(4);
+        const [, , , exclusions = []] = ordinaryArgs;
+        expect(exclusions).toEqual([]);
         expect(dispatch).toHaveBeenCalledTimes(1); expect(dispatch.mock.calls[0]![0]).toBe(ordinary);
     });
 
@@ -1185,6 +1370,9 @@ describeReal("quiet queue SQL selection, claim, and policy reconciliation", () =
         const core = new MessageTriggerService(handle.service, new MessageTriggerDeliveryService(sms), approval as never, {} as never, jobs, logs,
             {} as never, {} as never, settings, undefined, undefined, lock);
         const controller = new MessageDeliveryController(aligo as never, approval as never, handle.service, duplicates, quiet, jobs, sender as never);
+        const acceptance = new SmsProviderAcceptanceService(logs);
+        const retry = new SmsRetryService(logs, aligo as never, approval as never, acceptance, undefined, undefined,
+            undefined, jobs, undefined, settings, quiet, sender as never);
         let prepared: Row | undefined;
         if (options.finalDefer) {
             const pending = controller as unknown as { createPendingSmsLog(...args: unknown[]): Promise<{ row: Row; created: boolean; id: number }> };
@@ -1203,8 +1391,89 @@ describeReal("quiet queue SQL selection, claim, and policy reconciliation", () =
         const result = await send();
         if (!("items" in result)) throw new Error("Expected internal queue response");
         const item = result.items[0]!;
-        return { branchId: branch.id, configuration, jobs, logs, settings, lock, core, aligo, sms, send, result, prepared, jobId: item.jobId, logId: item.messageLogId };
+        return { branchId: branch.id, configuration, jobs, logs, settings, lock, core, aligo, sms, send, result, prepared,
+            controller, quiet, acceptance, retry, jobId: item.jobId, logId: item.messageLogId };
     }
+
+    it.each(["unchanged", "final owner replacement", "missing original", "snapshot mismatch"])(
+        "preserves original immediate batch provenance through a real PostgreSQL quiet retry: %s", async mode => {
+            const f = await pgSlice();
+            const second = await createClient(handle.raw, tracker, { branchId: f.branchId, name: "batch second",
+                phone: "01000000022", phoneNormalized: "01000000022" });
+            jest.mocked(Date.now).mockReturnValue(Date.parse("2026-11-03T12:59:59.000Z"));
+            f.aligo.sendSms.mockImplementation(async request => {
+                expect(await handle.raw.message_log.count({ where: { branchId: f.branchId, providerAcceptanceState: "started" } })).toBe(1);
+                return { request, response: { result_code: -101, message: "rejected", msg_id: 0, success_cnt: 0, error_cnt: 2 } };
+            });
+            await expect(f.controller.sendSms({ branchId: f.branchId }, { receiver: "01000000011,01000000022",
+                message: "original PG batch", idempotencyKey: "pg-original-batch" })).rejects.toMatchObject({ response: { code: "MESSAGE_SEND_REJECTED" } });
+            const sourceRow = await handle.raw.message_log.findFirstOrThrow({ where: { branchId: f.branchId, receiver: "01000000011,01000000022" } });
+            const source = (await f.logs.findByIdInBranch(f.branchId, sourceRow.id))!;
+            const first = await handle.raw.client.findFirstOrThrow({ where: { branchId: f.branchId, phone: "01000000011" } });
+            const snapshot = JSON.stringify({ version: 1, branchId: f.branchId, recipients: [
+                { kind: "CLIENT", id: first.id, phone: "01000000011" }, { kind: "CLIENT", id: second.id, phone: "01000000022" },
+            ] });
+            expect(source.variables["manualRecipientBindings"]).toBe(snapshot);
+            f.aligo.sendSms.mockClear();
+            jest.mocked(Date.now).mockReturnValue(original.getTime());
+            if (mode === "missing original") {
+                const variables = { ...source.variables }; delete variables["manualRecipientBindings"];
+                await handle.raw.message_log.update({ where: { id: source.id }, data: { variables } });
+                const before = await handle.raw.message_log.findMany({ where: { branchId: f.branchId }, orderBy: { id: "asc" } });
+                const start = jest.spyOn(f.logs, "startRetryAttempt"); const begin = jest.spyOn(f.acceptance, "beginProviderCall");
+                await expect(f.retry.retryById(f.branchId, source.id)).rejects.toMatchObject({ response: { code: "REQUEST_CONFLICT" } });
+                expect(start).not.toHaveBeenCalled(); expect(begin).not.toHaveBeenCalled(); expect(f.aligo.sendSms).not.toHaveBeenCalled();
+                expect(await handle.raw.message_log.findMany({ where: { branchId: f.branchId }, orderBy: { id: "asc" } })).toEqual(before);
+                return;
+            }
+            // PostgreSQL defaults use its real clock. Bind only the synthetic
+            // retry fixture's createdAt to the same literal clock as admission.
+            const startRetryAttempt = f.logs.startRetryAttempt.bind(f.logs);
+            jest.spyOn(f.logs, "startRetryAttempt").mockImplementation(async (...args) => {
+                const started = await startRetryAttempt(...args);
+                if (started.kind === "started") {
+                    await handle.raw.message_log.update({ where: { id: started.log.id }, data: { createdAt: original } });
+                    started.log.createdAt = original;
+                }
+                return started;
+            });
+            const held = await f.retry.retryById(f.branchId, source.id);
+            expect(held.variables["manualRecipientBindings"]).toBe(snapshot);
+            expect(held).toMatchObject({ status: "pending", providerCallStartedAt: null, nextRetryAt: release });
+            if (mode === "snapshot mismatch") await handle.raw.message_log.update({ where: { id: held.id },
+                data: { variables: { ...held.variables, manualRecipientBindings: "{}" } } });
+            const before = await handle.raw.message_log.findMany({ where: { branchId: f.branchId }, orderBy: { id: "asc" } });
+            let finalBoundary = false;
+            const runExclusive = f.lock.runExclusive.bind(f.lock);
+            if (mode === "final owner replacement") {
+                f.lock.runExclusive = async <T>(branchId: string, work: (tx: Prisma.TransactionClient) => Promise<T>, transaction?: Prisma.TransactionClient): Promise<T> =>
+                    runExclusive(branchId, async tx => {
+                        if (transaction) {
+                            finalBoundary = true;
+                            await tx.client.update({ where: { id: second.id }, data: { phone: "01000000099", phoneNormalized: "01000000099" } });
+                            await tx.client.update({ where: { id: first.id }, data: { phone: "01000000022", phoneNormalized: "01000000022" } });
+                        }
+                        return work(tx);
+                    }, transaction);
+            }
+            const begin = jest.spyOn(f.acceptance, "beginProviderCall");
+            jest.mocked(Date.now).mockReturnValue(release.getTime());
+            if (mode === "unchanged") {
+                f.aligo.sendSms.mockImplementation(async request => ({ request,
+                    response: { result_code: 1, message: "accepted", msg_id: 91, success_cnt: 2, error_cnt: 0 } }));
+                const sent = await f.retry.retry(held, "manual");
+                expect(sent).toMatchObject({ id: held.id, status: "sent", variables: { manualRecipientBindings: snapshot } });
+                expect(begin).toHaveBeenCalledTimes(1); expect(f.aligo.sendSms).toHaveBeenCalledTimes(1);
+                await f.retry.retry(sent!, "manual"); expect(f.aligo.sendSms).toHaveBeenCalledTimes(1);
+            } else {
+                await expect(f.retry.retry(held, "manual")).rejects.toMatchObject({ response: { code: "REQUEST_CONFLICT" } });
+                expect(finalBoundary).toBe(mode === "final owner replacement");
+                expect(begin).not.toHaveBeenCalled(); expect(f.aligo.sendSms).not.toHaveBeenCalled();
+                expect(await handle.raw.message_log.findMany({ where: { branchId: f.branchId }, orderBy: { id: "asc" } })).toEqual(before);
+                expect((await handle.raw.client.findUniqueOrThrow({ where: { id: second.id } })).phone).toBe("01000000022");
+            }
+        });
+
     it.each([false, true])("atomically converts final DEFER in PostgreSQL (batch=%s), preserving source identity and replay", async batch => {
         const f = await pgSlice({ finalDefer: true, batch });
         const prepared = f.prepared!;

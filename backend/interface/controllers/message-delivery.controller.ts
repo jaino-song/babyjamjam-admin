@@ -52,6 +52,11 @@ import type {
 
 const ALIGO_SCHEDULE_MIN_LEAD_MS = 10 * 60 * 1000;
 
+type ManualRecipientBinding = { kind: "CLIENT" | "CAREGIVER"; id: number; phone: string };
+type ResolvedSmsMessage = SendSmsMessageDto & {
+    manualRecipientBindings: { version: 1; branchId: string; recipients: ManualRecipientBinding[] };
+};
+
 type SmsQueueLogRecord = Awaited<ReturnType<Prisma.TransactionClient["message_log"]["findFirstOrThrow"]>>;
 interface SmsMessageLogRecord {
     id: number;
@@ -72,6 +77,7 @@ type SmsProblemCode = Extract<
     | "MESSAGE_SEND_ALREADY_REQUESTED"
     | "MESSAGE_REQUEST_KEY_CONFLICT"
     | "REQUEST_INVALID"
+    | "REQUEST_CONFLICT"
     | "RESOURCE_NOT_FOUND"
 >;
 
@@ -369,7 +375,7 @@ export class MessageDeliveryController {
         };
     }
 
-    private async enqueueOrReplay(branchId: string, dto: SendSmsMessageDto, triggerType: string,
+    private async enqueueOrReplay(branchId: string, dto: ResolvedSmsMessage, triggerType: string,
         scheduledDate: string | undefined, scheduledTime: string | undefined, requestKey: string, onImmediate: (existing: SmsMessageLogRecord | null, scheduledFor?: Date) => void) {
         if (!this.jobs || !this.quietHours) throw new MessageQuietHoursUnavailableError();
         const fingerprint = this.smsFingerprint(branchId, dto, triggerType, scheduledDate, scheduledTime);
@@ -411,7 +417,7 @@ export class MessageDeliveryController {
     }
 
     /** Reuses the caller's admission transaction; every ordinal is committed together. */
-    private async createManualQueue(branchId: string, dto: SendSmsMessageDto, triggerType: string,
+    private async createManualQueue(branchId: string, dto: ResolvedSmsMessage, triggerType: string,
         scheduledDate: string | undefined, scheduledTime: string | undefined, requestKey: string,
         scheduledFor: Date, transaction: Prisma.TransactionClient, preparedRoot?: SmsQueueLogRecord) {
         if (!this.jobs || !this.quietHours) throw new MessageQuietHoursUnavailableError();
@@ -424,8 +430,38 @@ export class MessageDeliveryController {
         if (!sender || sender.availability !== "available") throw new MessageQuietHoursUnavailableError();
         // Validate the complete batch before the first ledger/job write.
         const recipients = [];
-        for (const receiver of phones) recipients.push(await this.resolveSmsRecipients(branchId,
-            { ...dto, receiver, clientId: phones.length === 1 ? dto.clientId : null, employeeId: phones.length === 1 ? dto.employeeId : null }, transaction));
+        for (const receiver of phones) {
+            try {
+                recipients.push(await this.resolveSmsRecipients(branchId,
+                    { ...dto, receiver, clientId: phones.length === 1 ? dto.clientId : null, employeeId: phones.length === 1 ? dto.employeeId : null }, transaction));
+            } catch (error) {
+                if (error instanceof BadRequestException || error instanceof NotFoundException) {
+                    throw new ConflictException(this.smsProblemBody("REQUEST_CONFLICT", "NOT_APPLIED"));
+                }
+                throw error;
+            }
+        }
+        // Fresh ownership must match the FIRST server resolution, never replace it.
+        const originalBindings = dto.manualRecipientBindings;
+        if (preparedRoot && this.smsRecordVariables(preparedRoot)["manualRecipientBindings"] !== JSON.stringify(originalBindings)) {
+            throw new ConflictException(this.smsProblemBody("REQUEST_CONFLICT", "NOT_APPLIED"));
+        }
+        const [clients, employees] = await Promise.all([
+            transaction.client.findMany({ where: { branchId, deletedAt: null }, select: { id: true, phone: true } }),
+            transaction.employee.findMany({ where: { branchId, deletedAt: null }, select: { id: true, phone: true } }),
+        ]);
+        for (const recipient of recipients) {
+            const binding = recipient.manualRecipientBindings.recipients[0]!;
+            const original = originalBindings.recipients.filter(item => item.phone === binding.phone);
+            const owners = [
+                ...clients.filter(item => normalizePhone(item.phone) === binding.phone).map(item => ({ kind: "CLIENT", id: item.id })),
+                ...employees.filter(item => normalizePhone(item.phone) === binding.phone).map(item => ({ kind: "CAREGIVER", id: item.id })),
+            ];
+            if (original.length !== 1 || original[0]!.kind !== binding.kind || original[0]!.id !== binding.id
+                || owners.length !== 1 || owners[0]!.kind !== binding.kind || owners[0]!.id !== binding.id) {
+                throw new ConflictException(this.smsProblemBody("REQUEST_CONFLICT", "NOT_APPLIED"));
+            }
+        }
         // Match the prepared snapshot before any conversion write, then repeat the
         // same fence at CAS. Never mutate the caller's snapshot before commit.
         let rootFence: Prisma.message_logWhereInput | undefined;
@@ -470,6 +506,7 @@ export class MessageDeliveryController {
                         recipientName: dto.recipientName ?? null, title: dto.title?.trim() || null, clientId: dto.clientId ?? null,
                         employeeId: dto.employeeId ?? null, msgType: dto.msgType ?? "AUTO", triggerType,
                         scheduledDate: scheduledDate ?? null, scheduledTime: scheduledTime ?? null, testMode: dto.testMode === true }),
+                    manualRecipientBindings: JSON.stringify(recipient.manualRecipientBindings),
                     title: dto.title ?? "", employeeId: recipient.employeeId ?? null,
                     triggerType, msgType: dto.msgType ?? "AUTO", testMode: dto.testMode ? "true" : "false",
                     duplicateDecision: dto.duplicateDecision ? JSON.stringify(dto.duplicateDecision) : null,
@@ -523,7 +560,7 @@ export class MessageDeliveryController {
 
     private async createPendingSmsLog(
         branchId: string,
-        dto: SendSmsMessageDto,
+        dto: ResolvedSmsMessage,
         triggerType: string,
         scheduledDate?: string,
         scheduledTime?: string,
@@ -573,6 +610,7 @@ export class MessageDeliveryController {
                 recipientPhone: dto.receiver,
                 messageBody: dto.message,
                 variables: {
+                    manualRecipientBindings: JSON.stringify(dto.manualRecipientBindings),
                     recipientName: dto.recipientName ?? null,
                     title: dto.title ?? null,
                     triggerType,
@@ -660,7 +698,7 @@ export class MessageDeliveryController {
         branchId: string,
         dto: SendSmsMessageDto,
         transaction?: Prisma.TransactionClient,
-    ): Promise<SendSmsMessageDto> {
+    ): Promise<ResolvedSmsMessage> {
         if (!branchId) {
             throw new BadRequestException(this.smsProblemBody("REQUEST_INVALID", "NOT_APPLIED"));
         }
@@ -741,6 +779,9 @@ export class MessageDeliveryController {
             recipientName: canonicalName,
             clientId,
             employeeId,
+            manualRecipientBindings: { version: 1, branchId, recipients: recipients.map(recipient => ({
+                kind: recipient.kind === "client" ? "CLIENT" : "CAREGIVER", id: recipient.id, phone: recipient.phone,
+            })) },
         };
     }
 

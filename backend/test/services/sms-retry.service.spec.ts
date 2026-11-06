@@ -114,6 +114,42 @@ describe("SmsRetryService", () => {
         jest.clearAllMocks();
     });
 
+    it("copies original mixed batch bindings unchanged into a manual retry attempt", async () => {
+        const source = createSmsRetryLog("manual_sms");
+        source.clientId = null;
+        source.receiver = "01012345678,01088889999";
+        const snapshot = JSON.stringify({ version: 1, branchId: source.branchId, recipients: [
+            { kind: "CLIENT", id: 7, phone: "01012345678" }, { kind: "CAREGIVER", id: 12, phone: "01088889999" },
+        ] });
+        source.variables = { triggerType: "immediate", manualRecipientBindings: snapshot, retrySafety: "manual-provider-rejected" };
+        aligoService.sendSms.mockResolvedValue({ request: { receiver: source.receiver },
+            response: { result_code: -101, message: "rejected", success_cnt: 0, error_cnt: 2 } });
+        const result = await service.retry(source, "manual");
+        expect(logRepository.startRetryAttempt).toHaveBeenCalledTimes(1);
+        expect(logRepository.startRetryAttempt.mock.calls[0]![1].variables["manualRecipientBindings"]).toBe(snapshot);
+        expect(result!.variables["manualRecipientBindings"]).toBe(snapshot);
+        expect(source.variables["manualRecipientBindings"]).toBe(snapshot);
+        expect(aligoService.sendSms).toHaveBeenCalledTimes(1);
+    });
+
+    it.each([undefined, "invalid-json", "null", JSON.stringify({ version: 2, recipients: [] })])(
+        "rejects a quiet batch with missing/malformed provenance before creating any retry (%s)", async snapshot => {
+            const source = createSmsRetryLog("manual_sms");
+            source.clientId = null; source.receiver = "01012345678,01088889999";
+            source.variables = { triggerType: "immediate", retrySafety: "manual-provider-rejected",
+                ...(snapshot === undefined ? {} : { manualRecipientBindings: snapshot }) };
+            logRepository.findByIdInBranch.mockResolvedValue(source);
+            const before = structuredClone(source);
+            Object.assign(service, { quietHours: { runAdmission: async (_branch: string, _receiver: string,
+                work: (decision: unknown, tx: unknown, revision: string) => Promise<unknown>) =>
+                work({ action: "DEFER", reevaluateAt: new Date(60_000) }, {}, "revision") } });
+            await expect(service.retry(source, "manual")).rejects.toMatchObject({ response: { code: "REQUEST_CONFLICT" } });
+            expect(logRepository.startRetryAttempt).not.toHaveBeenCalled();
+            expect(logRepository.update).not.toHaveBeenCalled();
+            expect(aligoService.sendSms).not.toHaveBeenCalled();
+            expect(source).toEqual(before);
+        });
+
     describe("manual retry duplicate guards", () => {
         it("returns 409 without sending when transactional family admission loses after the fast-path read", async () => {
             const source = createSmsRetryLog();
