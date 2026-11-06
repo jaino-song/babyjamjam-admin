@@ -5,6 +5,8 @@ import { artifactKey, runKey } from "domain/eformsign-backup/worker";
 import { executionChunks, ExecutionFencedError, type ExecutionEffectFence } from "infrastructure/eformsign-backup/execution-effect-fence";
 import { LocalArtifactArchive, type ArchiveFaultPoint } from "infrastructure/eformsign-backup/local-artifact-archive";
 import { publishBytesNoClobber } from "infrastructure/eformsign-backup/worker/atomic-file";
+import { driveOk } from "infrastructure/eformsign-backup/worker/drive-auth";
+import { DriveClient } from "infrastructure/eformsign-backup/worker/drive-client";
 
 import { makeArchive, makeDestination, makeTestBase, publishInput, snapshotTree, streamOf, type ArchiveFixture } from "./helpers/destination-support";
 import { buildMinimalPdf } from "./helpers/pdf-fixture-minimal";
@@ -102,6 +104,67 @@ describe("local effect fences", () => {
             }) }, fenced ? authority().fence : undefined);
             await expect(bounded(iterator.next())).rejects.toBe(error);
             expect(returned).not.toHaveBeenCalled();
+        });
+    });
+    describe.each(["iterator", "archive", "upload"] as const)("abort during producer failure (%s)", target => {
+        it.each([
+            ["throw", "never"], ["throw", "reject"], ["throw", "throw"],
+            ["reject", "never"], ["reject", "reject"], ["reject", "throw"],
+        ] as const)("normalizes next %s and cancels once with return %s", async (pullFailure, cleanupFailure) => {
+            const { controller, fence } = authority();
+            const add = jest.spyOn(controller.signal, "addEventListener");
+            const remove = jest.spyOn(controller.signal, "removeEventListener");
+            let finishCleanup: (() => void) | undefined;
+            const returned = jest.fn((): Promise<IteratorResult<Uint8Array>> => {
+                if (cleanupFailure === "throw") throw new Error("private cleanup detail");
+                if (cleanupFailure === "reject") return Promise.reject(new Error("private cleanup detail"));
+                return new Promise(resolve => { finishCleanup = () => resolve({ done: true, value: undefined }); });
+            });
+            let pulls = 0;
+            const next = jest.fn((): Promise<IteratorResult<Uint8Array>> => {
+                if (++pulls === 1) return Promise.resolve({ done: false, value: pdf.subarray(0, 10) });
+                controller.abort("private abort reason");
+                const error = new Error("private producer detail");
+                if (pullFailure === "throw") throw error;
+                return Promise.reject(error);
+            });
+            const source = { [Symbol.asyncIterator]: () => ({ next, return: returned }) };
+            const fetcher = jest.fn(async () => new Response(null, {
+                status: 200, headers: { location: "http://127.0.0.1:9/synthetic-session" },
+            }));
+            const client = new DriveClient({
+                apiBaseUrl: "http://127.0.0.1:9", uploadBaseUrl: "http://127.0.0.1:9",
+                tokens: { get: async () => driveOk("synthetic-token") }, fetchImpl: fetcher,
+                requestTimeoutMs: 1000, chunkBytes: 262144,
+            });
+            const before = await snapshotTree(base);
+            const unhandled = jest.fn();
+            process.on("unhandledRejection", unhandled);
+            const pending: Promise<unknown> = target === "archive" ? primitive().archive(claim, source, { effectFence: fence })
+                : target === "upload" ? client.uploadResumable({
+                    id: "SyntheticFile00001", parentId: "SyntheticParent0001", name: "doc.pdf", mimeType: "application/pdf",
+                }, () => source, pdf.length, fence)
+                : (async () => { for await (const chunk of executionChunks(source, fence)) { expect(chunk).toEqual(pdf.subarray(0, 10)); } })();
+            try {
+                const error: unknown = await bounded(pending).catch(error => error);
+                expect(error).toBeInstanceOf(ExecutionFencedError);
+                expect(error).toMatchObject({ reason: "aborted", message: "Execution effect fenced" });
+                expect(error).not.toHaveProperty("cause");
+                expect(String(error)).not.toContain("private");
+                expect(next).toHaveBeenCalledTimes(2);
+                expect(returned).toHaveBeenCalledTimes(1);
+                expect(fetcher).toHaveBeenCalledTimes(target === "upload" ? 1 : 0);
+                expect(await snapshotTree(base)).toEqual(before);
+                finishCleanup?.();
+                await new Promise<void>(resolve => setImmediate(resolve));
+                expect(unhandled).not.toHaveBeenCalled();
+                expect(returned).toHaveBeenCalledTimes(1);
+                expect(remove.mock.calls.map(call => call[1])).toEqual(add.mock.calls.map(call => call[1]));
+            } finally {
+                finishCleanup?.();
+                await pending.catch(() => undefined);
+                process.off("unhandledRejection", unhandled);
+            }
         });
     });
     it.each([false, true])("preserves consumer body failure through rejecting cleanup (fenced=%s)", async fenced => {
