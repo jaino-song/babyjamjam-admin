@@ -31,6 +31,8 @@ export const SYSTEM_TEMPLATE_KEYS = [
   'PROVIDER_NOTICE',
   'SERVICE_RECORD_LINK',
   'SERVICE_RECORD_REMINDER',
+  'CAREGIVER_SERVICE_START_NOTICE',
+  'CAREGIVER_SERVICE_END_NOTICE',
 ] as const;
 
 export type SystemTemplateKey = (typeof SYSTEM_TEMPLATE_KEYS)[number];
@@ -66,6 +68,8 @@ export const SYSTEM_TEMPLATE_DELIVERY_MODES_BY_KEY = {
   PROVIDER_NOTICE: "sms",
   SERVICE_RECORD_LINK: "service-feedback-link",
   SERVICE_RECORD_REMINDER: "sms",
+  CAREGIVER_SERVICE_START_NOTICE: "sms",
+  CAREGIVER_SERVICE_END_NOTICE: "sms",
 } satisfies Record<SystemTemplateKey, SystemTemplateDeliveryMode>;
 
 /**
@@ -235,3 +239,11 @@ export type SystemTemplateVersionListResponse = SystemTemplateVersionSummary[];
 export type SystemTemplateVersionDetailResponse = SystemTemplateVersionDetail;
 export type RollbackSystemTemplateResponse = SystemTemplateRecord;
 export type ResetSystemTemplateResponse = SystemTemplateRecord;
+
+export type CaregiverTemplateLifecycleAction = "activate" | "disable" | "delete" | "restore";
+export interface CaregiverTemplateLifecycleResponse {
+  key: "CAREGIVER_SERVICE_START_NOTICE" | "CAREGIVER_SERVICE_END_NOTICE";
+  state: "active" | "disabled" | "deleted";
+  deletedAt: string | null;
+  snapshotVersion: 2;
+}

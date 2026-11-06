@@ -1,5 +1,5 @@
 import { z } from "zod";
-export declare const SYSTEM_TEMPLATE_KEYS: readonly ["GREETING", "SERVICE_INFO", "PRICE_INFO", "REMINDER", "THANKS", "INFO", "CONTRACT_GUIDE", "CONTRACT_REMINDER", "MATERNAL_NOTICE", "SERVICE_END_NOTICE", "SURVEY", "PROVIDER_NOTICE", "SERVICE_RECORD_LINK", "SERVICE_RECORD_REMINDER"];
+export declare const SYSTEM_TEMPLATE_KEYS: readonly ["GREETING", "SERVICE_INFO", "PRICE_INFO", "REMINDER", "THANKS", "INFO", "CONTRACT_GUIDE", "CONTRACT_REMINDER", "MATERNAL_NOTICE", "SERVICE_END_NOTICE", "SURVEY", "PROVIDER_NOTICE", "SERVICE_RECORD_LINK", "SERVICE_RECORD_REMINDER", "CAREGIVER_SERVICE_START_NOTICE", "CAREGIVER_SERVICE_END_NOTICE"];
 export type SystemTemplateKey = (typeof SYSTEM_TEMPLATE_KEYS)[number];
 /** Runtime key validation for system-template BFF route parameters. */
 export declare const systemTemplateKeySchema: z.ZodEnum<{
@@ -11,6 +11,8 @@ export declare const systemTemplateKeySchema: z.ZodEnum<{
     INFO: "INFO";
     SERVICE_END_NOTICE: "SERVICE_END_NOTICE";
     SERVICE_RECORD_LINK: "SERVICE_RECORD_LINK";
+    CAREGIVER_SERVICE_START_NOTICE: "CAREGIVER_SERVICE_START_NOTICE";
+    CAREGIVER_SERVICE_END_NOTICE: "CAREGIVER_SERVICE_END_NOTICE";
     GREETING: "GREETING";
     CONTRACT_GUIDE: "CONTRACT_GUIDE";
     CONTRACT_REMINDER: "CONTRACT_REMINDER";
@@ -40,6 +42,8 @@ export declare const SYSTEM_TEMPLATE_DELIVERY_MODES_BY_KEY: {
     PROVIDER_NOTICE: "sms";
     SERVICE_RECORD_LINK: "service-feedback-link";
     SERVICE_RECORD_REMINDER: "sms";
+    CAREGIVER_SERVICE_START_NOTICE: "sms";
+    CAREGIVER_SERVICE_END_NOTICE: "sms";
 };
 /**
  * Resolve the delivery preparation path for a system template.
@@ -183,3 +187,10 @@ export type SystemTemplateVersionListResponse = SystemTemplateVersionSummary[];
 export type SystemTemplateVersionDetailResponse = SystemTemplateVersionDetail;
 export type RollbackSystemTemplateResponse = SystemTemplateRecord;
 export type ResetSystemTemplateResponse = SystemTemplateRecord;
+export type CaregiverTemplateLifecycleAction = "activate" | "disable" | "delete" | "restore";
+export interface CaregiverTemplateLifecycleResponse {
+    key: "CAREGIVER_SERVICE_START_NOTICE" | "CAREGIVER_SERVICE_END_NOTICE";
+    state: "active" | "disabled" | "deleted";
+    deletedAt: string | null;
+    snapshotVersion: 2;
+}

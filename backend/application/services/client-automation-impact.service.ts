@@ -1,3 +1,5 @@
+import { MessageTriggerRecipientResolverService, describeCaregiverMessageEffect } from "./message-trigger-recipient-resolver.service";
+import { isCaregiverTriggerTemplate } from "domain/constants/message-trigger-catalog";
 import type { Prisma } from "@prisma/client";
 import { Inject, Injectable, Optional } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
@@ -176,6 +178,7 @@ export class ClientAutomationImpactService implements ClientAutomationImpactPort
         private readonly sender: AligoDefaultSenderPolicyService,
         @Inject(MESSAGE_TRIGGER_JOB_REPOSITORY) private readonly jobs: IMessageTriggerJobRepository,
         @Optional() private readonly configService?: ConfigService,
+        private readonly caregiverRecipients?: MessageTriggerRecipientResolverService,
     ) {}
 
     async planClientWrite(branchId: string, write: ClientAutomationWrite): Promise<ClientAutomationImpact> {
@@ -246,7 +249,7 @@ export class ClientAutomationImpactService implements ClientAutomationImpactPort
         let complete = true;
         const noteUnavailable = (next: NonNullable<ClientAutomationImpact["reason"]>): void => { reason ??= next; };
 
-        for (const rule of rules.filter((entry) => CLIENT_EVENTS.has(entry.eventType))) {
+        for (const rule of rules.filter((entry) => CLIENT_EVENTS.has(entry.eventType) && !isCaregiverTriggerTemplate(entry.templateKey))) {
             if (rule.recipientType !== MessageTriggerRecipientType.CLIENT) { noteUnavailable("source-unavailable"); complete = false; continue; }
             const oldRecipe = before ? buildClientMessageRecipe(rule, before, now) : null;
             const newRecipe = rule.isActive && settings.dispatchEnabled ? buildClientMessageRecipe(rule, after, now) : null;
@@ -295,6 +298,42 @@ export class ClientAutomationImpactService implements ClientAutomationImpactPort
             if (change === "cancel") effect = { ...effect, sourceDigest: agentBindingHash({ canceled: true, after: recipeSource(newRecipe, rule), previous: effect.sourceDigest }) };
             effects.push(effect);
             mutable.forEach((job) => affected.set(job.id, job));
+        }
+
+        const caregiverRules = rules.filter((rule) => isCaregiverTriggerTemplate(rule.templateKey));
+        let caregiverSourceGuard: unknown;
+        if (before && caregiverRules.length) {
+            if (!this.caregiverRecipients) return this.unavailable("source-unavailable");
+            const oldSet = await this.caregiverRecipients.resolve(branchId, before.id, caregiverRules, transaction, { clientOverride: before, now });
+            const newSet = await this.caregiverRecipients.resolve(branchId, before.id, caregiverRules, transaction, { clientOverride: after, now });
+            if (!oldSet.complete || !newSet.complete) return this.unavailable("source-unavailable");
+            caregiverSourceGuard = { before: oldSet, after: newSet };
+            for (const row of newSet.recipients) {
+                const rule = caregiverRules.find((entry) => entry.id === row.ruleId)!;
+                const previous = oldSet.recipients.find((entry) => entry.ruleId === row.ruleId && entry.employeeScheduleId === row.employeeScheduleId);
+                const sourceJobs = jobs.filter((job) => job.ruleId === rule.id && job.employeeScheduleId === row.employeeScheduleId && !isManualMessageTriggerJob(job));
+                const mutable = sourceJobs.filter((job) => job.status === "pending" || job.status === "processing");
+                if (sourceJobs.some((job) => job.status === "dispatching")) { complete = false; noteUnavailable("source-unavailable"); continue; }
+                const recipe = row.recipe ?? previous?.recipe;
+                if (!recipe) continue;
+                if (sourceJobs.some((job) => (job.status === "sent" || job.canceledByUser) && job.payload.employeeId === recipe.payload.employeeId)) continue;
+                const unchanged = sourceHash(previous?.recipe ?? null) === sourceHash(row.recipe ?? null);
+                const change: AgentAutomationEffect["change"] = row.outcome !== "ready" || !rule.isActive ? "cancel" : mutable.length ? "refresh" : "create";
+                if (change === "cancel" && !mutable.length) continue;
+                if (change === "cancel") {
+                    const effect = unavailableEffect({ branchId, subject, rule, recipe, policy, change, kind: "caregiver-service",
+                        scheduleIdentity: agentAutomationScheduleIdentity(recipe.payload.caregiverSourceSnapshot!.schedule.incarnationId), reason: row.reason ?? "source-unavailable" });
+                    effects.push(effect); mutable.forEach((job) => affected.set(job.id, job)); continue;
+                }
+                try {
+                    const snapshot = transaction ? await this.delivery.resolveCanonicalDeliverySnapshot(MessageTriggerJobEntity.create(recipe), transaction)
+                        : await this.delivery.resolveCanonicalDeliverySnapshot(MessageTriggerJobEntity.create(recipe));
+                    const effect = describeCaregiverMessageEffect({ branchId, subject, rule, recipe, policy, snapshot, change });
+                    if (!effect) { complete = false; noteUnavailable("source-unavailable"); continue; }
+                    if (unchanged) grandfatheredEffects.push(effect);
+                    else { effects.push(effect); mutable.forEach((job) => affected.set(job.id, job)); }
+                } catch { complete = false; noteUnavailable("unsupported-content"); }
+            }
         }
 
         // A client-name correction refreshes existing active schedule recipes. It
@@ -458,6 +497,7 @@ export class ClientAutomationImpactService implements ClientAutomationImpactPort
                 rules: [...reviewRules].sort((a, b) => a.id.localeCompare(b.id)),
                 jobs: jobs.map((job) => ({ id: job.id, version: jobVersion(job) })).sort((a, b) => a.id.localeCompare(b.id)), schedules,
                 serviceRecordLinks,
+                ...(caregiverSourceGuard ? { caregiverSourceGuard } : {}),
                 grandfatheredEffects: canonicalAgentAutomationEffects(grandfatheredEffects) }),
             affectedJobs: [...affected.values()].map((job) => ({ id: job.id, version: jobVersion(job) })).sort((a, b) => a.id.localeCompare(b.id)) };
     }

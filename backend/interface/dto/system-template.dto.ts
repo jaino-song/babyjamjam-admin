@@ -1,4 +1,4 @@
-import { IsString, IsNotEmpty, IsObject, IsOptional, IsArray, ValidateNested, IsBoolean } from 'class-validator';
+import { IsString, IsNotEmpty, IsObject, IsOptional, IsArray, ValidateNested, IsBoolean, IsIn } from 'class-validator';
 import { Type } from 'class-transformer';
 
 class CustomVariableDto {
@@ -40,4 +40,9 @@ export class PreviewTemplateDto {
   @IsObject()
   @IsNotEmpty()
   data!: Record<string, unknown>;
+}
+
+export class CaregiverTemplateLifecycleDto {
+  @IsIn(['activate', 'disable', 'delete', 'restore'])
+  action!: 'activate' | 'disable' | 'delete' | 'restore';
 }

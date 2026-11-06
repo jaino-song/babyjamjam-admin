@@ -1,4 +1,10 @@
+import { Type } from "class-transformer";
 import {
+    ArrayUnique,
+    IsArray,
+    IsISO8601,
+    Equals,
+    ValidateNested,
     IsBoolean,
     IsInt,
     IsIn,
@@ -13,7 +19,30 @@ import {
 export const MESSAGE_DELIVERY_TRIGGER_TYPES = ["immediate", "scheduled"] as const;
 export type MessageDeliveryTriggerType = (typeof MESSAGE_DELIVERY_TRIGGER_TYPES)[number];
 
+export class SmsDuplicateDecisionDto {
+    @Equals(true)
+    confirmed!: true;
+
+    @IsISO8601()
+    checkedAt!: string;
+
+    @IsArray()
+    @ArrayUnique()
+    @IsInt({ each: true })
+    matchIds!: number[];
+
+    @IsOptional()
+    @IsString()
+    @Matches(/^[a-f0-9]{64}$/)
+    payloadHash?: string;
+}
+
 export class SendSmsMessageDto {
+    @IsOptional()
+    @ValidateNested()
+    @Type(() => SmsDuplicateDecisionDto)
+    duplicateDecision?: SmsDuplicateDecisionDto;
+
     @IsString()
     @IsNotEmpty()
     @Matches(/^[0-9,\-\s]+$/, { message: "수신자 연락처 형식이 올바르지 않습니다." })

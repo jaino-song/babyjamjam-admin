@@ -33,6 +33,8 @@ exports.SYSTEM_TEMPLATE_KEYS = [
     'PROVIDER_NOTICE',
     'SERVICE_RECORD_LINK',
     'SERVICE_RECORD_REMINDER',
+    'CAREGIVER_SERVICE_START_NOTICE',
+    'CAREGIVER_SERVICE_END_NOTICE',
 ];
 /** Runtime key validation for system-template BFF route parameters. */
 exports.systemTemplateKeySchema = zod_1.z.enum(exports.SYSTEM_TEMPLATE_KEYS);
@@ -61,6 +63,8 @@ exports.SYSTEM_TEMPLATE_DELIVERY_MODES_BY_KEY = {
     PROVIDER_NOTICE: "sms",
     SERVICE_RECORD_LINK: "service-feedback-link",
     SERVICE_RECORD_REMINDER: "sms",
+    CAREGIVER_SERVICE_START_NOTICE: "sms",
+    CAREGIVER_SERVICE_END_NOTICE: "sms",
 };
 /**
  * Resolve the delivery preparation path for a system template.

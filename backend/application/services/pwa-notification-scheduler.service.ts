@@ -14,7 +14,7 @@ import {
 } from "domain/repositories/message-trigger-job.repository.interface";
 import { MessageTriggerJobEntity } from "domain/entities/message-trigger-job.entity";
 import {
-    MESSAGE_TRIGGER_TEMPLATE_CATALOG,
+    findMessageTriggerTemplate,
     MessageTriggerRecipientType,
     MessageTriggerTemplateKey,
 } from "domain/constants/message-trigger-catalog";
@@ -390,7 +390,7 @@ export class PwaNotificationSchedulerService {
      */
     private formatUndeliveredMessageDetail(job: MessageTriggerJobEntity): string {
         const recipientName = job.payload.recipientName || "사용자";
-        const templateLabel = MESSAGE_TRIGGER_TEMPLATE_CATALOG[job.templateKey]?.name ?? "메시지";
+        const templateLabel = findMessageTriggerTemplate(job.templateKey)?.name ?? "메시지";
         const reason = job.cancelReason ?? "사유 미상";
         return `${recipientName} · ${templateLabel} — ${reason}`;
     }
@@ -417,7 +417,7 @@ export class PwaNotificationSchedulerService {
             : `${recipientName}님`;
         const templateLabel = job.templateKey === MessageTriggerTemplateKey.SERVICE_RECORD_LINK
             ? "제공기록지"
-            : MESSAGE_TRIGGER_TEMPLATE_CATALOG[job.templateKey]?.name ?? "안내";
+            : findMessageTriggerTemplate(job.templateKey)?.name ?? "안내";
         const deliveryResult = job.status === "failed" ? "실패했습니다" : "취소되었습니다";
 
         return {

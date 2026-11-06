@@ -1,5 +1,8 @@
+import { GetSettingUsecase } from "application/usecases/system-setting/get-setting.usecase";
+import { UpdateSettingUsecase } from "application/usecases/system-setting/update-setting.usecase";
+import { TenantContext } from "infrastructure/tenant/tenant.context";
 import { Test, TestingModule } from "@nestjs/testing";
-import { INestApplication, RequestMethod, ValidationPipe } from "@nestjs/common";
+import { ExecutionContext, INestApplication, RequestMethod, ValidationPipe } from "@nestjs/common";
 import { GUARDS_METADATA, METHOD_METADATA, PATH_METADATA } from "@nestjs/common/constants";
 import request from "supertest";
 import { SystemSettingController } from "interface/controllers/system-setting.controller";
@@ -11,6 +14,7 @@ import { BranchManagerGuard } from "infrastructure/auth/branch-manager.guard";
 import { JwtGuard } from "infrastructure/auth/jwt.guard";
 import { OwnerGuard } from "infrastructure/auth/owner.guard";
 import { TenantGuard } from "infrastructure/tenant";
+import { defaultMessageAutomationPolicy } from "domain/entities/system-setting.entity";
 import { SystemSettingEntity } from "domain/entities/system-setting.entity";
 import {
     PAST_OCCURRENCE_GRACE_MS,
@@ -46,6 +50,7 @@ describe("SystemSettingController (Integration)", () => {
     beforeEach(async () => {
         const mockSystemSettingService = {
             getMessageAutomationPastTriggerConfig: jest.fn(),
+            getMessageAutomationPolicyConfig: jest.fn(),
             setMessageAutomationPastTriggerConfig: jest.fn(),
             getMessageSettingsPolicyActivations: jest.fn(),
             setMessageSettingsPolicyEnabled: jest.fn(),
@@ -112,6 +117,7 @@ describe("SystemSettingController (Integration)", () => {
         systemSettingService = moduleFixture.get(SystemSettingService);
         messageSenderApprovalService = moduleFixture.get(MessageSenderApprovalService);
         controller = moduleFixture.get(SystemSettingController);
+        systemSettingService.getMessageAutomationPolicyConfig.mockResolvedValue({ version: null, configuration: defaultMessageAutomationPolicy(), warnings: [] });
         systemSettingService.getMessageAutomationPastTriggerConfig.mockResolvedValue({
             sendIntervalMinutes: 1,
             ruleOrder: [],
@@ -329,10 +335,11 @@ describe("SystemSettingController (Integration)", () => {
         it("should update the branch-scoped past trigger config", async () => {
             systemSettingService.setMessageAutomationPastTriggerConfig.mockResolvedValue(
                 new SystemSettingEntity(
-                    "branch:branch-1:message_automation:past_trigger",
+                    "branch:branch-1:message_automation:policy",
                     JSON.stringify({
-                        sendIntervalMinutes: 3,
-                        ruleOrder: ["rule-2", "rule-1"],
+                        ...defaultMessageAutomationPolicy(),
+                        pastSendIntervalMinutes: 3,
+                        pastRuleOrder: ["rule-2", "rule-1"],
                     }),
                     new Date("2026-07-09T00:00:00.000Z"),
                 ),
@@ -485,3 +492,136 @@ function formatKstDateHour(date: Date): string {
 
     return `${hour}:00`;
 }
+
+// Real controller + service + use cases + tenant/manager guards. Persistence is
+// an isolated in-memory repository; no database or provider is reachable here.
+describe("POL-1 policy config HTTP boundary", () => {
+    const config = () => ({
+        schemaVersion: 1, dispatchCheckIntervalMinutes: 1, defaultRuleSendTime: "09:00",
+        triggerRetryIntervalMinutes: 5, processingReclaimMinutes: 10, smsRetryIntervalMinutes: 5,
+        pastExpiryHours: 24, pastSendIntervalMinutes: 1, pastRuleOrder: [], duplicateWindowHours: 72,
+        quietHours: { enabled: false, start: "22:00", end: "08:00", recipientGroups: ["CLIENT", "CAREGIVER", "STAFF"], action: "DEFER", timezone: "Asia/Seoul" },
+    });
+    let app: INestApplication;
+    let membershipRole: string;
+    let rows: Map<string, string>;
+    let repository: { findByKey: jest.Mock; compareAndSet: jest.Mock };
+    let logs: { countFutureProviderReservations: jest.Mock; findPolicyPreviewCandidates: jest.Mock; resolvePolicyRecipientGroups: jest.Mock };
+    const path = "/settings/message-automation-policies/config";
+    const key = "branch:A:message_automation:policy";
+    beforeEach(async () => {
+        rows = new Map();
+        membershipRole = "manager";
+        repository = {
+            findByKey: jest.fn(async key => rows.has(key) ? SystemSettingEntity.create(key, rows.get(key)!) : null),
+            compareAndSet: jest.fn(async (key, expected, entity, versionOf) => {
+                if (versionOf(rows.get(key) ?? null) !== expected) return null;
+                rows.set(key, entity.value);
+                return entity;
+            }),
+        };
+        logs = { countFutureProviderReservations: jest.fn().mockResolvedValue(0), findPolicyPreviewCandidates: jest.fn().mockResolvedValue([]),
+            resolvePolicyRecipientGroups: jest.fn(async (_branch, candidates) => candidates) };
+        const service = new SystemSettingService(new GetSettingUsecase(repository as any), new UpdateSettingUsecase(repository as any), { append: jest.fn() } as any, undefined,
+            { findAll: jest.fn().mockResolvedValue([]) } as any, { findPolicyPreviewCandidates: jest.fn().mockResolvedValue([]) } as any, logs as any,
+            { runExclusive: async (_branch: string, work: (tx: unknown) => Promise<unknown>) => work({ marker: "same TX" }) } as any);
+        const prisma = { user_branch: { findFirst: jest.fn(async ({ where }) => where.branchId === "A" ? { role: membershipRole, branch: { isActive: true } } : null) },
+            branch: { findUnique: jest.fn().mockResolvedValue({ id: "A", isActive: true }) } };
+        const fixture = await Test.createTestingModule({ controllers: [SystemSettingController], providers: [
+            { provide: SystemSettingService, useValue: service }, { provide: MessageSenderApprovalService, useValue: {} },
+            { provide: EformsignAutomationStatusService, useValue: {} },
+        ] }).overrideGuard(JwtGuard).useValue({ canActivate: (context: ExecutionContext) => {
+            const req = context.switchToHttp().getRequest();
+            req.user = { userId: "fixture-user", role: req.headers["x-test-role"] ?? "user", branchId: req.headers["x-test-branch"] ?? "A" };
+            return true;
+        } }).overrideGuard(TenantGuard).useValue(new TenantGuard(prisma as any, new TenantContext()))
+            .overrideGuard(BranchManagerGuard).useValue(new BranchManagerGuard()).compile();
+        app = fixture.createNestApplication();
+        app.useGlobalPipes(new ValidationPipe({ transform: true, whitelist: true }));
+        await app.listen(0, "127.0.0.1");
+    });
+    afterEach(async () => { await app?.close(); });
+    it("GET defaults and PUT/reload return stable values; stale requests change nothing", async () => {
+        const initial = await request(app.getHttpServer()).get(path).expect(200);
+        expect(initial.body).toEqual({ version: null, configuration: config(), permissions: { canRead: true, canWrite: true }, warnings: [] });
+        const changed = { ...config(), dispatchCheckIntervalMinutes: 7, defaultRuleSendTime: "10:45" };
+        const saved = await request(app.getHttpServer()).put(path).send({ expectedVersion: null, configuration: changed, branchId: "B" }).expect(200);
+        expect(saved.body.configuration).toEqual(changed);
+        expect(saved.body.version).toMatch(/^[a-f0-9]{64}$/);
+        const reload = await request(app.getHttpServer()).get(path).expect(200);
+        expect(reload.body).toEqual(saved.body);
+        const before = rows.get(key);
+        await request(app.getHttpServer()).put(path).send({ expectedVersion: null, configuration: config() }).expect(409);
+        expect(rows.get(key)).toBe(before);
+        expect(rows.has("branch:B:message_automation:policy")).toBe(false);
+        expect(repository.compareAndSet).toHaveBeenCalledTimes(1);
+    });
+    it("legacy explanation rows use resolved branch policy values", async () => {
+        rows.set(key, JSON.stringify({ ...config(), dispatchCheckIntervalMinutes: 7, defaultRuleSendTime: "11:30", triggerRetryIntervalMinutes: 8,
+            processingReclaimMinutes: 20, smsRetryIntervalMinutes: 12, pastExpiryHours: 48, pastSendIntervalMinutes: 3, duplicateWindowHours: 96 }));
+        // The activation reader is separate from canonical configuration storage.
+        const response = await request(app.getHttpServer()).get("/settings/message-automation-policies").expect(200);
+        const row = (policy: string, id: string) => response.body.policies.find((item: { id: string }) => item.id === policy).rows.find((item: { id: string }) => item.id === id).value;
+        expect(row("trigger-dispatch", "dispatch-interval")).toBe("7분마다");
+        expect(row("trigger-dispatch", "send-time")).toBe("규칙별 설정 (기본 11:30 KST)");
+        expect(row("trigger-dispatch", "duplicate-window")).toBe("96시간");
+        expect(row("trigger-job-retry", "retry-delay")).toBe("8분 후");
+        expect(row("trigger-job-retry", "processing-reclaim")).toBe("20분 후");
+        expect(row("sms-retry", "retry-delay")).toBe("12분 후");
+        expect(row("past-trigger", "grace-window")).toBe("예정 시각 후 48시간");
+        expect(row("past-trigger", "catch-up-interval")).toBe("3분");
+    });
+    it("denies branch B read/write through the actual tenant guard", async () => {
+        await request(app.getHttpServer()).get(path).set("x-test-branch", "B").expect(403);
+        await request(app.getHttpServer()).put(path).set("x-test-branch", "B").send({ expectedVersion: null, configuration: config() }).expect(403);
+        expect(repository.findByKey).not.toHaveBeenCalled();
+        expect(repository.compareAndSet).not.toHaveBeenCalled();
+    });
+    it("allows owner/admin/manager writes and projects read-only member permissions", async () => {
+        for (const role of ["admin", "manager"]) {
+            membershipRole = role;
+            const current = await request(app.getHttpServer()).get(path).expect(200);
+            expect(current.body.permissions).toEqual({ canRead: true, canWrite: true });
+            await request(app.getHttpServer()).put(path).send({ expectedVersion: current.body.version, configuration: config() }).expect(200);
+        }
+        membershipRole = "user";
+        const member = await request(app.getHttpServer()).get(path).expect(200);
+        expect(member.body.permissions).toEqual({ canRead: true, canWrite: false });
+        await request(app.getHttpServer()).put(path).send({ expectedVersion: member.body.version, configuration: config() }).expect(403);
+        await request(app.getHttpServer()).post(`${path}/preview`).send({ expectedVersion: member.body.version, configuration: config() }).expect(200);
+        await request(app.getHttpServer()).put(path).set("x-test-role", "owner").send({ expectedVersion: member.body.version, configuration: config() }).expect(200);
+    });
+
+    it.each([
+        ["dispatchCheckIntervalMinutes", 0], ["defaultRuleSendTime", "8:00"], ["triggerRetryIntervalMinutes", 0],
+        ["processingReclaimMinutes", 9], ["smsRetryIntervalMinutes", 1441], ["pastExpiryHours", 0],
+        ["pastSendIntervalMinutes", 1.2], ["duplicateWindowHours", 721],
+    ])("returns 400 for invalid %s", async (field, value) => {
+        await request(app.getHttpServer()).put(path).send({ expectedVersion: null, configuration: { ...config(), [field]: value } }).expect(400);
+        expect(repository.compareAndSet).not.toHaveBeenCalled();
+    });
+    it("requires an explicit version and rejects malformed quiet settings", async () => {
+        await request(app.getHttpServer()).put(path).send({ configuration: config() }).expect(400);
+        await request(app.getHttpServer()).put(path).send({ expectedVersion: null, configuration: { ...config(), quietHours: { ...config().quietHours, enabled: true, recipientGroups: [] } } }).expect(400);
+        expect(repository.compareAndSet).not.toHaveBeenCalled();
+    });
+    it("returns reservation409/zero200 and preview reports the gate without writes", async () => {
+        const configuration = { ...config(), quietHours: { ...config().quietHours, enabled: true } };
+        logs.countFutureProviderReservations.mockResolvedValue(1);
+        await request(app.getHttpServer()).put(path).send({ expectedVersion: null, configuration }).expect(409);
+        const preview = await request(app.getHttpServer()).post(`${path}/preview`).send({ expectedVersion: null, configuration }).expect(200);
+        expect(preview.body).toMatchObject({ futureProviderReservations: 1, canEnableQuietHours: false, deferredCount: 0, canceledCount: 0 });
+        expect(repository.compareAndSet).not.toHaveBeenCalled();
+        logs.countFutureProviderReservations.mockResolvedValue(0);
+        await request(app.getHttpServer()).put(path).send({ expectedVersion: null, configuration }).expect(200);
+    });
+    it("returns503 for corrupt storage with zero mutations or provider collaborators", async () => {
+        rows.set(key, "{");
+        await request(app.getHttpServer()).get(path).expect(503);
+        await request(app.getHttpServer()).put(path).send({ expectedVersion: null, configuration: config() }).expect(503);
+        await request(app.getHttpServer()).post(`${path}/preview`).send({ expectedVersion: null, configuration: config() }).expect(503);
+        expect(rows.get(key)).toBe("{");
+        expect(repository.compareAndSet).not.toHaveBeenCalled();
+        expect(logs.countFutureProviderReservations).not.toHaveBeenCalled();
+    });
+});

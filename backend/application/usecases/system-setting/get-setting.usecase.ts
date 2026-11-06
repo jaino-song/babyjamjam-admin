@@ -1,3 +1,4 @@
+import type { Prisma } from "@prisma/client";
 import { Injectable, Inject } from "@nestjs/common";
 import {
     ISystemSettingRepository,
@@ -12,13 +13,13 @@ export class GetSettingUsecase {
         private readonly repository: ISystemSettingRepository
     ) {}
 
-    async execute(key: string): Promise<string | null> {
-        const entity = await this.repository.findByKey(key);
+    async execute(key: string, transaction?: Prisma.TransactionClient): Promise<string | null> {
+        const entity = await (transaction ? this.repository.findByKey(key, transaction) : this.repository.findByKey(key));
         return entity?.value ?? null;
     }
 
-    async executeEntity(key: string): Promise<SystemSettingEntity | null> {
-        return this.repository.findByKey(key);
+    async executeEntity(key: string, transaction?: Prisma.TransactionClient): Promise<SystemSettingEntity | null> {
+        return transaction ? this.repository.findByKey(key, transaction) : this.repository.findByKey(key);
     }
 
     async executeWithDefault(key: string, defaultValue: string): Promise<string> {

@@ -1,8 +1,10 @@
 import fs from "node:fs";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { waitFor } from "@testing-library/react";
+import { renderToStaticMarkup } from "react-dom/server.node";
 
+import { ThemeChoice } from "@/components/app/ui/theme-choice";
 import { useGetAuthUser } from "@/hooks/useGetAuthUser";
 import { settingsApi } from "@/services/api";
 
@@ -133,6 +135,47 @@ describe("SettingsPage profile query states", () => {
     expect(screen.getByText("사용자")).toBeInTheDocument();
     expect(screen.getAllByText("-")).toHaveLength(3);
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("keeps only the light theme selected and unavailable themes disabled", () => {
+    renderProfile({ data: { name: "직원", role: "user" } });
+    fireEvent.click(screen.getAllByRole("button", { name: "테마" })[0]);
+    const light = screen.getByRole("button", { name: /라이트 밝은 테마/ });
+    expect(light).toHaveAttribute("aria-pressed", "true");
+    expect(light).toHaveClass("border-2", "border-v3-primary", "hover:border-v3-primary");
+    expect(light).toHaveAttribute("type", "button");
+    for (const name of [/다크 어두운 테마/, /시스템 시스템 설정/]) {
+      const option = screen.getByRole("button", { name });
+      expect(option).toBeDisabled();
+      expect(option).toHaveAttribute("aria-pressed", "false");
+      expect(option).toHaveClass("border-2", "border-v3-selectable-border", "hover:border-v3-selectable-border");
+      expect(option.className).not.toContain("!border");
+      fireEvent.click(option);
+      expect(light).toHaveAttribute("aria-pressed", "true");
+      expect(option).toHaveAttribute("aria-pressed", "false");
+    }
+    light.focus();
+    expect(document.activeElement).toBe(light);
+  });
+
+  it.each([
+    { label: "light", name: /라이트 밝은 테마/, selected: true, border: "border-color:hsl(var(--v3-primary))" },
+    { label: "dark", name: /다크 어두운 테마/, selected: false, border: "border-color:hsl(var(--v3-selectable-border))" },
+    { label: "system", name: /시스템 시스템 설정/, selected: false, border: "border-color:hsl(var(--v3-selectable-border))" },
+  ])("emits the $label theme's inline border for its selected state", ({ name, selected, border }) => {
+    // SSR preserves CSS-variable declarations that jsdom's style parser can
+    // discard. Inspect the real consumer's emitted inline style, not its recipe
+    // classes; browser-computed color is covered by the separate browser gate.
+    const container = document.createElement("div");
+    container.innerHTML = renderToStaticMarkup(<ThemeChoice data-component="desktop_settings_theme-choice" />);
+    const option = within(container).getByRole("button", { name });
+    expect(option).toHaveAttribute("aria-pressed", String(selected));
+    if (selected) {
+      expect(option).toBeEnabled();
+    } else {
+      expect(option).toBeDisabled();
+    }
+    expect(option.getAttribute("style")?.split(";")).toContain(border);
   });
 
   it("keeps flag-off email disabled without a load-failure alert", async () => {

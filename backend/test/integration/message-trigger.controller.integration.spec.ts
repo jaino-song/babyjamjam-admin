@@ -1,3 +1,14 @@
+import { CaregiverTemplateResolverService } from "application/services/caregiver-template-resolver.service";
+import { MessageTriggerRecipientResolverService } from "application/services/message-trigger-recipient-resolver.service";
+import { ClientAutomationSourceReader } from "application/services/client-automation-source.reader";
+import { SystemTemplateService } from "application/services/system-template.service";
+import { GetAllSystemTemplatesUseCase } from "application/usecases/system-template/get-all-system-templates.usecase";
+import { GetSystemTemplateUseCase } from "application/usecases/system-template/get-system-template.usecase";
+import { UpdateBranchSystemTemplateUseCase } from "application/usecases/system-template/update-branch-system-template.usecase";
+import { SystemTemplateMutationGuardService } from "application/services/system-template-mutation-guard.service";
+import { SbSystemTemplateRepository } from "infrastructure/database/repositories/sb.system-template.repository";
+import { BranchSystemTemplateController } from "interface/controllers/branch-system-template.controller";
+import { SystemTemplateKey } from "domain/constants/system-template-registry";
 import { Test, TestingModule } from "@nestjs/testing";
 import {
     BadRequestException,
@@ -968,5 +979,487 @@ describe("MessageTriggerController (Integration)", () => {
                 recipientType: "CLIENT",
             });
         });
+    });
+});
+
+import { MessageTriggerRuleGroupController } from "interface/controllers/message-trigger-rule-group.controller";
+import { MessageTriggerRuleGroupService } from "application/services/message-trigger-rule-group.service";
+import { MessageAutomationBranchLockService } from "application/services/message-automation-branch-lock.service";
+import { MessageTemplateAutomationLockService } from "application/services/message-template-automation-lock.service";
+import { SbMessageTriggerRuleRepository } from "infrastructure/database/repositories/sb.message-trigger-rule.repository";
+import { SbMessageTriggerJobRepository } from "infrastructure/database/repositories/sb.message-trigger-job.repository";
+import { SbMessageLogRepository } from "infrastructure/database/repositories/sb.message-log.repository";
+import { SbMessageTriggerRuleBranchOverrideRepository } from "infrastructure/database/repositories/sb.message-trigger-rule-branch-override.repository";
+import { defaultMessageAutomationPolicy } from "domain/entities/system-setting.entity";
+import { createIntegrityPrisma, closeIntegrityPrisma, describeReal, type IntegrityPrisma } from "../integrity/helpers/real-db";
+import { randomUUID } from "node:crypto";
+import { mapHttpProblem } from "infrastructure/filters/problem-response";
+import { MessageTriggerJobEntity } from "domain/entities/message-trigger-job.entity";
+
+const clientGroupBody = (overrides: Record<string, unknown> = {}) => ({
+    name: "합성 고객 안내", recipientMode: "CLIENT", eventType: "SERVICE_START", offsetType: "BEFORE_DAYS", offsetDays: 3,
+    sendTime: "10:30", isActive: false, targetClientStatus: "all", retryOnFailure: true,
+    recipientTemplates: { CLIENT: "SERVICE_INFO" }, ...overrides,
+});
+
+/** Auth transport is synthetic; the production BranchManagerGuard is unchanged. */
+const groupTenantGuard = {
+    canActivate(context: ExecutionContext) {
+        const req = context.switchToHttp().getRequest();
+        req.tenant = { branchId: req.headers["x-test-branch"] ?? "branch-http", globalRole: "user", branchRole: req.headers["x-test-role"] ?? "manager" };
+        return true;
+    },
+};
+
+function installGroupProblemFilter(app: INestApplication) {
+    app.useGlobalFilters({ catch(exception: unknown, host: import("@nestjs/common").ArgumentsHost) {
+        const http = host.switchToHttp(); const response = http.getResponse();
+        const problem = mapHttpProblem(exception, http.getRequest(), response);
+        if (problem) response.status(problem.status).json(problem);
+        else { const error = exception as import("@nestjs/common").HttpException; response.status(error.getStatus()).json(error.getResponse()); }
+    } });
+}
+
+describe("MessageTriggerRuleGroupController tenant/DTO transport", () => {
+    let app: INestApplication;
+    const service = { list: jest.fn(), get: jest.fn(), create: jest.fn(), update: jest.fn(), delete: jest.fn() };
+    beforeAll(async () => {
+        const module = await Test.createTestingModule({ controllers: [MessageTriggerRuleGroupController], providers: [BranchManagerGuard, { provide: MessageTriggerRuleGroupService, useValue: service }] })
+            .overrideGuard(JwtGuard).useValue(groupTenantGuard).overrideGuard(TenantGuard).useValue(groupTenantGuard).compile();
+        app = module.createNestApplication(); app.useGlobalPipes(new ValidationPipe({ transform: true })); installGroupProblemFilter(app); await app.init();
+    });
+    afterAll(async () => { if (app) await app.close(); });
+    beforeEach(() => { jest.clearAllMocks(); service.list.mockResolvedValue({ groups: [], standaloneRules: [] }); service.get.mockResolvedValue({ id: "legacy-rule:opaque" }); });
+    it("permits tenant reads for ordinary members and accepts opaque migrated group ids", async () => {
+        expect((await request(app.getHttpServer()).get("/message-trigger-rule-groups").set("x-test-role", "member")).status).toBe(200);
+        expect((await request(app.getHttpServer()).get("/message-trigger-rule-groups/legacy-rule:opaque")).status).toBe(200);
+        expect(service.get).toHaveBeenCalledWith("branch-http", "legacy-rule:opaque");
+    });
+    it.each(["post", "put", "delete"] as const)("denies ordinary member %s before dispatching the writer", async (method) => {
+        const url = method === "post" ? "/message-trigger-rule-groups" : "/message-trigger-rule-groups/group";
+        const response = await request(app.getHttpServer())[method](url).set("x-test-role", "member").send({ ...clientGroupBody(), expectedVersion: 1 });
+        expect(response.status).toBe(403); expect(service.create).not.toHaveBeenCalled(); expect(service.update).not.toHaveBeenCalled(); expect(service.delete).not.toHaveBeenCalled();
+    });
+    it("derives branch authority exclusively from tenant context", async () => {
+        service.create.mockResolvedValue({ id: "group" });
+        expect((await request(app.getHttpServer()).post("/message-trigger-rule-groups").set("x-test-branch", "branch-A").send(clientGroupBody({ branchId: "branch-B" }))).status).toBe(201);
+        expect(service.create).toHaveBeenCalledWith("branch-A", expect.objectContaining({ branchId: "branch-B" }));
+    });
+    it.each([{ sendTime: "24:00" }, { offsetDays: -1 }, { recipientMode: "OTHER" }, { recipientTemplates: [] }, { name: " " }])("rejects invalid syntax %j before core invocation", async (invalid) => {
+        expect((await request(app.getHttpServer()).post("/message-trigger-rule-groups").send(clientGroupBody(invalid))).status).toBe(400); expect(service.create).not.toHaveBeenCalled();
+    });
+    it.each([undefined, null, 0, -1, 1.5, "1"])("rejects invalid expectedVersion %j", async (expectedVersion) => {
+        expect((await request(app.getHttpServer()).put("/message-trigger-rule-groups/group").send({ ...clientGroupBody(), expectedVersion })).status).toBe(400); expect(service.update).not.toHaveBeenCalled();
+    });
+    it("allows syntax for all four stored modes for the semantic service gate", async () => {
+        service.create.mockResolvedValue({});
+        for (const recipientMode of ["CLIENT", "PRIMARY_EMPLOYEE", "SECONDARY_EMPLOYEE", "BOTH_EMPLOYEES"]) {
+            expect((await request(app.getHttpServer()).post("/message-trigger-rule-groups").send(clientGroupBody({ recipientMode }))).status).toBe(201);
+        }
+        expect(service.create).toHaveBeenCalledTimes(4);
+    });
+});
+
+// These cases run only through the EXISTING guarded throwaway runner. Local
+// skips are intentional and never evidence of actual PostgreSQL success.
+describeReal("Phase6 group core/controllers/repository (real PostgreSQL)", () => {
+    let handle: IntegrityPrisma;
+    let app: INestApplication;
+    let core: MessageTriggerService;
+    let repository: SbMessageTriggerRuleRepository;
+    let jobs: SbMessageTriggerJobRepository;
+    let branchId: string;
+    let otherBranchId: string;
+    let templates: SystemTemplateService;
+    let caregiverTemplates: CaregiverTemplateResolverService;
+    let caregiverResolver: MessageTriggerRecipientResolverService;
+    const branches: string[] = [];
+    const provider = jest.fn();
+    beforeAll(async () => {
+        handle = await createIntegrityPrisma();
+        repository = new SbMessageTriggerRuleRepository(handle.service); jobs = new SbMessageTriggerJobRepository(handle.service);
+        const branchLock = new MessageAutomationBranchLockService(handle.service);
+        const settings = { getMessageAutomationPolicyConfig: async () => ({ configuration: { ...defaultMessageAutomationPolicy(), defaultRuleSendTime: "11:45" } }), getMessageSettingsPolicyEnabled: async () => false };
+        const approval = { ensureApproved: async () => undefined, isApproved: async () => true };
+        const activation = { getTriggerDispatchEnabled: async () => true, assertTriggerDispatchEnabled: async () => undefined };
+        const templateRepository = new SbSystemTemplateRepository(handle.service);
+        const templateLock = new MessageTemplateAutomationLockService(handle.service);
+        templates = new SystemTemplateService(new GetAllSystemTemplatesUseCase(templateRepository), new GetSystemTemplateUseCase(templateRepository), undefined as never,
+            new UpdateBranchSystemTemplateUseCase(templateRepository, new SystemTemplateMutationGuardService(repository), templateLock),
+            undefined as never, undefined as never, undefined as never, undefined as never, undefined as never, undefined as never);
+        caregiverTemplates = new CaregiverTemplateResolverService(handle.service);
+        const source = new ClientAutomationSourceReader(handle.service, repository, new SbMessageTriggerRuleBranchOverrideRepository(handle.service), approval as never,
+            settings as never, activation as never);
+        caregiverResolver = new MessageTriggerRecipientResolverService(source, caregiverTemplates, repository);
+        core = new MessageTriggerService(handle.service, { send: provider } as never, approval as never, repository, jobs,
+            new SbMessageLogRepository(handle.service), { getByKeyForBranch: async () => ({ customVariables: [] }) } as never,
+            new MessageTemplateAutomationLockService(handle.service), settings as never,
+            new SbMessageTriggerRuleBranchOverrideRepository(handle.service), activation as never, branchLock);
+        Object.assign(core, { caregiverTemplates, caregiverRecipients: caregiverResolver });
+        const module = await Test.createTestingModule({ controllers: [MessageTriggerRuleGroupController, MessageTriggerController, BranchSystemTemplateController], providers: [BranchManagerGuard,
+            { provide: SystemTemplateService, useValue: templates },
+            MessageTriggerRuleGroupService, { provide: MessageTriggerService, useValue: core }, { provide: SmsRetryService, useValue: {} }] })
+            .overrideGuard(JwtGuard).useValue(groupTenantGuard).overrideGuard(TenantGuard).useValue({ canActivate(context: ExecutionContext) {
+                const allowed = groupTenantGuard.canActivate(context);
+                const req = context.switchToHttp().getRequest();
+                if (req.url.startsWith("/branch-system-templates")) req.tenant.userId = "66000000-0000-4000-8000-000000000001";
+                return allowed;
+            } }).compile();
+        app = module.createNestApplication(); app.useGlobalPipes(new ValidationPipe({ transform: true })); installGroupProblemFilter(app); await app.init();
+    });
+    beforeEach(async () => {
+        branchId = randomUUID(); otherBranchId = randomUUID(); branches.push(branchId, otherBranchId);
+        await handle.raw.branch.createMany({ data: [branchId, otherBranchId].map((id) => ({ id, name: "Phase6 합성 지점", slug: `phase6-${id}` })) });
+        provider.mockClear();
+    });
+    afterAll(async () => {
+        if (app) await app.close();
+        if (handle) {
+            await handle.raw.message_trigger_job.deleteMany({ where: { branchId: { in: branches } } });
+            await handle.raw.message_trigger_rule.deleteMany({ where: { branchId: { in: branches } } });
+            await handle.raw.message_trigger_rule_group.deleteMany({ where: { branchId: { in: branches } } });
+            await handle.raw.branch.deleteMany({ where: { id: { in: branches } } });
+            await closeIntegrityPrisma(handle);
+        }
+    });
+    const post = (body = clientGroupBody()) => request(app.getHttpServer()).post("/message-trigger-rule-groups").set("x-test-branch", branchId).send(body);
+    it("executes CLIENT HTTP CRUD with CAS, branch fencing and real child projection", async () => {
+        const created = await post(); expect(created.status).toBe(201); const id = created.body.id as string;
+        expect(created.body).toMatchObject({ branchId, version: 1, recipientMode: "CLIENT", sendTime: "10:30", rules: [{ groupId: id, recipientType: "CLIENT" }] });
+        const updated = await request(app.getHttpServer()).put(`/message-trigger-rule-groups/${id}`).set("x-test-branch", branchId).send({ ...clientGroupBody({ sendTime: "12:20" }), expectedVersion: 1 });
+        expect(updated.status).toBe(200); expect(updated.body).toMatchObject({ version: 2, sendTime: "12:20" });
+        const stale = await request(app.getHttpServer()).put(`/message-trigger-rule-groups/${id}`).set("x-test-branch", branchId).send({ ...clientGroupBody(), expectedVersion: 1 });
+        expect(stale.status).toBe(409); expect(stale.body).toMatchObject({ code: "REQUEST_CONFLICT", groupId: id, currentVersion: 2 });
+        expect((await request(app.getHttpServer()).get(`/message-trigger-rule-groups/${id}`).set("x-test-branch", otherBranchId)).status).toBe(404);
+        expect((await request(app.getHttpServer()).delete(`/message-trigger-rule-groups/${id}`).set("x-test-branch", otherBranchId)).status).toBe(404);
+        expect((await request(app.getHttpServer()).put(`/message-trigger-rule-groups/${id}`).set("x-test-branch", otherBranchId).send({ ...clientGroupBody(), expectedVersion: 2 })).status).toBe(404);
+        expect((await request(app.getHttpServer()).delete(`/message-trigger-rule-groups/${id}`).set("x-test-branch", branchId)).status).toBe(200);
+        expect(await handle.raw.message_trigger_rule_group.findUnique({ where: { id } })).toMatchObject({ deletedAt: expect.any(Date) });
+        expect(await handle.raw.message_trigger_rule.findFirst({ where: { groupId: id } })).toMatchObject({ deletedAt: expect.any(Date), isActive: false }); expect(provider).not.toHaveBeenCalled();
+    });
+    it("concurrent equivalent HTTP creates yield exactly one201 and one duplicate409 with no orphan", async () => {
+        const responses = await Promise.all([post(), post(clientGroupBody({ name: "별명", retryOnFailure: false }))]);
+        expect(responses.map((response) => response.status).sort()).toEqual([201, 409]);
+        expect(await handle.raw.message_trigger_rule_group.count({ where: { branchId } })).toBe(1); expect(await handle.raw.message_trigger_rule.count({ where: { branchId } })).toBe(1);
+    });
+    it("rolls back real parent/child inserts on a late repository failure, then permits one retry", async () => {
+        const fail = jest.spyOn(repository, "markJobsStale").mockRejectedValueOnce(new Error("private simulated failure"));
+        const response = await post(); expect(response.status).toBe(500); expect(JSON.stringify(response.body)).not.toContain("private simulated failure"); fail.mockRestore();
+        expect(await handle.raw.message_trigger_rule_group.count({ where: { branchId } })).toBe(0); expect(await handle.raw.message_trigger_rule.count({ where: { branchId } })).toBe(0);
+        expect((await post()).status).toBe(201);
+    });
+    it("legacy POST/update/delete preserves atomic parent and soft deletion identity", async () => {
+        const common: Record<string, unknown> = clientGroupBody();
+        delete common["recipientMode"];
+        delete common["recipientTemplates"];
+        const created = await request(app.getHttpServer()).post("/message-trigger-rules").set("x-test-branch", branchId).send({ ...common, recipientType: "CLIENT", templateKey: "SERVICE_INFO" });
+        expect(created.status).toBe(201); expect(typeof created.body.groupId).toBe("string");
+        const updated = await request(app.getHttpServer()).patch(`/message-trigger-rules/${created.body.id}`).set("x-test-branch", branchId).send({ name: "legacy update" });
+        expect(updated.status).toBe(200); expect(updated.body.groupId).toBe(created.body.groupId);
+        expect(await handle.raw.message_trigger_rule_group.findUnique({ where: { id: created.body.groupId } })).toMatchObject({ version: 2, name: "legacy update" });
+        expect((await request(app.getHttpServer()).delete(`/message-trigger-rules/${created.body.id}`).set("x-test-branch", branchId)).status).toBe(200);
+    });
+    it("refuses nonCLIENT new group modes before any SQL insert/provider attempt", async () => {
+        for (const recipientMode of ["PRIMARY_EMPLOYEE", "SECONDARY_EMPLOYEE", "BOTH_EMPLOYEES"]) expect((await post(clientGroupBody({ recipientMode }))).status).toBe(400);
+        expect(await handle.raw.message_trigger_rule_group.count({ where: { branchId } })).toBe(0); expect(provider).not.toHaveBeenCalled();
+    });
+    it("serializes BOTH child refusal for all old HTTP writers with the real groupId", async () => {
+        const created = await post(); const groupId = created.body.id as string; const ruleId = created.body.rules[0].id as string;
+        await handle.raw.message_trigger_rule_group.update({ where: { id: groupId }, data: { recipientMode: "BOTH_EMPLOYEES" } });
+        await handle.raw.message_trigger_rule.update({ where: { id: ruleId }, data: { recipientType: "PRIMARY_EMPLOYEE" } });
+        await handle.raw.message_trigger_rule.create({ data: { branchId, groupId, name: "보조", isActive: false, eventType: "SERVICE_START", offsetType: "BEFORE_DAYS", offsetDays: 3, recipientType: "SECONDARY_EMPLOYEE", templateKey: "SERVICE_INFO" } });
+        const responses = [
+            await request(app.getHttpServer()).patch(`/message-trigger-rules/${ruleId}`).set("x-test-branch", branchId).send({ name: "split" }),
+            await request(app.getHttpServer()).delete(`/message-trigger-rules/${ruleId}`).set("x-test-branch", branchId),
+            await request(app.getHttpServer()).put(`/message-trigger-rules/${ruleId}/branch-activation`).set("x-test-branch", branchId).send({ isActive: false }),
+            await request(app.getHttpServer()).put(`/message-trigger-rules/${ruleId}/activation-with-parent`).set("x-test-branch", branchId).send({ isActive: true, enableParent: true }),
+        ];
+        expect(responses.map((response) => response.status)).toEqual([409, 409, 409, 409]);
+        responses.forEach((response) => expect(response.body).toMatchObject({ code: "REQUEST_CONFLICT", groupId }));
+        expect(await handle.raw.message_trigger_rule_group.findUnique({ where: { id: groupId } })).toMatchObject({ version: 1 }); expect(provider).not.toHaveBeenCalled();
+    });
+    it("fences pending work while retaining canceledByUser/sent dedupe rows through metadata update/delete", async () => {
+        const created = await post(); const groupId = created.body.id as string; const ruleId = created.body.rules[0].id as string;
+        const entities = ["pending", "canceled", "sent"].map((status) => MessageTriggerJobEntity.create({ branchId, ruleId, recipientType: MessageTriggerRecipientType.CLIENT,
+            templateKey: MessageTriggerTemplateKey.SERVICE_INFO, scheduledFor: new Date("2026-12-01T00:00:00Z"), dedupeKey: `phase6:${groupId}:${status}`, payload: { memberId: "synthetic", recipientName: "합성", recipientPhone: "01000000001", templateVariables: {}, ...(status === "canceled" ? { canceledByUser: true } : {}) } }));
+        for (const entity of entities) { if (entity.dedupeKey.endsWith("canceled")) entity.cancel("사용자가 발송을 취소함"); if (entity.dedupeKey.endsWith("sent")) entity.markSent(); await jobs.create(entity); }
+        const idsBefore = await handle.raw.message_trigger_job.findMany({ where: { branchId }, select: { id: true, status: true, dedupeKey: true, payload: true }, orderBy: { dedupeKey: "asc" } });
+        expect((await request(app.getHttpServer()).put(`/message-trigger-rule-groups/${groupId}`).set("x-test-branch", branchId).send({ ...clientGroupBody({ name: "metadata" }), expectedVersion: 1 })).status).toBe(200);
+        await core.deleteRuleGroup(branchId, groupId);
+        const after = await handle.raw.message_trigger_job.findMany({ where: { branchId }, select: { id: true, status: true, dedupeKey: true, payload: true }, orderBy: { dedupeKey: "asc" } });
+        expect(after.map((job) => job.id)).toEqual(idsBefore.map((job) => job.id)); expect(after.map((job) => job.status)).toEqual(["canceled", "canceled", "sent"]); expect(after[0]!.payload).toEqual(idsBefore[0]!.payload); expect(provider).not.toHaveBeenCalled();
+    });
+    it("C1 refuses an omitted-status duplicate with no version, rule or job mutation", async () => {
+        const first = await post(clientGroupBody({ sendTime: "09:00", targetClientStatus: "pre_booking" }));
+        const target = await post(clientGroupBody({ sendTime: "10:00", targetClientStatus: "pre_booking" }));
+        expect(first.status).toBe(201); expect(target.status).toBe(201);
+        await jobs.create(MessageTriggerJobEntity.create({ branchId, ruleId: target.body.rules[0].id,
+            recipientType: MessageTriggerRecipientType.CLIENT, templateKey: MessageTriggerTemplateKey.SERVICE_INFO,
+            scheduledFor: new Date("2026-12-01T00:00:00Z"), dedupeKey: `phase6-c1:${target.body.id}`,
+            payload: { memberId: "synthetic", recipientName: "합성", recipientPhone: "01000000001", templateVariables: {} } }));
+        const beforeGroups = await handle.raw.message_trigger_rule_group.findMany({ where: { branchId }, orderBy: { id: "asc" } });
+        const beforeRules = await handle.raw.message_trigger_rule.findMany({ where: { branchId }, orderBy: { id: "asc" } });
+        const beforeJobs = await handle.raw.message_trigger_job.findMany({ where: { branchId }, orderBy: { id: "asc" } });
+        const update: Record<string, unknown> = { ...clientGroupBody({ sendTime: "09:00" }), expectedVersion: 1 };
+        delete update["targetClientStatus"];
+        const response = await request(app.getHttpServer()).put(`/message-trigger-rule-groups/${target.body.id}`).set("x-test-branch", branchId).send(update);
+        expect(response.status).toBe(409); expect(response.body).toMatchObject({ code: "REQUEST_CONFLICT" });
+        expect(await handle.raw.message_trigger_rule_group.findMany({ where: { branchId }, orderBy: { id: "asc" } })).toEqual(beforeGroups);
+        expect(await handle.raw.message_trigger_rule.findMany({ where: { branchId }, orderBy: { id: "asc" } })).toEqual(beforeRules);
+        expect(await handle.raw.message_trigger_job.findMany({ where: { branchId }, orderBy: { id: "asc" } })).toEqual(beforeJobs);
+        expect(provider).not.toHaveBeenCalled();
+    });
+    it("C1 allows the requested time for a distinct retained status without a false duplicate", async () => {
+        const first = await post(clientGroupBody({ sendTime: "09:00", targetClientStatus: "all" }));
+        const target = await post(clientGroupBody({ sendTime: "10:00", targetClientStatus: "pre_booking" }));
+        expect(first.status).toBe(201); expect(target.status).toBe(201);
+        const update: Record<string, unknown> = { ...clientGroupBody({ sendTime: "09:00" }), expectedVersion: 1 };
+        delete update["targetClientStatus"];
+        const response = await request(app.getHttpServer()).put(`/message-trigger-rule-groups/${target.body.id}`).set("x-test-branch", branchId).send(update);
+        expect(response.status).toBe(200); expect(response.body).toMatchObject({ version: 2, sendTime: "09:00", targetClientStatus: "pre_booking" });
+        expect(await handle.raw.message_trigger_rule.findUnique({ where: { id: target.body.rules[0].id } })).toMatchObject({ sendTime: "09:00", targetClientStatus: "pre_booking" });
+        expect(provider).not.toHaveBeenCalled();
+    });
+    it("C1 preserves omitted metadata options and applies explicit options on the next version", async () => {
+        const target = await post(clientGroupBody({ offsetDays: 3, sendTime: "10:30", retryOnFailure: false, isActive: false, targetClientStatus: "pre_booking" }));
+        expect(target.status).toBe(201);
+        const update: Record<string, unknown> = { ...clientGroupBody({ name: "metadata only" }), expectedVersion: 1 };
+        for (const key of ["offsetDays", "sendTime", "retryOnFailure", "isActive", "targetClientStatus"]) delete update[key];
+        const response = await request(app.getHttpServer()).put(`/message-trigger-rule-groups/${target.body.id}`).set("x-test-branch", branchId).send(update);
+        expect(response.status).toBe(200); expect(response.body).toMatchObject({ name: "metadata only", version: 2,
+            offsetDays: 3, sendTime: "10:30", retryOnFailure: false, isActive: false, targetClientStatus: "pre_booking" });
+        const explicit = await request(app.getHttpServer()).put(`/message-trigger-rule-groups/${target.body.id}`).set("x-test-branch", branchId)
+            .send({ ...clientGroupBody({ offsetDays: 5, sendTime: "12:15", retryOnFailure: true, isActive: false, targetClientStatus: "active" }), expectedVersion: 2 });
+        expect(explicit.status).toBe(200); expect(explicit.body).toMatchObject({ version: 3, offsetDays: 5, sendTime: "12:15", retryOnFailure: true, isActive: false, targetClientStatus: "active" });
+        const invalid = await request(app.getHttpServer()).put(`/message-trigger-rule-groups/${target.body.id}`).set("x-test-branch", branchId)
+            .send({ ...clientGroupBody({ eventType: "EMPLOYEE_ASSIGNED", offsetType: "IMMEDIATE" }), expectedVersion: 3 });
+        expect(invalid.status).toBe(400); expect(invalid.body).toMatchObject({ code: "VALIDATION_FAILED", errors: [{ pointer: "/draft" }] });
+        expect(JSON.stringify(invalid.body)).not.toMatch(/cause|stack|Invalid recipient/);
+        expect(await handle.raw.message_trigger_rule_group.findUnique({ where: { id: target.body.id } })).toMatchObject({ version: 3 });
+        expect(provider).not.toHaveBeenCalled();
+    });
+    it.each(["NOT_A_TEMPLATE", 7, { toString: "x" }, "toString"])("C2 rejects malformed HTTP update template %j for all active states without mutations", async (template) => {
+        const target = await post(); expect(target.status).toBe(201);
+        const beforeGroup = await handle.raw.message_trigger_rule_group.findUnique({ where: { id: target.body.id } });
+        const beforeRule = await handle.raw.message_trigger_rule.findUnique({ where: { id: target.body.rules[0].id } });
+        const beforeJobs = await handle.raw.message_trigger_job.findMany({ where: { branchId }, orderBy: { id: "asc" } });
+        for (const isActive of [undefined, true, false]) {
+            const update = { ...clientGroupBody({ recipientTemplates: { CLIENT: template }, isActive }), expectedVersion: 1 };
+            const response = await request(app.getHttpServer()).put(`/message-trigger-rule-groups/${target.body.id}`).set("x-test-branch", branchId).send(update);
+            expect(response.status).toBe(400); expect(response.body).toMatchObject({ code: "VALIDATION_FAILED", errors: [{ pointer: "/draft" }] });
+            expect(JSON.stringify(response.body)).not.toMatch(/TypeError|cause|stack|NOT_A_TEMPLATE/);
+        }
+        expect(await handle.raw.message_trigger_rule_group.findUnique({ where: { id: target.body.id } })).toEqual(beforeGroup);
+        expect(await handle.raw.message_trigger_rule.findUnique({ where: { id: target.body.rules[0].id } })).toEqual(beforeRule);
+        expect(await handle.raw.message_trigger_job.findMany({ where: { branchId }, orderBy: { id: "asc" } })).toEqual(beforeJobs);
+        expect(provider).not.toHaveBeenCalled();
+    });
+    it("C2 refuses malformed HTTP create values and permits a registered CLIENT template", async () => {
+        for (const template of ["NOT_A_TEMPLATE", 7, { toString: "x" }, "toString"]) {
+            const response = await post(clientGroupBody({ recipientTemplates: { CLIENT: template } }));
+            expect(response.status).toBe(400); expect(response.body).toMatchObject({ code: "VALIDATION_FAILED", errors: [{ pointer: "/draft" }] });
+        }
+        expect(await handle.raw.message_trigger_rule_group.count({ where: { branchId } })).toBe(0);
+        expect(await handle.raw.message_trigger_rule.count({ where: { branchId } })).toBe(0);
+        const target = await post(); expect(target.status).toBe(201);
+        const update: Record<string, unknown> = { ...clientGroupBody({ name: "valid template" }), expectedVersion: 1 }; delete update["isActive"];
+        const response = await request(app.getHttpServer()).put(`/message-trigger-rule-groups/${target.body.id}`).set("x-test-branch", branchId).send(update);
+        expect(response.status).toBe(200); expect(response.body).toMatchObject({ version: 2, isActive: false, recipientTemplates: { CLIENT: "SERVICE_INFO" } });
+        expect(provider).not.toHaveBeenCalled();
+    });
+    it("C3 refuses immediate create duplicates that differ only in stored HH:mm", async () => {
+        const immediate = clientGroupBody({ eventType: "CLIENT_CREATED", offsetType: "IMMEDIATE", offsetDays: 0, sendTime: "09:00", recipientTemplates: { CLIENT: "CLIENT_GREETING" } });
+        const first = await post(immediate); expect(first.status).toBe(201);
+        const duplicate = await post({ ...immediate, sendTime: "10:00" });
+        expect(duplicate.status).toBe(409); expect(duplicate.body).toMatchObject({ code: "REQUEST_CONFLICT", groupId: first.body.id });
+        const legacy = await request(app.getHttpServer()).post("/message-trigger-rules").set("x-test-branch", branchId).send({
+            name: "legacy immediate", eventType: "CLIENT_CREATED", offsetType: "IMMEDIATE", offsetDays: 0, sendTime: "11:00", isActive: false, recipientType: "CLIENT", templateKey: "CLIENT_GREETING" });
+        expect(legacy.status).toBe(409);
+        expect(await handle.raw.message_trigger_rule_group.count({ where: { branchId } })).toBe(1);
+        expect(await handle.raw.message_trigger_rule.count({ where: { branchId } })).toBe(1);
+        expect(await handle.raw.message_trigger_rule.findUnique({ where: { id: first.body.rules[0].id } })).toMatchObject({ sendTime: "09:00" });
+        expect(provider).not.toHaveBeenCalled();
+    });
+    it("C3 refuses group and legacy conversion to duplicate immediate semantics without any mutation", async () => {
+        const immediate = clientGroupBody({ eventType: "CLIENT_CREATED", offsetType: "IMMEDIATE", offsetDays: 0, sendTime: "09:00", recipientTemplates: { CLIENT: "CLIENT_GREETING" } });
+        const first = await post(immediate); const target = await post(clientGroupBody({ sendTime: "10:00" }));
+        expect(first.status).toBe(201); expect(target.status).toBe(201);
+        await jobs.create(MessageTriggerJobEntity.create({ branchId, ruleId: target.body.rules[0].id,
+            recipientType: MessageTriggerRecipientType.CLIENT, templateKey: MessageTriggerTemplateKey.SERVICE_INFO,
+            scheduledFor: new Date("2026-12-01T00:00:00Z"), dedupeKey: `phase6-c3:${target.body.id}`,
+            payload: { memberId: "synthetic", recipientName: "합성", recipientPhone: "01000000001", templateVariables: {} } }));
+        const beforeGroups = await handle.raw.message_trigger_rule_group.findMany({ where: { branchId }, orderBy: { id: "asc" } });
+        const beforeRules = await handle.raw.message_trigger_rule.findMany({ where: { branchId }, orderBy: { id: "asc" } });
+        const beforeJobs = await handle.raw.message_trigger_job.findMany({ where: { branchId }, orderBy: { id: "asc" } });
+        const duplicate = await request(app.getHttpServer()).put(`/message-trigger-rule-groups/${target.body.id}`).set("x-test-branch", branchId)
+            .send({ ...immediate, sendTime: "10:00", expectedVersion: 1 });
+        expect(duplicate.status).toBe(409); expect(duplicate.body).toMatchObject({ code: "REQUEST_CONFLICT", groupId: first.body.id });
+        const legacy = await request(app.getHttpServer()).patch(`/message-trigger-rules/${target.body.rules[0].id}`).set("x-test-branch", branchId)
+            .send({ eventType: "CLIENT_CREATED", offsetType: "IMMEDIATE", offsetDays: 0, sendTime: "11:00", templateKey: "CLIENT_GREETING" });
+        expect(legacy.status).toBe(409);
+        expect(await handle.raw.message_trigger_rule_group.findMany({ where: { branchId }, orderBy: { id: "asc" } })).toEqual(beforeGroups);
+        expect(await handle.raw.message_trigger_rule.findMany({ where: { branchId }, orderBy: { id: "asc" } })).toEqual(beforeRules);
+        expect(await handle.raw.message_trigger_job.findMany({ where: { branchId }, orderBy: { id: "asc" } })).toEqual(beforeJobs);
+        expect(provider).not.toHaveBeenCalled();
+    });
+    it("C3 retains distinct calendar times and permits same-group metadata/time updates", async () => {
+        const first = await post(clientGroupBody({ sendTime: "09:00" })); const second = await post(clientGroupBody({ sendTime: "10:00" }));
+        expect(first.status).toBe(201); expect(second.status).toBe(201);
+        const updated = await request(app.getHttpServer()).put(`/message-trigger-rule-groups/${first.body.id}`).set("x-test-branch", branchId)
+            .send({ ...clientGroupBody({ name: "calendar metadata", sendTime: "09:00" }), expectedVersion: 1 });
+        expect(updated.status).toBe(200); expect(updated.body).toMatchObject({ version: 2, name: "calendar metadata", sendTime: "09:00" });
+        const immediate = clientGroupBody({ eventType: "CLIENT_CREATED", offsetType: "IMMEDIATE", offsetDays: 0, sendTime: "09:00", recipientTemplates: { CLIENT: "CLIENT_GREETING" } });
+        const own = await post(immediate); expect(own.status).toBe(201);
+        const ownUpdate = await request(app.getHttpServer()).put(`/message-trigger-rule-groups/${own.body.id}`).set("x-test-branch", branchId)
+            .send({ ...immediate, name: "immediate metadata", sendTime: "10:00", expectedVersion: 1 });
+        expect(ownUpdate.status).toBe(200); expect(ownUpdate.body).toMatchObject({ version: 2, name: "immediate metadata", sendTime: "10:00" });
+        expect(await handle.raw.message_trigger_rule.findUnique({ where: { id: own.body.rules[0].id } })).toMatchObject({ sendTime: "10:00" });
+        expect(provider).not.toHaveBeenCalled();
+    });
+    it.each(["swapped-current", "unchanged", "explicit-request"] as const)("C4 serializes two-branch legacy template updates (%s) with the current effective key", async (mode) => {
+        const scopes = [branchId, otherBranchId]; const initial = ["SERVICE_INFO", "INFO"];
+        const created = await Promise.all(scopes.map((scope, index) => request(app.getHttpServer()).post("/message-trigger-rule-groups").set("x-test-branch", scope)
+            .send(clientGroupBody({ isActive: true, recipientTemplates: { CLIENT: initial[index] } }))));
+        created.forEach((response) => expect(response.status).toBe(201));
+        const latch = () => { let release!: () => void; const promise = new Promise<void>((resolve) => { release = resolve; }); return { promise, release }; };
+        const reads = latch(); const resume = latch(); const firstTemplates = latch();
+        const paused = new Set<string>(); const seenTransactions = new WeakSet<object>(); const acquiredKeys: string[] = [];
+        const canonicalKeys = new Map<object, string[]>();
+        let firstCount = 0; let legacyPhase = false;
+        const originalFind = repository.findById.bind(repository);
+        const findSpy = jest.spyOn(repository, "findById").mockImplementation(async (scope, id, transaction) => {
+            const row = await originalFind(scope, id, transaction);
+            if (!transaction && created.some((response) => response.body.rules[0].id === id) && !paused.has(id)) {
+                paused.add(id); if (paused.size === 2) reads.release(); await resume.promise;
+            }
+            return row;
+        });
+        const templateLock = (core as unknown as { templateAutomationLock: MessageTemplateAutomationLockService }).templateAutomationLock;
+        const originalTemplate = templateLock.runExclusive.bind(templateLock);
+        const templateSpy = jest.spyOn(templateLock, "runExclusive").mockImplementation(async (key, work, transaction) => {
+            if (legacyPhase && transaction) canonicalKeys.set(transaction, [...(canonicalKeys.get(transaction) ?? []), key]);
+            if (!legacyPhase || !transaction || seenTransactions.has(transaction)) return originalTemplate(key, work, transaction);
+            seenTransactions.add(transaction);
+            return originalTemplate(key, async (lockedTransaction) => {
+                acquiredKeys.push(key); firstCount++; if (firstCount === 2) firstTemplates.release();
+                if (mode !== "explicit-request") await firstTemplates.promise;
+                return work(lockedTransaction);
+            }, transaction);
+        });
+        const legacy = scopes.map((scope, index) => request(app.getHttpServer()).patch(`/message-trigger-rules/${created[index]!.body.rules[0].id}`).set("x-test-branch", scope)
+            .send({ name: `legacy metadata ${index}`, ...(mode === "explicit-request" ? { templateKey: initial[index] } : {}) }).then((response) => response));
+        try {
+            await reads.promise;
+            if (mode !== "unchanged") {
+                const swaps = await Promise.all(scopes.map((scope, index) => request(app.getHttpServer()).put(`/message-trigger-rule-groups/${created[index]!.body.id}`).set("x-test-branch", scope)
+                    .send({ ...clientGroupBody({ isActive: true, recipientTemplates: { CLIENT: initial[1 - index] } }), expectedVersion: 1 })));
+                swaps.forEach((response) => { expect(response.status).toBe(200); expect(response.body.version).toBe(2); });
+            }
+            legacyPhase = true; resume.release();
+            const responses = await Promise.all(legacy);
+            expect(responses.map((response) => response.status)).toEqual([200, 200]);
+            expect(acquiredKeys.sort()).toEqual(mode === "explicit-request" ? ["INFO", "INFO"] : ["INFO", "SERVICE_INFO"]);
+            if (mode === "explicit-request") expect([...canonicalKeys.values()]).toEqual([["INFO", "SERVICE_INFO"], ["INFO", "SERVICE_INFO"]]);
+            for (const [index, scope] of scopes.entries()) {
+                const expectedTemplate = mode === "swapped-current" ? initial[1 - index] : initial[index];
+                const group = await handle.raw.message_trigger_rule_group.findUnique({ where: { id: created[index]!.body.id } });
+                const rule = await handle.raw.message_trigger_rule.findUnique({ where: { id: created[index]!.body.rules[0].id } });
+                expect(group).toMatchObject({ branchId: scope, version: mode === "unchanged" ? 2 : 3 });
+                expect(rule).toMatchObject({ branchId: scope, groupId: created[index]!.body.id, templateKey: expectedTemplate, name: `legacy metadata ${index}` });
+                expect(await handle.raw.message_trigger_rule_group.count({ where: { branchId: scope } })).toBe(1);
+                expect(await handle.raw.message_trigger_rule.count({ where: { branchId: scope } })).toBe(1);
+            }
+            expect(await handle.raw.message_trigger_job.count({ where: { branchId: { in: scopes } } })).toBe(0);
+            expect(provider).not.toHaveBeenCalled();
+        } finally {
+            resume.release(); firstTemplates.release(); await Promise.allSettled(legacy);
+            findSpy.mockRestore(); templateSpy.mockRestore();
+        }
+    });
+    it("RULE-2 lifecycle HTTP persists v2 tombstones and preserves unrelated branch edits", async () => {
+        const key = "CAREGIVER_SERVICE_START_NOTICE";
+        const content = "{{employeeName}} 관리사님 / {{clientName}} / {{serviceStartDate}} / {{branchName}} (지점 편집)";
+        expect((await request(app.getHttpServer()).put("/branch-system-templates/INFO").set("x-test-branch", branchId).send({ content: "보존할 정보" })).status).toBe(200);
+        expect((await request(app.getHttpServer()).put(`/branch-system-templates/${key}`).set("x-test-branch", branchId).send({ content })).status).toBe(200);
+        const before = await handle.raw.branch.findUniqueOrThrow({ where: { id: branchId } });
+        expect((before.systemTemplateSnapshot as { version: number }).version).toBe(1);
+        for (const [action, state] of [["disable", "disabled"], ["delete", "deleted"], ["restore", "active"]]) {
+            const response = await request(app.getHttpServer()).put(`/branch-system-templates/${key}/lifecycle`).set("x-test-branch", branchId).send({ action });
+            expect(response.status).toBe(200); expect(response.body).toMatchObject({ key, state, snapshotVersion: 2 });
+            const branch = await handle.raw.branch.findUniqueOrThrow({ where: { id: branchId } });
+            const snapshot = branch.systemTemplateSnapshot as { version: number; templates: Record<string, { content: string; state?: string; deletedAt?: string }> };
+            expect(snapshot.version).toBe(2); expect(snapshot.templates["INFO"]?.content).toBe("보존할 정보");
+            expect(snapshot.templates[key]).toMatchObject({ content, state });
+            if (state === "deleted") expect(snapshot.templates[key]?.deletedAt).toEqual(expect.any(String));
+            else expect(snapshot.templates[key]).not.toHaveProperty("deletedAt");
+            if (state === "disabled" || state === "deleted") await expect(caregiverTemplates.resolve(branchId, SystemTemplateKey.CAREGIVER_SERVICE_START_NOTICE)).rejects.toThrow();
+            else expect((await caregiverTemplates.resolve(branchId, SystemTemplateKey.CAREGIVER_SERVICE_START_NOTICE)).content).toBe(content);
+        }
+        expect((await request(app.getHttpServer()).put("/branch-system-templates/INFO/lifecycle").set("x-test-branch", branchId).send({ action: "disable" })).status).toBe(400);
+        expect((await request(app.getHttpServer()).put(`/branch-system-templates/${key}/lifecycle?expectedBranchId=${otherBranchId}`).set("x-test-branch", branchId).send({ action: "disable" })).status).toBe(409);
+        expect(provider).not.toHaveBeenCalled();
+    });
+
+    it.each(["content", "lifecycle"] as const)("RULE-2 C1 canonical keys precede group/FK while concurrent %s owns a later key and snapshot row", async (writer) => {
+        await templates.updateForBranch(branchId, "INFO", "보존할 정보", "fixture-user");
+        const pair = clientGroupBody({ recipientMode: "BOTH_EMPLOYEES", recipientTemplates: {
+            PRIMARY_EMPLOYEE: "CAREGIVER_SERVICE_START_NOTICE", SECONDARY_EMPLOYEE: "CAREGIVER_SERVICE_END_NOTICE",
+        } });
+        const created = await post(pair); expect(created.status).toBe(201);
+        const latch = () => { let release!: () => void; const promise = new Promise<void>((resolve) => { release = resolve; }); return { promise, release }; };
+        const first = latch(); const resume = latch(); let paused = false;
+        const lock = (core as unknown as { templateAutomationLock: MessageTemplateAutomationLockService }).templateAutomationLock;
+        const original = lock.runExclusive.bind(lock); const trace: string[] = [];
+        const spy = jest.spyOn(lock, "runExclusive").mockImplementation((key, work, transaction) => original(key, async (tx) => {
+            trace.push(key);
+            if (!paused && key === "CAREGIVER_SERVICE_END_NOTICE") { paused = true; first.release(); await resume.promise; }
+            return work(tx);
+        }, transaction));
+        const update = request(app.getHttpServer()).put(`/message-trigger-rule-groups/${created.body.id}`).set("x-test-branch", branchId).send({
+            ...pair, name: "동시 갱신", expectedVersion: 1, recipientTemplates: {
+                PRIMARY_EMPLOYEE: "CAREGIVER_SERVICE_END_NOTICE", SECONDARY_EMPLOYEE: "CAREGIVER_SERVICE_START_NOTICE",
+            },
+        }).then((response) => response);
+        try {
+            await first.promise;
+            const content = "{{employeeName}} 관리사님 / {{clientName}} / {{serviceStartDate}} / {{branchName}} (동시 편집)";
+            const changed = writer === "content"
+                ? await request(app.getHttpServer()).put("/branch-system-templates/CAREGIVER_SERVICE_START_NOTICE").set("x-test-branch", branchId).send({ content })
+                : await request(app.getHttpServer()).put("/branch-system-templates/CAREGIVER_SERVICE_START_NOTICE/lifecycle").set("x-test-branch", branchId).send({ action: "disable" });
+            expect(changed.status).toBe(200);
+            resume.release();
+            expect((await update).status).toBe(200);
+            expect(trace).toEqual(["CAREGIVER_SERVICE_END_NOTICE", "CAREGIVER_SERVICE_START_NOTICE"]);
+            const group = await repository.findGroup(branchId, created.body.id); expect(group?.version).toBe(2);
+            const children = await repository.findGroupRules(branchId, created.body.id);
+            expect(children.map((child) => child.id).sort()).toEqual(created.body.rules.map((child: { id: string }) => child.id).sort());
+            expect(children.map((child) => [child.recipientType, child.templateKey]).sort()).toEqual([
+                ["PRIMARY_EMPLOYEE", "CAREGIVER_SERVICE_END_NOTICE"], ["SECONDARY_EMPLOYEE", "CAREGIVER_SERVICE_START_NOTICE"],
+            ]);
+            expect(children.every((child) => child.name === "동시 갱신" && child.isActive === false)).toBe(true);
+            const snapshot = (await handle.raw.branch.findUniqueOrThrow({ where: { id: branchId } })).systemTemplateSnapshot as { templates: Record<string, { content: string; state?: string }> };
+            expect(snapshot.templates["INFO"]?.content).toBe("보존할 정보");
+            if (writer === "content") expect(snapshot.templates["CAREGIVER_SERVICE_START_NOTICE"]?.content).toBe(content);
+            else { expect(snapshot.templates["CAREGIVER_SERVICE_START_NOTICE"]?.state).toBe("disabled");
+                await expect(caregiverTemplates.resolve(branchId, SystemTemplateKey.CAREGIVER_SERVICE_START_NOTICE)).rejects.toThrow(); }
+            expect(await handle.raw.message_trigger_job.count({ where: { branchId } })).toBe(0); expect(provider).not.toHaveBeenCalled();
+        } finally { resume.release(); await Promise.allSettled([update]); spy.mockRestore(); }
+    });
+
+    it("generic projection primitives retain removed role identity for later re-addition", async () => {
+        const lock = new MessageAutomationBranchLockService(handle.service);
+        let groupId = ""; let childId = "";
+        await lock.runExclusive(branchId, async (transaction) => {
+            const group = await repository.createGroup(branchId, "generic", MessageTriggerRecipientType.SECONDARY_EMPLOYEE, transaction); groupId = group.id;
+            const rule = await repository.create(branchId, MessageTriggerRuleEntity.create({ branchId, groupId, name: "role", isActive: false, eventType: MessageTriggerEventType.SERVICE_START, offsetType: MessageTriggerOffsetType.SAME_DAY, recipientType: MessageTriggerRecipientType.SECONDARY_EMPLOYEE, templateKey: MessageTriggerTemplateKey.INFO }), transaction); childId = rule.id;
+            await repository.delete(branchId, childId, transaction);
+        });
+        await lock.runExclusive(branchId, async (transaction) => {
+            await repository.lockGroup(branchId, groupId, transaction); await repository.lockGroupRules(branchId, groupId, transaction);
+            expect(await repository.findGroupRules(branchId, groupId, transaction)).toEqual([]);
+            const deleted = await repository.findGroupRules(branchId, groupId, transaction, true); expect(deleted).toHaveLength(1);
+            expect((await repository.restoreGroupRule(branchId, groupId, deleted[0]!, transaction))?.id).toBe(childId);
+        });
+        expect(await handle.raw.message_trigger_rule.count({ where: { groupId } })).toBe(1);
     });
 });

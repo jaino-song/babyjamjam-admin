@@ -1,3 +1,5 @@
+import type { MessageTriggerRuleBranchOverride } from "./message-trigger-rule-branch-override.repository.interface";
+import type { MessageQuietHoursDecision, MessageQuietHold, MessagePolicyPreviewCandidate } from "domain/message-policy-evaluator";
 import { MessageTriggerJobEntity } from "domain/entities/message-trigger-job.entity";
 import type { Prisma } from "@prisma/client";
 import type { MessageTriggerRecipientType } from "domain/constants/message-trigger-catalog";
@@ -81,23 +83,72 @@ export interface CancelPendingJobsResult {
     inFlightJobIds: string[];
 }
 
+export interface MessageDispatchBranchEligibility {
+    branchId: string;
+    automaticEnabled: boolean;
+    retryEnabled: boolean;
+    intervalMinutes: number;
+    /** Validated branch policy in production; legacy internal callers default to 24. */
+    pastExpiryHours?: number;
+}
+
+/** Transient SQL snapshot, never persisted or included in enumerable entity fields. */
+export interface MessageDispatchSelectionSnapshot {
+    readonly expired: boolean;
+    readonly anchor: Date;
+    readonly pastExpiryHours: number;
+    readonly selectedAt: Date;
+}
+
+/** Entity-only legacy adapters remain compatible; production SQL supplies the snapshot. */
+export type MessageDispatchSelectedJob = MessageTriggerJobEntity & {
+    readonly dispatchSelection?: MessageDispatchSelectionSnapshot;
+};
+
+export type MessageTriggerClaimSnapshot = Pick<MessageTriggerJobEntity,
+    "status" | "claimToken" | "updatedAt" | "processingDeadlineAt">;
+
+export interface MessageQuietHeldJob {
+    job: MessageTriggerJobEntity;
+    logId: number;
+    acceptanceKey: string;
+    fingerprint: string;
+    hold: MessageQuietHold;
+}
+
 export interface IMessageTriggerJobRepository {
+    createManualSmsJob(job: MessageTriggerJobEntity, existingMessageLogId: number, transaction: Prisma.TransactionClient): Promise<MessageTriggerJobEntity>;
+    findDueQuietQueueJobs(eligibility: MessageDispatchBranchEligibility[], now: Date, limit?: number): Promise<MessageDispatchSelectedJob[]>;
+    findQuietHeldJobs(branchId: string, transaction?: Prisma.TransactionClient): Promise<MessageQuietHeldJob[]>;
+    readQuietHold(job: MessageTriggerJobEntity, transaction?: Prisma.TransactionClient): Promise<MessageQuietHold | null>;
+    transitionQuietHold(job: MessageTriggerJobEntity, logId: number, acceptanceKey: string, fingerprint: string,
+        decision: Exclude<MessageQuietHoursDecision, { action: "ALLOW" }>, revision: string,
+        transaction: Prisma.TransactionClient, cancellationReason?: "duplicate_at_release" | "expired_after_quiet"): Promise<MessageQuietHold | null>;
+
+    /** Auxiliary persisted override projection shared with the branch rule list. */
+    findPolicyRuleBranchOverrides(branchId: string, transaction?: Prisma.TransactionClient): Promise<MessageTriggerRuleBranchOverride[]>;
+    /** Full branch-scoped, read-only policy population; no UI page limit. */
+    findPolicyPreviewCandidates(branchId: string, transaction?: Prisma.TransactionClient): Promise<MessagePolicyPreviewCandidate[]>;
+
     create(job: MessageTriggerJobEntity): Promise<MessageTriggerJobEntity>;
     update(job: MessageTriggerJobEntity): Promise<MessageTriggerJobEntity>;
     /** Branch-fenced read for request-path callers; a branch mismatch resolves to null, not another branch's row. */
-    findByIdInBranch(branchId: string, id: string): Promise<MessageTriggerJobEntity | null>;
+    findByIdInBranch(branchId: string, id: string, transaction?: Prisma.TransactionClient): Promise<MessageTriggerJobEntity | null>;
     /**
      * Claim only while the branch-scoped rule is not fenced as stale. The
      * returned token is unique to this processing attempt and must be supplied
      * to every terminal update/fence before a provider call.
      */
-    claimPendingWithRuleFence(id: string, branchId: string | null, transaction?: Prisma.TransactionClient): Promise<string | null>;
+    claimPendingWithRuleFence(id: string, branchId: string | null, transaction?: Prisma.TransactionClient, processingDeadlineAt?: Date): Promise<string | null>;
     /**
      * Same rule fence and token as `claimPendingWithRuleFence`, but for a job in
      * `needs_setup` (manual resend). Returns null when the job is not in that
      * state or the rule fence refuses; the row is left unchanged.
      */
-    claimNeedsSetupWithRuleFence(id: string, branchId: string | null, transaction?: Prisma.TransactionClient): Promise<string | null>;
+    claimNeedsSetupWithRuleFence(id: string, branchId: string | null, transaction?: Prisma.TransactionClient, processingDeadlineAt?: Date): Promise<string | null>;
+    findDueDispatchBranchIds(now: Date): Promise<string[]>;
+    consumeDispatchSlotsAndFindDueJobs(eligibility: MessageDispatchBranchEligibility[], now: Date, limit?: number, excludedJobIds?: readonly string[]): Promise<MessageDispatchSelectedJob[]>;
+    reclaimWithClaimFence(job: MessageTriggerJobEntity, snapshot: MessageTriggerClaimSnapshot): Promise<boolean>;
     findDuePendingSystemScope(limit?: number): Promise<MessageTriggerJobEntity[]>;
     findStaleProcessingSystemScope(cutoff: Date, limit?: number): Promise<MessageTriggerJobEntity[]>;
     findUpcomingPendingByBranch(

@@ -10,6 +10,9 @@ import { MessageAutomationBranchLockService } from "application/services/message
 import { MessageSenderApprovalService } from "application/services/message-sender-approval.service";
 import { MessageTriggerService } from "application/services/message-trigger.service";
 import { SmsAutomationSafeguardService } from "application/services/sms-automation-safeguard.service";
+import { SystemSettingService } from "application/services/system-setting.service";
+import { GetSettingUsecase } from "application/usecases/system-setting/get-setting.usecase";
+import { UpdateSettingUsecase } from "application/usecases/system-setting/update-setting.usecase";
 import { ChangeEmployeeOpenStatusUsecase } from "application/usecases/employee/change-employee-open-status.usecase";
 import { CreateEmployeeUsecase } from "application/usecases/employee/create-employee.usecase";
 import { EmployeeWriteAgentCapabilitiesProvider } from "application/usecases/employee/employee-write-agent-capabilities.provider";
@@ -49,6 +52,7 @@ import { SbEmployeeRepository } from "infrastructure/database/repositories/sb.em
 import { SbMessageLogRepository } from "infrastructure/database/repositories/sb.message-log.repository";
 import { SbMessageTriggerJobRepository } from "infrastructure/database/repositories/sb.message-trigger-job.repository";
 import { SbMessageTriggerRuleRepository } from "infrastructure/database/repositories/sb.message-trigger-rule.repository";
+import { SbSystemSettingRepository } from "infrastructure/database/repositories/sb.system-setting.repository";
 import type { MessageTriggerDeliveryService } from "application/services/message-trigger-delivery.service";
 import { EmployeeController } from "interface/controllers/employee.controller";
 
@@ -143,6 +147,11 @@ function buildDispatchingTriggerService(handle: IntegrityPrisma): {
     const branchLock = new MessageAutomationBranchLockService(handle.service);
     const activation = new MessageAutomationActivationService(handle.service, branchLock, auditWriterStub);
     const sentJobs: string[] = [];
+    const settingsRepository = new SbSystemSettingRepository(handle.service);
+    const systemSettingService = new SystemSettingService(
+        new GetSettingUsecase(settingsRepository),
+        new UpdateSettingUsecase(settingsRepository),
+    );
     const service = new MessageTriggerService(
         handle.service,
         buildVendorDeliveryStub(sentJobs),
@@ -152,7 +161,7 @@ function buildDispatchingTriggerService(handle: IntegrityPrisma): {
         new SbMessageLogRepository(handle.service),
         undefined as unknown as never,
         undefined as unknown as never,
-        undefined,
+        systemSettingService,
         undefined,
         activation,
         branchLock,

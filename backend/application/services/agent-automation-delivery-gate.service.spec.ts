@@ -1,3 +1,4 @@
+import { SystemSettingService } from "application/services/system-setting.service";
 import { randomUUID } from "node:crypto";
 import type { Prisma } from "@prisma/client";
 import { MessageTriggerJobEntity } from "domain/entities/message-trigger-job.entity";
@@ -129,7 +130,7 @@ describe("AgentAutomationDeliveryGateService", () => {
     it("refuses direct SMS and preparation entrypoints before enrichment, logs or provider calls", async () => {
         const f = fixture(); const aligo = { sendSms: jest.fn() }; const templates = { resolveEffective: jest.fn() };
         const logs = { create: jest.fn() }; const enrichers = { get: jest.fn() };
-        const sms = new SmsTriggerDeliveryService(aligo as never, templates as never, logs as never, undefined, enrichers as never, f.gate);
+        const sms = new SmsTriggerDeliveryService(aligo as never, templates as never, logs as never, undefined, enrichers as never, f.gate, undefined, new SystemSettingService({ execute: jest.fn().mockResolvedValue(null) } as never, {} as never));
         expect(await sms.prepareJob(f.job)).toBeNull();
         expect(await sms.sendJob(f.job)).toBe(false);
         await expect(sms.sendPreparedJob(f.job, f.preparation)).rejects.toBeInstanceOf(AgentAutomationDispatchUncertainError);

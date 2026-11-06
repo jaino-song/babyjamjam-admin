@@ -842,7 +842,7 @@ export class ClientWriteAgentCapabilitiesProvider implements AgentCapabilityProv
             taskRevision: artifact.taskRevision,
             batch,
         });
-        const clientEffects = artifact.impact.effects.some((effect) => effect.kind === "client-rule" && effect.change !== "cancel");
+        const clientEffects = artifact.impact.effects.some((effect) => (effect.kind === "client-rule" || effect.kind === "caregiver-service") && effect.change !== "cancel");
         if (clientEffects) {
             await this.messageAutomationIntentService.persistClientIntent(transaction, {
                 branchId: artifact.branchId,

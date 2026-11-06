@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { MessageTriggerEventType, MessageTriggerOffsetType, MessageTriggerRecipientType, MessageTriggerTemplateKey } from "domain/constants/message-trigger-catalog";
 import type { MessageTriggerRuleEntity } from "domain/entities/message-trigger-rule.entity";
 import type { MessageTriggerJobEntity } from "domain/entities/message-trigger-job.entity";
+import type { MessageDispatchSelectedJob } from "domain/repositories/message-trigger-job.repository.interface";
 import { buildSmsClientVariables } from "./sms-client-variables";
 import { PAST_OCCURRENCE_GRACE_MS } from "domain/constants/message-automation-policy";
 
@@ -129,6 +130,7 @@ export function buildClientMessageRecipe(
     client: ClientTriggerSource,
     now: Date,
 ): MessageTriggerJobRecipe | null {
+    if (rule.recipientType !== MessageTriggerRecipientType.CLIENT) return null;
     if (!client.phone) return null;
     if (
         rule.templateKey === MessageTriggerTemplateKey.SERVICE_END_NOTICE
@@ -242,7 +244,7 @@ function getClientAnchorDate(
     }
 }
 
-function computeScheduledFor(anchorDate: Date, rule: MessageTriggerRuleEntity, now: Date): Date {
+export function computeScheduledFor(anchorDate: Date, rule: MessageTriggerRuleEntity, now: Date): Date {
     if (rule.offsetType === MessageTriggerOffsetType.IMMEDIATE) {
         return new Date(now);
     }
@@ -295,4 +297,23 @@ export function formatMessageRecipeDate(date: Date | null): string {
     const month = String(date.getMonth() + 1).padStart(2, "0");
     const day = String(date.getDate()).padStart(2, "0");
     return `${year}-${month}-${day}`;
+}
+
+/** SQL true is reusable only for the same anchor/policy and a non-rewound clock. */
+export function isSelectedMessageJobExpired(
+    job: MessageDispatchSelectedJob,
+    pastExpiryHours: number,
+    now: Date,
+    quietReleaseAt?: Date,
+): boolean {
+    const selection = job.dispatchSelection;
+    const anchor = Math.max(job.scheduledFor.getTime(), quietReleaseAt?.getTime() ?? job.scheduledFor.getTime());
+    if (!Number.isFinite(anchor)) return true;
+    if (selection?.expired === true
+        && selection.anchor.getTime() === anchor
+        && selection.pastExpiryHours === pastExpiryHours
+        && selection.selectedAt.getTime() <= now.getTime()) return true;
+    // A false or stale SQL decision, and entity-only legacy adapters, always
+    // use the fresh claim-time cutoff. Equality retains the existing expiry.
+    return anchor <= now.getTime() - pastExpiryHours * 3_600_000;
 }

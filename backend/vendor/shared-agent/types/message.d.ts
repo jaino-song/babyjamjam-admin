@@ -7,7 +7,20 @@ export declare const MESSAGE_TRIGGER_OFFSET_TYPES: readonly ["IMMEDIATE", "SAME_
 export type MessageTriggerOffsetType = (typeof MESSAGE_TRIGGER_OFFSET_TYPES)[number];
 export declare const MESSAGE_TRIGGER_RECIPIENT_TYPES: readonly ["CLIENT", "PRIMARY_EMPLOYEE", "SECONDARY_EMPLOYEE"];
 export type MessageTriggerRecipientType = (typeof MESSAGE_TRIGGER_RECIPIENT_TYPES)[number];
-export declare const MESSAGE_TRIGGER_TEMPLATE_KEYS: readonly ["CLIENT_WELCOME", "SERVICE_START_REMINDER", "SERVICE_INFO", "SERVICE_END_REMINDER", "EMPLOYEE_ASSIGNED", "SERVICE_RECORD_LINK", "CLIENT_GREETING", "PRICE_INFO", "REMINDER", "THANKS", "SURVEY", "INFO", "SERVICE_END_NOTICE"];
+/** UI group mode; each projected child/job still has a single recipient type. */
+export declare const MESSAGE_TRIGGER_RECIPIENT_MODES: readonly ["CLIENT", "PRIMARY_EMPLOYEE", "SECONDARY_EMPLOYEE", "BOTH_EMPLOYEES"];
+export type MessageTriggerRecipientMode = (typeof MESSAGE_TRIGGER_RECIPIENT_MODES)[number];
+export interface MessageTriggerRuleGroup {
+    id: string;
+    branchId: string;
+    name: string;
+    recipientMode: MessageTriggerRecipientMode;
+    version: number;
+    createdAt: string;
+    updatedAt: string;
+    deletedAt: string | null;
+}
+export declare const MESSAGE_TRIGGER_TEMPLATE_KEYS: readonly ["CAREGIVER_SERVICE_START_NOTICE", "CAREGIVER_SERVICE_END_NOTICE", "CLIENT_WELCOME", "SERVICE_START_REMINDER", "SERVICE_INFO", "SERVICE_END_REMINDER", "EMPLOYEE_ASSIGNED", "SERVICE_RECORD_LINK", "CLIENT_GREETING", "PRICE_INFO", "REMINDER", "THANKS", "SURVEY", "INFO", "SERVICE_END_NOTICE"];
 export type MessageTriggerTemplateKey = (typeof MESSAGE_TRIGGER_TEMPLATE_KEYS)[number];
 /**
  * Which clients a trigger rule applies to, by their service stage at send time.
@@ -35,6 +48,12 @@ export declare const messageTriggerRecipientTypeSchema: z.ZodEnum<{
     PRIMARY_EMPLOYEE: "PRIMARY_EMPLOYEE";
     SECONDARY_EMPLOYEE: "SECONDARY_EMPLOYEE";
 }>;
+export declare const messageTriggerRecipientModeSchema: z.ZodEnum<{
+    CLIENT: "CLIENT";
+    PRIMARY_EMPLOYEE: "PRIMARY_EMPLOYEE";
+    SECONDARY_EMPLOYEE: "SECONDARY_EMPLOYEE";
+    BOTH_EMPLOYEES: "BOTH_EMPLOYEES";
+}>;
 export declare const messageTriggerTemplateKeySchema: z.ZodEnum<{
     SERVICE_INFO: "SERVICE_INFO";
     CLIENT_GREETING: "CLIENT_GREETING";
@@ -46,6 +65,8 @@ export declare const messageTriggerTemplateKeySchema: z.ZodEnum<{
     SERVICE_END_NOTICE: "SERVICE_END_NOTICE";
     EMPLOYEE_ASSIGNED: "EMPLOYEE_ASSIGNED";
     SERVICE_RECORD_LINK: "SERVICE_RECORD_LINK";
+    CAREGIVER_SERVICE_START_NOTICE: "CAREGIVER_SERVICE_START_NOTICE";
+    CAREGIVER_SERVICE_END_NOTICE: "CAREGIVER_SERVICE_END_NOTICE";
     CLIENT_WELCOME: "CLIENT_WELCOME";
     SERVICE_START_REMINDER: "SERVICE_START_REMINDER";
     SERVICE_END_REMINDER: "SERVICE_END_REMINDER";
@@ -84,6 +105,8 @@ export interface MessageTriggerTemplateCatalogItem {
 }
 export interface MessageTriggerRule {
     id: string;
+    /** Nullable for system/default rules; absent on older servers. */
+    groupId?: string | null;
     branchId: string | null;
     name: string;
     /**
@@ -115,6 +138,63 @@ export interface MessageTriggerRule {
     retryOnFailure: boolean;
     createdAt: string;
     updatedAt: string;
+}
+/** A group projects one execution rule per recipient; children never repeat in standaloneRules. */
+export interface MessageTriggerRuleGroupView extends MessageTriggerRuleGroup {
+    rules: MessageTriggerRule[];
+    eventType: MessageTriggerEventType;
+    offsetType: MessageTriggerOffsetType;
+    offsetDays: number;
+    sendTime: string;
+    targetClientStatus: MessageTriggerTargetClientStatus;
+    retryOnFailure: boolean;
+    isActive: boolean;
+    recipientTemplates: Partial<Record<MessageTriggerRecipientType, MessageTriggerTemplateKey>>;
+}
+export interface MessageTriggerRuleGroupList {
+    groups: MessageTriggerRuleGroupView[];
+    standaloneRules: MessageTriggerRule[];
+}
+export interface CreateMessageTriggerRuleGroupDto {
+    name: string;
+    recipientMode: MessageTriggerRecipientMode;
+    eventType: MessageTriggerEventType;
+    offsetType: MessageTriggerOffsetType;
+    offsetDays?: number;
+    sendTime?: string;
+    targetClientStatus?: MessageTriggerTargetClientStatus;
+    retryOnFailure?: boolean;
+    isActive?: boolean;
+    recipientTemplates: Partial<Record<MessageTriggerRecipientType, MessageTriggerTemplateKey>>;
+}
+export interface UpdateMessageTriggerRuleGroupDto extends CreateMessageTriggerRuleGroupDto {
+    expectedVersion: number;
+}
+export interface PreviewMessageTriggerRuleGroupDto {
+    draft: CreateMessageTriggerRuleGroupDto;
+    clientId?: number;
+    employeeScheduleId?: number;
+}
+export interface MessageTriggerRuleGroupPreviewRecipient {
+    ruleId: string;
+    recipientType: MessageTriggerRecipientType;
+    employeeId: number | null;
+    employeeScheduleId: number | null;
+    recipientName: string | null;
+    recipientPhone: string | null;
+    templateKey: MessageTriggerTemplateKey;
+    body: string | null;
+    count: number;
+    scheduledFor: string | null;
+    anchorSource: "client.createdAt" | "client.startDate" | "client.endDate" | "employee_schedule.startDate" | "employee_schedule.endDate";
+    anchorDate: string | null;
+    outcome: "ready" | "skip" | "needs_setup" | "unavailable";
+    reason: string | null;
+}
+export interface MessageTriggerRuleGroupPreviewResponse {
+    complete: boolean;
+    recipients: MessageTriggerRuleGroupPreviewRecipient[];
+    count: number;
 }
 /**
  * Runtime validation for `POST /message-trigger-rules`.
@@ -156,6 +236,8 @@ export declare const createMessageTriggerRuleSchema: z.ZodObject<{
         SERVICE_END_NOTICE: "SERVICE_END_NOTICE";
         EMPLOYEE_ASSIGNED: "EMPLOYEE_ASSIGNED";
         SERVICE_RECORD_LINK: "SERVICE_RECORD_LINK";
+        CAREGIVER_SERVICE_START_NOTICE: "CAREGIVER_SERVICE_START_NOTICE";
+        CAREGIVER_SERVICE_END_NOTICE: "CAREGIVER_SERVICE_END_NOTICE";
         CLIENT_WELCOME: "CLIENT_WELCOME";
         SERVICE_START_REMINDER: "SERVICE_START_REMINDER";
         SERVICE_END_REMINDER: "SERVICE_END_REMINDER";
@@ -202,6 +284,8 @@ export declare const updateMessageTriggerRuleSchema: z.ZodObject<{
         SERVICE_END_NOTICE: "SERVICE_END_NOTICE";
         EMPLOYEE_ASSIGNED: "EMPLOYEE_ASSIGNED";
         SERVICE_RECORD_LINK: "SERVICE_RECORD_LINK";
+        CAREGIVER_SERVICE_START_NOTICE: "CAREGIVER_SERVICE_START_NOTICE";
+        CAREGIVER_SERVICE_END_NOTICE: "CAREGIVER_SERVICE_END_NOTICE";
         CLIENT_WELCOME: "CLIENT_WELCOME";
         SERVICE_START_REMINDER: "SERVICE_START_REMINDER";
         SERVICE_END_REMINDER: "SERVICE_END_REMINDER";
@@ -247,6 +331,8 @@ export declare const CreateMessageTriggerRuleSchema: z.ZodObject<{
         SERVICE_END_NOTICE: "SERVICE_END_NOTICE";
         EMPLOYEE_ASSIGNED: "EMPLOYEE_ASSIGNED";
         SERVICE_RECORD_LINK: "SERVICE_RECORD_LINK";
+        CAREGIVER_SERVICE_START_NOTICE: "CAREGIVER_SERVICE_START_NOTICE";
+        CAREGIVER_SERVICE_END_NOTICE: "CAREGIVER_SERVICE_END_NOTICE";
         CLIENT_WELCOME: "CLIENT_WELCOME";
         SERVICE_START_REMINDER: "SERVICE_START_REMINDER";
         SERVICE_END_REMINDER: "SERVICE_END_REMINDER";
@@ -292,6 +378,8 @@ export declare const UpdateMessageTriggerRuleSchema: z.ZodObject<{
         SERVICE_END_NOTICE: "SERVICE_END_NOTICE";
         EMPLOYEE_ASSIGNED: "EMPLOYEE_ASSIGNED";
         SERVICE_RECORD_LINK: "SERVICE_RECORD_LINK";
+        CAREGIVER_SERVICE_START_NOTICE: "CAREGIVER_SERVICE_START_NOTICE";
+        CAREGIVER_SERVICE_END_NOTICE: "CAREGIVER_SERVICE_END_NOTICE";
         CLIENT_WELCOME: "CLIENT_WELCOME";
         SERVICE_START_REMINDER: "SERVICE_START_REMINDER";
         SERVICE_END_REMINDER: "SERVICE_END_REMINDER";
@@ -337,6 +425,8 @@ export declare const createMessageTriggerRuleDtoSchema: z.ZodObject<{
         SERVICE_END_NOTICE: "SERVICE_END_NOTICE";
         EMPLOYEE_ASSIGNED: "EMPLOYEE_ASSIGNED";
         SERVICE_RECORD_LINK: "SERVICE_RECORD_LINK";
+        CAREGIVER_SERVICE_START_NOTICE: "CAREGIVER_SERVICE_START_NOTICE";
+        CAREGIVER_SERVICE_END_NOTICE: "CAREGIVER_SERVICE_END_NOTICE";
         CLIENT_WELCOME: "CLIENT_WELCOME";
         SERVICE_START_REMINDER: "SERVICE_START_REMINDER";
         SERVICE_END_REMINDER: "SERVICE_END_REMINDER";
@@ -382,6 +472,8 @@ export declare const updateMessageTriggerRuleDtoSchema: z.ZodObject<{
         SERVICE_END_NOTICE: "SERVICE_END_NOTICE";
         EMPLOYEE_ASSIGNED: "EMPLOYEE_ASSIGNED";
         SERVICE_RECORD_LINK: "SERVICE_RECORD_LINK";
+        CAREGIVER_SERVICE_START_NOTICE: "CAREGIVER_SERVICE_START_NOTICE";
+        CAREGIVER_SERVICE_END_NOTICE: "CAREGIVER_SERVICE_END_NOTICE";
         CLIENT_WELCOME: "CLIENT_WELCOME";
         SERVICE_START_REMINDER: "SERVICE_START_REMINDER";
         SERVICE_END_REMINDER: "SERVICE_END_REMINDER";
@@ -436,6 +528,8 @@ export interface UpcomingMessageTriggerJobPayload {
 }
 export interface UpcomingMessageTriggerJob {
     id: string;
+    /** Claim policy snapshot; absent on older servers or null before claiming. */
+    processingDeadlineAt?: string | null;
     ruleId: string;
     ruleName: string;
     eventType: MessageTriggerEventType | null;
@@ -574,6 +668,20 @@ export type MessageDeliverySmsType = "AUTO" | "SMS" | "LMS";
 export type MessageDeliveryTriggerType = "immediate" | "scheduled";
 export type MessageDeliveryResolvedSmsType = "SMS" | "LMS";
 export type MessageDeliveryProviderSmsType = "SMS" | "LMS" | "MMS";
+export interface MessageDeliverySmsDuplicateDecision {
+    confirmed: true;
+    checkedAt: string;
+    matchIds: number[];
+    /** Optional on legacy input; the server requires a matching hash under ON. */
+    payloadHash?: string;
+}
+export interface MessageDeliverySmsDuplicateCheckResponse {
+    checkedAt: string;
+    matchIds: number[];
+    latestSentAt: string | null;
+    payloadHash: string;
+}
+export type MessageDeliverySmsDuplicateCheckRequest = SendMessageDeliverySmsRequest;
 export interface SendMessageDeliverySmsRequest {
     receiver: string;
     message: string;
@@ -588,8 +696,10 @@ export interface SendMessageDeliverySmsRequest {
     scheduledDate?: string;
     scheduledTime?: string;
     testMode?: boolean;
+    idempotencyKey?: string;
+    duplicateDecision?: MessageDeliverySmsDuplicateDecision;
 }
-export interface SendMessageDeliverySmsResponse {
+export interface SendMessageDeliverySmsSentResponse {
     provider: "aligo_sms";
     triggerType: MessageDeliveryTriggerType;
     request: {
@@ -608,6 +718,27 @@ export interface SendMessageDeliverySmsResponse {
         msgType?: MessageDeliveryProviderSmsType;
     };
 }
+export interface SendMessageDeliverySmsQueueResponse {
+    provider: "aligo_sms";
+    triggerType: MessageDeliveryTriggerType;
+    request: {
+        senderPhone?: string;
+        receiver: string;
+        msgType: MessageDeliverySmsType;
+        testMode: boolean;
+        idempotencyKey: string;
+    };
+    outcome: "queued" | "deferred" | "canceled" | "mixed";
+    items: Array<{
+        jobId: string;
+        messageLogId: number;
+        recipientPhone: string;
+        status: "queued" | "deferred" | "canceled";
+        scheduledAt: string;
+        reason: string | null;
+    }>;
+}
+export type SendMessageDeliverySmsResponse = SendMessageDeliverySmsSentResponse | SendMessageDeliverySmsQueueResponse;
 export declare const MESSAGE_SENDER_APPROVAL_STATUSES: readonly ["not_requested", "pending", "approved"];
 export type MessageSenderApprovalStatus = (typeof MESSAGE_SENDER_APPROVAL_STATUSES)[number];
 export interface MessageSenderApprovalResponse {
@@ -677,4 +808,52 @@ export interface SystemAdminBranchRequest {
     /** @deprecated Release-1 alias of `admin`; removed in Release 2. Do not read. */
     owner?: SystemAdminBranchUser | null;
     messageSenderApproval: SystemAdminBranchMessageSenderApproval;
+}
+export declare const MESSAGE_POLICY_RECIPIENT_GROUPS: readonly ["CLIENT", "CAREGIVER", "STAFF"];
+export type MessagePolicyRecipientGroup = typeof MESSAGE_POLICY_RECIPIENT_GROUPS[number];
+export interface MessageAutomationPolicyConfiguration {
+    schemaVersion: 1;
+    dispatchCheckIntervalMinutes: number;
+    defaultRuleSendTime: string;
+    triggerRetryIntervalMinutes: number;
+    processingReclaimMinutes: number;
+    smsRetryIntervalMinutes: number;
+    pastExpiryHours: number;
+    pastSendIntervalMinutes: number;
+    pastRuleOrder: string[];
+    duplicateWindowHours: number;
+    quietHours: {
+        enabled: boolean;
+        start: string;
+        end: string;
+        recipientGroups: MessagePolicyRecipientGroup[];
+        action: "DEFER" | "CANCEL";
+        timezone: "Asia/Seoul";
+    };
+}
+export interface MessagePolicyWarning {
+    code: "ORDER_ENTRY_PRUNED";
+    ruleId: string;
+}
+export interface MessageAutomationPolicyConfigResponse {
+    version: string | null;
+    configuration: MessageAutomationPolicyConfiguration;
+    permissions: {
+        canRead: boolean;
+        canWrite: boolean;
+    };
+    warnings: MessagePolicyWarning[];
+}
+export interface UpdateMessageAutomationPolicyConfigRequest {
+    expectedVersion: string | null;
+    configuration: MessageAutomationPolicyConfiguration;
+}
+export interface MessageAutomationPolicyPreviewResponse {
+    version: string | null;
+    deferredCount: number;
+    canceledCount: number;
+    reevaluateAt: string | null;
+    futureProviderReservations: number;
+    canEnableQuietHours: boolean;
+    warnings: MessagePolicyWarning[];
 }

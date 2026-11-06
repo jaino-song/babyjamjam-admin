@@ -1,4 +1,13 @@
+import { AligoDefaultSenderPolicyService } from "application/services/aligo-default-sender-policy.service";
+import { MESSAGE_TRIGGER_JOB_REPOSITORY, type IMessageTriggerJobRepository } from "domain/repositories/message-trigger-job.repository.interface";
+import { MessageTriggerJobEntity } from "domain/entities/message-trigger-job.entity";
+import { MANUAL_SMS_TEMPLATE_KEY, MANUAL_SMS_RULE_PREFIX, MessageTriggerRecipientType } from "domain/constants/message-trigger-catalog";
+import { messageQuietHoldVariables } from "domain/message-policy-evaluator";
+import { MessageQuietHoursService, MessageQuietHoursUnavailableError, QUIET_HOURS_CANCEL_REASON, QUIET_HOURS_DEFER_REASON } from "application/services/message-quiet-hours.service";
+import { MessageDuplicateCheckService } from "application/services/message-duplicate-check.service";
+import { MessageDuplicateCheckDto } from "interface/dto/message-duplicate-check.dto";
 import {
+    Inject,
     BadGatewayException,
     BadRequestException,
     Body,
@@ -43,6 +52,12 @@ import type {
 
 const ALIGO_SCHEDULE_MIN_LEAD_MS = 10 * 60 * 1000;
 
+type ManualRecipientBinding = { kind: "CLIENT" | "CAREGIVER"; id: number; phone: string };
+type ResolvedSmsMessage = SendSmsMessageDto & {
+    manualRecipientBindings: { version: 1; branchId: string; recipients: ManualRecipientBinding[] };
+};
+
+type SmsQueueLogRecord = Awaited<ReturnType<Prisma.TransactionClient["message_log"]["findFirstOrThrow"]>>;
 interface SmsMessageLogRecord {
     id: number;
     providerAcceptanceKey?: string | null;
@@ -62,6 +77,7 @@ type SmsProblemCode = Extract<
     | "MESSAGE_SEND_ALREADY_REQUESTED"
     | "MESSAGE_REQUEST_KEY_CONFLICT"
     | "REQUEST_INVALID"
+    | "REQUEST_CONFLICT"
     | "RESOURCE_NOT_FOUND"
 >;
 
@@ -79,7 +95,50 @@ export class MessageDeliveryController {
         private readonly aligoService: AligoService,
         private readonly messageSenderApprovalService: MessageSenderApprovalService,
         private readonly prisma: PrismaService,
+        private readonly duplicateCheck: MessageDuplicateCheckService,
+        private readonly quietHours?: MessageQuietHoursService,
+        @Inject(MESSAGE_TRIGGER_JOB_REPOSITORY) private readonly jobs?: IMessageTriggerJobRepository,
+        private readonly defaultSender?: AligoDefaultSenderPolicyService,
     ) {}
+
+    @Post("sms/duplicate-check")
+    async checkSmsDuplicates(
+        @CurrentTenant() tenant: { branchId?: string },
+        @Body() dto: MessageDuplicateCheckDto,
+        @Query("expectedBranchId") expectedBranchId?: string,
+    ) {
+        const branchId = tenant.branchId ?? "";
+        this.assertBranchContext(branchId, expectedBranchId);
+        const resolved = await this.resolveSmsRecipients(branchId, dto);
+        const schedule = this.smsSchedule(dto);
+        return this.duplicateCheck.check(branchId, resolved.receiver, resolved.message,
+            this.smsFingerprint(branchId, resolved, dto.triggerType ?? "immediate", schedule.scheduledDate, schedule.scheduledTime));
+    }
+
+    private assertBranchContext(branchId: string, expectedBranchId?: string): void {
+        if (expectedBranchId !== undefined && expectedBranchId !== branchId) {
+            throw new ConflictException({ code: "BRANCH_CONTEXT_CHANGED", message: "지점이 변경됐어요. 화면을 새로고침한 뒤 다시 시도해 주세요." });
+        }
+    }
+
+    private smsSchedule(dto: SendSmsMessageDto, validateLead = true) {
+        if (validateLead && dto.triggerType === "scheduled") this.assertScheduledAtLeastTenMinutesAhead(dto.scheduledDate, dto.scheduledTime);
+        return {
+            scheduledDate: dto.triggerType === "scheduled" ? dto.scheduledDate?.replace(/-/g, "") : undefined,
+            scheduledTime: dto.triggerType === "scheduled" ? dto.scheduledTime?.replace(":", "") : undefined,
+        };
+    }
+
+    private smsFingerprint(branchId: string, dto: SendSmsMessageDto, triggerType: string, scheduledDate?: string, scheduledTime?: string): string {
+        return buildSmsProviderAcceptanceFingerprint({
+            branchId, receiver: dto.receiver, message: dto.message,
+            recipientName: dto.recipientName ?? null, title: dto.title?.trim() || null,
+            clientId: dto.clientId ?? null, employeeId: dto.employeeId ?? null,
+            msgType: dto.msgType ?? "AUTO", triggerType,
+            scheduledDate: scheduledDate ?? null, scheduledTime: scheduledTime ?? null,
+            testMode: dto.testMode === true,
+        });
+    }
 
     @Post("sms")
     async sendSms(
@@ -90,12 +149,8 @@ export class MessageDeliveryController {
     ) {
         const triggerType = dto.triggerType ?? "immediate";
         const branchId = tenant.branchId ?? "";
-        if (expectedBranchId !== undefined && expectedBranchId !== branchId) {
-            throw new ConflictException({
-                code: "BRANCH_CONTEXT_CHANGED",
-                message: "지점이 변경됐어요. 화면을 새로고침한 뒤 다시 시도해 주세요.",
-            });
-        }
+        this.assertBranchContext(branchId, expectedBranchId);
+        const effectiveRequestKey = (dto.idempotencyKey ?? requestId)?.trim() || randomUUID();
         const resolvedDto = await this.resolveSmsRecipients(branchId, dto);
         this.logger.log(
             `[SMS] Request received: branchId=${branchId || "unknown"}, triggerType=${triggerType}, recipientCount=${this.countSmsRecipients(resolvedDto.receiver)}`,
@@ -110,28 +165,25 @@ export class MessageDeliveryController {
             throw error;
         }
 
-        if (triggerType === "scheduled") {
-            this.assertScheduledAtLeastTenMinutesAhead(
-                dto.scheduledDate,
-                dto.scheduledTime,
-            );
+        const { scheduledDate, scheduledTime } = this.smsSchedule(dto, !this.jobs);
+        let knownExisting: SmsMessageLogRecord | null | undefined;
+        let immediateScheduledFor: Date | undefined;
+        if (this.jobs) {
+            const queued = await this.enqueueOrReplay(branchId, resolvedDto, triggerType, scheduledDate, scheduledTime, effectiveRequestKey, (existing, scheduledFor) => { knownExisting = existing; immediateScheduledFor = scheduledFor; });
+            if (queued) return queued;
+        } else if (triggerType === "scheduled") {
+            throw new MessageQuietHoursUnavailableError();
         }
-
-        const scheduledDate = triggerType === "scheduled"
-            ? dto.scheduledDate?.replace(/-/g, "")
-            : undefined;
-        const scheduledTime = triggerType === "scheduled"
-            ? dto.scheduledTime?.replace(":", "")
-            : undefined;
         const pendingLog = await this.createPendingSmsLog(
             branchId,
             resolvedDto,
             triggerType,
             scheduledDate,
             scheduledTime,
-            dto.idempotencyKey ?? requestId,
+            effectiveRequestKey,
+            knownExisting,
         ).catch((error) => {
-            if (error instanceof ConflictException) {
+            if (error instanceof ConflictException || error instanceof ServiceUnavailableException) {
                 throw error;
             }
             this.logger.error(
@@ -166,10 +218,21 @@ export class MessageDeliveryController {
             );
         }
 
+        let admission: { kind: "provider" } | { kind: "queued"; response: ReturnType<MessageDeliveryController["manualQueueResponse"]> };
         try {
-            await this.markProviderCallStarted(pendingLog.row);
+            if (!this.quietHours) throw new MessageQuietHoursUnavailableError();
+            admission = await this.quietHours.runAdmission(branchId, resolvedDto.receiver, async (decision, transaction) => {
+                if (decision.action !== "ALLOW") {
+                    if (!transaction) throw new MessageQuietHoursUnavailableError();
+                    const response = await this.createManualQueue(branchId, resolvedDto, triggerType, scheduledDate, scheduledTime,
+                        effectiveRequestKey, immediateScheduledFor ?? new Date(Date.now()), transaction, pendingLog.row);
+                    return { kind: "queued" as const, response };
+                }
+                await this.markProviderCallStarted(pendingLog.row, transaction);
+                return { kind: "provider" as const };
+            });
         } catch (error) {
-            if (error instanceof ConflictException) {
+            if (error instanceof ConflictException || error instanceof MessageQuietHoursUnavailableError) {
                 throw error;
             }
             this.logger.error(
@@ -184,6 +247,8 @@ export class MessageDeliveryController {
                 { cause: error },
             );
         }
+
+        if (admission.kind === "queued") return admission.response;
 
         const result = await this.aligoService.sendSms({
             receiver: resolvedDto.receiver,
@@ -310,14 +375,198 @@ export class MessageDeliveryController {
         };
     }
 
+    private async enqueueOrReplay(branchId: string, dto: ResolvedSmsMessage, triggerType: string,
+        scheduledDate: string | undefined, scheduledTime: string | undefined, requestKey: string, onImmediate: (existing: SmsMessageLogRecord | null, scheduledFor?: Date) => void) {
+        if (!this.jobs || !this.quietHours) throw new MessageQuietHoursUnavailableError();
+        const fingerprint = this.smsFingerprint(branchId, dto, triggerType, scheduledDate, scheduledTime);
+        const rootKey = buildSmsProviderAcceptanceKey("manual", `${branchId}:${requestKey}`);
+        const keyFor = (ordinal: number) => ordinal === 0 ? rootKey : buildSmsProviderAcceptanceKey("manual", `${rootKey}:ordinal:${ordinal}`);
+        const replay = async (known?: Awaited<ReturnType<typeof this.prisma.message_log.findUnique>> | null) => {
+            const first = known === undefined ? await this.prisma.message_log.findUnique({ where: { providerAcceptanceKey: keyFor(0) } }) : known;
+            if (!first) return null;
+            if (first.providerAcceptanceFingerprint !== fingerprint) throw new ConflictException(this.smsProblemBody("MESSAGE_REQUEST_KEY_CONFLICT", "NOT_APPLIED"));
+            const variables = this.smsRecordVariables(first);
+            if (variables["manualQueueMode"] !== "internal") return null;
+            const count = Number(variables["manualQueueCount"]);
+            if (!Number.isSafeInteger(count) || count < 1 || count !== new Set(dto.receiver.split(",")).size) throw new MessageQuietHoursUnavailableError();
+            const logs = await this.prisma.message_log.findMany({ where: { branchId, providerAcceptanceKey: { in: Array.from({ length: count }, (_, ordinal) => keyFor(ordinal)) } }, orderBy: { id: "asc" } });
+            if (logs.length !== count || logs.some(log => log.providerAcceptanceFingerprint !== fingerprint || !log.triggerJobId)) throw new MessageQuietHoursUnavailableError();
+            return this.manualQueueResponse(dto, triggerType, requestKey, logs);
+        };
+        const first = await this.prisma.message_log.findUnique({ where: { providerAcceptanceKey: keyFor(0) } });
+        const existing = await replay(first);
+        if (existing) return existing;
+        if (first) { onImmediate(first); return null; }
+        if (triggerType === "scheduled") this.assertScheduledAtLeastTenMinutesAhead(dto.scheduledDate, dto.scheduledTime);
+        const scheduledFor = triggerType === "scheduled" ? parseKstSchedule(dto.scheduledDate, dto.scheduledTime) : new Date(Date.now());
+        if (!scheduledFor) throw new BadRequestException(this.smsProblemBody("REQUEST_INVALID", "NOT_APPLIED"));
+        await this.duplicateCheck.assertCanSend(branchId, dto.receiver, dto.message, fingerprint, dto.duplicateDecision);
+        try {
+            return await this.quietHours.runAdmission(branchId, dto.receiver, async (decision, transaction) => {
+                if (triggerType !== "scheduled" && decision.action === "ALLOW") { onImmediate(null, scheduledFor); return null; }
+                if (!transaction) throw new MessageQuietHoursUnavailableError();
+                return this.createManualQueue(branchId, dto, triggerType, scheduledDate, scheduledTime, requestKey, scheduledFor, transaction);
+            }, undefined, scheduledFor);
+        } catch (error) {
+            if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
+                const result = await replay();
+                if (result) return result;
+            }
+            throw error;
+        }
+    }
+
+    /** Reuses the caller's admission transaction; every ordinal is committed together. */
+    private async createManualQueue(branchId: string, dto: ResolvedSmsMessage, triggerType: string,
+        scheduledDate: string | undefined, scheduledTime: string | undefined, requestKey: string,
+        scheduledFor: Date, transaction: Prisma.TransactionClient, preparedRoot?: SmsQueueLogRecord) {
+        if (!this.jobs || !this.quietHours) throw new MessageQuietHoursUnavailableError();
+        const fingerprint = this.smsFingerprint(branchId, dto, triggerType, scheduledDate, scheduledTime);
+        const rootKey = buildSmsProviderAcceptanceKey("manual", `${branchId}:${requestKey}`);
+        const keyFor = (ordinal: number) => ordinal === 0 ? rootKey : buildSmsProviderAcceptanceKey("manual", `${rootKey}:ordinal:${ordinal}`);
+        const phones = [...new Set(dto.receiver.split(","))].sort();
+        if (!phones.length) throw new BadRequestException(this.smsProblemBody("REQUEST_INVALID", "NOT_APPLIED"));
+        const sender = this.defaultSender?.read();
+        if (!sender || sender.availability !== "available") throw new MessageQuietHoursUnavailableError();
+        // Validate the complete batch before the first ledger/job write.
+        const recipients = [];
+        for (const receiver of phones) {
+            try {
+                recipients.push(await this.resolveSmsRecipients(branchId,
+                    { ...dto, receiver, clientId: phones.length === 1 ? dto.clientId : null, employeeId: phones.length === 1 ? dto.employeeId : null }, transaction));
+            } catch (error) {
+                if (error instanceof BadRequestException || error instanceof NotFoundException) {
+                    throw new ConflictException(this.smsProblemBody("REQUEST_CONFLICT", "NOT_APPLIED"));
+                }
+                throw error;
+            }
+        }
+        // Fresh ownership must match the FIRST server resolution, never replace it.
+        const originalBindings = dto.manualRecipientBindings;
+        if (preparedRoot && this.smsRecordVariables(preparedRoot)["manualRecipientBindings"] !== JSON.stringify(originalBindings)) {
+            throw new ConflictException(this.smsProblemBody("REQUEST_CONFLICT", "NOT_APPLIED"));
+        }
+        const [clients, employees] = await Promise.all([
+            transaction.client.findMany({ where: { branchId, deletedAt: null }, select: { id: true, phone: true } }),
+            transaction.employee.findMany({ where: { branchId, deletedAt: null }, select: { id: true, phone: true } }),
+        ]);
+        for (const recipient of recipients) {
+            const binding = recipient.manualRecipientBindings.recipients[0]!;
+            const original = originalBindings.recipients.filter(item => item.phone === binding.phone);
+            const owners = [
+                ...clients.filter(item => normalizePhone(item.phone) === binding.phone).map(item => ({ kind: "CLIENT", id: item.id })),
+                ...employees.filter(item => normalizePhone(item.phone) === binding.phone).map(item => ({ kind: "CAREGIVER", id: item.id })),
+            ];
+            if (original.length !== 1 || original[0]!.kind !== binding.kind || original[0]!.id !== binding.id
+                || owners.length !== 1 || owners[0]!.kind !== binding.kind || owners[0]!.id !== binding.id) {
+                throw new ConflictException(this.smsProblemBody("REQUEST_CONFLICT", "NOT_APPLIED"));
+            }
+        }
+        // Match the prepared snapshot before any conversion write, then repeat the
+        // same fence at CAS. Never mutate the caller's snapshot before commit.
+        let rootFence: Prisma.message_logWhereInput | undefined;
+        if (preparedRoot) {
+            if (preparedRoot.branchId !== branchId || preparedRoot.provider !== "aligo_sms"
+                || preparedRoot.providerAcceptanceKey !== rootKey || preparedRoot.providerAcceptanceFingerprint !== fingerprint
+                || preparedRoot.status !== "pending" || preparedRoot.attempts !== 0 || preparedRoot.providerAcceptanceState !== "prepared"
+                || preparedRoot.triggerJobId !== null || preparedRoot.providerCallStartedAt !== null
+                || preparedRoot.providerAcceptedAt !== null || preparedRoot.providerReconciledAt !== null
+                || preparedRoot.providerReconciledBy !== null || preparedRoot.providerReconciliationReason !== null
+                || preparedRoot.aligoMid !== null || !preparedRoot.updatedAt || !this.isRecord(preparedRoot.variables)) {
+                throw new ConflictException(this.smsProblemBody("MESSAGE_SEND_ALREADY_REQUESTED", "UNKNOWN", this.safeOperationId(preparedRoot.id)));
+            }
+            rootFence = { id: preparedRoot.id, branchId, provider: "aligo_sms", providerAcceptanceKey: rootKey,
+                providerAcceptanceFingerprint: fingerprint, providerAcceptanceState: "prepared", status: "pending", attempts: 0,
+                triggerJobId: null, providerCallStartedAt: null, providerAcceptedAt: null, providerReconciledAt: null,
+                providerReconciledBy: null, providerReconciliationReason: null, aligoMid: null,
+                updatedAt: preparedRoot.updatedAt, templateKey: preparedRoot.templateKey, receiver: preparedRoot.receiver,
+                recipientPhone: preparedRoot.recipientPhone, recipientName: preparedRoot.recipientName, clientId: preparedRoot.clientId,
+                messageBody: preparedRoot.messageBody, variables: { equals: preparedRoot.variables },
+                errorMessage: preparedRoot.errorMessage, lastAttemptAt: preparedRoot.lastAttemptAt, nextRetryAt: preparedRoot.nextRetryAt };
+            if (!await transaction.message_log.findFirst({ where: rootFence })) {
+                throw new ConflictException(this.smsProblemBody("MESSAGE_SEND_ALREADY_REQUESTED", "UNKNOWN", this.safeOperationId(preparedRoot.id)));
+            }
+        }
+        const logs = [];
+        for (let ordinal = 0; ordinal < recipients.length; ordinal++) {
+            const recipient = recipients[ordinal]!;
+            logs.push(await this.quietHours!.runAdmission(branchId, recipient.receiver, async (current, tx, revision) => {
+                if (!tx || (current.action === "DEFER" && !revision)) throw new MessageQuietHoursUnavailableError();
+                const status = current.action === "DEFER" ? "deferred" : current.action === "CANCEL" ? "canceled" : "queued";
+                const due = current.action === "DEFER" ? current.reevaluateAt : scheduledFor;
+                const originalVariables: Record<string, Prisma.JsonValue> = ordinal === 0 && preparedRoot
+                    ? { ...this.smsRecordVariables(preparedRoot) } as Record<string, Prisma.JsonValue> : {};
+                // Provider reservation fields are not part of the internal queue source.
+                delete originalVariables["scheduledDate"];
+                delete originalVariables["scheduledTime"];
+                const variables = { ...originalVariables, ...(preparedRoot && ordinal === 0 ? { recipientName: recipient.recipientName ?? null } : {}), origin: "ADMIN_DIRECT", manualQueueMode: "internal", manualQueueCount: String(recipients.length),
+                    manualQueueOrdinal: String(ordinal), manualQueueStatus: status, manualQueueScheduledAt: due.toISOString(),
+                    manualQueueRequestKey: requestKey, manualQueueSenderIdentity: sender.identityDigest,
+                    manualQueueFingerprintInput: JSON.stringify({ branchId, receiver: dto.receiver, message: dto.message,
+                        recipientName: dto.recipientName ?? null, title: dto.title?.trim() || null, clientId: dto.clientId ?? null,
+                        employeeId: dto.employeeId ?? null, msgType: dto.msgType ?? "AUTO", triggerType,
+                        scheduledDate: scheduledDate ?? null, scheduledTime: scheduledTime ?? null, testMode: dto.testMode === true }),
+                    manualRecipientBindings: JSON.stringify(recipient.manualRecipientBindings),
+                    title: dto.title ?? "", employeeId: recipient.employeeId ?? null,
+                    triggerType, msgType: dto.msgType ?? "AUTO", testMode: dto.testMode ? "true" : "false",
+                    duplicateDecision: dto.duplicateDecision ? JSON.stringify(dto.duplicateDecision) : null,
+                    ...(current.action === "DEFER" ? messageQuietHoldVariables({ releaseAt: due, originalScheduledFor: scheduledFor,
+                        policyRevision: revision!, reason: QUIET_HOURS_DEFER_REASON }) : current.action === "CANCEL" ? { quietHoursDisposition: "CANCEL" } : {}) };
+                const data = { branchId, provider: "aligo_sms", templateKey: "manual_sms",
+                    receiver: recipient.receiver, recipientPhone: recipient.receiver, recipientName: recipient.recipientName ?? null,
+                    clientId: recipient.clientId ?? null, messageBody: dto.message, variables,
+                    status: current.action === "CANCEL" ? "failed" : "pending", attempts: 0, nextRetryAt: null,
+                    errorMessage: current.action === "CANCEL" ? QUIET_HOURS_CANCEL_REASON : null,
+                    providerAcceptanceKey: keyFor(ordinal), providerAcceptanceFingerprint: fingerprint,
+                    providerAcceptanceState: "prepared", providerCallStartedAt: null };
+                let log: SmsQueueLogRecord;
+                if (ordinal === 0 && preparedRoot && rootFence) {
+                    const converted = await tx.message_log.updateMany({ where: rootFence, data });
+                    if (converted.count !== 1) throw new ConflictException(this.smsProblemBody("MESSAGE_SEND_ALREADY_REQUESTED", "UNKNOWN", this.safeOperationId(preparedRoot.id)));
+                    const convertedLog = await tx.message_log.findFirst({ where: { id: preparedRoot.id, branchId } });
+                    if (!convertedLog) throw new MessageQuietHoursUnavailableError();
+                    log = convertedLog;
+                } else log = await tx.message_log.create({ data });
+                const job = MessageTriggerJobEntity.create({ branchId, ruleId: MANUAL_SMS_RULE_PREFIX + branchId,
+                    scheduledFor, clientId: recipient.clientId ?? null,
+                    recipientType: recipient.employeeId ? MessageTriggerRecipientType.PRIMARY_EMPLOYEE : MessageTriggerRecipientType.CLIENT,
+                    recipientPhone: recipient.receiver, templateKey: MANUAL_SMS_TEMPLATE_KEY,
+                    dedupeKey: `manual-sms:${branchId}:${keyFor(ordinal)}`,
+                    payload: { origin: "ADMIN_DIRECT", existingMessageLogId: log.id, clientId: recipient.clientId,
+                        employeeId: recipient.employeeId, memberId: String(recipient.clientId ?? recipient.employeeId),
+                        recipientName: recipient.recipientName ?? "", recipientPhone: recipient.receiver, messageBody: dto.message,
+                        templateVariables: { senderIdentityDigest: sender.identityDigest, title: dto.title ?? "", msgType: dto.msgType ?? "AUTO", testMode: dto.testMode ? "true" : "false" } } });
+                if (current.action === "DEFER") job.nextAttemptAt = due;
+                if (current.action === "CANCEL") job.cancel(QUIET_HOURS_CANCEL_REASON);
+                const saved = await this.jobs!.createManualSmsJob(job, log.id, tx);
+                return { ...log, triggerJobId: saved.id };
+            }, transaction, scheduledFor));
+        }
+        return this.manualQueueResponse(dto, triggerType, requestKey, logs);
+    }
+
+    private manualQueueResponse(dto: SendSmsMessageDto, triggerType: string, requestKey: string,
+        logs: Array<{ id: number; triggerJobId: string | null; recipientPhone: string | null; variables: Prisma.JsonValue }>) {
+        const items = logs.map(log => {
+            const v = this.smsRecordVariables(log);
+            return { jobId: log.triggerJobId!, messageLogId: log.id, recipientPhone: log.recipientPhone!,
+                status: v["manualQueueStatus"] as "queued" | "deferred" | "canceled", scheduledAt: String(v["manualQueueScheduledAt"]),
+                reason: typeof v["manualQueueReason"] === "string" ? v["manualQueueReason"] : v["manualQueueStatus"] === "deferred" ? QUIET_HOURS_DEFER_REASON : v["manualQueueStatus"] === "canceled" ? QUIET_HOURS_CANCEL_REASON : null };
+        });
+        const status = items[0]!.status;
+        return { provider: "aligo_sms" as const, triggerType, request: { receiver: dto.receiver, msgType: dto.msgType ?? "AUTO", testMode: dto.testMode === true, idempotencyKey: requestKey },
+            outcome: items.every(item => item.status === status) ? status : "mixed" as const, items };
+    }
+
     private async createPendingSmsLog(
         branchId: string,
-        dto: SendSmsMessageDto,
+        dto: ResolvedSmsMessage,
         triggerType: string,
         scheduledDate?: string,
         scheduledTime?: string,
         requestId?: string,
-    ): Promise<{ row: SmsMessageLogRecord; created: boolean; id: number }> {
+        knownExisting?: SmsMessageLogRecord | null,
+    ): Promise<{ row: SmsQueueLogRecord; created: true; id: number } | { row: SmsMessageLogRecord; created: false; id: number }> {
         // A caller-provided idempotency key (or HTTP Idempotency-Key header)
         // scopes duplicate manual requests. Without one, each intentional
         // send receives a fresh opaque identity; the persisted state still
@@ -327,25 +576,12 @@ export class MessageDeliveryController {
             "manual",
             `${branchId}:${logicalIdentity}`,
         );
-        const providerAcceptanceFingerprint = buildSmsProviderAcceptanceFingerprint({
-            branchId,
-            receiver: dto.receiver,
-            message: dto.message,
-            recipientName: dto.recipientName ?? null,
-            title: dto.title?.trim() || null,
-            clientId: dto.clientId ?? null,
-            employeeId: dto.employeeId ?? null,
-            msgType: dto.msgType ?? "AUTO",
-            triggerType,
-            scheduledDate: scheduledDate ?? null,
-            scheduledTime: scheduledTime ?? null,
-            testMode: dto.testMode === true,
-        });
+        const providerAcceptanceFingerprint = this.smsFingerprint(branchId, dto, triggerType, scheduledDate, scheduledTime);
         const messageLogModel = this.prisma.message_log as typeof this.prisma.message_log & {
             findUnique?: (args: { where: { providerAcceptanceKey: string } }) => Promise<SmsMessageLogRecord | null>;
         };
         if (typeof messageLogModel.findUnique === "function") {
-            const existing = await messageLogModel.findUnique({ where: { providerAcceptanceKey } });
+            const existing = knownExisting === undefined ? await messageLogModel.findUnique({ where: { providerAcceptanceKey } }) : knownExisting;
             if (existing) {
                 if (existing.providerAcceptanceFingerprint !== providerAcceptanceFingerprint) {
                     throw new ConflictException(
@@ -359,6 +595,11 @@ export class MessageDeliveryController {
             }
         }
 
+        // An existing durable identity always keeps its original replay/conflict
+        // outcome. Only a new request reaches the fresh gate, before admission.
+        if (knownExisting === undefined) await this.duplicateCheck.assertCanSend(branchId, dto.receiver, dto.message,
+            providerAcceptanceFingerprint, dto.duplicateDecision);
+
         const data = {
                 branchId: branchId || null,
                 provider: "aligo_sms",
@@ -369,6 +610,7 @@ export class MessageDeliveryController {
                 recipientPhone: dto.receiver,
                 messageBody: dto.message,
                 variables: {
+                    manualRecipientBindings: JSON.stringify(dto.manualRecipientBindings),
                     recipientName: dto.recipientName ?? null,
                     title: dto.title ?? null,
                     triggerType,
@@ -414,9 +656,9 @@ export class MessageDeliveryController {
         }
     }
 
-    private async markProviderCallStarted(row: SmsMessageLogRecord): Promise<void> {
+    private async markProviderCallStarted(row: SmsMessageLogRecord, transaction?: Prisma.TransactionClient): Promise<void> {
         const startedAt = new Date(Date.now());
-        const messageLogModel = this.prisma.message_log as typeof this.prisma.message_log & {
+        const messageLogModel = (transaction ?? this.prisma).message_log as typeof this.prisma.message_log & {
             updateMany?: (args: { where: Record<string, unknown>; data: Record<string, unknown> }) => Promise<{ count: number }>;
         };
         if (typeof messageLogModel.updateMany !== "function") {
@@ -455,7 +697,8 @@ export class MessageDeliveryController {
     private async resolveSmsRecipients(
         branchId: string,
         dto: SendSmsMessageDto,
-    ): Promise<SendSmsMessageDto> {
+        transaction?: Prisma.TransactionClient,
+    ): Promise<ResolvedSmsMessage> {
         if (!branchId) {
             throw new BadRequestException(this.smsProblemBody("REQUEST_INVALID", "NOT_APPLIED"));
         }
@@ -480,7 +723,7 @@ export class MessageDeliveryController {
             if (normalizedReceivers.length !== 1) {
                 throw new BadRequestException(this.smsProblemBody("REQUEST_INVALID", "NOT_APPLIED"));
             }
-            const client = await this.prisma.client.findFirst({
+            const client = await (transaction ?? this.prisma).client.findFirst({
                 where: { id: dto.clientId, branchId, deletedAt: null },
                 select: { id: true, name: true, phone: true },
             });
@@ -496,7 +739,7 @@ export class MessageDeliveryController {
             if (normalizedReceivers.length !== 1) {
                 throw new BadRequestException(this.smsProblemBody("REQUEST_INVALID", "NOT_APPLIED"));
             }
-            const employeeModel = (this.prisma as PrismaService & { employee?: PrismaService["employee"] }).employee;
+            const employeeModel = ((transaction ?? this.prisma) as PrismaService & { employee?: PrismaService["employee"] }).employee;
             const employee = employeeModel && await employeeModel.findFirst({
                 where: { id: dto.employeeId, branchId, deletedAt: null },
                 select: { id: true, name: true, phone: true },
@@ -511,8 +754,8 @@ export class MessageDeliveryController {
             recipients.push({ id: employee.id, name: employee.name, phone, kind: "employee" });
         } else {
             for (const phone of normalizedReceivers) {
-                const client = await this.findClientByPhone(branchId, phone);
-                const employee = await this.findEmployeeByPhone(branchId, phone);
+                const client = await this.findClientByPhone(branchId, phone, transaction);
+                const employee = await this.findEmployeeByPhone(branchId, phone, transaction);
                 if (client && employee) {
                     throw new BadRequestException(this.smsProblemBody("REQUEST_INVALID", "NOT_APPLIED"));
                 }
@@ -536,18 +779,21 @@ export class MessageDeliveryController {
             recipientName: canonicalName,
             clientId,
             employeeId,
+            manualRecipientBindings: { version: 1, branchId, recipients: recipients.map(recipient => ({
+                kind: recipient.kind === "client" ? "CLIENT" : "CAREGIVER", id: recipient.id, phone: recipient.phone,
+            })) },
         };
     }
 
-    private async findClientByPhone(branchId: string, phone: string): Promise<{ id: number; name: string | null } | null> {
-        const client = await this.prisma.client.findFirst({
+    private async findClientByPhone(branchId: string, phone: string, transaction?: Prisma.TransactionClient): Promise<{ id: number; name: string | null } | null> {
+        const client = await (transaction ?? this.prisma).client.findFirst({
             where: { branchId, phone, deletedAt: null },
             select: { id: true, name: true, phone: true },
         });
         if (client && normalizePhone(client.phone) === phone) {
             return { id: client.id, name: client.name };
         }
-        const clientModel = this.prisma.client as typeof this.prisma.client & {
+        const clientModel = (transaction ?? this.prisma).client as Prisma.TransactionClient["client"] & {
             findMany?: (args: { where: { branchId: string; deletedAt: null }; select: { id: true; name: true; phone: true } }) => Promise<Array<{ id: number; name: string | null; phone: string | null }>>;
         };
         if (typeof clientModel.findMany !== "function") return null;
@@ -556,8 +802,8 @@ export class MessageDeliveryController {
         return match ? { id: match.id, name: match.name } : null;
     }
 
-    private async findEmployeeByPhone(branchId: string, phone: string): Promise<{ id: number; name: string | null } | null> {
-        const employeeModel = (this.prisma as PrismaService & { employee?: PrismaService["employee"] }).employee;
+    private async findEmployeeByPhone(branchId: string, phone: string, transaction?: Prisma.TransactionClient): Promise<{ id: number; name: string | null } | null> {
+        const employeeModel = ((transaction ?? this.prisma) as PrismaService & { employee?: PrismaService["employee"] }).employee;
         if (!employeeModel) return null;
         const employee = await employeeModel.findFirst({
             where: { branchId, phone, deletedAt: null },
