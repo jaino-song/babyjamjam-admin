@@ -942,9 +942,10 @@ describe("Independent C4 R2 exact original scenarios and direct scheduler impact
         });
         const reached=jest.fn(async()=>true);runtime.dispatchClaimedJob=reached;
         await f.core.dispatchDueJobs();
+        expect((f.jobRepository as any).consumeDispatchSlotsAndFindDueJobs).toHaveBeenCalledTimes(1);
         expect((f.jobRepository as any).consumeDispatchSlotsAndFindDueJobs).toHaveBeenCalledWith([
             {branchId,automaticEnabled:true,retryEnabled,intervalMinutes:1,pastExpiryHours:24}
-        ],new Date("2026-11-05T12:06:00Z"),100);
+        ],new Date("2026-11-05T12:06:00Z"),100,[]);
         console.log("RETRY_OFF_OPERATIONAL_WAIT",JSON.stringify({retryEnabled,wait,attempts:primary.attempts,nextAttemptAt:primary.nextAttemptAt,status:primary.status,reached:reached.mock.calls.length}));
         expect(reached).toHaveBeenCalledTimes(1);
     });

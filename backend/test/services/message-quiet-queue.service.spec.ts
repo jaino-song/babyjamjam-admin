@@ -63,6 +63,12 @@ import { MANUAL_SMS_TEMPLATE_KEY, isConfigurableSmsTriggerTemplate, isRetiredFix
 
 // The SQL/Prisma boundary is synthetic; all application controls and repositories execute.
 type Row = Record<string, unknown>;
+function expectPublicRetryVariables(variables: Record<string, string>) {
+    for (const key of ["manualRecipientBindings", "quietHoursDisposition", "quietHoursReleaseAt", "quietHoursOriginalScheduledFor",
+        "quietHoursPolicyRevision", "quietHoursReason", "manualQueueMode", "manualQueueCount", "manualQueueOrdinal", "manualQueueStatus",
+        "manualQueueScheduledAt", "manualQueueRequestKey", "manualQueueFingerprintInput", "manualQueueSenderIdentity", "manualQueueReason",
+        "retryInvocation", "retrySenderIdentity"]) expect(variables).not.toHaveProperty(key);
+}
 function memoryQueue() {
     const branchId = "88000000-0000-4000-8000-000000000001";
     const tables: Record<string, Row[]> = { message_log: [], message_trigger_job: [], message_trigger_rule: [], message_trigger_rule_branch_override: [], system_setting: [],
@@ -428,7 +434,9 @@ describe("private manual queue through actual controls", () => {
         expect(f.tables["message_log"]![0]).toMatchObject({ status: "failed", providerAcceptanceState: "rejected", nextRetryAt: null });
         const retried = await f.retry.retryById(f.branchId, log["id"] as number);
         expect(retried).toMatchObject({ status: "sent", providerAcceptanceState: "accepted", variables: { retryOfLogId: "1" } });
-        if (scheduledTime === "07:00") expect(retried.variables).toMatchObject({ quietHoursDisposition: "DEFER",
+        expectPublicRetryVariables(retried.variables);
+        const storedRetry = (await f.logs.findByIdInBranch(f.branchId, retried.id))!;
+        if (scheduledTime === "07:00") expect(storedRetry.variables).toMatchObject({ quietHoursDisposition: "DEFER",
             quietHoursReleaseAt: provenance["quietHoursReleaseAt"], quietHoursOriginalScheduledFor: provenance["quietHoursOriginalScheduledFor"] });
         expect(f.tables["message_log"]).toHaveLength(2);
         expect(f.aligo.sendSms).toHaveBeenCalledTimes(2);
@@ -842,7 +850,10 @@ describe("original manual batch identity across quiet retry", () => {
 
     async function heldBatch(mixed = true) {
         const { f, source } = await rejectedBatch(mixed);
-        const held = await f.retry.retryById(f.branchId, source.id);
+        const publicHeld = await f.retry.retryById(f.branchId, source.id);
+        expect(publicHeld).toMatchObject({ status: "pending", providerAcceptanceState: "prepared", providerCallStartedAt: null, nextRetryAt: release });
+        expectPublicRetryVariables(publicHeld.variables);
+        const held = (await f.logs.findByIdInBranch(f.branchId, publicHeld.id))!;
         expect(held).toMatchObject({ status: "pending", providerAcceptanceState: "prepared", providerCallStartedAt: null,
             nextRetryAt: release, variables: { retryInvocation: "manual", quietHoursDisposition: "DEFER",
                 manualRecipientBindings: source.variables["manualRecipientBindings"] } });
@@ -861,8 +872,11 @@ describe("original manual batch identity across quiet retry", () => {
             providerAcceptanceKey: "legacy-single", providerAcceptanceFingerprint: "legacy-single-fingerprint" });
         draft.status = "failed"; draft.attempts = 1;
         const source = await f.logs.save(draft);
-        const held = await f.retry.retryById(f.branchId, source.id);
-        expect(held).toMatchObject({ nextRetryAt: release, providerCallStartedAt: null });
+        const publicHeld = await f.retry.retryById(f.branchId, source.id);
+        expect(publicHeld).toMatchObject({ nextRetryAt: release, providerCallStartedAt: null });
+        expectPublicRetryVariables(publicHeld.variables);
+        const held = (await f.logs.findByIdInBranch(f.branchId, publicHeld.id))!;
+        expect(held.variables).toMatchObject({ quietHoursDisposition: "DEFER", retryInvocation: "manual", quietHoursReleaseAt: "2026-11-03T23:00:00.000Z" });
         jest.setSystemTime(release);
         expect(await f.retry.retry(held, "manual")).toMatchObject({ id: held.id, status: "sent" });
         expect(f.aligo.sendSms).toHaveBeenCalledTimes(1);
@@ -1173,6 +1187,10 @@ describe("quiet retry scheduler release", () => {
         expect(f.aligo.sendSms).toHaveBeenCalledTimes(1);
         const continued = await f.retry.retryById(f.branchId, held.id);
         expect(continued).toMatchObject({ id: 3, status: "sent", attempts: 3, nextRetryAt: null,
+            variables: { retryOfLogId: "2" } });
+        expectPublicRetryVariables(continued.variables);
+        const storedContinuation = (await f.logs.findByIdInBranch(f.branchId, continued.id))!;
+        expect(storedContinuation).toMatchObject({ id: 3, status: "sent", attempts: 3, nextRetryAt: null,
             variables: { retryOfLogId: "2", quietHoursDisposition: "DEFER", quietHoursReleaseAt: "2026-11-03T23:00:00.000Z",
                 quietHoursOriginalScheduledFor: "2026-11-03T13:30:00.000Z" } });
         expect(f.aligo.sendSms).toHaveBeenCalledTimes(2);
@@ -1437,7 +1455,10 @@ describeReal("quiet queue SQL selection, claim, and policy reconciliation", () =
                 }
                 return started;
             });
-            const held = await f.retry.retryById(f.branchId, source.id);
+            const publicHeld = await f.retry.retryById(f.branchId, source.id);
+            expectPublicRetryVariables(publicHeld.variables);
+            expect(publicHeld).toMatchObject({ status: "pending", providerCallStartedAt: null, nextRetryAt: release });
+            const held = (await f.logs.findByIdInBranch(f.branchId, publicHeld.id))!;
             expect(held.variables["manualRecipientBindings"]).toBe(snapshot);
             expect(held).toMatchObject({ status: "pending", providerCallStartedAt: null, nextRetryAt: release });
             if (mode === "snapshot mismatch") await handle.raw.message_log.update({ where: { id: held.id },
