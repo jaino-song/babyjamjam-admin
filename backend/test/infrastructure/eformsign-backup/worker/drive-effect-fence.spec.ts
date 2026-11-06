@@ -41,6 +41,21 @@ function ledger(initial: ReturnType<DriveNodeLedger["current"]> = null): DriveNo
 }
 async function collect(source: AsyncIterable<unknown>): Promise<void> { for await (const part of source) { void part; } }
 
+function deferred<T>() {
+    let resolve!: (value: T) => void;
+    let reject!: (error: Error) => void;
+    const promise = new Promise<T>((yes, no) => { resolve = yes; reject = no; });
+    return { promise, resolve, reject };
+}
+async function bounded<T>(pending: Promise<T>): Promise<T> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+        return await Promise.race([pending, new Promise<never>((_resolve, reject) => {
+            timer = setTimeout(() => reject(new Error("cleanup settlement guard")), 250);
+        })]);
+    } finally { clearTimeout(timer); }
+}
+
 describe("Drive effect fences", () => {
     afterEach(() => { jest.restoreAllMocks(); jest.useRealTimers(); });
     it("blocks every client operation before tokens, fetches or opening a source", async () => {
@@ -122,6 +137,7 @@ describe("Drive effect fences", () => {
     });
     it("cancels pending download reads, clears idle timers, and removes owned listeners", async () => {
         jest.useFakeTimers();
+        const readerCancel = jest.spyOn(ReadableStreamDefaultReader.prototype, "cancel");
         const { controller, fence } = authority();
         const add = jest.spyOn(controller.signal, "addEventListener");
         const remove = jest.spyOn(controller.signal, "removeEventListener");
@@ -135,6 +151,7 @@ describe("Drive effect fences", () => {
         await expect(pending).rejects.toBeInstanceOf(ExecutionFencedError);
         expect(cancel).toHaveBeenCalledTimes(1);
         expect(jest.getTimerCount()).toBe(0);
+        expect(readerCancel).toHaveBeenCalledTimes(1);
         expect(remove.mock.calls.map(call => call[1])).toEqual(add.mock.calls.map(call => call[1]));
     });
     it("preserves ordinary download idle timeouts without a fence", async () => {
@@ -229,6 +246,165 @@ describe("Drive effect fences", () => {
             await expect(outcome).rejects.toMatchObject({ reason: "lease-lost" });
             expect(returned).toHaveBeenCalledTimes(1); expect(fetcher).toHaveBeenCalledTimes(1);
         } finally { clearTimeout(timer); }
+    });
+    it.each(["resolve", "reject"])("fences a 308 offset correction after source cleanup starts, consuming late %s", async outcome => {
+        const { controller, fence } = authority();
+        const cleanupStarted = deferred<void>();
+        const cleanup = deferred<IteratorResult<Uint8Array>>();
+        const returned = jest.fn(() => { cleanupStarted.resolve(); return cleanup.promise; });
+        const next = jest.fn(async () => ({ done: false as const, value: Buffer.alloc(CHUNK) }));
+        const source = jest.fn(() => ({ [Symbol.asyncIterator]: () => ({ next, return: returned }) }));
+        const fetcher = jest.fn(async (_url: unknown, init?: RequestInit) => init?.method === "POST"
+            ? new Response(null, { headers: { location: `${BASE}/session` } })
+            : new Response(null, { status: 308 })); // No Range: reopen at zero, closing the first source.
+        const unhandled = jest.fn();
+        process.on("unhandledRejection", unhandled);
+        try {
+            const pending = setup(fetcher).uploadResumable(meta, source, CHUNK * 2, fence);
+            const settlement = expect(bounded(pending)).rejects.toMatchObject({ name: "ExecutionFencedError", reason: "aborted" });
+            await bounded(cleanupStarted.promise);
+            controller.abort("private reason");
+            await settlement;
+            if (outcome === "resolve") cleanup.resolve({ done: true, value: undefined });
+            else cleanup.reject(new Error("private cleanup"));
+            await new Promise<void>(resolve => setImmediate(resolve));
+            expect(fetcher).toHaveBeenCalledTimes(2);
+            expect(source).toHaveBeenCalledTimes(1);
+            expect(next).toHaveBeenCalledTimes(1);
+            expect(returned).toHaveBeenCalledTimes(1);
+            expect(unhandled).not.toHaveBeenCalled();
+        } finally {
+            cleanup.resolve({ done: true, value: undefined });
+            process.off("unhandledRejection", unhandled);
+        }
+    });
+    it("propagates a typed source cleanup fence through offset correction without reopening", async () => {
+        const { fence } = authority();
+        const typed = new ExecutionFencedError("lease-lost");
+        const returned = jest.fn(async () => { throw typed; });
+        const next = jest.fn(async () => ({ done: false as const, value: Buffer.alloc(CHUNK) }));
+        const source = jest.fn(() => ({ [Symbol.asyncIterator]: () => ({ next, return: returned }) }));
+        const fetcher = jest.fn(async (_url: unknown, init?: RequestInit) => init?.method === "POST"
+            ? new Response(null, { headers: { location: `${BASE}/session` } })
+            : new Response(null, { status: 308 }));
+        await expect(bounded(setup(fetcher).uploadResumable(meta, source, CHUNK * 2, fence))).rejects.toBe(typed);
+        expect(fetcher).toHaveBeenCalledTimes(2);
+        expect(source).toHaveBeenCalledTimes(1);
+        expect(next).toHaveBeenCalledTimes(1);
+        expect(returned).toHaveBeenCalledTimes(1);
+    });
+    it.each(["throw", "reject"])("keeps ordinary source cleanup %s abandoned during offset correction", async mode => {
+        const returned = jest.fn((): Promise<IteratorResult<Uint8Array>> => {
+            if (mode === "throw") throw new Error("private cleanup");
+            return Promise.reject(new Error("private cleanup"));
+        });
+        let opened = 0;
+        const source = jest.fn(() => ++opened === 1
+            ? { [Symbol.asyncIterator]: () => ({ next: async () => ({ done: false, value: Buffer.alloc(CHUNK) }), return: returned }) }
+            : { async *[Symbol.asyncIterator]() { yield Buffer.alloc(CHUNK * 2); } });
+        let puts = 0;
+        const fetcher = jest.fn(async (_url: unknown, init?: RequestInit) => {
+            if (init?.method === "POST") return new Response(null, { headers: { location: `${BASE}/session` } });
+            if (++puts === 1) return new Response(null, { status: 308 });
+            return json(remote);
+        });
+        await expect(bounded(setup(fetcher).uploadResumable(meta, source, CHUNK * 2)))
+            .resolves.toMatchObject({ ok: true, value: { id: ID } });
+        expect(source.mock.calls).toHaveLength(2);
+        expect(returned).toHaveBeenCalledTimes(1);
+        expect(fetcher).toHaveBeenCalledTimes(3);
+    });
+    it.each(["resolve", "reject"])("consumes an already aborted upload cleanup's late %s without awaiting it twice", async outcome => {
+        const { controller, fence } = authority();
+        const cleanup = deferred<IteratorResult<Uint8Array>>();
+        const returned = jest.fn(() => cleanup.promise);
+        const next = jest.fn(async () => ({ done: false as const, value: Buffer.alloc(CHUNK) }));
+        const source = jest.fn(() => ({ [Symbol.asyncIterator]: () => ({ next, return: returned }) }));
+        const fetcher = jest.fn(async (_url: unknown, init?: RequestInit) => {
+            if (init?.method === "POST") return new Response(null, { headers: { location: `${BASE}/session` } });
+            controller.abort("private reason");
+            return new Response(null, { status: 308 });
+        });
+        const unhandled = jest.fn();
+        process.on("unhandledRejection", unhandled);
+        try {
+            await expect(bounded(setup(fetcher).uploadResumable(meta, source, CHUNK * 2, fence)))
+                .rejects.toMatchObject({ name: "ExecutionFencedError", reason: "aborted" });
+            if (outcome === "resolve") cleanup.resolve({ done: true, value: undefined });
+            else cleanup.reject(new Error("private cleanup"));
+            await new Promise<void>(resolve => setImmediate(resolve));
+            expect(fetcher).toHaveBeenCalledTimes(2);
+            expect(source).toHaveBeenCalledTimes(1);
+            expect(next).toHaveBeenCalledTimes(1);
+            expect(returned).toHaveBeenCalledTimes(1);
+            expect(unhandled).not.toHaveBeenCalled();
+        } finally {
+            cleanup.resolve({ done: true, value: undefined });
+            process.off("unhandledRejection", unhandled);
+        }
+    });
+    it.each(["resolve", "reject"])("fences download return after reader.cancel starts and consumes late %s", async outcome => {
+        const { controller, fence } = authority();
+        const cleanupStarted = deferred<void>();
+        const cleanup = deferred<void>();
+        const cancel = jest.fn(() => { cleanupStarted.resolve(); return cleanup.promise; });
+        const pull = jest.fn();
+        const fetcher = jest.fn(async () => new Response(new ReadableStream({ pull, cancel }, { highWaterMark: 0 })));
+        const unhandled = jest.fn();
+        process.on("unhandledRejection", unhandled);
+        try {
+            const result = await setup(fetcher).download(ID, fence);
+            if (!result.ok) throw new Error("expected download");
+            const iterator = result.value[Symbol.asyncIterator]();
+            const pending = iterator.return!();
+            const settlement = expect(bounded(pending)).rejects.toMatchObject({ name: "ExecutionFencedError", reason: "aborted" });
+            await bounded(cleanupStarted.promise);
+            controller.abort("private reason");
+            await settlement;
+            if (outcome === "resolve") cleanup.resolve();
+            else cleanup.reject(new Error("private cleanup"));
+            await new Promise<void>(resolve => setImmediate(resolve));
+            await iterator.return?.();
+            await expect(iterator.next()).rejects.toBeInstanceOf(ExecutionFencedError);
+            expect(cancel).toHaveBeenCalledTimes(1);
+            expect(fetcher).toHaveBeenCalledTimes(1);
+            expect(pull).not.toHaveBeenCalled();
+            expect(unhandled).not.toHaveBeenCalled();
+        } finally {
+            cleanup.resolve();
+            process.off("unhandledRejection", unhandled);
+        }
+    });
+    it.each(["resolve", "reject", "throw"])("consumes already aborted download cancellation (%s) once", async outcome => {
+        const { controller, fence } = authority();
+        const cleanup = deferred<void>();
+        const cancel = jest.fn(() => {
+            if (outcome === "throw") throw new Error("private cleanup");
+            return cleanup.promise;
+        });
+        const pull = jest.fn();
+        const fetcher = jest.fn(async () => new Response(new ReadableStream({ pull, cancel }, { highWaterMark: 0 })));
+        const unhandled = jest.fn();
+        process.on("unhandledRejection", unhandled);
+        try {
+            const result = await setup(fetcher).download(ID, fence);
+            if (!result.ok) throw new Error("expected download");
+            const iterator = result.value[Symbol.asyncIterator]();
+            controller.abort("private reason");
+            await bounded(iterator.return!());
+            if (outcome === "reject") cleanup.reject(new Error("private cleanup"));
+            else cleanup.resolve();
+            await new Promise<void>(resolve => setImmediate(resolve));
+            await iterator.return?.();
+            await expect(iterator.next()).rejects.toBeInstanceOf(ExecutionFencedError);
+            expect(cancel).toHaveBeenCalledTimes(1);
+            expect(fetcher).toHaveBeenCalledTimes(1);
+            expect(pull).not.toHaveBeenCalled();
+            expect(unhandled).not.toHaveBeenCalled();
+        } finally {
+            cleanup.resolve();
+            process.off("unhandledRejection", unhandled);
+        }
     });
     it("isolates concurrent calls using different fences on the same client", async () => {
         const first = authority(); const second = authority();

@@ -30,6 +30,52 @@ describe("local effect fences", () => {
     function primitive(fault?: (point: ArchiveFaultPoint) => void): LocalArtifactArchive {
         return new LocalArtifactArchive({ rootPath: fixture.root, expectedDevice: fixture.dev, expectedInode: fixture.ino, maxBytes: pdf.length }, fault);
     }
+    it.each(["created", "reused"] as const)("archives actual bytes with an active fence (%s)", async disposition => {
+        const archive = primitive();
+        const artifactId = artifactIdentity(claim);
+        const relativeKey = `${artifactId}.bin`;
+        const path = `${fixture.root}/${relativeKey}`;
+        if (disposition === "reused") {
+            await expect(archive.archive(claim, streamOf(pdf))).resolves.toMatchObject({ ok: true, disposition: "created" });
+        }
+        const previous = disposition === "reused" ? await fs.lstat(path) : undefined;
+        const { fence } = authority();
+        const assertActive = jest.fn(async () => undefined);
+        fence.assertActive = assertActive;
+        await expect(archive.archive(claim, streamOf(pdf), { effectFence: fence })).resolves.toEqual({
+            ok: true, artifactId, relativeKey, contentSha256: input.sha256, byteLength: pdf.length, disposition,
+        });
+        expect(assertActive).toHaveBeenCalled();
+        expect(await fs.readFile(path)).toEqual(pdf);
+        const stat = await fs.lstat(path);
+        expect(stat.isFile()).toBe(true);
+        expect(stat.mode & 0o777).toBe(0o600);
+        expect(stat.uid).toBe(process.getuid?.());
+        expect(stat.nlink).toBe(1);
+        if (previous) expect({ dev: stat.dev, ino: stat.ino }).toEqual({ dev: previous.dev, ino: previous.ino });
+        expect((await fs.readdir(fixture.root)).sort()).toEqual([".bjj-backup", relativeKey].sort());
+    });
+    it.each(["created", "reused"] as const)("atomically publishes actual bytes with an active fence (%s)", async disposition => {
+        const bytes = Buffer.from('{"synthetic":true}\n');
+        const path = `${fixture.root}/record.json`;
+        if (disposition === "reused") {
+            await expect(publishBytesNoClobber(fixture.root, "record.json", bytes)).resolves.toEqual({ disposition: "created" });
+        }
+        const previous = disposition === "reused" ? await fs.lstat(path) : undefined;
+        const { fence } = authority();
+        const assertActive = jest.fn(async () => undefined);
+        fence.assertActive = assertActive;
+        await expect(publishBytesNoClobber(fixture.root, "record.json", bytes, { effectFence: fence })).resolves.toEqual({ disposition });
+        expect(assertActive).toHaveBeenCalled();
+        expect(await fs.readFile(path)).toEqual(bytes);
+        const stat = await fs.lstat(path);
+        expect(stat.isFile()).toBe(true);
+        expect(stat.mode & 0o777).toBe(0o600);
+        expect(stat.uid).toBe(process.getuid?.());
+        expect(stat.nlink).toBe(1);
+        if (previous) expect({ dev: stat.dev, ino: stat.ino }).toEqual({ dev: previous.dev, ino: previous.ino });
+        expect((await fs.readdir(fixture.root)).sort()).toEqual([".bjj-backup", "record.json"]);
+    });
     it("blocks every public mutation before directories, temps, source pulls or renames", async () => {
         const { controller, fence } = authority();
         controller.abort("secret");

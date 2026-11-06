@@ -160,10 +160,13 @@ class ByteSource {
         this.iterator = null;
         this.carry = Buffer.alloc(0);
         try {
-            const closing = iterator?.return?.();
-            if (abandon || this.effectFence?.signal.aborted) void closing?.catch(() => undefined);
-            else await closing;
-        } catch { /* the source is abandoned either way */ }
+            const closing = (async () => iterator?.return?.())();
+            if (abandon || this.effectFence?.signal.aborted) void closing.catch(() => undefined);
+            else await awaitExecutionSignal(this.effectFence, closing);
+        } catch (error) {
+            if (isExecutionFencedError(error)) throw error;
+            // Ordinary source cleanup failures still abandon the source.
+        }
     }
 }
 
@@ -421,7 +424,9 @@ export class DriveClient {
             if (finished) return Promise.resolve();
             finished = true;
             effectFence.signal.removeEventListener("abort", abort);
-            const closing = cancel ? reader?.cancel().catch(() => undefined) : undefined;
+            const closing = cancel ? (async () => {
+                try { await reader?.cancel(); } catch { /* cancellation cannot expose source details */ }
+            })() : undefined;
             reader?.releaseLock();
             return closing ?? Promise.resolve();
         };
@@ -454,7 +459,7 @@ export class DriveClient {
             },
             return: async () => {
                 const closing = finish(true);
-                if (!effectFence.signal.aborted) await closing;
+                if (!effectFence.signal.aborted) await awaitExecutionSignal(effectFence, closing);
                 return { done: true, value: undefined };
             },
         };
@@ -493,10 +498,8 @@ export class DriveClient {
         });
         try {
             checkExecutionSignal(effectFence);
-            return await awaitExecutionSignal(effectFence, Promise.race([reader.read(), idle]), () => {
-                controller.abort();
-                void reader.cancel().catch(() => undefined);
-            });
+            // The fenced stream owns cancellation through its abort listener and finish().
+            return await awaitExecutionSignal(effectFence, Promise.race([reader.read(), idle]));
         } finally {
             clearTimeout(timer);
         }

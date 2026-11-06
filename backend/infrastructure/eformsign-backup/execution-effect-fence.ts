@@ -86,7 +86,13 @@ export async function* executionChunks<T>(source: AsyncIterable<T>, fence?: Exec
     } finally {
         if (!finished) {
             if (fenced || fence?.signal.aborted) cancel();
-            else if (!returned) await iterator.return?.();
+            else if (!returned) {
+                returned = true;
+                // Capture synchronous throws as well as asynchronous cleanup failures. The race
+                // keeps a rejection handler attached if cleanup ignores an abort after it starts.
+                const closing = (async () => iterator.return?.())();
+                await awaitExecutionSignal(fence, closing);
+            }
         }
     }
 }
