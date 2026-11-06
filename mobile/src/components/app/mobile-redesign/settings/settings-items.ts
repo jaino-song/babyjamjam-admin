@@ -8,12 +8,14 @@ import {
   Building2,
   CalendarClock,
   History,
+  Moon,
   Repeat2,
   ShieldCheck,
   UserPlus,
   type LucideIcon,
 } from "lucide-react";
 
+export const QUIET_HOURS_POLICY_ITEM_ID = "quiet-hours";
 export const DUPLICATE_SEND_POLICY_ITEM_ID = "duplicate-send-confirmation";
 export const CLIENT_REGISTRATION_POLICY_ITEM_ID = "client-registration-policy";
 export const TENANT_APPLICATION_ITEM_ID = "current-tenant";
@@ -40,6 +42,8 @@ export type SettingsListItem = {
     | "duplicate-send-policy"
     | "client-registration-policy";
   active: boolean;
+  disabled?: boolean;
+  unavailable?: boolean;
   requiresApproval: boolean;
   rows?: MessageAutomationPolicyRow[];
 };
@@ -69,10 +73,14 @@ export function buildSettingsListItems({
   policies,
   clientAutoRegistration = false,
   policyActivations,
+  quietHoursEnabled,
+  canWriteConfiguration,
 }: {
   approval: MessageSenderApprovalResponse | undefined;
   policies: MessageAutomationPolicy[] | undefined;
   clientAutoRegistration?: boolean;
+  quietHoursEnabled?: boolean;
+  canWriteConfiguration?: boolean;
   policyActivations?: Partial<Record<MessageSettingsPolicyId, boolean>>;
 }): SettingsListItem[] {
   const items: SettingsListItem[] = [];
@@ -132,6 +140,18 @@ export function buildSettingsListItems({
     },
   );
 
+  items.push({
+    id: QUIET_HOURS_POLICY_ITEM_ID,
+    title: "심야 시간 메세지 전송 금지",
+    subtitle: "SMS/LMS 전송 금지 시간과 대상, 처리 방식을 설정합니다.",
+    statusLabel: quietHoursEnabled === undefined ? "확인 불가" : getPolicyStatusLabel(quietHoursEnabled),
+    icon: Moon,
+    kind: "automation-policy",
+    active: quietHoursEnabled === true,
+    unavailable: quietHoursEnabled === undefined,
+    disabled: canWriteConfiguration === false,
+    requiresApproval: false,
+  });
   return items;
 }
 
