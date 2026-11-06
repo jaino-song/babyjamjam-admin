@@ -221,7 +221,7 @@ describe("MessageTriggerEditor", () => {
     mockPreview.mockResolvedValue({ complete: false, count: 1, recipients: [{ ruleId: "r", recipientType: "PRIMARY_EMPLOYEE", employeeId: 3, employeeScheduleId: 9, recipientName: "주제공인력", recipientPhone: "01011112222", templateKey: "CAREGIVER_SERVICE_START_NOTICE", body: "서버가 만든 본문", count: 1, scheduledFor: "2026-11-07T00:00:00Z", anchorSource: "employee_schedule.startDate", anchorDate: "2026-11-07", outcome: "ready", reason: null }, { ruleId: "r2", recipientType: "SECONDARY_EMPLOYEE", employeeId: null, employeeScheduleId: null, recipientName: null, recipientPhone: null, templateKey: "CAREGIVER_SERVICE_START_NOTICE", body: null, count: 0, scheduledFor: null, anchorSource: "employee_schedule.startDate", anchorDate: null, outcome: "skip", reason: "배정 없음" }] });
     render(<MessageTriggerEditor data-component="mobile_messages_automation_test_editor" rule={null} onClose={jest.fn()} />);
     fireEvent.change(screen.getByLabelText("규칙 이름"), { target: { value: "제공인력 안내" } });
-    fireEvent.click(screen.getByRole("button", { name: "주보조모두", exact: true }));
+    fireEvent.click(screen.getByRole("button", { name: "주보조모두" }));
     expect(screen.getByRole("button", { name: "규칙 저장" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "수신자별 미리보기" })).toBeDisabled();
     fireEvent.change(screen.getByLabelText("주 담당 제공인력 메시지 템플릿"), { target: { value: "CAREGIVER_SERVICE_START_NOTICE" } });
@@ -238,7 +238,7 @@ describe("MessageTriggerEditor", () => {
     render(<MessageTriggerEditor data-component="mobile_messages_automation_test_editor" rule={null} onClose={jest.fn()} />);
     fireEvent.change(screen.getByLabelText("규칙 이름"), { target: { value: "등록 안내" } });
     fireEvent.change(screen.getByLabelText("발송 이벤트"), { target: { value: "CLIENT_CREATED" } });
-    fireEvent.click(screen.getByRole("button", { name: "주제공인력", exact: true }));
+    fireEvent.click(screen.getByRole("button", { name: "주제공인력" }));
     expect(screen.getByRole("button", { name: "규칙 저장" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "수신자별 미리보기" })).toBeDisabled();
     expect(createRule).not.toHaveBeenCalled(); expect(mockPreview).not.toHaveBeenCalled();
