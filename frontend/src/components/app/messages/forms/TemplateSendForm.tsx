@@ -8,7 +8,7 @@ import {
 
 import { isAxiosError } from "axios";
 import { useQueryClient } from "@tanstack/react-query";
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Calendar, Loader2, Send, X } from "lucide-react";
 
 import { resolveFieldMessage } from "@babyjamjam/shared/utils/field-validation-message";
@@ -746,7 +746,7 @@ export function TemplateSendForm({
     />
   );
 
-  const getRecipientsForSubmit = () => {
+  const getRecipientsForSubmit = useCallback(() => {
     if (recipientQueue.length > 0) {
       const queuedRecipients = acceptedCurrentPhoneRef.current
         ? recipientQueue.filter((item) => item.phone !== acceptedCurrentPhoneRef.current)
@@ -761,17 +761,7 @@ export function TemplateSendForm({
     if (currentQueueItem) return [currentQueueItem];
 
     return [];
-  };
-
-  useLayoutEffect(() => {
-    if (isPreparedLinkDelivery) return;
-    latestSmsSnapshotRef.current = createSmsSubmissionSnapshot(getRecipientsForSubmit());
-    if (duplicateSubmissionRef.current && !isSmsSubmissionSnapshotCurrent(duplicateSubmissionRef.current)) {
-      duplicateSubmissionRef.current = null;
-      setDuplicateSendCandidates(null);
-      if (submissionGuardRef.current === "awaiting-confirm") submissionGuardRef.current = "idle";
-    }
-  });
+  }, [currentQueueItem, recipientQueue]);
 
   const getBranchContextError = () => {
     if (!capturedBranchIdRef.current) {
@@ -970,7 +960,7 @@ export function TemplateSendForm({
     }
   };
 
-  const createSmsSubmissionSnapshot = (recipients: RecipientQueueItem[]): SmsSubmissionSnapshot => ({
+  const createSmsSubmissionSnapshot = useCallback((recipients: RecipientQueueItem[]): SmsSubmissionSnapshot => ({
     recipients: recipients.map((recipient) => ({ ...recipient })),
     templateId,
     templateName,
@@ -998,9 +988,9 @@ export function TemplateSendForm({
       }
       return { ...payload, idempotencyKey: entry.key };
     }),
-  });
+  }), [capturedBranchId, clientId, deliveryMode, message, name, phone, requiresRecipientName, selectedClientId, templateId, templateName]);
 
-  const isSmsSubmissionSnapshotCurrent = (snapshot: SmsSubmissionSnapshot) => {
+  const isSmsSubmissionSnapshotCurrent = useCallback((snapshot: SmsSubmissionSnapshot) => {
     const latest = latestSmsSnapshotRef.current;
     return deliveryModeRef.current === "sms"
       && snapshot.deliveryMode === "sms"
@@ -1016,7 +1006,17 @@ export function TemplateSendForm({
       && snapshot.message === latest.message
       && snapshot.requiresRecipientName === latest.requiresRecipientName
       && recipientsMatch(snapshot.recipients, latest.recipients);
-  };
+  }, []);
+
+  useLayoutEffect(() => {
+    if (isPreparedLinkDelivery) return;
+    latestSmsSnapshotRef.current = createSmsSubmissionSnapshot(getRecipientsForSubmit());
+    if (duplicateSubmissionRef.current && !isSmsSubmissionSnapshotCurrent(duplicateSubmissionRef.current)) {
+      duplicateSubmissionRef.current = null;
+      setDuplicateSendCandidates(null);
+      if (submissionGuardRef.current === "awaiting-confirm") submissionGuardRef.current = "idle";
+    }
+  }, [createSmsSubmissionSnapshot, getRecipientsForSubmit, isPreparedLinkDelivery, isSmsSubmissionSnapshotCurrent, resolvedBranchId]);
 
   const sendServiceRecordLink = async () => {
     if (rejectBranchContextChange() || !templateReady) {

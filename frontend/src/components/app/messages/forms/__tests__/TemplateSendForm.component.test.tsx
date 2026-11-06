@@ -4,6 +4,8 @@
  *
  * Pure-helper unit tests live in TemplateSendForm.test.ts — do NOT merge them here.
  */
+import { randomUUID } from "node:crypto";
+
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { createProblemDetails } from "@babyjamjam/shared";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -283,6 +285,16 @@ async function queueRecipient(phone: string, name = "") {
 // ---------------------------------------------------------------------------
 // Setup / teardown
 // ---------------------------------------------------------------------------
+
+// JSDOM omits this browser API; use Node's secure UUID implementation in this suite.
+const originalRandomUUID = Object.getOwnPropertyDescriptor(globalThis.crypto, "randomUUID");
+beforeAll(() => {
+  Object.defineProperty(globalThis.crypto, "randomUUID", { configurable: true, value: randomUUID });
+});
+afterAll(() => {
+  if (originalRandomUUID) Object.defineProperty(globalThis.crypto, "randomUUID", originalRandomUUID);
+  else Reflect.deleteProperty(globalThis.crypto, "randomUUID");
+});
 
 beforeEach(() => {
   jest.clearAllMocks();
