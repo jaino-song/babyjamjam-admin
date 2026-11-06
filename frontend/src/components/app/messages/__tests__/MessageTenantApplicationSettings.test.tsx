@@ -1101,6 +1101,43 @@ describe("canonical policy draft", () => {
     fireEvent.click(screen.getByRole("button", { name: "변경 취소" }));
     expect(screen.getByLabelText("자동 작업 확인 간격")).toHaveValue(success ? 7 : 1);
   });
+  it.each(["v1", null])("keeps draft origin %s after a same-branch remote refetch and retains it on conflict", async (originVersion) => {
+    configResponse = { ...BASE_CONFIG, version: originVersion };
+    mockedPolicyApi.saveConfiguration.mockRejectedValue({ response: { status: 409 } });
+    const view = open("메시지 자동 발송");
+    fireEvent.change(screen.getByLabelText("자동 작업 확인 간격"), { target: { value: "7" } });
+    configResponse = { ...BASE_CONFIG, version: "remote-v2", configuration: { ...BASE_CONFIG.configuration, quietHours: { ...BASE_CONFIG.configuration.quietHours, enabled: true } } };
+    view.rerender(<MessageTenantApplicationSettings />);
+    fireEvent.click(screen.getByRole("button", { name: "저장" }));
+    await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("새로고침"));
+    expect(mockedPolicyApi.saveConfiguration).toHaveBeenCalledWith({ expectedVersion: originVersion, configuration: { ...BASE_CONFIG.configuration, dispatchCheckIntervalMinutes: 7 } }, "branch-1");
+    expect(mockedPolicyApi.saveConfiguration).toHaveBeenCalledTimes(1);
+    expect(screen.getByLabelText("자동 작업 확인 간격")).toHaveValue(7);
+    expect(configResponse.version).toBe("remote-v2");
+    expect(configResponse.configuration.quietHours.enabled).toBe(true);
+  });
+  it("advances newer edits only to their own successful save version", async () => {
+    let resolve!: (value: MessageAutomationPolicyConfigResponse) => void;
+    configResponse = { ...BASE_CONFIG, version: "v1" };
+    mockedPolicyApi.saveConfiguration.mockReturnValueOnce(new Promise((yes) => { resolve = yes; }));
+    const view = open("메시지 자동 발송");
+    fireEvent.change(screen.getByLabelText("자동 작업 확인 간격"), { target: { value: "7" } });
+    fireEvent.click(screen.getByRole("button", { name: "저장" }));
+    await waitFor(() => expect(mockedPolicyApi.saveConfiguration).toHaveBeenCalledTimes(1));
+    fireEvent.change(screen.getByLabelText("자동 작업 확인 간격"), { target: { value: "8" } });
+    await act(async () => resolve({ ...BASE_CONFIG, version: "own-saved-v2", configuration: { ...BASE_CONFIG.configuration, dispatchCheckIntervalMinutes: 7 } }));
+    expect(screen.getByLabelText("자동 작업 확인 간격")).toHaveValue(8);
+    configResponse = { ...BASE_CONFIG, version: "remote-v3", configuration: { ...BASE_CONFIG.configuration, dispatchCheckIntervalMinutes: 7, quietHours: { ...BASE_CONFIG.configuration.quietHours, enabled: true } } };
+    view.rerender(<MessageTenantApplicationSettings />);
+    mockedPolicyApi.saveConfiguration.mockRejectedValueOnce({ response: { status: 409 } });
+    fireEvent.click(screen.getByRole("button", { name: "저장" }));
+    await waitFor(() => expect(mockedPolicyApi.saveConfiguration).toHaveBeenCalledTimes(2));
+    expect(mockedPolicyApi.saveConfiguration).toHaveBeenNthCalledWith(1, { expectedVersion: "v1", configuration: { ...BASE_CONFIG.configuration, dispatchCheckIntervalMinutes: 7 } }, "branch-1");
+    expect(mockedPolicyApi.saveConfiguration).toHaveBeenNthCalledWith(2, { expectedVersion: "own-saved-v2", configuration: { ...BASE_CONFIG.configuration, dispatchCheckIntervalMinutes: 8 } }, "branch-1");
+    await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("새로고침"));
+    expect(screen.getByLabelText("자동 작업 확인 간격")).toHaveValue(8);
+    expect(configResponse.configuration.quietHours.enabled).toBe(true);
+  });
   it("retains a conflicting draft and sends no overwrite", async () => {
     mockedPolicyApi.saveConfiguration.mockRejectedValue({ response: { status: 409 } });
     open("메시지 자동 발송");

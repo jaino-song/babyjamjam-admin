@@ -2764,6 +2764,58 @@ describe("canonical recipient groups and read-only preview", () => {
     expect(actions.preview).not.toHaveBeenCalled();
     expect(messageDeliveryApi.sendSms).not.toHaveBeenCalled();
   });
+  it.each(["create", "update"] as const)("locks every group editor control while %s is pending and unlocks after settlement", async (operation) => {
+    const group: MessageTriggerRuleGroupView = { ...baseGroup, offsetType: "BEFORE_DAYS", offsetDays: 2, rules: baseGroup.rules.map((rule) => ({ ...rule, offsetType: "BEFORE_DAYS", offsetDays: 2 })) };
+    const actions = configure(group);
+    const mutationState = {
+      create: { isPending: false, mutateAsync: actions.create }, update: { isPending: false, mutateAsync: actions.update },
+      remove: { isPending: false, mutateAsync: actions.remove }, preview: { isPending: false, mutateAsync: actions.preview },
+    };
+    let settle!: (value: MessageTriggerRuleGroupView) => void;
+    actions[operation].mockImplementation(() => {
+      mutationState[operation].isPending = true;
+      return new Promise((resolve) => { settle = resolve; });
+    });
+    jest.mocked(useMessageTriggerGroupMutations).mockReturnValue(mutationState as unknown as ReturnType<typeof useMessageTriggerGroupMutations>);
+    const view = render(<TriggerRulesManager dataComponent={DC} />);
+    if (operation === "create") fireEvent.click(screen.getByRole("button", { name: "새 규칙" }));
+    else fireEvent.click(screen.getByText("배정 시작 안내"));
+    fireEvent.change(screen.getByLabelText("규칙 이름"), { target: { value: "저장할 초안" } });
+    fireEvent.click(screen.getByRole("button", { name: "저장" }));
+    expect(actions[operation]).toHaveBeenCalledTimes(1);
+    view.rerender(<TriggerRulesManager dataComponent={DC} />);
+    const labels = ["규칙 이름", "이벤트 기준", "발송 시점", "발송 시각 (한국 시간)", "수신 대상", "대상 고객 상태", "기준 일수", "발송 템플릿", ...(operation === "create" ? ["고객 템플릿"] : ["주제공인력 템플릿", "보조제공인력 템플릿"])];
+    for (const label of labels) expect(screen.getByLabelText(label)).toBeDisabled();
+    expect(screen.getByRole("switch", { name: "실패 시 재전송" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "저장 중..." })).toBeDisabled();
+    const saved: MessageTriggerRuleGroupView = operation === "create"
+      ? { ...group, id: "group-created", name: "저장할 초안", version: 1, recipientMode: "CLIENT", recipientTemplates: { CLIENT: "SERVICE_INFO" }, offsetDays: 7, sendTime: "09:00", rules: [{ ...group.rules[0], id: "created-child", groupId: "group-created", recipientType: "CLIENT", templateKey: "SERVICE_INFO", offsetDays: 7, sendTime: "09:00" }] }
+      : { ...group, name: "저장할 초안", version: 5 };
+    jest.mocked(useMessageTriggerRuleGroups).mockReturnValue({ data: { groups: [saved], standaloneRules: [] }, isLoading: false, refetch: jest.fn() } as unknown as ReturnType<typeof useMessageTriggerRuleGroups>);
+    await act(async () => { mutationState[operation].isPending = false; settle(saved); });
+    view.rerender(<TriggerRulesManager dataComponent={DC} />);
+    for (const label of labels) expect(screen.getByLabelText(label)).toBeEnabled();
+    expect(screen.getByRole("switch", { name: "실패 시 재전송" })).toBeEnabled();
+    expect(screen.getByLabelText("규칙 이름")).toHaveValue("저장할 초안");
+  });
+  it("preserves idle local edits when an unrelated group list refetch replaces the selected object", () => {
+    const actions = configure();
+    const view = render(<TriggerRulesManager dataComponent={DC} />);
+    fireEvent.click(screen.getByText("배정 시작 안내"));
+    fireEvent.change(screen.getByLabelText("규칙 이름"), { target: { value: "아직 저장하지 않은 이름" } });
+    fireEvent.click(screen.getByLabelText("수신 대상"));
+    fireEvent.click(screen.getByRole("option", { name: "보조제공인력" }));
+    fireEvent.click(screen.getByLabelText("보조제공인력 템플릿"));
+    fireEvent.click(screen.getByRole("option", { name: "제공 시작 안내" }));
+    jest.mocked(useMessageTriggerRuleGroups).mockReturnValue({ data: { groups: [{ ...baseGroup, recipientTemplates: { ...baseGroup.recipientTemplates }, rules: [...baseGroup.rules] }, { ...baseGroup, id: "unrelated-group", name: "다른 규칙" }], standaloneRules: [] }, isLoading: false, refetch: jest.fn() } as unknown as ReturnType<typeof useMessageTriggerRuleGroups>);
+    view.rerender(<TriggerRulesManager dataComponent={DC} />);
+    expect(screen.getByLabelText("규칙 이름")).toHaveValue("아직 저장하지 않은 이름");
+    expect(screen.getByLabelText("수신 대상")).toHaveTextContent("보조제공인력");
+    expect(screen.getByLabelText("보조제공인력 템플릿")).toHaveTextContent("제공 시작 안내");
+    expect(screen.queryByLabelText("주제공인력 템플릿")).not.toBeInTheDocument();
+    expect(actions.update).not.toHaveBeenCalled();
+    expect(actions.create).not.toHaveBeenCalled();
+  });
   it("keeps the group draft after stale409 and never retries an overwrite", async () => {
     const actions = configure(); actions.update.mockRejectedValue({ response: { status: 409 } }); openGroup();
     fireEvent.change(screen.getByLabelText("규칙 이름"), { target: { value: "남길 초안" } });

@@ -444,6 +444,7 @@ export function TriggerRulesManager({
   const branchId = useActiveBranchId();
   const currentBranchRef = useRef(branchId); currentBranchRef.current = branchId;
   const groupMutations = useMessageTriggerGroupMutations(branchId);
+  const isGroupSavePending = groupMutations.create.isPending || groupMutations.update.isPending;
   const defaultTimeQuery = useQuery({ queryKey: ["settings", "message-automation-config", branchId], queryFn: () => messagePolicyApi.getConfiguration(branchId!), enabled: !!branchId });
   const [recipientMode, setRecipientMode] = useState<MessageTriggerRecipientMode>("CLIENT");
   const [recipientTemplates, setRecipientTemplates] = useState<Partial<Record<TriggerRecipientType, TriggerTemplateKey>>>({ CLIENT: "SERVICE_INFO" });
@@ -464,6 +465,8 @@ export function TriggerRulesManager({
   const newRuleDefaultIsActiveRef = useRef(true);
   const newRuleDefaultSendTimeRef = useRef("09:00");
   const previousSelectedRuleRef = useRef<RuleSelection>(null);
+  const initializedRecipientGroupRef = useRef<string | null>(null);
+  const initializedFormGroupRef = useRef<string | null>(null);
   const component = (suffix: string) => `${dataComponent}_${suffix}`;
   const isCompactSplitLayout = splitLayoutMode === "compact";
   const copy = CHANNEL_COPY[channel];
@@ -593,6 +596,8 @@ export function TriggerRulesManager({
       : null;
   const selectedGroup = rulesQueryData?.groups.find((group) => group.id === effectiveSelectedRuleId);
   const isGroupEditor = effectiveSelectedRuleId === "new" || !!selectedGroup;
+  const groupSelectionKey = selectedGroup ? `${branchId}:${selectedGroup.id}:${selectedGroup.version}` : null;
+  const isGroupEditorLocked = isGroupEditor && isGroupSavePending;
   const isSelectedDedicatedRule = Boolean(
     selectedRule
     && !CONFIGURABLE_SMS_TRIGGER_TEMPLATE_KEYS.includes(selectedRule.templateKey),
@@ -614,6 +619,8 @@ export function TriggerRulesManager({
     setRecipientMode("CLIENT"); setRecipientTemplates({ CLIENT: "SERVICE_INFO" });
   }, [branchId]);
   useEffect(() => {
+    if (groupSelectionKey && initializedRecipientGroupRef.current === groupSelectionKey) return;
+    initializedRecipientGroupRef.current = groupSelectionKey;
     setGroupPreview(null); setGroupError(null);
     if (selectedGroup) {
       setRecipientMode(selectedGroup.recipientMode);
@@ -621,7 +628,7 @@ export function TriggerRulesManager({
     } else if (effectiveSelectedRuleId === "new") {
       setRecipientMode("CLIENT"); setRecipientTemplates({ CLIENT: "SERVICE_INFO" });
     }
-  }, [effectiveSelectedRuleId, selectedGroup]);
+  }, [effectiveSelectedRuleId, selectedGroup, groupSelectionKey]);
   const selectedSystemTemplateKey = SMS_TRIGGER_TO_SYSTEM_TEMPLATE[formState.templateKey] ?? "";
   const { data: selectedSystemTemplate } = useSystemTemplate(selectedSystemTemplateKey);
 
@@ -749,7 +756,7 @@ export function TriggerRulesManager({
 ;
   useEffect(() => { setGroupPreview(null); }, [formState, recipientMode, recipientTemplates]);
   const handleGroupPreview = async () => {
-    if (isRuleEditingBlocked || !validGroupPreview || !branchId || !isBranchContextAligned(branchId)) return;
+    if (isGroupEditorLocked || isRuleEditingBlocked || !validGroupPreview || !branchId || !isBranchContextAligned(branchId)) return;
     const input = previewInput(); const capturedBranch = branchId; const identity = JSON.stringify(input);
     setGroupError(null);
     try {
@@ -829,6 +836,8 @@ export function TriggerRulesManager({
   ]);
 
   useEffect(() => {
+    if (groupSelectionKey && initializedFormGroupRef.current === groupSelectionKey) return;
+    initializedFormGroupRef.current = groupSelectionKey;
     if (effectiveSelectedRuleId === "new") {
       setFormState((current) => {
         const isEnteringNewDraft = previousSelectedRuleRef.current !== "new";
@@ -847,6 +856,7 @@ export function TriggerRulesManager({
   }, [
     channel,
     effectiveSelectedRuleId,
+    groupSelectionKey,
     isTriggerDispatchAvailable,
     isTriggerDispatchOff,
     selectedRule,
@@ -960,7 +970,7 @@ export function TriggerRulesManager({
   };
 
   const handleCreateNew = () => {
-    if (isRuleEditingBlocked) return;
+    if (isGroupSavePending || isRuleEditingBlocked) return;
     if (!defaultTimeQuery.data || defaultTimeQuery.isError) { toast({ variant: "destructive", description: "새 규칙의 기본 설정을 불러온 뒤 다시 시도해 주세요." }); return; }
     if (!isTriggerDispatchAvailable) {
       void refreshMessageAutomationState();
@@ -977,6 +987,7 @@ export function TriggerRulesManager({
   };
 
   const handleRuleSelect = (ruleId: string) => {
+    if (isGroupSavePending) return;
     setIsRuleDetailDismissed(false);
     setSelectedRuleId(ruleId);
   };
@@ -1096,12 +1107,13 @@ export function TriggerRulesManager({
   };
 
   const handleBackToRuleList = () => {
+    if (isGroupSavePending) return;
     setIsRuleDetailDismissed(true);
     setSelectedRuleId(null);
   };
 
   const handleSave = async () => {
-    if (isRuleEditingBlocked || isSelectedSystemRule || !branchId || !isBranchContextAligned(branchId)) return;
+    if (isGroupSavePending || isRuleEditingBlocked || isSelectedSystemRule || !branchId || !isBranchContextAligned(branchId)) return;
     if (!isTriggerDispatchAvailable) {
       await refreshMessageAutomationState();
       toast({ variant: "destructive", description: PARENT_DISABLED_RETRY_MESSAGE });
@@ -1176,7 +1188,7 @@ export function TriggerRulesManager({
   };
 
   const handleDelete = async () => {
-    if (isRuleEditingBlocked || isSelectedSystemRule) return;
+    if (isGroupSavePending || isRuleEditingBlocked || isSelectedSystemRule) return;
     if (!selectedRule || selectedRule.isDefault) return;
     try {
       if (selectedGroup) await groupMutations.remove.mutateAsync(selectedGroup.id);
@@ -1236,12 +1248,12 @@ export function TriggerRulesManager({
             subtitle={copy.listSubtitle}
             tabs={RULE_STATUS_TABS.map((tab) => ({ ...tab }))}
             activeTab={statusFilter}
-            onTabChange={isTriggerRulesLocked ? undefined : (value) => setStatusFilter(value as RuleStatusFilter)}
+            onTabChange={isTriggerRulesLocked || isGroupSavePending ? undefined : (value) => setStatusFilter(value as RuleStatusFilter)}
             disabled={isTriggerRulesLocked}
             disabledOverlay={isTriggerRulesLocked ? (
               <MessageApprovalRequiredNotice dataComponent={component("trigger-rules-disabled-copy")} />
             ) : undefined}
-            headerActions={isLoading || isRuleEditingBlocked ? undefined : (
+            headerActions={isLoading || isRuleEditingBlocked || isGroupSavePending ? undefined : (
               <HeaderActionButton
                 icon={Plus}
                 label="새 규칙"
@@ -1305,7 +1317,7 @@ export function TriggerRulesManager({
                               disabled={
                                 isRuleEditingBlocked ||
                                 item.rule.isLockedByGlobal === true ||
-                                groupMutations.update.isPending ||
+                                isGroupSavePending ||
                                 updateMutation.isPending ||
                                 branchActivationMutation.isPending ||
                                 parentActivationMutation.isPending ||
@@ -1392,7 +1404,7 @@ export function TriggerRulesManager({
                       size="sm"
                       width="sm"
                       onClick={handleDelete}
-                      disabled={isDetailLoading || isRuleEditingBlocked || deleteMutation.isPending}
+                      disabled={isGroupSavePending || isDetailLoading || isRuleEditingBlocked || deleteMutation.isPending}
                       data-component={component("trigger-rules-delete")}
                     >
                       삭제
@@ -1435,7 +1447,7 @@ export function TriggerRulesManager({
                           id="trigger-rule-name"
                           label="규칙 이름"
                           value={formState.name}
-                          disabled={isSelectedSystemRule}
+                          disabled={isSelectedSystemRule || isGroupEditorLocked}
                           onValueChange={(value) =>
                             setFormState((current) => ({ ...current, name: value }))
                           }
@@ -1452,7 +1464,7 @@ export function TriggerRulesManager({
                               label: option.label,
                               value: option.value,
                             }))}
-                            disabled={isSelectedDedicatedRule}
+                            disabled={isSelectedDedicatedRule || isGroupEditorLocked}
                             onValueChange={(value) => {
                               const nextEventType = value as TriggerEventType;
                               const nextRecipient =
@@ -1477,7 +1489,7 @@ export function TriggerRulesManager({
                           label="발송 시점"
                           value={formState.offsetType}
                           options={OFFSET_OPTIONS[formState.eventType]}
-                          disabled={isSelectedDedicatedRule}
+                          disabled={isSelectedDedicatedRule || isGroupEditorLocked}
                           onValueChange={(value) => {
                             const nextOffsetType = value as TriggerOffsetType;
 
@@ -1501,7 +1513,7 @@ export function TriggerRulesManager({
                             type="time"
                             step={60}
                             value={formState.sendTime ?? "09:00"}
-                            disabled={isSelectedSystemRule}
+                            disabled={isSelectedSystemRule || isGroupEditorLocked}
                             onValueChange={(sendTime) => setFormState((current) => ({ ...current, sendTime }))}
                             dataComponent={component("trigger-rules-send-time")}
                             inputDataComponent={component("trigger-rules-send-time_input")}
@@ -1514,7 +1526,7 @@ export function TriggerRulesManager({
                             label="수신 대상"
                             value={isGroupEditor ? recipientMode : formState.recipientType}
                             options={recipientOptions}
-                            disabled={isSelectedDedicatedRule}
+                            disabled={isSelectedDedicatedRule || isGroupEditorLocked}
                             onValueChange={(value) => {
                               if (isGroupEditor) { const mode = value as MessageTriggerRecipientMode; setRecipientMode(mode); setRecipientTemplates({}); setFormState((current) => ({ ...current, recipientType: expandRecipientMode(mode)[0] })); }
                               else setFormState((current) => ({ ...current, recipientType: value as TriggerRecipientType }));
@@ -1526,7 +1538,7 @@ export function TriggerRulesManager({
 
                         {isGroupEditor ? <FormSection title="대상별 발송 템플릿" data-component={component("trigger-rules-role-templates")}>
                           {recipientMode !== "CLIENT" && ["SERVICE_START", "SERVICE_END"].includes(formState.eventType) ? <p>제공인력 발송은 배정 일정 기준입니다.</p> : null}
-                          {expandedRecipients.map((role) => <TitleSelectMolecule key={role} id={`trigger-template-${role}`} label={`${role === "CLIENT" ? "고객" : role === "PRIMARY_EMPLOYEE" ? "주제공인력" : "보조제공인력"} 템플릿`} value={recipientTemplates[role] ?? ""} options={deriveAvailableTemplates(automaticChannelTemplates, formState.eventType, role).map((template) => ({ value: template.key, label: template.name }))} onValueChange={(value) => setRecipientTemplates((current) => ({ ...current, [role]: value as TriggerTemplateKey }))} dataComponent={component(`trigger-rules-template-${role}`)} />)}
+                          {expandedRecipients.map((role) => <TitleSelectMolecule key={role} id={`trigger-template-${role}`} label={`${role === "CLIENT" ? "고객" : role === "PRIMARY_EMPLOYEE" ? "주제공인력" : "보조제공인력"} 템플릿`} value={recipientTemplates[role] ?? ""} disabled={isGroupEditorLocked} options={deriveAvailableTemplates(automaticChannelTemplates, formState.eventType, role).map((template) => ({ value: template.key, label: template.name }))} onValueChange={(value) => setRecipientTemplates((current) => ({ ...current, [role]: value as TriggerTemplateKey }))} dataComponent={component(`trigger-rules-template-${role}`)} />)}
                           {!isGroupMappingValid ? <p role="alert">각 수신 대상의 발송 템플릿을 선택해 주세요.</p> : null}
                           {groupError ? <p role="alert">{groupError}</p> : null}
                         </FormSection> : null}
@@ -1536,7 +1548,7 @@ export function TriggerRulesManager({
                           label="대상 고객 상태"
                           value={formState.targetClientStatus}
                           options={TARGET_CLIENT_STATUS_OPTIONS}
-                          disabled={isSelectedSystemRule}
+                          disabled={isSelectedSystemRule || isGroupEditorLocked}
                           onValueChange={(value) =>
                             setFormState((current) => ({
                               ...current,
@@ -1560,7 +1572,7 @@ export function TriggerRulesManager({
                               <Switch
                                 aria-label="실패 시 재전송"
                                 checked={formState.retryOnFailure ?? DEFAULT_MESSAGE_TRIGGER_RETRY_ON_FAILURE}
-                                disabled={isSelectedSystemRule}
+                                disabled={isSelectedSystemRule || isGroupEditorLocked}
                                 onCheckedChange={(checked) =>
                                   setFormState((current) => ({ ...current, retryOnFailure: checked }))
                                 }
@@ -1577,6 +1589,7 @@ export function TriggerRulesManager({
                             type="number"
                             min={1}
                             value={formState.offsetDays || 1}
+                            disabled={isGroupEditorLocked}
                             onValueChange={(value) =>
                               setFormState((current) => ({
                                 ...current,
@@ -1615,7 +1628,7 @@ export function TriggerRulesManager({
                               ),
                               value: template.key,
                             }))}
-                            disabled={isSelectedDedicatedRule}
+                            disabled={isSelectedDedicatedRule || isGroupEditorLocked}
                             onValueChange={(value) => {
                               setFormState((current) => ({ ...current, templateKey: value as TriggerTemplateKey }));
                               if (isGroupEditor) setRecipientTemplates((current) => ({ ...current, ...Object.fromEntries(expandedRecipients.filter((role) => deriveAvailableTemplates(automaticChannelTemplates, formState.eventType, role).some((template) => template.key === value)).map((role) => [role, value as TriggerTemplateKey])) }));
@@ -1672,7 +1685,7 @@ export function TriggerRulesManager({
                                     <Switch
                                       aria-label="전자문서 자동 등록 고객에게도 발송"
                                       checked={clientRegistrationPolicy?.greetingOnAutoRegistration === true}
-                                      disabled={clientRegistrationPolicy === undefined || updateClientRegistrationPolicyMutation.isPending}
+                                      disabled={isGroupEditorLocked || clientRegistrationPolicy === undefined || updateClientRegistrationPolicyMutation.isPending}
                                       onCheckedChange={(checked) => {
                                         updateClientRegistrationPolicyMutation.mutate({ greetingOnAutoRegistration: checked });
                                       }}
@@ -1749,7 +1762,7 @@ export function TriggerRulesManager({
                     className: "flex min-h-0 justify-center",
                     children: isGroupEditor ? (
                       <FormSection title="실제 수신자 미리보기" description="현재 지점의 고객과 배정 일정을 기준으로 초안을 확인합니다. 발송이나 예약을 만들지 않습니다." data-component={component("trigger-rules-server-preview")}>
-                        <Button data-component={component("trigger-rules-server-preview_action")} type="button" variant="neutral" disabled={isRuleEditingBlocked || !validGroupPreview || groupMutations.preview.isPending} onClick={() => void handleGroupPreview()}>수신자 미리보기</Button>
+                        <Button data-component={component("trigger-rules-server-preview_action")} type="button" variant="neutral" disabled={isGroupEditorLocked || isRuleEditingBlocked || !validGroupPreview || groupMutations.preview.isPending} onClick={() => void handleGroupPreview()}>수신자 미리보기</Button>
                         {!isGroupMappingValid ? <p role="alert">각 수신 대상의 발송 템플릿을 선택해 주세요.</p> : null}
                         {groupError ? <p role="alert">{groupError}</p> : null}
                         {groupPreview ? <div data-component={component("trigger-rules-server-preview_result")}>
