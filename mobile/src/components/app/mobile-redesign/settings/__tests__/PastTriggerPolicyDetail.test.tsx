@@ -29,7 +29,7 @@ function mount() {
 }
 async function interval() { return screen.findByLabelText("늦은 등록 자동 전송 간격"); }
 async function edit(value: string) { fireEvent.change(await interval(), { target: { value } }); }
-function save() { fireEvent.click(screen.getByRole("button", { name: "저장", exact: true })); }
+function save() { fireEvent.click(screen.getByRole("button", { name: "저장" })); }
 
 beforeAll(() => {
   Object.defineProperty(globalThis, "ResizeObserver", { configurable: true, value: class { observe() {} unobserve() {} disconnect() {} } });
@@ -49,8 +49,8 @@ beforeEach(() => {
 describe("actual settings route manual configuration", () => {
   it("renders policy information and only active SMS ordering rules", async () => {
     mount(); await interval();
-    expect(screen.getByText("첫 번째 규칙")).toBeInTheDocument();
-    expect(screen.getByText("두 번째 규칙")).toBeInTheDocument();
+    expect(screen.getByText(/^1\. 첫 번째 규칙$/)).toBeInTheDocument();
+    expect(screen.getByText(/^2\. 두 번째 규칙$/)).toBeInTheDocument();
     expect(screen.queryByText("inactive")).not.toBeInTheDocument();
     expect(screen.queryByText("hidden")).not.toBeInTheDocument();
     expect(screen.getByText("늦게 등록된 고객")).toBeInTheDocument();
@@ -67,13 +67,13 @@ describe("actual settings route manual configuration", () => {
     mount(); await interval();
     fireEvent.click(screen.getByRole("button", { name: "첫 번째 규칙 아래로 이동" }));
     fireEvent.click(screen.getByRole("button", { name: "두 번째 규칙 아래로 이동" }));
-    expect(screen.getByRole("button", { name: "저장", exact: true })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "저장" })).toBeDisabled();
     expect(api.updateMessageAutomationConfig).not.toHaveBeenCalled();
   });
   it.each(["0", "1441", ""])("blocks invalid interval %s including reordered drafts", async (value) => {
     mount(); await edit(value);
     fireEvent.click(screen.getByRole("button", { name: "첫 번째 규칙 아래로 이동" }));
-    expect(screen.getByRole("button", { name: "저장", exact: true })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "저장" })).toBeDisabled();
     expect(api.updateMessageAutomationConfig).not.toHaveBeenCalled();
     expect(screen.getByRole("alert")).toHaveTextContent("1~1440");
   });
@@ -82,7 +82,7 @@ describe("actual settings route manual configuration", () => {
     await waitFor(() => expect(api.updateMessageAutomationConfig).toHaveBeenCalledWith({ expectedVersion: "v1", configuration: { ...CONFIG, pastSendIntervalMinutes: Number(value) } }, "branch-1"));
   });
   it("Cancel restores persisted values without writing", async () => {
-    mount(); await edit("15"); fireEvent.click(screen.getByRole("button", { name: "취소", exact: true }));
+    mount(); await edit("15"); fireEvent.click(screen.getByRole("button", { name: "취소" }));
     expect(await interval()).toHaveValue(5); expect(api.updateMessageAutomationConfig).not.toHaveBeenCalled();
   });
   it("restores the persisted draft on failure and resets the pending state", async () => {
@@ -90,7 +90,7 @@ describe("actual settings route manual configuration", () => {
     const { client } = mount(); await edit("15"); save();
     expect(await screen.findByRole("alert")).toHaveTextContent("저장하지 못했어요");
     expect(await interval()).toHaveValue(5); expect(client.getQueryData(cacheKey)).toEqual(response());
-    expect(screen.getByRole("button", { name: "저장", exact: true })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "저장" })).toBeDisabled();
   });
   it.each(["success", "failure"])("preserves newer pending edits after %s with no queued automatic write", async (outcome) => {
     let resolve!: (value: MessageAutomationPolicyConfigResponse) => void;
@@ -101,7 +101,7 @@ describe("actual settings route manual configuration", () => {
     await edit("20");
     await act(async () => { if (outcome === "success") resolve(response({ ...CONFIG, pastSendIntervalMinutes: 15 }, "v2")); else reject(new Error("save failed")); });
     expect(await interval()).toHaveValue(20); expect(api.updateMessageAutomationConfig).toHaveBeenCalledTimes(1);
-    expect(screen.getByRole("button", { name: "저장", exact: true })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "저장" })).toBeEnabled();
   });
   it("adopts idle refetch and preserves invalid local drafts through later refetch", async () => {
     const { client } = mount(); await interval();
@@ -126,7 +126,7 @@ describe("actual settings route manual configuration", () => {
   it("retains dirty draft until item navigation is explicitly confirmed", async () => {
     mount(); await edit("15"); fireEvent.click(screen.getByText("중복 전송 확인"));
     expect(await screen.findByRole("dialog")).toBeInTheDocument(); expect(mockPush).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByRole("button", { name: "변경 취소", exact: true }));
+    fireEvent.click(screen.getByRole("button", { name: "변경 취소" }));
     expect(mockPush).toHaveBeenCalledWith("?item=duplicate-send-confirmation", { scroll: false });
     expect(api.updateMessageAutomationConfig).not.toHaveBeenCalled();
   });
@@ -139,7 +139,7 @@ describe("actual settings route manual configuration", () => {
   it("honors read-only permission", async () => {
     api.getMessageAutomationConfig.mockResolvedValue({ ...response(), permissions: { canRead: true, canWrite: false } });
     mount(); expect(await interval()).toBeDisabled();
-    expect(screen.getByRole("button", { name: "저장", exact: true })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "저장" })).toBeDisabled();
   });
   it.each([
     ["trigger-dispatch", "자동 전송 확인 간격 (분)", "1"], ["trigger-dispatch", "기본 발송 시각 (한국 시간)", "23:59"],
@@ -152,21 +152,21 @@ describe("actual settings route manual configuration", () => {
   it("blocks reclaim7, equal quiet times, and quietON without targets", async () => {
     mockItem = "trigger-job-retry"; const view = mount();
     fireEvent.change(await screen.findByLabelText("처리 중 작업 재확인 간격 (분)"), { target: { value: "7" } });
-    expect(screen.getByRole("button", { name: "저장", exact: true })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "저장" })).toBeDisabled();
     view.unmount(); mockItem = "quiet-hours"; mount();
     const start = await screen.findByLabelText("시작 시각 (한국 시간)");
     fireEvent.change(start, { target: { value: "08:00" } });
-    expect(screen.getByRole("button", { name: "저장", exact: true })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "저장" })).toBeDisabled();
     fireEvent.change(start, { target: { value: "21:00" } });
-    fireEvent.click(screen.getByRole("switch", { name: "심야 시간 메세지 전송 금지", exact: true }));
-    fireEvent.click(screen.getByRole("button", { name: "고객", exact: true }));
-    expect(screen.getByRole("button", { name: "저장", exact: true })).toBeDisabled();
+    fireEvent.click(screen.getByRole("switch", { name: "심야 시간 메세지 전송 금지" }));
+    fireEvent.click(screen.getByRole("button", { name: "고객" }));
+    expect(screen.getByRole("button", { name: "저장" })).toBeDisabled();
     expect(api.updateMessageAutomationConfig).not.toHaveBeenCalled();
   });
   it("uses multi groups and reads server preview without saving or sending", async () => {
     mockItem = "quiet-hours"; mount(); await screen.findByLabelText("시작 시각 (한국 시간)");
-    fireEvent.click(screen.getByRole("button", { name: "직원", exact: true }));
-    fireEvent.click(screen.getByRole("button", { name: "제공인력", exact: true }));
+    fireEvent.click(screen.getByRole("button", { name: "직원" }));
+    fireEvent.click(screen.getByRole("button", { name: "제공인력" }));
     fireEvent.click(screen.getByRole("button", { name: "영향 미리보기" }));
     await waitFor(() => expect(api.previewMessageAutomationConfig).toHaveBeenCalledWith({ ...CONFIG, quietHours: { ...CONFIG.quietHours, recipientGroups: ["CLIENT", "STAFF", "CAREGIVER"] } }, "branch-1", "v1"));
     expect(await screen.findByText("3건")).toBeInTheDocument(); expect(api.updateMessageAutomationConfig).not.toHaveBeenCalled();

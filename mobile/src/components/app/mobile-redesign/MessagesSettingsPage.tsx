@@ -289,7 +289,7 @@ export function MessagesSettingsPage(): ReactElement {
       triggerRulesQuery.data,
       canWriteConfig,
       configQuery.isError,
-      configuration?.quietHours.enabled,
+      configuration?.quietHours,
     ],
   );
   const selectedItem = useMemo(
