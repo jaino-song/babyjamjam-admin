@@ -4,6 +4,8 @@ import type { FileHandle } from "node:fs/promises";
 
 import { ArtifactClaim, artifactIdentity, assertCount, canonicalJson } from "domain/eformsign-backup/source-evidence";
 
+import { beforeExecutionEffect, checkExecutionSignal, executionChunks, isExecutionFencedError, type ExecutionEffectFence } from "./execution-effect-fence";
+
 export interface LocalArchiveRoot {
     rootPath: string;
     expectedDevice: number;
@@ -23,6 +25,7 @@ export type LocalArchiveResult = Readonly<{
 export interface LocalArchiveOptions {
     /** Replaces the default `${artifactId}.bin` object name. Must be `<64 lowercase hex>.pdf`. */
     objectName?: string;
+    effectFence?: ExecutionEffectFence;
 }
 
 const OBJECT_NAME_PATTERN = /^[0-9a-f]{64}\.pdf$/;
@@ -63,7 +66,7 @@ export class LocalArtifactArchive {
         if (root.dev !== expectedDevice || root.ino !== expectedInode) fail();
     }
 
-    private async verifyFile(file: FileHandle, claim: Readonly<ArtifactClaim>): Promise<void> {
+    private async verifyFile(file: FileHandle, claim: Readonly<ArtifactClaim>, effectFence?: ExecutionEffectFence): Promise<void> {
         const initial = await file.stat();
         const serviceUid = process.getuid?.();
         if (!initial.isFile() || initial.size !== claim.byteLength ||
@@ -73,7 +76,9 @@ export class LocalArtifactArchive {
         let count = 0;
         while (true) {
             await this.checkRoot();
+            checkExecutionSignal(effectFence);
             const { bytesRead } = await file.read(buffer, 0, buffer.length, count);
+            checkExecutionSignal(effectFence);
             if (bytesRead === 0) break;
             if (bytesRead > claim.byteLength - count) fail();
             hash.update(buffer.subarray(0, bytesRead));
@@ -85,7 +90,7 @@ export class LocalArtifactArchive {
             hash.digest("hex") !== claim.contentSha256) fail();
     }
 
-    private async verifyExisting(path: string, claim: Readonly<ArtifactClaim>): Promise<void> {
+    private async verifyExisting(path: string, claim: Readonly<ArtifactClaim>, effectFence?: ExecutionEffectFence): Promise<void> {
         await this.checkRoot();
         const entry = await fs.lstat(path);
         if (!entry.isFile()) fail();
@@ -93,9 +98,10 @@ export class LocalArtifactArchive {
         try {
             const stat = await file.stat();
             if (stat.dev !== entry.dev || stat.ino !== entry.ino) fail();
-            await this.verifyFile(file, claim);
+            await this.verifyFile(file, claim, effectFence);
             await this.checkRoot();
             this.before?.("file-sync");
+            checkExecutionSignal(effectFence);
             await file.sync();
             const final = await fs.lstat(path);
             if (!final.isFile() || final.dev !== stat.dev || final.ino !== stat.ino) fail();
@@ -119,6 +125,8 @@ export class LocalArtifactArchive {
             if (objectName !== undefined && (typeof objectName !== "string" || !OBJECT_NAME_PATTERN.test(objectName))) fail();
         } catch { return Object.freeze({ ok: false, error: "INVALID_INPUT" }); }
 
+        const effectFence = options?.effectFence;
+        await beforeExecutionEffect(effectFence);
         const relativeKey = objectName ?? `${artifactId}.bin`;
         const finalPath = `${this.config.rootPath}/${relativeKey}`;
         let tempPath: string | undefined;
@@ -132,6 +140,8 @@ export class LocalArtifactArchive {
             if (!root.isDirectory() || root.dev !== this.config.expectedDevice || root.ino !== this.config.expectedInode) fail();
             const candidate = `${this.config.rootPath}/.archive-${randomBytes(24).toString("hex")}.tmp`;
             await this.checkRoot();
+            await beforeExecutionEffect(effectFence);
+            checkExecutionSignal(effectFence);
             file = await fs.open(candidate, constants.O_CREAT | constants.O_EXCL | constants.O_RDWR | constants.O_NOFOLLOW, PRIVATE_FILE_MODE);
             tempPath = candidate; // Cleanup ownership begins only after exclusive creation succeeds.
             const created = await file.stat();
@@ -139,7 +149,7 @@ export class LocalArtifactArchive {
             if (!created.isFile()) fail();
             const hash = createHash("sha256");
             let count = 0;
-            for await (const chunk of source) {
+            for await (const chunk of executionChunks(source, effectFence)) {
                 if (!(chunk instanceof Uint8Array)) fail();
                 const chunkLength = chunk.byteLength;
                 assertCount(chunkLength);
@@ -157,7 +167,9 @@ export class LocalArtifactArchive {
                     while (written < piece.length) {
                         await this.checkRoot();
                         this.before?.("write");
+                        checkExecutionSignal(effectFence);
                         const result = await file.write(piece, written, piece.length - written, count + written);
+                        checkExecutionSignal(effectFence);
                         if (result.bytesWritten <= 0) fail();
                         written += result.bytesWritten;
                     }
@@ -165,20 +177,23 @@ export class LocalArtifactArchive {
                 }
             }
             if (count !== claim.byteLength || hash.digest("hex") !== claim.contentSha256) fail();
-            await this.verifyFile(file, claim);
+            await this.verifyFile(file, claim, effectFence);
             await this.checkRoot();
             this.before?.("file-sync");
+            checkExecutionSignal(effectFence);
             await file.sync();
             await file.close(); file = undefined;
             await this.checkRoot();
             const entry = await fs.lstat(tempPath);
             if (!entry.isFile() || entry.dev !== tempIdentity.dev || entry.ino !== tempIdentity.ino) fail();
             let disposition: "created" | "reused" = "created";
+            await beforeExecutionEffect(effectFence);
             this.before?.("publish");
+            checkExecutionSignal(effectFence);
             try { await fs.link(tempPath, finalPath); }
             catch (error) {
                 if (!hasCode(error, "EEXIST")) throw error;
-                await this.verifyExisting(finalPath, claim);
+                await this.verifyExisting(finalPath, claim, effectFence);
                 disposition = "reused";
             }
             await this.checkRoot();
@@ -190,9 +205,12 @@ export class LocalArtifactArchive {
             await directory.sync();
             await this.checkRoot();
             await directory.close(); directory = undefined;
+            await beforeExecutionEffect(effectFence);
             return Object.freeze({ ok: true, artifactId, relativeKey, contentSha256: claim.contentSha256,
                 byteLength: claim.byteLength, disposition });
-        } catch {
+        } catch (error) {
+            if (isExecutionFencedError(error)) throw error;
+            checkExecutionSignal(effectFence);
             // Never expose source exceptions, paths, identifiers, payloads or low-level causes.
             return Object.freeze({ ok: false, error: "ARCHIVE_FAILED" });
         } finally {
