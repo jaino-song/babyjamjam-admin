@@ -269,10 +269,14 @@ export function MessageTenantApplicationSettings() {
   const configKey = ["settings", "message-automation-config", branchId] as const;
   const configQuery = useQuery({ queryKey: configKey, queryFn: () => messagePolicyApi.getConfiguration(branchId!), enabled: !!branchId });
   const [draft, setDraft] = useState<{ branchId: string; configuration: MessageAutomationPolicyConfiguration } | null>(null);
-  const [configError, setConfigError] = useState<string | null>(null);
-  const [impact, setImpact] = useState<MessageAutomationPolicyPreviewResponse | null>(null);
+  const [configErrorResult, setConfigError] = useState<{ branchId: string; message: string } | null>(null);
+  const [impactResult, setImpact] = useState<{ branchId: string; configuration: MessageAutomationPolicyConfiguration; value: MessageAutomationPolicyPreviewResponse } | null>(null);
   const persisted = configQuery.data;
   const configuration = draft?.branchId === branchId ? draft.configuration : persisted?.configuration;
+  const configError = configErrorResult?.branchId === branchId ? configErrorResult.message : null;
+  const impact = impactResult?.branchId === branchId && JSON.stringify(impactResult.configuration) === JSON.stringify(configuration)
+    ? impactResult.value
+    : null;
   const configurationRef = useRef(configuration);
   useLayoutEffect(() => {
     branchRef.current = branchId;
@@ -286,9 +290,6 @@ export function MessageTenantApplicationSettings() {
     setDraft({ branchId, configuration: update(configuration) });
     setImpact(null); setConfigError(null);
   };
-  useEffect(() => {
-    setDraft(null); setConfigError(null); setImpact(null);
-  }, [branchId]);
   useEffect(() => {
     if (!dirty) return;
     const unload = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = ""; };
@@ -573,13 +574,13 @@ export function MessageTenantApplicationSettings() {
       if (branchRef.current !== submitted.branchId) return;
       const status = (error as { response?: { status?: number } }).response?.status;
       if (status !== 409) setDraft((current) => current?.branchId === submitted.branchId && JSON.stringify(current.configuration) === JSON.stringify(submitted.configuration) ? null : current);
-      setConfigError(status === 409 ? "다른 곳에서 설정이 변경됐어요. 변경 내용을 확인하고 새로고침해 주세요." : "설정을 저장하지 못했어요. 다시 시도해 주세요.");
+      setConfigError({ branchId: submitted.branchId, message: status === 409 ? "다른 곳에서 설정이 변경됐어요. 변경 내용을 확인하고 새로고침해 주세요." : "설정을 저장하지 못했어요. 다시 시도해 주세요." });
     },
   });
   const previewConfiguration = useMutation({
     mutationFn: async (input: { branchId: string; expectedVersion: string | null; configuration: MessageAutomationPolicyConfiguration }) => messagePolicyApi.previewConfiguration({ expectedVersion: input.expectedVersion, configuration: input.configuration }, input.branchId),
-    onSuccess: (value, submitted) => { if (branchRef.current === submitted.branchId && JSON.stringify(configurationRef.current) === JSON.stringify(submitted.configuration)) setImpact(value); },
-    onError: (_error, submitted) => { if (branchRef.current === submitted.branchId && JSON.stringify(configurationRef.current) === JSON.stringify(submitted.configuration)) setConfigError("설정 영향을 확인하지 못했어요. 다시 시도해 주세요."); },
+    onSuccess: (value, submitted) => { if (branchRef.current === submitted.branchId && JSON.stringify(configurationRef.current) === JSON.stringify(submitted.configuration)) setImpact({ branchId: submitted.branchId, configuration: submitted.configuration, value }); },
+    onError: (_error, submitted) => { if (branchRef.current === submitted.branchId && JSON.stringify(configurationRef.current) === JSON.stringify(submitted.configuration)) setConfigError({ branchId: submitted.branchId, message: "설정 영향을 확인하지 못했어요. 다시 시도해 주세요." }); },
   });
   const footerBase = selectedItem?.kind === "duplicate-send-policy" ? "desktop_messages_sections_split-layout_detail-panel-4_actions" : "desktop_messages_sections_split-layout_detail-panel-2_actions";
   const configFooter = <div data-component={footerBase} className="ml-auto flex gap-3">
