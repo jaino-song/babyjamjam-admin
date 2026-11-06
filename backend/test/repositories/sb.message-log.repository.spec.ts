@@ -1,8 +1,10 @@
 import { Logger } from "@nestjs/common";
+import { Prisma } from "@prisma/client";
 
 import { SbMessageLogRepository } from "infrastructure/database/repositories/sb.message-log.repository";
 import { PrismaService } from "infrastructure/database/prisma.service";
 import { MessageLogEntity } from "domain/entities/message-log.entity";
+import { messageQuietHoldVariables, type MessagePolicyPreviewCandidate } from "domain/message-policy-evaluator";
 
 describe("SbMessageLogRepository", () => {
     const createMockPrismaMessageLog = () => ({
@@ -46,6 +48,97 @@ describe("SbMessageLogRepository", () => {
 
     afterEach(() => {
         jest.clearAllMocks();
+    });
+
+    describe("policy candidate phone lists", () => {
+        const branchId = "11111111-1111-1111-1111-111111111111";
+        const dueAt = new Date("2026-11-03T23:00:00Z"); // 08:00 KST
+        const quietHold = { releaseAt: dueAt, originalScheduledFor: new Date("2026-11-03T13:30:00Z"),
+            policyRevision: "original-policy", reason: "message_quiet_hours:DEFER" };
+
+        it("queries individual phones once and unions every member's groups while retaining candidate fields and order", async () => {
+            const candidates: MessagePolicyPreviewCandidate[] = [
+                { dueAt, recipientPhone: " , +82 10-1234-5678 ; 010 2345 6789\n010-1234-5678;;\n ",
+                    recipientGroups: ["CAREGIVER", "CLIENT"], quietHold },
+                { dueAt: quietHold.originalScheduledFor, recipientPhone: "01023456789", recipientGroups: [] },
+                { dueAt, recipientPhone: null, recipientGroups: ["STAFF"] },
+            ];
+            queryRaw.mockResolvedValue([
+                { phone: "01023456789", group_name: "STAFF" },
+                { phone: "+82 10-1234-5678", group_name: "CLIENT" },
+                { phone: "010-2345-6789", group_name: "CAREGIVER" },
+                { phone: "01023456789", group_name: "CLIENT" },
+                { phone: "01023456789", group_name: "STAFF" },
+            ]);
+            const result = await repository.resolvePolicyRecipientGroups(branchId, candidates);
+            expect(result).toEqual([
+                { ...candidates[0], recipientGroups: ["CAREGIVER", "CLIENT", "STAFF"] },
+                { ...candidates[1], recipientGroups: ["STAFF", "CAREGIVER", "CLIENT"] }, candidates[2],
+            ]);
+            // The equality above verifies all three results; the fixture defines all three candidates.
+            expect(result[0]!.quietHold).toBe(quietHold);
+            expect(candidates[0]!.recipientGroups).toEqual(["CAREGIVER", "CLIENT"]);
+            expect(queryRaw).toHaveBeenCalledTimes(1);
+            const sql = queryRaw.mock.calls[0][0] as Prisma.Sql;
+            const numbers = ["01012345678", "821012345678", "00821012345678", "8201012345678", "008201012345678", "1012345678",
+                "01023456789", "821023456789", "00821023456789", "8201023456789", "008201023456789", "1023456789"];
+            expect(sql.values).toEqual([branchId, numbers, branchId, numbers, branchId, numbers]);
+            expect(sql.sql.match(/branch_id = \?::uuid/g)).toHaveLength(3);
+            expect(sql.sql).toContain("JOIN user_branch ub ON ub.user_id = u.id");
+            expect(sql.sql).toContain("WHERE ub.branch_id = ?::uuid AND");
+            expect(sql.sql).toContain("WHERE c.branch_id = ?::uuid AND c.deleted_at IS NULL AND");
+            expect(sql.sql).toContain("WHERE e.branch_id = ?::uuid AND e.deleted_at IS NULL AND");
+            expect(sql.sql).toContain("c.deleted_at IS NULL");
+            expect(sql.sql).toContain("e.deleted_at IS NULL");
+            expect(sql.sql.match(/= ANY\(\?::text\[\]\)/g)).toHaveLength(3);
+            expect(sql.sql).not.toMatch(/LIMIT|SELECT \*/);
+        });
+
+        it("uses the caller transaction for its exact-phone query instead of the root client", async () => {
+            const transactionQuery = jest.fn().mockResolvedValue([{ phone: "01023456789", group_name: "CAREGIVER" }]);
+            const tx = { $queryRaw: transactionQuery } as unknown as Prisma.TransactionClient;
+            await expect(repository.resolvePolicyRecipientGroups(branchId, [
+                { dueAt, recipientPhone: "01012345678;01023456789", recipientGroups: ["CLIENT"] },
+            ], tx)).resolves.toEqual([
+                { dueAt, recipientPhone: "01012345678;01023456789", recipientGroups: ["CLIENT", "CAREGIVER"] },
+            ]);
+            expect(transactionQuery).toHaveBeenCalledTimes(1);
+            expect(queryRaw).not.toHaveBeenCalled();
+        });
+
+        it("does not query arbitrary identities for empty or digit-free lists", async () => {
+            const candidates = [null, "", " , ;\n ", "malformed; + ;\n"].map((recipientPhone): MessagePolicyPreviewCandidate => (
+                { dueAt, recipientPhone, recipientGroups: ["CLIENT"] }));
+            await expect(repository.resolvePolicyRecipientGroups(branchId, candidates)).resolves.toBe(candidates);
+            await expect(repository.resolvePolicyRecipientGroups(branchId, [])).resolves.toEqual([]);
+            expect(queryRaw).not.toHaveBeenCalled();
+        });
+
+        it.each([",", ";", "\n"])("projects the full %j-separated batch even when its index contains only the first phone", async delimiter => {
+            const receiver = `01012345678${delimiter} +82 10-2345-6789`;
+            messageLogModel.findMany.mockResolvedValue([{ nextRetryAt: dueAt, recipientPhone: "01012345678", receiver,
+                clientId: null, variables: {}, triggerJob: null }]);
+            const held = { nextRetryAt: dueAt, recipientPhone: "01012345678", receiver,
+                variables: messageQuietHoldVariables(quietHold) } as unknown as MessageLogEntity;
+            const heldFinder = jest.spyOn(repository, "findQuietHeldRetries").mockResolvedValue([held]);
+            await expect(repository.findPolicyPreviewCandidates(branchId)).resolves.toEqual([
+                { dueAt, recipientPhone: receiver, recipientGroups: [] },
+                { dueAt, recipientPhone: receiver, recipientGroups: [], quietHold },
+            ]);
+            heldFinder.mockRestore();
+        });
+
+        it("preserves the indexed phone preference and receiver fallback for single recipients", async () => {
+            messageLogModel.findMany.mockResolvedValue(["01012345678", null].map(recipientPhone => ({
+                nextRetryAt: dueAt, recipientPhone, receiver: "01023456789", clientId: null, variables: {}, triggerJob: null,
+            })));
+            const heldFinder = jest.spyOn(repository, "findQuietHeldRetries").mockResolvedValue([]);
+            await expect(repository.findPolicyPreviewCandidates(branchId)).resolves.toEqual([
+                { dueAt, recipientPhone: "01012345678", recipientGroups: [] },
+                { dueAt, recipientPhone: "01023456789", recipientGroups: [] },
+            ]);
+            heldFinder.mockRestore();
+        });
     });
 
     describe("manual retry duplicate lookups", () => {
