@@ -1040,7 +1040,7 @@ describe("canonical policy draft", () => {
     expect(within(list as HTMLElement).getByText(`${count}개`)).toBeInTheDocument();
     expect(within(list as HTMLElement).getAllByText("심야 시간 메세지 전송 금지")).toHaveLength(1);
     expect(screen.queryByText("제공기록지 전송 자동화 규칙")).not.toBeInTheDocument();
-    expect(screen.queryByText("메시지 발송 기능 신청") !== null).toBe(!approved);
+    expect(within(list as HTMLElement).queryByText("메시지 발송 기능 신청") !== null).toBe(!approved);
   });
   it.each(numericFields)("validates literal bounds for %s / %s without writes", (title, label, min, max) => {
     open(title);

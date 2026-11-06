@@ -724,6 +724,11 @@ export function TriggerRulesManager({
     [automaticChannelTemplates, formState.eventType, formState.recipientType],
   );
   const expandedRecipients = expandRecipientMode(recipientMode);
+  // Common selection reflects the required mappings. A reconciled legacy template
+  // must not look selected before it has been applied to the new recipient mode.
+  const commonTemplateKey = expandedRecipients.every((role) => recipientTemplates[role] === recipientTemplates[expandedRecipients[0]])
+    ? recipientTemplates[expandedRecipients[0]] ?? ""
+    : "";
   const isGroupMappingValid = expandedRecipients.every((role) => {
     const key = recipientTemplates[role];
     return !!key && deriveAvailableTemplates(automaticChannelTemplates, formState.eventType, role).some((template) => template.key === key);
@@ -1601,7 +1606,7 @@ export function TriggerRulesManager({
                           <TitleSelectMolecule
                             id="trigger-rule-template"
                             label="발송 템플릿"
-                            value={formState.templateKey}
+                            value={isGroupEditor ? commonTemplateKey : formState.templateKey}
                             options={visibleTemplates.map((template) => ({
                               ...getTemplateOptionPresentation(
                                 template,
