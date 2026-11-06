@@ -26,6 +26,7 @@ describe("PwaNotificationSchedulerService", () => {
     };
     const clientRepository = {
         findStartingWithinDays: jest.fn(),
+        findServiceRecordAlertCandidates: jest.fn(),
         findEndingWithinDays: jest.fn(),
         findWithIncompleteContractsStartingWithinDays: jest.fn(),
         findWithoutContractSentStartingWithinDays: jest.fn(),
@@ -85,6 +86,7 @@ describe("PwaNotificationSchedulerService", () => {
             createHolidayCalendarStub(),
         );
 
+        clientRepository.findServiceRecordAlertCandidates.mockResolvedValue([]);
         branchRepository.findAllActive.mockResolvedValue([{ id: "branch-1", name: "인천점" }]);
         clientRepository.findStartingWithinDays.mockResolvedValue(
             Array.from({ length: 6 }, (_, index) => ({ id: index + 1 })),
@@ -122,6 +124,53 @@ describe("PwaNotificationSchedulerService", () => {
         // implementation — clearAllMocks only resets call history, so a global spy like
         // Date.now would otherwise leak into every test defined after it in this file.
         jest.restoreAllMocks();
+    });
+
+    it("forwards exact missing-record items and mail details from the same section", async () => {
+        jest.useFakeTimers().setSystemTime(new Date("2026-09-08T18:00:00+09:00"));
+        try {
+            clientRepository.findServiceRecordAlertCandidates.mockResolvedValue([{
+                source: {
+                    caseId: "case-1", caseVersion: 1, requiredSessionCount: 3,
+                    startDate: "2026-09-07", endDate: "2026-09-09", plannedSessions: null,
+                    client: { id: 10, branchId: "branch-1", name: "김산모", duration: 3,
+                        startDate: "2026-09-07", endDate: "2026-09-09", serviceStatus: "active" },
+                    assignments: [{ id: "assignment-1", branchId: "branch-1", serviceRecordCaseId: "case-1",
+                        scheduleId: 55, employeeId: 9, startDate: "2026-09-07", endDate: "2026-09-09",
+                        replaced: false, employeeName: "이관리", scheduleStartDate: "2026-09-07",
+                        scheduleEndDate: "2026-09-09", scheduleTerminatedAt: null,
+                        primaryEmployeeId: 9, secondaryEmployeeId: null, primaryEmployeeName: "이관리" }],
+                    sessions: [],
+                },
+                assignmentSessions: [],
+            }]);
+            await service.sendDailySummaryNotifications();
+            const section = digestCall()[2].find((item) => item.key === "missingServiceRecords");
+            const body = "김산모 산모님의 서비스 제공기록지가 작성되지 않고 있어요. 이관리 관리사님께 확인이 필요해 보여요.";
+            expect(section).toEqual({
+                key: "missingServiceRecords", label: "제공기록지 미작성",
+                description: "제공기록지 작성 확인이 필요한 산모가 1명 있어요.",
+                count: 1, unit: "명", url: "/dashboard", details: [body],
+                notificationItems: [{ title: "제공기록지 미작성", body,
+                    data: { type: "daily-summary-item", category: "service-record-missing",
+                        clientId: 10, scheduleId: 55, url: "/dashboard?clientId=10" } }],
+            });
+            expect(clientRepository.findServiceRecordAlertCandidates).toHaveBeenCalledWith("branch-1");
+        } finally {
+            jest.useRealTimers();
+        }
+    });
+
+    it("omits the missing-record section on an empty result", async () => {
+        await service.sendDailySummaryNotifications();
+        expect(digestCall()[2].some((section) => section.key === "missingServiceRecords")).toBe(false);
+    });
+
+    it("isolates a missing-record collector failure from other sections", async () => {
+        clientRepository.findServiceRecordAlertCandidates.mockRejectedValue(new Error("query failed"));
+        await service.sendDailySummaryNotifications();
+        expect(digestCall()[2].some((section) => section.key === "missingServiceRecords")).toBe(false);
+        expect(digestCall()[2].some((section) => section.key === "upcoming")).toBe(true);
     });
 
     it("should send exactly one branch-scoped digest carrying every non-empty section", async () => {
