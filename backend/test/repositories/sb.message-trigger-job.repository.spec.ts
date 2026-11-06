@@ -452,6 +452,41 @@ describe("SbMessageTriggerJobRepository", () => {
 
     describe("TIME-1 adapter contracts", () => {
         const policy = [{ branchId: "branch-1", automaticEnabled: true, retryEnabled: false, intervalMinutes: 7 }];
+        it("binds selected quiet IDs in eligible WHERE before ranking, branch LIMIT and cadence consumption", async () => {
+            const excludedJobIds: readonly string[] = ["quiet-selected", "quiet'); DROP TABLE message_trigger_job; --"];
+            queryRaw.mockResolvedValue([]);
+
+            expect(await repository.consumeDispatchSlotsAndFindDueJobs(policy, now, 1, excludedJobIds)).toEqual([]);
+
+            const query = queryRaw.mock.calls[0][0] as Prisma.Sql;
+            const sql = getSqlText(query);
+            const eligible = sql.slice(sql.indexOf("eligible AS MATERIALIZED"), sql.indexOf("branches AS MATERIALIZED"));
+            expect(eligible).toContain("row_number() OVER (PARTITION BY job.branch_id");
+            expect(eligible).toMatch(/AND job\.id NOT IN \(\s*,\s*\)/);
+            expect(eligible.indexOf("AND job.id NOT IN")).toBeGreaterThan(eligible.indexOf("WHERE job.status = 'pending'"));
+            expect(sql.indexOf("AND job.id NOT IN")).toBeLessThan(sql.indexOf("branches AS MATERIALIZED"));
+            expect(sql.indexOf("AND job.id NOT IN")).toBeLessThan(sql.indexOf("LIMIT"));
+            expect(sql.indexOf("AND job.id NOT IN")).toBeLessThan(sql.indexOf('INSERT INTO "system_setting"'));
+            expect(query.values).toEqual(expect.arrayContaining([...excludedJobIds, 1]));
+            for (const id of excludedJobIds) expect(sql).not.toContain(id);
+            expect(messageTriggerJobModel.findMany).not.toHaveBeenCalled();
+        });
+        it("preserves legacy three-argument SQL with no exclusion predicate for omitted or empty IDs", async () => {
+            queryRaw.mockResolvedValue([]);
+
+            await repository.consumeDispatchSlotsAndFindDueJobs(policy, now, 100);
+            await repository.consumeDispatchSlotsAndFindDueJobs(policy, now, 100, []);
+
+            const legacy = queryRaw.mock.calls[0][0] as Prisma.Sql;
+            const explicitEmpty = queryRaw.mock.calls[1][0] as Prisma.Sql;
+            expect(getSqlText(legacy)).not.toContain("job.id NOT IN");
+            expect(getSqlText(explicitEmpty)).toBe(getSqlText(legacy));
+            expect(explicitEmpty.values).toEqual(legacy.values);
+        });
+        it("does not query or consume cadence when selected quiet jobs fill the dispatch limit", async () => {
+            expect(await repository.consumeDispatchSlotsAndFindDueJobs(policy, now, 0, ["quiet-selected"])).toEqual([]);
+            expect(queryRaw).not.toHaveBeenCalled();
+        });
         it("binds eligibility, branch round robin and cadence CAS before the final limit", async () => {
             queryRaw.mockResolvedValue([]);
             expect(await repository.consumeDispatchSlotsAndFindDueJobs(policy, now, 100)).toEqual([]);
@@ -2993,6 +3028,64 @@ describeReal("TIME-1 real PostgreSQL cadence and reclaim fences", () => {
         ], due);
         expect(selected.map(row => row.id)).toEqual([fresh.id]);
         expect(await handle.raw.system_setting.findUnique({ where: { key: key(branches[1]!) } })).toBeNull();
+    });
+
+    describe("Phase9 selected quiet exclusions before ordinary cadence", () => {
+        beforeEach(async () => {
+            const id = `system:manual-sms:${branches[0]!}`;
+            await handle.raw.message_trigger_rule.upsert({ where: { id }, update: {}, create: {
+                id, branchId: branches[0]!, name: "Phase9 quiet cadence fixture", isActive: false,
+                eventType: "CLIENT_CREATED", offsetType: "IMMEDIATE", recipientType: "CLIENT", templateKey: "MANUAL_SMS",
+            } });
+            if (!rules.includes(id)) rules.push(id);
+        });
+        const seedQuiet = (suffix: string, minutesEarlier: number) => seed(0, suffix, {
+            ruleId: `system:manual-sms:${branches[0]!}`, templateKey: "MANUAL_SMS",
+            scheduledFor: new Date(at21.getTime() - minutesEarlier * 60_000),
+            payload: { origin: "ADMIN_DIRECT", memberId: "time1", recipientName: "Fixture", recipientPhone: "01012345678", templateVariables: {} },
+        });
+
+        it.each([0, 1])("excludes older selected quiet rows before limit 1 and consumes only ordinary branch %s cadence", async ordinaryBranch => {
+            const first = await seedQuiet("quiet-first", 2);
+            const second = await seedQuiet("quiet-second", 1);
+            const ordinary = await seed(ordinaryBranch, "ordinary-after-quiet");
+            const quiet = await repository.findDueQuietQueueJobs(eligibility(), at21, 2);
+            expect(quiet.map(job => job.id)).toEqual([first.id, second.id]);
+
+            const jobs = await repository.consumeDispatchSlotsAndFindDueJobs(eligibility(), at21, 1, quiet.map(job => job.id));
+
+            expect(jobs.map(job => job.id)).toEqual([ordinary.id]);
+            expect(await handle.raw.system_setting.findMany({ where: { key: { in: branches.map(key) } }, select: { key: true, value: true } }))
+                .toEqual([{ key: key(branches[ordinaryBranch]!), value: at21.toISOString() }]);
+            for (const row of [first, second]) {
+                expect(await handle.raw.message_trigger_job.findUniqueOrThrow({ where: { id: row.id } })).toEqual(row);
+            }
+        });
+
+        it("does not consume ordinary cadence when only an excluded quiet row is due", async () => {
+            const row = await seedQuiet("quiet-only", 1);
+            const quiet = await repository.findDueQuietQueueJobs(eligibility(), at21, 1);
+            expect(quiet.map(job => job.id)).toEqual([row.id]);
+
+            expect(await repository.consumeDispatchSlotsAndFindDueJobs(eligibility(), at21, 1, quiet.map(job => job.id))).toEqual([]);
+
+            expect(await handle.raw.system_setting.findMany({ where: { key: { in: branches.map(key) } } })).toEqual([]);
+            expect(await handle.raw.message_trigger_job.findUniqueOrThrow({ where: { id: row.id } })).toEqual(row);
+        });
+
+        it("keeps an unselected quiet candidate eligible for an ordinary slot", async () => {
+            const selected = await seedQuiet("quiet-selected", 2);
+            const remaining = await seedQuiet("quiet-remaining", 1);
+            const quiet = await repository.findDueQuietQueueJobs(eligibility(), at21, 1);
+            expect(quiet.map(job => job.id)).toEqual([selected.id]);
+
+            const jobs = await repository.consumeDispatchSlotsAndFindDueJobs(eligibility(), at21, 1, quiet.map(job => job.id));
+
+            expect(jobs.map(job => job.id)).toEqual([remaining.id]);
+            expect(await handle.raw.system_setting.findUnique({ where: { key: key(branches[0]!) } }))
+                .toMatchObject({ value: at21.toISOString() });
+            expect(await handle.raw.system_setting.findUnique({ where: { key: key(branches[1]!) } })).toBeNull();
+        });
     });
 
     it("has one concurrent cadence winner, refuses 21:06:59.999 and admits exactly 21:07", async () => {

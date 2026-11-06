@@ -147,7 +147,7 @@ export interface IMessageTriggerJobRepository {
      */
     claimNeedsSetupWithRuleFence(id: string, branchId: string | null, transaction?: Prisma.TransactionClient, processingDeadlineAt?: Date): Promise<string | null>;
     findDueDispatchBranchIds(now: Date): Promise<string[]>;
-    consumeDispatchSlotsAndFindDueJobs(eligibility: MessageDispatchBranchEligibility[], now: Date, limit?: number): Promise<MessageDispatchSelectedJob[]>;
+    consumeDispatchSlotsAndFindDueJobs(eligibility: MessageDispatchBranchEligibility[], now: Date, limit?: number, excludedJobIds?: readonly string[]): Promise<MessageDispatchSelectedJob[]>;
     reclaimWithClaimFence(job: MessageTriggerJobEntity, snapshot: MessageTriggerClaimSnapshot): Promise<boolean>;
     findDuePendingSystemScope(limit?: number): Promise<MessageTriggerJobEntity[]>;
     findStaleProcessingSystemScope(cutoff: Date, limit?: number): Promise<MessageTriggerJobEntity[]>;
