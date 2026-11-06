@@ -1,5 +1,6 @@
 import type {
   MessageAutomationPolicy,
+  MessageAutomationPolicyConfiguration,
   MessageSenderApprovalResponse,
 } from "@babyjamjam/shared/types/message";
 import {
@@ -54,6 +55,12 @@ const policies: MessageAutomationPolicy[] = [
     rows: [],
   },
 ];
+
+const configuration: MessageAutomationPolicyConfiguration = {
+  schemaVersion: 1, dispatchCheckIntervalMinutes: 7, defaultRuleSendTime: "10:10", triggerRetryIntervalMinutes: 7, processingReclaimMinutes: 10, smsRetryIntervalMinutes: 7,
+  pastExpiryHours: 96, pastSendIntervalMinutes: 7, pastRuleOrder: [], duplicateWindowHours: 96,
+  quietHours: { enabled: true, start: "22:30", end: "07:10", recipientGroups: ["CLIENT", "CAREGIVER", "STAFF"], action: "CANCEL", timezone: "Asia/Seoul" },
+};
 
 describe("buildSettingsListItems", () => {
   it("includes the tenant application only for a known unapproved state", () => {
@@ -111,6 +118,47 @@ describe("buildSettingsListItems", () => {
       rows: DUPLICATE_SEND_ROWS,
     });
   });
+  it.each<[string, string[]]>([
+    ["trigger-dispatch", ["7분마다", "96시간", "규칙별 설정 (기본 10:10 한국 시간)"]],
+    ["trigger-job-retry", ["7분 후", "10분 후"]],
+    ["sms-retry", ["7분 후"]],
+    ["past-trigger", ["예정 시각 후 96시간", "7분"]],
+  ])("derives every editable timing row and summary for %s from canonical values", (id, values) => {
+    const policy: MessageAutomationPolicy = { id, title: id, description: "유지할 설명", active: true, requiresApproval: true, rows: [{ id: "max-attempts", label: "최대 시도 횟수", value: "최대 3회" }, ...["dispatch-interval", "duplicate-window", "send-time", "retry-delay", "processing-reclaim", "grace-window", "catch-up-interval"].map((rowId) => ({ id: rowId, label: rowId, value: "오래된 값" }))] };
+    const item = buildSettingsListItems({ approval: approved, policies: [policy], configuration }).find((item) => item.id === id);
+    expect(item?.subtitle).toContain("유지할 설명");
+    expect(item?.rows).toContainEqual({ id: "max-attempts", label: "최대 시도 횟수", value: "최대 3회" });
+    expect(item).toMatchObject({ active: true, requiresApproval: true });
+    for (const value of values) {
+      expect(item?.rows?.some((row) => row.value === value)).toBe(true);
+      expect(item?.subtitle).toContain(value);
+    }
+  });
+
+  it("uses the96hour canonical duplicate window and current quiet policy", () => {
+    const items = buildSettingsListItems({ approval: approved, policies: [], configuration });
+    const duplicate = items.find((item) => item.id === DUPLICATE_SEND_POLICY_ITEM_ID);
+    expect(duplicate?.subtitle).toBe("96시간 내 같은 번호와 같은 메시지는 전송 전 확인합니다.");
+    expect(duplicate?.rows).toContainEqual({ id: "window", label: "확인 범위", value: "최근 96시간" });
+    const quiet = items.find((item) => item.id === QUIET_HOURS_POLICY_ITEM_ID);
+    expect(quiet).toMatchObject({ active: true, statusLabel: "활성", unavailable: false });
+    expect(quiet?.subtitle).toContain("22:30~07:10 (한국 시간)");
+    expect(quiet?.subtitle).toContain("고객 · 제공인력 · 직원");
+    expect(quiet?.subtitle).toContain("전송 취소");
+    expect(quiet?.rows).toContainEqual({ id: "time", label: "금지 시간", value: "22:30~07:10 (한국 시간)" });
+    expect(quiet?.rows).toContainEqual({ id: "action", label: "처리", value: "전송 취소" });
+  });
+
+  it("never invents a72hour or stale timing fallback when canonical configuration is unavailable", () => {
+    const item = buildSettingsListItems({ approval: approved, policies: [{ id: "trigger-dispatch", title: "실행", description: "승인된 자동 전송", active: true, requiresApproval: true, rows: [{ id: "dispatch-interval", label: "실행 주기", value: "5분마다" }, { id: "duplicate-window", label: "중복 확인 기간", value: "72시간" }] }] });
+    const display = JSON.stringify(item);
+    expect(display).not.toContain("72시간");
+    expect(display).not.toContain("5분마다");
+    expect(item[0].rows).toEqual(expect.arrayContaining([expect.objectContaining({ id: "dispatch-interval", value: "확인 불가" }), expect.objectContaining({ id: "duplicate-window", value: "확인 불가" })]));
+    expect(item.find((row) => row.id === DUPLICATE_SEND_POLICY_ITEM_ID)?.subtitle).toContain("불러올 수 없습니다");
+    expect(item.find((row) => row.id === QUIET_HOURS_POLICY_ITEM_ID)).toMatchObject({ unavailable: true, statusLabel: "확인 불가" });
+  });
+
 });
 
 describe("getAutomationPolicyIcon", () => {

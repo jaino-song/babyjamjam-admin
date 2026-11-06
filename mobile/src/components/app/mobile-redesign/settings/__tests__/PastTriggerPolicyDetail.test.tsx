@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import type { MessageAutomationPolicyConfigResponse, MessageAutomationPolicyConfiguration, MessageTriggerRule } from "@babyjamjam/shared/types/message";
 import MessageSettingsPage from "@/app/(shell)/messages/settings/page";
 import { settingsApi } from "@/services/api";
@@ -26,6 +26,11 @@ function mount() {
   const tree = () => <QueryClientProvider client={client}><MessageSettingsPage /></QueryClientProvider>;
   const view = render(tree());
   return { ...view, client, rerenderPage: () => view.rerender(tree()) };
+}
+function pane(view: ReturnType<typeof mount>, slot: "list-pane" | "detail-pane") {
+  const element = view.container.querySelector<HTMLElement>(`[data-slot="${slot}"]`);
+  if (!element) throw new Error(`Missing settings ${slot}`);
+  return within(element);
 }
 async function interval() { return screen.findByLabelText("늦은 등록 자동 전송 간격"); }
 async function edit(value: string) { fireEvent.change(await interval(), { target: { value } }); }
@@ -176,6 +181,46 @@ describe("actual settings route manual configuration", () => {
     act(() => { client.setQueryData(cacheKey, response({ ...CONFIG, pastSendIntervalMinutes: 9 }, "v2")); });
     expect(await interval()).toHaveValue(15); save();
     await waitFor(() => expect(api.updateMessageAutomationConfig).toHaveBeenCalledWith(expect.objectContaining({ expectedVersion: "v1" }), "branch-1"));
+  });
+
+  it("keeps the96hour duplicate summary and detail aligned through Save, refetch, and reload", async () => {
+    mockItem = "duplicate-send-confirmation";
+    const view = mount();
+    const input = await screen.findByLabelText("중복 전송 확인 범위 (시간)");
+    fireEvent.change(input, { target: { value: "96" } });
+    const summary = "96시간 내 같은 번호와 같은 메시지는 전송 전 확인합니다.";
+    expect(pane(view, "list-pane").getByText(summary)).toBeInTheDocument();
+    expect(pane(view, "detail-pane").getByText(summary)).toBeInTheDocument();
+    expect(pane(view, "detail-pane").getByText("최근 96시간")).toBeInTheDocument();
+    expect(api.updateMessageAutomationConfig).not.toHaveBeenCalled();
+    save();
+    await waitFor(() => expect(api.updateMessageAutomationConfig).toHaveBeenCalledWith({ expectedVersion: "v1", configuration: { ...CONFIG, duplicateWindowHours: 96 } }, "branch-1"));
+    await waitFor(() => expect(screen.getByRole("button", { name: "저장" })).toBeDisabled());
+    api.getMessageAutomationConfig.mockResolvedValue(response({ ...CONFIG, duplicateWindowHours: 96 }, "v3"));
+    await act(async () => { await view.client.refetchQueries({ queryKey: cacheKey }); });
+    expect(pane(view, "detail-pane").getByText("최근 96시간")).toBeInTheDocument();
+    expect(pane(view, "list-pane").getByText(summary)).toBeInTheDocument();
+    view.unmount();
+    const reloaded = mount();
+    expect(await screen.findByLabelText("중복 전송 확인 범위 (시간)")).toHaveValue(96);
+    expect(pane(reloaded, "list-pane").getByText(summary)).toBeInTheDocument();
+    expect(pane(reloaded, "detail-pane").getByText("최근 96시간")).toBeInTheDocument();
+    expect(screen.queryByText("최근 72시간")).not.toBeInTheDocument();
+    expect(api.updateMessageAutomationConfig).toHaveBeenCalledTimes(1);
+  });
+  it("shows canonical7/10 retry values and restores persisted summaries on Cancel", async () => {
+    mockItem = "trigger-job-retry";
+    api.getMessageAutomationConfig.mockResolvedValue(response({ ...CONFIG, triggerRetryIntervalMinutes: 7, processingReclaimMinutes: 10 }));
+    const view = mount();
+    expect(await screen.findByLabelText("자동 전송 재시도 간격 (분)")).toHaveValue(7);
+    expect(screen.getByLabelText("처리 중 작업 재확인 간격 (분)")).toHaveValue(10);
+    expect(pane(view, "detail-pane").getByText("7분 후")).toBeInTheDocument();
+    expect(pane(view, "detail-pane").getByText("10분 후")).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("자동 전송 재시도 간격 (분)"), { target: { value: "9" } });
+    expect(pane(view, "detail-pane").getByText("9분 후")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "취소" }));
+    expect(pane(view, "detail-pane").getByText("7분 후")).toBeInTheDocument();
+    expect(api.updateMessageAutomationConfig).not.toHaveBeenCalled();
   });
 
 });
