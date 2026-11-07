@@ -167,11 +167,15 @@ export class ServiceRecordStartDateChangeService {
             if (entries) {
                 for (const entry of entries) addDate(entry.assignmentId, entry.scheduleId, entry.serviceDate);
             } else {
-                for (const day of days) {
-                    const date = dates[(day.caseSessionIndex ?? day.sessionIndex) - 1];
-                    if (!date || day.scheduleId === null) continue;
-                    const assignment = assignments.find((candidate) => candidate.scheduleId === day.scheduleId);
-                    addDate(assignment?.id ?? null, day.scheduleId, date);
+                const scheduleBySession = new Map(days.map((day) => [
+                    day.caseSessionIndex ?? day.sessionIndex, day.scheduleId,
+                ]));
+                for (const [index, date] of dates.entries()) {
+                    // 기록된 회차의 소유자는 유지하고, 미작성 회차는 현재 활성 일정에 배정한다.
+                    const scheduleId = scheduleBySession.get(index + 1) ?? activeSchedule?.id;
+                    if (scheduleId === undefined) continue;
+                    const assignment = assignments.find((candidate) => candidate.scheduleId === scheduleId);
+                    addDate(assignment?.id ?? null, scheduleId, date);
                 }
             }
         }
