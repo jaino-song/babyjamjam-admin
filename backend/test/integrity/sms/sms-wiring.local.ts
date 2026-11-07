@@ -10,10 +10,13 @@ import { AgentAutomationDeliveryGateService } from "application/services/agent-a
 import { AgentAutomationJobAuthorityService } from "application/services/agent-automation-job-authority.service";
 import { MessageAutomationActivationService } from "application/services/message-automation-activation.service";
 import { MessageAutomationBranchLockService } from "application/services/message-automation-branch-lock.service";
+import { MessageTemplateAutomationLockService } from "application/services/message-template-automation-lock.service";
 import { MessageTriggerService } from "application/services/message-trigger.service";
 import { SmsAutomationSafeguardService } from "application/services/sms-automation-safeguard.service";
 import { SmsProviderAcceptanceService } from "application/services/sms-provider-acceptance.service";
 import type { SmsTriggerDeliveryPreparation } from "application/services/sms-trigger-delivery.service";
+import { SystemSettingService } from "application/services/system-setting.service";
+import { GetSettingUsecase, UpdateSettingUsecase } from "application/usecases/system-setting";
 import { MessageTriggerJobEntity } from "domain/entities/message-trigger-job.entity";
 import { SMS_DELIVERY_SNAPSHOT_VARIABLE } from "domain/constants/sms-delivery-snapshot";
 import type { IMessageTriggerRuleBranchOverrideRepository } from "domain/repositories/message-trigger-rule-branch-override.repository.interface";
@@ -21,6 +24,7 @@ import { PrismaService } from "infrastructure/database/prisma.service";
 import { SbMessageLogRepository } from "infrastructure/database/repositories/sb.message-log.repository";
 import { SbMessageTriggerJobRepository } from "infrastructure/database/repositories/sb.message-trigger-job.repository";
 import { SbMessageTriggerRuleRepository } from "infrastructure/database/repositories/sb.message-trigger-rule.repository";
+import { SbSystemSettingRepository } from "infrastructure/database/repositories/sb.system-setting.repository";
 
 import type { IntegrityPrisma } from "../helpers/real-db";
 
@@ -70,7 +74,6 @@ function stubCollaborators(branchId: string) {
                 throw new Error("system templates are not wired in the SMS integrity specs");
             },
         },
-        templateAutomationLock: {},
     };
 }
 
@@ -215,6 +218,11 @@ export function wireMessageTriggerService(
     const auditWriter = new AdminAuditEventWriter(service);
     const activation = new MessageAutomationActivationService(service, branchLock, auditWriter);
     const safeguard = new SmsAutomationSafeguardService(service, activation);
+    const settingRepository = new SbSystemSettingRepository(service);
+    const settings = new SystemSettingService(
+        new GetSettingUsecase(settingRepository),
+        new UpdateSettingUsecase(settingRepository),
+    );
     const stubs = stubCollaborators(branchId);
     const sourceReader = new ClientAutomationSourceReader(
         service,
@@ -242,8 +250,8 @@ export function wireMessageTriggerService(
         jobRepository,
         logRepository,
         stubs.systemTemplateService as unknown as ConstructorParameters<typeof MessageTriggerService>[6],
-        stubs.templateAutomationLock as unknown as ConstructorParameters<typeof MessageTriggerService>[7],
-        undefined,
+        new MessageTemplateAutomationLockService(service),
+        settings,
         undefined,
         activation,
         branchLock,

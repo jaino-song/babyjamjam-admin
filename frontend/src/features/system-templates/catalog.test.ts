@@ -58,6 +58,16 @@ describe("system template catalog", () => {
     });
   });
 
+  it("uses only server-provided groups and leaves old responses ungrouped", () => {
+    const items = buildSystemTemplateCatalog([
+      template({ templateKey: "CONTRACT_GUIDE", name: "계약서 작성 안내", content: "", group: "mother", groupLabel: "산모 대상" }),
+      template({ templateKey: "PROVIDER_NOTICE", name: "제공인력 안내문", content: "", group: "provider", groupLabel: "제공인력 대상" }),
+      template(),
+    ]);
+    expect(items.map((item) => item.groupLabel)).toEqual(["산모 대상", "제공인력 대상", undefined]);
+    expect(items.slice(0, 2).every((item) => item.manualSendAvailability === "disabled")).toBe(true);
+  });
+
   it("retains the eight legacy ids for existing links", () => {
     const items = buildSystemTemplateCatalog([
       template({ templateKey: "GREETING" }),

@@ -24,7 +24,8 @@ import {
 } from "domain/entities/message-trigger-job.entity";
 import { Logger } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
+import { describeReal, assertThrowawayTarget, createIntegrityPrisma, closeIntegrityPrisma, IntegrityPrisma } from "../integrity/helpers/real-db";
 import { PrismaService } from "infrastructure/database/prisma.service";
 import { SbMessageTriggerJobRepository, serviceRecordScheduleBlockerSql } from "infrastructure/database/repositories/sb.message-trigger-job.repository";
 
@@ -244,17 +245,18 @@ describe("SbMessageTriggerJobRepository", () => {
         messageTriggerJobModel.findMany.mockResolvedValue([]);
         await repository.findDuePendingSystemScope();
         expect(messageTriggerJobModel.findMany.mock.calls[0][0].where.status).toBe("pending");
+        queryRaw.mockResolvedValueOnce([]);
         await repository.findStaleProcessingSystemScope(now);
-        expect(messageTriggerJobModel.findMany.mock.calls[1][0].where.status.in).toEqual(["processing", "dispatching"]);
+        expect(getSqlText(queryRaw.mock.calls[0][0])).toContain("job.status IN ('processing', 'dispatching')");
         await repository.findUpcomingPendingByBranch("branch-1");
-        expect(messageTriggerJobModel.findMany.mock.calls[2][0].where.status.in).toEqual(["pending", "processing", "dispatching"]);
+        expect(messageTriggerJobModel.findMany.mock.calls[1][0].where.status.in).toEqual(["pending", "processing", "dispatching"]);
         messageTriggerJobModel.updateMany.mockResolvedValue({ count: 0 });
         await repository.cancelPendingOlderThan("rule-1", now, "expired");
         expect(messageTriggerJobModel.updateMany.mock.calls[0][0].where.status.in).not.toContain("needs_setup");
         queryRaw.mockResolvedValue([]);
         await repository.claimPendingWithRuleFence("job-1", "branch-1");
-        expect(getSqlText(queryRaw.mock.calls[0][0])).toContain("AND job.status = 'pending'");
-        expect(getSqlText(queryRaw.mock.calls[0][0])).not.toContain("needs_setup");
+        expect(getSqlText(queryRaw.mock.calls.at(-1)![0])).toContain("AND job.status = 'pending'");
+        expect(getSqlText(queryRaw.mock.calls.at(-1)![0])).not.toContain("needs_setup");
     });
 
     it("reschedules only a pending job in the branch whose current send time is over a minute away by the database clock", async () => {
@@ -404,6 +406,168 @@ describe("SbMessageTriggerJobRepository", () => {
         expect(messageTriggerJobModel.findMany).not.toHaveBeenCalled();
     });
 
+    // Phase7 C5: query-builder contract only; actual PostgreSQL classifications live under describeReal below.
+    it("Phase7 C5 binds only CARE wait templates and a JSON string predecessor before LIMIT", async () => {
+        queryRaw.mockResolvedValue([]);
+        const selectedAt = new Date("2026-11-05T12:06:00Z");
+        await repository.consumeDispatchSlotsAndFindDueJobs([
+            { branchId: "33000000-0000-4000-8000-000000000001", automaticEnabled: true, retryEnabled: false, intervalMinutes: 1, pastExpiryHours: 24 },
+        ], selectedAt, 100);
+        const query = queryRaw.mock.calls[0][0] as Prisma.Sql;
+        const sql = getSqlText(query);
+        const eligible = sql.slice(sql.indexOf("eligible AS MATERIALIZED"), sql.indexOf("branches AS MATERIALIZED"));
+        expect(eligible).toContain("job.attempts = 0");
+        expect(eligible).toContain("job.next_attempt_at IS NULL OR job.next_attempt_at <=");
+        expect(eligible).toContain("job.status = 'pending' AND job.scheduled_for <=");
+        expect(eligible).toContain("jsonb_typeof(job.payload #> '{catchUp,predecessorDedupeKey}') = 'string'");
+        expect(eligible).toContain("length(btrim(job.payload #>> '{catchUp,predecessorDedupeKey}',");
+        expect(query.values).toEqual(expect.arrayContaining([false, selectedAt, 100,
+            "CAREGIVER_SERVICE_START_NOTICE", "CAREGIVER_SERVICE_END_NOTICE"]));
+        expect(query.values).not.toContain("SERVICE_INFO");
+        const trimCharacters = query.values.find(value => typeof value === "string" && value.includes("\ufeff")) as string;
+        expect(trimCharacters).toBeDefined();
+        for (let code = 0; code <= 0xffff; code++) {
+            const character = String.fromCharCode(code);
+            expect(trimCharacters.includes(character)).toBe(character.trim().length === 0);
+        }
+        expect(sql.indexOf("jsonb_typeof")).toBeLessThan(sql.indexOf("LIMIT"));
+    });
+
+    it("Phase7 C6 binds persisted mixed sibling evidence before branch cadence and LIMIT", async () => {
+        queryRaw.mockResolvedValue([]); await repository.consumeDispatchSlotsAndFindDueJobs([
+            { branchId: "33000000-0000-4000-8000-000000000001", automaticEnabled: true, retryEnabled: false, intervalMinutes: 1 },
+        ], new Date("2026-11-05T12:06:00Z"));
+        const query = queryRaw.mock.calls[0][0] as Prisma.Sql; const sql = getSqlText(query);
+        const eligible = sql.slice(sql.indexOf("eligible AS MATERIALIZED"), sql.indexOf("branches AS MATERIALIZED"));
+        expect(eligible).toContain('SELECT 1 FROM "message_trigger_job" AS mixed_care');
+        expect(eligible).toContain("mixed_care.branch_id = job.branch_id AND mixed_care.client_id = job.client_id");
+        expect(eligible).toContain("mixed_care.employee_schedule_id IS NOT NULL");
+        expect(eligible).toContain("mixed_care.recipient_type IN ('PRIMARY_EMPLOYEE', 'SECONDARY_EMPLOYEE')");
+        expect(eligible).toContain("mixed_care.payload #> '{catchUp,batchId}' = job.payload #> '{catchUp,batchId}'");
+        expect(eligible).toContain("mixed_care.payload #> '{caregiverSourceSnapshot,version}' = '1'::jsonb");
+        expect(eligible).toContain("jsonb_typeof(job.payload #> '{catchUp,batchId}') = 'string'");
+        expect(eligible).not.toContain("mixed_care.status"); expect(eligible).not.toContain("is_active");
+        expect(sql.indexOf("AS mixed_care")).toBeLessThan(sql.indexOf("LIMIT"));
+    });
+
+    describe("TIME-1 adapter contracts", () => {
+        const policy = [{ branchId: "branch-1", automaticEnabled: true, retryEnabled: false, intervalMinutes: 7 }];
+        it("binds selected quiet IDs in eligible WHERE before ranking, branch LIMIT and cadence consumption", async () => {
+            const excludedJobIds: readonly string[] = ["quiet-selected", "quiet'); DROP TABLE message_trigger_job; --"];
+            queryRaw.mockResolvedValue([]);
+
+            expect(await repository.consumeDispatchSlotsAndFindDueJobs(policy, now, 1, excludedJobIds)).toEqual([]);
+
+            const query = queryRaw.mock.calls[0][0] as Prisma.Sql;
+            const sql = getSqlText(query);
+            const eligible = sql.slice(sql.indexOf("eligible AS MATERIALIZED"), sql.indexOf("branches AS MATERIALIZED"));
+            expect(eligible).toContain("row_number() OVER (PARTITION BY job.branch_id");
+            expect(eligible).toMatch(/AND job\.id NOT IN \(\s*,\s*\)/);
+            expect(eligible.indexOf("AND job.id NOT IN")).toBeGreaterThan(eligible.indexOf("WHERE job.status = 'pending'"));
+            expect(sql.indexOf("AND job.id NOT IN")).toBeLessThan(sql.indexOf("branches AS MATERIALIZED"));
+            expect(sql.indexOf("AND job.id NOT IN")).toBeLessThan(sql.indexOf("LIMIT"));
+            expect(sql.indexOf("AND job.id NOT IN")).toBeLessThan(sql.indexOf('INSERT INTO "system_setting"'));
+            expect(query.values).toEqual(expect.arrayContaining([...excludedJobIds, 1]));
+            for (const id of excludedJobIds) expect(sql).not.toContain(id);
+            expect(messageTriggerJobModel.findMany).not.toHaveBeenCalled();
+        });
+        it("preserves legacy three-argument SQL with no exclusion predicate for omitted or empty IDs", async () => {
+            queryRaw.mockResolvedValue([]);
+
+            await repository.consumeDispatchSlotsAndFindDueJobs(policy, now, 100);
+            await repository.consumeDispatchSlotsAndFindDueJobs(policy, now, 100, []);
+
+            const legacy = queryRaw.mock.calls[0][0] as Prisma.Sql;
+            const explicitEmpty = queryRaw.mock.calls[1][0] as Prisma.Sql;
+            expect(getSqlText(legacy)).not.toContain("job.id NOT IN");
+            expect(getSqlText(explicitEmpty)).toBe(getSqlText(legacy));
+            expect(explicitEmpty.values).toEqual(legacy.values);
+        });
+        it("does not query or consume cadence when selected quiet jobs fill the dispatch limit", async () => {
+            expect(await repository.consumeDispatchSlotsAndFindDueJobs(policy, now, 0, ["quiet-selected"])).toEqual([]);
+            expect(queryRaw).not.toHaveBeenCalled();
+        });
+        it("binds eligibility, branch round robin and cadence CAS before the final limit", async () => {
+            queryRaw.mockResolvedValue([]);
+            expect(await repository.consumeDispatchSlotsAndFindDueJobs(policy, now, 100)).toEqual([]);
+            const query = queryRaw.mock.calls[0][0] as Prisma.Sql;
+            const sql = getSqlText(query);
+            expect(sql.indexOf("policy.automatic_enabled OR")).toBeLessThan(sql.indexOf("LIMIT"));
+            expect(sql.indexOf("policy.retry_enabled OR")).toBeLessThan(sql.indexOf("LIMIT"));
+            expect(sql).toContain("row_number() OVER (PARTITION BY job.branch_id");
+            expect(sql).toContain("ORDER BY eligible.ordinal, branches.last_dispatch_at");
+            expect(sql).toContain("ON CONFLICT (key) DO UPDATE");
+            expect(sql).toContain("WHERE setting.value::timestamptz <=");
+            expect(query.values).toEqual(expect.arrayContaining(["branch-1", true, false, 7, 100, now.toISOString()]));
+            expect(sql).not.toContain("branch-1");
+            expect(messageTriggerJobModel.findMany).not.toHaveBeenCalled();
+        });
+        it("does not consume an empty approved branch population", async () => {
+            expect(await repository.consumeDispatchSlotsAndFindDueJobs([], now)).toEqual([]);
+            expect(queryRaw).not.toHaveBeenCalled();
+        });
+        it("keeps SQL fair ordering when materializing the selected jobs", async () => {
+            queryRaw.mockResolvedValue([{ id: "b" }, { id: "a" }]);
+            messageTriggerJobModel.findMany.mockResolvedValue([createRow({ id: "a" }), createRow({ id: "b" })]);
+            expect((await repository.consumeDispatchSlotsAndFindDueJobs(policy, now)).map(job => job.id)).toEqual(["b", "a"]);
+        });
+        it("binds separate branch expiry hours and exposes only the SQL snapshot as non-enumerable metadata", async () => {
+            const selectedAt = new Date("2026-11-03T12:00:00.000Z");
+            queryRaw.mockResolvedValue([
+                { id: "a", expired: true, expiry_anchor: new Date("2026-11-02T12:00:00.000Z"), past_expiry_hours: 24, selected_at: selectedAt },
+                { id: "b", expired: false, expiry_anchor: new Date("2026-11-02T11:59:59.999Z"), past_expiry_hours: 48, selected_at: selectedAt },
+            ]);
+            // A materialization race must not replace the anchor used by SQL.
+            messageTriggerJobModel.findMany.mockResolvedValue([
+                createRow({ id: "b", scheduledFor: new Date("2026-11-02T11:59:59.999Z") }),
+                createRow({ id: "a", scheduledFor: selectedAt }),
+            ]);
+            const jobs = await repository.consumeDispatchSlotsAndFindDueJobs([
+                { branchId: "branch-a", automaticEnabled: true, retryEnabled: false, intervalMinutes: 7, pastExpiryHours: 24 },
+                { branchId: "branch-b", automaticEnabled: true, retryEnabled: true, intervalMinutes: 3, pastExpiryHours: 48 },
+            ], selectedAt);
+            const query = queryRaw.mock.calls[0][0] as Prisma.Sql;
+            expect(query.values.slice(0, 10)).toEqual(["branch-a", true, false, 7, 24, "branch-b", true, true, 3, 48]);
+            expect(jobs.map(job => job.id)).toEqual(["a", "b"]);
+            expect(jobs[0]?.dispatchSelection).toEqual({
+                expired: true, anchor: new Date("2026-11-02T12:00:00.000Z"), pastExpiryHours: 24, selectedAt,
+            });
+            expect(jobs[1]?.dispatchSelection).toEqual({
+                expired: false, anchor: new Date("2026-11-02T11:59:59.999Z"), pastExpiryHours: 48, selectedAt,
+            });
+            expect(jobs[0]?.scheduledFor).toEqual(selectedAt);
+            expect(Object.keys(jobs[0]!)).not.toContain("dispatchSelection");
+            expect({ ...jobs[0] }).not.toHaveProperty("dispatchSelection");
+            expect(JSON.stringify(jobs)).not.toContain("dispatchSelection");
+        });
+        it("writes the supplied deadline inside the existing claim statement", async () => {
+            queryRaw.mockResolvedValue([{ claim_token: "new-token" }]);
+            const deadline = new Date("2026-07-09T00:17:00.000Z");
+            expect(await repository.claimPendingWithRuleFence("job-1", "branch-1", undefined, deadline)).toBe("new-token");
+            expect(queryRaw).toHaveBeenCalledTimes(1);
+            const query = queryRaw.mock.calls[0][0] as Prisma.Sql;
+            expect(getSqlText(query)).toContain("processing_deadline_at =");
+            expect(query.values).toContain(deadline);
+        });
+        it("CASes status, token, time and deadline while clearing the token in the same update", async () => {
+            const job = createJob();
+            job.status = "processing"; job.claimToken = "old-owner";
+            job.processingDeadlineAt = new Date("2026-07-09T00:20:00.000Z");
+            const snapshot = { status: job.status, claimToken: job.claimToken, updatedAt: job.updatedAt, processingDeadlineAt: job.processingDeadlineAt };
+            job.defer("transient", "reclaim");
+            expect(await repository.reclaimWithClaimFence(job, snapshot)).toBe(true);
+            const query = executeRaw.mock.calls[0][0] as Prisma.Sql;
+            const sql = getSqlText(query);
+            expect(sql).toContain("claim_token = NULL, processing_deadline_at = NULL");
+            expect(sql).toContain("AND job.status =");
+            expect(sql).toContain("AND job.claim_token IS NOT DISTINCT FROM");
+            expect(sql).toContain("AND job.updated_at =");
+            expect(sql).toContain("AND job.processing_deadline_at IS NOT DISTINCT FROM");
+            expect(query.values).toEqual(expect.arrayContaining(["processing", "old-owner", snapshot.updatedAt, snapshot.processingDeadlineAt]));
+            expect(messageTriggerJobModel.updateMany).not.toHaveBeenCalled();
+        });
+    });
+
     it("claimPendingWithRuleFence atomically locks the rule and claims the pending job", async () => {
         queryRaw.mockResolvedValueOnce([{ id: "job-1", claim_token: "claim-a" }]);
 
@@ -421,7 +585,7 @@ describe("SbMessageTriggerJobRepository", () => {
         expect(sqlText).toContain("RETURNING job.id, job.claim_token");
         // The ordinary claim clears the reason, so a `processing` row that carries one can only be a
         // resend claim (the stale-processing reclaim reads that as the resend mark).
-        expect(sqlText).toContain("updated_at = now(), cancel_reason = NULL FROM locked_rule");
+        expect(sqlText).toContain("updated_at = date_trunc('milliseconds', now()), processing_deadline_at = , cancel_reason = NULL FROM locked_rule");
 
         queryRaw.mockReset();
         queryRaw.mockResolvedValueOnce([]);
@@ -483,7 +647,7 @@ describe("SbMessageTriggerJobRepository", () => {
         const result = await repository.update(staleAttempt);
 
         expect(messageTriggerJobModel.updateMany).toHaveBeenCalledWith({
-            where: { ...ordinaryAutomationJobWhere(), id: staleAttempt.id, claimToken: "claim-a", branchId: "branch-1" },
+            where: { ...ordinaryAutomationJobWhere(), id: staleAttempt.id, claimToken: "claim-a", branchId: "branch-1", status: { in: ["processing", "dispatching"] }, processingDeadlineAt: null },
             data: expect.objectContaining({ claimToken: "claim-a" }),
         });
         expect(messageTriggerJobModel.update).not.toHaveBeenCalled();
@@ -1585,7 +1749,10 @@ describe("SbMessageTriggerJobRepository", () => {
                 status: { in: ["pending", "processing", "needs_setup"] },
                 clientId: null,
                 employeeScheduleId: null,
-                NOT: { ruleId: { startsWith: "agent-sms:" } },
+                NOT: [
+                    { ruleId: { startsWith: "agent-sms:" } },
+                    { ruleId: { startsWith: "system:manual-sms:" } },
+                ],
             },
             data: {
                 status: "canceled",
@@ -1722,31 +1889,18 @@ describe("SbMessageTriggerJobRepository", () => {
         });
     });
 
-    it("findStaleProcessingSystemScope queries processing and dispatching rows older than cutoff", async () => {
+    it("selects expired snapshot deadlines or legacy updatedAt+10min and preserves exact CAS clocks", async () => {
+        queryRaw.mockResolvedValueOnce([]);
         const cutoff = new Date("2026-07-09T00:10:00.000Z");
-        messageTriggerJobModel.findMany.mockResolvedValue([
-            createRow({
-                status: "processing",
-                updatedAt: new Date("2026-07-08T23:59:00.000Z"),
-            }),
-            createRow({
-                id: "job-dispatching",
-                status: "dispatching",
-                updatedAt: new Date("2026-07-08T23:58:00.000Z"),
-            }),
-        ]);
-
-        const result = await repository.findStaleProcessingSystemScope(cutoff, 10);
-
-        expect(messageTriggerJobModel.findMany).toHaveBeenCalledWith({
-            where: { ...ordinaryAutomationJobWhere(),
-                status: { in: ["processing", "dispatching"] },
-                updatedAt: { lt: cutoff },
-            },
-            orderBy: { updatedAt: "asc" },
-            take: 10,
-        });
-        expect(result.map((job) => job.status)).toEqual(["processing", "dispatching"]);
+        expect(await repository.findStaleProcessingSystemScope(cutoff, 10)).toEqual([]);
+        const query = queryRaw.mock.calls[0][0] as Prisma.Sql;
+        const sql = getSqlText(query);
+        expect(sql).toContain("job.status IN ('processing', 'dispatching')");
+        expect(sql).toContain("job.processing_deadline_at <=");
+        expect(sql).toContain("job.processing_deadline_at IS NULL AND job.updated_at <=");
+        expect(sql).toContain("job.updated_at::text AS exact_updated_at");
+        expect(sql).toContain("job.processing_deadline_at::text AS exact_deadline");
+        expect(query.values).toEqual(expect.arrayContaining([cutoff, new Date("2026-07-09T00:20:00.000Z"), 10]));
     });
 
     it("findByIdInBranch returns null when the id and branch do not both match", async () => {
@@ -1777,7 +1931,7 @@ describe("SbMessageTriggerJobRepository", () => {
         await repository.update(job);
 
         expect(messageTriggerJobModel.updateMany).toHaveBeenCalledWith({
-            where: { ...ordinaryAutomationJobWhere(), id: job.id, claimToken: "claim-a", branchId: "branch-1" },
+            where: { ...ordinaryAutomationJobWhere(), id: job.id, claimToken: "claim-a", branchId: "branch-1", status: { in: ["processing", "dispatching"] }, processingDeadlineAt: null },
             data: expect.any(Object),
         });
         expect(messageTriggerJobModel.findUnique).toHaveBeenCalledWith({
@@ -2658,5 +2812,456 @@ describe("SbMessageTriggerJobRepository b5 cancel races (statement shape)", () =
 
             expect(statements.join(" ")).not.toContain("service_record_token");
         });
+    });
+});
+
+describeReal("TIME-1 real PostgreSQL cadence and reclaim fences", () => {
+    let handle: IntegrityPrisma;
+    let repository: SbMessageTriggerJobRepository;
+    const fixture = `time1-${randomUUID()}`;
+    const branches: string[] = [];
+    const rules: string[] = [];
+    const at21 = new Date("2026-07-09T12:00:00.000Z");
+    const key = (branchId: string) => `branch:${branchId}:message_automation:last_dispatch_at`;
+    const eligibility = (automaticA = true, retryA = true) => branches.map((branchId, index) => ({
+        branchId, automaticEnabled: index === 0 ? automaticA : true,
+        retryEnabled: index === 0 ? retryA : true, intervalMinutes: 7,
+    }));
+    const seed = async (index: number, suffix: string, overrides: Partial<Prisma.message_trigger_jobUncheckedCreateInput> = {}) =>
+        handle.raw.message_trigger_job.create({ data: {
+            branchId: branches[index]!, ruleId: rules[index]!, status: "pending", scheduledFor: at21,
+            recipientType: "CLIENT", templateKey: "SERVICE_INFO", dedupeKey: `${fixture}-${suffix}`,
+            payload: { memberId: "time1", recipientName: "Fixture", recipientPhone: "01012345678", templateVariables: {} },
+            ...overrides,
+        } });
+    beforeAll(async () => {
+        assertThrowawayTarget();
+        handle = await createIntegrityPrisma();
+        repository = new SbMessageTriggerJobRepository(handle.service);
+        for (const suffix of ["a", "b"]) {
+            const branch = await handle.raw.branch.create({ data: { name: "TIME-1 fixture", slug: `${fixture}-${suffix}` } });
+            branches.push(branch.id);
+            const rule = await handle.raw.message_trigger_rule.create({ data: {
+                branchId: branch.id, name: "TIME-1 fixture", eventType: "SERVICE_START", offsetType: "BEFORE_DAYS",
+                recipientType: "CLIENT", templateKey: "SERVICE_INFO",
+            } });
+            rules.push(rule.id);
+        }
+    });
+    afterEach(async () => {
+        if (!handle) return;
+        await handle.raw.message_trigger_job.deleteMany({ where: { branchId: { in: branches } } });
+        await handle.raw.system_setting.deleteMany({ where: { key: { in: branches.map(key) } } });
+    });
+    afterAll(async () => {
+        if (!handle) return;
+        try {
+            await handle.raw.message_trigger_job.deleteMany({ where: { branchId: { in: branches } } });
+            await handle.raw.system_setting.deleteMany({ where: { key: { in: branches.map(key) } } });
+            await handle.raw.message_trigger_rule.deleteMany({ where: { id: { in: rules } } });
+            await handle.raw.branch.deleteMany({ where: { id: { in: branches } } });
+        } finally {
+            await closeIntegrityPrisma(handle);
+        }
+    });
+
+    it("orphan cleanup cancels ordinary live orphans while preserving manual/agent holders, terminal jobs and other branches", async () => {
+        const manualRule = await handle.raw.message_trigger_rule.create({ data: {
+            id: `system:manual-sms:${branches[0]!}`, branchId: branches[0]!, name: "Manual orphan regression",
+            eventType: "CLIENT_CREATED", offsetType: "IMMEDIATE", recipientType: "CLIENT", templateKey: "MANUAL_SMS",
+            isActive: false, groupId: null, retryOnFailure: false,
+        } });
+        rules.push(manualRule.id);
+        const agentRule = await handle.raw.message_trigger_rule.create({ data: {
+            id: `agent-sms:${fixture}`, branchId: branches[0]!, name: "Agent orphan regression",
+            eventType: "CLIENT_CREATED", offsetType: "IMMEDIATE", recipientType: "CLIENT", templateKey: "SERVICE_INFO",
+        } });
+        rules.push(agentRule.id);
+        const manual = await seed(0, "orphan-manual", { ruleId: manualRule.id, templateKey: "MANUAL_SMS",
+            recipientType: "PRIMARY_EMPLOYEE", payload: { origin: "ADMIN_DIRECT", employeeId: 8 }, nextAttemptAt: at21 });
+        const agent = await seed(0, "orphan-agent", { ruleId: agentRule.id });
+        const terminal = await seed(0, "orphan-terminal", { status: "sent" });
+        const otherBranch = await seed(1, "orphan-other-branch");
+        const orphans = await Promise.all((["pending", "processing", "needs_setup"] as const)
+            .map(status => seed(0, `orphan-${status}`, {
+                status,
+                ...(status === "processing" ? { claimToken: "orphan-processing-owner" } : {}),
+            })));
+
+        expect(await repository.cancelOrphanedPending("Related client or schedule deleted", branches[0])).toBe(3);
+        for (const row of [manual, agent, terminal, otherBranch]) {
+            expect(await handle.raw.message_trigger_job.findUniqueOrThrow({ where: { id: row.id } })).toEqual(row);
+        }
+        for (const row of orphans) {
+            expect(await handle.raw.message_trigger_job.findUniqueOrThrow({ where: { id: row.id } }))
+                .toMatchObject({ status: "canceled", cancelReason: "Related client or schedule deleted", claimToken: null });
+        }
+        expect(await repository.cancelOrphanedPending("Related client or schedule deleted")).toBe(1);
+        expect(await handle.raw.message_trigger_job.findUniqueOrThrow({ where: { id: otherBranch.id } })).toMatchObject({ status: "canceled" });
+        for (const row of [manual, agent, terminal]) {
+            expect(await handle.raw.message_trigger_job.findUniqueOrThrow({ where: { id: row.id } })).toEqual(row);
+        }
+    });
+
+    // Phase7 C6: same existing PostgreSQL guard and outer cleanup; no runtime DB in the worker.
+    describe("Phase7 C6 mixed CLIENT SQL wait classification", () => {
+        let clients: number[]; let employeeId: number; let scheduleId: number; let careRuleId: string;
+        beforeEach(async () => {
+            clients = [];
+            for (const name of ["C6 target", "C6 other client"]) {
+                const client = await handle.raw.client.create({ data: { name, voucherClient: false, branchId: branches[0]! } }); clients.push(client.id);
+            }
+            const employee = await handle.raw.employee.create({ data: { name: "C6 employee", phone: "01000000011", workArea: [], grade: "fixture", branchId: branches[0]! } }); employeeId = employee.id;
+            const schedule = await handle.raw.employee_schedule.create({ data: { branchId: branches[0]!, clientId: clients[0]!, primaryEmployeeId: employeeId,
+                workAddress: "synthetic", startDate: new Date("2026-11-05T00:00:00Z"), endDate: new Date("2026-11-20T00:00:00Z") } }); scheduleId = schedule.id;
+            const rule = await handle.raw.message_trigger_rule.create({ data: { branchId: branches[0]!, name: "C6 inactive CARE history", isActive: false,
+                eventType: "SERVICE_START", offsetType: "SAME_DAY", recipientType: "PRIMARY_EMPLOYEE", templateKey: "CAREGIVER_SERVICE_START_NOTICE" } }); careRuleId = rule.id; rules.push(rule.id);
+        });
+        afterEach(async () => {
+            await handle.raw.message_trigger_job.deleteMany({ where: { branchId: { in: branches } } });
+            if (scheduleId) await handle.raw.employee_schedule.deleteMany({ where: { id: scheduleId } });
+            if (clients?.length) await handle.raw.client.deleteMany({ where: { id: { in: clients } } });
+            if (employeeId) await handle.raw.employee.deleteMany({ where: { id: employeeId } });
+        });
+        const payload = (batchId: string, predecessor: Prisma.InputJsonValue | null = "preceding-client") => ({ memberId: "c6", recipientName: "Fixture", recipientPhone: "01000000007", templateVariables: {},
+            catchUp: { batchId, sequence: 2, intervalMinutes: 3, originalScheduledFor: "2026-11-05T00:00:00.000Z", predecessorDedupeKey: predecessor } });
+        const clientWait = (batchId: string) => ({ clientId: clients[0]!, recipientType: "CLIENT", templateKey: "INFO", employeeScheduleId: null,
+            scheduledFor: new Date("2026-11-05T12:03:00Z"), nextAttemptAt: new Date("2026-11-05T12:06:00Z"), attempts: 0, payload: payload(batchId) });
+        const sibling = (batchId: string) => ({ clientId: clients[0]!, ruleId: careRuleId, employeeScheduleId: scheduleId, recipientType: "PRIMARY_EMPLOYEE", templateKey: "CAREGIVER_SERVICE_START_NOTICE",
+            status: "canceled", canceledAt: new Date("2026-11-05T12:03:00Z"), scheduledFor: new Date("2026-11-05T12:09:00Z"),
+            payload: { ...payload(batchId), catchUp: { ...payload(batchId).catchUp, sequence: 3 }, caregiverSourceSnapshot: { version: 1 } } });
+        it.each([false, true])("admits actual downstream CARE-backed CLIENT wait with retry=%s and preserves failure policy", async retryEnabled => {
+            const batch = `client:${clients[0]}:2026-11-05T12:00:00.000Z`;
+            const care = await seed(0, `c6-downstream-${retryEnabled}`, sibling(batch));
+            const wait = await seed(0, `c6-wait-${retryEnabled}`, clientWait(batch));
+            const failureJob = MessageTriggerJobEntity.create({ branchId: branches[0]!, ruleId: rules[0]!, clientId: clients[0]!, recipientType: MessageTriggerRecipientType.CLIENT,
+                templateKey: MessageTriggerTemplateKey.INFO, dedupeKey: "actual-failure", scheduledFor: new Date("2026-11-05T12:03:00Z"), payload: { ...payload(batch), catchUp: { ...payload(batch).catchUp, predecessorDedupeKey: "preceding-client" } } }); failureJob.defer("transient", "synthetic failure"); expect(failureJob.attempts).toBe(1);
+            const failure = await seed(0, `c6-failure-${retryEnabled}`, { ...clientWait(batch), attempts: failureJob.attempts });
+            const policy = [{ branchId: branches[0]!, automaticEnabled: true, retryEnabled, intervalMinutes: 1 }];
+            expect(await repository.consumeDispatchSlotsAndFindDueJobs(policy, new Date("2026-11-05T12:05:59.999Z"))).toEqual([]);
+            const selected = await repository.consumeDispatchSlotsAndFindDueJobs(policy, new Date("2026-11-05T12:06:00Z"));
+            expect(selected.map(row => row.id).sort()).toEqual((retryEnabled ? [wait.id, failure.id] : [wait.id]).sort());
+            expect(await handle.raw.message_trigger_job.findUnique({ where: { id: care.id } })).toEqual(care);
+            expect(await handle.raw.message_trigger_job.findUnique({ where: { id: wait.id } })).toEqual(wait);
+        });
+        it("refuses missing/cross-scope/malformed/future mixed evidence with retry OFF", async () => {
+            for (const [index, kind] of ["missing", "branch", "client", "batch", "snapshot", "recipient", "template", "schedule", "metadata", "blank", "numeric", "future", "future canonical"].entries()) {
+                const batch = `client:${clients[0]}:${new Date(Date.UTC(2026, 10, 5, 11, index)).toISOString()}`;
+                const target: Prisma.message_trigger_jobUncheckedCreateInput = { branchId: branches[0]!, ruleId: rules[0]!, dedupeKey: `${fixture}-c6-negative-${kind}`, ...clientWait(batch) };
+                const care: Prisma.message_trigger_jobUncheckedCreateInput = { branchId: branches[0]!, dedupeKey: `${fixture}-c6-negative-care-${kind}`, ...sibling(batch) };
+                if (kind === "branch") care.branchId = branches[1]!;
+                if (kind === "client") care.clientId = clients[1]!;
+                if (kind === "batch") care.payload = sibling("different-batch").payload;
+                if (kind === "snapshot") care.payload = { ...payload(batch), caregiverSourceSnapshot: { version: "1" } };
+                if (kind === "recipient") care.recipientType = "CLIENT";
+                if (kind === "template") care.templateKey = "INFO";
+                if (kind === "schedule") care.employeeScheduleId = null;
+                if (kind === "metadata") target.payload = payload(batch, {});
+                if (kind === "blank") target.payload = payload(" \t");
+                if (kind === "numeric") target.payload = { ...payload(batch), catchUp: { ...payload(batch).catchUp, batchId: 12 } };
+                if (kind === "future") target.nextAttemptAt = new Date("2026-11-05T12:06:00.001Z");
+                if (kind === "future canonical") target.scheduledFor = new Date("2026-11-05T12:06:00.001Z");
+                if (kind !== "missing") await handle.raw.message_trigger_job.create({ data: care });
+                await handle.raw.message_trigger_job.create({ data: target });
+            }
+            const policy = [{ branchId: branches[0]!, automaticEnabled: true, retryEnabled: false, intervalMinutes: 1 }];
+            expect(await repository.consumeDispatchSlotsAndFindDueJobs(policy, new Date("2026-11-05T12:06:00Z"))).toEqual([]);
+            expect(await handle.raw.system_setting.findUnique({ where: { key: key(branches[0]!) } })).toBeNull();
+        });
+    });
+
+    // Phase7 C5 real SQL: Main executes this existing throwaway-DB guard on the committed candidate.
+    it.each([false, true])("Phase7 C5 SQL admits due unattempted CARE waits with retry=%s and preserves failure policy", async retryEnabled => {
+        const due = new Date("2026-11-05T12:06:00Z");
+        const careRule = await handle.raw.message_trigger_rule.create({ data: {
+            branchId: branches[0]!, name: "C5 CARE fixture", eventType: "SERVICE_START", offsetType: "SAME_DAY",
+            recipientType: "PRIMARY_EMPLOYEE", templateKey: "CAREGIVER_SERVICE_START_NOTICE",
+        } });
+        rules.push(careRule.id);
+        const payload = { memberId: "c5", recipientName: "Fixture", recipientPhone: "01000000011", templateVariables: {},
+            catchUp: { batchId: "client:7:2026-11-05T12:00:00.000Z", sequence: 2, intervalMinutes: 3,
+                originalScheduledFor: "2026-11-05T00:00:00.000Z", predecessorDedupeKey: `${fixture}-completed-secondary` } };
+        const base = { ruleId: careRule.id, scheduledFor: new Date("2026-11-05T12:03:00Z"), nextAttemptAt: due,
+            attempts: 0, recipientType: "PRIMARY_EMPLOYEE", templateKey: "CAREGIVER_SERVICE_START_NOTICE", payload };
+        const start = await seed(0, `c5-start-${retryEnabled}`, base);
+        const end = await seed(0, `c5-end-${retryEnabled}`, { ...base, templateKey: "CAREGIVER_SERVICE_END_NOTICE" });
+        const transient = MessageTriggerJobEntity.create({ branchId: branches[0]!, ruleId: careRule.id,
+            scheduledFor: new Date("2026-11-05T12:03:00Z"), recipientType: MessageTriggerRecipientType.PRIMARY_EMPLOYEE,
+            templateKey: MessageTriggerTemplateKey.CAREGIVER_SERVICE_START_NOTICE, dedupeKey: "c5-actual-failure", payload });
+        transient.defer("transient", "synthetic provider rejection");
+        expect(transient.attempts).toBe(1);
+        const failure = await seed(0, `c5-failure-${retryEnabled}`, { ...base, attempts: transient.attempts });
+        const policy = [{ branchId: branches[0]!, automaticEnabled: true, retryEnabled, intervalMinutes: 1, pastExpiryHours: 24 }];
+        expect(await repository.consumeDispatchSlotsAndFindDueJobs(policy, new Date("2026-11-05T12:05:59.999Z"))).toEqual([]);
+        expect(await handle.raw.system_setting.findUnique({ where: { key: key(branches[0]!) } })).toBeNull();
+        const selected = await repository.consumeDispatchSlotsAndFindDueJobs(policy, due);
+        expect(selected.map(row => row.id).sort()).toEqual((retryEnabled ? [start.id, end.id, failure.id] : [start.id, end.id]).sort());
+        expect(await handle.raw.message_trigger_job.findUnique({ where: { id: start.id } })).toMatchObject({
+            status: "pending", scheduledFor: new Date("2026-11-05T12:03:00Z"), nextAttemptAt: due, attempts: 0, dedupeKey: start.dedupeKey, payload,
+        });
+        expect(await handle.raw.message_trigger_job.findUnique({ where: { id: failure.id } })).toMatchObject({ attempts: 1, status: "pending", nextAttemptAt: due });
+    });
+
+    it("Phase7 C5 SQL refuses malformed/nonCARE/future/canceled/cross-branch wait exceptions with retry OFF", async () => {
+        const due = new Date("2026-11-05T12:06:00Z");
+        const careRule = await handle.raw.message_trigger_rule.create({ data: {
+            branchId: branches[0]!, name: "C5 negative CARE fixture", eventType: "SERVICE_START", offsetType: "SAME_DAY",
+            recipientType: "PRIMARY_EMPLOYEE", templateKey: "CAREGIVER_SERVICE_START_NOTICE",
+        } }); rules.push(careRule.id);
+        const payload = (predecessorDedupeKey: Prisma.InputJsonValue | null) => ({ memberId: "c5", recipientName: "Fixture", recipientPhone: "01000000011", templateVariables: {},
+            catchUp: { batchId: "client:7:2026-11-05T12:00:00.000Z", sequence: 2, intervalMinutes: 3,
+                originalScheduledFor: "2026-11-05T00:00:00.000Z", predecessorDedupeKey } });
+        const base = { ruleId: careRule.id, scheduledFor: new Date("2026-11-05T12:03:00Z"), nextAttemptAt: due, attempts: 0,
+            recipientType: "PRIMARY_EMPLOYEE", templateKey: "CAREGIVER_SERVICE_START_NOTICE", payload: payload("completed-secondary") };
+        for (const [index, predecessor] of [12, {}, null, "", " \t\n\r\v\f\u00a0\u3000\ufeff"].entries()) {
+            await seed(0, `c5-malformed-${index}`, { ...base, payload: payload(predecessor) });
+        }
+        await seed(0, "c5-no-metadata", { ...base, payload: {} });
+        await seed(0, "c5-client", { ...base, templateKey: "SERVICE_INFO", recipientType: "CLIENT" });
+        await seed(0, "c5-future-eligibility", { ...base, nextAttemptAt: new Date("2026-11-05T12:06:00.001Z") });
+        await seed(0, "c5-future-canonical", { ...base, scheduledFor: new Date("2026-11-05T12:06:00.001Z") });
+        await seed(0, "c5-canceled", { ...base, status: "canceled", canceledAt: due });
+        await seed(1, "c5-cross-branch", { ...base, ruleId: rules[1]! });
+        const fresh = await seed(0, "c5-fresh-client", { scheduledFor: new Date("2026-11-05T12:03:00Z") });
+        const selected = await repository.consumeDispatchSlotsAndFindDueJobs([
+            { branchId: branches[0]!, automaticEnabled: true, retryEnabled: false, intervalMinutes: 1, pastExpiryHours: 24 },
+        ], due);
+        expect(selected.map(row => row.id)).toEqual([fresh.id]);
+        expect(await handle.raw.system_setting.findUnique({ where: { key: key(branches[1]!) } })).toBeNull();
+    });
+
+    describe("Phase9 selected quiet exclusions before ordinary cadence", () => {
+        beforeEach(async () => {
+            const id = `system:manual-sms:${branches[0]!}`;
+            await handle.raw.message_trigger_rule.upsert({ where: { id }, update: {}, create: {
+                id, branchId: branches[0]!, name: "Phase9 quiet cadence fixture", isActive: false,
+                eventType: "CLIENT_CREATED", offsetType: "IMMEDIATE", recipientType: "CLIENT", templateKey: "MANUAL_SMS",
+            } });
+            if (!rules.includes(id)) rules.push(id);
+        });
+        const seedQuiet = (suffix: string, minutesEarlier: number) => seed(0, suffix, {
+            ruleId: `system:manual-sms:${branches[0]!}`, templateKey: "MANUAL_SMS",
+            scheduledFor: new Date(at21.getTime() - minutesEarlier * 60_000),
+            payload: { origin: "ADMIN_DIRECT", memberId: "time1", recipientName: "Fixture", recipientPhone: "01012345678", templateVariables: {} },
+        });
+
+        it.each([0, 1])("excludes older selected quiet rows before limit 1 and consumes only ordinary branch %s cadence", async ordinaryBranch => {
+            const first = await seedQuiet("quiet-first", 2);
+            const second = await seedQuiet("quiet-second", 1);
+            const ordinary = await seed(ordinaryBranch, "ordinary-after-quiet");
+            const quiet = await repository.findDueQuietQueueJobs(eligibility(), at21, 2);
+            expect(quiet.map(job => job.id)).toEqual([first.id, second.id]);
+
+            const jobs = await repository.consumeDispatchSlotsAndFindDueJobs(eligibility(), at21, 1, quiet.map(job => job.id));
+
+            expect(jobs.map(job => job.id)).toEqual([ordinary.id]);
+            expect(await handle.raw.system_setting.findMany({ where: { key: { in: branches.map(key) } }, select: { key: true, value: true } }))
+                .toEqual([{ key: key(branches[ordinaryBranch]!), value: at21.toISOString() }]);
+            for (const row of [first, second]) {
+                expect(await handle.raw.message_trigger_job.findUniqueOrThrow({ where: { id: row.id } })).toEqual(row);
+            }
+        });
+
+        it("does not consume ordinary cadence when only an excluded quiet row is due", async () => {
+            const row = await seedQuiet("quiet-only", 1);
+            const quiet = await repository.findDueQuietQueueJobs(eligibility(), at21, 1);
+            expect(quiet.map(job => job.id)).toEqual([row.id]);
+
+            expect(await repository.consumeDispatchSlotsAndFindDueJobs(eligibility(), at21, 1, quiet.map(job => job.id))).toEqual([]);
+
+            expect(await handle.raw.system_setting.findMany({ where: { key: { in: branches.map(key) } } })).toEqual([]);
+            expect(await handle.raw.message_trigger_job.findUniqueOrThrow({ where: { id: row.id } })).toEqual(row);
+        });
+
+        it("keeps an unselected quiet candidate eligible for an ordinary slot", async () => {
+            const selected = await seedQuiet("quiet-selected", 2);
+            const remaining = await seedQuiet("quiet-remaining", 1);
+            const quiet = await repository.findDueQuietQueueJobs(eligibility(), at21, 1);
+            expect(quiet.map(job => job.id)).toEqual([selected.id]);
+
+            const jobs = await repository.consumeDispatchSlotsAndFindDueJobs(eligibility(), at21, 1, quiet.map(job => job.id));
+
+            expect(jobs.map(job => job.id)).toEqual([remaining.id]);
+            expect(await handle.raw.system_setting.findUnique({ where: { key: key(branches[0]!) } }))
+                .toMatchObject({ value: at21.toISOString() });
+            expect(await handle.raw.system_setting.findUnique({ where: { key: key(branches[1]!) } })).toBeNull();
+        });
+    });
+
+    it("has one concurrent cadence winner, refuses 21:06:59.999 and admits exactly 21:07", async () => {
+        const job = await seed(0, "race");
+        const reads = await Promise.all([repository.findDueDispatchBranchIds(at21), repository.findDueDispatchBranchIds(at21)]);
+        expect(reads[0]).toContain(branches[0]);
+        expect(reads[1]).toContain(branches[0]);
+        const results = await Promise.all([
+            repository.consumeDispatchSlotsAndFindDueJobs(eligibility(), at21),
+            repository.consumeDispatchSlotsAndFindDueJobs(eligibility(), at21),
+        ]);
+        expect(results.map(rows => rows.length).sort()).toEqual([0, 1]);
+        expect(results.flat().map(row => row.id)).toEqual([job.id]);
+        expect(await handle.raw.system_setting.findUnique({ where: { key: key(branches[0]!) } }))
+            .toMatchObject({ value: "2026-07-09T12:00:00.000Z" });
+        expect(await repository.consumeDispatchSlotsAndFindDueJobs(eligibility(), new Date("2026-07-09T12:06:59.999Z"))).toEqual([]);
+        expect((await repository.consumeDispatchSlotsAndFindDueJobs(eligibility(), new Date("2026-07-09T12:07:00.000Z"))).map(row => row.id)).toEqual([job.id]);
+    });
+
+    it.each(["activation", "retry"] as const)("filters 100 earlier %s-ineligible A rows before LIMIT so B is not starved", async gate => {
+        await handle.raw.message_trigger_job.createMany({ data: Array.from({ length: 100 }, (_, index) => ({
+            branchId: branches[0]!, ruleId: rules[0]!, status: "pending", scheduledFor: new Date(at21.getTime() - 60_000),
+            recipientType: "CLIENT", templateKey: "SERVICE_INFO", dedupeKey: `${fixture}-blocked-${index}`,
+            attempts: gate === "retry" ? 1 : 0,
+        })) });
+        const allowed = await seed(1, "allowed");
+        const jobs = await repository.consumeDispatchSlotsAndFindDueJobs(eligibility(gate !== "activation", gate !== "retry"), at21, 100);
+        expect(jobs.map(job => job.id)).toEqual([allowed.id]);
+        expect(await handle.raw.system_setting.findUnique({ where: { key: key(branches[0]!) } })).toBeNull();
+    });
+
+    it("round robins branches before LIMIT when A has 100 earlier due rows", async () => {
+        await handle.raw.message_trigger_job.createMany({ data: Array.from({ length: 100 }, (_, index) => ({
+            branchId: branches[0]!, ruleId: rules[0]!, scheduledFor: new Date(at21.getTime() - 60_000),
+            recipientType: "CLIENT", templateKey: "SERVICE_INFO", dedupeKey: `${fixture}-fair-${index}`,
+        })) });
+        const b = await seed(1, "fair-b");
+        const jobs = await repository.consumeDispatchSlotsAndFindDueJobs(eligibility(), at21, 100);
+        expect(jobs).toHaveLength(100);
+        expect(jobs.slice(0, 2).map(job => job.branchId).sort()).toEqual([...branches].sort());
+        expect(jobs.map(job => job.id)).toContain(b.id);
+    });
+
+    it("preserves an existing 21:05 retry due when the dispatch policy changes", async () => {
+        const due = new Date("2026-07-09T12:05:00.000Z");
+        const row = await seed(0, "old-due", { attempts: 1, nextAttemptAt: due });
+        const changedPolicy = eligibility().map(branch => ({ ...branch, intervalMinutes: 1 }));
+        expect(await repository.consumeDispatchSlotsAndFindDueJobs(changedPolicy, at21)).toEqual([]);
+        expect(await handle.raw.system_setting.findUnique({ where: { key: key(branches[0]!) } })).toBeNull();
+        expect((await handle.raw.message_trigger_job.findUnique({ where: { id: row.id } }))?.nextAttemptAt).toEqual(due);
+        expect((await repository.consumeDispatchSlotsAndFindDueJobs(changedPolicy, due)).map(job => job.id)).toEqual([row.id]);
+        expect((await handle.raw.message_trigger_job.findUnique({ where: { id: row.id } }))?.nextAttemptAt).toEqual(due);
+    });
+
+    it("TIME-3 returns expired A24 and B48 rows with independent inclusive SQL cutoffs without stranding them", async () => {
+        const selectedAt = new Date("2026-11-03T12:00:00.000Z");
+        const aBefore = await seed(0, "a-before24", { scheduledFor: new Date("2026-11-02T12:00:00.001Z") });
+        const aExact = await seed(0, "a-exact24", { scheduledFor: new Date("2026-11-02T12:00:00.000Z") });
+        const aAfter = await seed(0, "a-after24", { scheduledFor: new Date("2026-11-02T11:59:59.999Z") });
+        const bAfter24 = await seed(1, "b-after24", { scheduledFor: new Date("2026-11-02T11:59:59.999Z") });
+        const bBefore = await seed(1, "b-before48", { scheduledFor: new Date("2026-11-01T12:00:00.001Z") });
+        const bExact = await seed(1, "b-exact48", { scheduledFor: new Date("2026-11-01T12:00:00.000Z") });
+        const bAfter = await seed(1, "b-after48", { scheduledFor: new Date("2026-11-01T11:59:59.999Z") });
+        const jobs = await repository.consumeDispatchSlotsAndFindDueJobs([
+            { branchId: branches[0]!, automaticEnabled: true, retryEnabled: true, intervalMinutes: 1, pastExpiryHours: 24 },
+            { branchId: branches[1]!, automaticEnabled: true, retryEnabled: true, intervalMinutes: 1, pastExpiryHours: 48 },
+        ], selectedAt, 100);
+        expect(jobs).toHaveLength(7);
+        for (const [id, expired, anchor, hours] of [
+            [aBefore.id, false, "2026-11-02T12:00:00.001Z", 24],
+            [aExact.id, true, "2026-11-02T12:00:00.000Z", 24],
+            [aAfter.id, true, "2026-11-02T11:59:59.999Z", 24],
+            [bAfter24.id, false, "2026-11-02T11:59:59.999Z", 48],
+            [bBefore.id, false, "2026-11-01T12:00:00.001Z", 48],
+            [bExact.id, true, "2026-11-01T12:00:00.000Z", 48],
+            [bAfter.id, true, "2026-11-01T11:59:59.999Z", 48],
+        ] as const) {
+            const job = jobs.find(candidate => candidate.id === id);
+            expect(job).toBeDefined();
+            expect(job!.dispatchSelection).toEqual({ expired, anchor: new Date(anchor), pastExpiryHours: hours, selectedAt });
+            expect(job!.status).toBe("pending");
+            expect(job!.attempts).toBe(0);
+            expect(JSON.stringify(job)).not.toContain("dispatchSelection");
+            expect(await handle.raw.message_trigger_job.findUnique({ where: { id } })).toMatchObject({
+                status: "pending", scheduledFor: new Date(anchor), attempts: 0, claimToken: null,
+            });
+        }
+        expect(await handle.raw.system_setting.findMany({ where: { key: { in: branches.map(key) } }, select: { value: true } }))
+            .toEqual([{ value: "2026-11-03T12:00:00.000Z" }, { value: "2026-11-03T12:00:00.000Z" }]);
+    });
+
+    it("TIME-3 retains the default24 inclusive SQL decision for legacy eligibility without expiry hours", async () => {
+        const row = await seed(0, "default24", { scheduledFor: new Date("2026-11-02T12:00:00.000Z") });
+        const jobs = await repository.consumeDispatchSlotsAndFindDueJobs(eligibility(), new Date("2026-11-03T12:00:00.000Z"));
+        expect(jobs.map(job => job.id)).toEqual([row.id]);
+        expect(jobs[0]?.dispatchSelection).toEqual({
+            expired: true, anchor: new Date("2026-11-02T12:00:00.000Z"), pastExpiryHours: 24,
+            selectedAt: new Date("2026-11-03T12:00:00.000Z"),
+        });
+    });
+
+    it("TIME-3 keeps existing pending due and sent occurrences intact when generation-preserving materialization repeats", async () => {
+        const pending = await seed(0, "preserved-pending", { scheduledFor: new Date("2026-11-03T12:05:00.000Z") });
+        const sent = await seed(1, "preserved-sent", { status: "sent", sentAt: new Date("2026-11-03T11:00:00.000Z"),
+            scheduledFor: new Date("2026-11-03T10:00:00.000Z") });
+        for (const original of [pending, sent]) {
+            const rule = await handle.raw.message_trigger_rule.findUniqueOrThrow({ where: { id: original.ruleId } });
+            const replacement = MessageTriggerJobEntity.create({
+                branchId: original.branchId!, ruleId: original.ruleId, scheduledFor: new Date("2026-11-03T12:03:00.000Z"),
+                recipientType: MessageTriggerRecipientType.CLIENT, templateKey: MessageTriggerTemplateKey.SERVICE_INFO,
+                dedupeKey: original.dedupeKey, payload: { memberId: "time3-repeat", recipientName: "Fixture",
+                    recipientPhone: "01012345678", templateVariables: {} },
+            });
+            const result = await repository.upsertPendingForRuleGeneration(replacement, rule.updatedAt, false, true);
+            expect(result?.id).toBe(original.id);
+            expect(await handle.raw.message_trigger_job.findUnique({ where: { id: original.id } })).toEqual(original);
+            expect(await handle.raw.message_trigger_job.count({ where: { dedupeKey: original.dedupeKey } })).toBe(1);
+        }
+    });
+
+    it("persists a custom claim deadline and leaves that snapshot intact before its exact expiry", async () => {
+        const row = await seed(0, "deadline");
+        const deadline = new Date(Date.now() + 15 * 60_000);
+        expect(typeof await repository.claimPendingWithRuleFence(row.id, branches[0]!, undefined, deadline)).toBe("string");
+        expect(await handle.raw.message_trigger_job.findUnique({ where: { id: row.id } })).toMatchObject({ processingDeadlineAt: deadline });
+        const before = new Date(deadline.getTime() - 600_000 - 1);
+        expect((await repository.findStaleProcessingSystemScope(before)).some(job => job.id === row.id)).toBe(false);
+        const atExpiry = new Date(deadline.getTime() - 600_000);
+        expect((await repository.findStaleProcessingSystemScope(atExpiry)).map(job => job.id)).toContain(row.id);
+        expect(await handle.raw.message_trigger_job.findUnique({ where: { id: row.id } })).toMatchObject({ processingDeadlineAt: deadline });
+    });
+
+    const stale = async (suffix: string) => {
+        const row = await seed(0, suffix, { status: "processing", claimToken: "old-owner", processingDeadlineAt: null });
+        // Exercise legacy now() claims with precision that JS Date cannot retain.
+        await handle.raw.$executeRaw(Prisma.sql`UPDATE message_trigger_job SET updated_at = '2026-07-09T11:40:00.123456Z'::timestamptz WHERE id = ${row.id}`);
+        const jobs = await repository.findStaleProcessingSystemScope(new Date("2026-07-09T11:50:00.124Z"));
+        const job = jobs.find(candidate => candidate.id === row.id)!;
+        expect(job).toBeDefined();
+        return job;
+    };
+    const snapshotOf = (job: MessageTriggerJobEntity) => ({
+        status: job.status, claimToken: job.claimToken, updatedAt: job.updatedAt, processingDeadlineAt: job.processingDeadlineAt,
+    });
+
+    it("reclaims a sub-ms legacy claim with one winner, NULL token, and rejects the old owner's late completion", async () => {
+        const job = await stale("reclaim-race");
+        const second = (await repository.findStaleProcessingSystemScope(new Date("2026-07-09T11:50:00.124Z"))).find(row => row.id === job.id)!;
+        const firstSnapshot = snapshotOf(job), secondSnapshot = snapshotOf(second);
+        job.defer("transient", "reclaim", 420_000); second.defer("transient", "reclaim", 420_000);
+        const results = await Promise.all([repository.reclaimWithClaimFence(job, firstSnapshot), repository.reclaimWithClaimFence(second, secondSnapshot)]);
+        expect(results.sort()).toEqual([false, true]);
+        expect(await handle.raw.message_trigger_job.findUnique({ where: { id: job.id } })).toMatchObject({ status: "pending", claimToken: null, attempts: 1 });
+        job.markSent();
+        const late = await repository.update(job);
+        expect(late.status).toBe("pending");
+        await handle.raw.message_trigger_job.update({ where: { id: job.id }, data: { status: "sent", claimToken: "old-owner", sentAt: at21 } });
+        expect(await repository.reclaimWithClaimFence(second, secondSnapshot)).toBe(false);
+        expect((await handle.raw.message_trigger_job.findUnique({ where: { id: job.id } }))?.status).toBe("sent");
+        expect((await repository.update(job)).status).toBe("sent");
+    });
+
+    it.each(["status", "token", "updatedAt", "deadline"] as const)("rejects reclaim when only the observed %s changed", async field => {
+        const job = await stale(`stale-${field}`);
+        const snapshot = snapshotOf(job);
+        const change = field === "status" ? { status: "sent" }
+            : field === "token" ? { claimToken: "new-owner" }
+                : field === "deadline" ? { processingDeadlineAt: new Date("2026-07-09T13:00:00.000Z") }
+                    : { updatedAt: new Date("2026-07-09T11:40:01.000Z") };
+        const assignment = field === "status" ? Prisma.sql`status = 'sent'`
+            : field === "token" ? Prisma.sql`claim_token = 'new-owner'`
+                : field === "deadline" ? Prisma.sql`processing_deadline_at = '2026-07-09T13:00:00.000Z'::timestamptz`
+                    : Prisma.sql`updated_at = '2026-07-09T11:40:01.000Z'::timestamptz`;
+        await handle.raw.$executeRaw(Prisma.sql`UPDATE message_trigger_job SET ${assignment} WHERE id = ${job.id}`);
+        job.defer("transient", "reclaim");
+        expect(await repository.reclaimWithClaimFence(job, snapshot)).toBe(false);
+        expect(await handle.raw.message_trigger_job.findUnique({ where: { id: job.id } })).toMatchObject(change);
     });
 });

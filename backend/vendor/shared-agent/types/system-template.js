@@ -19,16 +19,22 @@ const zod_1 = require("zod");
 // to ISO strings on the wire, so the client-facing response types below use
 // string while Raw* variants retain Date for backend-reference parity.
 exports.SYSTEM_TEMPLATE_KEYS = [
-    'PRICE_INFO',
     'GREETING',
-    'THANKS',
-    'CONTRACT_REMINDER',
-    'SURVEY',
     'SERVICE_INFO',
-    'SERVICE_RECORD_LINK',
-    'SERVICE_END_NOTICE',
+    'PRICE_INFO',
     'REMINDER',
+    'THANKS',
     'INFO',
+    'CONTRACT_GUIDE',
+    'CONTRACT_REMINDER',
+    'MATERNAL_NOTICE',
+    'SERVICE_END_NOTICE',
+    'SURVEY',
+    'PROVIDER_NOTICE',
+    'SERVICE_RECORD_LINK',
+    'SERVICE_RECORD_REMINDER',
+    'CAREGIVER_SERVICE_START_NOTICE',
+    'CAREGIVER_SERVICE_END_NOTICE',
 ];
 /** Runtime key validation for system-template BFF route parameters. */
 exports.systemTemplateKeySchema = zod_1.z.enum(exports.SYSTEM_TEMPLATE_KEYS);
@@ -43,16 +49,22 @@ exports.SYSTEM_TEMPLATE_DELIVERY_MODES = [
  * delivery path a compile-time error instead of silently falling back to SMS.
  */
 exports.SYSTEM_TEMPLATE_DELIVERY_MODES_BY_KEY = {
-    PRICE_INFO: "sms",
     GREETING: "sms",
-    THANKS: "sms",
-    CONTRACT_REMINDER: "sms",
-    SURVEY: "sms",
     SERVICE_INFO: "sms",
-    SERVICE_RECORD_LINK: "service-feedback-link",
-    SERVICE_END_NOTICE: "receipt-link",
+    PRICE_INFO: "sms",
     REMINDER: "sms",
+    THANKS: "sms",
     INFO: "sms",
+    CONTRACT_GUIDE: "sms",
+    CONTRACT_REMINDER: "sms",
+    MATERNAL_NOTICE: "sms",
+    SERVICE_END_NOTICE: "receipt-link",
+    SURVEY: "sms",
+    PROVIDER_NOTICE: "sms",
+    SERVICE_RECORD_LINK: "service-feedback-link",
+    SERVICE_RECORD_REMINDER: "sms",
+    CAREGIVER_SERVICE_START_NOTICE: "sms",
+    CAREGIVER_SERVICE_END_NOTICE: "sms",
 };
 /**
  * Resolve the delivery preparation path for a system template.

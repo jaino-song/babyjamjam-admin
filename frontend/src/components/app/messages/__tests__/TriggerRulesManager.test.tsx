@@ -1,9 +1,13 @@
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import type { MessageTriggerRuleGroupView, MessageTriggerRuleGroupPreviewRecipient, MessageTriggerRecipientMode } from "@babyjamjam/shared/types/message";
+import { messageDeliveryApi } from "@/services/message-delivery";
 import type { ReactNode } from "react";
 import { TriggerRulesManager } from "../TriggerRulesManager";
 import {
   useMessageTriggerRules,
+  useMessageTriggerRuleGroups,
+  useMessageTriggerGroupMutations,
   useMessageTriggerTemplates,
   useCreateMessageTriggerRule,
   useDeleteMessageTriggerRule,
@@ -13,6 +17,8 @@ import {
 } from "@/features/message-triggers/hooks/use-message-triggers";
 import { settingsApi, type MessageAutomationPoliciesResponse } from "@/services/api";
 
+jest.mock("@/services/message-delivery", () => ({ messageDeliveryApi: { sendSms: jest.fn() } }));
+jest.mock("@/features/system-templates/branch-context", () => ({ useActiveBranchId: () => "org-1", isBranchContextAligned: () => true }));
 jest.mock("@tanstack/react-query", () => ({
   useMutation: jest.fn(),
   useQuery: jest.fn(),
@@ -81,6 +87,8 @@ jest.mock("@/hooks/use-toast", () => ({
 
 jest.mock("@/features/message-triggers/hooks/use-message-triggers", () => ({
   useMessageTriggerRules: jest.fn(),
+  useMessageTriggerRuleGroups: jest.fn(),
+  useMessageTriggerGroupMutations: jest.fn(),
   useMessageTriggerTemplates: jest.fn(),
   useCreateMessageTriggerRule: jest.fn(),
   useUpdateMessageTriggerRule: jest.fn(),
@@ -289,6 +297,7 @@ function mockSettingsQueries({
   mockedUseQuery.mockImplementation((options: QueryOptions) => {
     const queryKey = options.queryKey ?? [];
 
+    if (queryKey.includes("message-automation-config")) return useQueryResult({ version: null, configuration: { defaultRuleSendTime: "09:00" }, permissions: { canRead: true, canWrite: true } });
     if (queryKey.includes("message-sender-approval")) {
       if (senderApprovalState === "paused") {
         return { ...PAUSED_QUERY_RESULT, refetch: jest.fn() } as unknown as ReturnType<typeof useQuery>;
@@ -366,6 +375,25 @@ beforeEach(() => {
   });
 
   mockSettingsQueries();
+  const envelopeCache = new WeakMap<object, object>();
+  jest.mocked(useMessageTriggerRuleGroups).mockImplementation(() => {
+    const legacy = mockedUseMessageTriggerRules();
+    let data: object | undefined;
+    if (legacy.data) {
+      data = envelopeCache.get(legacy.data);
+      if (!data) { data = { groups: [], standaloneRules: legacy.data }; envelopeCache.set(legacy.data, data); }
+    }
+    return { ...legacy, data, refetch: async (...args: unknown[]) => {
+      const result = await (legacy.refetch as (...args: unknown[]) => Promise<{ data?: unknown }> | undefined)?.(...args);
+      return result && { ...result, data: result.data ? { groups: [], standaloneRules: result.data } : undefined };
+    } } as unknown as ReturnType<typeof useMessageTriggerRuleGroups>;
+  });
+  jest.mocked(useMessageTriggerGroupMutations).mockImplementation(() => ({
+    create: mockedUseCreateMessageTriggerRule(),
+    update: mockedUseUpdateMessageTriggerRule(),
+    remove: mockedUseDeleteMessageTriggerRule(),
+    preview: { isPending: false, mutateAsync: jest.fn() },
+  }) as unknown as ReturnType<typeof useMessageTriggerGroupMutations>);
   mockedUseQueryClient.mockReturnValue({
     invalidateQueries: mockInvalidateQueries,
     setQueryData: mockSetQueryData,
@@ -705,8 +733,8 @@ describe("TriggerRulesManager", () => {
       offsetType: "BEFORE_DAYS",
       offsetDays: 7,
       sendTime: "09:00",
-      recipientType: "CLIENT",
-      templateKey: "SERVICE_END_NOTICE",
+      recipientMode: "CLIENT",
+      recipientTemplates: { CLIENT: "SERVICE_END_NOTICE" },
       targetClientStatus: "all",
       retryOnFailure: true,
     });
@@ -824,20 +852,27 @@ describe("TriggerRulesManager", () => {
 
     const recipientTrigger = screen.getByLabelText("수신 대상");
     fireEvent.click(recipientTrigger);
-    fireEvent.click(screen.getByRole("option", { name: "주 담당 제공인력" }));
+    expect(screen.getByRole("option", { name: "고객" })).toBeInTheDocument();
+    expect(screen.queryByRole("option", { name: "주제공인력" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("option", { name: "고객" }));
+    fireEvent.click(eventTrigger);
+    fireEvent.click(screen.getByRole("option", { name: "서비스 시작" }));
+    fireEvent.click(recipientTrigger);
+    fireEvent.click(screen.getByRole("option", { name: "주제공인력" }));
 
     const templateTrigger = screen.getByLabelText("발송 템플릿");
     fireEvent.click(templateTrigger);
     const options = screen.getAllByRole("option");
     expect(options).toHaveLength(allSmsTriggerTemplates.length);
-    expect(screen.getByRole("option", { name: "리마인드" })).not.toHaveAttribute("aria-disabled");
-    expect(screen.getByRole("option", { name: "서비스 안내 · 선택한 이벤트·수신 대상과 맞지 않음" }))
+    expect(screen.getByRole("option", { name: "비용 안내" })).not.toHaveAttribute("aria-disabled");
+    expect(screen.getByRole("option", { name: "리마인드 · 선택한 이벤트와 맞지 않음" })).toHaveAttribute("aria-disabled", "true");
+    expect(screen.getByRole("option", { name: "서비스 안내 · 선택한 수신 대상과 맞지 않음" }))
       .toHaveAttribute("aria-disabled", "true");
     expect(screen.getByRole("option", { name: "수동 영수증 안내 · 선택한 이벤트·수신 대상과 맞지 않음" }))
       .toHaveAttribute("aria-disabled", "true");
   });
 
-  it("reconciles an incompatible selected template while keeping the full catalog visible", async () => {
+  it("requires a compatible recipient mapping while keeping the full common catalog visible", () => {
     mockSettingsQueries({ providerEnabled: true, senderApproved: true });
     mockedUseMessageTriggerTemplates.mockReturnValue({
       data: allSmsTriggerTemplates,
@@ -848,15 +883,16 @@ describe("TriggerRulesManager", () => {
 
     const recipientTrigger = screen.getByLabelText("수신 대상");
     fireEvent.click(recipientTrigger);
-    fireEvent.click(screen.getByRole("option", { name: "주 담당 제공인력" }));
+    fireEvent.click(screen.getByRole("option", { name: "주제공인력" }));
 
-    await waitFor(() => {
-      expect(screen.getByLabelText("발송 템플릿")).toHaveTextContent("비용 안내");
-    });
-
+    expect(screen.getByLabelText("주제공인력 템플릿")).not.toHaveTextContent("비용 안내");
+    expect(screen.getByRole("button", { name: "저장" })).toBeDisabled();
     fireEvent.click(screen.getByLabelText("발송 템플릿"));
     expect(screen.getAllByRole("option")).toHaveLength(allSmsTriggerTemplates.length);
     expect(screen.getByRole("option", { name: "비용 안내" })).not.toHaveAttribute("aria-disabled");
+    fireEvent.click(screen.getByRole("option", { name: "비용 안내" }));
+    expect(screen.getByLabelText("발송 템플릿")).toHaveTextContent("비용 안내");
+    expect(screen.getByLabelText("주제공인력 템플릿")).toHaveTextContent("비용 안내");
   });
 
   it("keeps a selected dedicated template displayed with its disabled reason while editing", () => {
@@ -1417,8 +1453,8 @@ describe("TriggerRulesManager", () => {
       offsetType: "BEFORE_DAYS",
       offsetDays: 7,
       sendTime: "14:37",
-      recipientType: "CLIENT",
-      templateKey: "SERVICE_INFO",
+      recipientMode: "CLIENT",
+      recipientTemplates: { CLIENT: "SERVICE_INFO" },
       targetClientStatus: "all",
       retryOnFailure: true,
     });
@@ -2600,5 +2636,191 @@ describe("TriggerRulesManager target client status and retry (BJJ-444)", () => {
     const retrySwitch = screen.getByRole("switch", { name: "실패 시 재전송" });
     expect(retrySwitch).toBeDisabled();
     expect(retrySwitch).not.toBeChecked();
+  });
+});
+
+describe("canonical recipient groups and read-only preview", () => {
+  const DC = "desktop_messages_sections_section-content_triggers-section_trigger-rules";
+  const baseGroup: MessageTriggerRuleGroupView = {
+    id: "group-a", branchId: "org-1", name: "배정 시작 안내", recipientMode: "BOTH_EMPLOYEES", version: 4,
+    createdAt: "2026-11-01T00:00:00.000Z", updatedAt: "2026-11-02T00:00:00.000Z", deletedAt: null,
+    eventType: "SERVICE_START", offsetType: "SAME_DAY", offsetDays: 0, sendTime: "09:20", targetClientStatus: "all", retryOnFailure: true, isActive: true,
+    recipientTemplates: { PRIMARY_EMPLOYEE: "CAREGIVER_SERVICE_START_NOTICE", SECONDARY_EMPLOYEE: "CAREGIVER_SERVICE_START_NOTICE" },
+    rules: [{ id: "child-primary", groupId: "group-a", branchId: "org-1", name: "배정 시작 안내 주", eventType: "SERVICE_START", offsetType: "SAME_DAY", offsetDays: 0, sendTime: "09:20", targetClientStatus: "all", retryOnFailure: true, isActive: true, recipientType: "PRIMARY_EMPLOYEE", templateKey: "CAREGIVER_SERVICE_START_NOTICE", createdAt: "2026-11-01T00:00:00.000Z", updatedAt: "2026-11-02T00:00:00.000Z" },
+      { id: "child-secondary", groupId: "group-a", branchId: "org-1", name: "배정 시작 안내 보조", eventType: "SERVICE_START", offsetType: "SAME_DAY", offsetDays: 0, sendTime: "09:20", targetClientStatus: "all", retryOnFailure: true, isActive: true, recipientType: "SECONDARY_EMPLOYEE", templateKey: "CAREGIVER_SERVICE_START_NOTICE", createdAt: "2026-11-01T00:00:00.000Z", updatedAt: "2026-11-02T00:00:00.000Z" }],
+  };
+  const primary: MessageTriggerRuleGroupPreviewRecipient = {
+    ruleId: "child-primary", recipientType: "PRIMARY_EMPLOYEE", employeeId: 41, employeeScheduleId: 301,
+    recipientName: "김주연", recipientPhone: "01011112222", templateKey: "CAREGIVER_SERVICE_START_NOTICE",
+    body: "김주연님, 이고객님 배정은 11월 9일 시작합니다.", count: 1, scheduledFor: "2026-11-09T00:20:00.000Z",
+    anchorSource: "employee_schedule.startDate", anchorDate: "2026-11-09", outcome: "ready", reason: null,
+  };
+  const secondary: MessageTriggerRuleGroupPreviewRecipient = {
+    ruleId: "child-secondary", recipientType: "SECONDARY_EMPLOYEE", employeeId: 42, employeeScheduleId: 301,
+    recipientName: "박보조", recipientPhone: "01033334444", templateKey: "CAREGIVER_SERVICE_START_NOTICE",
+    body: "박보조님, 이고객님 배정은 11월 9일 시작합니다.", count: 1, scheduledFor: "2026-11-09T00:20:00.000Z",
+    anchorSource: "employee_schedule.startDate", anchorDate: "2026-11-09", outcome: "ready", reason: null,
+  };
+  const client: MessageTriggerRuleGroupPreviewRecipient = {
+    ruleId: "child-client", recipientType: "CLIENT", employeeId: null, employeeScheduleId: null,
+    recipientName: "이고객", recipientPhone: "01055556666", templateKey: "SERVICE_INFO", body: "이고객님, 서비스는 11월 8일 시작합니다.", count: 1,
+    scheduledFor: "2026-11-08T00:20:00.000Z", anchorSource: "client.startDate", anchorDate: "2026-11-08", outcome: "ready", reason: null,
+  };
+  function configure(group: MessageTriggerRuleGroupView = baseGroup, recipients: MessageTriggerRuleGroupPreviewRecipient[] = [primary, secondary]) {
+    mockSettingsQueries({ senderApproved: true });
+    jest.mocked(useMessageTriggerRuleGroups).mockReturnValue({ data: { groups: [group], standaloneRules: [] }, isLoading: false, refetch: jest.fn() } as unknown as ReturnType<typeof useMessageTriggerRuleGroups>);
+    mockedUseMessageTriggerTemplates.mockReturnValue({ data: [
+      { key: "SERVICE_INFO", name: "고객 서비스 안내", description: "고객 안내", allowedEventTypes: ["SERVICE_START"], allowedRecipientTypes: ["CLIENT"], requiredVariables: [], providers: { sms: { templateKey: "SERVICE_INFO" } } },
+      { key: "CAREGIVER_SERVICE_START_NOTICE", name: "제공 시작 안내", description: "배정 안내", allowedEventTypes: ["SERVICE_START"], allowedRecipientTypes: ["PRIMARY_EMPLOYEE", "SECONDARY_EMPLOYEE"], requiredVariables: [], providers: { sms: { templateKey: "CAREGIVER_SERVICE_START_NOTICE" } } },
+      { key: "CLIENT_GREETING", name: "고객 인사", description: "등록 인사", allowedEventTypes: ["CLIENT_CREATED"], allowedRecipientTypes: ["CLIENT"], requiredVariables: [], providers: { sms: { templateKey: "CLIENT_GREETING" } } },
+    ] } as unknown as ReturnType<typeof useMessageTriggerTemplates>);
+    const create = jest.fn().mockResolvedValue(group);
+    const update = jest.fn().mockResolvedValue(group);
+    const remove = jest.fn().mockResolvedValue(undefined);
+    const preview = jest.fn().mockResolvedValue({ complete: true, count: recipients.reduce((sum, row) => sum + row.count, 0), recipients });
+    jest.mocked(useMessageTriggerGroupMutations).mockReturnValue({ create: { isPending: false, mutateAsync: create }, update: { isPending: false, mutateAsync: update }, remove: { isPending: false, mutateAsync: remove }, preview: { isPending: false, mutateAsync: preview } } as unknown as ReturnType<typeof useMessageTriggerGroupMutations>);
+    return { create, update, remove, preview };
+  }
+  function openGroup() {
+    render(<TriggerRulesManager dataComponent={DC} />);
+    expect(screen.getAllByText("배정 시작 안내")).toHaveLength(1);
+    expect(screen.queryByText("배정 시작 안내 주")).not.toBeInTheDocument();
+    expect(screen.queryByText("배정 시작 안내 보조")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByText("배정 시작 안내"));
+  }
+  async function previewGroup() {
+    fireEvent.click(screen.getByRole("tab", { name: "미리보기" }));
+    fireEvent.click(screen.getByRole("button", { name: "수신자 미리보기" }));
+    await waitFor(() => expect(screen.getByText(/미리보기 완료/)).toBeInTheDocument());
+  }
+  it("shows all four catalog modes, requires per-role templates and fills common compatible templates", () => {
+    const actions = configure(); openGroup();
+    expect(screen.getByText("제공인력 발송은 배정 일정 기준입니다.")).toBeInTheDocument();
+    fireEvent.click(screen.getByLabelText("수신 대상"));
+    for (const label of ["고객", "주제공인력", "보조제공인력", "주보조 모두"]) expect(screen.getByRole("option", { name: label })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("option", { name: "고객" }));
+    expect(screen.getByRole("button", { name: "저장" })).toBeDisabled();
+    expect(actions.update).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByLabelText("발송 템플릿"));
+    fireEvent.click(screen.getByRole("option", { name: "고객 서비스 안내" }));
+    expect(screen.getByLabelText("고객 템플릿")).toHaveTextContent("고객 서비스 안내");
+    expect(screen.getByRole("button", { name: "저장" })).toBeEnabled();
+    fireEvent.click(screen.getByLabelText("이벤트 기준"));
+    fireEvent.click(screen.getByRole("option", { name: "고객 등록" }));
+    fireEvent.click(screen.getByLabelText("수신 대상"));
+    expect(screen.getByRole("option", { name: "고객" })).toBeInTheDocument();
+    expect(screen.queryByRole("option", { name: "주보조 모두" })).not.toBeInTheDocument();
+    expect(actions.preview).not.toHaveBeenCalled();
+  });
+  it("updates the parent with its literal version and all required role mappings", async () => {
+    const actions = configure(); openGroup();
+    fireEvent.change(screen.getByLabelText("규칙 이름"), { target: { value: "배정 시작 변경" } });
+    fireEvent.click(screen.getByRole("button", { name: "저장" }));
+    await waitFor(() => expect(actions.update).toHaveBeenCalledWith({ id: "group-a", draft: {
+      expectedVersion: 4, name: "배정 시작 변경", recipientMode: "BOTH_EMPLOYEES", recipientTemplates: { PRIMARY_EMPLOYEE: "CAREGIVER_SERVICE_START_NOTICE", SECONDARY_EMPLOYEE: "CAREGIVER_SERVICE_START_NOTICE" },
+      eventType: "SERVICE_START", offsetType: "SAME_DAY", offsetDays: 0, sendTime: "09:20", targetClientStatus: "all", retryOnFailure: true, isActive: true,
+    } }));
+  });
+  it.each([
+    ["CLIENT", [client], ["이고객님, 서비스는 11월 8일 시작합니다."], 1],
+    ["PRIMARY_EMPLOYEE", [primary], ["김주연님, 이고객님 배정은 11월 9일 시작합니다."], 1],
+    ["SECONDARY_EMPLOYEE", [secondary], ["박보조님, 이고객님 배정은 11월 9일 시작합니다."], 1],
+    ["BOTH_EMPLOYEES", [primary, secondary], ["김주연님, 이고객님 배정은 11월 9일 시작합니다.", "박보조님, 이고객님 배정은 11월 9일 시작합니다."], 2],
+  ] as const)("renders literal %s identities/bodies/counts from the server", async (mode, recipients, bodies, count) => {
+    const role = mode === "BOTH_EMPLOYEES" ? "PRIMARY_EMPLOYEE" : mode;
+    const group = { ...baseGroup, recipientMode: mode as MessageTriggerRecipientMode, recipientTemplates: mode === "BOTH_EMPLOYEES" ? baseGroup.recipientTemplates : { [role]: mode === "CLIENT" ? "SERVICE_INFO" : "CAREGIVER_SERVICE_START_NOTICE" } };
+    const actions = configure(group, [...recipients]); openGroup(); await previewGroup();
+    expect(screen.getByText(`미리보기 완료 · 발송 가능 ${count}건`)).toBeInTheDocument();
+    for (const body of bodies) expect(screen.getByText(body)).toBeInTheDocument();
+    const result = document.querySelector(`[data-component="${DC}_trigger-rules-server-preview_result"]`)!;
+    expect(result.querySelectorAll('[data-source-component="InfoCard"]')).toHaveLength(count);
+    expect(result).toHaveTextContent(mode === "CLIENT" ? "고객 서비스 시작일 · 2026-11-08" : "배정 시작일 · 2026-11-09");
+    expect(result).toHaveTextContent(mode === "CLIENT" ? "01055556666" : mode === "SECONDARY_EMPLOYEE" ? "01033334444" : "01011112222");
+    expect(result).toHaveTextContent(mode === "CLIENT" ? "2026. 11. 08. 09:20 (한국 시간)" : "2026. 11. 09. 09:20 (한국 시간)");
+    expect(actions.preview).toHaveBeenCalledWith({ draft: { name: "배정 시작 안내", recipientMode: mode, recipientTemplates: group.recipientTemplates, eventType: "SERVICE_START", offsetType: "SAME_DAY", offsetDays: 0, sendTime: "09:20", targetClientStatus: "all", retryOnFailure: true, isActive: true } });
+    expect(actions.create).not.toHaveBeenCalled(); expect(actions.update).not.toHaveBeenCalled();
+    expect(messageDeliveryApi.sendSms).not.toHaveBeenCalled();
+  });
+  it.each([
+    ["보조 없음", [primary, { ...secondary, employeeId: null, recipientName: null, recipientPhone: null, body: null, count: 0, outcome: "skip", reason: "배정 없음" }], 1, "배정 없음"],
+    ["같은 직원", [primary, { ...secondary, employeeId: 41, recipientName: "김주연", recipientPhone: "01011112222", body: null, count: 0, outcome: "skip", reason: "동일 제공인력 중복 제외" }], 1, "같은 제공인력이므로 중복 대상에서 제외합니다."],
+    ["같은 번호 다른 본문", [{ ...primary, recipientPhone: "01099990000", count: 0, outcome: "needs_setup", reason: "recipient_phone_conflict" }, { ...secondary, recipientPhone: "01099990000", count: 0, outcome: "needs_setup", reason: "recipient_phone_conflict" }], 0, "recipient_phone_conflict"],
+  ] as const)("preserves the server outcome for %s without a send", async (_label, recipients, count, reason) => {
+    configure(baseGroup, recipients as unknown as MessageTriggerRuleGroupPreviewRecipient[]); openGroup(); await previewGroup();
+    const result = document.querySelector(`[data-component="${DC}_trigger-rules-server-preview_result"]`)!;
+    expect(result).toHaveTextContent(`발송 가능 ${count}건`); expect(result).toHaveTextContent(reason === "recipient_phone_conflict" ? "같은 전화번호에 서로 다른 본문이 있어 확인이 필요합니다." : reason === "배정 없음" ? "배정 일정이 없습니다." : reason);
+    expect(result.querySelectorAll('[data-source-component="InfoCard"]')).toHaveLength(recipients.length);
+    expect(messageDeliveryApi.sendSms).not.toHaveBeenCalled();
+  });
+  it("blocks save and read-only preview with an empty required mapping", () => {
+    const actions = configure(); openGroup();
+    fireEvent.click(screen.getByLabelText("수신 대상"));
+    fireEvent.click(screen.getByRole("option", { name: "주제공인력" }));
+    fireEvent.click(screen.getByRole("button", { name: "저장" }));
+    expect(actions.update).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("tab", { name: "미리보기" }));
+    expect(screen.getByRole("button", { name: "수신자 미리보기" })).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "수신자 미리보기" }));
+    expect(actions.preview).not.toHaveBeenCalled();
+    expect(messageDeliveryApi.sendSms).not.toHaveBeenCalled();
+  });
+  it.each(["create", "update"] as const)("locks every group editor control while %s is pending and unlocks after settlement", async (operation) => {
+    const group: MessageTriggerRuleGroupView = { ...baseGroup, offsetType: "BEFORE_DAYS", offsetDays: 2, rules: baseGroup.rules.map((rule) => ({ ...rule, offsetType: "BEFORE_DAYS", offsetDays: 2 })) };
+    const actions = configure(group);
+    const mutationState = {
+      create: { isPending: false, mutateAsync: actions.create }, update: { isPending: false, mutateAsync: actions.update },
+      remove: { isPending: false, mutateAsync: actions.remove }, preview: { isPending: false, mutateAsync: actions.preview },
+    };
+    let settle!: (value: MessageTriggerRuleGroupView) => void;
+    actions[operation].mockImplementation(() => {
+      mutationState[operation].isPending = true;
+      return new Promise((resolve) => { settle = resolve; });
+    });
+    jest.mocked(useMessageTriggerGroupMutations).mockReturnValue(mutationState as unknown as ReturnType<typeof useMessageTriggerGroupMutations>);
+    const view = render(<TriggerRulesManager dataComponent={DC} />);
+    if (operation === "create") fireEvent.click(screen.getByRole("button", { name: "새 규칙" }));
+    else fireEvent.click(screen.getByText("배정 시작 안내"));
+    fireEvent.change(screen.getByLabelText("규칙 이름"), { target: { value: "저장할 초안" } });
+    fireEvent.click(screen.getByRole("button", { name: "저장" }));
+    expect(actions[operation]).toHaveBeenCalledTimes(1);
+    view.rerender(<TriggerRulesManager dataComponent={DC} />);
+    const labels = ["규칙 이름", "이벤트 기준", "발송 시점", "발송 시각 (한국 시간)", "수신 대상", "대상 고객 상태", "기준 일수", "발송 템플릿", ...(operation === "create" ? ["고객 템플릿"] : ["주제공인력 템플릿", "보조제공인력 템플릿"])];
+    for (const label of labels) expect(screen.getByLabelText(label)).toBeDisabled();
+    expect(screen.getByRole("switch", { name: "실패 시 재전송" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "저장 중..." })).toBeDisabled();
+    const saved: MessageTriggerRuleGroupView = operation === "create"
+      ? { ...group, id: "group-created", name: "저장할 초안", version: 1, recipientMode: "CLIENT", recipientTemplates: { CLIENT: "SERVICE_INFO" }, offsetDays: 7, sendTime: "09:00", rules: [{ ...group.rules[0], id: "created-child", groupId: "group-created", recipientType: "CLIENT", templateKey: "SERVICE_INFO", offsetDays: 7, sendTime: "09:00" }] }
+      : { ...group, name: "저장할 초안", version: 5 };
+    jest.mocked(useMessageTriggerRuleGroups).mockReturnValue({ data: { groups: [saved], standaloneRules: [] }, isLoading: false, refetch: jest.fn() } as unknown as ReturnType<typeof useMessageTriggerRuleGroups>);
+    await act(async () => { mutationState[operation].isPending = false; settle(saved); });
+    view.rerender(<TriggerRulesManager dataComponent={DC} />);
+    for (const label of labels) expect(screen.getByLabelText(label)).toBeEnabled();
+    expect(screen.getByRole("switch", { name: "실패 시 재전송" })).toBeEnabled();
+    expect(screen.getByLabelText("규칙 이름")).toHaveValue("저장할 초안");
+  });
+  it("preserves idle local edits when an unrelated group list refetch replaces the selected object", () => {
+    const actions = configure();
+    const view = render(<TriggerRulesManager dataComponent={DC} />);
+    fireEvent.click(screen.getByText("배정 시작 안내"));
+    fireEvent.change(screen.getByLabelText("규칙 이름"), { target: { value: "아직 저장하지 않은 이름" } });
+    fireEvent.click(screen.getByLabelText("수신 대상"));
+    fireEvent.click(screen.getByRole("option", { name: "보조제공인력" }));
+    fireEvent.click(screen.getByLabelText("보조제공인력 템플릿"));
+    fireEvent.click(screen.getByRole("option", { name: "제공 시작 안내" }));
+    jest.mocked(useMessageTriggerRuleGroups).mockReturnValue({ data: { groups: [{ ...baseGroup, recipientTemplates: { ...baseGroup.recipientTemplates }, rules: [...baseGroup.rules] }, { ...baseGroup, id: "unrelated-group", name: "다른 규칙" }], standaloneRules: [] }, isLoading: false, refetch: jest.fn() } as unknown as ReturnType<typeof useMessageTriggerRuleGroups>);
+    view.rerender(<TriggerRulesManager dataComponent={DC} />);
+    expect(screen.getByLabelText("규칙 이름")).toHaveValue("아직 저장하지 않은 이름");
+    expect(screen.getByLabelText("수신 대상")).toHaveTextContent("보조제공인력");
+    expect(screen.getByLabelText("보조제공인력 템플릿")).toHaveTextContent("제공 시작 안내");
+    expect(screen.queryByLabelText("주제공인력 템플릿")).not.toBeInTheDocument();
+    expect(actions.update).not.toHaveBeenCalled();
+    expect(actions.create).not.toHaveBeenCalled();
+  });
+  it("keeps the group draft after stale409 and never retries an overwrite", async () => {
+    const actions = configure(); actions.update.mockRejectedValue({ response: { status: 409 } }); openGroup();
+    fireEvent.change(screen.getByLabelText("규칙 이름"), { target: { value: "남길 초안" } });
+    fireEvent.click(screen.getByRole("button", { name: "저장" }));
+    await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("새로고침"));
+    expect(screen.getByLabelText("규칙 이름")).toHaveValue("남길 초안"); expect(actions.update).toHaveBeenCalledTimes(1);
   });
 });

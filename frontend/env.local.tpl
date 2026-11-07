@@ -31,3 +31,6 @@ E2E_PREVIEW_BRANCH_NAME=
 # QA post-merge contact runs: the developer's own email/phone (secret, keep blank here)
 QA_DEVELOPER_EMAIL=
 QA_DEVELOPER_PHONE=
+# QA test provider (제공인력) account: the developer's second email/phone (keep blank here)
+QA_PROVIDER_EMAIL=
+QA_PROVIDER_PHONE=

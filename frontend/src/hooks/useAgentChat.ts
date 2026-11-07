@@ -187,6 +187,8 @@ export function useAgentShellEnabled(): AgentShellState {
 }
 
 export function useAgentChat() {
+    // Display-only projection; request identity remains owned by the existing refs/storage.
+    const [displayedSession, setDisplayedSession] = useState<Readonly<Pick<AgentSessionSummary, "id" | "title">> | null>(null);
     const [sessions, setSessions] = useState<AgentSessionSummary[]>([]);
     const [actionError, setActionError] = useState<AgentClientError | null>(null);
     const [taskSnapshotState, setTaskSnapshotState] = useState<AgentTaskClientSnapshotState>(() => createAgentTaskSnapshotState());
@@ -566,6 +568,10 @@ export function useAgentChat() {
         if (requestGeneration !== sessionListGenerationRef.current) return;
         if (requestEpoch !== sessionOperationEpoch.read()) return;
         setSessions(Array.isArray(next) ? next : []);
+        setDisplayedSession((current) => {
+            const confirmed = Array.isArray(next) && current ? next.find((session) => session.id === current.id) : undefined;
+            return confirmed && current ? { id: confirmed.id, title: confirmed.title ?? current.title } : current;
+        });
     }, [sessionOperationEpoch]);
 
     const transportFetch = useCallback(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -574,6 +580,9 @@ export function useAgentChat() {
         const sessionId = response.headers.get("x-agent-session-id");
         if (requestEpoch === sessionOperationEpoch.read() && sessionId && typeof window !== "undefined") {
             window.sessionStorage.setItem(AGENT_SESSION_KEY, sessionId);
+            if (response.ok && !init?.signal?.aborted) {
+                setDisplayedSession((current) => current?.id === sessionId ? current : { id: sessionId, title: null });
+            }
         }
         return response;
     }, [sessionOperationEpoch]);
@@ -624,6 +633,7 @@ export function useAgentChat() {
         activeSessionIdRef.current = session.id;
         if (typeof window !== "undefined") window.sessionStorage.setItem(AGENT_SESSION_KEY, session.id);
         chat.setMessages(session.messages ?? []);
+        setDisplayedSession({ id: session.id, title: session.title ?? null });
         if (typeof session.activeTaskId === "string") await loadTaskSnapshot(session.activeTaskId, operationEpoch);
     }, [chat, loadTaskSnapshot, resetTaskSnapshot, sessionOperationEpoch]);
 
@@ -636,6 +646,7 @@ export function useAgentChat() {
         const session = await response.json() as AgentSessionSummary;
         if (requestEpoch !== sessionOperationEpoch.read()) return;
         chat.setMessages(session.messages ?? []);
+        setDisplayedSession({ id: session.id, title: session.title ?? null });
     }, [chat, sessionOperationEpoch]);
 
     useEffect(() => {
@@ -762,6 +773,7 @@ export function useAgentChat() {
             activeSessionIdRef.current = null;
             window.sessionStorage.removeItem(AGENT_SESSION_KEY);
             chat.setMessages([]);
+            setDisplayedSession(null);
             resetTaskSnapshot();
         }
         await refreshSessions();
@@ -805,6 +817,7 @@ export function useAgentChat() {
             activeSessionIdRef.current = null;
             window.sessionStorage.removeItem(AGENT_SESSION_KEY);
             chat.setMessages([]);
+            setDisplayedSession(null);
             resetTaskSnapshot();
         }
         await refreshSessions();
@@ -817,6 +830,7 @@ export function useAgentChat() {
         activeSessionIdRef.current = null;
         if (typeof window !== "undefined") window.sessionStorage.removeItem(AGENT_SESSION_KEY);
         chat.setMessages([]);
+        setDisplayedSession(null);
         setActionError(null);
         resetTaskSnapshot();
         void refreshSessions();
@@ -839,6 +853,7 @@ export function useAgentChat() {
         clearTaskError: () => setTaskError(null),
         resetBranch,
         sessions,
+        displayedSession,
         refreshSessions,
         selectSession,
         renameSession,

@@ -62,6 +62,59 @@ function withPreviewConcurrencyAtBase(text,label) {
   assert.equal(text.includes(previewConcurrencyCheck.before),false,`${label}: the old concurrency 8 check is gone`);
   return text.replace(previewConcurrencyCheck.after,previewConcurrencyCheck.before);
 }
+// Admit only the approved provider verifier and its new Lightsail checkout, then
+// preserve the original byte comparisons for every other deployment detail.
+const providerVerifierStep = [
+  '      - name: Verify public production provider eligibility',
+  '        env:',
+  '          RESOLVED_DEPLOY_TARGET: ${{ needs.resolve-backend-deploy-target.outputs.target }}',
+  '        run: node backend/deploy/ci/verify-production-provider.mjs "$RESOLVED_DEPLOY_TARGET"',
+  '', '',
+].join('\n');
+const lightsailCheckoutAnchor = '      LIGHTSAIL_SSM_TARGET_TAG: ${{ vars.LIGHTSAIL_SSM_TARGET_TAG }}\n\n    steps:\n';
+const lightsailProviderCheckout = [
+  '      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0',
+  '        with:',
+  '          persist-credentials: false',
+  '', '',
+].join('\n');
+const lightnodeLeaseComment = {
+  before: [
+    '          # ADR-010: a temporary-active fallback contests the lease. Only asserted',
+    '          # after replace (the pre-replace release may predate /health/lease), and',
+    '          # only the mode: lease_held may legitimately be false while Lightsail holds it.',
+  ].join('\n'),
+  after: [
+    '          # ADR-010: this post-replace CI check requires lease mode required.',
+    '          # Persistent LightNode independently requires required AND held=true in',
+    '          # ci-deployer validated_status before status/replace and after replace.',
+    '          # The enabled temporary-expiry lifecycle has a separate legacy contract.',
+  ].join('\n'),
+};
+// Normalize exactly the approved comment once; executable bytes stay frozen.
+function withApprovedLightnodeLeaseCommentAtBase(text,label) {
+  const block=jobText(text,'deploy-lightnode');
+  assert.ok(block,`${label}: deploy-lightnode exists`);
+  assert.equal(text.split(lightnodeLeaseComment.after).length-1,1,`${label}: approved LightNode lease comment occurs exactly once`);
+  assert.equal(block.includes(lightnodeLeaseComment.after),true,`${label}: approved lease comment belongs to deploy-lightnode`);
+  assert.equal(text.includes(lightnodeLeaseComment.before),false,`${label}: old LightNode lease comment is gone`);
+  return text.replace(lightnodeLeaseComment.after,lightnodeLeaseComment.before);
+}
+function withApprovedDeployAdditionsAtBase(text,label) {
+  for(const id of ['deploy-lightsail','deploy-lightnode']) {
+    const block=jobText(text,id);
+    assert.ok(block,`${label}: ${id} exists`);
+    assert.equal(block.split(providerVerifierStep).length-1,1,`${label}: ${id} has exactly the approved unconditional provider verifier`);
+    let projected=block.replace(providerVerifierStep,'');
+    if(id==='deploy-lightsail') {
+      const checkout=lightsailCheckoutAnchor+lightsailProviderCheckout;
+      assert.equal(projected.split(checkout).length-1,1,`${label}: Lightsail verifier checkout is exact and anchored to its own job`);
+      projected=projected.replace(checkout,lightsailCheckoutAnchor);
+    }
+    text=text.replace(block,projected);
+  }
+  return withApprovedLightnodeLeaseCommentAtBase(text,label);
+}
 // The LightNode warm-standby change adds exactly these contract-test commands to the
 // 'Verify backend deployment automation contracts' step, right after the ci-deployer
 // contract line, plus one new job. Each is asserted here, then removed so the caller still
@@ -73,6 +126,8 @@ const standbyContractAdditions = [
   'bash backend/deploy/fallback-server/ci/standby-decision.test.sh',
   'bash backend/deploy/fallback-server/ci/newer-primary-release.test.sh',
 ];
+const contractGlobBase = 'node --test backend/deploy/fallback-server/ci/*.test.mjs backend/deploy/cloudrun/*.test.mjs';
+const contractGlobApproved = 'node --test backend/deploy/ci/*.test.mjs backend/deploy/fallback-server/ci/*.test.mjs backend/deploy/cloudrun/*.test.mjs';
 function stepsWithoutStandbyContractTests(steps,label) {
   const index=steps.findIndex(s=>s.name===standbyContractStep);
   assert.ok(index>=0,`${label}: ${standbyContractStep} step exists`);
@@ -81,8 +136,9 @@ function stepsWithoutStandbyContractTests(steps,label) {
   assert.ok(anchor>=0,`${label}: ci-deployer contract line exists`);
   assert.deepEqual(lines.slice(anchor+1,anchor+1+standbyContractAdditions.length),standbyContractAdditions,`${label}: standby contract tests directly follow the ci-deployer contract`);
   for(const added of standbyContractAdditions) assert.equal(lines.filter(line=>line===added).length,1,`${label}: ${added} occurs exactly once`);
+  assert.equal(lines.filter(line=>line===contractGlobApproved).length,1,`${label}: production provider verifier tests run exactly once`);
   const copy=structuredClone(steps);
-  copy[index].run=[...lines.slice(0,anchor+1),...lines.slice(anchor+1+standbyContractAdditions.length)].join('\n');
+  copy[index].run=[...lines.slice(0,anchor+1),...lines.slice(anchor+1+standbyContractAdditions.length)].map(line=>line===contractGlobApproved?contractGlobBase:line).join('\n');
   return copy;
 }
 // The only job the warm-standby change adds. Asserts it exists with exactly its approved
@@ -136,7 +192,7 @@ for(const app of apps) test(`${app}: parsed executable graph and stable gate`,()
   if(app==='backend') {assert.equal(enabled(j.impact,{backend:true},'workflow_dispatch','lightnode-status'),false);assert.equal(enabled(j.verify,{backend:true},'workflow_dispatch','lightnode-status'),false);}
 });
 test('backend auth matrix/steps and every operational/deploy block remain byte-identical',()=>{
-  const before=old('backend-ci.yml'),after=withPreviewConcurrencyAtBase(read('backend-ci.yml'),'backend-ci.yml');const a=parse(before).jobs,b=parse(after).jobs;
+  const before=old('backend-ci.yml'),current=read('backend-ci.yml'),after=withPreviewConcurrencyAtBase(withApprovedDeployAdditionsAtBase(current,'backend-ci.yml'),'backend-ci.yml');const a=parse(before).jobs,b=parse(after).jobs;
   assertOnlyStandbyJobAdded(a,b,'backend-ci.yml',['impact','checks']);
   for(const id of Object.keys(a).filter(id=>!['verify','auth-e2e'].includes(id))) {
     assert.equal(jobText(after,id),jobText(before,id),`${id} raw block changed`);assert.deepEqual(b[id],a[id]);
@@ -145,6 +201,23 @@ test('backend auth matrix/steps and every operational/deploy block remain byte-i
   assert.deepEqual(b['auth-e2e'].strategy.matrix.tenant_isolation_mode,['observe','enforce']);
   for(const id of ['build-lightsail-image','wait-database-patches','resolve-backend-deploy-target']) assert.deepEqual(b[id].needs,a[id].needs);
   assert.equal(needs(b.verify).includes('auth-e2e'),false);
+  for(const [id,original,mutated] of [
+    ['deploy-lightsail','aws ssm send-command','aws ssm list-commands'],
+    ['deploy-lightsail','role-to-assume: ${{ env.AWS_DEPLOY_ROLE_ARN }}','role-to-assume: unapproved-role'],
+    ['deploy-lightnode','"replace $GITHUB_SHA $IMAGE_DIGEST"','"status"'],
+  ]) {
+    assert.equal(current.split(original).length-1,1,`${id}: negative mutation has one exact target`);
+    const mutant=withPreviewConcurrencyAtBase(withApprovedDeployAdditionsAtBase(current.replace(original,mutated),'negative mutation'),'negative mutation');
+    assert.throws(()=>assert.equal(jobText(mutant,id),jobText(before,id),`${id} raw block changed`),/raw block changed/,`${id}: unrelated deployment edits must remain visible to the frozen comparison`);
+  }
+});
+test('LightNode lease comment projection rejects duplicate and unrecognized comment edits',()=>{
+  const current=read('backend-ci.yml');
+  assert.equal(withApprovedLightnodeLeaseCommentAtBase(current,'approved'),current.replace(lightnodeLeaseComment.after,lightnodeLeaseComment.before));
+  assert.throws(()=>withApprovedLightnodeLeaseCommentAtBase(current.replace(lightnodeLeaseComment.after,`${lightnodeLeaseComment.after}\n${lightnodeLeaseComment.after}`),'duplicate'),/occurs exactly once/);
+  assert.throws(()=>withApprovedLightnodeLeaseCommentAtBase(current.replace(lightnodeLeaseComment.after,lightnodeLeaseComment.after.replace('held=true','held=false')),'unrecognized'),/occurs exactly once/);
+  const extraComment=current.replace('          expect_status lease_mode required','          # unapproved lease exception\n          expect_status lease_mode required');
+  assert.notEqual(jobText(withApprovedLightnodeLeaseCommentAtBase(extraComment,'extra comment'),'deploy-lightnode'),jobText(withApprovedLightnodeLeaseCommentAtBase(current,'approved'),'deploy-lightnode'),'unrecognized extra comments remain visible');
 });
 test('mobile advisory keeps every step/service and full suite; only relevance and direct dependency change',()=>{
   const a=parse(old('mobile-ci.yml')).jobs.e2e,b=parse(read('mobile-ci.yml')).jobs.e2e;
@@ -178,7 +251,7 @@ test('service-record-ui reaches all downstream path-filtered required and adviso
 const correctionBase = 'a05682829ef59dd072d07401b6cdcf058c309085';
 const correctionOld = name => execFileSync('git', ['show', `${correctionBase}:.github/workflows/${name}`], {cwd:root,encoding:'utf8'});
 test('backend installs declared compiler before executing CI impact contracts; operational blocks are unchanged', () => {
-  const text = withPreviewConcurrencyAtBase(read('backend-ci.yml'),'backend-ci.yml'), workflow = parse(text);
+  const text = withPreviewConcurrencyAtBase(withApprovedDeployAdditionsAtBase(read('backend-ci.yml'),'backend-ci.yml'),'backend-ci.yml'), workflow = parse(text);
   const steps = workflow.jobs.checks.steps;
   const contracts = steps.findIndex(step => step.name === 'CI impact routing contracts');
   const install = steps.findIndex(step => step.name === 'Install dependencies');

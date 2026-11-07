@@ -1,6 +1,12 @@
+import { normalizePhone } from "application/utils/normalize-phone";
+import { AligoDefaultSenderPolicyService } from "./aligo-default-sender-policy.service";
+import { parseMessageQuietHold, publicMessageVariables, type MessageQuietHold } from "domain/message-policy-evaluator";
+import { isSelectedMessageJobExpired } from "./message-trigger-recipes";
+import { MessageQuietHoursService, isQuietHoursCanceled, recordQuietHoursRefusal, runSmsQuietHoursAdmission, QUIET_HOURS_CANCEL_REASON, QUIET_HOURS_DEFER_REASON } from "./message-quiet-hours.service";
 import { BadRequestException, ConflictException, Inject, Injectable, Logger, NotFoundException, Optional, ServiceUnavailableException } from "@nestjs/common";
 import type { Prisma } from "@prisma/client";
 import { codeOnlyProblemBody, problemBody } from "application/utils/problem-bodies";
+import { SystemSettingService } from "./system-setting.service";
 import { AligoService } from "application/services/aligo.service";
 import { MessageSenderApprovalService } from "application/services/message-sender-approval.service";
 import { MessageAutomationActivationService, type AutomaticRetryRulePolicy } from "application/services/message-automation-activation.service";
@@ -18,7 +24,6 @@ import {
     isRetryFamilyBlocker,
     withoutAligoHistoryBookkeeping,
     SMS_MANUAL_PROVIDER_REJECTED_RETRY_SAFETY,
-    SMS_DELIVERY_RETRY_DELAY_MS,
     SMS_PARTIAL_RETRY_SAFETY,
 } from "domain/entities/message-log.entity";
 import {
@@ -54,11 +59,19 @@ const UNCERTAIN_RETRY_SUPERSEDED_REASON =
 const AUTOMATION_RETRY_SEAL_INVALID_REASON =
     "자동 문자 권한 증거가 현재 작업과 일치하지 않아 자동 재전송을 중단했습니다. 작업을 다시 검토해 주세요.";
 
+export class SmsRetryTimingPolicyUnavailableError extends ServiceUnavailableException {
+    constructor() {
+        super("SMS retry timing policy is unavailable");
+    }
+}
+
 interface RetrySchedule {
     scheduledDate?: string;
     scheduledTime?: string;
     scheduledAtMs: number | null;
 }
+
+type ManualRecipientBinding = { kind: "CLIENT" | "CAREGIVER"; id: number; phone: string };
 
 type AutomaticRetryBoundary =
     | { kind: "terminal"; log: MessageLogEntity }
@@ -68,6 +81,7 @@ type AutomaticRetryBoundary =
         schedule: RetrySchedule;
         retryLog: MessageLogEntity;
         providerAttempt: MessageLogEntity;
+        retryDelayMs: number;
         authorizedSnapshot?: Readonly<SmsTriggerDeliverySnapshot>;
     };
 
@@ -80,6 +94,7 @@ type AutomaticRetryAuthorityState =
 @Injectable()
 export class SmsRetryService {
     private readonly logger = new Logger(SmsRetryService.name);
+    private readonly quietDeferredLogs = new WeakSet<MessageLogEntity>();
 
     constructor(
         @Inject(MESSAGE_LOG_REPOSITORY)
@@ -99,7 +114,21 @@ export class SmsRetryService {
         private readonly jobRepository?: IMessageTriggerJobRepository,
         // Required in production (no @Optional): the safeguard must never fail open.
         private readonly smsAutomationSafeguard?: SmsAutomationSafeguardService,
+        // Nest injection is mandatory; legacy direct callers fail closed at timing lookup.
+        private readonly systemSettingService?: SystemSettingService,
+        private readonly quietHours?: MessageQuietHoursService,
+        private readonly defaultSender?: AligoDefaultSenderPolicyService,
     ) {}
+
+    async getRetryDelayMs(branchId: string | null): Promise<number> {
+        if (!branchId || !this.systemSettingService) throw new SmsRetryTimingPolicyUnavailableError();
+        try {
+            const { configuration } = await this.systemSettingService.getMessageAutomationPolicyConfig(branchId);
+            return configuration.smsRetryIntervalMinutes * 60 * 1000;
+        } catch {
+            throw new SmsRetryTimingPolicyUnavailableError();
+        }
+    }
 
     async retryById(branchId: string, logId: number): Promise<MessageLogEntity> {
         const sourceLog = await this.logRepository.findByIdInBranch(branchId, logId);
@@ -137,7 +166,7 @@ export class SmsRetryService {
         }
 
         const family = await this.logRepository.findRetryFamilyInBranch(branchId, sourceLog.id);
-        if (family.some((log) => log.id !== sourceLog.id && isRetryFamilyBlocker(log))) {
+        if (family.some((log) => isQuietHoursCanceled(log) || (log.id !== sourceLog.id && isRetryFamilyBlocker(log)))) {
             throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
         }
 
@@ -153,13 +182,31 @@ export class SmsRetryService {
             throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
         }
 
-        return retryLog;
+        // Project only the public response. Persisted retry/resume provenance
+        // stays on the original entity; keep the response's class and fields.
+        return Object.assign(MessageLogEntity.create({
+            provider: retryLog.provider, templateKey: retryLog.templateKey,
+            receiver: retryLog.receiver, messageBody: retryLog.messageBody, variables: {},
+        }), retryLog, { variables: publicMessageVariables(retryLog.variables) });
     }
 
     async retry(
         sourceLog: MessageLogEntity,
         invocation: MessageRetryInvocation = "manual",
     ): Promise<MessageLogEntity | null> {
+        if (isQuietHoursCanceled(sourceLog)) return sourceLog;
+        if (sourceLog.variables["quietHoursDisposition"] === "DEFER") {
+            if (sourceLog.status === "pending" && sourceLog.providerAcceptanceState === "prepared"
+                && sourceLog.providerCallStartedAt === null && sourceLog.providerAcceptedAt === null && sourceLog.aligoMid === null
+                && ["manual", "automatic"].includes(sourceLog.variables["retryInvocation"] ?? "")) {
+                return this.resumeQuietRetry(sourceLog, invocation);
+            }
+            // 실제 거절 이후에는 안정된 quiet 이력을 보존한 채 기존 재시도 경로를 따른다.
+            // 그 외 pending/시작됨/불확실/수락됨 상태를 새 시도로 되살리지 않는다.
+            if (sourceLog.status !== "failed" || sourceLog.providerAcceptanceState !== "rejected") return sourceLog;
+        }
+        if (invocation === "automatic" && sourceLog.variables["origin"] === "ADMIN_DIRECT"
+            && sourceLog.variables["manualQueueMode"] === "internal") return sourceLog;
         if (sourceLog.templateKey === SERVICE_RECORD_LINK_SMS_LOG_TEMPLATE_KEY) {
             const client = await this.logRepository.findServiceRecordLinkClientState(sourceLog);
             if (client && getEffectiveClientServiceStatus(client.serviceStatus, client.startDate, client.endDate, client.bookingConfirmedAt) === "pre_booking") {
@@ -225,10 +272,12 @@ export class SmsRetryService {
                     }
 
                     const retryAuthority = await this.verifyAutomaticRetryAuthority(transaction, sourceLog);
-                    const retryDraft = this.createRetryAttempt(sourceLog);
+                    const retryDelayMs = await this.getRetryDelayMs(sourceLog.branchId);
+                    const retryDraft = this.createRetryAttempt(sourceLog, retryDelayMs);
                     if (retryAuthority.kind === "valid") {
                         this.applyAuthorizedSnapshot(retryDraft, retryAuthority.snapshot);
                     }
+                    await this.checkQuietRetryBeforeStart(sourceLog, transaction);
                     const retryStart = await this.logRepository.startRetryAttempt(
                         sourceLog,
                         retryDraft,
@@ -258,9 +307,8 @@ export class SmsRetryService {
                         return { kind: "terminal", log: retryLog };
                     }
 
-                    const providerAttempt = this.acceptanceService
-                        ? await this.acceptanceService.beginProviderCall(retryLog, transaction)
-                        : this.beginProviderCallWithoutBoundary(retryLog);
+                    const providerAttempt = await this.admitRetry(sourceLog, retryLog, transaction, invocation);
+                    if (!providerAttempt) return { kind: "terminal", log: retryLog };
                     if (!this.acceptanceService) {
                         await this.logRepository.update(providerAttempt, transaction);
                     }
@@ -269,6 +317,7 @@ export class SmsRetryService {
                         schedule,
                         retryLog,
                         providerAttempt,
+                        retryDelayMs,
                         ...(retryAuthority.kind === "valid" ? { authorizedSnapshot: retryAuthority.snapshot } : {}),
                     };
                 },
@@ -278,7 +327,8 @@ export class SmsRetryService {
                 // the automation parent is disabled.
             } else {
                 if (!boundary.allowed || !boundary.value) return null;
-                if (boundary.value.kind === "terminal") return boundary.value.log;
+                if (boundary.value.kind === "terminal") return this.quietDeferredLogs.has(boundary.value.log)
+                    ? this.logRepository.findByIdInBranch(sourceLog.branchId!, boundary.value.log.id) : boundary.value.log;
                 if (boundary.value.kind === "claimed") return null;
                 return this.sendRetryAttempt(
                     sourceLog,
@@ -286,6 +336,7 @@ export class SmsRetryService {
                     boundary.value.retryLog,
                     boundary.value.providerAttempt,
                     invocation,
+                    boundary.value.retryDelayMs,
                     boundary.value.authorizedSnapshot,
                 );
             }
@@ -315,9 +366,11 @@ export class SmsRetryService {
             return sourceLog;
         }
 
+        const retryDelayMs = await this.getRetryDelayMs(sourceLog.branchId);
+        await this.checkQuietRetryBeforeStart(sourceLog);
         const retryStart = await this.logRepository.startRetryAttempt(
             sourceLog,
-            this.createRetryAttempt(sourceLog),
+            this.createRetryAttempt(sourceLog, retryDelayMs),
             invocation,
         );
         if (retryStart.kind === "lost") {
@@ -348,11 +401,264 @@ export class SmsRetryService {
             }
         }
 
-        const providerAttempt = this.acceptanceService
-            ? await this.acceptanceService.beginProviderCall(retryLog)
-            : this.beginProviderCallWithoutBoundary(retryLog);
+        const providerAttempt = await this.admitRetry(sourceLog, retryLog, undefined, invocation);
+        if (!providerAttempt) return this.quietDeferredLogs.has(retryLog) ? this.logRepository.findByIdInBranch(retryLog.branchId!, retryLog.id) : retryLog;
 
-        return this.sendRetryAttempt(sourceLog, schedule, retryLog, providerAttempt, invocation);
+        return this.sendRetryAttempt(sourceLog, schedule, retryLog, providerAttempt, invocation, retryDelayMs);
+    }
+
+    private async admitRetry(source: MessageLogEntity, retry: MessageLogEntity, transaction?: Prisma.TransactionClient, invocation: MessageRetryInvocation = "automatic"): Promise<MessageLogEntity | null> {
+        return runSmsQuietHoursAdmission(this.quietHours, this.systemSettingService, retry.branchId, retry.receiver,
+            async (decision, tx, revision) => {
+                if (decision.action === "DEFER") {
+                    if (!tx || !revision) throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
+                    const storedSource = await this.logRepository.findByIdInBranch(source.branchId!, source.id, tx);
+                    const storedRetry = await this.logRepository.findByIdInBranch(retry.branchId!, retry.id, tx);
+                    if (!storedSource || !storedRetry) throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
+                    await this.assertQuietRetryRecipients(source, storedSource, tx);
+                    await this.assertQuietRetryRecipients(storedSource, storedRetry, tx);
+                    const old = parseMessageQuietHold(retry.variables);
+                    const job = retry.triggerJobId ? await tx.message_trigger_job.findFirst({ where: { id: retry.triggerJobId, branchId: retry.branchId } }) : null;
+                    const hold: MessageQuietHold = { releaseAt: new Date(Math.max(old?.releaseAt.getTime() ?? 0, decision.reevaluateAt.getTime())),
+                        originalScheduledFor: old?.originalScheduledFor ?? job?.scheduledFor ?? retry.createdAt,
+                        policyRevision: old && decision.reevaluateAt <= old.releaseAt ? old.policyRevision : revision, reason: QUIET_HOURS_DEFER_REASON };
+                    const sender = this.defaultSender?.read();
+                    if (!sender || sender.availability !== "available") throw new SmsRetryTimingPolicyUnavailableError();
+                    await this.logRepository.transitionQuietRetry(retry, hold, false, tx, undefined, invocation, sender.identityDigest);
+                    this.quietDeferredLogs.add(retry);
+                    return null;
+                }
+                if (decision.action !== "ALLOW") {
+                    if (!tx) throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
+                    const refused = await tx.message_log.updateMany({
+                        where: { id: retry.id, branchId: retry.branchId, providerAcceptanceState: "prepared",
+                            providerAcceptanceKey: retry.providerAcceptanceKey,
+                            providerAcceptanceFingerprint: retry.providerAcceptanceFingerprint },
+                        data: { status: "failed", nextRetryAt: null,
+                            errorMessage: decision.action === "CANCEL" ? QUIET_HOURS_CANCEL_REASON : QUIET_HOURS_DEFER_REASON,
+                            variables: { ...retry.variables, quietHoursDisposition: decision.action } },
+                    });
+                    if (refused.count !== 1) throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
+                    recordQuietHoursRefusal(source, decision);
+                    recordQuietHoursRefusal(retry, decision);
+                    await this.logRepository.update(source, tx);
+                    return null;
+                }
+                return this.acceptanceService
+                    ? this.acceptanceService.beginProviderCall(retry, tx)
+                    : this.beginProviderCallWithoutBoundary(retry);
+            }, transaction);
+    }
+
+    /** Resume the same prepared acceptance; never create another retry attempt for quiet waiting. */
+    private async resumeQuietRetry(retry: MessageLogEntity, invocation: MessageRetryInvocation): Promise<MessageLogEntity | null> {
+        const hold = parseMessageQuietHold(retry.variables);
+        const sourceId = Number(retry.variables["retryOfLogId"]);
+        if (!hold || !retry.branchId || !this.quietHours || !Number.isSafeInteger(sourceId) || sourceId <= 0) throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
+        if (retry.status !== "pending" || retry.providerAcceptanceState !== "prepared" || retry.providerCallStartedAt !== null
+            || retry.providerAcceptedAt !== null || retry.aligoMid !== null) return retry;
+        if (!retry.nextRetryAt || retry.nextRetryAt.getTime() > Date.now()) return retry;
+        // Approval reads use the root client. Resolve them before taking a
+        // branch connection; an unavailable/revoked approval leaves the hold intact.
+        try {
+            await this.messageSenderApprovalService.ensureApproved(retry.branchId);
+        } catch {
+            return retry;
+        }
+        const retryDelayMs = await this.getRetryDelayMs(retry.branchId);
+        const resume = (transaction?: Prisma.TransactionClient, rulePolicy?: AutomaticRetryRulePolicy) => this.quietHours!.runAdmission(retry.branchId!, retry.receiver, async (_decision, tx) => {
+            if (!tx) throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
+            const current = await this.logRepository.findByIdInBranch(retry.branchId!, retry.id, tx);
+            const source = await this.logRepository.findByIdInBranch(retry.branchId!, sourceId, tx);
+            if (!current || !source || current.status !== "pending" || current.provider !== "aligo_sms" || source.provider !== "aligo_sms"
+                || current.providerAcceptanceState !== "prepared" || current.providerCallStartedAt !== null
+                || current.providerAcceptedAt !== null || current.aligoMid !== null
+                || current.providerAcceptanceKey !== retry.providerAcceptanceKey || current.providerAcceptanceFingerprint !== retry.providerAcceptanceFingerprint
+                || current.variables["retryOfLogId"] !== String(sourceId)
+                || !["manual", "automatic"].includes(current.variables["retryInvocation"] ?? "")
+                || current.variables["retryInvocation"] !== retry.variables["retryInvocation"]
+                || current.triggerJobId !== retry.triggerJobId
+                || current.triggerJobId !== source.triggerJobId || current.receiver !== source.receiver || current.messageBody !== source.messageBody
+                || current.isPartialProviderOutcome() || current.isManualProviderRejection()
+                || (current.variables["retryInvocation"] === "automatic" && source.isManualProviderRejection())
+                || source.isProviderOutcomeUncertain() || source.variables["retrySafety"] === "uncertain"
+                || source.providerAcceptanceState === "accepted" || source.providerAcceptanceState === "reconciled_delivered"
+                || source.status !== "failed" || source.isPartialProviderOutcome()) throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
+            const sender = this.defaultSender?.read();
+            if (!sender || sender.availability !== "available" || sender.identityDigest !== current.variables["retrySenderIdentity"]) throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
+            await this.assertQuietRetryRecipients(source, current, tx);
+            const currentHold = parseMessageQuietHold(current.variables);
+            if (!currentHold || !current.nextRetryAt || current.nextRetryAt.getTime() > Date.now()) return null;
+            const explicitManual = current.variables["retryInvocation"] === "manual";
+            if (!explicitManual) {
+                const enabled = await this.systemSettingService!.getMessageSettingsPolicyEnabled(current.branchId!, "sms-retry", async key => {
+                    const row = await tx.system_setting.findUnique({ where: { key } });
+                    if (row && row.value !== "true" && row.value !== "false") throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
+                    return row?.value ?? null;
+                });
+                if (!enabled) return null;
+                if (await this.supersedeForRulePolicy(tx, current, rulePolicy)) return null;
+            }
+            const safeguard = !explicitManual ? await this.supersedeForSmsSafeguard(current, tx) : null;
+            if (safeguard) return null;
+            const authority = await this.verifyAutomaticRetryAuthority(tx, source);
+            if (authority.kind === "invalid") return null;
+            if (current.triggerJobId) {
+                const job = this.jobRepository && await this.jobRepository.findByIdInBranch(current.branchId!, current.triggerJobId, tx);
+                if (!job || job.scheduledFor.getTime() !== currentHold.originalScheduledFor.getTime()) throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
+                if (current.templateKey === SERVICE_RECORD_LINK_SMS_LOG_TEMPLATE_KEY) {
+                    const schedule = job.employeeScheduleId ? await tx.employee_schedule.findFirst({ where: { id: job.employeeScheduleId, branchId: current.branchId! } }) : null;
+                    let token: string | null = null;
+                    try { token = new URL(job.payload.buttonUrl ?? "").pathname.split("/service-record/")[1] ?? null; } catch { /* Invalid links fail closed below. */ }
+                    const valid = token && schedule && !schedule.replaced && !schedule.terminatedAt
+                        && schedule.primaryEmployeeId === job.payload.employeeId
+                        ? await tx.service_record_token.findFirst({ where: { branchId: current.branchId!, scheduleId: schedule.id,
+                            employeeId: schedule.primaryEmployeeId!, linkTokenHash: token, active: true, revokedAt: null, expiresAt: { gt: new Date(Date.now()) } } }) : null;
+                    if (!valid) { await this.logRepository.transitionQuietRetry(current, currentHold, true, tx, "stale_link"); return null; }
+                }
+                const policy = await this.systemSettingService!.getMessageAutomationPolicyConfig(current.branchId!, tx);
+                if (isSelectedMessageJobExpired(job,
+                    policy.configuration.pastExpiryHours, new Date(Date.now()), currentHold.releaseAt)) {
+                    await this.logRepository.transitionQuietRetry(current, currentHold, true, tx, "expired_after_quiet");
+                    return null;
+                }
+            }
+            if (explicitManual) {
+                const enabled = await this.systemSettingService!.getMessageSettingsPolicyEnabled(current.branchId!, "duplicate-send-confirmation", async key => {
+                    const row = await tx.system_setting.findUnique({ where: { key } });
+                    if (row && row.value !== "true" && row.value !== "false") throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
+                    return row?.value ?? null;
+                });
+                if (enabled) {
+                    const policy = await this.systemSettingService!.getMessageAutomationPolicyConfig(current.branchId!, tx);
+                    const at = new Date(Date.now());
+                    const matches = await this.logRepository.findSmsDuplicateMatches({ branchId: current.branchId!, receivers: current.receiver.split(",").map(phone => normalizePhone(phone)).filter((phone): phone is string => Boolean(phone)),
+                        messageBody: current.messageBody.replace(/\r\n/g, "\n").trim(), from: new Date(at.getTime() - policy.configuration.duplicateWindowHours * 3_600_000), to: at }, tx);
+                    if (matches.some(match => match.sentAt >= current.createdAt)) {
+                        await this.logRepository.transitionQuietRetry(current, currentHold, true, tx, "duplicate_at_release"); return null;
+                    }
+                }
+            }
+            const result = await runSmsQuietHoursAdmission(this.quietHours, this.systemSettingService, current.branchId, current.receiver,
+                async (decision, finalTx) => {
+                    if (!finalTx) throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
+                    // Re-read provenance and EVERY current owner at the final acquired
+                    // admission boundary, immediately before any transition/provider CAS.
+                    const finalCurrent = await this.logRepository.findByIdInBranch(current.branchId!, current.id, finalTx);
+                    const finalSource = await this.logRepository.findByIdInBranch(current.branchId!, source.id, finalTx);
+                    if (!finalCurrent || !finalSource
+                        || finalCurrent.variables["manualRecipientBindings"] !== current.variables["manualRecipientBindings"]
+                        || finalSource.variables["manualRecipientBindings"] !== source.variables["manualRecipientBindings"]
+                        || finalCurrent.receiver !== current.receiver || finalSource.receiver !== source.receiver
+                        || finalCurrent.clientId !== current.clientId || finalSource.clientId !== source.clientId
+                        || finalCurrent.variables["employeeId"] !== current.variables["employeeId"]
+                        || finalSource.variables["employeeId"] !== source.variables["employeeId"]) {
+                        throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
+                    }
+                    await this.assertQuietRetryRecipients(finalSource, finalCurrent, finalTx);
+                    if (decision.action !== "ALLOW") {
+                        await this.logRepository.transitionQuietRetry(current, decision.action === "DEFER"
+                            ? { ...currentHold, releaseAt: new Date(Math.max(currentHold.releaseAt.getTime(), decision.reevaluateAt.getTime())) } : currentHold,
+                            decision.action === "CANCEL", finalTx);
+                        return null;
+                    }
+                    const providerAttempt = this.acceptanceService ? await this.acceptanceService.beginProviderCall(current, finalTx) : this.beginProviderCallWithoutBoundary(current);
+                    return { source, current, providerAttempt, explicitManual, ...(authority.kind === "valid" ? { snapshot: authority.snapshot } : {}) };
+                }, tx, currentHold.releaseAt);
+            return result;
+        }, transaction);
+        let admitted: Awaited<ReturnType<typeof resume>> = null;
+        if (retry.variables["retryInvocation"] !== "manual") {
+            if (!retry.triggerJobId || !this.messageAutomationActivationService) return retry;
+            // The existing automatic retry boundary owns the branch transaction.
+            // Quiet admission and its final provider CAS reuse that transaction.
+            const boundary = await this.messageAutomationActivationService.runAutomaticRetryIfEnabled(
+                retry.branchId, retry.triggerJobId, (tx, rulePolicy) => resume(tx, rulePolicy),
+            );
+            if (boundary.applies) {
+                if (!boundary.allowed) return retry;
+                admitted = boundary.value ?? null;
+            } else {
+                admitted = await resume();
+            }
+        } else {
+            admitted = await resume();
+        }
+        if (!admitted) return this.logRepository.findByIdInBranch(retry.branchId, retry.id);
+        return this.sendRetryAttempt(admitted.source, { scheduledAtMs: null }, admitted.current, admitted.providerAttempt, admitted.explicitManual ? "manual" : invocation, retryDelayMs, admitted.snapshot);
+    }
+
+    /** Reject invalid batch provenance before creating a retry ledger row. */
+    private async checkQuietRetryBeforeStart(source: MessageLogEntity, transaction?: Prisma.TransactionClient): Promise<void> {
+        await runSmsQuietHoursAdmission(this.quietHours, this.systemSettingService, source.branchId, source.receiver,
+            async (decision, tx) => {
+                if (decision.action !== "DEFER") return;
+                if (!tx) throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
+                const stored = await this.logRepository.findByIdInBranch(source.branchId!, source.id, tx);
+                if (!stored) throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
+                await this.assertQuietRetryRecipients(source, stored, tx);
+            }, transaction);
+    }
+
+    private async assertQuietRetryRecipients(source: MessageLogEntity, current: MessageLogEntity, tx: Prisma.TransactionClient): Promise<void> {
+        const conflict = () => new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
+        if (!source.branchId || source.branchId !== current.branchId || source.receiver !== current.receiver
+            || source.clientId !== current.clientId || source.variables["employeeId"] !== current.variables["employeeId"]
+            || source.variables["manualRecipientBindings"] !== current.variables["manualRecipientBindings"]) throw conflict();
+        const phones = source.receiver.split(",").map(phone => normalizePhone(phone));
+        if (!phones.length || phones.some(phone => !phone) || new Set(phones).size !== phones.length) throw conflict();
+        const employeeValue = source.variables["employeeId"];
+        const employeeId = employeeValue == null || employeeValue === "" ? null : Number(employeeValue);
+        if ((source.clientId !== null && (!Number.isSafeInteger(source.clientId) || source.clientId <= 0))
+            || (employeeId !== null && (!Number.isSafeInteger(employeeId) || employeeId <= 0))) throw conflict();
+        const raw = source.variables["manualRecipientBindings"];
+        let bindings: ManualRecipientBinding[];
+        if (raw !== undefined) {
+            if (typeof raw !== "string" || (source.clientId !== null && employeeId !== null)) throw conflict();
+            let snapshot: unknown;
+            try { snapshot = JSON.parse(raw); } catch { throw conflict(); }
+            if (!snapshot || typeof snapshot !== "object" || Array.isArray(snapshot)) throw conflict();
+            const value = snapshot as Record<string, unknown>;
+            if (Object.keys(value).length !== 3 || value["version"] !== 1 || value["branchId"] !== source.branchId
+                || !Array.isArray(value["recipients"]) || value["recipients"].length !== phones.length) throw conflict();
+            bindings = [];
+            for (const entry of value["recipients"] as unknown[]) {
+                if (!entry || typeof entry !== "object" || Array.isArray(entry)) throw conflict();
+                const member = entry as Record<string, unknown>;
+                if (Object.keys(member).length !== 3 || (member["kind"] !== "CLIENT" && member["kind"] !== "CAREGIVER")
+                    || typeof member["id"] !== "number" || !Number.isSafeInteger(member["id"]) || member["id"] <= 0
+                    || typeof member["phone"] !== "string" || !member["phone"] || normalizePhone(member["phone"]) !== member["phone"]
+                    || !phones.includes(member["phone"])) throw conflict();
+                bindings.push({ kind: member["kind"], id: member["id"], phone: member["phone"] });
+            }
+            if (new Set(bindings.map(binding => binding.phone)).size !== phones.length
+                || new Set(bindings.map(binding => `${binding.kind}:${binding.id}`)).size !== phones.length) throw conflict();
+            if ((source.clientId !== null || employeeId !== null) && (bindings.length !== 1
+                || bindings[0]!.kind !== (source.clientId !== null ? "CLIENT" : "CAREGIVER")
+                || bindings[0]!.id !== (source.clientId ?? employeeId))) throw conflict();
+        } else {
+            // Historical single-ID logs carry real original authority. An unbound
+            // legacy batch has no historical owners to recover from today's rows.
+            if (phones.length !== 1 || (source.clientId === null && employeeId === null)) throw conflict();
+            // A legacy caregiver log may retain a contextual clientId; its
+            // original employeeId remains the recipient, as before.
+            const identity = employeeId !== null
+                ? await tx.employee.findFirst({ where: { id: employeeId, branchId: source.branchId, deletedAt: null }, select: { phone: true } })
+                : await tx.client.findFirst({ where: { id: source.clientId!, branchId: source.branchId, deletedAt: null }, select: { phone: true } });
+            if (!identity || normalizePhone(identity.phone) !== phones[0]) throw conflict();
+            return;
+        }
+        const [clients, employees] = await Promise.all([
+            tx.client.findMany({ where: { branchId: source.branchId, deletedAt: null }, select: { id: true, phone: true } }),
+            tx.employee.findMany({ where: { branchId: source.branchId, deletedAt: null }, select: { id: true, phone: true } }),
+        ]);
+        for (const binding of bindings) {
+            const owners = [
+                ...clients.filter(owner => normalizePhone(owner.phone) === binding.phone).map(owner => ({ kind: "CLIENT", id: owner.id })),
+                ...employees.filter(owner => normalizePhone(owner.phone) === binding.phone).map(owner => ({ kind: "CAREGIVER", id: owner.id })),
+            ];
+            if (owners.length !== 1 || owners[0]!.kind !== binding.kind || owners[0]!.id !== binding.id) throw conflict();
+        }
     }
 
     /**
@@ -502,6 +808,7 @@ export class SmsRetryService {
         retryLog: MessageLogEntity,
         providerAttempt: MessageLogEntity,
         invocation: MessageRetryInvocation,
+        retryDelayMs: number,
         authorizedSnapshot?: Readonly<SmsTriggerDeliverySnapshot>,
     ): Promise<MessageLogEntity> {
         const isScheduledInFuture = schedule.scheduledAtMs !== null && schedule.scheduledAtMs > Date.now();
@@ -529,7 +836,7 @@ export class SmsRetryService {
                 countSmsRecipients(authorizedSnapshot?.receiver ?? providerAttempt.receiver),
             );
             if (providerOutcome === "rejected") {
-                this.markSmsRetryRejected(providerAttempt, this.providerResponseMessage(result), invocation);
+                this.markSmsRetryRejected(providerAttempt, this.providerResponseMessage(result), invocation, retryDelayMs);
                 // 수동 재시도의 주차 정책은 변경하지 않는다.
                 if (invocation === "automatic") {
                     const rejection = classifySmsProviderRejection(result);
@@ -629,6 +936,7 @@ export class SmsRetryService {
      * caller's outcome handling cannot misread a lookup failure as uncertain.
      */
     private async ruleStillPermitsAutomaticRetry(sourceLog: MessageLogEntity): Promise<boolean> {
+        if (sourceLog.variables["origin"] === "ADMIN_DIRECT" && sourceLog.variables["manualQueueMode"] === "internal") return false;
         if (!this.messageAutomationActivationService || !sourceLog.branchId || !sourceLog.triggerJobId) return true;
         try {
             return await this.messageAutomationActivationService
@@ -694,9 +1002,9 @@ export class SmsRetryService {
         });
     }
 
-    private createRetryAttempt(sourceLog: MessageLogEntity): MessageLogEntity {
+    private createRetryAttempt(sourceLog: MessageLogEntity, retryDelayMs: number): MessageLogEntity {
         const now = new Date(Date.now());
-        const recoveryAt = new Date(now.getTime() + SMS_DELIVERY_RETRY_DELAY_MS);
+        const recoveryAt = new Date(now.getTime() + retryDelayMs);
         const retryAttempt = sourceLog.attempts + 1;
         const providerAcceptanceKey = buildSmsProviderAcceptanceKey(
             "retry",
@@ -712,6 +1020,9 @@ export class SmsRetryService {
                 variables: sourceLog.variables,
                 retryAttempt,
             });
+        const sourceVariables = withoutAligoHistoryBookkeeping(sourceLog.variables);
+        delete sourceVariables["retryInvocation"];
+        delete sourceVariables["retrySenderIdentity"];
         return MessageLogEntity.reconstitute(
             0,
             sourceLog.branchId,
@@ -722,7 +1033,7 @@ export class SmsRetryService {
             sourceLog.clientId,
             sourceLog.messageBody,
             {
-                ...withoutAligoHistoryBookkeeping(sourceLog.variables),
+                ...sourceVariables,
                 retryOfLogId: String(sourceLog.id),
                 retryAttempt: String(retryAttempt),
                 // Persist the attempt conservatively before the provider call. If the
@@ -754,6 +1065,11 @@ export class SmsRetryService {
         const hasTime = rawTime !== undefined && rawTime !== null;
 
         if (!hasDate && !hasTime) {
+            // 내부 큐 예약은 job의 due 시각에 이미 실행되므로 제공자 예약 필드가 없다.
+            if (log.templateKey === "manual_sms" && log.triggerJobId
+                && log.variables["origin"] === "ADMIN_DIRECT" && log.variables["manualQueueMode"] === "internal") {
+                return { scheduledAtMs: null };
+            }
             return isExplicitlyScheduled ? null : { scheduledAtMs: null };
         }
         if (!hasDate || !hasTime || typeof rawDate !== "string" || typeof rawTime !== "string") {
@@ -781,6 +1097,7 @@ export class SmsRetryService {
         log: MessageLogEntity,
         errorMessage: string,
         invocation: MessageRetryInvocation,
+        retryDelayMs: number,
     ): void {
         log.status = "failed";
         log.providerAcceptanceState = "rejected";
@@ -809,7 +1126,7 @@ export class SmsRetryService {
         // on; sendRetryAttempt re-checks the rule's CURRENT value before keeping
         // this schedule, and the next pick is superseded at the boundary too.
         log.nextRetryAt = log.canRetry()
-            ? new Date(Date.now() + SMS_DELIVERY_RETRY_DELAY_MS)
+            ? new Date(Date.now() + retryDelayMs)
             : null;
     }
 

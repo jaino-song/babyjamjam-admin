@@ -1,11 +1,12 @@
 import {
     MessageTriggerRecipientType,
-    MessageTriggerTemplateKey,
+    type MessageTriggerJobTemplateKey,
 } from "domain/constants/message-trigger-catalog";
 import {
     TRIGGER_JOB_MAX_ATTEMPTS,
     TRIGGER_JOB_RETRY_DELAY_MS,
 } from "domain/constants/message-automation-policy";
+import type { MessageQuietHold } from "domain/message-policy-evaluator";
 import type { AgentAutomationJobSeal, AgentAutomationTaskCommitReference } from "./agent-automation-consent";
 import type { ServiceRecordRevisionDispatchContext } from "@babyjamjam/shared/types/service-record";
 
@@ -26,7 +27,24 @@ export interface MessageTriggerCatchUpMetadata {
     predecessorDedupeKey: string | null;
 }
 
+export interface CaregiverSourceSnapshot {
+    version: 1;
+    groupId: string;
+    groupVersion: number;
+    ruleId: string;
+    eventType: "SERVICE_START" | "SERVICE_END";
+    schedule: { id: number; incarnationId: string; startDate: string; endDate: string; replaced: false; terminatedAt: null };
+    employee: { id: number; branchId: string; name: string; phone: string; deletedAt: null; smsAutomationEnabled: true };
+    client: { id: number; branchId: string; name: string; createdAt: string; deletedAt: null; serviceStatus: string | null;
+        startDate: string | null; endDate: string | null; bookingConfirmedAt: string | null };
+    branchName: string;
+    variables: Record<string, string>;
+}
+
 export interface MessageTriggerJobPayload {
+    existingMessageLogId?: number;
+    origin?: "ADMIN_DIRECT";
+    caregiverSourceSnapshot?: CaregiverSourceSnapshot;
     /** Private server-derived authority. Presence is not proof without terminal-record validation. */
     agentAutomationSeal?: AgentAutomationJobSeal;
     /** Digest-only task commit/coverage lookup; never contains customer or message data. */
@@ -67,6 +85,9 @@ export interface MessageTriggerJobPayload {
 }
 
 export class MessageTriggerJobEntity {
+    /** Validated repository projection; never source payload or public input. */
+    quietHold?: MessageQuietHold;
+
     constructor(
         public readonly id: string,
         public branchId: string | null,
@@ -80,7 +101,7 @@ export class MessageTriggerJobEntity {
         public employeeScheduleId: number | null,
         public recipientType: MessageTriggerRecipientType,
         public recipientPhone: string | null,
-        public templateKey: MessageTriggerTemplateKey,
+        public templateKey: MessageTriggerJobTemplateKey,
         public dedupeKey: string,
         public payload: MessageTriggerJobPayload,
         public attempts: number,
@@ -89,6 +110,8 @@ export class MessageTriggerJobEntity {
         public updatedAt: Date,
         /** Immutable token for the currently claimed processing attempt. */
         public claimToken: string | null = null,
+        /** Policy snapshot stored with a processing claim; legacy rows may be null. */
+        public processingDeadlineAt: Date | null = null,
     ) {}
 
     static create(params: {
@@ -99,7 +122,7 @@ export class MessageTriggerJobEntity {
         employeeScheduleId?: number | null;
         recipientType: MessageTriggerRecipientType;
         recipientPhone?: string | null;
-        templateKey: MessageTriggerTemplateKey;
+        templateKey: MessageTriggerJobTemplateKey;
         dedupeKey: string;
         payload: MessageTriggerJobPayload;
     }): MessageTriggerJobEntity {
@@ -141,7 +164,7 @@ export class MessageTriggerJobEntity {
         employeeScheduleId: number | null,
         recipientType: MessageTriggerRecipientType,
         recipientPhone: string | null,
-        templateKey: MessageTriggerTemplateKey,
+        templateKey: MessageTriggerJobTemplateKey,
         dedupeKey: string,
         payload: MessageTriggerJobPayload,
         createdAt: Date,
@@ -149,6 +172,7 @@ export class MessageTriggerJobEntity {
         attempts = 0,
         nextAttemptAt: Date | null = null,
         claimToken: string | null = null,
+        processingDeadlineAt: Date | null = null,
     ): MessageTriggerJobEntity {
         return new MessageTriggerJobEntity(
             id,
@@ -171,12 +195,14 @@ export class MessageTriggerJobEntity {
             createdAt,
             updatedAt,
             claimToken,
+            processingDeadlineAt,
         );
     }
 
-    markProcessing(claimToken?: string | null): void {
+    markProcessing(claimToken?: string | null, processingDeadlineAt?: Date): void {
         if (this.isTerminal()) return;
         this.status = "processing";
+        if (processingDeadlineAt !== undefined) this.processingDeadlineAt = processingDeadlineAt;
         if (claimToken !== undefined) {
             this.claimToken = claimToken;
         }
@@ -195,7 +221,7 @@ export class MessageTriggerJobEntity {
         this.updatedAt = new Date();
     }
 
-    defer(kind: "transient", reason: string): void {
+    defer(kind: "transient", reason: string, retryDelayMs = TRIGGER_JOB_RETRY_DELAY_MS): void {
         if (this.isTerminal()) return;
         const now = new Date();
 
@@ -206,7 +232,7 @@ export class MessageTriggerJobEntity {
         }
 
         this.status = "pending";
-        this.nextAttemptAt = new Date(now.getTime() + TRIGGER_JOB_RETRY_DELAY_MS);
+        this.nextAttemptAt = new Date(now.getTime() + retryDelayMs);
         this.updatedAt = now;
     }
 
@@ -260,7 +286,7 @@ export class MessageTriggerJobEntity {
             this.id, this.branchId, this.ruleId, this.status, this.scheduledFor, this.sentAt, this.canceledAt,
             this.cancelReason, this.clientId, this.employeeScheduleId, this.recipientType, this.recipientPhone,
             this.templateKey, this.dedupeKey, { ...this.payload, ...overrides }, this.createdAt, this.updatedAt,
-            this.attempts, this.nextAttemptAt, this.claimToken,
+            this.attempts, this.nextAttemptAt, this.claimToken, this.processingDeadlineAt,
         );
     }
 }

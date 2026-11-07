@@ -8,6 +8,8 @@ import {
     AgentActionResultPartSchema,
     AgentFormFieldSchema,
     AgentFormPartSchema,
+    AgentActionPreviewSchema,
+    AgentActionProposalPartSchema,
     type BjjUIMessage,
 } from "./index";
 
@@ -171,5 +173,51 @@ describe("agent contracts", () => {
         expect(AgentFormFieldSchema.safeParse({ ...field, maxLength: 0 }).success).toBe(false);
         expect(AgentFormFieldSchema.safeParse({ ...field, maxLength: 1001 }).success).toBe(false);
         expect(AgentFormFieldSchema.parse(field)).toEqual(field);
+    });
+
+    describe("action proposal preview", () => {
+        const proposal = {
+            actionId: "action-1",
+            capability: "clients.update",
+            title: "수정",
+            summary: "요약",
+            expiresAt: "2026-08-03T00:00:00.000Z",
+            expectedRevision: "rev-1",
+            changes: { a: 1 },
+        };
+        const preview = {
+            sections: [{
+                title: "회차 날짜",
+                rows: [
+                    { label: "1회차", before: "2026-08-03", after: "2026-08-04" },
+                    { label: "2회차", before: null, after: "2026-08-05", note: "휴일입니다" },
+                ],
+            }],
+        };
+
+        it("parses a valid preview and keeps null before/after values", () => {
+            expect(AgentActionPreviewSchema.parse(preview)).toEqual(preview);
+            expect(AgentActionProposalPartSchema.parse({ ...proposal, preview }).preview).toEqual(preview);
+        });
+
+        it("still parses a proposal without a preview", () => {
+            const parsed = AgentActionProposalPartSchema.parse(proposal);
+            expect(parsed).toEqual(proposal);
+            expect("preview" in parsed).toBe(false);
+        });
+
+        it("rejects oversize or malformed previews", () => {
+            const row = { label: "행", before: "a", after: "b" };
+            const section = (rows: unknown[], title = "구간") => ({ title, rows });
+            expect(AgentActionPreviewSchema.safeParse({ sections: Array.from({ length: 11 }, () => section([row])) }).success).toBe(false);
+            expect(AgentActionPreviewSchema.safeParse({ sections: [section(Array.from({ length: 61 }, () => row))] }).success).toBe(false);
+            expect(AgentActionPreviewSchema.safeParse({ sections: [section(Array.from({ length: 60 }, () => row))] }).success).toBe(true);
+            expect(AgentActionPreviewSchema.safeParse({ sections: [section([{ ...row, after: "x".repeat(201) }])] }).success).toBe(false);
+            expect(AgentActionPreviewSchema.safeParse({ sections: [section([{ ...row, note: "x".repeat(201) }])] }).success).toBe(false);
+            expect(AgentActionPreviewSchema.safeParse({ sections: [section([{ ...row, label: "x".repeat(81) }])] }).success).toBe(false);
+            expect(AgentActionPreviewSchema.safeParse({ sections: [section([row], "x".repeat(81))] }).success).toBe(false);
+            expect(AgentActionPreviewSchema.safeParse({ sections: [section([{ label: "행", after: "b" }])] }).success).toBe(false);
+            expect(AgentActionProposalPartSchema.safeParse({ ...proposal, preview: { sections: "no" } }).success).toBe(false);
+        });
     });
 });

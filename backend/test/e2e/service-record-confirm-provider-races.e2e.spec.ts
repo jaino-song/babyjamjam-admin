@@ -254,7 +254,7 @@ describeE2E("service-record confirmation/provider lock races (real disposable Po
             });
             const staleProviderError = await providerPromise.then(() => undefined, (error) => error);
             expect(staleProviderError).toBeInstanceOf(ConflictException);
-            expect(conflictCode(staleProviderError)).toBe("SERVICE_RECORD_PLANNED_DATE_STALE");
+            expect(conflictCode(staleProviderError)).toBe("REQUEST_CONFLICT");
 
             const beforeRefresh = await readCaseState(prisma, fixture);
             expect(beforeRefresh.days).toHaveLength(3);

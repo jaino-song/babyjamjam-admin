@@ -40,6 +40,7 @@ import {
     SERVICE_STATUS_OPTIONS
 } from "@/lib/client/types";
 import type { Employee } from "@/hooks/useEmployees";
+import { formatVoucherDurationLabel } from "@/lib/client/voucher-duration-label";
 import { useLocale } from "@/providers/LocaleProvider";
 import { t } from "@/lib/i18n/translations";
 import { formatKoreanPhoneNumber } from "@/lib/phone";
@@ -709,7 +710,7 @@ function ClientFormContent({
 
         return availableDurations.map((duration) => ({
             value: String(duration),
-            label: `${duration}일`,
+            label: formatVoucherDurationLabel(duration, availableDurations),
         }));
     }, [availableDurations, formData.voucherClient, outOfPocketPriceInfos]);
 

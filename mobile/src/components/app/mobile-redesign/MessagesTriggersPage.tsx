@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, type ReactElement } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactElement } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 
 import { ClientRegistrationPolicySettings } from "@/components/app/mobile-redesign/ClientRegistrationPolicySettings";
@@ -8,7 +8,9 @@ import { MessageSectionNav } from "@/components/app/mobile-redesign/MessageSecti
 import { MessageTriggerEditor } from "@/components/app/mobile-redesign/MessageTriggerEditor";
 import { MessageTriggerList } from "@/components/app/mobile-redesign/MessageTriggerList";
 import { SlidingCard } from "@/components/app/mobile-redesign/sliding-card";
-import { useMessageTriggerRules } from "@/features/message-triggers/hooks/use-message-triggers";
+import { useQuery } from "@tanstack/react-query";
+import { messageRuleGroupsApi } from "@/services/api";
+import { ApprovalTwoButtonModal } from "@/components/app/ui/ApprovalTwoButtonModal";
 import { canManageBranch, canManageBranchFromAuthQuery } from "@/lib/auth/branch-role-policy";
 import { useGetAuthUser } from "@/hooks/useGetAuthUser";
 
@@ -27,15 +29,33 @@ export function MessagesTriggersPage(): ReactElement {
   const canManage = canManageBranchFromAuthQuery(authUserQuery);
   const didPushDetailRef = useRef(false);
   const lastClearedItemRef = useRef<string | null>(null);
-  const rulesQuery = useMessageTriggerRules();
+  const branchId = authUserQuery.data?.branchId ?? null;
+  const rulesQuery = useQuery({ queryKey: ["message-trigger-rule-groups", branchId], queryFn: () => messageRuleGroupsApi.list(branchId!), enabled: Boolean(branchId) });
+  const [editorDirty, setEditorDirty] = useState(false);
+  const [leaveOpen, setLeaveOpen] = useState(false);
+  const leaveAction = useRef<(() => void) | null>(null);
+  const guardNavigation = (action: () => void) => { if (editorDirty) { leaveAction.current = action; setLeaveOpen(true); } else action(); };
+  useEffect(() => {
+    if (!editorDirty) return;
+    const click = (event: MouseEvent) => {
+      const anchor = event.target instanceof Element ? event.target.closest("a[href]") : null;
+      if (!(anchor instanceof HTMLAnchorElement) || anchor.origin !== window.location.origin || anchor.target === "_blank" || event.ctrlKey || event.metaKey || anchor.href === window.location.href) return;
+      event.preventDefault(); event.stopPropagation();
+      leaveAction.current = () => router.push(anchor.pathname + anchor.search + anchor.hash);
+      setLeaveOpen(true);
+    };
+    document.addEventListener("click", click, true);
+    return () => document.removeEventListener("click", click, true);
+  }, [editorDirty, router]);
   const rules = useMemo(
-    () => Array.isArray(rulesQuery.data) ? rulesQuery.data : [],
+    () => rulesQuery.data?.standaloneRules ?? [],
     [rulesQuery.data],
   );
   const selectedRule = useMemo(
     () => rules.find((rule) => rule.id === selectedItemId && rule.branchId !== null),
     [rules, selectedItemId],
   );
+  const selectedGroup = rulesQuery.data?.groups.find((group) => group.id === selectedItemId);
   const isCreating = selectedItemId === NEW_RULE_ITEM_ID;
   const authoritySettled = !authUserQuery.isPending
     && !authUserQuery.isLoading
@@ -49,7 +69,7 @@ export function MessagesTriggersPage(): ReactElement {
     && authUserQuery.isFetching
   );
   const isOpen = canRenderAuthorizedDetail
-    && (isCreating || selectedRule !== undefined);
+    && (isCreating || selectedRule !== undefined || selectedGroup !== undefined);
 
   useEffect(() => {
     if (selectedItemId === null) {
@@ -73,7 +93,8 @@ export function MessagesTriggersPage(): ReactElement {
         rulesQuery.isFetching ||
         rulesQuery.isError ||
         isCreating ||
-        selectedRule !== undefined
+        selectedRule !== undefined ||
+        selectedGroup !== undefined
       ))
     ) {
       return;
@@ -86,34 +107,37 @@ export function MessagesTriggersPage(): ReactElement {
     lastClearedItemRef.current = selectedItemId;
 
     router.replace("/messages/automation", { scroll: false });
-  }, [authoritySettled, canManage, isCreating, router, rulesQuery.isError, rulesQuery.isFetching, rulesQuery.isLoading, selectedItemId, selectedRule]);
+  }, [authoritySettled, canManage, isCreating, router, rulesQuery.isError, rulesQuery.isFetching, rulesQuery.isLoading, selectedItemId, selectedRule, selectedGroup]);
 
   const openItem = (id: string) => {
     if (id === selectedItemId) return;
 
-    router.push(`?item=${encodeURIComponent(id)}`, { scroll: false });
-    didPushDetailRef.current = true;
+    guardNavigation(() => { router.push(`?item=${encodeURIComponent(id)}`, { scroll: false }); didPushDetailRef.current = true; });
   };
 
-  const closeDetail = () => {
+  const closeDetail = () => guardNavigation(() => {
     if (didPushDetailRef.current) {
       router.back();
       return;
     }
 
     router.replace("/messages/automation", { scroll: false });
-  };
+  });
 
   const detail = isOpen ? (
     <MessageTriggerEditor
-      key={selectedItemId}
-      data-component={`${DETAIL_BODY_BASE}_${isCreating ? "new-rule" : `rule-${selectedRule?.id}`}_editor`}
+      key={`${branchId}-${selectedItemId}`}
+      data-component={`${DETAIL_BODY_BASE}_${isCreating ? "new-rule" : `rule-${selectedGroup?.id ?? selectedRule?.id}`}_editor`}
       rule={selectedRule ?? null}
-      onClose={closeDetail}
+      group={selectedGroup ?? null}
+      onDirtyChange={setEditorDirty}
+      onCancel={closeDetail}
+      onClose={() => { setEditorDirty(false); if (didPushDetailRef.current) router.back(); else router.replace("/messages/automation", { scroll: false }); }}
     />
   ) : null;
 
   return (
+    <>
     <section
       data-component={AUTOMATION_PAGE_BASE}
       data-slot="messages-page"
@@ -147,6 +171,7 @@ export function MessagesTriggersPage(): ReactElement {
                 selectedId={selectedItemId}
                 onCreate={() => openItem(NEW_RULE_ITEM_ID)}
                 onEdit={(rule) => openItem(rule.id)}
+                onEditGroup={(group) => openItem(group.id)}
                 beforeItems={canManage ? (
                   <ClientRegistrationPolicySettings
                     data-component={`${AUTOMATION_LIST_BASE}_client-registration-policy`}
@@ -159,5 +184,7 @@ export function MessagesTriggersPage(): ReactElement {
         </div>
       </div>
     </section>
+    <ApprovalTwoButtonModal data-component={`${AUTOMATION_PAGE_BASE}_leave-modal`} open={leaveOpen} onOpenChange={setLeaveOpen} title="변경 내용을 취소할까요?" description="저장하지 않은 변경 내용은 취소됩니다." isDescriptionVisuallyHidden={false} approvalLabel="변경 취소" onApprove={() => { setEditorDirty(false); setLeaveOpen(false); const action = leaveAction.current; leaveAction.current = null; action?.(); }} />
+    </>
   );
 }

@@ -1,3 +1,4 @@
+import { Prisma } from "@prisma/client";
 import { ExecutionContext, INestApplication } from "@nestjs/common";
 import { ConfigModule } from "@nestjs/config";
 import { Test, TestingModule } from "@nestjs/testing";
@@ -51,6 +52,8 @@ export interface MessageCronHarness {
     backdate(jobId: string, scheduledFor: Date): Promise<void>;
     /** Direct prisma update of message_log.nextRetryAt to the past. */
     forceRetryDue(logId: number): Promise<void>;
+    /** Explicitly opens a new logical test window for the seeded branch only. Never called by tick.dispatch. */
+    prepareFreshDispatchWindow(): Promise<void>;
     close(): Promise<void>;
 }
 
@@ -116,6 +119,19 @@ export async function bootMessageCronHarness(options: BootOptions = {}): Promise
     }
 
     const prisma = app.get(PrismaService);
+    const cadenceKey = `branch:${MESSAGE_CRON_BRANCH_ID}:message_automation:last_dispatch_at`;
+    // Capture before callers can run suite activity. PostgreSQL text preserves
+    // timestamp microseconds that a Prisma Date round trip would truncate.
+    let originalCadence: Array<{ value: string; updated_at: string }>;
+    try {
+        originalCadence = await prisma.$queryRaw(Prisma.sql`
+            SELECT value, updated_at::text AS updated_at FROM "system_setting" WHERE key = ${cadenceKey}
+        `);
+    } catch (error) {
+        await app.close();
+        throw error;
+    }
+    let closing: Promise<void> | undefined;
     const triggerScheduler = app.get(MessageTriggerSchedulerService, { strict: false });
     const retryScheduler = app.get(MessageRetrySchedulerService, { strict: false });
     const intentService = app.get(MessageAutomationIntentService, { strict: false });
@@ -145,6 +161,33 @@ export async function bootMessageCronHarness(options: BootOptions = {}): Promise
             prisma.message_log
                 .update({ where: { id: logId }, data: { nextRetryAt: new Date(Date.now() - 60_000) } })
                 .then(() => undefined),
-        close: () => app.close(),
+        prepareFreshDispatchWindow: async () => {
+            // The maximum configured cadence is 24 hours. Backdate only this
+            // fixture key by 48 hours relative to the scenario's current clock.
+            const value = new Date(Date.now() - 48 * 60 * 60_000).toISOString();
+            await prisma.system_setting.upsert({
+                where: { key: cadenceKey },
+                create: { key: cadenceKey, value },
+                update: { value },
+            });
+        },
+        close: () => closing ??= (async () => {
+            try {
+                const original = originalCadence[0];
+                if (original) {
+                    await prisma.$executeRaw(Prisma.sql`
+                        INSERT INTO "system_setting" (key, value, updated_at)
+                        VALUES (${cadenceKey}, ${original.value}, ${original.updated_at}::timestamptz)
+                        ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = EXCLUDED.updated_at
+                    `);
+                } else {
+                    await prisma.system_setting.deleteMany({ where: { key: cadenceKey } });
+                }
+            } finally {
+                // Restore while this client is connected; close even if the
+                // restoration fails, without reopening a disconnected pool.
+                await app.close();
+            }
+        })(),
     };
 }

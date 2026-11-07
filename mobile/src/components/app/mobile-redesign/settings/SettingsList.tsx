@@ -66,7 +66,7 @@ export function SettingsList({
                   subtitle={item.subtitle}
                   isSelected={selectedId === item.id}
                   onSelect={() => onSelect(item.id)}
-                  control={isTenantApplication ? (
+                  control={isTenantApplication || item.unavailable ? (
                     <StatusPill
                       data-component={`${itemBase}_trailing_status`}
                       variant="primary"
@@ -80,7 +80,9 @@ export function SettingsList({
                       thumbDataComponent={`${itemBase}_trailing_switch_thumb`}
                       aria-label={`${item.title} 활성화`}
                       checked={isSwitchChecked}
-                      disabled={togglingItemId !== null}
+                      disabled={item.disabled || togglingItemId !== null}
+                      onClick={(event) => event.stopPropagation()}
+                      onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") event.stopPropagation(); }}
                       onCheckedChange={(active) => onToggle(item.id, active)}
                       className="[--v3-ui-scale:var(--glint-ui-scale,1)]"
                     />

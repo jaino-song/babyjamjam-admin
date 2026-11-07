@@ -18,6 +18,8 @@ import { ListCard } from "@/components/app/mobile-redesign/primitives";
 import { MsgField } from "@/components/app/messages/templates/MsgField";
 import { FieldLabelRow, fieldMessageId } from "@/components/app/ui/FieldLabelRow";
 import { Input } from "@/components/app/v3/Input";
+import { ApprovalTwoButtonModal } from "@/components/app/ui/ApprovalTwoButtonModal";
+import { useGetAuthUser } from "@/hooks/useGetAuthUser";
 import bankAccountJSON from "@/components/app/messages/templates/json/bank-account.json";
 import voucherOptions from "@/components/app/messages/templates/json/voucher.json";
 import { greetingMsgTemplate } from "@/components/app/messages/templates/messageTemplate/greetingMsg";
@@ -33,6 +35,8 @@ import { Button } from "@/components/ui/button";
 import {
   Select,
   SelectContent,
+  SelectGroup,
+  SelectLabel,
   SelectItem,
   SelectTrigger,
   SelectValue,
@@ -68,7 +72,12 @@ import {
   type SlotMessage,
 } from "@/lib/validations/field-message";
 import { useLocale } from "@/providers/LocaleProvider";
-import type { SendMessageDeliverySmsResponse } from "@babyjamjam/shared/types/message";
+import type {
+  MessageDeliverySmsDuplicateCheckResponse,
+  SendMessageDeliverySmsResponse,
+  SendMessageDeliverySmsSentResponse,
+  SendMessageDeliverySmsQueueResponse,
+} from "@babyjamjam/shared/types/message";
 import {
   SYSTEM_TEMPLATE_KEYS,
   resolveSystemTemplateDeliveryMode,
@@ -94,6 +103,9 @@ interface TemplateOption {
   name: string;
   body: string;
   variables: TemplateInputVariable[];
+  disabled?: boolean;
+  group?: string;
+  groupLabel?: string;
 }
 
 interface TemplateInputVariable {
@@ -187,6 +199,7 @@ type SmsSubmission = {
   payload: Record<string, unknown>;
   fingerprint: string;
   idempotencyKey: string;
+  branchId: string;
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -272,8 +285,8 @@ function countSmsRecipients(receiver: string): number {
     .length;
 }
 
-function isSmsSendResponse(value: unknown): value is SendResponse {
-  if (!isRecord(value)) return false;
+function isSmsSendResponse(value: unknown): value is SendMessageDeliverySmsSentResponse {
+  if (!isRecord(value) || "outcome" in value || "items" in value) return false;
 
   const request = value.request;
   const result = value.result;
@@ -315,6 +328,7 @@ function isAcceptedSmsSendResponse(
   value: unknown,
   submittedReceiver: unknown,
 ): value is SendResponse {
+  if (isQueuedSmsResponse(value, submittedReceiver)) return true;
   if (!isSmsSendResponse(value) || typeof submittedReceiver !== "string") {
     return false;
   }
@@ -328,6 +342,52 @@ function isAcceptedSmsSendResponse(
     && value.result.resultCode === 1
     && value.result.successCount === expectedRecipientCount
     && value.result.errorCount === 0;
+}
+
+function isQueuedSmsResponse(value: unknown, receiver: unknown): value is SendMessageDeliverySmsQueueResponse {
+  if (!isRecord(value) || typeof receiver !== "string" || "result" in value
+    || value.provider !== "aligo_sms"
+    || (value.triggerType !== "immediate" && value.triggerType !== "scheduled")
+    || !isRecord(value.request) || typeof value.request.receiver !== "string"
+    || (value.request.senderPhone !== undefined && typeof value.request.senderPhone !== "string")
+    || !["AUTO", "SMS", "LMS"].includes(String(value.request.msgType))
+    || typeof value.request.testMode !== "boolean"
+    || typeof value.request.idempotencyKey !== "string" || !value.request.idempotencyKey.trim()
+    || !["queued", "deferred", "canceled", "mixed"].includes(String(value.outcome))
+    || !Array.isArray(value.items) || !value.items.length) return false;
+  const phones = receiver.split(",").map(normalizeKoreanPhoneDigits).sort();
+  const responsePhones = value.request.receiver.split(",").map(normalizeKoreanPhoneDigits).sort();
+  if (JSON.stringify(phones) !== JSON.stringify(responsePhones)) return false;
+  const items = value.items;
+  if (!items.every((item) => isRecord(item)
+    && typeof item.jobId === "string" && Boolean(item.jobId.trim())
+    && Number.isInteger(item.messageLogId) && Number(item.messageLogId) > 0
+    && typeof item.recipientPhone === "string" && Boolean(normalizeKoreanPhoneDigits(item.recipientPhone))
+    && ["queued", "deferred", "canceled"].includes(String(item.status))
+    && typeof item.scheduledAt === "string" && Number.isFinite(Date.parse(item.scheduledAt))
+    && (item.reason === null || typeof item.reason === "string"))) return false;
+  if (JSON.stringify(items.map((item) => normalizeKoreanPhoneDigits(item.recipientPhone)).sort()) !== JSON.stringify(phones)) return false;
+  if (new Set(items.map((item) => item.jobId)).size !== items.length
+    || new Set(items.map((item) => item.messageLogId)).size !== items.length) return false;
+  const statuses = new Set(items.map((item) => item.status));
+  return value.outcome === (statuses.size === 1 ? items[0].status : "mixed");
+}
+
+function isDuplicateCheck(value: unknown): value is MessageDeliverySmsDuplicateCheckResponse {
+  return isRecord(value) && typeof value.checkedAt === "string" && Number.isFinite(Date.parse(value.checkedAt))
+    && Array.isArray(value.matchIds) && value.matchIds.every((id) => Number.isInteger(id) && id > 0)
+    && new Set(value.matchIds).size === value.matchIds.length
+    && (value.latestSentAt === null || (typeof value.latestSentAt === "string" && Number.isFinite(Date.parse(value.latestSentAt))))
+    && typeof value.payloadHash === "string" && Boolean(value.payloadHash.trim());
+}
+
+function smsOutcomeMessage(response: SendResponse): string {
+  if (!("outcome" in response)) return "메시지 발송 요청이 접수되었습니다.";
+  const labels = { queued: "대기", deferred: "보류", canceled: "취소" };
+  const counts = (["queued", "deferred", "canceled"] as const).map(
+    (status) => `${labels[status]} ${response.items.filter((item) => item.status === status).length}건`,
+  ).join(" · ");
+  return `${counts}. ${response.items.map((item) => `${item.recipientPhone}: ${labels[item.status]} (${item.scheduledAt})${item.reason ? ` — ${item.reason}` : ""}`).join(" / ")}`;
 }
 
 function stablePayloadFingerprint(payload: Record<string, unknown>): string {
@@ -872,7 +932,14 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId, initi
   const [sendOutcomeLocked, setSendOutcomeLocked] = useState(false);
 
   const seededClientIdsRef = useRef<Set<number>>(new Set());
+  const { data: authUser } = useGetAuthUser();
+  const branchId = authUser?.branchId ?? null;
   const inFlightRef = useRef(false);
+  const [isDuplicateChecking, setIsDuplicateChecking] = useState(false);
+  const [duplicateConfirmation, setDuplicateConfirmation] = useState<{
+    submission: SmsSubmission;
+    check: MessageDeliverySmsDuplicateCheckResponse;
+  } | null>(null);
   const submissionRef = useRef<SmsSubmission | null>(null);
   useEffect(() => {
     if (!initialClient) return;
@@ -1145,21 +1212,39 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId, initi
       variables: normalizeTemplateVariables([], [], template.content),
     }));
 
-    return [
+    const supportedOptions = [
       greetingOption,
       serviceInfoOption,
-      infoOption,
       priceInfoOption,
       reminderOption,
       thanksOption,
+      infoOption,
       contractReminderOption,
-      surveyOption,
       ...(serviceEndNoticeOption ? [serviceEndNoticeOption] : []),
+      surveyOption,
+    ];
+    const byKey = new Map(supportedOptions.map((option) => [option.id, option]));
+    // Only successful server rows define the selector's membership, names and order.
+    // The established form options remain available internally for deep links
+    // while their individual branch queries enforce readiness.
+    const serverOptions = (systemTemplatesQuery.data ?? []).map((template) => {
+      const supported = byKey.get(template.templateKey);
+      return {
+        ...(supported ?? { id: template.templateKey, body: template.content, variables: [], disabled: true }),
+        name: template.name,
+        group: template.group,
+        groupLabel: template.groupLabel,
+      };
+    });
+    return [
+      ...serverOptions,
+      ...supportedOptions.filter((option) => !serverOptions.some((server) => server.id === option.id)),
       ...userOptions,
       CUSTOM_TEMPLATE_OPTION,
     ];
   }, [
     greetingSystemTemplate,
+    systemTemplatesQuery.data,
     infoSystemTemplate,
     priceInfoSystemTemplate,
     reminderSystemTemplate,
@@ -1171,6 +1256,19 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId, initi
     thanksSystemTemplate,
     userTemplates,
   ]);
+  const templateSelectorSections = useMemo(() => {
+    const serverKeys = new Set(systemTemplatesQuery.data?.map((template) => template.templateKey));
+    const userKeys = new Set(userTemplates?.map((template) => template.id));
+    return templateOptions
+      .filter((option) => serverKeys.has(option.id as SystemTemplateKey) || userKeys.has(option.id) || option.id === CUSTOM_TEMPLATE_ID)
+      .reduce<{ id: string; label?: string; options: TemplateOption[] }[]>((sections, option) => {
+        const id = option.group && option.groupLabel ? option.group : "ungrouped";
+        const last = sections.at(-1);
+        if (last?.id === id) last.options.push(option);
+        else sections.push({ id, label: option.groupLabel, options: [option] });
+        return sections;
+      }, []);
+  }, [systemTemplatesQuery.data, templateOptions, userTemplates]);
   const selectedTemplate = useMemo(
     () => templateOptions.find((template) => template.id === selectedTemplateId) ?? CUSTOM_TEMPLATE_OPTION,
     [selectedTemplateId, templateOptions],
@@ -1189,9 +1287,14 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId, initi
       data: serviceEndNoticeSystemTemplate,
     },
   }[selectedTemplateId];
-  const templateReadinessError = selectedSystemTemplateQuery && !isBranchTemplateReady(selectedSystemTemplateQuery)
-    ? BRANCH_TEMPLATE_READINESS_MESSAGE
-    : null;
+  const isUnsupportedTemplate = selectedTemplateId !== CUSTOM_TEMPLATE_ID && (
+    (!selectedSystemTemplateQuery && !templateOptions.some((option) => option.id === selectedTemplateId)) || Boolean(selectedTemplate.disabled)
+  );
+  const templateReadinessError = isUnsupportedTemplate
+    ? "이 템플릿은 직접 발송할 수 없습니다."
+    : selectedSystemTemplateQuery && !isBranchTemplateReady(selectedSystemTemplateQuery)
+      ? BRANCH_TEMPLATE_READINESS_MESSAGE
+      : null;
   const selectedTemplateVariables = selectedTemplate.variables;
   const recipientNameVariable = selectedTemplateVariables.find((variable) => variable.key === "name");
   // Delivery is derived from the shared system-template contract. In
@@ -1347,9 +1450,16 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId, initi
     return payload;
   }, [body, payloadClientId, payloadRecipientName, receiverPayload, selectedTemplate]);
   const sendPayloadFingerprint = useMemo(
-    () => stablePayloadFingerprint(sendPayload),
-    [sendPayload],
+    () => stablePayloadFingerprint({ ...sendPayload, branchId, authUserId: authUser?.id, templateId: selectedTemplateId }),
+    [sendPayload, branchId, authUser?.id, selectedTemplateId],
   );
+
+  const currentDraftRef = useRef(sendPayloadFingerprint);
+  currentDraftRef.current = sendPayloadFingerprint;
+  useEffect(() => {
+    setDuplicateConfirmation(null);
+    if (submissionRef.current?.fingerprint !== sendPayloadFingerprint) submissionRef.current = null;
+  }, [sendPayloadFingerprint]);
 
   const showVariableHint = useMemo(() => hasUnreplacedVariables(body), [body]);
   const isPriceInfoTemplateSelected = selectedTemplate.id === PRICE_INFO_TEMPLATE_ID;
@@ -1375,8 +1485,15 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId, initi
   // shows its own problem in its label-row slot (`short` is the one-line copy
   // for that slot); only "form" problems have no field to sit in.
   const validationIssue = useMemo((): ValidationIssue | null => {
+    if (selectedTemplateDeliveryMode === "service-feedback-link") {
+      return {
+        field: "template",
+        message: "제공기록지 링크는 서비스 기록지 화면에서 준비한 뒤 발송해 주세요.",
+        short: "기록지 화면에서 보내 주세요",
+      };
+    }
     if (templateReadinessError) {
-      return { field: "template", message: templateReadinessError, short: "템플릿을 불러오는 중이에요" };
+      return { field: "template", message: templateReadinessError, short: isUnsupportedTemplate ? templateReadinessError : "템플릿을 불러오는 중이에요" };
     }
     if (!receiverPayload) {
       return { field: "receiver", message: RECIPIENT_REQUIRED_MESSAGE, short: "수신자를 추가해 주세요" };
@@ -1399,13 +1516,6 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId, initi
         field: "receiver",
         message: "서비스 종료 안내를 보낼 산모님 한 명을 선택해 주세요.",
         short: "산모님 한 명을 선택해 주세요",
-      };
-    }
-    if (selectedTemplateDeliveryMode === "service-feedback-link") {
-      return {
-        field: "template",
-        message: "제공기록지 링크는 서비스 기록지 화면에서 준비한 뒤 발송해 주세요.",
-        short: "기록지 화면에서 보내 주세요",
       };
     }
     if (isServiceEndNoticeSelected && receiptLinkPreparationError) {
@@ -1453,6 +1563,7 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId, initi
     body,
     isReceiptLinkPreparing,
     isServiceEndNoticeSelected,
+    isUnsupportedTemplate,
     receiptLinkPreparation,
     receiptLinkPreparationError,
     receiverPayload,
@@ -1501,13 +1612,9 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId, initi
     showVariableHint ? { text: VARIABLE_HINT_SLOT_COPY, tone: "muted" } : null,
   );
 
-  const sendMutation = useMutation<SendResponse, unknown, void>({
-    mutationFn: async () => {
-      if (templateReadinessError) {
-        throw new Error(templateReadinessError);
-      }
-
-      if (isServiceEndNoticeSelected) {
+  const sendMutation = useMutation<SendResponse, unknown, SmsSubmission | null>({
+    mutationFn: async (capturedSubmission) => {
+      if (!capturedSubmission) {
         if (
           !receiptLinkPreparation
           || receiptLinkPreparation.clientId !== serviceEndClientId
@@ -1522,34 +1629,30 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId, initi
         }).then((response) => response.data as SendResponse);
       }
 
-      if (selectedTemplateDeliveryMode !== "sms") {
-        throw new Error("지원되지 않는 메시지 발송 경로입니다.");
-      }
-
-      const submission = submissionRef.current;
-      if (!submission) {
-        throw new Error(INVALID_SMS_RESPONSE_MESSAGE);
-      }
-
-      const res = await api.post<SendResponse>("/message-deliveries/sms", submission.payload);
+      const submission = capturedSubmission;
+      const res = await api.post<unknown>("/message-deliveries/sms", submission.payload, {
+        params: { expectedBranchId: submission.branchId },
+      });
 
       const data = res.data;
-      if (!isAcceptedSmsSendResponse(data, submission.payload.receiver)) {
+      if (!isAcceptedSmsSendResponse(data, submission.payload.receiver)
+        || ("outcome" in data && data.request.idempotencyKey !== submission.idempotencyKey)) {
         throw new Error(INVALID_SMS_RESPONSE_MESSAGE);
       }
       return data;
     },
-    onSuccess: () => {
+    onSuccess: (data, submission) => {
       void invalidateMessageViews(queryClient);
       setErrorMessage(null);
       setSendError(null);
       setSendRetryFingerprint(null);
       setSendOutcomeLocked(false);
       setSuccessMessage(
-        isServiceEndNoticeSelected
+        submission === null
           ? "서비스 종료 안내 발송 요청이 접수되었습니다."
-          : "메시지 발송 요청이 접수되었습니다.",
+          : smsOutcomeMessage(data),
       );
+      if (submission && currentDraftRef.current !== submission.fingerprint) return;
       setReceiver("");
       setRecipientNameInputValue("");
       setRecipients([]);
@@ -1558,12 +1661,20 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId, initi
       submissionRef.current = null;
       setReceiptLinkPreparation(null);
     },
-    onError: (err) => {
+    onError: async (err, submission) => {
+      if (submission && isRecord(err) && isRecord(err.response) && err.response.status === 409
+        && !hasExplicitAmbiguousOutcome(err, normalizeApiError(err, { operation: "mutation", locale: "ko-KR" }))) {
+        setDuplicateConfirmation(null);
+        if (currentDraftRef.current === submission.fingerprint) {
+          await checkDuplicates(submission, true);
+        }
+        return;
+      }
       const normalized = normalizeApiError(err, { operation: "mutation", locale: "ko-KR" });
       setSuccessMessage(null);
       setErrorMessage(null);
       setSendError(
-        isServiceEndNoticeSelected
+        submission === null
           ? { ...normalized, message: describeReceiptLinkError(err) }
           : normalized,
       );
@@ -1571,16 +1682,42 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId, initi
       const isAmbiguous = normalized.outcome === "UNKNOWN"
         || normalized.outcome === "PARTIALLY_APPLIED"
         || normalized.recovery?.action === "CHECK_STATUS";
-      const canRetryReceiptLink = isServiceEndNoticeSelected
+      const canRetryReceiptLink = submission === null
         && isReceiptLinkPreflightFailure(err, normalized);
-      setSendOutcomeLocked(isServiceEndNoticeSelected ? !canRetryReceiptLink : isAmbiguous);
-      setSendRetryFingerprint(isServiceEndNoticeSelected ? null : submissionRef.current?.fingerprint ?? null);
+      setSendOutcomeLocked(submission === null ? !canRetryReceiptLink : isAmbiguous);
+      setSendRetryFingerprint(submission === null || normalized.outcome === "NOT_APPLIED" ? null : submission.fingerprint);
     },
     onSettled: () => {
       inFlightRef.current = false;
-
     },
   });
+
+  const checkDuplicates = async (submission: SmsSubmission, requireConfirmation = false) => {
+    setIsDuplicateChecking(true);
+    let mutationStarted = false;
+    try {
+      const response = await api.post<unknown>("/message-deliveries/sms/duplicate-check", submission.payload, {
+        params: { expectedBranchId: submission.branchId },
+      });
+      if (!isDuplicateCheck(response.data)) throw new Error("중복 발송 확인 응답을 확인할 수 없습니다.");
+      if (currentDraftRef.current !== submission.fingerprint) return;
+      setSendError(null);
+      setSendRetryFingerprint(null);
+      if (requireConfirmation || response.data.matchIds.length > 0) {
+        setDuplicateConfirmation({ submission, check: response.data });
+      } else {
+        inFlightRef.current = true;
+        mutationStarted = true;
+        sendMutation.mutate(submission);
+      }
+    } catch (error) {
+      setErrorMessage(getUserErrorMessage(error));
+    } finally {
+      setIsDuplicateChecking(false);
+      // A mutation retains the synchronous lock until onSettled.
+      if (!mutationStarted) inFlightRef.current = false;
+    }
+  };
 
   const addRecipientChips = (nextRecipients: RecipientChip[]) => {
     const existingPhoneSet = new Set(recipients.map((recipient) => normalizeKoreanPhoneDigits(recipient.phone)));
@@ -1727,6 +1864,7 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId, initi
   };
 
   const handleTemplateSelect = (option: TemplateOption) => {
+    if (option.disabled) return;
     setSelectedTemplateId(option.id);
     setBodyOverride(null);
     setReceiptLinkPreparation(null);
@@ -1880,10 +2018,14 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId, initi
       setErrorMessage(null);
       setSuccessMessage(null);
       inFlightRef.current = true;
-      sendMutation.mutate();
+      sendMutation.mutate(null);
       return;
     }
 
+    if (!branchId) {
+      setErrorMessage("지점 정보를 확인한 후 다시 시도해 주세요.");
+      return;
+    }
     const previousSubmission = submissionRef.current;
     const idempotencyKey = previousSubmission?.fingerprint === sendPayloadFingerprint
       ? previousSubmission.idempotencyKey
@@ -1895,20 +2037,22 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId, initi
       },
       fingerprint: sendPayloadFingerprint,
       idempotencyKey,
+      branchId,
     };
     setErrorMessage(null);
     setSuccessMessage(null);
     inFlightRef.current = true;
-    sendMutation.mutate();
+    void checkDuplicates(submissionRef.current);
   };
 
   const visibleErrorMessage = (errorMessage ? getUserErrorMessage(errorMessage) : null)
     ?? (showValidationIssues && validationIssue && !issueHasSlot ? validationIssue.message : null);
 
-  // A field problem does not disable the button: pressing it is what shows the
-  // problem in its slot. Only a send that is already running or settled does.
+  // Field validation, including unsupported templates, is shown on submit.
+  // Approval readiness and a send already running or settled disable the action.
   const isSubmitDisabled =
     sendMutation.isPending ||
+    isDuplicateChecking ||
     isSenderApprovalLoading ||
     needsSenderApproval ||
     sendOutcomeLocked ||
@@ -1921,6 +2065,33 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId, initi
       data-page="messages-new"
       className={`messages-page ${styles.pageRoot}`}
     >
+      <ApprovalTwoButtonModal
+        data-component="mobile_messages_new_page_duplicate-confirmation"
+        open={Boolean(duplicateConfirmation && duplicateConfirmation.submission.fingerprint === sendPayloadFingerprint)}
+        onOpenChange={(open) => { if (!open) setDuplicateConfirmation(null); }}
+        title="중복 발송을 확인해 주세요"
+        description={duplicateConfirmation?.check.latestSentAt
+          ? `동일한 메시지 ${duplicateConfirmation.check.matchIds.length}건이 확인되었습니다. 최근 발송: ${duplicateConfirmation.check.latestSentAt}. 다시 요청하시겠어요?`
+          : "최신 중복 확인 결과로 다시 발송을 요청하시겠어요?"}
+        isDescriptionVisuallyHidden={false}
+        approvalLabel="확인 후 발송"
+        onApprove={() => {
+          const confirmation = duplicateConfirmation;
+          if (!confirmation || confirmation.submission.fingerprint !== currentDraftRef.current || inFlightRef.current) return;
+          const { checkedAt, matchIds, payloadHash } = confirmation.check;
+          const submission = {
+            ...confirmation.submission,
+            payload: {
+              ...confirmation.submission.payload,
+              duplicateDecision: { confirmed: true, checkedAt, matchIds, payloadHash },
+            },
+          };
+          submissionRef.current = submission;
+          setDuplicateConfirmation(null);
+          inFlightRef.current = true;
+          sendMutation.mutate(submission);
+        }}
+      />
       <div data-component="mobile_messages_new_page_screen" className={styles.phoneScreen}>
         <form
           data-component="mobile_messages_new_page_screen_form"
@@ -2005,10 +2176,15 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId, initi
                         className={styles.templateSelectContent}
                         avoidCollisions
                       >
-                        {templateOptions.map((option) => (
-                          <SelectItem key={option.id} value={option.id}>
-                            {option.name}
-                          </SelectItem>
+                        {templateSelectorSections.map((section, index) => (
+                          <SelectGroup key={`${section.id}-${index}`}>
+                            {section.label ? <SelectLabel>{section.label}</SelectLabel> : null}
+                            {section.options.map((option) => (
+                              <SelectItem key={option.id} value={option.id} disabled={option.disabled}>
+                                {option.name}
+                              </SelectItem>
+                            ))}
+                          </SelectGroup>
                         ))}
                       </SelectContent>
                     </Select>
@@ -2027,7 +2203,7 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId, initi
                       />
                       <ClientAutocomplete
                         data-component="mobile_messages_new_page_screen_form_scroll_list-card_body_form-card_content_recipient_name-row_autocomplete"
-                        inputId="recipient-name"
+                        inputId="recipient-name" hideEmptyDropdown
                         value={null}
                         onChange={handleClientRecipientSelect}
                         inputValue={recipientNameInputValue}

@@ -1,3 +1,7 @@
+import { createAgentAutomationTerminalRecord, agentAutomationRecordKey } from "./agent-automation-terminal-record";
+import { agentAutomationCoverageRecordDigest } from "./agent-automation-coverage";
+import type { AgentAutomationCoverage, AgentAutomationScope } from "domain/entities/agent-automation-consent";
+import { AGENT_AUTOMATION_RECORD_CANCEL_REASON } from "domain/constants/agent-automation-storage";
 import type { AgentAutomationAuthority, AgentAutomationEffect } from "domain/entities/agent-automation-consent";
 import { MessageTriggerTemplateKey } from "domain/constants/message-trigger-catalog";
 import { MESSAGE_AUTOMATION_INTENT_RULE_ID } from "domain/constants/message-automation-intent";
@@ -261,5 +265,34 @@ describe("AgentAutomationRecordStoreService internal marker rule", () => {
         tx.message_trigger_rule.createManyAndReturn.mockResolvedValue([]);
 
         await expect(ensure(tx)).resolves.toBeUndefined();
+    });
+});
+
+describe("RULE-2 actual RecordStore new-family provenance fence", () => {
+    it.each(["empty-review", "old-denial"] as const)("does not interpret %s terminal history as ordinary caregiver legacy consent", async (mode) => {
+        const origin = taskAuthority(employeeAssignmentEffect(), "deny").origin;
+        const coverage: AgentAutomationCoverage = { kind: "coverage", version: 1, id: "76000000-0000-4000-8000-000000000020",
+            scope: { branchId, clientId: 41, clientIdentity: digest, kind: "client-rule", scheduleId: null, scheduleIdentity: null, recipientType: "client" },
+            sequence: 1, previousId: null, origin, mutationDigest: digest, grandfatheredScopes: [], recordedAt: "2026-09-18T00:00:00.000Z", recordDigest: "" };
+        coverage.recordDigest = agentAutomationCoverageRecordDigest(coverage);
+        const record = mode === "empty-review" ? coverage : taskAuthority(employeeAssignmentEffect(), "deny");
+        const taskOrigin = record.origin;
+        if (taskOrigin.kind !== "task") throw new Error("fixture task origin required");
+        const terminal = createAgentAutomationTerminalRecord(record, { version: 1, kind: "task", actionId: taskOrigin.actionId, userId: taskOrigin.userId,
+            taskId: taskOrigin.taskId, taskRevision: taskOrigin.taskRevision, questionRef: "76000000-0000-4000-8000-000000000021", inputHash: digest,
+            capability: "clients.update", resourceId: 41, receiptDigest: digest, recordedAt: record.recordedAt });
+        const row = { id: record.id, branchId, ruleId: MESSAGE_AUTOMATION_INTENT_RULE_ID, dedupeKey: agentAutomationRecordKey(record), status: "canceled",
+            cancelReason: AGENT_AUTOMATION_RECORD_CANCEL_REASON, canceledAt: new Date(record.recordedAt), scheduledFor: new Date(record.recordedAt), sentAt: null,
+            clientId: null, employeeScheduleId: null, recipientPhone: null, recipientType: "CLIENT", templateKey: "CLIENT_GREETING", nextAttemptAt: null,
+            claimToken: null, attempts: 0, canceledByUser: false, payload: { [AGENT_AUTOMATION_RECORD_PAYLOAD_KEY]: terminal } };
+        const tx = { message_trigger_job: { findMany: jest.fn(async (query: { where: { payload?: unknown } }) => query.where.payload ? [row] : []) } };
+        const store = new AgentAutomationRecordStoreService({} as never);
+        const scope: AgentAutomationScope = { branchId, clientId: 41, clientIdentity: digest, kind: "caregiver-service", ruleId: "new-caregiver-child",
+            scheduleId: 7, scheduleIdentity: digest, recipientType: "primary-employee" };
+        await expect(store.readLineageEvidence(tx as never, scope)).rejects.toBeInstanceOf(AgentAutomationRecordRefusedError);
+        expect(tx.message_trigger_job.findMany).toHaveBeenLastCalledWith({ where: { branchId, ruleId: MESSAGE_AUTOMATION_INTENT_RULE_ID,
+            cancelReason: "agent_automation_authority_record", payload: { path: ["agentAutomationRecord", "record", "scope", "clientId"], equals: 41 } }, take: 4097 });
+        expect(row.clientId).toBeNull();
+        expect(await store.readLineageEvidence(tx as never, { ...scope, clientIdentity: "b".repeat(64) })).toEqual({ batch: { authorities: [], coverages: [] }, creationSubjects: [] });
     });
 });

@@ -288,8 +288,8 @@ export class AgentAutomationRecordStoreService {
             const pendingAuthorities: Array<{ record: AgentAutomationAuthority; commit: AgentAutomationCommit }> = [];
             for (const effect of effects) {
                 if (!isAgentAutomationOperationValid(effect)
-                    || (params.operation === "client-write" && effect.kind !== "client-rule")
-                    || (params.operation === "schedule-write" && !["employee-assignment", "service-record-link"].includes(effect.kind))) {
+                    || (params.operation === "client-write" && effect.kind !== "client-rule" && effect.kind !== "caregiver-service")
+                    || (params.operation === "schedule-write" && !["employee-assignment", "service-record-link", "caregiver-service"].includes(effect.kind))) {
                     throw new AgentAutomationRecordRefusedError();
                 }
                 const schedule = effect.scheduleId === null ? null : await tx.employee_schedule.findFirst({
@@ -477,6 +477,14 @@ export class AgentAutomationRecordStoreService {
                         });
                     }
                 }
+                const caregiverRules = await tx.message_trigger_rule.findMany({ where: { branchId: params.branchId, deletedAt: null,
+                    groupId: { not: null }, templateKey: { in: [MessageTriggerTemplateKey.CAREGIVER_SERVICE_START_NOTICE, MessageTriggerTemplateKey.CAREGIVER_SERVICE_END_NOTICE] } },
+                    select: { id: true, recipientType: true } });
+                for (const rule of caregiverRules) if (rule.recipientType === MessageTriggerRecipientType.PRIMARY_EMPLOYEE || rule.recipientType === MessageTriggerRecipientType.SECONDARY_EMPLOYEE) {
+                    scopes.push({ branchId: params.branchId, clientId: params.clientId, clientIdentity, kind: "caregiver-service", ruleId: rule.id,
+                        scheduleId: schedule.id, scheduleIdentity,
+                        recipientType: rule.recipientType === MessageTriggerRecipientType.PRIMARY_EMPLOYEE ? "primary-employee" : "secondary-employee" });
+                }
                 scopes.push({
                     branchId: params.branchId,
                     clientId: params.clientId,
@@ -514,6 +522,18 @@ export class AgentAutomationRecordStoreService {
         const valid = AgentAutomationScopeStorageSchema.parse(scope);
         const coverages = await this.load(transaction, "coverage", agentAutomationCoverageScope(valid));
         const authorities = await this.load(transaction, "authority", valid);
+        if (valid.kind === "caregiver-service" && !coverages.length && !authorities.length) {
+            const history = await transaction.message_trigger_job.findMany({ where: { branchId: valid.branchId,
+                ruleId: MESSAGE_AUTOMATION_INTENT_RULE_ID, cancelReason: AGENT_AUTOMATION_RECORD_CANCEL_REASON,
+                payload: { path: [AGENT_AUTOMATION_RECORD_PAYLOAD_KEY, "record", "scope", "clientId"], equals: valid.clientId } }, take: MAX_CHAIN + 1 });
+            if (history.length > MAX_CHAIN) refuse();
+            for (const row of history) {
+                const terminal = decodeAgentAutomationTerminalRow(row);
+                if (!terminal) refuse();
+                if (terminal.record.scope.clientIdentity === valid.clientIdentity && terminal.commit.kind === "task") refuse();
+            }
+        }
+
         this.head(coverages, agentAutomationCoverageScope(valid));
         this.head(authorities, valid);
         return { batch: { coverages: coverages.map(({ record }) => record as AgentAutomationCoverage),

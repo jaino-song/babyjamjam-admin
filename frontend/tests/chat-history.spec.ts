@@ -1,4 +1,12 @@
 import { test, expect, type Page } from '@playwright/test';
+import type { OutOfPocketPriceInfo } from "@babyjamjam/shared";
+import type { AvailableClientArea } from "../src/hooks/useVoucherData";
+import type { BranchHolidayYear } from "../src/services/holidays";
+import type { DashboardStats } from "../src/hooks/useDashboardStats";
+import type { ClientListSummary } from "../src/features/clients/types";
+import type { EformsignDocumentJobSummary, ConsultationInquiryListResponse } from "../src/services/api";
+import type { ClientActionRequiredAlert } from "../src/hooks/useClientAlerts";
+import type { Notification as AppNotification } from "../src/hooks/usePushNotification";
 
 const MOCK_CHAT_MESSAGES = [
     { role: 'user', content: '안녕하세요', timestamp: '2026-01-19T10:00:00.000Z' },
@@ -16,6 +24,65 @@ const MOCK_AUTH_RESPONSE = {
 };
 
 const setupAuthMocks = async (page: Page) => {
+    // These UI-only reads must stay isolated from the real backend under mock auth.
+    // Match exact paths and GET only; auth refresh and every mutation remain unmocked.
+    const workspaceReadFixtures = [
+        { pathname: "/api/clients/stats", json: { activeClients: 0, contractsNotSent: 0, contractsPendingSignature: 0, upcomingThisMonth: 0, upcomingNextMonth: 0 } satisfies DashboardStats },
+        { pathname: "/api/clients/list-summary", json: {
+            total: 0,
+            byTab: { all: 0, pre_booking: 0, waiting: 0, replacement_requested: 0, active: 0, completed: 0, terminated: 0 },
+            dueDate: { thisMonth: 0, nextMonth: 0 },
+            serviceEnd: { count: 0, from: "2026-11-01", to: "2026-11-07" },
+        } satisfies ClientListSummary },
+        { pathname: "/api/eformsign-docs/jobs/summary", json: { activeCount: 0, requiresAttentionCount: 0, failedCount: 0, unresolvedCount: 0, unresolvedJobIds: [] } satisfies EformsignDocumentJobSummary },
+        { pathname: "/api/consultation-inquiries", json: { data: [], total: 0, page: 1, limit: 1, totalPages: 0 } satisfies ConsultationInquiryListResponse },
+        { pathname: "/api/clients/alerts", json: [] satisfies ClientActionRequiredAlert[] },
+        { pathname: "/api/notifications", json: [] satisfies AppNotification[] },
+        { pathname: "/api/notifications/unread/count", json: { count: 0 } satisfies { count: number } },
+        { pathname: "/api/voucher-price-infos/years", json: [] satisfies number[] },
+        { pathname: "/api/area-templates/available-areas", json: [] satisfies AvailableClientArea[] },
+        { pathname: "/api/out-of-pocket-price-infos", json: [] satisfies OutOfPocketPriceInfo[] },
+    ];
+    for (const fixture of workspaceReadFixtures) {
+        await page.route((url) => url.pathname === fixture.pathname, async (route) => {
+            if (route.request().method() !== "GET") {
+                await route.fallback();
+                return;
+            }
+            await route.fulfill({ status: 200, json: fixture.json });
+        });
+    }
+    // Only fixture branches used by the E2E server/auth storage are isolated here.
+    const holidayFixturePaths = [
+        "/api/branches/e2e-branch/holidays",
+        "/api/branches/20000000-0000-4000-8000-000000000001/holidays",
+    ];
+    await page.route((url) => holidayFixturePaths.includes(url.pathname), async (route) => {
+        if (route.request().method() !== "GET") {
+            await route.fallback();
+            return;
+        }
+        const year = Number(new URL(route.request().url()).searchParams.get("year"));
+        if (!Number.isInteger(year) || year < 1) {
+            await route.fallback();
+            return;
+        }
+        await route.fulfill({ status: 200, json: {
+            year, revision: 0, supported: false, synced: false,
+            lastSyncedAt: null, holidays: [], inactiveOverrides: [],
+        } satisfies BranchHolidayYear });
+    });
+    // Realtime delivery is outside these mocked chat cases. An open SSE would block
+    // networkidle; abort leaves the real 3s retry/auth-me probe on existing auth,
+    // without contacting the real stream or mocking auth refresh.
+    await page.route((url) => url.pathname === "/api/realtime/events", async (route) => {
+        if (route.request().method() !== "GET") {
+            await route.fallback();
+            return;
+        }
+        await route.abort("failed");
+    });
+
     await page.addInitScript(() => {
         (window as Window & { __E2E_AUTH__?: boolean }).__E2E_AUTH__ = true;
     });
@@ -88,7 +155,7 @@ test.describe('Chat History Persistence', () => {
         // The dashboard chat widget was removed; the chat is its own /chat page.
         await page.goto('/chat');
         await page.waitForLoadState('networkidle');
-        await expect(page.getByText('AI 어시스턴트')).toBeVisible({ timeout: 10000 });
+        await expect(page.locator('[data-component="desktop_chat_page_header"]').getByRole('heading', { level: 1, name: '현재 대화', exact: true })).toBeVisible({ timeout: 10000 });
 
         await expect(page.getByText('안녕하세요').first()).toBeVisible({ timeout: 5000 });
         await expect(page.getByText('무엇을 도와드릴까요?').first()).toBeVisible();
@@ -113,7 +180,7 @@ test.describe('Chat History Persistence', () => {
         // The dashboard chat widget was removed; the chat is its own /chat page.
         await page.goto('/chat');
         await page.waitForLoadState('networkidle');
-        await expect(page.getByText('AI 어시스턴트')).toBeVisible({ timeout: 10000 });
+        await expect(page.locator('[data-component="desktop_chat_page_header"]').getByRole('heading', { level: 1, name: '새 대화', exact: true })).toBeVisible({ timeout: 10000 });
         await expect(page.getByText('고객 검색, 제공인력 관리, 계약서 발송 등을 도와드립니다.')).toBeVisible();
     });
 
@@ -121,7 +188,7 @@ test.describe('Chat History Persistence', () => {
         // The dashboard chat widget was removed; the chat is its own /chat page.
         await page.goto('/chat');
         await page.waitForLoadState('networkidle');
-        await expect(page.getByText('AI 어시스턴트')).toBeVisible({ timeout: 10000 });
+        await expect(page.locator('[data-component="desktop_chat_page_header"]').getByRole('heading', { level: 1, name: '현재 대화', exact: true })).toBeVisible({ timeout: 10000 });
 
         const chatPageInput = page.getByPlaceholder('무엇을 도와드릴까요?').first();
         await expect(chatPageInput).toBeVisible({ timeout: 5000 });
@@ -149,7 +216,7 @@ test.describe('Chat History Persistence', () => {
         await page.goto('/chat');
         await page.waitForLoadState('networkidle');
 
-        await expect(page.getByText('AI 어시스턴트')).toBeVisible({ timeout: 10000 });
+        await expect(page.locator('[data-component="desktop_chat_page_header"]').getByRole('heading', { level: 1, name: '현재 대화', exact: true })).toBeVisible({ timeout: 10000 });
         await expect(page.getByText('안녕하세요').first()).toBeVisible({ timeout: 5000 });
     });
 
@@ -177,7 +244,7 @@ test.describe('Chat History Persistence', () => {
         // The dashboard chat widget was removed; the chat is its own /chat page.
         // Do not wait for network idle: the history request is held open on purpose.
         await page.goto('/chat');
-        await expect(page.getByText('AI 어시스턴트')).toBeVisible({ timeout: 10000 });
+        await expect(page.locator('[data-component="desktop_chat_page_header"]').getByRole('heading', { level: 1, name: '새 대화', exact: true })).toBeVisible({ timeout: 10000 });
 
         // While the history request is pending the stored conversation is not shown yet.
         await expect(page.getByText('안녕하세요')).toHaveCount(0);
@@ -216,7 +283,7 @@ test.describe('Chat History API Error Handling', () => {
         // The dashboard chat widget was removed; the chat is its own /chat page.
         await page.goto('/chat');
         await page.waitForLoadState('networkidle');
-        await expect(page.getByText('AI 어시스턴트')).toBeVisible({ timeout: 10000 });
+        await expect(page.locator('[data-component="desktop_chat_page_header"]').getByRole('heading', { level: 1, name: '새 대화', exact: true })).toBeVisible({ timeout: 10000 });
     });
 
     test('should handle 401 unauthorized error', async ({ page }) => {
@@ -231,6 +298,6 @@ test.describe('Chat History API Error Handling', () => {
         // The dashboard chat widget was removed; the chat is its own /chat page.
         await page.goto('/chat');
         await page.waitForLoadState('networkidle');
-        await expect(page.getByText('AI 어시스턴트')).toBeVisible({ timeout: 10000 });
+        await expect(page.locator('[data-component="desktop_chat_page_header"]').getByRole('heading', { level: 1, name: '새 대화', exact: true })).toBeVisible({ timeout: 10000 });
     });
 });

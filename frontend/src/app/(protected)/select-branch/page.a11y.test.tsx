@@ -85,7 +85,9 @@ describe("SelectBranchPage branch action accessibility", () => {
       expect(option).toHaveAttribute("type", "button");
       expect(option.tagName).toBe("BUTTON");
       expect(option).toHaveClass("focus-visible:ring-2");
-      expect(option).toHaveClass("focus-visible:ring-ring");
+      expect(option).toHaveClass("focus-visible:ring-v3-primary", "border-2", "border-v3-selectable-border", "hover:border-v3-selectable-border");
+      expect(option).not.toHaveAttribute("aria-pressed");
+      expect(option.className).not.toContain("!border");
       expect(option).toHaveAttribute("aria-label", `${branches[index].name} 지점 선택`);
       expect(option.tabIndex).toBe(0);
 
@@ -118,6 +120,12 @@ describe("SelectBranchPage branch action accessibility", () => {
     expect(mockedSetCurrentBranch).toHaveBeenCalledTimes(1);
     expect(firstOption).toBeDisabled();
     expect(secondOption).toBeDisabled();
+    for (const option of [firstOption, secondOption]) {
+      expect(option).toHaveAttribute("aria-busy", "true");
+      expect(option).toHaveClass("border-2", "border-v3-selectable-border");
+      expect(option).not.toHaveClass("border-v3-primary");
+      expect(option).not.toHaveAttribute("aria-pressed");
+    }
 
     fireEvent.click(firstOption);
     expect(mockedSetCurrentBranch).toHaveBeenCalledTimes(1);

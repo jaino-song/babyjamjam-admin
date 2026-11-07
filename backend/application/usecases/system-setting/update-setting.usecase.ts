@@ -1,3 +1,4 @@
+import type { Prisma } from "@prisma/client";
 import { Injectable, Inject } from "@nestjs/common";
 import {
     ISystemSettingRepository,
@@ -30,8 +31,10 @@ export class UpdateSettingUsecase {
         expectedVersion: string,
         versionOf: (currentValue: string | null) => string,
         auditContext?: SystemSettingAuditContext,
+        transaction?: Prisma.TransactionClient,
     ): Promise<SystemSettingEntity | null> {
         const entity = SystemSettingEntity.create(key, value);
+        if (transaction) return this.repository.compareAndSet(key, expectedVersion, entity, versionOf, auditContext, transaction);
         return auditContext === undefined
             ? this.repository.compareAndSet(key, expectedVersion, entity, versionOf)
             : this.repository.compareAndSet(key, expectedVersion, entity, versionOf, auditContext);

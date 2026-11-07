@@ -1,4 +1,4 @@
-import { Inject, Injectable, Logger, NotFoundException } from "@nestjs/common";
+import { Inject, Injectable, Logger, NotFoundException, Optional } from "@nestjs/common";
 import { codeOnlyProblemBody } from "application/utils/problem-bodies";
 import {
     EFORMSIGN_DOCUMENT_KIND,
@@ -9,6 +9,7 @@ import { ClientEntity } from "domain/entities/client.entity";
 import { EFORMSIGN_DOC_REPOSITORY, IEformsignDocRepository } from "domain/repositories/eformsign-doc.repository.interface";
 import { CLIENT_REPOSITORY, IClientRepository } from "domain/repositories/client.repository.interface";
 import { HolidayCalendarService } from "application/services/holiday-calendar.service";
+import { EformsignDocumentSnapshotService } from "application/services/eformsign-document-snapshot.service";
 
 export interface CreateEformsignDocParams {
     documentId: string;
@@ -56,6 +57,8 @@ export class CreateEformsignDocUsecase {
         @Inject(CLIENT_REPOSITORY)
         private readonly clientRepository: IClientRepository,
         private readonly holidayCalendar: HolidayCalendarService,
+        @Optional()
+        private readonly documentSnapshotService?: EformsignDocumentSnapshotService,
     ) {}
 
     async execute(
@@ -142,6 +145,15 @@ export class CreateEformsignDocUsecase {
             } catch (error) {
                 this.logger.error(`Failed to link document to client: ${error}`);
                 warnings.push("client_link_failed");
+            }
+        }
+
+        if (branchid) {
+            try {
+                await this.documentSnapshotService?.bumpVersion(branchid);
+            } catch {
+                // 캐시 무효화 실패가 문서 생성 성공을 되돌리면 안 된다.
+                this.logger.warn("Failed to invalidate document snapshot after document creation");
             }
         }
 

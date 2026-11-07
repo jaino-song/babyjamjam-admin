@@ -17,13 +17,14 @@ import type { AgentTaskDisplayedChoiceHint } from "@babyjamjam/shared";
 import type { VerifiedTenantPrincipal } from "infrastructure/tenant/tenant.context";
 import { AgentModelFactory } from "infrastructure/agent/agent-model.factory";
 import { codeOnlyProblemBody, uncertainProblemBody } from "application/utils/problem-bodies";
+import { buildActionProposalPresentation } from "./action-proposal-presentation";
 import { buildAgentSystemPrompt } from "./agent-system-prompt";
 import { AgentFlagsService } from "./agent-flags.service";
 import { AgentSessionService } from "./agent-session.service";
 import { CapabilityRegistryService } from "./capability-registry.service";
 import { CapabilityRouterService, type CapabilityRouteResult } from "./capability-router.service";
 import { AgentTraceService } from "./agent-trace.service";
-import { ActionCoordinatorService } from "./action-coordinator.service";
+import { ActionCoordinatorService, AgentActionQuestionError } from "./action-coordinator.service";
 import { AgentIntelligenceService, AgentSessionSummarySchema, LegacyAgentSessionSummarySchema } from "./agent-intelligence.service";
 import { redactFreeText, redactKnownValues, redactModelValue } from "./agent-model-redaction";
 import { ConversationContextAssemblerService, safeSummary, type ConversationContext } from "./conversation-context-assembler.service";
@@ -108,19 +109,6 @@ function taskSnapshotPart(task: Parameters<typeof projectTaskForSafeChat>[0]) {
     };
 }
 
-function redactApprovalValue(value: unknown, key = ""): unknown {
-    if (Array.isArray(value)) return value.map((item) => redactApprovalValue(item, key));
-    if (value && typeof value === "object") {
-        return Object.fromEntries(Object.entries(value as Record<string, unknown>)
-            .filter(([nestedKey]) => !/(?:token|secret|password|signedurl|documentcontent|storageurl)/i.test(nestedKey.replace(/[^a-z0-9]/gi, "")))
-            .map(([nestedKey, nestedValue]) => [nestedKey, redactApprovalValue(nestedValue, nestedKey)]));
-    }
-    if (typeof value === "string" && /(?:phone|mobile|receiver|account|accnum)/i.test(key.replace(/[^a-z0-9]/gi, ""))) {
-        const digits = value.replace(/\D/g, "");
-        return digits.length >= 4 ? `••••${digits.slice(-4)}` : "[masked]";
-    }
-    return value;
-}
 
 /**
  * Client lookup memory is a protected task reference once conversation task
@@ -1011,6 +999,9 @@ export class AgentRuntimeService {
                                 summary: capability.meta.description,
                             });
                         } catch (error) {
+                            if (error instanceof AgentActionQuestionError) {
+                                return { kind: "needs-input" as const, code: error.code, message: error.message, candidates: error.candidates };
+                            }
                             if (error instanceof Error && error.name === "ZodError") {
                                 writeDataChunk({
                                     type: "data-form",
@@ -1023,18 +1014,7 @@ export class AgentRuntimeService {
                         if (!action.taskId) writeDataChunk({
                             type: "data-action-proposal",
                             data: {
-                                actionId: action.id,
-                                capability: action.capability,
-                                title: typeof action.proposal["title"] === "string" ? action.proposal["title"] : capability.meta.description,
-                                summary: typeof action.proposal["summary"] === "string" ? action.proposal["summary"] : capability.meta.description,
-                                expiresAt: action.expiresAt.toISOString(),
-                                expectedRevision: action.proposalRevision,
-                                risk: action.risk,
-                                branchId: action.branchId,
-                                ...(action.targetSnapshot ? { target: redactModelValue(action.targetSnapshot) as Record<string, unknown> } : {}),
-                                changes: redactApprovalValue(action.proposal["input"]) as Record<string, unknown>,
-                                ...(typeof action.proposal["provider"] === "string" ? { provider: action.proposal["provider"] } : {}),
-                                ...(typeof action.proposal["estimatedCost"] === "string" ? { estimatedCost: action.proposal["estimatedCost"] } : {}),
+                                ...buildActionProposalPresentation(action, capability.meta.description, (warning) => this.logger.warn(warning)),
                                 ...(capability.meta.approvalPolicy === "strong"
                                     ? { acknowledgementToken: this.actions.strongAcknowledgementToken(action) }
                                     : {}),
@@ -1222,7 +1202,10 @@ export class AgentRuntimeService {
             tools,
             stopWhen: [
                 stepCountIs(6),
-                ({ steps }) => steps.some((step) => step.toolCalls.some((call) => writeToolNames.has(call.toolName))),
+                ({ steps }) => steps.some((step) => step.toolCalls.some((call) => writeToolNames.has(call.toolName)
+                    && !step.toolResults.some((result) => result.toolCallId === call.toolCallId
+                        && typeof result.output === "object" && result.output !== null
+                        && "kind" in result.output && result.output.kind === "needs-input"))),
             ],
             prepareStep: () => ({ system: buildSystemPrompt() }),
             providerOptions: this.models.providerOptions(),

@@ -87,10 +87,24 @@ describe("mobile AI agent catch-all proxy", () => {
             "https://backend.example.test/ai/agent/chat?sessionId=s1",
             expect.objectContaining({
                 method: "POST",
-                headers: { Authorization: "Bearer token-a", "Content-Type": "application/json" },
+                headers: { Authorization: "Bearer token-a", "x-bjj-client": "mobile", "Content-Type": "application/json" },
                 body,
             }),
         );
+    });
+
+    it.each([
+        [["actions", "a", "approve"], "/ai/actions/a/approve"],
+        [["tasks"], "/ai/agent/tasks"],
+    ])("sets mobile upstream even if the client sends desktop (%j)", async (path, upstreamPath) => {
+        setAuthCookie("token-c");
+        mockFetch.mockResolvedValue(new Response("{}"));
+        await POST(new NextRequest(`http://localhost/api/ai/agent/${path.join("/")}`, {
+            method: "POST", body: "{}", headers: { "x-bjj-client": "desktop" },
+        }), routeParams(...path));
+        expect(mockFetch).toHaveBeenCalledWith(`https://backend.example.test${upstreamPath}`, expect.objectContaining({
+            headers: { Authorization: "Bearer token-c", "x-bjj-client": "mobile", "Content-Type": "application/json" },
+        }));
     });
 
     it("does not synthesize acceleration when the upstream omits it", async () => {
@@ -119,7 +133,7 @@ describe("mobile AI agent catch-all proxy", () => {
             "https://backend.example.test/ai/capabilities",
             expect.objectContaining({
                 method: "GET",
-                headers: { Authorization: "Bearer token-b" },
+                headers: { Authorization: "Bearer token-b", "x-bjj-client": "mobile" },
                 body: undefined,
             }),
         );

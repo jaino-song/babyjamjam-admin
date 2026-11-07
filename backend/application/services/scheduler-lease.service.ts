@@ -42,7 +42,20 @@ const MAX_IDENTITY_LENGTH = 64;
 
 export type SchedulerLeaseMode = "required" | "off" | "standby";
 
+export type ProductionDeploymentProvider = "lightnode" | "lightsail";
+export type SchedulerLeaseEligibilityReason =
+    | "schedulers_disabled"
+    | "provider_not_configured"
+    | "provider_invalid"
+    | "holder_unrecognized"
+    | "provider_holder_mismatch"
+    | "provider_match"
+    | "nonproduction_unconfigured";
+
 export interface SchedulerLeaseSnapshot {
+    provider: ProductionDeploymentProvider | null;
+    eligible: boolean;
+    eligibilityReason: SchedulerLeaseEligibilityReason;
     mode: SchedulerLeaseMode;
     holderId: string;
     instanceId: string;
@@ -98,6 +111,9 @@ type AwaitOutcome<T> =
 export class SchedulerLeaseService implements OnModuleInit, OnModuleDestroy {
     private readonly logger = new Logger(SchedulerLeaseService.name);
 
+    readonly provider: ProductionDeploymentProvider | null;
+    readonly eligible: boolean;
+    readonly eligibilityReason: SchedulerLeaseEligibilityReason;
     readonly mode: SchedulerLeaseMode;
     readonly holderId: string;
     readonly instanceId: string;
@@ -130,6 +146,30 @@ export class SchedulerLeaseService implements OnModuleInit, OnModuleDestroy {
             MAX_IDENTITY_LENGTH,
         );
         this.instanceId = randomUUID().slice(0, MAX_IDENTITY_LENGTH);
+
+        const providerRaw = this.configService.get<string>("PRODUCTION_DEPLOYMENT_PROVIDER")?.trim().toLowerCase();
+        this.provider = providerRaw === "lightnode" || providerRaw === "lightsail" ? providerRaw : null;
+        const unconfigured = !providerRaw || providerRaw === "none";
+        // Passive hosts never contest ownership. Outside production, the local `none`
+        // sentinel preserves off/local development; explicit providers still require a match.
+        // Use the configured identity, not the hostname fallback, for owner eligibility.
+        if (this.mode === "standby") {
+            this.eligibilityReason = "schedulers_disabled";
+        } else if (nodeEnv !== "production" && unconfigured) {
+            this.eligibilityReason = "nonproduction_unconfigured";
+        } else if (unconfigured) {
+            this.eligibilityReason = "provider_not_configured";
+        } else if (!this.provider) {
+            this.eligibilityReason = "provider_invalid";
+        } else if (holderIdRaw !== "lightnode" && holderIdRaw !== "lightsail") {
+            this.eligibilityReason = "holder_unrecognized";
+        } else if (holderIdRaw !== this.provider) {
+            this.eligibilityReason = "provider_holder_mismatch";
+        } else {
+            this.eligibilityReason = "provider_match";
+        }
+        this.eligible = this.eligibilityReason === "provider_match" ||
+            this.eligibilityReason === "nonproduction_unconfigured";
     }
 
     async onModuleInit(): Promise<void> {
@@ -142,7 +182,7 @@ export class SchedulerLeaseService implements OnModuleInit, OnModuleDestroy {
         // "standby" this must NEVER call the repository or create a timer: a dev/preview host
         // in "off" mode pointed at the shared DB must not be able to evict production, and a
         // passive host in "standby" must never acquire the lease at all.
-        if (this.mode !== "required") {
+        if (!this.eligible || this.mode !== "required") {
             return;
         }
 
@@ -188,6 +228,9 @@ export class SchedulerLeaseService implements OnModuleInit, OnModuleDestroy {
     }
 
     holdsLease(): boolean {
+        if (!this.eligible) {
+            return false;
+        }
         if (this.mode === "off") {
             return true;
         }
@@ -203,6 +246,9 @@ export class SchedulerLeaseService implements OnModuleInit, OnModuleDestroy {
 
     snapshot(): SchedulerLeaseSnapshot {
         return {
+            provider: this.provider,
+            eligible: this.eligible,
+            eligibilityReason: this.eligibilityReason,
             mode: this.mode,
             holderId: this.holderId,
             instanceId: this.instanceId,
@@ -263,6 +309,9 @@ export class SchedulerLeaseService implements OnModuleInit, OnModuleDestroy {
      * startup acquire above) never need their own try/catch.
      */
     private startRenew(): Promise<void> {
+        if (!this.eligible || this.stopped) {
+            return Promise.resolve();
+        }
         if (this.renewInFlight) {
             return this.renewInFlight;
         }

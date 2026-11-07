@@ -63,6 +63,7 @@ interface ScheduleSpec {
     startDate: string;
     endDate: string;
     replaced?: boolean;
+    terminatedAt?: string;
 }
 
 interface WorldOptions {
@@ -76,7 +77,15 @@ interface WorldOptions {
     caseStartDate?: string;
     endDate?: string;
     schedules?: ScheduleSpec[];
-    days?: Array<{ index: number; date: string; locked?: boolean; submittedAt?: Date | null }>;
+    days?: Array<{
+        index: number;
+        date: string;
+        locked?: boolean;
+        submittedAt?: Date | null;
+        /** The writer of the row; both default to null (no writer evidence). */
+        scheduleId?: number | null;
+        employeeId?: number | null;
+    }>;
 }
 
 function createWorld(options: WorldOptions = {}) {
@@ -109,7 +118,7 @@ function createWorld(options: WorldOptions = {}) {
         startDate: date(schedule.startDate),
         endDate: date(schedule.endDate),
         replaced: schedule.replaced ?? false,
-        terminatedAt: null,
+        terminatedAt: schedule.terminatedAt ? new Date(`${schedule.terminatedAt}T03:00:00.000Z`) : null,
         primaryEmployeeId: schedule.employeeId,
         secondaryEmployeeId: null,
         primaryEmployee: { name: `Employee ${schedule.employeeId}` },
@@ -133,6 +142,8 @@ function createWorld(options: WorldOptions = {}) {
         serviceDate: date(day.date),
         locked: day.locked ?? false,
         submittedAt: day.submittedAt ?? null,
+        scheduleId: day.scheduleId ?? null,
+        employeeId: day.employeeId ?? null,
     }));
 
     const apply = (target: Record<string, unknown>, data: Record<string, unknown>) => {
@@ -211,6 +222,86 @@ beforeEach(() => {
 
 describe("ServiceRecordScheduleRealignmentService", () => {
     describe("planned vector", () => {
+        it.each([false, true])("keeps the incident pause while today is inside it (Saturday=%s)", async (saturday) => {
+            const stored = ["2026-10-01", "2026-10-14", "2026-10-15"];
+            const world = createWorld({
+                flags: { saturday }, planned: vector(stored), requiredSessionCount: 3,
+                startDate: stored[0], endDate: stored[2],
+                schedules: [{ id: 11, employeeId: 7, assignmentId: "a-1", startDate: stored[0]!, endDate: stored[2]! }],
+                days: written(1, stored),
+            });
+
+            await world.run({ now: new Date("2026-10-09T15:00:00.000Z") }); // Oct 10 KST, inside the pause.
+
+            expect(world.plannedDates()).toEqual(stored);
+            expect(world.tx.service_record_case.update).not.toHaveBeenCalled();
+            expect(world.tx.employee_schedule.updateMany).not.toHaveBeenCalled();
+        });
+
+        it("keeps a manual weekday gap but re-lays later sessions within the segment", async () => {
+            const stored = ["2026-10-14", "2026-10-16", "2026-10-19"];
+            const world = createWorld({
+                flags: { saturday: true }, planned: vector(stored), requiredSessionCount: 3,
+                startDate: stored[0], endDate: stored[2],
+                schedules: [{ id: 11, employeeId: 7, assignmentId: "a-1", startDate: stored[0]!, endDate: stored[2]! }],
+                days: written(1, stored),
+            });
+
+            await world.run({ now: new Date("2026-10-14T15:00:00.000Z") }); // Oct 15 KST.
+
+            // Thu 15 is a pause; Sat 17 / Sun 18 are not. Only the segment's start stays put.
+            expect(world.plannedDates()).toEqual(["2026-10-14", "2026-10-16", "2026-10-17"]);
+            expect(iso(world.client.endDate)).toBe("2026-10-17");
+        });
+
+        it("rolls a post-pause segment forward when its stored start is no longer a service day", async () => {
+            // The stored Saturday start follows an empty Thu/Fri; disabling Saturday rolls it to Mon.
+            const stored = ["2026-10-14", "2026-10-17", "2026-10-19"];
+            const world = createWorld({
+                planned: vector(stored), requiredSessionCount: 3, startDate: stored[0], endDate: stored[2],
+                schedules: [{ id: 11, employeeId: 7, assignmentId: "a-1", startDate: stored[0]!, endDate: stored[2]! }],
+                days: written(1, stored),
+            });
+
+            await world.run({ now: new Date("2026-10-14T15:00:00.000Z") });
+
+            expect(world.plannedDates()).toEqual(["2026-10-14", "2026-10-19", "2026-10-20"]);
+        });
+
+        it("uses branch holidays to distinguish a holiday gap from a pause", async () => {
+            const stored = ["2026-10-14", "2026-10-16", "2026-10-19"];
+            const calendar = createKrBusinessDayCalendar([...KR_BUILTIN_HOLIDAYS, "2026-10-15"]);
+            const world = createWorld({
+                flags: { saturday: true, holiday: true }, planned: vector(stored), requiredSessionCount: 3,
+                startDate: stored[0], endDate: stored[2],
+                schedules: [{ id: 11, employeeId: 7, assignmentId: "a-1", startDate: stored[0]!, endDate: stored[2]! }],
+                days: written(1, stored),
+            });
+
+            await world.run({ calendar, now: new Date("2026-10-14T15:00:00.000Z") });
+
+            // Oct 15 is the branch holiday, so this is no pause even though the client accepts holiday service.
+            expect(world.plannedDates()).toEqual(["2026-10-14", "2026-10-15", "2026-10-16"]);
+        });
+
+        it.each([
+            { flags: { saturday: true }, expected: ["2026-10-08", "2026-10-10", "2026-10-12"] },
+            { flags: { saturday: true, holiday: true }, expected: ["2026-10-08", "2026-10-09", "2026-10-10"] },
+        ])("does not treat a holiday/weekend gap as a pause under flags $flags", async ({ flags, expected }) => {
+            // Fri Oct 9 is a holiday, then Sat/Sun. There is no plain working weekday in this gap.
+            const stored = ["2026-10-08", "2026-10-12", "2026-10-13"];
+            const world = createWorld({
+                flags, planned: vector(stored), requiredSessionCount: 3,
+                startDate: stored[0], endDate: stored[2],
+                schedules: [{ id: 11, employeeId: 7, assignmentId: "a-1", startDate: stored[0]!, endDate: stored[2]! }],
+                days: written(1, stored),
+            });
+
+            await world.run({ now: new Date("2026-10-08T15:00:00.000Z") });
+
+            expect(world.plannedDates()).toEqual(expected);
+        });
+
         it("keeps written sessions and moves the unwritten suffix onto the new Saturday service days", async () => {
             const world = createWorld({
                 flags: { saturday: true },
@@ -649,6 +740,151 @@ describe("ServiceRecordScheduleRealignmentService", () => {
                 status: 409,
                 scheduleCode: "REALIGNMENT_REQUIRES_MANUAL_SCHEDULE",
             });
+        });
+    });
+
+    describe("historical writer slots", () => {
+        // A corrected record that was resumed from session 1: A was replaced (or terminated) and keeps
+        // session 1 only because A wrote that row. Her stored period (10-01..10-01) does not reach it.
+        const A_WROTE = { scheduleId: 11, employeeId: 7 };
+        /** [id, start, end] of every updateMany call that wrote dates. */
+        const writtenRanges = (calls: ReadonlyArray<ReadonlyArray<unknown>>) => calls.map(([arg]) => {
+            const call = arg as { where: { id: string | number }; data: { startDate: Date; endDate: Date } };
+            return [call.where.id, iso(call.data.startDate), iso(call.data.endDate)];
+        });
+        const stored = (spec: Partial<ScheduleSpec> & Pick<ScheduleSpec, "id" | "employeeId" | "assignmentId" | "startDate" | "endDate">): ScheduleSpec => spec;
+
+        /** Session 1 on Mon 09-28 (A), then 14 weekday sessions 2..15 ending Tue 10-20 (B). */
+        const F5_DATES = [
+            "2026-09-28",
+            "2026-09-29", "2026-09-30", "2026-10-01", "2026-10-02",
+            "2026-10-06", "2026-10-07", "2026-10-08",
+            "2026-10-12", "2026-10-13", "2026-10-14", "2026-10-15", "2026-10-16",
+            "2026-10-19", "2026-10-20",
+        ];
+        // 2026-09-28 12:00 in Korea: every date from session 2 on is still ahead, so the vector is re-laid.
+        const F5_NOW = new Date("2026-09-28T03:00:00.000Z");
+
+        const f5World = (aSchedule: Partial<ScheduleSpec>) => createWorld({
+            flags: { saturday: true },
+            startDate: "2026-09-28",
+            endDate: "2026-10-20",
+            requiredSessionCount: 15,
+            planned: vector(F5_DATES, (index) => (index === 1 ? A : B)),
+            schedules: [
+                stored({ id: 11, employeeId: 7, assignmentId: "a-1", startDate: "2026-10-01", endDate: "2026-10-01", ...aSchedule }),
+                stored({ id: 12, employeeId: 8, assignmentId: "a-2", startDate: "2026-09-29", endDate: "2026-10-20" }),
+            ],
+            days: [{
+                index: 1, date: "2026-09-28", locked: true, submittedAt: new Date("2026-09-28T01:00:00Z"), ...A_WROTE,
+            }],
+        });
+
+        // Saturday on, sessions 2..15 re-laid from 09-29: 09-29, 09-30, 10-01, 10-02 (4), then 10-03 is the
+        // Gaecheonjeol holiday (a Saturday, not served) and 10-05 a substitute holiday, so 10-06, 10-07, 10-08
+        // (7); 10-09 is Hangul Day, so Sat 10-10 serves (8); Mon 10-12 .. Fri 10-16 (13); Sat 10-17 is the 14th.
+        const F5_END = "2026-10-17";
+
+        it.each([
+            ["terminated", { terminatedAt: "2026-10-01" }],
+            ["replaced", { replaced: true }],
+        ])("keeps a %s caregiver that only holds a kept writer slot at her stored dates when the vector end moves", async (_label, aSchedule) => {
+            const world = f5World(aSchedule);
+
+            const result = await world.run({ now: F5_NOW });
+
+            expect(result).toMatchObject({ changed: true, mode: "planned", endDate: F5_END });
+            expect(world.plannedDates()[0]).toBe("2026-09-28");
+            expect(world.plannedDates().at(-1)).toBe(F5_END);
+            // A keeps [10-01, 10-01] in both tables; B follows the vector's end and its start is not pulled to 09-28.
+            const aSchedule11 = world.schedules.find((schedule) => schedule.id === 11)!;
+            expect([iso(aSchedule11.startDate), iso(aSchedule11.endDate)]).toEqual(["2026-10-01", "2026-10-01"]);
+            const bSchedule = world.schedules.find((schedule) => schedule.id === 12)!;
+            expect([iso(bSchedule.startDate), iso(bSchedule.endDate)]).toEqual(["2026-09-29", F5_END]);
+            expect(writtenRanges(world.tx.employee_schedule.updateMany.mock.calls)).toEqual([[12, "2026-09-29", F5_END]]);
+            expect(writtenRanges(world.tx.service_record_assignment.updateMany.mock.calls)).toEqual([["a-2", "2026-09-29", F5_END]]);
+            // Case and client end agree with the vector.
+            expect(iso(world.record["endDate"] as Date)).toBe(F5_END);
+            expect(iso(world.client.endDate)).toBe(F5_END);
+            // A's schedule is not fenced or re-evaluated as an edge: only B's is written.
+            expect(world.store.appendScheduleWriteFence).toHaveBeenCalledTimes(1);
+            expect(world.store.appendScheduleWriteFence).toHaveBeenCalledWith(world.tx, expect.objectContaining({ scheduleIds: [12] }));
+        });
+
+        it("keeps a historical-only caregiver at the tail at her stored dates and ends the other caregiver on her own last session", async () => {
+            // B owns sessions 1-9, A (terminated) wrote the unwritten session 10 (the 28th, outside her
+            // 12-01 period). The Saturday layout re-lays 4..10 onto the 17th .. 24th, so session 10 is the
+            // 24th and session 9 the 23rd: B ends on the 23rd, not on the vector's end.
+            const world = createWorld({
+                flags: { saturday: true },
+                planned: vector(WEEKDAY_LAYOUT, (index) => (index === 10 ? A : B)),
+                schedules: [
+                    stored({ id: 11, employeeId: 7, assignmentId: "a-1", startDate: "2026-12-01", endDate: "2026-12-01", terminatedAt: "2026-12-01" }),
+                    stored({ id: 12, employeeId: 8, assignmentId: "a-2", startDate: "2026-12-14", endDate: "2026-12-28" }),
+                ],
+                days: [...written(3).map((day) => ({ ...day, scheduleId: 12, employeeId: 8 })), { index: 10, date: "2026-12-28", ...A_WROTE }],
+            });
+
+            const result = await world.run();
+
+            expect(result).toMatchObject({ changed: true, endDate: "2026-12-24" });
+            expect(world.plannedDates().at(-1)).toBe("2026-12-24");
+            const aSchedule11 = world.schedules.find((schedule) => schedule.id === 11)!;
+            expect([iso(aSchedule11.startDate), iso(aSchedule11.endDate)]).toEqual(["2026-12-01", "2026-12-01"]);
+            const bSchedule = world.schedules.find((schedule) => schedule.id === 12)!;
+            expect([iso(bSchedule.startDate), iso(bSchedule.endDate)]).toEqual(["2026-12-14", "2026-12-23"]);
+            expect(iso(world.record["endDate"] as Date)).toBe("2026-12-24");
+            expect(iso(world.client.endDate)).toBe("2026-12-24");
+        });
+
+        it("never moves a historical-only caregiver whose stored period shares a date with the other caregiver's start", async () => {
+            // A (terminated) is stored [12-14, 12-14], the shape of a placeholder sharing B's start date, and
+            // only holds session 1 (12-11) that she wrote. Sessions 2-3 are past, so 4..10 are re-laid.
+            const world = createWorld({
+                flags: { saturday: true },
+                startDate: "2026-12-11",
+                planned: vector(["2026-12-11", ...WEEKDAY_LAYOUT.slice(0, 9)], (index) => (index === 1 ? A : B)),
+                schedules: [
+                    stored({ id: 11, employeeId: 7, assignmentId: "a-1", startDate: "2026-12-14", endDate: "2026-12-14", terminatedAt: "2026-12-14" }),
+                    stored({ id: 12, employeeId: 8, assignmentId: "a-2", startDate: "2026-12-14", endDate: "2026-12-28" }),
+                ],
+                days: [{ index: 1, date: "2026-12-11", locked: true, ...A_WROTE }],
+            });
+
+            const result = await world.run();
+
+            // Sessions 2-3 (14th, 15th) are past; 4..10 become 16th, 17th, 18th, 19th(Sat), 21st, 22nd, 23rd.
+            expect(result).toMatchObject({ changed: true, endDate: "2026-12-23" });
+            const aSchedule11 = world.schedules.find((schedule) => schedule.id === 11)!;
+            expect([iso(aSchedule11.startDate), iso(aSchedule11.endDate)]).toEqual(["2026-12-14", "2026-12-14"]);
+            const bSchedule = world.schedules.find((schedule) => schedule.id === 12)!;
+            expect([iso(bSchedule.startDate), iso(bSchedule.endDate)]).toEqual(["2026-12-14", "2026-12-23"]);
+            expect(writtenRanges(world.tx.employee_schedule.updateMany.mock.calls).map(([id]) => id)).toEqual([12]);
+        });
+
+        it("does not turn a mixed caregiver, who also bears a period, into a historical-only one", async () => {
+            // A (terminated, stored [12-14, 12-14]) wrote session 1 on the 11th (outside) and also owns
+            // session 2 (the 14th, inside): she bears a period, so her end follows normal edge handling.
+            const world = createWorld({
+                flags: { saturday: true },
+                startDate: "2026-12-11",
+                planned: vector(["2026-12-11", ...WEEKDAY_LAYOUT.slice(0, 9)], (index) => (index <= 2 ? A : B)),
+                schedules: [
+                    stored({ id: 11, employeeId: 7, assignmentId: "a-1", startDate: "2026-12-14", endDate: "2026-12-14", terminatedAt: "2026-12-14" }),
+                    stored({ id: 12, employeeId: 8, assignmentId: "a-2", startDate: "2026-12-15", endDate: "2026-12-28" }),
+                ],
+                days: [
+                    { index: 1, date: "2026-12-11", locked: true, ...A_WROTE },
+                    { index: 2, date: "2026-12-14", locked: true, ...A_WROTE },
+                ],
+            });
+
+            await world.run();
+
+            // Session 2 sits inside A's period, so A is not historical-only: she still counts as the edge
+            // owner of session 1 (the 11th), exactly as before this rule existed.
+            const aSchedule11 = world.schedules.find((schedule) => schedule.id === 11)!;
+            expect([iso(aSchedule11.startDate), iso(aSchedule11.endDate)]).toEqual(["2026-12-11", "2026-12-14"]);
         });
     });
 

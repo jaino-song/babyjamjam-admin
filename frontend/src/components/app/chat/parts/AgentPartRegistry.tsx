@@ -77,6 +77,12 @@ function readContactRef(target: Record<string, unknown> | undefined, changes: Re
     return null;
 }
 
+/** Unknown parts render a safe fallback; only structural markers and blank text are invisible. */
+export function hasRenderableAgentPart(parts: readonly { type: string; text?: string }[]): boolean {
+    return parts.some((part) => part.type !== "step-start" && part.type !== "reasoning"
+        && (part.type !== "text" || Boolean(part.text?.trim())));
+}
+
 export function AgentPartRegistry({ "data-component": dataComponent, message, task, onTaskEntitySelect, onTaskPatch, onTaskCommand, onEntitySelect, onFeedback, onApproveAction, onRejectAction, onSubmitForm, onRetry, terminalActionIds, isBusy = false, taskBusy = false }: AgentPartRegistryProps) {
     const component = (suffix: string) => `${dataComponent}_${suffix}`;
 
@@ -90,6 +96,7 @@ export function AgentPartRegistry({ "data-component": dataComponent, message, ta
                 // "can't display this" fallback.
                 if (part.type === "step-start" || part.type === "reasoning") return null;
                 if (part.type === "text") {
+                    if (!part.text.trim()) return null;
                     return (
                         <div key={index} data-component={component("text")} data-slot="text" className="markdown-content break-words">
                             <ChatMarkdown remarkPlugins={AGENT_TEXT_REMARK_PLUGINS} components={AGENT_TEXT_MARKDOWN_COMPONENTS}>{part.text}</ChatMarkdown>

@@ -1,3 +1,9 @@
+import { MESSAGE_TRIGGER_RULE_REPOSITORY } from "domain/repositories/message-trigger-rule.repository.interface";
+import { MESSAGE_TRIGGER_JOB_REPOSITORY } from "domain/repositories/message-trigger-job.repository.interface";
+import { MESSAGE_LOG_REPOSITORY } from "domain/repositories/message-log.repository.interface";
+import { SbMessageTriggerRuleRepository } from "infrastructure/database/repositories/sb.message-trigger-rule.repository";
+import { SbMessageTriggerJobRepository } from "infrastructure/database/repositories/sb.message-trigger-job.repository";
+import { SbMessageLogRepository } from "infrastructure/database/repositories/sb.message-log.repository";
 import { Module } from "@nestjs/common";
 import { SYSTEM_SETTING_REPOSITORY } from "domain/repositories/system-setting.repository.interface";
 import { SbSystemSettingRepository } from "infrastructure/database/repositories/sb.system-setting.repository";
@@ -22,6 +28,9 @@ import { MESSAGE_AUTOMATION_DATABASE } from "domain/repositories/message-automat
     imports: [DatabaseModule],
     controllers: [SystemSettingController, PublicSettingsController],
     providers: [
+        { provide: MESSAGE_TRIGGER_RULE_REPOSITORY, useClass: SbMessageTriggerRuleRepository },
+        { provide: MESSAGE_TRIGGER_JOB_REPOSITORY, useClass: SbMessageTriggerJobRepository },
+        { provide: MESSAGE_LOG_REPOSITORY, useClass: SbMessageLogRepository },
         { provide: SYSTEM_SETTING_REPOSITORY, useClass: SbSystemSettingRepository },
         GetSettingUsecase,
         UpdateSettingUsecase,

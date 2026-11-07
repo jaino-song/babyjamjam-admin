@@ -323,6 +323,23 @@
         "note": "In app forms prefer FormField + FormNativeSelect or Select composition."
       },
       {
+        "name": "SelectableItemFrame",
+        "layer": "atom",
+        "import": "@/components/ui/selectable-item",
+        "file": "frontend/src/components/ui/selectable-item.tsx",
+        "exports": [
+          "SelectableItemFrame",
+          "selectableItemVariants"
+        ],
+        "note": "Visible selection frames use SelectableItemFrame, which owns recipe classes and inline border color. asChild preserves the native element, semantics, events, refs, and non-border styles. selectableItemVariants remains a compatibility class recipe only.",
+        "replaces": [
+          "duplicated selectable card and chip border/background/focus styles"
+        ],
+        "requiredFor": [
+          "selectable list cards and chip frames"
+        ]
+      },
+      {
         "name": "Separator",
         "layer": "atom",
         "import": "@/components/ui/separator",
@@ -777,6 +794,15 @@
             ]
           }
         }
+      },
+      {
+        "name": "ThemeChoice",
+        "layer": "molecule",
+        "import": "@/components/app/ui/theme-choice",
+        "file": "frontend/src/components/app/ui/theme-choice.tsx",
+        "exports": ["ThemeChoice"],
+        "note": "Light-only theme choices using SelectableItemFrame; dark and system remain disabled.",
+        "replaces": ["settings page-local theme option markup"]
       },
       {
         "name": "InfoRow",
@@ -1777,6 +1803,30 @@
         "requiredFor": [
           "admin service-record editor"
         ]
+      },
+      {
+        "name": "ChatWorkspace",
+        "layer": "template",
+        "import": "@/components/app/chat/ChatWorkspace",
+        "file": "frontend/src/components/app/chat/ChatWorkspace.tsx",
+        "exports": [
+          "ChatWorkspace"
+        ],
+        "replaces": [
+          "fixed fullscreen chat shells",
+          "custom chat sidebar overlays"
+        ],
+        "note": "Chat-only ListPanel/DetailPanel composition with controller-owned list/header/message slots. One compact Sheet authority below 1280px."
+      },
+      {
+        "name": "ChatWorkspaceStats",
+        "layer": "organism",
+        "import": "@/components/app/chat/ChatWorkspaceStats",
+        "file": "frontend/src/components/app/chat/ChatWorkspaceStats.tsx",
+        "exports": [
+          "ChatWorkspaceStats"
+        ],
+        "note": "Branch-aligned live chat statistics; reuses DocumentJobsStatMini and backend contractsNotSent/serviceEnd counts."
       }
     ],
     "mobile": [

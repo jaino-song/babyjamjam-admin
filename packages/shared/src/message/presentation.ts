@@ -35,6 +35,8 @@ export const MESSAGE_SECTION_DEFINITIONS = [
 }>;
 
 export const MESSAGE_TEMPLATE_LABELS: Readonly<Record<string, string>> = {
+  CAREGIVER_SERVICE_START_NOTICE: "제공인력 서비스 시작 안내",
+  CAREGIVER_SERVICE_END_NOTICE: "제공인력 서비스 종료 안내",
   CLIENT_WELCOME: "고객 등록 안내",
   SERVICE_START_REMINDER: "서비스 시작 알림",
   SERVICE_INFO: "서비스 안내",
