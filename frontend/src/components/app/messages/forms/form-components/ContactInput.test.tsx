@@ -24,19 +24,19 @@ describe("ContactInput", () => {
     render(<ControlledContactInput />);
 
     fireEvent.change(screen.getByLabelText("전화번호"), {
-      target: { value: "01096411878" },
+      target: { value: "01000009641" },
     });
 
-    expect(screen.getByLabelText("전화번호")).toHaveValue("010-9641-1878");
-    expect(screen.getByTestId("phone-state")).toHaveTextContent("010-9641-1878");
+    expect(screen.getByLabelText("전화번호")).toHaveValue("010-0000-9641");
+    expect(screen.getByTestId("phone-state")).toHaveTextContent("010-0000-9641");
   });
 
   it("normalizes an incoming unformatted phone value", async () => {
-    render(<ControlledContactInput initialPhone="01096411878" />);
+    render(<ControlledContactInput initialPhone="01000009641" />);
 
-    expect(screen.getByLabelText("전화번호")).toHaveValue("010-9641-1878");
+    expect(screen.getByLabelText("전화번호")).toHaveValue("010-0000-9641");
     await waitFor(() => {
-      expect(screen.getByTestId("phone-state")).toHaveTextContent("010-9641-1878");
+      expect(screen.getByTestId("phone-state")).toHaveTextContent("010-0000-9641");
     });
   });
 

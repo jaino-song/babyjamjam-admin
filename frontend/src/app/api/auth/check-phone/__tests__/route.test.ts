@@ -34,10 +34,10 @@ describe("GET /api/auth/check-phone", () => {
   it("proxies a normalized phone to the public auth duplicate check", async () => {
     mockServerGet.mockResolvedValue({ data: { exists: true }, status: 200 });
 
-    const response = await GET(createRequest("010-6621-1878"));
+    const response = await GET(createRequest("010-0000-6621"));
 
     expect(mockServerGet).toHaveBeenCalledWith("/auth/check-phone", {
-      params: { phone: "01066211878" },
+      params: { phone: "01000006621" },
     });
     await expect(response.json()).resolves.toEqual({ exists: true });
     expect(response.status).toBe(200);
@@ -46,7 +46,7 @@ describe("GET /api/auth/check-phone", () => {
   it("returns an error when the backend lookup fails", async () => {
     mockServerGet.mockRejectedValue(new Error("backend unavailable"));
 
-    const response = await GET(createRequest("01066211878"));
+    const response = await GET(createRequest("01000006621"));
 
     expect(response.status).toBe(500);
     const body = await response.json();

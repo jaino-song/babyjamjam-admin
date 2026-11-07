@@ -32,7 +32,7 @@ const client: Client = {
   dueDate: "2026-06-10",
   birthDate: null,
   address: "인천시 서구",
-  phone: "010-6621-1878",
+  phone: "010-0000-6621",
   primaryEmployee: null,
   secondaryEmployee: null,
   type: null,
@@ -336,7 +336,7 @@ describe("ClientAutocomplete", () => {
       />
     );
 
-    expect(screen.queryByText("010-6621-1878")).not.toBeInTheDocument();
+    expect(screen.queryByText("010-0000-6621")).not.toBeInTheDocument();
 
     fireEvent.change(screen.getByPlaceholderText("연락처 검색 또는 직접 입력"), {
       target: { value: "6621" },
@@ -368,7 +368,7 @@ describe("ClientAutocomplete", () => {
         searchMode="phone"
       />
     );
-    expect(trigger).toHaveTextContent("010-6621-1878");
+    expect(trigger).toHaveTextContent("010-0000-6621");
   });
 
   it("selects the exact phone match on Enter in phone mode", () => {
@@ -390,7 +390,7 @@ describe("ClientAutocomplete", () => {
 
     fireEvent.click(screen.getByRole("combobox"));
     fireEvent.change(screen.getByPlaceholderText("연락처 검색 또는 직접 입력"), {
-      target: { value: "01066211878" },
+      target: { value: "01000006621" },
     });
     rerender(
       <ClientAutocomplete
@@ -398,15 +398,15 @@ describe("ClientAutocomplete", () => {
         onChange={onChange}
         label="휴대 전화번호"
         placeholder="연락처 검색 또는 직접 입력"
-        manualValue="01066211878"
+        manualValue="01000006621"
         onManualValueChange={onManualValueChange}
         displayValueMode="phone"
         searchMode="phone"
       />
     );
 
-    expect(screen.getByPlaceholderText("연락처 검색 또는 직접 입력")).toHaveValue("010-6621-1878");
-    expect(screen.getByText("010-6621-1878 · 인천시 서구")).toBeInTheDocument();
+    expect(screen.getByPlaceholderText("연락처 검색 또는 직접 입력")).toHaveValue("010-0000-6621");
+    expect(screen.getByText("010-0000-6621 · 인천시 서구")).toBeInTheDocument();
 
     fireEvent.keyDown(screen.getByPlaceholderText("연락처 검색 또는 직접 입력"), {
       key: "Enter",

@@ -31,7 +31,7 @@ const MOCK_CLIENT = {
   birthday: "950414",
   dueDate: "2026-06-11",
   address: "인천시 동구 송현로 100",
-  phone: "010-9641-1878",
+  phone: "010-0000-9641",
   primaryEmployee: { id: 1, name: "김정인" },
   secondaryEmployee: { id: 2, name: "박지영" },
   type: VOUCHER_TYPE,

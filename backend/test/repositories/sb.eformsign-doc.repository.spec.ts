@@ -38,7 +38,7 @@ describe("SbEformsignDocRepository", () => {
         stepName: "이용자",
         stepRecipientType: "05",
         stepRecipientName: "송진호",
-        stepRecipientSms: "01066211878",
+        stepRecipientSms: "01000006621",
         expiredDate: new Date("2026-08-01T00:00:00.000Z"),
         expired: false,
         clientId: 55,
@@ -968,7 +968,7 @@ describe("SbEformsignDocRepository", () => {
             data: expect.objectContaining({
                 clientId: 55,
                 stepRecipientName: "송진호",
-                stepRecipientSms: "01066211878",
+                stepRecipientSms: "01000006621",
             }),
         });
         expect(eformsignDocModel.findFirst).not.toHaveBeenCalled();
@@ -2905,7 +2905,7 @@ describe("SbEformsignDocRepository", () => {
 
     it("uses the service record mom name for snapshot document client summaries", async () => {
         const clientFindMany = jest.fn().mockResolvedValue([
-            { id: 55, name: "고객 원본명", phone: "01066211878" },
+            { id: 55, name: "고객 원본명", phone: "01000006621" },
         ]);
         const scheduleFindMany = jest.fn().mockResolvedValue([]);
         eformsignDocModel.findMany.mockResolvedValue([
@@ -2943,7 +2943,7 @@ describe("SbEformsignDocRepository", () => {
                 documentId: "service-record-doc-1",
                 clientId: 55,
                 clientName: "송진호",
-                clientPhone: "01066211878",
+                clientPhone: "01000006621",
                 providerName: null,
             },
         ]);

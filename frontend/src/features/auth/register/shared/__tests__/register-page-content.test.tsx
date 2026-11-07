@@ -157,7 +157,7 @@ describe("RegisterPageContent field messages", () => {
 
     mockApiGet.mockResolvedValue({ data: { exists: true } });
     await act(async () => {
-      fireEvent.change(screen.getByLabelText("전화번호"), { target: { value: "01066211878" } });
+      fireEvent.change(screen.getByLabelText("전화번호"), { target: { value: "01000006621" } });
     });
     await waitFor(() => {
       expect(slotOf(container, "전화번호")).toHaveTextContent("이미 존재하는 사용자 입니다.");

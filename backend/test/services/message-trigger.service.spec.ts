@@ -6312,7 +6312,7 @@ describe("MessageTriggerService", () => {
 
         const variables = buildClientTemplateVariables(rule, {
             name: "자동발송 테스트",
-            phone: "010-6621-1878",
+            phone: "010-0000-6621",
             type: "A가1형",
             duration: 10,
             startDate: new Date("2026-08-31T00:00:00.000Z"),
@@ -6339,7 +6339,7 @@ describe("MessageTriggerService", () => {
 
             const variables = buildClientTemplateVariables(rule, {
                 name: "자동발송 테스트",
-                phone: "010-6621-1878",
+                phone: "010-0000-6621",
                 type: "A가1형",
                 duration: 10,
                 startDate: new Date("2026-08-31T00:00:00.000Z"),

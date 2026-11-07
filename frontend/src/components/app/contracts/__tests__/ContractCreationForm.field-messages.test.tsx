@@ -87,7 +87,7 @@ function seedCustomerStep(overrides: Partial<ReturnType<typeof useFormStore.getS
   useFormStore.setState({
     clientId: 42,
     name: "송진호",
-    phone: "010-6621-1878",
+    phone: "010-0000-6621",
     birthday: "",
     dueDate: "",
     birthDate: "",
@@ -268,7 +268,7 @@ describe("ContractCreationForm — inline field messages", () => {
   });
 
   it("blocks 다음 on an incomplete customer phone and focuses it", () => {
-    seedCustomerStep({ phone: "010-6621-1878" });
+    seedCustomerStep({ phone: "010-0000-6621" });
     const { onActiveStepChange, container } = renderForm(CUSTOMER_STEP_INDEX);
     const phoneInput = container.querySelector<HTMLInputElement>(
       '[data-component="desktop_messages_form_contact-input"] input',

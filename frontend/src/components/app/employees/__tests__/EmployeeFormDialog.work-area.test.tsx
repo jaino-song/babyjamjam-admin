@@ -223,7 +223,7 @@ describe("EmployeeFormPanel work area multi-select", () => {
     fireEvent.click(screen.getByRole("combobox", { name: /근무 지역 선택/ }));
     fireEvent.click(await screen.findByRole("checkbox", { name: "남동구" }));
     fireEvent.click(screen.getByRole("button", { name: "완료" }));
-    fireEvent.change(phoneInput, { target: { value: "01066211878" } });
+    fireEvent.change(phoneInput, { target: { value: "01000006621" } });
 
     const duplicateMessage = await screen.findByText("이미 등록된 연락처예요");
     const phoneLabel = screen.getByText("연락처", { selector: "label" });

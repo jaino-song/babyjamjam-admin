@@ -931,7 +931,7 @@ describe("EformsignWebhookController (Integration)", () => {
                         step_seq: "2",
                         name: "송진호",
                         id: "",
-                        sms: { country_code: "+82", phone_number: "1066211878" },
+                        sms: { country_code: "+82", phone_number: "1000006621" },
                         token_id: "e638f0969f634156bb9c32652309017d",
                         sms_template_index: 0,
                     },
