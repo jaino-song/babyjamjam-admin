@@ -7,6 +7,7 @@ import {
     formatOutOfPocketDurationLabel,
     getUserErrorMessage,
     resolveProblemPresentation,
+    type StartDateChangeMode,
 } from "@babyjamjam/shared";
 import {
     normalizeApiError,
@@ -75,6 +76,7 @@ import { Separator } from "@/components/ui/separator";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { StatusBadge } from "@/components/app/ui/status-badge";
 import { Spinner } from "@/components/ui/spinner";
+import { MobileTwoButtonModal } from "@/components/app/ui/MobileTwoButtonModal";
 
 interface ClientFormDialogProps {
     open: boolean;
@@ -100,6 +102,13 @@ type ClientFormState = Omit<CreateClientDto, "primaryEmployeeId"> & { primaryEmp
 interface ClientFormErrorState {
     message: string;
     normalized?: NormalizedApiError;
+}
+
+interface StartDateConfirmation {
+    id: number;
+    dto: UpdateClientDto;
+    lock: NonNullable<NonNullable<NormalizedApiError["problem"]>["startDateLock"]>;
+    step: "started" | "records";
 }
 
 interface StructuredErrorPresentation {
@@ -230,6 +239,10 @@ export function ClientFormDialog({ open, onClose, client, onSuccess }: ClientFor
     // Read pre-filled name from Zustand store (when opened from ClientAutocomplete)
     const prefillName = useClientDialogStore((state) => state.prefillName);
     const clearPrefillName = useClientDialogStore((state) => state.clearPrefillName);
+
+    const [startDateConfirmation, setStartDateConfirmation] = useState<StartDateConfirmation | null>(null);
+    const [isRetryingStartDate, setIsRetryingStartDate] = useState(false);
+    const startDateRetryInFlightRef = useRef(false);
 
     const createClient = useCreateClient();
     const updateClient = useUpdateClient();
@@ -427,6 +440,7 @@ export function ClientFormDialog({ open, onClose, client, onSuccess }: ClientFor
     useEffect(() => {
         if (!open) {
             formSessionRef.current.open = false;
+            queueMicrotask(() => setStartDateConfirmation(null));
             return;
         }
         const sessionClientId = client?.id ?? null;
@@ -498,6 +512,7 @@ export function ClientFormDialog({ open, onClose, client, onSuccess }: ClientFor
             }
             resetFieldMessages();
             setErrorState(null);
+            setStartDateConfirmation(null);
             setHasUnknownMutationOutcome(false);
         });
     }, [open, client, prefillName, clearPrefillName, resetFieldMessages]);
@@ -523,8 +538,91 @@ export function ClientFormDialog({ open, onClose, client, onSuccess }: ClientFor
         }
     };
 
+    const handleMutationError = (error: unknown, endDateGuardSent: boolean, updateDto?: UpdateClientDto) => {
+        const normalized = normalizeApiError(error, {
+            locale: locale === "en" ? "en-US" : "ko-KR",
+            operation: "mutation",
+        });
+        const responseData = error && typeof error === "object" && "response" in error
+            ? (error.response as { data?: unknown } | undefined)?.data : error;
+        const claimsProblem = responseData !== null && typeof responseData === "object"
+            && ("type" in responseData || "requestId" in responseData);
+        const isLegacyClientError = !normalized.verified && !claimsProblem
+            && normalized.status !== undefined && normalized.status >= 400 && normalized.status < 500;
+        // Only the first attempt may open confirmations. A failed retry uses normal error handling.
+        const lock = normalized.problem?.startDateLock;
+        if (
+            updateDto && client
+            && normalized.status === 409
+            && normalized.problem?.code === "SERVICE_RECORD_START_DATE_LOCKED"
+            && lock
+        ) {
+            setStartDateConfirmation({
+                id: client.id,
+                dto: updateDto,
+                lock,
+                step: lock.serviceStarted ? "started" : "records",
+            });
+            return;
+        }
+        // The save carried the end date this form was opened with and the backend found it moved.
+        if (
+            endDateGuardSent
+            && normalized.status === 409
+            && normalized.problem?.code === END_DATE_CHANGED_PROBLEM_CODE
+        ) {
+            setErrorAndScroll(CLIENT_END_DATE_CHANGED_MESSAGE);
+            return;
+        }
+        // A handover the server cannot re-lay on its own: send the admin to the schedule editor.
+        if (
+            normalized.status === 409
+            && responseData !== null
+            && typeof responseData === "object"
+            && (responseData as { scheduleCode?: unknown }).scheduleCode === MANUAL_SCHEDULE_REQUIRED_CODE
+        ) {
+            setErrorAndScroll(t(locale, "clients.form.error-manual-schedule"));
+            return;
+        }
+        const shouldUseNormalized = !isLegacyClientError;
+        if (shouldUseNormalized) {
+            setErrorAndScroll(normalized.message, normalized);
+            return;
+        }
+        setErrorAndScroll(getErrorMessage(error, locale, "clients.form.error-save-failed"));
+    };
+
+    const retryStartDateChange = async (startDateChangeMode: StartDateChangeMode) => {
+        if (!open || !startDateConfirmation || startDateRetryInFlightRef.current) return;
+        const remembered = startDateConfirmation;
+        const session = formSessionRef.current;
+        startDateRetryInFlightRef.current = true;
+        setIsRetryingStartDate(true);
+        try {
+            const updatedClient = await updateClient.mutateAsync({
+                id: remembered.id,
+                dto: { ...remembered.dto, startDateChangeMode },
+            });
+            if (!session.open || session !== formSessionRef.current) return;
+            setStartDateConfirmation(null);
+            onSuccess?.(updatedClient);
+            onClose();
+        } catch (error: unknown) {
+            if (!session.open || session !== formSessionRef.current) return;
+            setStartDateConfirmation(null);
+            handleMutationError(error, remembered.dto.expectedEndDate !== undefined);
+        } finally {
+            startDateRetryInFlightRef.current = false;
+            setIsRetryingStartDate(false);
+        }
+    };
+
+    const dismissStartDateConfirmation = () => {
+        if (!startDateRetryInFlightRef.current) setStartDateConfirmation(null);
+    };
+
     const handleSubmit = async () => {
-        if (hasUnknownMutationOutcome) {
+        if (hasUnknownMutationOutcome || startDateConfirmation || startDateRetryInFlightRef.current) {
             return;
         }
         setErrorState(null);
@@ -538,6 +636,8 @@ export function ClientFormDialog({ open, onClose, client, onSuccess }: ClientFor
             return;
         }
         let endDateGuardSent = false;
+        let updateDto: UpdateClientDto | undefined;
+        const session = formSessionRef.current;
         try {
             if (isEditMode && client) {
                 // Send only what the user changed since the form was opened. The backend moves the end
@@ -551,7 +651,7 @@ export function ClientFormDialog({ open, onClose, client, onSuccess }: ClientFor
                 const baseline = openingTablePricesRef.current && !priceBaselineFrozenRef.current
                     ? { ...storedBaseline, ...openingTablePricesRef.current }
                     : storedBaseline;
-                const updateDto: UpdateClientDto = buildClientUpdatePayload({ baseline, current: formData });
+                updateDto = buildClientUpdatePayload({ baseline, current: formData });
                 endDateGuardSent = updateDto.expectedEndDate !== undefined;
                 const updatedClient = await updateClient.mutateAsync({ id: client.id, dto: updateDto });
                 onSuccess?.(updatedClient);
@@ -585,45 +685,12 @@ export function ClientFormDialog({ open, onClose, client, onSuccess }: ClientFor
             }
             onClose();
         } catch (error: unknown) {
-            const normalized = normalizeApiError(error, {
-                locale: locale === "en" ? "en-US" : "ko-KR",
-                operation: "mutation",
-            });
-            const responseData = error && typeof error === "object" && "response" in error
-                ? (error.response as { data?: unknown } | undefined)?.data : error;
-            const claimsProblem = responseData !== null && typeof responseData === "object"
-                && ("type" in responseData || "requestId" in responseData);
-            const isLegacyClientError = !normalized.verified && !claimsProblem
-                && normalized.status !== undefined && normalized.status >= 400 && normalized.status < 500;
-            // The save carried the end date this form was opened with and the backend found it moved.
-            if (
-                endDateGuardSent
-                && normalized.status === 409
-                && normalized.problem?.code === END_DATE_CHANGED_PROBLEM_CODE
-            ) {
-                setErrorAndScroll(CLIENT_END_DATE_CHANGED_MESSAGE);
-                return;
-            }
-            // A handover the server cannot re-lay on its own: send the admin to the schedule editor.
-            if (
-                normalized.status === 409
-                && responseData !== null
-                && typeof responseData === "object"
-                && (responseData as { scheduleCode?: unknown }).scheduleCode === MANUAL_SCHEDULE_REQUIRED_CODE
-            ) {
-                setErrorAndScroll(t(locale, "clients.form.error-manual-schedule"));
-                return;
-            }
-            const shouldUseNormalized = !isLegacyClientError;
-            if (shouldUseNormalized) {
-                setErrorAndScroll(normalized.message, normalized);
-                return;
-            }
-            setErrorAndScroll(getErrorMessage(error, locale, "clients.form.error-save-failed"));
+            if (!session.open || session !== formSessionRef.current) return;
+            handleMutationError(error, endDateGuardSent, updateDto);
         }
     };
 
-    const isSubmitting = createClient.isPending || updateClient.isPending;
+    const isSubmitting = createClient.isPending || updateClient.isPending || isRetryingStartDate;
     // 고객-04: a new client is always 예약 전, and a save can no longer move a client between 예약 전
     // and 대기·진행·완료 (only [예약 확정] does), so the select offers only what the server accepts.
     const serviceStatusOptions = getServiceStatusFormOptions({
@@ -1276,6 +1343,41 @@ export function ClientFormDialog({ open, onClose, client, onSuccess }: ClientFor
                     }}
                 />
             </DialogContent>
+            <MobileTwoButtonModal
+                data-component={`${CLIENT_FORM_DIALOG_BASE}_start-date-started-confirmation`}
+                open={open && startDateConfirmation?.step === "started"}
+                title="서비스 시작 후 변경"
+                description="서비스가 이미 시작되었어요. 그래도 변경할까요?"
+                cancelLabel="취소"
+                confirmLabel="진행"
+                confirmVariant="default"
+                actionOrder="cancel-confirm"
+                loading={isSubmitting}
+                onOpenChange={(isOpen) => { if (!isOpen) dismissStartDateConfirmation(); }}
+                onCancel={dismissStartDateConfirmation}
+                onConfirm={() => {
+                    if (!startDateConfirmation || startDateRetryInFlightRef.current) return;
+                    if (startDateConfirmation.lock.recordedSessionCount > 0) {
+                        setStartDateConfirmation({ ...startDateConfirmation, step: "records" });
+                    } else {
+                        void retryStartDateChange("CONFIRM_STARTED");
+                    }
+                }}
+            />
+            <MobileTwoButtonModal
+                data-component={`${CLIENT_FORM_DIALOG_BASE}_start-date-records-confirmation`}
+                open={open && startDateConfirmation?.step === "records"}
+                title="제공기록지 회차 처리"
+                description="이미 제출된 제공기록지 기록이 있어요. 새로운 시작일을 기준으로 1회차부터 작성된 회차까지 모두 옮길까요?"
+                cancelLabel="처음부터 시작"
+                confirmLabel="모두 옮기기"
+                confirmVariant="default"
+                actionOrder="cancel-confirm"
+                loading={isSubmitting}
+                onOpenChange={(isOpen) => { if (!isOpen) dismissStartDateConfirmation(); }}
+                onCancel={() => { void retryStartDateChange("RESTART"); }}
+                onConfirm={() => retryStartDateChange("MOVE")}
+            />
         </Dialog>
     );
 }
