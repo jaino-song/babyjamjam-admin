@@ -42,10 +42,10 @@ function documentFixture(overrides: Partial<EformsignDocument> = {}): EformsignD
 describe("contract display names", () => {
   it("uses eformsign document fields as the customer name source", () => {
     const doc = documentFixture({
-      fields: [{ id: "이용자 성명", value: "송진호" }],
+      fields: [{ id: "이용자 성명", value: "정다라" }],
     });
 
-    expect(customerName(doc)).toBe("송진호");
+    expect(customerName(doc)).toBe("정다라");
   });
 
   it("does not use internal creator/editor names as customer names", () => {
@@ -78,21 +78,21 @@ describe("contract display names", () => {
   it("recovers customer name from detailed eformsign fields when list data is missing it", () => {
     const listDoc = documentFixture();
     const detailDoc = documentFixture({
-      fields: [{ id: "이용자 성명", value: "송진호" }],
+      fields: [{ id: "이용자 성명", value: "정다라" }],
     });
 
     const merged = mergeDocumentForDisplayData(listDoc, detailDoc);
 
     expect(customerName(listDoc)).toBe(UNKNOWN_CUSTOMER_NAME);
-    expect(contractDisplayName(merged)).toBe("송진호");
+    expect(contractDisplayName(merged)).toBe("정다라");
   });
 
   it("reads customer name from keyed field value maps returned by document detail APIs", () => {
     const doc = documentFixture({
-      fields: [{ field_values: { "이용자 성명": "송진호" } }],
+      fields: [{ field_values: { "이용자 성명": "정다라" } }],
     });
 
-    expect(customerName(doc)).toBe("송진호");
+    expect(customerName(doc)).toBe("정다라");
   });
 
   it("prefers the customer name embedded in the document over a stale client mapping", () => {
@@ -104,6 +104,6 @@ describe("contract display names", () => {
   });
 
   it("uses the client mapping only when the document has no customer name", () => {
-    expect(resolveDocumentCustomerName(documentFixture(), " 송진호 ")).toBe("송진호");
+    expect(resolveDocumentCustomerName(documentFixture(), " 정다라 ")).toBe("정다라");
   });
 });

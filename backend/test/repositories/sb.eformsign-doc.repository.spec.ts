@@ -37,7 +37,7 @@ describe("SbEformsignDocRepository", () => {
         stepIndex: "1",
         stepName: "이용자",
         stepRecipientType: "05",
-        stepRecipientName: "송진호",
+        stepRecipientName: "정다라",
         stepRecipientSms: "01000006621",
         expiredDate: new Date("2026-08-01T00:00:00.000Z"),
         expired: false,
@@ -858,7 +858,7 @@ describe("SbEformsignDocRepository", () => {
         eformsignDocModel.findMany.mockResolvedValue([
             {
                 documentId: "doc-1",
-                stepRecipientName: "  송진호  ",
+                stepRecipientName: "  정다라  ",
             },
             {
                 documentId: "doc-2",
@@ -884,7 +884,7 @@ describe("SbEformsignDocRepository", () => {
             },
         });
         expect(result).toEqual([
-            { documentId: "doc-1", customerName: "송진호" },
+            { documentId: "doc-1", customerName: "정다라" },
             { documentId: "doc-2", customerName: null },
         ]);
     });
@@ -967,7 +967,7 @@ describe("SbEformsignDocRepository", () => {
             },
             data: expect.objectContaining({
                 clientId: 55,
-                stepRecipientName: "송진호",
+                stepRecipientName: "정다라",
                 stepRecipientSms: "01000006621",
             }),
         });
@@ -2914,7 +2914,7 @@ describe("SbEformsignDocRepository", () => {
                 clientId: 55,
                 stepRecipientName: "인천 아이미래로",
                 documentKind: "service_record_snapshot",
-                serviceRecordCase: { momName: "송진호" },
+                serviceRecordCase: { momName: "정다라" },
             },
         ]);
         repository = new SbEformsignDocRepository({
@@ -2942,7 +2942,7 @@ describe("SbEformsignDocRepository", () => {
             {
                 documentId: "service-record-doc-1",
                 clientId: 55,
-                clientName: "송진호",
+                clientName: "정다라",
                 clientPhone: "01000006621",
                 providerName: null,
             },

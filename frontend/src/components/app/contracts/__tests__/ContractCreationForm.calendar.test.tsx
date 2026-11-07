@@ -93,15 +93,15 @@ function hookResult(overrides: Partial<UseBusinessDayCalendarResult> = {}): UseB
 function seedStore(overrides: { startDate: string; endDate?: string; voucherDuration: string }): void {
   useFormStore.setState({
     clientId: 42,
-    name: "송진호",
+    name: "정다라",
     phone: "010-0000-6621",
     birthday: "960414",
     dueDate: "",
     birthDate: "",
     address: "인천시",
     employeeId: 7,
-    employeeName: "김정인",
-    employeePhone: "01057871878",
+    employeeName: "최가나",
+    employeePhone: "01000005787",
     showEmployee2: false,
     employee2Id: null,
     startDate: overrides.startDate,

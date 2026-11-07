@@ -32,7 +32,7 @@ const MOCK_CLIENT = {
   dueDate: "2026-06-11",
   address: "인천시 동구 송현로 100",
   phone: "010-0000-9641",
-  primaryEmployee: { id: 1, name: "김정인" },
+  primaryEmployee: { id: 1, name: "최가나" },
   secondaryEmployee: { id: 2, name: "박지영" },
   type: VOUCHER_TYPE,
   duration: 20,
@@ -91,7 +91,7 @@ test.describe("clients edit wizard hydration", () => {
         status: 200,
         contentType: "application/json",
         body: JSON.stringify([
-          { id: 1, name: "김정인", status: "active", workArea: [] },
+          { id: 1, name: "최가나", status: "active", workArea: [] },
           { id: 2, name: "박지영", status: "active", workArea: [] },
         ]),
       });

@@ -26,7 +26,7 @@ jest.mock("../ClientFormDialog", () => ({
 
 const client: Client = {
   id: 1,
-  name: "송진호",
+  name: "정다라",
   createdAt: "2026-01-01",
   birthday: "960201",
   dueDate: "2026-06-10",
@@ -80,7 +80,7 @@ describe("ClientAutocomplete", () => {
 
     fireEvent.click(screen.getByRole("combobox", { name: "고객 선택" }));
 
-    expect(screen.queryByText("송진호")).not.toBeInTheDocument();
+    expect(screen.queryByText("정다라")).not.toBeInTheDocument();
     expect(document.querySelector('[data-component="desktop_clients_autocomplete_dropdown"]')).toHaveClass(
       "glint-ui-scale-scope",
     );
@@ -106,7 +106,7 @@ describe("ClientAutocomplete", () => {
 
     fireEvent.click(screen.getByRole("combobox", { name: "고객 선택" }));
     fireEvent.change(screen.getByPlaceholderText("이름, 연락처 또는 주소로 검색"), {
-      target: { value: "송진호" },
+      target: { value: "정다라" },
     });
 
     expect(await screen.findByText("서명 완료")).toBeInTheDocument();
@@ -123,7 +123,7 @@ describe("ClientAutocomplete", () => {
     );
 
     const trigger = screen.getByRole("combobox");
-    await waitFor(() => expect(trigger).toHaveTextContent("송진호"));
+    await waitFor(() => expect(trigger).toHaveTextContent("정다라"));
     expect(trigger).toHaveClass("h-[calc(38px*var(--glint-ui-scale,1))]");
     expect(trigger).toHaveClass("rounded-[13px]");
     expect(trigger).toHaveClass("border-[1.35px]");
@@ -141,7 +141,7 @@ describe("ClientAutocomplete", () => {
       />
     );
 
-    await waitFor(() => expect(screen.getByRole("combobox")).toHaveTextContent("송진호"));
+    await waitFor(() => expect(screen.getByRole("combobox")).toHaveTextContent("정다라"));
     fireEvent.click(screen.getByRole("button", { name: "고객 선택 해제" }));
 
     expect(onChange).toHaveBeenCalledWith(null, null);
@@ -213,7 +213,7 @@ describe("ClientAutocomplete", () => {
     );
 
     const trigger = screen.getByRole("combobox");
-    await waitFor(() => expect(trigger).toHaveTextContent("송진호"));
+    await waitFor(() => expect(trigger).toHaveTextContent("정다라"));
     fireEvent.click(trigger);
     fireEvent.change(screen.getByPlaceholderText("이름, 연락처 또는 주소로 검색"), {
       target: { value: "김산모" },
@@ -240,14 +240,14 @@ describe("ClientAutocomplete", () => {
     const trigger = screen.getByRole("combobox");
     fireEvent.click(trigger);
     fireEvent.change(screen.getByPlaceholderText("이름, 연락처 또는 주소로 검색"), {
-      target: { value: "송진호" },
+      target: { value: "정다라" },
     });
     rerender(
       <ClientAutocomplete
         value={null}
         onChange={onChange}
         label="고객 선택"
-        manualValue="송진호"
+        manualValue="정다라"
         onManualValueChange={onManualValueChange}
       />
     );
@@ -258,7 +258,7 @@ describe("ClientAutocomplete", () => {
     });
 
     expect(onChange).not.toHaveBeenCalled();
-    expect(onManualValueChange).toHaveBeenLastCalledWith("송진호");
+    expect(onManualValueChange).toHaveBeenLastCalledWith("정다라");
     await waitFor(() => {
       expect(screen.queryByPlaceholderText("이름, 연락처 또는 주소로 검색")).not.toBeInTheDocument();
     });
@@ -281,14 +281,14 @@ describe("ClientAutocomplete", () => {
     const trigger = screen.getByRole("combobox");
     fireEvent.click(trigger);
     fireEvent.change(screen.getByPlaceholderText("이름, 연락처 또는 주소로 검색"), {
-      target: { value: "송진호" },
+      target: { value: "정다라" },
     });
     rerender(
       <ClientAutocomplete
         value={null}
         onChange={onChange}
         label="고객 선택"
-        manualValue="송진호"
+        manualValue="정다라"
         onManualValueChange={onManualValueChange}
       />
     );
@@ -296,7 +296,7 @@ describe("ClientAutocomplete", () => {
     fireEvent.click(screen.getByRole("button", { name: "수동 입력으로 진행" }));
 
     expect(onChange).not.toHaveBeenCalled();
-    expect(onManualValueChange).toHaveBeenLastCalledWith("송진호");
+    expect(onManualValueChange).toHaveBeenLastCalledWith("정다라");
     await waitFor(() => {
       expect(screen.queryByPlaceholderText("이름, 연락처 또는 주소로 검색")).not.toBeInTheDocument();
     });
@@ -321,7 +321,7 @@ describe("ClientAutocomplete", () => {
     const trigger = screen.getByRole("combobox");
     fireEvent.click(trigger);
     fireEvent.change(screen.getByPlaceholderText("연락처 검색 또는 직접 입력"), {
-      target: { value: "송진호" },
+      target: { value: "정다라" },
     });
     rerender(
       <ClientAutocomplete
@@ -329,7 +329,7 @@ describe("ClientAutocomplete", () => {
         onChange={onChange}
         label="휴대 전화번호"
         placeholder="연락처 검색 또는 직접 입력"
-        manualValue="송진호"
+        manualValue="정다라"
         onManualValueChange={jest.fn()}
         displayValueMode="phone"
         searchMode="phone"
@@ -353,7 +353,7 @@ describe("ClientAutocomplete", () => {
         searchMode="phone"
       />
     );
-    fireEvent.click(screen.getByText("송진호"));
+    fireEvent.click(screen.getByText("정다라"));
 
     expect(onChange).toHaveBeenCalledWith(client.id, client);
     rerender(

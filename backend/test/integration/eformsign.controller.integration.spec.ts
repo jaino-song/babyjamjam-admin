@@ -1713,7 +1713,7 @@ describe("EformsignController (Integration)", () => {
                 stepIndex: "1",
                 stepName: overrides.stepName ?? "이용자 서명",
                 stepRecipientType: "05",
-                stepRecipientName: "송진호",
+                stepRecipientName: "정다라",
                 stepRecipientSms: "01012345678",
                 expiredDate: new Date("2026-08-01T00:00:00.000Z"),
                 expired: false,
@@ -2326,7 +2326,7 @@ describe("EformsignController (Integration)", () => {
                 .get("/api/documents?accessToken=access-token");
 
             expect(response.body.documents[0].fields).toEqual([
-                { id: "이용자 성명", value: "송진호" },
+                { id: "이용자 성명", value: "정다라" },
             ]);
         });
 
@@ -2644,7 +2644,7 @@ describe("EformsignController (Integration)", () => {
         ] as any);
         eformsignService.getDocumentById.mockResolvedValueOnce({
             id: "branch-1-doc",
-            fields: [{ id: "이용자 성명", value: "송진호" }],
+            fields: [{ id: "이용자 성명", value: "정다라" }],
         });
 
         const response = await request(app.getHttpServer())
@@ -2654,7 +2654,7 @@ describe("EformsignController (Integration)", () => {
         expect(response.body.documents).toEqual([
             {
                 id: "branch-1-doc",
-                fields: [{ id: "이용자 성명", value: "송진호" }],
+                fields: [{ id: "이용자 성명", value: "정다라" }],
             },
         ]);
         expect(eformsignService.getDocumentById).toHaveBeenCalledTimes(1);

@@ -78,7 +78,7 @@ describe("mobile redesign list skeletons", () => {
         data-component="mobile_tests_client-like-row_root"
         row={{
           name: "가나안덕",
-          meta: "A통합1형 · 김정인",
+          meta: "A통합1형 · 최가나",
           initial: "가",
           badge: "진행중",
           badgeTone: "primary",

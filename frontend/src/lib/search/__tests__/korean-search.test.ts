@@ -333,10 +333,10 @@ describe("matchesKoreanSearch", () => {
 });
 
 describe("matchesSearchQuery", () => {
-    const fields = ["송진호", "010-0000-6621", "인천광역시 연수구", "Alpha Branch"];
+    const fields = ["정다라", "010-0000-6621", "인천광역시 연수구", "Alpha Branch"];
 
     it("matches Korean names by initial consonants", () => {
-        expect(matchesSearchQuery("ㅅㅈㅎ", fields)).toBe(true);
+        expect(matchesSearchQuery("ㅈㄷㄹ", fields)).toBe(true);
     });
 
     it("matches any text field case-insensitively", () => {
@@ -352,7 +352,7 @@ describe("matchesSearchQuery", () => {
     });
 
     it("matches NFC text, case-insensitive values, and fields beyond the name", () => {
-        expect(matchesSearchQuery("송진호", fields)).toBe(true);
+        expect(matchesSearchQuery("정다라", fields)).toBe(true);
         expect(matchesSearchQuery("alpha", fields)).toBe(true);
         expect(matchesSearchQuery("연수구", fields)).toBe(true);
     });

@@ -135,7 +135,7 @@ describe("CreateAndSendContractUsecase", () => {
         const clientRepository = {
             findById: jest.fn().mockResolvedValue({
                 id: 55,
-                name: "송진호",
+                name: "정다라",
                 phone: "010-1111-2222",
             }),
         };
@@ -172,7 +172,7 @@ describe("CreateAndSendContractUsecase", () => {
         const clientRepository = {
             findById: jest.fn().mockResolvedValue({
                 id: 55,
-                name: "송진호",
+                name: "정다라",
                 phone: "010-1111-2222",
             }),
         };

@@ -67,7 +67,7 @@ jest.mock("@/hooks/useClients", () => ({
 
 jest.mock("@/hooks/useEmployees", () => ({
   useEmployees: () => ({
-    data: [{ id: 7, name: "김정인", phone: "010-5787-1878", workArea: [] }],
+    data: [{ id: 7, name: "최가나", phone: "010-0000-5787", workArea: [] }],
     isLoading: false,
   }),
   useCreateEmployee: () => ({ mutateAsync: jest.fn(), isPending: false }),
@@ -107,7 +107,7 @@ const BASE_CLIENT: Client = {
   birthDate: null,
   address: "인천시 남동구",
   phone: "010-1111-2222",
-  primaryEmployee: { id: 7, name: "김정인", phone: "010-5787-1878" },
+  primaryEmployee: { id: 7, name: "최가나", phone: "010-0000-5787" },
   secondaryEmployee: null,
   type: "일반",
   duration: 15,
@@ -253,13 +253,13 @@ describe("ContractCreationForm — confirm before writing form edits back to the
   it("persists only the staff assignment for 계약서에만 반영 when the stored client has no primary employee", async () => {
     renderExistingClient({ ...BASE_CLIENT, primaryEmployee: null });
     act(() => {
-      useFormStore.getState().setEmployeeSelection(7, "김정인", "010-5787-1878");
+      useFormStore.getState().setEmployeeSelection(7, "최가나", "010-0000-5787");
     });
 
     submit();
     const dialog = await screen.findByRole("dialog");
     expect(within(dialog).getByText("제공인력 1")).toBeInTheDocument();
-    expect(within(dialog).getByText(/\(없음\) → 김정인/)).toBeInTheDocument();
+    expect(within(dialog).getByText(/\(없음\) → 최가나/)).toBeInTheDocument();
     fireEvent.click(within(dialog).getByRole("button", { name: CONTRACT_ONLY_LABEL }));
 
     await waitFor(() => expect(mockEnqueueMutateAsync).toHaveBeenCalledTimes(1));
@@ -358,15 +358,15 @@ describe("ContractCreationForm — confirm before writing form edits back to the
   it("never asks for a client that is auto-registered in the same submit", async () => {
     useFormStore.setState({
       clientId: null,
-      name: "송진호",
+      name: "정다라",
       phone: "010-0000-6621",
       birthday: "",
       dueDate: "",
       birthDate: "",
       address: "인천시",
       employeeId: 7,
-      employeeName: "김정인",
-      employeePhone: "01057871878",
+      employeeName: "최가나",
+      employeePhone: "01000005787",
       showEmployee2: false,
       employee2Id: null,
       startDate: "2026-08-05",
@@ -552,14 +552,14 @@ describe("ContractCreationForm — per-field registered-value hints and stored-v
     });
     expect(screen.queryByText(HINT)).not.toBeInTheDocument();
     expect(screen.getByRole("combobox", { name: t("ko", "contract-msg.employee-select-label") })).toHaveTextContent(
-      "김정인",
+      "최가나",
     );
     stored.unmount();
     useFormStore.getState().resetAll();
 
     renderExistingClient({ ...BASE_CLIENT, primaryEmployee: null }, STAFF_STEP_INDEX);
     act(() => {
-      useFormStore.getState().setEmployeeSelection(7, "김정인", "010-5787-1878");
+      useFormStore.getState().setEmployeeSelection(7, "최가나", "010-0000-5787");
     });
     expect(screen.queryByText(HINT)).not.toBeInTheDocument();
   });

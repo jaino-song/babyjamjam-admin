@@ -101,9 +101,9 @@ describe("consultation list state", () => {
   });
 
   it("filters inquiries by the same initial-consonant search used by customer autocomplete", () => {
-    const songJinho = createInquiry({
-      id: "song-jinho",
-      motherName: "송진호",
+    const jeongDara = createInquiry({
+      id: "jeong-dara",
+      motherName: "정다라",
       phone: "010-0000-6621",
       address: "인천광역시 연수구",
     });
@@ -115,13 +115,13 @@ describe("consultation list state", () => {
     });
 
     const result = getDisplayedConsultationInquiries({
-      inquiries: [songJinho, leeSoonshin],
+      inquiries: [jeongDara, leeSoonshin],
       selectedInquiry: null,
       activeReadState: "read",
-      search: "ㅅㅈㅎ",
+      search: "ㅈㄷㄹ",
     });
 
-    expect(result.map((inquiry) => inquiry.id)).toEqual(["song-jinho"]);
+    expect(result.map((inquiry) => inquiry.id)).toEqual(["jeong-dara"]);
   });
 
   it("does not pin a selected inquiry that does not match the active search", () => {
@@ -131,7 +131,7 @@ describe("consultation list state", () => {
     });
     const matchingInquiry = createInquiry({
       id: "matching",
-      motherName: "송진호",
+      motherName: "정다라",
       phone: "010-0000-6621",
     });
 
@@ -139,7 +139,7 @@ describe("consultation list state", () => {
       inquiries: [matchingInquiry],
       selectedInquiry,
       activeReadState: "unread",
-      search: "ㅅㅈㅎ",
+      search: "ㅈㄷㄹ",
     });
 
     expect(result.map((inquiry) => inquiry.id)).toEqual(["matching"]);

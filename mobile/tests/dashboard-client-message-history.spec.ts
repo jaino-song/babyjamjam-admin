@@ -25,12 +25,12 @@ function isoDaysFromToday(days: number): string {
 
 const CLIENT = {
   id: 62,
-  name: "송진호",
+  name: "정다라",
   birthday: "960414",
   dueDate: "2026-06-26",
   address: "경기도 고양시",
   phone: "010-0000-6621",
-  primaryEmployee: { id: 1, name: "송진호" },
+  primaryEmployee: { id: 1, name: "정다라" },
   secondaryEmployee: null,
   type: "A통합2형",
   duration: 23,

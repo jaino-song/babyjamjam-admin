@@ -76,7 +76,7 @@ jest.mock("@/hooks/useClients", () => ({
 
 jest.mock("@/hooks/useEmployees", () => ({
   useEmployees: () => ({
-    data: [{ id: 7, name: "김정인", phone: "010-5787-1878", workArea: [] }],
+    data: [{ id: 7, name: "최가나", phone: "010-0000-5787", workArea: [] }],
     isLoading: false,
   }),
   useCreateEmployee: () => ({ mutateAsync: jest.fn(), isPending: false }),
@@ -128,7 +128,7 @@ const STORED_CLIENT: Client = {
   birthDate: null,
   address: "인천시 남동구",
   phone: "010-1111-2222",
-  primaryEmployee: { id: 7, name: "김정인", phone: "010-5787-1878" },
+  primaryEmployee: { id: 7, name: "최가나", phone: "010-0000-5787" },
   secondaryEmployee: null,
   type: "일반",
   duration: 15,

@@ -31,7 +31,7 @@ function renderCard(props: Partial<React.ComponentProps<typeof HoverCard>> = {})
       title="자동 문자가 꺼져 있어요"
       description={
         <>
-          <b>송진호</b> 관리사의 ‘자동 문자 발송’이 꺼져 있어 재발송할 수 없어요.
+          <b>정다라</b> 관리사의 ‘자동 문자 발송’이 꺼져 있어 재발송할 수 없어요.
         </>
       }
       action={{ label: "관리사 정보에서 켜기 →", href: "/employees/7" }}
@@ -75,7 +75,7 @@ describe("HoverCard", () => {
     expect(content).toHaveAttribute("data-component", "mobile_tests_hover-card");
     expect(content.querySelector('[data-slot="title"]')).toHaveTextContent("자동 문자가 꺼져 있어요");
     expect(content.querySelector('[data-slot="description"]')).toHaveTextContent(
-      "송진호 관리사의 ‘자동 문자 발송’이 꺼져 있어 재발송할 수 없어요.",
+      "정다라 관리사의 ‘자동 문자 발송’이 꺼져 있어 재발송할 수 없어요.",
     );
     const link = content.querySelector('[data-slot="action"]');
     expect(link).toHaveAttribute("href", "/employees/7");

@@ -5,7 +5,7 @@ import {
 
 describe("message history client matching", () => {
   const clients = [
-    { id: 1, name: "송진호", phone: "010-0000-6621" },
+    { id: 1, name: "정다라", phone: "010-0000-6621" },
     { id: 2, name: "가나다", phone: "010-0000-9641" },
   ];
 
@@ -50,6 +50,6 @@ describe("message history client matching", () => {
 
   it("finds the matching client across all customer items", () => {
     expect(findMessageHistoryClient({ clientId: 2, receiver: "010-0000-0000" }, clients)?.name).toBe("가나다");
-    expect(findMessageHistoryClient({ clientId: null, receiver: "01000006621" }, clients)?.name).toBe("송진호");
+    expect(findMessageHistoryClient({ clientId: null, receiver: "01000006621" }, clients)?.name).toBe("정다라");
   });
 });
