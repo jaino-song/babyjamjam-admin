@@ -1,3 +1,4 @@
+import { START_DATE_CHANGE_MODES, type StartDateChangeMode } from "@babyjamjam/shared/types/start-date-change";
 import { ArrayNotEmpty, ArrayUnique, IsArray, IsBoolean, IsDateString, IsIn, IsInt, IsOptional, IsString, Matches, ValidateIf } from "class-validator";
 import { Transform } from "class-transformer";
 import { SERVICE_STATUS_VALUES } from "domain/value-objects/service-status.vo";
@@ -202,6 +203,10 @@ export class UpdateClientDto {
     @IsOptional()
     @IsBoolean()
     allowBusinessDayMismatch?: boolean;
+
+    @IsOptional()
+    @IsIn([...START_DATE_CHANGE_MODES])
+    startDateChangeMode?: StartDateChangeMode;
 
     @IsOptional()
     @IsString()

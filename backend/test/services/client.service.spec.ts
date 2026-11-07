@@ -1,3 +1,9 @@
+import type { StartDateChangeMode } from "@babyjamjam/shared/types/start-date-change";
+import { plainToInstance } from "class-transformer";
+import { validate } from "class-validator";
+import { ClientController } from "interface/controllers/client.controller";
+import { CreateClientDto, UpdateClientDto } from "interface/dto/client.dto";
+import { ServiceRecordStartDateChangeService } from "application/services/service-record-start-date-change.service";
 import { BadRequestException, ConflictException, Logger, NotFoundException } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import type { Request, Response } from "express";
@@ -400,6 +406,7 @@ describe("ClientService", () => {
             assertCanCombineWithAssignmentChange?: jest.Mock;
         },
         branchLock?: { runExclusive: jest.Mock },
+        startDateChange?: { applyInTransaction: jest.Mock },
     ) => new ClientService(
         createClientUsecase as unknown as CreateClientUsecase,
         findClientByIdUsecase as unknown as FindClientByIdUsecase,
@@ -424,6 +431,7 @@ describe("ClientService", () => {
             assertCanCombineWithAssignmentChange: jest.fn().mockResolvedValue(undefined),
             ...realignment,
         } as unknown as ServiceRecordScheduleRealignmentService,
+        startDateChange as unknown as ServiceRecordStartDateChangeService,
     );
 
     // ============================================
@@ -713,7 +721,98 @@ describe("ClientService", () => {
                 expect(persisted.allowHolidayService).toBe(false);
             });
 
-            describe("re-laying the remaining sessions", () => {
+            describe("confirmed start-date changes", () => {
+            const setup = (mode: StartDateChangeMode = "MOVE") => {
+                const client = createClientEntity();
+                client.startDate = new Date("2026-12-14T00:00:00Z");
+                client.endDate = new Date("2026-12-28T00:00:00Z");
+                client.duration = 10;
+                findClientByIdUsecase.execute.mockResolvedValue(client);
+                const decision = { mode, previousStartDate: client.startDate, recordedSessionCount: mode === "CONFIRM_STARTED" ? 0 : 3 };
+                serviceRecordLifecycleService.validatePeriodChange.mockResolvedValue(decision);
+                const startChange = { applyInTransaction: jest.fn().mockResolvedValue({ restoreRequiredSessionCount: 10 }) };
+                const realignment = { realignForServiceDayChangeInTransaction: jest.fn() };
+                const withStartChange = createServiceWithRealignment(realignment, undefined, startChange);
+                const patch = { startDate: "2026-12-21", endDate: "2026-12-31", startDateChangeMode: mode, actorUserId: "actor-id" };
+                return { client, decision, startChange, realignment, withStartChange, patch };
+            };
+
+            it.each(["CONFIRM_STARTED", "RESTART", "MOVE"] as const)("saves %s after the client write and before ensureForClient, skipping flag realignment", async (mode) => {
+                const w = setup(mode);
+                await w.withStartChange.update(branchId, 1, { ...w.patch, allowSaturdayService: true });
+                expect(serviceRecordLifecycleService.validatePeriodChange).toHaveBeenCalledWith(expect.objectContaining({
+                    clientId: 1, startDate: new Date("2026-12-21T00:00:00Z"), startDateChangeMode: mode,
+                }), prismaService);
+                expect(w.startChange.applyInTransaction).toHaveBeenCalledWith(prismaService, {
+                    branchId, clientId: 1, decision: w.decision, newStartDate: new Date("2026-12-21T00:00:00Z"),
+                    actorUserId: "actor-id", calendar: expect.anything(),
+                });
+                expect(prismaService.client.updateMany.mock.invocationCallOrder[0])
+                    .toBeLessThan(w.startChange.applyInTransaction.mock.invocationCallOrder[0]!);
+                expect(w.startChange.applyInTransaction.mock.invocationCallOrder[0])
+                    .toBeLessThan(serviceRecordLifecycleService.ensureForClient.mock.invocationCallOrder[0]!);
+                expect(w.realignment.realignForServiceDayChangeInTransaction).not.toHaveBeenCalled();
+            });
+
+            it.each([
+                { primaryEmployeeId: 9 }, { secondaryEmployeeId: 8 },
+            ])("refuses a simultaneous actual assignment change (%s) before any writes", async (employeePatch) => {
+                const w = setup();
+                prismaService.employee_schedule.findFirst.mockResolvedValue({
+                    id: 100, primaryEmployeeId: 7, secondaryEmployeeId: null,
+                });
+                await expect(w.withStartChange.update(branchId, 1, { ...w.patch, ...employeePatch })).rejects.toMatchObject({
+                    response: { scheduleCode: "REALIGNMENT_REQUIRES_MANUAL_SCHEDULE" },
+                });
+                expect(prismaService.client.updateMany).not.toHaveBeenCalled();
+                expect(prismaService.employee_schedule.update).not.toHaveBeenCalled();
+                expect(prismaService.employee_schedule.create).not.toHaveBeenCalled();
+                expect(w.startChange.applyInTransaction).not.toHaveBeenCalled();
+            });
+
+            it("allows resubmitting the same employees with a mode", async () => {
+                const w = setup();
+                prismaService.employee_schedule.findFirst.mockResolvedValue({ id: 100, primaryEmployeeId: 7, secondaryEmployeeId: null });
+                await w.withStartChange.update(branchId, 1, { ...w.patch, primaryEmployeeId: 7, secondaryEmployeeId: null });
+                expect(w.startChange.applyInTransaction).toHaveBeenCalledTimes(1);
+                expect(prismaService.employee_schedule.create).not.toHaveBeenCalled();
+            });
+
+            it("does not apply a mode when the lifecycle returned no locked-start decision", async () => {
+                const w = setup();
+                serviceRecordLifecycleService.validatePeriodChange.mockResolvedValue(null);
+                await w.withStartChange.update(branchId, 1, { ...w.patch, allowSaturdayService: true });
+                expect(w.startChange.applyInTransaction).not.toHaveBeenCalled();
+                expect(w.realignment.realignForServiceDayChangeInTransaction).toHaveBeenCalledTimes(1);
+            });
+
+            it.each([7, 10])("restores legacy N only if ensureForClient changed it to %s", async (syncedN) => {
+                const w = setup();
+                const recompute = jest.fn();
+                (serviceRecordLifecycleService as unknown as { recompute: jest.Mock }).recompute = recompute;
+                serviceRecordLifecycleService.ensureForClient.mockResolvedValue({ id: "case-1", requiredSessionCount: syncedN });
+                const updateCase = jest.fn();
+                (prismaService.service_record_case as unknown as { update: jest.Mock }).update = updateCase;
+                await w.withStartChange.update(branchId, 1, w.patch);
+                if (syncedN !== 10) {
+                    expect(updateCase).toHaveBeenCalledWith({ where: { id: "case-1" }, data: { requiredSessionCount: 10 } });
+                    expect(recompute).toHaveBeenCalledWith("case-1", prismaService, expect.anything());
+                } else {
+                    expect(updateCase).not.toHaveBeenCalled();
+                    expect(recompute).not.toHaveBeenCalled();
+                }
+            });
+
+            it("propagates archive/apply failure and never runs lifecycle synchronization afterward", async () => {
+                const w = setup();
+                const failure = new Error("archive insert failed");
+                w.startChange.applyInTransaction.mockRejectedValue(failure);
+                await expect(w.withStartChange.update(branchId, 1, w.patch)).rejects.toBe(failure);
+                expect(serviceRecordLifecycleService.ensureForClient).not.toHaveBeenCalled();
+            });
+        });
+
+        describe("re-laying the remaining sessions", () => {
                 const realign = () => ({
                     realignForServiceDayChangeInTransaction: jest.fn().mockResolvedValue({ changed: true }),
                 });
@@ -8779,5 +8878,28 @@ describe("ClientService ordinary caregiver authority successors", () => {
         await f.refresh();
         expect((await f.check()).status).toBe("refused");
         expect(f.provider.sendSms).not.toHaveBeenCalled();
+    });
+});
+
+
+describe("client update start-date confirmation request", () => {
+    it.each(["CONFIRM_STARTED", "RESTART", "MOVE"] as const)("accepts %s on update and forwards the tenant actor", async (mode) => {
+        const dto = plainToInstance(UpdateClientDto, { startDateChangeMode: mode });
+        await expect(validate(dto)).resolves.toEqual([]);
+        const service = { update: jest.fn() };
+        const controller = new ClientController(service as unknown as ClientService);
+        controller.update({ branchId: "branch-1", userId: "tenant-user" }, 1, dto);
+        expect(service.update).toHaveBeenCalledWith("branch-1", 1, expect.objectContaining({
+            startDateChangeMode: mode, actorUserId: "tenant-user",
+        }));
+    });
+
+    it("rejects unknown modes and keeps the field out of create DTO", async () => {
+        const errors = await validate(plainToInstance(UpdateClientDto, { startDateChangeMode: "BYPASS" }));
+        expect(errors).toEqual(expect.arrayContaining([expect.objectContaining({ property: "startDateChangeMode" })]));
+        const createErrors = await validate(plainToInstance(CreateClientDto, { name: "Client", startDateChangeMode: "MOVE" }), {
+            whitelist: true, forbidNonWhitelisted: true,
+        });
+        expect(createErrors).toEqual(expect.arrayContaining([expect.objectContaining({ property: "startDateChangeMode" })]));
     });
 });

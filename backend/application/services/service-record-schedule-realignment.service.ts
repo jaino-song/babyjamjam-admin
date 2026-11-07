@@ -76,7 +76,7 @@ const NOT_CHANGED: ServiceRecordRealignmentResult = Object.freeze({
     restoreRequiredSessionCount: null,
 });
 
-function manualScheduleConflict(): ConflictException {
+export function manualScheduleConflict(): ConflictException {
     return new ConflictException({
         ...problemBody("REQUEST_CONFLICT", {
             pointer: "",
@@ -103,7 +103,7 @@ function nextCalendarDay(iso: string): string {
 }
 
 /** Parse only a complete authoritative vector; null when the stored one cannot be trusted. */
-function parsePlannedVector(
+export function parsePlannedVector(
     raw: Prisma.JsonValue,
     requiredSessionCount: number | null,
     calendar: KrBusinessDayCalendar,
@@ -426,8 +426,8 @@ export class ServiceRecordScheduleRealignmentService {
                 });
             }
         }
-        await this.refreshTokenExpiry(tx, branchId, record.id, endDateValue);
-        await this.persistReevaluationIntents(tx, {
+        await refreshTokenExpiry(tx, branchId, record.id, endDateValue);
+        await persistReevaluationIntents(tx, {
             branchId,
             clientId,
             scheduleIds: writes.map((write) => write.scheduleId),
@@ -471,7 +471,7 @@ export class ServiceRecordScheduleRealignmentService {
             wrote = true;
         }
         if (!wrote) return { ...NOT_CHANGED, mode: "planned" };
-        await this.refreshTokenExpiry(tx, branchId, record.id, endDateValue);
+        await refreshTokenExpiry(tx, branchId, record.id, endDateValue);
         return { changed: true, mode: "planned", endDate, restoreRequiredSessionCount: null };
     }
 
@@ -528,8 +528,8 @@ export class ServiceRecordScheduleRealignmentService {
             where: { id: record.id, branchId },
             data: { endDate: endDateValue, version: { increment: 1 } },
         });
-        await this.refreshTokenExpiry(tx, branchId, record.id, endDateValue);
-        await this.persistReevaluationIntents(tx, { branchId, clientId, scheduleIds: [], intentAt: now });
+        await refreshTokenExpiry(tx, branchId, record.id, endDateValue);
+        await persistReevaluationIntents(tx, { branchId, clientId, scheduleIds: [], intentAt: now });
 
         return { changed: true, mode: "legacy", endDate, restoreRequiredSessionCount: total };
     }
@@ -663,65 +663,65 @@ export class ServiceRecordScheduleRealignmentService {
             throw error;
         }
     }
+}
 
-    private async refreshTokenExpiry(
-        tx: Prisma.TransactionClient,
-        branchId: string,
-        caseId: string,
-        endDate: Date,
-    ): Promise<void> {
-        await tx.service_record_token.updateMany({
-            where: { branchId, serviceRecordCaseId: caseId, active: true, revokedAt: null },
-            data: { expiresAt: getServiceRecordTokenExpiresAt(endDate) },
-        });
+export async function refreshTokenExpiry(
+    tx: Prisma.TransactionClient,
+    branchId: string,
+    caseId: string,
+    endDate: Date,
+): Promise<void> {
+    await tx.service_record_token.updateMany({
+        where: { branchId, serviceRecordCaseId: caseId, active: true, revokedAt: null },
+        data: { expiresAt: getServiceRecordTokenExpiresAt(endDate) },
+    });
+}
+
+/**
+ * Leaves the durable marker the automation reconciler uses to recalculate
+ * future jobs, the way the admin edit confirm does. Written in the caller's
+ * transaction, so a later failure rolls it back with the dates.
+ */
+export async function persistReevaluationIntents(
+    tx: Prisma.TransactionClient,
+    params: {
+        branchId: string;
+        clientId: number;
+        scheduleIds: ReadonlyArray<number | null>;
+        intentAt: Date;
+    },
+): Promise<void> {
+    const transaction = tx as unknown as {
+        message_trigger_rule?: { upsert?: unknown };
+        message_trigger_job?: { upsert?: unknown };
+    };
+    // Narrow unit doubles do not expose the message delegates; a real Prisma
+    // transaction always does, so production stays durable and atomic.
+    if (
+        typeof transaction.message_trigger_rule?.upsert !== "function"
+        || typeof transaction.message_trigger_job?.upsert !== "function"
+    ) {
+        return;
     }
-
-    /**
-     * Leaves the durable marker the automation reconciler uses to recalculate
-     * future jobs, the way the admin edit confirm does. Written in the caller's
-     * transaction, so a later failure rolls it back with the dates.
-     */
-    private async persistReevaluationIntents(
-        tx: Prisma.TransactionClient,
-        params: {
-            branchId: string;
-            clientId: number;
-            scheduleIds: ReadonlyArray<number | null>;
-            intentAt: Date;
-        },
-    ): Promise<void> {
-        const transaction = tx as unknown as {
-            message_trigger_rule?: { upsert?: unknown };
-            message_trigger_job?: { upsert?: unknown };
-        };
-        // Narrow unit doubles do not expose the message delegates; a real Prisma
-        // transaction always does, so production stays durable and atomic.
-        if (
-            typeof transaction.message_trigger_rule?.upsert !== "function"
-            || typeof transaction.message_trigger_job?.upsert !== "function"
-        ) {
-            return;
-        }
-        await persistClientMessageAutomationIntent(tx, {
+    await persistClientMessageAutomationIntent(tx, {
+        branchId: params.branchId,
+        clientId: params.clientId,
+        includePast: false,
+        suppressGreeting: true,
+        intentAt: params.intentAt,
+    });
+    const scheduleIds = [...new Set(
+        params.scheduleIds.filter((scheduleId): scheduleId is number => (
+            typeof scheduleId === "number" && Number.isInteger(scheduleId) && scheduleId > 0
+        )),
+    )].sort((left, right) => left - right);
+    for (const scheduleId of scheduleIds) {
+        await persistScheduleMessageAutomationIntent(tx, {
             branchId: params.branchId,
             clientId: params.clientId,
+            scheduleId,
             includePast: false,
-            suppressGreeting: true,
             intentAt: params.intentAt,
         });
-        const scheduleIds = [...new Set(
-            params.scheduleIds.filter((scheduleId): scheduleId is number => (
-                typeof scheduleId === "number" && Number.isInteger(scheduleId) && scheduleId > 0
-            )),
-        )].sort((left, right) => left - right);
-        for (const scheduleId of scheduleIds) {
-            await persistScheduleMessageAutomationIntent(tx, {
-                branchId: params.branchId,
-                clientId: params.clientId,
-                scheduleId,
-                includePast: false,
-                intentAt: params.intentAt,
-            });
-        }
     }
 }

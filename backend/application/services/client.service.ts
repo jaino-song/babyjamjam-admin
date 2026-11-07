@@ -1,3 +1,4 @@
+import type { StartDateChangeMode } from "@babyjamjam/shared/types/start-date-change";
 import { BadRequestException, ConflictException, Injectable, Inject, Logger, NotFoundException, Optional } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { Prisma } from "@prisma/client";
@@ -105,10 +106,12 @@ import { MessageTriggerService } from "./message-trigger.service";
 import { MessageAutomationIntentService } from "./message-automation-intent.service";
 import { ServiceRecordLinkService } from "./service-record-link.service";
 import { IMMUTABLE_FINALIZATION_STATUSES, ServiceRecordLifecycleService } from "./service-record-lifecycle.service";
+import { ServiceRecordStartDateChangeService } from "./service-record-start-date-change.service";
 import { SystemSettingService } from "./system-setting.service";
 import { MessageAutomationBranchLockService } from "./message-automation-branch-lock.service";
 import {
     ServiceRecordScheduleRealignmentService,
+    manualScheduleConflict,
     type ServiceRecordRealignmentResult,
 } from "./service-record-schedule-realignment.service";
 import { AgentAutomationRecordStoreService } from "../agent/agent-automation-record-store.service";
@@ -288,6 +291,7 @@ export class ClientService {
         @Optional() private readonly agentAutomationRecordStore?: AgentAutomationRecordStoreService,
         @Optional() private readonly messageAutomationBranchLockService?: MessageAutomationBranchLockService,
         @Optional() private readonly serviceRecordScheduleRealignmentService?: ServiceRecordScheduleRealignmentService,
+        @Optional() private readonly serviceRecordStartDateChangeService?: ServiceRecordStartDateChangeService,
     ) {}
 
     /**
@@ -2022,6 +2026,8 @@ export class ClientService {
         type?: string | null;
         duration?: number | null;
         allowBusinessDayMismatch?: boolean;
+        startDateChangeMode?: StartDateChangeMode;
+        actorUserId?: string | null;
         fullPrice?: string | null;
         grant?: string | null;
         actualPrice?: string | null;
@@ -2348,11 +2354,12 @@ export class ClientService {
                 : currentClient.duration === null && lockedDerivedDuration !== null
                     ? lockedDerivedDuration
                     : undefined;
-            await this.serviceRecordLifecycleService?.validatePeriodChange({
+            const startDateChangeDecision = await this.serviceRecordLifecycleService?.validatePeriodChange({
                 clientId: id,
                 startDate: startDateUpdate,
                 endDate: endDateUpdate,
                 duration,
+                startDateChangeMode: params.startDateChangeMode,
             }, transaction);
             const lockedPricing = hasPricingUpdate
                 ? normalizeClientPricing({
@@ -2406,6 +2413,7 @@ export class ClientService {
                 const assignmentChanged = primaryEmployeeId !== currentPrimaryEmployeeId
                     || secondaryEmployeeId !== currentSecondaryEmployeeId;
                 if (assignmentChanged) {
+                    if (startDateChangeDecision) throw manualScheduleConflict();
                     if (serviceDayFlagsChanged) {
                         // A new schedule has no assignment row until the lifecycle sync below,
                         // so the remaining sessions cannot be re-laid in the same save.
@@ -2540,10 +2548,20 @@ export class ClientService {
             } else if (!currentClient) {
                 throw new NotFoundException(clientCodeOnlyProblemBody("RESOURCE_NOT_FOUND", "고객을 찾을 수 없습니다."));
             }
+            const startDateChange = startDateChangeDecision
+                ? await this.serviceRecordStartDateChangeService?.applyInTransaction(transaction, {
+                    branchId: branchid,
+                    clientId: id,
+                    decision: startDateChangeDecision,
+                    newStartDate: startDateUpdate ?? null,
+                    actorUserId: params.actorUserId,
+                    calendar,
+                })
+                : null;
             // The flags are written; re-lay what is still unwritten before the lifecycle
             // sync derives status and token expiry from the new period.
             let realignment: ServiceRecordRealignmentResult | null = null;
-            if (serviceDayFlagsChanged && this.serviceRecordScheduleRealignmentService) {
+            if (!startDateChangeDecision && serviceDayFlagsChanged && this.serviceRecordScheduleRealignmentService) {
                 realignment = await this.serviceRecordScheduleRealignmentService.realignForServiceDayChangeInTransaction(
                     transaction,
                     {
@@ -2557,14 +2575,16 @@ export class ClientService {
             const syncedRecord = await this.serviceRecordLifecycleService?.ensureForClient(id, transaction, calendar);
             // A re-laid legacy end date never changes how many sessions the case owes. The
             // sync re-caps a legacy case's N from its period, so restore the N it had.
+            const restoreRequiredSessionCount = startDateChange?.restoreRequiredSessionCount
+                ?? realignment?.restoreRequiredSessionCount;
             if (
-                realignment?.restoreRequiredSessionCount != null
+                restoreRequiredSessionCount != null
                 && syncedRecord
-                && syncedRecord.requiredSessionCount !== realignment.restoreRequiredSessionCount
+                && syncedRecord.requiredSessionCount !== restoreRequiredSessionCount
             ) {
                 await transaction.service_record_case.update({
                     where: { id: syncedRecord.id },
-                    data: { requiredSessionCount: realignment.restoreRequiredSessionCount },
+                    data: { requiredSessionCount: restoreRequiredSessionCount },
                 });
                 await this.serviceRecordLifecycleService?.recompute(syncedRecord.id, transaction, calendar);
             }

@@ -1,3 +1,4 @@
+import type { StartDateChangeMode } from "@babyjamjam/shared/types/start-date-change";
 import { ConflictException, Logger } from "@nestjs/common";
 import {
     SERVICE_RECORD_CASE_STATUS,
@@ -145,11 +146,75 @@ describe("ServiceRecordLifecycleService", () => {
         };
         const service = new ServiceRecordLifecycleService(prisma as unknown as PrismaService, createHolidayCalendarStub());
 
-        await expectConflict(service.validatePeriodChange({
+        await expect(service.validatePeriodChange({
             clientId: 1,
             startDate: date("2026-07-02"),
             now: new Date("2026-07-01T01:00:00.000Z"),
-        }), "SERVICE_RECORD_START_DATE_LOCKED");
+        })).rejects.toMatchObject({ response: {
+            code: "SERVICE_RECORD_START_DATE_LOCKED",
+            startDateLock: { serviceStarted: true, recordedSessionCount: 0 },
+        } });
+    });
+
+    describe("explicit start-date change decisions", () => {
+        const setup = (count: number, status: string = SERVICE_RECORD_CASE_STATUS.IN_PROGRESS) => {
+            const record = {
+                status, startDate: date("2026-07-01"), endDate: date("2026-07-20"), requiredSessionCount: 10,
+                days: Array.from({ length: count }, () => ({ serviceDate: date("2026-07-03"), locked: true })),
+            };
+            const db = { service_record_case: { findUnique: jest.fn().mockResolvedValue(record) } };
+            return { record, service: new ServiceRecordLifecycleService(db as unknown as PrismaService, createHolidayCalendarStub()) };
+        };
+        const change = { clientId: 1, startDate: date("2026-07-02"), now: new Date("2026-07-01T01:00:00Z") };
+
+        it.each([undefined, "CONFIRM_STARTED"] as const)("refuses %s when three sessions exist, including before the stored start", async (mode) => {
+            const { service } = setup(3);
+            await expect(service.validatePeriodChange({ ...change, startDateChangeMode: mode, now: new Date("2026-06-30T00:00:00Z") }))
+                .rejects.toMatchObject({ response: {
+                    code: "SERVICE_RECORD_START_DATE_LOCKED",
+                    startDateLock: { serviceStarted: false, recordedSessionCount: 3 },
+                } });
+        });
+
+        it.each(["CONFIRM_STARTED", "RESTART", "MOVE"] as StartDateChangeMode[])("allows %s for a started case without rows", async (mode) => {
+            const { service, record } = setup(0);
+            await expect(service.validatePeriodChange({ ...change, startDateChangeMode: mode })).resolves.toEqual({
+                mode, previousStartDate: record.startDate, recordedSessionCount: 0,
+            });
+        });
+
+        it.each(["RESTART", "MOVE"] as const)("allows %s for recorded sessions", async (mode) => {
+            const { service, record } = setup(3);
+            await expect(service.validatePeriodChange({ ...change, startDateChangeMode: mode })).resolves.toEqual({
+                mode, previousStartDate: record.startDate, recordedSessionCount: 3,
+            });
+        });
+
+        it.each(["CONFIRM_STARTED", "RESTART", "MOVE"] as const)("never bypasses finalized state with %s", async (mode) => {
+            const { service } = setup(3, SERVICE_RECORD_CASE_STATUS.COMPLETED);
+            await expect(service.validatePeriodChange({ ...change, startDateChangeMode: mode }))
+                .rejects.toMatchObject({ response: { code: "SERVICE_RECORD_FINALIZED" } });
+        });
+
+        it("returns no decision for an unchanged start or a not-yet-started case without rows", async () => {
+            const { service } = setup(0);
+            await expect(service.validatePeriodChange({ ...change, startDate: date("2026-07-01"), startDateChangeMode: "MOVE" })).resolves.toBeNull();
+            await expect(service.validatePeriodChange({ ...change, now: new Date("2026-06-30T14:59:59Z") })).resolves.toBeNull();
+            await expect(service.validatePeriodChange({ ...change, now: new Date("2026-06-30T15:00:00Z") })).rejects.toMatchObject({
+                response: { startDateLock: { serviceStarted: true, recordedSessionCount: 0 } },
+            });
+        });
+
+        it.each([
+            [{ endDate: null }, "SERVICE_RECORD_END_DATE_REQUIRED"],
+            [{ endDate: date("2026-07-02") }, "SERVICE_RECORD_END_DATE_BEFORE_LOCKED_SESSION"],
+            [{ duration: null }, "SERVICE_RECORD_DURATION_REQUIRED"],
+            [{ duration: 2 }, "SERVICE_RECORD_DURATION_CANNOT_DECREASE"],
+        ] as const)("keeps subsequent period guards with an allowed mode: %s", async (extra, code) => {
+            const { service } = setup(3);
+            await expect(service.validatePeriodChange({ ...change, ...extra, startDateChangeMode: "MOVE" }))
+                .rejects.toMatchObject({ response: { code } });
+        });
     });
 
     it("allows extending the end date without deleting existing sessions", async () => {
@@ -171,7 +236,7 @@ describe("ServiceRecordLifecycleService", () => {
         await expect(service.validatePeriodChange({
             clientId: 1,
             endDate: date("2026-07-20"),
-        })).resolves.toBeUndefined();
+        })).resolves.toBeNull();
         expect(prisma.service_record_day.deleteMany).not.toHaveBeenCalled();
     });
 
@@ -1606,7 +1671,7 @@ describe("ServiceRecordLifecycleService", () => {
         await expect(service.validatePeriodChange({
             clientId: 1,
             endDate: date("2026-07-11"),
-        })).resolves.toBeUndefined();
+        })).resolves.toBeNull();
     });
 
     it("rejects shortening the period before a locked service day", async () => {
@@ -1696,7 +1761,7 @@ describe("ServiceRecordLifecycleService", () => {
             startDate: date("2026-09-07"),
             endDate: date("2026-09-30"),
             duration: 15,
-        })).resolves.toBeUndefined();
+        })).resolves.toBeNull();
     });
 
     it("completes four transferred service days while preserving outside rows", async () => {
