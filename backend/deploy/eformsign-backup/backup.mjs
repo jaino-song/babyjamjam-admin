@@ -294,7 +294,7 @@ async function main() {
     for (let attempt = 0; attempt < 2 && !posted; attempt += 1) {
         try {
             const response = await request('/internal/eformsign-backup/runs', {
-                method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(report),
+                method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...report, failures: report.failures.slice(0, 200) }),
             });
             await response.body?.cancel();
             if (response.status !== 201) throw new Error(`결과 POST HTTP ${response.status}`);
