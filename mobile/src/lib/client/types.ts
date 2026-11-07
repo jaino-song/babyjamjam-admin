@@ -1,4 +1,11 @@
-// Re-export all types from the feature module to avoid duplication
+import type { StartDateChangeMode } from "@babyjamjam/shared";
+import type { UpdateClientDto as FeatureUpdateClientDto } from "@/features/clients/types";
+
+export interface UpdateClientDto extends FeatureUpdateClientDto {
+    startDateChangeMode?: StartDateChangeMode;
+}
+
+// Re-export the remaining types from the feature module to avoid duplication
 export {
     type EmployeeSummary,
     type DocumentStatus,
@@ -9,7 +16,6 @@ export {
     type PendingScheduleChange,
     type Client,
     type CreateClientDto,
-    type UpdateClientDto,
     type TerminateServiceDto,
     type RequestReplacementDto,
     type PaginatedResponse,
