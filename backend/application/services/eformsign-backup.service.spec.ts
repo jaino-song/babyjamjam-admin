@@ -42,15 +42,20 @@ describe("EformsignBackupService", () => {
             .toMatchObject({ serviceStartDate: "2026-11-07" });
         expect(await item()).toMatchObject({ serviceStartDate: null, serviceRecordChunk: null });
     });
-    it("formats UTC db.Date without shifting the day in Asia/Seoul", async () => {
-        const previous = process.env["TZ"];
-        process.env["TZ"] = "Asia/Seoul";
+    it("formats db.Date from its UTC calendar day, never from local-time getters", async () => {
+        // A local-time formatter shifts the day for any zone west of UTC. Poison the local getters
+        // so such a formatter produces a wrong date here, whatever TZ the test process runs in.
+        const spies = [
+            jest.spyOn(Date.prototype, "getFullYear").mockReturnValue(1999),
+            jest.spyOn(Date.prototype, "getMonth").mockReturnValue(0),
+            jest.spyOn(Date.prototype, "getDate").mockReturnValue(1),
+        ];
         try {
             expect(await item({ employeeSchedule: { startDate: date } })).toMatchObject({
                 serviceStartDate: "2026-11-07", createdAt: "2026-11-07T00:00:00.000Z",
             });
         } finally {
-            if (previous === undefined) delete process.env["TZ"]; else process.env["TZ"] = previous;
+            for (const spy of spies) spy.mockRestore();
         }
     });
     it("maps the chunk fields", async () => {
