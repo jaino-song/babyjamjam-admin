@@ -737,6 +737,26 @@ describe("ClientService", () => {
                 return { client, decision, startChange, realignment, withStartChange, patch };
             };
 
+            it.each(["CONFIRM_STARTED", "RESTART", "MOVE"] as const)("rejects %s before any writes when the start-date change service is missing", async (mode) => {
+                const w = setup(mode);
+                const withoutStartChange = createServiceWithRealignment(w.realignment);
+
+                await expect(withoutStartChange.update(branchId, 1, w.patch)).rejects.toMatchObject({
+                    status: 500,
+                    response: { code: "INTERNAL_ERROR" },
+                });
+                expect(serviceRecordLifecycleService.validatePeriodChange).toHaveBeenCalledWith(expect.objectContaining({
+                    clientId: 1, startDate: new Date("2026-12-21T00:00:00Z"), startDateChangeMode: mode,
+                }), prismaService);
+                expect(prismaService.client.updateMany).not.toHaveBeenCalled();
+                expect(prismaService.client.update).not.toHaveBeenCalled();
+                expect(prismaService.employee_schedule.update).not.toHaveBeenCalled();
+                expect(prismaService.employee_schedule.create).not.toHaveBeenCalled();
+                expect(w.startChange.applyInTransaction).not.toHaveBeenCalled();
+                expect(serviceRecordLifecycleService.ensureForClient).not.toHaveBeenCalled();
+                expect(w.realignment.realignForServiceDayChangeInTransaction).not.toHaveBeenCalled();
+            });
+
             it.each(["CONFIRM_STARTED", "RESTART", "MOVE"] as const)("saves %s after the client write and before ensureForClient, skipping flag realignment", async (mode) => {
                 const w = setup(mode);
                 await w.withStartChange.update(branchId, 1, { ...w.patch, allowSaturdayService: true });

@@ -1,5 +1,5 @@
 import type { StartDateChangeMode } from "@babyjamjam/shared/types/start-date-change";
-import { BadRequestException, ConflictException, Injectable, Inject, Logger, NotFoundException, Optional } from "@nestjs/common";
+import { BadRequestException, ConflictException, Injectable, Inject, InternalServerErrorException, Logger, NotFoundException, Optional } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { Prisma } from "@prisma/client";
 import { randomUUID } from "node:crypto";
@@ -53,7 +53,7 @@ import {
     assertEmployeeAssignmentShape,
     type EmployeeAssignmentCandidate,
 } from "application/policies/employee-assignment-eligibility.policy";
-import { codeOnlyProblemBody, problemBody } from "application/utils/problem-bodies";
+import { codeOnlyProblemBody, problemBody, uncertainProblemBody } from "application/utils/problem-bodies";
 import {
     assertNoActiveEmployeeScheduleOverlap,
     employeeScheduleHandoverPeriod,
@@ -2361,6 +2361,9 @@ export class ClientService {
                 duration,
                 startDateChangeMode: params.startDateChangeMode,
             }, transaction);
+            if (startDateChangeDecision && !this.serviceRecordStartDateChangeService) {
+                throw new InternalServerErrorException(uncertainProblemBody("INTERNAL_ERROR"));
+            }
             const lockedPricing = hasPricingUpdate
                 ? normalizeClientPricing({
                     voucherClient: params.voucherClient ?? currentClient.voucherClient,
