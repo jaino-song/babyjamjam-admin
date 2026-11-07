@@ -20,6 +20,6 @@ describe("contract document search", () => {
   });
 
   it("falls back to the local mapping when the document has no customer name", () => {
-    expect(matchesDocumentSearch(documentFixture(), "송진호", " 송진호 ")).toBe(true);
+    expect(matchesDocumentSearch(documentFixture(), "정다라", " 정다라 ")).toBe(true);
   });
 });

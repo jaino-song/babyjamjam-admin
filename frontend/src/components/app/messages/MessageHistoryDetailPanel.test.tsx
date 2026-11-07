@@ -272,7 +272,7 @@ describe("MessageHistoryDetailPanel 추가 정보 필요 reason and 재발송 (B
     const recipientBlock: MessageResendBlock = {
       level: "recipient",
       recipient: { kind: "employee", id: 7 },
-      recipientName: "송진호",
+      recipientName: "정다라",
       ruleId: "rule-1",
       ruleName: "제공기록지 링크",
     };
@@ -325,7 +325,7 @@ describe("MessageHistoryDetailPanel 추가 정보 필요 reason and 재발송 (B
       expect(await screen.findByText("자동 문자가 꺼져 있어요")).toBeInTheDocument();
       const card = document.querySelector(`[data-component="${prefix}_detail-retry_blocked-hover-card"]`);
       expect(card).not.toBeNull();
-      expect(card).toHaveTextContent("송진호 관리사의 ‘자동 문자 발송’이 꺼져 있어 재발송할 수 없어요.");
+      expect(card).toHaveTextContent("정다라 관리사의 ‘자동 문자 발송’이 꺼져 있어 재발송할 수 없어요.");
       expect(screen.getByRole("link", { name: "관리사 정보에서 켜기 →" })).toHaveAttribute("href", "/employees");
     });
 

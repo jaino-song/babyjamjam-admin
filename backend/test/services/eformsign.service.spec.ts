@@ -420,7 +420,7 @@ describe("EformsignService", () => {
     it("uses payment collection date fields and reviewer step for provider confirmation", () => {
         const service = new EformsignService(createConfigService());
         const contractData: ContractDataDto = {
-            customerName: "김정인",
+            customerName: "최가나",
             customerContact: "010-1234-5678",
             customerDOB: "900101",
             customerAddress: "인천 서구",
@@ -576,7 +576,7 @@ describe("EformsignService", () => {
     it("round-trips formatted whole-won prices as canonical provider values", () => {
         const service = new EformsignService(createConfigService());
         const contractData: ContractDataDto = {
-            customerName: "김정인",
+            customerName: "최가나",
             customerContact: "010-1234-5678",
             customerDOB: "900101",
             customerAddress: "인천 서구",
@@ -755,7 +755,7 @@ describe("EformsignService", () => {
             EFORMSIGN_TEMPLATE_ID: undefined,
         }));
         const contractData: ContractDataDto = {
-            customerName: "김정인",
+            customerName: "최가나",
             customerContact: "010-1234-5678",
             customerDOB: "900101",
             customerAddress: "인천 서구",

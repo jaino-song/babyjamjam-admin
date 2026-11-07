@@ -5,7 +5,7 @@ import { QUERY_RETRY_SETTLE_MS } from "./helpers/query-retry";
 const MOCK_EMPLOYEES = [
   {
     id: 101,
-    name: "김정인",
+    name: "최가나",
     workArea: ["인천 남동구"],
     phone: "010-1111-2222",
     grade: "A",
@@ -138,9 +138,9 @@ test.describe("employees mobile detail layout", () => {
     await search.fill("남동");
     await expect(rows).toHaveCount(2);
     await expect(rows.filter({ hasText: "박지영" })).toHaveCount(0);
-    await search.fill("김정인");
+    await search.fill("최가나");
     await expect(rows).toHaveCount(1);
-    await expect(rows).toContainText("김정인");
+    await expect(rows).toContainText("최가나");
     await search.fill("");
     await expect(rows).toHaveCount(3);
   });
@@ -185,7 +185,7 @@ test.describe("employees mobile detail layout", () => {
     const row = page.locator('[data-component="mobile_employees_detail-sheet_stack_list-page_content_list-card_body_section_row"]');
     await expect(row).toHaveCount(3);
     const assignedRow = page.locator('[data-component="mobile_employees_detail-sheet_stack_list-page_content_list-card_body_section_row"]', {
-      hasText: "김정인",
+      hasText: "최가나",
     });
     await expect(assignedRow).toHaveCount(1);
     await assignedRow.click();
@@ -243,7 +243,7 @@ test.describe("employees mobile detail layout", () => {
     await page.goto("/employees");
     const assignedRow = page.locator(
       '[data-component="mobile_employees_detail-sheet_stack_list-page_content_list-card_body_section_row"]',
-      { hasText: "김정인" },
+      { hasText: "최가나" },
     );
     await expect(assignedRow).toBeVisible({ timeout: 15000 });
     await assignedRow.click();

@@ -9,7 +9,8 @@ describe("mobile file preview source", () => {
     expect(source).toContain("src={preview.url}");
     expect(source).not.toContain("window.open(getDownloadUrl");
     expect(source).not.toContain("제1조 (문서 개요)");
-    expect(source).not.toContain('doc.uploadedBy || "송진호"');
+    expect(source).toContain('selectedDoc.uploadedBy || "-"');
+    expect(source).not.toMatch(/uploadedBy \|\| "(?!-")[^"]*"/);
     expect(source).not.toContain("확인 완료");
   });
 

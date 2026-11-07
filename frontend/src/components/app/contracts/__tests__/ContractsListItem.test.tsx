@@ -65,7 +65,7 @@ describe("ContractsListItem", () => {
         <ContractsListItem
           data-component="desktop_contracts_tests_list-item"
           document={document}
-          customerName="송진호"
+          customerName="정다라"
           isLoading={false}
         />,
       );
@@ -91,7 +91,7 @@ describe("ContractsListItem", () => {
         <ContractsListItem
           data-component="desktop_contracts_tests_list-item"
           document={{ ...base, current_status: { ...base.current_status, status_type: statusType } }}
-          customerName="송진호"
+          customerName="정다라"
           isLoading={false}
         />,
       );
@@ -107,7 +107,7 @@ describe("ContractsListItem", () => {
       <ContractsListItem
         data-component="desktop_contracts_tests_list-item"
         document={{ ...base, current_status: { ...base.current_status, status_type: statusType, step_type: "06", step_name: "제공기관 확인" } }}
-        customerName="송진호"
+        customerName="정다라"
         isLoading={false}
       />,
     );
@@ -147,12 +147,12 @@ describe("ContractsListItem", () => {
       <ContractsListItem
         data-component="desktop_contracts_tests_list-item"
         document={documentFixture()}
-        customerName="  송진호  "
+        customerName="  정다라  "
         isLoading={false}
       />,
     );
 
-    expect(title(container)).toHaveTextContent("송진호");
+    expect(title(container)).toHaveTextContent("정다라");
     expect(title(container)).not.toHaveClass("italic", "text-v3-text-muted");
   });
 
@@ -161,7 +161,7 @@ describe("ContractsListItem", () => {
       <ContractsListItem
         data-component="desktop_contracts_tests_list-item"
         document={documentFixture()}
-        customerName="송진호"
+        customerName="정다라"
         subtitle="제공기록지"
         isLoading={false}
       />,

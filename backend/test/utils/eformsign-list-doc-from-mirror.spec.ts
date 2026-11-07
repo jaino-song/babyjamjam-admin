@@ -25,7 +25,7 @@ function persistedMirrorRow() {
         stepIndex: "2",
         stepName: "이용자 서명",
         stepRecipientType: "05",
-        stepRecipientName: "송진호",
+        stepRecipientName: "정다라",
         stepRecipientSms: "01012345678",
         expiredDate: new Date("2026-08-01T00:00:00.000Z"),
         expired: false,

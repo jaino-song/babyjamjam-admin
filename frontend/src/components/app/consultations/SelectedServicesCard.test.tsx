@@ -8,7 +8,7 @@ const baseInquiry = {
   branchId: "branch-1",
   publicBranchSlug: "incheon-namdong",
   motherName: "강감찬",
-  phone: "010-9641-1878",
+  phone: "010-0000-9641",
   address: "남동구 논현동",
   dueDate: "2026-04-23T00:00:00.000Z",
   birthExperience: "초산",

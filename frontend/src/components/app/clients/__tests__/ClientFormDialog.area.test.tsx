@@ -77,7 +77,7 @@ const existingClient: Client = {
   dueDate: null,
   birthDate: null,
   address: "인천광역시 남동구",
-  phone: "010-6621-1878",
+  phone: "010-0000-6621",
   primaryEmployee: null,
   secondaryEmployee: null,
   type: null,

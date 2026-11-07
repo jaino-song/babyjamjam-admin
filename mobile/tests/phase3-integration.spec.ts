@@ -195,7 +195,7 @@ test.describe("Phase 3.1 functional integration matrix", () => {
       birthday: "950414",
       dueDate: "2026-09-15",
       address: "인천시 동구 송현로 100",
-      phone: "010-9641-1878",
+      phone: "010-0000-9641",
       primaryEmployee: { id: 11, name: "테스트제공인력" },
       secondaryEmployee: null,
       type: "A통합3형",

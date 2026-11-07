@@ -12,7 +12,7 @@ const BASE_CLIENT: Client = {
   birthDate: null,
   address: null,
   phone: null,
-  primaryEmployee: { id: 1, name: "김정인" },
+  primaryEmployee: { id: 1, name: "최가나" },
   secondaryEmployee: null,
   type: "A통합1형",
   duration: 10,

@@ -2217,7 +2217,7 @@ describe("EformsignWebhookService", () => {
                 step_type: "05",
                 step_index: "2",
                 step_name: "이용자",
-                step_recipients: [{ recipient_type: "01", name: "송진호" }],
+                step_recipients: [{ recipient_type: "01", name: "정다라" }],
                 step_group: 3,
                 expired_date: Date.now() + 1000 * 60 * 60 * 24,
                 _expired: false,

@@ -46,7 +46,7 @@ function createMirrorDocument(overrides: {
         stepIndex: "1",
         stepName: "이용자 서명",
         stepRecipientType: "05",
-        stepRecipientName: overrides.stepRecipientName ?? "송진호",
+        stepRecipientName: overrides.stepRecipientName ?? "정다라",
         stepRecipientSms: "01012345678",
         expiredDate: new Date("2026-08-01T00:00:00.000Z"),
         expired: false,
@@ -266,7 +266,7 @@ describe("EformsignListShadowCompareService", () => {
     });
 
     it("matches 초성 against the recipient name, the way the served search does", async () => {
-        const song = createMirrorDocument({ documentId: "doc-song", stepRecipientName: "송진호" });
+        const song = createMirrorDocument({ documentId: "doc-song", stepRecipientName: "정다라" });
         repository.findAllVisibleInMirror.mockResolvedValue([
             song,
             createMirrorDocument({ documentId: "doc-park", stepRecipientName: "박수신" }),
@@ -274,8 +274,8 @@ describe("EformsignListShadowCompareService", () => {
         const service = createService("true");
         const logger = spyOnLogger(service);
 
-        // 초성 검색은 startsWith 규칙이라 "ㅅㅈㅎ"는 송진호만 집는다.
-        service.compareInBackground(createQuery({ search: "ㅅㅈㅎ" }), servedFrom([song]));
+        // 초성 검색은 startsWith 규칙이라 "ㅈㄷㄹ"는 정다라만 집는다.
+        service.compareInBackground(createQuery({ search: "ㅈㄷㄹ" }), servedFrom([song]));
         await settle();
 
         expect(logger.warn).not.toHaveBeenCalled();
@@ -291,7 +291,7 @@ describe("EformsignListShadowCompareService", () => {
                 documentId: "doc-hidden",
                 customerName: "최고객",
                 documentName: "계약",
-                stepRecipientName: "송진호",
+                stepRecipientName: "정다라",
             }),
         ]);
         const service = createService("true");

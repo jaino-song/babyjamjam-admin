@@ -5,8 +5,8 @@ import {
 
 describe("message history client matching", () => {
   const clients = [
-    { id: 1, name: "송진호", phone: "010-6621-1878" },
-    { id: 2, name: "가나다", phone: "010-9641-1878" },
+    { id: 1, name: "정다라", phone: "010-0000-6621" },
+    { id: 2, name: "가나다", phone: "010-0000-9641" },
   ];
 
   it("matches by client id before relying on the current phone number", () => {
@@ -21,7 +21,7 @@ describe("message history client matching", () => {
   it("falls back to normalized phone matching when client id is missing", () => {
     expect(
       matchesMessageHistoryClient(
-        { clientId: null, receiver: "+82 10 9641 1878" },
+        { clientId: null, receiver: "+82 10 0000 9641" },
         clients[1],
       ),
     ).toBe(true);
@@ -30,19 +30,19 @@ describe("message history client matching", () => {
   it("never matches a record owned by another client, even when the phone number is the same", () => {
     expect(
       matchesMessageHistoryClient(
-        { clientId: 1, receiver: "010-9641-1878", recipientPhone: "010-9641-1878" },
+        { clientId: 1, receiver: "010-0000-9641", recipientPhone: "010-0000-9641" },
         clients[1],
       ),
     ).toBe(false);
     expect(
-      findMessageHistoryClient({ clientId: 99, receiver: "010-6621-1878" }, clients),
+      findMessageHistoryClient({ clientId: 99, receiver: "010-0000-6621" }, clients),
     ).toBeNull();
   });
 
   it("uses the recipient phone snapshot before the provider receiver value", () => {
     expect(
       matchesMessageHistoryClient(
-        { clientId: null, receiver: "010-0000-0000", recipientPhone: "010-9641-1878" },
+        { clientId: null, receiver: "010-0000-0000", recipientPhone: "010-0000-9641" },
         clients[1],
       ),
     ).toBe(true);
@@ -50,6 +50,6 @@ describe("message history client matching", () => {
 
   it("finds the matching client across all customer items", () => {
     expect(findMessageHistoryClient({ clientId: 2, receiver: "010-0000-0000" }, clients)?.name).toBe("가나다");
-    expect(findMessageHistoryClient({ clientId: null, receiver: "01066211878" }, clients)?.name).toBe("송진호");
+    expect(findMessageHistoryClient({ clientId: null, receiver: "01000006621" }, clients)?.name).toBe("정다라");
   });
 });
