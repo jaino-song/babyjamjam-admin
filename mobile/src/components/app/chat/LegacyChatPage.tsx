@@ -48,7 +48,7 @@ function UserMessage({ message }: { message: ChatDisplayMessage }) {
 
   return (
     <div className={`${styles.msgRow} ${styles.userRow}`} data-component="mobile_chat_page_content_messages_message-user">
-      <div className={`${styles.msgAvatar} ${styles.userAvatar}`} data-component="mobile_chat_page_content_messages_message-user_avatar">송</div>
+      <div className={`${styles.msgAvatar} ${styles.userAvatar}`} data-component="mobile_chat_page_content_messages_message-user_avatar">정</div>
       <div data-component="mobile_chat_page_content_messages_message-user_body">
         <div className={styles.msgBubble} data-component="mobile_chat_page_content_messages_message-user_body_bubble">{message.content}</div>
         {timeLabel && <div className={styles.msgTime} data-component="mobile_chat_page_content_messages_message-user_body_time">{timeLabel}</div>}
@@ -333,7 +333,7 @@ export function LegacyChatPage() {
   const lastMessage = messages[messages.length - 1];
   const showConfirmButtons = Boolean(pendingConfirmation) && lastMessage?.role === "assistant" && !lastMessage.isStreaming;
 
-  const userLabel = user?.name ? `${user.name} 님` : "송진호 님";
+  const userLabel = user?.name ? `${user.name} 님` : "고객님";
   const branchLabel = user?.branchName ?? "인천 아이미래로";
   const isInputDisabled = state === "streaming" || state === "connecting";
 
