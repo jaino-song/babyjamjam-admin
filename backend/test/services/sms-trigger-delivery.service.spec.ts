@@ -1223,7 +1223,7 @@ describe("SMS system-template variable coverage", () => {
             employeeId: recipientType === MessageTriggerRecipientType.CLIENT ? undefined : 0,
             employeeName: templateVariables["employeeName"],
             memberId: recipientType === MessageTriggerRecipientType.CLIENT ? "155" : "employee:0",
-            recipientName: templateVariables["name"] ?? templateVariables["employeeName"] ?? "김정인",
+            recipientName: templateVariables["name"] ?? templateVariables["employeeName"] ?? "최가나",
             recipientPhone: "010-0000-6621",
             buttonUrl: templateVariables["serviceRecordUrl"],
             templateVariables,

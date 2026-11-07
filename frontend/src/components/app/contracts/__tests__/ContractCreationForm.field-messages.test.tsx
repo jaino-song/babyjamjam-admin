@@ -86,15 +86,15 @@ const FIELD_MESSAGE_SELECTOR = '[data-slot="field-message"], [data-slot="field-e
 function seedCustomerStep(overrides: Partial<ReturnType<typeof useFormStore.getState>> = {}): void {
   useFormStore.setState({
     clientId: 42,
-    name: "송진호",
+    name: "정다라",
     phone: "010-0000-6621",
     birthday: "",
     dueDate: "",
     birthDate: "",
     address: "인천시",
     employeeId: 7,
-    employeeName: "김정인",
-    employeePhone: "01057871878",
+    employeeName: "최가나",
+    employeePhone: "01000005787",
     showEmployee2: false,
     employee2Id: null,
     startDate: "2026-09-21",

@@ -336,7 +336,7 @@ beforeEach(() => {
   mockedUseGetAuthUser.mockReturnValue({
     data: {
       id: "user-1",
-      name: "송진호",
+      name: "정다라",
       branchName: "인천점",
       role: "admin",
     },

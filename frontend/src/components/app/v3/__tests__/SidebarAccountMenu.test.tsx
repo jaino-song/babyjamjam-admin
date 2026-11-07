@@ -8,17 +8,17 @@ jest.mock("next/navigation", () => ({
 }));
 
 const defaultProps = {
-  name: "송진호",
+  name: "정다라",
   roleLabel: "오너",
   profileImage: "",
-  initials: "송진",
+  initials: "정다",
 };
 
 function renderMenu(props: Partial<typeof defaultProps> = {}) {
   return render(<SidebarAccountMenu {...defaultProps} {...props} />);
 }
 
-const getTrigger = () => screen.getByRole("button", { name: /송진호/ });
+const getTrigger = () => screen.getByRole("button", { name: /정다라/ });
 
 beforeEach(() => {
   mockPush.mockClear();

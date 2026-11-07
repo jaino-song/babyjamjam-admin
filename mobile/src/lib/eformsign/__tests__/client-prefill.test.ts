@@ -91,25 +91,25 @@ describe("buildClientEditPrefillFromEformsignDocument", () => {
 
   it("extracts provider names from document aliases used in contract detail", () => {
     const doc = documentWithFields([
-      { id: "제공인력명", value: "김정인" },
+      { id: "제공인력명", value: "최가나" },
       { id: "제공자 연락처", value: "01012345678" },
     ]);
 
     expect(buildClientEditPrefillFromEformsignDocument(doc)).toMatchObject({
-      primaryEmployeeName: "김정인",
+      primaryEmployeeName: "최가나",
       primaryEmployeePhone: "010-1234-5678",
     });
   });
 
   it("normalizes country-code provider phones", () => {
     const withCountryCode = documentWithFields([
-      { id: "제공인력명", value: "김정인" },
+      { id: "제공인력명", value: "최가나" },
       { id: "제공자 연락처", value: "+82 10 1234 5678" },
     ]);
     expect(buildClientEditPrefillFromEformsignDocument(withCountryCode).primaryEmployeePhone).toBe("010-1234-5678");
 
     const withAccessPrefix = documentWithFields([
-      { id: "제공인력명", value: "김정인" },
+      { id: "제공인력명", value: "최가나" },
       { id: "제공자 연락처", value: "00821012345678" },
     ]);
     expect(buildClientEditPrefillFromEformsignDocument(withAccessPrefix).primaryEmployeePhone).toBe("010-1234-5678");
@@ -117,19 +117,19 @@ describe("buildClientEditPrefillFromEformsignDocument", () => {
 
   it("omits provider phones the client form cannot accept", () => {
     const landline = documentWithFields([
-      { id: "제공인력명", value: "김정인" },
+      { id: "제공인력명", value: "최가나" },
       { id: "제공자 연락처", value: "02-1234-5678" },
     ]);
     expect(buildClientEditPrefillFromEformsignDocument(landline).primaryEmployeePhone).toBeUndefined();
 
     const shortMobile = documentWithFields([
-      { id: "제공인력명", value: "김정인" },
+      { id: "제공인력명", value: "최가나" },
       { id: "제공자 연락처", value: "0101234567" },
     ]);
     expect(buildClientEditPrefillFromEformsignDocument(shortMobile).primaryEmployeePhone).toBeUndefined();
 
     const overlong = documentWithFields([
-      { id: "제공인력명", value: "김정인" },
+      { id: "제공인력명", value: "최가나" },
       { id: "제공자 연락처", value: "010123456789" },
     ]);
     expect(buildClientEditPrefillFromEformsignDocument(overlong).primaryEmployeePhone).toBeUndefined();

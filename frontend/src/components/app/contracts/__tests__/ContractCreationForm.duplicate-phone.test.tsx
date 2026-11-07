@@ -96,15 +96,15 @@ function seedAutoRegistrationDraft() {
   // No selected client: submitting runs the auto-registration create path.
   useFormStore.setState({
     clientId: null,
-    name: "송진호",
+    name: "정다라",
     phone: "010-0000-6621",
     birthday: "960414",
     dueDate: "",
     birthDate: "",
     address: "인천시",
     employeeId: 7,
-    employeeName: "김정인",
-    employeePhone: "01057871878",
+    employeeName: "최가나",
+    employeePhone: "01000005787",
     showEmployee2: false,
     employee2Id: null,
     startDate: "2026-08-05",
