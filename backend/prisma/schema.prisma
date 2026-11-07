@@ -1780,3 +1780,21 @@ model end_date_review_item {
   @@index([branchId, clientId, status], map: "idx_end_date_review_item_branch_client_status")
   @@index([branchId, status], map: "idx_end_date_review_item_branch_status")
 }
+
+model eformsign_backup_daily_run {
+  id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  startedAt    DateTime @map("started_at") @db.Timestamptz(6)
+  finishedAt   DateTime @map("finished_at") @db.Timestamptz(6)
+  status       String
+  limited      Boolean  @default(false)
+  totalDocs    Int      @map("total_docs")
+  savedFiles   Int      @map("saved_files")
+  skippedFiles Int      @map("skipped_files")
+  failedFiles  Int      @map("failed_files")
+  driveStatus  String   @map("drive_status")
+  failures     Json     @default("[]") @db.JsonB
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@index([startedAt(sort: Desc)], map: "idx_eformsign_backup_daily_run_started_at")
+  @@map("eformsign_backup_daily_run")
+}

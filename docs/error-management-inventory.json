@@ -77961,6 +77961,102 @@
       "review_task": "message-policy-phase8-quiet-gate (independent CODE and phase review pending)",
       "spec_mapping_status": "mapped-em-v1",
       "spec_mapping_note": "Task8 coded-refusal ownership only; not independent review PASS, real-provider proof, queue completion or a baseline/debt/scanner change."
+    },
+    {
+      "id": "owner-f385e2618efb",
+      "path": "backend/infrastructure/auth/eformsign-backup-token.guard.ts",
+      "root": "backend/infrastructure/",
+      "classification": "migrated",
+      "reason": "Guard checks the trimmed env on every request before parsing bearer authentication; disabled routes return code-only 404 and invalid credentials return code-only 401. No token is echoed or logged.",
+      "seams": [
+        {
+          "line": 1,
+          "kinds": [
+            "raw_http_exception"
+          ]
+        },
+        {
+          "line": 15,
+          "kinds": [
+            "raw_http_exception",
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 21,
+          "kinds": [
+            "raw_http_exception",
+            "throw_or_reject"
+          ]
+        }
+      ],
+      "discovery_task_id": "backup-v2-api-r1-20261107",
+      "spec_ids": [
+        "EM-CAT-01",
+        "EM-SEC-02",
+        "EM-SEC-03",
+        "EM-ARCH-01"
+      ],
+      "public_codes": [
+        "RESOURCE_NOT_FOUND",
+        "AUTH_REQUIRED"
+      ],
+      "outcome_evidence": "Pre-read authentication and eligibility rejections; no mutation has started (NOT_APPLIED).",
+      "consumer_paths": [
+        "HTTP /internal/eformsign-backup"
+      ],
+      "test_evidence": [
+        "backend/infrastructure/auth/eformsign-backup-token.guard.spec.ts",
+        "backend/test/contract/eformsign-backup.contract.spec.ts",
+        "backend/test/integration/eformsign-backup.controller.integration.spec.ts"
+      ],
+      "followup_task": null,
+      "review_task": "backup-v2-api-review",
+      "spec_mapping_status": "mapped-em-v1",
+      "spec_mapping_note": "Machine caller authentication and file-read eligibility use existing codeOnlyProblemBody helpers."
+    },
+    {
+      "id": "owner-20fc5c0b5047",
+      "path": "backend/application/services/eformsign-backup.service.ts",
+      "root": "backend/application/",
+      "classification": "migrated",
+      "reason": "File eligibility rejection returns code-only 404 when the file is missing or the parent is not completed, is purged, is not ready, or its source date differs. Document reads are otherwise mapped without error payloads.",
+      "seams": [
+        {
+          "line": 1,
+          "kinds": [
+            "raw_http_exception"
+          ]
+        },
+        {
+          "line": 42,
+          "kinds": [
+            "raw_http_exception",
+            "throw_or_reject"
+          ]
+        }
+      ],
+      "discovery_task_id": "backup-v2-api-r1-20261107",
+      "spec_ids": [
+        "EM-CAT-01",
+        "EM-SEC-02",
+        "EM-SEC-03",
+        "EM-ARCH-01"
+      ],
+      "public_codes": [
+        "RESOURCE_NOT_FOUND"
+      ],
+      "outcome_evidence": "Pre-read authentication and eligibility rejections; no mutation has started (NOT_APPLIED).",
+      "consumer_paths": [
+        "HTTP /internal/eformsign-backup"
+      ],
+      "test_evidence": [
+        "backend/application/services/eformsign-backup.service.spec.ts"
+      ],
+      "followup_task": null,
+      "review_task": "backup-v2-api-review",
+      "spec_mapping_status": "mapped-em-v1",
+      "spec_mapping_note": "Machine caller authentication and file-read eligibility use existing codeOnlyProblemBody helpers."
     }
   ]
 }
