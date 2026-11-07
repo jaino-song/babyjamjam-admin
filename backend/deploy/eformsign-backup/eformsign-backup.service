@@ -1,0 +1,7 @@
+[Unit]
+Description=Daily eformsign PDF backup
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/flock -n %h/.local/state/eformsign-backup/run.lock /usr/bin/env node %h/eformsign-backup/backup.mjs --settings %h/.config/eformsign-backup/settings.json
+TimeoutStartSec=3h
