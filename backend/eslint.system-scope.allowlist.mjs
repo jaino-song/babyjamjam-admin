@@ -64,6 +64,9 @@ export const systemScopeImportAllowlist = [
     // replacement, snapshot) therefore runs in system scope on every trigger; it
     // touches no branch-owned data.
     "infrastructure/database/repositories/sb.holiday-sync.repository.ts",
+    // Read-only company-wide backup listing for a machine caller with no branch.
+    // Never selects phone or detailPayload; content is selected only for the single requested file.
+    "infrastructure/database/repositories/sb.eformsign-backup.repository.ts",
     // The automation-recovery marker rule (`MESSAGE_AUTOMATION_INTENT_RULE_ID`) is one fixed-id,
     // branchless (branchId: null) row shared by every branch, created lazily on the first automation
     // intent from inside a branch request. A null-branch row cannot satisfy `branch_mutation`, so under

@@ -27,13 +27,18 @@ describe("drop eformsign backup migration", () => {
 
     it("contains no statement other than DROP TABLE IF EXISTS", () => {
         const statements = sql
+            .replace(/\/\*[\s\S]*?\*\//g, "")
             .replace(/--.*$/gm, "")
             .split(";")
             .map((s) => s.trim())
-            .filter(Boolean)
-            .filter((s) => !/^(BEGIN|COMMIT)$/i.test(s));
-        for (const statement of statements) {
-            expect(statement).toMatch(/^DROP TABLE IF EXISTS\s/i);
+            .filter(Boolean);
+        expect(statements).toEqual([
+            "BEGIN",
+            ...OLD_TABLES.map((table) => `DROP TABLE IF EXISTS "${table}"`),
+            "COMMIT",
+        ]);
+        for (const statement of statements.slice(1, -1)) {
+            expect(statement).toMatch(/^DROP TABLE IF EXISTS "[a-z_]+"$/);
         }
     });
 

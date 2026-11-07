@@ -43,6 +43,7 @@ import { ContractClientAssignmentGuardService } from "application/services/contr
 import { AgentModule } from "module/agent.module";
 import { HolidayModule } from "module/holiday.module";
 import { HolidayReviewModule } from "module/holiday-review.module";
+import { EformsignBackupModule } from "module/eformsign-backup.module";
 import { HolidaySyncModule } from "module/holiday-sync.module";
 import { resolveSchedulerModuleOptions } from "infrastructure/config/scheduler-config";
 import { HealthController } from "interface/controllers/health.controller";
@@ -102,6 +103,7 @@ const ENV_FILE_PATHS = [
         HolidayModule,
         HolidaySyncModule,
         HolidayReviewModule,
+        EformsignBackupModule,
     ],
     controllers: [EformsignController, HealthController],
     providers: [

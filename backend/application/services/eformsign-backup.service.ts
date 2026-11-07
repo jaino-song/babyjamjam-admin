@@ -1,0 +1,63 @@
+import { Inject, Injectable, NotFoundException } from "@nestjs/common";
+
+import { codeOnlyProblemBody } from "application/utils/problem-bodies";
+import { EFORMSIGN_COMPLETED_STATUS_STORAGE_VALUES } from "domain/constants/eformsign-doc-status.constants";
+import {
+    BackupFailure, BackupRunInput, EFORMSIGN_BACKUP_REPOSITORY, IEformsignBackupRepository,
+} from "domain/repositories/eformsign-backup.repository.interface";
+
+@Injectable()
+export class EformsignBackupService {
+    constructor(@Inject(EFORMSIGN_BACKUP_REPOSITORY) private readonly repository: IEformsignBackupRepository) {}
+
+    async listDocuments(cursor: number | undefined, limit: number) {
+        const rows = await this.repository.listDocuments(cursor, limit);
+        const items = rows.map((row) => {
+            const kind = row.documentKind === "service_record_snapshot" ? "service_record" : "contract";
+            const start = kind === "service_record" ? row.serviceRecordCase?.startDate
+                : row.employeeSchedule?.startDate ?? row.client?.startDate;
+            const chunk = row.serviceRecordSnapshotChunk;
+            return {
+                docId: row.documentId, kind, customerName: row.customerName,
+                serviceStartDate: start?.toISOString().slice(0, 10) ?? null,
+                createdAt: row.createdDate.toISOString(),
+                serviceRecordChunk: chunk ? {
+                    caseId: chunk.serviceRecordCaseId, snapshotVersion: chunk.snapshotVersion,
+                    chunkIndex: chunk.chunkIndex, chunkCount: chunk.chunkCount, firstSessionIndex: chunk.firstSessionIndex,
+                } : null,
+                files: row.syncStatus === "ready" ? row.files
+                    .filter((file) => file.sourceUpdatedDate.getTime() === row.detailSourceUpdatedDate?.getTime())
+                    .map((file) => ({ fileId: file.id, fileType: file.fileType, sha256: file.sha256, byteSize: file.byteSize })) : [],
+            };
+        });
+        return { items, nextCursor: rows.length === limit ? rows[rows.length - 1]?.id ?? null : null };
+    }
+
+    async getFile(fileId: string) {
+        const file = await this.repository.findFile(fileId);
+        const doc = file?.eformsignDoc;
+        if (!file || !doc || !EFORMSIGN_COMPLETED_STATUS_STORAGE_VALUES.some((status) => status === doc.statusType)
+            || doc.permanentPurgeRequestedAt !== null || doc.syncStatus !== "ready"
+            || file.sourceUpdatedDate.getTime() !== doc.detailSourceUpdatedDate?.getTime()) {
+            throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
+        }
+        return { buffer: Buffer.from(file.content), sha256: file.sha256 };
+    }
+
+    createRun(input: Omit<BackupRunInput, "startedAt" | "finishedAt"> & { startedAt: string; finishedAt: string }) {
+        return this.repository.createRun({
+            ...input, startedAt: new Date(input.startedAt), finishedAt: new Date(input.finishedAt),
+            failures: input.failures.slice(0, 200),
+        });
+    }
+
+    async listRuns(limit: number) {
+        const rows = await this.repository.listRuns(limit);
+        return { items: rows.map((row) => ({
+            id: row.id, startedAt: row.startedAt.toISOString(), finishedAt: row.finishedAt.toISOString(),
+            status: row.status, limited: row.limited, totalDocs: row.totalDocs, savedFiles: row.savedFiles,
+            skippedFiles: row.skippedFiles, failedFiles: row.failedFiles, driveStatus: row.driveStatus,
+            failures: row.failures as BackupFailure[],
+        })) };
+    }
+}
