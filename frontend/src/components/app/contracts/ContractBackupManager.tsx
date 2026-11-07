@@ -165,9 +165,6 @@ function ContractBackupView({
               </Button>
             </div>
           )}
-          emptyState={source.state !== 'loading' && visible.length === 0 ? (
-            <ListEmptyState data-component={`${list}_overlay_empty`} icon={Archive} message={stateMessage} />
-          ) : undefined}
           subHeader={(
             <div className="flex min-w-0 flex-col gap-[calc(8px*var(--glint-ui-scale,1))]">
               {source.state !== 'ready' ? (
@@ -186,6 +183,9 @@ function ContractBackupView({
             </div>
           )}
         >
+          {source.state !== 'loading' && visible.length === 0 ? (
+            <ListEmptyState data-component={`${list}_content_empty`} icon={Archive} message={stateMessage} />
+          ) : null}
           <AnimatedSlotList
             data-component={`${list}_content_runs`} itemDataComponent={`${list}_content_runs_item`}
             items={source.state === 'loading' ? undefined : visible}
