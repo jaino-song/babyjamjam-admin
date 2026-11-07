@@ -1,0 +1,9 @@
+{
+  "apiBaseUrl": "https://api.example.invalid",
+  "tokenFile": "/home/USER/.config/eformsign-backup/token",
+  "archiveDir": "/home/USER/eformsign-archive",
+  "stateDir": "/home/USER/.local/state/eformsign-backup",
+  "rcloneRemote": "google-drive:eformsign-backup",
+  "rcloneBin": "rclone",
+  "qpdfBin": "qpdf"
+}
