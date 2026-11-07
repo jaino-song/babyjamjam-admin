@@ -11,12 +11,12 @@ const backend = path.resolve(path.dirname(entry), "..");
 const worktree = path.dirname(backend);
 const require = createRequire(path.join(backend, "package.json"));
 export const TARGET = Object.freeze({
-    connection: "/Users/jaino/Development/.task-evidence/eformsign-backup-execution-20261106/private-ui-postgres-synced/connection.json",
+    connection: "/Users/jaino/Development/.task-evidence/eformsign-backup-execution-20261106/private-ui-postgres-r2/connection.json",
     password: "/Users/jaino/Development/.task-evidence/eformsign-backup-execution-20261106/private-test-postgres/password",
-    ownership: "/Users/jaino/Development/.task-evidence/eformsign-backup-execution-20261106/private-ui-postgres-synced/ownership.json",
-    root: "/Users/jaino/Development/.task-evidence/eformsign-backup-execution-20261106/qa-fixture-synced-runtime",
+    ownership: "/Users/jaino/Development/.task-evidence/eformsign-backup-execution-20261106/private-ui-postgres-r2/ownership.json",
+    root: "/Users/jaino/Development/.task-evidence/eformsign-backup-execution-20261106/qa-fixture-r2-runtime",
     qaEnv: "/Users/jaino/Development/babyjamjam-admin/eformsign-backup-ui-connection/frontend/.env.local",
-    database: "backup_exec_throwaway_ui_synced_20261107", host: "127.0.0.1", port: 63241, user: "backup_test_owner",
+    database: "backup_exec_throwaway_ui_r2_20261107", host: "127.0.0.1", port: 63241, user: "backup_test_owner",
 });
 const OWNED = ["scripts/eformsign-backup-qa.mjs", "test/qa/eformsign-backup-fixture-app.ts", "test/qa/eformsign-backup-fixture-data.ts", "test/qa/eformsign-backup-fixture-worker.ts", "test/scripts/eformsign-backup-qa.spec.ts", "test/qa/eformsign-backup-fixture-app.spec.ts"];
 export const NATIVE_OWNED_PATHS = Object.freeze([
