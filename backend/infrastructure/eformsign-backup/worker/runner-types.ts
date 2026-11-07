@@ -1,4 +1,3 @@
-import type { ManualExecutionScope, ManualSelection } from "domain/eformsign-backup/worker/manual-protocol";
 import type {
     JudgedHistoricalCoverage, JudgedSnapshotStatus, RunCounts, WorkerReasonCode,
 } from "domain/eformsign-backup/worker";
@@ -45,29 +44,6 @@ export interface ExportPort {
     openArtifact(snapshotId: string, artifact: ArtifactRequest): Promise<AsyncIterable<Uint8Array>>;
 }
 
-export interface ManualExecutionFence {
-    signal: AbortSignal;
-    assertActive(documentId?: string): Promise<void>;
-}
-
-export interface ManualRunOptions {
-    executionScope: ManualExecutionScope;
-    selection: ManualSelection;
-    snapshot: SnapshotView;
-    exportPort: ExportPort;
-    fence: ManualExecutionFence;
-    scheduledFor?: never;
-}
-
-export type RunOptions = ManualRunOptions | {
-    scheduledFor?: string | null;
-    executionScope?: never;
-    selection?: never;
-    snapshot?: never;
-    exportPort?: never;
-    fence?: never;
-};
-
 export const LOCAL_DESTINATION_REVISION = "local-layout-v1";
 export function localDestinationIdentity(archiveId: string): string {
     return `local:${archiveId}`;
@@ -106,7 +82,6 @@ export interface RunnerDependencies {
 }
 
 export interface RunSummary {
-    manualReceipt?: { runId: string; receiptId: string; digest: string };
     outcome: "finished" | "disabled";
     runId: string | null;
     snapshotId: string | null;
@@ -152,7 +127,7 @@ export interface InspectSummary {
 
 export interface WorkerRunnerPort {
     init(): Promise<InitSummary>;
-    run(options?: RunOptions): Promise<RunSummary>;
+    run(options?: { scheduledFor?: string | null }): Promise<RunSummary>;
     verify(options: { all: boolean }): Promise<VerifySummary>;
     recover(options: { installationId: string; driveRootFolderId?: string }): Promise<RecoverSummary>;
     /** Binds (or resumes binding, or with `rebind` re-binds) the Google Drive root of this installation. */

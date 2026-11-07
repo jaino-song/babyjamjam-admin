@@ -2,7 +2,6 @@ import { createHash } from "node:crypto";
 import { z } from "zod";
 import { EXPORT_CLASSIFICATIONS } from "domain/eformsign-backup/export/constants";
 import { canonicalJson } from "domain/eformsign-backup/source-evidence";
-import { manualExecutionScopeSchema, manualSelectedCandidateSchema, manualDocumentResultSchema, manualAggregateResultSchema } from "./manual-protocol";
 import { DESTINATION_STATES } from "./destination-transitions";
 import {
     artifactTypeField, count, fileNameField, hex64, identifier, isoUtc, isoWithOffset, opaqueId,
@@ -14,16 +13,9 @@ import { WorkerError } from "./worker-error";
 export const LEDGER_RECORD_VERSION = 1;
 const CHECKSUM_DOMAIN = "eformsign-backup/ledger/v1\n";
 
-// Rollout: older binaries reject the six manual record types; journals/checkpoints have no downgrade guarantee.
 export const LEDGER_RECORD_TYPES = [
     "installed",
     "run_started",
-    "manual_candidate_selected",
-    "manual_selection_ready",
-    "manual_document_result",
-    "manual_result_ready",
-    "manual_result_acknowledged",
-    "manual_result_rejected",
     "snapshot_bound",
     "candidate_observed",
     "destination_transition",
@@ -77,15 +69,7 @@ export type KnownGap = z.infer<typeof knownGapSchema>;
 /** Contract §4: body fields are fixed, no additions. */
 export const LEDGER_BODY_SCHEMAS = {
     installed: z.strictObject(installationFields),
-    run_started: z.strictObject({ runId: runIdField, scheduledFor: isoWithOffset.nullable(), startedAt: isoUtc, executionScope: manualExecutionScopeSchema.optional() }),
-    manual_candidate_selected: z.strictObject({ runId: runIdField, candidate: manualSelectedCandidateSchema }),
-    manual_selection_ready: z.strictObject({
-        runId: runIdField, scopeRevision: identifier, policyRevision: identifier, candidateCount: count, selectionDigest: hex64,
-    }),
-    manual_document_result: z.strictObject({ payload: manualDocumentResultSchema, digest: hex64 }),
-    manual_result_ready: z.strictObject({ payload: manualAggregateResultSchema, digest: hex64 }),
-    manual_result_acknowledged: z.strictObject({ runId: runIdField, receiptId: runIdField, digest: hex64 }),
-    manual_result_rejected: z.strictObject({ runId: runIdField, receiptId: runIdField, digest: hex64, reason: z.enum(["lease-lost", "not-found", "conflict"]) }),
+    run_started: z.strictObject({ runId: runIdField, scheduledFor: isoWithOffset.nullable(), startedAt: isoUtc }),
     snapshot_bound: z.strictObject({
         runId: runIdField,
         snapshotId: identifier,

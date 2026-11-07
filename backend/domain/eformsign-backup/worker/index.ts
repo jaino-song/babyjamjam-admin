@@ -11,4 +11,3 @@ export * from "./restore-selection";
 export * from "./schema-fields";
 export * from "./snapshot-status";
 export * from "./worker-error";
-export * from "./manual-protocol";

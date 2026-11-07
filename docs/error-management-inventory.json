@@ -78012,49 +78012,6 @@
       "review_task": "message-policy-phase8-quiet-gate (independent CODE and phase review pending)",
       "spec_mapping_status": "mapped-em-v1",
       "spec_mapping_note": "Task8 coded-refusal ownership only; not independent review PASS, real-provider proof, queue completion or a baseline/debt/scanner change."
-    },
-    {
-      "id": "owner-ce85bde083bb",
-      "path": "backend/interface/filters/eformsign-manual-backup.filter.ts",
-      "root": "backend/interface/",
-      "classification": "approved-exception",
-      "reason": "Manual-backup v1 protocol boundary documented in docs/error-management.md (2026-11-07). HttpException is used only as a trusted type/status discriminator, never to forward its raw body, message or stack. Preserve the reviewed closed-code {code, requestId} error contract used by the machine worker and the staff backup BFF; no global exception formatter or error catalog change is made. EM-API-01 exception scope is limited to /eformsign-backups/runs and /internal/eformsign-backup/v1/manual-runs, including their subpaths. Maintainer: BabyJamJam electronic-document backup API maintainers. Re-review before changing this v1 error body or either consumer, or migrating it to the shared Problem Details contract.",
-      "seams": [
-        {
-          "line": 2,
-          "kinds": [
-            "raw_http_exception"
-          ]
-        },
-        {
-          "line": 40,
-          "kinds": [
-            "raw_http_exception"
-          ]
-        }
-      ],
-      "discovery_task_id": "BJJ-457-manual-backup-intake",
-      "spec_ids": [
-        "EM-GOV-03",
-        "EM-API-01",
-        "EM-CHANGE-01"
-      ],
-      "public_codes": [],
-      "outcome_evidence": "Exact runtime candidate 98d1ba865c5a88ac23a6f252e3e1ea32cfd6120c passed 182 focused backend tests. The boundary emits only domain/EXPORT_ERRORS closed codes or fixed status mappings, UUID requestId and matching X-Request-Id plus no-store. Malformed JSON body content and unexpected private errors are not reflected; routes outside the two exact prefix boundaries retain their existing handling. No error body claims provider acceptance or completion.",
-      "consumer_paths": [
-        "backend/infrastructure/eformsign-backup/worker/manual-control-client.ts",
-        "frontend/src/lib/eformsign-backup-api.ts",
-        "frontend/src/hooks/useEformsignBackups.ts"
-      ],
-      "test_evidence": [
-        "backend/test/integration/eformsign-manual-backup-http.spec.ts",
-        "backend/test/integration/eformsign-backup-export.controller.spec.ts",
-        "frontend/src/lib/__tests__/eformsign-backup-api.test.ts"
-      ],
-      "followup_task": null,
-      "review_task": "eformsign-backup-manual-error-inventory-20261107",
-      "spec_mapping_status": "mapped-em-v1",
-      "spec_mapping_note": "Reference mapping, not an EM compliance claim. EM-GOV-03 scope/reason/alternative safeguards/maintainer/re-review point are recorded above. Existing versioned control codes are local protocol codes; public_codes does not claim catalog registration."
     }
   ]
 }

@@ -8,10 +8,6 @@
 // actually required and audited (runSystemScope logs a
 // `tenant_system_scope_used` event on every call).
 export const systemScopeImportAllowlist = [
-    // Manual backup machine claim/heartbeat/result/expire operations have no human branch ALS.
-    // Company + run + principal + lease fences guard control operations; claim/expire are
-    // company-pinned. Staff methods retain explicit branch/company scope without this bypass.
-    "infrastructure/database/repositories/sb.eformsign-backup-run.repository.ts",
     "**/*.spec.ts",
     // TenantGuard wraps its own membership-lookup query (which runs before
     // `assignPrincipal` sets the ALS store's branchId) in `runSystemScope`

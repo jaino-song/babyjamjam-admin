@@ -11,7 +11,6 @@ import {
     isSafeRelativeKey, isoUtc, parseArtifactKey, parseManifestKey, runKey, type ArchiveArtifactType, type WorkerReasonCode,
 } from "domain/eformsign-backup/worker";
 import { LocalArtifactArchive, type ArchiveFaultPoint } from "infrastructure/eformsign-backup/local-artifact-archive";
-import { beforeExecutionEffect, checkExecutionSignal, executionChunks, isExecutionFencedError, type ExecutionEffectFence } from "../execution-effect-fence";
 import { publishBytesNoClobber } from "./atomic-file";
 import { ExportFailure } from "./export-client";
 import { assertSupportedFilesystem, hasRoom, isMountPoint, type FsProbe } from "./fs-probe";
@@ -99,7 +98,7 @@ interface SourceState {
  * `ARCHIVE_FAILED`). It stops at the first byte over the claim, checks length and sha256 at the end, and applies the
  * PDF shape check to the first 5 and last 1024 bytes BEFORE the stream ends, so non-PDF bytes never get published.
  */
-function observe(source: AsyncIterable<Uint8Array>, input: ArtifactPublishInput, effectFence?: ExecutionEffectFence): { iterable: AsyncIterable<Uint8Array>; state: SourceState } {
+function observe(source: AsyncIterable<Uint8Array>, input: ArtifactPublishInput): { iterable: AsyncIterable<Uint8Array>; state: SourceState } {
     const state: SourceState = { failure: undefined };
     const hash: Hash = createHash("sha256");
     async function* iterate(): AsyncGenerator<Uint8Array> {
@@ -107,7 +106,7 @@ function observe(source: AsyncIterable<Uint8Array>, input: ArtifactPublishInput,
             let count = 0;
             let head = Buffer.alloc(0);
             let tail = Buffer.alloc(0);
-            for await (const chunk of executionChunks(source, effectFence)) {
+            for await (const chunk of source) {
                 if (!(chunk instanceof Uint8Array)) throw new WorkerError("export-response-invalid");
                 count += chunk.byteLength;
                 if (count > input.byteLength) throw new WorkerError("artifact-integrity");
@@ -261,17 +260,14 @@ export class LocalDestination {
     // ---- safe directories --------------------------------------------------------------------------------------
 
     /** Creates missing segments one by one (0700), each time requiring a real directory, owned by this uid, not group/other-writable. */
-    private async ensureDirectories(segments: readonly string[], effectFence?: ExecutionEffectFence): Promise<string> {
+    private async ensureDirectories(segments: readonly string[]): Promise<string> {
         const uid = process.getuid?.();
         let current = this.options.archivePath;
         for (const segment of segments) {
             current = `${current}/${segment}`;
             try {
-                await beforeExecutionEffect(effectFence);
-                checkExecutionSignal(effectFence);
                 await fs.mkdir(current, { mode: 0o700 });
             } catch (error) {
-                if (isExecutionFencedError(error)) throw error;
                 if (!hasCode(error, "EEXIST")) throw new WorkerError(hasCode(error, "ENOSPC") ? "archive-space" : "archive-unavailable");
             }
             let stat;
@@ -313,13 +309,11 @@ export class LocalDestination {
     // ---- publishing --------------------------------------------------------------------------------------------
 
     /** Hashes the entry at `target`: `same`, `different`, or `unsafe` for a symlink; `null` when nothing is there. */
-    private async compareFinal(target: string, input: ArtifactPublishInput, effectFence?: ExecutionEffectFence): Promise<"same" | "different" | "unsafe" | null> {
+    private async compareFinal(target: string, input: ArtifactPublishInput): Promise<"same" | "different" | "unsafe" | null> {
         let entry;
         try {
             entry = await fs.lstat(target);
-        } catch (error) {
-            if (isExecutionFencedError(error)) throw error;
-            checkExecutionSignal(effectFence);
+        } catch {
             return null;
         }
         if (entry.isSymbolicLink()) return "unsafe";
@@ -331,29 +325,25 @@ export class LocalDestination {
             const buffer = Buffer.alloc(IO_BYTES);
             let position = 0;
             while (true) {
-                checkExecutionSignal(effectFence);
                 const { bytesRead } = await file.read(buffer, 0, buffer.length, position);
-                checkExecutionSignal(effectFence);
                 if (bytesRead === 0) break;
                 hash.update(buffer.subarray(0, bytesRead));
                 position += bytesRead;
             }
             return hash.digest("hex") === input.sha256 ? "same" : "different";
-        } catch (error) {
-            if (isExecutionFencedError(error)) throw error;
-            checkExecutionSignal(effectFence);
+        } catch {
             return null;
         } finally {
             try { await file?.close(); } catch { /* read-only handle */ }
         }
     }
 
-    private async classifyFailure(state: SourceState, input: ArtifactPublishInput, target: string, ioCode: WorkerReasonCode, effectFence?: ExecutionEffectFence): Promise<WorkerReasonCode> {
+    private async classifyFailure(state: SourceState, input: ArtifactPublishInput, target: string, ioCode: WorkerReasonCode): Promise<WorkerReasonCode> {
         if (state.failure instanceof WorkerError) return state.failure.reasonCode;
         if (state.failure instanceof ExportFailure) return "network-timeout";
         if (state.failure !== undefined) return "internal";
         // The primitive failed on its own: an existing object with other bytes is a conflict, anything else is I/O.
-        const found = await this.compareFinal(target, input, effectFence);
+        const found = await this.compareFinal(target, input);
         if (found === "unsafe") return "archive-unsafe-path";
         if (found === "different") return "archive-conflict";
         return ioCode;
@@ -381,21 +371,20 @@ export class LocalDestination {
     /** Runs the archive primitive on `root` and turns its two failure kinds into reason codes. */
     private async runPrimitive(
         root: { path: string; dev: number; ino: number }, input: ArtifactPublishInput, source: AsyncIterable<Uint8Array>,
-        objectName: string | undefined, ioCode: WorkerReasonCode, effectFence?: ExecutionEffectFence,
+        objectName: string | undefined, ioCode: WorkerReasonCode,
     ): Promise<{ ok: true; relativeKey: string; disposition: "created" | "reused" } | { ok: false; reasonCode: WorkerReasonCode }> {
-        const observed = observe(source, input, effectFence);
+        const observed = observe(source, input);
         const primitive = new LocalArtifactArchive({
             rootPath: root.path, expectedDevice: root.dev, expectedInode: root.ino, maxBytes: EXPORT_ARTIFACT_MAX_BYTES,
         }, this.fault);
         const result = await primitive.archive({
             companyId: input.companyId, documentId: input.documentId, artifactKind: input.artifactType,
             contentSha256: input.sha256, byteLength: input.byteLength,
-        }, observed.iterable, { objectName, effectFence });
-        await beforeExecutionEffect(effectFence);
+        }, observed.iterable, objectName === undefined ? undefined : { objectName });
         if (result.ok) return { ok: true, relativeKey: result.relativeKey, disposition: result.disposition };
         if (result.error === "INVALID_INPUT") return refuse("export-response-invalid");
         const name = objectName ?? `${input.artifactIdentity}.bin`;
-        return refuse(await this.classifyFailure(observed.state, input, `${root.path}/${name}`, ioCode, effectFence));
+        return refuse(await this.classifyFailure(observed.state, input, `${root.path}/${name}`, ioCode));
     }
 
     private async pdfShapeOf(target: string): Promise<boolean> {
@@ -418,55 +407,47 @@ export class LocalDestination {
      * the leaf exists, the primitive into the leaf as `<sha256>.pdf`, then a PDF re-check of the final file and a
      * last `checkArchive()`. Any failure is a reason code; nothing is ever deleted.
      */
-    async publishArtifact(input: ArtifactPublishInput, source: AsyncIterable<Uint8Array>, effectFence?: ExecutionEffectFence): Promise<PublishResult> {
+    async publishArtifact(input: ArtifactPublishInput, source: AsyncIterable<Uint8Array>): Promise<PublishResult> {
         try {
-            await beforeExecutionEffect(effectFence);
             const first = await this.checkArchive(input.byteLength);
             if (!first.ok) return first;
             const invalid = this.validateClaim(input);
             if (invalid) return refuse(invalid);
             const key = artifactKey(input);
-            const leaf = await this.ensureDirectories(key.split("/").slice(0, -1), effectFence);
+            const leaf = await this.ensureDirectories(key.split("/").slice(0, -1));
             const second = await this.checkArchive(input.byteLength);
             if (!second.ok) return second;
             const stat = await fs.lstat(leaf);
             const objectName = `${input.sha256}.pdf`;
-            const result = await this.runPrimitive({ path: leaf, dev: stat.dev, ino: stat.ino }, input, source, objectName, "archive-unavailable", effectFence);
+            const result = await this.runPrimitive({ path: leaf, dev: stat.dev, ino: stat.ino }, input, source, objectName, "archive-unavailable");
             if (!result.ok) return result;
             if (!await this.pdfShapeOf(`${leaf}/${objectName}`)) return refuse("pdf-shape");
             // Identity and marker only: room dropping after the publish must not turn a success into a failure.
             const last = await this.verifyRoot(null, true);
             if (!last.ok) return last;
-            await beforeExecutionEffect(effectFence);
             return { ok: true, relativeKey: key, disposition: result.disposition };
         } catch (error) {
-            if (isExecutionFencedError(error)) throw error;
-            checkExecutionSignal(effectFence);
             return refuse(reasonOf(error));
         }
     }
 
     /** Writes a manifest, completion or run inventory (`publishJson`'s key must be one of those three shapes). */
-    async publishJson(relativeKey: string, bytes: Uint8Array, effectFence?: ExecutionEffectFence): Promise<PublishResult> {
+    async publishJson(relativeKey: string, bytes: Uint8Array): Promise<PublishResult> {
         try {
-            await beforeExecutionEffect(effectFence);
             if (!isJsonKey(relativeKey)) return refuse("invalid-path-segment");
             if (bytes.byteLength > EXPORT_ARTIFACT_MAX_BYTES) return refuse("artifact-too-large");
             const first = await this.verifyRoot(bytes.byteLength, true);
             if (!first.ok) return first;
             const segments = relativeKey.split("/");
             const name = segments.pop()!;
-            const directory = await this.ensureDirectories(segments, effectFence);
+            const directory = await this.ensureDirectories(segments);
             const second = await this.verifyRoot(null, true);
             if (!second.ok) return second;
-            const { disposition } = await publishBytesNoClobber(directory, name, bytes, { fault: this.fault, effectFence });
+            const { disposition } = await publishBytesNoClobber(directory, name, bytes, { fault: this.fault });
             const last = await this.verifyRoot(null, true);
             if (!last.ok) return last;
-            await beforeExecutionEffect(effectFence);
             return { ok: true, relativeKey, disposition };
         } catch (error) {
-            if (isExecutionFencedError(error)) throw error;
-            checkExecutionSignal(effectFence);
             return refuse(reasonOf(error));
         }
     }
@@ -474,47 +455,35 @@ export class LocalDestination {
     // ---- staging (control side) --------------------------------------------------------------------------------
 
     /** `<control>/staging`: created 0700 if missing, then required to be a real directory of this uid, not group/other-writable. */
-    async ensureStaging(controlPath: string, effectFence?: ExecutionEffectFence): Promise<StagingResult> {
+    async ensureStaging(controlPath: string): Promise<StagingResult> {
         try {
-            await beforeExecutionEffect(effectFence);
             if (typeof controlPath !== "string" || !controlPath.startsWith("/")) return refuse("control-unavailable");
             const stagingPath = `${controlPath}/staging`;
             try {
-                await beforeExecutionEffect(effectFence);
-                checkExecutionSignal(effectFence);
                 await fs.mkdir(stagingPath, { mode: 0o700 });
             } catch (error) {
-                if (isExecutionFencedError(error)) throw error;
-                checkExecutionSignal(effectFence);
                 if (!hasCode(error, "EEXIST")) return refuse(hasCode(error, "ENOSPC") ? "control-space" : "control-unavailable");
             }
             const stat = await fs.lstat(stagingPath);
             if (!stat.isDirectory() || stat.uid !== process.getuid?.() || (stat.mode & WRITABLE_BY_OTHERS) !== 0) {
                 return refuse("control-unavailable");
             }
-            await beforeExecutionEffect(effectFence);
             return { ok: true, root: { path: stagingPath, dev: stat.dev, ino: stat.ino } };
-        } catch (error) {
-            if (isExecutionFencedError(error)) throw error;
-            checkExecutionSignal(effectFence);
+        } catch {
             return refuse("control-unavailable");
         }
     }
 
     /** The primitive, unchanged, on `<control>/staging` (flat `<artifactIdentity>.bin`), plus the PDF check. */
-    async stageArtifact(root: StagingRoot, input: ArtifactPublishInput, source: AsyncIterable<Uint8Array>, effectFence?: ExecutionEffectFence): Promise<PublishResult> {
+    async stageArtifact(root: StagingRoot, input: ArtifactPublishInput, source: AsyncIterable<Uint8Array>): Promise<PublishResult> {
         try {
-            await beforeExecutionEffect(effectFence);
             const invalid = this.validateClaim(input);
             if (invalid) return refuse(invalid);
-            const result = await this.runPrimitive(root, input, source, undefined, "control-unavailable", effectFence);
+            const result = await this.runPrimitive(root, input, source, undefined, "control-unavailable");
             if (!result.ok) return result;
             if (!await this.pdfShapeOf(`${root.path}/${result.relativeKey}`)) return refuse("pdf-shape");
-            await beforeExecutionEffect(effectFence);
             return result;
-        } catch (error) {
-            if (isExecutionFencedError(error)) throw error;
-            checkExecutionSignal(effectFence);
+        } catch {
             return refuse("control-unavailable");
         }
     }
@@ -575,8 +544,7 @@ export class LocalDestination {
     }
 
     /** Renames a damaged artifact to `<name>.corrupt-<runId>` in the same directory. Never deletes, never overwrites. */
-    async quarantineCorrupt(relativeKey: string, runId: string, effectFence?: ExecutionEffectFence): Promise<string> {
-        await beforeExecutionEffect(effectFence);
+    async quarantineCorrupt(relativeKey: string, runId: string): Promise<string> {
         const parsed = parseArtifactKey(relativeKey);
         if (!parsed || typeof runId !== "string" || !UUID_V4_PATTERN.test(runId)) throw new WorkerError("invalid-path-segment");
         const gate = await this.verifyRoot(null, true);
@@ -588,25 +556,18 @@ export class LocalDestination {
         let entry;
         try {
             entry = await fs.lstat(source);
-        } catch (error) {
-            if (isExecutionFencedError(error)) throw error;
-            checkExecutionSignal(effectFence);
+        } catch {
             throw new WorkerError("archive-unavailable");
         }
         if (!entry.isFile()) throw new WorkerError("archive-unsafe-path");
         if (await fs.lstat(target).then(() => true, () => false)) throw new WorkerError("archive-conflict");
         try {
-            await beforeExecutionEffect(effectFence);
-            checkExecutionSignal(effectFence);
             await fs.rename(source, target);
             await this.syncDirectory(directory);
-        } catch (error) {
-            if (isExecutionFencedError(error)) throw error;
-            checkExecutionSignal(effectFence);
+        } catch {
             throw new WorkerError("archive-unavailable");
         }
         await this.assertRootIdentity();
-        await beforeExecutionEffect(effectFence);
         return `${relativeKey}.corrupt-${runId}`;
     }
 
