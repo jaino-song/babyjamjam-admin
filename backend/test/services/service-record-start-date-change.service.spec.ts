@@ -205,6 +205,62 @@ describe("ServiceRecordStartDateChangeService", () => {
         expect(w.assignments.find((row) => row.id === "a2")).toMatchObject({ startDate: date(newDates[1]!), endDate: date(newDates[2]!) });
     });
 
+    it.each([
+        { scenario: "one active caregiver", owners: [12, 12], activeStart: "2026-12-21", historicalEnd: null },
+        { scenario: "a caregiver handover", owners: [11, 12], activeStart: "2026-12-22", historicalEnd: "2026-12-21" },
+        { scenario: "only historical written rows", owners: [11, 11], activeStart: "2026-12-23", historicalEnd: "2026-12-22" },
+    ])("legacy MOVE includes unwritten sessions through N with $scenario", async ({ owners, activeStart, historicalEnd }) => {
+        const w = world({ planned: null, total: 4, count: 2 });
+        w.days.forEach((day, index) => { day.scheduleId = owners[index]!; });
+        w.days[1]!.caseSessionIndex = null; // Legacy rows still use sessionIndex.
+        const original = structuredClone(w.days);
+        const endDate = date("2026-12-24");
+
+        await expect(w.apply("MOVE")).resolves.toEqual({ restoreRequiredSessionCount: 4 });
+
+        expect(w.days).toEqual(original.map((day, index) => ({ ...day, serviceDate: date(newDates[index]!) })));
+        expect(w.archive).toHaveLength(2);
+        expect(w.record).toMatchObject({ requiredSessionCount: 4, plannedSessions: null, endDate });
+        expect(w.client.endDate).toEqual(endDate);
+        expect(w.schedules.find((row) => row.id === 12)).toMatchObject({ startDate: date(activeStart), endDate });
+        expect(w.assignments.find((row) => row.id === "a2")).toMatchObject({ startDate: date(activeStart), endDate });
+        if (historicalEnd) {
+            const period = { startDate: date(newDates[0]!), endDate: date(historicalEnd) };
+            expect(w.schedules.find((row) => row.id === 11)).toMatchObject(period);
+            expect(w.assignments.find((row) => row.id === "a1")).toMatchObject(period);
+        } else {
+            expect(w.tx.employee_schedule.updateMany).toHaveBeenCalledTimes(1);
+            expect(w.tx.service_record_assignment.updateMany).toHaveBeenCalledTimes(1);
+        }
+        expect(w.schedules.find((row) => row.id === 10)).toMatchObject({
+            startDate: date("2026-12-10"), endDate: date("2026-12-11"),
+        });
+        expect(w.fence.appendScheduleWriteFence).toHaveBeenCalledWith(w.tx, expect.objectContaining({
+            branchId, clientId, scheduleIds: [12],
+        }));
+        expect(persistScheduleMessageAutomationIntent).toHaveBeenCalledWith(w.tx, expect.objectContaining({
+            branchId, scheduleId: 12,
+        }));
+    });
+
+    it("legacy MOVE assigns unwritten gaps to the active caregiver without taking written sessions", async () => {
+        const w = world({ planned: null, total: 4, count: 2 });
+        w.days[1]!.caseSessionIndex = 3;
+
+        await w.apply("MOVE");
+
+        expect(w.days.map((day) => day.serviceDate)).toEqual([date("2026-12-21"), date("2026-12-23")]);
+        expect(w.schedules.find((row) => row.id === 12)).toMatchObject({
+            startDate: date("2026-12-22"), endDate: date("2026-12-24"),
+        });
+        expect(w.assignments.find((row) => row.id === "a2")).toMatchObject({
+            startDate: date("2026-12-22"), endDate: date("2026-12-24"),
+        });
+        expect(w.assignments.find((row) => row.id === "a1")).toMatchObject({
+            startDate: date("2026-12-21"), endDate: date("2026-12-21"),
+        });
+    });
+
     it.each(["MOVE", "CONFIRM_STARTED", "RESTART"] as const)("%s falls back to the active schedule when no owner evidence exists", async (mode) => {
         const w = world({ planned: null, count: 0 });
         await w.apply(mode);
