@@ -81,6 +81,9 @@ import {
 import { ContractStatsBar } from "@/components/app/contracts/ContractStatsBar";
 import { ContractLinkConfirmationsNotice } from "@/components/app/contracts/ContractLinkConfirmationsNotice";
 import { ContractAutomationsManager } from "@/components/app/contracts/ContractAutomationsManager";
+import { EformsignBackupHistory } from "@/components/app/contracts/EformsignBackupHistory";
+import { useInitialUser } from "@/providers/UserProvider";
+import { ROLES } from "@/lib/constants/roles";
 import type { StatusType } from "@/components/app/v3";
 import { isBranchContextAligned, useActiveBranchId } from "@/features/system-templates/branch-context";
 import { TwoButtonModal } from "@/components/app/ui/TwoButtonModal";
@@ -426,11 +429,13 @@ const NAV_SECTIONS = [
   { id: "documents", label: "전자문서 목록", icon: FileText, disabled: true },
   { id: "notifications", label: "알림 설정", icon: Bell, disabled: true },
   { id: "automations", label: "자동화", icon: Workflow },
+  { id: "backups", label: "전자문서 백업", icon: FileText },
 ] as const;
 
 type SectionId = (typeof NAV_SECTIONS)[number]["id"];
 
 export default function ContractsPage() {
+  const isOwner = useInitialUser()?.role === ROLES.owner;
   const router = useRouter();
   // Display-only (status labels, stat counts): the built-in calendar stands in while it loads.
   const { calendar } = useBusinessDayCalendar();
@@ -749,7 +754,7 @@ export default function ContractsPage() {
       >
         <SectionNav
           data-component="desktop_contracts_sections_section-nav"
-          items={NAV_SECTIONS}
+          items={NAV_SECTIONS.filter((section) => section.id !== "backups" || isOwner)}
           activeId={activeSection}
           onSelect={(id) => {
             setRegisterClientDocumentId(null);
@@ -1133,6 +1138,7 @@ export default function ContractsPage() {
           {activeSection === "automations" ? (
             <ContractAutomationsManager dataComponent="desktop_contracts_sections_section-content_automations-section" />
           ) : null}
+          {activeSection === "backups" && isOwner ? (<EformsignBackupHistory />) : null}
         </div>
       </div>
 
