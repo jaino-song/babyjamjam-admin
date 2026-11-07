@@ -19,6 +19,7 @@ const MAX_IDENTIFIER_LENGTH = 128;
 const MAX_POINTER_LENGTH = 512;
 const MAX_ORIGINAL_TEXT_LENGTH = 512;
 const MAX_DELETED_EMPLOYEE_NAME_LENGTH = 100;
+const MAX_START_DATE_LOCK_SESSION_COUNT = 10000;
 const SAFE_IDENTIFIER_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 const CONTROL_CHARACTER_PATTERN = /[\u0000-\u001f\u007f]/;
 const RFC6901_POINTER_PATTERN = /^(?:\/(?:[^~/]|~[01])*)*$/;
@@ -1382,7 +1383,7 @@ function parseProblemDetailsInternal(value, httpStatus, locale) {
     if (parsed.outcome === "UNKNOWN") {
         parsed.recovery = { action: "CHECK_STATUS", retry: { mode: "NEVER" } };
     }
-    // This is the sole data-bearing extension allowed through the BFF.
+    // deletedEmployee and startDateLock are the only data-bearing extensions allowed through the BFF.
     if (parsed.code === "EMPLOYEE_PHONE_HELD_BY_DELETED") {
         const deletedEmployee = readOwn(value, "deletedEmployee").value;
         if (isRecord(deletedEmployee)) {
@@ -1392,6 +1393,18 @@ function parseProblemDetailsInternal(value, httpStatus, locale) {
                 && typeof name === "string" && name.length > 0 && name.length <= MAX_DELETED_EMPLOYEE_NAME_LENGTH
                 && !CONTROL_CHARACTER_PATTERN.test(name)) {
                 parsed.deletedEmployee = { id, name };
+            }
+        }
+    }
+    if (parsed.code === "SERVICE_RECORD_START_DATE_LOCKED") {
+        const startDateLock = readOwn(value, "startDateLock").value;
+        if (isRecord(startDateLock)) {
+            const serviceStarted = readOwn(startDateLock, "serviceStarted").value;
+            const recordedSessionCount = readOwn(startDateLock, "recordedSessionCount").value;
+            if (typeof serviceStarted === "boolean"
+                && typeof recordedSessionCount === "number" && Number.isSafeInteger(recordedSessionCount)
+                && recordedSessionCount >= 0 && recordedSessionCount <= MAX_START_DATE_LOCK_SESSION_COUNT) {
+                parsed.startDateLock = { serviceStarted, recordedSessionCount };
             }
         }
     }

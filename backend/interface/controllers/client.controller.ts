@@ -162,7 +162,7 @@ export class ClientController {
 
     @Patch(":id")
     update(
-        @CurrentTenant() tenant: { branchId?: string },
+        @CurrentTenant() tenant: { branchId?: string; userId?: string },
         @Param("id", ParseIntPipe) id: number,
         @Body() dto: UpdateClientDto
     ) {
@@ -175,6 +175,8 @@ export class ClientController {
             type: dto.type,
             duration: dto.duration,
             allowBusinessDayMismatch: dto.allowBusinessDayMismatch,
+            startDateChangeMode: dto.startDateChangeMode,
+            actorUserId: tenant.userId,
             fullPrice: dto.fullPrice,
             grant: dto.grant,
             actualPrice: dto.actualPrice,

@@ -10,6 +10,7 @@ import {
     normalizeApiError,
     type ProblemError,
     type ProblemOutcome,
+    type StartDateChangeMode,
 } from "@babyjamjam/shared";
 import { isValidBirthdayIsoDate, normalizeBirthdayIsoDate } from "@babyjamjam/shared/utils/birthday";
 import {
@@ -28,9 +29,10 @@ import {
     useVoucherPriceInfos,
     useVoucherYears,
 } from "@/hooks/useVoucherData";
-import type { ClientFormData } from "@/features/clients/types";
+import type { ClientFormData, UpdateClientDto } from "@/features/clients/types";
 import { readServiceRecordScheduleCode } from "@/features/service-records/types/admin-edit";
 import { buildClientUpdatePayload, hasServicePeriodChange } from "./client-update-payload";
+import { getStartDateLock } from "./start-date-lock";
 import { EmployeeAutocomplete } from "./EmployeeAutocomplete";
 import { EmployeeFormDialog } from "@/components/app/employees/EmployeeFormDialog";
 import { useClientDialogStore } from "@/stores/client-dialog-store";
@@ -551,6 +553,12 @@ function ClientFormContent({
     // Fields whose server error the user already edited away; set again by each new error.
     const [editedServerErrorFields, setEditedServerErrorFields] = useState<ClientFormField[]>([]);
     const [pendingDurationConfirmation, setPendingDurationConfirmation] = useState<string | null>(null);
+    const [pendingStartDateChange, setPendingStartDateChange] = useState<{
+        id: number;
+        dto: UpdateClientDto;
+        lock: { serviceStarted: boolean; recordedSessionCount: number };
+        step: "started" | "records";
+    } | null>(null);
     const submissionInFlightRef = useRef(false);
     const summaryRef = useRef<HTMLDivElement>(null);
     const nameInputRef = useRef<HTMLInputElement>(null);
@@ -930,6 +938,7 @@ function ClientFormContent({
     useEffect(() => {
         if (!open) {
             formSessionRef.current.open = false;
+            queueMicrotask(() => setPendingStartDateChange(null));
             return;
         }
         const sessionClientId = client?.id ?? null;
@@ -1033,6 +1042,7 @@ function ClientFormContent({
                 resetFieldStates();
                 pendingFieldFocusRef.current = null;
                 setPendingDurationConfirmation(null);
+                setPendingStartDateChange(null);
             });
         }
     }, [clearPrefillName, client, open, prefillName, resetFieldStates]);
@@ -1388,6 +1398,7 @@ function ClientFormContent({
     const isCalendarBlockingSubmit = (!isCalendarReady || isEndDateUnsupported) && !isLegacyNoopEdit;
 
     const handleSubmit = async (confirmedPeriod?: string) => {
+        const session = formSessionRef.current;
         if (submissionInFlightRef.current || error?.outcome === "UNKNOWN" || isCalendarBlockingSubmit) return;
         clearFormError();
 
@@ -1500,7 +1511,25 @@ function ClientFormContent({
                     allowBusinessDayMismatch: hasDurationMismatch && confirmedPeriod === periodKey,
                 });
                 endDateGuardSent = updateDto.expectedEndDate !== undefined;
-                const updatedClient = await updateClient.mutateAsync({ id: client.id, dto: updateDto });
+                let updatedClient: Client;
+                try {
+                    updatedClient = await updateClient.mutateAsync({ id: client.id, dto: updateDto });
+                } catch (cause: unknown) {
+                    if (!session.open || session !== formSessionRef.current) return;
+                    const lock = getStartDateLock(cause);
+                    if (!lock) throw cause;
+                    if (!lock.serviceStarted && lock.recordedSessionCount === 0) {
+                        await retryStartDateChangeCore(client.id, updateDto, "CONFIRM_STARTED", session);
+                        return;
+                    }
+                    setPendingStartDateChange({
+                        id: client.id,
+                        dto: updateDto,
+                        lock,
+                        step: lock.serviceStarted ? "started" : "records",
+                    });
+                    return;
+                }
                 onSuccess?.(updatedClient);
             } else {
                 const createDto: CreateClientDto = {
@@ -1538,6 +1567,40 @@ function ClientFormContent({
             onDirtyChange?.(false);
         } catch (error: unknown) {
             setMutationError(error, { endDateGuardSent });
+        } finally {
+            submissionInFlightRef.current = false;
+        }
+    };
+
+    const retryStartDateChangeCore = async (
+        id: number,
+        rememberedDto: UpdateClientDto,
+        startDateChangeMode: StartDateChangeMode,
+        session: typeof formSessionRef.current,
+    ) => {
+        try {
+            const updatedClient = await updateClient.mutateAsync({
+                id,
+                dto: { ...rememberedDto, startDateChangeMode },
+            });
+            if (!session.open || session !== formSessionRef.current) return;
+            setPendingStartDateChange(null);
+            onSuccess?.(updatedClient);
+            onClose();
+            onDirtyChange?.(false);
+        } catch (cause: unknown) {
+            if (!session.open || session !== formSessionRef.current) return;
+            setPendingStartDateChange(null);
+            setMutationError(cause, { endDateGuardSent: rememberedDto.expectedEndDate !== undefined });
+        }
+    };
+
+    const retryStartDateChange = async (startDateChangeMode: StartDateChangeMode) => {
+        const session = formSessionRef.current;
+        if (!session.open || !pendingStartDateChange || submissionInFlightRef.current) return;
+        submissionInFlightRef.current = true;
+        try {
+            await retryStartDateChangeCore(pendingStartDateChange.id, pendingStartDateChange.dto, startDateChangeMode, session);
         } finally {
             submissionInFlightRef.current = false;
         }
@@ -1592,6 +1655,7 @@ function ClientFormContent({
         }
 
         setPendingDurationConfirmation(null);
+        setPendingStartDateChange(null);
         if (searchParams.get("openClientForm") === "1") {
             router.replace("/clients");
         }
@@ -2659,6 +2723,91 @@ function ClientFormContent({
         </Dialog>
     );
 
+    const startDateStartedConfirmationDialog = (
+        <Dialog
+            open={open && pendingStartDateChange?.step === "started"}
+            onOpenChange={(isOpen) => { if (!isOpen) setPendingStartDateChange(null); }}
+        >
+            <FormDialogShell
+                data-component={`${base}_start-date-started-confirmation`}
+                size="compact"
+                title="서비스 시작 후 변경"
+                description="서비스가 이미 시작되었어요. 그래도 변경할까요?"
+                footer={(
+                    <>
+                        <Button
+                            type="button"
+                            variant="outline"
+                            data-component={`${base}_start-date-started-confirmation_cancel`}
+                            disabled={isSubmitting}
+                            onClick={() => setPendingStartDateChange(null)}
+                        >
+                            취소
+                        </Button>
+                        <Button
+                            type="button"
+                            data-component={`${base}_start-date-started-confirmation_proceed`}
+                            disabled={isSubmitting}
+                            onClick={() => {
+                                if (!pendingStartDateChange) return;
+                                if (pendingStartDateChange.lock.recordedSessionCount > 0) {
+                                    setPendingStartDateChange({ ...pendingStartDateChange, step: "records" });
+                                } else {
+                                    void retryStartDateChange("CONFIRM_STARTED");
+                                }
+                            }}
+                        >
+                            진행
+                        </Button>
+                    </>
+                )}
+            >
+                <p data-component={`${base}_start-date-started-confirmation_message`}>
+                    서비스가 이미 시작되었어요. 그래도 변경할까요?
+                </p>
+            </FormDialogShell>
+        </Dialog>
+    );
+
+    const startDateRecordsConfirmationDialog = (
+        <Dialog
+            open={open && pendingStartDateChange?.step === "records"}
+            onOpenChange={(isOpen) => { if (!isOpen) setPendingStartDateChange(null); }}
+        >
+            <FormDialogShell
+                data-component={`${base}_start-date-records-confirmation`}
+                size="compact"
+                title="제공기록지 회차 처리"
+                description="이미 제출된 제공기록지 기록이 있어요. 새로운 시작일을 기준으로 1회차부터 작성된 회차까지 모두 옮길까요?"
+                footer={(
+                    <>
+                        <Button
+                            type="button"
+                            variant="outline"
+                            data-component={`${base}_start-date-records-confirmation_restart`}
+                            disabled={isSubmitting}
+                            onClick={() => void retryStartDateChange("RESTART")}
+                        >
+                            처음부터 시작
+                        </Button>
+                        <Button
+                            type="button"
+                            data-component={`${base}_start-date-records-confirmation_move`}
+                            disabled={isSubmitting}
+                            onClick={() => void retryStartDateChange("MOVE")}
+                        >
+                            모두 옮기기
+                        </Button>
+                    </>
+                )}
+            >
+                <p data-component={`${base}_start-date-records-confirmation_message`}>
+                    이미 제출된 제공기록지 기록이 있어요. 새로운 시작일을 기준으로 1회차부터 작성된 회차까지 모두 옮길까요?
+                </p>
+            </FormDialogShell>
+        </Dialog>
+    );
+
     const panelFooter = panelFormActions;
     const employeeRegistrationDialog = (
         <EmployeeFormDialog
@@ -2687,6 +2836,8 @@ function ClientFormContent({
                 {panelLayout}
                 {employeeRegistrationDialog}
                 {durationConfirmationDialog}
+                {startDateStartedConfirmationDialog}
+                {startDateRecordsConfirmationDialog}
             </>
         );
     }
@@ -2710,6 +2861,8 @@ function ClientFormContent({
             </Dialog>
             {employeeRegistrationDialog}
             {durationConfirmationDialog}
+            {startDateStartedConfirmationDialog}
+            {startDateRecordsConfirmationDialog}
         </>
     );
 }

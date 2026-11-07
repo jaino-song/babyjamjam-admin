@@ -1,3 +1,4 @@
+import type { StartDateChangeMode } from "@babyjamjam/shared/types/start-date-change";
 import { ConflictException, Injectable, Logger, NotFoundException } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import {
@@ -225,6 +226,12 @@ function callPath(): string {
         .map((line) => line.trim().replace(/^at (async )?/, ""))
         .filter((line) => line && !/service-record-lifecycle\.service\.(ts|js)/.test(line));
     return frames.slice(0, 3).join(" <- ") || "unknown";
+}
+
+export interface StartDateChangeDecision {
+    mode: StartDateChangeMode;
+    previousStartDate: Date | null;
+    recordedSessionCount: number;
 }
 
 @Injectable()
@@ -625,15 +632,16 @@ export class ServiceRecordLifecycleService {
         endDate?: Date | null;
         duration?: number | null;
         now?: Date;
-    }, tx?: Prisma.TransactionClient): Promise<void> {
+        startDateChangeMode?: StartDateChangeMode;
+    }, tx?: Prisma.TransactionClient): Promise<StartDateChangeDecision | null> {
         const db = tx ?? this.prisma;
         const record = await db.service_record_case.findUnique({
             where: { clientId: params.clientId },
             include: {
-                days: { select: { serviceDate: true, locked: true } },
+                days: { select: { serviceDate: true, locked: true, caseSessionIndex: true, sessionIndex: true } },
             },
         });
-        if (!record) return;
+        if (!record) return null;
         const now = params.now ?? new Date();
 
         if (IMMUTABLE_FINALIZATION_STATUSES.has(record.status)) {
@@ -649,12 +657,22 @@ export class ServiceRecordLifecycleService {
             }
         }
 
+        let decision: StartDateChangeDecision | null = null;
+        const serviceStarted = record.startDate != null && todayKst(now) >= isoDate(record.startDate)!;
+        const recordedSessionCount = record.days.length;
         if (
             params.startDate !== undefined
             && isoDate(params.startDate) !== isoDate(record.startDate)
-            && (record.days.length > 0 || (record.startDate && todayKst(now) >= isoDate(record.startDate)!))
+            && (recordedSessionCount > 0 || serviceStarted)
         ) {
-            throw new ConflictException(codeOnlyProblemBody("SERVICE_RECORD_START_DATE_LOCKED"));
+            const mode = params.startDateChangeMode;
+            if (!mode || (recordedSessionCount > 0 && mode !== "RESTART" && mode !== "MOVE")) {
+                throw new ConflictException({
+                    ...codeOnlyProblemBody("SERVICE_RECORD_START_DATE_LOCKED"),
+                    startDateLock: { serviceStarted, recordedSessionCount },
+                });
+            }
+            decision = { mode, previousStartDate: record.startDate, recordedSessionCount };
         }
 
         if (params.endDate === null && record.days.length > 0) {
@@ -663,8 +681,15 @@ export class ServiceRecordLifecycleService {
         if (
             params.endDate !== undefined
             && params.endDate !== null
-            && record.days.some((day) =>
-                day.locked && isoDate(day.serviceDate)! > isoDate(params.endDate)!)
+            && decision?.mode !== "RESTART"
+            && record.days.some((day) => {
+                // MOVE가 재배치하는 회차는 기존 날짜로 종료일을 제한하지 않는다.
+                if (decision?.mode === "MOVE" && record.requiredSessionCount !== null && record.requiredSessionCount > 0) {
+                    const sessionIndex = day.caseSessionIndex ?? day.sessionIndex;
+                    if (sessionIndex != null && sessionIndex <= record.requiredSessionCount) return false;
+                }
+                return day.locked && isoDate(day.serviceDate)! > isoDate(params.endDate)!;
+            })
         ) {
             throw new ConflictException(codeOnlyProblemBody("SERVICE_RECORD_END_DATE_BEFORE_LOCKED_SESSION"));
         }
@@ -680,6 +705,7 @@ export class ServiceRecordLifecycleService {
         ) {
             throw new ConflictException(codeOnlyProblemBody("SERVICE_RECORD_DURATION_CANNOT_DECREASE"));
         }
+        return decision;
     }
 
     async syncEndDateFromContract(params: {
