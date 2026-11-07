@@ -1441,6 +1441,30 @@ model service_record_day_edit_log {
   @@index([branchId, serviceRecordCaseId, editedAt], map: "idx_service_record_day_edit_log_branch_case_edited")
 }
 
+/// Append-only copy of service_record_day rows taken right before an admin start-date change
+/// re-dates (MOVE) or removes (RESTART) them, or confirms a started change (CONFIRM_STARTED).
+/// `payload` is the complete original row as JSON. Deliberately no FK to service_record_day:
+/// the archived row may be deleted and this copy must survive. Recovery is manual.
+model service_record_day_archive {
+  id                  String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  branchId            String    @map("branch_id") @db.Uuid
+  serviceRecordCaseId String    @map("service_record_case_id") @db.Uuid
+  clientId            Int       @map("client_id")
+  batchId             String    @map("batch_id") @db.Uuid
+  reason              String    @db.VarChar(32)
+  originalDayId       String    @map("original_day_id") @db.Uuid
+  caseSessionIndex    Int?      @map("case_session_index")
+  serviceDate         DateTime  @map("service_date") @db.Date
+  previousStartDate   DateTime? @map("previous_start_date") @db.Date
+  newStartDate        DateTime  @map("new_start_date") @db.Date
+  archivedByUserId    String?   @map("archived_by_user_id") @db.Uuid
+  payload             Json      @db.JsonB
+  archivedAt          DateTime  @default(now()) @map("archived_at") @db.Timestamptz(6)
+
+  @@index([branchId, serviceRecordCaseId, archivedAt], map: "idx_service_record_day_archive_branch_case_archived")
+  @@index([batchId], map: "idx_service_record_day_archive_batch")
+}
+
 /// Mutable per-operation state for one immutable service-record revision.
 /// This is separate from the append-only revision payload and reuses the
 /// existing eformsign_document_job system for provider work.
