@@ -15,6 +15,9 @@ jest.mock("@/hooks/useBusinessDayCalendar", () => ({
   useBusinessDayCalendar: () => ({ calendar: undefined }),
 }));
 jest.mock("@/hooks/useEformsignAuth", () => ({ useEformsignAuth: jest.fn() }));
+jest.mock("@/hooks/useEformsignBackups", () => ({
+  useEformsignBackupAccess: () => ({ ready: false, isManager: false, userId: null, branchId: "branch-1", identity: null }),
+}));
 jest.mock("@/hooks/useEformsignDocsLiveStream", () => ({
   useEformsignDocsLiveStream: () => undefined,
 }));
