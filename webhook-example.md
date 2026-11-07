@@ -118,7 +118,7 @@
         "recipients": [
             {
                 "step_seq": "2",
-                "name": "송진호",
+                "name": "정다라",
                 "id": "",
                 "sms": {
                     "country_code": "+82",

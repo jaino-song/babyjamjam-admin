@@ -2,7 +2,7 @@
 
 **Date:** 2026-06-30
 **Status:** Draft for review
-**Author:** David Jinho Song (+ Claude)
+**Author:** Covenant Labs (+ Claude)
 **Builds on:** `2026-06-27-client-greeting-trigger-rule-design.md` (Phase C — CLIENT_GREETING SMS trigger), which established the "trigger rule → SMS, body from a SystemTemplate" bridge precedent.
 
 ---

@@ -2,7 +2,7 @@
 
 **Date:** 2026-09-05
 **Status:** Shared editor design resumed; scope superseded by the 2026-09-10 branch-wide editing requirements
-**Author:** David Jinho Song (+ Claude)
+**Author:** Covenant Labs (+ Claude)
 **Builds on:** `2026-06-30-sms-trigger-any-system-template-design.md` (시스템 템플릿이 SMS 자동 발송 본문의 단일 출처가 된 결정)
 
 ---

@@ -2,7 +2,7 @@
 
 **Date:** 2026-09-03
 **Status:** Implemented on branch `service-end-receipt-link` (2026-09-03). §4–§5.9 were re-aligned with the shipped code in Task 4.1; where the implementation deviates from the original design the reason is noted inline.
-**Author:** David Jinho Song (+ Claude)
+**Author:** Covenant Labs (+ Claude)
 **Builds on:**
 - `2026-06-30-sms-trigger-any-system-template-design.md` (SMS 트리거 ↔ 시스템 템플릿 브리지, skip-and-log 가드 선례)
 - `2026-08-08-contract-auto-finalize-design.md` (검토 → 완료 자동 전환, `graceDays` 설정)
