@@ -638,7 +638,7 @@ export class ServiceRecordLifecycleService {
         const record = await db.service_record_case.findUnique({
             where: { clientId: params.clientId },
             include: {
-                days: { select: { serviceDate: true, locked: true } },
+                days: { select: { serviceDate: true, locked: true, caseSessionIndex: true, sessionIndex: true } },
             },
         });
         if (!record) return null;
@@ -681,8 +681,15 @@ export class ServiceRecordLifecycleService {
         if (
             params.endDate !== undefined
             && params.endDate !== null
-            && record.days.some((day) =>
-                day.locked && isoDate(day.serviceDate)! > isoDate(params.endDate)!)
+            && decision?.mode !== "RESTART"
+            && record.days.some((day) => {
+                // MOVE가 재배치하는 회차는 기존 날짜로 종료일을 제한하지 않는다.
+                if (decision?.mode === "MOVE" && record.requiredSessionCount !== null && record.requiredSessionCount > 0) {
+                    const sessionIndex = day.caseSessionIndex ?? day.sessionIndex;
+                    if (sessionIndex != null && sessionIndex <= record.requiredSessionCount) return false;
+                }
+                return day.locked && isoDate(day.serviceDate)! > isoDate(params.endDate)!;
+            })
         ) {
             throw new ConflictException(codeOnlyProblemBody("SERVICE_RECORD_END_DATE_BEFORE_LOCKED_SESSION"));
         }
