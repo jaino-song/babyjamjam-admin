@@ -731,7 +731,7 @@ export default function ContractsPage() {
   return (
     <PageSection name="contracts">
       {/* TODO: 통계 카운트는 아직 제공기록지 문서를 포함한다. 후속 작업에서 통계 엔드포인트를 분리한다. */}
-      <ContractStatsBar
+      {activeSection !== 'backup' && (<ContractStatsBar
         name="contracts" density="responsive-square"
         showDocumentJobs={true} statsError={statsError} statsHasData={statsHasData} isStatsRefreshing={isStatsRefreshing}
         isLoading={isStatsLoading} onRetryStats={isAuthenticated && isStatsBranchContextReady ? () => void statusCountsQuery.refetch() : undefined}
@@ -742,7 +742,7 @@ export default function ContractsPage() {
           { icon: FileText, value: stats?.drafting ?? "—", label: "작성 대기중", counter: "건" },
           { icon: AlertTriangle, value: stats?.expired ?? "—", label: "기간 만료", counter: "건", colorIndex: 3 },
         ]}
-      />
+      />)}
 
       {activeSection === "maternity" && <ContractLinkConfirmationsNotice />}
       <div
