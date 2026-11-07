@@ -1515,6 +1515,10 @@ function ClientFormContent({
                 } catch (cause: unknown) {
                     const lock = getStartDateLock(cause);
                     if (!lock) throw cause;
+                    if (!lock.serviceStarted && lock.recordedSessionCount === 0) {
+                        await retryStartDateChangeCore(client.id, updateDto, "CONFIRM_STARTED");
+                        return;
+                    }
                     setPendingStartDateChange({
                         dto: updateDto,
                         lock,
@@ -1564,13 +1568,14 @@ function ClientFormContent({
         }
     };
 
-    const retryStartDateChange = async (startDateChangeMode: StartDateChangeMode) => {
-        if (!client || !pendingStartDateChange || submissionInFlightRef.current) return;
-        const rememberedDto = pendingStartDateChange.dto;
-        submissionInFlightRef.current = true;
+    const retryStartDateChangeCore = async (
+        id: number,
+        rememberedDto: UpdateClientDto,
+        startDateChangeMode: StartDateChangeMode,
+    ) => {
         try {
             const updatedClient = await updateClient.mutateAsync({
-                id: client.id,
+                id,
                 dto: { ...rememberedDto, startDateChangeMode },
             });
             setPendingStartDateChange(null);
@@ -1580,6 +1585,14 @@ function ClientFormContent({
         } catch (cause: unknown) {
             setPendingStartDateChange(null);
             setMutationError(cause, { endDateGuardSent: rememberedDto.expectedEndDate !== undefined });
+        }
+    };
+
+    const retryStartDateChange = async (startDateChangeMode: StartDateChangeMode) => {
+        if (!client || !pendingStartDateChange || submissionInFlightRef.current) return;
+        submissionInFlightRef.current = true;
+        try {
+            await retryStartDateChangeCore(client.id, pendingStartDateChange.dto, startDateChangeMode);
         } finally {
             submissionInFlightRef.current = false;
         }

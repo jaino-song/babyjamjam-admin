@@ -96,6 +96,50 @@ describe("ClientFormDialog start-date confirmation", () => {
         updateMutateAsync.mockResolvedValue(client);
     });
 
+    it("silently retries an unstarted service with no records using the exact rejected dto", async () => {
+        let rejectSave!: (cause: unknown) => void;
+        let finishRetry!: (value: typeof client) => void;
+        updateMutateAsync
+            .mockImplementationOnce(() => new Promise((_, reject) => { rejectSave = reject; }))
+            .mockImplementationOnce(() => new Promise((resolve) => { finishRetry = resolve; }));
+        const selector = `[data-component="${base}_start-date-started-confirmation"], `
+            + `[data-component="${base}_start-date-records-confirmation"]`;
+        const renderedConfirmations: Element[] = [];
+        const observer = new MutationObserver((mutations) => {
+            for (const mutation of mutations) for (const node of mutation.addedNodes) {
+                if (!(node instanceof Element)) continue;
+                if (node.matches(selector)) renderedConfirmations.push(node);
+                renderedConfirmations.push(...node.querySelectorAll(selector));
+            }
+        });
+        observer.observe(document.body, { childList: true, subtree: true });
+        try {
+            const { props } = await renderDialog();
+            await submitChangedDate();
+            const firstRequest = updateMutateAsync.mock.calls[0][0];
+            const saveButton = button("저장");
+            await act(async () => { rejectSave(lockedError({ serviceStarted: false, recordedSessionCount: 0 })); });
+            expect(updateMutateAsync).toHaveBeenCalledTimes(2);
+            expect(updateMutateAsync.mock.calls[1][0]).toEqual({
+                id: client.id, dto: { ...firstRequest.dto, startDateChangeMode: "CONFIRM_STARTED" },
+            });
+            expect(firstRequest.dto).not.toHaveProperty("startDateChangeMode");
+            expect(document.querySelector(selector)).not.toBeInTheDocument();
+            fireEvent.click(saveButton);
+            expect(updateMutateAsync).toHaveBeenCalledTimes(2);
+            await act(async () => { finishRetry(client); });
+            expect(props.onSuccess).toHaveBeenCalledTimes(1);
+            expect(props.onSuccess).toHaveBeenCalledWith(client);
+            expect(props.onClose).toHaveBeenCalledTimes(1);
+            expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+            expect(document.querySelector(selector)).not.toBeInTheDocument();
+            expect(renderedConfirmations).toEqual([]);
+            expect(updateMutateAsync).toHaveBeenCalledTimes(2);
+        } finally {
+            observer.disconnect();
+        }
+    });
+
     it("confirms a started service with the exact rejected dto, then follows the normal success path", async () => {
         updateMutateAsync.mockRejectedValueOnce(lockedError({ serviceStarted: true, recordedSessionCount: 0 }));
         const { props } = await renderDialog();

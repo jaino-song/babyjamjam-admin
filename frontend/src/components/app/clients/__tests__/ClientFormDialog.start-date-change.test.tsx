@@ -143,6 +143,44 @@ describe("client start-date change confirmation", () => {
     mockUpdateClient.mockReset().mockResolvedValue(client);
   });
 
+  it("silently retries an unstarted service with no records using the exact rejected dto", async () => {
+    let rejectSave!: (cause: unknown) => void;
+    let finishRetry!: (value: Client) => void;
+    mockUpdateClient
+      .mockImplementationOnce(() => new Promise((_, reject) => { rejectSave = reject; }))
+      .mockImplementationOnce(() => new Promise((resolve) => { finishRetry = resolve; }));
+    const selector = '[data-component="desktop_clients_form-dialog_start-date-started-confirmation"], '
+      + '[data-component="desktop_clients_form-dialog_start-date-records-confirmation"]';
+    const renderedConfirmations: Element[] = [];
+    const observer = new MutationObserver((mutations) => {
+      for (const mutation of mutations) for (const node of mutation.addedNodes) {
+        if (!(node instanceof Element)) continue;
+        if (node.matches(selector)) renderedConfirmations.push(node);
+        renderedConfirmations.push(...node.querySelectorAll(selector));
+      }
+    });
+    observer.observe(document.body, { childList: true, subtree: true });
+    try {
+      const { onSuccess, onClose } = await submitChangedStartDate("dialog");
+      const saveButton = document.querySelector('[data-component="desktop_clients_form-dialog_submit"]') as HTMLButtonElement;
+      await act(async () => { rejectSave(lockError({ serviceStarted: false, recordedSessionCount: 0 })); });
+      expectRetry("CONFIRM_STARTED");
+      expect(document.querySelector(selector)).not.toBeInTheDocument();
+      fireEvent.click(saveButton);
+      expect(mockUpdateClient).toHaveBeenCalledTimes(2);
+      await act(async () => { finishRetry(client); });
+      expect(onSuccess).toHaveBeenCalledTimes(1);
+      expect(onSuccess).toHaveBeenCalledWith(client);
+      expect(onClose).toHaveBeenCalledTimes(1);
+      expectNoInlineError();
+      expect(document.querySelector(selector)).not.toBeInTheDocument();
+      expect(renderedConfirmations).toEqual([]);
+      expect(mockUpdateClient).toHaveBeenCalledTimes(2);
+    } finally {
+      observer.disconnect();
+    }
+  });
+
   it("confirms an already started service in the desktop dialog and preserves the exact DTO", async () => {
     mockUpdateClient.mockRejectedValueOnce(lockError({ serviceStarted: true, recordedSessionCount: 0 }));
     const { onSuccess, onClose } = await submitChangedStartDate("dialog");

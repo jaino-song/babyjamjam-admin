@@ -538,7 +538,7 @@ export function ClientFormDialog({ open, onClose, client, onSuccess }: ClientFor
         }
     };
 
-    const handleMutationError = (error: unknown, endDateGuardSent: boolean, updateDto?: UpdateClientDto) => {
+    const handleMutationError = async (error: unknown, endDateGuardSent: boolean, updateDto?: UpdateClientDto): Promise<void> => {
         const normalized = normalizeApiError(error, {
             locale: locale === "en" ? "en-US" : "ko-KR",
             operation: "mutation",
@@ -557,6 +557,10 @@ export function ClientFormDialog({ open, onClose, client, onSuccess }: ClientFor
             && normalized.problem?.code === "SERVICE_RECORD_START_DATE_LOCKED"
             && lock
         ) {
+            if (!lock.serviceStarted && lock.recordedSessionCount === 0) {
+                await retryStartDateChange("CONFIRM_STARTED", { id: client.id, dto: updateDto });
+                return;
+            }
             setStartDateConfirmation({
                 id: client.id,
                 dto: updateDto,
@@ -592,9 +596,12 @@ export function ClientFormDialog({ open, onClose, client, onSuccess }: ClientFor
         setErrorAndScroll(getErrorMessage(error, locale, "clients.form.error-save-failed"));
     };
 
-    const retryStartDateChange = async (startDateChangeMode: StartDateChangeMode) => {
-        if (!open || !startDateConfirmation || startDateRetryInFlightRef.current) return;
-        const remembered = startDateConfirmation;
+    const retryStartDateChange = async (
+        startDateChangeMode: StartDateChangeMode,
+        request?: { id: number; dto: UpdateClientDto },
+    ) => {
+        const remembered = request ?? startDateConfirmation;
+        if (!open || !remembered || startDateRetryInFlightRef.current) return;
         const session = formSessionRef.current;
         startDateRetryInFlightRef.current = true;
         setIsRetryingStartDate(true);
@@ -610,7 +617,7 @@ export function ClientFormDialog({ open, onClose, client, onSuccess }: ClientFor
         } catch (error: unknown) {
             if (!session.open || session !== formSessionRef.current) return;
             setStartDateConfirmation(null);
-            handleMutationError(error, remembered.dto.expectedEndDate !== undefined);
+            await handleMutationError(error, remembered.dto.expectedEndDate !== undefined);
         } finally {
             startDateRetryInFlightRef.current = false;
             setIsRetryingStartDate(false);
@@ -686,7 +693,7 @@ export function ClientFormDialog({ open, onClose, client, onSuccess }: ClientFor
             onClose();
         } catch (error: unknown) {
             if (!session.open || session !== formSessionRef.current) return;
-            handleMutationError(error, endDateGuardSent, updateDto);
+            await handleMutationError(error, endDateGuardSent, updateDto);
         }
     };
 
