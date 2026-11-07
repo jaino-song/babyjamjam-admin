@@ -104,7 +104,7 @@ describe("consultation list state", () => {
     const songJinho = createInquiry({
       id: "song-jinho",
       motherName: "송진호",
-      phone: "010-6621-1878",
+      phone: "010-0000-6621",
       address: "인천광역시 연수구",
     });
     const leeSoonshin = createInquiry({
@@ -132,7 +132,7 @@ describe("consultation list state", () => {
     const matchingInquiry = createInquiry({
       id: "matching",
       motherName: "송진호",
-      phone: "010-6621-1878",
+      phone: "010-0000-6621",
     });
 
     const result = getDisplayedConsultationInquiries({

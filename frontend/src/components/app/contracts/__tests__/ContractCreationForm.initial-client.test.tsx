@@ -190,7 +190,7 @@ function seedValidContract(overrides: Partial<ReturnType<typeof useFormStore.get
   useFormStore.setState({
     clientId: 42,
     name: "송진호",
-    phone: "010-6621-1878",
+    phone: "010-0000-6621",
     birthday: "960414",
     dueDate: "",
     birthDate: "",
@@ -285,7 +285,7 @@ describe("ContractCreationForm — initialClient mode", () => {
     await submitQueue();
     expect(screen.getByRole("alert")).toHaveTextContent(/.+/);
     expect(screen.getByLabelText("계약 시작일")).toHaveValue("2026-08-05");
-    expect(useFormStore.getState()).toEqual(expect.objectContaining({ name: "송진호", phone: "010-6621-1878", address: "인천시 강다", actualPrice: "200000" }));
+    expect(useFormStore.getState()).toEqual(expect.objectContaining({ name: "송진호", phone: "010-0000-6621", address: "인천시 강다", actualPrice: "200000" }));
     expect(onSuccess).not.toHaveBeenCalled();
     expect(onClose).not.toHaveBeenCalled();
     expect(screen.queryByTestId("contract-creation-manual")).not.toBeInTheDocument();

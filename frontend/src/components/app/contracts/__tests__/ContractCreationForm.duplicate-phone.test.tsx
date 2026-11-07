@@ -97,7 +97,7 @@ function seedAutoRegistrationDraft() {
   useFormStore.setState({
     clientId: null,
     name: "송진호",
-    phone: "010-6621-1878",
+    phone: "010-0000-6621",
     birthday: "960414",
     dueDate: "",
     birthDate: "",

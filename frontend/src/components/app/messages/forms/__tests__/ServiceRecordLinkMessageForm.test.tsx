@@ -319,16 +319,16 @@ describe("ServiceRecordLinkMessageForm", () => {
 
     expect(employeePhoneInput).not.toBeDisabled();
     fireEvent.change(employeePhoneInput, {
-      target: { value: "01066211878" },
+      target: { value: "01000006621" },
     });
 
     await waitFor(() => {
-      expect(employeePhoneInput).toHaveValue("010-6621-1878");
+      expect(employeePhoneInput).toHaveValue("010-0000-6621");
       expect(serviceRecordsApi.prepareLink).toHaveBeenLastCalledWith(11, {
-        recipientPhone: "01066211878",
+        recipientPhone: "01000006621",
       });
     });
-    expect(useFormStore.getState().employeePhone).toBe("010-6621-1878");
+    expect(useFormStore.getState().employeePhone).toBe("010-0000-6621");
   });
 
   it("keeps manually entered employee and client names with a formatted phone", async () => {

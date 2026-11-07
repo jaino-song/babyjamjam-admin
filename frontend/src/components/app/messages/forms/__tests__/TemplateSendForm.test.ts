@@ -13,9 +13,9 @@ function createHistoryRecord(
     provider: "aligo_sms",
     templateKey: "인사 메시지",
     triggerJobId: null,
-    receiver: "010-6621-1878",
+    receiver: "010-0000-6621",
     clientId: null,
-    recipientPhone: "010-6621-1878",
+    recipientPhone: "010-0000-6621",
     messageBody: "안녕하세요",
     variables: {},
     status: "sent",
@@ -43,14 +43,14 @@ function createHistoryRecord(
 describe("TemplateSendForm duplicate send helpers", () => {
   it("finds a sent duplicate within 72 hours by normalized receiver and message", () => {
     const duplicate = createHistoryRecord({
-      receiver: "01066211878",
+      receiver: "01000006621",
       messageBody: "안녕하세요\n",
       lastAttemptAt: "2026-06-18T09:20:00.000Z",
     });
 
     expect(
       findRecentDuplicateSend([duplicate], {
-        receiver: "010-6621-1878",
+        receiver: "010-0000-6621",
         message: "안녕하세요",
         now: new Date("2026-06-19T09:20:00.000Z"),
       }),
@@ -70,7 +70,7 @@ describe("TemplateSendForm duplicate send helpers", () => {
 
     expect(
       findRecentDuplicateSend([failed, expired], {
-        receiver: "010-6621-1878",
+        receiver: "010-0000-6621",
         message: "안녕하세요",
         now: new Date("2026-06-19T09:20:00.000Z"),
       }),

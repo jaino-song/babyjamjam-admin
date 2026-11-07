@@ -1162,7 +1162,7 @@ describe("SMS system-template variable coverage", () => {
     const allTemplateVariables: Record<string, string> = {
         name: "fixture-name",
         clientName: "fixture-clientName",
-        phone: "010-6621-1878",
+        phone: "010-0000-6621",
         employeeName: "fixture-employeeName",
         registrationDate: "fixture-registrationDate",
         serviceType: "fixture-serviceType",
@@ -1214,7 +1214,7 @@ describe("SMS system-template variable coverage", () => {
         155,
         recipientType === MessageTriggerRecipientType.CLIENT ? null : 77,
         recipientType,
-        "010-6621-1878",
+        "010-0000-6621",
         templateKey,
         `rule-${templateKey}:fixture`,
         {
@@ -1224,7 +1224,7 @@ describe("SMS system-template variable coverage", () => {
             employeeName: templateVariables["employeeName"],
             memberId: recipientType === MessageTriggerRecipientType.CLIENT ? "155" : "employee:0",
             recipientName: templateVariables["name"] ?? templateVariables["employeeName"] ?? "김정인",
-            recipientPhone: "010-6621-1878",
+            recipientPhone: "010-0000-6621",
             buttonUrl: templateVariables["serviceRecordUrl"],
             templateVariables,
         },
@@ -1235,7 +1235,7 @@ describe("SMS system-template variable coverage", () => {
     const createDeliveryHarness = () => {
         const aligoService = {
             sendSms: jest.fn().mockResolvedValue({
-                request: { receiver: "01066211878", msgType: "LMS", testModeYn: "N" },
+                request: { receiver: "01000006621", msgType: "LMS", testModeYn: "N" },
                 response: { result_code: 1, message: "성공", msg_id: 1878, success_cnt: 1, error_cnt: 0 },
             }),
         };
@@ -1321,7 +1321,7 @@ describe("SMS system-template variable coverage", () => {
 
             const providerRequest = aligoService.sendSms.mock.calls[0]?.[0];
             expect(providerRequest?.message).not.toMatch(/\{\{\s*\w+\s*\}\}/);
-            expect(providerRequest?.receiver).toBe("010-6621-1878");
+            expect(providerRequest?.receiver).toBe("010-0000-6621");
         },
     );
 
@@ -1417,7 +1417,7 @@ describe("SMS system-template variable coverage", () => {
         await expect(service.sendJob(job)).resolves.toBe(true);
 
         expect(aligoService.sendSms).toHaveBeenCalledWith(expect.objectContaining({
-            message: "fixture-name 산모님 연락처 010-6621-1878",
+            message: "fixture-name 산모님 연락처 010-0000-6621",
         }));
     });
 

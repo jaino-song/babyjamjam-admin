@@ -591,7 +591,7 @@ describe("ServiceRecordLinkService", () => {
         );
         prisma.employee_schedule.findUnique.mockResolvedValue(createSchedule());
 
-        const result = await service.prepareLink(10, "010-6621-1878");
+        const result = await service.prepareLink(10, "010-0000-6621");
 
         expect(tokenService.reuseActiveLink).toHaveBeenCalledWith(expect.objectContaining({
             branchId: "branch-1",
@@ -697,7 +697,7 @@ describe("ServiceRecordLinkService", () => {
         );
         prisma.employee_schedule.findUnique.mockResolvedValue(createSchedule());
 
-        await service.sendNow(10, "efl_prepared", "01066211878");
+        await service.sendNow(10, "efl_prepared", "01000006621");
 
         expect(tokenService.activatePreparedLink).toHaveBeenCalledWith(expect.objectContaining({
             linkToken: "efl_prepared",
@@ -708,8 +708,8 @@ describe("ServiceRecordLinkService", () => {
         }));
         expect(tokenService.issueLink).not.toHaveBeenCalled();
         const job = jobRepository.replacePendingJobsUnlessInFlight.mock.calls[0]?.[0] as MessageTriggerJobEntity;
-        expect(job.recipientPhone).toBe("01066211878");
-        expect(job.payload.recipientPhone).toBe("01066211878");
+        expect(job.recipientPhone).toBe("01000006621");
+        expect(job.payload.recipientPhone).toBe("01000006621");
         expect(job.payload.buttonUrl).toBe("https://mobile.test/service-record/efl_prepared");
         expect(job.payload.messageBody).toContain("https://mobile.test/service-record/efl_prepared");
     });
@@ -1650,9 +1650,9 @@ describe("ServiceRecordLinkService", () => {
             createOverrideRepository() as unknown as IMessageTriggerRuleBranchOverrideRepository,
         );
         prisma.employee_schedule.findUnique.mockResolvedValue(createSchedule({ primaryEmployee: { id: 30, name: "홍제공", phone: "", birthday: "900101" } }));
-        await expect(service.prepareLink(10, "01066211878")).rejects.toBeInstanceOf(BadRequestException);
-        await expect(service.prepareLink(10, "01066211878")).rejects.toMatchObject({ response: { code: "INVALID_PROVIDER_PHONE" } });
-        await expect(service.sendNow(10, undefined, "01066211878")).rejects.toBeInstanceOf(BadRequestException);
+        await expect(service.prepareLink(10, "01000006621")).rejects.toBeInstanceOf(BadRequestException);
+        await expect(service.prepareLink(10, "01000006621")).rejects.toMatchObject({ response: { code: "INVALID_PROVIDER_PHONE" } });
+        await expect(service.sendNow(10, undefined, "01000006621")).rejects.toBeInstanceOf(BadRequestException);
         expect(tokenService.prepareLink).not.toHaveBeenCalled();
         expect(tokenService.issueLink).not.toHaveBeenCalled();
     });

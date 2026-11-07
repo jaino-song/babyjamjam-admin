@@ -1146,13 +1146,13 @@ describe("AdminServiceRecordService", () => {
         );
         prisma.employee_schedule.findFirst.mockResolvedValue({ id: 10 });
 
-        const result = await service.prepareLink("branch-1", 10, "01066211878");
+        const result = await service.prepareLink("branch-1", 10, "01000006621");
 
         expect(prisma.employee_schedule.findFirst).toHaveBeenCalledWith({
             where: { id: 10, branchId: "branch-1" },
             select: { id: true },
         });
-        expect(linkService.prepareLink).toHaveBeenCalledWith(10, "01066211878");
+        expect(linkService.prepareLink).toHaveBeenCalledWith(10, "01000006621");
         expect(result.preparedLinkToken).toBe("efl_prepared");
     });
 
@@ -1168,7 +1168,7 @@ describe("AdminServiceRecordService", () => {
         prisma.employee_schedule.findFirst.mockResolvedValue({ id: 10 });
 
         await expect(
-            service.sendLinkNow("branch-1", 10, "efl_prepared", "01066211878"),
+            service.sendLinkNow("branch-1", 10, "efl_prepared", "01000006621"),
         ).resolves.toEqual({
             ok: true,
             jobId: "job-manual",
@@ -1176,7 +1176,7 @@ describe("AdminServiceRecordService", () => {
             scheduledFor: new Date("2026-07-03T01:00:00.000Z"),
         });
 
-        expect(linkService.sendNow).toHaveBeenCalledWith(10, "efl_prepared", "01066211878");
+        expect(linkService.sendNow).toHaveBeenCalledWith(10, "efl_prepared", "01000006621");
         expect(triggerService.dispatchPendingJobNow).toHaveBeenCalledWith("job-manual", {
             expectedBranchId: "branch-1",
         });

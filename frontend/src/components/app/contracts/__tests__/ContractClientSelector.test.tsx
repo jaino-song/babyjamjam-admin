@@ -15,7 +15,7 @@ const mockExistingClient: Client = {
   dueDate: "2026-06-10",
   birthDate: null,
   address: "경기도 고양시",
-  phone: "01066211878",
+  phone: "01000006621",
   primaryEmployee: null,
   secondaryEmployee: null,
   type: null,
