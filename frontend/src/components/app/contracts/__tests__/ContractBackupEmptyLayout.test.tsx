@@ -36,14 +36,18 @@ describe('ContractBackupManager empty content placement', () => {
     [{ state: 'ready', runs: [] }, '이력이 없습니다'],
     [{ state: 'error' }, '이력을 불러오지 못했습니다'],
     [{ state: 'unavailable' }, '백업 연결 전'],
-  ])('keeps the %s message inside scroll content and outside the header and overlay', (source, message) => {
+  ])('keeps the %s message inside scroll content before the animated list and outside the header and overlay', (source, message) => {
     const { container } = render(<ContractBackupManager dataComponent={base} source={source} />);
     const panel = listPanel(container);
     const copy = within(panel).getByText(message);
     const empty = copy.closest<HTMLElement>('[data-source-component="ListEmptyState"]');
     const content = panel.querySelector('[data-slot="list-panel-content"]');
+    const animatedList = panel.querySelector('[data-slot="animated-slot-list"]');
 
     expect(empty).toBeInTheDocument();
+    expect(animatedList).not.toBeNull();
+    if (!empty || !animatedList) throw new Error('Expected the empty state and animated list');
+    expect(empty.compareDocumentPosition(animatedList) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(content).toContainElement(empty);
     expect(empty).toHaveAttribute('data-component', `${list}_content_empty`);
     expect(copy.closest('[data-slot="list-panel-top-area"]')).toBeNull();
