@@ -1,5 +1,6 @@
 "use client";
 
+
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { EformsignDocClientSummary } from "@babyjamjam/shared/types/eformsign";
@@ -30,7 +31,6 @@ import {
   Briefcase,
   Bell,
   Workflow,
-  Archive,
 } from "lucide-react";
 import {
   useContractClientCandidate,
@@ -80,8 +80,6 @@ import {
 } from "@/components/app/v3";
 import { ContractStatsBar } from "@/components/app/contracts/ContractStatsBar";
 import { ContractLinkConfirmationsNotice } from "@/components/app/contracts/ContractLinkConfirmationsNotice";
-import { ConnectedContractBackupManager as ContractBackupManager } from "@/components/app/contracts/ContractBackupManager";
-import { useEformsignBackupAccess } from "@/hooks/useEformsignBackups";
 import { ContractAutomationsManager } from "@/components/app/contracts/ContractAutomationsManager";
 import type { StatusType } from "@/components/app/v3";
 import { isBranchContextAligned, useActiveBranchId } from "@/features/system-templates/branch-context";
@@ -428,7 +426,6 @@ const NAV_SECTIONS = [
   { id: "documents", label: "전자문서 목록", icon: FileText, disabled: true },
   { id: "notifications", label: "알림 설정", icon: Bell, disabled: true },
   { id: "automations", label: "자동화", icon: Workflow },
-  { id: "backup", label: "전자문서 백업", icon: Archive },
 ] as const;
 
 type SectionId = (typeof NAV_SECTIONS)[number]["id"];
@@ -558,7 +555,7 @@ export default function ContractsPage() {
   const statsHasData = isStatsBranchContextReady && statusCounts !== undefined;
   const isStatsRefreshing = isStatsBranchContextReady && statusCountsQuery.isFetching;
   const isServiceRecordListLoading = isInitialLoading;
-  const backupAccess = useEformsignBackupAccess();
+
   // Search happens server-side (it is part of the query key), so what the
   // server returns is what renders — total_rows/hasNextPage describe the
   // searched set and pagination stops when the matches run out.
@@ -731,7 +728,7 @@ export default function ContractsPage() {
   return (
     <PageSection name="contracts">
       {/* TODO: 통계 카운트는 아직 제공기록지 문서를 포함한다. 후속 작업에서 통계 엔드포인트를 분리한다. */}
-      {activeSection !== 'backup' && (<ContractStatsBar
+      <ContractStatsBar
         name="contracts" density="responsive-square"
         showDocumentJobs={true} statsError={statsError} statsHasData={statsHasData} isStatsRefreshing={isStatsRefreshing}
         isLoading={isStatsLoading} onRetryStats={isAuthenticated && isStatsBranchContextReady ? () => void statusCountsQuery.refetch() : undefined}
@@ -742,7 +739,7 @@ export default function ContractsPage() {
           { icon: FileText, value: stats?.drafting ?? "—", label: "작성 대기중", counter: "건" },
           { icon: AlertTriangle, value: stats?.expired ?? "—", label: "기간 만료", counter: "건", colorIndex: 3 },
         ]}
-      />)}
+      />
 
       {activeSection === "maternity" && <ContractLinkConfirmationsNotice />}
       <div
@@ -752,12 +749,10 @@ export default function ContractsPage() {
       >
         <SectionNav
           data-component="desktop_contracts_sections_section-nav"
-          items={NAV_SECTIONS.filter(item => item.id !== 'backup' || backupAccess.isManager)}
+          items={NAV_SECTIONS}
           activeId={activeSection}
           onSelect={(id) => {
             setRegisterClientDocumentId(null);
-            setSelectedDocId(null);
-            setSelectedServiceRecordDocId(null);
             setActiveSection(id as SectionId);
           }}
         />
@@ -1132,12 +1127,6 @@ export default function ContractsPage() {
                   <DetailEmptyState icon={Bell} message="아직 준비중입니다" />
                 </DetailPanel>
               </SplitLayout>
-            </section>
-          ) : null}
-
-          {activeSection === "backup" && backupAccess.isManager ? (
-            <section data-component="desktop_contracts_sections_section-content_backup-section" className="flex flex-1 min-h-0 flex-col">
-              <ContractBackupManager dataComponent="desktop_contracts_sections_section-content_backup-section_manager" />
             </section>
           ) : null}
 

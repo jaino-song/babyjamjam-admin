@@ -1827,19 +1827,6 @@
           "ChatWorkspaceStats"
         ],
         "note": "Branch-aligned live chat statistics; reuses DocumentJobsStatMini and backend contractsNotSent/serviceEnd counts."
-      },
-      {
-        "name": "DocumentMilestoneFilterDialog",
-        "layer": "organism",
-        "import": "@/components/app/ui/DocumentMilestoneFilterDialog",
-        "file": "frontend/src/components/app/ui/DocumentMilestoneFilterDialog.tsx",
-        "exports": [
-          "DocumentMilestoneFilterDialog",
-          "DocumentMilestoneScopeSummary"
-        ],
-        "replaces": [
-          "document milestone scope filter dialogs"
-        ]
       }
     ],
     "mobile": [

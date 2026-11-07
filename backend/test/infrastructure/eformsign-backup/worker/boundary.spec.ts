@@ -12,16 +12,6 @@ const ALLOWED_MODULE_FILES = [
     "domain/eformsign-backup/source-evidence.ts",
     "domain/eformsign-backup/export/constants.ts",
     "domain/eformsign-backup/export/cursor.ts",
-    "domain/eformsign-backup/manual-backup-control.ts",
-    "domain/eformsign-backup/manual-backup-constants.ts",
-    "domain/eformsign-backup/manual-backup-scope.ts",
-    "domain/eformsign-backup/manual-backup-run.ts",
-    "domain/eformsign-backup/export/errors.ts",
-    "domain/eformsign-backup/export/types.ts",
-    "domain/eformsign-backup/export/classification.ts",
-    "domain/constants/eformsign-doc-status.constants.ts",
-    "domain/utils/eformsign-status-code.ts",
-    "infrastructure/eformsign-backup/execution-effect-fence.ts",
 ];
 
 /** Contract W1: the exact import allowlist of a worker runtime file. */
@@ -33,19 +23,7 @@ const ALLOWED_BARE: Array<string | RegExp> = [
     "domain/eformsign-backup/export/cursor",
     /^domain\/eformsign-backup\/worker(\/.*)?$/,
     "infrastructure/eformsign-backup/local-artifact-archive",
-    "domain/eformsign-backup/manual-backup-control",
-    "domain/eformsign-backup/manual-backup-constants",
-    "domain/eformsign-backup/manual-backup-scope",
-    "domain/eformsign-backup/manual-backup-run",
-    "domain/eformsign-backup/export/errors",
-    "domain/eformsign-backup/export/types",
-    "domain/eformsign-backup/export/classification",
-    "domain/constants/eformsign-doc-status.constants",
-    "domain/utils/eformsign-status-code",
-    "infrastructure/eformsign-backup/execution-effect-fence",
 ];
-const MANUAL_DELIVERY_STORE = "infrastructure/eformsign-backup/worker/manual-delivery-store.ts";
-const WORKER_CLI = "infrastructure/eformsign-backup/worker/cli.ts";
 const FORBIDDEN_UNLINK = /(^|[^A-Za-z0-9_$])(unlink|unlinkSync|rmdir|rmdirSync|rmSync|rm)\s*\(|\.(unlink|rmdir|rm)\b|\b(unlink|rmdir|rmSync)\b/;
 const FORBIDDEN_EXCEPTIONS = /\b(BadRequest|NotFound|Conflict|Forbidden|Unauthorized|InternalServerError|ServiceUnavailable|BadGateway|Http)Exception\b/;
 
@@ -109,34 +87,16 @@ const RAW_PROCESS_PATTERNS = [
  * Every use of `process` must be `process.<allowed member>`. Anything else is a violation: another
  * member (env, cwd, binding...), a bracket access, destructuring, aliasing, or passing `process`
  * around. `globalThis` and `global` are banned outright because they reach `process` by another name.
- * Only the manual delivery store may additionally read direct `process.platform` for its Linux guard.
  * Takes RAW source: the member check runs on the comment-stripped text, and the raw patterns run on
  * the text as written, so a regex literal that fools the stripper cannot hide an access.
  */
-function processViolations(raw: string, file?: string): string[] {
-    if (file === WORKER_CLI) {
-        // Command data cannot name the process binding. Mask only exact, unescaped AST tokens;
-        // comments, regexes, templates and every other spelling remain visible to both scans.
-        const sf = ts.createSourceFile("cli.ts", raw, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
-        const spans: Array<{ start: number; end: number }> = [];
-        const visit = (node: ts.Node): void => {
-            if (ts.isStringLiteral(node) && node.text === "process-pending") {
-                const start = node.getStart(sf);
-                const token = raw.slice(start, node.end);
-                if (token === '"process-pending"' || token === "'process-pending'") spans.push({ start, end: node.end });
-            }
-            ts.forEachChild(node, visit);
-        };
-        visit(sf);
-        for (const { start, end } of spans) raw = raw.slice(0, start) + " ".repeat(end - start) + raw.slice(end);
-    }
+function processViolations(raw: string): string[] {
     const source = stripComments(raw);
     const hits: string[] = [];
     for (const match of source.matchAll(/(?<![\w$])process(?![\w$])/g)) {
         const member = /^\s*\??\.\s*([A-Za-z_$][\w$]*)/.exec(source.slice(match.index! + match[0].length));
         if (!member) hits.push(`process used other than as process.<member>: ${source.slice(match.index!, match.index! + 24).trim()}`);
-        else if (!ALLOWED_PROCESS_MEMBERS.includes(member[1]!)
-            && !(file === MANUAL_DELIVERY_STORE && member[1] === "platform" && /^\s*\.\s*platform\b/.test(member[0]))) hits.push(`process.${member[1]}`);
+        else if (!ALLOWED_PROCESS_MEMBERS.includes(member[1]!)) hits.push(`process.${member[1]}`);
     }
     for (const match of source.matchAll(/(?<![\w$])(globalThis|global)(?![\w$])/g)) hits.push(match[1]!);
     for (const pattern of RAW_PROCESS_PATTERNS) if (pattern.test(raw)) hits.push(`raw ${pattern.source}`);
@@ -199,30 +159,15 @@ const DATA_ALLOWLIST: Array<{ file: string; text: string; reason: string }> = [
         text: '["__proto__", "constructor", "prototype"].includes(key)',
         reason: "prototype-pollution guard: the strings are keys the canonicaliser rejects, never used to read a member",
     },
-    {
-        file: "infrastructure/eformsign-backup/worker/ledger-canonical-json.ts",
-        text: '["__proto__", "constructor", "prototype"].includes(key)',
-        reason: "JSON prototype-pollution reject guard: these keys are rejected data, never member access",
-    },
 ];
 
-/** Default Reflect permissions; the store-only direct error-code read is checked separately below. */
+/** `Reflect` is allowed only as the receiver of a direct `Reflect.ownKeys(...)` / `Reflect.has(...)` call, which name keys and reach nothing. */
 const SAFE_REFLECT_MEMBERS = new Set(["ownKeys", "has"]);
 
-function isStoreReflectCodeUse(node: ts.Identifier, file?: string): boolean {
+function isSafeReflectUse(node: ts.Identifier): boolean {
     const access = node.parent;
-    if (file !== MANUAL_DELIVERY_STORE || !ts.isPropertyAccessExpression(access) || access.expression !== node
-        || access.name.text !== "get" || access.questionDotToken) return false;
-    const call = access.parent;
-    return ts.isCallExpression(call) && call.expression === access && !call.questionDotToken && call.arguments.length === 2
-        && ts.isIdentifier(call.arguments[0]!) && call.arguments[0]!.text === "error"
-        && ts.isStringLiteral(call.arguments[1]!) && call.arguments[1]!.text === "code";
-}
-
-function isSafeReflectUse(node: ts.Identifier, file?: string): boolean {
-    const access = node.parent;
-    return (ts.isPropertyAccessExpression(access) && access.expression === node && SAFE_REFLECT_MEMBERS.has(access.name.text)
-        && ts.isCallExpression(access.parent) && access.parent.expression === access) || isStoreReflectCodeUse(node, file);
+    return ts.isPropertyAccessExpression(access) && access.expression === node && SAFE_REFLECT_MEMBERS.has(access.name.text)
+        && ts.isCallExpression(access.parent) && access.parent.expression === access;
 }
 
 /** True where an identifier declares a binding of any kind that could shadow a name (a catch variable is a VariableDeclaration). */
@@ -321,7 +266,7 @@ function isStringExpressionCandidate(node: ts.Node): boolean {
  *    `.call`), every `module` read as a value (`module.require`, `module["require"]`), and every
  *    call of a property named `require` on any receiver, and every `eval` / `arguments` / `Function`
  *    read as a value, and every use of `Reflect` other than a direct `Reflect.ownKeys(...)` /
- *    `Reflect.has(...)` call (or the store's two exact error-code reads), in `violations`;
+ *    `Reflect.has(...)` call, in `violations`;
  *  - an `import(x)` / `require(x)` whose argument is statically known is resolved and checked against
  *    the allowlist as if it were a literal.
  *
@@ -335,16 +280,15 @@ function isStringExpressionCandidate(node: ts.Node): boolean {
  *    `DATA_ALLOWLIST` entries.
  * Names computed at RUN TIME (from input, I/O, a function result, a `let`, a parameter) are out of scope by
  * design: this test guards the worker against accidental coupling to Nest, Prisma and the environment, not
- * against hostile code. Pass `file` to apply its DATA/Reflect exceptions; their counts must still match.
+ * against hostile code. Pass `file` to apply that file's `DATA_ALLOWLIST` entries; `allowanceUses` counts them.
  */
-function analyzeLoads(source: string, file?: string): { specifiers: string[]; violations: string[]; allowanceUses: Map<string, number>; reflectCodeUses: number } {
+function analyzeLoads(source: string, file?: string): { specifiers: string[]; violations: string[]; allowanceUses: Map<string, number> } {
     const sf = ts.createSourceFile("scan.ts", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
     const specs: string[] = [];
     const violations: string[] = [];
     const staticString = makeStaticString(sf);
     const allowances = DATA_ALLOWLIST.filter((entry) => entry.file === file);
     const allowanceUses = new Map<string, number>();
-    let reflectCodeUses = 0;
     /** Reports a banned name unless an enclosing expression is an allowlisted data expression. */
     const reportName = (node: ts.Node, message: string): void => {
         if (inTypePosition(node)) return;
@@ -394,14 +338,13 @@ function analyzeLoads(source: string, file?: string): { specifiers: string[]; vi
                 violations.push(`.require( called on a receiver: ${callee.getText(sf).slice(0, 24)}`);
             }
         } else if (ts.isIdentifier(node)) {
-            if (node.text === "Reflect" && isStoreReflectCodeUse(node, file)) reflectCodeUses += 1;
             if (node.text === "constructor") reportName(node, `the name constructor: ${node.parent.getText(sf).slice(0, 24)}`);
             else if (node.text === "createRequire") violations.push("createRequire");
             else if (node.text === "require" && !isPropertyName(node) && !isStaticRequireCallee(node, staticString)) {
                 violations.push(`require used other than as require("literal"): ${node.parent.getText(sf).slice(0, 24)}`);
             } else if (node.text === "module" && !isPropertyName(node) && !isDeclarationName(node)) {
                 violations.push(`module used as a value: ${node.parent.getText(sf).slice(0, 24)}`);
-            } else if (node.text === "Reflect" && !isPropertyName(node) && !isDeclarationName(node) && !isTypeReferenceName(node) && !isSafeReflectUse(node, file)) {
+            } else if (node.text === "Reflect" && !isPropertyName(node) && !isDeclarationName(node) && !isTypeReferenceName(node) && !isSafeReflectUse(node)) {
                 violations.push(`Reflect used other than as Reflect.ownKeys(...) / Reflect.has(...): ${node.parent.getText(sf).slice(0, 24)}`);
             } else if (DYNAMIC_CODE_NAMES.has(node.text) && !isPropertyName(node) && !isDeclarationName(node) && !isTypeReferenceName(node)) {
                 violations.push(`${node.text} used as a value: ${node.parent.getText(sf).slice(0, 24)}`);
@@ -410,11 +353,7 @@ function analyzeLoads(source: string, file?: string): { specifiers: string[]; vi
         ts.forEachChild(node, visit);
     };
     visit(sf);
-    for (const entry of allowances) {
-        if (allowanceUses.get(entry.text) !== 1 || source.split(entry.text).length - 1 !== 1) violations.push(`DATA allowance must occur and be used exactly once: ${entry.text}`);
-    }
-    if (file === MANUAL_DELIVERY_STORE && reflectCodeUses !== 2) violations.push(`Reflect.get(error, "code") must occur exactly twice: ${reflectCodeUses}`);
-    return { specifiers: specs, violations, allowanceUses, reflectCodeUses };
+    return { specifiers: specs, violations, allowanceUses };
 }
 
 function specifiers(source: string): string[] {
@@ -424,88 +363,6 @@ function specifiers(source: string): string[] {
 /** `createRequire` and a dynamic `import(x)` / `require(x)` with a computed argument load code the specifier scan never sees. */
 function loaderViolations(source: string, file?: string): string[] {
     return analyzeLoads(source, file).violations;
-}
-
-const DELETE_NAMES = new Set(["unlink", "unlinkSync", "rmdir", "rmdirSync", "rmSync", "rm"]);
-
-/** Preserve the original atomic-temp exception. The store gets only one bound, direct, anchored call.
- * AST inspection also refuses aliases/computed deletion; comments describing unlink are not operations.
- * Runtime descriptor privacy is established by the separate store regressions, not this syntax check.
- */
-function deletionViolations(source: string, file: string): string[] {
-    if (file === "infrastructure/eformsign-backup/worker/atomic-file.ts") return [];
-    const sf = ts.createSourceFile("scan.ts", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
-    const staticString = makeStaticString(sf);
-    const hits: string[] = [];
-    const store = file === MANUAL_DELIVERY_STORE;
-    let unlinkBindings = 0;
-    const countBindings = (node: ts.Node): void => {
-        if (ts.isIdentifier(node) && node.text === "unlinkSync" && declaresName(node)) unlinkBindings += 1;
-        ts.forEachChild(node, countBindings);
-    };
-    countBindings(sf);
-    const isUnlinkImport = (node: ts.Identifier): boolean => {
-        const spec = node.parent;
-        if (!ts.isImportSpecifier(spec) || spec.name !== node || spec.propertyName || spec.isTypeOnly) return false;
-        const bindings = spec.parent;
-        const clause = bindings.parent;
-        const declaration = clause.parent;
-        return ts.isImportClause(clause) && !clause.isTypeOnly && ts.isImportDeclaration(declaration)
-            && ts.isStringLiteral(declaration.moduleSpecifier) && declaration.moduleSpecifier.text === "node:fs";
-    };
-    let importedUnlink = false;
-    const findImport = (node: ts.Node): void => {
-        if (ts.isIdentifier(node) && node.text === "unlinkSync" && isUnlinkImport(node)) importedUnlink = true;
-        ts.forEachChild(node, findImport);
-    };
-    findImport(sf);
-    const isExactRemoval = (node: ts.Identifier): boolean => {
-        const call = node.parent;
-        if (!store || !importedUnlink || unlinkBindings !== 1 || !ts.isCallExpression(call) || call.expression !== node
-            || call.questionDotToken || !ts.isExpressionStatement(call.parent) || call.arguments.length !== 1
-            || !ts.isIdentifier(call.arguments[0]!) || call.arguments[0]!.text !== "file") return false;
-        let nearest: ts.Node | undefined = call.parent;
-        while (nearest && !ts.isFunctionLike(nearest)) nearest = nearest.parent;
-        if (!nearest || !ts.isMethodDeclaration(nearest) || !ts.isIdentifier(nearest.name) || nearest.name.text !== "removeExact"
-            || !nearest.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.PrivateKeyword)
-            || !ts.isClassDeclaration(nearest.parent) || nearest.parent.name?.text !== "ManualDeliveryStore") return false;
-        const fileBindings: ts.Identifier[] = [];
-        const findFile = (child: ts.Node): void => {
-            if (ts.isIdentifier(child) && child.text === "file" && declaresName(child)) fileBindings.push(child);
-            ts.forEachChild(child, findFile);
-        };
-        findFile(nearest);
-        if (fileBindings.length !== 1) return false;
-        const declaration = fileBindings[0]!.parent;
-        if (!ts.isVariableDeclaration(declaration) || !declaration.initializer || !ts.isVariableDeclarationList(declaration.parent)
-            || !(declaration.parent.flags & ts.NodeFlags.Const) || !ts.isVariableStatement(declaration.parent.parent)
-            || declaration.parent.parent.parent !== nearest.body || declaration.end >= call.pos) return false;
-        const anchor = declaration.initializer;
-        return ts.isCallExpression(anchor) && !anchor.questionDotToken && ts.isPropertyAccessExpression(anchor.expression)
-            && !anchor.expression.questionDotToken && anchor.expression.expression.kind === ts.SyntaxKind.ThisKeyword
-            && anchor.expression.name.text === "recordPath" && anchor.arguments.length === 2
-            && ts.isIdentifier(anchor.arguments[0]!) && anchor.arguments[0]!.text === "context"
-            && ts.isPropertyAccessExpression(anchor.arguments[1]!) && !anchor.arguments[1]!.questionDotToken
-            && ts.isIdentifier(anchor.arguments[1]!.expression) && anchor.arguments[1]!.expression.text === "record"
-            && anchor.arguments[1]!.name.text === "name";
-    };
-    let removalUses = 0;
-    const visit = (node: ts.Node): void => {
-        if (ts.isIdentifier(node) && DELETE_NAMES.has(node.text)) {
-            if (store && node.text === "unlinkSync" && unlinkBindings === 1 && isUnlinkImport(node)) return;
-            if (node.text === "unlinkSync" && isExactRemoval(node)) removalUses += 1;
-            else hits.push(`deletion name: ${node.getText(sf)}`);
-        } else if (isStringExpressionCandidate(node)) {
-            const value = staticString(node);
-            if (value !== undefined && DELETE_NAMES.has(value)) hits.push(`computed deletion name: ${value}`);
-        }
-        ts.forEachChild(node, visit);
-    };
-    visit(sf);
-    // The raw legacy gate remains in force for every file without the store's syntax exception.
-    if (!store && FORBIDDEN_UNLINK.test(source)) hits.push("forbidden unlink/remove");
-    if (store && removalUses !== 1) hits.push(`private removeExact unlinkSync(file) must occur exactly once: ${removalUses}`);
-    return hits;
 }
 
 function insideRuntime(file: string, specifier: string): boolean {
@@ -846,150 +703,10 @@ describe("T-WRK-14: worker runtime boundary (static scan)", () => {
         for (const expected of [
             "infrastructure/eformsign-backup/local-artifact-archive.ts", "domain/eformsign-backup/source-evidence.ts",
             "domain/eformsign-backup/export/constants.ts", "domain/eformsign-backup/export/cursor.ts",
-            "domain/eformsign-backup/manual-backup-control.ts", "domain/eformsign-backup/manual-backup-constants.ts",
-            "domain/eformsign-backup/manual-backup-scope.ts", "domain/eformsign-backup/manual-backup-run.ts",
-            "domain/eformsign-backup/export/errors.ts", "domain/eformsign-backup/export/types.ts",
-            "domain/eformsign-backup/export/classification.ts", "domain/constants/eformsign-doc-status.constants.ts",
-            "domain/utils/eformsign-status-code.ts", "infrastructure/eformsign-backup/execution-effect-fence.ts",
         ]) {
             expect(files).toContain(expected);
             expect(scanned.has(expected)).toBe(true);
         }
-    });
-
-    it("should allow each exact approved pure import and its relative/type-only transitive edges", () => {
-        const file = "infrastructure/eformsign-backup/worker/x.ts";
-        for (const specifier of [
-            "domain/eformsign-backup/manual-backup-control", "domain/eformsign-backup/manual-backup-constants",
-            "domain/eformsign-backup/manual-backup-scope", "domain/eformsign-backup/manual-backup-run",
-            "domain/eformsign-backup/export/errors", "domain/eformsign-backup/export/types", "domain/eformsign-backup/export/classification",
-            "domain/constants/eformsign-doc-status.constants", "domain/utils/eformsign-status-code",
-            "infrastructure/eformsign-backup/execution-effect-fence",
-        ]) {
-            expect(allowed(file, specifier)).toBe(true);
-            expect(allowed(file, `${specifier}/index`)).toBe(false);
-            expect(specifiers(`import type { X } from "${specifier}";`)).toEqual([specifier]);
-        }
-        for (const [from, edges] of [
-            ["domain/eformsign-backup/manual-backup-control.ts", ["./export/constants", "./manual-backup-scope", "./manual-backup-run", "./manual-backup-constants", "./worker/manual-protocol", "./worker/schema-fields"]],
-            ["domain/eformsign-backup/manual-backup-constants.ts", ["./worker/manual-protocol"]],
-            ["domain/eformsign-backup/manual-backup-run.ts", ["./export/types", "./export/classification", "./export/constants", "./manual-backup-scope"]],
-            ["domain/eformsign-backup/export/errors.ts", ["./types"]],
-            ["domain/eformsign-backup/export/types.ts", ["./classification", "./constants", "./errors"]],
-            ["domain/eformsign-backup/export/classification.ts", ["./constants", "../source-evidence", "domain/constants/eformsign-doc-status.constants", "domain/utils/eformsign-status-code"]],
-            ["domain/constants/eformsign-doc-status.constants.ts", ["domain/utils/eformsign-status-code"]],
-            ["infrastructure/eformsign-backup/worker/atomic-file.ts", ["../execution-effect-fence"]],
-        ] as Array<[string, string[]]>) {
-            for (const edge of edges) {
-                expect(allowed(from, edge)).toBe(true);
-                expect(specifiers(`import type { X } from "${edge}";`)).toEqual([edge]);
-            }
-        }
-    });
-
-    it("should refuse forbidden bridges and loader/process access from every approved non-worker module", () => {
-        for (const file of ALLOWED_MODULE_FILES) {
-            const source = scanned.get(file)!;
-            for (const bad of ["@prisma/client", "@nestjs/common", "app.module", "application/services/x", "infrastructure/database/prisma.service", "domain/utils/x", "domain/eformsign-backup/export/evidence", "domain/eformsign-backup/export/index"]) {
-                for (const bridge of [`import type { X } from "${bad}";`, `export * from "${bad}";`, `type T = import("${bad}").X;`]) {
-                    expect(specifiers(`${source}\n${bridge}`).filter((specifier) => !allowed(file, specifier))).toContain(bad);
-                }
-            }
-            const relative = path.relative(path.dirname(file), "infrastructure/database/prisma.service");
-            expect(allowed(file, relative.startsWith(".") ? relative : `./${relative}`)).toBe(false);
-            expect(loaderViolations(`${source}\nconst load = require; load(name);`, file)).not.toEqual([]);
-            expect(processViolations(`${source}\nprocess.env.SECRET;`, file)).not.toEqual([]);
-            expect(processViolations(`${source}\nprocess.platform;`, file)).not.toEqual([]);
-        }
-    });
-
-    it("should keep data guards single-use and refuse constructor/loader access in the same allowlisted file", () => {
-        for (const entry of DATA_ALLOWLIST) {
-            expect(loaderViolations("export {};", entry.file)).toEqual(expect.arrayContaining([expect.stringContaining("DATA allowance must occur")]));
-            expect(loaderViolations(`${entry.text}; ${entry.text};`, entry.file)).toEqual(expect.arrayContaining([expect.stringContaining("DATA allowance must occur")]));
-            for (const bad of ["x.constructor", "const C = x.constructor; C(payload);", 'x["con" + "structor"]', "const r = require; r(name);", 'const k = "require"; target[k](name);', "require(name)"]) {
-                expect(loaderViolations(`${entry.text}; ${bad}`, entry.file)).not.toEqual([]);
-            }
-        }
-    });
-
-    it("should allow exactly two direct store error-code Reflect reads and refuse every wider shape", () => {
-        const read = 'Reflect.get(error, "code");';
-        const source = `${read}\n${read}`;
-        expect(analyzeLoads(source, MANUAL_DELIVERY_STORE).reflectCodeUses).toBe(2);
-        expect(loaderViolations(source, MANUAL_DELIVERY_STORE)).toEqual([]);
-        expect(analyzeLoads(scanned.get(MANUAL_DELIVERY_STORE)!, MANUAL_DELIVERY_STORE).reflectCodeUses).toBe(2);
-        expect(loaderViolations(source)).not.toEqual([]);
-        expect(loaderViolations(source, "infrastructure/eformsign-backup/worker/manual-control-client.ts")).not.toEqual([]);
-        for (const changed of ["export {};", read, `${source}\n${read}`]) {
-            expect(loaderViolations(changed, MANUAL_DELIVERY_STORE)).toEqual(expect.arrayContaining([expect.stringContaining("must occur exactly twice")]));
-        }
-        for (const bad of [
-            'Reflect["get"](error, "code")', 'Reflect.get(error, key)', 'Reflect.get(error, "co" + "de")',
-            'Reflect.get(other, "code")', 'Reflect.get(error, "code", receiver)', 'Reflect.get(...args)',
-            'Reflect.get?.(error, "code")', 'Reflect?.get(error, "code")', 'Reflect.get(error, "constructor")',
-            'Reflect.get(error, "require")', 'Reflect.get(globalThis, "code")', 'Reflect.get(process, "code")',
-            "const R = Reflect; R.get(error, key)", "const get = Reflect.get; get(error, key)", "const { get } = Reflect;",
-            "Reflect.construct(F, [])", "Reflect.apply(f, null, [])",
-        ]) expect(loaderViolations(`${source}\n${bad}`, MANUAL_DELIVERY_STORE)).not.toEqual([]);
-    });
-
-    it("should allow only direct store process.platform while retaining all environment and alias denials", () => {
-        const guard = 'if (process.platform !== "linux") throw new Error("unsupported-filesystem");';
-        expect(processViolations(guard, MANUAL_DELIVERY_STORE)).toEqual([]);
-        expect(processViolations(guard)).not.toEqual([]);
-        expect(processViolations(guard, "infrastructure/eformsign-backup/worker/manual-control-client.ts")).not.toEqual([]);
-        expect(ALLOWED_PROCESS_MEMBERS).not.toContain("platform");
-        for (const bad of [
-            "process.env.SECRET", 'process["platform"]', 'process["plat" + "form"]', "process[key]", "process?.platform",
-            "const p = process; p.platform", "const { platform } = process", "const { env } = process;", "globalThis.process.platform",
-            'Reflect.get(process, "env")', "process/* hidden */.env", "process.cwd()",
-            'const re = /^https?:\\/\\//; process.env.SECRET;',
-        ]) expect(processViolations(`${guard}\n${bad}`, MANUAL_DELIVERY_STORE)).not.toEqual([]);
-    });
-
-    it("should permit exactly one imported private anchored store removal and reject stale or wider deletion", () => {
-        const fixture = `import { unlinkSync } from "node:fs";
-            class ManualDeliveryStore {
-                private removeExact(context: Context, record: RecordFile): void {
-                    const file = this.recordPath(context, record.name);
-                    unlinkSync(file);
-                }
-            }`;
-        expect(deletionViolations(fixture, MANUAL_DELIVERY_STORE)).toEqual([]);
-        expect(deletionViolations(scanned.get(MANUAL_DELIVERY_STORE)!, MANUAL_DELIVERY_STORE)).toEqual([]);
-        expect(deletionViolations(fixture, "infrastructure/eformsign-backup/worker/other.ts")).not.toEqual([]);
-        for (const changed of [
-            fixture.replace("unlinkSync(file);", ""),
-            fixture.replace("unlinkSync(file);", "unlinkSync(file); unlinkSync(file);"),
-            fixture.replace("removeExact(", "removeOther("),
-            fixture.replace("private removeExact", "removeExact"),
-            fixture.replace("ManualDeliveryStore", "OtherStore"),
-            fixture.replace("unlinkSync(file);", "unlinkSync(other);"),
-            fixture.replace("this.recordPath(context, record.name)", "arbitraryPath"),
-            fixture.replace("this.recordPath(context, record.name)", "this.recordPath(context, other.name)"),
-            fixture.replace("unlinkSync(file);", "const remove = unlinkSync; remove(file);"),
-            fixture.replace("unlinkSync(file);", 'fs["unlinkSync"](file);'),
-            fixture.replace("unlinkSync(file);", 'fs["unlink" + "Sync"](file);'),
-            fixture.replace("unlinkSync(file);", "unlinkSync?.(file);"),
-            fixture.replace("unlinkSync(file);", "function nested() { unlinkSync(file); }"),
-            fixture.replace("unlinkSync(file);", "((file) => unlinkSync(file))(other);"),
-            fixture.replace("const file = this.recordPath(context, record.name);", "function nested() { const file = this.recordPath(context, record.name); }"),
-            fixture.replace('from "node:fs"', 'from "other"'),
-            fixture.replace("{ unlinkSync }", "{ unlinkSync as remove }"),
-            fixture.replace("{ unlinkSync }", "type { unlinkSync }"),
-            fixture.replace("unlinkSync(file);", "const unlinkSync = remove; unlinkSync(file);"),
-        ]) expect(deletionViolations(changed, MANUAL_DELIVERY_STORE)).not.toEqual([]);
-        // Keep a valid permitted call while adding another delete: the count alone cannot catch these.
-        for (const bad of [
-            "unlinkSync(other)", "fs.unlink(file)", "fs.unlinkSync(file)", "fs.rm(file, { recursive: true })", "rmSync(file)",
-            "rmdir(file)", "fs.rmdirSync(file)", 'fs["rm"](file)', 'const remove = fs["unlinkSync"]; remove(file)',
-            'const key = "rm"; fs[key](file)', 'import { rm as remove } from "node:fs"; remove(file);',
-        ]) expect(deletionViolations(`${fixture}\nfunction other() { ${bad}; }`, MANUAL_DELIVERY_STORE)).not.toEqual([]);
-        expect(deletionViolations(fixture.replace("unlinkSync(file);", ""), MANUAL_DELIVERY_STORE))
-            .toEqual(expect.arrayContaining([expect.stringContaining("must occur exactly once: 0")]));
-        expect(deletionViolations(fixture.replace("unlinkSync(file);", "unlinkSync(file); unlinkSync(file);"), MANUAL_DELIVERY_STORE))
-            .toEqual(expect.arrayContaining([expect.stringContaining("must occur exactly once: 2")]));
     });
 
     it("should load no module through createRequire or a computed import()/require() in any runtime file", () => {
@@ -1000,74 +717,9 @@ describe("T-WRK-14: worker runtime boundary (static scan)", () => {
 
     it("should touch no process member outside the allowlist, and never read process.env", () => {
         const offenders: string[] = [];
-        for (const [file, source] of scanned) for (const hit of processViolations(source, file)) offenders.push(`${file}: ${hit}`);
+        for (const [file, source] of scanned) for (const hit of processViolations(source)) offenders.push(`${file}: ${hit}`);
         expect(offenders).toEqual([]);
         expect(ALLOWED_PROCESS_MEMBERS).not.toContain("env");
-    });
-
-    it("should allow only exact quoted command literals in the CLI, including the command type", () => {
-        for (const good of [
-            "const command = 'process-pending';",
-            'const command = "process-pending";',
-            'type Command = "run" | "process-pending";',
-        ]) {
-            expect(processViolations(good, WORKER_CLI)).toEqual([]);
-            expect(processViolations(good)).not.toEqual([]);
-            expect(processViolations(good, MANUAL_DELIVERY_STORE)).not.toEqual([]);
-            expect(processViolations(good, `${WORKER_CLI}.other`)).not.toEqual([]);
-            expect(processViolations(`${good}\nprocess.env.SECRET;`, WORKER_CLI)).not.toEqual([]);
-        }
-        expect(processViolations('const command = "process-pending"; process.stdout.write(command);', WORKER_CLI)).toEqual([]);
-    });
-
-    it("should account for all eight exact command literals in the full CLI source", () => {
-        const source = scanned.get(WORKER_CLI)!;
-        const sf = ts.createSourceFile("cli.ts", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
-        const literals: ts.StringLiteral[] = [];
-        const visit = (node: ts.Node): void => {
-            if (ts.isStringLiteral(node) && node.text === "process-pending") literals.push(node);
-            ts.forEachChild(node, visit);
-        };
-        visit(sf);
-        expect(literals).toHaveLength(8);
-        expect(literals.filter(node => ts.isLiteralTypeNode(node.parent))).toHaveLength(1);
-        expect([...source.matchAll(/['"]process-pending['"]/g)]).toHaveLength(8);
-        expect(processViolations(source, WORKER_CLI)).toEqual([]);
-        expect(processViolations(source)).not.toEqual([]);
-        for (const bad of [
-            "process.env.SECRET;",
-            'const re = /^https?:\\/\\//; process.env.SECRET;',
-            'const re = /x\\/*/; process.env.SECRET; /* phantom close */',
-        ]) expect(processViolations(`${source}\n${bad}`, WORKER_CLI)).not.toEqual([]);
-        for (const node of literals) {
-            expect(["'process-pending'", '"process-pending"']).toContain(node.getText(sf));
-            const changed = source.slice(0, node.getStart(sf)) + '"process"' + source.slice(node.end);
-            expect(processViolations(changed, WORKER_CLI)).not.toEqual([]);
-        }
-    });
-
-    it("should retain CLI process and raw comment/regex denials beside permitted command data", () => {
-        const good = 'const command = "process-pending";';
-        for (const bad of [
-            'const name = "process";', 'const name = "process.env";',
-            'const name = "process" + "-pending";', 'const name = `process-pending`;',
-            'const name = `process-${"pending"}`;', 'const name = `${process}-pending`;', 'const name = "process\\u002dpending";',
-            'const name = "process\\x2dpending";', 'const processPending = process;',
-            'process.env.SECRET;', 'process["env"];', 'process.cwd();',
-            'const p = process;', 'const { env } = process;', 'globalThis.process.env.SECRET;',
-            'const re = /process-pending/;',
-            '// "process-pending" globalThis', '/* "process-pending" global */',
-            'const re = /^https?:\\/\\//; const command = "process-pending"; process.env.SECRET;',
-            'const re = /x\\/*/; const command = "process-pending"; process.env.SECRET; /* phantom close */',
-        ]) {
-            expect(processViolations(bad)).not.toEqual([]);
-            expect(processViolations(`${good}\n${bad}`, WORKER_CLI)).not.toEqual([]);
-            expect(processViolations(`${good}\n${bad}`)).not.toEqual([]);
-        }
-        // The command-data exception cannot alter the separate loader/Reflect guards.
-        for (const bad of ['Reflect.get(process, "env");', 'const load = require; load(name);', 'const k = "pro" + "cess"; target[k];']) {
-            expect(loaderViolations(`${good}\n${bad}`, WORKER_CLI)).not.toEqual([]);
-        }
     });
 
     it("should refuse every way of reaching process.env (the check itself can fail)", () => {
@@ -1128,9 +780,10 @@ describe("T-WRK-14: worker runtime boundary (static scan)", () => {
         }
     });
 
-    it("should unlink or remove nothing except atomic-file.ts own temp and the store's exact private ACK binding", () => {
+    it("should unlink or remove nothing except atomic-file.ts removing its own temp file", () => {
         const offenders = [...sources]
-            .filter(([file, source]) => deletionViolations(source, file).length > 0)
+            .filter(([file]) => file !== "infrastructure/eformsign-backup/worker/atomic-file.ts")
+            .filter(([, source]) => FORBIDDEN_UNLINK.test(source))
             .map(([file]) => file);
         expect(offenders).toEqual([]);
         expect(FORBIDDEN_UNLINK.test("await fs.unlink(x)")).toBe(true);

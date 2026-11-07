@@ -1,15 +1,5 @@
-import { Module, NestModule } from "@nestjs/common";
-import { ConfigModule, ConfigService } from "@nestjs/config";
-import { HttpAdapterHost } from "@nestjs/core";
-import { EformsignManualBackupService } from "application/services/eformsign-manual-backup.service";
-import { SbEformsignBackupRunRepository } from "infrastructure/database/repositories/sb.eformsign-backup-run.repository";
-import { JwtGuard } from "infrastructure/auth/jwt.guard";
-import { BranchManagerGuard } from "infrastructure/auth/branch-manager.guard";
-import { TenantGuard } from "infrastructure/tenant/tenant.guard";
-import { TenantModule } from "infrastructure/tenant/tenant.module";
-import { EformsignManualBackupController } from "interface/controllers/eformsign-manual-backup.controller";
-import { EformsignManualBackupWorkerController } from "interface/controllers/eformsign-manual-backup-worker.controller";
-import { manualBackupErrorBoundary } from "interface/filters/eformsign-manual-backup.filter";
+import { Module } from "@nestjs/common";
+import { ConfigModule } from "@nestjs/config";
 
 import { EformsignBackupExportService } from "application/services/eformsign-backup-export.service";
 import { EformsignBackupExportGuard } from "infrastructure/auth/eformsign-backup-export.guard";
@@ -24,29 +14,13 @@ import { EformsignBackupExportController } from "interface/controllers/eformsign
  * reachable from here can repair, re-download or call out.
  */
 @Module({
-    imports: [DatabaseModule, ConfigModule, TenantModule],
-    controllers: [EformsignBackupExportController, EformsignManualBackupController, EformsignManualBackupWorkerController],
+    imports: [DatabaseModule, ConfigModule],
+    controllers: [EformsignBackupExportController],
     providers: [
         EformsignBackupExportGuard,
         SbEformsignBackupExportCredentialRepository,
         SbEformsignBackupExportRepository,
         EformsignBackupExportService,
-        JwtGuard, TenantGuard, BranchManagerGuard,
-        SbEformsignBackupRunRepository,
-        {
-            provide: EformsignManualBackupService,
-            inject: [SbEformsignBackupRunRepository, EformsignBackupExportService, ConfigService],
-            useFactory: (repository: SbEformsignBackupRunRepository, exportService: EformsignBackupExportService, config: ConfigService) =>
-                new EformsignManualBackupService(repository, exportService, config),
-        },
     ],
 })
-export class EformsignBackupExportModule implements NestModule {
-    constructor(private readonly adapterHost: HttpAdapterHost) {}
-
-    configure(): void {
-        // configure runs after body-parser registration and before Nest's final
-        // error handler. Use the adapter to preserve Express's four-arg arity.
-        this.adapterHost.httpAdapter.use(manualBackupErrorBoundary);
-    }
-}
+export class EformsignBackupExportModule {}

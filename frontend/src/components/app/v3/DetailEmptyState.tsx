@@ -4,7 +4,6 @@ import type { LucideIcon } from "lucide-react";
 import { ListEmptyState } from "./ListEmptyState";
 
 export interface DetailEmptyStateProps {
-  "data-component"?: string;
   message: string;
   icon?: LucideIcon;
   className?: string;
@@ -12,7 +11,6 @@ export interface DetailEmptyStateProps {
 }
 
 export function DetailEmptyState({
-  "data-component": dataComponent,
   message,
   icon: Icon,
   className,
@@ -20,8 +18,6 @@ export function DetailEmptyState({
 }: DetailEmptyStateProps) {
   return (
     <ListEmptyState
-      data-component={dataComponent}
-      sourceComponent="DetailEmptyState"
       icon={Icon}
       message={message}
       className={className}

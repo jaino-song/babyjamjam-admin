@@ -193,18 +193,18 @@ jobs:
           --shadow-database-url "postgresql://postgres@localhost:5432/postgres"
           --exit-code
 
-      # Generic prisma and state-integrity DB specs run on the PG16 throwaway database
-      # with HOLIDAY_REVIEW_REAL_DB=1 and STATE_INTEGRITY_REAL_DB=1. A separate database
-      # keeps `postgres` clean for the drift guard above. The three manual-backup
-      # runs/live-source/delivery suites require a private PG17 target and are excluded
-      # here; Main verifies them separately on the integrated candidate using the existing
-      # protected runner backend/scripts/run-manual-backup-real-db.mjs. The unit step
-      # above still runs their pure guard tests with the real-DB portions skipped.
+      # The specs under backend/test/prisma/*.real-db.spec.ts skip themselves unless
+      # HOLIDAY_REVIEW_REAL_DB=1, so no step above ever ran them. They need a real PostgreSQL
+      # (partial unique index, RESTRICT foreign key, advisory locks, the revision triggers) and
+      # refuse any database whose name does not contain "throwaway". The state-integrity harness
+      # specs under backend/test/integrity/ skip themselves unless STATE_INTEGRITY_REAL_DB=1 and
+      # run against the same throwaway database. A separate database keeps
+      # the `postgres` one clean for the drift guard above.
       - name: Real-database specs (holiday calendar and review)
         run: |
           psql -h localhost -U postgres -c 'CREATE DATABASE throwaway_ci'
           pnpm --filter ./backend exec prisma migrate deploy
-          pnpm --filter ./backend test --runInBand test/prisma/ test/integrity/ --testPathIgnorePatterns='/node_modules/' --testPathIgnorePatterns='manual-backup-(runs|live-source|delivery)\.real-db\.spec\.ts$'
+          pnpm --filter ./backend test --runInBand test/prisma/ test/integrity/
         env:
           CI: true
           DATABASE_URL: postgresql://postgres@localhost:5432/throwaway_ci
