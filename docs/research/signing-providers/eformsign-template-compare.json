@@ -478,7 +478,7 @@
             {
               "type": "company",
               "name": "인천 아이미래로",
-              "contact_number": "+82 1096411878",
+              "contact_number": "+82 1000009641",
               "address": "",
               "employer_identification_code": "",
               "home_page": "",
@@ -572,7 +572,7 @@
           "external_users": [
             {
               "contact": {
-                "number": "1066211878",
+                "number": "1000006621",
                 "tel": "",
                 "email": "",
                 "country_id": "+82"
@@ -585,7 +585,7 @@
             },
             {
               "contact": {
-                "number": "1066211878",
+                "number": "1000006621",
                 "tel": "",
                 "email": "",
                 "country_id": "+82"
@@ -598,7 +598,7 @@
             },
             {
               "contact": {
-                "number": "1096411878",
+                "number": "1000009641",
                 "tel": "",
                 "email": "",
                 "country_id": "+82"
@@ -1131,7 +1131,7 @@
             },
             {
               "contact": {
-                "number": "1066211878",
+                "number": "1000006621",
                 "tel": "",
                 "email": "",
                 "country_id": "+82"
@@ -1157,7 +1157,7 @@
             },
             {
               "contact": {
-                "number": "1066211878",
+                "number": "1000006621",
                 "tel": "",
                 "email": "",
                 "country_id": "+82"
@@ -1170,20 +1170,20 @@
             },
             {
               "contact": {
-                "number": "1066211878",
+                "number": "1000006621",
                 "tel": "",
                 "email": "",
                 "country_id": "+82"
               },
               "type": "personal",
-              "id": "wlsghtmeod@gmail.com",
-              "account_id": "wlsghtmeod@gmail.com",
+              "id": "qa-customer@example.test",
+              "account_id": "qa-customer@example.test",
               "name": "송진호",
-              "flexdataDisplay": "wlsghtmeod@gmail.com"
+              "flexdataDisplay": "qa-customer@example.test"
             },
             {
               "contact": {
-                "number": "1066211878",
+                "number": "1000006621",
                 "tel": "",
                 "email": "",
                 "country_id": "+82"
@@ -1742,7 +1742,7 @@
             },
             {
               "contact": {
-                "number": "1096411878",
+                "number": "1000009641",
                 "tel": "",
                 "email": "",
                 "country_id": "+82"
@@ -2916,7 +2916,7 @@
             {
               "type": "company",
               "name": "인천 아이미래로",
-              "contact_number": "+82 1096411878",
+              "contact_number": "+82 1000009641",
               "address": "",
               "employer_identification_code": "",
               "home_page": "",
@@ -3010,7 +3010,7 @@
           "external_users": [
             {
               "contact": {
-                "number": "1066211878",
+                "number": "1000006621",
                 "tel": "",
                 "email": "",
                 "country_id": "+82"
@@ -3023,7 +3023,7 @@
             },
             {
               "contact": {
-                "number": "1066211878",
+                "number": "1000006621",
                 "tel": "",
                 "email": "",
                 "country_id": "+82"
@@ -3036,7 +3036,7 @@
             },
             {
               "contact": {
-                "number": "1096411878",
+                "number": "1000009641",
                 "tel": "",
                 "email": "",
                 "country_id": "+82"
@@ -3569,7 +3569,7 @@
             },
             {
               "contact": {
-                "number": "1066211878",
+                "number": "1000006621",
                 "tel": "",
                 "email": "",
                 "country_id": "+82"
@@ -3595,7 +3595,7 @@
             },
             {
               "contact": {
-                "number": "1066211878",
+                "number": "1000006621",
                 "tel": "",
                 "email": "",
                 "country_id": "+82"
@@ -3608,20 +3608,20 @@
             },
             {
               "contact": {
-                "number": "1066211878",
+                "number": "1000006621",
                 "tel": "",
                 "email": "",
                 "country_id": "+82"
               },
               "type": "personal",
-              "id": "wlsghtmeod@gmail.com",
-              "account_id": "wlsghtmeod@gmail.com",
+              "id": "qa-customer@example.test",
+              "account_id": "qa-customer@example.test",
               "name": "송진호",
-              "flexdataDisplay": "wlsghtmeod@gmail.com"
+              "flexdataDisplay": "qa-customer@example.test"
             },
             {
               "contact": {
-                "number": "1066211878",
+                "number": "1000006621",
                 "tel": "",
                 "email": "",
                 "country_id": "+82"
@@ -4180,7 +4180,7 @@
             },
             {
               "contact": {
-                "number": "1096411878",
+                "number": "1000009641",
                 "tel": "",
                 "email": "",
                 "country_id": "+82"
