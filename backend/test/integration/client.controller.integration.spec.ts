@@ -777,6 +777,8 @@ describe("ClientController (Integration)", () => {
                         phone: undefined,
                         type: undefined,
                         duration: undefined,
+                        startDateChangeMode: undefined,
+                        actorUserId: "user-1",
                         fullPrice: undefined,
                         grant: undefined,
                         actualPrice: undefined,
