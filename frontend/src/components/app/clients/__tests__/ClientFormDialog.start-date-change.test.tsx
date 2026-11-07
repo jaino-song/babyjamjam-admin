@@ -310,4 +310,83 @@ describe("client start-date change confirmation", () => {
     expect(mockUpdateClient).toHaveBeenCalledTimes(1);
     expectNoInlineError();
   });
+
+  it.each([
+    { serviceStarted: true, recordedSessionCount: 3 },
+    { serviceStarted: false, recordedSessionCount: 0 },
+  ])("ignores a late lock for a closed session: %j", async (lock) => {
+    let rejectSave!: (cause: unknown) => void;
+    mockUpdateClient.mockImplementationOnce(() => new Promise((_, reject) => { rejectSave = reject; }));
+    const { rerender, onClose, onSuccess, onDirtyChange } = await submitChangedStartDate("dialog");
+    fireEvent.keyDown(screen.getByRole("dialog", { name: "고객 정보 수정" }), { key: "Escape" });
+    expect(onClose).toHaveBeenCalledTimes(1);
+    const callbacks = { onClose, onSuccess, onDirtyChange };
+    await act(async () => {
+      rerender(<ClientFormDialog open={false} client={null} {...callbacks} />);
+    });
+    const other = { ...client, id: 3, name: "다른 고객" };
+    await act(async () => {
+      rerender(<ClientFormDialog open client={other} {...callbacks} />);
+    });
+    fireEvent.change(screen.getByRole("textbox", { name: /주소/ }), { target: { value: "저장하지 않은 주소" } });
+    onClose.mockClear();
+    onDirtyChange.mockClear();
+
+    await act(async () => { rejectSave(lockError(lock)); });
+
+    expect(mockUpdateClient).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole("dialog", { name: startedTitle })).not.toBeInTheDocument();
+    expect(screen.queryByRole("dialog", { name: recordsTitle })).not.toBeInTheDocument();
+    expect(screen.getByRole("dialog", { name: "고객 정보 수정" })).toBeVisible();
+    expect(screen.getByRole("textbox", { name: /주소/ })).toHaveValue("저장하지 않은 주소");
+    expect(onClose).not.toHaveBeenCalled();
+    expect(onSuccess).not.toHaveBeenCalled();
+    expect(onDirtyChange).not.toHaveBeenCalled();
+    expectNoInlineError();
+  });
+
+  it.each(["success", "failure"])("ignores a stale retry's %s after another client opens", async (outcome) => {
+    let finishRetry!: (value: Client) => void;
+    let rejectRetry!: (cause: unknown) => void;
+    mockUpdateClient
+      .mockRejectedValueOnce(lockError({ serviceStarted: true, recordedSessionCount: 0 }))
+      .mockImplementationOnce(() => new Promise((resolve, reject) => {
+        finishRetry = resolve;
+        rejectRetry = reject;
+      }));
+    const { rerender, onClose, onSuccess, onDirtyChange } = await submitChangedStartDate("dialog");
+    const started = await screen.findByRole("dialog", { name: startedTitle });
+    fireEvent.click(within(started).getByRole("button", { name: "진행" }));
+    expectRetry("CONFIRM_STARTED");
+    fireEvent.keyDown(started, { key: "Escape" });
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: startedTitle })).not.toBeInTheDocument());
+    fireEvent.keyDown(screen.getByRole("dialog", { name: "고객 정보 수정" }), { key: "Escape" });
+    expect(onClose).toHaveBeenCalledTimes(1);
+    const callbacks = { onClose, onSuccess, onDirtyChange };
+    await act(async () => {
+      rerender(<ClientFormDialog open={false} client={null} {...callbacks} />);
+    });
+    const other = { ...client, id: 3, name: "다른 고객" };
+    await act(async () => {
+      rerender(<ClientFormDialog open client={other} {...callbacks} />);
+    });
+    fireEvent.change(screen.getByRole("textbox", { name: /주소/ }), { target: { value: "저장하지 않은 주소" } });
+    onClose.mockClear();
+    onDirtyChange.mockClear();
+
+    await act(async () => {
+      if (outcome === "success") finishRetry(client);
+      else rejectRetry(lockError({ serviceStarted: true, recordedSessionCount: 3 }));
+    });
+
+    expect(mockUpdateClient).toHaveBeenCalledTimes(2);
+    expect(onClose).not.toHaveBeenCalled();
+    expect(onSuccess).not.toHaveBeenCalled();
+    expect(onDirtyChange).not.toHaveBeenCalled();
+    expect(screen.getByRole("dialog", { name: "고객 정보 수정" })).toBeVisible();
+    expect(screen.getByRole("textbox", { name: /주소/ })).toHaveValue("저장하지 않은 주소");
+    expect(screen.queryByRole("dialog", { name: startedTitle })).not.toBeInTheDocument();
+    expect(screen.queryByRole("dialog", { name: recordsTitle })).not.toBeInTheDocument();
+    expectNoInlineError();
+  });
 });

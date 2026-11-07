@@ -554,6 +554,7 @@ function ClientFormContent({
     const [editedServerErrorFields, setEditedServerErrorFields] = useState<ClientFormField[]>([]);
     const [pendingDurationConfirmation, setPendingDurationConfirmation] = useState<string | null>(null);
     const [pendingStartDateChange, setPendingStartDateChange] = useState<{
+        id: number;
         dto: UpdateClientDto;
         lock: { serviceStarted: boolean; recordedSessionCount: number };
         step: "started" | "records";
@@ -1397,6 +1398,7 @@ function ClientFormContent({
     const isCalendarBlockingSubmit = (!isCalendarReady || isEndDateUnsupported) && !isLegacyNoopEdit;
 
     const handleSubmit = async (confirmedPeriod?: string) => {
+        const session = formSessionRef.current;
         if (submissionInFlightRef.current || error?.outcome === "UNKNOWN" || isCalendarBlockingSubmit) return;
         clearFormError();
 
@@ -1513,13 +1515,15 @@ function ClientFormContent({
                 try {
                     updatedClient = await updateClient.mutateAsync({ id: client.id, dto: updateDto });
                 } catch (cause: unknown) {
+                    if (!session.open || session !== formSessionRef.current) return;
                     const lock = getStartDateLock(cause);
                     if (!lock) throw cause;
                     if (!lock.serviceStarted && lock.recordedSessionCount === 0) {
-                        await retryStartDateChangeCore(client.id, updateDto, "CONFIRM_STARTED");
+                        await retryStartDateChangeCore(client.id, updateDto, "CONFIRM_STARTED", session);
                         return;
                     }
                     setPendingStartDateChange({
+                        id: client.id,
                         dto: updateDto,
                         lock,
                         step: lock.serviceStarted ? "started" : "records",
@@ -1572,27 +1576,31 @@ function ClientFormContent({
         id: number,
         rememberedDto: UpdateClientDto,
         startDateChangeMode: StartDateChangeMode,
+        session: typeof formSessionRef.current,
     ) => {
         try {
             const updatedClient = await updateClient.mutateAsync({
                 id,
                 dto: { ...rememberedDto, startDateChangeMode },
             });
+            if (!session.open || session !== formSessionRef.current) return;
             setPendingStartDateChange(null);
             onSuccess?.(updatedClient);
             onClose();
             onDirtyChange?.(false);
         } catch (cause: unknown) {
+            if (!session.open || session !== formSessionRef.current) return;
             setPendingStartDateChange(null);
             setMutationError(cause, { endDateGuardSent: rememberedDto.expectedEndDate !== undefined });
         }
     };
 
     const retryStartDateChange = async (startDateChangeMode: StartDateChangeMode) => {
-        if (!client || !pendingStartDateChange || submissionInFlightRef.current) return;
+        const session = formSessionRef.current;
+        if (!session.open || !pendingStartDateChange || submissionInFlightRef.current) return;
         submissionInFlightRef.current = true;
         try {
-            await retryStartDateChangeCore(client.id, pendingStartDateChange.dto, startDateChangeMode);
+            await retryStartDateChangeCore(pendingStartDateChange.id, pendingStartDateChange.dto, startDateChangeMode, session);
         } finally {
             submissionInFlightRef.current = false;
         }
