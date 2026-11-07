@@ -33,7 +33,7 @@ describeReal("eformsign backup repository (real PostgreSQL, tenant enforce)", ()
     const bytes = Buffer.from([37, 80, 68, 70, 0, 255, 10]);
     const date = new Date("2026-11-07T00:00:00.000Z");
     const previousMode = process.env["TENANT_ISOLATION_MODE"];
-    const asHttp = <T>(fn: () => Promise<T>): Promise<T> => tenantContextStore.run({ origin: "http" }, fn);
+    const asHttp = <T>(fn: () => Promise<T>): Promise<T> => tenantContextStore.run({ origin: "http" }, async () => await fn());
 
     beforeAll(async () => {
         assertThrowawayTarget();
