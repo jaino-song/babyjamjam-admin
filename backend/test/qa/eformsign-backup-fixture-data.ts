@@ -112,6 +112,8 @@ export async function attributableRows(db: PrismaClient, profile: Profile, crede
     const results = await db.eformsign_backup_run_document.findMany({ select: { runId: true, documentId: true, branchId: true } });
     demand(results.every(r => runs.some(run => run.id === r.runId) && r.branchId === A && expected.some(e => e.documentId === r.documentId && e.branchId === A)), "FOREIGN_RESULT");
     const allowedCounters = ["ip", "identity"].flatMap(scope => ["127.0.0.1", "::ffff:127.0.0.1"].flatMap(ip => (scope === "ip" ? [""] : emails.map(e => e.trim().toLowerCase())).map(email => createHash("sha256").update(`post:login:${scope}:${ip}:${email}`).digest("hex"))));
+    // Fixture policy revision 2: only the observed BFF refresh IPv4 IP counter.
+    allowedCounters.push(createHash("sha256").update("post:refreshToken:ip:127.0.0.1:").digest("hex"));
     const counters = await db.auth_rate_limit.findMany({ select: { keyHash: true } });
     demand(counters.every(c => allowedCounters.includes(c.keyHash)), "FOREIGN_COUNTER");
     return { docs, users: users.map(u => ({ id: u.id })), branches, sessions, refresh, memberships, files, credentials, snapshots, candidates, runs, results, counters, allowedCounters };
