@@ -8,7 +8,7 @@ import { createRequire, Module } from 'node:module';
 
 const ENTRY = fileURLToPath(import.meta.url);
 const SOURCE = path.dirname(path.dirname(ENTRY));
-const UI = '/Users/jaino/Development/babyjamjam-admin/eformsign-backup-review-fixes-v6';
+const UI = '/Users/jaino/Development/babyjamjam-admin/eformsign-backup-ui-socket-v8';
 const ROOT = '/Users/jaino/Development/.task-evidence/eformsign-backup-execution-20261106/ui-qa-synced-runtime';
 const FIXTURE = '/Users/jaino/Development/.task-evidence/eformsign-backup-execution-20261106/qa-fixture-synced-runtime';
 const FIXEDCONNECTION = '/Users/jaino/Development/.task-evidence/eformsign-backup-execution-20261106/private-ui-postgres-synced/connection.json';
@@ -19,9 +19,16 @@ const PNPM = '/opt/homebrew/lib/node_modules/pnpm/bin/pnpm.cjs';
 const ENVIRONMENT = 'eformsign-backup-ui-qa-synced-20261107';
 const A = '10000000-0000-4000-8000-000000000001';
 const OWNER = '10000000-0000-4000-8000-000000000010';
-const SOCKET = path.join(ROOT, 'manager.sock');
 const RECORD = path.join(ROOT, 'deployment.json');
 const required = (ok, code) => { if (!ok) throw new Error(code); };
+export function guiSocketPath(root) {
+  required(typeof root === 'string' && path.isAbsolute(root), 'SOCKET_ROOT_REFUSED');
+  const socket = path.join(root, 'm.sock');
+  // Leave room for the terminating NUL in macOS sockaddr_un.sun_path.
+  required(Buffer.byteLength(socket, 'utf8') <= 103, 'SOCKET_PATH_TOO_LONG');
+  return socket;
+}
+const SOCKET = guiSocketPath(ROOT);
 // The caller owns only these two operations and these fixed fixture resources.
 export function buildFixtureArgs(mode, sha) {
   required(mode === 'start' || mode === 'self-test', 'MODE_REFUSED');
@@ -81,10 +88,10 @@ async function root(create = false) {
     await fs.writeFile(markerFile, JSON.stringify(owner), { mode: 0o600, flag: 'wx' });
   }
   required(owner.version === 1 && owner.uid === process.getuid() && owner.environmentId === ENVIRONMENT, 'ROOT_OWNER_REFUSED');
-  const allowed = ['owner.json', 'deployment.json', 'startup.json', 'manager.sock', 'manager.log', 'children.log', 'native.log', 'closed.json', 'account-state.json', 'failure.json'];
+  const allowed = ['owner.json', 'deployment.json', 'startup.json', 'm.sock', 'manager.log', 'children.log', 'native.log', 'closed.json', 'account-state.json', 'failure.json'];
   const entries = await fs.readdir(ROOT);
   required(entries.every(name => allowed.includes(name)), 'UNKNOWN_ROOT_REFUSED');
-  for (const name of entries) if (name !== 'manager.sock') await privatePath(path.join(ROOT, name));
+  for (const name of entries) if (name !== 'm.sock') await privatePath(path.join(ROOT, name));
 }
 export function proof(pid) {
   required(Number.isInteger(pid) && pid > 1, 'PID_REFUSED');
@@ -392,7 +399,7 @@ export async function main(args) {
   if (mode === 'self-test') {
     const sha = candidate(true);
     await root(true);
-    required(!(await fs.readdir(ROOT)).some(name => ['deployment.json', 'startup.json', 'failure.json', 'manager.sock'].includes(name)), 'ACTIVE_OR_INTERRUPTED_GUI_REFUSED');
+    required(!(await fs.readdir(ROOT)).some(name => ['deployment.json', 'startup.json', 'failure.json', 'm.sock'].includes(name)), 'ACTIVE_OR_INTERRUPTED_GUI_REFUSED');
     const child = spawn(NODE, buildFixtureArgs('self-test', sha),
       { cwd: SOURCE, env: cleanEnv(), stdio: ['ignore', 'pipe', 'pipe'] });
     let output = '';
@@ -432,7 +439,7 @@ export async function main(args) {
   await root(true); candidate();
   try { await fs.access(RECORD); console.log(JSON.stringify(await control('readiness'))); return; }
   catch (e) { if (e.code !== 'ENOENT') throw e; }
-  required(!(await fs.readdir(ROOT)).some(name => ['startup.json', 'failure.json', 'manager.sock'].includes(name)), 'ACTIVE_OR_INTERRUPTED_GUI_REFUSED');
+  required(!(await fs.readdir(ROOT)).some(name => ['startup.json', 'failure.json', 'm.sock'].includes(name)), 'ACTIVE_OR_INTERRUPTED_GUI_REFUSED');
   required(!listeners(3003).length && !listeners(63245).length, 'FOREIGN_PORT_REFUSED');
   const log = await fs.open(path.join(ROOT, 'manager.log'), 'a', 0o600); await privatePath(path.join(ROOT, 'manager.log'));
   const child = spawn(NODE, [ENTRY, 'serve'], { cwd: UI, env: { ...cleanEnv(), CANDIDATE_SHA: candidate() }, detached: true, stdio: ['ignore', log.fd, log.fd] });

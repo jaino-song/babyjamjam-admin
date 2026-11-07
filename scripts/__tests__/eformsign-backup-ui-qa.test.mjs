@@ -1,11 +1,13 @@
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
 import { once } from 'node:events';
+import { promises as fs } from 'node:fs';
+import http from 'node:http';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 
-import { buildFixtureArgs, isIdleNativeRootEntries, proof, equalProof, descendant } from '../eformsign-backup-ui-qa.mjs';
+import { buildFixtureArgs, guiSocketPath, isIdleNativeRootEntries, proof, equalProof, descendant } from '../eformsign-backup-ui-qa.mjs';
 import { parseArgs, TARGET } from '../../backend/scripts/eformsign-backup-qa.mjs';
 
 const source = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
@@ -71,11 +73,81 @@ test('idle native root requires its owner marker and only optional native histor
     assert.equal(isIdleNativeRootEntries(entries), false);
   }
   for (const name of [
-    'deployment.json', 'startup.json', 'manager.sock', 'failure.json', 'account-state.json',
+    'deployment.json', 'startup.json', 'm.sock', 'failure.json', 'account-state.json',
     'manager.log', 'children.log', 'closed.json', 'process.json', 'operation.json', 'session',
     'capability', 'unknown', '../native.log', null,
   ]) {
     assert.equal(isIdleNativeRootEntries(['owner.json', 'native.log', name]), false);
+  }
+});
+
+test('GUI socket at the 103-byte boundary supports bind, private chmod and HTTP control', { timeout: 10_000 }, async () => {
+  // Use a short, real OS temp path; never use the private GUI/fixture roots.
+  const temporary = await fs.mkdtemp(path.join(await fs.realpath('/tmp'), 'ui-socket-'));
+  const server = http.createServer((req, res) => {
+    assert.equal(req.method, 'POST');
+    assert.equal(req.url, '/readiness');
+    res.end(JSON.stringify({ ready: true }));
+  });
+  let root;
+  try {
+    await fs.chmod(temporary, 0o700);
+    const temporaryStat = await fs.lstat(temporary);
+    assert.equal(temporaryStat.isDirectory(), true);
+    assert.equal(temporaryStat.mode & 0o777, 0o700);
+    assert.equal(temporaryStat.uid, process.getuid());
+    const directory = path.join(temporary, 'a'.repeat(96 - Buffer.byteLength(temporary, 'utf8') - 1));
+    await fs.mkdir(directory, { mode: 0o700 });
+    root = directory;
+    const socket = guiSocketPath(root);
+    assert.equal(Buffer.byteLength(root, 'utf8'), 96);
+    assert.equal(socket, path.join(root, 'm.sock'));
+    assert.equal(Buffer.byteLength(socket, 'utf8'), 103);
+    await new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error('TEST_LISTEN_TIMEOUT')), 2000);
+      server.once('error', error => { clearTimeout(timer); reject(error); });
+      server.listen(socket, () => { clearTimeout(timer); resolve(); });
+    });
+    await fs.chmod(socket, 0o600);
+    const stat = await fs.lstat(socket);
+    assert.equal(stat.isSocket(), true);
+    assert.equal(stat.mode & 0o777, 0o600);
+    assert.equal(stat.uid, process.getuid());
+    const result = await new Promise((resolve, reject) => {
+      const req = http.request({ socketPath: socket, path: '/readiness', method: 'POST', agent: false,
+        signal: AbortSignal.timeout(2000) }, res => {
+        let body = '';
+        res.on('error', reject);
+        res.on('data', chunk => { body += chunk; if (body.length > 4096) req.destroy(new Error('TEST_BODY_LIMIT')); });
+        res.on('end', () => resolve({ status: res.statusCode, body }));
+      });
+      req.on('error', reject); req.end();
+    });
+    assert.deepEqual(result, { status: 200, body: JSON.stringify({ ready: true }) });
+  } finally {
+    server.closeAllConnections();
+    if (server.listening) await new Promise((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+    if (root) {
+      try { await fs.unlink(path.join(root, 'm.sock')); } catch (error) { if (error.code !== 'ENOENT') throw error; }
+      await fs.rmdir(root);
+    }
+    await fs.rmdir(temporary);
+  }
+  await assert.rejects(fs.lstat(temporary), { code: 'ENOENT' });
+});
+
+test('GUI socket rejects overlong ASCII and multibyte roots before binding', () => {
+  for (const root of ['/' + 'a'.repeat(96), '/' + 'a'.repeat(94) + '한']) {
+    const server = http.createServer();
+    assert.ok(Buffer.byteLength(path.join(root, 'm.sock'), 'utf8') > 103);
+    assert.throws(() => server.listen(guiSocketPath(root)), { message: 'SOCKET_PATH_TOO_LONG' });
+    assert.equal(server.listening, false);
+  }
+});
+
+test('GUI socket requires an absolute root', () => {
+  for (const root of ['', 'relative', undefined, null, {}, 123]) {
+    assert.throws(() => guiSocketPath(root), { message: 'SOCKET_ROOT_REFUSED' });
   }
 });
 
