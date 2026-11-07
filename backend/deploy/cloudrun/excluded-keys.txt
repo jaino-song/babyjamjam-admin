@@ -21,3 +21,4 @@ AGENT_DECISION_ENVIRONMENT  # JEV environment gate; unset keeps JEV off. Preview
 AUTH_RATE_LIMIT_DISABLED  # local runs only; the guard ignores it when NODE_ENV=production and preview must keep login rate limiting on
 AUTH_RATE_LIMIT_EXEMPT_EMAILS  # not deployed to preview yet (keeps current behaviour); wiring it as a preview value is a separate decision for the preview E2E account
 PRODUCTION_DEPLOYMENT_PROVIDER  # preview is passive: SCHEDULERS_ENABLED=false always resolves to standby regardless of provider
+EFORMSIGN_BACKUP_TOKEN  # production-only: the backup script calls the production API; unset makes the internal backup routes answer 404 (BJJ-570)
