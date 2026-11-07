@@ -227,8 +227,10 @@ async function assertMerge(env, docs) {
     const ordered = [...docs].sort((a, b) => a.serviceRecordChunk.firstSessionIndex - b.serviceRecordChunk.firstSessionIndex);
     for (const [i, type] of ['document', 'audit_trail'].entries()) {
         const path = `제공기록지/${i ? '감사추적/' : ''}${srBase}.pdf`;
+        const info = await stat(join(env.archiveDir, path));
+        assert.equal(info.mtimeMs, Date.parse(ordered[0].createdAt));
+        assert.equal(info.atimeMs, Date.parse(ordered[0].createdAt));
         assert.equal(await env.bytes(path), ordered.map((doc) => doc.files[i].content.toString()).join(''));
-        assert.equal((await stat(join(env.archiveDir, path))).mtimeMs, Date.parse(ordered[0].createdAt));
         for (const doc of docs) {
             assert.equal(await env.bytes(`제공기록지/원본/${i ? '감사추적/' : ''}${srBase}_${doc.serviceRecordChunk.chunkIndex + 1}장.pdf`), doc.files[i].content.toString());
         }
@@ -238,7 +240,12 @@ async function assertMerge(env, docs) {
             `제공기록지/원본/${type === 'audit_trail' ? '감사추적/' : ''}${srBase}_${doc.serviceRecordChunk.chunkIndex + 1}장.pdf`)));
         assert.equal(args.at(-2), '--');
     }
-    assert.equal(Object.keys((await env.state()).units).length, 4);
+    const state = await env.state();
+    const chunk = ordered[0].serviceRecordChunk;
+    const mergedKey = `merged:${chunk.caseId}:${chunk.snapshotVersion}:${ordered.map((doc) => doc.files[0].sha256).join(',')}`;
+    assert.deepEqual(state.units[mergedKey], { files: Object.fromEntries(['', '감사추적/'].map((folder, i) =>
+        [`제공기록지/${folder}${srBase}.pdf`, docs.reduce((bytes, doc) => bytes + doc.files[i].byteSize, 0)])) });
+    assert.equal(Object.keys(state.units).length, 4);
 }
 
 test('7. three chunks merge in firstSessionIndex order and preserve signed originals', async (t) => {
@@ -248,6 +255,23 @@ test('7. three chunks merge in firstSessionIndex order and preserve signed origi
     assert.equal((await env.files()).length, 8);
     await assertMerge(env, docs);
     await assertReport(env, { status: 'success', savedFiles: 8, failedFiles: 0 });
+});
+
+test('merge order and file times follow firstSessionIndex when chunkIndex and createdAt orders differ', async (t) => {
+    // Listing: 2,0,1; chunkIndex: 0,1,2; createdAt: 0,2,1; firstSessionIndex: 1,2,0.
+    // The first session belongs to the latest-created chunk, not chunkIndex 0.
+    const docs = [
+        { id: '3', chunkIndex: 2, firstSessionIndex: 11, createdAt: '2026-10-02T01:00:00.000Z' },
+        { id: '1', chunkIndex: 0, firstSessionIndex: 21, createdAt: '2026-10-01T01:00:00.000Z' },
+        { id: '2', chunkIndex: 1, firstSessionIndex: 1, createdAt: '2026-10-03T01:00:00.000Z' },
+    ].map(({ id, chunkIndex, firstSessionIndex, createdAt }) => document(id, { kind: 'service_record', createdAt,
+        serviceRecordChunk: { caseId: 'case-1', snapshotVersion: 1, chunkIndex, chunkCount: 3, firstSessionIndex } }));
+    const env = await setup(t, docs);
+    assert.equal((await env.run()).code, 0);
+    assert.equal((await env.files()).length, 8);
+    await assertMerge(env, docs);
+    await assertReport(env, { status: 'success', driveStatus: 'ok', totalDocs: 3, savedFiles: 8, skippedFiles: 0,
+        failedFiles: 0, limited: false, failures: [] });
 });
 
 test('8. incomplete group is successful, merges when the third chunk appears', async (t) => {
