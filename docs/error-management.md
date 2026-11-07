@@ -500,3 +500,20 @@ headless 문서 발송(`POST /eformsign-docs/dispatch-headless`)의 `ok:false` �
 `resolveSmsRecipients`의 남은 원시 400 분기 8개(지점 컨텍스트 누락, client+employee 동시 지정, 빈/무효 수신자, client/employee 1건 규칙, client·employee 연락처 불일치, 무료 수신자 중복 일치)를 `REQUEST_INVALID` + `NOT_APPLIED`로 전환했다. 발송 전 거절이며 승인·로그 쓰기·공급자 호출 0회, 빈 params, 민감정보 비노출은 그대로다. 공유 카탈로그와 vendor는 변경하지 않았고 신규 공개 코드도 만들지 않았다.
 
 통합 `f91fabdba`(base `5f87f8a3`, unit `5c6632133`): controller 46 + problem-response 8 = 54 tests, backend 타입·대상 lint·diff check 통과, red-first 11 failures 확인. read-only auditor FINAL SHIP/HIGH. 매핑·증거는 `docs/error-management-inventory.json`의 `sms-recipient-presend-legacy`(migrated)에 기록했다. 예약 일시 검증과 `ensureApproved` 승인 오류는 아직 레거시이며 Task 2.1 전체·Task 1.1·전체 이슈는 미완료다.
+
+
+## 2026-11-07 전자문서 수동 백업 v1 오류 경계
+
+`backend/interface/filters/eformsign-manual-backup.filter.ts`를 intake inventory에 등록했다. `HttpException`을 원시 오류 전달이 아닌 타입·상태 분류에 사용하는 파일도 intake 대상이므로 경계와 안전장치를 명시한다. 이 등록은 기존 2026-09-22 이행 수치나 규격 준수 판정을 소급 변경하지 않는다.
+
+| 항목 | 수동 백업 v1 적용 내용 |
+| --- | --- |
+| 대상 규칙 | EM-API-01 응답 형식 예외, EM-GOV-03 예외 기록, EM-CHANGE-01 소비자 호환 |
+| 범위 | `/eformsign-backups/runs`와 `/internal/eformsign-backup/v1/manual-runs` 및 각 하위 경로 |
+| 사유 | 검토된 수동 백업 v1의 닫힌 코드 집합과 `{code, requestId}` 계약을 백업 실행기 및 관리자 BFF에서 함께 소비한다. 전역 오류 처리나 공용 카탈로그는 변경하지 않는다. |
+| 대체 안전장치 | 알려진 도메인·export 코드와 고정 상태 매핑만 응답한다. 원시 메시지·스택·파서 본문을 전달하지 않으며 UUID 요청 ID, 일치하는 `X-Request-Id`, `Cache-Control: no-store`를 적용한다. 오류 본문으로 제공자 수락·처리 완료를 추정하지 않는다. |
+| 책임 | BabyJamJam 전자문서 백업 API 유지보수 담당 |
+| 재검토 시점 | v1 오류 본문 또는 실행기·BFF 소비자를 변경하기 전, 혹은 공용 Problem Details 계약으로 전환할 때 |
+| 코드·테스트 근거 | `backend/test/integration/eformsign-manual-backup-http.spec.ts`의 실제 모듈·파서 경계, `eformsign-backup-export.controller.spec.ts`, `frontend/src/lib/__tests__/eformsign-backup-api.test.ts` |
+
+실행 후보 `98d1ba865c5a88ac23a6f252e3e1ea32cfd6120c`의 관련 backend 182개 테스트가 통과했다. 문서 등록 자체로 규격 준수나 운영 배포 완료를 주장하지 않으며, 독립 검토와 최종 CI는 별도로 확인한다.
