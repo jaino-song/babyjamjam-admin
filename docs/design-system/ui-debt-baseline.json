@@ -799,11 +799,11 @@
         "130:10-130:15|pageLocalComponent"
       ],
       "ui-architecture/no-raw-ui-in-pages": [
-        "1396:13-1402:14|rawUiElement",
-        "1408:13-1414:14|rawUiElement",
-        "1790:25-1802:26|rawUiElement",
-        "1886:15-1891:16|rawUiElement",
-        "1894:15-1899:16|rawUiElement"
+        "1483:13-1489:14|rawUiElement",
+        "1495:13-1501:14|rawUiElement",
+        "1877:25-1889:26|rawUiElement",
+        "1973:15-1978:16|rawUiElement",
+        "1981:15-1986:16|rawUiElement"
       ]
     },
     "mobile/src/app/(shell)/consultations/page.tsx": {
