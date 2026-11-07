@@ -5,13 +5,17 @@ import type { FileHandle } from "node:fs/promises";
 import { WorkerError, type WorkerReasonCode } from "domain/eformsign-backup/worker";
 import type { ArchiveFaultPoint } from "infrastructure/eformsign-backup/local-artifact-archive";
 
+import { beforeExecutionEffect, checkExecutionSignal, isExecutionFencedError, type ExecutionEffectFence } from "../execution-effect-fence";
+
 export interface AtomicPublishOptions {
+    effectFence?: ExecutionEffectFence;
     /** Test seam: called before each durable step, may throw or kill the process. */
     fault?: (point: ArchiveFaultPoint) => void;
     /** Reason code for an I/O failure; `control-unavailable` when the directory is under the control path. */
     ioReasonCode?: WorkerReasonCode;
 }
 
+const IO_BYTES = 64 * 1024;
 const PRIVATE_FILE_MODE = 0o600;
 const NAME_MAX_BYTES = 255;
 const DIRECTORY_FLAGS = constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW;
@@ -26,19 +30,21 @@ function isSafeName(name: string): boolean {
         && name !== "." && name !== ".." && !/[/\\\u0000]/u.test(name);
 }
 
-async function writeAll(file: FileHandle, bytes: Uint8Array, fault?: (point: ArchiveFaultPoint) => void): Promise<void> {
+async function writeAll(file: FileHandle, bytes: Uint8Array, fault?: (point: ArchiveFaultPoint) => void, effectFence?: ExecutionEffectFence): Promise<void> {
     let written = 0;
     // An empty payload still passes the write fault point once, like the archive primitive.
     do {
         fault?.("write");
-        const { bytesWritten } = await file.write(bytes, written, bytes.byteLength - written, written);
+        checkExecutionSignal(effectFence);
+        const { bytesWritten } = await file.write(bytes, written, effectFence ? Math.min(IO_BYTES, bytes.byteLength - written) : bytes.byteLength - written, written);
+        checkExecutionSignal(effectFence);
         if (bytesWritten <= 0 && written < bytes.byteLength) throw new Error("short write");
         written += bytesWritten;
     } while (written < bytes.byteLength);
 }
 
 /** The existing entry must be a regular file holding exactly `bytes`; anything else is a conflict or unsafe. */
-async function compareExisting(finalPath: string, bytes: Uint8Array): Promise<void> {
+async function compareExisting(finalPath: string, bytes: Uint8Array, effectFence?: ExecutionEffectFence): Promise<void> {
     const entry = await fs.lstat(finalPath);
     if (entry.isSymbolicLink()) throw new WorkerError("archive-unsafe-path");
     if (!entry.isFile() || entry.size !== bytes.byteLength) throw new WorkerError("archive-conflict");
@@ -49,7 +55,9 @@ async function compareExisting(finalPath: string, bytes: Uint8Array): Promise<vo
         const existing = Buffer.alloc(bytes.byteLength);
         let filled = 0;
         while (filled < existing.length) {
-            const { bytesRead } = await file.read(existing, filled, existing.length - filled, filled);
+            checkExecutionSignal(effectFence);
+            const { bytesRead } = await file.read(existing, filled, effectFence ? Math.min(IO_BYTES, existing.length - filled) : existing.length - filled, filled);
+            checkExecutionSignal(effectFence);
             if (bytesRead === 0) break;
             filled += bytesRead;
         }
@@ -71,7 +79,7 @@ export async function publishBytesNoClobber(
     dirPath: string, name: string, bytes: Uint8Array, options: AtomicPublishOptions = {},
 ): Promise<{ disposition: "created" | "reused" }> {
     if (!isSafeName(name)) throw new WorkerError("invalid-path-segment");
-    const { fault, ioReasonCode = "archive-unavailable" } = options;
+    const { fault, effectFence, ioReasonCode = "archive-unavailable" } = options;
     const finalPath = `${dirPath}/${name}`;
     let directory: FileHandle | undefined;
     let file: FileHandle | undefined;
@@ -81,21 +89,26 @@ export async function publishBytesNoClobber(
     try {
         directory = await fs.open(dirPath, DIRECTORY_FLAGS);
         const candidate = `${dirPath}/.atomic-${randomBytes(16).toString("hex")}.tmp`;
+        await beforeExecutionEffect(effectFence);
+        checkExecutionSignal(effectFence);
         file = await fs.open(candidate, constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY | constants.O_NOFOLLOW, PRIVATE_FILE_MODE);
         tempPath = candidate;
         const created = await file.stat();
         tempIdentity = { dev: created.dev, ino: created.ino };
-        await writeAll(file, bytes, fault);
+        await writeAll(file, bytes, fault, effectFence);
         fault?.("file-sync");
+        checkExecutionSignal(effectFence);
         await file.sync();
         await file.close(); file = undefined;
+        await beforeExecutionEffect(effectFence);
         fault?.("publish");
+        checkExecutionSignal(effectFence);
         let disposition: "created" | "reused" = "created";
         try {
             await fs.link(tempPath, finalPath);
         } catch (error) {
             if (!hasCode(error, "EEXIST")) throw error;
-            await compareExisting(finalPath, bytes);
+            await compareExisting(finalPath, bytes, effectFence);
             disposition = "reused";
         }
         fault?.("cleanup");
@@ -104,8 +117,11 @@ export async function publishBytesNoClobber(
         fault?.("directory-sync");
         await directory.sync();
         removeTemp = false;
+        await beforeExecutionEffect(effectFence);
         return { disposition };
     } catch (error) {
+        if (isExecutionFencedError(error)) throw error;
+        checkExecutionSignal(effectFence);
         if (error instanceof WorkerError) throw error;
         if (hasCode(error, "ENOSPC")) throw new WorkerError(ioReasonCode === "control-unavailable" ? "control-space" : "archive-space");
         throw new WorkerError(ioReasonCode);

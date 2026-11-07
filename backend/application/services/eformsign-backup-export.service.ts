@@ -4,6 +4,7 @@ import {
     EXPORT_POLICY_REVISION,
     EXPORT_SCOPE_REVISION,
     EXPORT_ARTIFACT_MAX_CONCURRENCY,
+    type ExportFileType,
     ExportError,
     assertExclusiveCounts,
     buildExportArtifacts,
@@ -28,6 +29,7 @@ import {
     type ExportCandidateRecord,
     type ExportSnapshotRecord,
     type ExportSource,
+    type ExportArtifactSource,
 } from "infrastructure/database/repositories/sb.eformsign-backup-export.repository";
 
 export interface CreateExportSnapshotBody {
@@ -151,6 +153,16 @@ export class EformsignBackupExportService {
         if (!expected) throw new ExportError("NOT_FOUND");
         this.assertNotExpired(snapshot);
 
+        return this.readFixedArtifact({ ...expected, artifactIdentity }, withContent =>
+            this.repository.readArtifactForDownload(expected.documentId, expected.fileType, { withContent }));
+    }
+
+    async readFixedArtifact(
+        fixed: { documentId: string; fileType: ExportFileType; artifactIdentity: string; sha256: string; byteSize: number },
+        reader: (withContent: boolean) => Promise<ExportArtifactSource>,
+    ): Promise<ExportArtifactLease> {
+        // Copy the server-owned expectation before awaiting a source reader.
+        const expected = { ...fixed };
         // The slot is taken after the cheap checks and before any file row or byte is read (contract 3.5 #3b),
         // and on success it stays held: the controller releases it when the response ends.
         if (this.artifactReadsInFlight >= EXPORT_ARTIFACT_MAX_CONCURRENCY) {
@@ -166,10 +178,10 @@ export class EformsignBackupExportService {
         try {
             const expectation = { sha256: expected.sha256, byteSize: expected.byteSize };
             // Pass 1 decides from metadata alone, so a missing, moved or oversized file never loads bytes.
-            this.assertServable(decideExportArtifact({ expected: expectation, ...await this.metadata(expected) }));
+            this.assertServable(decideExportArtifact({ expected: expectation, ...await reader(false) }));
             // Pass 2 reads the bytes and decides again on the same read, so a change between the two
             // passes is reported as what it is rather than as a byte mismatch.
-            const { doc, file } = await this.repository.readArtifactForDownload(expected.documentId, expected.fileType, { withContent: true });
+            const { doc, file } = await reader(true);
             this.assertServable(decideExportArtifact({ expected: expectation, doc, file }));
             const bytes = file?.content;
             if (!file || !bytes || !verifyExportArtifactBytes(bytes, expectation)) throw new ExportError("CONSISTENCY_CONFLICT");
@@ -178,7 +190,7 @@ export class EformsignBackupExportService {
                 contentType: file.contentType || "application/pdf",
                 byteSize: bytes.length,
                 sha256: expected.sha256,
-                artifactIdentity,
+                artifactIdentity: expected.artifactIdentity,
                 release,
             };
         } catch (error) {
@@ -186,10 +198,6 @@ export class EformsignBackupExportService {
             release();
             throw error;
         }
-    }
-
-    private metadata(expected: { documentId: string; fileType: "document" | "audit_trail" }) {
-        return this.repository.readArtifactForDownload(expected.documentId, expected.fileType, { withContent: false });
     }
 
     private assertServable(decision: ReturnType<typeof decideExportArtifact>): void {

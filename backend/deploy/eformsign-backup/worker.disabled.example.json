@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "enabled": false,
+  "companyId": "example-company",
+  "exportBaseUrl": "https://backup.example.invalid/internal/eformsign-backup/v1",
+  "tokenFile": "/home/covenant_labs_server/.config/bjj-backup/secrets/export.token",
+  "control": {
+    "path": "/home/covenant_labs_server/.local/state/bjj-backup/control",
+    "reserveBytes": 1073741824,
+    "reserveInodes": 10000
+  },
+  "archive": {
+    "path": "/home/covenant_labs_server/.local/share/bjj-backup/archive",
+    "archiveId": "11111111-1111-4111-8111-111111111111",
+    "reserveBytes": 10737418240,
+    "reserveInodes": 100000,
+    "requireMountPoint": false
+  },
+  "requestTimeoutMs": 120000
+}

@@ -82,11 +82,13 @@ describe("ledger record line codec", () => {
         expect(() => encodeLedgerLine({ ...record, v: 2 } as unknown as LedgerRecord)).toThrow(expect.objectContaining({ reasonCode: "ledger-schema" }));
     });
 
-    it("has a strict body schema for exactly the eighteen contract types (twelve BJJ-455 plus six Drive)", () => {
+    it("has a strict body schema for exactly the twenty-four contract types (twelve BJJ-455 plus six Drive plus six manual)", () => {
         expect([...LEDGER_RECORD_TYPES].sort()).toEqual([
             "candidate_observed", "completion_published", "destination_transition", "drive_bound", "drive_node_created",
             "drive_node_reserved", "drive_ready", "drive_record_pending", "drive_record_published", "installed",
-            "manifest_published", "recovered_verified", "recovery_started", "run_finished", "run_started", "snapshot_bound",
+            "manifest_published", "manual_candidate_selected", "manual_document_result", "manual_result_acknowledged",
+            "manual_result_ready", "manual_result_rejected", "manual_selection_ready",
+            "recovered_verified", "recovery_started", "run_finished", "run_started", "snapshot_bound",
             "staging_verified", "tail_discarded",
         ]);
         expect(Object.keys(LEDGER_BODY_SCHEMAS).sort()).toEqual([...LEDGER_RECORD_TYPES].sort());

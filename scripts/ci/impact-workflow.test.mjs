@@ -20,7 +20,7 @@ function withStateIntegrityRealDatabaseStep(steps) {
     ...step,
     run: "psql -h localhost -U postgres -c 'CREATE DATABASE throwaway_ci'\n" +
       'pnpm --filter ./backend exec prisma migrate deploy\n' +
-      'pnpm --filter ./backend test --runInBand test/prisma/ test/integrity/\n',
+      "pnpm --filter ./backend test --runInBand test/prisma/ test/integrity/ --testPathIgnorePatterns='/node_modules/' --testPathIgnorePatterns='manual-backup-(runs|live-source|delivery)\\.real-db\\.spec\\.ts$'\n",
     env: {...step.env, STATE_INTEGRITY_REAL_DB: '1'},
   });
 }
