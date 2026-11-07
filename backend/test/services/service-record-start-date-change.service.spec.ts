@@ -77,9 +77,14 @@ function world(options: { count?: number; total?: number | null; planned?: Servi
         service_record_day: {
             findMany: jest.fn().mockResolvedValue(days),
             deleteMany: jest.fn(async () => { days.splice(0); return { count: 3 }; }),
-            updateMany: jest.fn(async ({ where, data }: { where: { id: string }; data: { serviceDate: Date } }) => {
-                Object.assign(days.find((day) => day.id === where.id)!, data);
-                return { count: 1 };
+            updateMany: jest.fn(async ({ where, data }: {
+                where: Partial<Pick<(typeof days)[number], "id" | "branchId" | "serviceRecordCaseId" | "locked">>;
+                data: { serviceDate: Date };
+            }) => {
+                const matching = days.filter((day) => Object.entries(where)
+                    .every(([key, value]) => day[key as keyof typeof where] === value));
+                matching.forEach((day) => Object.assign(day, data));
+                return { count: matching.length };
             }),
         },
         service_record_day_archive: {
@@ -145,6 +150,10 @@ describe("ServiceRecordStartDateChangeService", () => {
         const w = world();
         const original = structuredClone(w.days);
         await w.apply("MOVE");
+        expect(w.days.filter((day) => day.locked)).toEqual([
+            { ...original[0], serviceDate: date(newDates[0]!) },
+            { ...original[1], serviceDate: date(newDates[1]!) },
+        ]);
         expect(w.days).toEqual(original.map((day, index) => ({ ...day, serviceDate: date(newDates[index]!) })));
         expect(w.record.plannedSessions).toEqual(oldVector().map((entry, index) => ({
             ...entry, serviceDate: newDates[index], originalDate: newDates[index],
@@ -324,10 +333,19 @@ describe("ServiceRecordStartDateChangeService", () => {
         expect(w.tx.service_record_case.update).not.toHaveBeenCalled();
     });
 
-    it("MOVE with currentRevisionId succeeds; finalization blocks an incomplete source and creates no stale revision document", async () => {
+    it.each(["MOVE", "RESTART"] as const)("%s with currentRevisionId succeeds; finalization blocks an incomplete source and creates no stale revision document", async (mode) => {
         const w = world();
+        const original = structuredClone(w.days);
         w.record.currentRevisionId = "existing-admin-revision";
-        await w.apply("MOVE");
+        await w.apply(mode);
+        if (mode === "RESTART") {
+            expect(w.archive).toEqual(original.map((day) => expect.objectContaining({
+                reason: "RESTART", originalDayId: day.id, payload: JSON.parse(JSON.stringify(day)),
+            })));
+            expect(w.tx.service_record_day_archive.createMany.mock.invocationCallOrder[0])
+                .toBeLessThan(w.tx.service_record_day.deleteMany.mock.invocationCallOrder[0]!);
+            expect(w.days).toHaveLength(0);
+        }
         expect(w.record.currentRevisionId).toBe("existing-admin-revision");
         const source = {
             ...w.record, status: "READY_TO_FINALIZE", branchName: "Branch", days: w.days, assignments: w.assignments,
