@@ -8,15 +8,15 @@ import { createRequire, Module } from 'node:module';
 
 const ENTRY = fileURLToPath(import.meta.url);
 const SOURCE = path.dirname(path.dirname(ENTRY));
-const UI = '/Users/jaino/Development/babyjamjam-admin/eformsign-backup-ui-socket-v8';
-const ROOT = '/Users/jaino/Development/.task-evidence/eformsign-backup-execution-20261106/ui-qa-synced-runtime';
-const FIXTURE = '/Users/jaino/Development/.task-evidence/eformsign-backup-execution-20261106/qa-fixture-synced-runtime';
-const FIXEDCONNECTION = '/Users/jaino/Development/.task-evidence/eformsign-backup-execution-20261106/private-ui-postgres-synced/connection.json';
+const UI = '/Users/jaino/Development/babyjamjam-admin/eformsign-backup-qa-r2';
+const ROOT = '/Users/jaino/Development/.task-evidence/eformsign-backup-execution-20261106/ui-qa-r2-runtime';
+const FIXTURE = '/Users/jaino/Development/.task-evidence/eformsign-backup-execution-20261106/qa-fixture-r2-runtime';
+const FIXEDCONNECTION = '/Users/jaino/Development/.task-evidence/eformsign-backup-execution-20261106/private-ui-postgres-r2/connection.json';
 // Credential input remains the immutable reviewed fixture input, independent of GUI source.
 const ENV = '/Users/jaino/Development/babyjamjam-admin/eformsign-backup-ui-connection/frontend/.env.local';
 const NODE = '/Users/jaino/.hermes/node/bin/node';
 const PNPM = '/opt/homebrew/lib/node_modules/pnpm/bin/pnpm.cjs';
-const ENVIRONMENT = 'eformsign-backup-ui-qa-synced-20261107';
+const ENVIRONMENT = 'eformsign-backup-ui-qa-r2-20261107';
 const A = '10000000-0000-4000-8000-000000000001';
 const OWNER = '10000000-0000-4000-8000-000000000010';
 const RECORD = path.join(ROOT, 'deployment.json');
@@ -220,7 +220,7 @@ async function verifyCleanDatabase() {
     PGUSER: parent.TARGET.user, PGPASSWORD: password, PGCONNECT_TIMEOUT: '5' };
   const sql = `BEGIN READ ONLY;
     DO $$ DECLARE r record; n bigint; BEGIN
-      IF current_database() <> 'backup_exec_throwaway_ui_synced_20261107' OR current_user <> 'backup_test_owner'
+      IF current_database() <> 'backup_exec_throwaway_ui_r2_20261107' OR current_user <> 'backup_test_owner'
         OR inet_server_addr() <> '127.0.0.1'::inet OR inet_server_port() <> 63241
         OR (SELECT pg_get_userbyid(datdba) FROM pg_database WHERE datname=current_database()) <> current_user THEN RAISE EXCEPTION 'IDENTITY_REFUSED'; END IF;
       IF (SELECT array_agg(tablename::text ORDER BY tablename) FROM pg_tables WHERE schemaname='public')

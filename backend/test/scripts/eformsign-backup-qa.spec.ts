@@ -61,7 +61,7 @@ describe("backup QA strict CLI (hermetic)", () => {
         expect(probe(`const args=${argsSource}; let n=0; const variants=[['bogus',...args.slice(1)],[...args,'--profile','basic','--profile','kst'],[...args,'--extra','x'],[...args,'--port','3001'],[...args,'--candidate','abc'],[...args,'--port'],[...args,'--root','relative']]; for(const a of variants){try{qa.parseArgs(a)}catch{n++}} console.log(n);`)).toBe("7");
     });
     it("rejects relative, traversal, other-worktree and repeated credential paths", () => {
-        expect(probe(`const args=${argsSource}; let n=0; for(const value of ['relative','/tmp/connection.json',qa.TARGET.connection.replace('/private-ui-postgres-synced/','/private-ui-postgres-synced/../private-ui-postgres-synced/'),qa.TARGET.connection+'\u0000']){const a=[...args];a[2]=value;try{qa.parseArgs(a)}catch{n++}} console.log(n);`)).toBe("4");
+        expect(probe(`const args=${argsSource}; let n=0; for(const value of ['relative','/tmp/connection.json',qa.TARGET.connection.replace('/private-ui-postgres-r2/','/private-ui-postgres-r2/../private-ui-postgres-r2/'),qa.TARGET.connection+'\u0000']){const a=[...args];a[2]=value;try{qa.parseArgs(a)}catch{n++}} console.log(n);`)).toBe("4");
     });
     it("checks the entire descriptor before any password read", () => {
         expect(probe(`const d={host:qa.TARGET.host,port:qa.TARGET.port,user:qa.TARGET.user,database:qa.TARGET.database,passwordFile:qa.TARGET.password};const o={host:d.host,port:d.port,database:d.database,createdByThisTask:true};qa.validateDescriptor(d,o);let n=0;for(const change of [{host:'remote'},{port:63237},{database:'backup_exec_throwaway_other'},{user:'postgres'},{passwordFile:'/tmp/p'},{extra:true}]){try{qa.validateDescriptor({...d,...change},o)}catch{n++}}try{qa.validateDescriptor(d,{...o,createdByThisTask:false})}catch{n++}console.log(n);`)).toBe("7");
@@ -88,7 +88,7 @@ describe("backup QA strict CLI (hermetic)", () => {
 
 describe("V5 native-only scope and safe diagnostics", () => {
     it("pins the new target and exact 79 table names", () => {
-        expect(probe("console.log(qa.TARGET.database,qa.TARGET.connection.endsWith('/private-ui-postgres-synced/connection.json'),qa.TARGET.root.endsWith('/qa-fixture-synced-runtime'),qa.TABLE_INVENTORY.length,new Set(qa.TABLE_INVENTORY).size,qa.TABLE_INVENTORY.includes('admin_audit_event'));" )).toBe("backup_exec_throwaway_ui_synced_20261107 true true 79 79 true");
+        expect(probe("console.log(qa.TARGET.database,qa.TARGET.connection.endsWith('/private-ui-postgres-r2/connection.json'),qa.TARGET.root.endsWith('/qa-fixture-r2-runtime'),qa.TABLE_INVENTORY.length,new Set(qa.TABLE_INVENTORY).size,qa.TABLE_INVENTORY.includes('admin_audit_event'));" )).toBe("backup_exec_throwaway_ui_r2_20261107 true true 79 79 true");
     });
     it("accepts exactly the 27 owned paths and rejects foreign changes, renames and deletions", () => {
         expect(probe("for(const path of qa.NATIVE_OWNED_PATHS)qa.validateNativeChanges([{path,status:' M'}]);let n=0;for(const path of ['backend/test/qa/eformsign-backup-fixture-data.ts','backend/prisma/schema.prisma','backend/.env','package.json','pnpm-lock.yaml','backend/infrastructure/auth/jwt.guard.ts','unknown']){try{qa.validateNativeChanges([{path,status:' M'}])}catch{n++}}for(const status of ['R ',' R','C ',' D','D ','UU']){try{qa.validateNativeChanges([{path:qa.NATIVE_OWNED_PATHS[0],status}])}catch{n++}}console.log(Object.isFrozen(qa.NATIVE_OWNED_PATHS),qa.NATIVE_OWNED_PATHS.length,new Set(qa.NATIVE_OWNED_PATHS).size,n);" )).toBe("true 27 27 13");
