@@ -298,6 +298,9 @@ describe("mobile edit page split employee save after start-date confirmation", (
       expect(screen.getByRole("alert")).toHaveTextContent("요청 ID: req-uncertain-employee");
       if (outcome === "UNKNOWN") expect(screen.queryByText(partialMessage)).not.toBeInTheDocument();
       fireEvent.click(button("저장"));
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      });
       expect(mockUpdateClient).toHaveBeenCalledTimes(3);
       expect(mockPush).not.toHaveBeenCalled();
       expectNoConfirmation();
