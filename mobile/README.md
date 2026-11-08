@@ -1,6 +1,6 @@
 # 아가잼잼 모바일 관리자 (babyjamjam-admin-mobile)
 
-Mobile-first admin dashboard for 아가잼잼 baby care service management.
+Mobile-first admin dashboard for BabyJamJam, an **AI-powered Postpartum Care Operations Platform** for maternal and newborn care providers.
 
 ## Tech Stack
 
