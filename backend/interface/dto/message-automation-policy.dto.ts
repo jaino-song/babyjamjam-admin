@@ -1,14 +1,8 @@
 import {
-    PAST_OCCURRENCE_GRACE_MS,
-    SEND_HOUR_KST,
     SMS_DELIVERY_MAX_ATTEMPTS,
-    SMS_DELIVERY_RETRY_DELAY_MS,
-    TRIGGER_DISPATCH_CRON,
     TRIGGER_JOB_MAX_ATTEMPTS,
-    TRIGGER_JOB_PROCESSING_RECLAIM_MS,
-    TRIGGER_JOB_RETRY_DELAY_MS,
 } from "domain/constants/message-automation-policy";
-import { IsArray, IsBoolean, IsIn, IsInt, IsString, Max, Min } from "class-validator";
+import { Allow, IsObject, IsArray, IsBoolean, IsIn, IsInt, IsString, Max, Min } from "class-validator";
 import {
     DEFAULT_MESSAGE_SETTINGS_POLICY_ENABLED,
     STORED_MESSAGE_SETTINGS_POLICY_IDS,
@@ -25,6 +19,8 @@ import {
 } from "domain/constants/service-record-link-message";
 import {
     DEFAULT_MESSAGE_AUTOMATION_PAST_TRIGGER_CONFIG,
+    MessageAutomationPolicyConfiguration,
+    defaultMessageAutomationPolicy,
     MessageAutomationPastTriggerConfig,
 } from "domain/entities/system-setting.entity";
 
@@ -59,6 +55,14 @@ export class MessageAutomationPastTriggerConfigDto {
         dto.ruleOrder = config.ruleOrder;
         return dto;
     }
+}
+
+export class UpdateMessageAutomationPolicyConfigDto {
+    @Allow()
+    expectedVersion!: string | null;
+
+    @IsObject()
+    configuration!: MessageAutomationPolicyConfiguration;
 }
 
 export class UpdateMessageAutomationPastTriggerConfigDto {
@@ -114,14 +118,16 @@ export class MessageAutomationPoliciesResponseDto {
         pastTriggerConfig: MessageAutomationPastTriggerConfig = DEFAULT_MESSAGE_AUTOMATION_PAST_TRIGGER_CONFIG,
         policyActivations: Record<StoredMessageSettingsPolicyId, boolean> = DEFAULT_POLICY_ACTIVATIONS,
         canManageActivation = false,
+        configuration: MessageAutomationPolicyConfiguration = defaultMessageAutomationPolicy(),
     ): MessageAutomationPoliciesResponseDto {
-        return MessageAutomationPoliciesResponseDto.build(pastTriggerConfig, policyActivations, canManageActivation);
+        return MessageAutomationPoliciesResponseDto.build(pastTriggerConfig, policyActivations, canManageActivation, configuration);
     }
 
     static build(
         pastTriggerConfig: MessageAutomationPastTriggerConfig = DEFAULT_MESSAGE_AUTOMATION_PAST_TRIGGER_CONFIG,
         policyActivations: Record<StoredMessageSettingsPolicyId, boolean> = DEFAULT_POLICY_ACTIVATIONS,
         canManageActivation = false,
+        configuration: MessageAutomationPolicyConfiguration = defaultMessageAutomationPolicy(),
     ): MessageAutomationPoliciesResponseDto {
         const dto = new MessageAutomationPoliciesResponseDto();
         dto.pastTriggerConfig = MessageAutomationPastTriggerConfigDto.from(pastTriggerConfig);
@@ -138,7 +144,7 @@ export class MessageAutomationPoliciesResponseDto {
                     {
                         id: "dispatch-interval",
                         label: "실행 주기",
-                        value: `${formatCronIntervalMinutes(TRIGGER_DISPATCH_CRON)}마다`,
+                        value: `${configuration.dispatchCheckIntervalMinutes}분마다`,
                     },
                     {
                         id: "duplicate-protection",
@@ -146,9 +152,14 @@ export class MessageAutomationPoliciesResponseDto {
                         value: "처리 중인 작업 확인 + 발송 이력 확인",
                     },
                     {
+                        id: "duplicate-window",
+                        label: "중복 확인 기간",
+                        value: `${configuration.duplicateWindowHours}시간`,
+                    },
+                    {
                         id: "send-time",
                         label: "발송 시각",
-                        value: `규칙별 설정 (기본 ${formatKstHour(SEND_HOUR_KST)} KST)`,
+                        value: `규칙별 설정 (기본 ${configuration.defaultRuleSendTime} KST)`,
                     },
                 ],
             },
@@ -162,7 +173,7 @@ export class MessageAutomationPoliciesResponseDto {
                     {
                         id: "retry-delay",
                         label: "일시 오류 재시도",
-                        value: `${formatMinutes(TRIGGER_JOB_RETRY_DELAY_MS)} 후`,
+                        value: `${formatMinutes(configuration.triggerRetryIntervalMinutes * MS_PER_MINUTE)} 후`,
                     },
                     {
                         id: "max-attempts",
@@ -172,7 +183,7 @@ export class MessageAutomationPoliciesResponseDto {
                     {
                         id: "processing-reclaim",
                         label: "처리중 작업 회수",
-                        value: `${formatMinutes(TRIGGER_JOB_PROCESSING_RECLAIM_MS)} 후`,
+                        value: `${formatMinutes(configuration.processingReclaimMinutes * MS_PER_MINUTE)} 후`,
                     },
                 ],
             },
@@ -191,7 +202,7 @@ export class MessageAutomationPoliciesResponseDto {
                     {
                         id: "retry-delay",
                         label: "재시도 간격",
-                        value: `${formatMinutes(SMS_DELIVERY_RETRY_DELAY_MS)} 후`,
+                        value: `${formatMinutes(configuration.smsRetryIntervalMinutes * MS_PER_MINUTE)} 후`,
                     },
                     {
                         id: "coverage",
@@ -210,7 +221,12 @@ export class MessageAutomationPoliciesResponseDto {
                     {
                         id: "grace-window",
                         label: "기존 발송 만료 기준",
-                        value: `예정 시각 후 ${formatHours(PAST_OCCURRENCE_GRACE_MS)}`,
+                        value: `예정 시각 후 ${formatHours(configuration.pastExpiryHours * MS_PER_HOUR)}`,
+                    },
+                    {
+                        id: "catch-up-interval",
+                        label: "보충 발송 간격",
+                        value: `${configuration.pastSendIntervalMinutes}분`,
                     },
                     {
                         id: "handling",
@@ -285,16 +301,6 @@ function formatMinutes(ms: number): string {
 
 function formatHours(ms: number): string {
     return `${ms / MS_PER_HOUR}시간`;
-}
-
-function formatCronIntervalMinutes(cron: string): string {
-    const minuteExpression = cron.split(" ")[0] ?? "";
-    const interval = Number(minuteExpression.replace("*/", ""));
-    return `${interval}분`;
-}
-
-function formatKstHour(hour: number): string {
-    return `${String(hour).padStart(2, "0")}:00`;
 }
 
 function formatKstDateHour(date: Date): string {

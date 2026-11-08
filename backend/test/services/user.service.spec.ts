@@ -406,7 +406,7 @@ describe("UserService", () => {
                     ...sharedFields,
                     id: "owner-user-id",
                     email: "owner@example.com",
-                    name: "송진호",
+                    name: "정다라",
                     role: "owner",
                     adminBranches: [],
                     userBranches: [
@@ -420,7 +420,7 @@ describe("UserService", () => {
                     ...sharedFields,
                     id: "manager-user-id",
                     email: "manager@example.com",
-                    name: "송진호",
+                    name: "정다라",
                     role: "admin",
                     adminBranches: [
                         { id: "manager-branch-id", name: "인천 서구점" },

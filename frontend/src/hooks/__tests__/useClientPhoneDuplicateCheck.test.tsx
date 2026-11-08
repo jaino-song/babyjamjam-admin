@@ -19,15 +19,15 @@ describe("useClientPhoneDuplicateCheck", () => {
     mockApiGet.mockResolvedValue({ data: { exists: true } });
 
     const { result } = renderHook(() =>
-      useClientPhoneDuplicateCheck({ phone: "010-6621-1878" }),
+      useClientPhoneDuplicateCheck({ phone: "010-0000-6621" }),
     );
 
     await waitFor(() => {
-      expect(result.current.lastCheckedPhoneDigits).toBe("01066211878");
+      expect(result.current.lastCheckedPhoneDigits).toBe("01000006621");
     });
 
     expect(mockApiGet).toHaveBeenCalledWith("/clients/check-phone", {
-      params: { phone: "01066211878" },
+      params: { phone: "01000006621" },
       signal: expect.any(AbortSignal),
     });
     expect(result.current.isPhoneDuplicate).toBe(true);
@@ -61,8 +61,8 @@ describe("useClientPhoneDuplicateCheck", () => {
   it("accepts an unchanged phone number while editing without checking itself", () => {
     const { result } = renderHook(() =>
       useClientPhoneDuplicateCheck({
-        phone: "010-6621-1878",
-        originalPhone: "01066211878",
+        phone: "010-0000-6621",
+        originalPhone: "01000006621",
       }),
     );
 

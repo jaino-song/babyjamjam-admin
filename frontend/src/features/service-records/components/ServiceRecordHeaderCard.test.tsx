@@ -8,7 +8,7 @@ describe("ServiceRecordHeaderCard", () => {
       <ServiceRecordHeaderCard
         data-component="desktop_test_service-records_header-card"
         header={{
-          momName: "송진호",
+          momName: "정다라",
           momBirth: "960414",
           babyName: "송송송",
           babyBirth: "260626",
@@ -23,7 +23,7 @@ describe("ServiceRecordHeaderCard", () => {
 
     expect(screen.getByText("서비스 기본정보")).toBeInTheDocument();
     expect(screen.getByText("산모 성명")).toBeInTheDocument();
-    expect(screen.getByText("송진호")).toBeInTheDocument();
+    expect(screen.getByText("정다라")).toBeInTheDocument();
     expect(screen.getByText("1996.04.14")).toBeInTheDocument();
     expect(screen.getByText("송송송")).toBeInTheDocument();
     expect(screen.getByText("2026.06.26")).toBeInTheDocument();

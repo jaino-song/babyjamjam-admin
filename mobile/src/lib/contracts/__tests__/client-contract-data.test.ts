@@ -9,7 +9,7 @@ import type { AreaTemplate } from "@/hooks/useVoucherData";
 
 const baseClient: Client = {
   id: 44,
-  name: "김정인",
+  name: "최가나",
   birthday: "960101",
   dueDate: "2026-05-30T00:00:00.000Z",
   birthDate: null,
@@ -71,7 +71,7 @@ describe("buildClientContractData", () => {
 
     expect(result.areaId).toBe("area_namdong");
     expect(result.contractData).toMatchObject({
-      customerName: "김정인",
+      customerName: "최가나",
       customerContact: "010-1234-5678",
       caretaker1Name: "이관리",
       caretaker1Contact: "010-9999-8888",

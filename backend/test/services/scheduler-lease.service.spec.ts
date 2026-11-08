@@ -364,3 +364,121 @@ describe("SchedulerLeaseService", () => {
         });
     });
 });
+
+describe("SchedulerLeaseService provider ownership", () => {
+    beforeEach(() => jest.useFakeTimers());
+    afterEach(() => jest.useRealTimers());
+
+    function createHost(values: Record<string, string | undefined>, enabled = true) {
+        const repository = createRepositoryMock();
+        repository.acquireOrRenew.mockResolvedValue(acquireResult());
+        const service = new SchedulerLeaseService(repository, createConfigService(values), enabled);
+        return { repository, service };
+    }
+
+    it.each(["lightnode", "lightsail"])("only the selected %s host acquires and renews in a two-host deployment", async (provider) => {
+        const hosts = ["lightnode", "lightsail"].map((holder) => createHost({
+            NODE_ENV: "production",
+            PRODUCTION_DEPLOYMENT_PROVIDER: provider,
+            SCHEDULER_LEASE_HOLDER_ID: holder,
+        }));
+        await Promise.all(hosts.map(({ service }) => service.onModuleInit()));
+        await jest.advanceTimersByTimeAsync(LEASE_RENEW_INTERVAL_MS * 3);
+        for (const { repository, service } of hosts) {
+            const selected = service.holderId === provider;
+            expect(service.holdsLease()).toBe(selected);
+            expect(service.snapshot()).toEqual(expect.objectContaining({
+                provider,
+                eligible: selected,
+                eligibilityReason: selected ? "provider_match" : "provider_holder_mismatch",
+            }));
+            expect(repository.acquireOrRenew).toHaveBeenCalledTimes(selected ? 4 : 0);
+            await service.onModuleDestroy();
+            expect(repository.release).toHaveBeenCalledTimes(selected ? 1 : 0);
+        }
+    });
+
+    it.each([undefined, "", "none", "unexpected-private-value"])("fails closed without throwing on production provider %s, including off mode", async (provider) => {
+        for (const mode of ["required", "off"]) {
+            const { service, repository } = createHost({
+                NODE_ENV: "production",
+                PRODUCTION_DEPLOYMENT_PROVIDER: provider,
+                SCHEDULER_LEASE_HOLDER_ID: "lightnode",
+                SCHEDULER_LEASE_MODE: mode,
+            });
+            await expect(service.onModuleInit()).resolves.toBeUndefined();
+            await jest.advanceTimersByTimeAsync(LEASE_RENEW_INTERVAL_MS * 3);
+            expect(service.holdsLease()).toBe(false);
+            expect(service.snapshot()).toEqual(expect.objectContaining({ provider: null, eligible: false }));
+            expect(JSON.stringify(service.snapshot())).not.toContain("unexpected-private-value");
+            expect(repository.acquireOrRenew).not.toHaveBeenCalled();
+            await service.onModuleDestroy();
+            expect(repository.release).not.toHaveBeenCalled();
+        }
+    });
+
+    it.each([undefined, "", "local", "unrecognized-host"])("rejects production holder %s without using the hostname fallback for eligibility", async (holder) => {
+        for (const mode of ["required", "off"]) {
+            const { service, repository } = createHost({
+                NODE_ENV: "production",
+                PRODUCTION_DEPLOYMENT_PROVIDER: "lightnode",
+                SCHEDULER_LEASE_HOLDER_ID: holder,
+                SCHEDULER_LEASE_MODE: mode,
+            });
+            await service.onModuleInit();
+            expect(service.holdsLease()).toBe(false);
+            expect(service.snapshot().eligibilityReason).toBe("holder_unrecognized");
+            expect(repository.acquireOrRenew).not.toHaveBeenCalled();
+        }
+    });
+
+    it.each(["lightnode", "lightsail"])("off mode cannot bypass %s provider mismatch", async (provider) => {
+        const { service, repository } = createHost({
+            NODE_ENV: "production", PRODUCTION_DEPLOYMENT_PROVIDER: provider,
+            SCHEDULER_LEASE_HOLDER_ID: provider === "lightnode" ? "lightsail" : "lightnode",
+            SCHEDULER_LEASE_MODE: "off",
+        });
+        await service.onModuleInit();
+        expect(service.holdsLease()).toBe(false);
+        expect(service.snapshot().eligibilityReason).toBe("provider_holder_mismatch");
+        expect(repository.acquireOrRenew).not.toHaveBeenCalled();
+    });
+
+    it.each([undefined, "none"])("preserves nonproduction off/local with provider %s", async (provider) => {
+        const { service, repository } = createHost({
+            NODE_ENV: "development", PRODUCTION_DEPLOYMENT_PROVIDER: provider,
+            SCHEDULER_LEASE_MODE: "off", SCHEDULER_LEASE_HOLDER_ID: "local",
+        });
+        await service.onModuleInit();
+        expect(service.holdsLease()).toBe(true);
+        expect(service.snapshot()).toEqual(expect.objectContaining({
+            provider: null, eligible: true, eligibilityReason: "nonproduction_unconfigured",
+        }));
+        expect(repository.acquireOrRenew).not.toHaveBeenCalled();
+    });
+
+    it.each(["lightnode", "bad-value"])("validates explicit nonproduction provider %s", async (provider) => {
+        const { service, repository } = createHost({
+            NODE_ENV: "development", PRODUCTION_DEPLOYMENT_PROVIDER: provider,
+            SCHEDULER_LEASE_MODE: "off", SCHEDULER_LEASE_HOLDER_ID: "local",
+        });
+        await service.onModuleInit();
+        expect(service.holdsLease()).toBe(false);
+        expect(repository.acquireOrRenew).not.toHaveBeenCalled();
+    });
+
+    it.each([undefined, "none", "invalid", "lightnode", "lightsail"])("standby remains passive regardless of provider %s", async (provider) => {
+        const { service, repository } = createHost({
+            NODE_ENV: "production", PRODUCTION_DEPLOYMENT_PROVIDER: provider,
+            SCHEDULER_LEASE_HOLDER_ID: "lightnode", SCHEDULER_LEASE_MODE: "off",
+        }, false);
+        await service.onModuleInit();
+        await jest.advanceTimersByTimeAsync(LEASE_RENEW_INTERVAL_MS * 3);
+        expect(service.snapshot()).toEqual(expect.objectContaining({
+            mode: "standby", held: false, eligible: false, eligibilityReason: "schedulers_disabled",
+        }));
+        expect(repository.acquireOrRenew).not.toHaveBeenCalled();
+        await service.onModuleDestroy();
+        expect(repository.release).not.toHaveBeenCalled();
+    });
+});

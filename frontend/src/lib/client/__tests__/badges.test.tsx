@@ -82,7 +82,7 @@ describe("schedule-change badge priority", () => {
       <AnimatedSlotListItemContent
         dataComponent="desktop_dashboard_split-list-item-content"
         icon={<span>고객</span>}
-        title="송진호"
+        title="정다라"
         status={orderedBadges.map((badge) => (
           <StatusBadge
             key={badge.key}

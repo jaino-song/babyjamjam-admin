@@ -1,3 +1,6 @@
+import { GetSettingUsecase, UpdateSettingUsecase } from "application/usecases/system-setting";
+import { SbSystemSettingRepository } from "infrastructure/database/repositories/sb.system-setting.repository";
+import { SystemSettingService } from "application/services/system-setting.service";
 import { AligoService } from "application/services/aligo.service";
 import { SmsTriggerDeliveryService } from "application/services/sms-trigger-delivery.service";
 import { MessageTriggerJobEntity } from "domain/entities/message-trigger-job.entity";
@@ -179,7 +182,7 @@ describeReal("SMS duplicate dispatch prevention (real PostgreSQL)", () => {
             // A gate stub that permits: this audit targets the acceptance-boundary
             // fence, not the agent gate refusing the job before it starts.
             { permitsDirectManualJob: async () => true } as unknown as ConstructorParameters<typeof SmsTriggerDeliveryService>[5],
-            new SbMessageTriggerRuleRepository(handle.service),
+            new SbMessageTriggerRuleRepository(handle.service),new SystemSettingService(new GetSettingUsecase(new SbSystemSettingRepository(handle.service)), new UpdateSettingUsecase(new SbSystemSettingRepository(handle.service))),
         );
 
         // Dispatcher A: crosses the provider boundary and hangs inside the

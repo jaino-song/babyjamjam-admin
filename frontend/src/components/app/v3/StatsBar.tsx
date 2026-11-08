@@ -14,6 +14,7 @@ export interface StatsBarItem {
   label: string;
   counter?: string;
   colorIndex?: number;
+  isLoading?: boolean;
 }
 
 interface StatsBarProps {
@@ -48,13 +49,14 @@ export function StatsBar({
       {items.map((item, idx) => (
         <StatMini
           key={item.label}
+          data-component={`${name}_stats_item-${idx}`}
           icon={item.icon}
           value={item.value}
           label={item.label}
           counter={item.counter}
           colorIndex={item.colorIndex ?? idx}
           animationDelay={`${idx * 0.08}s`}
-          isLoading={isLoading}
+          isLoading={item.isLoading ?? isLoading}
           density={density}
         />
       ))}

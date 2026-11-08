@@ -686,6 +686,36 @@ describe("messages page — narrow viewport layout (below md)", () => {
 });
 
 describe("messages page — server system-template catalog", () => {
+  it("wires both server recipient groups into the real template list in catalog order", () => {
+    const entries = [
+      ["GREETING", "첫 인사"],
+      ["SERVICE_INFO", "서비스 내용 안내"],
+      ["PRICE_INFO", "서비스 비용 안내"],
+      ["REMINDER", "리마인드"],
+      ["THANKS", "입금 확인 및 예약 완료 안내"],
+      ["INFO", "산모 정보 요청"],
+      ["CONTRACT_GUIDE", "계약서 작성 안내"],
+      ["CONTRACT_REMINDER", "계약서 작성 요청"],
+      ["MATERNAL_NOTICE", "산모님 안내문"],
+      ["SERVICE_END_NOTICE", "서비스 종료 안내"],
+      ["SURVEY", "모니터링 설문"],
+      ["PROVIDER_NOTICE", "제공인력 안내문"],
+      ["SERVICE_RECORD_LINK", "제공기록지 작성 요청"],
+      ["SERVICE_RECORD_REMINDER", "제공기록지 미작성 알림"],
+    ];
+    const templates = entries.map(([templateKey, name], index) => buildSystemTemplate({
+      templateKey, name, group: index < 11 ? "mother" : "provider", groupLabel: index < 11 ? "산모 대상" : "제공인력 대상",
+    }));
+    mockUseSystemTemplates.mockReturnValue({ data: templates, isLoading: false, isError: false });
+    const { container } = render(<MessagesPage />);
+    fireEvent.click(screen.getAllByRole("button", { name: "템플릿" })[0]);
+    const list = container.querySelector('[data-component="desktop_messages_sections_split-layout_list-panel-4_templates-list_slots"]') as HTMLElement;
+    expect(within(list).getAllByRole("heading").map((heading) => heading.textContent)).toEqual(["산모 대상", "제공인력 대상"]);
+    const rows = within(list).getAllByRole("button");
+    expect(rows).toHaveLength(14);
+    rows.forEach((row, index) => expect(within(row).getByText(entries[index][1])).toBeInTheDocument());
+  });
+
   it("saves only the newly selected template's content and variables after switching editors", async () => {
     mockAuthUser({ id: "owner-1", role: "owner" });
     const secondVariables = [{ key: "second", label: "두 번째 변수", required: true }];
@@ -882,7 +912,7 @@ describe("messages page — server system-template catalog", () => {
 
     const { container } = render(<MessagesPage />);
     const badge = container.querySelector(
-      '[data-component="desktop_messages_sections_template-item_status_badge"]',
+      '[data-component="desktop_messages_sections_split-layout_list-panel-4_templates-list_slots_template-item_status_badge"]',
     );
 
     expect(badge).toHaveTextContent("직접 발송 불가");

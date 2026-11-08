@@ -5,11 +5,11 @@ import {
 
 describe("getConsultationPhoneSearchVariants", () => {
     it("should include hyphenated and digit-only variants for mobile numbers", () => {
-        expect(getConsultationPhoneSearchVariants("010-9641-1878")).toEqual([
-            "010-9641-1878",
-            "01096411878",
-            "010-96411878",
-            "0109641-1878",
+        expect(getConsultationPhoneSearchVariants("010-0000-9641")).toEqual([
+            "010-0000-9641",
+            "01000009641",
+            "010-00009641",
+            "0100000-9641",
         ]);
     });
 

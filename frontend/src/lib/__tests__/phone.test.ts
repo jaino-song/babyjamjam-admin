@@ -13,9 +13,9 @@ describe("normalizePhoneDigits", () => {
 
 describe("normalizeKoreanPhoneLookupKey", () => {
   it("normalizes domestic and country-code mobile formats to the same key", () => {
-    expect(normalizeKoreanPhoneLookupKey("01066211878")).toBe("01066211878");
-    expect(normalizeKoreanPhoneLookupKey("010-6621-1878")).toBe("01066211878");
-    expect(normalizeKoreanPhoneLookupKey("+82 10 6621 1878")).toBe("01066211878");
+    expect(normalizeKoreanPhoneLookupKey("01000006621")).toBe("01000006621");
+    expect(normalizeKoreanPhoneLookupKey("010-0000-6621")).toBe("01000006621");
+    expect(normalizeKoreanPhoneLookupKey("+82 10 0000 6621")).toBe("01000006621");
   });
 
   it("normalizes 82 and domestic Seoul landline formats to the same key", () => {

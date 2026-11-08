@@ -15,8 +15,8 @@ export class SbSystemSettingRepository implements ISystemSettingRepository {
         private readonly auditWriter?: AdminAuditEventWriter,
     ) {}
 
-    async findByKey(key: string): Promise<SystemSettingEntity | null> {
-        const row = await this.prismaService.system_setting.findUnique({
+    async findByKey(key: string, transaction?: Prisma.TransactionClient): Promise<SystemSettingEntity | null> {
+        const row = await (transaction ?? this.prismaService).system_setting.findUnique({
             where: { key },
         });
         return row ? SystemSettingMapper.toDomain(row) : null;
@@ -59,40 +59,15 @@ export class SbSystemSettingRepository implements ISystemSettingRepository {
         entity: SystemSettingEntity,
         versionOf: (value: string | null) => string,
         auditContext?: SystemSettingAuditContext,
+        transaction?: Prisma.TransactionClient,
     ): Promise<SystemSettingEntity | null> {
-        try {
-            const row = await this.prismaService.$transaction(async (transaction) => {
-                await transaction.$queryRawUnsafe(
-                    'SELECT "key" FROM "system_setting" WHERE "key" = $1 FOR UPDATE',
-                    key,
-                );
-                const current = await transaction.system_setting.findUnique({ where: { key } });
-                if (versionOf(current?.value ?? null) !== expectedVersion) return null;
-                if (!current) {
-                    const created = await transaction.system_setting.create({
-                        data: { key: entity.key, value: entity.value, updatedAt: entity.updatedAt },
-                    });
-                    if (auditContext) {
-                        if (!this.auditWriter) {
-                            throw new Error("Admin audit writer is required for audited setting mutations");
-                        }
-                        await this.auditWriter.append(transaction, {
-                            actor: auditContext.actor,
-                            branchId: auditContext.branchId,
-                            action: auditContext.action ?? "system_setting.updated",
-                            targetType: "system_setting",
-                            targetId: entity.key,
-                            before: null,
-                            after: { key: created.key, valueDigest: digest(created.value) },
-                            outcome: "success",
-                            source: auditContext.source ?? "backend",
-                        });
-                    }
-                    return created;
-                }
-                const updated = await transaction.system_setting.update({
-                    where: { key },
-                    data: { value: entity.value, updatedAt: entity.updatedAt },
+        const run = async (transaction: Prisma.TransactionClient) => {
+            await transaction.$queryRaw(Prisma.sql`SELECT "key" FROM "system_setting" WHERE "key" = ${key} FOR UPDATE`);
+            const current = await transaction.system_setting.findUnique({ where: { key } });
+            if (versionOf(current?.value ?? null) !== expectedVersion) return null;
+            if (!current) {
+                const created = await transaction.system_setting.create({
+                    data: { key: entity.key, value: entity.value, updatedAt: entity.updatedAt },
                 });
                 if (auditContext) {
                     if (!this.auditWriter) {
@@ -104,14 +79,44 @@ export class SbSystemSettingRepository implements ISystemSettingRepository {
                         action: auditContext.action ?? "system_setting.updated",
                         targetType: "system_setting",
                         targetId: entity.key,
-                        before: { key: current.key, valueDigest: digest(current.value) },
-                        after: { key: updated.key, valueDigest: digest(updated.value) },
+                        before: null,
+                        after: { key: created.key, valueDigest: digest(created.value) },
                         outcome: "success",
                         source: auditContext.source ?? "backend",
                     });
                 }
-                return updated;
+                return created;
+            }
+            const updated = await transaction.system_setting.update({
+                where: { key },
+                data: { value: entity.value, updatedAt: entity.updatedAt },
             });
+            if (auditContext) {
+                if (!this.auditWriter) {
+                    throw new Error("Admin audit writer is required for audited setting mutations");
+                }
+                await this.auditWriter.append(transaction, {
+                    actor: auditContext.actor,
+                    branchId: auditContext.branchId,
+                    action: auditContext.action ?? "system_setting.updated",
+                    targetType: "system_setting",
+                    targetId: entity.key,
+                    before: { key: current.key, valueDigest: digest(current.value) },
+                    after: { key: updated.key, valueDigest: digest(updated.value) },
+                    outcome: "success",
+                    source: auditContext.source ?? "backend",
+                });
+            }
+            return updated;
+        };
+        // A caller-owned transaction must abort on a database error. Never swallow
+        // P2002 here: PostgreSQL has already marked that transaction as aborted.
+        if (transaction) {
+            const row = await run(transaction);
+            return row ? SystemSettingMapper.toDomain(row) : null;
+        }
+        try {
+            const row = await this.prismaService.$transaction(run);
             return row ? SystemSettingMapper.toDomain(row) : null;
         } catch (error) {
             if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") return null;

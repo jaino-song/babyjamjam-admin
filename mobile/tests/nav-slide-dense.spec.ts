@@ -7,14 +7,16 @@ import fs from "node:fs";
  * (covering 0-200ms) during a tab change.
  *
  * Drives the user's running pnpm dev server at http://localhost:3000 via the
- * real /login flow (no E2E shortcut cookies).
+ * real /login flow (no E2E shortcut cookies), with credentials from E2E_DEV_EMAIL and E2E_DEV_PASSWORD.
  */
 
 const OUT = path.join(__dirname, "screenshots", "nav-broken-diagnose");
 fs.mkdirSync(OUT, { recursive: true });
 
-const EMAIL = "wlsghtmeod@gmail.com";
-const PASSWORD = "Test1234!";
+const EMAIL = process.env.E2E_DEV_EMAIL ?? "";
+const PASSWORD = process.env.E2E_DEV_PASSWORD ?? "";
+
+test.skip(!EMAIL || !PASSWORD, "export E2E_DEV_EMAIL and E2E_DEV_PASSWORD (values in frontend/.env.local; this config loads no env file) to run this local diagnostic");
 
 interface NavSample {
   t: number;

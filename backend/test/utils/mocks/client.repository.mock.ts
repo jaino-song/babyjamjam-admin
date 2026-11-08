@@ -1,6 +1,7 @@
 import { ClientEntity } from "domain/entities/client.entity";
 import {
     ClientDeleteOutcome,
+    ServiceRecordAlertCandidate,
     AutomaticServiceStatusUpdateResult,
     ClientPhoneMatch,
     ClientWithInitialSchedule,
@@ -26,6 +27,11 @@ import {
  * In-memory 저장소로 동작하며, 테스트 간 독립성 보장
  */
 export class MockClientRepository implements IClientRepository {
+    async findServiceRecordAlertCandidates(_branchId: string): Promise<ServiceRecordAlertCandidate[]> {
+        void _branchId;
+        return [];
+    }
+
     private clients: Map<number, ClientEntity> = new Map();
     private nextId: number = 1;
 

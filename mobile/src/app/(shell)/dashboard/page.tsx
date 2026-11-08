@@ -467,10 +467,11 @@ export default function DashboardPage() {
     [sectionsFull],
   );
 
-  const { visibleCount, isInitialLoad, hasMore, sentinelRef, scrollContainerRef, loadMore } =
+  const { visibleCount, hasMore, sentinelRef, scrollContainerRef } =
     useListInfiniteScroll({
       resetKey: activeFilter,
       totalItems: maxFullCount,
+      autoLoadInitial: true,
     });
 
   const visibleSections = useMemo(
@@ -509,10 +510,9 @@ export default function DashboardPage() {
             onRetry={() => { void refetchClients(); }}
             onRetryAnalytics={() => { void refetchAnalytics(); }}
             scrollRef={scrollContainerRef}
-            loadMore={isInitialLoad && hasMore}
-            onLoadMore={loadMore}
+            loadMore={false}
             loadMoreSentinel={
-              !isInitialLoad && hasMore ? (
+              hasMore ? (
                 <ListLoadMoreSentinel
                   data-component="mobile_dashboard_page_content_list-card_body_load-sentinel"
                   sentinelRef={sentinelRef}

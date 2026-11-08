@@ -34,6 +34,20 @@ describe("deleted employee problem passthrough", () => {
     });
 });
 
+describe("start-date lock problem passthrough", () => {
+    it("forwards the bounded extension only for the start-date lock code", () => {
+        const problem = createProblemDetails({ code: "SERVICE_RECORD_START_DATE_LOCKED", requestId: "req-start-date" });
+        const startDateLock = { serviceStarted: true, recordedSessionCount: 3 };
+        expect(sanitizeUpstreamClientError({ ...problem, startDateLock: { ...startDateLock, secret: "dropped" } }, "fallback", 409))
+            .toEqual({ ...problem, startDateLock, error: problem.detail });
+        expect(sanitizeUpstreamClientError({ ...problem, startDateLock: { ...startDateLock, recordedSessionCount: -1 } }, "fallback", 409))
+            .toEqual({ ...problem, error: problem.detail });
+        const finalized = createProblemDetails({ code: "SERVICE_RECORD_FINALIZED", requestId: "req-start-date" });
+        expect(sanitizeUpstreamClientError({ ...finalized, startDateLock }, "fallback", 409))
+            .toEqual({ ...finalized, error: finalized.detail });
+    });
+});
+
 describe("logUpstreamError", () => {
     afterEach(() => {
         jest.restoreAllMocks();

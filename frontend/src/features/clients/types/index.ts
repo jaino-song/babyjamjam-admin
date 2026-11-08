@@ -42,6 +42,7 @@ export interface PendingScheduleChange {
 
 // Client entity types
 import type { ClientActionRequired } from "@babyjamjam/shared/types/client-action-required";
+import type { StartDateChangeMode } from "@babyjamjam/shared";
 
 export type {
     ActionRequiredReason,
@@ -129,6 +130,8 @@ export type ClientFormData = Omit<CreateClientDto, "primaryEmployeeId" | "allowB
 
 // Update client DTO - Frontend sends employeeId, backend converts to scheduleId
 export interface UpdateClientDto {
+    /** Set only after an explicit start-date change confirmation for this save. */
+    startDateChangeMode?: StartDateChangeMode;
     name?: string;
     birthday?: string | null;
     dueDate?: string | null;

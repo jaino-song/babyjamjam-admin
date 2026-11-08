@@ -209,6 +209,9 @@ export function SystemTemplatesManager({
               loadingCount={9}
               className="space-y-2"
               getItemKey={(template) => template.templateKey}
+              getItemGroup={(template) => template.group && template.groupLabel
+                ? { id: template.group, label: template.groupLabel }
+                : undefined}
               getSlotState={({ item, isLoading }) => ({
                 isActive: !isLoading && item?.templateKey === selectedTemplateKey,
                 isInteractive: !isLoading && Boolean(item) && !isSaving,

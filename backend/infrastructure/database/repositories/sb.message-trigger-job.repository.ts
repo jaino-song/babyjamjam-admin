@@ -1,9 +1,17 @@
+import { MANUAL_SMS_TEMPLATE_KEY, MANUAL_SMS_RULE_PREFIX } from "domain/constants/message-trigger-catalog";
+import { parseMessageQuietHold, messageQuietHoldVariables, type MessageQuietHold, type MessageQuietHoursDecision } from "domain/message-policy-evaluator";
+import type { MessageQuietHeldJob } from "domain/repositories/message-trigger-job.repository.interface";
+import type { MessageTriggerRuleBranchOverride } from "domain/repositories/message-trigger-rule-branch-override.repository.interface";
+import type { MessagePolicyPreviewCandidate } from "domain/message-policy-evaluator";
 import { Injectable, Logger } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import { createHash } from "node:crypto";
 import { PrismaService } from "infrastructure/database/prisma.service";
 import {
     IMessageTriggerJobRepository,
+    MessageDispatchBranchEligibility,
+    MessageDispatchSelectedJob,
+    MessageTriggerClaimSnapshot,
     CancelPendingJobsResult,
     MessageTriggerJobCancellationScope,
     MessageTriggerJobReviewSnapshot,
@@ -64,6 +72,7 @@ type MessageTriggerJobPrismaRow = {
     createdAt: Date;
     updatedAt: Date;
     claimToken: string | null;
+    processingDeadlineAt: Date | null;
 };
 
 type MessageTriggerJobRawRow = {
@@ -87,6 +96,7 @@ type MessageTriggerJobRawRow = {
     created_at: Date | string;
     updated_at: Date | string;
     claim_token: string | null;
+    processing_deadline_at: Date | string | null;
 };
 
 type ClientUpcomingMessageTriggerJobRawRow = {
@@ -240,6 +250,9 @@ function jobTargetVersion(job: MessageTriggerJobEntity, snapshotHash: string): s
 @Injectable()
 export class SbMessageTriggerJobRepository implements IMessageTriggerJobRepository {
     private readonly logger = new Logger(SbMessageTriggerJobRepository.name);
+    // JS Date loses PostgreSQL microseconds. Preserve the exact observed clock
+    // for reclaim CAS, including claims created by older app versions.
+    private readonly reclaimClocks = new WeakMap<MessageTriggerJobEntity, { updatedAt: string; deadline: string | null }>();
 
     constructor(private readonly prisma: PrismaService) {}
 
@@ -257,6 +270,136 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
         return { branchId: job.branchId };
     }
 
+    async createManualSmsJob(job: MessageTriggerJobEntity, existingMessageLogId: number, transaction: Prisma.TransactionClient): Promise<MessageTriggerJobEntity> {
+        if (!job.branchId || job.ruleId !== MANUAL_SMS_RULE_PREFIX + job.branchId || job.templateKey !== MANUAL_SMS_TEMPLATE_KEY
+            || job.payload.origin !== "ADMIN_DIRECT" || job.payload.existingMessageLogId !== existingMessageLogId
+            || job.payload.agentAutomationSeal || job.payload.taskAutomationReference
+            || !job.recipientPhone || job.recipientPhone !== job.payload.recipientPhone || job.employeeScheduleId !== null
+            || !job.dedupeKey.startsWith(`manual-sms:${job.branchId}:`) || job.attempts !== 0 || job.claimToken !== null) throw new Error("Invalid manual SMS holder job");
+        const log = await transaction.message_log.findFirst({ where: { id: existingMessageLogId, branchId: job.branchId,
+            provider: "aligo_sms", providerAcceptanceState: "prepared", providerCallStartedAt: null, triggerJobId: null } });
+        if (!log || log.recipientPhone !== job.recipientPhone || log.messageBody !== job.payload.messageBody
+            || !log.providerAcceptanceKey || !log.providerAcceptanceFingerprint) throw new Error("Invalid manual SMS acceptance");
+        const holder = await transaction.message_trigger_rule.upsert({
+            where: { id: job.ruleId }, update: {}, create: { id: job.ruleId, branchId: job.branchId,
+                name: "수동 문자 예약", isActive: false, eventType: "CLIENT_CREATED", offsetType: "IMMEDIATE", offsetDays: 0,
+                recipientType: "CLIENT", templateKey: MANUAL_SMS_TEMPLATE_KEY, isDefault: false, groupId: null, retryOnFailure: false },
+        });
+        if (holder.branchId !== job.branchId || holder.templateKey !== MANUAL_SMS_TEMPLATE_KEY || holder.groupId !== null
+            || holder.isActive !== false || holder.retryOnFailure !== false || holder.deletedAt !== null || holder.jobsStale) throw new Error("Manual SMS holder changed");
+        const persisted = await transaction.message_trigger_job.create({ data: this.toCreate(job) });
+        const linked = await transaction.message_log.updateMany({ where: { id: log.id, branchId: job.branchId,
+            triggerJobId: null, providerAcceptanceState: "prepared", providerCallStartedAt: null,
+            providerAcceptanceKey: log.providerAcceptanceKey, providerAcceptanceFingerprint: log.providerAcceptanceFingerprint },
+            data: { triggerJobId: persisted.id } });
+        if (linked.count !== 1) throw new Error("Manual SMS acceptance link changed");
+        return this.toDomain(persisted);
+    }
+
+    async readQuietHold(job: MessageTriggerJobEntity, transaction?: Prisma.TransactionClient): Promise<MessageQuietHold | null> {
+        const rows = await (transaction ?? this.prisma).message_log.findMany({
+            where: { branchId: job.branchId, triggerJobId: job.id, provider: "aligo_sms" }, orderBy: { id: "desc" },
+        });
+        if (!rows.length) return null;
+        let latest: MessageQuietHold | null = null;
+        for (const log of rows) {
+            const variables = log.variables && typeof log.variables === "object" && !Array.isArray(log.variables) ? log.variables : {};
+            const hasHold = Object.keys(variables).some(key => key.startsWith("quietHours"));
+            if (!hasHold) {
+                if (job.attempts === 0 && job.nextAttemptAt !== null && log.providerAcceptanceState === "prepared" && log.providerCallStartedAt === null) throw new Error("Quiet hold metadata is missing");
+                continue;
+            }
+            const hold = parseMessageQuietHold(log.variables);
+            if (!hold || !log.providerAcceptanceKey || !log.providerAcceptanceFingerprint
+                || hold.originalScheduledFor.getTime() !== job.scheduledFor.getTime()
+                || (job.payload.existingMessageLogId !== undefined && job.payload.existingMessageLogId !== log.id)) {
+                throw new Error("Invalid quiet hold association");
+            }
+            if (!latest || hold.releaseAt > latest.releaseAt) latest = hold;
+        }
+        return latest;
+    }
+
+    async findQuietHeldJobs(branchId: string, transaction?: Prisma.TransactionClient): Promise<MessageQuietHeldJob[]> {
+        const rows = await (transaction ?? this.prisma).message_trigger_job.findMany({
+            where: { branchId, status: "pending", attempts: 0, claimToken: null, processingDeadlineAt: null,
+                logs: { some: { branchId, provider: "aligo_sms", providerAcceptanceState: "prepared", providerCallStartedAt: null,
+                    variables: { path: ["quietHoursDisposition"], equals: "DEFER" } } } },
+            include: { logs: { where: { branchId, provider: "aligo_sms", providerAcceptanceState: "prepared", providerCallStartedAt: null,
+                variables: { path: ["quietHoursDisposition"], equals: "DEFER" } } } },
+            orderBy: [{ nextAttemptAt: "asc" }, { id: "asc" }],
+        });
+        return rows.map(row => {
+            const job = this.toDomain(row);
+            const log = row.logs[0];
+            const hold = parseMessageQuietHold(log?.variables);
+            if (row.logs.length !== 1 || !log || !hold || !log.providerAcceptanceKey || !log.providerAcceptanceFingerprint
+                || hold.originalScheduledFor.getTime() !== job.scheduledFor.getTime()
+                || !job.nextAttemptAt || job.nextAttemptAt < hold.releaseAt
+                || (job.payload.existingMessageLogId !== undefined && job.payload.existingMessageLogId !== log.id)) {
+                throw new Error("Invalid quiet hold association");
+            }
+            job.quietHold = hold;
+            return { job, logId: log.id, acceptanceKey: log.providerAcceptanceKey, fingerprint: log.providerAcceptanceFingerprint, hold };
+        });
+    }
+
+    /** Caller owns the existing branch transaction. No entity mutation before commit. */
+    async transitionQuietHold(job: MessageTriggerJobEntity, logId: number, acceptanceKey: string, fingerprint: string,
+        decision: Exclude<MessageQuietHoursDecision, { action: "ALLOW" }>, revision: string,
+        transaction: Prisma.TransactionClient, cancellationReason?: "duplicate_at_release" | "expired_after_quiet"): Promise<MessageQuietHold | null> {
+        const current = await transaction.message_trigger_job.findFirst({ where: { id: job.id, branchId: job.branchId } });
+        const log = await transaction.message_log.findFirst({ where: { id: logId, branchId: job.branchId, triggerJobId: job.id,
+            provider: "aligo_sms", providerAcceptanceKey: acceptanceKey, providerAcceptanceFingerprint: fingerprint,
+            providerAcceptanceState: "prepared", providerCallStartedAt: null } });
+        if (!current || !log || !job.branchId || log.status !== "pending" || log.attempts !== 0
+            || log.providerAcceptedAt != null || log.aligoMid != null || current.status !== job.status
+            || current.claimToken !== job.claimToken || current.processingDeadlineAt?.getTime() !== job.processingDeadlineAt?.getTime()
+            || current.attempts !== 0 || current.ruleId !== job.ruleId || current.dedupeKey !== job.dedupeKey
+            || current.templateKey !== job.templateKey || current.recipientPhone !== job.recipientPhone
+            || current.clientId !== job.clientId || current.employeeScheduleId !== job.employeeScheduleId || current.recipientType !== job.recipientType
+            || current.scheduledFor.getTime() !== job.scheduledFor.getTime() || stableJson(current.payload) !== stableJson(job.payload)
+            || (current.status !== "pending" && current.status !== "dispatching" && current.status !== "processing")
+            || (current.status !== "pending" && !job.claimToken)
+            || (current.status === "pending" && (current.claimToken !== null || current.processingDeadlineAt !== null))) {
+            throw new Error("Quiet hold claim changed");
+        }
+        const variables = log.variables && typeof log.variables === "object" && !Array.isArray(log.variables) ? log.variables : {};
+        const oldHold = parseMessageQuietHold(variables);
+        if (variables["quietHoursDisposition"] === "CANCEL"
+            || (variables["quietHoursDisposition"] === "DEFER" && !oldHold)
+            || (oldHold && oldHold.originalScheduledFor.getTime() !== job.scheduledFor.getTime())) throw new Error("Quiet hold metadata changed");
+        const hold: MessageQuietHold | null = decision.action === "DEFER" ? {
+            releaseAt: new Date(Math.max(oldHold?.releaseAt.getTime() ?? 0, decision.reevaluateAt.getTime(), job.scheduledFor.getTime())),
+            originalScheduledFor: oldHold?.originalScheduledFor ?? job.scheduledFor,
+            policyRevision: oldHold && decision.reevaluateAt <= oldHold.releaseAt ? oldHold.policyRevision : revision, reason: "message_quiet_hours:DEFER",
+        } : null;
+        const reason = cancellationReason ?? `message_quiet_hours:${decision.action}`;
+        const jobWrite = await transaction.message_trigger_job.updateMany({
+            where: { id: job.id, branchId: job.branchId, status: current.status, claimToken: current.claimToken,
+                processingDeadlineAt: current.processingDeadlineAt, updatedAt: current.updatedAt, attempts: 0,
+                payload: { equals: current.payload as Prisma.InputJsonValue }, scheduledFor: current.scheduledFor,
+                ruleId: current.ruleId, dedupeKey: current.dedupeKey, templateKey: current.templateKey,
+                recipientPhone: current.recipientPhone, recipientType: current.recipientType,
+                clientId: current.clientId, employeeScheduleId: current.employeeScheduleId },
+            data: { status: hold ? "pending" : "canceled", nextAttemptAt: hold?.releaseAt ?? null,
+                claimToken: null, processingDeadlineAt: null, cancelReason: hold ? null : reason,
+                canceledAt: hold ? null : new Date(Date.now()) },
+        });
+        if (jobWrite.count !== 1) throw new Error("Quiet hold job CAS lost");
+        const logWrite = await transaction.message_log.updateMany({
+            where: { id: log.id, branchId: job.branchId, triggerJobId: job.id, updatedAt: log.updatedAt,
+                providerAcceptanceKey: acceptanceKey, providerAcceptanceFingerprint: fingerprint,
+                providerAcceptanceState: "prepared", providerCallStartedAt: null,
+                variables: { equals: log.variables as Prisma.InputJsonValue } },
+            data: { status: hold ? "pending" : "failed", nextRetryAt: null, errorMessage: hold ? null : reason,
+                variables: { ...variables, ...(hold ? messageQuietHoldVariables(hold) : { quietHoursDisposition: "CANCEL" }),
+                    ...(job.templateKey === MANUAL_SMS_TEMPLATE_KEY ? hold ? { manualQueueStatus: "deferred", manualQueueScheduledAt: hold.releaseAt.toISOString() } : { manualQueueStatus: "canceled", manualQueueReason: reason } : {}) } },
+        });
+        if (logWrite.count !== 1) throw new Error("Quiet hold log CAS lost");
+        return hold;
+    }
+
     async create(job: MessageTriggerJobEntity): Promise<MessageTriggerJobEntity> {
         this.assertOrdinaryJob(job);
         const row = await this.prisma.message_trigger_job.create({
@@ -270,7 +413,12 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
         const branchWhere = this.branchWhereFragment(job);
         if (job.claimToken) {
             const result = await this.prisma.message_trigger_job.updateMany({
-                where: { id: job.id, claimToken: job.claimToken, ...branchWhere, ...ordinaryAutomationJobWhere() },
+                where: {
+                    id: job.id, claimToken: job.claimToken,
+                    status: { in: ["processing", "dispatching"] },
+                    processingDeadlineAt: job.processingDeadlineAt,
+                    ...branchWhere, ...ordinaryAutomationJobWhere(),
+                },
                 data: this.toUpdate(job),
             });
             if (result.count !== 1) {
@@ -303,8 +451,8 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
         return this.toDomain(row);
     }
 
-    async findByIdInBranch(branchId: string, id: string): Promise<MessageTriggerJobEntity | null> {
-        const row = await this.prisma.message_trigger_job.findFirst({ where: { id, branchId, ...ordinaryAutomationJobWhere() } });
+    async findByIdInBranch(branchId: string, id: string, transaction?: Prisma.TransactionClient): Promise<MessageTriggerJobEntity | null> {
+        const row = await (transaction ?? this.prisma).message_trigger_job.findFirst({ where: { id, branchId, ...ordinaryAutomationJobWhere() } });
         return row && !isReservedAutomationJob(row) ? this.toDomain(row) : null;
     }
 
@@ -312,8 +460,9 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
         id: string,
         branchId: string | null,
         transaction?: Prisma.TransactionClient,
+        processingDeadlineAt?: Date,
     ): Promise<string | null> {
-        return this.claimWithRuleFence("pending", id, branchId, transaction);
+        return this.claimWithRuleFence("pending", id, branchId, transaction, processingDeadlineAt);
     }
 
     /**
@@ -327,8 +476,9 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
         id: string,
         branchId: string | null,
         transaction?: Prisma.TransactionClient,
+        processingDeadlineAt?: Date,
     ): Promise<string | null> {
-        return this.claimWithRuleFence("needs_setup", id, branchId, transaction);
+        return this.claimWithRuleFence("needs_setup", id, branchId, transaction, processingDeadlineAt);
     }
 
     private async claimWithRuleFence(
@@ -336,6 +486,7 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
         id: string,
         branchId: string | null,
         transaction?: Prisma.TransactionClient,
+        processingDeadlineAt?: Date,
     ): Promise<string | null> {
         const statusPredicate = expectedStatus === "pending"
             ? Prisma.sql`job.status = 'pending'`
@@ -418,7 +569,8 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
                 FOR UPDATE OF rule
             )
             UPDATE "message_trigger_job" AS job
-            SET status = 'processing', claim_token = gen_random_uuid()::text, updated_at = now()${claimedReasonAssignment}
+            SET status = 'processing', claim_token = gen_random_uuid()::text, updated_at = date_trunc('milliseconds', now()),
+                processing_deadline_at = ${processingDeadlineAt ?? new Date(Date.now() + 600_000)}${claimedReasonAssignment}
             FROM locked_rule AS rule
             WHERE job.id = ${id}
               AND job.rule_id = rule.id
@@ -428,6 +580,192 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
             RETURNING job.id, job.claim_token
         `);
         return claimed[0]?.claim_token ?? null;
+    }
+
+    async findDueDispatchBranchIds(now: Date): Promise<string[]> {
+        const rows = await this.prisma.message_trigger_job.findMany({
+            where: {
+                ...ordinaryAutomationJobWhere(), status: "pending", branchId: { not: null },
+                scheduledFor: { lte: now }, OR: [{ nextAttemptAt: null }, { nextAttemptAt: { lte: now } }],
+            },
+            select: { branchId: true }, distinct: ["branchId"],
+        });
+        return rows.flatMap((row) => row.branchId ? [row.branchId] : []);
+    }
+
+    private quietReleaseSql(): Prisma.Sql {
+        return Prisma.sql`(SELECT MAX((quiet.variables->>'quietHoursReleaseAt')::timestamptz)
+            FROM message_log quiet
+            WHERE quiet.branch_id = job.branch_id AND quiet.trigger_job_id = job.id AND quiet.provider = 'aligo_sms'
+              AND quiet.provider_acceptance_key IS NOT NULL AND quiet.provider_acceptance_fingerprint IS NOT NULL
+              AND quiet.variables->>'quietHoursDisposition' = 'DEFER'
+              AND quiet.variables->>'quietHoursReason' = 'message_quiet_hours:DEFER'
+              AND length(quiet.variables->>'quietHoursPolicyRevision') > 0
+              AND quiet.variables->>'quietHoursReleaseAt' ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}.[0-9]{3}Z$'
+              AND quiet.variables->>'quietHoursOriginalScheduledFor' = to_char(job.scheduled_for AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'))`;
+    }
+
+    async findDueQuietQueueJobs(eligibility: MessageDispatchBranchEligibility[], now: Date, limit = 100): Promise<MessageDispatchSelectedJob[]> {
+        if (eligibility.length === 0 || limit <= 0) return [];
+        const eligibleValues = Prisma.join(eligibility.map(branch => Prisma.sql`(
+            ${branch.branchId}::uuid, ${branch.automaticEnabled}::boolean
+        )`));
+        const manualJob = manualMessageTriggerJobPredicate({
+            templateKey: Prisma.sql`job.template_key`, ruleId: Prisma.sql`job.rule_id`, dedupeKey: Prisma.sql`job.dedupe_key`,
+        });
+        const rows = await this.prisma.$queryRaw<Array<{ id: string }>>(Prisma.sql`
+            WITH policy(branch_id, automatic_enabled) AS (VALUES ${eligibleValues}),
+            ranked AS (
+                SELECT job.id, job.branch_id, COALESCE(job.next_attempt_at, job.scheduled_for) AS due,
+                    row_number() OVER (PARTITION BY job.branch_id ORDER BY COALESCE(job.next_attempt_at, job.scheduled_for), job.id) AS ordinal
+                FROM message_trigger_job job
+                INNER JOIN policy ON policy.branch_id = job.branch_id
+                WHERE job.status = 'pending' AND job.attempts = 0 AND job.branch_id IS NOT NULL
+                  AND (policy.automatic_enabled OR ${manualJob})
+                  AND job.claim_token IS NULL AND job.processing_deadline_at IS NULL
+                  AND job.scheduled_for <= ${now} AND (job.next_attempt_at IS NULL OR job.next_attempt_at <= ${now})
+                  AND ((job.template_key = 'MANUAL_SMS' AND job.rule_id = 'system:manual-sms:' || job.branch_id::text
+                        AND job.payload->>'origin' = 'ADMIN_DIRECT')
+                    OR (${this.quietReleaseSql()} IS NOT NULL AND EXISTS (
+                        SELECT 1 FROM message_log quiet WHERE quiet.trigger_job_id = job.id AND quiet.branch_id = job.branch_id
+                        AND quiet.provider_acceptance_state = 'prepared' AND quiet.provider_call_started_at IS NULL
+                        AND quiet.variables->>'quietHoursDisposition' = 'DEFER')))
+                  AND ${ordinaryAutomationJobSql({ ruleId: Prisma.sql`job.rule_id`, dedupeKey: Prisma.sql`job.dedupe_key`, payload: Prisma.sql`job.payload` })}
+            ) SELECT id FROM ranked ORDER BY ordinal, due, branch_id, id LIMIT ${limit}
+        `);
+        if (!rows.length) return [];
+        const jobs = await this.prisma.message_trigger_job.findMany({ where: { id: { in: rows.map(row => row.id) }, status: "pending" } });
+        const byId = new Map(jobs.map(row => [row.id, this.toDomain(row)]));
+        return rows.flatMap(row => byId.get(row.id) ?? []);
+    }
+
+    async consumeDispatchSlotsAndFindDueJobs(
+        eligibility: MessageDispatchBranchEligibility[], now: Date, limit = 100,
+        excludedJobIds: readonly string[] = [],
+    ): Promise<MessageDispatchSelectedJob[]> {
+        if (eligibility.length === 0 || limit <= 0) return [];
+        const eligibleValues = Prisma.join(eligibility.map((branch) => Prisma.sql`(
+            ${branch.branchId}::uuid, ${branch.automaticEnabled}::boolean,
+            ${branch.retryEnabled}::boolean, ${branch.intervalMinutes}::integer,
+            ${branch.pastExpiryHours ?? 24}::integer
+        )`));
+        const manualJob = manualMessageTriggerJobPredicate({
+            templateKey: Prisma.sql`job.template_key`, ruleId: Prisma.sql`job.rule_id`, dedupeKey: Prisma.sql`job.dedupe_key`,
+        });
+        const excludedJobs = excludedJobIds.length > 0
+            ? Prisma.sql`AND job.id NOT IN (${Prisma.join(excludedJobIds)})`
+            : Prisma.empty;
+        // Eligibility is applied before both branch selection and the job limit.
+        // Selected quiet jobs must not rank or consume an ordinary cadence slot.
+        // Rank one job per branch first, then the second per branch, etc. Oldest
+        // consumed cadence slots lead so >100 active branches rotate across ticks.
+        // The INSERT conflict predicate is the cross-process cadence CAS.
+        const selected = await this.prisma.$queryRaw<Array<{
+            id: string; expired: boolean; expiry_anchor: Date; past_expiry_hours: number; selected_at: Date;
+        }>>(Prisma.sql`
+            WITH policy(branch_id, automatic_enabled, retry_enabled, interval_minutes, past_expiry_hours) AS (VALUES ${eligibleValues}),
+            eligible AS MATERIALIZED (
+                SELECT job.id, job.branch_id, job.scheduled_for, GREATEST(job.scheduled_for, ${this.quietReleaseSql()}) AS expiry_anchor, job.created_at, policy.interval_minutes,
+                    GREATEST(job.scheduled_for, ${this.quietReleaseSql()}) <= ${now}::timestamptz - policy.past_expiry_hours * interval '1 hour' AS expired,
+                    policy.past_expiry_hours,
+                    row_number() OVER (PARTITION BY job.branch_id ORDER BY job.scheduled_for, job.created_at, job.id) AS ordinal
+                FROM "message_trigger_job" AS job
+                INNER JOIN policy ON policy.branch_id = job.branch_id
+                WHERE job.status = 'pending' AND job.scheduled_for <= ${now}
+                  ${excludedJobs}
+                  AND (job.next_attempt_at IS NULL OR job.next_attempt_at <= ${now})
+                  AND (policy.automatic_enabled OR ${manualJob})
+                  AND (policy.retry_enabled OR (job.attempts = 0 AND (
+                      job.next_attempt_at IS NULL OR (
+                          -- Unattempted CARE predecessor waits are operational eligibility, not failure retries.
+                          -- The trim character set matches JavaScript String.trim at the consumer.
+                          (job.template_key IN (${MessageTriggerTemplateKey.CAREGIVER_SERVICE_START_NOTICE}, ${MessageTriggerTemplateKey.CAREGIVER_SERVICE_END_NOTICE})
+                           OR (job.recipient_type = 'CLIENT' AND job.employee_schedule_id IS NULL AND job.client_id IS NOT NULL
+                               AND jsonb_typeof(job.payload #> '{catchUp,batchId}') = 'string'
+                               AND length(btrim(job.payload #>> '{catchUp,batchId}', ${" \t\n\r\v\f\u00a0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a\u2028\u2029\u202f\u205f\u3000\ufeff"})) > 0
+                               AND EXISTS (
+                                   SELECT 1 FROM "message_trigger_job" AS mixed_care
+                                   WHERE mixed_care.branch_id = job.branch_id AND mixed_care.client_id = job.client_id
+                                     AND mixed_care.employee_schedule_id IS NOT NULL
+                                     AND mixed_care.recipient_type IN ('PRIMARY_EMPLOYEE', 'SECONDARY_EMPLOYEE')
+                                     AND mixed_care.template_key IN (${MessageTriggerTemplateKey.CAREGIVER_SERVICE_START_NOTICE}, ${MessageTriggerTemplateKey.CAREGIVER_SERVICE_END_NOTICE})
+                                     AND mixed_care.payload #> '{catchUp,batchId}' = job.payload #> '{catchUp,batchId}'
+                                     AND mixed_care.payload #> '{caregiverSourceSnapshot,version}' = '1'::jsonb
+                               )))
+                          AND jsonb_typeof(job.payload #> '{catchUp,predecessorDedupeKey}') = 'string'
+                          AND length(btrim(job.payload #>> '{catchUp,predecessorDedupeKey}', ${" \t\n\r\v\f\u00a0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a\u2028\u2029\u202f\u205f\u3000\ufeff"})) > 0
+                      )
+                  )))
+                  AND ${ordinaryAutomationJobSql({ ruleId: Prisma.sql`job.rule_id`, dedupeKey: Prisma.sql`job.dedupe_key`, payload: Prisma.sql`job.payload` })}
+            ),
+            branches AS MATERIALIZED (
+                SELECT eligible.branch_id, eligible.interval_minutes, setting.value AS last_dispatch_at
+                FROM eligible
+                LEFT JOIN "system_setting" AS setting
+                  ON setting.key = 'branch:' || eligible.branch_id::text || ':message_automation:last_dispatch_at'
+                WHERE eligible.ordinal = 1
+                  AND (setting.value IS NULL OR setting.value::timestamptz <= ${now} - eligible.interval_minutes * interval '1 minute')
+                ORDER BY setting.value::timestamptz ASC NULLS FIRST, eligible.scheduled_for, eligible.branch_id
+                LIMIT ${limit}
+            ),
+            consumed AS (
+                INSERT INTO "system_setting" AS setting (key, value, updated_at)
+                SELECT 'branch:' || branch_id::text || ':message_automation:last_dispatch_at', ${now.toISOString()}, ${now}
+                FROM branches
+                ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = EXCLUDED.updated_at
+                WHERE setting.value::timestamptz <= ${now} - (
+                    SELECT interval_minutes FROM policy
+                    WHERE setting.key = 'branch:' || policy.branch_id::text || ':message_automation:last_dispatch_at'
+                ) * interval '1 minute'
+                RETURNING key
+            )
+            SELECT eligible.id, eligible.expired, eligible.expiry_anchor,
+                eligible.past_expiry_hours, ${now}::timestamptz AS selected_at
+            FROM eligible
+            INNER JOIN branches ON branches.branch_id = eligible.branch_id
+            INNER JOIN consumed ON consumed.key = 'branch:' || eligible.branch_id::text || ':message_automation:last_dispatch_at'
+            ORDER BY eligible.ordinal, branches.last_dispatch_at::timestamptz ASC NULLS FIRST,
+                eligible.scheduled_for, eligible.created_at, eligible.id
+            LIMIT ${limit}
+        `);
+        if (selected.length === 0) return [];
+        const rows = await this.prisma.message_trigger_job.findMany({
+            where: { id: { in: selected.map((row) => row.id) }, status: "pending", ...ordinaryAutomationJobWhere() },
+        });
+        const byId = new Map(rows.map((row) => [row.id, this.toDomain(row)]));
+        return selected.flatMap((selection) => {
+            const job = byId.get(selection.id);
+            if (!job) return [];
+            // Use SQL facts from the selection, not the later materialization read:
+            // a reschedule in between must invalidate this optimization at claim time.
+            Object.defineProperty(job, "dispatchSelection", { value: Object.freeze({
+                expired: selection.expired,
+                anchor: selection.expiry_anchor,
+                pastExpiryHours: selection.past_expiry_hours,
+                selectedAt: selection.selected_at,
+            }), enumerable: false });
+            return [job];
+        });
+    }
+
+    async reclaimWithClaimFence(job: MessageTriggerJobEntity, snapshot: MessageTriggerClaimSnapshot): Promise<boolean> {
+        this.assertOrdinaryJob(job);
+        if (snapshot.status !== "processing" && snapshot.status !== "dispatching") return false;
+        const clock = this.reclaimClocks.get(job);
+        const branch = job.branchId === null ? Prisma.sql`job.branch_id IS NULL` : Prisma.sql`job.branch_id = ${job.branchId}::uuid`;
+        const changed = await this.prisma.$executeRaw(Prisma.sql`
+            UPDATE "message_trigger_job" AS job
+            SET status = ${job.status}, sent_at = ${job.sentAt}, canceled_at = ${job.canceledAt},
+                cancel_reason = ${job.cancelReason}, attempts = ${job.attempts}, next_attempt_at = ${job.nextAttemptAt},
+                updated_at = ${job.updatedAt}, claim_token = NULL, processing_deadline_at = NULL
+            WHERE job.id = ${job.id} AND ${branch}
+              AND job.status = ${snapshot.status}
+              AND job.claim_token IS NOT DISTINCT FROM ${snapshot.claimToken}::text
+              AND job.updated_at = ${clock?.updatedAt ?? snapshot.updatedAt}::timestamptz
+              AND job.processing_deadline_at IS NOT DISTINCT FROM ${clock ? clock.deadline : snapshot.processingDeadlineAt}::timestamptz
+              AND ${ordinaryAutomationJobSql({ ruleId: Prisma.sql`job.rule_id`, dedupeKey: Prisma.sql`job.dedupe_key`, payload: Prisma.sql`job.payload` })}
+        `);
+        return changed === 1;
     }
 
     async findDuePendingSystemScope(limit = 100): Promise<MessageTriggerJobEntity[]> {
@@ -448,19 +786,53 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
     }
 
     async findStaleProcessingSystemScope(cutoff: Date, limit = 50): Promise<MessageTriggerJobEntity[]> {
-        const rows = await this.prisma.message_trigger_job.findMany({
-            where: { ...ordinaryAutomationJobWhere(),
-                // `dispatching` is an irreversible provider authorization
-                // state. It is reclaimed for reconciliation, never for a
-                // fresh provider attempt, so a crash after authorization
-                // cannot duplicate delivery.
-                status: { in: ["processing", "dispatching"] },
-                updatedAt: { lt: cutoff },
-            },
-            orderBy: { updatedAt: "asc" },
-            take: limit,
+        const now = new Date(cutoff.getTime() + 600_000);
+        const rows = await this.prisma.$queryRaw<Array<MessageTriggerJobRawRow & { exact_updated_at: string; exact_deadline: string | null }>>(Prisma.sql`
+            SELECT job.id, job.branch_id, job.rule_id, job.status, job.scheduled_for, job.attempts,
+                job.next_attempt_at, job.sent_at, job.canceled_at, job.cancel_reason, job.client_id,
+                job.employee_schedule_id, job.recipient_type, job.recipient_phone, job.template_key,
+                job.dedupe_key, job.payload, job.created_at, job.updated_at, job.claim_token, job.processing_deadline_at,
+                job.updated_at::text AS exact_updated_at, job.processing_deadline_at::text AS exact_deadline
+            FROM "message_trigger_job" AS job
+            WHERE job.status IN ('processing', 'dispatching')
+              AND (job.processing_deadline_at <= ${now}
+                OR (job.processing_deadline_at IS NULL AND job.updated_at <= ${cutoff}))
+              AND ${ordinaryAutomationJobSql({ ruleId: Prisma.sql`job.rule_id`, dedupeKey: Prisma.sql`job.dedupe_key`, payload: Prisma.sql`job.payload` })}
+            ORDER BY COALESCE(job.processing_deadline_at, job.updated_at + interval '10 minutes'), job.id
+            LIMIT ${limit}
+        `);
+        return rows.map((row) => {
+            const job = this.rawRowToDomain(row);
+            this.reclaimClocks.set(job, { updatedAt: row.exact_updated_at, deadline: row.exact_deadline });
+            return job;
         });
-        return rows.map((row) => this.toDomain(row));
+    }
+
+    async findPolicyRuleBranchOverrides(
+        branchId: string,
+        transaction?: Prisma.TransactionClient,
+    ): Promise<MessageTriggerRuleBranchOverride[]> {
+        // Same persisted three-column read as ClientAutomationSourceReader. An
+        // existing branch-lock transaction must never fall back to the pool.
+        return (transaction ?? this.prisma).message_trigger_rule_branch_override.findMany({
+            where: { branchId }, select: { branchId: true, ruleId: true, isActive: true },
+        });
+    }
+
+    async findPolicyPreviewCandidates(branchId: string, transaction?: Prisma.TransactionClient): Promise<MessagePolicyPreviewCandidate[]> {
+        const rows = await (transaction ?? this.prisma).message_trigger_job.findMany({
+            where: { branchId, status: { in: ["pending", "processing", "dispatching"] } },
+        });
+        return Promise.all(rows.map(async row => {
+            const job = this.toDomain(row);
+            const quietHold = await this.readQuietHold(job, transaction) ?? undefined;
+            return {
+                dueAt: new Date(Math.max(row.scheduledFor.getTime(), row.nextAttemptAt?.getTime() ?? 0)),
+                recipientGroups: row.recipientType === "CLIENT" ? ["CLIENT" as const]
+                    : ["PRIMARY_EMPLOYEE", "SECONDARY_EMPLOYEE"].includes(row.recipientType) ? ["CAREGIVER" as const] : [],
+                recipientPhone: row.recipientPhone, quietHold,
+            };
+        }));
     }
 
     async findUpcomingPendingByBranch(
@@ -994,7 +1366,10 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
                 status: { in: ["pending", "processing", "needs_setup"] },
                 clientId: null,
                 employeeScheduleId: null,
-                NOT: { ruleId: { startsWith: AGENT_SMS_RULE_ID_PREFIX } },
+                NOT: [
+                    { ruleId: { startsWith: AGENT_SMS_RULE_ID_PREFIX } },
+                    { ruleId: { startsWith: MANUAL_SMS_RULE_PREFIX } },
+                ],
             },
             data: {
                 status: "canceled",
@@ -1084,18 +1459,32 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
     }
 
     async cancelPendingByUser(id: string, branchId: string, reason: string): Promise<boolean> {
-        const result = await this.prisma.message_trigger_job.updateMany({
-            where: { ...ordinaryAutomationJobWhere(), id, branchId, status: { in: ["pending", "processing"] } },
-            data: {
-                status: "canceled",
-                canceledAt: new Date(),
-                cancelReason: reason,
-                canceledByUser: true,
-                nextAttemptAt: null,
-                claimToken: null,
-            },
+        return this.prisma.$transaction(async transaction => {
+            const result = await transaction.message_trigger_job.updateMany({
+                where: { ...ordinaryAutomationJobWhere(), id, branchId, status: { in: ["pending", "processing"] } },
+                data: { status: "canceled", canceledAt: new Date(), cancelReason: reason, canceledByUser: true,
+                    nextAttemptAt: null, claimToken: null },
+            });
+            if (result.count !== 1) return false;
+            const current = await transaction.message_trigger_job.findFirst({ where: { id, branchId, status: "canceled", canceledByUser: true } });
+            if (current?.templateKey === MANUAL_SMS_TEMPLATE_KEY) {
+                const payload = this.toPayload(current.payload);
+                const cleared = await transaction.message_trigger_job.updateMany({ where: { id, branchId, status: "canceled", claimToken: null,
+                    processingDeadlineAt: current.processingDeadlineAt, updatedAt: current.updatedAt }, data: { processingDeadlineAt: null } });
+                if (cleared.count !== 1) throw new Error("Manual cancellation claim changed");
+                const log = await transaction.message_log.findFirst({ where: { id: payload.existingMessageLogId,
+                    triggerJobId: id, branchId, provider: "aligo_sms", providerAcceptanceState: "prepared", providerCallStartedAt: null } });
+                if (!log || !payload.existingMessageLogId) throw new Error("Manual cancellation acceptance changed");
+                const variables = log.variables && typeof log.variables === "object" && !Array.isArray(log.variables) ? log.variables : {};
+                const written = await transaction.message_log.updateMany({ where: { id: log.id, branchId, triggerJobId: id,
+                    providerAcceptanceState: "prepared", providerCallStartedAt: null, updatedAt: log.updatedAt,
+                    providerAcceptanceKey: log.providerAcceptanceKey, providerAcceptanceFingerprint: log.providerAcceptanceFingerprint },
+                    data: { status: "failed", nextRetryAt: null, errorMessage: reason,
+                        variables: { ...variables, quietHoursDisposition: "CANCEL", manualQueueStatus: "canceled", manualQueueReason: reason } } });
+                if (written.count !== 1) throw new Error("Manual cancellation log CAS lost");
+            }
+            return true;
         });
-        return result.count === 1;
     }
 
     async cancelFailedServiceRecordLinkJobForPreBooking(id: string, branchId: string): Promise<boolean> {
@@ -1729,6 +2118,7 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
             attempts: job.attempts,
             nextAttemptAt: job.nextAttemptAt,
             claimToken: job.claimToken,
+            processingDeadlineAt: job.processingDeadlineAt,
         };
     }
 
@@ -1746,6 +2136,7 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
             attempts: job.attempts,
             nextAttemptAt: job.nextAttemptAt,
             claimToken: job.claimToken,
+            processingDeadlineAt: job.processingDeadlineAt,
         };
     }
 
@@ -1777,6 +2168,7 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
             row.attempts,
             row.nextAttemptAt,
             row.claimToken,
+            row.processingDeadlineAt ?? null,
         );
     }
 
@@ -1803,6 +2195,7 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
             row.attempts,
             this.toNullableDate(row.next_attempt_at),
             row.claim_token,
+            this.toNullableDate(row.processing_deadline_at),
         );
     }
 

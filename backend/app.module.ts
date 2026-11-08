@@ -23,7 +23,6 @@ import { ClientModule } from "module/client.module";
 import { EmployeeScheduleModule } from "module/employee-schedule.module";
 import { EformsignDocModule } from "module/eformsign-doc.module";
 import { EformsignWebhookModule } from "module/eformsign-webhook.module";
-import { EformsignBackupExportModule } from "module/eformsign-backup-export.module";
 import { AreaTemplateModule } from "module/area-template.module";
 import { DocumentModule } from "module/document.module";
 import { DatabaseModule } from "infrastructure/database/database.module";
@@ -44,6 +43,7 @@ import { ContractClientAssignmentGuardService } from "application/services/contr
 import { AgentModule } from "module/agent.module";
 import { HolidayModule } from "module/holiday.module";
 import { HolidayReviewModule } from "module/holiday-review.module";
+import { EformsignBackupModule } from "module/eformsign-backup.module";
 import { HolidaySyncModule } from "module/holiday-sync.module";
 import { resolveSchedulerModuleOptions } from "infrastructure/config/scheduler-config";
 import { HealthController } from "interface/controllers/health.controller";
@@ -87,7 +87,6 @@ const ENV_FILE_PATHS = [
         EmployeeScheduleModule,
         EformsignDocModule,
         EformsignWebhookModule,
-        EformsignBackupExportModule,
         AreaTemplateModule,
         DocumentModule,
         TenantModule,
@@ -104,6 +103,7 @@ const ENV_FILE_PATHS = [
         HolidayModule,
         HolidaySyncModule,
         HolidayReviewModule,
+        EformsignBackupModule,
     ],
     controllers: [EformsignController, HealthController],
     providers: [

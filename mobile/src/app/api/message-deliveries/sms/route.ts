@@ -35,8 +35,11 @@ export async function POST(request: NextRequest) {
       return invalidBody;
     }
 
-    const response = await serverAPIClient.post("/message-deliveries/sms", data, {
-      headers: getAuthHeaders(token),
+    const headers: Record<string, string> = { ...getAuthHeaders(token) };
+    const idempotencyKey = request.headers.get("Idempotency-Key");
+    if (idempotencyKey !== null) headers["Idempotency-Key"] = idempotencyKey;
+    const response = await serverAPIClient.post(`/message-deliveries/sms${request.nextUrl.search}`, data, {
+      headers,
     });
     return NextResponse.json(response.data, { status: response.status });
   } catch (error) {

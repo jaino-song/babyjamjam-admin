@@ -27,7 +27,7 @@ const client = {
   hasSigned: false,
 };
 
-function renderAutocomplete() {
+function renderAutocomplete(props: Partial<React.ComponentProps<typeof ClientAutocomplete>> = {}) {
   return render(
     <LocaleProvider locale="ko">
       <ClientAutocomplete
@@ -35,6 +35,7 @@ function renderAutocomplete() {
         value={null}
         onChange={jest.fn()}
         label="고객"
+        {...props}
       />
     </LocaleProvider>,
   );
@@ -46,7 +47,7 @@ describe("ClientAutocomplete query states", () => {
     mockQuery = { data: [client], isLoading: false, isError: false };
   });
 
-  it("does not render the selection control after an initial client read failure", () => {
+  it.each([undefined, true])("does not render the selection control after an initial client read failure (hide empty: %s)", (hideEmptyDropdown) => {
     mockQuery = {
       data: undefined,
       isLoading: false,
@@ -54,7 +55,7 @@ describe("ClientAutocomplete query states", () => {
       error: new Error("server detail must not be shown"),
     };
 
-    renderAutocomplete();
+    renderAutocomplete({ hideEmptyDropdown });
 
     expect(screen.getByText("고객 목록을 불러오지 못했어요")).toBeInTheDocument();
     expect(screen.queryByTestId("test-client-autocomplete")).not.toBeInTheDocument();
@@ -63,7 +64,7 @@ describe("ClientAutocomplete query states", () => {
     expect(screen.queryByText("server detail must not be shown")).not.toBeInTheDocument();
   });
 
-  it("retains stale clients and shows a retry warning after a refresh failure", () => {
+  it.each([undefined, true])("retains stale clients and shows a retry warning after a refresh failure (hide empty: %s)", (hideEmptyDropdown) => {
     mockQuery = {
       data: [client],
       isLoading: false,
@@ -71,11 +72,37 @@ describe("ClientAutocomplete query states", () => {
       error: new Error("server detail must not be shown"),
     };
 
-    renderAutocomplete();
+    renderAutocomplete({ hideEmptyDropdown });
 
     expect(screen.getByTestId("test-client-autocomplete")).toBeInTheDocument();
     expect(screen.getByText("고객 목록을 새로 불러오지 못했어요")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("textbox"));
     expect(screen.getByText("홍길동")).toBeInTheDocument();
+  });
+
+  it("hides an opted-in empty result and restores selectable matching clients", () => {
+    const onChange = jest.fn();
+    const { container } = renderAutocomplete({ hideEmptyDropdown: true, onChange });
+    const input = screen.getByLabelText("고객");
+    fireEvent.change(input, { target: { value: "없는 이름" } });
+
+    expect(screen.queryByTestId("test-client-autocomplete_dropdown")).not.toBeInTheDocument();
+    expect(container.querySelector('[data-component="test-client-autocomplete_empty"]')).not.toBeInTheDocument();
+    expect(input).toHaveAttribute("data-state", "closed");
+    expect(input).toHaveValue("없는 이름");
+
+    fireEvent.change(input, { target: { value: "홍" } });
+    expect(screen.getByTestId("test-client-autocomplete_dropdown")).toBeVisible();
+    fireEvent.click(screen.getByText("홍길동"));
+    expect(onChange).toHaveBeenCalledTimes(1);
+    expect(onChange).toHaveBeenCalledWith(client.id, client);
+  });
+
+  it("keeps the default empty result message visible", () => {
+    const { container } = renderAutocomplete();
+    fireEvent.change(screen.getByLabelText("고객"), { target: { value: "없는 이름" } });
+
+    expect(screen.getByTestId("test-client-autocomplete_dropdown")).toBeVisible();
+    expect(container.querySelector('[data-component="test-client-autocomplete_empty"]')).toBeVisible();
   });
 });

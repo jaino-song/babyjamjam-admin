@@ -73,6 +73,24 @@ describe("MobileAgentPartRegistry", () => {
         expiresAt: "2099-08-03T00:00:00.000Z", expectedRevision: "revision-1", changes: {},
     };
 
+    it("replaces service-record correction approval with a PC handoff note", () => {
+        render(<MobileAgentPartRegistry {...registryProps} data-component="mobile_chat_tests_proposal"
+            part={{ type: "data-action-proposal", data: { ...proposal, capability: "service-records.edit" } }} />);
+        const note = screen.getByText("제공기록지 정정은 PC 관리자 화면에서 승인해 주세요.");
+        expect(note).toHaveAttribute("data-slot", "desktop-approval-note");
+        expect(note).toHaveAttribute("data-component", "mobile_chat_tests_proposal");
+        expect(note).toHaveAttribute("data-source-component", "MobileAgentPartRegistry");
+        expect(screen.queryByRole("button", { name: "승인하고 실행" })).not.toBeInTheDocument();
+        expect(screen.queryByRole("button", { name: "거절" })).not.toBeInTheDocument();
+    });
+
+    it("keeps approve available for other capabilities", () => {
+        render(<MobileAgentPartRegistry {...registryProps} data-component="mobile_chat_tests_proposal"
+            part={{ type: "data-action-proposal", data: { ...proposal, capability: "clients.update" } }} />);
+        fireEvent.click(screen.getByRole("button", { name: "승인하고 실행" }));
+        expect(registryProps.onApproveAction).toHaveBeenCalledWith(proposal.actionId, proposal.expectedRevision, undefined);
+    });
+
     it.each([
         [{ clientId: 12 }, {}, { clientId: 12 }],
         [{}, { clientId: 12 }, { clientId: 12 }],

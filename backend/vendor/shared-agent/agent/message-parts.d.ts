@@ -46,6 +46,25 @@ export declare const AgentEntityChoicePartSchema: z.ZodObject<{
         metadata: z.ZodOptional<z.ZodRecord<z.ZodString, z.ZodUnknown>>;
     }, z.core.$strip>>;
 }, z.core.$strip>;
+/** One BEFORE -> AFTER row of a human-readable change preview. `note` is a per-row warning. */
+export declare const AgentActionPreviewRowSchema: z.ZodObject<{
+    label: z.ZodString;
+    before: z.ZodNullable<z.ZodString>;
+    after: z.ZodNullable<z.ZodString>;
+    note: z.ZodOptional<z.ZodString>;
+}, z.core.$strip>;
+export declare const AgentActionPreviewSchema: z.ZodObject<{
+    sections: z.ZodArray<z.ZodObject<{
+        title: z.ZodString;
+        rows: z.ZodArray<z.ZodObject<{
+            label: z.ZodString;
+            before: z.ZodNullable<z.ZodString>;
+            after: z.ZodNullable<z.ZodString>;
+            note: z.ZodOptional<z.ZodString>;
+        }, z.core.$strip>>;
+    }, z.core.$strip>>;
+}, z.core.$strip>;
+export type AgentActionPreview = z.infer<typeof AgentActionPreviewSchema>;
 export declare const AgentActionProposalPartSchema: z.ZodObject<{
     actionId: z.ZodString;
     capability: z.ZodString;
@@ -60,6 +79,17 @@ export declare const AgentActionProposalPartSchema: z.ZodObject<{
     provider: z.ZodOptional<z.ZodString>;
     estimatedCost: z.ZodOptional<z.ZodString>;
     acknowledgementToken: z.ZodOptional<z.ZodString>;
+    preview: z.ZodOptional<z.ZodObject<{
+        sections: z.ZodArray<z.ZodObject<{
+            title: z.ZodString;
+            rows: z.ZodArray<z.ZodObject<{
+                label: z.ZodString;
+                before: z.ZodNullable<z.ZodString>;
+                after: z.ZodNullable<z.ZodString>;
+                note: z.ZodOptional<z.ZodString>;
+            }, z.core.$strip>>;
+        }, z.core.$strip>>;
+    }, z.core.$strip>>;
 }, z.core.$strip>;
 export declare const AgentActionResultPartSchema: z.ZodObject<{
     actionId: z.ZodString;

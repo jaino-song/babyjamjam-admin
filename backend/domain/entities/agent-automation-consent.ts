@@ -1,5 +1,5 @@
 import type { AgentAutomationEffectSummary, AgentAutomationQuestion } from "@babyjamjam/shared";
-import { AGENT_SMS_RULE_ID_PREFIX, CONFIGURABLE_SMS_TRIGGER_TEMPLATE_KEYS, MessageTriggerTemplateKey } from "domain/constants/message-trigger-catalog";
+import { AGENT_SMS_RULE_ID_PREFIX, CONFIGURABLE_SMS_TRIGGER_TEMPLATE_KEYS, MessageTriggerTemplateKey, isCaregiverTriggerTemplate } from "domain/constants/message-trigger-catalog";
 import { SERVICE_RECORD_LINK_RULE_ID } from "domain/constants/service-record-link-message";
 
 /** Protected question recipe; only its public question may enter an owned REST snapshot. */
@@ -120,7 +120,7 @@ export function isAgentAutomationCoverageScopeValid(scope: AgentAutomationCovera
     if (scope.kind === "client-rule") return scope.scheduleId === null && scope.scheduleIdentity === null && scope.recipientType === "client";
     if (scope.scheduleId === null || scope.scheduleIdentity === null) return false;
     if (scope.kind === "service-record-link") return scope.recipientType === "primary-employee";
-    return scope.kind === "employee-assignment" && (scope.recipientType === "primary-employee" || scope.recipientType === "secondary-employee");
+    return (scope.kind === "employee-assignment" || scope.kind === "caregiver-service") && (scope.recipientType === "primary-employee" || scope.recipientType === "secondary-employee");
 }
 
 /** Dedicated producers own their rule/recipient combination; generic rules cannot impersonate them. */
@@ -131,7 +131,7 @@ export function isAgentAutomationOperationValid(operation: Pick<AgentAutomationS
     }
     if (operation.ruleId.startsWith("system:") || operation.ruleId.startsWith(AGENT_SMS_RULE_ID_PREFIX)) return false;
     if (operation.kind === "client-rule") return operation.scheduleId === null && operation.recipientType === "client";
-    return operation.kind === "employee-assignment" && operation.scheduleId !== null
+    return (operation.kind === "employee-assignment" || operation.kind === "caregiver-service") && operation.scheduleId !== null
         && (operation.recipientType === "primary-employee" || operation.recipientType === "secondary-employee");
 }
 
@@ -139,5 +139,7 @@ export function isAgentAutomationEffectVariantValid(effect: AgentAutomationEffec
     if (!isAgentAutomationOperationValid(effect)) return false;
     if (effect.kind === "service-record-link") return effect.templateKey === MessageTriggerTemplateKey.SERVICE_RECORD_LINK;
     if (effect.kind === "employee-assignment") return effect.templateKey === MessageTriggerTemplateKey.EMPLOYEE_ASSIGNED;
+    if (effect.kind === "caregiver-service") return isCaregiverTriggerTemplate(effect.templateKey);
+    if (isCaregiverTriggerTemplate(effect.templateKey)) return false;
     return CONFIGURABLE_SMS_TRIGGER_TEMPLATE_KEYS.includes(effect.templateKey as MessageTriggerTemplateKey);
 }

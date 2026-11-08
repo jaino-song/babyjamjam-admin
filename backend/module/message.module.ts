@@ -1,3 +1,9 @@
+import { MessageQuietHoursService } from "application/services/message-quiet-hours.service";
+import { CaregiverTemplateResolverService } from "application/services/caregiver-template-resolver.service";
+import { MessageTriggerRecipientResolverService } from "application/services/message-trigger-recipient-resolver.service";
+import { MessageTriggerRuleGroupController } from "interface/controllers/message-trigger-rule-group.controller";
+import { MessageTriggerRuleGroupService } from "application/services/message-trigger-rule-group.service";
+import { MessageDuplicateCheckService } from "application/services/message-duplicate-check.service";
 import { Module } from "@nestjs/common";
 import { ConfigModule } from "@nestjs/config";
 
@@ -59,8 +65,13 @@ import { BranchManagerGuard } from "infrastructure/auth/branch-manager.guard";
         AligoModule,
         SystemTemplateModule,
     ],
-    controllers: [MessageController, MessageTriggerController],
+    controllers: [MessageController, MessageTriggerController, MessageTriggerRuleGroupController],
     providers: [
+        MessageQuietHoursService,
+        CaregiverTemplateResolverService,
+        MessageTriggerRecipientResolverService,
+        MessageTriggerRuleGroupService,
+        MessageDuplicateCheckService,
         CreateMessageUsecase,
         ListMessagesUsecase,
         FindMessageByIdUsecase,
@@ -99,6 +110,8 @@ import { BranchManagerGuard } from "infrastructure/auth/branch-manager.guard";
         { provide: CLIENT_AUTOMATION_IMPACT, useExisting: ClientAutomationImpactService },
     ],
     exports: [
+        MessageQuietHoursService,
+        MessageDuplicateCheckService,
         MessageService,
         MessageTriggerService,
         CLIENT_AUTOMATION_IMPACT,

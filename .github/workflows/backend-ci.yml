@@ -158,7 +158,7 @@ jobs:
           bash backend/deploy/fallback-server/ci/standby-decision.test.sh
           bash backend/deploy/fallback-server/ci/newer-primary-release.test.sh
           backend/deploy/ci/wait-database-patches.test.sh
-          node --test backend/deploy/fallback-server/ci/*.test.mjs backend/deploy/cloudrun/*.test.mjs
+          node --test backend/deploy/ci/*.test.mjs backend/deploy/fallback-server/ci/*.test.mjs backend/deploy/cloudrun/*.test.mjs
 
       # pdfjs-dist is ESM-only and its Jest VM import can outlive a neighboring
       # CommonJS test environment when both suites share a worker. Keep the
@@ -831,6 +831,10 @@ jobs:
       LIGHTSAIL_SSM_TARGET_TAG: ${{ vars.LIGHTSAIL_SSM_TARGET_TAG }}
 
     steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+
       - name: Validate deployment configuration
         run: |
           set -euo pipefail
@@ -1045,6 +1049,11 @@ jobs:
             "runtime_route=$runtime_route" \
             "db_readiness=$db_readiness"
 
+      - name: Verify public production provider eligibility
+        env:
+          RESOLVED_DEPLOY_TARGET: ${{ needs.resolve-backend-deploy-target.outputs.target }}
+        run: node backend/deploy/ci/verify-production-provider.mjs "$RESOLVED_DEPLOY_TARGET"
+
   deploy-lightnode:
     name: deploy LightNode fallback backend
     if: >-
@@ -1147,9 +1156,10 @@ jobs:
           expect_status container_health healthy
           expect_status restart_count 0
           expect_status public_routing fallback
-          # ADR-010: a temporary-active fallback contests the lease. Only asserted
-          # after replace (the pre-replace release may predate /health/lease), and
-          # only the mode: lease_held may legitimately be false while Lightsail holds it.
+          # ADR-010: this post-replace CI check requires lease mode required.
+          # Persistent LightNode independently requires required AND held=true in
+          # ci-deployer validated_status before status/replace and after replace.
+          # The enabled temporary-expiry lifecycle has a separate legacy contract.
           expect_status lease_mode required
           curl --fail --silent --show-error --connect-timeout 3 --max-time 10 \
             https://api.babyjamjam.com/health/ready >/dev/null
@@ -1162,13 +1172,18 @@ jobs:
             "public_routing=fallback" \
             "schedulers_enabled=true" \
             "lease_mode=required"
+      - name: Verify public production provider eligibility
+        env:
+          RESOLVED_DEPLOY_TARGET: ${{ needs.resolve-backend-deploy-target.outputs.target }}
+        run: node backend/deploy/ci/verify-production-provider.mjs "$RESOLVED_DEPLOY_TARGET"
+
   deploy-lightnode-standby:
     # Warm standby: after Lightsail (the primary) has deployed a `main` backend
     # release, the LightNode Fallback Server is brought to the same immutable
     # release in passive mode (schedulers and document jobs off, Aligo blanked).
     # Nothing depends on this job, so a failure here never affects Lightsail.
-    # (These comments sit inside the job, and no blank line precedes it, so the
-    # preceding deploy-lightnode block stays byte-identical to its base.)
+    # Keep standby comments inside this job; frozen deploy-lightnode comparisons
+    # separately account for the approved production provider verifier.
     name: deploy LightNode standby backend
     if: >-
       always() &&

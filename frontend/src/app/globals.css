@@ -113,6 +113,7 @@
   --v3-text: 214 25% 28%;
   --v3-text-muted: 214 10% 55%;
   --v3-border: 214 20% 92%;
+  --v3-selectable-border: 214 16% 82%;
 
   /* Status surfaces — one semantic triple per state: tinted surface, matching
      line, readable text. Single source for StatusBadge and Toaster, so a
@@ -214,6 +215,7 @@
   /* V3 Colors - Dark Mode */
   --v3-primary: 214 100% 50%;
   --v3-primary-light: 214 30% 20%;
+  --v3-selectable-border: 214 16% 42%;
   --v3-dim-white: 220 15% 15%;
 }
 
@@ -301,6 +303,7 @@
   --color-v3-text: hsl(var(--v3-text));
   --color-v3-text-muted: hsl(var(--v3-text-muted));
   --color-v3-border: hsl(var(--v3-border));
+  --color-v3-selectable-border: hsl(var(--v3-selectable-border));
   --color-v3-dim-white: hsl(var(--v3-dim-white));
 
   /* Status surfaces (defined in :root). The warning and danger lines carry
@@ -1733,3 +1736,35 @@ body {
 [data-slot="client-detail-presentation"][data-layout="mobile"] [data-source-component="ClientServiceRecordsTab"] .grid { grid-template-columns: minmax(0, 1fr); }
 
 [data-slot="client-detail-presentation"][data-layout="mobile"] [data-source-component="ClientServiceRecordsTab"] :is(button, a) { min-height: 40px; font-size: .78rem; }
+
+/* ChatWorkspace owns the bounded viewport; the controllers retain their scrollers. */
+.chat-workspace-thread > [data-slot="detail-panel"] > [data-slot="detail-panel-main"] > [data-slot="detail-panel-scroll-content"] {
+  overflow: hidden;
+  padding: 0;
+}
+.chat-workspace-thread > [data-slot="detail-panel"] > [data-slot="detail-panel-main"] > [data-slot="detail-panel-bottom-spacer"] {
+  display: none;
+}
+
+/* Chat workspace controls retain readable type and 44px targets under Glint scaling. */
+[data-chat-workspace-controls] :is(input, textarea) {
+  min-height: 44px;
+  font-size: 16px;
+  line-height: 26px;
+}
+[data-chat-workspace-controls] [data-slot="button"] {
+  min-height: 44px;
+  min-width: 44px;
+}
+
+/* Chat workspace normal conversation text; rich registry cards and widgets retain their typography. */
+.chat-workspace [data-slot="chat-workspace-agent-message"] > div > [data-slot="text"],
+.chat-workspace [data-slot="chat-workspace-assistant-prose"] {
+  font-size: 16px;
+}
+.chat-workspace [data-slot="chat-workspace-agent-message"] > div > [data-slot="text"] :is(p, li),
+.chat-workspace [data-slot="chat-workspace-user-text"],
+.chat-workspace [data-slot="chat-workspace-assistant-prose"] :is(p, li) {
+  font-size: 16px;
+  line-height: 28px;
+}

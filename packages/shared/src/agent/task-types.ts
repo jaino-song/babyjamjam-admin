@@ -171,7 +171,7 @@ export const AgentAutomationConsentInputSchema = z.object({ choice: AutomationCo
 export type AgentAutomationConsent = z.infer<typeof AgentAutomationConsentSchema>;
 
 /** Delivery descriptions contain references, never phone/name/body preimages. */
-export const AgentAutomationEffectKindSchema = z.enum(["client-rule", "employee-assignment", "service-record-link"]);
+export const AgentAutomationEffectKindSchema = z.enum(["client-rule", "employee-assignment", "service-record-link", "caregiver-service"]);
 export const AgentAutomationQuestionAvailabilitySchema = z.enum(["available", "none", "unavailable"]);
 export const AgentAutomationUnavailableReasonSchema = z.enum([
     "missing-input", "missing-default-rules", "sender-unavailable", "unsupported-content", "source-unavailable",
@@ -184,7 +184,7 @@ export const AgentAutomationEffectSummarySchema = z.object({
     change: z.enum(["create", "refresh", "cancel"]),
     templateKey: z.enum([
         "SERVICE_INFO", "CLIENT_GREETING", "PRICE_INFO", "REMINDER", "THANKS", "SURVEY", "INFO",
-        "SERVICE_END_NOTICE", "EMPLOYEE_ASSIGNED", "SERVICE_RECORD_LINK",
+        "SERVICE_END_NOTICE", "EMPLOYEE_ASSIGNED", "SERVICE_RECORD_LINK", "CAREGIVER_SERVICE_START_NOTICE", "CAREGIVER_SERVICE_END_NOTICE",
     ]),
 }).strict();
 export const AgentAutomationQuestionSchema = z.object({
@@ -238,6 +238,13 @@ export const AgentTaskSchema = z.object({
 }).strict().superRefine((value, context) => {
     if (value.kind !== value.capabilityId) {
         context.addIssue({ code: "custom", path: ["kind"], message: "Task kind must match capabilityId" });
+    }
+    for (const [index, effect] of (value.automation?.effects ?? []).entries()) {
+        const caregiverTemplate = effect.templateKey === "CAREGIVER_SERVICE_START_NOTICE" || effect.templateKey === "CAREGIVER_SERVICE_END_NOTICE";
+        if ((effect.kind === "caregiver-service" && (!caregiverTemplate || effect.recipientType === "client"))
+            || (caregiverTemplate && effect.kind !== "caregiver-service")) {
+            context.addIssue({ code: "custom", path: ["automation", "effects", index], message: "Caregiver effect requires its dedicated template and recipient" });
+        }
     }
     for (const field of value.clearedFields) {
         if (Object.prototype.hasOwnProperty.call(value.confirmed, field)) {

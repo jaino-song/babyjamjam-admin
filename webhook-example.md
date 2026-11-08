@@ -86,7 +86,7 @@
         "history_id": "0810988b1e2c42ef9f8ebb33fe2fa238",
         "status": "doc_accept_participant",
         "action": "",
-        "editor_id": "+821066211878",
+        "editor_id": "+821000006621",
         "outside_token": "",
         "updated_date": 1767601310769,
         "mass_job_request_id": "",
@@ -110,7 +110,7 @@
         "history_id": "0810988b1e2c42ef9f8ebb33fe2fa238",
         "status": "doc_complete",
         "action": "",
-        "editor_id": "+821066211878",
+        "editor_id": "+821000006621",
         "outside_token": "",
         "updated_date": 1767601310825,
         "mass_job_request_id": "",
@@ -118,11 +118,11 @@
         "recipients": [
             {
                 "step_seq": "2",
-                "name": "송진호",
+                "name": "정다라",
                 "id": "",
                 "sms": {
                     "country_code": "+82",
-                    "phone_number": "1066211878"
+                    "phone_number": "1000006621"
                 },
                 "token_id": "e638f0969f634156bb9c32652309017d",
                 "sms_template_index": 0

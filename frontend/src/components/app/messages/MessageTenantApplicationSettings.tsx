@@ -1,7 +1,7 @@
 "use client";
 
 
-import { useMemo, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { getUserErrorMessage } from "@babyjamjam/shared";
 import {
@@ -16,6 +16,9 @@ import {
   Send,
   ShieldCheck,
 } from "lucide-react";
+import { useActiveBranchId, isBranchContextAligned } from "@/features/system-templates/branch-context";
+import { FormSection, FormGrid, FormField, FormTextInput, FormSwitchRow, FormChip } from "@/components/app/ui/form-section";
+import { messagePolicyApi, type MessageAutomationPolicyConfiguration, type MessageAutomationPolicyConfigResponse, type MessageAutomationPolicyPreviewResponse } from "@/services/settings";
 import { mergeRuleOrder } from "@babyjamjam/shared/utils/rule-order";
 import {
   AnimatedSlotList,
@@ -27,6 +30,7 @@ import {
   ListEmptyState,
   ListPanel,
 } from "@/components/app/v3";
+import { SelectableItemFrame } from "@/components/ui/selectable-item";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -43,12 +47,10 @@ import type {
 } from "@/features/message-triggers/types";
 import { useGetAuthUser } from "@/hooks/useGetAuthUser";
 import { useToast } from "@/hooks/use-toast";
-import { cn } from "@/lib/utils";
 import {
   settingsApi,
   type MessagePolicyActivationResponse,
   type MessageAutomationPoliciesResponse,
-  type MessageAutomationPastTriggerConfig,
   type MessageAutomationPolicy,
 } from "@/services/api";
 
@@ -66,11 +68,6 @@ const MESSAGE_AUTOMATION_POLICIES_QUERY_KEY = [
 ] as const;
 const TRIGGER_DISPATCH_SCOPE_COPY =
   "현재 지점의 메시지 자동 발송을 관리합니다. 끄면 이 지점의 자동 전송 규칙이 모두 비활성화됩니다.";
-const DEFAULT_PAST_TRIGGER_CONFIG: MessageAutomationPastTriggerConfig = {
-  sendIntervalMinutes: 1,
-  ruleOrder: [],
-};
-
 const TRIGGER_EVENT_LABELS: Record<TriggerEventType, string> = {
   CLIENT_CREATED: "고객 등록",
   SERVICE_START: "서비스 시작",
@@ -184,7 +181,7 @@ function getPolicyStatusLabel(active: boolean) {
 }
 
 function getAutomationPolicyDataComponent(policyId: string) {
-  return `messages-settings-${policyId}-policy`;
+  return `desktop_messages_sections_split-layout_detail-panel-2_${policyId}-policy`;
 }
 
 function formatTriggerOffset(rule: MessageTriggerRule) {
@@ -243,7 +240,75 @@ async function invalidateMessageAutomationCaches(queryClient: ReturnType<typeof 
   ]);
 }
 
+const POLICY_FIELDS = {
+  "trigger-dispatch": [["dispatchCheckIntervalMinutes", "자동 작업 확인 간격", 1, 1440, "분"], ["defaultRuleSendTime", "새 규칙 기본 발송 시각", 0, 0, "한국 시간"]],
+  "trigger-job-retry": [["triggerRetryIntervalMinutes", "자동 작업 재시도 간격", 1, 1440, "분"], ["processingReclaimMinutes", "처리 중 작업 회수 시간", 10, 1440, "분"]],
+  "sms-retry": [["smsRetryIntervalMinutes", "문자 재시도 간격", 1, 1440, "분"]],
+  "past-trigger": [["pastExpiryHours", "지난 자동 전송 유효 시간", 1, 720, "시간"], ["pastSendIntervalMinutes", "늦은 등록 자동 전송 간격", 1, 1440, "분"]],
+  "duplicate-send-confirmation": [["duplicateWindowHours", "중복 확인 범위", 1, 720, "시간"]],
+} as const;
+const QUIET_POLICY_ID = "quiet-hours";
+const RECIPIENT_GROUP_LABELS = { CLIENT: "고객", CAREGIVER: "제공인력", STAFF: "직원" } as const;
+const validTime = (value: string) => /^([01]\d|2[0-3]):[0-5]\d$/.test(value);
+function configurationErrors(config: MessageAutomationPolicyConfiguration): string[] {
+  const errors: string[] = [];
+  for (const fields of Object.values(POLICY_FIELDS)) for (const [key, label, min, max] of fields) {
+    const value = config[key];
+    if (key === "defaultRuleSendTime") { if (!validTime(String(value))) errors.push(`${label}을 입력해 주세요.`); }
+    else if (typeof value !== "number" || !Number.isInteger(value) || value < min || value > max) errors.push(`${label}은 ${min}~${max} 사이의 정수로 입력해 주세요.`);
+  }
+  if (!validTime(config.quietHours.start) || !validTime(config.quietHours.end)) errors.push("심야 시작·종료 시각을 입력해 주세요.");
+  if (config.quietHours.start === config.quietHours.end) errors.push("심야 시작과 종료 시각은 달라야 해요.");
+  if (config.quietHours.enabled && config.quietHours.recipientGroups.length === 0) errors.push("전송 금지 대상을 한 개 이상 선택해 주세요.");
+  return errors;
+}
+
 export function MessageTenantApplicationSettings() {
+  const branchId = useActiveBranchId();
+  const branchRef = useRef(branchId);
+  const configKey = ["settings", "message-automation-config", branchId] as const;
+  const configQuery = useQuery({ queryKey: configKey, queryFn: () => messagePolicyApi.getConfiguration(branchId!), enabled: !!branchId });
+  const [draft, setDraft] = useState<{ branchId: string; expectedVersion: string | null; lineage: object; configuration: MessageAutomationPolicyConfiguration } | null>(null);
+  const [configErrorResult, setConfigError] = useState<{ branchId: string; message: string } | null>(null);
+  const [impactResult, setImpact] = useState<{ branchId: string; configuration: MessageAutomationPolicyConfiguration; value: MessageAutomationPolicyPreviewResponse } | null>(null);
+  const persisted = configQuery.data;
+  const activeDraft = draft?.branchId === branchId ? draft : null;
+  const configuration = activeDraft?.configuration ?? persisted?.configuration;
+  const configError = configErrorResult?.branchId === branchId ? configErrorResult.message : null;
+  const impact = impactResult?.branchId === branchId && JSON.stringify(impactResult.configuration) === JSON.stringify(configuration)
+    ? impactResult.value
+    : null;
+  const configurationRef = useRef(configuration);
+  useLayoutEffect(() => {
+    branchRef.current = branchId;
+    configurationRef.current = configuration;
+  }, [branchId, configuration]);
+  const dirty = !!configuration && JSON.stringify(configuration) !== JSON.stringify(persisted?.configuration);
+  const errors = configuration ? configurationErrors(configuration) : [];
+  const editable = !!branchId && !!persisted?.permissions.canWrite && !configQuery.isError;
+  const editConfiguration = (update: (current: MessageAutomationPolicyConfiguration) => MessageAutomationPolicyConfiguration) => {
+    if (!editable || !configuration || !persisted || !branchId) return;
+    setDraft((current) => {
+      const origin = current?.branchId === branchId ? current : null;
+      return {
+        branchId,
+        expectedVersion: origin ? origin.expectedVersion : persisted.version,
+        lineage: origin ? origin.lineage : {},
+        configuration: update(origin?.configuration ?? configuration),
+      };
+    });
+    setImpact(null); setConfigError(null);
+  };
+  useEffect(() => {
+    if (!dirty) return;
+    const unload = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = ""; };
+    const navigate = (event: MouseEvent) => {
+      const anchor = (event.target as Element)?.closest?.("a[href]");
+      if (anchor && !window.confirm("저장하지 않은 변경 내용을 버리고 이동할까요?")) { event.preventDefault(); event.stopPropagation(); }
+    };
+    window.addEventListener("beforeunload", unload); document.addEventListener("click", navigate, true);
+    return () => { window.removeEventListener("beforeunload", unload); document.removeEventListener("click", navigate, true); };
+  }, [dirty]);
   const { data: authUser } = useGetAuthUser();
   const { toast } = useToast();
   const queryClient = useQueryClient();
@@ -292,8 +357,7 @@ export function MessageTenantApplicationSettings() {
   );
   const [requestedAt, setRequestedAt] = useState<string | null>(null);
   const [selectedItemId, setSelectedItemId] = useState<string | null>(null);
-  const [draftRetroactiveRuleOrderIds, setDraftRetroactiveRuleOrderIds] = useState<string[] | null>(null);
-  const [draftRetroactiveSendIntervalMinutes, setDraftRetroactiveSendIntervalMinutes] = useState<string | null>(null);
+
 
   const tenantName = authUser?.branchName?.trim() || "현재 선택된 지점";
   const allAgreed = ALIGO_POLICY_ITEMS.every((item) => agreements[item.id]);
@@ -373,11 +437,19 @@ export function MessageTenantApplicationSettings() {
           },
         );
 
-      items.push(...automationPolicyItems, DUPLICATE_SEND_POLICY_ITEM);
+      items.push(...automationPolicyItems.filter((item) => item.id !== DUPLICATE_SEND_POLICY_ITEM_ID), {
+        ...DUPLICATE_SEND_POLICY_ITEM,
+        subtitle: configuration ? `${configuration.duplicateWindowHours}시간 내 같은 번호와 같은 메시지는 전송 전 확인합니다.` : "중복 확인 정책을 불러옵니다.",
+      }, {
+        id: QUIET_POLICY_ID, title: "심야 시간 메세지 전송 금지", subtitle: "지정한 한국 시간 동안 SMS/LMS 전송을 제한합니다.",
+        statusLabel: !configuration || configQuery.isError ? "확인 필요" : configuration.quietHours.enabled ? "활성" : "비활성", icon: Clock3, kind: "automation-policy", active: configuration?.quietHours.enabled === true, requiresApproval: false, activationUnavailable: !configuration || configQuery.isError,
+      });
 
       return items;
     },
     [
+      configuration,
+      configQuery.isError,
       canSubmit,
       isTriggerDispatchUnavailable,
       isMessageSettingsListLoading,
@@ -404,43 +476,16 @@ export function MessageTenantApplicationSettings() {
       ),
     [isTriggerDispatchAvailable, triggerDispatchActive, triggerRulesData],
   );
-  const savedPastTriggerConfig = messageAutomationPolicies?.pastTriggerConfig ?? DEFAULT_PAST_TRIGGER_CONFIG;
-  const retroactiveRuleOrderIds = draftRetroactiveRuleOrderIds ?? savedPastTriggerConfig.ruleOrder;
-  const retroactiveSendIntervalMinutes =
-    draftRetroactiveSendIntervalMinutes ?? String(savedPastTriggerConfig.sendIntervalMinutes);
   const retroactiveTriggerOrderItems = useMemo(
-    () => getOrderedTriggerRules(activeSmsTriggerRules, retroactiveRuleOrderIds),
-    [activeSmsTriggerRules, retroactiveRuleOrderIds],
+    () => getOrderedTriggerRules(activeSmsTriggerRules, configuration?.pastRuleOrder ?? []),
+    [activeSmsTriggerRules, configuration?.pastRuleOrder],
   );
-  const isPastTriggerConfigDirty = draftRetroactiveRuleOrderIds !== null ||
-    (
-      draftRetroactiveSendIntervalMinutes !== null &&
-      Number(draftRetroactiveSendIntervalMinutes) !== savedPastTriggerConfig.sendIntervalMinutes
-    );
-  // Without the rules list, a save would merge an order built from zero rules.
-  const canSavePastTriggerConfig =
-    isPastTriggerConfigDirty &&
-    Number(retroactiveSendIntervalMinutes) >= 1 &&
-    !isTriggerRulesLoadFailed;
-
   const moveRetroactiveRuleOrder = (ruleId: string, direction: -1 | 1) => {
-    const currentOrderIds = retroactiveTriggerOrderItems.map((item) => item.id);
-    const index = currentOrderIds.indexOf(ruleId);
-    const nextIndex = index + direction;
-
-    if (index < 0 || nextIndex < 0 || nextIndex >= currentOrderIds.length) {
-      return;
-    }
-
-    const nextOrderIds = [...currentOrderIds];
-    [nextOrderIds[index], nextOrderIds[nextIndex]] = [nextOrderIds[nextIndex], nextOrderIds[index]];
-    setDraftRetroactiveRuleOrderIds(nextOrderIds);
-  };
-
-  const updateRetroactiveSendIntervalMinutes = (value: string) => {
-    if (value === "" || /^\d+$/.test(value)) {
-      setDraftRetroactiveSendIntervalMinutes(value);
-    }
+    const ids = retroactiveTriggerOrderItems.map((item) => item.id);
+    const index = ids.indexOf(ruleId); const next = index + direction;
+    if (index < 0 || next < 0 || next >= ids.length) return;
+    [ids[index], ids[next]] = [ids[next], ids[index]];
+    editConfiguration((current) => ({ ...current, pastRuleOrder: mergeRuleOrder(current.pastRuleOrder, ids) }));
   };
 
   const toggleAgreement = (id: string, checked: boolean) => {
@@ -522,24 +567,69 @@ export function MessageTenantApplicationSettings() {
     triggerDispatchMutation.mutate(enabled);
   };
 
-  const savePastTriggerConfigMutation = useMutation({
-    mutationFn: settingsApi.updateMessageAutomationPastTriggerConfig,
-    onSuccess: (savedConfig) => {
-      queryClient.setQueryData<MessageAutomationPoliciesResponse>(
-        ["settings", "message-automation-policies"],
-        (current) => current ? { ...current, pastTriggerConfig: savedConfig } : current,
-      );
-      setDraftRetroactiveRuleOrderIds(null);
-      setDraftRetroactiveSendIntervalMinutes(null);
-      toast({ variant: "success", description: "지난 자동 전송 설정을 저장했어요" });
+  const saveConfiguration = useMutation({
+    mutationFn: async (input: { branchId: string; expectedVersion: string | null; lineage: object; configuration: MessageAutomationPolicyConfiguration }) => {
+      if (!isBranchContextAligned(input.branchId)) throw new Error("지점이 변경되어 저장할 수 없어요.");
+      return messagePolicyApi.saveConfiguration({ expectedVersion: input.expectedVersion, configuration: input.configuration }, input.branchId);
     },
-    onError: () => {
-      toast({
-        variant: "destructive",
-        description: "지난 자동 전송 설정을 저장하지 못했어요",
+    onSuccess: (saved, submitted) => {
+      queryClient.setQueryData<MessageAutomationPolicyConfigResponse>(["settings", "message-automation-config", submitted.branchId], saved);
+      if (branchRef.current !== submitted.branchId) return;
+      setDraft((current) => {
+        if (current?.branchId !== submitted.branchId || current.lineage !== submitted.lineage) return current;
+        return JSON.stringify(current.configuration) === JSON.stringify(submitted.configuration)
+          ? null
+          : { ...current, expectedVersion: saved.version };
       });
+      setConfigError(null); setImpact(null);
+      void queryClient.invalidateQueries({ queryKey: MESSAGE_AUTOMATION_POLICIES_QUERY_KEY });
+    },
+    onError: (error, submitted) => {
+      if (branchRef.current !== submitted.branchId) return;
+      const status = (error as { response?: { status?: number } }).response?.status;
+      if (status !== 409) setDraft((current) => current?.branchId === submitted.branchId && current.lineage === submitted.lineage && JSON.stringify(current.configuration) === JSON.stringify(submitted.configuration) ? null : current);
+      setConfigError({ branchId: submitted.branchId, message: status === 409 ? "다른 곳에서 설정이 변경됐어요. 변경 내용을 확인하고 새로고침해 주세요." : "설정을 저장하지 못했어요. 다시 시도해 주세요." });
     },
   });
+  const previewConfiguration = useMutation({
+    mutationFn: async (input: { branchId: string; expectedVersion: string | null; configuration: MessageAutomationPolicyConfiguration }) => messagePolicyApi.previewConfiguration({ expectedVersion: input.expectedVersion, configuration: input.configuration }, input.branchId),
+    onSuccess: (value, submitted) => { if (branchRef.current === submitted.branchId && JSON.stringify(configurationRef.current) === JSON.stringify(submitted.configuration)) setImpact({ branchId: submitted.branchId, configuration: submitted.configuration, value }); },
+    onError: (_error, submitted) => { if (branchRef.current === submitted.branchId && JSON.stringify(configurationRef.current) === JSON.stringify(submitted.configuration)) setConfigError({ branchId: submitted.branchId, message: "설정 영향을 확인하지 못했어요. 다시 시도해 주세요." }); },
+  });
+  const footerBase = selectedItem?.kind === "duplicate-send-policy" ? "desktop_messages_sections_split-layout_detail-panel-4_actions" : "desktop_messages_sections_split-layout_detail-panel-2_actions";
+  const configFooter = <div data-component={footerBase} className="ml-auto flex gap-3">
+    <Button data-component={`${footerBase}_cancel`} type="button" variant="neutral" disabled={!dirty} onClick={() => { setDraft(null); setConfigError(null); setImpact(null); }}>변경 취소</Button>
+    <Button data-component={`${footerBase}_save`} type="button" variant="positive" disabled={!editable || !dirty || errors.length > 0 || saveConfiguration.isPending || (selectedItem?.id === PAST_TRIGGER_POLICY_ID && isTriggerRulesLoadFailed)} onClick={() => {
+      if (configuration && activeDraft && branchId && errors.length === 0) saveConfiguration.mutate({ branchId, expectedVersion: activeDraft.expectedVersion, lineage: activeDraft.lineage, configuration: JSON.parse(JSON.stringify(configuration)) as MessageAutomationPolicyConfiguration });
+    }}>{saveConfiguration.isPending ? "저장 중..." : "저장"}</Button>
+  </div>;
+  const renderConfigFields = (policyId: string) => {
+    const base = policyId === DUPLICATE_SEND_POLICY_ITEM_ID ? "desktop_messages_sections_split-layout_detail-panel-4_duplicate-send-policy_form" : `${getAutomationPolicyDataComponent(policyId)}_form`;
+    if (!configuration && !configQuery.isError) return <InfoRow data-component={`${base}_loading`} label="상태" value="설정을 불러오는 중입니다." />;
+    if (!configuration || configQuery.isError) return <QueryErrorState dataComponent={`${base}_error`} title="설정을 불러오지 못했습니다" onRetry={() => void configQuery.refetch()} />;
+    return <FormSection title="설정" data-component={base}>
+      <FormGrid data-component={`${base}_fields`}>
+        {(POLICY_FIELDS[policyId as keyof typeof POLICY_FIELDS] ?? []).map(([key, label, min, max, unit]) => <FormField key={key} label={`${label} (${unit})`} htmlFor={`policy-${key}`} data-component={`${base}_${key}`}>
+          <FormTextInput id={`policy-${key}`} aria-label={label} type={key === "defaultRuleSendTime" ? "time" : "number"} min={min || undefined} max={max || undefined} step={key === "defaultRuleSendTime" ? undefined : 1} disabled={!editable} value={key === "defaultRuleSendTime" ? configuration[key] : Number.isFinite(configuration[key]) ? configuration[key] : ""} onChange={(event) => { const value = event.target.value; editConfiguration((current) => ({ ...current, [key]: key === "defaultRuleSendTime" ? value : value === "" ? NaN : Number(value), ...(key === "pastSendIntervalMinutes" ? { pastRuleOrder: mergeRuleOrder(current.pastRuleOrder, retroactiveTriggerOrderItems.map((rule) => rule.id)) } : {}) })); }} data-component={`${base}_${key}_input`} />
+          <span>{key === "defaultRuleSendTime" ? `${configuration[key]} (한국 시간)` : `${configuration[key]}${unit}`}</span>
+        </FormField>)}
+      </FormGrid>
+      {policyId === QUIET_POLICY_ID ? <>
+        <FormSwitchRow title="심야 시간 메세지 전송 금지" buttonAriaLabel="심야 시간 메세지 전송 금지 활성화" checked={configuration.quietHours.enabled} disabled={!editable} onToggle={() => editConfiguration((current) => ({ ...current, quietHours: { ...current.quietHours, enabled: !current.quietHours.enabled } }))} data-component={`${base}_enabled`} />
+        <FormGrid data-component={`${base}_time`}>
+          {(["start", "end"] as const).map((key) => <FormField key={key} label={key === "start" ? "시작 시각 (한국 시간)" : "종료 시각 (한국 시간)"} htmlFor={`quiet-${key}`} data-component={`${base}_${key}`}><FormTextInput data-component={`${base}_${key}_input`} id={`quiet-${key}`} type="time" aria-label={key === "start" ? "심야 시작 시각" : "심야 종료 시각"} value={configuration.quietHours[key]} disabled={!editable} onChange={(event) => { const value = event.target.value; editConfiguration((current) => ({ ...current, quietHours: { ...current.quietHours, [key]: value } })); }} /></FormField>)}
+        </FormGrid>
+        <FormField label="전송 금지 대상 (여러 대상 선택 가능)" data-component={`${base}_targets`}><div className="flex flex-wrap gap-2">{(Object.keys(RECIPIENT_GROUP_LABELS) as Array<keyof typeof RECIPIENT_GROUP_LABELS>).map((group) => <FormChip data-component={`${base}_targets_${group}`} key={group} type="button" selected={configuration.quietHours.recipientGroups.includes(group)} aria-pressed={configuration.quietHours.recipientGroups.includes(group)} disabled={!editable} onClick={() => editConfiguration((current) => ({ ...current, quietHours: { ...current.quietHours, recipientGroups: current.quietHours.recipientGroups.includes(group) ? current.quietHours.recipientGroups.filter((item) => item !== group) : [...current.quietHours.recipientGroups, group] } }))}>{RECIPIENT_GROUP_LABELS[group]}</FormChip>)}</div></FormField>
+        <FormField label="금지 시간에 발생한 메시지" data-component={`${base}_action`}><div className="flex gap-2">{(["DEFER", "CANCEL"] as const).map((action) => <FormChip data-component={`${base}_action_${action}`} type="button" key={action} selected={configuration.quietHours.action === action} aria-pressed={configuration.quietHours.action === action} disabled={!editable} onClick={() => editConfiguration((current) => ({ ...current, quietHours: { ...current.quietHours, action } }))}>{action === "DEFER" ? "금지 종료 후 순서대로 전송" : "발송 취소"}</FormChip>)}</div></FormField>
+        <InfoRow data-component={`${base}_summary`} label="적용" value={configuration.quietHours.enabled ? `매일 ${configuration.quietHours.start}~${configuration.quietHours.end} (한국 시간), ${configuration.quietHours.recipientGroups.map((group) => RECIPIENT_GROUP_LABELS[group]).join("·")} SMS/LMS ${configuration.quietHours.action === "DEFER" ? "종료 후 순서대로 전송" : "발송 취소"}` : "심야 전송 제한 꺼짐"} />
+        <p>SMS/LMS에만 적용합니다. 직원은 이 지점 소속 사용자입니다. 기존 보류 건은 설정을 끄거나 대상을 해제해도 바로 발송되지 않으며 다시 평가합니다.</p>
+        <Button data-component={`${base}_preview`} type="button" variant="neutral" disabled={!branchId || errors.length > 0 || previewConfiguration.isPending} onClick={() => { if (branchId && persisted) previewConfiguration.mutate({ branchId, expectedVersion: activeDraft ? activeDraft.expectedVersion : persisted.version, configuration: JSON.parse(JSON.stringify(configuration)) as MessageAutomationPolicyConfiguration }); }}>영향 미리보기</Button>
+        {impact ? <InfoCard title="설정 영향" data-component={`${base}_impact`}><InfoRow label="보류" value={`${impact.deferredCount}건`} /><InfoRow label="취소" value={`${impact.canceledCount}건`} /><InfoRow label="재평가 시각" value={impact.reevaluateAt ?? "없음"} /><InfoRow label="예약된 공급자 전송" value={`${impact.futureProviderReservations}건`} /></InfoCard> : null}
+      </> : null}
+      {errors.map((error) => <p role="alert" key={error}>{error}</p>)}
+      {configError ? <p role="alert">{configError}</p> : null}
+    </FormSection>;
+  };
 
   const handleSubmit = () => {
     if (!allAgreed) {
@@ -548,21 +638,6 @@ export function MessageTenantApplicationSettings() {
     }
 
     requestApprovalMutation.mutate();
-  };
-  const handleSavePastTriggerConfig = () => {
-    const sendIntervalMinutes = Number(retroactiveSendIntervalMinutes);
-    if (!Number.isInteger(sendIntervalMinutes) || sendIntervalMinutes < 1) {
-      toast({ variant: "destructive", description: "전송 간격은 1분 이상이어야 해요" });
-      return;
-    }
-
-    savePastTriggerConfigMutation.mutate({
-      sendIntervalMinutes,
-      ruleOrder: mergeRuleOrder(
-        savedPastTriggerConfig.ruleOrder,
-        retroactiveTriggerOrderItems.map((item) => item.id),
-      ),
-    });
   };
   const emptyListMessage = isMessageSettingsListLoading
     ? "설정 정보를 불러오는 중입니다."
@@ -653,7 +728,7 @@ export function MessageTenantApplicationSettings() {
             isActive: item?.id === selectedItem?.id,
             isInteractive: Boolean(item),
           })}
-          onSlotClick={(item) => setSelectedItemId(item.id)}
+          onSlotClick={(item) => { if (item.id === selectedItem?.id || !dirty || window.confirm("저장하지 않은 변경 내용을 버리고 이동할까요?")) { if (item.id !== selectedItem?.id) { setDraft(null); setConfigError(null); setImpact(null); } setSelectedItemId(item.id); } }}
           render={({ item }) => {
             if (!item) return null;
 
@@ -669,7 +744,7 @@ export function MessageTenantApplicationSettings() {
                     <span className="inline-flex items-center rounded-full bg-white/85 px-2 py-0.5 text-[0.68rem] font-semibold text-v3-primary">
                       {item.statusLabel}
                     </span>
-                  ) : item.requiresApproval &&
+                  ) : item.id === QUIET_POLICY_ID && item.activationUnavailable ? <span>확인 필요</span> : item.requiresApproval &&
                     item.id !== TRIGGER_DISPATCH_POLICY_ID &&
                     isMessageSenderApprovalUnknown ? (
                     // An "off" switch derived from an unknown approval would be a definite value.
@@ -677,14 +752,15 @@ export function MessageTenantApplicationSettings() {
                   ) : (
                     <Switch
                       aria-label={`${item.title} 활성화`}
-                      checked={item.id === TRIGGER_DISPATCH_POLICY_ID
+                      checked={item.id === QUIET_POLICY_ID ? configuration?.quietHours.enabled === true : item.id === TRIGGER_DISPATCH_POLICY_ID
                         ? item.active
                         : item.requiresApproval ? (isMessageSenderApproved && item.active) : item.active}
-                      disabled={item.id === TRIGGER_DISPATCH_POLICY_ID
+                      disabled={item.id === QUIET_POLICY_ID ? !editable : item.id === TRIGGER_DISPATCH_POLICY_ID
                         ? !isAdminOrOwner || item.activationUnavailable === true || triggerDispatchMutation.isPending
                         : true}
                       onClick={(event) => event.stopPropagation()}
-                      onCheckedChange={item.id === TRIGGER_DISPATCH_POLICY_ID
+                      onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") event.stopPropagation(); }}
+                      onCheckedChange={item.id === QUIET_POLICY_ID ? (enabled) => editConfiguration((current) => ({ ...current, quietHours: { ...current.quietHours, enabled } })) : item.id === TRIGGER_DISPATCH_POLICY_ID
                         ? (checked) => handleTriggerDispatchToggle(checked)
                         : undefined}
                       className="ml-auto shrink-0"
@@ -711,26 +787,10 @@ export function MessageTenantApplicationSettings() {
               {selectedItem.statusLabel}
             </span>
           }
-          footer={selectedItem.id === PAST_TRIGGER_POLICY_ID ? (
-            <div
-              data-component="desktop_messages_sections_split-layout_detail-panel-2_past-trigger-policy-footer"
-              className="ml-auto flex shrink-0 flex-wrap justify-end gap-[calc(12px*var(--glint-ui-scale,1))]"
-            >
-              <Button
-                type="button"
-                variant="positive"
-                onClick={handleSavePastTriggerConfig}
-                disabled={!canSavePastTriggerConfig || savePastTriggerConfigMutation.isPending}
-                data-component="desktop_messages_sections_split-layout_detail-panel-2_past-trigger-policy-footer_save"
-                className="shrink-0"
-              >
-                <Send className="h-4 w-4" />
-                {savePastTriggerConfigMutation.isPending ? "저장 중..." : "저장"}
-              </Button>
-            </div>
-          ) : undefined}
+          footer={configFooter}
         >
           <div data-component={getAutomationPolicyDataComponent(selectedItem.id)} className="space-y-4">
+            {renderConfigFields(selectedItem.id)}
             <InfoCard
               data-component={`${getAutomationPolicyDataComponent(selectedItem.id)}-card`}
               title="규칙"
@@ -744,28 +804,7 @@ export function MessageTenantApplicationSettings() {
                     value={item.value}
                   />
                 ))}
-                {selectedItem.id === PAST_TRIGGER_POLICY_ID ? (
-                  <InfoRow
-                    data-component="desktop_messages_sections_settings-past-trigger-policy-send-interval"
-                    label="전송 간격"
-                    value={
-                      <div className="flex min-w-0 items-center justify-end gap-2">
-                        <Input
-                          aria-label="늦은 등록 자동 전송 간격"
-                          inputMode="numeric"
-                          min={1}
-                          onChange={(event) => updateRetroactiveSendIntervalMinutes(event.target.value)}
-                          step={1}
-                          type="number"
-                          value={retroactiveSendIntervalMinutes}
-                          variant="v3"
-                          className="h-9 w-20 shrink-0 text-center"
-                        />
-                        <span className="shrink-0 text-[0.8rem] font-semibold text-v3-text-muted">분</span>
-                      </div>
-                    }
-                  />
-                ) : null}
+
               </div>
             </InfoCard>
 
@@ -824,7 +863,7 @@ export function MessageTenantApplicationSettings() {
                           />
                           <Button
                             aria-label={`${item.name} 위로 이동`}
-                            disabled={index === 0}
+                            disabled={!editable || index === 0}
                             onClick={() => moveRetroactiveRuleOrder(item.id, -1)}
                             type="button"
                             variant="neutral"
@@ -835,7 +874,7 @@ export function MessageTenantApplicationSettings() {
                           </Button>
                           <Button
                             aria-label={`${item.name} 아래로 이동`}
-                            disabled={index === retroactiveTriggerOrderItems.length - 1}
+                            disabled={!editable || index === retroactiveTriggerOrderItems.length - 1}
                             onClick={() => moveRetroactiveRuleOrder(item.id, 1)}
                             type="button"
                             variant="neutral"
@@ -866,6 +905,7 @@ export function MessageTenantApplicationSettings() {
               <Repeat2 className="h-5 w-5" />
             </div>
           }
+          footer={configFooter}
           title="중복 전송 확인"
           subtitle="같은 번호에 같은 메시지를 짧은 시간 안에 다시 보낼 때 재확인합니다."
           trailing={
@@ -875,6 +915,7 @@ export function MessageTenantApplicationSettings() {
           }
         >
           <div data-component="desktop_messages_sections_split-layout_detail-panel-4_duplicate-send-policy" className="space-y-4">
+            {renderConfigFields(DUPLICATE_SEND_POLICY_ITEM_ID)}
             <InfoCard
               data-component="desktop_messages_sections_split-layout_detail-panel-4_duplicate-send-policy_card"
               title="규칙"
@@ -888,7 +929,7 @@ export function MessageTenantApplicationSettings() {
                 <InfoRow
                   data-component="desktop_messages_sections_split-layout_detail-panel-4_duplicate-send-policy_card_window"
                   label="확인 범위"
-                  value="최근 72시간"
+                  value={configuration ? `최근 ${configuration.duplicateWindowHours}시간` : "확인 중"}
                 />
                 <InfoRow
                   data-component="desktop_messages_sections_split-layout_detail-panel-4_duplicate-send-policy_card_action"
@@ -964,37 +1005,35 @@ export function MessageTenantApplicationSettings() {
                 const checked = agreements[policy.id];
 
                 return (
-                  <label
-                    key={policy.id}
-                    htmlFor={policy.id}
-                    className={cn(
-                      "block cursor-pointer rounded-[18px] border px-4 py-3 transition-colors",
-                      checked
-                        ? "border-v3-primary bg-v3-primary-light/60"
-                        : "border-v3-border bg-white hover:border-v3-primary/30 hover:bg-v3-primary-light/20",
-                    )}
-                  >
-                    <div className="flex items-start gap-3">
-                      <Checkbox
-                        id={policy.id}
-                        checked={checked}
-                        onCheckedChange={(value) => toggleAgreement(policy.id, value === true)}
-                        className="mt-0.5"
-                      />
-                      <div className="min-w-0 flex-1">
-                        <p className="text-[0.76rem] leading-5 text-v3-dark">{policy.text}</p>
-                        <a
-                          href={policy.sourceHref}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="mt-2 inline-flex items-center gap-1 text-[0.7rem] font-semibold text-v3-primary hover:underline"
-                        >
-                          {policy.sourceLabel}
-                          <ExternalLink className="h-3.5 w-3.5" />
-                        </a>
+                  <SelectableItemFrame key={policy.id} asChild isSelected={checked}>
+                    <label
+                      data-component={`desktop_messages_sections_split-layout_detail-panel-5_tenant-form_agreements_${policy.id}`}
+                      data-selected={checked}
+                      htmlFor={policy.id}
+                      className="block cursor-pointer rounded-[18px] px-4 py-3"
+                    >
+                      <div className="flex items-start gap-3">
+                        <Checkbox
+                          id={policy.id}
+                          checked={checked}
+                          onCheckedChange={(value) => toggleAgreement(policy.id, value === true)}
+                          className="mt-0.5"
+                        />
+                        <div className="min-w-0 flex-1">
+                          <p className="text-[0.76rem] leading-5 text-v3-dark">{policy.text}</p>
+                          <a
+                            href={policy.sourceHref}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="mt-2 inline-flex items-center gap-1 text-[0.7rem] font-semibold text-v3-primary hover:underline"
+                          >
+                            {policy.sourceLabel}
+                            <ExternalLink className="h-3.5 w-3.5" />
+                          </a>
+                        </div>
                       </div>
-                    </div>
-                  </label>
+                    </label>
+                  </SelectableItemFrame>
                 );
               })}
             </div>

@@ -4,6 +4,7 @@ import {
     ForbiddenException,
     Inject,
     Injectable,
+    InternalServerErrorException,
     NotFoundException,
     Optional,
 } from "@nestjs/common";
@@ -11,13 +12,14 @@ import { Prisma } from "@prisma/client";
 import { createHash, randomUUID } from "node:crypto";
 import { Cron, CronExpression } from "@nestjs/schedule";
 
-import type { AgentActionRisk, AgentActionStatus, AgentCapabilityMeta } from "@babyjamjam/shared";
+import { AgentActionPreviewSchema, type AgentActionRisk, type AgentActionStatus, type AgentCapabilityMeta } from "@babyjamjam/shared";
 import type { BjjUIMessage } from "@babyjamjam/shared";
 import type { AgentActionEntity, AgentActionOwner } from "domain/entities/agent-action.entity";
 import { AGENT_ACTION_REPOSITORY, type IAgentActionRepository } from "domain/repositories/agent-action.repository.interface";
 import type { VerifiedTenantPrincipal } from "infrastructure/tenant/tenant.context";
 import { PrismaService } from "infrastructure/database/prisma.service";
 import { codeOnlyProblemBody, problemBody, uncertainProblemBody } from "application/utils/problem-bodies";
+import { buildActionProposalPresentation } from "./action-proposal-presentation";
 import { CapabilityRegistryService } from "./capability-registry.service";
 import { AgentFlagsService } from "./agent-flags.service";
 import { AgentActionSweepLockService } from "infrastructure/locking/agent-action-sweep-lock.service";
@@ -51,6 +53,18 @@ export class AgentActionCertainFailureError extends Error {
     constructor(message: string) {
         super(message);
         this.name = AgentActionCertainFailureError.name;
+    }
+}
+
+/** An answerable refusal: no action was created and the model may ask or correct its input. */
+export class AgentActionQuestionError extends AgentActionCertainFailureError {
+    constructor(
+        readonly code: string,
+        message: string,
+        readonly candidates: ReadonlyArray<{ employeeId: number; employeeName: string | null }> = [],
+    ) {
+        super(message);
+        this.name = AgentActionQuestionError.name;
     }
 }
 
@@ -309,6 +323,14 @@ export class ActionCoordinatorService implements AgentTaskReviewPort {
                 : undefined;
             const parsedTargetVersion = inspection?.targetVersion ?? input.targetVersion;
             const targetSnapshot = input.targetSnapshot ?? inspection?.targetSnapshot;
+            // The preview carries safety warnings a manager must see: an invalid one
+            // fails the proposal instead of silently dropping them.
+            const previewResult = inspection?.preview === undefined
+                ? undefined
+                : AgentActionPreviewSchema.safeParse(inspection.preview);
+            if (previewResult && !previewResult.success) {
+                throw new InternalServerErrorException(`Agent capability ${input.capability} produced an invalid approval preview`);
+            }
             const proposal = {
                 capability: input.capability,
                 title: inspection?.title ?? input.title ?? capability.meta.description,
@@ -319,6 +341,9 @@ export class ActionCoordinatorService implements AgentTaskReviewPort {
                 provider: inspection?.provider ?? null,
                 estimatedCost: inspection?.estimatedCost ?? null,
                 locale: input.locale,
+                // Only when present: the proposal is hashed into proposalRevision, so a
+                // preview-less proposal must stay byte-identical to what it was before.
+                ...(previewResult?.success ? { preview: previewResult.data } : {}),
             };
             const proposalRevision = createHash("sha256").update(stableJson({
                 capability: input.capability,
@@ -1048,18 +1073,22 @@ export class ActionCoordinatorService implements AgentTaskReviewPort {
         const message = {
             id: `agent-action-result:${actionId}`,
             role: "assistant",
-            parts: [{
-                type: "data-action-result",
-                data: {
-                    actionId,
-                    status,
-                    summary,
-                    completedAt: new Date().toISOString(),
-                    ...(!action.taskId && action.result && typeof action.result === "object" && !Array.isArray(action.result)
-                        ? { result: action.result }
-                        : {}),
+            parts: [
+                // Task actions use task snapshots instead of standalone approval cards.
+                ...(!action.taskId ? [{ type: "data-action-proposal", data: buildActionProposalPresentation(action) }] : []),
+                {
+                    type: "data-action-result",
+                    data: {
+                        actionId,
+                        status,
+                        summary,
+                        completedAt: new Date().toISOString(),
+                        ...(!action.taskId && action.result && typeof action.result === "object" && !Array.isArray(action.result)
+                            ? { result: action.result }
+                            : {}),
+                    },
                 },
-            }],
+            ],
         } as unknown as BjjUIMessage;
         const owner = { userId: action.userId, branchId: action.branchId };
         const persisted = await this.sessions.upsertActionResultMessage(action.sessionId, owner, message);

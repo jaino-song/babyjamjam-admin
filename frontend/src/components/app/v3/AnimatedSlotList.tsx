@@ -3,6 +3,7 @@
 import React, { useRef, useEffect } from "react";
 import { Loader2 } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
+import { SelectableItemFrame } from "@/components/ui/selectable-item";
 import { cn } from "@/lib/utils";
 
 type SlotClassNameArgs<T> = { index: number; item: T | null; isLoading: boolean };
@@ -32,6 +33,8 @@ export interface AnimatedSlotListProps<T> {
   slotClassName?: string | ((args: SlotClassNameArgs<T>) => string);
   onSlotClick?: (item: T, index: number) => void;
   getItemKey?: (item: T, index: number) => string;
+  /** Optional server-owned section header; absent metadata keeps a flat list. */
+  getItemGroup?: (item: T) => { id: string; label: string } | undefined;
   render: (args: { index: number; item: T | null; isLoading: boolean }) => React.ReactNode;
 
   /** Whether there are more items to load */
@@ -58,6 +61,7 @@ export function AnimatedSlotList<T>({
   slotClassName,
   onSlotClick,
   getItemKey,
+  getItemGroup,
   render,
   hasMore = false,
   onLoadMore,
@@ -131,12 +135,8 @@ export function AnimatedSlotList<T>({
         const variantClassName =
           itemVariant === "card"
             ? cn(
-                "flex h-[calc(94px*var(--glint-ui-scale,1))] items-center gap-[calc(12px*var(--glint-ui-scale,1))] overflow-hidden rounded-[18px] border-2 border-transparent bg-white p-[calc(16px*var(--glint-ui-scale,1))] text-left transition-all duration-200 [&>*:only-child]:w-full",
-                isInteractive &&
-                  "cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-v3-primary focus-visible:ring-offset-2",
-                slotState.isActive
-                  ? "border-v3-primary bg-v3-primary-light"
-                  : isInteractive && "hover:border-v3-primary/30 hover:bg-v3-primary-light/50"
+                "flex h-[calc(94px*var(--glint-ui-scale,1))] items-center gap-[calc(12px*var(--glint-ui-scale,1))] overflow-hidden rounded-[18px] p-[calc(16px*var(--glint-ui-scale,1))] text-left duration-200 [&>*:only-child]:w-full",
+                isInteractive && "cursor-pointer"
               )
             : "";
 
@@ -153,14 +153,17 @@ export function AnimatedSlotList<T>({
 
         if (isSlotLoading && itemVariant === "card") {
           return (
-            <div
+            <SelectableItemFrame
               key={slotKey}
+              isSelected={false}
               data-component={itemDataComponent}
+              data-slot="animated-slot-list-item"
+              data-state="loading"
               className={cn(
                 shouldAnimateSlot && "animate-v3-pop-up",
                 // Mirror the real card chrome so a mid-load mix of skeleton and
                 // rendered rows reads as one list, not broken cards.
-                "flex h-[calc(94px*var(--glint-ui-scale,1))] items-center gap-[calc(12px*var(--glint-ui-scale,1))] overflow-hidden rounded-[18px] border-2 border-transparent bg-white p-[calc(16px*var(--glint-ui-scale,1))] text-left",
+                "flex h-[calc(94px*var(--glint-ui-scale,1))] items-center gap-[calc(12px*var(--glint-ui-scale,1))] overflow-hidden rounded-[18px] p-[calc(16px*var(--glint-ui-scale,1))] text-left",
                 computedSlotClassName
               )}
               style={shouldAnimateSlot ? { animationDelay } : undefined}
@@ -174,17 +177,33 @@ export function AnimatedSlotList<T>({
                 <Skeleton className="h-[calc(16px*var(--glint-ui-scale,1))] w-[calc(112px*var(--glint-ui-scale,1))] bg-v3-dim-white" />
                 <Skeleton className="h-[calc(12px*var(--glint-ui-scale,1))] w-full bg-v3-dim-white" />
               </div>
-            </div>
+            </SelectableItemFrame>
           );
         }
 
         const handleClick =
-          !isSlotLoading && item && onSlotClick ? () => onSlotClick(item, index) : undefined;
+          isInteractive && !isSlotLoading && item && onSlotClick
+            ? (event?: React.MouseEvent<HTMLDivElement>) => {
+                if (event?.defaultPrevented) return;
+                if (event && event.target instanceof Element) {
+                  const interactiveAncestor = event.target.closest(
+                    'button, input, select, textarea, a[href], label, summary, [role="button"], [role="link"], [role="switch"], [role="checkbox"], [role="radio"], [role="textbox"], [role="combobox"], [contenteditable="true"], [contenteditable=""]'
+                  );
+                  if (
+                    interactiveAncestor &&
+                    interactiveAncestor !== event.currentTarget &&
+                    event.currentTarget.contains(interactiveAncestor)
+                  ) return;
+                }
+                onSlotClick(item, index);
+              }
+            : undefined;
 
-        return (
+        const slot = (
           <div
-            key={slotKey}
             data-component={itemDataComponent}
+            data-slot="animated-slot-list-item"
+            data-selected={slotState.isActive}
             className={cn(
               shouldAnimateSlot && "animate-v3-pop-up",
               variantClassName,
@@ -200,6 +219,7 @@ export function AnimatedSlotList<T>({
                   "aria-pressed":
                     slotState.isActive === undefined ? undefined : Boolean(slotState.isActive),
                   onKeyDown: (event: React.KeyboardEvent<HTMLDivElement>) => {
+                    if (event.defaultPrevented || event.target !== event.currentTarget) return;
                     if (event.key === "Enter" || event.key === " ") {
                       if (event.key === " ") event.preventDefault();
                       handleClick();
@@ -210,6 +230,33 @@ export function AnimatedSlotList<T>({
           >
             {render({ index, item, isLoading: isSlotLoading })}
           </div>
+        );
+
+        const group = item ? getItemGroup?.(item) : undefined;
+        const previousItem = index > 0 ? items?.[index - 1] : undefined;
+        const previousGroup = previousItem ? getItemGroup?.(previousItem) : undefined;
+
+        return (
+          <React.Fragment key={slotKey}>
+            {group && group.id !== previousGroup?.id && !shouldHide ? (
+              <h3
+                data-component={dataComponent ? `${dataComponent}_group-${group.id}_heading` : undefined}
+                data-slot="group-heading"
+                className="px-2 pt-3 pb-1 text-sm font-semibold text-v3-text-muted"
+              >
+                {group.label}
+              </h3>
+            ) : null}
+            {itemVariant === "card" ? (
+              <SelectableItemFrame
+                asChild
+                isSelected={Boolean(slotState.isActive)}
+                isInteractive={isInteractive}
+              >
+                {slot}
+              </SelectableItemFrame>
+            ) : slot}
+          </React.Fragment>
         );
       })}
 

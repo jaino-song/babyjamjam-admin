@@ -1,3 +1,4 @@
+import { findMissingServiceRecordAlerts } from "application/policies/missing-service-record-alert.policy";
 import { Injectable, Inject, Logger } from "@nestjs/common";
 import { Cron } from "@nestjs/schedule";
 import {
@@ -13,7 +14,7 @@ import {
 } from "domain/repositories/message-trigger-job.repository.interface";
 import { MessageTriggerJobEntity } from "domain/entities/message-trigger-job.entity";
 import {
-    MESSAGE_TRIGGER_TEMPLATE_CATALOG,
+    findMessageTriggerTemplate,
     MessageTriggerRecipientType,
     MessageTriggerTemplateKey,
 } from "domain/constants/message-trigger-catalog";
@@ -160,7 +161,7 @@ export class PwaNotificationSchedulerService {
         runStartedAt: Date,
         deliveryKey: string,
     ): Promise<boolean> {
-        const [upcoming, ending, incompleteContracts, contractsNotSent, undelivered] = await Promise.all([
+        const [upcoming, ending, incompleteContracts, contractsNotSent, undelivered, missingServiceRecords] = await Promise.all([
             // Everything below counts on the Korean calendar of the run instant, and the two
             // contract lists use the same rules as the dashboard (current contract, not the
             // `eDocId` pin): "계약서 미발송" is exactly the dashboard's 발송 필요 clients.
@@ -181,6 +182,13 @@ export class PwaNotificationSchedulerService {
                     runStartedAt,
                 )),
             this.collectUndeliveredMessages(branchId, undeliveredSince, runStartedAt),
+            this.collect(branchId, "missing service records", async () => {
+                const [candidates, calendar] = await Promise.all([
+                    this.clientRepository.findServiceRecordAlertCandidates(branchId),
+                    this.holidayCalendar.forBranch(branchId),
+                ]);
+                return findMissingServiceRecordAlerts(candidates, branchId, calendar, runStartedAt);
+            }),
         ]);
 
         const sections: DailyDigestSection[] = [];
@@ -244,6 +252,31 @@ export class PwaNotificationSchedulerService {
                 unit: "명",
                 url: "/clients/filtered?filter=no-contract",
                 details: contractsNotSent.map((client) => client.name),
+            });
+        }
+
+        if (missingServiceRecords.length > 0) {
+            const notificationItems: DailyDigestNotificationItem[] = missingServiceRecords.map((alert) => ({
+                title: "제공기록지 미작성",
+                body: `${alert.clientName} 산모님의 서비스 제공기록지가 작성되지 않고 있어요. ${alert.primaryEmployeeName} 관리사님께 확인이 필요해 보여요.`,
+                data: {
+                    type: "daily-summary-item",
+                    category: "service-record-missing",
+                    clientId: alert.clientId,
+                    scheduleId: alert.scheduleId,
+                    url: `/dashboard?clientId=${alert.clientId}`,
+                },
+            }));
+            const details = notificationItems.map((item) => item.body);
+            sections.push({
+                key: "missingServiceRecords",
+                label: "제공기록지 미작성",
+                description: `제공기록지 작성 확인이 필요한 산모가 ${notificationItems.length}명 있어요.`,
+                count: notificationItems.length,
+                unit: "명",
+                url: "/dashboard",
+                details,
+                notificationItems,
             });
         }
 
@@ -357,7 +390,7 @@ export class PwaNotificationSchedulerService {
      */
     private formatUndeliveredMessageDetail(job: MessageTriggerJobEntity): string {
         const recipientName = job.payload.recipientName || "사용자";
-        const templateLabel = MESSAGE_TRIGGER_TEMPLATE_CATALOG[job.templateKey]?.name ?? "메시지";
+        const templateLabel = findMessageTriggerTemplate(job.templateKey)?.name ?? "메시지";
         const reason = job.cancelReason ?? "사유 미상";
         return `${recipientName} · ${templateLabel} — ${reason}`;
     }
@@ -384,7 +417,7 @@ export class PwaNotificationSchedulerService {
             : `${recipientName}님`;
         const templateLabel = job.templateKey === MessageTriggerTemplateKey.SERVICE_RECORD_LINK
             ? "제공기록지"
-            : MESSAGE_TRIGGER_TEMPLATE_CATALOG[job.templateKey]?.name ?? "안내";
+            : findMessageTriggerTemplate(job.templateKey)?.name ?? "안내";
         const deliveryResult = job.status === "failed" ? "실패했습니다" : "취소되었습니다";
 
         return {

@@ -49,6 +49,10 @@ export interface ProblemDetails {
         id: number;
         name: string;
     };
+    startDateLock?: {
+        serviceStarted: boolean;
+        recordedSessionCount: number;
+    };
 }
 export interface ProblemCatalogEntry {
     code: ProblemCode;

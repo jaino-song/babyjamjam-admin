@@ -6,14 +6,16 @@ import fs from "node:fs";
  * Diagnostic: do bottom-nav indicator + sliding underline actually animate
  * on the USER's running pnpm dev server (http://localhost:3000)?
  *
- * Uses the real login flow so we hit the user's actual server (no E2E env).
+ * Uses the real login flow with credentials from E2E_DEV_EMAIL and E2E_DEV_PASSWORD.
  */
 
 const OUT = path.join(__dirname, "screenshots", "nav-diagnose");
 fs.mkdirSync(OUT, { recursive: true });
 
-const EMAIL = "wlsghtmeod@gmail.com";
-const PASSWORD = "Test1234!";
+const EMAIL = process.env.E2E_DEV_EMAIL ?? "";
+const PASSWORD = process.env.E2E_DEV_PASSWORD ?? "";
+
+test.skip(!EMAIL || !PASSWORD, "export E2E_DEV_EMAIL and E2E_DEV_PASSWORD (values in frontend/.env.local; this config loads no env file) to run this local diagnostic");
 
 interface IndicatorFrame {
   t: number;

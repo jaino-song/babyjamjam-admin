@@ -110,9 +110,9 @@ export const dashboardSections: SectionRows[] = [
     title: "시작 예정 · 1명",
     rows: [
       {
-        name: "송진호",
+        name: "정다라",
         meta: "A통합1형 · 제공인력 미배정",
-        initial: "송",
+        initial: "정",
         badge: "대기",
         badgeTone: "muted",
         due: "D-5",
@@ -210,7 +210,7 @@ export const clientSections: SectionRows[] = [
   {
     title: "대기 · 2명",
     rows: [
-      { name: "송진호", meta: "A통합1형 · 제공인력 미배정", initial: "송", badge: "대기", badgeTone: "muted", avatarTone: "orange" },
+      { name: "정다라", meta: "A통합1형 · 제공인력 미배정", initial: "정", badge: "대기", badgeTone: "muted", avatarTone: "orange" },
       { name: "윤지아", meta: "B가1형 · 제공인력 미배정", initial: "윤", badge: "대기", badgeTone: "muted", avatarTone: "purple" },
     ],
   },
@@ -229,7 +229,7 @@ export const contractSections: Array<{ title: string; rows: ContractRow[] }> = [
     rows: [
       { name: "이수현 · A통합1형", meta: "제공기관 검토 필요 · 5단계", badge: "검토 필요", badgeTone: "primary", iconTone: "primary" },
       { name: "[더미] 정유진 · A라1형", meta: "이용자 문서 열람 · 3단계", badge: "대기", badgeTone: "muted", iconTone: "muted" },
-      { name: "송진호 · A통합1형", meta: "이용자 서명 완료 · 4단계", badge: "대기", badgeTone: "muted", iconTone: "muted" },
+      { name: "정다라 · A통합1형", meta: "이용자 서명 완료 · 4단계", badge: "대기", badgeTone: "muted", iconTone: "muted" },
     ],
   },
   {
@@ -278,7 +278,7 @@ export const menuGroups: MenuGroup[] = [
 export const chatMessages = [
   {
     role: "assistant",
-    body: "안녕하세요 송진호 님. 인천점 운영을 돕는 AI 어시스턴트예요. 오늘 어떤 걸 도와드릴까요?",
+    body: "안녕하세요 정다라 님. 인천점 운영을 돕는 AI 어시스턴트예요. 오늘 어떤 걸 도와드릴까요?",
     time: "오전 9:14",
   },
   {
@@ -288,13 +288,13 @@ export const chatMessages = [
   },
   {
     role: "assistant",
-    body: "이번 주(5/12-5/18) 시작 예정 고객은 총 3명입니다.\n\n· 송진호 (5/14, A통합1형) — 제공인력 미배정 ⚠\n· 윤지아 (5/21, B가1형) — 제공인력 미배정 ⚠\n· 박민수 (5/16, A라1형) — 김민지 매니저 배정됨 ✓\n\n미배정 2건은 시작일까지 D-3 이내라 우선 배정이 필요합니다.",
+    body: "이번 주(5/12-5/18) 시작 예정 고객은 총 3명입니다.\n\n· 정다라 (5/14, A통합1형) — 제공인력 미배정 ⚠\n· 윤지아 (5/21, B가1형) — 제공인력 미배정 ⚠\n· 박민수 (5/16, A라1형) — 김민지 매니저 배정됨 ✓\n\n미배정 2건은 시작일까지 D-3 이내라 우선 배정이 필요합니다.",
     time: "오전 9:15",
     sources: ["고객 · 8건", "제공인력 · 12명"],
   },
   {
     role: "user",
-    body: "송진호 고객한테 가장 적합한 제공인력 추천해줘",
+    body: "정다라 고객한테 가장 적합한 제공인력 추천해줘",
     time: "오전 9:16",
   },
   {

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Behavioral contract for the LightNode passive-standby CI commands
-# (`standby-status`, `deploy-standby`) and their SSH dispatcher. It executes a
+# Behavioral contract for LightNode passive-standby and active CI commands
+# (`standby-status`, `deploy-standby`, `status`, `replace`) and their SSH dispatcher. It executes a
 # copy of ci-deployer.sh with its entrypoint removed, the protected paths moved
 # into a temp directory and the operator replaced by a stub. It never touches
 # Docker, sudo, DNS or the network, and runs under bash 3.2 (macOS) and Linux.
@@ -17,6 +17,7 @@ COPY="$TMP/ci-deployer.sh"
 STUB="$TMP/operator-stub.sh"
 DISPATCH_COPY="$TMP/ssh-dispatch.sh"
 DISPATCH_STUB="$TMP/sudo-stub.sh"
+NODE_BINARY="$(command -v node)"
 ALL_CALLS="$TMP/all-operator-calls.log"
 : >"$ALL_CALLS"
 
@@ -38,9 +39,11 @@ APPROVED_HASH="$(printf '%s\n' "$LIGHTNODE_IP" | sha256sum | awk '{ print $1 }')
 sed -e '$d' \
     -e "s|^readonly STATE_ROOT=.*|readonly STATE_ROOT=\"$W/root\"|" \
     -e "s|^readonly OPERATOR=.*|readonly OPERATOR=\"$STUB\"|" \
+    -e "s|^readonly APPROVAL_HELPER=.*|readonly APPROVAL_HELPER=\"$ROOT/automatic-approval.mjs\"|" \
     "$ROOT/ci-deployer.sh" >"$COPY"
 grep -q "$W/root" "$COPY" || fail "state root was not redirected"
 grep -q "readonly OPERATOR=\"$STUB\"" "$COPY" || fail "operator was not redirected"
+grep -Fq "readonly APPROVAL_HELPER=\"$ROOT/automatic-approval.mjs\"" "$COPY" || fail "approval helper was not redirected"
 [[ "$(tail -n 1 "$ROOT/ci-deployer.sh")" == 'main "$@"' ]] || fail "main must stay the last line of ci-deployer.sh"
 
 # --- an operator stub driven by files under $W
@@ -48,6 +51,7 @@ cat >"$STUB" <<'STUB'
 #!/usr/bin/env bash
 # Records every call; `status` replays status.out/status.rc, `deploy` replays
 # deploy.rc and, on success, promotes status.after to the current status.
+# replace-temporary-active does the same, with a separate replacement exit code.
 set -u
 printf '%s\n' "$*" >>"$STUB_CALLS"
 printf '%s\n' "$*" >>"$STUB_ALL_CALLS"
@@ -56,9 +60,10 @@ case "${1:-}" in
         if [[ -f "$STUB_WORLD/status.out" ]]; then cat "$STUB_WORLD/status.out"; fi
         exit "$(cat "$STUB_WORLD/status.rc" 2>/dev/null || echo 0)"
         ;;
-    deploy)
+    deploy|replace-temporary-active)
         echo "OPERATOR-DEPLOY-STDOUT-SUMMARY"
-        rc="$(cat "$STUB_WORLD/deploy.rc" 2>/dev/null || echo 0)"
+        if [[ "$1" == deploy ]]; then result=deploy; else result=replace; fi
+        rc="$(cat "$STUB_WORLD/$result.rc" 2>/dev/null || echo 0)"
         if [[ "$rc" == 0 && -f "$STUB_WORLD/status.after" ]]; then
             cp "$STUB_WORLD/status.after" "$STUB_WORLD/status.out"
             echo 0 >"$STUB_WORLD/status.rc"
@@ -73,8 +78,9 @@ esac
 STUB
 chmod 755 "$STUB"
 
-status_block() { # tag digest mode schedulers [health] [restarts]
+status_block() { # tag digest mode schedulers [health] [restarts] [shutdown] [lease_mode] [held]
     local tag="$1" digest="$2" mode="$3" schedulers="$4" health="${5:-healthy}" restarts="${6:-0}"
+    local shutdown="${7:-enabled}" lease_mode="${8:-off}" held="${9:-false}"
     printf '%s\n' \
         "environment=fallback-server" \
         "current_tag=$tag" \
@@ -85,11 +91,12 @@ status_block() { # tag digest mode schedulers [health] [restarts]
         "production_db_identity=ok" \
         "public_routing=not_managed" \
         "runtime_mode=$mode" \
-        "automatic_shutdown=enabled" \
+        "automatic_shutdown=$shutdown" \
         "schedulers_enabled=$schedulers" \
         "document_jobs_accepting=$schedulers" \
         "document_jobs_worker=$schedulers" \
-        "lease_mode=off"
+        "lease_mode=$lease_mode" \
+        "lease_held=$held"
 }
 
 world_reset() {
@@ -106,7 +113,7 @@ world_reset() {
 # set -e from the sourced script stays active, as in production.
 run_main() {
     local rc=0
-    STUB_WORLD="$W" STUB_CALLS="$W/calls.log" STUB_ALL_CALLS="$ALL_CALLS" ROUTE_IPS="$ROUTE_IPS" GETENT_RC="$GETENT_RC" \
+    STUB_WORLD="$W" STUB_CALLS="$W/calls.log" STUB_ALL_CALLS="$ALL_CALLS" ROUTE_IPS="$ROUTE_IPS" GETENT_RC="$GETENT_RC" TEST_NODE_BINARY="$NODE_BINARY" \
         bash -c '
             source "$1"; shift
             validate_protected_file() {
@@ -121,6 +128,10 @@ run_main() {
                 return "$GETENT_RC"
             }
             require_root_and_caller() { :; }
+            # Only the test copy reaches these stubs; the real approval builder
+            # runs locally, without root ownership changes or PATH assumptions.
+            chown() { :; }
+            node() { "$TEST_NODE_BINARY" "$@"; }
             main "$@"
         ' _ "$COPY" "$@" >"$W/out" 2>"$W/err" || rc=$?
     RC="$rc"
@@ -135,6 +146,12 @@ expect_out_line() { grep -Fxq -- "$2" "$W/out" || { cat "$W/out" >&2; fail "$1: 
 expect_no_out_line() { if grep -Fxq -- "$2" "$W/out"; then fail "$1: stdout has unexpected line '$2'"; fi; }
 expect_no_operator_calls() { [[ ! -s "$W/calls.log" ]] || fail "$1: the operator was called: $(cat "$W/calls.log")"; }
 expect_operator_called() { grep -Fxq -- "$2" "$W/calls.log" || fail "$1: operator call '$2' missing; saw: $(cat "$W/calls.log")"; }
+expect_only_status_calls() {
+    expect_operator_called "$1" status
+    if grep -vFx status "$W/calls.log" >"$W/mutations.log"; then
+        fail "$1: mutating operator calls: $(cat "$W/mutations.log")"
+    fi
+}
 expect_unique_key() {
     local count
     count="$(grep -c "^$2=" "$W/out" || true)"
@@ -569,6 +586,112 @@ if grep -Eq '^(replace-temporary-active|temporary-active|stop|rollback|valkey-re
 fi
 grep -Eq '^deploy ' "$ALL_CALLS" || fail "the test run never exercised operator deploy"
 echo "ok - only status and deploy reach the operator"
+
+# ===== 11b. persistent active hosts require required mode AND held=true.
+# All fixtures explicitly name their shutdown lifecycle. In particular, these
+# tests do not bless missing/duplicate automatic_shutdown (tracked separately).
+active_world() {
+    world_reset
+    ROUTE_IPS="$LIGHTNODE_IP"
+    # A valid approval/evidence set lets a removed gate reach a real replacement;
+    # an unrelated missing-approval failure cannot masquerade as lease refusal.
+    printf '%s\n' "incident_id=BJJ-493-test" "aligo_egress_ipv4_sha256=$APPROVED_HASH" >"$W/root/temporary-active-approval"
+    printf '%s\n' fixture-scheduler-evidence >"$W/root/temporary-active-scheduler-evidence"
+    printf '%s\n' "$APPROVED_HASH" >"$W/root/approved-production-db-ref.sha256"
+    printf '%s\n' 1000000000 >"$W/root/state/temporary-active-expiry"
+}
+persistent_status() { # tag digest [lease_mode] [held]
+    status_block "$1" "$2" temporary-active true healthy 0 disabled "${3:-required}" "${4:-true}"
+}
+expect_lease_refusal() {
+    expect_refused "$1"
+    expect_err "$1" "The persistent Fallback host does not hold the scheduler lease."
+}
+expect_one_replace_then_status() {
+    local expected="replace-temporary-active $SHA_A $DIG_A"
+    # Exactly one replacement, only reads before/after it, at least one read
+    # after it. This assertion intentionally permits the completed replacement.
+    awk -v expected="$expected" '
+        $0 == expected { replaced += 1; next }
+        $0 != "status" { bad = 1 }
+        $0 == "status" && replaced { reads_after += 1 }
+        END { exit !(replaced == 1 && reads_after >= 1 && !bad) }
+    ' "$W/calls.log" || fail "$1: unexpected operator sequence: $(cat "$W/calls.log")"
+}
+
+active_world
+persistent_status "$SHA_A" "$DIG_A" >"$W/status.out"
+run_main status
+expect_ok "persistent required+held status"
+expect_out_line "persistent status" "lease_mode=required"
+expect_out_line "persistent status" "lease_held=true"
+expect_out_line "persistent status" "public_routing=fallback"
+expect_only_status_calls "persistent status"
+run_main replace "$SHA_A" "$DIG_A"
+expect_ok "persistent required+held no-op replacement"
+expect_out_line "persistent no-op" "deployment_changed=false"
+expect_only_status_calls "persistent no-op"
+
+for invalid in held-false held-missing held-duplicate mode-off; do
+    # Cover status, changed release, and idempotent release independently: each
+    # must reject on the lease gate before any deploy/replace operator command.
+    for operation in status replace no-op; do
+        active_world
+        case "$invalid" in
+            held-false) persistent_status "$SHA_B" "$DIG_B" required false >"$W/status.out" ;;
+            held-missing) persistent_status "$SHA_B" "$DIG_B" | sed '/^lease_held=/d' >"$W/status.out" ;;
+            held-duplicate)
+                persistent_status "$SHA_B" "$DIG_B" >"$W/status.out"
+                echo lease_held=true >>"$W/status.out"
+                ;;
+            mode-off) persistent_status "$SHA_B" "$DIG_B" off true >"$W/status.out" ;;
+        esac
+        persistent_status "$SHA_A" "$DIG_A" >"$W/status.after"
+        case "$operation" in
+            status) run_main status ;;
+            replace) run_main replace "$SHA_A" "$DIG_A" ;;
+            no-op) run_main replace "$SHA_B" "$DIG_B" ;;
+        esac
+        expect_lease_refusal "$invalid $operation"
+        expect_only_status_calls "$invalid $operation"
+        expect_no_out_line "$invalid $operation" "deployment_changed=true"
+    done
+done
+echo "ok - persistent status and pre-replace require required mode and a unique held=true"
+
+active_world
+persistent_status "$SHA_B" "$DIG_B" >"$W/status.out"
+persistent_status "$SHA_A" "$DIG_A" >"$W/status.after"
+run_main replace "$SHA_A" "$DIG_A"
+expect_ok "persistent required+held replacement"
+expect_one_replace_then_status "persistent replacement"
+expect_out_line "persistent replacement" "deployment_changed=true"
+expect_out_line "persistent replacement" "current_tag=$SHA_A"
+expect_out_line "persistent replacement" "current_digest=$DIG_A"
+expect_out_line "persistent replacement" "lease_held=true"
+grep -Fxq "image_tag=$SHA_A" "$W/root/temporary-active-approval" || fail "replacement did not build a fresh approval"
+
+active_world
+persistent_status "$SHA_B" "$DIG_B" >"$W/status.out"
+persistent_status "$SHA_A" "$DIG_A" required false >"$W/status.after"
+run_main replace "$SHA_A" "$DIG_A"
+expect_lease_refusal "persistent replacement lost its lease"
+expect_one_replace_then_status "persistent post-replace refusal"
+expect_no_out_line "persistent post-replace refusal" "deployment_changed=true"
+echo "ok - persistent replacement verifies held=true after exactly one replace"
+
+# The enabled, expiring temporary-active lifecycle keeps its legacy behavior,
+# including a full replacement with lease_mode=off and held=false.
+active_world
+status_block "$SHA_B" "$DIG_B" temporary-active true healthy 0 enabled off false >"$W/status.out"
+status_block "$SHA_A" "$DIG_A" temporary-active true healthy 0 enabled off false >"$W/status.after"
+run_main replace "$SHA_A" "$DIG_A"
+expect_ok "enabled temporary-expiry replacement"
+expect_one_replace_then_status "enabled temporary-expiry replacement"
+expect_out_line "enabled temporary-expiry replacement" "automatic_shutdown=enabled"
+expect_out_line "enabled temporary-expiry replacement" "deployment_changed=true"
+expect_out_line "enabled temporary-expiry replacement" "lease_held=false"
+echo "ok - enabled temporary-expiry lifecycle is preserved"
 
 # ===== 12. SSH dispatcher: exact forms accepted, variants rejected
 sed -e "s|/usr/bin/sudo -n|$DISPATCH_STUB|" "$ROOT/ssh-dispatch.sh" >"$DISPATCH_COPY"

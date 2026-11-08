@@ -46,7 +46,7 @@ describe("service-record link proxy routes", () => {
 
         const response = await prepareLink(
             createRequest("/api/admin/service-records/schedules/11/prepare-link", {
-                recipientPhone: "01066211878",
+                recipientPhone: "01000006621",
             }),
             { params: Promise.resolve({ scheduleId: "11" }) },
         );
@@ -55,7 +55,7 @@ describe("service-record link proxy routes", () => {
         expect(response.headers.get("cache-control")).toBe("no-store");
         expect(mockPost).toHaveBeenCalledWith(
             "/admin/service-records/schedules/11/prepare-link",
-            { recipientPhone: "01066211878" },
+            { recipientPhone: "01000006621" },
             { headers: { Authorization: "Bearer token-1" } },
         );
         await expect(response.json()).resolves.toEqual(expect.objectContaining({ preparedLinkToken }));
@@ -70,7 +70,7 @@ describe("service-record link proxy routes", () => {
         const response = await sendLink(
             createRequest("/api/admin/service-records/schedules/11/send-link", {
                 preparedLinkToken,
-                recipientPhone: "01066211878",
+                recipientPhone: "01000006621",
                 ignored: "do-not-forward",
             }),
             { params: Promise.resolve({ scheduleId: "11" }) },
@@ -79,7 +79,7 @@ describe("service-record link proxy routes", () => {
         expect(response.status).toBe(201);
         expect(mockPost).toHaveBeenCalledWith(
             "/admin/service-records/schedules/11/send-link",
-            { preparedLinkToken, recipientPhone: "01066211878" },
+            { preparedLinkToken, recipientPhone: "01000006621" },
             { headers: { Authorization: "Bearer token-1" } },
         );
     });

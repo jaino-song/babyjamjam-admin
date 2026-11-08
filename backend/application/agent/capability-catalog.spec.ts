@@ -28,6 +28,13 @@ describe("capability catalog", () => {
         }
         expect(CAPABILITY_CATALOG_BY_NAME.get("notifications.test")?.requiredRoles)
             .toEqual(["owner", "admin"]);
+        // A service-record correction is a reversible write for staff who run the branch, never for plain users.
+        expect(CAPABILITY_CATALOG_BY_NAME.get("service-records.edit")).toMatchObject({
+            requiredRoles: ["owner", "admin", "manager"],
+            risk: "reversible-write",
+            approvalPolicy: "structured",
+            idempotencyPolicy: "action-id",
+        });
     });
 
     it("agrees with every real provider's own meta.description for all read capabilities", () => {

@@ -161,6 +161,9 @@ validated_status() {
         && "$(status_value document_jobs_accepting "$output")" == "true" \
         && "$(status_value document_jobs_worker "$output")" == "true" ]] \
         || die "The active Fallback runtime is not safe for automatic replacement."
+    # Persistent LightNode owns API + jobs: required mode AND a held lease are
+    # mandatory for status, before replace (including no-op), and after replace.
+    # The enabled temporary-expiry lifecycle has a separate legacy contract.
     if [[ "$(status_value automatic_shutdown "$output" || true)" == disabled ]]; then
         [[ "$(status_value lease_mode "$output")" == required \
             && "$(status_value lease_held "$output")" == true ]] \

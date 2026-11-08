@@ -4,7 +4,7 @@ import { enableE2EAuth, fulfillShellDefaults } from "./helpers/e2e-shell";
 const SERVICE_RECORD_URL = "https://mobile.test/service-record/efl_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 const PREPARED_LINK_TOKEN = SERVICE_RECORD_URL.split("/").at(-1)!;
 
-const serviceRecordTemplate = `송진호 관리사님, 송진호 산모님의 {{serviceStartDate}} 시작 서비스 제공기록지 작성 링크입니다.
+const serviceRecordTemplate = `정다라 관리사님, 정다라 산모님의 {{serviceStartDate}} 시작 서비스 제공기록지 작성 링크입니다.
 
 제공기록지 링크
 {{serviceRecordUrl}}`;
@@ -78,7 +78,7 @@ test("shows the exact prepared service-record URL and sends the same token", asy
                 contentType: "application/json",
                 body: JSON.stringify([{
                     id: 30,
-                    name: "송진호",
+                    name: "정다라",
                     phone: "010-1111-2222",
                     workArea: ["인천"],
                     grade: "A",
@@ -97,7 +97,7 @@ test("shows the exact prepared service-record URL and sends the same token", asy
                 contentType: "application/json",
                 body: JSON.stringify([{
                     id: 62,
-                    name: "송진호",
+                    name: "정다라",
                     phone: "010-3333-4444",
                     address: "인천",
                 }]),
@@ -115,7 +115,7 @@ test("shows the exact prepared service-record URL and sends the same token", asy
                         replaced: false,
                         employee: {
                             id: 30,
-                            name: "송진호",
+                            name: "정다라",
                             phone: "010-1111-2222",
                         },
                     }],
@@ -158,11 +158,11 @@ test("shows the exact prepared service-record URL and sends the same token", asy
     await page.getByRole("button", { name: /^제공기록지 작성 링크/ }).click();
 
     await page.getByRole("combobox", { name: "관리사님 성함" }).click();
-    await page.getByRole("combobox", { name: "관리사님 성함 검색" }).fill("송진호");
-    await page.getByRole("option", { name: /송진호/ }).click();
+    await page.getByRole("combobox", { name: "관리사님 성함 검색" }).fill("정다라");
+    await page.getByRole("option", { name: /정다라/ }).click();
 
     await page.getByRole("combobox", { name: "산모님 성함" }).click();
-    await page.getByRole("combobox", { name: "산모님 성함 검색" }).fill("송진호");
+    await page.getByRole("combobox", { name: "산모님 성함 검색" }).fill("정다라");
     // The employee has the same name, so pick the client row by its phone number.
     await page.getByRole("option", { name: /010-3333-4444/ }).click();
 

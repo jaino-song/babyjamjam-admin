@@ -66,7 +66,9 @@ export default function EditSystemTemplatePage({ params }: { params: Promise<{ t
     );
   }
 
+  const canSend = Boolean(template.content.trim());
   const handleSend = () => {
+    if (!canSend) return;
     router.push(buildSystemTemplateSendHref(template.templateKey, template.content));
   };
 
@@ -84,6 +86,7 @@ export default function EditSystemTemplatePage({ params }: { params: Promise<{ t
           </>
         ),
         onClick: handleSend,
+        disabled: !canSend,
         dataComponent: 'mobile_messages_system-templates_template-key-detail_send-cta',
       }}
     >

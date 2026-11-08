@@ -1,6 +1,7 @@
 import {
     getExpectedSessionDateFromRecords,
     moveServiceRecordSessionDate,
+    replanServiceRecordScheduleFromResume,
     shiftServiceRecordScheduleSuffix,
     validateServiceRecordScheduleVector,
 } from "./service-record-schedule";
@@ -155,6 +156,120 @@ describe("shiftServiceRecordScheduleSuffix", () => {
         ];
         expect(() => validateServiceRecordScheduleVector(invertedByIndex, vector.length))
             .toThrow(/not after the previous session/);
+    });
+});
+
+describe("replanServiceRecordScheduleFromResume", () => {
+    const originalDates = [
+        "2026-10-01", "2026-10-02", "2026-10-06", "2026-10-07", "2026-10-08",
+        "2026-10-12", "2026-10-13", "2026-10-14", "2026-10-15", "2026-10-16",
+        "2026-10-19", "2026-10-20", "2026-10-21", "2026-10-22", "2026-10-23",
+    ];
+    const vector = originalDates.map((serviceDate, index) => ({
+        sessionIndex: index + 1,
+        serviceDate,
+        originalDate: serviceDate,
+        assignmentId: `assignment-${index + 1}`,
+        scheduleId: 10,
+        employeeId: 20,
+        provenanceVersion: "case-7",
+    }));
+    const dates = (rows: ReadonlyArray<{ serviceDate: string }>) => rows.map((row) => row.serviceDate);
+
+    it("packs the remaining sessions onto consecutive business days from the resume date", () => {
+        const result = replanServiceRecordScheduleFromResume(vector, 2, "2026-10-14");
+        expect(dates(result.entries)).toEqual([
+            "2026-10-01",
+            "2026-10-14", "2026-10-15", "2026-10-16", "2026-10-19", "2026-10-20", "2026-10-21",
+            "2026-10-22", "2026-10-23", "2026-10-26", "2026-10-27", "2026-10-28", "2026-10-29",
+            "2026-10-30", "2026-11-02",
+        ]);
+        expect(result.endDate).toBe("2026-11-02");
+        expect(result.entries[0]).toEqual(vector[0]);
+        expect(result.entries.map((row) => row.originalDate)).toEqual(originalDates);
+        expect(result.entries.map((row) => row.assignmentId)).toEqual(vector.map((row) => row.assignmentId));
+    });
+
+    it("does not mutate its input", () => {
+        const snapshot = JSON.parse(JSON.stringify(vector));
+        replanServiceRecordScheduleFromResume(vector, 2, "2026-10-14");
+        expect(vector).toEqual(snapshot);
+    });
+
+    it("starts on the next business day when the resume date is a weekend or holiday", () => {
+        // 2026-10-17 is a Saturday; the run then crosses the weekend and nothing lands on it.
+        const saturday = replanServiceRecordScheduleFromResume(vector, 2, "2026-10-17");
+        expect(dates(saturday.entries).slice(1, 5)).toEqual(["2026-10-19", "2026-10-20", "2026-10-21", "2026-10-22"]);
+        // 2026-10-09 (한글날) is a holiday and the 10th/11th are a weekend, so it starts Monday 10-12.
+        const holiday = replanServiceRecordScheduleFromResume(vector, 2, "2026-10-09");
+        expect(holiday.entries[1]!.serviceDate).toBe("2026-10-12");
+    });
+
+    it("skips a KR holiday while packing", () => {
+        // 10-05 (개천절 substitute) is skipped between Fri 10-02 and Tue 10-06.
+        const result = replanServiceRecordScheduleFromResume(vector, 2, "2026-10-02");
+        expect(dates(result.entries).slice(1, 4)).toEqual(["2026-10-02", "2026-10-06", "2026-10-07"]);
+        // 10-09 (한글날) is skipped as well: 10-08 -> 10-12.
+        expect(dates(result.entries)).not.toContain("2026-10-05");
+        expect(dates(result.entries)).not.toContain("2026-10-09");
+        expect(dates(result.entries)).toContain("2026-10-12");
+    });
+
+    it("re-plans everything when fromSessionIndex is 1", () => {
+        const result = replanServiceRecordScheduleFromResume(vector, 1, "2026-11-02");
+        expect(result.entries[0]!.serviceDate).toBe("2026-11-02");
+        expect(result.entries[14]!.serviceDate).toBe("2026-11-20");
+        expect(result.endDate).toBe("2026-11-20");
+        expect(result.entries.map((row) => row.originalDate)).toEqual(originalDates);
+    });
+
+    it("moves only the last session when fromSessionIndex is N", () => {
+        const result = replanServiceRecordScheduleFromResume(vector, 15, "2026-10-26");
+        expect(dates(result.entries).slice(0, 14)).toEqual(originalDates.slice(0, 14));
+        expect(result.entries[14]!.serviceDate).toBe("2026-10-26");
+        expect(result.endDate).toBe("2026-10-26");
+    });
+
+    it("rejects a resume date on or before the last kept session", () => {
+        // Session 2 is 2026-10-02; resuming on or before it cannot follow it.
+        expect(() => replanServiceRecordScheduleFromResume(vector, 3, "2026-10-02"))
+            .toThrow(expect.objectContaining({ code: "INVALID_DATE" }));
+        expect(() => replanServiceRecordScheduleFromResume(vector, 3, "2026-10-01"))
+            .toThrow(expect.objectContaining({ code: "INVALID_DATE" }));
+        // A non-business resume date is judged after adjustment: 10-03 -> 10-06 is after 10-02.
+        expect(replanServiceRecordScheduleFromResume(vector, 3, "2026-10-03").entries[2]!.serviceDate).toBe("2026-10-06");
+    });
+
+    it("rejects an out-of-range or non-integer session index", () => {
+        for (const index of [0, 16, 1.5, Number.NaN, -1]) {
+            expect(() => replanServiceRecordScheduleFromResume(vector, index, "2026-10-14"))
+                .toThrow(expect.objectContaining({ code: "INVALID_SESSION_INDEX" }));
+        }
+    });
+
+    it("rejects a malformed resume date", () => {
+        for (const invalid of ["2026-13-40", "", "2026-10-1", "not-a-date"]) {
+            expect(() => replanServiceRecordScheduleFromResume(vector, 2, invalid))
+                .toThrow(expect.objectContaining({ code: "INVALID_DATE" }));
+        }
+    });
+
+    it("fails closed on a year the calendar does not support", () => {
+        expect(() => replanServiceRecordScheduleFromResume(vector, 2, "2099-01-05"))
+            .toThrow(UnsupportedKoreanHolidayYearError);
+    });
+
+    it("packs onto Saturdays under a weekend-service calendar", () => {
+        const weekendCalendar = KR_BUILTIN_CALENDAR.withServiceDays({ saturday: true, sunday: false, holiday: false });
+        expect(weekendCalendar.isBusinessDay("2026-10-17")).toBe(true);
+        const result = replanServiceRecordScheduleFromResume(vector, 2, "2026-10-14", weekendCalendar);
+        expect(dates(result.entries).slice(0, 6)).toEqual([
+            "2026-10-01", "2026-10-14", "2026-10-15", "2026-10-16", "2026-10-17", "2026-10-19",
+        ]);
+        expect(result.entries.map((row) => row.originalDate)).toEqual(originalDates);
+        // A Saturday resume date is itself a business day here, so it is not pushed to Monday.
+        expect(replanServiceRecordScheduleFromResume(vector, 2, "2026-10-17", weekendCalendar).entries[1]!.serviceDate)
+            .toBe("2026-10-17");
     });
 });
 

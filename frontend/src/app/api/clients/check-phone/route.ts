@@ -11,7 +11,7 @@ interface CheckPhoneResponse {
   exists?: boolean;
 }
 
-// GET /api/clients/check-phone?phone=01096411878
+// GET /api/clients/check-phone?phone=01000009641
 export async function GET(request: NextRequest) {
   try {
     const token = getAuthToken(request);

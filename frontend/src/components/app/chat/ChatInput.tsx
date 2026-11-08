@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
 interface ChatInputProps {
+    variant?: "default" | "workspace";
     onSubmit: (message: string) => void;
     onFocus?: () => void;
     onClick?: () => void;
@@ -16,6 +17,7 @@ interface ChatInputProps {
 }
 
 export function ChatInput({
+    variant = "default",
     onSubmit,
     onFocus,
     onClick,
@@ -36,6 +38,7 @@ export function ChatInput({
     };
 
     const handleKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
+        if (e.nativeEvent.isComposing || e.nativeEvent.keyCode === 229) return;
         if (e.key === "Enter") {
             e.preventDefault();
             handleSubmit();
@@ -48,10 +51,10 @@ export function ChatInput({
             onClick={onClick}
             className={cn(
                 "relative flex items-center gap-2 rounded-full",
-                "border-2 !border-primary/50 bg-card p-2 pl-4",
+                variant === "workspace" ? "border border-v3-border bg-card p-2 pl-4" : "border-2 !border-primary/50 bg-card p-2 pl-4",
                 "transition-all duration-300",
                 "focus-within:!border-primary focus-within:shadow-md",
-                "opacity-0 animate-fade-in hover-glow",
+                variant === "default" && "opacity-0 animate-fade-in hover-glow",
                 onClick && "cursor-pointer"
             )}
             style={{ animationDelay: "250ms" }}
@@ -73,6 +76,7 @@ export function ChatInput({
                     "flex-1 border-0 bg-transparent",
                     "text-foreground placeholder:text-muted-foreground",
                     "focus-visible:ring-0 focus-visible:ring-offset-0",
+                    variant === "workspace" && "min-w-0",
                     readOnly && "caret-transparent"
                 )}
             />
@@ -84,9 +88,9 @@ export function ChatInput({
                 disabled={disabled || !value.trim()}
                 className={cn(
                     "shrink-0 rounded-full h-10 w-10",
-                    "!bg-navy text-primary-foreground",
+                    variant === "workspace" ? "!bg-primary text-primary-foreground" : "!bg-navy text-primary-foreground",
                     "transition-all duration-200",
-                    "hover:scale-110 hover:!bg-navy/90 active:scale-95",
+                    variant === "workspace" ? "hover:!bg-primary/90" : "hover:scale-110 hover:!bg-navy/90 active:scale-95",
                     "disabled:!opacity-100"
                 )}
             >

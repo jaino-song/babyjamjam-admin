@@ -1,7 +1,25 @@
+import { ClientAutomationImpactService } from "application/services/client-automation-impact.service";
+import { ClientAutomationSourceReader } from "application/services/client-automation-source.reader";
+import { CaregiverTemplateResolverService } from "application/services/caregiver-template-resolver.service";
+import { MessageTriggerRecipientResolverService } from "application/services/message-trigger-recipient-resolver.service";
+import { MessageAutomationBranchLockService } from "application/services/message-automation-branch-lock.service";
+import { AgentAutomationRecordStoreService, agentAutomationTaskCommitReference } from "application/agent/agent-automation-record-store.service";
+import { AgentAutomationAuthorityService } from "application/agent/agent-automation-authority.service";
+import { AgentAutomationJobAuthorityService } from "application/services/agent-automation-job-authority.service";
+import { AgentAutomationDeliveryGateService } from "application/services/agent-automation-delivery-gate.service";
+import { SmsTriggerDeliveryService } from "application/services/sms-trigger-delivery.service";
+import { fulfillClientMessageAutomationIntent } from "application/services/client-message-automation-intent-fulfiller";
+import { agentAutomationCoverageRecordDigest, agentAutomationCoverageScope, agentAutomationGrandfatheredFingerprint } from "application/agent/agent-automation-coverage";
+import { agentAutomationRecordDigest, agentAutomationEffectDigest, agentAutomationScheduleIdentity } from "application/agent/agent-automation-consent";
+import { createAgentAutomationTerminalRecord, agentAutomationRecordKey } from "application/agent/agent-automation-terminal-record";
+import { agentBindingHash } from "domain/repositories/agent-linked-action.types";
+import type { AgentAutomationAuthority, AgentAutomationCoverage, AgentAutomationScope, AgentAutomationTaskCommitReference } from "domain/entities/agent-automation-consent";
+import { SystemSettingService } from "application/services/system-setting.service";
+import { defaultMessageAutomationPolicy } from "domain/entities/system-setting.entity";
 import { AgentAutomationDispatchUncertainError } from "../../domain/errors/agent-automation-dispatch-uncertain.error";
 import { createLegacyAutomationDeliveryGate } from "../fixtures/legacy-automation-delivery-gate";
 import { buildClientMessageRecipe, buildEmployeeAssignmentMessageRecipe, buildClientTemplateVariables, buildMessageRecipeDedupeKey } from "../../application/services/message-trigger-recipes";
-import { BadRequestException, ConflictException, Logger, NotFoundException } from "@nestjs/common";
+import { BadRequestException, ConflictException, Logger, NotFoundException, ServiceUnavailableException } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import { createHash } from "node:crypto";
 import {
@@ -12,6 +30,7 @@ import {
     CONFIGURABLE_SMS_TRIGGER_TEMPLATE_KEYS,
     EVENT_OFFSET_OPTIONS,
     MESSAGE_TRIGGER_TEMPLATE_CATALOG,
+    MANUAL_SMS_TEMPLATE_KEY,
     MessageTriggerEventType,
     MessageTriggerOffsetType,
     MessageTriggerRecipientType,
@@ -291,8 +310,21 @@ describe("MessageTriggerService", () => {
 
     const createService = (systemSettingService?: {
         getMessageSettingsPolicyEnabled: jest.Mock;
+        getMessageAutomationPolicyConfig?: jest.Mock;
     }) => {
+        const timingSettings = {
+            ...systemSettingService,
+            getMessageAutomationPolicyConfig: systemSettingService?.getMessageAutomationPolicyConfig
+                ?? jest.fn().mockResolvedValue({ configuration: defaultMessageAutomationPolicy() }),
+        };
+        const durableGroups: Array<{ id: string; branchId: string; name: string; recipientMode: string }> = [];
         const ruleRepository = {
+            findGroupDuplicateCandidates: jest.fn().mockResolvedValue([]),
+            createGroup: jest.fn(async (groupBranchId: string, name: string, recipientMode: string) => {
+                const group = { id: `group-${durableGroups.length}`, branchId: groupBranchId, name, recipientMode };
+                durableGroups.push(group);
+                return group;
+            }),
             findAll: jest.fn(),
             findById: jest.fn(),
             findByIdIncludingGlobal: jest.fn().mockResolvedValue(null),
@@ -396,7 +428,7 @@ describe("MessageTriggerService", () => {
             messageLogRepository as never,
             systemTemplateService as never,
             templateAutomationLock as never,
-            systemSettingService as never,
+            timingSettings as never,
             overrideRepository as never,
             messageAutomationActivationService as never,
             messageAutomationBranchLockService as never,
@@ -407,6 +439,7 @@ describe("MessageTriggerService", () => {
         jest.spyOn(internals, "rebuildJobsForRule").mockResolvedValue(undefined);
 
         return {
+            durableGroups,
             service,
             internals,
             prisma,
@@ -424,7 +457,13 @@ describe("MessageTriggerService", () => {
 
     const createDispatchService = (systemSettingService?: {
         getMessageSettingsPolicyEnabled: jest.Mock;
+        getMessageAutomationPolicyConfig?: jest.Mock;
     }) => {
+        const timingSettings = {
+            ...systemSettingService,
+            getMessageAutomationPolicyConfig: systemSettingService?.getMessageAutomationPolicyConfig
+                ?? jest.fn().mockResolvedValue({ configuration: defaultMessageAutomationPolicy() }),
+        };
         const sendJob = jest.fn().mockResolvedValue(true);
         const deliveryService: { sendJob: jest.Mock; prepareJob: jest.Mock; sendPreparedJob: jest.Mock } = {
             sendJob,
@@ -436,7 +475,9 @@ describe("MessageTriggerService", () => {
         };
         const jobRepository = {
             cancelOrphanedPending: jest.fn().mockResolvedValue(0),
-            findDuePendingSystemScope: jest.fn().mockResolvedValue([]),
+            findDueDispatchBranchIds: jest.fn().mockResolvedValue([branchId]),
+            consumeDispatchSlotsAndFindDueJobs: jest.fn().mockResolvedValue([]),
+            reclaimWithClaimFence: jest.fn().mockResolvedValue(true),
             findByIdInBranch: jest.fn().mockResolvedValue(null),
             findStaleProcessingSystemScope: jest.fn().mockResolvedValue([]),
             claimPendingWithRuleFence: jest.fn().mockResolvedValue("claim-a"),
@@ -489,8 +530,18 @@ describe("MessageTriggerService", () => {
             },
         };
         const messageAutomationActivationService = createAutomationActivationService();
+        const storedCatchUpSiblings: MessageTriggerJobEntity[] = [];
         const prisma = {
             message_trigger_job: {
+                findFirst: jest.fn(async (query: unknown) => {
+                    const { where } = query as { where: { branchId: string; clientId: number; AND: Array<{ payload: { equals: unknown } }> } };
+                    const row = storedCatchUpSiblings.find(candidate => candidate.branchId === where.branchId && candidate.clientId === where.clientId
+                        && candidate.employeeScheduleId !== null && ["PRIMARY_EMPLOYEE", "SECONDARY_EMPLOYEE"].includes(candidate.recipientType)
+                        && ["CAREGIVER_SERVICE_START_NOTICE", "CAREGIVER_SERVICE_END_NOTICE"].includes(candidate.templateKey)
+                        && candidate.payload.catchUp?.batchId === where.AND[0]!.payload.equals
+                        && candidate.payload.caregiverSourceSnapshot?.version === where.AND[1]!.payload.equals);
+                    return row ? { id: row.id } : null;
+                }),
                 findUnique: jest.fn().mockResolvedValue(null),
             },
             employee_schedule: {
@@ -513,7 +564,7 @@ describe("MessageTriggerService", () => {
             messageLogRepository as never,
             createSystemTemplateService() as never,
             createTemplateAutomationLock(prisma) as never,
-            systemSettingService as never,
+            timingSettings as never,
             createOverrideRepository() as never,
             messageAutomationActivationService as never,
             messageAutomationBranchLockService as never,
@@ -524,6 +575,7 @@ describe("MessageTriggerService", () => {
         return {
             service,
             deliveryService,
+            timingSettings,
             ruleRepository,
             jobRepository,
             messageLogRepository,
@@ -531,10 +583,418 @@ describe("MessageTriggerService", () => {
             prisma,
             transaction,
             claimedJobRead,
+            storedCatchUpSiblings,
             messageAutomationActivationService,
             messageAutomationBranchLockService,
         };
     };
+
+    // Phase7 C5: inspect the actual consumer independently of repository eligibility.
+    describe("Phase7 C5 retry classification at the consumer", () => {
+        const due = new Date("2026-11-05T12:06:00Z");
+        beforeEach(() => jest.useFakeTimers().setSystemTime(due));
+        afterEach(() => jest.useRealTimers());
+        it.each([
+            ["START wait", false, "start", "predecessor", 0, 1],
+            ["END wait", false, "end", "predecessor", 0, 1],
+            ["failure OFF", false, "start", "predecessor", 1, 0],
+            ["failure ON", true, "start", "predecessor", 1, 1],
+            ["CLIENT", false, "client", "predecessor", 0, 0],
+            ["assignment", false, "assignment", "predecessor", 0, 0],
+            ["agent", false, "agent", "predecessor", 0, 0],
+            ["ordinary END", false, "ordinaryEnd", "predecessor", 0, 0],
+            ["link", false, "link", "predecessor", 0, 0],
+            ["numeric key", false, "start", 12, 0, 0],
+            ["object key", false, "start", {}, 0, 0],
+            ["null key", false, "start", null, 0, 0],
+            ["empty key", false, "start", "", 0, 0],
+            ["whitespace key", false, "start", " \t\n\r\v\f\u00a0\u3000\ufeff", 0, 0],
+        ])("keeps %s classification", async (_label, retry, kind, predecessor, attempts, expected) => {
+            const settings = { getMessageSettingsPolicyEnabled: jest.fn(async (_branch: string, key: string) => key !== "trigger-job-retry" || retry === true) };
+            const fx = createDispatchService(settings);
+            const templates = { start: MessageTriggerTemplateKey.CAREGIVER_SERVICE_START_NOTICE, end: MessageTriggerTemplateKey.CAREGIVER_SERVICE_END_NOTICE,
+                client: MessageTriggerTemplateKey.SERVICE_INFO, assignment: MessageTriggerTemplateKey.EMPLOYEE_ASSIGNED,
+                link: MessageTriggerTemplateKey.SERVICE_RECORD_LINK, agent: MessageTriggerTemplateKey.CLIENT_GREETING,
+                ordinaryEnd: MessageTriggerTemplateKey.SERVICE_END_NOTICE };
+            const job = createJob({ scheduledFor: new Date("2026-11-05T12:03:00Z"), templateKey: templates[kind as keyof typeof templates] });
+            if (kind === "agent") Object.assign(job, { ruleId: `${"agent_sms:"}fixture` });
+            job.nextAttemptAt = due; job.attempts = Number(attempts);
+            Object.assign(job.payload, { catchUp: { predecessorDedupeKey: predecessor } });
+            fx.jobRepository.consumeDispatchSlotsAndFindDueJobs.mockResolvedValue([job]);
+            const reached = jest.spyOn(fx.service as unknown as { dispatchClaimedJob: () => Promise<boolean> }, "dispatchClaimedJob").mockResolvedValue(true);
+            await fx.service.dispatchDueJobs(); expect(reached).toHaveBeenCalledTimes(Number(expected));
+            expect(job.attempts).toBe(Number(attempts)); expect(job.nextAttemptAt).toEqual(due);
+        });
+        it.each(["future wait", "future canonical", "canceled", "cross branch"])("does not admit %s as a due unattempted wait", async (change) => {
+            const fx = createDispatchService({ getMessageSettingsPolicyEnabled: jest.fn(async (_branch: string, key: string) => key !== "trigger-job-retry") });
+            const job = createJob({ scheduledFor: new Date("2026-11-05T12:03:00Z"), templateKey: MessageTriggerTemplateKey.CAREGIVER_SERVICE_START_NOTICE });
+            job.nextAttemptAt = due; Object.assign(job.payload, { catchUp: { predecessorDedupeKey: "predecessor" } });
+            if (change === "future wait") job.nextAttemptAt = new Date("2026-11-05T12:06:00.001Z");
+            if (change === "future canonical") job.scheduledFor = new Date("2026-11-05T12:06:00.001Z");
+            if (change === "canceled") job.status = "canceled";
+            if (change === "cross branch") job.branchId = "another-branch";
+            fx.jobRepository.consumeDispatchSlotsAndFindDueJobs.mockResolvedValue([job]);
+            const reached = jest.spyOn(fx.service as unknown as { dispatchClaimedJob: () => Promise<boolean> }, "dispatchClaimedJob").mockResolvedValue(true);
+            await fx.service.dispatchDueJobs(); expect(reached).not.toHaveBeenCalled();
+        });
+    });
+
+    // Phase7 C6: stored sibling classification at the real consumer boundary.
+    describe("Phase7 C6 mixed CLIENT operational eligibility", () => {
+        beforeEach(() => jest.useFakeTimers().setSystemTime(new Date("2026-11-05T12:06:00Z")));
+        afterEach(() => jest.useRealTimers());
+        it.each(["valid downstream", "terminal inactive history", "branch", "client", "batch", "snapshot", "template", "recipient", "schedule", "missing", "blank batch", "numeric batch", "failure OFF", "failure ON", "future"])("classifies %s from actual stored rows", async change => {
+            const fx = createDispatchService({ getMessageSettingsPolicyEnabled: jest.fn(async (_branch: string, key: string) => key !== "trigger-job-retry" || change === "failure ON") });
+            const batchId = "client:1:2026-11-05T12:00:00.000Z";
+            const job = createJob({ scheduledFor: new Date("2026-11-05T12:03:00Z"), clientId: 1 });
+            Object.assign(job.payload, { catchUp: { batchId, predecessorDedupeKey: "client-before-client", sequence: 2, intervalMinutes: 3, originalScheduledFor: "2026-11-05T00:00:00Z" } });
+            job.nextAttemptAt = new Date("2026-11-05T12:06:00Z");
+            const sibling = createJob({ id: "downstream-care", clientId: 1, employeeScheduleId: 91, recipientType: MessageTriggerRecipientType.PRIMARY_EMPLOYEE,
+                templateKey: MessageTriggerTemplateKey.CAREGIVER_SERVICE_START_NOTICE, scheduledFor: new Date("2026-11-05T12:09:00Z") });
+            Object.assign(sibling.payload, { catchUp: { batchId }, caregiverSourceSnapshot: { version: 1 } });
+            if (change === "terminal inactive history") sibling.status = "canceled";
+            if (change === "branch") sibling.branchId = "other-branch";
+            if (change === "client") sibling.clientId = 2;
+            if (change === "batch") sibling.payload.catchUp!.batchId = "client:1:2026-11-05T13:00:00.000Z";
+            if (change === "snapshot") Object.assign(sibling.payload.caregiverSourceSnapshot!, { version: "1" });
+            if (change === "template") sibling.templateKey = MessageTriggerTemplateKey.INFO;
+            if (change === "recipient") sibling.recipientType = MessageTriggerRecipientType.CLIENT;
+            if (change === "schedule") sibling.employeeScheduleId = null;
+            if (change === "blank batch") job.payload.catchUp!.batchId = " \t";
+            if (change === "numeric batch") Object.assign(job.payload.catchUp!, { batchId: 12 });
+            if (change !== "missing") fx.storedCatchUpSiblings.push(sibling);
+            if (change.startsWith("failure")) job.defer("transient", "synthetic failure", 0);
+            if (change === "future") job.nextAttemptAt = new Date("2026-11-05T12:06:00.001Z");
+            fx.jobRepository.consumeDispatchSlotsAndFindDueJobs.mockResolvedValue([job]);
+            const reached = jest.spyOn(fx.service as unknown as { dispatchClaimedJob: () => Promise<boolean> }, "dispatchClaimedJob").mockResolvedValue(true);
+            await fx.service.dispatchDueJobs();
+            expect(reached).toHaveBeenCalledTimes(["valid downstream", "terminal inactive history", "failure ON"].includes(change) ? 1 : 0);
+        });
+        it("propagates a scoped read failure without a legacy eligibility fallback", async () => {
+            const fx = createDispatchService({ getMessageSettingsPolicyEnabled: jest.fn(async (_branch: string, key: string) => key !== "trigger-job-retry") });
+            const job = createJob({ clientId: 1 }); job.nextAttemptAt = new Date("2026-11-05T12:06:00Z");
+            Object.assign(job.payload, { catchUp: { batchId: "client:1:2026-11-05T12:00:00.000Z", predecessorDedupeKey: "previous-client" } });
+            fx.jobRepository.consumeDispatchSlotsAndFindDueJobs.mockResolvedValue([job]); fx.prisma.message_trigger_job.findFirst.mockRejectedValue(new Error("mixed history unavailable"));
+            await expect(fx.service.dispatchDueJobs()).rejects.toThrow("mixed history unavailable");
+        });
+    });
+
+    describe("TIME-3 branch past expiry", () => {
+        const at21 = new Date("2026-11-03T12:00:00.000Z");
+        const settings = (hours = 24) => ({
+            getMessageSettingsPolicyEnabled: jest.fn().mockResolvedValue(true),
+            getMessageAutomationPolicyConfig: jest.fn().mockResolvedValue({
+                configuration: { ...defaultMessageAutomationPolicy(), pastExpiryHours: hours },
+            }),
+        });
+        beforeEach(() => jest.useFakeTimers().setSystemTime(at21));
+        afterEach(() => jest.useRealTimers());
+
+        describe.each(["tick", "immediate"] as const)("%s dispatch", entry => {
+            it.each([
+                [24, "2026-11-02T12:00:00.001Z", "sent"],
+                [24, "2026-11-02T12:00:00.000Z", "canceled"],
+                [24, "2026-11-02T11:59:59.999Z", "canceled"],
+                [48, "2026-11-02T11:59:59.999Z", "sent"],
+                [48, "2026-11-01T12:00:00.001Z", "sent"],
+                [48, "2026-11-01T12:00:00.000Z", "canceled"],
+                [48, "2026-11-01T11:59:59.999Z", "canceled"],
+            ] as const)("%ih policy at %s resolves %s without advancing attempts", async (hours, scheduledFor, status) => {
+                const fx = createDispatchService(settings(hours));
+                const job = createJob({ scheduledFor: new Date(scheduledFor) });
+                fx.jobRepository.consumeDispatchSlotsAndFindDueJobs.mockResolvedValue([job]);
+                fx.jobRepository.findByIdInBranch.mockResolvedValue(job);
+                if (entry === "tick") await fx.service.dispatchDueJobs();
+                else await fx.service.dispatchPendingJobNow(job.id, { expectedBranchId: branchId });
+                expect(fx.jobRepository.claimPendingWithRuleFence).toHaveBeenCalledTimes(1);
+                expect(fx.deliveryService.sendJob).toHaveBeenCalledTimes(status === "sent" ? 1 : 0);
+                expect(job.status).toBe(status);
+                expect(job.attempts).toBe(0);
+                if (status === "canceled") {
+                    expect(job.cancelReason).toBe(`기존 발송 예정 ${hours}시간 경과`);
+                    expect(fx.jobRepository.update).toHaveBeenCalledTimes(1);
+                    expect(fx.jobRepository.update).toHaveBeenCalledWith(expect.objectContaining({
+                        id: job.id, status: "canceled", claimToken: "claim-a", attempts: 0,
+                    }));
+                    expect(fx.jobRepository.claimPendingWithRuleFence.mock.invocationCallOrder[0])
+                        .toBeLessThan(fx.jobRepository.update.mock.invocationCallOrder[0]!);
+                }
+            });
+        });
+
+        it.each([
+            ["matching", "2026-11-02T12:00:00.000Z", 24, "2026-11-02T12:00:00.000Z", 24, "canceled"],
+            ["rescheduled", "2026-11-02T12:00:00.001Z", 24, "2026-11-01T12:00:00.000Z", 24, "sent"],
+            ["policy changed", "2026-11-02T11:59:59.999Z", 48, "2026-11-02T11:59:59.999Z", 24, "sent"],
+        ] as const)("uses a true SQL decision only while %s anchor and policy match", async (_label, currentAt, hours, selectedAt, selectedHours, status) => {
+            const fx = createDispatchService(settings(hours));
+            const job = createJob({ scheduledFor: new Date(currentAt) });
+            Object.defineProperty(job, "dispatchSelection", { value: {
+                expired: true, anchor: new Date(selectedAt), pastExpiryHours: selectedHours, selectedAt: at21,
+            } });
+            fx.jobRepository.consumeDispatchSlotsAndFindDueJobs.mockResolvedValue([job]);
+            await fx.service.dispatchDueJobs();
+            expect(job.status).toBe(status);
+            expect(fx.deliveryService.sendJob).toHaveBeenCalledTimes(status === "sent" ? 1 : 0);
+        });
+
+        it("rechecks a false SQL decision after processing delay crosses the inclusive cutoff", async () => {
+            const fx = createDispatchService(settings());
+            const job = createJob({ scheduledFor: new Date("2026-11-02T12:00:00.001Z") });
+            Object.defineProperty(job, "dispatchSelection", { value: {
+                expired: false, anchor: new Date("2026-11-02T12:00:00.001Z"), pastExpiryHours: 24, selectedAt: at21,
+            } });
+            fx.jobRepository.consumeDispatchSlotsAndFindDueJobs.mockImplementation(async () => {
+                jest.setSystemTime(new Date("2026-11-03T12:00:00.001Z"));
+                return [job];
+            });
+            await fx.service.dispatchDueJobs();
+            expect(job.status).toBe("canceled");
+            expect(job.attempts).toBe(0);
+            expect(fx.deliveryService.sendJob).not.toHaveBeenCalled();
+        });
+
+        it("recomputes a true SQL decision if the clock moves back before its selection time", async () => {
+            const fx = createDispatchService(settings());
+            const job = createJob({ scheduledFor: new Date("2026-11-02T12:00:00.001Z") });
+            Object.defineProperty(job, "dispatchSelection", { value: {
+                expired: true, anchor: new Date("2026-11-02T12:00:00.001Z"), pastExpiryHours: 24,
+                selectedAt: new Date("2026-11-03T12:00:00.001Z"),
+            } });
+            fx.jobRepository.consumeDispatchSlotsAndFindDueJobs.mockResolvedValue([job]);
+            await fx.service.dispatchDueJobs();
+            expect(job.status).toBe("sent");
+            expect(fx.deliveryService.sendJob).toHaveBeenCalledTimes(1);
+        });
+
+        it("reads fresh validated hours after waiting for the branch claim lock", async () => {
+            const policy = settings();
+            const fx = createDispatchService(policy);
+            const job = createJob({ scheduledFor: new Date("2026-11-02T11:59:59.999Z") });
+            fx.jobRepository.findByIdInBranch.mockResolvedValue(job);
+            const original = fx.messageAutomationBranchLockService.runExclusive.getMockImplementation()!;
+            fx.messageAutomationBranchLockService.runExclusive.mockImplementation(async (...args: Parameters<typeof original>) => {
+                policy.getMessageAutomationPolicyConfig.mockResolvedValue({ configuration: {
+                    ...defaultMessageAutomationPolicy(), pastExpiryHours: 48,
+                } });
+                return original(...args);
+            });
+            await fx.service.dispatchPendingJobNow(job.id, { expectedBranchId: branchId });
+            expect(job.status).toBe("sent");
+            expect(fx.deliveryService.sendJob).toHaveBeenCalledTimes(1);
+        });
+
+        it.each([null, 48])("uses the real validated getter for legacy entity-only selection with stored hours %s", async hours => {
+            const read = jest.fn().mockResolvedValue(hours === null ? null : JSON.stringify({
+                ...defaultMessageAutomationPolicy(), pastExpiryHours: hours,
+            }));
+            const realSettings = new SystemSettingService({ execute: read } as never, {} as never);
+            const policy = settings();
+            policy.getMessageAutomationPolicyConfig.mockImplementation(id => realSettings.getMessageAutomationPolicyConfig(id));
+            const fx = createDispatchService(policy);
+            const job = createJob({ scheduledFor: new Date("2026-11-02T11:59:59.999Z") });
+            fx.jobRepository.consumeDispatchSlotsAndFindDueJobs.mockResolvedValue([job]);
+            await fx.service.dispatchDueJobs();
+            expect(job.status).toBe(hours === null ? "canceled" : "sent");
+            expect(fx.deliveryService.sendJob).toHaveBeenCalledTimes(hours === null ? 0 : 1);
+            expect(job).not.toHaveProperty("dispatchSelection");
+            expect(fx.jobRepository.consumeDispatchSlotsAndFindDueJobs).toHaveBeenCalledWith([
+                expect.objectContaining({ branchId, pastExpiryHours: hours === null ? 24 : 48 }),
+            ], at21, 100, []);
+        });
+
+        it.each([
+            ["corrupt", "tick"], ["unavailable", "tick"], ["missing", "tick"],
+            ["corrupt", "immediate"], ["unavailable", "immediate"], ["missing", "immediate"],
+        ] as const)("fails closed before claim or provider when policy is %s in %s dispatch", async (failure, entry) => {
+            const read = jest.fn().mockResolvedValue(JSON.stringify({ ...defaultMessageAutomationPolicy(), pastExpiryHours: 0 }));
+            if (failure === "unavailable") read.mockRejectedValue(new Error("synthetic storage failure"));
+            const realSettings = new SystemSettingService({ execute: read } as never, {} as never);
+            const policy = settings();
+            policy.getMessageAutomationPolicyConfig.mockImplementation(id => realSettings.getMessageAutomationPolicyConfig(id));
+            const fx = createDispatchService(policy);
+            if (failure === "missing") Object.assign(fx.service, { systemSettingService: undefined });
+            const job = createJob({ scheduledFor: new Date("2026-11-02T12:00:00.001Z") });
+            fx.jobRepository.findByIdInBranch.mockResolvedValue(job);
+            fx.jobRepository.consumeDispatchSlotsAndFindDueJobs.mockResolvedValue([job]);
+            await expect(entry === "tick" ? fx.service.dispatchDueJobs()
+                : fx.service.dispatchPendingJobNow(job.id, { expectedBranchId: branchId }))
+                .rejects.toBeInstanceOf(ServiceUnavailableException);
+            expect(fx.jobRepository.claimPendingWithRuleFence).not.toHaveBeenCalled();
+            expect(fx.deliveryService.sendJob).not.toHaveBeenCalled();
+            expect(job.status).toBe("pending");
+            expect(job.attempts).toBe(0);
+        });
+
+        it("saving interval and expiry settings preserves old due/occurrence and sent-log history; repeat sends zero", async () => {
+            const fx = createDispatchService(settings());
+            const existing = createJob({ id: "old-due", scheduledFor: new Date("2026-11-03T12:05:00.000Z"),
+                dedupeKey: "old-rule:client:1:CLIENT:2026-11-03T12:05:00.000Z" });
+            const landed = createJob({ id: "landed", scheduledFor: new Date("2026-11-01T12:00:00.000Z"),
+                dedupeKey: "landed-rule:client:1:CLIENT:2026-11-01T12:00:00.000Z" });
+            const oldSnapshot = JSON.stringify(existing);
+            const sentHistory = new Set(["landed"]);
+            let stored: string | null = null;
+            const realSettings = new SystemSettingService(
+                { execute: jest.fn(async () => stored) } as never,
+                { executeIfVersion: jest.fn(async (_key: string, value: string) => {
+                    stored = value;
+                    return { value };
+                }) } as never,
+                undefined, undefined, undefined, undefined, undefined,
+                fx.messageAutomationBranchLockService as never,
+            );
+            fx.timingSettings.getMessageAutomationPolicyConfig.mockImplementation(id => realSettings.getMessageAutomationPolicyConfig(id));
+            await realSettings.setMessageAutomationPolicyConfig(branchId, null, {
+                ...defaultMessageAutomationPolicy(), pastSendIntervalMinutes: 3, pastExpiryHours: 48,
+            });
+            expect((await realSettings.getMessageAutomationPastTriggerConfig(branchId)).sendIntervalMinutes).toBe(3);
+            expect(JSON.stringify(existing)).toBe(oldSnapshot);
+            expect(existing.scheduledFor.toISOString()).toBe("2026-11-03T12:05:00.000Z");
+            expect(existing.dedupeKey).toBe("old-rule:client:1:CLIENT:2026-11-03T12:05:00.000Z");
+            expect(fx.jobRepository.update).not.toHaveBeenCalled();
+            fx.jobRepository.consumeDispatchSlotsAndFindDueJobs.mockResolvedValue([landed]);
+            fx.messageLogRepository.findSentTriggerJobIdsSystemScope.mockResolvedValue(sentHistory);
+            await fx.service.dispatchDueJobs();
+            fx.jobRepository.findByIdInBranch.mockResolvedValue(landed);
+            await fx.service.dispatchPendingJobNow(landed.id, { expectedBranchId: branchId });
+            expect(landed.id).toBe("landed");
+            expect(landed.status).toBe("sent");
+            expect(landed.dedupeKey).toBe("landed-rule:client:1:CLIENT:2026-11-01T12:00:00.000Z");
+            expect([...sentHistory]).toEqual(["landed"]);
+            expect(fx.jobRepository.claimPendingWithRuleFence).toHaveBeenCalledTimes(1);
+            expect(fx.deliveryService.sendJob).not.toHaveBeenCalled();
+            expect(JSON.stringify(existing)).toBe(oldSnapshot);
+        });
+
+        it("reconciles a sent log before expiry and never sends again", async () => {
+            const fx = createDispatchService(settings());
+            const job = createJob({ scheduledFor: new Date("2026-11-01T12:00:00.000Z") });
+            fx.jobRepository.consumeDispatchSlotsAndFindDueJobs.mockResolvedValue([job]);
+            fx.messageLogRepository.findSentTriggerJobIdsSystemScope.mockResolvedValue(new Set([job.id]));
+            await fx.service.dispatchDueJobs();
+            expect(job.status).toBe("sent");
+            expect(job.attempts).toBe(0);
+            expect(fx.deliveryService.sendJob).not.toHaveBeenCalled();
+        });
+    });
+
+    describe("TIME-1 runtime timing", () => {
+        const at21 = new Date("2026-07-09T12:00:00.000Z");
+        const settings = (configuration = defaultMessageAutomationPolicy()) => ({
+            getMessageSettingsPolicyEnabled: jest.fn().mockResolvedValue(true),
+            getMessageAutomationPolicyConfig: jest.fn().mockResolvedValue({ configuration }),
+        });
+        beforeEach(() => jest.useFakeTimers().setSystemTime(at21));
+        afterEach(() => jest.useRealTimers());
+
+        it("uses seven minutes only for a new retry and preserves an existing 21:05 due", async () => {
+            const policy = { ...defaultMessageAutomationPolicy(), triggerRetryIntervalMinutes: 7 };
+            const fx = createDispatchService(settings(policy));
+            const due = new Date("2026-07-09T12:05:00.000Z");
+            const existing = createJob({ id: "existing", nextAttemptAt: due });
+            const job = createJob({ id: "new-retry" });
+            fx.jobRepository.consumeDispatchSlotsAndFindDueJobs.mockResolvedValue([job]);
+            fx.deliveryService.sendJob.mockRejectedValue(new TriggerJobDeferredError("transient", "temporary"));
+            await fx.service.dispatchDueJobs();
+            expect(job.nextAttemptAt?.toISOString()).toBe("2026-07-09T12:07:00.000Z");
+            expect(job.attempts).toBe(1);
+            expect(existing.nextAttemptAt).toBe(due);
+            expect(existing.nextAttemptAt?.toISOString()).toBe("2026-07-09T12:05:00.000Z");
+            expect(fx.jobRepository.update).toHaveBeenCalledTimes(2);
+            expect(fx.jobRepository.update).not.toHaveBeenCalledWith(existing);
+        });
+
+        it("uses 10:30 for omitted creates, preserves explicit times and existing 09:00 rules", async () => {
+            const fx = createService(settings({ ...defaultMessageAutomationPolicy(), defaultRuleSendTime: "10:30" }));
+            const existing = createRule();
+            existing.sendTime = "09:00";
+            fx.ruleRepository.create.mockImplementation(async (_branch, rule) => Object.assign(rule, { id: "new-rule" }));
+            const params = {
+                name: "new", isActive: false, eventType: MessageTriggerEventType.SERVICE_START,
+                offsetType: MessageTriggerOffsetType.BEFORE_DAYS, offsetDays: 1,
+                recipientType: MessageTriggerRecipientType.CLIENT, templateKey: MessageTriggerTemplateKey.SERVICE_INFO,
+            };
+            const omitted = await fx.service.createRule(branchId, params, {} as never);
+            const explicit = await fx.service.createRule(branchId, { ...params, sendTime: "11:45" }, {} as never);
+            expect(omitted.sendTime).toBe("10:30");
+            expect(explicit.sendTime).toBe("11:45");
+            expect(existing.sendTime).toBe("09:00");
+            expect(fx.ruleRepository.update).not.toHaveBeenCalled();
+        });
+
+        it("keeps legacy 09:00 for a missing stored policy and applies no cadence to immediate sends", async () => {
+            const fx = createService(settings());
+            fx.ruleRepository.create.mockImplementation(async (_branch, rule) => Object.assign(rule, { id: "new-rule" }));
+            const rule = await fx.service.createRule(branchId, {
+                name: "legacy", isActive: false, eventType: MessageTriggerEventType.SERVICE_START,
+                offsetType: MessageTriggerOffsetType.BEFORE_DAYS, offsetDays: 1,
+                recipientType: MessageTriggerRecipientType.CLIENT, templateKey: MessageTriggerTemplateKey.SERVICE_INFO,
+            }, {} as never);
+            expect(rule.sendTime).toBe("09:00");
+            const dispatch = createDispatchService(settings());
+            const job = createJob();
+            dispatch.jobRepository.findByIdInBranch.mockResolvedValue(job);
+            await dispatch.service.dispatchPendingJobNow(job.id, { expectedBranchId: branchId });
+            expect(dispatch.deliveryService.sendJob).toHaveBeenCalledTimes(1);
+            expect(dispatch.jobRepository.consumeDispatchSlotsAndFindDueJobs).not.toHaveBeenCalled();
+        });
+
+        it("captures the claim deadline once, unaffected by a later policy edit", async () => {
+            const configuration = { ...defaultMessageAutomationPolicy(), processingReclaimMinutes: 15 };
+            const fx = createDispatchService(settings(configuration));
+            const job = createJob();
+            fx.jobRepository.consumeDispatchSlotsAndFindDueJobs.mockResolvedValue([job]);
+            fx.deliveryService.prepareJob.mockImplementation(async () => {
+                configuration.processingReclaimMinutes = 60;
+                return { serializedSnapshot: "synthetic-trigger-prepared", snapshot: { snapshotHash: "synthetic" } };
+            });
+            await fx.service.dispatchDueJobs();
+            const deadline = new Date("2026-07-09T12:15:00.000Z");
+            expect(fx.jobRepository.claimPendingWithRuleFence).toHaveBeenCalledWith(job.id, branchId, expect.any(Object), deadline);
+            expect(job.processingDeadlineAt).toEqual(deadline);
+        });
+
+        it("passes approved branch activation and retry gates into the limited DB selection", async () => {
+            const fx = createDispatchService(settings({ ...defaultMessageAutomationPolicy(), dispatchCheckIntervalMinutes: 7 }));
+            fx.jobRepository.findDueDispatchBranchIds.mockResolvedValue(["disabled", branchId, "unapproved"]);
+            fx.messageSenderApprovalService.getApprovedBranchIds.mockResolvedValue(new Set(["disabled", branchId]));
+            fx.messageAutomationActivationService.getTriggerDispatchEnabled.mockImplementation(async (id: string) => id !== "disabled");
+            await fx.service.dispatchDueJobs();
+            expect(fx.jobRepository.consumeDispatchSlotsAndFindDueJobs).toHaveBeenCalledWith([
+                { branchId: "disabled", automaticEnabled: false, retryEnabled: true, intervalMinutes: 7, pastExpiryHours: 24 },
+                { branchId, automaticEnabled: true, retryEnabled: true, intervalMinutes: 7, pastExpiryHours: 24 },
+            ], at21, 100, []);
+            expect(fx.deliveryService.sendJob).not.toHaveBeenCalled();
+        });
+
+        it("fails closed on corrupt policy reads before cadence consumption or provider calls", async () => {
+            const config = settings();
+            config.getMessageAutomationPolicyConfig.mockRejectedValue(new ServiceUnavailableException("corrupt policy"));
+            const fx = createDispatchService(config);
+            await expect(fx.service.dispatchDueJobs()).rejects.toThrow(ServiceUnavailableException);
+            expect(fx.jobRepository.consumeDispatchSlotsAndFindDueJobs).not.toHaveBeenCalled();
+            expect(fx.jobRepository.claimPendingWithRuleFence).not.toHaveBeenCalled();
+            expect(fx.deliveryService.sendJob).not.toHaveBeenCalled();
+        });
+
+        it("fails closed when the timing policy dependency is absent", async () => {
+            const fx = createDispatchService();
+            Object.assign(fx.service, { systemSettingService: undefined });
+            await expect(fx.service.dispatchDueJobs()).rejects.toThrow(ServiceUnavailableException);
+            expect(fx.deliveryService.sendJob).not.toHaveBeenCalled();
+        });
+
+        it("refuses an old owner at the provider fence after reclaim clears its token", async () => {
+            const fx = createDispatchService(settings());
+            const job = createJob();
+            fx.jobRepository.consumeDispatchSlotsAndFindDueJobs.mockResolvedValue([job]);
+            fx.transaction.$queryRaw.mockResolvedValue([{ status: "pending", claim_token: null }]);
+            await fx.service.dispatchDueJobs();
+            expect(fx.deliveryService.sendJob).not.toHaveBeenCalled();
+            expect(fx.jobRepository.update).not.toHaveBeenCalled();
+        });
+    });
 
     it("cancels orphaned pending jobs before returning the upcoming list", async () => {
         const { service, jobRepository } = createService();
@@ -556,9 +1016,9 @@ describe("MessageTriggerService", () => {
         await service.dispatchDueJobs();
 
         expect(rebuildSpy).toHaveBeenCalledTimes(1);
-        expect(jobRepository.findDuePendingSystemScope).toHaveBeenCalledTimes(1);
+        expect(jobRepository.consumeDispatchSlotsAndFindDueJobs).toHaveBeenCalledTimes(1);
         expect(rebuildSpy.mock.invocationCallOrder[0]!).toBeLessThan(
-            jobRepository.findDuePendingSystemScope.mock.invocationCallOrder[0]!,
+            jobRepository.consumeDispatchSlotsAndFindDueJobs.mock.invocationCallOrder[0]!,
         );
     });
 
@@ -1295,15 +1755,23 @@ describe("MessageTriggerService", () => {
     it("rolls back the inserted rule when its stale marker fails so a retry cannot duplicate it", async () => {
         const { service, prisma, ruleRepository } = createService();
         const durableRules: MessageTriggerRuleEntity[] = [];
+        const durableGroups: unknown[] = [];
+        ruleRepository.createGroup.mockImplementation(async (groupBranchId, name, recipientMode) => {
+            const group = { id: `group-${durableGroups.length}`, branchId: groupBranchId, name, recipientMode };
+            durableGroups.push(group);
+            return group;
+        });
         let failStaleMarker = true;
         prisma.$transaction.mockImplementation(async (
             operation: (transaction: { id: string }) => Promise<MessageTriggerRuleEntity>,
         ) => {
             const snapshot = [...durableRules];
+            const groupSnapshot = [...durableGroups];
             try {
                 return await operation({ id: `tx-${prisma.$transaction.mock.calls.length}` });
             } catch (error) {
                 durableRules.splice(0, durableRules.length, ...snapshot);
+                durableGroups.splice(0, durableGroups.length, ...groupSnapshot);
                 throw error;
             }
         });
@@ -1489,7 +1957,7 @@ describe("MessageTriggerService", () => {
         },
     );
 
-    it.each(CONFIGURABLE_SMS_TRIGGER_TEMPLATE_KEYS)(
+    it.each(CONFIGURABLE_SMS_TRIGGER_TEMPLATE_KEYS.filter((key) => MESSAGE_TRIGGER_TEMPLATE_CATALOG[key].allowedRecipientTypes.includes(MessageTriggerRecipientType.CLIENT)))(
         "rejects invalid employee-recipient creation for %s without persisting a rule",
         async (templateKey) => {
             const { service, ruleRepository } = createService();
@@ -1941,6 +2409,7 @@ describe("MessageTriggerService", () => {
             job.id,
             job.branchId,
             expect.any(Object),
+            expect.any(Date),
         );
         expect(dispatcher.deliveryService.sendJob).not.toHaveBeenCalled();
     });
@@ -2255,7 +2724,7 @@ describe("MessageTriggerService", () => {
     it("skips a job whose claim was lost to another instance", async () => {
         const { service, deliveryService, jobRepository } = createDispatchService();
         const job = createJob();
-        jobRepository.findDuePendingSystemScope.mockResolvedValue([job]);
+        jobRepository.consumeDispatchSlotsAndFindDueJobs.mockResolvedValue([job]);
         jobRepository.claimPendingWithRuleFence.mockResolvedValue(false);
 
         await service.dispatchDueJobs();
@@ -2264,6 +2733,7 @@ describe("MessageTriggerService", () => {
             job.id,
             job.branchId,
             expect.any(Object),
+            expect.any(Date),
         );
         expect(deliveryService.sendJob).not.toHaveBeenCalled();
         expect(jobRepository.update).not.toHaveBeenCalled();
@@ -2273,7 +2743,7 @@ describe("MessageTriggerService", () => {
         const { service, deliveryService, jobRepository, messageLogRepository } =
             createDispatchService();
         const job = createJob();
-        jobRepository.findDuePendingSystemScope.mockResolvedValue([job]);
+        jobRepository.consumeDispatchSlotsAndFindDueJobs.mockResolvedValue([job]);
         messageLogRepository.findSentTriggerJobIdsSystemScope.mockResolvedValue(new Set([job.id]));
 
         await service.dispatchDueJobs();
@@ -2283,32 +2753,25 @@ describe("MessageTriggerService", () => {
         expect(jobRepository.update).toHaveBeenCalledWith(job);
     });
 
-    it("dispatch cancels a claimed job whose branch is unapproved without calling the provider", async () => {
-        const { service, deliveryService, jobRepository, messageSenderApprovalService } =
-            createDispatchService();
+    it("excludes an unapproved branch before claiming and calling the provider", async () => {
+        const { service, deliveryService, jobRepository, messageSenderApprovalService } = createDispatchService();
         const job = createJob();
-        jobRepository.findDuePendingSystemScope.mockResolvedValue([job]);
+        jobRepository.consumeDispatchSlotsAndFindDueJobs.mockResolvedValue([job]);
         messageSenderApprovalService.getApprovedBranchIds.mockResolvedValue(new Set());
-
         await service.dispatchDueJobs();
-
         expect(messageSenderApprovalService.getApprovedBranchIds).toHaveBeenCalledWith([branchId]);
-        expect(jobRepository.claimPendingWithRuleFence).toHaveBeenCalledWith(
-            job.id,
-            job.branchId,
-            expect.any(Object),
-        );
+        expect(jobRepository.consumeDispatchSlotsAndFindDueJobs).toHaveBeenCalledWith([], expect.any(Date), 100, []);
+        expect(jobRepository.claimPendingWithRuleFence).not.toHaveBeenCalled();
         expect(deliveryService.sendJob).not.toHaveBeenCalled();
-        expect(job.status).toBe("canceled");
-        expect(job.cancelReason).toBe("메시지 발송 승인 필요");
-        expect(jobRepository.update).toHaveBeenCalledWith(job);
+        expect(job.status).toBe("pending");
+        expect(jobRepository.update).not.toHaveBeenCalled();
     });
 
     it("dispatch sends normally for approved branches", async () => {
         const { service, deliveryService, jobRepository, messageSenderApprovalService } =
             createDispatchService();
         const job = createJob();
-        jobRepository.findDuePendingSystemScope.mockResolvedValue([job]);
+        jobRepository.consumeDispatchSlotsAndFindDueJobs.mockResolvedValue([job]);
         messageSenderApprovalService.getApprovedBranchIds.mockResolvedValue(new Set([branchId]));
 
         await service.dispatchDueJobs();
@@ -2319,6 +2782,66 @@ describe("MessageTriggerService", () => {
         expect(jobRepository.update).toHaveBeenCalledWith(job);
     });
 
+    describe("Phase9 selected quiet jobs do not consume ordinary cadence", () => {
+        const now = new Date("2026-11-05T12:00:00.000Z");
+        beforeEach(() => jest.useFakeTimers().setSystemTime(now));
+        afterEach(() => jest.useRealTimers());
+
+        it("forwards only selected quiet IDs and still dispatches an unselected quiet candidate", async () => {
+            const fx = createDispatchService();
+            const selected = createJob({ id: "quiet-selected" });
+            const unselected = createJob({ id: "quiet-unselected" });
+            const quietSelector = jest.fn().mockResolvedValue([selected]);
+            Object.assign(fx.jobRepository, { findDueQuietQueueJobs: quietSelector });
+            fx.jobRepository.consumeDispatchSlotsAndFindDueJobs.mockResolvedValue([unselected]);
+
+            await fx.service.dispatchDueJobs();
+
+            expect(quietSelector).toHaveBeenCalledWith(expect.any(Array), now, 100);
+            expect(fx.jobRepository.consumeDispatchSlotsAndFindDueJobs).toHaveBeenCalledWith(
+                expect.any(Array), now, 99, [selected.id],
+            );
+            expect(fx.deliveryService.sendJob.mock.calls.map(([job]) => job.id)).toEqual([selected.id, unselected.id]);
+            expect([selected.status, unselected.status]).toEqual(["sent", "sent"]);
+        });
+
+        it.each([99, 100])("dispatches 100 distinct jobs when %s quiet jobs take the first slots", async quietCount => {
+            const fx = createDispatchService();
+            const quietJobs = Array.from({ length: quietCount }, (_, index) => createJob({ id: `quiet-${index}` }));
+            const ordinary = createJob({ id: "ordinary" });
+            Object.assign(fx.jobRepository, { findDueQuietQueueJobs: jest.fn().mockResolvedValue(quietJobs) });
+            fx.jobRepository.consumeDispatchSlotsAndFindDueJobs.mockImplementation(async (
+                _eligibility: unknown, _now: Date, limit: number, excludedJobIds: readonly string[] = [],
+            ) => [...quietJobs, ordinary].filter(job => !excludedJobIds.includes(job.id)).slice(0, limit));
+
+            await fx.service.dispatchDueJobs();
+
+            expect(fx.jobRepository.consumeDispatchSlotsAndFindDueJobs).toHaveBeenCalledTimes(1);
+            expect(fx.jobRepository.consumeDispatchSlotsAndFindDueJobs).toHaveBeenCalledWith(
+                expect.any(Array), now, 100 - quietCount, quietJobs.map(job => job.id),
+            );
+            const sentIds = fx.deliveryService.sendJob.mock.calls.map(([job]) => job.id);
+            expect(sentIds).toHaveLength(100);
+            expect(new Set(sentIds).size).toBe(100);
+            expect(sentIds.filter(id => id === ordinary.id)).toHaveLength(quietCount === 99 ? 1 : 0);
+            expect(quietJobs.every(job => job.status === "sent")).toBe(true);
+            expect(ordinary.status).toBe(quietCount === 99 ? "sent" : "pending");
+        });
+
+        it("retains the consumer dedupe if ordinary selection returns a selected quiet job", async () => {
+            const fx = createDispatchService();
+            const quiet = createJob({ id: "quiet" });
+            const ordinary = createJob({ id: "ordinary" });
+            Object.assign(fx.jobRepository, { findDueQuietQueueJobs: jest.fn().mockResolvedValue([quiet]) });
+            fx.jobRepository.consumeDispatchSlotsAndFindDueJobs.mockResolvedValue([quiet, ordinary]);
+
+            await fx.service.dispatchDueJobs();
+
+            expect(fx.deliveryService.sendJob.mock.calls.map(([job]) => job.id)).toEqual([quiet.id, ordinary.id]);
+            expect(fx.jobRepository.claimPendingWithRuleFence).toHaveBeenCalledTimes(2);
+        });
+    });
+
     it("cancels a queued automatic service-end notice when the client was already notified", async () => {
         const dispatcher = createDispatchService();
         const job = createJob({
@@ -2326,7 +2849,7 @@ describe("MessageTriggerService", () => {
             templateKey: MessageTriggerTemplateKey.SERVICE_END_NOTICE,
             dedupeKey: "rule-service-end-notice:client:7:CLIENT:2026-09-16T03:00:00.000Z",
         });
-        dispatcher.jobRepository.findDuePendingSystemScope.mockResolvedValue([job]);
+        dispatcher.jobRepository.consumeDispatchSlotsAndFindDueJobs.mockResolvedValue([job]);
         dispatcher.claimedJobRead.mockResolvedValue(job);
         dispatcher.transaction.$queryRaw
             .mockResolvedValueOnce([{ service_end_notice_sent_at: new Date("2026-09-15T03:00:00.000Z") }])
@@ -2347,7 +2870,7 @@ describe("MessageTriggerService", () => {
             templateKey: MessageTriggerTemplateKey.SERVICE_END_NOTICE,
             dedupeKey: "system:service_end_notice:client:7:manual:request-1",
         });
-        dispatcher.jobRepository.findDuePendingSystemScope.mockResolvedValue([job]);
+        dispatcher.jobRepository.consumeDispatchSlotsAndFindDueJobs.mockResolvedValue([job]);
         dispatcher.claimedJobRead.mockResolvedValue(job);
 
         await dispatcher.service.dispatchDueJobs();
@@ -2366,7 +2889,7 @@ describe("MessageTriggerService", () => {
         const prepareJob = jest.fn();
         const sendPreparedJob = jest.fn();
         Object.assign(dispatcher.deliveryService, { prepareJob, sendPreparedJob });
-        dispatcher.jobRepository.findDuePendingSystemScope.mockResolvedValue([job]);
+        dispatcher.jobRepository.consumeDispatchSlotsAndFindDueJobs.mockResolvedValue([job]);
         dispatcher.claimedJobRead.mockResolvedValue(job);
         dispatcher.transaction.$queryRaw.mockResolvedValueOnce([{
             service_end_notice_sent_at: new Date("2026-09-15T03:00:00.000Z"),
@@ -2386,7 +2909,7 @@ describe("MessageTriggerService", () => {
         };
         const { service, deliveryService, jobRepository, messageAutomationActivationService } = createDispatchService(systemSettingService);
         const job = createJob();
-        jobRepository.findDuePendingSystemScope.mockResolvedValue([job]);
+        jobRepository.consumeDispatchSlotsAndFindDueJobs.mockResolvedValue([job]);
         messageAutomationActivationService.getTriggerDispatchEnabled.mockResolvedValue(false);
 
         await service.dispatchDueJobs();
@@ -2406,7 +2929,7 @@ describe("MessageTriggerService", () => {
         };
         const { service, deliveryService, jobRepository } = createDispatchService(systemSettingService);
         const job = createJob({ attempts: 1, nextAttemptAt: new Date() });
-        jobRepository.findDuePendingSystemScope.mockResolvedValue([job]);
+        jobRepository.consumeDispatchSlotsAndFindDueJobs.mockResolvedValue([job]);
 
         await service.dispatchDueJobs();
 
@@ -2434,7 +2957,7 @@ describe("MessageTriggerService", () => {
 
     it("keeps a post-CAS admission refusal dispatching for uncertain reconciliation", async () => {
         const { service, deliveryService, jobRepository } = createDispatchService();
-        const job = createJob(); jobRepository.findDuePendingSystemScope.mockResolvedValue([job]);
+        const job = createJob(); jobRepository.consumeDispatchSlotsAndFindDueJobs.mockResolvedValue([job]);
         deliveryService.sendPreparedJob.mockRejectedValue(new AgentAutomationDispatchUncertainError());
         await service.dispatchDueJobs();
         expect(job.status).toBe("dispatching");
@@ -2447,7 +2970,7 @@ describe("MessageTriggerService", () => {
     it("refuses the automatic one-step compatibility path before provider authorization", async () => {
         const { service, deliveryService, jobRepository, transaction } = createDispatchService();
         Object.assign(deliveryService, { prepareJob: undefined, sendPreparedJob: undefined });
-        const job = createJob(); jobRepository.findDuePendingSystemScope.mockResolvedValue([job]);
+        const job = createJob(); jobRepository.consumeDispatchSlotsAndFindDueJobs.mockResolvedValue([job]);
         await service.dispatchDueJobs();
         expect(job.status).toBe("canceled");
         expect(deliveryService.sendJob).not.toHaveBeenCalled();
@@ -2459,7 +2982,7 @@ describe("MessageTriggerService", () => {
         const job = createJob();
         const events: string[] = [];
         const serializedSnapshot = "prepared-snapshot";
-        dispatcher.jobRepository.findDuePendingSystemScope.mockResolvedValue([job]);
+        dispatcher.jobRepository.consumeDispatchSlotsAndFindDueJobs.mockResolvedValue([job]);
         dispatcher.messageSenderApprovalService.getApprovedBranchIds.mockResolvedValue(new Set([branchId]));
         dispatcher.jobRepository.update.mockImplementation(async () => {
             events.push("persist-preparation");
@@ -2524,7 +3047,7 @@ describe("MessageTriggerService", () => {
     it("does not prepare a legacy receipt when its claim is lost before preparation", async () => {
         const dispatcher = createDispatchService();
         const job = createJob();
-        dispatcher.jobRepository.findDuePendingSystemScope.mockResolvedValue([job]);
+        dispatcher.jobRepository.consumeDispatchSlotsAndFindDueJobs.mockResolvedValue([job]);
         dispatcher.messageSenderApprovalService.getApprovedBranchIds.mockResolvedValue(new Set([branchId]));
         const prepareJob = jest.fn().mockResolvedValue({
             snapshot: { snapshotHash: "must-not-prepare" },
@@ -2584,7 +3107,7 @@ describe("MessageTriggerService", () => {
                 serviceRecordRevisionContext: expectedContext,
             },
         });
-        dispatcher.jobRepository.findDuePendingSystemScope.mockResolvedValue([job]);
+        dispatcher.jobRepository.consumeDispatchSlotsAndFindDueJobs.mockResolvedValue([job]);
         dispatcher.messageSenderApprovalService.getApprovedBranchIds.mockResolvedValue(new Set([branchId]));
         const prepareJob = jest.fn().mockResolvedValue({
             snapshot: { snapshotHash: "must-not-prepare" },
@@ -2727,7 +3250,7 @@ describe("MessageTriggerService", () => {
     it("does not call the provider when cancellation invalidates a claim before the fence", async () => {
         const { service, deliveryService, jobRepository, transaction } = createDispatchService();
         const job = createJob();
-        jobRepository.findDuePendingSystemScope.mockResolvedValue([job]);
+        jobRepository.consumeDispatchSlotsAndFindDueJobs.mockResolvedValue([job]);
         jobRepository.claimPendingWithRuleFence.mockResolvedValue("claim-a");
         transaction.$queryRaw.mockResolvedValueOnce([{
             status: "canceled",
@@ -2743,7 +3266,7 @@ describe("MessageTriggerService", () => {
     it("does not call the provider when a newer claim token replaced the active attempt", async () => {
         const { service, deliveryService, jobRepository, transaction } = createDispatchService();
         const job = createJob();
-        jobRepository.findDuePendingSystemScope.mockResolvedValue([job]);
+        jobRepository.consumeDispatchSlotsAndFindDueJobs.mockResolvedValue([job]);
         jobRepository.claimPendingWithRuleFence.mockResolvedValue("claim-a");
         transaction.$queryRaw.mockResolvedValueOnce([{ payload: { templateVariables: { [SMS_DELIVERY_SNAPSHOT_VARIABLE]: "synthetic-trigger-prepared" } },
             status: "processing",
@@ -2759,7 +3282,7 @@ describe("MessageTriggerService", () => {
     it("does not call the provider when cancellation wins the authorization CAS", async () => {
         const { service, deliveryService, jobRepository, transaction } = createDispatchService();
         const job = createJob();
-        jobRepository.findDuePendingSystemScope.mockResolvedValue([job]);
+        jobRepository.consumeDispatchSlotsAndFindDueJobs.mockResolvedValue([job]);
         jobRepository.claimPendingWithRuleFence.mockResolvedValue("claim-a");
         let authorizationReadStarted!: () => void;
         const authorizationRead = new Promise<void>((resolve) => {
@@ -2805,11 +3328,12 @@ describe("MessageTriggerService", () => {
         const result = await service.dispatchPendingJobNow(job.id, { expectedBranchId: job.branchId! });
 
         expect(jobRepository.findByIdInBranch).toHaveBeenCalledWith(job.branchId, job.id);
-        expect(jobRepository.findDuePendingSystemScope).not.toHaveBeenCalled();
+        expect(jobRepository.consumeDispatchSlotsAndFindDueJobs).not.toHaveBeenCalled();
         expect(jobRepository.claimPendingWithRuleFence).toHaveBeenCalledWith(
             job.id,
             job.branchId,
             expect.any(Object),
+            expect.any(Date),
         );
         expect(deliveryService.sendJob).toHaveBeenCalledWith(job);
         expect(job.status).toBe("sent");
@@ -2992,7 +3516,7 @@ describe("MessageTriggerService", () => {
             const fx = createDispatchService();
             const { updateMany } = attachSafeguard(fx, { clientFlags: new Map([[1, false]]) });
             const job = createJob({ clientId: 1 });
-            fx.jobRepository.findDuePendingSystemScope.mockResolvedValue([job]);
+            fx.jobRepository.consumeDispatchSlotsAndFindDueJobs.mockResolvedValue([job]);
 
             await fx.service.dispatchDueJobs();
 
@@ -3016,7 +3540,7 @@ describe("MessageTriggerService", () => {
                 templateKey: MessageTriggerTemplateKey.SERVICE_RECORD_LINK,
                 dedupeKey: "system:service_record_link:schedule:10:primary",
             });
-            fx.jobRepository.findDuePendingSystemScope.mockResolvedValue([job]);
+            fx.jobRepository.consumeDispatchSlotsAndFindDueJobs.mockResolvedValue([job]);
 
             await fx.service.dispatchDueJobs();
 
@@ -3029,7 +3553,7 @@ describe("MessageTriggerService", () => {
             const fx = createDispatchService();
             const { updateMany } = attachSafeguard(fx, { ruleActive: false });
             const job = createJob();
-            fx.jobRepository.findDuePendingSystemScope.mockResolvedValue([job]);
+            fx.jobRepository.consumeDispatchSlotsAndFindDueJobs.mockResolvedValue([job]);
 
             await fx.service.dispatchDueJobs();
 
@@ -3112,7 +3636,7 @@ describe("MessageTriggerService", () => {
             const fx = createDispatchService();
             const { world, updateMany } = attachSafeguard(fx);
             const job = createJob({ clientId: 1 });
-            fx.jobRepository.findDuePendingSystemScope.mockResolvedValue([job]);
+            fx.jobRepository.consumeDispatchSlotsAndFindDueJobs.mockResolvedValue([job]);
             fx.deliveryService.prepareJob.mockImplementation(async (prepared: MessageTriggerJobEntity) => {
                 prepared.payload.templateVariables[SMS_DELIVERY_SNAPSHOT_VARIABLE] = "synthetic-trigger-prepared";
                 world.clientFlags.set(1, false); // admin turns the client off while the message is prepared
@@ -3154,7 +3678,7 @@ describe("MessageTriggerService", () => {
             const eligible = createJob({ id: "eligible", clientId: 500, scheduledFor: new Date(Date.now() - 1000) });
             attachSafeguard(fx, { clientFlags: flags });
             const all = [...blocked, eligible];
-            fx.jobRepository.findDuePendingSystemScope.mockImplementation(async (limit: number) =>
+            fx.jobRepository.consumeDispatchSlotsAndFindDueJobs.mockImplementation(async (_eligibility: unknown, _now: Date, limit: number) =>
                 all.filter((job) => job.status === "pending").slice(0, limit));
 
             await fx.service.dispatchDueJobs();
@@ -3778,7 +4302,7 @@ describe("MessageTriggerService", () => {
 
             const result = await service.resendNeedsSetupJob(branchId, job.id);
 
-            expect(jobRepository.claimNeedsSetupWithRuleFence).toHaveBeenCalledWith(job.id, job.branchId);
+            expect(jobRepository.claimNeedsSetupWithRuleFence).toHaveBeenCalledWith(job.id, job.branchId, undefined, expect.any(Date));
             expect(jobRepository.claimPendingWithRuleFence).not.toHaveBeenCalled();
             expect(deliveryService.sendJob).toHaveBeenCalledWith(job);
             // prepareJob freezes the delivery snapshot into the variables; every stored value is unchanged.
@@ -3837,7 +4361,7 @@ describe("MessageTriggerService", () => {
 
             const ordinary = createDispatchService();
             const oldPending = createJob({ scheduledFor: new Date(Date.now() - 30 * DAY_MS) });
-            ordinary.jobRepository.findDuePendingSystemScope.mockResolvedValue([oldPending]);
+            ordinary.jobRepository.consumeDispatchSlotsAndFindDueJobs.mockResolvedValue([oldPending]);
             await ordinary.service.dispatchDueJobs();
             expect(oldPending.status).toBe("canceled");
             expect(oldPending.cancelReason).toBe("기존 발송 예정 24시간 경과");
@@ -3893,7 +4417,7 @@ describe("MessageTriggerService", () => {
 
             const result = await service.resendNeedsSetupJob(branchId, job.id);
 
-            expect(jobRepository.claimNeedsSetupWithRuleFence).toHaveBeenCalledWith(job.id, branchId, expect.any(Object));
+            expect(jobRepository.claimNeedsSetupWithRuleFence).toHaveBeenCalledWith(job.id, branchId, expect.any(Object), expect.any(Date));
             expect(deliveryService.sendJob).toHaveBeenCalledTimes(1);
             expect(result.status).toBe("sent");
         });
@@ -3977,7 +4501,7 @@ describe("MessageTriggerService", () => {
             it("control: the ordinary dispatcher still defers the same error to pending with one more attempt", async () => {
                 const { service, deliveryService, jobRepository } = createDispatchService();
                 const job = createJob({ attempts: 1 });
-                jobRepository.findDuePendingSystemScope.mockResolvedValue([job]);
+                jobRepository.consumeDispatchSlotsAndFindDueJobs.mockResolvedValue([job]);
                 deliveryService.sendJob.mockRejectedValue(new TriggerJobDeferredError("transient", "Provider timeout"));
 
                 await service.dispatchDueJobs();
@@ -4011,8 +4535,11 @@ describe("MessageTriggerService", () => {
                 expect(row.attempts).toBe(1);
                 expect(row.scheduledFor).toBe(scheduledFor);
                 expect(row.nextAttemptAt).toBeNull();
-                expect(row.claimToken).toBe("claim-resend");
-                expect(jobRepository.update).toHaveBeenCalledWith(row);
+                expect(row.claimToken).toBeNull();
+                expect(jobRepository.reclaimWithClaimFence).toHaveBeenCalledWith(row, expect.objectContaining({
+                    status: "processing", claimToken: "claim-resend",
+                }));
+                expect(jobRepository.update).not.toHaveBeenCalled();
             });
 
             it("control: an ordinary stale processing row (no resend mark) is still deferred to pending with one more attempt", async () => {
@@ -4196,7 +4723,7 @@ describe("MessageTriggerService", () => {
         const job = builder.internals.buildEmployeeAssignmentJob(employeeRule, schedule)!;
         const dispatcher = createDispatchService();
         const events: string[] = [];
-        dispatcher.jobRepository.findDuePendingSystemScope.mockResolvedValue([job]);
+        dispatcher.jobRepository.consumeDispatchSlotsAndFindDueJobs.mockResolvedValue([job]);
         dispatcher.claimedJobRead.mockImplementation(async () => {
             events.push("job-read");
             return job;
@@ -4246,7 +4773,7 @@ describe("MessageTriggerService", () => {
         const schedule = createEmployeeSchedule();
         const job = builder.internals.buildEmployeeAssignmentJob(employeeRule, schedule)!;
         const dispatcher = createDispatchService();
-        dispatcher.jobRepository.findDuePendingSystemScope.mockResolvedValue([job]);
+        dispatcher.jobRepository.consumeDispatchSlotsAndFindDueJobs.mockResolvedValue([job]);
         dispatcher.claimedJobRead.mockResolvedValue(job);
         dispatcher.prisma.employee_schedule.findFirst.mockResolvedValue(schedule);
 
@@ -4289,7 +4816,7 @@ describe("MessageTriggerService", () => {
         const schedule = createEmployeeSchedule();
         const job = builder.internals.buildEmployeeAssignmentJob(employeeRule, schedule)!;
         const dispatcher = createDispatchService();
-        dispatcher.jobRepository.findDuePendingSystemScope.mockResolvedValue([job]);
+        dispatcher.jobRepository.consumeDispatchSlotsAndFindDueJobs.mockResolvedValue([job]);
         dispatcher.claimedJobRead.mockResolvedValue(job);
         dispatcher.prisma.employee_schedule.findFirst.mockResolvedValue(schedule);
 
@@ -4356,7 +4883,7 @@ describe("MessageTriggerService", () => {
         const job = builder.internals.buildEmployeeAssignmentJob(employeeRule, originalSchedule)!;
         const dispatcher = createDispatchService();
         const events: string[] = [];
-        dispatcher.jobRepository.findDuePendingSystemScope.mockResolvedValue([job]);
+        dispatcher.jobRepository.consumeDispatchSlotsAndFindDueJobs.mockResolvedValue([job]);
         dispatcher.claimedJobRead.mockImplementation(async () => {
             events.push("job-read");
             return job;
@@ -4406,7 +4933,7 @@ describe("MessageTriggerService", () => {
                 },
             },
         });
-        dispatcher.jobRepository.findDuePendingSystemScope.mockResolvedValue([job]);
+        dispatcher.jobRepository.consumeDispatchSlotsAndFindDueJobs.mockResolvedValue([job]);
         dispatcher.claimedJobRead.mockResolvedValue(job);
         dispatcher.prisma.employee_schedule.findFirst.mockResolvedValue(
             createEmployeeSchedule({ replaced: true }),
@@ -4443,7 +4970,7 @@ describe("MessageTriggerService", () => {
                 },
             },
         });
-        dispatcher.jobRepository.findDuePendingSystemScope.mockResolvedValue([job]);
+        dispatcher.jobRepository.consumeDispatchSlotsAndFindDueJobs.mockResolvedValue([job]);
         dispatcher.claimedJobRead.mockResolvedValue(job);
         dispatcher.prisma.employee_schedule.findFirst.mockResolvedValue(createEmployeeSchedule());
 
@@ -4478,7 +5005,7 @@ describe("MessageTriggerService", () => {
                 },
             },
         });
-        dispatcher.jobRepository.findDuePendingSystemScope.mockResolvedValue([job]);
+        dispatcher.jobRepository.consumeDispatchSlotsAndFindDueJobs.mockResolvedValue([job]);
         dispatcher.claimedJobRead.mockResolvedValue(job);
         dispatcher.prisma.employee_schedule.findFirst.mockResolvedValue(createEmployeeSchedule());
 
@@ -4500,7 +5027,7 @@ describe("MessageTriggerService", () => {
         });
         const job = builder.internals.buildEmployeeAssignmentJob(employeeRule, createEmployeeSchedule())!;
         const dispatcher = createDispatchService();
-        dispatcher.jobRepository.findDuePendingSystemScope.mockResolvedValue([job]);
+        dispatcher.jobRepository.consumeDispatchSlotsAndFindDueJobs.mockResolvedValue([job]);
         dispatcher.claimedJobRead.mockResolvedValue({
             ...job,
             status: "canceled",
@@ -4526,7 +5053,7 @@ describe("MessageTriggerService", () => {
         });
         const job = builder.internals.buildEmployeeAssignmentJob(employeeRule, createEmployeeSchedule())!;
         const dispatcher = createDispatchService();
-        dispatcher.jobRepository.findDuePendingSystemScope.mockResolvedValue([job]);
+        dispatcher.jobRepository.consumeDispatchSlotsAndFindDueJobs.mockResolvedValue([job]);
         dispatcher.claimedJobRead.mockResolvedValue(job);
         dispatcher.prisma.employee_schedule.findFirst.mockRejectedValue(new Error("schedule read failed"));
 
@@ -4548,7 +5075,7 @@ describe("MessageTriggerService", () => {
         });
         const job = builder.internals.buildEmployeeAssignmentJob(employeeRule, createEmployeeSchedule())!;
         const dispatcher = createDispatchService();
-        dispatcher.jobRepository.findDuePendingSystemScope.mockResolvedValue([job]);
+        dispatcher.jobRepository.consumeDispatchSlotsAndFindDueJobs.mockResolvedValue([job]);
         dispatcher.claimedJobRead.mockResolvedValue(job);
         dispatcher.prisma.employee_schedule.findFirst.mockResolvedValue(null);
 
@@ -4582,7 +5109,7 @@ describe("MessageTriggerService", () => {
                     buttonUrl: "https://mobile.test/service-record/efl_link",
                     templateVariables: { serviceRecordUrl: "https://mobile.test/service-record/efl_link" } },
                 scheduledFor: new Date("2026-11-02T03:00:00.000Z") });
-            dispatcher.jobRepository.findDuePendingSystemScope.mockResolvedValue([job]);
+            dispatcher.jobRepository.consumeDispatchSlotsAndFindDueJobs.mockResolvedValue([job]);
             dispatcher.prisma.employee_schedule.findFirst.mockResolvedValue(schedule && {
                 ...schedule,
                 client: { serviceStatus: "waiting", bookingConfirmedAt: new Date("2026-01-01"), startDate: new Date("2026-11-03T00:00:00.000Z"), endDate: new Date("2026-11-14T00:00:00.000Z") },
@@ -4636,7 +5163,7 @@ describe("MessageTriggerService", () => {
                 buttonUrl: "https://mobile.test/service-record/efl_link",
                 templateVariables: { serviceRecordUrl: "https://mobile.test/service-record/efl_link" } },
         });
-        dispatcher.jobRepository.findDuePendingSystemScope.mockResolvedValue([job]);
+        dispatcher.jobRepository.consumeDispatchSlotsAndFindDueJobs.mockResolvedValue([job]);
         dispatcher.prisma.employee_schedule.findFirst.mockResolvedValue({
             endDate: new Date(Date.now() + 86400000), replaced: false, terminatedAt: null,
             client: missing === "client" ? null : {
@@ -4695,7 +5222,7 @@ describe("MessageTriggerService", () => {
                 createRule({ id: "rule-target", targetClientStatus: target }),
             );
             dispatcher.prisma.client.findFirst.mockResolvedValue(clientFacts(status));
-            dispatcher.jobRepository.findDuePendingSystemScope.mockResolvedValue([job]);
+            dispatcher.jobRepository.consumeDispatchSlotsAndFindDueJobs.mockResolvedValue([job]);
             await dispatcher.service.dispatchDueJobs();
             return { dispatcher, job };
         };
@@ -4730,7 +5257,7 @@ describe("MessageTriggerService", () => {
                     createRule({ id: "rule-target", targetClientStatus: target }),
                 );
                 dispatcher.prisma.client.findFirst.mockResolvedValue(facts);
-                dispatcher.jobRepository.findDuePendingSystemScope.mockResolvedValue([job]);
+                dispatcher.jobRepository.consumeDispatchSlotsAndFindDueJobs.mockResolvedValue([job]);
                 await dispatcher.service.dispatchDueJobs();
                 expect(job.status).toBe(sends ? "sent" : "canceled");
             }
@@ -4756,7 +5283,7 @@ describe("MessageTriggerService", () => {
                 createRule({ id: "rule-global", branchId: null, targetClientStatus: "active" }),
             );
             dispatcher.prisma.client.findFirst.mockResolvedValue(clientFacts("waiting"));
-            dispatcher.jobRepository.findDuePendingSystemScope.mockResolvedValue([job]);
+            dispatcher.jobRepository.consumeDispatchSlotsAndFindDueJobs.mockResolvedValue([job]);
             await dispatcher.service.dispatchDueJobs();
 
             expect(job.status).toBe("canceled");
@@ -4767,7 +5294,7 @@ describe("MessageTriggerService", () => {
             const dispatcher = createDispatchService();
             const job = createJob({ ruleId: "rule-target" });
             dispatcher.prisma.client.findFirst.mockResolvedValue(clientFacts("waiting"));
-            dispatcher.jobRepository.findDuePendingSystemScope.mockResolvedValue([job]);
+            dispatcher.jobRepository.consumeDispatchSlotsAndFindDueJobs.mockResolvedValue([job]);
 
             // First tick: the admin has set 진행 only.
             dispatcher.ruleRepository.findByIdIncludingGlobal.mockResolvedValueOnce(
@@ -4794,7 +5321,7 @@ describe("MessageTriggerService", () => {
             dispatcher.ruleRepository.findByIdIncludingGlobal.mockResolvedValue(
                 createRule({ id: "rule-target", targetClientStatus: "waiting" }),
             );
-            dispatcher.jobRepository.findDuePendingSystemScope.mockResolvedValue([job]);
+            dispatcher.jobRepository.consumeDispatchSlotsAndFindDueJobs.mockResolvedValue([job]);
 
             // 09:00 — the client is still 예약 전.
             dispatcher.prisma.client.findFirst.mockResolvedValue(clientFacts("pre_booking"));
@@ -4856,7 +5383,7 @@ describe("MessageTriggerService", () => {
                 createRule({ id: "rule-target", targetClientStatus: "active" }),
             );
             dispatcher.prisma.client.findFirst.mockResolvedValue(null);
-            dispatcher.jobRepository.findDuePendingSystemScope.mockResolvedValue([job]);
+            dispatcher.jobRepository.consumeDispatchSlotsAndFindDueJobs.mockResolvedValue([job]);
             await dispatcher.service.dispatchDueJobs();
 
             expect(job.status).toBe("canceled");
@@ -4871,7 +5398,7 @@ describe("MessageTriggerService", () => {
             payload: { memberId: "employee:30", recipientName: "제공인력", recipientPhone: "010-1234-5678",
                 buttonUrl: "https://mobile.test/service-record/efl_link",
                 templateVariables: { serviceRecordUrl: "https://mobile.test/service-record/efl_link" } } });
-        dispatcher.jobRepository.findDuePendingSystemScope.mockResolvedValue([job]);
+        dispatcher.jobRepository.consumeDispatchSlotsAndFindDueJobs.mockResolvedValue([job]);
         await dispatcher.service.dispatchDueJobs();
         expect(job.cancelReason).toBe("제공기록지 링크가 철회되어 발송하지 않았습니다");
         expect(dispatcher.deliveryService.sendJob).not.toHaveBeenCalled();
@@ -4888,7 +5415,7 @@ describe("MessageTriggerService", () => {
         const job = createJob({ ruleId: "system:service_record_link", employeeScheduleId: 10,
             templateKey: MessageTriggerTemplateKey.SERVICE_RECORD_LINK,
             dedupeKey: "system:service_record_link:schedule:10:primary" });
-        dispatcher.jobRepository.findDuePendingSystemScope.mockResolvedValue([job]);
+        dispatcher.jobRepository.consumeDispatchSlotsAndFindDueJobs.mockResolvedValue([job]);
         dispatcher.prisma.employee_schedule.findFirst.mockResolvedValue(overrides && {
             endDate: new Date(Date.now() + 86400000), replaced: false, terminatedAt: null,
             client: { serviceStatus: "pre_booking", bookingConfirmedAt: null, startDate: new Date(), endDate: new Date() },
@@ -4908,7 +5435,7 @@ describe("MessageTriggerService", () => {
                 buttonUrl: "https://mobile.test/service-record/efl_link",
                 templateVariables: { serviceRecordUrl: "https://mobile.test/service-record/efl_link" } },
         });
-        dispatcher.jobRepository.findDuePendingSystemScope.mockResolvedValue([job]);
+        dispatcher.jobRepository.consumeDispatchSlotsAndFindDueJobs.mockResolvedValue([job]);
         dispatcher.prisma.employee_schedule.findFirst.mockResolvedValue({
             replaced: true, terminatedAt: new Date(), endDate: new Date("2026-01-01"),
             client: { serviceStatus: "waiting", bookingConfirmedAt: new Date("2026-01-01"), startDate: new Date(), endDate: new Date() },
@@ -4930,7 +5457,7 @@ describe("MessageTriggerService", () => {
             const job = createJob({
                 scheduledFor: new Date("2026-07-08T12:00:00.000Z"),
             });
-            jobRepository.findDuePendingSystemScope.mockResolvedValue([job]);
+            jobRepository.consumeDispatchSlotsAndFindDueJobs.mockResolvedValue([job]);
 
             await service.dispatchDueJobs();
 
@@ -4938,6 +5465,7 @@ describe("MessageTriggerService", () => {
                 job.id,
                 job.branchId,
                 expect.any(Object),
+                expect.any(Date),
             );
             expect(deliveryService.sendJob).not.toHaveBeenCalled();
             expect(job.status).toBe("canceled");
@@ -4958,7 +5486,7 @@ describe("MessageTriggerService", () => {
                 dedupeKey: "system:service_record_link:schedule:10:primary:manual:aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
                 scheduledFor: new Date("2026-11-02T03:00:00.000Z"),
             });
-            dispatcher.jobRepository.findDuePendingSystemScope.mockResolvedValue([job]);
+            dispatcher.jobRepository.consumeDispatchSlotsAndFindDueJobs.mockResolvedValue([job]);
             await dispatcher.service.dispatchDueJobs();
             expect(dispatcher.deliveryService.sendJob).not.toHaveBeenCalled();
             expect(job.cancelReason).toBe("기존 발송 예정 24시간 경과");
@@ -4988,7 +5516,7 @@ describe("MessageTriggerService", () => {
                     },
                 },
             });
-            jobRepository.findDuePendingSystemScope.mockResolvedValue([job]);
+            jobRepository.consumeDispatchSlotsAndFindDueJobs.mockResolvedValue([job]);
             prisma.message_trigger_job.findUnique.mockResolvedValue({
                 status: "sent",
                 sentAt: new Date("2026-07-09T12:10:00.000Z"),
@@ -5022,7 +5550,7 @@ describe("MessageTriggerService", () => {
     it("persists a settings refusal without incrementing attempts", async () => {
         const { service, deliveryService, jobRepository } = createDispatchService();
         const job = createJob({ attempts: 2 });
-        jobRepository.findDuePendingSystemScope.mockResolvedValue([job]);
+        jobRepository.consumeDispatchSlotsAndFindDueJobs.mockResolvedValue([job]);
         deliveryService.sendJob.mockImplementation(async () => {
             job.markNeedsSetup("필수 정보 누락 (name)");
             return false;
@@ -5039,7 +5567,7 @@ describe("MessageTriggerService", () => {
     it("persists an automatic preparation refusal under its retained claim without authorizing dispatch", async () => {
         const { service, deliveryService, jobRepository, transaction } = createDispatchService();
         const job = createJob({ attempts: 2 });
-        jobRepository.findDuePendingSystemScope.mockResolvedValue([job]);
+        jobRepository.consumeDispatchSlotsAndFindDueJobs.mockResolvedValue([job]);
         deliveryService.prepareJob.mockImplementation(async () => {
             job.markNeedsSetup("필수 정보 누락 (name)");
             return null;
@@ -5055,7 +5583,7 @@ describe("MessageTriggerService", () => {
     it("terminal-fails after TRIGGER_JOB_MAX_ATTEMPTS transient defers", async () => {
         const { service, deliveryService, jobRepository } = createDispatchService();
         const job = createJob({ attempts: TRIGGER_JOB_MAX_ATTEMPTS - 1 });
-        jobRepository.findDuePendingSystemScope.mockResolvedValue([job]);
+        jobRepository.consumeDispatchSlotsAndFindDueJobs.mockResolvedValue([job]);
         deliveryService.sendJob.mockRejectedValue(
             new TriggerJobDeferredError("transient", "Provider timeout"),
         );
@@ -5074,7 +5602,7 @@ describe("MessageTriggerService", () => {
             code: "P1001",
             clientVersion: "test",
         });
-        jobRepository.findDuePendingSystemScope.mockResolvedValue([job]);
+        jobRepository.consumeDispatchSlotsAndFindDueJobs.mockResolvedValue([job]);
         deliveryService.sendJob.mockRejectedValue(prismaError);
 
         await service.dispatchDueJobs();
@@ -5099,7 +5627,137 @@ describe("MessageTriggerService", () => {
         expect(unsentJob.status).toBe("pending");
         expect(unsentJob.attempts).toBe(1);
         expect(unsentJob.nextAttemptAt).toBeInstanceOf(Date);
-        expect(jobRepository.update).toHaveBeenCalledTimes(2);
+        expect(jobRepository.reclaimWithClaimFence).toHaveBeenCalledTimes(2);
+    });
+
+    describe("reclaim of an unattempted manual reservation or quiet hold", () => {
+        const createReclaimFixture = () => {
+            const fx = createDispatchService();
+            const job = Object.assign(createJob({
+                id: "manual-reservation", status: "processing", attempts: 0,
+                scheduledFor: new Date("2026-11-05T12:00:00.000Z"),
+            }), {
+                templateKey: MANUAL_SMS_TEMPLATE_KEY,
+                claimToken: "claim-manual-reservation",
+                processingDeadlineAt: new Date("2026-11-05T12:05:00.000Z"),
+            });
+            job.payload.existingMessageLogId = 17;
+            const snapshot = {
+                status: job.status, claimToken: job.claimToken,
+                updatedAt: job.updatedAt, processingDeadlineAt: job.processingDeadlineAt,
+            };
+            const acceptance = {
+                id: 17, branchId: job.branchId, triggerJobId: job.id, provider: "aligo_sms",
+                providerAcceptanceState: "prepared", providerCallStartedAt: null as Date | null,
+                providerAcceptanceKey: "acceptance-reservation",
+                providerAcceptanceFingerprint: "reservation-fingerprint",
+            };
+            const findFirst = jest.fn(async ({ where }: { where: Record<string, unknown> }) =>
+                Object.entries(where).every(([key, value]) => acceptance[key as keyof typeof acceptance] === value)
+                    ? acceptance : null);
+            Object.assign(fx.prisma, { message_log: { findFirst } });
+            const readQuietHold = jest.fn().mockResolvedValue(null);
+            Object.assign(fx.jobRepository, { readQuietHold });
+            fx.jobRepository.findStaleProcessingSystemScope.mockResolvedValue([job]);
+            return { ...fx, job, snapshot, acceptance, findFirst, readQuietHold };
+        };
+
+        it("reclaims a captured unheld manual reservation with its null retry marker and original content intact", async () => {
+            const fx = createReclaimFixture();
+            const payload = structuredClone(fx.job.payload);
+            const scheduledFor = fx.job.scheduledFor;
+            const dedupeKey = fx.job.dedupeKey;
+
+            await fx.service.dispatchDueJobs();
+
+            expect(fx.readQuietHold).toHaveBeenCalledWith(fx.job);
+            expect(fx.findFirst).toHaveBeenCalledWith({ where: {
+                branchId: fx.job.branchId, triggerJobId: fx.job.id, id: 17,
+                provider: "aligo_sms", providerAcceptanceState: "prepared", providerCallStartedAt: null,
+            } });
+            expect(fx.jobRepository.reclaimWithClaimFence).toHaveBeenCalledWith(fx.job, fx.snapshot);
+            expect(fx.jobRepository.reclaimWithClaimFence).toHaveBeenCalledTimes(1);
+            expect(fx.job.status).toBe("pending");
+            expect(fx.job.nextAttemptAt).toBeNull();
+            expect(fx.job.attempts).toBe(0);
+            expect(fx.job.payload).toEqual(payload);
+            expect(fx.job.scheduledFor).toBe(scheduledFor);
+            expect(fx.job.dedupeKey).toBe(dedupeKey);
+            expect(fx.job.claimToken).toBeNull();
+            expect(fx.job.processingDeadlineAt).toBeNull();
+            expect(fx.jobRepository.update).not.toHaveBeenCalled();
+            expect(fx.deliveryService.prepareJob).not.toHaveBeenCalled();
+            expect(fx.deliveryService.sendPreparedJob).not.toHaveBeenCalled();
+            expect(fx.deliveryService.sendJob).not.toHaveBeenCalled();
+        });
+
+        it.each([false, true])("retains a genuine hold release time (existing retry marker=%s)", async existing => {
+            const fx = createReclaimFixture();
+            // Exercise the hold condition independently of the manual-template condition.
+            fx.job.templateKey = MessageTriggerTemplateKey.CLIENT_GREETING;
+            const releaseAt = new Date("2026-11-05T23:00:00.000Z");
+            const nextAttemptAt = existing ? new Date("2026-11-05T23:05:00.000Z") : null;
+            fx.job.nextAttemptAt = nextAttemptAt;
+            fx.readQuietHold.mockResolvedValue({ releaseAt });
+
+            await fx.service.dispatchDueJobs();
+
+            expect(fx.job.status).toBe("pending");
+            expect(fx.job.nextAttemptAt).toBe(nextAttemptAt ?? releaseAt);
+            expect(fx.job.attempts).toBe(0);
+            expect(fx.jobRepository.reclaimWithClaimFence).toHaveBeenCalledWith(fx.job, fx.snapshot);
+            expect(fx.deliveryService.sendJob).not.toHaveBeenCalled();
+        });
+
+        it.each(["missing", "missing key", "missing fingerprint", "started", "uncertain", "dispatching"])(
+            "refuses an unsafe manual reservation: %s", async condition => {
+                const fx = createReclaimFixture();
+                if (condition === "missing") fx.acceptance.id = 18;
+                if (condition === "missing key") fx.acceptance.providerAcceptanceKey = "";
+                if (condition === "missing fingerprint") fx.acceptance.providerAcceptanceFingerprint = "";
+                if (condition === "started") fx.acceptance.providerCallStartedAt = new Date("2026-11-05T12:01:00.000Z");
+                if (condition === "uncertain") {
+                    fx.messageLogRepository.findUncertainTriggerJobIdsSystemScope.mockResolvedValue(new Set([fx.job.id]));
+                }
+                if (condition === "dispatching") {
+                    fx.job.status = "dispatching";
+                    fx.snapshot.status = "dispatching";
+                }
+
+                await fx.service.dispatchDueJobs();
+
+                expect(fx.job.status).toBe("failed");
+                expect(fx.job.cancelReason).toContain("불확실");
+                expect(fx.job.nextAttemptAt).toBeNull();
+                expect(fx.job.attempts).toBe(0);
+                expect(fx.jobRepository.reclaimWithClaimFence).toHaveBeenCalledWith(fx.job, fx.snapshot);
+                if (condition === "started") {
+                    expect(fx.findFirst).toHaveBeenCalledWith({ where: expect.objectContaining({
+                        providerAcceptanceState: "prepared", providerCallStartedAt: null,
+                    }) });
+                }
+                if (condition === "uncertain" || condition === "dispatching") {
+                    expect(fx.findFirst).not.toHaveBeenCalled();
+                }
+                expect(fx.jobRepository.update).not.toHaveBeenCalled();
+                expect(fx.deliveryService.sendPreparedJob).not.toHaveBeenCalled();
+                expect(fx.deliveryService.sendJob).not.toHaveBeenCalled();
+            },
+        );
+
+        it("does not overwrite a newer holder or clear the stale claim when the reclaim fence refuses", async () => {
+            const fx = createReclaimFixture();
+            fx.jobRepository.reclaimWithClaimFence.mockResolvedValue(false);
+
+            await fx.service.dispatchDueJobs();
+
+            expect(fx.jobRepository.reclaimWithClaimFence).toHaveBeenCalledWith(fx.job, fx.snapshot);
+            expect(fx.job.claimToken).toBe(fx.snapshot.claimToken);
+            expect(fx.job.processingDeadlineAt).toBe(fx.snapshot.processingDeadlineAt);
+            expect(fx.jobRepository.update).not.toHaveBeenCalled();
+            expect(fx.deliveryService.sendPreparedJob).not.toHaveBeenCalled();
+            expect(fx.deliveryService.sendJob).not.toHaveBeenCalled();
+        });
     });
 
     it("does not requeue a stale dispatch-authorized job after a worker crash", async () => {
@@ -5113,7 +5771,7 @@ describe("MessageTriggerService", () => {
         expect(dispatchingJob.status).toBe("failed");
         expect(dispatchingJob.cancelReason).toContain("불확실");
         expect(dispatchingJob.nextAttemptAt).toBeNull();
-        expect(jobRepository.update).toHaveBeenCalledWith(dispatchingJob);
+        expect(jobRepository.reclaimWithClaimFence).toHaveBeenCalledWith(dispatchingJob, expect.objectContaining({ status: "dispatching" }));
     });
 
     it("reclaim terminal-fails a stale job whose provider attempt is uncertain instead of resending it", async () => {
@@ -5138,7 +5796,7 @@ describe("MessageTriggerService", () => {
         // The job without an uncertain log still follows the bounded requeue path.
         expect(unsentJob.status).toBe("pending");
         expect(unsentJob.nextAttemptAt).toBeInstanceOf(Date);
-        expect(jobRepository.update).toHaveBeenCalledTimes(2);
+        expect(jobRepository.reclaimWithClaimFence).toHaveBeenCalledTimes(2);
     });
 
     it("an externally approved branch recovers via the scheduler tick without any page load", async () => {
@@ -5160,7 +5818,7 @@ describe("MessageTriggerService", () => {
             order.push("reclaim");
             return [];
         });
-        jobRepository.findDuePendingSystemScope.mockImplementation(async () => {
+        jobRepository.consumeDispatchSlotsAndFindDueJobs.mockImplementation(async () => {
             order.push("due");
             return [];
         });
@@ -5208,7 +5866,7 @@ describe("MessageTriggerService", () => {
             logger: { error: (message: string, stack?: string) => void };
         }).logger;
         jest.spyOn(logger, "error").mockImplementation(() => undefined);
-        jobRepository.findDuePendingSystemScope.mockResolvedValue([firstJob, secondJob]);
+        jobRepository.consumeDispatchSlotsAndFindDueJobs.mockResolvedValue([firstJob, secondJob]);
         jobRepository.update.mockResolvedValueOnce(undefined).mockRejectedValueOnce(new Error("write failed"));
 
         await service.dispatchDueJobs();
@@ -5654,7 +6312,7 @@ describe("MessageTriggerService", () => {
 
         const variables = buildClientTemplateVariables(rule, {
             name: "자동발송 테스트",
-            phone: "010-6621-1878",
+            phone: "010-0000-6621",
             type: "A가1형",
             duration: 10,
             startDate: new Date("2026-08-31T00:00:00.000Z"),
@@ -5669,7 +6327,7 @@ describe("MessageTriggerService", () => {
         expect(variables["receiptUrl"]).toBeUndefined();
     });
 
-    it.each(CONFIGURABLE_SMS_TRIGGER_TEMPLATE_KEYS)(
+    it.each(CONFIGURABLE_SMS_TRIGGER_TEMPLATE_KEYS.filter((key) => MESSAGE_TRIGGER_TEMPLATE_CATALOG[key].allowedRecipientTypes.includes(MessageTriggerRecipientType.CLIENT)))(
         "builds every required %s variable from a complete client record",
         (templateKey) => {
             const rule = createRule({
@@ -5681,7 +6339,7 @@ describe("MessageTriggerService", () => {
 
             const variables = buildClientTemplateVariables(rule, {
                 name: "자동발송 테스트",
-                phone: "010-6621-1878",
+                phone: "010-0000-6621",
                 type: "A가1형",
                 duration: 10,
                 startDate: new Date("2026-08-31T00:00:00.000Z"),
@@ -5719,12 +6377,17 @@ describe("MessageTriggerService", () => {
             findActiveByEventTypes: jest.fn(),
             create: jest.fn(),
         };
+        // C4b: snapshot only rows actually submitted to this synthetic persistence boundary.
+        const history = new Map<string, MessageTriggerJobEntity & { canceledByUser: boolean }>();
         const jobRepository = {
             upsertPending: jest.fn().mockResolvedValue(undefined),
             upsertPendingForRuleGeneration: jest.fn().mockImplementation(async (job: MessageTriggerJobEntity) => {
                 await jobRepository.upsertPending(job);
+                history.set(job.dedupeKey, Object.assign(structuredClone(job), { canceledByUser: false }));
                 return job;
             }),
+            findForClientAutomationReview: jest.fn(async (scope: string, clientId: number, ruleIds: string[]) =>
+                [...history.values()].filter((row) => row.branchId === scope && row.clientId === clientId && ruleIds.includes(row.ruleId)).map((row) => structuredClone(row))),
             findPendingByRuleIdsAndClientId: jest.fn().mockResolvedValue([]),
             cancelPendingByClientContext: jest.fn().mockResolvedValue(0),
             cancelProcessingClaim: jest.fn().mockResolvedValue(true),
@@ -5749,6 +6412,9 @@ describe("MessageTriggerService", () => {
             update: jest.fn().mockResolvedValue(undefined),
         };
         const prisma = {
+            message_trigger_job: { findUnique: jest.fn(async ({ where }: { where: { dedupeKey: string } }) => {
+                const row = history.get(where.dedupeKey); return row ? structuredClone(row) : null;
+            }) },
             client: {
                 findFirst: jest.fn().mockResolvedValue({
                     id: 1,
@@ -6110,13 +6776,15 @@ describe("MessageTriggerService", () => {
             offsetType: MessageTriggerOffsetType.IMMEDIATE,
             templateKey: MessageTriggerTemplateKey.CLIENT_GREETING,
         });
-        const sync = createSyncService();
+        const sync = createSyncService({ createdAt: new Date("2026-06-27T00:00:00.000Z") });
         sync.ruleRepository.findActiveByEventTypes.mockResolvedValue([greetingRule]);
         const taskAutomationReference = createAgentAutomationTaskCommitReference({
             actionId: "70000000-0000-4000-8000-000000000004",
             taskId: "70000000-0000-4000-8000-000000000005",
             taskRevision: 4,
-            authorities: [{ id: "70000000-0000-4000-8000-000000000001", recordDigest: "a".repeat(64), scopeDigest: "b".repeat(64) }],
+            authorities: [{ id: "70000000-0000-4000-8000-000000000001", recordDigest: "a".repeat(64), scopeDigest: agentBindingHash({ branchId, clientId: 1,
+                clientIdentity: agentBindingHash({ version: 1, resource: "client", id: 1, createdAt: "2026-06-27T00:00:00.000Z" }),
+                kind: "client-rule", ruleId: "rule-task-reference", scheduleId: null, scheduleIdentity: null, recipientType: "client" }) }],
             coverages: [],
         });
 
@@ -6242,7 +6910,7 @@ describe("MessageTriggerService", () => {
         expect(waiting.payload.templateVariables["name"]).toBe("김수정");
         const dispatch = createDispatchService();
         waiting.scheduledFor = new Date();
-        dispatch.jobRepository.findDuePendingSystemScope.mockResolvedValue([waiting]);
+        dispatch.jobRepository.consumeDispatchSlotsAndFindDueJobs.mockResolvedValue([waiting]);
         await dispatch.service.dispatchDueJobs();
         expect(dispatch.deliveryService.sendJob).toHaveBeenCalledTimes(1);
         expect(waiting.status).toBe("sent");
@@ -6318,7 +6986,7 @@ describe("MessageTriggerService", () => {
             expect(waiting.status).toBe("pending");
             expect(waiting.payload.templateVariables["name"]).toBe("김수정");
             const dispatch = createDispatchService();
-            dispatch.jobRepository.findDuePendingSystemScope.mockResolvedValue([waiting]);
+            dispatch.jobRepository.consumeDispatchSlotsAndFindDueJobs.mockResolvedValue([waiting]);
             await dispatch.service.dispatchDueJobs();
             expect(dispatch.deliveryService.sendPreparedJob).toHaveBeenCalledTimes(1);
             expect(waiting.status).toBe("sent");
@@ -6654,6 +7322,34 @@ describe("MessageTriggerService", () => {
         } finally {
             jest.useRealTimers();
         }
+    });
+
+    it("TIME-3 resolves saved canonical order and interval3 into literal 21:00, 21:03 and 21:06 new catchups", async () => {
+        jest.useFakeTimers().setSystemTime(new Date("2026-11-03T12:00:00.000Z"));
+        try {
+            const rules = ["time3-first", "time3-second", "time3-third"].map(id => createRule({ id }));
+            const read = jest.fn().mockResolvedValue(JSON.stringify({
+                ...defaultMessageAutomationPolicy(), pastSendIntervalMinutes: 3,
+                pastRuleOrder: ["time3-third", "time3-first", "time3-second"],
+            }));
+            const realSettings = new SystemSettingService({ execute: read } as never, {} as never);
+            const sync = createSyncService({ createdAt: new Date("2026-11-02T00:00:00.000Z") });
+            sync.ruleRepository.findActiveByEventTypes.mockResolvedValue(rules);
+            sync.systemSettingService.getMessageAutomationPastTriggerConfig.mockImplementation(id => realSettings.getMessageAutomationPastTriggerConfig(id));
+            await sync.service.syncClientRulesForClient(branchId, 1, true);
+            const jobs = sync.jobRepository.upsertPending.mock.calls.map(([job]) => job);
+            expect(jobs.map(job => job.ruleId)).toEqual(["time3-third", "time3-first", "time3-second"]);
+            expect(jobs.map(job => job.scheduledFor.toISOString())).toEqual([
+                "2026-11-03T12:00:00.000Z", "2026-11-03T12:03:00.000Z", "2026-11-03T12:06:00.000Z",
+            ]);
+            expect(jobs.map(job => job.dedupeKey)).toEqual([
+                "time3-third:client:1:CLIENT:2026-11-03T12:00:00.000Z",
+                "time3-first:client:1:CLIENT:2026-11-03T12:03:00.000Z",
+                "time3-second:client:1:CLIENT:2026-11-03T12:06:00.000Z",
+            ]);
+            expect(jobs.map(job => job.payload.catchUp?.sequence)).toEqual([1, 2, 3]);
+            expect(jobs.map(job => job.payload.catchUp?.intervalMinutes)).toEqual([3, 3, 3]);
+        } finally { jest.useRealTimers(); }
     });
 
     it("includePast=true applies saved retroactive order and interval to due client jobs", async () => {
@@ -7736,4 +8432,180 @@ describe("MessageTriggerService", () => {
             expect(ctx.prisma.client.findFirst).not.toHaveBeenCalled();
         });
     });
+});
+
+
+// Phase7 C3 B: real impact, committed-record verification, fulfiller, core and final gates over synthetic persistence.
+async function deferredCaregiverIntentFixture(clientFuture = false, coverageOnly = false, denied = false) {
+    const id = (n: number) => `97000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
+    const branchId = id(1);
+    const client = { id: 7, branchId, name: "합성 고객", phone: "01000000007", createdAt: new Date("2026-10-01T00:00:00Z"), deletedAt: null,
+        serviceStatus: "waiting", bookingConfirmedAt: new Date("2026-10-01T00:00:00Z"), startDate: new Date(clientFuture ? "2026-11-06T00:00:00Z" : "2026-09-10T00:00:00Z"), endDate: new Date("2027-01-20T00:00:00Z") };
+    const clientRule = Object.assign(MessageTriggerRuleEntity.create({ branchId, name: "Existing CLIENT", isActive: true, eventType: MessageTriggerEventType.SERVICE_START,
+        offsetType: MessageTriggerOffsetType.SAME_DAY, offsetDays: 0, sendTime: "10:30", recipientType: MessageTriggerRecipientType.CLIENT,
+        templateKey: MessageTriggerTemplateKey.INFO, groupId: id(2) }), { id: id(3), jobsStale: false });
+    const careRule = Object.assign(MessageTriggerRuleEntity.create({ branchId, name: "Reviewed CARE", isActive: true, eventType: MessageTriggerEventType.SERVICE_START,
+        offsetType: MessageTriggerOffsetType.SAME_DAY, offsetDays: 0, sendTime: "10:30", recipientType: MessageTriggerRecipientType.PRIMARY_EMPLOYEE,
+        templateKey: MessageTriggerTemplateKey.CAREGIVER_SERVICE_START_NOTICE, groupId: id(4) }), { id: id(5), jobsStale: false });
+    const schedule = { id: 91, incarnationId: id(10), branchId, clientId: 7, replaced: false, terminatedAt: null,
+        startDate: new Date("2026-11-06T00:00:00Z"), endDate: new Date("2027-01-20T00:00:00Z"), primaryEmployeeId: 11, secondaryEmployeeId: null,
+        primaryEmployee: { id: 11, branchId, name: "합성 주", phone: "01000000011", deletedAt: null, smsAutomationEnabled: true }, secondaryEmployee: null };
+    const rows: MessageTriggerJobEntity[] = [];
+    const terminalRows: Array<Record<string, unknown>> = [];
+    const db = { $queryRaw: jest.fn(async () => [{ id: id(99), scheduled_for: new Date("2026-11-05T12:00:00Z") }]),
+        $queryRawUnsafe: jest.fn(async () => [{ exists: true }]), $executeRaw: jest.fn(async () => 1),
+        $transaction: async <T>(work: (tx: Prisma.TransactionClient) => Promise<T>): Promise<T> => work(db as never),
+        client: { findFirst: jest.fn(async () => client) }, branch: { findUnique: jest.fn(async () => ({ id: branchId, name: "합성 지점", systemTemplateSnapshot: null, smsSenderApprovalStatus: "approved" })) },
+        employee_schedule: { findMany: jest.fn(async () => [schedule]), findFirst: jest.fn(async () => schedule) },
+        message_trigger_job: { deleteMany: jest.fn(async () => ({ count: 1 })),
+            findFirst: jest.fn(async ({ where }: { where: { id: string } }) => structuredClone(rows.find((row) => row.id === where.id) ?? null)),
+            findMany: jest.fn(async ({ where }: { where: { id?: { in: string[] }; dedupeKey?: { startsWith: string } } }) => where.id
+                ? terminalRows.filter((row) => where.id!.in.includes(String(row["id"]))) : where.dedupeKey ? terminalRows.filter((row) => String(row["dedupeKey"]).startsWith(where.dedupeKey!.startsWith)) : terminalRows),
+            updateMany: jest.fn(async ({ where, data }: { where: { id: string; status?: string }; data: Partial<MessageTriggerJobEntity> }) => {
+                const row = rows.find((row) => row.id === where.id && (!where.status || row.status === where.status));
+                if (!row) return { count: 0 }; Object.assign(row, structuredClone(data)); return { count: 1 };
+            }),
+        } };
+    const rules = { findActiveByEventTypes: jest.fn(async () => [clientRule, ...(careRule.isActive ? [careRule] : [])]), findAll: jest.fn(async () => [clientRule, careRule]),
+        findGroup: jest.fn(async (_branch: string, group: string) => ({ id: group, version: 1 })), findGroupRules: jest.fn(async (_branch: string, group: string) => [clientRule, careRule].filter((rule) => rule.groupId === group)) };
+    const jobs = { findForClientAutomationReview: jest.fn(async () => []), upsertPendingForRuleGeneration: jest.fn(async (job: MessageTriggerJobEntity, _version: Date, _stale: boolean, preserve: boolean, tx: unknown) => {
+        expect(preserve).toBe(true); expect(tx).toBe(db);
+        const previous = rows.find((row) => row.dedupeKey === job.dedupeKey);
+        if (previous) return Object.assign(Object.create(MessageTriggerJobEntity.prototype), structuredClone(previous)) as MessageTriggerJobEntity;
+        const saved: MessageTriggerJobEntity = Object.assign(Object.create(MessageTriggerJobEntity.prototype), structuredClone(job), { id: id(20 + rows.length) }); rows.push(structuredClone(saved)); return saved;
+    }) };
+    const approval = { isApproved: jest.fn(async () => true) }; const activation = { getTriggerDispatchEnabled: jest.fn(async () => true) };
+    const sources = new ClientAutomationSourceReader(db as never, rules as never, {} as never, approval as never, undefined, activation as never);
+    jest.spyOn(sources, "readClientAutomationSettings").mockImplementation(async () => ({ status: "available", rules: [clientRule, careRule], defaultsPresent: true,
+        dispatchEnabled: true, senderApproved: true, senderApprovedAt: null, pastTriggerEnabled: true, pastTriggerConfig: { sendIntervalMinutes: 3, ruleOrder: [] } }));
+    jest.spyOn(sources, "readClientAutomationSchedules").mockResolvedValue([]); jest.spyOn(sources, "readClientAutomationServiceRecordLinks").mockResolvedValue([]);
+    const templates = new CaregiverTemplateResolverService(db as never), recipients = new MessageTriggerRecipientResolverService(sources, templates, rules as never);
+    const lock = new MessageAutomationBranchLockService(db as never), records = new AgentAutomationRecordStoreService(lock);
+    const sender = { read: () => ({ availability: "available", identityDigest: "a".repeat(64) }) };
+    const authority = new AgentAutomationJobAuthorityService(new AgentAutomationAuthorityService(records), sources, sender as never, undefined, recipients);
+    const gate = new AgentAutomationDeliveryGateService(db as never, lock, authority);
+    const aligo = { sendSms: jest.fn(async (request: unknown) => ({ response: { result_code: 1, message: "성공", msg_id: 9876, success_cnt: 1, error_cnt: 0 }, request })) };
+    const delivery = new SmsTriggerDeliveryService(aligo as never, { getByKeyForBranch: async () => ({ id: "synthetic-info", content: "{{clientName}} 안내", requiredVariables: [], customVariables: [], updatedAt: new Date("2026-10-01T00:00:00Z") }) } as never,
+        { save: async (log: unknown) => log } as never, undefined, undefined, gate, undefined, { getMessageAutomationPolicyConfig: async () => ({ configuration: defaultMessageAutomationPolicy() }) } as never, templates);
+    const core = new MessageTriggerService(db as never, delivery as never, approval as never, rules as never, jobs as never, {} as never, {} as never, {} as never,
+        undefined, undefined, activation as never, lock, sources, gate, undefined, undefined, recipients, templates);
+    const impact = new ClientAutomationImpactService(sources, delivery, sender as never, jobs as never, undefined, recipients);
+    const planned = await impact.planClientWrite(branchId, { kind: "update", clientId: 7, values: { name: "변경 합성 고객" } });
+    expect(planned.availability).toBe("available"); expect(planned.complete).toBe(true);
+    expect(planned.effects.map((effect) => effect.kind).sort()).toEqual(clientFuture ? ["caregiver-service", "client-rule"] : ["caregiver-service"]);
+    const origin = { kind: "task" as const, userId: id(11), actionId: id(6), taskId: id(7), taskRevision: 2, consentEventId: id(12) };
+    const recordedAt = "2026-11-05T12:00:00.000Z";
+    const authorities: AgentAutomationAuthority[] = [], coverages: AgentAutomationCoverage[] = [];
+    for (const [index, effect] of planned.effects.entries()) {
+        const scope: AgentAutomationScope = { branchId, clientId: 7, clientIdentity: agentBindingHash({ version: 1, resource: "client", id: 7, createdAt: client.createdAt.toISOString() }),
+            kind: effect.kind, ruleId: effect.ruleId, scheduleId: effect.scheduleId, scheduleIdentity: effect.scheduleId === null ? null : agentAutomationScheduleIdentity(id(10)), recipientType: effect.recipientType };
+        const coverage: AgentAutomationCoverage = { kind: "coverage", version: 1, id: id(100 + index), scope: agentAutomationCoverageScope(scope), sequence: 1, previousId: null, origin,
+            mutationDigest: "a".repeat(64), grandfatheredScopes: coverageOnly ? [{ scope, fingerprint: agentAutomationGrandfatheredFingerprint(effect) }] : [], recordedAt, recordDigest: "" };
+        coverage.recordDigest = agentAutomationCoverageRecordDigest(coverage); coverages.push(coverage);
+        if (!coverageOnly || effect.kind !== "client-rule") {
+            const record: AgentAutomationAuthority = { version: 1, id: id(110 + index), scope, sequence: 1, previousId: null, origin, decision: denied ? "deny" : "allow", noSend: denied,
+                effects: [effect], scopeEffectDigest: agentAutomationEffectDigest([effect]), reviewedEffectDigest: agentAutomationEffectDigest([effect]), reviewedPolicyDigest: effect.policyDigest, recordedAt, recordDigest: "" };
+            record.recordDigest = agentAutomationRecordDigest(record); authorities.push(record);
+        }
+    }
+    for (const record of [...authorities, ...coverages]) {
+        const terminal = createAgentAutomationTerminalRecord(record, { version: 1, kind: "task", actionId: id(6), userId: id(11), taskId: id(7), taskRevision: 2,
+            questionRef: id(13), inputHash: "a".repeat(64), capability: "clients.update", resourceId: 7, receiptDigest: "a".repeat(64), recordedAt });
+        terminalRows.push({ id: record.id, branchId, ruleId: "system:message_automation_intent", dedupeKey: agentAutomationRecordKey(record), status: "canceled", cancelReason: "agent_automation_authority_record",
+            canceledAt: new Date(recordedAt), scheduledFor: new Date(recordedAt), sentAt: null, clientId: null, employeeScheduleId: null, recipientPhone: null, recipientType: "CLIENT", templateKey: "CLIENT_GREETING",
+            nextAttemptAt: null, claimToken: null, attempts: 0, canceledByUser: false, payload: { agentAutomationRecord: terminal } });
+    }
+    const reference = agentAutomationTaskCommitReference({ actionId: id(6), taskId: id(7), taskRevision: 2, batch: { authorities, coverages } });
+    expect(await records.verifyTaskCommitReference(db as never, reference, branchId)).toBe(true);
+    client.name = "변경 합성 고객";
+    const fulfill = (taskReference: AgentAutomationTaskCommitReference | undefined = reference, taskOrigin = true) => fulfillClientMessageAutomationIntent({ prisma: db as never, triggerService: core,
+        branchId, clientId: 7, includePast: true, suppressGreeting: false, taskOrigin, taskAutomationReference: taskReference });
+    const send = async (ruleId: string) => {
+        const stored = rows.find((row) => row.ruleId === ruleId)!;
+        const job: MessageTriggerJobEntity = Object.assign(Object.create(MessageTriggerJobEntity.prototype), structuredClone(stored));
+        job.markProcessing("isolation-claim"); Object.assign(stored, structuredClone(job));
+        const render = (candidate: MessageTriggerJobEntity, tx: Parameters<typeof delivery.resolveCanonicalDeliverySnapshot>[1]) => delivery.resolveCanonicalDeliverySnapshot(candidate, tx);
+        if ((await gate.authorizePreparation(job, render as never, async () => ({ kind: "allow" }))).kind !== "allow") return false;
+        const prepared = await delivery.prepareJob(job); if (!prepared) return false; Object.assign(stored, structuredClone(job));
+        const permission = await gate.authorizeDispatch(job, prepared, render as never, async (tx) => {
+            const result = await tx.message_trigger_job.updateMany({ where: { id: job.id, status: "processing", claimToken: job.claimToken }, data: { status: "dispatching" } });
+            return result.count === 1 ? { kind: "allow" } : { kind: "lost" };
+        });
+        if (permission.kind !== "allow") return false; job.status = "dispatching";
+        return delivery.sendPreparedJob(job, prepared);
+    };
+    return { branchId, client, clientRule, careRule, rows, terminalRows, db, jobs, rules, core, planned, records, reference, fulfill, aligo, delivery, gate, send };
+}
+
+describe("Phase7 C3 deferred reviewed-family isolation", () => {
+    beforeEach(() => { jest.useFakeTimers(); jest.setSystemTime(new Date("2026-11-05T12:00:00Z")); });
+    afterEach(() => jest.useRealTimers());
+    it.each([false, true])("caregiver active=%s never admits an unreviewed CLIENT during actual intent consumption", async (active) => {
+        const f = await deferredCaregiverIntentFixture(); f.careRule.isActive = active;
+        expect(await f.fulfill()).toBe(true);
+        expect(f.jobs.upsertPendingForRuleGeneration.mock.calls.filter(([job]) => job.recipientType === "CLIENT")).toEqual([]);
+        expect(f.rows.map((job) => [job.ruleId, job.status])).toEqual(active ? [[f.careRule.id, "pending"]] : []);
+        expect(f.db.message_trigger_job.deleteMany).toHaveBeenCalledTimes(1); expect(f.aligo.sendSms).not.toHaveBeenCalled();
+    });
+    it.each([false, true])("permits real mixed CLIENT+CARE committed authority, coverage-only=%s", async (coverage) => {
+        const f = await deferredCaregiverIntentFixture(true, coverage); expect(await f.fulfill()).toBe(true);
+        expect(f.rows.map((job) => [job.ruleId, job.status]).sort()).toEqual([[f.clientRule.id, "pending"], [f.careRule.id, "pending"]].sort());
+        expect(f.jobs.upsertPendingForRuleGeneration).toHaveBeenCalledTimes(2); expect(f.aligo.sendSms).not.toHaveBeenCalled();
+        expect(await f.send(f.clientRule.id)).toBe(true);
+        expect(f.aligo.sendSms).toHaveBeenCalledTimes(1); expect(f.aligo.sendSms).toHaveBeenCalledWith(expect.objectContaining({ receiver: "01000000007", message: "변경 합성 고객 안내" }));
+    });
+    it.each(["unknown", "non-client-coverage", "wrong-client", "missing"])("refuses %s CLIENT carrier before any CLIENT upsert", async (mode) => {
+        const f = await deferredCaregiverIntentFixture(); f.careRule.isActive = false;
+        const altered = createAgentAutomationTaskCommitReference({ ...f.reference, authorities: mode === "non-client-coverage" ? [] : f.reference.authorities.map((ref) => ({ ...ref, scopeDigest: "b".repeat(64) })),
+            coverages: mode === "missing" ? f.reference.coverages : f.reference.coverages.map((ref) => ({ ...ref, scopeDigest: mode === "non-client-coverage" ? ref.scopeDigest : "c".repeat(64) })) });
+        await f.core.syncClientRulesForClient(f.branchId, 7, true, false, { preserveExisting: true, stableBatchAt: new Date("2026-11-05T12:00:00Z"), taskOrigin: true,
+            ...(mode !== "missing" ? { taskAutomationReference: altered } : {}) });
+        expect(f.jobs.upsertPendingForRuleGeneration).not.toHaveBeenCalled(); expect(f.db.message_trigger_job.updateMany).not.toHaveBeenCalled(); expect(f.aligo.sendSms).not.toHaveBeenCalled();
+    });
+    it("preserves ordinary legacy CLIENT processing and final delivery without task records", async () => {
+        const f = await deferredCaregiverIntentFixture(true); f.careRule.isActive = false; f.terminalRows.splice(0);
+        await f.core.syncClientRulesForClient(f.branchId, 7, true, false, { preserveExisting: true, stableBatchAt: new Date("2026-11-05T12:00:00Z") });
+        expect(f.rows.map((job) => [job.ruleId, job.status])).toEqual([[f.clientRule.id, "pending"]]);
+        expect(await f.send(f.clientRule.id)).toBe(true); expect(f.aligo.sendSms).toHaveBeenCalledTimes(1);
+    });
+    it("does not touch any unrelated existing CLIENT/assignment/link rows after the last CARE deactivation", async () => {
+        const f = await deferredCaregiverIntentFixture(); f.careRule.isActive = false;
+        const old = ["old-client", "old-assignment", "system:service_record_link"].map((ruleId, index) => MessageTriggerJobEntity.create({ branchId: f.branchId, ruleId, clientId: 7,
+            employeeScheduleId: index === 0 ? null : 91, recipientType: index === 0 ? MessageTriggerRecipientType.CLIENT : MessageTriggerRecipientType.PRIMARY_EMPLOYEE,
+            templateKey: index === 0 ? MessageTriggerTemplateKey.INFO : index === 1 ? MessageTriggerTemplateKey.EMPLOYEE_ASSIGNED : MessageTriggerTemplateKey.SERVICE_RECORD_LINK,
+            scheduledFor: new Date("2026-09-10T00:00:00Z"), dedupeKey: ruleId, payload: { memberId: "7", recipientName: "old", recipientPhone: "01000000007", templateVariables: {} } }));
+        f.rows.push(...old); const before = structuredClone(f.rows);
+        expect(await f.fulfill()).toBe(true); expect(f.rows).toEqual(before);
+        expect(f.jobs.upsertPendingForRuleGeneration).not.toHaveBeenCalled(); expect(f.db.message_trigger_job.updateMany).not.toHaveBeenCalled(); expect(f.aligo.sendSms).not.toHaveBeenCalled();
+    });
+
+
+    it.each(["stale-id", "wrong-digest", "coverage-digest"])("refuses %s with the real authoritative lineage retained", async (mode) => {
+        const f = await deferredCaregiverIntentFixture(true, mode === "coverage-digest"); f.careRule.isActive = false;
+        const altered = createAgentAutomationTaskCommitReference({ ...f.reference,
+            authorities: f.reference.authorities.map((ref, index) => mode === "stale-id" ? { ...ref, id: index === 0 ? "97000000-0000-4000-8000-000000000999" : "97000000-0000-4000-8000-000000000998" } : mode === "wrong-digest" ? { ...ref, recordDigest: "b".repeat(64) } : ref),
+            coverages: f.reference.coverages.map((ref) => mode === "coverage-digest" ? { ...ref, recordDigest: "b".repeat(64) } : ref) });
+        expect(f.terminalRows.length).toBeGreaterThan(0); expect(await f.fulfill(altered)).toBe(true);
+        expect(f.rows.map((job) => [job.ruleId, job.status])).toEqual([[f.clientRule.id, "canceled"]]); expect(f.aligo.sendSms).not.toHaveBeenCalled();
+    });
+    it("retains no-send denial through actual committed records and materialization authority", async () => {
+        const f = await deferredCaregiverIntentFixture(true, false, true); f.careRule.isActive = false;
+        expect(await f.fulfill()).toBe(true);
+        expect(f.rows.map((job) => [job.ruleId, job.status])).toEqual([[f.clientRule.id, "canceled"]]); expect(f.aligo.sendSms).not.toHaveBeenCalled();
+    });
+    it("rechecks retained consent and current source before the final CLIENT provider permit", async () => {
+        const f = await deferredCaregiverIntentFixture(true, true); f.careRule.isActive = false;
+        expect(await f.fulfill()).toBe(true); expect(f.rows[0]?.status).toBe("pending");
+        f.client.name = "승인 이후 다른 이름";
+        expect(await f.send(f.clientRule.id)).toBe(false); expect(f.aligo.sendSms).not.toHaveBeenCalled();
+    });
+
+    it("replays the same real committed CLIENT reference and stable batch without a second occurrence", async () => {
+        const f = await deferredCaregiverIntentFixture(true, true); f.careRule.isActive = false;
+        expect(await f.fulfill()).toBe(true); const before = structuredClone(f.rows);
+        await f.core.syncClientRulesForClient(f.branchId, 7, true, false, { preserveExisting: true, taskOrigin: true, taskAutomationReference: f.reference,
+            stableBatchAt: new Date("2026-11-05T12:00:00Z") });
+        expect(f.rows).toEqual(before); expect(f.rows).toHaveLength(1); expect(f.aligo.sendSms).not.toHaveBeenCalled();
+    });
+
 });

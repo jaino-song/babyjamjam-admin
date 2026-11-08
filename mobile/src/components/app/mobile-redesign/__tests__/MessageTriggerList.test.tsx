@@ -1,17 +1,21 @@
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { QueryClient, QueryClientProvider, onlineManager } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 
 import { MessageTriggerList } from "../MessageTriggerList";
 import {
-  useMessageTriggerRules,
   useUpdateMessageTriggerRuleBranchActivation,
   useUpdateMessageTriggerRule,
 } from "@/features/message-triggers/hooks/use-message-triggers";
 import type { MessageTriggerRule } from "@/features/message-triggers/types";
+import type { MessageTriggerRuleGroupList, MessageTriggerRuleGroupView } from "@babyjamjam/shared/types/message";
+import { messageRuleGroupsApi } from "@/services/api";
 import { fetchAllMessageLogs } from "@/lib/messages/logs";
 
+let mockBranchId: string | null = "branch-1";
+jest.mock("@/hooks/useGetAuthUser", () => ({ useGetAuthUser: () => ({ data: { branchId: mockBranchId } }) }));
+jest.mock("@/services/api", () => ({ messageRuleGroupsApi: { list: jest.fn(), update: jest.fn() } }));
+
 jest.mock("@/features/message-triggers/hooks/use-message-triggers", () => ({
-  useMessageTriggerRules: jest.fn(),
   useUpdateMessageTriggerRuleBranchActivation: jest.fn(),
   useUpdateMessageTriggerRule: jest.fn(),
 }));
@@ -20,7 +24,8 @@ jest.mock("@/lib/messages/logs", () => ({
   fetchAllMessageLogs: jest.fn(),
 }));
 
-const mockUseMessageTriggerRules = useMessageTriggerRules as jest.Mock;
+const mockGroupQuery = jest.fn();
+const GROUPS_KEY = ["message-trigger-rule-groups", "branch-1"] as const;
 const mockUseUpdateMessageTriggerRule = useUpdateMessageTriggerRule as jest.Mock;
 const mockUseUpdateMessageTriggerRuleBranchActivation = useUpdateMessageTriggerRuleBranchActivation as jest.Mock;
 const mockFetchAllMessageLogs = fetchAllMessageLogs as jest.Mock;
@@ -58,17 +63,25 @@ function monthLabel() {
   return new Intl.DateTimeFormat("ko-KR", { month: "numeric" }).format(new Date());
 }
 
-function renderPage(onEdit?: (rule: MessageTriggerRule) => void) {
+function renderPage(onEdit?: (rule: MessageTriggerRule) => void, { groups = [], selectedId, onEditGroup, seedGroups = true }: { groups?: MessageTriggerRuleGroupView[]; selectedId?: string; onEditGroup?: (group: MessageTriggerRuleGroupView) => void; seedGroups?: boolean } = {}) {
   const queryClient = new QueryClient({
     defaultOptions: {
-      queries: { retry: false },
+      queries: { retry: false, staleTime: Infinity, retryOnMount: false, refetchOnMount: false },
       mutations: { retry: false },
     },
   });
-
+  if (seedGroups) {
+    const fixture = mockGroupQuery();
+    const query = queryClient.getQueryCache().build<MessageTriggerRuleGroupList, Error>(queryClient, { queryKey: GROUPS_KEY });
+    if (fixture.isPaused && fixture.data === undefined) onlineManager.setOnline(false);
+    const data = fixture.data === undefined ? undefined : { groups, standaloneRules: fixture.data };
+    // Seed the actual QueryClient state formerly controlled through the removed
+    // rules hook. Error/paused/loading cases still exercise useQuery itself.
+    query.setState({ data, dataUpdatedAt: data ? Date.now() : 0, status: fixture.isError ? "error" : data ? "success" : "pending", error: fixture.isError ? new Error("group read unavailable") : null, fetchStatus: fixture.isPaused ? "paused" : fixture.isFetching || fixture.isLoading ? "fetching" : "idle" });
+  }
   return render(
     <QueryClientProvider client={queryClient}>
-      <MessageTriggerList data-component="mobile_messages_triggers_test_list" canManage onEdit={onEdit} />
+      <MessageTriggerList data-component="mobile_messages_triggers_test_list" canManage onEdit={onEdit} onEditGroup={onEditGroup} selectedId={selectedId} />
     </QueryClientProvider>,
   );
 }
@@ -78,6 +91,11 @@ describe("MessageTriggerList", () => {
   const branchActivationMutate = jest.fn();
 
   beforeEach(() => {
+    onlineManager.setOnline(true);
+    mockBranchId = "branch-1";
+    jest.mocked(messageRuleGroupsApi.list).mockReset();
+    jest.mocked(messageRuleGroupsApi.update).mockReset();
+    jest.mocked(messageRuleGroupsApi.list).mockImplementation(() => new Promise<MessageTriggerRuleGroupList>(() => undefined));
     updateMutate.mockClear();
     mockFetchAllMessageLogs.mockResolvedValue([]);
     mockUseUpdateMessageTriggerRule.mockReturnValue({
@@ -88,7 +106,7 @@ describe("MessageTriggerList", () => {
       isPending: false,
       mutate: branchActivationMutate,
     });
-    mockUseMessageTriggerRules.mockReturnValue({
+    mockGroupQuery.mockReturnValue({
       data: [],
       isError: false,
       isLoading: false,
@@ -96,11 +114,12 @@ describe("MessageTriggerList", () => {
   });
 
   afterEach(() => {
+    onlineManager.setOnline(true);
     jest.clearAllMocks();
   });
 
   it("renders only actual trigger rules instead of fallback rows", async () => {
-    mockUseMessageTriggerRules.mockReturnValue({
+    mockGroupQuery.mockReturnValue({
       data: [createRule({ sendTime: "14:37" })],
       isError: false,
       isLoading: false,
@@ -161,7 +180,7 @@ describe("MessageTriggerList", () => {
   });
 
   it("displays the computed service-record timing instead of its carrier rule timing", () => {
-    mockUseMessageTriggerRules.mockReturnValue({
+    mockGroupQuery.mockReturnValue({
       data: [createRule({
         id: "system:service_record_link", branchId: null,
         name: "제공기록지 작성 링크", offsetType: "SAME_DAY", offsetDays: 0,
@@ -175,7 +194,7 @@ describe("MessageTriggerList", () => {
   });
 
   it("updates the selected real rule when the toggle row is pressed", async () => {
-    mockUseMessageTriggerRules.mockReturnValue({
+    mockGroupQuery.mockReturnValue({
       data: [createRule({ isActive: true })],
       isError: false,
       isLoading: false,
@@ -192,7 +211,7 @@ describe("MessageTriggerList", () => {
   });
 
   it("uses branch activation for global rules without sending the content DTO", async () => {
-    mockUseMessageTriggerRules.mockReturnValue({
+    mockGroupQuery.mockReturnValue({
       data: [createRule({ id: "global-rule", branchId: null, isActive: true })],
       isError: false,
       isLoading: false,
@@ -210,7 +229,7 @@ describe("MessageTriggerList", () => {
   });
 
   it("disables a global-locked rule toggle", async () => {
-    mockUseMessageTriggerRules.mockReturnValue({
+    mockGroupQuery.mockReturnValue({
       data: [createRule({ branchId: null, isLockedByGlobal: true })],
       isError: false,
       isLoading: false,
@@ -224,7 +243,7 @@ describe("MessageTriggerList", () => {
   it("separates rule editing from the active toggle in management mode", async () => {
     const onEdit = jest.fn();
     const rule = createRule({ isActive: true });
-    mockUseMessageTriggerRules.mockReturnValue({ data: [rule], isError: false, isLoading: false });
+    mockGroupQuery.mockReturnValue({ data: [rule], isError: false, isLoading: false });
 
     renderPage(onEdit);
 
@@ -237,7 +256,7 @@ describe("MessageTriggerList", () => {
   });
 
   it("renders the service information trigger seven days before service start", async () => {
-    mockUseMessageTriggerRules.mockReturnValue({
+    mockGroupQuery.mockReturnValue({
       data: [
         createRule({
           id: "rule-service-info",
@@ -269,7 +288,7 @@ describe("MessageTriggerList", () => {
   });
 
   it.each([false, true])("shows an unknown count and skeleton for a cold rules load (paused=%s)", (isPaused) => {
-    mockUseMessageTriggerRules.mockReturnValue({ data: undefined, isPending: true, isLoading: !isPaused, isError: false, isFetching: !isPaused, isPaused, status: "pending", fetchStatus: isPaused ? "paused" : "fetching" });
+    mockGroupQuery.mockReturnValue({ data: undefined, isPending: true, isLoading: !isPaused, isError: false, isFetching: !isPaused, isPaused, status: "pending", fetchStatus: isPaused ? "paused" : "fetching" });
     const { container } = renderPage();
     expect(screen.getByText("—개")).toBeInTheDocument();
     expect(screen.queryByText("0개")).not.toBeInTheDocument();
@@ -279,14 +298,15 @@ describe("MessageTriggerList", () => {
   });
 
   it("preserves the empty state for disabled pending rules that are not paused", () => {
-    mockUseMessageTriggerRules.mockReturnValue({ data: undefined, isPending: true, isLoading: false, isError: false, isFetching: false, isPaused: false, status: "pending", fetchStatus: "idle" });
+    mockBranchId = null;
+    mockGroupQuery.mockReturnValue({ data: undefined, isPending: true, isLoading: false, isError: false, isFetching: false, isPaused: false, status: "pending", fetchStatus: "idle" });
     renderPage();
     expect(screen.getByText("0개")).toBeInTheDocument();
     expect(screen.getByText("등록된 자동 전송 트리거가 없습니다.")).toBeInTheDocument();
   });
 
   it("keeps cached rules and count during a paused refetch", () => {
-    mockUseMessageTriggerRules.mockReturnValue({ data: [createRule()], isLoading: false, isError: false, isPaused: true });
+    mockGroupQuery.mockReturnValue({ data: [createRule()], isLoading: false, isError: false, isPaused: true });
     const { container } = renderPage();
     expect(screen.getByText("실제 서비스 시작 규칙")).toBeInTheDocument();
     expect(screen.getByText("1개")).toBeInTheDocument();
@@ -294,8 +314,7 @@ describe("MessageTriggerList", () => {
   });
 
   it("shows an unavailable count and retries a failed first rules load", () => {
-    const refetch = jest.fn();
-    mockUseMessageTriggerRules.mockReturnValue({ data: undefined, isLoading: false, isError: true, isFetching: false, refetch });
+    mockGroupQuery.mockReturnValue({ data: undefined, isLoading: false, isError: true, isFetching: false });
     renderPage();
     expect(screen.getByText("—개")).toBeInTheDocument();
     expect(screen.queryByText("0개")).not.toBeInTheDocument();
@@ -304,11 +323,12 @@ describe("MessageTriggerList", () => {
     expect(alert).toHaveAttribute("data-size", "panel");
     expect(alert).toHaveTextContent("자동 전송 트리거를 불러오지 못했습니다.");
     fireEvent.click(within(alert).getByRole("button", { name: "다시 시도" }));
-    expect(refetch).toHaveBeenCalledTimes(1);
+    expect(messageRuleGroupsApi.list).toHaveBeenCalledTimes(1);
+    expect(messageRuleGroupsApi.list).toHaveBeenCalledWith("branch-1");
   });
 
   it("retains a cached successful zero count after a failed refetch", () => {
-    mockUseMessageTriggerRules.mockReturnValue({ data: [], isLoading: false, isError: true, isFetching: false, refetch: jest.fn() });
+    mockGroupQuery.mockReturnValue({ data: [], isLoading: false, isError: true, isFetching: false });
     renderPage();
     expect(screen.getByText("0개")).toBeInTheDocument();
     expect(screen.queryByText("—개")).not.toBeInTheDocument();
@@ -317,8 +337,7 @@ describe("MessageTriggerList", () => {
   });
 
   it.each([false, true])("keeps cached rules and count above a retryable inline notice (fetching=%s)", (isFetching) => {
-    const refetch = jest.fn();
-    mockUseMessageTriggerRules.mockReturnValue({ data: [createRule()], isLoading: false, isError: true, isFetching, refetch });
+    mockGroupQuery.mockReturnValue({ data: [createRule()], isLoading: false, isError: true, isFetching });
     renderPage();
     const alert = screen.getByRole("alert");
     const row = screen.getByText("실제 서비스 시작 규칙");
@@ -329,9 +348,11 @@ describe("MessageTriggerList", () => {
     const retry = within(alert).getByRole("button", { name: "다시 시도" });
     if (isFetching) {
       expect(retry).toBeDisabled();
+      expect(messageRuleGroupsApi.list).not.toHaveBeenCalled();
     } else {
       fireEvent.click(retry);
-      expect(refetch).toHaveBeenCalledTimes(1);
+      expect(messageRuleGroupsApi.list).toHaveBeenCalledTimes(1);
+      expect(messageRuleGroupsApi.list).toHaveBeenCalledWith("branch-1");
     }
   });
 
@@ -341,7 +362,7 @@ describe("MessageTriggerList", () => {
   it("hides the edit affordance but keeps the toggle live for a branchless system rule (M5)", async () => {
     const onEdit = jest.fn();
     const rule = createRule({ id: "rule-system", branchId: null, name: "수동 발송 규칙" });
-    mockUseMessageTriggerRules.mockReturnValue({ data: [rule], isError: false, isLoading: false });
+    mockGroupQuery.mockReturnValue({ data: [rule], isError: false, isLoading: false });
 
     renderPage(onEdit);
 
@@ -358,7 +379,7 @@ describe("MessageTriggerList", () => {
 
   it("keeps the row toggle live for a branchless system rule when no onEdit is provided (M5)", async () => {
     const rule = createRule({ id: "rule-system", branchId: null, name: "수동 발송 규칙" });
-    mockUseMessageTriggerRules.mockReturnValue({ data: [rule], isError: false, isLoading: false });
+    mockGroupQuery.mockReturnValue({ data: [rule], isError: false, isLoading: false });
 
     renderPage();
 
@@ -368,4 +389,26 @@ describe("MessageTriggerList", () => {
     expect(branchActivationMutate).toHaveBeenCalledWith({ id: "rule-system", dto: { isActive: false } });
     expect(updateMutate).not.toHaveBeenCalled();
   });
+  it("fetches a BOTH parent plus standalone rules through the branch-scoped group endpoint without child duplicates", async () => {
+    const primary = createRule({ id: "child-primary", groupId: "group-both", name: "주 규칙", recipientType: "PRIMARY_EMPLOYEE", templateKey: "CAREGIVER_SERVICE_START_NOTICE" });
+    const secondary = createRule({ ...primary, id: "child-secondary", name: "보조 규칙", recipientType: "SECONDARY_EMPLOYEE" });
+    const group: MessageTriggerRuleGroupView = { id: "group-both", branchId: "branch-1", name: "주보조 배정 안내", recipientMode: "BOTH_EMPLOYEES", version: 3, createdAt: "2026-11-01", updatedAt: "2026-11-01", deletedAt: null, rules: [primary, secondary], eventType: "SERVICE_START", offsetType: "BEFORE_DAYS", offsetDays: 1, sendTime: "09:00", targetClientStatus: "all", retryOnFailure: true, isActive: true, recipientTemplates: { PRIMARY_EMPLOYEE: "CAREGIVER_SERVICE_START_NOTICE", SECONDARY_EMPLOYEE: "CAREGIVER_SERVICE_START_NOTICE" } };
+    jest.mocked(messageRuleGroupsApi.list).mockResolvedValue({ groups: [group], standaloneRules: [createRule({ id: "system-rule", branchId: null, name: "기존 시스템 안내" })] });
+    const onEditGroup = jest.fn();
+    renderPage(jest.fn(), { seedGroups: false, selectedId: "group-both", onEditGroup });
+    const parent = await screen.findByRole("button", { name: "주보조 배정 안내 설정" });
+    expect(parent).toHaveAttribute("aria-current", "true");
+    expect(screen.getAllByText("주보조 배정 안내")).toHaveLength(1);
+    expect(screen.getByText("기존 시스템 안내")).toBeInTheDocument();
+    expect(screen.getByText("2개")).toBeInTheDocument();
+    expect(screen.queryByText("주 규칙")).not.toBeInTheDocument();
+    expect(screen.queryByText("보조 규칙")).not.toBeInTheDocument();
+    expect(screen.getByText(/주보조모두 · 배정 일정 기준/)).toBeInTheDocument();
+    fireEvent.click(parent);
+    expect(onEditGroup).toHaveBeenCalledWith(group);
+    expect(messageRuleGroupsApi.list).toHaveBeenCalledWith("branch-1");
+    expect(updateMutate).not.toHaveBeenCalled();
+    expect(branchActivationMutate).not.toHaveBeenCalled();
+  });
+
 });

@@ -25,6 +25,7 @@
         "src/utils/service-record-input.ts",
         "src/utils/service-record-schedule.ts",
         "src/types/service-record.ts",
+        "src/types/start-date-change.ts",
         "src/errors/problem-details.ts",
         "src/types/system-template.ts"
     ]

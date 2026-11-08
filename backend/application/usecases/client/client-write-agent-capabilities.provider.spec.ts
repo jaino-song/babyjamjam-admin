@@ -1805,3 +1805,30 @@ describe("ClientWriteAgentCapabilitiesProvider", () => {
         });
     });
 });
+
+describe("RULE-2 r4.19 existing client-intent staging owner", () => {
+    it.each([
+        ["caregiver-only", "yes", false, ["caregiver-service"], "refresh", 1],
+        ["mixed", "yes", false, ["client-rule", "caregiver-service"], "refresh", 1],
+        ["denied", "no", false, ["caregiver-service"], "refresh", 0],
+        ["no-send", "yes", true, ["caregiver-service"], "refresh", 0],
+        ["cancel-only", "yes", false, ["caregiver-service"], "cancel", 0],
+    ] as const)("%s stages only its authorized existing client intent", async (_label, choice, noSend, kinds, change, expected) => {
+        const transaction = { marker: "caller transaction" };
+        const intent = { persistClientIntent: jest.fn(async () => undefined), persistScheduleIntent: jest.fn(async () => undefined) };
+        const provider = new ClientWriteAgentCapabilitiesProvider(undefined as never, undefined as never, undefined as never, undefined as never,
+            undefined as never, undefined as never, undefined as never, undefined, undefined, intent as never);
+        const branchId = "77000000-0000-4000-8000-000000000001";
+        const artifact = { actionId: "77000000-0000-4000-8000-000000000002", taskId: "77000000-0000-4000-8000-000000000003", taskRevision: 2,
+            branchId, consent: { choice }, noSend, impact: { effects: kinds.map((kind) => ({ kind, change, scheduleId: kind === "client-rule" ? null : 91 })) } };
+        const batch = { authorities: [{ id: "77000000-0000-4000-8000-000000000004", recordDigest: "a".repeat(64), scope: {
+            branchId, clientId: 7, clientIdentity: "b".repeat(64), kind: "caregiver-service", ruleId: "caregiver-child", scheduleId: 91, scheduleIdentity: "c".repeat(64), recipientType: "primary-employee",
+        } }], coverages: [] };
+        await (provider as unknown as { stageTaskAutomation(tx: unknown, artifact: unknown, batch: unknown, clientId: number | null): Promise<void> })
+            .stageTaskAutomation(transaction, artifact, batch, 7);
+        expect(intent.persistClientIntent).toHaveBeenCalledTimes(expected);
+        expect(intent.persistScheduleIntent).not.toHaveBeenCalled();
+        if (expected) expect(intent.persistClientIntent).toHaveBeenCalledWith(transaction, expect.objectContaining({ branchId, clientId: 7,
+            includePast: true, suppressGreeting: false, taskOrigin: true, intentAt: expect.any(Date), taskAutomationReference: expect.objectContaining({ version: 1, actionId: artifact.actionId, taskId: artifact.taskId, taskRevision: 2 }) }));
+    });
+});

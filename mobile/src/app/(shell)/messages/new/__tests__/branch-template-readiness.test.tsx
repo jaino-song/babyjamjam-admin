@@ -2,10 +2,13 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 import NewMessagePage from "../page";
-import { api } from "@/lib/api/client";
 
+const mockApiPost = jest.fn();
+const mockDuplicateCheck = jest.fn();
+let mockBranchId = "branch-a";
 const mockUseSystemTemplate = jest.fn();
 const mockUseMessageTemplates = jest.fn();
+const mockUseSystemTemplates = jest.fn();
 let mockSearchParams = new URLSearchParams();
 
 const SYSTEM_TEMPLATE_KEYS = [
@@ -106,7 +109,7 @@ jest.mock("next/navigation", () => ({
 
 jest.mock("@/hooks/useGetAuthUser", () => ({
   useGetAuthUser: () => ({
-    data: { role: "user", branchRole: "manager" },
+    data: { id: "user-1", role: "user", branchRole: "manager", branchId: mockBranchId },
     isPending: false,
     isLoading: false,
     isFetching: false,
@@ -116,13 +119,7 @@ jest.mock("@/hooks/useGetAuthUser", () => ({
 
 jest.mock("@/features/system-templates/hooks", () => ({
   useSystemTemplate: (key: string) => mockUseSystemTemplate(key),
-  useSystemTemplates: () => ({
-    data: [],
-    isError: false,
-    isFetching: false,
-    isLoading: false,
-    isSuccess: true,
-  }),
+  useSystemTemplates: () => mockUseSystemTemplates(),
 }));
 
 jest.mock("@/hooks/use-message-templates", () => ({
@@ -140,7 +137,9 @@ jest.mock("@/hooks", () => ({
 
 jest.mock("@/lib/api/client", () => ({
   api: {
-    post: jest.fn(),
+    post: jest.fn((url: string, payload: unknown, config: unknown) => url === "/message-deliveries/sms/duplicate-check"
+      ? mockDuplicateCheck(url, payload, config)
+      : mockApiPost(url, payload, config)),
   },
 }));
 
@@ -185,18 +184,93 @@ function submitForm() {
 
 beforeEach(() => {
   jest.clearAllMocks();
+  mockBranchId = "branch-a";
+  mockDuplicateCheck.mockResolvedValue({ data: {
+    checkedAt: "2026-11-06T00:00:00.000Z", matchIds: [], latestSentAt: null, payloadHash: "hash-current",
+  } });
   mockSearchParams = new URLSearchParams();
   mockUseMessageTemplates.mockReturnValue({ data: [] });
+  mockUseSystemTemplates.mockReturnValue({ data: [], isSuccess: true, isLoading: false, isFetching: false, isError: false });
   SYSTEM_TEMPLATE_KEYS.forEach((key) => {
     templateQueries[key] = readyTemplate(key, `${key} 기본 문구`);
   });
   mockUseSystemTemplate.mockImplementation((key: string) => templateQueries[key]);
-  (api.post as jest.Mock).mockResolvedValue({
-    data: { result: { resultCode: 1, errorCount: 0 } },
+  mockApiPost.mockResolvedValue({
+    data: {
+      provider: "aligo_sms", triggerType: "immediate",
+      request: { receiver: "010-1234-5678", msgType: "SMS", testMode: false },
+      result: { resultCode: 1, message: "accepted", successCount: 1, errorCount: 0 },
+    },
   });
 });
 
 describe("messages/new branch template readiness", () => {
+  it.each(["CONTRACT_GUIDE", "MATERNAL_NOTICE", "PROVIDER_NOTICE", "SERVICE_RECORD_REMINDER"])(
+    "explains unsupported %s after an owner saves a body without posting", (key) => {
+      mockUseSystemTemplates.mockReturnValue({ data: [{ templateKey: key, name: key, content: "owner saved body", requiredVariables: [], customVariables: [] }], isSuccess: true });
+      mockSearchParams = new URLSearchParams({ template: key, body: "owner saved body" });
+      renderPage();
+      expect(screen.getByRole("button", { name: "즉시 발송" })).toBeEnabled();
+      submitForm();
+      expect(document.getElementById("template-select-message")).toHaveTextContent("이 템플릿은 직접 발송할 수 없습니다.");
+      expect(document.getElementById("template-select-message")).not.toHaveTextContent("불러오는 중");
+      expect(mockApiPost).not.toHaveBeenCalled();
+      expect(mockDuplicateCheck).not.toHaveBeenCalled();
+    },
+  );
+
+  it("explains an unknown deep link instead of sending its supplied body as direct composing", () => {
+    mockSearchParams = new URLSearchParams({ template: "UNKNOWN_TEMPLATE", body: "deep link body" });
+    renderPage();
+    expect(screen.getByRole("button", { name: "즉시 발송" })).toBeEnabled();
+    submitForm();
+    expect(document.getElementById("template-select-message")).toHaveTextContent("이 템플릿은 직접 발송할 수 없습니다.");
+    expect(mockApiPost).not.toHaveBeenCalled();
+    expect(mockDuplicateCheck).not.toHaveBeenCalled();
+  });
+
+  it("keeps service-record preparation guidance visible after pressing send", () => {
+    mockUseSystemTemplates.mockReturnValue({ data: [{ templateKey: "SERVICE_RECORD_LINK", name: "제공기록지 작성 요청", content: "stored link body", requiredVariables: [], customVariables: [] }], isSuccess: true });
+    mockSearchParams = new URLSearchParams({ template: "SERVICE_RECORD_LINK", body: "stored link body" });
+    renderPage();
+    expect(screen.getByRole("button", { name: "즉시 발송" })).toBeEnabled();
+    submitForm();
+    expect(document.getElementById("template-select-message")).toHaveTextContent("기록지 화면에서 보내 주세요");
+    expect(document.getElementById("template-select-message")).not.toHaveTextContent("불러오는 중");
+    expect(mockApiPost).not.toHaveBeenCalled();
+    expect(mockDuplicateCheck).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { data: undefined, isLoading: true, isError: false },
+    { data: undefined, isLoading: false, isError: true },
+  ])("shows a recoverable explanation for a user-template deep link while its list is unavailable (%j)", (query) => {
+    mockUseMessageTemplates.mockReturnValue(query);
+    mockSearchParams = new URLSearchParams({ template: "branch-template-1", body: "supplied custom body" });
+    renderPage();
+    expect(screen.getByRole("button", { name: "즉시 발송" })).toBeEnabled();
+    submitForm();
+    expect(document.getElementById("template-select-message")).toHaveTextContent("이 템플릿은 직접 발송할 수 없습니다.");
+    expect(mockApiPost).not.toHaveBeenCalled();
+    expect(mockDuplicateCheck).not.toHaveBeenCalled();
+  });
+
+  it("uses the server names, order and groups in the compose selector and disables create-only entries", async () => {
+    mockUseSystemTemplates.mockReturnValue({ data: [
+      { templateKey: "GREETING", name: "첫 인사", group: "mother", groupLabel: "산모 대상", content: "stored" },
+      { templateKey: "CONTRACT_GUIDE", name: "계약서 작성 안내", group: "mother", groupLabel: "산모 대상", content: "" },
+      { templateKey: "PROVIDER_NOTICE", name: "제공인력 안내문", group: "provider", groupLabel: "제공인력 대상", content: "" },
+    ], isSuccess: true });
+    renderPage();
+    fireEvent.keyDown(screen.getByRole("combobox", { name: /템플릿 선택/ }), { key: "ArrowDown" });
+    await waitFor(() => expect(screen.getByRole("option", { name: "첫 인사" })).toBeInTheDocument());
+    expect(screen.getAllByRole("option").map((option) => option.textContent)).toEqual(["첫 인사", "계약서 작성 안내", "제공인력 안내문", "직접 작성"]);
+    expect(screen.getByRole("option", { name: "계약서 작성 안내" })).toHaveAttribute("aria-disabled", "true");
+    expect(screen.getByRole("option", { name: "제공인력 안내문" })).toHaveAttribute("aria-disabled", "true");
+    expect(screen.getByText("산모 대상")).toBeInTheDocument();
+    expect(screen.getByText("제공인력 대상")).toBeInTheDocument();
+  });
+
   it("blocks sending until the current branch template query resolves", async () => {
     templateQueries.GREETING = pendingTemplate();
     const view = renderPage();
@@ -206,7 +280,8 @@ describe("messages/new branch template readiness", () => {
     expect(screen.getByRole("button", { name: "즉시 발송" })).toBeEnabled();
     submitForm();
 
-    expect(api.post).not.toHaveBeenCalled();
+    expect(mockApiPost).not.toHaveBeenCalled();
+    expect(mockDuplicateCheck).not.toHaveBeenCalled();
     // The problem belongs to the template field, so it shows in that field's label-row slot.
     expect(document.getElementById("template-select-message")).toHaveTextContent("템플릿을 불러오는 중이에요");
 
@@ -230,7 +305,8 @@ describe("messages/new branch template readiness", () => {
     await addManualRecipient();
     submitForm();
 
-    expect(api.post).not.toHaveBeenCalled();
+    expect(mockApiPost).not.toHaveBeenCalled();
+    expect(mockDuplicateCheck).not.toHaveBeenCalled();
     // The problem belongs to the template field, so it shows in that field's label-row slot.
     expect(document.getElementById("template-select-message")).toHaveTextContent("템플릿을 불러오는 중이에요");
   });
@@ -244,12 +320,13 @@ describe("messages/new branch template readiness", () => {
     fireEvent.click(screen.getByRole("button", { name: "즉시 발송" }));
 
     await waitFor(() => {
-      expect(api.post).toHaveBeenCalledWith(
+      expect(mockApiPost).toHaveBeenCalledWith(
         "/message-deliveries/sms",
         expect.objectContaining({
           receiver: "010-1234-5678",
           message: "branch-a 맞춤 인사",
         }),
+        { params: { expectedBranchId: "branch-a" } },
       );
     });
   });
@@ -260,6 +337,7 @@ describe("messages/new branch template readiness", () => {
     await addManualRecipient();
     expect(screen.getByLabelText("메시지 본문")).toHaveValue("branch-a 맞춤 인사");
 
+    mockBranchId = "branch-b";
     templateQueries.GREETING = {
       ...readyTemplate("GREETING", "branch-a 맞춤 인사", "branch-b"),
       isFetching: true,
@@ -274,7 +352,8 @@ describe("messages/new branch template readiness", () => {
 
     expect(screen.getByRole("button", { name: "즉시 발송" })).toBeEnabled();
     submitForm();
-    expect(api.post).not.toHaveBeenCalled();
+    expect(mockApiPost).not.toHaveBeenCalled();
+    expect(mockDuplicateCheck).not.toHaveBeenCalled();
     expect(document.getElementById("template-select-message")).toHaveTextContent("템플릿을 불러오는 중이에요");
 
     templateQueries.GREETING = readyTemplate("GREETING", "branch-b 맞춤 인사", "branch-b");
@@ -291,9 +370,10 @@ describe("messages/new branch template readiness", () => {
     fireEvent.click(screen.getByRole("button", { name: "즉시 발송" }));
 
     await waitFor(() => {
-      expect(api.post).toHaveBeenCalledWith(
+      expect(mockApiPost).toHaveBeenCalledWith(
         "/message-deliveries/sms",
         expect.objectContaining({ message: "branch-b 맞춤 인사" }),
+        { params: { expectedBranchId: "branch-b" } },
       );
     });
   });
@@ -310,9 +390,10 @@ describe("messages/new branch template readiness", () => {
     fireEvent.click(screen.getByRole("button", { name: "즉시 발송" }));
 
     await waitFor(() => {
-      expect(api.post).toHaveBeenCalledWith(
+      expect(mockApiPost).toHaveBeenCalledWith(
         "/message-deliveries/sms",
         expect.objectContaining({ message: "직접 작성한 본문" }),
+        { params: { expectedBranchId: "branch-a" } },
       );
     });
   });

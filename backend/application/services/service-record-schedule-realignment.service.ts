@@ -8,7 +8,8 @@ import {
 } from "@babyjamjam/shared/utils/service-record-schedule";
 
 import { AgentAutomationRecordStoreService } from "application/agent/agent-automation-record-store.service";
-import { assignmentWrites } from "application/services/admin-service-record-edit.service";
+import { confirmAssignmentWrites } from "application/policies/service-record-edit-preview.policy";
+import type { PeriodOwnershipDay } from "application/policies/service-record-period-ownership.policy";
 import {
     persistClientMessageAutomationIntent,
     persistScheduleMessageAutomationIntent,
@@ -19,7 +20,7 @@ import { codeOnlyProblemBody, problemBody } from "application/utils/problem-bodi
 import { getServiceRecordTokenExpiresAt } from "domain/constants/service-record-link-message";
 import { ServiceRecordEditConflictError } from "domain/errors/service-record-edit.error";
 import type { ServiceRecordEditSourceAssignment } from "domain/repositories/service-record-edit.repository.interface";
-import { isoDateInKorea, type KrBusinessDayCalendar } from "domain/utils/business-days";
+import { DEFAULT_SERVICE_DAY_POLICY, isoDateInKorea, type KrBusinessDayCalendar } from "domain/utils/business-days";
 import { withClientServiceDays } from "domain/utils/client-service-days";
 
 /** The extension code a screen reads to send the admin to "제공기록지 일정 변경". */
@@ -75,7 +76,7 @@ const NOT_CHANGED: ServiceRecordRealignmentResult = Object.freeze({
     restoreRequiredSessionCount: null,
 });
 
-function manualScheduleConflict(): ConflictException {
+export function manualScheduleConflict(): ConflictException {
     return new ConflictException({
         ...problemBody("REQUEST_CONFLICT", {
             pointer: "",
@@ -102,7 +103,7 @@ function nextCalendarDay(iso: string): string {
 }
 
 /** Parse only a complete authoritative vector; null when the stored one cannot be trusted. */
-function parsePlannedVector(
+export function parsePlannedVector(
     raw: Prisma.JsonValue,
     requiredSessionCount: number | null,
     calendar: KrBusinessDayCalendar,
@@ -188,7 +189,8 @@ interface ScheduleRow {
  * Re-lays a client's remaining service-record sessions when its Saturday /
  * Sunday / holiday service-day flags change. Sessions already written (locked,
  * submitted, or dated before today) stay as they are; everything after the last
- * of them moves onto the next service days under the client's NEW flags.
+ * of them moves onto the next service days under the client's NEW flags, preserving
+ * stored pauses between segments.
  *
  * Runs inside the caller's transaction, after the flag write. The caller owns
  * the client -> employees -> case -> schedules/assignments/days lock order
@@ -311,8 +313,20 @@ export class ServiceRecordScheduleRealignmentService {
         const lowerBound = afterFixed > today ? afterFixed : today;
         let cursor = calendar.isBusinessDay(lowerBound) ? lowerBound : calendar.nextBusinessDay(lowerBound);
 
-        const relaid: ServiceRecordPlannedSession[] = vector.map((entry) => {
+        // 휴일이 아닌 평일이 비어 있으면 수동 변경을 포함한 중단 기간이다.
+        // 고객의 토요일/일요일/공휴일 플래그와 무관하게 지점의 기본 달력으로 판정한다.
+        const pauseCalendar = params.calendar.withServiceDays(DEFAULT_SERVICE_DAY_POLICY);
+        const relaid: ServiceRecordPlannedSession[] = vector.map((entry, index) => {
             if (entry.sessionIndex <= lastFixed) return { ...entry };
+            const previous = vector[index - 1];
+            const followsPause = previous !== undefined
+                && pauseCalendar.nextBusinessDay(previous.serviceDate) < entry.serviceDate;
+            // 중단 후 구간의 첫 날짜만 하한으로 보존하고, 구간 내부는 새 서비스 요일로 재배치한다.
+            if (followsPause && cursor < entry.serviceDate) {
+                cursor = calendar.isBusinessDay(entry.serviceDate)
+                    ? entry.serviceDate
+                    : calendar.nextBusinessDay(entry.serviceDate);
+            }
             const serviceDate = cursor;
             cursor = calendar.nextBusinessDay(cursor);
             // originalDate stays: it records the first projection and never changes on a move.
@@ -336,12 +350,17 @@ export class ServiceRecordScheduleRealignmentService {
         }
         const schedules = await this.loadSchedules(tx, branchId, clientId);
         const storedAssignments = this.sourceAssignments(schedules);
-        const ownerAssignmentIds = new Set(entries.map((entry) => entry.assignmentId));
 
-        // Same rule the admin edit confirm uses: the outer edges follow the first and last planned dates.
-        let writes: ReturnType<typeof assignmentWrites>;
+        // Same rule the admin edit confirm uses: the outer edges follow the first and last planned dates
+        // of the assignments that bear a period. An assignment whose only sessions are kept writer slots
+        // (a replaced or terminated caregiver's row, dated outside her stored period) is no period: it
+        // keeps its stored dates and is never an edge. Every owner of the vector stays an owner.
+        let writes: ReturnType<typeof confirmAssignmentWrites>;
         try {
-            writes = assignmentWrites({ assignments: storedAssignments }, entries[0]!.serviceDate, endDate, ownerAssignmentIds);
+            writes = confirmAssignmentWrites(
+                { assignments: storedAssignments, sessions: this.dayEvidence(days) },
+                entries,
+            );
         } catch (error) {
             if (error instanceof ServiceRecordEditConflictError) throw manualScheduleConflict();
             throw error;
@@ -407,8 +426,8 @@ export class ServiceRecordScheduleRealignmentService {
                 });
             }
         }
-        await this.refreshTokenExpiry(tx, branchId, record.id, endDateValue);
-        await this.persistReevaluationIntents(tx, {
+        await refreshTokenExpiry(tx, branchId, record.id, endDateValue);
+        await persistReevaluationIntents(tx, {
             branchId,
             clientId,
             scheduleIds: writes.map((write) => write.scheduleId),
@@ -452,7 +471,7 @@ export class ServiceRecordScheduleRealignmentService {
             wrote = true;
         }
         if (!wrote) return { ...NOT_CHANGED, mode: "planned" };
-        await this.refreshTokenExpiry(tx, branchId, record.id, endDateValue);
+        await refreshTokenExpiry(tx, branchId, record.id, endDateValue);
         return { changed: true, mode: "planned", endDate, restoreRequiredSessionCount: null };
     }
 
@@ -509,8 +528,8 @@ export class ServiceRecordScheduleRealignmentService {
             where: { id: record.id, branchId },
             data: { endDate: endDateValue, version: { increment: 1 } },
         });
-        await this.refreshTokenExpiry(tx, branchId, record.id, endDateValue);
-        await this.persistReevaluationIntents(tx, { branchId, clientId, scheduleIds: [], intentAt: now });
+        await refreshTokenExpiry(tx, branchId, record.id, endDateValue);
+        await persistReevaluationIntents(tx, { branchId, clientId, scheduleIds: [], intentAt: now });
 
         return { changed: true, mode: "legacy", endDate, restoreRequiredSessionCount: total };
     }
@@ -549,7 +568,7 @@ export class ServiceRecordScheduleRealignmentService {
         });
     }
 
-    /** The assignment view `assignmentWrites` expects; built the way the edit source builds it. */
+    /** The assignment view `confirmAssignmentWrites` expects; built the way the edit source builds it. */
     private sourceAssignments(schedules: readonly ScheduleRow[]): ServiceRecordEditSourceAssignment[] {
         return schedules.map((schedule) => ({
             id: schedule.serviceRecordAssignment?.id ?? null,
@@ -571,6 +590,29 @@ export class ServiceRecordScheduleRealignmentService {
     }
 
     /**
+     * The day rows as writer evidence for the period-ownership rule: who wrote each row, and whether
+     * several rows share one session index (a duplicate is evidence, never read as a writer).
+     */
+    private dayEvidence(
+        days: readonly Prisma.service_record_dayGetPayload<Prisma.service_record_dayDefaultArgs>[],
+    ): PeriodOwnershipDay[] {
+        const counts = new Map<number, number>();
+        for (const day of days) {
+            const sessionIndex = day.caseSessionIndex ?? day.sessionIndex;
+            counts.set(sessionIndex, (counts.get(sessionIndex) ?? 0) + 1);
+        }
+        return days.map((day) => {
+            const sessionIndex = day.caseSessionIndex ?? day.sessionIndex;
+            return {
+                sessionIndex,
+                scheduleId: day.scheduleId ?? null,
+                employeeId: day.employeeId ?? null,
+                ambiguous: (counts.get(sessionIndex) ?? 0) > 1,
+            };
+        });
+    }
+
+    /**
      * A re-laid session that stood inside its own assignment's period must still
      * stand inside it afterwards. Moving it across a handover boundary would hand
      * the session to the other caregiver's period; that is the admin's call.
@@ -580,7 +622,7 @@ export class ServiceRecordScheduleRealignmentService {
         after: readonly ServiceRecordPlannedSession[],
         movedIndexes: readonly number[],
         stored: readonly ServiceRecordEditSourceAssignment[],
-        writes: ReturnType<typeof assignmentWrites>,
+        writes: ReturnType<typeof confirmAssignmentWrites>,
     ): void {
         for (const sessionIndex of movedIndexes) {
             const entry = after[sessionIndex - 1]!;
@@ -621,65 +663,65 @@ export class ServiceRecordScheduleRealignmentService {
             throw error;
         }
     }
+}
 
-    private async refreshTokenExpiry(
-        tx: Prisma.TransactionClient,
-        branchId: string,
-        caseId: string,
-        endDate: Date,
-    ): Promise<void> {
-        await tx.service_record_token.updateMany({
-            where: { branchId, serviceRecordCaseId: caseId, active: true, revokedAt: null },
-            data: { expiresAt: getServiceRecordTokenExpiresAt(endDate) },
-        });
+export async function refreshTokenExpiry(
+    tx: Prisma.TransactionClient,
+    branchId: string,
+    caseId: string,
+    endDate: Date,
+): Promise<void> {
+    await tx.service_record_token.updateMany({
+        where: { branchId, serviceRecordCaseId: caseId, active: true, revokedAt: null },
+        data: { expiresAt: getServiceRecordTokenExpiresAt(endDate) },
+    });
+}
+
+/**
+ * Leaves the durable marker the automation reconciler uses to recalculate
+ * future jobs, the way the admin edit confirm does. Written in the caller's
+ * transaction, so a later failure rolls it back with the dates.
+ */
+export async function persistReevaluationIntents(
+    tx: Prisma.TransactionClient,
+    params: {
+        branchId: string;
+        clientId: number;
+        scheduleIds: ReadonlyArray<number | null>;
+        intentAt: Date;
+    },
+): Promise<void> {
+    const transaction = tx as unknown as {
+        message_trigger_rule?: { upsert?: unknown };
+        message_trigger_job?: { upsert?: unknown };
+    };
+    // Narrow unit doubles do not expose the message delegates; a real Prisma
+    // transaction always does, so production stays durable and atomic.
+    if (
+        typeof transaction.message_trigger_rule?.upsert !== "function"
+        || typeof transaction.message_trigger_job?.upsert !== "function"
+    ) {
+        return;
     }
-
-    /**
-     * Leaves the durable marker the automation reconciler uses to recalculate
-     * future jobs, the way the admin edit confirm does. Written in the caller's
-     * transaction, so a later failure rolls it back with the dates.
-     */
-    private async persistReevaluationIntents(
-        tx: Prisma.TransactionClient,
-        params: {
-            branchId: string;
-            clientId: number;
-            scheduleIds: ReadonlyArray<number | null>;
-            intentAt: Date;
-        },
-    ): Promise<void> {
-        const transaction = tx as unknown as {
-            message_trigger_rule?: { upsert?: unknown };
-            message_trigger_job?: { upsert?: unknown };
-        };
-        // Narrow unit doubles do not expose the message delegates; a real Prisma
-        // transaction always does, so production stays durable and atomic.
-        if (
-            typeof transaction.message_trigger_rule?.upsert !== "function"
-            || typeof transaction.message_trigger_job?.upsert !== "function"
-        ) {
-            return;
-        }
-        await persistClientMessageAutomationIntent(tx, {
+    await persistClientMessageAutomationIntent(tx, {
+        branchId: params.branchId,
+        clientId: params.clientId,
+        includePast: false,
+        suppressGreeting: true,
+        intentAt: params.intentAt,
+    });
+    const scheduleIds = [...new Set(
+        params.scheduleIds.filter((scheduleId): scheduleId is number => (
+            typeof scheduleId === "number" && Number.isInteger(scheduleId) && scheduleId > 0
+        )),
+    )].sort((left, right) => left - right);
+    for (const scheduleId of scheduleIds) {
+        await persistScheduleMessageAutomationIntent(tx, {
             branchId: params.branchId,
             clientId: params.clientId,
+            scheduleId,
             includePast: false,
-            suppressGreeting: true,
             intentAt: params.intentAt,
         });
-        const scheduleIds = [...new Set(
-            params.scheduleIds.filter((scheduleId): scheduleId is number => (
-                typeof scheduleId === "number" && Number.isInteger(scheduleId) && scheduleId > 0
-            )),
-        )].sort((left, right) => left - right);
-        for (const scheduleId of scheduleIds) {
-            await persistScheduleMessageAutomationIntent(tx, {
-                branchId: params.branchId,
-                clientId: params.clientId,
-                scheduleId,
-                includePast: false,
-                intentAt: params.intentAt,
-            });
-        }
     }
 }

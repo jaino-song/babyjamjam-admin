@@ -129,7 +129,7 @@ describe("needs_setup presentation", () => {
     const block = (overrides: Partial<MessageResendBlock> = {}): MessageResendBlock => ({
       level: "recipient",
       recipient: { kind: "employee", id: 7 },
-      recipientName: "송진호",
+      recipientName: "정다라",
       ruleId: "rule-1",
       ruleName: "제공기록지 작성 링크",
       ...overrides,
@@ -149,7 +149,7 @@ describe("needs_setup presentation", () => {
       const desktop = getMessageResendBlockCard(block({ recipient }), "desktop", { canOpenOwnerAdmin: true });
       expect(desktop).toEqual({
         title: "자동 문자가 꺼져 있어요",
-        emphasis: "송진호",
+        emphasis: "정다라",
         description: `${noun}의 ‘자동 문자 발송’이 꺼져 있어 재발송할 수 없어요.`,
         action: { label, href: desktopHref },
       });

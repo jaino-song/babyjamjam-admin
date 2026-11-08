@@ -3911,6 +3911,14 @@
       "discovery_task_id": "1.1.01"
     },
     {
+      "path": "backend/application/usecases/service-record/service-record-edit-agent-capabilities.provider.ts",
+      "root": "backend/application/",
+      "kind": "runtime",
+      "candidate_count": 52,
+      "review_status": "reviewed",
+      "discovery_task_id": "bjj-494-error-intake"
+    },
+    {
       "path": "backend/application/usecases/system-setting/get-setting.usecase.ts",
       "root": "backend/application/",
       "kind": "runtime",
@@ -17306,7 +17314,7 @@
       "path": "frontend/src/hooks/useDashboardStats.ts",
       "root": "frontend/src/",
       "kind": "runtime",
-      "candidate_count": 1,
+      "candidate_count": 2,
       "review_status": "reviewed",
       "discovery_task_id": "1.1.08"
     },
@@ -62182,10 +62190,16 @@
       "path": "frontend/src/hooks/useDashboardStats.ts",
       "root": "frontend/src/",
       "classification": "no-direct-error-boundary",
-      "reason": "Query hooks; fetchDashboardStats throws a status-only Error at line 31 and no error state or copy is authored here.",
+      "reason": "Query hooks; fetchDashboardStats throws a status-only Error and the optional scoped query rejects requests when auth enablement or captured branch alignment is unavailable. User-facing error state and retry copy are owned by ChatWorkspaceStats.",
       "seams": [
         {
-          "line": 31,
+          "line": 35,
+          "kinds": [
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 47,
           "kinds": [
             "throw_or_reject"
           ]
@@ -62197,15 +62211,19 @@
         "EM-FE-02"
       ],
       "public_codes": [],
-      "outcome_evidence": "Error handling is delegated to the dashboard page.",
+      "outcome_evidence": "Error handling is delegated to consumers. ChatWorkspaceStats displays unavailable counts as an em dash and source-specific retry alerts; the scoped query guard performs no API call when unavailable.",
       "consumer_paths": [
-        "app/(protected)/dashboard/page.tsx"
+        "app/(protected)/dashboard/page.tsx",
+        "frontend/src/components/app/chat/ChatWorkspaceStats.tsx"
       ],
-      "test_evidence": [],
+      "test_evidence": [
+        "frontend/src/hooks/useDashboardStats.test.tsx",
+        "frontend/src/components/app/chat/ChatWorkspaceStats.test.tsx"
+      ],
       "followup_task": null,
       "review_task": "1.1-batch-c",
       "spec_mapping_status": "mapped-em-v1",
-      "spec_mapping_note": "fetchDashboardStats throws status-only Error (31); no copy authored"
+      "spec_mapping_note": "fetchDashboardStats status-only Error (35) and optional scoped query enablement/alignment guard (47); no raw upstream error copy is authored"
     },
     {
       "id": "owner-349e7cd710d8",
@@ -77187,57 +77205,6 @@
       "spec_mapping_note": "problem-contract bodies only; uncertain vendor outcome keeps the uncertainty marker"
     },
     {
-      "id": "owner-26a8e63c0e59",
-      "path": "backend/interface/controllers/eformsign-backup-export.controller.ts",
-      "root": "backend/interface/",
-      "classification": "approved-exception",
-      "reason": "Added by BJJ-454 (machine-only read-only export API, /internal/eformsign-backup/v1); discovered unclassified by the raw-error intake gate. Machine-to-machine compatibility exception like the eformsign webhook: the caller is the backup worker (BJJ-455), not a browser, and the error body is the versioned export contract {code, retryable, requestId, reasonCode?, retryAfterSeconds?} with its own closed code table (BJJ-454 contract §3.6, domain/eformsign-backup/export EXPORT_ERRORS). The file throws no raw exception; HttpException is referenced only at L75 inside the controller-scoped @Catch() filter (L51) to map a Nest 400 to INVALID_REQUEST, and every other error becomes a code-only 500 INTERNAL with no message or stack. Safeguards: unit spec asserts the exact key set per code and uniform 401/404 bodies; real-DB HTTP spec runs behind the global ValidationPipe and filters and sweeps responses and logs for token/PII.",
-      "seams": [
-        {
-          "line": 1,
-          "kinds": [
-            "raw_http_exception"
-          ]
-        },
-        {
-          "line": 51,
-          "kinds": [
-            "catch_boundary"
-          ]
-        },
-        {
-          "line": 75,
-          "kinds": [
-            "raw_http_exception"
-          ]
-        },
-        {
-          "line": 125,
-          "kinds": [
-            "http_endpoint"
-          ]
-        }
-      ],
-      "discovery_task_id": "bjj-454-intake",
-      "spec_ids": [
-        "EM-GOV-03",
-        "EM-API-01"
-      ],
-      "public_codes": [],
-      "outcome_evidence": "Export error bodies intentionally follow the BJJ-454 machine contract for the backup worker caller.",
-      "consumer_paths": [
-        "internal/eformsign-backup/v1 (L125); backup worker (BJJ-455)"
-      ],
-      "test_evidence": [
-        "backend/test/integration/eformsign-backup-export.controller.spec.ts",
-        "backend/test/prisma/eformsign-backup-export-http.real-db.spec.ts"
-      ],
-      "followup_task": null,
-      "review_task": "bjj-454-phase-audit",
-      "spec_mapping_status": "mapped-em-v1",
-      "spec_mapping_note": "documented machine-export exception; record scope and safeguard against API-01"
-    },
-    {
       "id": "owner-5cc37a66a047",
       "path": "backend/application/services/contract-supersede.service.ts",
       "root": "backend/application/",
@@ -77499,6 +77466,659 @@
       "review_task": null,
       "spec_mapping_status": "mapped-em-v1",
       "spec_mapping_note": "Registered codes only; scheduleCode extension re-attached at the HTTP boundary"
+    },
+    {
+      "id": "owner-8ba6174b29fb",
+      "path": "backend/application/services/service-record-start-date-change.service.ts",
+      "root": "backend/application/",
+      "classification": "migrated",
+      "reason": "Added by started-client-start-date-change Task 2.1 (archive, move or restart a started client's service-record sessions when the start date changes, called from ClientService.update in the same transaction); discovered unclassified by the raw-error intake gate. Fully on-contract: every throw is a registered problem body. Missing new start date -> BadRequestException(problemBody VALIDATION_FAILED) 400; case or client outside the caller branch on the locked reread -> ConflictException(codeOnlyProblemBody SERVICE_RECORD_WRITE_TARGET_CHANGED) 409; no session count to lay the new window -> ConflictException(codeOnlyProblemBody SERVICE_RECORD_DURATION_REQUIRED) 409; stored planned vector unreadable -> ConflictException(codeOnlyProblemBody SERVICE_RECORD_PLANNED_DATE_UNAVAILABLE) 409. No new codes.",
+      "seams": [
+        {
+          "line": 1,
+          "kinds": [
+            "raw_http_exception"
+          ]
+        },
+        {
+          "line": 51,
+          "kinds": [
+            "raw_http_exception",
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 65,
+          "kinds": [
+            "raw_http_exception",
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 91,
+          "kinds": [
+            "raw_http_exception",
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 126,
+          "kinds": [
+            "raw_http_exception",
+            "throw_or_reject"
+          ]
+        }
+      ],
+      "discovery_task_id": "started-client-start-date-change-2.1-intake",
+      "spec_ids": [
+        "EM-CAT-01",
+        "EM-CORE-01",
+        "EM-ARCH-01"
+      ],
+      "public_codes": [],
+      "outcome_evidence": null,
+      "consumer_paths": [
+        "HTTP client.controller (update) via ClientService"
+      ],
+      "test_evidence": [
+        "backend/test/services/service-record-start-date-change.service.spec.ts",
+        "backend/test/services/client.service.spec.ts"
+      ],
+      "followup_task": null,
+      "review_task": null,
+      "spec_mapping_status": "mapped-em-v1",
+      "spec_mapping_note": "Registered codes only"
+    },
+    {
+      "id": "owner-202b8665a89c",
+      "path": "backend/application/usecases/service-record/service-record-edit-agent-capabilities.provider.ts",
+      "root": "backend/application/",
+      "classification": "no-direct-error-boundary",
+      "reason": "Introduced by 55857d5ea and inherited by BJJ-494; the raw-error intake pattern matches exception-class mentions, not only authored HTTP throws. Nest exception names occur only in the import (L1) and instanceof checks (L622, L625, L639, L849) that translate editor refusals or invalidate stale targets. Authored errors are AgentActionCertainFailureError/AgentActionQuestionError, private CardOverflowError mapped to a certain failure, and the plain Error catalog invariant at L779. Known editor refusals become agent questions/certain failures; unclassified errors propagate unchanged to the action coordinator for uncertainty and reconciliation. This provider is not an HTTP response boundary; registration changes no exception mapping.",
+      "seams": [
+        {
+          "line": 1,
+          "kinds": [
+            "raw_http_exception"
+          ]
+        },
+        {
+          "line": 171,
+          "kinds": [
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 415,
+          "kinds": [
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 544,
+          "kinds": [
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 547,
+          "kinds": [
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 622,
+          "kinds": [
+            "raw_http_exception"
+          ]
+        },
+        {
+          "line": 625,
+          "kinds": [
+            "raw_http_exception"
+          ]
+        },
+        {
+          "line": 639,
+          "kinds": [
+            "raw_http_exception"
+          ]
+        },
+        {
+          "line": 676,
+          "kinds": [
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 680,
+          "kinds": [
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 681,
+          "kinds": [
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 693,
+          "kinds": [
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 703,
+          "kinds": [
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 707,
+          "kinds": [
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 714,
+          "kinds": [
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 719,
+          "kinds": [
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 730,
+          "kinds": [
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 744,
+          "kinds": [
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 765,
+          "kinds": [
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 779,
+          "kinds": [
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 787,
+          "kinds": [
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 813,
+          "kinds": [
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 830,
+          "kinds": [
+            "catch_boundary"
+          ]
+        },
+        {
+          "line": 831,
+          "kinds": [
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 848,
+          "kinds": [
+            "catch_boundary"
+          ]
+        },
+        {
+          "line": 849,
+          "kinds": [
+            "raw_http_exception"
+          ]
+        },
+        {
+          "line": 850,
+          "kinds": [
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 862,
+          "kinds": [
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 864,
+          "kinds": [
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 868,
+          "kinds": [
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 871,
+          "kinds": [
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 882,
+          "kinds": [
+            "catch_boundary"
+          ]
+        },
+        {
+          "line": 883,
+          "kinds": [
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 903,
+          "kinds": [
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 906,
+          "kinds": [
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 932,
+          "kinds": [
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 938,
+          "kinds": [
+            "catch_boundary"
+          ]
+        },
+        {
+          "line": 941,
+          "kinds": [
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 943,
+          "kinds": [
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 949,
+          "kinds": [
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 961,
+          "kinds": [
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 975,
+          "kinds": [
+            "catch_boundary"
+          ]
+        },
+        {
+          "line": 981,
+          "kinds": [
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 983,
+          "kinds": [
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 986,
+          "kinds": [
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 1004,
+          "kinds": [
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 1010,
+          "kinds": [
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 1012,
+          "kinds": [
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 1014,
+          "kinds": [
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 1030,
+          "kinds": [
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 1033,
+          "kinds": [
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 1052,
+          "kinds": [
+            "catch_boundary"
+          ]
+        }
+      ],
+      "discovery_task_id": "bjj-494-error-intake",
+      "spec_ids": [
+        "EM-STATE-01",
+        "EM-ARCH-03"
+      ],
+      "public_codes": [],
+      "outcome_evidence": null,
+      "consumer_paths": [
+        "service-records.edit capability inspection, approved execution and reconciliation via the action coordinator"
+      ],
+      "test_evidence": [
+        "backend/application/usecases/service-record/service-record-edit-agent-capabilities.provider.spec.ts"
+      ],
+      "followup_task": null,
+      "review_task": "bjj-494-error-inventory",
+      "spec_mapping_status": "mapped-em-v1",
+      "spec_mapping_note": "Known editor refusals use AgentActionQuestionError/CertainFailureError; unknown failures retain their identity for coordinator uncertainty/reconciliation. Spec-ID references and the existing provider spec are evidence pointers, not a complete coverage or compliance claim."
+    },
+    {
+      "id": "owner-2b2ca7f0441d",
+      "path": "backend/application/services/message-duplicate-check.service.ts",
+      "root": "backend/application/",
+      "classification": "migrated",
+      "reason": "Introduced by the message-policy formal plan Task 4.2 / DUP-1; discovered unowned by the raw-error intake gate, which matches exception-class imports and throws independently of body sanitization. On-contract: lookup/configuration failures throw ServiceUnavailableException(codeOnlyProblemBody DEPENDENCY_UNAVAILABLE) 503 with an internal cause; a missing or stale required confirmation throws ConflictException(codeOnlyProblemBody REQUEST_CONFLICT) 409 with fresh checkedAt, matchIds, latestSentAt and payloadHash. The actual HTTP mapHttpProblem path preserves those fresh 409 fields and excludes the private 503 diagnostic. Existing catalog codes only; registration adds no raw-body debt or exception exemption.",
+      "seams": [
+        {
+          "line": 2,
+          "kinds": [
+            "raw_http_exception"
+          ]
+        },
+        {
+          "line": 20,
+          "kinds": [
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 36,
+          "kinds": [
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 43,
+          "kinds": [
+            "catch_boundary"
+          ]
+        },
+        {
+          "line": 44,
+          "kinds": [
+            "raw_http_exception",
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 55,
+          "kinds": [
+            "raw_http_exception",
+            "throw_or_reject"
+          ]
+        }
+      ],
+      "discovery_task_id": "message-policy-task4.2-dup-1",
+      "spec_ids": [
+        "EM-CAT-01",
+        "EM-STATE-01",
+        "EM-ARCH-01"
+      ],
+      "public_codes": [
+        "REQUEST_CONFLICT",
+        "DEPENDENCY_UNAVAILABLE"
+      ],
+      "outcome_evidence": "Both fresh refusals are NOT_APPLIED with recovery action NONE and retry mode NEVER. The service/controller specs cover duplicate-check write/provider counts of 0 and fresh send-gate refusal before acceptance admission (0) or provider transport (0); the controller spec invokes the actual mapHttpProblem serializer. Existing durable replay may report UNKNOWN at the controller boundary and is unchanged by this owner registration.",
+      "consumer_paths": [
+        "backend/interface/controllers/message-delivery.controller.ts"
+      ],
+      "test_evidence": [
+        "backend/test/services/message-duplicate-check.service.spec.ts",
+        "backend/test/interface/controllers/message-delivery.controller.spec.ts"
+      ],
+      "followup_task": "Message-policy Task 10 / Task 11 duplicate-confirmation desktop/mobile wiring remains pending.",
+      "review_task": "message-duplicate-error-owner (independent CODE review pending)",
+      "spec_mapping_status": "mapped-em-v1",
+      "spec_mapping_note": "Task 4.2 / DUP-1 coded refusal ownership only; inventory is not sanitization proof, consumer completion, review PASS, or a raw-body debt/cap change."
+    },
+    {
+      "id": "owner-7cd3f903482a",
+      "path": "backend/application/services/message-quiet-hours.service.ts",
+      "root": "backend/application/",
+      "classification": "migrated",
+      "reason": "Introduced by approved message-policy Task 8.1 / NIGHT-1. The existing intake gate flags the ServiceUnavailableException import and coded refusal class. Policy/recipient read failures and missing mandatory quiet admission fail closed with the existing MESSAGE_SEND_NOT_STARTED problem code, NOT_APPLIED and no automatic retry. The actual mapHttpProblem test excludes internal diagnostic text and phone data. This on-contract owner registration grants no raw-body exception, debt-cap change or release approval.",
+      "seams": [
+        {
+          "line": 1,
+          "kinds": [
+            "raw_http_exception"
+          ]
+        },
+        {
+          "line": 13,
+          "kinds": [
+            "raw_http_exception"
+          ]
+        },
+        {
+          "line": 45,
+          "kinds": [
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 51,
+          "kinds": [
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 63,
+          "kinds": [
+            "throw_or_reject",
+            "catch_boundary"
+          ]
+        },
+        {
+          "line": 73,
+          "kinds": [
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 76,
+          "kinds": [
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 78,
+          "kinds": [
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 79,
+          "kinds": [
+            "throw_or_reject",
+            "catch_boundary"
+          ]
+        }
+      ],
+      "discovery_task_id": "message-policy-task8.1-night-1",
+      "spec_ids": [
+        "EM-CAT-01",
+        "EM-STATE-01",
+        "EM-ARCH-01"
+      ],
+      "public_codes": [
+        "MESSAGE_SEND_NOT_STARTED"
+      ],
+      "outcome_evidence": "Fresh quiet-policy refusal precedes provider-start CAS and provider transport. Actual HTTP mapHttpProblem execution verifies NOT_APPLIED, NONE/NEVER recovery and sanitized public body. CANCEL persists terminal/no-retry disposition. Task8 DEFER is an intermediate refusal only; Task9 owns durable attempt-free deferral and queue responses.",
+      "consumer_paths": [
+        "backend/interface/controllers/message-delivery.controller.ts",
+        "backend/application/services/sms-trigger-delivery.service.ts",
+        "backend/application/services/sms-retry.service.ts"
+      ],
+      "test_evidence": [
+        "backend/test/services/message-quiet-hours.service.spec.ts",
+        "backend/test/interface/controllers/message-delivery.controller.spec.ts"
+      ],
+      "followup_task": "Task9 durable DEFER/queue and Task10/11 UI integration remain pending.",
+      "review_task": "message-policy-phase8-quiet-gate (independent CODE and phase review pending)",
+      "spec_mapping_status": "mapped-em-v1",
+      "spec_mapping_note": "Task8 coded-refusal ownership only; not independent review PASS, real-provider proof, queue completion or a baseline/debt/scanner change."
+    },
+    {
+      "id": "owner-f385e2618efb",
+      "path": "backend/infrastructure/auth/eformsign-backup-token.guard.ts",
+      "root": "backend/infrastructure/",
+      "classification": "migrated",
+      "reason": "Guard checks the trimmed env on every request before parsing bearer authentication; disabled routes return code-only 404 and invalid credentials return code-only 401. No token is echoed or logged.",
+      "seams": [
+        {
+          "line": 1,
+          "kinds": [
+            "raw_http_exception"
+          ]
+        },
+        {
+          "line": 15,
+          "kinds": [
+            "raw_http_exception",
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 21,
+          "kinds": [
+            "raw_http_exception",
+            "throw_or_reject"
+          ]
+        }
+      ],
+      "discovery_task_id": "backup-v2-api-r1-20261107",
+      "spec_ids": [
+        "EM-CAT-01",
+        "EM-SEC-02",
+        "EM-SEC-03",
+        "EM-ARCH-01"
+      ],
+      "public_codes": [
+        "RESOURCE_NOT_FOUND",
+        "AUTH_REQUIRED"
+      ],
+      "outcome_evidence": "Pre-read authentication and eligibility rejections; no mutation has started (NOT_APPLIED).",
+      "consumer_paths": [
+        "HTTP /internal/eformsign-backup"
+      ],
+      "test_evidence": [
+        "backend/infrastructure/auth/eformsign-backup-token.guard.spec.ts",
+        "backend/test/contract/eformsign-backup.contract.spec.ts",
+        "backend/test/integration/eformsign-backup.controller.integration.spec.ts"
+      ],
+      "followup_task": null,
+      "review_task": "backup-v2-api-review",
+      "spec_mapping_status": "mapped-em-v1",
+      "spec_mapping_note": "Machine caller authentication and file-read eligibility use existing codeOnlyProblemBody helpers."
+    },
+    {
+      "id": "owner-20fc5c0b5047",
+      "path": "backend/application/services/eformsign-backup.service.ts",
+      "root": "backend/application/",
+      "classification": "migrated",
+      "reason": "File eligibility rejection returns code-only 404 when the file is missing or the parent is not completed, is purged, is not ready, or its source date differs. Document reads are otherwise mapped without error payloads.",
+      "seams": [
+        {
+          "line": 1,
+          "kinds": [
+            "raw_http_exception"
+          ]
+        },
+        {
+          "line": 42,
+          "kinds": [
+            "raw_http_exception",
+            "throw_or_reject"
+          ]
+        }
+      ],
+      "discovery_task_id": "backup-v2-api-r1-20261107",
+      "spec_ids": [
+        "EM-CAT-01",
+        "EM-SEC-02",
+        "EM-SEC-03",
+        "EM-ARCH-01"
+      ],
+      "public_codes": [
+        "RESOURCE_NOT_FOUND"
+      ],
+      "outcome_evidence": "Pre-read authentication and eligibility rejections; no mutation has started (NOT_APPLIED).",
+      "consumer_paths": [
+        "HTTP /internal/eformsign-backup"
+      ],
+      "test_evidence": [
+        "backend/application/services/eformsign-backup.service.spec.ts"
+      ],
+      "followup_task": null,
+      "review_task": "backup-v2-api-review",
+      "spec_mapping_status": "mapped-em-v1",
+      "spec_mapping_note": "Machine caller authentication and file-read eligibility use existing codeOnlyProblemBody helpers."
     }
   ]
 }

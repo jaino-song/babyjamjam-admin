@@ -13,7 +13,7 @@ import { SystemTemplateService } from "application/services/system-template.serv
 import { SystemTemplateWithRegistryDto } from "application/dto/system-template-with-registry.dto";
 import { JwtGuard } from "infrastructure/auth/jwt.guard";
 import { CurrentTenant, TenantGuard, type VerifiedTenantPrincipal } from "infrastructure/tenant";
-import { UpdateSystemTemplateDto } from "interface/dto/system-template.dto";
+import { CaregiverTemplateLifecycleDto, UpdateSystemTemplateDto } from "interface/dto/system-template.dto";
 
 @Controller("branch-system-templates")
 @UseGuards(JwtGuard, TenantGuard)
@@ -35,6 +35,16 @@ export class BranchSystemTemplateController {
         @Query("expectedBranchId") expectedBranchId?: string,
     ): Promise<SystemTemplateWithRegistryDto> {
         return this.service.getByKeyForBranch(this.requireExpectedBranch(tenant, expectedBranchId), key);
+    }
+
+    @Put(":key/lifecycle")
+    lifecycle(
+        @Param("key") key: string,
+        @Body() dto: CaregiverTemplateLifecycleDto,
+        @CurrentTenant() tenant: VerifiedTenantPrincipal,
+        @Query("expectedBranchId") expectedBranchId?: string,
+    ) {
+        return this.service.updateCaregiverLifecycle(this.requireExpectedBranch(tenant, expectedBranchId), key, dto.action, this.requireUser(tenant));
     }
 
     @Put(":key")

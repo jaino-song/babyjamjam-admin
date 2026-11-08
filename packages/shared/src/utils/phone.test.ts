@@ -7,10 +7,10 @@ import {
 
 describe("shared Korean phone helpers", () => {
   it("keeps digit cleanup separate from lookup normalization", () => {
-    expect(normalizePhoneDigits("+82 10 6621 1878")).toBe("82106621187");
-    expect(normalizeKoreanPhoneLookupKey("+82 10 6621 1878")).toBe("01066211878");
+    expect(normalizePhoneDigits("+82 10 0000 6621")).toBe("82100000662");
+    expect(normalizeKoreanPhoneLookupKey("+82 10 0000 6621")).toBe("01000006621");
     expect(normalizeKoreanPhoneLookupKey("82 2 1234 5678")).toBe("0212345678");
-    expect(normalizeKoreanPhoneLookupKey("010-6621-1878")).toBe("01066211878");
+    expect(normalizeKoreanPhoneLookupKey("010-0000-6621")).toBe("01000006621");
   });
 
   it("accepts the 0082 international access prefix like +82", () => {
@@ -33,8 +33,8 @@ describe("shared Korean phone helpers", () => {
 
   it("formats Seoul, regional, mobile, and partial values consistently", () => {
     expect(formatKoreanPhoneNumber("01012345678")).toBe("010-1234-5678");
-    expect(formatKoreanPhoneNumber("821066211878")).toBe("010-6621-1878");
-    expect(formatKoreanPhoneNumber("821-0662-1187")).toBe("010-662-1187");
+    expect(formatKoreanPhoneNumber("821000006621")).toBe("010-0000-6621");
+    expect(formatKoreanPhoneNumber("821-0000-0662")).toBe("010-000-0662");
     expect(formatKoreanPhoneNumber("0212345678")).toBe("02-1234-5678");
     expect(formatKoreanPhoneNumber("021234567")).toBe("02-123-4567");
     expect(formatKoreanPhoneNumber("0324425992")).toBe("032-442-5992");

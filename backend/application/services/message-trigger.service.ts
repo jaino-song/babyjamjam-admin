@@ -1,3 +1,13 @@
+import { publicMessageVariables } from "domain/message-policy-evaluator";
+import { MANUAL_SMS_TEMPLATE_KEY, MANUAL_SMS_RULE_PREFIX } from "domain/constants/message-trigger-catalog";
+import { agentAutomationCoverageScope } from "application/agent/agent-automation-coverage";
+import { parseAgentAutomationTaskCommitReference } from "application/agent/agent-automation-storage.schema";
+import type { MessageTriggerRuleGroupPreviewResponse } from "@babyjamjam/shared/types/message";
+import { agentAutomationScheduleIdentity } from "application/agent/agent-automation-consent";
+import { MessageTriggerRecipientResolverService } from "./message-trigger-recipient-resolver.service";
+import { CaregiverTemplateResolverService } from "./caregiver-template-resolver.service";
+import { isCaregiverTriggerTemplate } from "domain/constants/message-trigger-catalog";
+import type { MessageTriggerRuleGroupEntity } from "domain/entities/message-trigger-rule-group.entity";
 import { ClientAutomationSourceReader, type ClientAutomationSettingsSnapshot } from "./client-automation-source.reader";
 import { AgentAutomationDeliveryGateService } from "./agent-automation-delivery-gate.service";
 import {
@@ -64,7 +74,7 @@ import { MessageTriggerJobEntity } from "domain/entities/message-trigger-job.ent
 import { MessageLogEntity, isLandedRetryAttempt, isRetryFamilyBlocker } from "domain/entities/message-log.entity";
 import { TriggerJobDeferredError } from "domain/errors/trigger-job-deferred.error";
 import { agentBindingHash } from "domain/repositories/agent-linked-action.types";
-import { agentAutomationSourcePayload } from "./agent-automation-job-binding";
+import { agentAutomationConcreteJobDigest, agentAutomationSourcePayload } from "./agent-automation-job-binding";
 import {
     MESSAGE_TRIGGER_RULE_REPOSITORY,
     IMessageTriggerRuleRepository,
@@ -85,6 +95,7 @@ import { getEffectiveClientServiceStatus } from "domain/repositories/client.repo
 import {
     MESSAGE_TRIGGER_JOB_REPOSITORY,
     IMessageTriggerJobRepository,
+    type MessageDispatchSelectedJob,
     type ClientUpcomingMessageTriggerJobCursor,
     type ClientUpcomingMessageTriggerJobRecord,
 } from "domain/repositories/message-trigger-job.repository.interface";
@@ -104,8 +115,9 @@ import { MessageSenderApprovalService } from "./message-sender-approval.service"
 import {
     buildClientMessageRecipe, buildEmployeeAssignmentMessageRecipe,
     isMessageRecipeWithinMaterializationWindow,
+    isSelectedMessageJobExpired,
     shouldSkipClientPreStartCatchUp,
-    buildMessageRecipeDedupeKey, employeeAssignmentScheduleFingerprint, formatMessageRecipeDate,
+    buildMessageRecipeDedupeKey, employeeAssignmentScheduleFingerprint, formatMessageRecipeDate, getKstCalendarDate,
     type ClientTriggerSource, type EmployeeAssignmentScheduleSource,
 } from "./message-trigger-recipes";
 import { normalizePhone } from "application/utils/normalize-phone";
@@ -138,6 +150,31 @@ type MessageTriggerRuleValidationParams = Pick<
     "eventType" | "offsetType" | "offsetDays" | "sendTime" | "recipientType" | "templateKey"
     | "targetClientStatus" | "retryOnFailure"
 >;
+
+export interface MessageTriggerRuleGroupDraft {
+    name: string;
+    recipientMode: MessageTriggerRuleGroupEntity["recipientMode"];
+    eventType: MessageTriggerEventType;
+    offsetType: MessageTriggerOffsetType;
+    offsetDays?: number;
+    sendTime?: string;
+    targetClientStatus?: UpsertRuleParams["targetClientStatus"];
+    retryOnFailure?: boolean;
+    isActive?: boolean;
+    recipientTemplates: Partial<Record<MessageTriggerRecipientType, MessageTriggerTemplateKey>>;
+}
+
+export interface MessageTriggerRuleGroupView extends MessageTriggerRuleGroupEntity {
+    rules: MessageTriggerRuleEntity[];
+    eventType: MessageTriggerEventType;
+    offsetType: MessageTriggerOffsetType;
+    offsetDays: number;
+    sendTime: string;
+    targetClientStatus: MessageTriggerRuleEntity["targetClientStatus"];
+    retryOnFailure: boolean;
+    isActive: boolean;
+    recipientTemplates: Partial<Record<MessageTriggerRecipientType, MessageTriggerTemplateKey>>;
+}
 
 export type { ClientAutomationSettingsSnapshot } from "./client-automation-source.reader";
 
@@ -250,7 +287,13 @@ export function validateMessageTriggerRule(
         }));
     }
 
-    if (!EVENT_RECIPIENT_OPTIONS[params.eventType].includes(params.recipientType)) {
+    const isLegacyServiceRecipientMismatch =
+        !isCaregiverTriggerTemplate(params.templateKey)
+        && (params.eventType === MessageTriggerEventType.SERVICE_START
+            || params.eventType === MessageTriggerEventType.SERVICE_END)
+        && params.recipientType !== MessageTriggerRecipientType.CLIENT;
+    if (isLegacyServiceRecipientMismatch
+        || !EVENT_RECIPIENT_OPTIONS[params.eventType].includes(params.recipientType)) {
         throw new BadRequestException(problemBody("VALIDATION_FAILED", {
             pointer: "/recipientType",
             code: "INVALID_VALUE",
@@ -643,6 +686,8 @@ export class MessageTriggerService {
         // Required in production: Nest must refuse to boot without it so the SMS
         // safeguard can never fail open. Optional only for constructor-built tests.
         private readonly smsAutomationSafeguard?: SmsAutomationSafeguardService,
+        private readonly caregiverRecipients?: MessageTriggerRecipientResolverService,
+        private readonly caregiverTemplates?: CaregiverTemplateResolverService,
     ) {
         // Preserve constructor-based callers while sharing exactly the same read
         // implementation; the production module injects its registered reader.
@@ -669,7 +714,8 @@ export class MessageTriggerService {
     }
 
     private async resolvePersistedRules(branchId: string, transaction?: Prisma.TransactionClient) {
-        return this.automationSources.resolvePersistedRules(branchId, transaction);
+        const result = await this.automationSources.resolvePersistedRules(branchId, transaction);
+        return { ...result, rules: result.rules.filter(rule => rule.id !== MANUAL_SMS_RULE_PREFIX + branchId) };
     }
 
     async ensureDefaultRulesForBranch(branchId: string): Promise<void> {
@@ -713,7 +759,7 @@ export class MessageTriggerService {
                 offsetDays: rule?.offsetDays ?? 0,
                 recipientType: job.recipientType,
                 recipientPhone: job.recipientPhone,
-                templateKey: job.templateKey,
+                templateKey: job.templateKey === MANUAL_SMS_TEMPLATE_KEY ? MessageTriggerTemplateKey.INFO : job.templateKey,
                 status: job.status,
                 scheduledFor: job.scheduledFor,
                 sentAt: job.sentAt,
@@ -850,7 +896,7 @@ export class MessageTriggerService {
                 clientId: log.clientId,
                 recipientPhone: log.recipientPhone ?? log.receiver,
                 messageBody: log.messageBody,
-                variables: log.variables,
+                variables: publicMessageVariables(log.variables),
                 status: log.status,
                 resentByLogId: null,
                 retryBlockedByLogId: null,
@@ -1016,7 +1062,7 @@ export class MessageTriggerService {
                 clientId: log.clientId,
                 recipientPhone: log.recipientPhone ?? log.receiver,
                 messageBody: log.messageBody,
-                variables: log.variables,
+                variables: publicMessageVariables(log.variables),
                 status: log.status,
                 resentByLogId: null,
                 retryBlockedByLogId: null,
@@ -1235,7 +1281,7 @@ export class MessageTriggerService {
                     clientId: log.clientId,
                     recipientPhone: log.recipientPhone ?? log.receiver,
                     messageBody: log.messageBody,
-                    variables: log.variables,
+                    variables: publicMessageVariables(log.variables),
                     status: log.status,
                     resentByLogId: null,
                     retryBlockedByLogId: null,
@@ -1341,6 +1387,328 @@ export class MessageTriggerService {
         };
     }
 
+    async listRuleGroups(branchId: string): Promise<{ groups: MessageTriggerRuleGroupView[]; standaloneRules: MessageTriggerRuleEntity[] }> {
+        await this.ensureTriggerSchemaReady();
+        const rules = await this.listRulesReadOnly(branchId);
+        const parents = await this.ruleRepository.findGroups(branchId);
+        const groups = parents.map((group) => this.projectRuleGroup(group, rules.filter((rule) => rule.groupId === group.id)));
+        return { groups, standaloneRules: rules.filter((rule) => rule.groupId === null) };
+    }
+
+    async getRuleGroup(branchId: string, id: string): Promise<MessageTriggerRuleGroupView> {
+        const result = await this.listRuleGroups(branchId);
+        const group = result.groups.find((item) => item.id === id);
+        if (!group) throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
+        return group;
+    }
+
+    async previewRuleGroup(branchId: string, input: { draft: MessageTriggerRuleGroupDraft; clientId?: number; employeeScheduleId?: number }): Promise<MessageTriggerRuleGroupPreviewResponse> {
+        this.validatePublicRuleGroup(input.draft);
+        if (!branchId) throw new BadRequestException(codeOnlyProblemBody("REQUEST_INVALID"));
+        const sendTime = input.draft.sendTime ?? await this.getDefaultRuleSendTime(branchId);
+        const rules = this.groupDraftRules(input.draft).map((state) => MessageTriggerRuleEntity.create({ branchId, ...state,
+            sendTime, groupId: "preview", isActive: true }));
+        const clients = input.clientId === undefined
+            ? await this.prisma.client.findMany({ where: { branchId, deletedAt: null }, select: { id: true }, orderBy: { id: "asc" }, take: 501 })
+            : [{ id: input.clientId }];
+        if (clients.length > 500) return { complete: false, recipients: [], count: 0 };
+        const recipients: MessageTriggerRuleGroupPreviewResponse["recipients"] = [];
+        let complete = true;
+        for (const client of clients) {
+            if (input.draft.recipientMode !== MessageTriggerRecipientType.CLIENT) {
+                if (!this.caregiverRecipients) throw new ServiceUnavailableException(codeOnlyProblemBody("DEPENDENCY_UNAVAILABLE"));
+                const set = await this.caregiverRecipients.resolve(branchId, client.id, rules, undefined, { draft: true, employeeScheduleId: input.employeeScheduleId });
+                complete &&= set.complete;
+                recipients.push(...set.recipients.map((row) => { const result = { ...row }; delete result.recipe; return result; }));
+            } else {
+                const source = await this.readClientAutomationSource(branchId, client.id);
+                if (!source) throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
+                const rule = rules[0]!;
+                const recipe = buildClientMessageRecipe(rule, source, new Date());
+                let body: string | null = null;
+                let reason: string | null = recipe ? null : !source.phone ? "전화번호 없음" : "anchor 없음";
+                if (recipe) try { body = (await this.prisma.$transaction((tx) => this.deliveryService.resolveCanonicalDeliverySnapshot(MessageTriggerJobEntity.create(recipe), tx))).message; }
+                catch { reason = "template_unavailable"; }
+                const anchor = rule.eventType === MessageTriggerEventType.SERVICE_END ? source.endDate : rule.eventType === MessageTriggerEventType.SERVICE_START ? source.startDate : source.createdAt;
+                recipients.push({ ruleId: rule.id, recipientType: MessageTriggerRecipientType.CLIENT, employeeId: null, employeeScheduleId: null,
+                    recipientName: source.name, recipientPhone: source.phone, templateKey: rule.templateKey, body, count: body ? 1 : 0,
+                    scheduledFor: recipe?.scheduledFor.toISOString() ?? null,
+                    anchorSource: rule.eventType === MessageTriggerEventType.SERVICE_END ? "client.endDate" : rule.eventType === MessageTriggerEventType.SERVICE_START ? "client.startDate" : "client.createdAt",
+                    anchorDate: anchor ? getKstCalendarDate(anchor, 0) : null,
+                    outcome: reason ? "skip" : "ready", reason });
+            }
+        }
+        return { complete, recipients, count: recipients.reduce((sum, row) => sum + row.count, 0) };
+    }
+
+    async createRuleGroup(branchId: string, draft: MessageTriggerRuleGroupDraft): Promise<MessageTriggerRuleGroupView> {
+        this.validatePublicRuleGroup(draft);
+        if (draft.recipientMode !== MessageTriggerRecipientType.CLIENT) return this.createCaregiverRuleGroup(branchId, draft);
+        const rule = await this.createRule(branchId, this.groupDraftRule(draft));
+        return this.getRuleGroup(branchId, rule.groupId!);
+    }
+
+    async updateRuleGroup(branchId: string, id: string, draft: MessageTriggerRuleGroupDraft & { expectedVersion: number }): Promise<MessageTriggerRuleGroupView> {
+        // Optional PUT fields inherit the locked child; validate their effective
+        // values inside mutateGroupedRule, after that child has been read.
+        this.validatePublicRuleGroup(draft, false);
+        if (!Number.isInteger(draft.expectedVersion) || draft.expectedVersion < 1) this.invalidGroup();
+        await this.ensureTriggerSchemaReady();
+        await this.messageSenderApprovalService.ensureApproved(branchId);
+        await this.withRuleGroupLock(branchId, id, async (group, transaction) => {
+            if (group.version !== draft.expectedVersion) this.groupConflict(group);
+            if (group.recipientMode !== MessageTriggerRecipientType.CLIENT || draft.recipientMode !== MessageTriggerRecipientType.CLIENT) {
+                await this.replaceGroupProjection(branchId, group, draft, transaction);
+                return;
+            }
+            const children = await this.ruleRepository.findGroupRules(branchId, id, transaction);
+            const child = children[0];
+            if (children.length !== 1 || !child || child.recipientType !== MessageTriggerRecipientType.CLIENT) this.groupConflict(group);
+            await this.mutateGroupedRule(branchId, group, child, this.groupDraftRule(draft), transaction, draft);
+        }, undefined, this.groupDraftRules(draft));
+        for (const rule of await this.ruleRepository.findGroupRules(branchId, id)) await this.reconcileRuleGenerationAfterMutation(branchId, rule.id);
+        return this.getRuleGroup(branchId, id);
+    }
+
+    async deleteRuleGroup(branchId: string, id: string): Promise<void> {
+        await this.ensureTriggerSchemaReady();
+        await this.withRuleGroupLock(branchId, id, async (group, transaction) => {
+            await this.deleteGroupedRules(branchId, group, transaction);
+        });
+    }
+
+    private validatePublicRuleGroup(draft: MessageTriggerRuleGroupDraft, effectiveRule?: UpsertRuleParams | false): void {
+        const recipients = this.groupRecipients(draft.recipientMode);
+        if (!recipients.length || !draft.name?.trim() || !draft.recipientTemplates || typeof draft.recipientTemplates !== "object"
+            || Array.isArray(draft.recipientTemplates) || Object.keys(draft.recipientTemplates).length !== recipients.length
+            || recipients.some((recipient) => !Object.prototype.hasOwnProperty.call(draft.recipientTemplates, recipient))) this.invalidGroup();
+        try {
+            for (const recipient of recipients) {
+                const templateKey = draft.recipientTemplates[recipient];
+                if (typeof templateKey !== "string" || !Object.prototype.hasOwnProperty.call(MESSAGE_TRIGGER_TEMPLATE_CATALOG, templateKey)) {
+                    throw new BadRequestException(codeOnlyProblemBody("VALIDATION_FAILED"));
+                }
+                if (effectiveRule !== false) this.validateRule({ ...(effectiveRule ?? this.groupDraftRule(draft)), recipientType: recipient, templateKey });
+            }
+            if (effectiveRule === false) return;
+            this.validateRule(effectiveRule ?? this.groupDraftRule(draft));
+        }
+        catch (error) {
+            if (!(error instanceof BadRequestException)) throw error;
+            throw new BadRequestException(problemBody("VALIDATION_FAILED", { pointer: "/draft", code: "INVALID_VALUE", detail: "규칙 그룹의 이벤트, 시각 또는 템플릿이 올바르지 않습니다.", location: "body" }), { cause: error });
+        }
+    }
+
+    private invalidGroup(): never {
+        throw new BadRequestException(problemBody("VALIDATION_FAILED", { pointer: "/recipientMode", code: "INVALID_VALUE", detail: "규칙 그룹의 수신 대상과 템플릿 조합이 올바르지 않습니다.", location: "body" }));
+    }
+
+    private groupRecipients(mode: MessageTriggerRuleGroupEntity["recipientMode"]): MessageTriggerRecipientType[] {
+        return mode === "BOTH_EMPLOYEES" ? [MessageTriggerRecipientType.PRIMARY_EMPLOYEE, MessageTriggerRecipientType.SECONDARY_EMPLOYEE]
+            : Object.values(MessageTriggerRecipientType).includes(mode as MessageTriggerRecipientType) ? [mode as MessageTriggerRecipientType] : [];
+    }
+
+    private groupDraftRules(draft: MessageTriggerRuleGroupDraft): UpsertRuleParams[] {
+        return this.groupRecipients(draft.recipientMode).map((recipientType) => ({ ...this.groupDraftRule(draft), recipientType, templateKey: draft.recipientTemplates[recipientType]! }));
+    }
+
+    private groupDraftRule(draft: MessageTriggerRuleGroupDraft): UpsertRuleParams {
+        return { name: draft.name, isActive: draft.isActive, eventType: draft.eventType, offsetType: draft.offsetType,
+            offsetDays: draft.offsetDays, sendTime: draft.sendTime, targetClientStatus: draft.targetClientStatus,
+            retryOnFailure: draft.retryOnFailure, recipientType: this.groupRecipients(draft.recipientMode)[0]!, templateKey: draft.recipientTemplates[this.groupRecipients(draft.recipientMode)[0]!]! };
+    }
+
+    private withCanonicalTemplateLocks<T>(keys: MessageTriggerTemplateKey[], work: (transaction: Prisma.TransactionClient) => Promise<T>, transaction: Prisma.TransactionClient): Promise<T> {
+        const sorted = [...new Set(keys.map((key) => this.getRuleSystemTemplateKey(key)).filter((key): key is SystemTemplateKey => key !== null))].sort();
+        const lock = (index: number, tx: Prisma.TransactionClient): Promise<T> => index === sorted.length ? work(tx)
+            : this.templateAutomationLock.runExclusive(sorted[index]!, (next) => lock(index + 1, next), tx);
+        return lock(0, transaction);
+    }
+
+    private async effectiveGroupStates(branchId: string, draft: MessageTriggerRuleGroupDraft, transaction: Prisma.TransactionClient, previous?: MessageTriggerRuleEntity): Promise<UpsertRuleParams[]> {
+        const base = previous ? { ...previous } : {};
+        const states = this.groupDraftRules(draft).map((params) => ({ ...base,
+            ...Object.fromEntries(Object.entries(params).filter(([, value]) => value !== undefined)),
+            sendTime: params.sendTime ?? previous?.sendTime,
+        } as UpsertRuleParams));
+        const parentEnabled = await this.messageAutomationActivationService!.getTriggerDispatchEnabled(branchId, transaction);
+        for (const state of states) {
+            state.sendTime ??= await this.getDefaultRuleSendTime(branchId);
+            if (!parentEnabled && draft.isActive !== true) state.isActive = false;
+            this.validateRule(state);
+            if (state.isActive !== false) await this.messageAutomationActivationService!.assertTriggerDispatchEnabled(branchId, transaction);
+            await this.ensureActiveRuleTemplateVariablesSupported(branchId, state, transaction);
+        }
+        return states;
+    }
+
+    private async createCaregiverRuleGroup(branchId: string, draft: MessageTriggerRuleGroupDraft): Promise<MessageTriggerRuleGroupView> {
+        await this.ensureTriggerSchemaReady();
+        await this.messageSenderApprovalService.ensureApproved(branchId);
+        if (!this.messageAutomationBranchLockService || !this.messageAutomationActivationService) throw new ServiceUnavailableException(codeOnlyProblemBody("DEPENDENCY_UNAVAILABLE"));
+        const id = await this.messageAutomationBranchLockService.runExclusive(branchId, (transaction) => this.withCanonicalTemplateLocks(
+            Object.values(draft.recipientTemplates), async (tx) => {
+                const states = await this.effectiveGroupStates(branchId, draft, tx);
+                for (const state of states) await this.assertNoSemanticDuplicate(branchId, state, tx);
+                const group = await this.ruleRepository.createGroup(branchId, draft.name, draft.recipientMode, tx);
+                for (const state of states) {
+                    const child = await this.ruleRepository.create(branchId, MessageTriggerRuleEntity.create({ branchId, ...state, groupId: group.id,
+                        offsetDays: this.normalizeOffsetDays(state.offsetType, state.offsetDays) }), tx);
+                    await this.ruleRepository.markJobsStale(branchId, child.id, tx);
+                }
+                return group.id;
+            }, transaction));
+        for (const rule of await this.ruleRepository.findGroupRules(branchId, id)) await this.reconcileRuleGenerationAfterMutation(branchId, rule.id);
+        return this.getRuleGroup(branchId, id);
+    }
+
+    private async replaceGroupProjection(branchId: string, group: MessageTriggerRuleGroupEntity, draft: MessageTriggerRuleGroupDraft, transaction: Prisma.TransactionClient): Promise<void> {
+        const current = await this.ruleRepository.findGroupRules(branchId, group.id, transaction);
+        const all = await this.ruleRepository.findGroupRules(branchId, group.id, transaction, true);
+        if (!current.length) this.groupConflict(group);
+        const states = await this.effectiveGroupStates(branchId, draft, transaction, current[0]);
+        for (const state of states) await this.assertNoSemanticDuplicate(branchId, state, transaction, group.id);
+        for (const child of current.filter((child) => !states.some((state) => state.recipientType === child.recipientType))) {
+            if (!await this.ruleRepository.deleteIfTargetMatchesAndFenceJobs(branchId, child, "Rule recipient removed", new Date(), transaction)) this.groupConflict(group);
+        }
+        for (const state of states) {
+            const existing = all.find((child) => child.recipientType === state.recipientType);
+            if (existing) {
+                const next = MessageTriggerRuleEntity.reconstitute(existing.id, existing.branchId, existing.name, existing.isActive, existing.eventType,
+                    existing.offsetType, existing.offsetDays, existing.recipientType, existing.templateKey, existing.createdAt, existing.updatedAt,
+                    existing.isDefault, existing.jobsStale, existing.sendTime, existing.targetClientStatus, existing.retryOnFailure, existing.groupId);
+                next.update({ ...state, offsetDays: this.normalizeOffsetDays(state.offsetType, state.offsetDays) });
+                const saved = current.some((child) => child.id === existing.id)
+                    ? await this.ruleRepository.updateIfTargetMatchesAndFenceJobs(branchId, existing, next, "Rule updated", new Date(), transaction)
+                    : await this.ruleRepository.restoreGroupRule(branchId, group.id, next, transaction);
+                if (!saved) this.groupConflict(group);
+                await this.ruleRepository.markJobsStale(branchId, saved.id, transaction);
+            } else {
+                const saved = await this.ruleRepository.create(branchId, MessageTriggerRuleEntity.create({ branchId, ...state, groupId: group.id,
+                    offsetDays: this.normalizeOffsetDays(state.offsetType, state.offsetDays) }), transaction);
+                await this.ruleRepository.markJobsStale(branchId, saved.id, transaction);
+            }
+        }
+        group.name = draft.name; group.recipientMode = draft.recipientMode;
+        if (!await this.ruleRepository.updateGroupCAS(branchId, group, group.version, transaction)) this.groupConflict(group);
+    }
+
+    private projectRuleGroup(group: MessageTriggerRuleGroupEntity, rules: MessageTriggerRuleEntity[]): MessageTriggerRuleGroupView {
+        const first = rules[0];
+        if (!first) throw new ServiceUnavailableException(codeOnlyProblemBody("DEPENDENCY_UNAVAILABLE"));
+        return { ...group, rules, eventType: first.eventType, offsetType: first.offsetType, offsetDays: first.offsetDays,
+            sendTime: first.sendTime, targetClientStatus: first.targetClientStatus, retryOnFailure: first.retryOnFailure,
+            isActive: rules.every((rule) => rule.isActive), recipientTemplates: Object.fromEntries(rules.map((rule) => [rule.recipientType, rule.templateKey])) };
+    }
+
+    private groupConflict(group: MessageTriggerRuleGroupEntity): never {
+        throw new ConflictException({ ...codeOnlyProblemBody("REQUEST_CONFLICT"), groupId: group.id, currentVersion: group.version });
+    }
+
+    private async withRuleGroupLock<T>(branchId: string, groupId: string, work: (group: MessageTriggerRuleGroupEntity, transaction: Prisma.TransactionClient) => Promise<T>, transaction?: Prisma.TransactionClient, templateParams?: UpsertRuleParams | UpsertRuleParams[] | ((transaction: Prisma.TransactionClient) => Promise<UpsertRuleParams>)): Promise<T> {
+        if (!this.messageAutomationBranchLockService) throw new ServiceUnavailableException(codeOnlyProblemBody("DEPENDENCY_UNAVAILABLE"));
+        return this.messageAutomationBranchLockService.runExclusive(branchId, async (writeTransaction) => {
+            const effectiveTemplateParams = typeof templateParams === "function" ? await templateParams(writeTransaction) : templateParams;
+            const mutate = async (lockedTransaction: Prisma.TransactionClient) => {
+                const group = await this.ruleRepository.lockGroup(branchId, groupId, lockedTransaction);
+                if (!group) throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
+                await this.ruleRepository.lockGroupRules(branchId, groupId, lockedTransaction);
+                return work(group, lockedTransaction);
+            };
+            const current = await this.ruleRepository.findGroupRules(branchId, groupId, writeTransaction);
+            const requested = effectiveTemplateParams ? Array.isArray(effectiveTemplateParams) ? effectiveTemplateParams : [effectiveTemplateParams] : [];
+            return this.withCanonicalTemplateLocks([...current.map((rule) => rule.templateKey), ...requested.map((rule) => rule.templateKey)], mutate, writeTransaction);
+        }, transaction);
+    }
+
+    private async refuseBothChild(branchId: string, rule: MessageTriggerRuleEntity, transaction: Prisma.TransactionClient): Promise<void> {
+        if (!rule.groupId) return;
+        const group = await this.ruleRepository.findGroup(branchId, rule.groupId, transaction);
+        if (group?.recipientMode === "BOTH_EMPLOYEES") this.groupConflict(group);
+    }
+
+    private async assertSingletonGroup(branchId: string, rule: MessageTriggerRuleEntity, transaction: Prisma.TransactionClient): Promise<MessageTriggerRuleGroupEntity | null> {
+        if (!rule.groupId) return null;
+        const group = await this.ruleRepository.lockGroup(branchId, rule.groupId, transaction);
+        if (!group) throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
+        if (group.recipientMode === "BOTH_EMPLOYEES") this.groupConflict(group);
+        await this.ruleRepository.lockGroupRules(branchId, group.id, transaction);
+        const children = await this.ruleRepository.findGroupRules(branchId, group.id, transaction);
+        if (children.length !== 1 || children[0]?.id !== rule.id) this.groupConflict(group);
+        return group;
+    }
+
+    private async assertNoSemanticDuplicate(branchId: string, candidate: UpsertRuleParams, transaction: Prisma.TransactionClient, excludedGroupId?: string): Promise<void> {
+        // Only configurable automatic rules participate; default/system/manual
+        // senders have their own specialized APIs and are never conflated.
+        if (!isConfigurableSmsTriggerTemplate(candidate.templateKey)) return;
+        // IMMEDIATE recipes use now; stored HH:mm does not distinguish a send.
+        const effectiveSendTime = candidate.offsetType === MessageTriggerOffsetType.IMMEDIATE ? null : candidate.sendTime;
+        const rules = await this.ruleRepository.findGroupDuplicateCandidates(branchId, transaction);
+        const duplicate = rules.find((rule) => rule.branchId === branchId && !rule.isDefault
+            && !MessageTriggerRuleEntity.isReservedId(rule.id) && !isManualMessageTriggerRule(rule)
+            && isConfigurableSmsTriggerTemplate(rule.templateKey) && (!excludedGroupId || rule.groupId !== excludedGroupId)
+            && rule.recipientType === candidate.recipientType && rule.eventType === candidate.eventType
+            && this.semanticRuleOffset(rule) === this.semanticRuleOffset(candidate)
+            && (rule.offsetType === MessageTriggerOffsetType.IMMEDIATE ? null : rule.sendTime) === effectiveSendTime
+            && rule.targetClientStatus === (candidate.targetClientStatus ?? "all")
+            && rule.templateKey === candidate.templateKey);
+        if (duplicate) throw new ConflictException({ ...codeOnlyProblemBody("REQUEST_CONFLICT"), groupId: duplicate.groupId, ruleId: duplicate.id });
+    }
+
+    private semanticRuleOffset(rule: Pick<UpsertRuleParams, "offsetType" | "offsetDays">): string {
+        if (rule.offsetType === MessageTriggerOffsetType.IMMEDIATE) return "immediate";
+        const days = this.normalizeOffsetDays(rule.offsetType, rule.offsetDays);
+        return `calendar:${rule.offsetType === MessageTriggerOffsetType.BEFORE_DAYS ? -days : days}`;
+    }
+
+    private async advanceRuleGroup(branchId: string, group: MessageTriggerRuleGroupEntity, rule: MessageTriggerRuleEntity, transaction: Prisma.TransactionClient): Promise<void> {
+        group.name = rule.name;
+        group.recipientMode = rule.recipientType;
+        if (!await this.ruleRepository.updateGroupCAS(branchId, group, group.version, transaction)) this.groupConflict(group);
+    }
+
+    private async mutateGroupedRule(branchId: string, group: MessageTriggerRuleGroupEntity, current: MessageTriggerRuleEntity, params: Partial<UpsertRuleParams>, transaction: Prisma.TransactionClient, publicDraft?: MessageTriggerRuleGroupDraft): Promise<MessageTriggerRuleEntity> {
+        // The duplicate predicate and entity update must inspect the same
+        // effective state. groupDraftRule includes omitted keys as undefined.
+        const state: UpsertRuleParams = {
+            name: params.name === undefined ? current.name : params.name,
+            isActive: params.isActive === undefined ? current.isActive : params.isActive,
+            eventType: params.eventType === undefined ? current.eventType : params.eventType,
+            offsetType: params.offsetType === undefined ? current.offsetType : params.offsetType,
+            offsetDays: params.offsetDays === undefined ? current.offsetDays : params.offsetDays,
+            sendTime: params.sendTime === undefined ? current.sendTime : params.sendTime,
+            recipientType: params.recipientType === undefined ? current.recipientType : params.recipientType,
+            templateKey: params.templateKey === undefined ? current.templateKey : params.templateKey,
+            targetClientStatus: params.targetClientStatus === undefined ? current.targetClientStatus : params.targetClientStatus,
+            retryOnFailure: params.retryOnFailure === undefined ? current.retryOnFailure : params.retryOnFailure,
+        };
+        if (publicDraft) this.validatePublicRuleGroup(publicDraft, state);
+        else this.validateRule(state, current.templateKey);
+        const parentEnabled = await this.messageAutomationActivationService!.getTriggerDispatchEnabled(branchId, transaction);
+        if (!parentEnabled && params.isActive !== true) state.isActive = false;
+        return this.runRuleTemplateMutation(branchId, state, async (writeTransaction) => {
+            await this.assertNoSemanticDuplicate(branchId, state, writeTransaction, group.id);
+            const next = MessageTriggerRuleEntity.reconstitute(current.id, current.branchId, current.name, current.isActive, current.eventType,
+                current.offsetType, current.offsetDays, current.recipientType, current.templateKey, current.createdAt, current.updatedAt,
+                current.isDefault, current.jobsStale, current.sendTime, current.targetClientStatus, current.retryOnFailure, current.groupId);
+            next.update({ ...state, offsetDays: this.normalizeOffsetDays(state.offsetType, state.offsetDays) });
+            const updated = await this.ruleRepository.updateIfTargetMatchesAndFenceJobs(branchId, current, next, "Rule updated", new Date(), writeTransaction);
+            if (!updated) this.groupConflict(group);
+            await this.advanceRuleGroup(branchId, group, updated, writeTransaction);
+            return updated;
+        }, transaction, { allowPersistedActivationUnderParentOff: params.isActive === undefined, templatesPrelocked: true });
+    }
+
+    private async deleteGroupedRules(branchId: string, group: MessageTriggerRuleGroupEntity, transaction: Prisma.TransactionClient): Promise<void> {
+        const rules = await this.ruleRepository.findGroupRules(branchId, group.id, transaction);
+        for (const rule of rules) {
+            if (rule.isDefault || MessageTriggerRuleEntity.isReservedId(rule.id)) throw new ConflictException(codeOnlyProblemBody("MESSAGE_DEFAULT_RULE_DELETE_BLOCKED"));
+            if (!await this.ruleRepository.deleteIfTargetMatchesAndFenceJobs(branchId, rule, "Rule deleted", new Date(), transaction)) this.groupConflict(group);
+        }
+        await this.ruleRepository.softDeleteGroup(branchId, group.id, transaction);
+    }
+
     async getRule(branchId: string, id: string): Promise<MessageTriggerRuleEntity> {
         await this.ensureTriggerSchemaReady();
         const rule = await this.ruleRepository.findById(branchId, id);
@@ -1367,12 +1735,19 @@ export class MessageTriggerService {
             // Read the candidate only after the branch lock is held. A stale
             // pre-lock snapshot could validate the wrong template while a
             // concurrent metadata update changes the rule.
-            const candidate = (await this.ruleRepository.findAll(branchId)).find((rule) => rule.id === id);
+            const candidate = (await this.ruleRepository.findAll(branchId, transaction)).find((rule) => rule.id === id);
             if (!candidate) throw new NotFoundException(`Trigger rule ${id} not found`);
+            await this.refuseBothChild(branchId, candidate, transaction);
+            const activate = async () => {
+                const group = await this.assertSingletonGroup(branchId, candidate, transaction);
+                const activated = await this.messageAutomationActivationService!.activateRuleWithParent(branchId, id, options, transaction);
+                if (group) await this.advanceRuleGroup(branchId, group, activated, transaction);
+                return activated;
+            };
             if (!isManualMessageTriggerRule(candidate)) {
                 const systemTemplateKey = this.getRuleSystemTemplateKey(candidate.templateKey);
                 if (!systemTemplateKey) throw new BadRequestException("SMS 발송 채널이 없는 템플릿입니다.");
-                await this.templateAutomationLock.runExclusive(
+                return this.templateAutomationLock.runExclusive(
                     systemTemplateKey,
                     async () => {
                         await this.ensureActiveRuleTemplateVariablesSupported(branchId, {
@@ -1385,16 +1760,12 @@ export class MessageTriggerService {
                             recipientType: candidate.recipientType,
                             templateKey: candidate.templateKey,
                         });
+                        return activate();
                     },
                     transaction,
                 );
             }
-            return this.messageAutomationActivationService!.activateRuleWithParent(
-                branchId,
-                id,
-                options,
-                transaction,
-            );
+            return activate();
         });
     }
 
@@ -1403,6 +1774,8 @@ export class MessageTriggerService {
         if (!this.messageAutomationActivationService) {
             throw new ServiceUnavailableException("Message automation activation is not configured");
         }
+        const rule = await this.ruleRepository.findById(branchId, id);
+        if (rule?.groupId) return this.updateRule(branchId, id, { isActive });
         return this.messageAutomationActivationService.setGlobalRuleBranchActivation(branchId, id, isActive);
     }
 
@@ -1423,6 +1796,11 @@ export class MessageTriggerService {
         });
     }
 
+    /** Read the validated branch default before binding a rule creation proposal. */
+    async getDefaultRuleSendTime(branchId: string): Promise<string> {
+        return (await this.getDispatchTimingPolicy(branchId)).defaultRuleSendTime;
+    }
+
     async createRule(
         branchId: string,
         params: UpsertRuleParams,
@@ -1438,13 +1816,19 @@ export class MessageTriggerService {
         if (isAutomaticRule && !this.messageAutomationActivationService) {
             throw new ServiceUnavailableException("Message automation activation is not configured");
         }
-        let persistedParams: UpsertRuleParams = params;
+        let persistedParams: UpsertRuleParams = {
+            ...params,
+            sendTime: params.sendTime ?? await this.getDefaultRuleSendTime(branchId),
+        };
         const persistRule = async (writeTransaction: Prisma.TransactionClient) => {
+            await this.assertNoSemanticDuplicate(branchId, persistedParams, writeTransaction);
+            const group = await this.ruleRepository.createGroup(branchId, persistedParams.name, persistedParams.recipientType, writeTransaction);
             const rule = await this.ruleRepository.create(
                 branchId,
                 MessageTriggerRuleEntity.create({
                     branchId,
                     ...persistedParams,
+                    groupId: group.id,
                     offsetDays: this.normalizeOffsetDays(persistedParams.offsetType, persistedParams.offsetDays),
                 }),
                 writeTransaction,
@@ -1489,6 +1873,29 @@ export class MessageTriggerService {
         await this.messageSenderApprovalService.ensureApproved(branchId);
         const rule = await this.ruleRepository.findById(branchId, id);
         if (!rule) throw new NotFoundException(`Trigger rule ${id} not found`);
+        if (rule.groupId) {
+            const updated = await this.withRuleGroupLock(branchId, rule.groupId, async (group, transaction) => {
+                if (group.recipientMode === "BOTH_EMPLOYEES") this.groupConflict(group);
+                const current = await this.ruleRepository.findById(branchId, id, transaction);
+                if (!current || current.groupId !== group.id) this.groupConflict(group);
+                await this.assertSingletonGroup(branchId, current, transaction);
+                return this.mutateGroupedRule(branchId, group, current, params, transaction);
+            }, undefined, async (transaction) => {
+                // Branch serialization must precede the key read: a public PUT
+                // may have replaced the template after the initial legacy read.
+                const current = await this.ruleRepository.findById(branchId, id, transaction);
+                if (!current) throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
+                if (current.groupId !== rule.groupId) {
+                    throw new ConflictException({ ...codeOnlyProblemBody("REQUEST_CONFLICT"), groupId: rule.groupId });
+                }
+                return {
+                    ...current,
+                    templateKey: params.templateKey === undefined ? current.templateKey : params.templateKey,
+                    isActive: params.isActive === undefined ? current.isActive : params.isActive,
+                };
+            });
+            return await this.reconcileRuleGenerationAfterMutation(branchId, updated.id) ?? updated;
+        }
         const metadataOnlyUpdate = params.isActive === undefined;
         let effectiveRule = rule;
         let effectiveState: UpsertRuleParams = {
@@ -1617,30 +2024,43 @@ export class MessageTriggerService {
             expected.sendTime,
             expected.targetClientStatus,
             expected.retryOnFailure,
+            expected.groupId,
         );
         next.update({
             ...nextState,
             offsetDays: this.normalizeOffsetDays(nextState.offsetType, nextState.offsetDays),
         });
         const nextForWrite = next;
+        let targetGroup: MessageTriggerRuleGroupEntity | null = null;
 
         const updated = await this.runRuleTemplateMutation(
             branchId,
             nextState,
-            (transaction) => this.ruleRepository.updateIfTargetMatchesAndFenceJobs(
-                branchId,
-                expected,
-                nextForWrite,
-                "Rule updated",
-                mutationStartedAt,
-                transaction,
-            ),
+            async (transaction) => {
+                if (nextForWrite.groupId) {
+                    const current = await this.ruleRepository.findById(branchId, id, transaction);
+                    if (current) targetGroup = await this.assertSingletonGroup(branchId, current, transaction);
+                }
+                if (targetGroup) await this.assertNoSemanticDuplicate(branchId, nextForWrite, transaction, targetGroup.id);
+                const saved = await this.ruleRepository.updateIfTargetMatchesAndFenceJobs(branchId, expected, nextForWrite, "Rule updated", mutationStartedAt, transaction);
+                if (saved && targetGroup) await this.advanceRuleGroup(branchId, targetGroup, saved, transaction);
+                return saved;
+            },
             undefined,
             {
+                oldTemplateKeys: async (tx) => {
+                    const current = await this.ruleRepository.findById(branchId, id, tx);
+                    return current ? [current.templateKey] : [];
+                },
                 allowPersistedActivationUnderParentOff: params.isActive === undefined,
                 resolveParams: async (transaction) => {
                     const current = await this.ruleRepository.findById(branchId, id, transaction);
                     if (!current) return nextState;
+                    await this.refuseBothChild(branchId, current, transaction);
+                    // Keep the approved hash/CAS unchanged. Membership is owned by
+                    // the locked current parent, never reconstructed as standalone.
+                    expected.groupId = current.groupId;
+                    nextForWrite.groupId = current.groupId;
                     const templateKey = params.templateKey ?? current.templateKey;
                     const automatic = !isManualMessageTriggerRule({ id: current.id, templateKey });
                     if (automatic && !this.messageAutomationActivationService) {
@@ -1696,6 +2116,16 @@ export class MessageTriggerService {
         if (rule.isDefault) {
             throw new ConflictException(codeOnlyProblemBody("MESSAGE_DEFAULT_RULE_DELETE_BLOCKED"));
         }
+        if (rule.groupId) {
+            await this.withRuleGroupLock(branchId, rule.groupId, async (group, transaction) => {
+                if (group.recipientMode === "BOTH_EMPLOYEES") this.groupConflict(group);
+                const current = await this.ruleRepository.findById(branchId, id, transaction);
+                if (!current || current.groupId !== group.id) this.groupConflict(group);
+                await this.assertSingletonGroup(branchId, current, transaction);
+                await this.deleteGroupedRules(branchId, group, transaction);
+            });
+            return;
+        }
         await this.cancelPendingJobsForRule(branchId, rule, "Rule deleted", false);
         await this.ruleRepository.delete(branchId, id);
     }
@@ -1730,12 +2160,16 @@ export class MessageTriggerService {
         if (expected.isDefault) {
             throw new ConflictException(codeOnlyProblemBody("MESSAGE_DEFAULT_RULE_DELETE_BLOCKED"));
         }
-        const deleted = await this.ruleRepository.deleteIfTargetMatchesAndFenceJobs(
-            branchId,
-            expected,
-            "Rule deleted",
-            mutationStartedAt,
-        );
+        const current = await this.ruleRepository.findById(branchId, id);
+        const deleted = current?.groupId
+            ? await this.withRuleGroupLock(branchId, current.groupId, async (group, transaction) => {
+                if (group.recipientMode === "BOTH_EMPLOYEES") this.groupConflict(group);
+                expected.groupId = group.id;
+                const saved = await this.ruleRepository.deleteIfTargetMatchesAndFenceJobs(branchId, expected, "Rule deleted", mutationStartedAt, transaction);
+                if (saved) await this.ruleRepository.softDeleteGroup(branchId, group.id, transaction);
+                return saved;
+            })
+            : await this.ruleRepository.deleteIfTargetMatchesAndFenceJobs(branchId, expected, "Rule deleted", mutationStartedAt);
         if (!deleted) {
             throw new BadRequestException(problemBody("VALIDATION_FAILED", {
                 pointer: "/targetVersion",
@@ -1765,6 +2199,13 @@ export class MessageTriggerService {
         return !(await this.jobRepository.hasActiveJobsBefore(branchId, rule.id, rule.updatedAt));
     }
 
+    private async getDispatchTimingPolicy(branchId: string | null, transaction?: Prisma.TransactionClient) {
+        if (!branchId || !this.systemSettingService) {
+            throw new ServiceUnavailableException("Message automation policy is not configured");
+        }
+        return (await this.systemSettingService.getMessageAutomationPolicyConfig(branchId, transaction)).configuration;
+    }
+
     async dispatchDueJobs(): Promise<void> {
         if (!(await this.hasTriggerSchema())) {
             return;
@@ -1776,32 +2217,44 @@ export class MessageTriggerService {
         // Rebuild before querying due rows so a rule saved immediately before
         // this tick can dispatch on this tick instead of waiting another minute.
         await this.processStaleRuleRebuilds();
-        const jobs = await this.jobRepository.findDuePendingSystemScope(100);
-        const policyCache = new Map<string, boolean>();
-        const isEnabled = async (
-            branchId: string,
-            policyId: "trigger-dispatch" | "trigger-job-retry",
-        ): Promise<boolean> => {
-            const cacheKey = `${branchId}:${policyId}`;
-            const cached = policyCache.get(cacheKey);
-            if (cached !== undefined) return cached;
-            const enabled = await this.getMessagePolicyEnabled(branchId, policyId);
-            policyCache.set(cacheKey, enabled);
-            return enabled;
-        };
-        const eligibleJobs: MessageTriggerJobEntity[] = [];
-        for (const job of jobs) {
-            if (!job.branchId) continue;
-            if (this.isAutomaticMessageJob(job) && !(await isEnabled(job.branchId, "trigger-dispatch"))) continue;
-            const isRetry = job.attempts > 0 || job.nextAttemptAt !== null;
-            if (isRetry && !(await isEnabled(job.branchId, "trigger-job-retry"))) continue;
-            eligibleJobs.push(job);
+        const now = new Date();
+        const branchIds = await this.jobRepository.findDueDispatchBranchIds(now);
+        const approvedBranchIds = await this.messageSenderApprovalService.getApprovedBranchIds(branchIds);
+        const eligibility = [];
+        for (const branchId of branchIds) {
+            if (!approvedBranchIds.has(branchId)) continue;
+            const policy = await this.getDispatchTimingPolicy(branchId);
+            eligibility.push({
+                branchId,
+                automaticEnabled: await this.getMessagePolicyEnabled(branchId, "trigger-dispatch"),
+                retryEnabled: await this.getMessagePolicyEnabled(branchId, "trigger-job-retry"),
+                intervalMinutes: policy.dispatchCheckIntervalMinutes,
+                pastExpiryHours: policy.pastExpiryHours,
+            });
         }
-
+        const quietJobs = typeof this.jobRepository.findDueQuietQueueJobs === "function"
+            ? await this.jobRepository.findDueQuietQueueJobs(eligibility, now, 100) : [];
+        const ordinaryJobs = await this.jobRepository.consumeDispatchSlotsAndFindDueJobs(
+            eligibility, now, 100 - quietJobs.length, quietJobs.map(job => job.id),
+        );
+        const jobs = [...quietJobs, ...ordinaryJobs.filter(job => !quietJobs.some(quiet => quiet.id === job.id))];
+        const quietIds = new Set(quietJobs.map(job => job.id));
+        // The repository applies these before LIMIT. Keep the snapshot check at
+        // the consumer boundary too; claim/provider fences recheck live state.
+        const byBranch = new Map(eligibility.map((branch) => [branch.branchId, branch]));
+        const eligibleJobs: typeof jobs = [];
+        for (const job of jobs) {
+            const branch = job.branchId ? byBranch.get(job.branchId) : undefined;
+            if (!branch || !(branch.automaticEnabled || !this.isAutomaticMessageJob(job))) continue;
+            if (quietIds.has(job.id) || branch.retryEnabled || (job.attempts === 0 && (job.nextAttemptAt === null || (
+                // Canonical mixed slots wait operationally without attempting delivery.
+                job.status === "pending" && job.scheduledFor <= now && job.nextAttemptAt <= now
+                && typeof job.payload.catchUp?.predecessorDedupeKey === "string"
+                && job.payload.catchUp.predecessorDedupeKey.trim().length > 0
+                && (isCaregiverTriggerTemplate(job.templateKey) || await this.hasStoredMixedClientCatchUpBatch(job))
+            )))) eligibleJobs.push(job);
+        }
         if (eligibleJobs.length > 0) {
-            const approvedBranchIds = await this.messageSenderApprovalService.getApprovedBranchIds(
-                [...new Set(eligibleJobs.map((job) => job.branchId).filter((id): id is string => !!id))],
-            );
             const sentIds = await this.messageLogRepository.findSentTriggerJobIdsSystemScope(
                 eligibleJobs.map((job) => job.id),
             );
@@ -2077,11 +2530,15 @@ export class MessageTriggerService {
         const client = await this.readClientAutomationSource(branchId, clientId);
         if (!client) return;
 
-        const rules = await this.ruleRepository.findActiveByEventTypes(branchId, [
+        const allRules = await this.ruleRepository.findActiveByEventTypes(branchId, [
             MessageTriggerEventType.CLIENT_CREATED,
             MessageTriggerEventType.SERVICE_START,
             MessageTriggerEventType.SERVICE_END,
         ]);
+
+        const caregiverRules = allRules.filter((rule) => isCaregiverTriggerTemplate(rule.templateKey));
+        const rules = allRules.filter((rule) => rule.recipientType === MessageTriggerRecipientType.CLIENT
+            && (!intentOptions?.taskOrigin || this.referenceIncludesClientRule(intentOptions.taskAutomationReference, branchId, client, rule)));
 
         if (includePast) {
             if (!intentOptions?.preserveExisting) {
@@ -2128,6 +2585,14 @@ export class MessageTriggerService {
             candidateJobs.push({ rule, job });
         }
 
+        if (caregiverRules.length) {
+            // One branch-owned batch makes child ordering and predecessor reads
+            // atomic across the two recipient families. CLIENT-only keeps its
+            // existing persistence boundary below.
+            await this.syncCaregiverRulesForClient(branchId, clientId, includePast, intentOptions, undefined, candidateJobs);
+            return;
+        }
+
         const jobsToPersist = includePast
             ? await this.applyRetroactiveSendConfig(
                 branchId,
@@ -2135,6 +2600,10 @@ export class MessageTriggerService {
                 intentOptions?.stableBatchAt,
             )
             : candidateJobs;
+
+        if (includePast && intentOptions?.preserveExisting && intentOptions.stableBatchAt) {
+            await this.retainExistingMixedBatchClientSlots(branchId, jobsToPersist, intentOptions.stableBatchAt);
+        }
 
         for (const { rule, job } of jobsToPersist) {
             await this.persistPendingJob(
@@ -2147,6 +2616,130 @@ export class MessageTriggerService {
                 intentOptions?.taskOrigin ? intentOptions.taskAutomationReference : undefined,
             );
         }
+    }
+
+    private async retainExistingMixedBatchClientSlots(branchId: string, candidates: ClientRuleJobCandidate[], batchAt: Date,
+        transaction?: Prisma.TransactionClient): Promise<void> {
+        const catchUps = candidates.filter(({ job }) => job.recipientType === MessageTriggerRecipientType.CLIENT && job.clientId !== null && job.payload.catchUp);
+        if (!catchUps.length) return;
+        const clientId = catchUps[0]!.job.clientId!;
+        const batchId = `client:${clientId}:${batchAt.toISOString()}`;
+        const previous = await this.jobRepository.findForClientAutomationReview(branchId, clientId, catchUps.map(({ rule }) => rule.id), transaction);
+        if (previous.length > 500) throw new ServiceUnavailableException(codeOnlyProblemBody("DEPENDENCY_UNAVAILABLE"));
+        for (const { rule, job } of catchUps) {
+            const slot = previous.find((row) => row.branchId === branchId && row.clientId === clientId && row.ruleId === rule.id
+                && row.employeeScheduleId === null && row.recipientType === job.recipientType && row.templateKey === job.templateKey
+                && row.payload.catchUp?.batchId === batchId);
+            if (!slot?.payload.catchUp) continue;
+            // A surviving CLIENT slot proves its mixed origin through actual
+            // stored predecessors, even if no CARE rule is currently active.
+            let predecessorKey = slot.payload.catchUp.predecessorDedupeKey;
+            let mixed = false;
+            for (let remaining = 500; predecessorKey && remaining > 0; remaining--) {
+                const predecessor = await (transaction ?? this.prisma).message_trigger_job.findUnique({ where: { dedupeKey: predecessorKey } });
+                const metadata = predecessor?.payload && typeof predecessor.payload === "object" && !Array.isArray(predecessor.payload)
+                    ? predecessor.payload as unknown as MessageTriggerJobEntity["payload"] : undefined;
+                if (!predecessor || predecessor.branchId !== branchId || predecessor.clientId !== clientId || metadata?.catchUp?.batchId !== batchId) break;
+                if (isCaregiverTriggerTemplate(predecessor.templateKey as MessageTriggerTemplateKey)
+                    && predecessor.employeeScheduleId !== null && metadata.caregiverSourceSnapshot?.version === 1) { mixed = true; break; }
+                predecessorKey = metadata.catchUp.predecessorDedupeKey;
+            }
+            if (!mixed) continue;
+            job.scheduledFor = new Date(slot.scheduledFor);
+            job.dedupeKey = slot.dedupeKey;
+            job.payload.catchUp = { ...slot.payload.catchUp };
+        }
+    }
+
+    private referenceIncludesClientRule(reference: AgentAutomationTaskCommitReference | undefined, branchId: string, client: ClientTriggerSource, rule: MessageTriggerRuleEntity): boolean {
+        const committed = parseAgentAutomationTaskCommitReference(reference);
+        if (!committed || !client.createdAt) return false;
+        const scope = { branchId, clientId: client.id, clientIdentity: agentBindingHash({ version: 1, resource: "client", id: client.id, createdAt: client.createdAt.toISOString() }),
+            kind: "client-rule" as const, ruleId: rule.id, scheduleId: null, scheduleIdentity: null, recipientType: "client" as const };
+        return committed.authorities.some((entry) => entry.scopeDigest === agentBindingHash(scope))
+            || committed.coverages.some((entry) => entry.scopeDigest === agentBindingHash(agentAutomationCoverageScope(scope)));
+    }
+
+    private async syncCaregiverRulesForClient(branchId: string, clientId: number, includePast: boolean, options?: Partial<MessageTriggerIntentSyncOptions>,
+        transaction?: Prisma.TransactionClient, clientCandidates: ClientRuleJobCandidate[] = []): Promise<void> {
+        if (!this.caregiverRecipients || !this.messageAutomationBranchLockService) throw new ServiceUnavailableException(codeOnlyProblemBody("DEPENDENCY_UNAVAILABLE"));
+        if (options?.taskOrigin && !options.taskAutomationReference) return;
+        await this.messageAutomationBranchLockService.runExclusive(branchId, async (tx) => {
+            const rules = (await this.ruleRepository.findAll(branchId, tx)).filter((rule) => rule.branchId === branchId && rule.isActive && isCaregiverTriggerTemplate(rule.templateKey));
+            const set = await this.caregiverRecipients!.resolve(branchId, clientId, rules, tx);
+            if (!set.complete) throw new ServiceUnavailableException(codeOnlyProblemBody("DEPENDENCY_UNAVAILABLE"));
+            const groupIds = [...new Set(rules.map((rule) => rule.groupId!))];
+            const allChildren = (await Promise.all(groupIds.map((id) => this.ruleRepository.findGroupRules(branchId, id, tx, true)))).flat();
+            const old = await this.jobRepository.findForClientAutomationReview(branchId, clientId, allChildren.map((rule) => rule.id), tx);
+            if (old.length > 500) throw new ServiceUnavailableException(codeOnlyProblemBody("DEPENDENCY_UNAVAILABLE"));
+            const candidates = set.recipients.filter((row) => row.recipe);
+            for (const stale of old.filter((job) => (job.status === "pending" || job.status === "processing") && !candidates.some((row) => row.recipe!.dedupeKey === job.dedupeKey))) {
+                if (options?.taskOrigin) continue;
+                const previousStatus = stale.status;
+                stale.cancel("Caregiver assignment changed");
+                await tx.message_trigger_job.updateMany({ where: { id: stale.id, branchId, clientId, status: previousStatus, canceledByUser: false },
+                    data: { status: "canceled", canceledAt: stale.canceledAt, cancelReason: stale.cancelReason, claimToken: null, nextAttemptAt: null, updatedAt: new Date() } });
+            }
+            const admitted: ClientRuleJobCandidate[] = [...clientCandidates];
+            const conflicts = new Set<string>();
+            const completedSlots = new Set<string>();
+            const batchId = options?.stableBatchAt ? `client:${clientId}:${options.stableBatchAt.toISOString()}` : undefined;
+            for (const row of candidates) {
+                const recipe = row.recipe!;
+                const rule = rules.find((entry) => entry.id === recipe.ruleId)!;
+                const source = recipe.payload.caregiverSourceSnapshot!;
+                if (options?.taskOrigin) {
+                    const scope = { branchId, clientId, clientIdentity: agentBindingHash({ version: 1, resource: "client", id: clientId, createdAt: source.client.createdAt }),
+                        kind: "caregiver-service", ruleId: rule.id, scheduleId: recipe.employeeScheduleId,
+                        scheduleIdentity: agentAutomationScheduleIdentity(source.schedule.incarnationId),
+                        recipientType: recipe.recipientType === MessageTriggerRecipientType.PRIMARY_EMPLOYEE ? "primary-employee" : "secondary-employee" };
+                    if (!options.taskAutomationReference!.authorities.some((entry) => entry.scopeDigest === agentBindingHash(scope))) continue;
+                }
+
+
+                const completed = old.filter((job) => job.employeeScheduleId === recipe.employeeScheduleId && job.payload.employeeId === source.employee.id
+                    && job.payload.caregiverSourceSnapshot?.groupId === source.groupId && job.payload.caregiverSourceSnapshot.eventType === source.eventType
+                    && (job.status === "sent" || job.canceledByUser));
+                if (completed.length) {
+                    // Completion suppresses persistence, not an already allocated
+                    // slot in this stable batch. Compacting it would mint a new
+                    // time-based CLIENT key. An unrelated batch gets no old slot.
+                    const slot = includePast && batchId ? completed.find((job) => job.dedupeKey === recipe.dedupeKey
+                        && job.payload.catchUp?.batchId === batchId) : undefined;
+                    if (slot?.payload.catchUp) {
+                        const originalTime = new Date(slot.payload.catchUp.originalScheduledFor);
+                        if (Number.isNaN(originalTime.getTime())) throw new ServiceUnavailableException(codeOnlyProblemBody("DEPENDENCY_UNAVAILABLE"));
+                        const job = MessageTriggerJobEntity.create({ ...recipe, scheduledFor: originalTime });
+                        admitted.push({ rule, job }); completedSlots.add(job.dedupeKey);
+                    }
+                    continue;
+                }
+                if (row.outcome === "needs_setup" && row.reason === "recipient_phone_conflict") {
+                    if (options?.taskOrigin) continue;
+                    conflicts.add(recipe.dedupeKey);
+                    admitted.push({ rule, job: MessageTriggerJobEntity.create(recipe) });
+                } else if (row.outcome === "ready") {
+                    admitted.push({ rule, job: MessageTriggerJobEntity.create(recipe) });
+                }
+            }
+            const jobsToPersist = includePast
+                ? await this.applyRetroactiveSendConfig(branchId, admitted, options?.stableBatchAt, tx)
+                : admitted;
+            if (includePast && options?.preserveExisting && options.stableBatchAt) {
+                await this.retainExistingMixedBatchClientSlots(branchId, jobsToPersist, options.stableBatchAt, tx);
+            }
+            for (const { rule, job } of jobsToPersist) {
+                if (completedSlots.has(job.dedupeKey)) continue;
+                if (conflicts.has(job.dedupeKey)) {
+                    const persisted = await this.jobRepository.upsertPendingForRuleGeneration(job, rule.updatedAt, rule.jobsStale, options?.preserveExisting === true, tx);
+                    if (persisted?.status === "pending") { persisted.markNeedsSetup("recipient_phone_conflict"); await tx.message_trigger_job.updateMany({ where: { id: persisted.id, branchId, status: "pending", canceledByUser: false },
+                        data: { status: "needs_setup", cancelReason: "recipient_phone_conflict", claimToken: null, updatedAt: new Date() } }); }
+                } else {
+                    await this.persistPendingJob(job, rule, includePast, isCaregiverTriggerTemplate(rule.templateKey) ? rule.jobsStale : false,
+                        options?.preserveExisting === true, tx, options?.taskOrigin ? options.taskAutomationReference : undefined);
+                }
+            }
+        }, transaction);
     }
 
     async cancelPendingJobsForClientDeletion(branchId: string, clientId: number): Promise<void> {
@@ -2235,6 +2828,11 @@ export class MessageTriggerService {
             },
         });
         if (!schedule) return true;
+        if (this.caregiverRecipients && !intentOptions?.taskOrigin) {
+            const caregiver = (await this.ruleRepository.findAll(branchId)).some((rule) => rule.isActive && isCaregiverTriggerTemplate(rule.templateKey));
+            if (caregiver) await this.syncCaregiverRulesForClient(branchId, schedule.clientId, includePast, intentOptions);
+        }
+
 
         const rules = await this.ruleRepository.findActiveByEventTypes(branchId, [
             MessageTriggerEventType.EMPLOYEE_ASSIGNED,
@@ -2458,6 +3056,12 @@ export class MessageTriggerService {
             return;
         }
 
+        if (isCaregiverTriggerTemplate(rule.templateKey)) {
+            const clients = await (transaction ?? this.prisma).client.findMany({ where: { branchId, deletedAt: null }, select: { id: true } });
+            for (const client of clients) await this.syncCaregiverRulesForClient(branchId, client.id, includePast, undefined, transaction);
+            return;
+        }
+
         if (rule.eventType === MessageTriggerEventType.EMPLOYEE_ASSIGNED) {
             return;
         }
@@ -2573,15 +3177,16 @@ export class MessageTriggerService {
         branchId: string,
         candidates: ClientRuleJobCandidate[],
         stableBatchAt?: Date,
+        transaction?: Prisma.TransactionClient,
     ): Promise<ClientRuleJobCandidate[]> {
         if (candidates.length === 0) return candidates;
 
-        const pastTriggerEnabled = await this.getMessagePolicyEnabled(branchId, "past-trigger");
+        const pastTriggerEnabled = await this.getMessagePolicyEnabled(branchId, "past-trigger", transaction);
         if (!pastTriggerEnabled) {
             return candidates.filter(({ job }) => job.scheduledFor.getTime() > Date.now());
         }
 
-        const config = await this.getRetroactiveSendConfig(branchId);
+        const config = await this.getRetroactiveSendConfig(branchId, transaction);
         const now = Date.now();
         const baseScheduledFor = stableBatchAt
             ? new Date(stableBatchAt)
@@ -2602,7 +3207,7 @@ export class MessageTriggerService {
                 baseScheduledFor.getTime() + (index * config.sendIntervalMinutes * MS_PER_MINUTE),
             );
             job.scheduledFor = scheduledFor;
-            if (job.clientId !== null) {
+            if (job.clientId !== null && !isCaregiverTriggerTemplate(job.templateKey)) {
                 job.dedupeKey = buildMessageRecipeDedupeKey(
                     rule.id,
                     `client:${job.clientId}`,
@@ -2874,6 +3479,7 @@ export class MessageTriggerService {
             sendTime,
             targetClientStatus,
             retryOnFailure,
+            typeof snapshot["groupId"] === "string" ? snapshot["groupId"] : null,
         );
     }
 
@@ -2887,6 +3493,7 @@ export class MessageTriggerService {
     private async ensureActiveRuleTemplateVariablesSupported(
         branchId: string,
         params: UpsertRuleParams,
+        transaction?: Prisma.TransactionClient,
     ): Promise<void> {
         if (params.isActive === false) return;
 
@@ -2894,7 +3501,13 @@ export class MessageTriggerService {
             .providers.sms?.templateKey;
         if (!systemTemplateKey) return;
 
-        const template = await this.systemTemplateService.getByKeyForBranch(branchId, systemTemplateKey);
+        if (isCaregiverTriggerTemplate(params.templateKey)) {
+            if (!this.caregiverTemplates) throw new ServiceUnavailableException(codeOnlyProblemBody("DEPENDENCY_UNAVAILABLE"));
+            await this.caregiverTemplates.resolve(branchId, systemTemplateKey as SystemTemplateKey, transaction);
+            return;
+        }
+        const template = transaction ? await this.systemTemplateService.getByKeyForBranch(branchId, systemTemplateKey, transaction)
+            : await this.systemTemplateService.getByKeyForBranch(branchId, systemTemplateKey);
         const unsupportedVariables = findUnsupportedRequiredMessageTriggerVariables(
             params.templateKey,
             template.customVariables ?? [],
@@ -2927,6 +3540,8 @@ export class MessageTriggerService {
         transaction?: Prisma.TransactionClient,
         options: {
             allowPersistedActivationUnderParentOff?: boolean;
+            templatesPrelocked?: boolean;
+            oldTemplateKeys?: (transaction: Prisma.TransactionClient) => Promise<MessageTriggerTemplateKey[]>;
             resolveParams?: (transaction: Prisma.TransactionClient) => Promise<UpsertRuleParams>;
         } = {},
     ): Promise<T> {
@@ -2955,8 +3570,6 @@ export class MessageTriggerService {
                 await this.messageAutomationActivationService!.assertTriggerDispatchEnabled(branchId, branchTransaction);
             }
 
-            if (effectiveParams.isActive === false) return work(branchTransaction);
-
             const systemTemplateKey = this.getRuleSystemTemplateKey(effectiveParams.templateKey);
             if (!systemTemplateKey) {
                 throw new BadRequestException(problemBody("VALIDATION_FAILED", {
@@ -2967,14 +3580,12 @@ export class MessageTriggerService {
                 }));
             }
             const withTemplateLock = async (writeTransaction: Prisma.TransactionClient): Promise<T> => {
-                await this.ensureActiveRuleTemplateVariablesSupported(branchId, effectiveParams);
+                await this.ensureActiveRuleTemplateVariablesSupported(branchId, effectiveParams, writeTransaction);
                 return work(writeTransaction);
             };
-            return this.templateAutomationLock.runExclusive(
-                systemTemplateKey,
-                withTemplateLock,
-                branchTransaction,
-            );
+            if (options.templatesPrelocked) return withTemplateLock(branchTransaction);
+            const old = options.oldTemplateKeys ? await options.oldTemplateKeys(branchTransaction) : [];
+            return this.withCanonicalTemplateLocks([...old, effectiveParams.templateKey], withTemplateLock, branchTransaction);
         };
 
         if (initiallyAutomatic) {
@@ -3030,6 +3641,7 @@ export class MessageTriggerService {
                 branchId,
                 provider: "aligo_sms",
                 status: "pending",
+                triggerJobId: null,
                 variables: {
                     path: ["triggerType"],
                     equals: "scheduled",
@@ -3152,7 +3764,7 @@ export class MessageTriggerService {
     }
 
     private async dispatchClaimedJob(
-        job: MessageTriggerJobEntity,
+        job: MessageDispatchSelectedJob,
         sentIds: ReadonlySet<string>,
         approvedBranchIds: ReadonlySet<string>,
         options: DispatchClaimedJobOptions = {},
@@ -3171,7 +3783,20 @@ export class MessageTriggerService {
         const skipSafeguard = !this.smsAutomationSafeguard
             || this.smsAutomationSafeguard.isAdminDirectSend(job);
         let safeguardBlock: Extract<SmsAutomationSafeguardDecision, { allowed: false }> | null = null;
+        // Assigned only after a validated policy read inside the claim lock.
+        let processingDeadlineAt!: Date;
+        let pastExpiryHours!: number;
         const claim = async (transaction?: Prisma.TransactionClient): Promise<string | null> => {
+            if (typeof this.jobRepository.readQuietHold === "function" && job.branchId) {
+                const current = transaction
+                    ? await transaction.message_trigger_job.findFirst({ where: { id: job.id, branchId: job.branchId, status: "pending" } })
+                    : null;
+                const hold = await this.jobRepository.readQuietHold(job, transaction);
+                if (hold || job.templateKey === MANUAL_SMS_TEMPLATE_KEY) {
+                    if (!current || Math.max(current.scheduledFor.getTime(), current.nextAttemptAt?.getTime() ?? 0) > Date.now()) return null;
+                    job.quietHold = hold ?? undefined;
+                }
+            }
             if (!skipSafeguard) {
                 const decision = await this.smsAutomationSafeguard!.check(job, transaction);
                 if (!decision.allowed) {
@@ -3195,17 +3820,28 @@ export class MessageTriggerService {
                     return null;
                 }
             }
+            const timingPolicy = await this.getDispatchTimingPolicy(job.branchId, transaction);
+            pastExpiryHours = timingPolicy.pastExpiryHours;
+            processingDeadlineAt = new Date(Date.now() + timingPolicy.processingReclaimMinutes * 60_000);
             if (resend) {
                 return transaction
-                    ? this.jobRepository.claimNeedsSetupWithRuleFence(job.id, job.branchId, transaction)
-                    : this.jobRepository.claimNeedsSetupWithRuleFence(job.id, job.branchId);
+                    ? this.jobRepository.claimNeedsSetupWithRuleFence(job.id, job.branchId, transaction, processingDeadlineAt)
+                    : this.jobRepository.claimNeedsSetupWithRuleFence(job.id, job.branchId, undefined, processingDeadlineAt);
             }
             return transaction
-                ? this.jobRepository.claimPendingWithRuleFence(job.id, job.branchId, transaction)
-                : this.jobRepository.claimPendingWithRuleFence(job.id, job.branchId);
+                ? this.jobRepository.claimPendingWithRuleFence(job.id, job.branchId, transaction, processingDeadlineAt)
+                : this.jobRepository.claimPendingWithRuleFence(job.id, job.branchId, undefined, processingDeadlineAt);
         };
-        const claimed = automaticJob
-            ? await this.messageAutomationBranchLockService!.runExclusive(job.branchId!, (transaction) => claim(transaction))
+        if (job.templateKey === MANUAL_SMS_TEMPLATE_KEY && !this.messageAutomationBranchLockService) {
+            throw new ServiceUnavailableException("Manual queue branch lock is unavailable");
+        }
+        // Manual-owned agent/link/end jobs can also carry quiet holds. Read
+        // their current due time and claim under the same branch transaction
+        // as automatic jobs and policy reconciliation. Existing manual
+        // needs_setup resends keep their separate, non-pending claim path.
+        const claimed = (automaticJob || job.templateKey === MANUAL_SMS_TEMPLATE_KEY || !resend)
+            && job.branchId && this.messageAutomationBranchLockService
+            ? await this.messageAutomationBranchLockService.runExclusive(job.branchId, (transaction) => claim(transaction))
             : await claim();
         if (!claimed) {
             if (safeguardBlock) {
@@ -3220,7 +3856,11 @@ export class MessageTriggerService {
         // The SQL claim returns the immutable attempt token. A claim without
         // one is not safe to deliver: the pre-provider fence fails closed.
         const claimToken = claimed;
+        if (typeof this.jobRepository.readQuietHold === "function") {
+            job.quietHold = await this.jobRepository.readQuietHold(job) ?? undefined;
+        }
         job.claimToken = claimToken;
+        job.processingDeadlineAt = processingDeadlineAt;
         // The resend claim keeps the setup reason on the in-flight row: a
         // non-null `cancel_reason` on a `processing` row is the durable mark
         // that the stale-processing reclaim reads to return it to
@@ -3258,8 +3898,23 @@ export class MessageTriggerService {
                 return true;
             }
             linkClient = schedule.client;
-        } else if (!resend && job.scheduledFor.getTime() <= Date.now() - PAST_OCCURRENCE_GRACE_MS) {
-            job.cancel(EXPIRED_PENDING_JOB_CANCEL_REASON);
+        } else if (!resend && isSelectedMessageJobExpired(job, pastExpiryHours, new Date(Date.now()), job.quietHold?.releaseAt)) {
+            if (job.quietHold) {
+                if (!this.messageAutomationBranchLockService || !job.branchId) throw new ServiceUnavailableException("Quiet expiry lock is unavailable");
+                await this.messageAutomationBranchLockService.runExclusive(job.branchId, async transaction => {
+                    const current = await this.jobRepository.findByIdInBranch(job.branchId!, job.id, transaction);
+                    if (!current || current.status !== "processing" || current.claimToken !== claimToken
+                        || agentAutomationConcreteJobDigest(current) !== agentAutomationConcreteJobDigest(job)) throw new AgentAutomationDispatchUncertainError();
+                    const log = await transaction.message_log.findFirst({ where: { branchId: job.branchId, triggerJobId: job.id,
+                        provider: "aligo_sms", providerAcceptanceState: "prepared", providerCallStartedAt: null,
+                        variables: { path: ["quietHoursDisposition"], equals: "DEFER" } } });
+                    if (!log || !log.providerAcceptanceKey || !log.providerAcceptanceFingerprint) throw new AgentAutomationDispatchUncertainError();
+                    await this.jobRepository.transitionQuietHold(current, log.id, log.providerAcceptanceKey, log.providerAcceptanceFingerprint,
+                        { action: "CANCEL", reevaluateAt: null }, job.quietHold!.policyRevision, transaction, "expired_after_quiet");
+                });
+                job.claimToken = null; job.processingDeadlineAt = null;
+            }
+            job.cancel(job.quietHold ? "expired_after_quiet" : pastExpiryHours === 24 ? EXPIRED_PENDING_JOB_CANCEL_REASON : `기존 발송 예정 ${pastExpiryHours}시간 경과`);
             await this.persistTriggerJobStatus(job, "persist expired trigger job");
             return true;
         }
@@ -3527,6 +4182,11 @@ export class MessageTriggerService {
                 return revisionFence;
             }
 
+            if (job.quietHold && job.templateKey === MessageTriggerTemplateKey.SERVICE_RECORD_LINK) {
+                const link = await this.fenceServiceRecordLinkTokenBeforeProviderSend(job, transaction);
+                if (link.kind !== "allow") return { kind: "stale", reason: "stale_link" };
+            }
+
             // Verify that the claim is still processing and owned by this
             // worker before releasing the source locks. No snapshot exists
             // yet, so the post-preparation snapshot CAS remains authoritative
@@ -3557,7 +4217,7 @@ export class MessageTriggerService {
             return await this.deliveryService.prepareJob(job);
         } catch (error) {
             if (error instanceof TriggerJobDeferredError) {
-                this.deferOrReturnToNeedsSetup(job, error, resend);
+                await this.deferOrReturnToNeedsSetup(job, error, resend);
             } else {
                 job.markFailed(error instanceof Error ? error.message : String(error));
             }
@@ -3816,7 +4476,7 @@ export class MessageTriggerService {
         transaction: Prisma.TransactionClient,
     ): Promise<PreProviderSendFenceResult> {
         if (job.templateKey !== MessageTriggerTemplateKey.SERVICE_RECORD_LINK) return { kind: "allow" };
-        const stale = { kind: "stale" as const, reason: SERVICE_RECORD_LINK_REVOKED_CANCEL_REASON };
+        const stale = { kind: "stale" as const, reason: job.quietHold ? "stale_link" : SERVICE_RECORD_LINK_REVOKED_CANCEL_REASON };
         const linkToken = this.readServiceRecordLinkToken(job);
         if (!linkToken || !job.branchId || job.employeeScheduleId === null) return stale;
 
@@ -3828,6 +4488,11 @@ export class MessageTriggerService {
               AND "schedule_id" = ${job.employeeScheduleId}
               AND "active" = true
               AND "revoked_at" IS NULL
+              ${job.quietHold ? Prisma.sql`AND "expires_at" > ${new Date(Date.now())}
+                AND "employee_id" = ${job.payload.employeeId ?? -1}
+                AND EXISTS (SELECT 1 FROM employee_schedule schedule WHERE schedule.id = ${job.employeeScheduleId}
+                    AND schedule.branch_id = ${job.branchId}::uuid AND schedule.primary_employee_id = ${job.payload.employeeId ?? -1}
+                    AND schedule.replaced = false AND schedule.terminated_at IS NULL)` : Prisma.empty}
         `);
         return rows.length > 0 ? { kind: "allow" } : stale;
     }
@@ -4060,16 +4725,22 @@ export class MessageTriggerService {
      * the ordinary dispatcher would expire an old job on its next tick. It goes
      * back to `needs_setup` with the transient reason, attempts untouched.
      */
-    private deferOrReturnToNeedsSetup(
+    private async deferOrReturnToNeedsSetup(
         job: MessageTriggerJobEntity,
         error: TriggerJobDeferredError,
         resend: boolean,
-    ): void {
+    ): Promise<void> {
+        if (job.ruleId.startsWith(MANUAL_SMS_RULE_PREFIX)) {
+            job.markFailed(error.message);
+            job.nextAttemptAt = null;
+            return;
+        }
         if (resend) {
             job.markNeedsSetup(error.message);
             return;
         }
-        job.defer(error.kind, error.message);
+        const policy = await this.getDispatchTimingPolicy(job.branchId);
+        job.defer(error.kind, error.message, policy.triggerRetryIntervalMinutes * 60_000);
     }
 
     private async deliverClaimedJob(
@@ -4083,6 +4754,9 @@ export class MessageTriggerService {
                 : await this.deliveryService.sendJob(job);
             if (sent) {
                 job.markSent();
+            } else if (job.status === "canceled") {
+                // A final policy cancellation is terminal, including retry eligibility.
+                job.nextAttemptAt = null;
             } else if (job.status === "processing" || job.status === "dispatching") {
                 job.markFailed("Provider disabled or delivery failed");
             }
@@ -4092,7 +4766,7 @@ export class MessageTriggerService {
             // entity; an unchanged dispatching row remains for reconciliation.
             if (error instanceof AgentAutomationDispatchUncertainError) return "preserve-stored";
             if (error instanceof TriggerJobDeferredError) {
-                this.deferOrReturnToNeedsSetup(job, error, resend);
+                await this.deferOrReturnToNeedsSetup(job, error, resend);
             } else {
                 job.markFailed(error instanceof Error ? error.message : String(error));
             }
@@ -4383,6 +5057,28 @@ export class MessageTriggerService {
         return shouldSkipClientPreStartCatchUp(rule, client, new Date());
     }
 
+    private async hasStoredMixedClientCatchUpBatch(job: MessageTriggerJobEntity): Promise<boolean> {
+        const catchUp = job.payload.catchUp;
+        if (!job.branchId || job.clientId === null || job.employeeScheduleId !== null
+            || job.recipientType !== MessageTriggerRecipientType.CLIENT
+            || typeof catchUp?.batchId !== "string" || !catchUp.batchId.trim()
+            || typeof catchUp.predecessorDedupeKey !== "string" || !catchUp.predecessorDedupeKey.trim()) return false;
+        // Stored siblings establish timing identity in either direction, including
+        // terminal/inactive CARE history. Current source and authority still gate delivery.
+        return !!await this.prisma.message_trigger_job.findFirst({
+            where: {
+                branchId: job.branchId, clientId: job.clientId, employeeScheduleId: { not: null },
+                recipientType: { in: [MessageTriggerRecipientType.PRIMARY_EMPLOYEE, MessageTriggerRecipientType.SECONDARY_EMPLOYEE] },
+                templateKey: { in: [MessageTriggerTemplateKey.CAREGIVER_SERVICE_START_NOTICE, MessageTriggerTemplateKey.CAREGIVER_SERVICE_END_NOTICE] },
+                AND: [
+                    { payload: { path: ["catchUp", "batchId"], equals: catchUp.batchId } },
+                    { payload: { path: ["caregiverSourceSnapshot", "version"], equals: 1 } },
+                ],
+            },
+            select: { id: true },
+        });
+    }
+
     private async postponeCatchUpJobUntilPredecessorCompletes(
         job: MessageTriggerJobEntity,
         resend = false,
@@ -4433,8 +5129,14 @@ export class MessageTriggerService {
             }
             const retryAt = new Date(Math.max(earliestNextSend.getTime(), now + intervalMs));
             job.status = "pending";
-            job.scheduledFor = retryAt;
-            job.nextAttemptAt = null;
+            if (isCaregiverTriggerTemplate(job.templateKey) || await this.hasStoredMixedClientCatchUpBatch(job)) {
+                // CARE and proven mixed CLIENT slots are canonical chain identity.
+                // Waiting is operational eligibility and consumes no attempt.
+                job.nextAttemptAt = retryAt;
+            } else {
+                job.scheduledFor = retryAt;
+                job.nextAttemptAt = null;
+            }
             await this.persistTriggerJobStatus(job, "postpone catch-up job for predecessor");
             return true;
         }
@@ -4590,6 +5292,10 @@ export class MessageTriggerService {
             ? await logRepository.findUncertainTriggerJobIdsSystemScope(stale.map((job) => job.id))
             : new Set<string>();
         for (const job of stale) {
+            const snapshot = {
+                status: job.status, claimToken: job.claimToken,
+                updatedAt: job.updatedAt, processingDeadlineAt: job.processingDeadlineAt,
+            };
             if (sentIds.has(job.id)) {
                 job.markSent();
             } else if (uncertainIds.has(job.id)) {
@@ -4608,9 +5314,26 @@ export class MessageTriggerService {
                 // the claim token so a newer owner is never overwritten.
                 job.markNeedsSetup(job.cancelReason);
             } else {
-                job.defer("transient", "Reclaimed stale processing job");
+                const hold = typeof this.jobRepository.readQuietHold === "function" ? await this.jobRepository.readQuietHold(job) : null;
+                if (job.attempts === 0 && (hold || job.templateKey === MANUAL_SMS_TEMPLATE_KEY)) {
+                    const prepared = await this.prisma.message_log.findFirst({ where: { branchId: job.branchId, triggerJobId: job.id,
+                        provider: "aligo_sms", providerAcceptanceState: "prepared", providerCallStartedAt: null,
+                        ...(job.payload.existingMessageLogId ? { id: job.payload.existingMessageLogId } : {}) } });
+                    if (!prepared || !prepared.providerAcceptanceKey || !prepared.providerAcceptanceFingerprint) {
+                        job.markFailed(SMS_PROVIDER_ACCEPTANCE_UNCERTAIN_REASON);
+                    } else {
+                        job.status = "pending";
+                        job.nextAttemptAt = job.nextAttemptAt ?? hold?.releaseAt ?? null;
+                    }
+                } else {
+                    const policy = await this.getDispatchTimingPolicy(job.branchId);
+                    job.defer("transient", "Reclaimed stale processing job", policy.triggerRetryIntervalMinutes * 60_000);
+                }
             }
-            await this.persistTriggerJobStatus(job, "persist reclaimed trigger job");
+            if (await this.jobRepository.reclaimWithClaimFence(job, snapshot)) {
+                job.claimToken = null;
+                job.processingDeadlineAt = null;
+            }
         }
     }
 

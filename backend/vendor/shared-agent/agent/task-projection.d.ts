@@ -405,6 +405,7 @@ export declare const AgentTaskSnapshotEnvelopeSchema: z.ZodObject<{
                     "client-rule": "client-rule";
                     "employee-assignment": "employee-assignment";
                     "service-record-link": "service-record-link";
+                    "caregiver-service": "caregiver-service";
                 }>;
                 recipientType: z.ZodEnum<{
                     client: "client";
@@ -427,6 +428,8 @@ export declare const AgentTaskSnapshotEnvelopeSchema: z.ZodObject<{
                     SERVICE_END_NOTICE: "SERVICE_END_NOTICE";
                     EMPLOYEE_ASSIGNED: "EMPLOYEE_ASSIGNED";
                     SERVICE_RECORD_LINK: "SERVICE_RECORD_LINK";
+                    CAREGIVER_SERVICE_START_NOTICE: "CAREGIVER_SERVICE_START_NOTICE";
+                    CAREGIVER_SERVICE_END_NOTICE: "CAREGIVER_SERVICE_END_NOTICE";
                 }>;
             }, z.core.$strict>>;
         }, z.core.$strict>>;

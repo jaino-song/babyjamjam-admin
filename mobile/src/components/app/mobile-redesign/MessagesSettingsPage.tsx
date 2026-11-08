@@ -6,6 +6,8 @@ import {
   SERVICE_RECORD_LINK_RULE_ID,
   STORED_MESSAGE_SETTINGS_POLICY_IDS,
   type MessageAutomationPoliciesResponse,
+  type MessageAutomationPolicyConfigResponse,
+  type MessageAutomationPolicyConfiguration,
   type MessageSettingsPolicyId,
   type StoredMessageSettingsPolicyId,
 } from "@babyjamjam/shared";
@@ -13,6 +15,7 @@ import {
   useEffect,
   useMemo,
   useRef,
+  useState,
   type ReactElement,
   type ReactNode,
 } from "react";
@@ -23,7 +26,7 @@ import { MessageSectionNav } from "@/components/app/mobile-redesign/MessageSecti
 import { SlidingCard } from "@/components/app/mobile-redesign/sliding-card";
 import { ClientRegistrationPolicyDetail } from "@/components/app/mobile-redesign/settings/ClientRegistrationPolicyDetail";
 import { useClientRegistrationPolicy } from "@/components/app/mobile-redesign/settings/use-client-registration-policy";
-import { PastTriggerPolicyDetail } from "@/components/app/mobile-redesign/settings/PastTriggerPolicyDetail";
+import { PastTriggerPolicyDetail, configurationError } from "@/components/app/mobile-redesign/settings/PastTriggerPolicyDetail";
 import { PolicyInfoRows } from "@/components/app/mobile-redesign/settings/PolicyInfoRows";
 import { SenderApprovalDetail } from "@/components/app/mobile-redesign/settings/SenderApprovalDetail";
 import { SettingsList } from "@/components/app/mobile-redesign/settings/SettingsList";
@@ -39,6 +42,9 @@ import {
 } from "@/features/message-triggers/hooks/use-message-triggers";
 import { useToast } from "@/hooks/use-toast";
 import { settingsApi } from "@/services/api";
+import { useGetAuthUser } from "@/hooks/useGetAuthUser";
+import { ApprovalTwoButtonModal } from "@/components/app/ui/ApprovalTwoButtonModal";
+import { isAxiosError } from "axios";
 
 import "@/components/app/mobile-redesign/redesign.css";
 
@@ -150,6 +156,58 @@ export function MessagesSettingsPage(): ReactElement {
   const queryClient = useQueryClient();
   const { toast } = useToast();
   const selectedItemId = useSearchParams().get("item");
+  const branchId = useGetAuthUser().data?.branchId ?? null;
+  const configKey = ["settings", "message-automation-config", branchId] as const;
+  const configQuery = useQuery({ queryKey: configKey, queryFn: () => settingsApi.getMessageAutomationConfig(branchId!), enabled: Boolean(branchId) });
+  const [draftState, setDraftState] = useState<{ branchId: string; expectedVersion: string | null; configuration: MessageAutomationPolicyConfiguration } | null>(null);
+  const [configError, setConfigError] = useState<string | null>(null);
+  const [leaveOpen, setLeaveOpen] = useState(false);
+  const leaveAction = useRef<(() => void) | null>(null);
+  const branchRef = useRef(branchId);
+  useEffect(() => { branchRef.current = branchId; }, [branchId]);
+  const persisted = configQuery.data;
+  const configuration = draftState?.branchId === branchId ? draftState.configuration : persisted?.configuration;
+  const dirty = Boolean(configuration && persisted && JSON.stringify(configuration) !== JSON.stringify(persisted.configuration));
+  const canWriteConfig = Boolean(branchId && persisted?.permissions.canRead && persisted.permissions.canWrite && !configQuery.isError);
+  const changeConfig = (next: MessageAutomationPolicyConfiguration) => { if (branchId && canWriteConfig) { setDraftState((current) => ({ branchId, expectedVersion: current?.branchId === branchId ? current.expectedVersion : persisted!.version, configuration: next })); setConfigError(null); } };
+  const cancelConfig = () => { setDraftState(null); setConfigError(null); };
+  const saveConfig = useMutation({
+    mutationFn: (captured: { branchId: string; expectedVersion: string | null; configuration: MessageAutomationPolicyConfiguration; fingerprint: string }) => settingsApi.updateMessageAutomationConfig({ expectedVersion: captured.expectedVersion, configuration: captured.configuration }, captured.branchId),
+    onSuccess: (response, captured) => {
+      queryClient.setQueryData<MessageAutomationPolicyConfigResponse>(["settings", "message-automation-config", captured.branchId], response);
+      if (branchRef.current !== captured.branchId) return;
+      setDraftState((current) => current?.branchId === captured.branchId ? JSON.stringify(current.configuration) === captured.fingerprint ? null : { ...current, expectedVersion: response.version } : current);
+      setConfigError(null);
+    },
+    onError: (error, captured) => {
+      if (branchRef.current !== captured.branchId) return;
+      const conflict = isAxiosError(error) && error.response?.status === 409;
+      if (!conflict) setDraftState((current) => current?.branchId === captured.branchId && JSON.stringify(current.configuration) === captured.fingerprint ? null : current);
+      setConfigError(conflict ? "설정이 다른 곳에서 변경되었습니다. 새로고침 후 변경 내용을 확인해 주세요." : getUserErrorMessage(error, "메시지 설정을 저장하지 못했어요"));
+    },
+  });
+  const requestSaveConfig = () => {
+    if (!branchId || !configuration || !persisted || !canWriteConfig || !dirty || saveConfig.isPending || configurationError(configuration)) return;
+    saveConfig.mutate({ branchId, expectedVersion: draftState?.branchId === branchId ? draftState.expectedVersion : persisted.version, configuration: { ...configuration, pastRuleOrder: [...configuration.pastRuleOrder], quietHours: { ...configuration.quietHours, recipientGroups: [...configuration.quietHours.recipientGroups] } }, fingerprint: JSON.stringify(configuration) });
+  };
+  const guardNavigation = (action: () => void) => {
+    if (dirty) { leaveAction.current = action; setLeaveOpen(true); } else action();
+  };
+  useEffect(() => {
+    if (!dirty) return;
+    const beforeUnload = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = ""; };
+    const click = (event: MouseEvent) => {
+      const anchor = event.target instanceof Element ? event.target.closest("a[href]") : null;
+      if (!(anchor instanceof HTMLAnchorElement) || anchor.target === "_blank" || event.ctrlKey || event.metaKey || anchor.href === window.location.href) return;
+      if (anchor.origin !== window.location.origin) return;
+      event.preventDefault(); event.stopPropagation();
+      leaveAction.current = () => router.push(anchor.pathname + anchor.search + anchor.hash);
+      setLeaveOpen(true);
+    };
+    window.addEventListener("beforeunload", beforeUnload);
+    document.addEventListener("click", click, true);
+    return () => { window.removeEventListener("beforeunload", beforeUnload); document.removeEventListener("click", click, true); };
+  }, [dirty, router]);
   const didPushDetailRef = useRef(false);
   const approvalQuery = useQuery({
     queryKey: MESSAGE_SENDER_APPROVAL_QUERY_KEY,
@@ -203,6 +261,7 @@ export function MessagesSettingsPage(): ReactElement {
       queryKey: MESSAGE_AUTOMATION_POLICIES_QUERY_KEY,
     }),
   });
+  const displayConfiguration = configQuery.isError || !persisted?.permissions.canRead ? undefined : configuration;
   const items = useMemo(
     () =>
       buildSettingsListItems({
@@ -220,6 +279,8 @@ export function MessagesSettingsPage(): ReactElement {
         clientAutoRegistration:
           clientRegistration.policy?.clientAutoRegistration ?? false,
         policyActivations: policiesQuery.data?.policyActivations,
+        configuration: displayConfiguration,
+        canWriteConfiguration: canWriteConfig,
       }),
     [
       approvalQuery.data,
@@ -227,6 +288,8 @@ export function MessagesSettingsPage(): ReactElement {
       policiesQuery.data?.policies,
       policiesQuery.data?.policyActivations,
       triggerRulesQuery.data,
+      canWriteConfig,
+      displayConfiguration,
     ],
   );
   const selectedItem = useMemo(
@@ -239,6 +302,10 @@ export function MessagesSettingsPage(): ReactElement {
     clientRegistration.isLoading;
 
   const handleToggle = (id: string, enabled: boolean) => {
+    if (id === "quiet-hours") {
+      if (configuration) changeConfig({ ...configuration, quietHours: { ...configuration.quietHours, enabled } });
+      return;
+    }
     if (id === CLIENT_REGISTRATION_POLICY_ITEM_ID) {
       clientRegistration.updatePolicy.mutate({
         clientAutoRegistration: enabled,
@@ -287,20 +354,22 @@ export function MessagesSettingsPage(): ReactElement {
       return;
     }
 
-    router.push(`?item=${encodeURIComponent(id)}`, { scroll: false });
-    didPushDetailRef.current = true;
+    guardNavigation(() => {
+      router.push(`?item=${encodeURIComponent(id)}`, { scroll: false });
+      didPushDetailRef.current = true;
+    });
   };
 
-  const handleBack = () => {
+  const handleBack = () => guardNavigation(() => {
     if (didPushDetailRef.current) {
       router.back();
       return;
     }
 
     router.replace("/messages/settings", { scroll: false });
-  };
+  });
 
-  const detail = useMemo<ReactNode>(() => {
+  const detail: ReactNode = (() => {
     if (!selectedItem) return null;
 
     const detailBase = `${DETAIL_BODY_BASE}_${selectedItem.kind}_${selectedItem.id}`;
@@ -313,23 +382,13 @@ export function MessagesSettingsPage(): ReactElement {
       return <ClientRegistrationPolicyDetail data-component={detailBase} />;
     }
 
-    if (
-      selectedItem.kind === "automation-policy" &&
-      selectedItem.id === PAST_TRIGGER_POLICY_ID
-    ) {
-      const pastTriggerConfig = policiesQuery.data?.pastTriggerConfig;
-      const policy = policiesQuery.data?.policies.find(
-        (candidate) => candidate.id === selectedItem.id,
-      );
-      if (!pastTriggerConfig || !policy) return null;
-
-      return (
-        <PastTriggerPolicyDetail
-          data-component={`${detailBase}_past-trigger`}
-          policy={policy}
-          pastTriggerConfig={pastTriggerConfig}
-        />
-      );
+    if (["trigger-dispatch", "trigger-job-retry", "sms-retry", PAST_TRIGGER_POLICY_ID, "duplicate-send-confirmation", "quiet-hours"].includes(selectedItem.id)) {
+      if (configQuery.isLoading) return <p role="status">메시지 설정을 불러오는 중</p>;
+      if (!configuration || !persisted?.permissions.canRead || configQuery.isError || !branchId) return <p role="alert">메시지 설정을 불러올 수 없습니다. 다시 불러온 뒤 편집해 주세요.</p>;
+      return <div data-component={`${detailBase}_configuration`} className="flex flex-col gap-3">
+        <DetailContent data-component={`${detailBase}_detail-content`} item={selectedItem} />
+        <PastTriggerPolicyDetail key={`${branchId}-${selectedItem.id}`} data-component={`${detailBase}_configuration_editor`} itemId={selectedItem.id} configuration={configuration} branchId={branchId} version={draftState?.branchId === branchId ? draftState.expectedVersion : persisted.version} canWrite={canWriteConfig} dirty={dirty} isPending={saveConfig.isPending} error={configError} onChange={changeConfig} onSave={requestSaveConfig} onCancel={cancelConfig} />
+      </div>;
     }
 
     return (
@@ -338,11 +397,7 @@ export function MessagesSettingsPage(): ReactElement {
         item={selectedItem}
       />
     );
-  }, [
-    policiesQuery.data?.pastTriggerConfig,
-    policiesQuery.data?.policies,
-    selectedItem,
-  ]);
+  })();
   const detailStatusLabel =
     selectedItem?.kind === "tenant-application" ||
     selectedItem?.kind === "automation-policy" ||
@@ -351,6 +406,7 @@ export function MessagesSettingsPage(): ReactElement {
       : null;
 
   return (
+    <>
     <section
       data-component={SETTINGS_PAGE_BASE}
       data-slot="messages-page"
@@ -421,5 +477,7 @@ export function MessagesSettingsPage(): ReactElement {
         </div>
       </div>
     </section>
+    <ApprovalTwoButtonModal data-component={`${SETTINGS_PAGE_BASE}_leave-modal`} open={leaveOpen} onOpenChange={setLeaveOpen} title="변경 내용을 취소할까요?" description="저장하지 않은 변경 내용은 취소됩니다." isDescriptionVisuallyHidden={false} approvalLabel="변경 취소" onApprove={() => { cancelConfig(); setLeaveOpen(false); const action = leaveAction.current; leaveAction.current = null; action?.(); }} />
+    </>
   );
 }
