@@ -15,6 +15,11 @@ import {
     lockScheduleChangeRequestForWrite,
     lockServiceRecordWriteSet,
 } from "application/policies/service-record-write-lock.policy";
+import {
+    classifyPeriodOwnership,
+    type PeriodOwnershipAssignment,
+    type PeriodOwnershipDay,
+} from "application/policies/service-record-period-ownership.policy";
 import { codeOnlyProblemBody } from "application/utils/problem-bodies";
 import { getServiceRecordTokenExpiresAt } from "domain/constants/service-record-link-message";
 import type { KrBusinessDayCalendar } from "domain/utils/business-days";
@@ -45,6 +50,10 @@ function nextCalendarDay(iso: string): string {
 
 function toIso(d: Date): string {
     return d.toISOString().slice(0, 10);
+}
+
+function toIsoOrEmpty(d: Date | null | undefined): string {
+    return d ? toIso(d) : "";
 }
 
 function toDbDate(iso: string): Date {
@@ -174,6 +183,19 @@ interface ServiceRecordDayForChange {
     locked: boolean;
 }
 
+/** A day row with the identity of its writer, the evidence the period-ownership rule reads. */
+interface ServiceRecordDayWithWriter {
+    sessionIndex: number;
+    caseSessionIndex: number | null;
+    scheduleId: number | null;
+    employeeId: number | null;
+}
+
+/** The reader a guard needs: a transaction client or the Prisma service itself. */
+interface ScheduleReader {
+    employee_schedule: Pick<Prisma.TransactionClient["employee_schedule"], "findMany">;
+}
+
 interface ScheduleChangeRequestForSerialization {
     id: string;
     branchId: string;
@@ -271,6 +293,77 @@ export class ScheduleChangeService {
         return { sessionIndex, fromDate, toDate, newEndDate, minimumDate };
     }
 
+    /**
+     * Whether a schedule change on `scheduleId` would write a period of a caregiver who only holds
+     * kept writer slots (see service-record-period-ownership.policy). Both write paths write the
+     * requested schedule's boundary and nothing else, so a request on the real period owner is
+     * already correct. The defect is a request on a historical-only assignment's schedule, or one
+     * whose first unlocked session is itself such a slot: either would extend or move the period of
+     * a caregiver who is only recorded as the writer of a row. The stored vector is judged against
+     * the stored periods, because the shifted plan is not known until the writes are chosen.
+     * A legacy case (no planned vector), a schedule without an assignment row and a slotless or
+     * period-bearing assignment are all untouched.
+     */
+    private async targetsHistoricalWriterSlot(
+        db: ScheduleReader,
+        params: {
+            branchId: string;
+            clientId: number;
+            scheduleId: number;
+            record: ServiceRecordForChange;
+            days: readonly ServiceRecordDayWithWriter[];
+            calendar: KrBusinessDayCalendar;
+            sessionIndex: number;
+        },
+    ): Promise<boolean> {
+        const planned = canonicalPlannedSessions(params.record, params.calendar);
+        if (!planned) return false;
+        const schedules = await db.employee_schedule.findMany({
+            where: { branchId: params.branchId, clientId: params.clientId },
+            orderBy: { id: "asc" },
+            select: {
+                id: true,
+                startDate: true,
+                endDate: true,
+                replaced: true,
+                terminatedAt: true,
+                primaryEmployeeId: true,
+                serviceRecordAssignment: {
+                    select: { id: true, employeeId: true, startDate: true, endDate: true },
+                },
+            },
+        });
+        const assignments: PeriodOwnershipAssignment[] = schedules.map((schedule) => ({
+            id: schedule.serviceRecordAssignment?.id ?? null,
+            scheduleId: schedule.id,
+            employeeId: schedule.serviceRecordAssignment?.employeeId ?? schedule.primaryEmployeeId,
+            startDate: toIsoOrEmpty(schedule.serviceRecordAssignment?.startDate ?? schedule.startDate),
+            endDate: toIsoOrEmpty(schedule.serviceRecordAssignment?.endDate ?? schedule.endDate),
+            scheduleStartDate: toIsoOrEmpty(schedule.startDate),
+            scheduleEndDate: toIsoOrEmpty(schedule.endDate),
+            replaced: schedule.replaced,
+            scheduleTerminatedAt: schedule.terminatedAt ? schedule.terminatedAt.toISOString() : null,
+        }));
+        const counts = new Map<number, number>();
+        for (const day of params.days) {
+            const index = day.caseSessionIndex ?? day.sessionIndex;
+            counts.set(index, (counts.get(index) ?? 0) + 1);
+        }
+        const sessions: PeriodOwnershipDay[] = params.days.map((day) => {
+            const index = day.caseSessionIndex ?? day.sessionIndex;
+            return {
+                sessionIndex: index,
+                scheduleId: day.scheduleId ?? null,
+                employeeId: day.employeeId ?? null,
+                ambiguous: (counts.get(index) ?? 0) > 1,
+            };
+        });
+        const { historicalOnly, historicalSlots } = classifyPeriodOwnership({ assignments, sessions }, planned);
+        const requestedAssignmentId = assignments.find((assignment) => assignment.scheduleId === params.scheduleId)?.id;
+        if (requestedAssignmentId && historicalOnly.has(requestedAssignmentId)) return true;
+        return historicalSlots.has(params.sessionIndex);
+    }
+
     private serializeRequest(row: ScheduleChangeRequestForSerialization) {
         return {
             id: row.id,
@@ -314,6 +407,17 @@ export class ScheduleChangeService {
             serviceDate: day.serviceDate,
             locked: day.locked,
         })), calendar, record);
+        if (await this.targetsHistoricalWriterSlot(this.prisma, {
+            branchId: ctx.branchId,
+            clientId: schedule.clientId,
+            scheduleId: schedule.id,
+            record: record,
+            days,
+            calendar,
+            sessionIndex: target.sessionIndex,
+        })) {
+            throw new ConflictException(codeOnlyProblemBody("SCHEDULE_CHANGE_UNCOMPUTABLE"));
+        }
 
         return {
             sessionIndex: target.sessionIndex,
@@ -353,6 +457,17 @@ export class ScheduleChangeService {
             serviceDate: day.serviceDate,
             locked: day.locked,
         })), calendar, record);
+        if (await this.targetsHistoricalWriterSlot(this.prisma, {
+            branchId: ctx.branchId,
+            clientId: schedule.clientId,
+            scheduleId: schedule.id,
+            record: record,
+            days,
+            calendar,
+            sessionIndex: target.sessionIndex,
+        })) {
+            throw new ConflictException(codeOnlyProblemBody("SCHEDULE_CHANGE_UNCOMPUTABLE"));
+        }
         if (!schedule.endDate) {
             throw new ConflictException(codeOnlyProblemBody("SCHEDULE_CHANGE_UNCOMPUTABLE"));
         }
@@ -414,6 +529,17 @@ export class ScheduleChangeService {
             serviceDate: day.serviceDate,
             locked: day.locked,
         })), calendar, record);
+        if (await this.targetsHistoricalWriterSlot(this.prisma, {
+            branchId: branchId,
+            clientId: schedule.clientId,
+            scheduleId: schedule.id,
+            record: record,
+            days,
+            calendar,
+            sessionIndex: target.sessionIndex,
+        })) {
+            throw new ConflictException(codeOnlyProblemBody("SCHEDULE_CHANGE_UNCOMPUTABLE"));
+        }
 
         return {
             sessionIndex: target.sessionIndex,
@@ -534,6 +660,19 @@ export class ScheduleChangeService {
                     serviceDate: day.serviceDate,
                     locked: day.locked,
                 })), calendar, record);
+                // Nothing is written yet: a request on a caregiver who only holds kept writer slots,
+                // or whose first unlocked session is such a slot, would move a period she never served.
+                if (await this.targetsHistoricalWriterSlot(tx, {
+                    branchId: branchId,
+                    clientId: schedule.clientId,
+                    scheduleId: schedule.id,
+                    record: record,
+                    days,
+                    calendar,
+                    sessionIndex: target.sessionIndex,
+                })) {
+                    throw new ConflictException(codeOnlyProblemBody("SCHEDULE_CHANGE_UNCOMPUTABLE"));
+                }
                 if (selectedDate === target.fromDate) {
                     throw new ConflictException(codeOnlyProblemBody("SCHEDULE_DATE_NOT_POSTPONED"));
                 }
@@ -843,6 +982,18 @@ export class ScheduleChangeService {
                     serviceDate: day.serviceDate,
                     locked: day.locked,
                 })), calendar, record);
+                // Same rule as the admin change: the request is bound to go stale, nothing is written.
+                if (await this.targetsHistoricalWriterSlot(tx, {
+                    branchId: request.branchId,
+                    clientId: request.clientId,
+                    scheduleId: schedule.id,
+                    record: record,
+                    days,
+                    calendar,
+                    sessionIndex: target.sessionIndex,
+                })) {
+                    throw new StaleRequestError(request.id, request.branchId);
+                }
                 if (
                     target.sessionIndex !== request.sessionIndex
                     || target.fromDate !== toIso(request.fromDate)

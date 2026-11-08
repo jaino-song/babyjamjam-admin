@@ -1,6 +1,7 @@
 import type {
   CustomVariable,
   SystemTemplate,
+  SystemTemplateGroup,
   TemplateVariable,
 } from "./types";
 
@@ -71,6 +72,8 @@ export interface SystemTemplateCatalogItem {
   id: string;
   templateKey: string;
   label: string;
+  group?: SystemTemplateGroup;
+  groupLabel?: string;
   description: string;
   content: string;
   customVariables: readonly CustomVariable[];
@@ -144,6 +147,8 @@ export function buildSystemTemplateCatalog(
         // The API title is authoritative. A malformed blank title still gets
         // a deterministic key label instead of a hardcoded catalog fallback.
         label: template.name || templateKey,
+        group: template.group,
+        groupLabel: template.groupLabel,
         description: template.description,
         content: template.content,
         customVariables: template.customVariables,

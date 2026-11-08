@@ -7,18 +7,18 @@ describe("auth email handling", () => {
   });
 
   it("returns an error for invalid email formats", () => {
-    expect(getEmailFormatError("jainostudio@gmail,com")).toBe("이메일 주소를 확인해 주세요.");
+    expect(getEmailFormatError("qa-provider@example,test")).toBe("이메일 주소를 확인해 주세요.");
     expect(getEmailFormatError("hello@domain")).toBe("이메일 주소를 확인해 주세요.");
   });
 
   it("accepts valid email formats", () => {
-    expect(getEmailFormatError("jainostudio@gmail.com")).toBeUndefined();
-    expect(getEmailFormatError("  jainostudio@gmail.com  ")).toBeUndefined();
+    expect(getEmailFormatError("qa-provider@example.test")).toBeUndefined();
+    expect(getEmailFormatError("  qa-provider@example.test  ")).toBeUndefined();
   });
 
   it("keeps register schema validation aligned with inline validation", () => {
     const result = registerSchema.safeParse({
-      email: "jainostudio@gmail,com",
+      email: "qa-provider@example,test",
       password: "password1!",
       confirmPassword: "password1!",
       name: "홍길동",

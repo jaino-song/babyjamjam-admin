@@ -87,6 +87,35 @@ describe("SidebarNotifications loading state", () => {
     expect(mockPush).toHaveBeenCalledWith("/contracts?recoverJobId=j1");
   });
 
+  it("keeps read and unread notification frames gray without selection semantics", () => {
+    const markAsRead = jest.fn();
+    mockedUseMarkAsRead.mockReturnValue({ mutate: markAsRead } as unknown as ReturnType<typeof useMarkAsRead>);
+    mockedUseClientAlerts.mockReturnValue({ data: [], isLoading: false } as unknown as ReturnType<typeof useClientAlerts>);
+    mockedUseNotifications.mockReturnValue({
+      data: [false, true].map((isRead, index) => ({
+        id: index + 10, title: isRead ? "읽은 알림" : "새 알림", body: "내용",
+        data: { url: "/messages" }, sentAt: "2026-08-19T00:00:00.000Z",
+        readAt: isRead ? "2026-08-19T01:00:00.000Z" : null, isRead,
+      })), isLoading: false,
+    } as unknown as ReturnType<typeof useNotifications>);
+    render(<SidebarNotifications />);
+    fireEvent.click(screen.getByRole("button", { name: "알림 열기" }));
+    const unread = screen.getByText("새 알림").closest('[data-slot="animated-slot-list-item"]')!;
+    const read = screen.getByText("읽은 알림").closest('[data-slot="animated-slot-list-item"]')!;
+    for (const item of [unread, read]) {
+      expect(item).toHaveClass("border-2", "border-v3-selectable-border", "hover:border-v3-selectable-border");
+      expect(item).not.toHaveClass("border-v3-primary");
+      expect(item.className).not.toMatch(/!border|!bg/);
+      expect(item).not.toHaveAttribute("aria-pressed");
+      expect(item).not.toHaveAttribute("data-selected", "true");
+    }
+    expect(unread).toHaveTextContent("읽지 않음");
+    expect(read).not.toHaveTextContent("읽지 않음");
+    fireEvent.keyDown(unread, { key: " " });
+    expect(markAsRead).toHaveBeenCalledTimes(1);
+    expect(mockPush).toHaveBeenCalledWith("/messages");
+  });
+
   it("wraps a specific notification body without overlapping its time label", () => {
     mockedUseClientAlerts.mockReturnValue({ data: [], isLoading: false } as unknown as ReturnType<typeof useClientAlerts>);
     mockedUseNotifications.mockReturnValue({

@@ -24,7 +24,7 @@ export const DOMAIN_TERMS: Record<string, RegExp> = {
     automation: /(자동화|트리거|automation|trigger)/i,
     files: /(파일|문서 파일|첨부|file|attachment)/i,
     policy: /(정책|규정|승인 원칙|보안 원칙|policy|rule|compliance)/i,
-    "service-records": /(제공기록|서비스 기록|service[ -]?record)/i,
+    "service-records": /(제공기록|서비스 기록|service[ -]?record|회차|중단|재개|교체|기록지)/i,
     analytics: /(분석|통계|analytics|metric|funnel)/i,
     settings: /(설정|환경설정|setting|configuration)/i,
     website: /(웹사이트|홈페이지|website|homepage)/i,
@@ -32,6 +32,11 @@ export const DOMAIN_TERMS: Record<string, RegExp> = {
     notifications: /(알림|notification|push)/i,
     admin: /(관리자|지점 생성|admin|branch creation)/i,
 };
+
+// Keep explicitly named, enabled domains in accepted routed domain lists.
+// Their capabilities remain subject to the max cap in registry order.
+export const CLASSIFIER_STICKY_DOMAINS = ["service-records"] as const;
+const SERVICE_RECORD_NAMING_TERMS = /(제공기록|서비스 기록|service[ -]?record|회차|기록지)/i;
 
 export function minimizeClassifierText(text: string, knownValues: readonly unknown[] = []): string {
     return redactClassifierText(text, knownValues);
@@ -201,14 +206,15 @@ export class CapabilityRouterService {
             // default "clients" fallback.
             return { domains: [], capabilities: [], disposition: "clarify" };
         }
+        const domains = this.appendStickyDomains(selection, matched, text);
         return {
-            domains: selection,
-            capabilities: this.offerCapabilitiesWithCoreReads(selection, enabledCapabilities, max),
+            domains,
+            capabilities: this.offerCapabilitiesWithCoreReads(domains, enabledCapabilities, max),
             disposition: "selected",
         };
     }
 
-    /** The incumbent decisions, unchanged; used in off/shadow and by legacy callers. */
+    /** Incumbent routing for off/shadow and legacy callers. */
     private async incumbentDomains(
         text: string,
         enabledDomains: ReadonlySet<string>,
@@ -218,8 +224,15 @@ export class CapabilityRouterService {
         const classifierDomains = matched.length === 1
             ? matched
             : await this.classifyAmbiguous(text, [...enabledDomains], protectedValues);
-        const routedDomains = classifierDomains.length > 0 ? classifierDomains : matched;
+        const routedDomains = this.appendStickyDomains(classifierDomains.length > 0 ? classifierDomains : matched, matched, text);
         return routedDomains.length > 0 ? routedDomains : (enabledDomains.has("clients") ? ["clients"] : []);
+    }
+
+    private appendStickyDomains(selection: readonly string[], matched: readonly string[], text: string): string[] {
+        const stickyDomains = CLASSIFIER_STICKY_DOMAINS.filter((domain) => (
+            matched.includes(domain) && SERVICE_RECORD_NAMING_TERMS.test(text)
+        ));
+        return [...new Set([...selection, ...stickyDomains])];
     }
 
     /** Facade input; `baseline` is always the deterministic keyword fallback. */
@@ -296,10 +309,13 @@ export class CapabilityRouterService {
     private async classifyAmbiguous(text: string, enabledDomains: string[], protectedValues: readonly unknown[]): Promise<string[]> {
         if (!this.models || enabledDomains.length === 0 || process.env["AGENT_ROUTER_CLASSIFIER_ENABLED"] === "false") return [];
         const prompt = minimizeClassifierText(text, protectedValues);
+        const serviceRecordsHint = enabledDomains.includes("service-records")
+            ? "service-records = 제공기록지: 회차 dates, pauses/resumes and 관리사 handover on a service record; moving a 회차 date belongs here, not schedules. "
+            : "";
         try {
             const result = await generateText({
                 model: this.models.create(),
-                system: `Classify the request into at most two domains from: ${enabledDomains.join(", ")}. employees = 제공인력; users may also say 직원 or 관리사. Return JSON only: {"domains":["domain"]}. Never include personal data.`,
+                system: `Classify the request into at most two domains from: ${enabledDomains.join(", ")}. employees = 제공인력; users may also say 직원 or 관리사. ${serviceRecordsHint}Return JSON only: {"domains":["domain"]}. Never include personal data.`,
                 prompt,
                 maxOutputTokens: 64,
             });

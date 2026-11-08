@@ -118,6 +118,25 @@ export class ClientAutomationSourceReader {
         }) as ClientTriggerSource | null;
     }
 
+    /** Dedicated caregiver facts; legacy source shapes and fingerprint inputs remain unchanged. */
+    async readCaregiverSource(branchId: string, clientId: number, transaction?: Prisma.TransactionClient) {
+        const database = transaction ?? this.prisma;
+        const [client, branch, schedules] = await Promise.all([
+            database.client.findFirst({ where: { id: clientId, branchId }, select: {
+                id: true, branchId: true, name: true, phone: true, createdAt: true, deletedAt: true,
+                serviceStatus: true, startDate: true, endDate: true, bookingConfirmedAt: true,
+            } }),
+            database.branch.findUnique({ where: { id: branchId }, select: { id: true, name: true } }),
+            database.employee_schedule.findMany({ where: { branchId, clientId, replaced: false, terminatedAt: null },
+                select: { id: true, incarnationId: true, branchId: true, clientId: true, startDate: true, endDate: true,
+                    replaced: true, terminatedAt: true, primaryEmployeeId: true, secondaryEmployeeId: true,
+                    primaryEmployee: { select: { id: true, branchId: true, name: true, phone: true, deletedAt: true, smsAutomationEnabled: true } },
+                    secondaryEmployee: { select: { id: true, branchId: true, name: true, phone: true, deletedAt: true, smsAutomationEnabled: true } },
+                }, orderBy: { id: "asc" }, take: 501 }),
+        ]);
+        return { client, branch, schedules };
+    }
+
     /** Normal client writes permit branch-owned and global areas; preview uses the same scope. */
     async readClientAutomationArea(branchId: string, areaId: string, transaction?: Prisma.TransactionClient): Promise<ClientTriggerSource["area"] | undefined> {
         return (await (transaction ?? this.prisma).area.findFirst({

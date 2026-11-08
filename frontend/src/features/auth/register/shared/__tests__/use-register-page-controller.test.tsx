@@ -45,16 +45,16 @@ describe("useRegisterPageController phone duplicate check", () => {
 
     act(() => {
       result.current.handlePhoneChange({
-        target: { value: "010-6621-1878" },
+        target: { value: "010-0000-6621" },
       } as React.ChangeEvent<HTMLInputElement>);
     });
 
     await waitFor(() => {
-      expect(result.current.lastCheckedPhoneDigits).toBe("01066211878");
+      expect(result.current.lastCheckedPhoneDigits).toBe("01000006621");
     });
 
     expect(mockApiGet).toHaveBeenCalledWith("/auth/check-phone", {
-      params: { phone: "01066211878" },
+      params: { phone: "01000006621" },
       signal: expect.any(AbortSignal),
     });
     expect(result.current.isPhoneDuplicate).toBe(true);

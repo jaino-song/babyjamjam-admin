@@ -1,6 +1,7 @@
 import { BadRequestException, ConflictException, ForbiddenException, NotFoundException } from "@nestjs/common";
 import { Test } from "@nestjs/testing";
 import { Prisma } from "@prisma/client";
+import { createHash } from "node:crypto";
 import { z } from "zod";
 
 import { AgentFlagsService } from "./agent-flags.service";
@@ -8,7 +9,7 @@ import { AgentActionSweepLockService } from "infrastructure/locking/agent-action
 import { CapabilityRegistryService } from "./capability-registry.service";
 import { AgentSessionService } from "./agent-session.service";
 import { PrismaService } from "infrastructure/database/prisma.service";
-import { ActionCoordinatorService, AgentActionCertainFailureError } from "./action-coordinator.service";
+import { ActionCoordinatorService, AgentActionCertainFailureError, AgentActionQuestionError } from "./action-coordinator.service";
 import { AGENT_ACTION_REPOSITORY } from "domain/repositories/agent-action.repository.interface";
 import { SchedulerLeaseService } from "application/services/scheduler-lease.service";
 import { createSchedulerLeaseMock } from "../../test/utils/mocks/scheduler-lease.mock";
@@ -90,6 +91,30 @@ describe("ActionCoordinatorService", () => {
         } };
     }
 
+    it.each(["approve", "reject"] as const)("stores a redacted read-only proposal before the %s result", async (operation) => {
+        const preview = { sections: [{ title: "변경", rows: [{ label: "종료일", before: "2026-10-01", after: "2026-10-14" }] }] };
+        const proposed = actionRecord({
+            proposal: { title: "수정 제안", summary: "변경 확인", input: { id: 3, phone: "01012345678", accountNumber: "1234567890", nested: { accessToken: "never-store", mobile: "01099998888" } }, preview, acknowledgementToken: "never-store" },
+            targetSnapshot: { clientId: 3, phone: "01012345678", accessToken: "never-store" },
+        });
+        const prisma = mutableActionPrisma(proposed);
+        const sessions = sessionPersistence();
+        const service = new ActionCoordinatorService(prisma as never, { get: jest.fn().mockReturnValue(capability()) } as never,
+            { isCapabilityEnabled: jest.fn().mockResolvedValue(true) } as never, { isAvailable: jest.fn().mockReturnValue(false) } as never,
+            sessions as never, actionPersistence() as never, createSchedulerLeaseMock());
+
+        if (operation === "approve") await service.approve(proposed.id, principal, proposed.proposalRevision);
+        else await service.reject(proposed.id, principal);
+
+        const message = sessions.upsertActionResultMessage.mock.calls[0]?.[2];
+        expect(message.parts).toEqual([
+            { type: "data-action-proposal", data: expect.objectContaining({ actionId: proposed.id, title: "수정 제안", preview,
+                changes: { id: 3, phone: "••••5678", accountNumber: "••••7890", nested: { mobile: "••••8888" } } }) },
+            { type: "data-action-result", data: expect.objectContaining({ status: operation === "approve" ? "succeeded" : "rejected" }) },
+        ]);
+        expect(JSON.stringify(message)).not.toMatch(/never-store|01012345678|1234567890|acknowledgementToken/);
+    });
+
     it("requires result persistence during Nest dependency construction", async () => {
         const expectedMissingDependency = AgentSessionService.name;
         await expect(Test.createTestingModule({
@@ -103,6 +128,23 @@ describe("ActionCoordinatorService", () => {
                 { provide: SchedulerLeaseService, useValue: createSchedulerLeaseMock() },
             ],
         }).compile()).rejects.toThrow(new RegExp(expectedMissingDependency));
+    });
+
+    it("propagates an answerable inspection refusal without creating an action", async () => {
+        const question = new AgentActionQuestionError("INCOMING_ASSIGNMENT_REQUIRED", "관리사를 골라 주세요.", [{ employeeId: 188, employeeName: "관리사B" }]);
+        expect(question).toBeInstanceOf(AgentActionCertainFailureError);
+        const definition = { ...capability(), inspect: jest.fn().mockRejectedValue(question) };
+        const prisma = { agent_action: { findUnique: jest.fn().mockResolvedValue(null), create: jest.fn() } };
+        const repository = actionPersistence(prisma);
+        const service = new ActionCoordinatorService(
+            prisma as never, { get: () => definition } as never,
+            { isCapabilityEnabled: jest.fn().mockResolvedValue(true) } as never, {} as never,
+            sessionPersistence() as never, repository as never, createSchedulerLeaseMock(),
+        );
+        await expect(service.propose({ sessionId: "session-a", principal, capability: "clients.update", input: { id: 3 }, locale: "ko" })).rejects.toBe(question);
+        expect(repository.createInActiveSession).not.toHaveBeenCalled();
+        expect(prisma.agent_action.create).not.toHaveBeenCalled();
+        expect(definition.execute).not.toHaveBeenCalled();
     });
 
     it("creates a random action identity with a bounded request dedupe key", async () => {
@@ -191,6 +233,66 @@ describe("ActionCoordinatorService", () => {
         expect(first.requestDedupeKey).toBe(duplicate.requestDedupeKey);
         expect(prisma.agent_action.create).toHaveBeenCalledTimes(1);
         expect(definition.canonicalizeInput).toHaveBeenCalledTimes(2);
+    });
+
+    describe("approval preview", () => {
+        const validPreview = {
+            sections: [{
+                title: "회차 날짜",
+                rows: [
+                    { label: "1회차", before: "2026-08-03", after: "2026-08-04" },
+                    { label: "2회차", before: null, after: "2026-08-05", note: "휴일입니다" },
+                ],
+            }],
+        };
+
+        function previewService(inspection: Record<string, unknown> | undefined) {
+            const definition = { ...capability(), ...(inspection ? { inspect: jest.fn().mockResolvedValue(inspection) } : {}) };
+            const prisma = { agent_action: {
+                findUnique: jest.fn().mockResolvedValue(null),
+                create: jest.fn().mockImplementation(async ({ data }) => ({ ...data, createdAt: new Date(), updatedAt: new Date(), approvedBy: null, approvedAt: null, rejectedBy: null, rejectedAt: null, result: null, error: null, executedAt: null, resultPartPersistedAt: null, targetSnapshot: null })),
+            } };
+            const service = new ActionCoordinatorService(
+                prisma as never,
+                { get: jest.fn().mockReturnValue(definition) } as never,
+                { isCapabilityEnabled: jest.fn().mockResolvedValue(true) } as never,
+                { isAvailable: jest.fn().mockReturnValue(false) } as never,
+                sessionPersistence() as never,
+                actionPersistence(prisma) as never,
+                createSchedulerLeaseMock(),
+            );
+            return { service, prisma };
+        }
+        const proposeInput = { sessionId: "session-a", principal, capability: "clients.update", input: { id: 3 }, locale: "ko" };
+
+        it("stores a valid inspect preview on the proposal", async () => {
+            const { service } = previewService({ preview: validPreview });
+            const action = await service.propose(proposeInput);
+            expect(action.proposal["preview"]).toEqual(validPreview);
+        });
+
+        it("fails closed without creating a proposal when the inspect preview is invalid", async () => {
+            const { service, prisma } = previewService({ preview: { sections: [{ title: "x", rows: [{ label: "a", before: "x".repeat(201), after: null }] }] } });
+            await expect(service.propose(proposeInput)).rejects.toThrow(/invalid approval preview/);
+            expect(prisma.agent_action.create).not.toHaveBeenCalled();
+        });
+
+        it("keeps the revision of a preview-less proposal byte-identical to the pre-preview shape", async () => {
+            const { service } = previewService({ title: "Update client", summary: "Apply" });
+            const action = await service.propose(proposeInput);
+            expect("preview" in action.proposal).toBe(false);
+            const legacyRevision = createHash("sha256").update(
+                // Hand-built stableJson of the pre-preview proposal (keys sorted).
+                `{"capability":"clients.update","capabilityVersion":"1.0.0","proposal":{"capability":"clients.update","estimatedCost":null,"input":{"id":3},"locale":"ko","provider":null,"summary":"Apply","targetSnapshot":null,"targetVersion":null,"title":"Update client"},"risk":"reversible-write"}`,
+            ).digest("hex");
+            expect(action.proposalRevision).toBe(legacyRevision);
+        });
+
+        it("changes the revision when a preview is attached", async () => {
+            const plain = await previewService({ title: "Update client", summary: "Apply" }).service.propose(proposeInput);
+            const withPreview = await previewService({ title: "Update client", summary: "Apply", preview: validPreview }).service.propose(proposeInput);
+            expect(withPreview.proposalRevision).not.toBe(plain.proposalRevision);
+        });
     });
 
     it("does not create an action for an archived or expired session", async () => {
@@ -774,7 +876,7 @@ describe("ActionCoordinatorService", () => {
             { userId: uncertain.userId, branchId: uncertain.branchId },
             expect.objectContaining({
                 id: `agent-action-result:${uncertain.id}`,
-                parts: [expect.objectContaining({ data: expect.objectContaining({ status: "succeeded", result: { status: "updated" } }) })],
+                parts: [expect.objectContaining({ type: "data-action-proposal" }), expect.objectContaining({ data: expect.objectContaining({ status: "succeeded", result: { status: "updated" } }) })],
             }),
         );
         expect(prisma.agent_action.updateMany).toHaveBeenNthCalledWith(2, expect.objectContaining({
@@ -895,7 +997,7 @@ describe("ActionCoordinatorService", () => {
         expect(sessions.upsertActionResultMessage).toHaveBeenCalledWith(
             uncertain.sessionId,
             { userId: principal.userId, branchId: principal.branchId },
-            expect.objectContaining({ parts: [expect.objectContaining({
+            expect.objectContaining({ parts: [expect.objectContaining({ type: "data-action-proposal" }), expect.objectContaining({
                 data: expect.objectContaining({ status: "failed", result: { status: "provider-rejected" } }),
             })] }),
         );
@@ -1083,6 +1185,20 @@ describe("ActionCoordinatorService", () => {
                 error: expect.objectContaining({ code: "provider_uncertain" }),
             }),
         }));
+    });
+
+    it("keeps task action results free of standalone proposal snapshots", async () => {
+        const succeeded = actionRecord({ status: "succeeded", taskId: "task-a", taskRevision: 2, result: { name: "task-private" }, resultPartPersistedAt: null });
+        const sessions = sessionPersistence();
+        const markResultPartPersisted = jest.fn().mockResolvedValue(true);
+        const tasks = { withLinkedActionRecoveryTransaction: jest.fn(async (_input, callback) => ({ status: "ok", value: await callback({ markResultPartPersisted }) })) };
+        const service = new ActionCoordinatorService({ agent_action: { findMany: jest.fn().mockResolvedValue([succeeded]) } } as never,
+            {} as never, {} as never, {} as never, sessions as never, actionPersistence() as never, createSchedulerLeaseMock(), tasks as never);
+        await expect(service.repairTerminalResultParts()).resolves.toBe(1);
+        const message = sessions.upsertActionResultMessage.mock.calls[0]?.[2];
+        expect(message.parts).toEqual([{ type: "data-action-result", data: expect.objectContaining({ actionId: succeeded.id, status: "succeeded" }) }]);
+        expect(JSON.stringify(message)).not.toContain("task-private");
+        expect(markResultPartPersisted).toHaveBeenCalledWith({ expectedStatus: "succeeded", persistedAt: expect.any(Date) });
     });
 
     it("repairs missing terminal result parts idempotently", async () => {
@@ -1310,7 +1426,7 @@ describe("ActionCoordinatorService", () => {
             { userId: principal.userId, branchId: principal.branchId },
             expect.objectContaining({
                 role: "assistant",
-                parts: [expect.objectContaining({
+                parts: [expect.objectContaining({ type: "data-action-proposal" }), expect.objectContaining({
                     type: "data-action-result",
                     data: expect.objectContaining({ actionId: proposed.id, status: "rejected" }),
                 })],
@@ -1344,7 +1460,7 @@ describe("ActionCoordinatorService", () => {
             proposed.sessionId,
             { userId: principal.userId, branchId: principal.branchId },
             expect.objectContaining({
-                parts: [expect.objectContaining({
+                parts: [expect.objectContaining({ type: "data-action-proposal" }), expect.objectContaining({
                     type: "data-action-result",
                     data: expect.objectContaining({ actionId: proposed.id, status: "expired" }),
                 })],
@@ -1381,7 +1497,7 @@ describe("ActionCoordinatorService", () => {
         expect(sessions.upsertActionResultMessage).toHaveBeenCalledWith(
             executing.sessionId,
             { userId: principal.userId, branchId: principal.branchId },
-            expect.objectContaining({ parts: [expect.objectContaining({ data: expect.objectContaining({ status: "uncertain" }) })] }),
+            expect.objectContaining({ parts: [expect.objectContaining({ type: "data-action-proposal" }), expect.objectContaining({ data: expect.objectContaining({ status: "uncertain" }) })] }),
         );
     });
 

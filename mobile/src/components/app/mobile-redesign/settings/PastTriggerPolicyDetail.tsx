@@ -1,528 +1,119 @@
 "use client";
-import { normalizeApiError } from "@babyjamjam/shared";
 
-
-import {
-  useCallback,
-  useEffect,
-  useId,
-  useMemo,
-  useRef,
-  useState,
-  type ReactElement,
-} from "react";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMemo, useState, type ReactElement } from "react";
+import { useMutation } from "@tanstack/react-query";
 import { ArrowDown, ArrowUp } from "lucide-react";
-import { useDebouncedCallback } from "use-debounce";
-import {
-  MESSAGE_EVENT_LABELS,
-  MESSAGE_RECIPIENT_LABELS,
-  isSmsTriggerTemplate,
-} from "@babyjamjam/shared";
+import { isSmsTriggerTemplate } from "@babyjamjam/shared";
 import { mergeRuleOrder } from "@babyjamjam/shared/utils/rule-order";
-import type {
-  MessageAutomationPastTriggerConfig,
-  MessageAutomationPoliciesResponse,
-  MessageAutomationPolicy,
-  MessageTriggerEventType,
-  MessageTriggerOffsetType,
-  MessageTriggerRule,
-} from "@babyjamjam/shared/types/message";
-
+import type { MessageAutomationPolicyConfiguration, MessageAutomationPolicyPreviewResponse, MessagePolicyRecipientGroup } from "@babyjamjam/shared/types/message";
+import { InputField } from "@/components/app/v3/InputField";
+import { OptionButtonGroup } from "@/components/app/v3/OptionButtonGroup";
+import { Switch } from "@/components/ui/switch";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Skeleton } from "@/components/ui/skeleton";
+import { InfoCard, InfoRow, MobileDetailActions } from "@/components/app/mobile-redesign/detail-sheet";
 import { useMessageTriggerRules } from "@/features/message-triggers/hooks/use-message-triggers";
-import { useToast } from "@/hooks/use-toast";
 import { settingsApi } from "@/services/api";
-
-import { PolicyInfoRows } from "./PolicyInfoRows";
 import { getOrderedTriggerRules } from "./settings-items";
 
-const MESSAGE_AUTOMATION_POLICIES_QUERY_KEY = [
-  "settings",
-  "message-automation-policies",
-] as const;
-const MIN_SEND_INTERVAL_MINUTES = 1;
-const MAX_SEND_INTERVAL_MINUTES = 1_440;
-const SOURCE_COMPONENT = "PastTriggerPolicyDetail";
-
-// Shared problem contract resolution — a registered body surfaces its
-// catalog copy; the locally authored fallback covers unverified failures.
-function failureMessage(error: unknown, fallback: string): string {
-  const normalized = normalizeApiError(error, { locale: "ko-KR", operation: "mutation" });
-  return normalized.verified ? normalized.message : fallback;
+export type ConfigurationField = Exclude<keyof MessageAutomationPolicyConfiguration, "schemaVersion" | "quietHours" | "pastRuleOrder">;
+export const CONFIGURATION_FIELDS: Array<{ key: ConfigurationField; label: string; min?: number; max?: number; item: string }> = [
+  { key: "dispatchCheckIntervalMinutes", label: "자동 전송 확인 간격 (분)", min: 1, max: 1440, item: "trigger-dispatch" },
+  { key: "defaultRuleSendTime", label: "기본 발송 시각 (한국 시간)", item: "trigger-dispatch" },
+  { key: "triggerRetryIntervalMinutes", label: "자동 전송 재시도 간격 (분)", min: 1, max: 1440, item: "trigger-job-retry" },
+  { key: "processingReclaimMinutes", label: "처리 중 작업 재확인 간격 (분)", min: 10, max: 1440, item: "trigger-job-retry" },
+  { key: "smsRetryIntervalMinutes", label: "SMS 재시도 간격 (분)", min: 1, max: 1440, item: "sms-retry" },
+  { key: "pastExpiryHours", label: "지난 자동 전송 유효 기간 (시간)", min: 1, max: 720, item: "past-trigger" },
+  { key: "pastSendIntervalMinutes", label: "늦은 등록 자동 전송 간격", min: 1, max: 1440, item: "past-trigger" },
+  { key: "duplicateWindowHours", label: "중복 전송 확인 범위 (시간)", min: 1, max: 720, item: "duplicate-send-confirmation" },
+];
+const TIME = /^([01]\d|2[0-3]):[0-5]\d$/;
+export function configurationError(configuration: MessageAutomationPolicyConfiguration): string | null {
+  for (const field of CONFIGURATION_FIELDS) {
+    const value = configuration[field.key];
+    if (field.key === "defaultRuleSendTime") {
+      if (typeof value !== "string" || !TIME.test(value)) return "발송 시각을 입력해 주세요 (한국 시간).";
+    } else if (typeof value !== "number" || !Number.isInteger(value) || value < field.min! || value > field.max!) {
+      return `${field.label}: ${field.min}~${field.max} 범위로 입력해 주세요.`;
+    }
+  }
+  const quiet = configuration.quietHours;
+  if (!TIME.test(quiet.start) || !TIME.test(quiet.end)) return "심야 시작·종료 시각을 입력해 주세요.";
+  if (quiet.start === quiet.end) return "심야 시작과 종료 시각은 달라야 합니다.";
+  if (quiet.enabled && quiet.recipientGroups.length === 0) return "심야 전송 금지 대상을 한 개 이상 선택해 주세요.";
+  return null;
 }
-
-const TRIGGER_OFFSET_LABELS: Record<
-  MessageTriggerEventType,
-  Record<MessageTriggerOffsetType, string>
-> = {
-  CLIENT_CREATED: {
-    IMMEDIATE: "즉시 발송",
-    SAME_DAY: "등록 당일",
-    BEFORE_DAYS: "등록 N일 전",
-    AFTER_DAYS: "등록 N일 후",
-  },
-  SERVICE_START: {
-    IMMEDIATE: "즉시 발송",
-    SAME_DAY: "시작 당일",
-    BEFORE_DAYS: "시작 N일 전",
-    AFTER_DAYS: "시작 N일 후",
-  },
-  SERVICE_END: {
-    IMMEDIATE: "즉시 발송",
-    SAME_DAY: "종료 당일",
-    BEFORE_DAYS: "종료 N일 전",
-    AFTER_DAYS: "종료 N일 후",
-  },
-  EMPLOYEE_ASSIGNED: {
-    IMMEDIATE: "즉시 발송",
-    SAME_DAY: "배정 당일",
-    BEFORE_DAYS: "배정 N일 전",
-    AFTER_DAYS: "배정 N일 후",
-  },
-};
 
 export interface PastTriggerPolicyDetailProps {
   "data-component": string;
-  policy: MessageAutomationPolicy;
-  pastTriggerConfig: MessageAutomationPastTriggerConfig;
+  itemId: string;
+  configuration: MessageAutomationPolicyConfiguration;
+  branchId: string;
+  version: string | null;
+  canWrite: boolean;
+  isPending: boolean;
+  dirty: boolean;
+  error: string | null;
+  onChange: (configuration: MessageAutomationPolicyConfiguration) => void;
+  onSave: () => void;
+  onCancel: () => void;
 }
 
-interface PastTriggerMutationContext {
-  previous: MessageAutomationPoliciesResponse | undefined;
-}
-
-function formatTriggerOffset(rule: MessageTriggerRule): string {
-  const offsetLabel = TRIGGER_OFFSET_LABELS[rule.eventType][rule.offsetType];
-
-  if (rule.offsetType === "BEFORE_DAYS" || rule.offsetType === "AFTER_DAYS") {
-    return offsetLabel.replace("N", String(rule.offsetDays || 0));
-  }
-
-  return offsetLabel;
-}
-
-function getTriggerRuleSummary(rule: MessageTriggerRule): string {
-  return `${MESSAGE_EVENT_LABELS[rule.eventType]} · ${formatTriggerOffset(rule)} · ${MESSAGE_RECIPIENT_LABELS[rule.recipientType]}`;
-}
-
-function parseSendInterval(value: string): number | null {
-  if (!/^\d+$/.test(value)) return null;
-
-  const parsed = Number(value);
-  if (
-    !Number.isInteger(parsed) ||
-    parsed < MIN_SEND_INTERVAL_MINUTES ||
-    parsed > MAX_SEND_INTERVAL_MINUTES
-  ) {
-    return null;
-  }
-
-  return parsed;
-}
-
-export function PastTriggerPolicyDetail({
-  "data-component": dataComponent,
-  policy,
-  pastTriggerConfig,
-}: PastTriggerPolicyDetailProps): ReactElement {
-  const queryClient = useQueryClient();
-  const { toast } = useToast();
-  const { data: triggerRules = [], isLoading: isTriggerRulesLoading } =
-    useMessageTriggerRules();
-  const [draftInterval, setDraftInterval] = useState(() =>
-    String(pastTriggerConfig.sendIntervalMinutes),
-  );
-  const [draftRuleOrder, setDraftRuleOrder] = useState<string[] | null>(null);
-  const draftIntervalRef = useRef(draftInterval);
-  const draftRuleOrderRef = useRef<string[] | null>(null);
-  const effectiveOrderIdsRef = useRef<string[]>([]);
-  const configRef = useRef(pastTriggerConfig);
-  const lastSyncedConfigRef = useRef(pastTriggerConfig);
-  const queuedRef = useRef(false);
-  const isPersistingRef = useRef(false);
-  const persistRef = useRef<() => void>(() => undefined);
-  const intervalInputId = useId();
-  const intervalHelperId = `${intervalInputId}-helper`;
-  const sub = (suffix: string) => `${dataComponent}_${suffix}`;
-
-  const activeSmsRules = useMemo(
-    () =>
-      triggerRules.filter(
-        (rule) => rule.isActive && isSmsTriggerTemplate(rule.templateKey),
-      ),
-    [triggerRules],
-  );
-  const orderedRules = useMemo(
-    () =>
-      getOrderedTriggerRules(
-        activeSmsRules,
-        draftRuleOrder ?? pastTriggerConfig.ruleOrder,
-      ),
-    [activeSmsRules, draftRuleOrder, pastTriggerConfig.ruleOrder],
-  );
-  const effectiveOrderIds = orderedRules.map((rule) => rule.id);
-  const isIntervalValid = parseSendInterval(draftInterval) !== null;
-
-  useEffect(() => {
-    configRef.current = pastTriggerConfig;
-  }, [pastTriggerConfig]);
-
-  useEffect(() => {
-    effectiveOrderIdsRef.current = effectiveOrderIds;
-  }, [effectiveOrderIds]);
-
-  const saveMutation = useMutation<
-    MessageAutomationPastTriggerConfig,
-    Error,
-    MessageAutomationPastTriggerConfig,
-    PastTriggerMutationContext
-  >({
-    mutationFn: settingsApi.updateMessageAutomationPastTriggerConfig,
-    onMutate: async (nextConfig) => {
-      isPersistingRef.current = true;
-      await queryClient.cancelQueries({
-        queryKey: MESSAGE_AUTOMATION_POLICIES_QUERY_KEY,
-      });
-      const previous =
-        queryClient.getQueryData<MessageAutomationPoliciesResponse>(
-          MESSAGE_AUTOMATION_POLICIES_QUERY_KEY,
-        );
-      queryClient.setQueryData<MessageAutomationPoliciesResponse>(
-        MESSAGE_AUTOMATION_POLICIES_QUERY_KEY,
-        (current) =>
-          current ? { ...current, pastTriggerConfig: nextConfig } : current,
-      );
-      return { previous };
-    },
-    onError: (_error, _nextConfig, context) => {
-      if (context?.previous) {
-        queryClient.setQueryData(
-          MESSAGE_AUTOMATION_POLICIES_QUERY_KEY,
-          context.previous,
-        );
-        const revertedConfig = context.previous.pastTriggerConfig;
-        configRef.current = revertedConfig;
-        lastSyncedConfigRef.current = revertedConfig;
-        draftIntervalRef.current = String(revertedConfig.sendIntervalMinutes);
-        // Rollback also resets drafts so the editor matches the restored cache baseline.
-        setDraftInterval(String(revertedConfig.sendIntervalMinutes));
-        draftRuleOrderRef.current = null;
-        setDraftRuleOrder(null);
-      }
-      queuedRef.current = false;
-      toast({
-        variant: "destructive",
-        description: failureMessage(_error, "지난 자동 전송 설정을 저장하지 못했어요"),
-      });
-    },
-    onSuccess: (nextConfig) => {
-      configRef.current = nextConfig;
-      queryClient.setQueryData<MessageAutomationPoliciesResponse>(
-        MESSAGE_AUTOMATION_POLICIES_QUERY_KEY,
-        (current) =>
-          current ? { ...current, pastTriggerConfig: nextConfig } : current,
-      );
-    },
-    onSettled: () => {
-      isPersistingRef.current = false;
-      void queryClient.invalidateQueries({
-        queryKey: MESSAGE_AUTOMATION_POLICIES_QUERY_KEY,
-      });
-
-      if (queuedRef.current) {
-        queuedRef.current = false;
-        persistRef.current();
-      }
-    },
+/** Shared configuration editor inside the existing settings detail sheet. */
+export function PastTriggerPolicyDetail({ "data-component": base, itemId, configuration, branchId, version, canWrite, isPending, dirty, error, onChange, onSave, onCancel }: PastTriggerPolicyDetailProps): ReactElement {
+  const rulesQuery = useMessageTriggerRules();
+  const rules = useMemo(() => getOrderedTriggerRules((rulesQuery.data ?? []).filter((rule) => rule.isActive && isSmsTriggerTemplate(rule.templateKey)), configuration.pastRuleOrder), [rulesQuery.data, configuration.pastRuleOrder]);
+  const [preview, setPreview] = useState<{ fingerprint: string; data: MessageAutomationPolicyPreviewResponse } | null>(null);
+  const fingerprint = JSON.stringify(configuration);
+  const previewMutation = useMutation({
+    mutationFn: (captured: { configuration: MessageAutomationPolicyConfiguration; branchId: string; version: string | null; fingerprint: string }) => settingsApi.previewMessageAutomationConfig(captured.configuration, captured.branchId, captured.version),
+    onSuccess: (data, captured) => setPreview({ fingerprint: captured.fingerprint, data }),
   });
-
-  const persist = useCallback(() => {
-    const parsedInterval = parseSendInterval(draftIntervalRef.current);
-    if (isPersistingRef.current) {
-      queuedRef.current = true;
-      return;
-    }
-
-    const config = configRef.current;
-    const latestOrderIds =
-      draftRuleOrderRef.current ?? effectiveOrderIdsRef.current;
-    const nextRuleOrder = mergeRuleOrder(config.ruleOrder, latestOrderIds);
-    const nextInterval =
-      parsedInterval ?? config.sendIntervalMinutes;
-    const hasIntervalChange =
-      parsedInterval !== null && parsedInterval !== config.sendIntervalMinutes;
-    const hasOrderChange =
-      nextRuleOrder.length !== config.ruleOrder.length ||
-      nextRuleOrder.some((ruleId, index) => ruleId !== config.ruleOrder[index]);
-
-    if (!hasIntervalChange && !hasOrderChange) {
-      return;
-    }
-
-    isPersistingRef.current = true;
-    saveMutation.mutate({
-      sendIntervalMinutes: nextInterval,
-      ruleOrder: nextRuleOrder,
-    });
-  }, [saveMutation]);
-
-  useEffect(() => {
-    persistRef.current = persist;
-  }, [persist]);
-
-  const debouncedOrderPersist = useDebouncedCallback(
-    () => persistRef.current(),
-    300,
-  );
-  const debouncedIntervalPersist = useDebouncedCallback(
-    () => persistRef.current(),
-    600,
-  );
-
-  useEffect(() => {
-    return () => {
-      // Flush pending autosaves; mutation settlement already supports post-unmount replay.
-      debouncedOrderPersist.flush();
-      debouncedIntervalPersist.flush();
-    };
-  }, [debouncedIntervalPersist, debouncedOrderPersist]);
-
-  useEffect(() => {
-    const hasPendingIntervalEdit =
-      draftInterval === "" || !isIntervalValid;
-    const hasPendingWork =
-      debouncedOrderPersist.isPending() ||
-      debouncedIntervalPersist.isPending() ||
-      saveMutation.isPending ||
-      queuedRef.current ||
-      hasPendingIntervalEdit;
-
-    if (
-      lastSyncedConfigRef.current === pastTriggerConfig ||
-      hasPendingWork
-    ) {
-      return;
-    }
-
-    lastSyncedConfigRef.current = pastTriggerConfig;
-    const nextInterval = String(pastTriggerConfig.sendIntervalMinutes);
-    draftIntervalRef.current = nextInterval;
-    draftRuleOrderRef.current = null;
-    // A fully idle editor adopts the latest server-owned baseline.
-    /* eslint-disable react-hooks/set-state-in-effect -- Server-owned props intentionally reset the idle editor. */
-    setDraftInterval(nextInterval);
-    setDraftRuleOrder(null);
-    /* eslint-enable react-hooks/set-state-in-effect */
-  }, [
-    debouncedIntervalPersist,
-    debouncedOrderPersist,
-    draftInterval,
-    isIntervalValid,
-    pastTriggerConfig,
-    saveMutation.isPending,
-  ]);
-
-  const moveRule = (ruleId: string, direction: -1 | 1) => {
-    const currentIndex = effectiveOrderIds.indexOf(ruleId);
-    const nextIndex = currentIndex + direction;
-
-    if (
-      currentIndex < 0 ||
-      nextIndex < 0 ||
-      nextIndex >= effectiveOrderIds.length
-    ) {
-      return;
-    }
-
-    const nextOrderIds = [...effectiveOrderIds];
-    [nextOrderIds[currentIndex], nextOrderIds[nextIndex]] = [
-      nextOrderIds[nextIndex],
-      nextOrderIds[currentIndex],
-    ];
-    effectiveOrderIdsRef.current = nextOrderIds;
-    draftRuleOrderRef.current = nextOrderIds;
-    setDraftRuleOrder(nextOrderIds);
-    debouncedOrderPersist();
+  const currentPreview = preview?.fingerprint === fingerprint ? preview.data : null;
+  const invalid = configurationError(configuration);
+  const fields = CONFIGURATION_FIELDS.filter((field) => field.item === itemId);
+  const setQuiet = (patch: Partial<MessageAutomationPolicyConfiguration["quietHours"]>) => onChange({ ...configuration, quietHours: { ...configuration.quietHours, ...patch } });
+  const moveRule = (id: string, direction: number) => {
+    const order = rules.map((rule) => rule.id);
+    const index = order.indexOf(id);
+    const target = index + direction;
+    if (target < 0 || target >= order.length) return;
+    [order[index], order[target]] = [order[target], order[index]];
+    onChange({ ...configuration, pastRuleOrder: mergeRuleOrder(configuration.pastRuleOrder, order) });
   };
-
   return (
-    <div
-      data-component={dataComponent}
-      data-slot="past-trigger-policy-detail"
-      data-source-component={SOURCE_COMPONENT}
-      className="flex flex-col gap-[calc(12px*var(--glint-ui-scale,1))]"
-    >
-      <PolicyInfoRows data-component={sub("rules")} rows={policy.rows} />
-
-      <section
-        data-component={sub("interval")}
-        data-slot="info-card"
-        className="info-card !flex !flex-col !gap-[calc(8px*var(--glint-ui-scale,1))] !rounded-[calc(18px*var(--glint-ui-scale,1))] !px-[calc(16px*var(--glint-ui-scale,1))] !py-[calc(14px*var(--glint-ui-scale,1))]"
-      >
-        <label
-          data-component={sub("interval_title")}
-          data-slot="info-card-title"
-          className="info-card-title !mb-0 !text-[calc(0.6rem*var(--glint-ui-scale,1))]"
-          htmlFor={intervalInputId}
-        >
-          전송 간격
-        </label>
-        <div
-          data-component={sub("interval_field")}
-          className="flex items-center gap-[calc(8px*var(--glint-ui-scale,1))]"
-        >
-          <Input
-            id={intervalInputId}
-            data-component={sub("interval_field_input")}
-            aria-describedby={intervalHelperId}
-            aria-invalid={draftInterval !== "" && !isIntervalValid}
-            aria-label="늦은 등록 자동 전송 간격"
-            inputMode="numeric"
-            pattern="[0-9]*"
-            type="text"
-            value={draftInterval}
-            variant="v3"
-            error={draftInterval !== "" && !isIntervalValid}
-            className="!h-[calc(44px*var(--glint-ui-scale,1))] !w-[calc(104px*var(--glint-ui-scale,1))] !rounded-[calc(12px*var(--glint-ui-scale,1))] !px-[calc(12px*var(--glint-ui-scale,1))] !text-center !text-[calc(0.9rem*var(--glint-ui-scale,1))]"
-            onChange={(event) => {
-              const nextInterval = event.target.value.replace(/\D/g, "");
-              draftIntervalRef.current = nextInterval;
-              setDraftInterval(nextInterval);
-
-              if (parseSendInterval(nextInterval) !== null) {
-                debouncedIntervalPersist();
-              } else {
-                debouncedIntervalPersist.cancel();
-              }
-            }}
-          />
-          <span
-            data-component={sub("interval_field_unit")}
-            className="text-[calc(0.78rem*var(--glint-ui-scale,1))] font-semibold text-v3-dark"
-          >
-            분
-          </span>
-        </div>
-        <p
-          id={intervalHelperId}
-          data-component={sub("interval_helper")}
-          className="text-[calc(0.66rem*var(--glint-ui-scale,1))] font-medium leading-[calc(0.98rem*var(--glint-ui-scale,1))] text-v3-text-muted"
-        >
-          1~1440분
-        </p>
-      </section>
-
-      <section
-        data-component={sub("order")}
-        data-slot="info-card"
-        className="info-card !rounded-[calc(18px*var(--glint-ui-scale,1))] !px-[calc(16px*var(--glint-ui-scale,1))] !py-[calc(14px*var(--glint-ui-scale,1))]"
-        aria-busy={isTriggerRulesLoading}
-      >
-        <div
-          data-component={sub("order_title")}
-          data-slot="info-card-title"
-          className="info-card-title !mb-[calc(8px*var(--glint-ui-scale,1))] !text-[calc(0.6rem*var(--glint-ui-scale,1))]"
-        >
-          늦은 등록 자동 전송 순서
-        </div>
-
-        {isTriggerRulesLoading ? (
-          <div
-            data-component={sub("order_loading")}
-            data-slot="info-row"
-            className="info-row !flex !w-full !flex-col !gap-[calc(6px*var(--glint-ui-scale,1))] !py-[calc(8px*var(--glint-ui-scale,1))]"
-            role="status"
-          >
-            <Skeleton
-              data-component={sub("order_loading_skeleton")}
-              className="h-[calc(36px*var(--glint-ui-scale,1))] w-full rounded-[calc(10px*var(--glint-ui-scale,1))]"
-            />
-            <span className="text-[calc(0.66rem*var(--glint-ui-scale,1))] font-medium text-v3-text-muted">
-              자동 전송 루틴을 불러오는 중
-            </span>
-          </div>
-        ) : orderedRules.length > 0 ? (
-          <ol data-component={sub("order_list")} className="flex list-none flex-col">
-            {orderedRules.map((rule, index) => {
-              const rowDataComponent = sub(`order_list_${rule.id}`);
-
-              return (
-                <li
-                  key={rule.id}
-                  data-component={rowDataComponent}
-                  data-slot="info-row"
-                  className="info-row !flex !items-center !gap-[calc(8px*var(--glint-ui-scale,1))] !py-[calc(8px*var(--glint-ui-scale,1))]"
-                >
-                  <span
-                    data-component={`${rowDataComponent}_rank`}
-                    className="w-[calc(20px*var(--glint-ui-scale,1))] shrink-0 text-center text-[calc(0.72rem*var(--glint-ui-scale,1))] font-bold text-v3-primary"
-                  >
-                    {index + 1}
-                  </span>
-                  <span
-                    data-component={`${rowDataComponent}_copy`}
-                    className="flex min-w-0 flex-1 flex-col gap-[calc(2px*var(--glint-ui-scale,1))]"
-                  >
-                    <span
-                      data-component={`${rowDataComponent}_copy_title`}
-                      className="truncate text-[calc(0.72rem*var(--glint-ui-scale,1))] font-bold leading-[calc(1rem*var(--glint-ui-scale,1))] text-v3-dark"
-                    >
-                      {rule.name}
-                    </span>
-                    <span
-                      data-component={`${rowDataComponent}_copy_summary`}
-                      className="truncate text-[calc(0.62rem*var(--glint-ui-scale,1))] font-medium leading-[calc(0.9rem*var(--glint-ui-scale,1))] text-v3-text-muted"
-                    >
-                      {getTriggerRuleSummary(rule)}
-                    </span>
-                  </span>
-                  <span
-                    data-component={`${rowDataComponent}_actions`}
-                    className="flex shrink-0 gap-[calc(4px*var(--glint-ui-scale,1))]"
-                  >
-                    <Button
-                      type="button"
-                      data-component={`${rowDataComponent}_actions_up`}
-                      aria-label={`${rule.name} 위로 이동`}
-                      disabled={index === 0}
-                      variant="v3-soft"
-                      size="icon"
-                      className="!h-[calc(44px*var(--glint-ui-scale,1))] !w-[calc(44px*var(--glint-ui-scale,1))] !rounded-full !p-0 [&_svg]:!h-[calc(16px*var(--glint-ui-scale,1))] [&_svg]:!w-[calc(16px*var(--glint-ui-scale,1))]"
-                      onClick={() => moveRule(rule.id, -1)}
-                    >
-                      <ArrowUp aria-hidden="true" size={16} />
-                    </Button>
-                    <Button
-                      type="button"
-                      data-component={`${rowDataComponent}_actions_down`}
-                      aria-label={`${rule.name} 아래로 이동`}
-                      disabled={index === orderedRules.length - 1}
-                      variant="v3-soft"
-                      size="icon"
-                      className="!h-[calc(44px*var(--glint-ui-scale,1))] !w-[calc(44px*var(--glint-ui-scale,1))] !rounded-full !p-0 [&_svg]:!h-[calc(16px*var(--glint-ui-scale,1))] [&_svg]:!w-[calc(16px*var(--glint-ui-scale,1))]"
-                      onClick={() => moveRule(rule.id, 1)}
-                    >
-                      <ArrowDown aria-hidden="true" size={16} />
-                    </Button>
-                  </span>
-                </li>
-              );
-            })}
-          </ol>
-        ) : (
-          <div
-            data-component={sub("order_empty")}
-            data-slot="info-row"
-            className="info-row !justify-center !py-[calc(12px*var(--glint-ui-scale,1))] text-center text-[calc(0.7rem*var(--glint-ui-scale,1))] font-medium text-v3-text-muted"
-          >
-            등록된 자동 전송 루틴 없음
-          </div>
-        )}
-      </section>
-
+    <div data-component={base} data-source-component="PastTriggerPolicyDetail" className="flex flex-col gap-3">
+      {fields.map((field) => (
+        <InputField key={field.key} data-component={`${base}_field-${field.key.toLowerCase()}`} title={field.label}
+          message={field.min === undefined ? undefined : `${field.min}~${field.max}`}
+          inputProps={{ id: `${base}-${field.key}`, "aria-label": field.label, type: field.key === "defaultRuleSendTime" ? "time" : "number", min: field.min, max: field.max, step: field.key === "defaultRuleSendTime" ? 60 : 1, inputMode: field.key === "defaultRuleSendTime" ? undefined : "numeric", disabled: !canWrite, value: typeof configuration[field.key] === "number" && !Number.isFinite(configuration[field.key]) ? "" : configuration[field.key], onChange: (event) => onChange({ ...configuration, [field.key]: field.key === "defaultRuleSendTime" ? event.target.value : event.target.value === "" ? NaN : Number(event.target.value) }) }} />
+      ))}
+      {itemId === "past-trigger" ? (
+        <InfoCard data-component={`${base}_order`} title="늦은 등록 자동 전송 순서">
+          {rulesQuery.isError ? <p role="alert">자동 전송 규칙을 불러오지 못했습니다.</p> : rulesQuery.isLoading ? <p role="status">자동 전송 루틴을 불러오는 중</p> : rules.length === 0 ? <p>등록된 자동 전송 루틴 없음</p> : rules.map((rule, index) => (
+            <div key={rule.id} data-component={`${base}_order_rule-${index}`} className="flex items-center gap-2">
+              <span className="flex-1">{index + 1}. {rule.name}</span>
+              <Button data-component={`${base}_order_rule-${index}_up`} variant="v3-soft" size="icon" aria-label={`${rule.name} 위로 이동`} disabled={!canWrite || index === 0} onClick={() => moveRule(rule.id, -1)}><ArrowUp size={16} /></Button>
+              <Button data-component={`${base}_order_rule-${index}_down`} variant="v3-soft" size="icon" aria-label={`${rule.name} 아래로 이동`} disabled={!canWrite || index === rules.length - 1} onClick={() => moveRule(rule.id, 1)}><ArrowDown size={16} /></Button>
+            </div>
+          ))}
+        </InfoCard>
+      ) : null}
+      {itemId === "quiet-hours" ? (
+        <InfoCard data-component={`${base}_quiet`} title="SMS/LMS 심야 전송 금지">
+          <InfoRow label="심야 시간 메세지 전송 금지" value={<Switch data-component={`${base}_quiet_enabled`} aria-label="심야 시간 메세지 전송 금지" checked={configuration.quietHours.enabled} disabled={!canWrite} onCheckedChange={(enabled) => setQuiet({ enabled })} />} />
+          {(["start", "end"] as const).map((key) => <InputField key={key} data-component={`${base}_quiet_${key}`} title={key === "start" ? "시작 시각 (한국 시간)" : "종료 시각 (한국 시간)"} inputProps={{ id: `${base}-${key}`, type: "time", step: 60, value: configuration.quietHours[key], disabled: !canWrite, onChange: (event) => setQuiet({ [key]: event.target.value }) }} />)}
+          <p id={`${base}-targets`}>전송 금지 대상</p>
+          <OptionButtonGroup data-component={`${base}_quiet_targets`} labelledBy={`${base}-targets`} mode="multi" options={[{ value: "CLIENT", label: "고객" }, { value: "CAREGIVER", label: "제공인력" }, { value: "STAFF", label: "직원" }]} selected={configuration.quietHours.recipientGroups} disabled={!canWrite} onToggle={(value) => { const group = value as MessagePolicyRecipientGroup; setQuiet({ recipientGroups: configuration.quietHours.recipientGroups.includes(group) ? configuration.quietHours.recipientGroups.filter((item) => item !== group) : [...configuration.quietHours.recipientGroups, group] }); }} />
+          <p id={`${base}-action`}>금지 시간에 접수한 메시지 처리</p>
+          <OptionButtonGroup data-component={`${base}_quiet_action`} labelledBy={`${base}-action`} mode="single" options={[{ value: "CANCEL", label: "전송 취소" }, { value: "DEFER", label: "금지 시간 이후 전송" }]} selected={[configuration.quietHours.action]} disabled={!canWrite} onToggle={(action) => setQuiet({ action: action as "CANCEL" | "DEFER" })} />
+          <Button data-component={`${base}_quiet_preview-action`} variant="v3-soft" disabled={Boolean(invalid) || previewMutation.isPending} onClick={() => previewMutation.mutate({ configuration: { ...configuration, pastRuleOrder: [...configuration.pastRuleOrder], quietHours: { ...configuration.quietHours, recipientGroups: [...configuration.quietHours.recipientGroups] } }, branchId, version, fingerprint })}>영향 미리보기</Button>
+          {previewMutation.isError ? <p role="alert">영향을 불러오지 못했습니다.</p> : null}
+          {currentPreview ? <div data-component={`${base}_quiet_preview`}><InfoRow label="보류" value={`${currentPreview.deferredCount}건`} /><InfoRow label="취소" value={`${currentPreview.canceledCount}건`} /><InfoRow label="예약된 메시지" value={`${currentPreview.futureProviderReservations}건`} /><InfoRow label="다음 확인" value={currentPreview.reevaluateAt ? new Date(currentPreview.reevaluateAt).toLocaleString("ko-KR", { timeZone: "Asia/Seoul" }) : "없음"} /><InfoRow label="사용 가능" value={currentPreview.canEnableQuietHours ? "가능" : "설정 확인 필요"} /></div> : null}
+        </InfoCard>
+      ) : null}
+      {invalid ? <p role="alert">{invalid}</p> : null}
+      {error ? <p role="alert">{error}</p> : null}
+      <MobileDetailActions data-component={`${base}_actions`} name="message-policy" actions={[{ label: "취소", onClick: onCancel, disabled: isPending }, { label: isPending ? "저장 중…" : "저장", variant: "primary", onClick: onSave, disabled: !canWrite || !dirty || Boolean(invalid) || isPending, busy: isPending }]} />
     </div>
   );
 }

@@ -4,6 +4,7 @@ exports.ServiceRecordScheduleValidationError = void 0;
 exports.previousBusinessDay = previousBusinessDay;
 exports.validateServiceRecordScheduleVector = validateServiceRecordScheduleVector;
 exports.shiftServiceRecordScheduleSuffix = shiftServiceRecordScheduleSuffix;
+exports.replanServiceRecordScheduleFromResume = replanServiceRecordScheduleFromResume;
 exports.moveServiceRecordSessionDate = moveServiceRecordSessionDate;
 exports.getExpectedSessionDateFromRecords = getExpectedSessionDateFromRecords;
 const business_days_1 = require("./business-days");
@@ -159,6 +160,37 @@ function shiftServiceRecordScheduleSuffix(entries, sessionIndex, newDate, calend
         shifted.push({ ...entry, serviceDate });
     }
     return { deltaBusinessDays, entries: validateServiceRecordScheduleVector(shifted, vector.length, calendar, { persisted: true }) };
+}
+/**
+ * Re-plans `fromSessionIndex..N` onto consecutive business days starting at
+ * `resumeDate` (or the next business day when it is not one). Unlike the suffix
+ * shift, old gaps are not preserved: used after a service pause plus caregiver
+ * replacement, where the remaining sessions run back to back from the resume.
+ * Only `serviceDate` changes; `originalDate` and provenance are kept.
+ */
+function replanServiceRecordScheduleFromResume(entries, fromSessionIndex, resumeDate, calendar = business_days_1.KR_BUILTIN_CALENDAR) {
+    const vector = validateServiceRecordScheduleVector(entries, undefined, calendar, { persisted: true });
+    if (!Number.isInteger(fromSessionIndex) || fromSessionIndex < 1 || fromSessionIndex > vector.length) {
+        throw new ServiceRecordScheduleValidationError("INVALID_SESSION_INDEX", `Session ${fromSessionIndex} is outside the contracted range 1..${vector.length}`, fromSessionIndex);
+    }
+    assertDateOnly(resumeDate, fromSessionIndex, calendar);
+    let cursor = calendar.isBusinessDay(resumeDate) ? resumeDate : calendar.nextBusinessDay(resumeDate);
+    const previousKept = fromSessionIndex > 1 ? vector[fromSessionIndex - 2] : null;
+    if (previousKept && cursor <= previousKept.serviceDate) {
+        throw new ServiceRecordScheduleValidationError("INVALID_DATE", `Resume date ${resumeDate} must be after session ${previousKept.sessionIndex} (${previousKept.serviceDate})`, fromSessionIndex);
+    }
+    const replanned = [];
+    for (const entry of vector) {
+        if (entry.sessionIndex < fromSessionIndex) {
+            replanned.push(cloneEntry(entry));
+            continue;
+        }
+        if (entry.sessionIndex > fromSessionIndex)
+            cursor = calendar.nextBusinessDay(cursor);
+        replanned.push({ ...entry, serviceDate: cursor });
+    }
+    const validated = validateServiceRecordScheduleVector(replanned, vector.length, calendar, { persisted: true });
+    return { entries: validated, endDate: validated[validated.length - 1].serviceDate };
 }
 /** A per-session correction moves later dates only with explicit approval. */
 function moveServiceRecordSessionDate(entries, sessionIndex, newDate, shiftFollowing, calendar = business_days_1.KR_BUILTIN_CALENDAR) {

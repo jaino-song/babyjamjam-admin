@@ -7,7 +7,7 @@ describe("hasContractPhoneProblem", () => {
   });
 
   it("accepts a complete mobile number", () => {
-    expect(hasContractPhoneProblem("010-6621-1878")).toBe(false);
+    expect(hasContractPhoneProblem("010-0000-6621")).toBe(false);
   });
 
   it("still flags a newly typed legacy 10-digit mobile number", () => {

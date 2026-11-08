@@ -9,7 +9,7 @@ jest.mock("react", () => ({ ...jest.requireActual("react"), use: () => ({ templa
 jest.mock("next/navigation", () => ({ useRouter: () => ({ back: jest.fn(), push: jest.fn() }) }));
 jest.mock("@/features/system-templates/hooks", () => ({ useSystemTemplate: jest.fn() }));
 jest.mock("@/components/app/mobile-redesign/mobile-detail-slideup", () => ({
-  MobileDetailSlideUp: ({ children }: { children: ReactNode }) => <>{children}</>,
+  MobileDetailSlideUp: ({ children, primaryAction }: { children: ReactNode; primaryAction?: { disabled?: boolean; onClick: () => void } }) => <>{children}{primaryAction ? <button disabled={primaryAction.disabled} onClick={primaryAction.onClick}>이 템플릿으로 보내기</button> : null}</>,
 }));
 
 const mockUseSystemTemplate = useSystemTemplate as jest.Mock;
@@ -63,6 +63,17 @@ describe("system template failed loads", () => {
       fireEvent.click(retry);
       expect(refetch).toHaveBeenCalledTimes(1);
     }
+  });
+
+  it.each(["CONTRACT_GUIDE", "MATERNAL_NOTICE", "PROVIDER_NOTICE", "SERVICE_RECORD_REMINDER"])("blocks blank %s at the detail send action", (key) => {
+    mockUseSystemTemplate.mockReturnValue({ data: { ...template, templateKey: key, content: "  \n " }, branchId: "branch-1", isLoading: false });
+    render(<EditSystemTemplatePage params={params} />);
+    expect(screen.getByRole("button", { name: "이 템플릿으로 보내기" })).toBeDisabled();
+  });
+
+  it("keeps a meaningful existing template send action enabled", () => {
+    render(<EditSystemTemplatePage params={params} />);
+    expect(screen.getByRole("button", { name: "이 템플릿으로 보내기" })).toBeEnabled();
   });
 
   it("shows successful template content without an alert", () => {

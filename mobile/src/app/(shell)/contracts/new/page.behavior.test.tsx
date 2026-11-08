@@ -301,7 +301,7 @@ beforeEach(() => {
 
 describe("contract creation mutation lifecycle", () => {
   it.each(["1905-01-01", "2005-01-01", "1958-03-03"])("preserves birthday %s in the live route payload", async (birthday) => {
-    installFormState({ birthday, clientId: null, isManualEntry: true, name: "새로운 고객", phone: "010-6621-1878" });
+    installFormState({ birthday, clientId: null, isManualEntry: true, name: "새로운 고객", phone: "010-0000-6621" });
     mockDispatchHeadless.mockResolvedValue({ ok: true });
     const submit = await renderReadyPage();
     fireEvent.click(submit);
@@ -408,7 +408,7 @@ describe("contract creation mutation lifecycle", () => {
       clientId: null,
       isManualEntry: true,
       name: "새로운 고객",
-      phone: "010-6621-1878",
+      phone: "010-0000-6621",
     });
     mockCreateClient.mockResolvedValue({ id: 73 });
     mockDispatchHeadless
@@ -800,7 +800,7 @@ describe("duplicate-phone conflict handling", () => {
       clientId: null,
       isManualEntry: true,
       name: "새로운 고객",
-      phone: "010-6621-1878",
+      phone: "010-0000-6621",
     });
   });
 

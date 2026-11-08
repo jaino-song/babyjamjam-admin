@@ -79,7 +79,7 @@ describe("ClientFormPanel phone duplicate check", () => {
     const phoneInput = screen.getByLabelText(/연락처/);
     const nextButton = screen.getByRole("button", { name: "다음" });
 
-    fireEvent.change(phoneInput, { target: { value: "01066211878" } });
+    fireEvent.change(phoneInput, { target: { value: "01000006621" } });
 
     expect(await screen.findByText("이미 등록된 연락처예요")).toBeInTheDocument();
     expect(phoneInput).toHaveAttribute("aria-invalid", "true");

@@ -47,7 +47,7 @@ function createMirrorDocument(overrides: {
         stepIndex: "1",
         stepName: overrides.stepName ?? "이용자 서명",
         stepRecipientType: "05",
-        stepRecipientName: overrides.stepRecipientName ?? "송진호",
+        stepRecipientName: overrides.stepRecipientName ?? "정다라",
         stepRecipientSms: "01012345678",
         expiredDate: new Date("2026-08-01T00:00:00.000Z"),
         expired: false,
@@ -180,12 +180,12 @@ describe("EformsignMirrorListService", () => {
 
     it("searches the recipient name, including by 초성", async () => {
         repository.findAllVisibleInMirror.mockResolvedValue([
-            createMirrorDocument({ documentId: "doc-song", stepRecipientName: "송진호" }),
+            createMirrorDocument({ documentId: "doc-song", stepRecipientName: "정다라" }),
             createMirrorDocument({ documentId: "doc-park", stepRecipientName: "박수신" }),
         ]);
 
-        const exact = await service.buildList(createQuery({ search: "송진" }));
-        const chosung = await service.buildList(createQuery({ search: "ㅅㅈㅎ" }));
+        const exact = await service.buildList(createQuery({ search: "정다" }));
+        const chosung = await service.buildList(createQuery({ search: "ㅈㄷㄹ" }));
 
         expect(exact.documents.map((d) => d.id)).toEqual(["doc-song"]);
         expect(chosung.documents.map((d) => d.id)).toEqual(["doc-song"]);
@@ -197,7 +197,7 @@ describe("EformsignMirrorListService", () => {
                 documentId: "doc-1",
                 customerName: "홍가람",
                 documentName: "계약",
-                stepRecipientName: "송진호",
+                stepRecipientName: "정다라",
             }),
         ]);
 
@@ -469,7 +469,7 @@ describe("enrichMirrorPage", () => {
         const named = createMirrorDocument({
             documentId: "doc-named",
             customerName: null,
-            stepRecipientName: "송진호",
+            stepRecipientName: "정다라",
             clientId: 42,
         });
         const service = new EformsignMirrorListService({
@@ -481,7 +481,7 @@ describe("enrichMirrorPage", () => {
         const enriched = enrichMirrorPage(documents);
         const byId = new Map(enriched.map((document) => [document.id, document] as const));
 
-        expect(documentCustomerNameValue(byId.get("doc-named")!)).toBe("송진호");
+        expect(documentCustomerNameValue(byId.get("doc-named")!)).toBe("정다라");
         expect(documentCustomerNameValue(byId.get("doc-titled")!)).toBeNull();
     });
 

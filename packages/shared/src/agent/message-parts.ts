@@ -56,6 +56,26 @@ export const AgentEntityChoicePartSchema = z.object({
     })).min(2),
 });
 
+const PREVIEW_TEXT_MAX = 200;
+const PREVIEW_LABEL_MAX = 80;
+
+/** One BEFORE -> AFTER row of a human-readable change preview. `note` is a per-row warning. */
+export const AgentActionPreviewRowSchema = z.object({
+    label: z.string().min(1).max(PREVIEW_LABEL_MAX),
+    before: z.string().max(PREVIEW_TEXT_MAX).nullable(),
+    after: z.string().max(PREVIEW_TEXT_MAX).nullable(),
+    note: z.string().max(PREVIEW_TEXT_MAX).optional(),
+});
+
+export const AgentActionPreviewSchema = z.object({
+    sections: z.array(z.object({
+        title: z.string().min(1).max(PREVIEW_LABEL_MAX),
+        rows: z.array(AgentActionPreviewRowSchema).max(60),
+    })).max(10),
+});
+
+export type AgentActionPreview = z.infer<typeof AgentActionPreviewSchema>;
+
 export const AgentActionProposalPartSchema = z.object({
     actionId: z.string().min(1),
     capability: z.string().min(1),
@@ -70,6 +90,7 @@ export const AgentActionProposalPartSchema = z.object({
     provider: z.string().min(1).optional(),
     estimatedCost: z.string().min(1).optional(),
     acknowledgementToken: z.string().min(1).optional(),
+    preview: AgentActionPreviewSchema.optional(),
 });
 
 export const AgentActionResultPartSchema = z.object({

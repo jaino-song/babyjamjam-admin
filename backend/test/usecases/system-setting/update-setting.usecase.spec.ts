@@ -1,3 +1,5 @@
+import type { Prisma } from "@prisma/client";
+import { GetSettingUsecase } from "application/usecases/system-setting/get-setting.usecase";
 import { UpdateSettingUsecase } from "application/usecases/system-setting/update-setting.usecase";
 import { ISystemSettingRepository } from "domain/repositories/system-setting.repository.interface";
 import { SystemSettingEntity } from "domain/entities/system-setting.entity";
@@ -65,5 +67,25 @@ describe("UpdateSettingUsecase", () => {
             expect.objectContaining({ key: "ribbon_config", value: "{}" }),
             versionOf,
         );
+    });
+});
+
+// These assertions exercise the actual use cases, rather than mocking forwarding.
+describe("setting transaction propagation", () => {
+    it("forwards the identical provided transaction for reads and CAS, preserving legacy arity", async () => {
+        const tx = { marker: "branch-locked-transaction" } as unknown as Prisma.TransactionClient;
+        const repository = { findByKey: jest.fn().mockResolvedValue(null), compareAndSet: jest.fn().mockResolvedValue(null) } as unknown as jest.Mocked<ISystemSettingRepository>;
+        const get = new GetSettingUsecase(repository);
+        const update = new UpdateSettingUsecase(repository);
+        const versionOf = (value: string | null) => value ?? "absent";
+        await get.execute("key", tx);
+        await get.executeEntity("key", tx);
+        expect(repository.findByKey.mock.calls).toEqual([["key", tx], ["key", tx]]);
+        await get.execute("key");
+        expect(repository.findByKey).toHaveBeenLastCalledWith("key");
+        await update.executeIfVersion("key", "value", "absent", versionOf, undefined, tx);
+        expect(repository.compareAndSet).toHaveBeenLastCalledWith("key", "absent", expect.any(SystemSettingEntity), versionOf, undefined, tx);
+        await update.executeIfVersion("key", "value", "absent", versionOf);
+        expect(repository.compareAndSet).toHaveBeenLastCalledWith("key", "absent", expect.any(SystemSettingEntity), versionOf);
     });
 });

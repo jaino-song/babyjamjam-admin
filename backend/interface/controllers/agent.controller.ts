@@ -1,4 +1,5 @@
 import { BadRequestException, Body, Controller, Delete, ForbiddenException, Get, HttpCode, HttpException, Optional, Param, Patch, Post, Req, Res, ServiceUnavailableException, UseGuards } from "@nestjs/common";
+import { agentPrincipalForHeaders, type AgentPrincipal } from "application/agent/agent-client-surface";
 import type { Request, Response } from "express";
 import { pipeUIMessageStreamToResponse } from "ai";
 
@@ -229,10 +230,10 @@ export class AgentController {
         return { userId: principal.userId, branchId: principal.branchId };
     }
 
-    private requirePrincipal(request: AgentRequest): VerifiedTenantPrincipal {
+    private requirePrincipal(request: AgentRequest): AgentPrincipal {
         if (!request.tenant?.userId || !request.tenant.branchId) {
             throw new ForbiddenException(codeOnlyProblemBody("ACCESS_DENIED"));
         }
-        return request.tenant;
+        return agentPrincipalForHeaders(request.tenant, request.headers ?? {});
     }
 }

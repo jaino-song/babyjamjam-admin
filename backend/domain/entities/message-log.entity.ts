@@ -146,13 +146,13 @@ export class MessageLogEntity {
         this.attempts += 1;
     }
 
-    markFailed(errorMessage: string): void {
+    markFailed(errorMessage: string, retryDelayMs = getMessageDeliveryRetryPolicy(this.provider).retryDelayMs): void {
         this.attempts += 1;
         this.lastAttemptAt = new Date();
         this.errorMessage = errorMessage;
 
         if (this.canRetry()) {
-            this.scheduleRetry();
+            this.scheduleRetry(retryDelayMs);
         } else {
             this.status = "failed";
             this.nextRetryAt = null;
@@ -170,8 +170,8 @@ export class MessageLogEntity {
         this.updatedAt = new Date();
     }
 
-    private scheduleRetry(): void {
-        this.nextRetryAt = new Date(Date.now() + getMessageDeliveryRetryPolicy(this.provider).retryDelayMs);
+    private scheduleRetry(retryDelayMs: number): void {
+        this.nextRetryAt = new Date(Date.now() + retryDelayMs);
     }
 
     static create(params: {

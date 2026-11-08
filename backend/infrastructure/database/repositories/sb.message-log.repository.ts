@@ -1,7 +1,11 @@
+import { parseMessageQuietHold, messageQuietHoldVariables, type MessageQuietHold, type MessagePolicyPreviewCandidate } from "domain/message-policy-evaluator";
+import type { MessagePolicyRecipientGroup } from "domain/entities/system-setting.entity";
 import { Injectable, Logger } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 
 import {
+    SmsDuplicateHistoryQuery,
+    SmsDuplicateHistoryMatch,
     ClientHistoryScope,
     IMessageLogRepository,
     MessageHistoryPageQuery,
@@ -15,6 +19,7 @@ import { MessageLogMapper } from "infrastructure/database/mapper/message-log.map
 import { PrismaService } from "infrastructure/database/prisma.service";
 import {
     koreanPhoneStoredDigitCandidates,
+    normalizeKoreanPhoneLookupKey,
     storedPhoneMatchesSql,
 } from "./stored-phone-lookup";
 import {
@@ -32,6 +37,75 @@ export class SbMessageLogRepository implements IMessageLogRepository {
 
     constructor(private readonly prisma: PrismaService) {}
 
+    async findQuietHeldRetries(branchId: string, transaction?: Prisma.TransactionClient): Promise<MessageLogEntity[]> {
+        const client = transaction ?? this.prisma;
+        const rows = await client.message_log.findMany({ where: { branchId, provider: "aligo_sms", status: "pending",
+            providerAcceptanceState: "prepared", providerCallStartedAt: null, nextRetryAt: { not: null },
+            variables: { path: ["quietHoursDisposition"], equals: "DEFER" } } });
+        const held: MessageLogEntity[] = [];
+        for (const row of rows) {
+            const log = MessageLogMapper.toDomain(row);
+            const sourceId = Number(log.variables["retryOfLogId"]);
+            const hold = parseMessageQuietHold(log.variables);
+            if (!Number.isSafeInteger(sourceId) || sourceId <= 0 || !["manual", "automatic"].includes(log.variables["retryInvocation"] ?? "")) continue;
+            const source = await client.message_log.findFirst({ where: { id: sourceId, branchId, provider: "aligo_sms" } });
+            if (!hold || !source || source.triggerJobId !== log.triggerJobId || source.receiver !== log.receiver
+                || source.messageBody !== log.messageBody || !log.providerAcceptanceKey || !log.providerAcceptanceFingerprint) throw new Error("Invalid quiet retry association");
+            held.push(log);
+        }
+        return held;
+    }
+
+    async transitionQuietRetry(log: MessageLogEntity, hold: MessageQuietHold, cancel: boolean, transaction: Prisma.TransactionClient, reason?: "expired_after_quiet" | "stale_link" | "duplicate_at_release", invocation?: MessageRetryInvocation, senderIdentity?: string): Promise<void> {
+        const current = await transaction.message_log.findFirst({ where: { id: log.id, branchId: log.branchId,
+            triggerJobId: log.triggerJobId, provider: "aligo_sms", providerAcceptanceKey: log.providerAcceptanceKey,
+            providerAcceptanceFingerprint: log.providerAcceptanceFingerprint, providerAcceptanceState: "prepared", providerCallStartedAt: null } });
+        const variables = current?.variables && typeof current.variables === "object" && !Array.isArray(current.variables) ? current.variables : null;
+        if (!current || !variables || current.status !== "pending" || current.providerAcceptedAt !== null || current.aligoMid !== null
+            || current.receiver !== log.receiver || current.messageBody !== log.messageBody
+            || current.attempts !== log.attempts || !current.providerAcceptanceKey || !current.providerAcceptanceFingerprint
+            || variables["retryOfLogId"] !== log.variables["retryOfLogId"]
+            || (variables["quietHoursDisposition"] === "DEFER" && !parseMessageQuietHold(variables))) throw new Error("Quiet retry acceptance changed");
+        const changed = await transaction.message_log.updateMany({ where: { id: current.id, branchId: current.branchId,
+            triggerJobId: current.triggerJobId, providerAcceptanceKey: current.providerAcceptanceKey,
+            providerAcceptanceFingerprint: current.providerAcceptanceFingerprint, providerAcceptanceState: "prepared", providerCallStartedAt: null,
+            updatedAt: current.updatedAt, variables: { equals: current.variables as Prisma.InputJsonValue }, attempts: current.attempts },
+            data: { status: cancel ? "failed" : "pending", nextRetryAt: cancel ? null : hold.releaseAt,
+                errorMessage: cancel ? reason ?? "message_quiet_hours:CANCEL" : null,
+                variables: { ...current.variables as Prisma.InputJsonObject, ...messageQuietHoldVariables(hold), quietHoursDisposition: cancel ? "CANCEL" : "DEFER",
+                    // This CAS proves the provider has never started. A quiet
+                    // wait is safe to resume, unlike an uncertain submission.
+                    ...(!cancel ? { retrySafety: "quiet-deferred" } : {}),
+                    ...(invocation ? { retryInvocation: invocation } : {}), ...(senderIdentity ? { retrySenderIdentity: senderIdentity } : {}) } } });
+        if (changed.count !== 1) throw new Error("Quiet retry CAS lost");
+    }
+
+    async findSmsDuplicateMatches(query: SmsDuplicateHistoryQuery, transaction?: Prisma.TransactionClient): Promise<SmsDuplicateHistoryMatch[]> {
+        if (!query.receivers.length) return [];
+        // PostgreSQL's whitespace regexp differs from ECMAScript trim (NBSP/BOM).
+        // Bind the exact trim character set alongside the CRLF replacement.
+        const trimCharacters = "\u0009\u000a\u000b\u000c\u000d\u0020\u00a0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a\u2028\u2029\u202f\u205f\u3000\ufeff";
+        // Split historical manual batches before normalization. Never concatenate
+        // multiple recipients into a single digit string; EXISTS returns each log once.
+        return (transaction ?? this.prisma).$queryRaw<SmsDuplicateHistoryMatch[]>(Prisma.sql`
+            SELECT ml.id, COALESCE(ml.provider_call_started_at, ml.created_at) AS "sentAt"
+            FROM message_log ml
+            WHERE ml.branch_id = ${query.branchId}::uuid
+              AND ml.provider = 'aligo_sms'
+              AND ml.status = 'sent'
+              AND COALESCE(ml.provider_call_started_at, ml.created_at) >= ${query.from}
+              AND COALESCE(ml.provider_call_started_at, ml.created_at) <= ${query.to}
+              AND btrim(replace(ml.message_body, ${"\r\n"}, ${"\n"}), ${trimCharacters}) = ${query.messageBody}
+              AND EXISTS (
+                SELECT 1 FROM regexp_split_to_table(COALESCE(ml.recipient_phone, ml.receiver), ',') AS recipient(phone)
+                CROSS JOIN LATERAL (SELECT regexp_replace(recipient.phone, '[^0-9]', '', 'g') AS digits) raw
+                CROSS JOIN LATERAL (SELECT CASE WHEN raw.digits LIKE '82%' THEN '0' || substring(raw.digits FROM 3) ELSE raw.digits END AS phone) normalized
+                WHERE normalized.phone IN (${Prisma.join(query.receivers)})
+              )
+            ORDER BY ml.id ASC
+        `);
+    }
+
     /**
      * Build the branch-pinning fragment for a bare-id where clause. `message_log.branchId`
      * is nullable for legacy rows: when the entity carries no branch, fall back to an
@@ -44,6 +118,82 @@ export class SbMessageLogRepository implements IMessageLogRepository {
             return {};
         }
         return { branchId: log.branchId };
+    }
+
+    async countFutureProviderReservations(branchId: string, now: Date, transaction?: Prisma.TransactionClient): Promise<number> {
+        // Aligo schedule fields are persisted in provider format YYYYMMDD/HHmm.
+        // Their fixed width permits a KST lexical cutoff without parsing malformed
+        // historical JSON as a PostgreSQL timestamp (which could abort the TX).
+        const kst = new Date(now.getTime() + 9 * 60 * 60 * 1000).toISOString();
+        const cutoff = kst.slice(0, 10).replace(/-/g, "") + kst.slice(11, 16).replace(":", "");
+        const rows = await (transaction ?? this.prisma).$queryRaw<Array<{ count: bigint }>>(Prisma.sql`
+            SELECT COUNT(*) AS count FROM message_log
+            WHERE branch_id = ${branchId}::uuid AND provider = 'aligo_sms'
+              AND provider_acceptance_state IN ('started', 'uncertain', 'accepted', 'reconciled_delivered', 'legacy')
+              AND (provider_acceptance_state <> 'legacy' OR status = 'sent')
+              AND variables->>'scheduledDate' ~ '^[0-9]{8}$'
+              AND variables->>'scheduledTime' ~ '^([01][0-9]|2[0-3])[0-5][0-9]$'
+              AND ((variables->>'scheduledDate') || (variables->>'scheduledTime')) > ${cutoff}
+              AND variables->>'testMode' IS DISTINCT FROM 'true'
+        `);
+        return Number(rows[0]?.count ?? 0);
+    }
+
+    async findPolicyPreviewCandidates(branchId: string, transaction?: Prisma.TransactionClient): Promise<MessagePolicyPreviewCandidate[]> {
+        const rows = await (transaction ?? this.prisma).message_log.findMany({
+            where: { branchId, provider: "aligo_sms", status: { in: ["pending", "failed"] }, attempts: { lt: 3 }, nextRetryAt: { not: null },
+                providerAcceptanceState: { in: ["legacy", "rejected", "reconciled_not_delivered"] } },
+            select: { nextRetryAt: true, recipientPhone: true, receiver: true, clientId: true, variables: true,
+                triggerJob: { select: { branchId: true, recipientType: true } } },
+        });
+        const held = await this.findQuietHeldRetries(branchId, transaction);
+        return [...rows.map(row => {
+            const variables = row.variables && typeof row.variables === "object" && !Array.isArray(row.variables)
+                ? row.variables as Record<string, unknown> : {};
+            const recipientType = row.triggerJob?.branchId === branchId ? row.triggerJob.recipientType : variables["recipientType"];
+            // A linked client's ID can be context for a caregiver's retry. Prefer
+            // the recipient type; retain ID-based inference for legacy unknowns.
+            const recipientGroup: MessagePolicyRecipientGroup | null = recipientType === "CLIENT" ? "CLIENT"
+                : ["PRIMARY_EMPLOYEE", "SECONDARY_EMPLOYEE"].includes(String(recipientType)) ? "CAREGIVER"
+                    : row.clientId != null ? "CLIENT" : variables["employeeId"] != null ? "CAREGIVER" : null;
+            return { dueAt: row.nextRetryAt!, recipientPhone: /[,;\n]/.test(row.receiver) ? row.receiver : row.recipientPhone ?? row.receiver,
+                recipientGroups: recipientGroup ? [recipientGroup] : [] };
+        }), ...held.map(log => ({ dueAt: log.nextRetryAt!, recipientGroups: [],
+            recipientPhone: /[,;\n]/.test(log.receiver) ? log.receiver : log.recipientPhone ?? log.receiver,
+            quietHold: parseMessageQuietHold(log.variables)! }))];
+    }
+
+    async resolvePolicyRecipientGroups(branchId: string, candidates: MessagePolicyPreviewCandidate[], transaction?: Prisma.TransactionClient): Promise<MessagePolicyPreviewCandidate[]> {
+        const candidatePhones = candidates.map(candidate => [...new Set((candidate.recipientPhone ?? "").split(/[,;\n]/)
+            .map(phone => phone.trim()).filter(Boolean).map(normalizeKoreanPhoneLookupKey).filter(Boolean))]);
+        const lookupKeys = [...new Set(candidatePhones.flat())];
+        const numbers = [...new Set(lookupKeys.flatMap(koreanPhoneStoredDigitCandidates))];
+        if (!numbers.length) return candidates;
+        // A single exact-number batch, branch fenced, with no arbitrary 500-user
+        // scan. Union STAFF even when a customer/caregiver identity already exists.
+        const rows = await (transaction ?? this.prisma).$queryRaw<Array<{ phone: string; group_name: MessagePolicyRecipientGroup }>>(Prisma.sql`
+            SELECT u.phone, 'STAFF'::text AS group_name FROM "user" u
+            JOIN user_branch ub ON ub.user_id = u.id
+            WHERE ub.branch_id = ${branchId}::uuid AND ${storedPhoneMatchesSql(Prisma.sql`u.phone`, numbers)}
+            UNION ALL
+            SELECT c.phone, 'CLIENT'::text FROM client c
+            WHERE c.branch_id = ${branchId}::uuid AND c.deleted_at IS NULL AND ${storedPhoneMatchesSql(Prisma.sql`c.phone`, numbers)}
+            UNION ALL
+            SELECT e.phone, 'CAREGIVER'::text FROM employee e
+            WHERE e.branch_id = ${branchId}::uuid AND e.deleted_at IS NULL AND ${storedPhoneMatchesSql(Prisma.sql`e.phone`, numbers)}
+        `);
+        const groups = new Map<string, Set<MessagePolicyRecipientGroup>>();
+        for (const row of rows) {
+            const phone = normalizeKoreanPhoneLookupKey(row.phone);
+            const current = groups.get(phone) ?? new Set<MessagePolicyRecipientGroup>();
+            current.add(row.group_name);
+            groups.set(phone, current);
+        }
+        // candidatePhones is mapped from candidates in the same order; neither array is mutated.
+        return candidates.map((candidate, index) => ({ ...candidate,
+            recipientGroups: [...new Set([...candidate.recipientGroups,
+                ...candidatePhones[index]!.flatMap(phone => [...(groups.get(phone) ?? [])])])],
+        }));
     }
 
     async save(log: MessageLogEntity): Promise<MessageLogEntity> {
@@ -415,8 +565,8 @@ export class SbMessageLogRepository implements IMessageLogRepository {
         return transaction ? run(transaction) : this.prisma.$transaction(run);
     }
 
-    async findByIdInBranch(branchId: string, id: number): Promise<MessageLogEntity | null> {
-        const row = await this.prisma.message_log.findFirst({
+    async findByIdInBranch(branchId: string, id: number, transaction?: Prisma.TransactionClient): Promise<MessageLogEntity | null> {
+        const row = await (transaction ?? this.prisma).message_log.findFirst({
             where: { id, branchId },
         });
         return row ? MessageLogMapper.toDomain(row) : null;

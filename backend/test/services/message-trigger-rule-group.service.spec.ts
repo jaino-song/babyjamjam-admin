@@ -1,0 +1,718 @@
+import { CaregiverTemplateResolverService } from "application/services/caregiver-template-resolver.service";
+import { MessageTriggerRecipientResolverService } from "application/services/message-trigger-recipient-resolver.service";
+import { ClientAutomationSourceReader } from "application/services/client-automation-source.reader";
+import { SystemTemplateService } from "application/services/system-template.service";
+import { GetAllSystemTemplatesUseCase } from "application/usecases/system-template/get-all-system-templates.usecase";
+import { GetSystemTemplateUseCase } from "application/usecases/system-template/get-system-template.usecase";
+import { UpdateBranchSystemTemplateUseCase } from "application/usecases/system-template/update-branch-system-template.usecase";
+import { SystemTemplateMutationGuardService } from "application/services/system-template-mutation-guard.service";
+import { SbSystemTemplateRepository } from "infrastructure/database/repositories/sb.system-template.repository";
+import { SmsTriggerDeliveryService } from "application/services/sms-trigger-delivery.service";
+import { MessageTriggerJobEntity } from "domain/entities/message-trigger-job.entity";
+import { MessageAutomationBranchLockService } from "application/services/message-automation-branch-lock.service";
+import { MessageTemplateAutomationLockService } from "application/services/message-template-automation-lock.service";
+import { MessageTriggerService } from "application/services/message-trigger.service";
+import { buildClientMessageRecipe } from "application/services/message-trigger-recipes";
+import { MessageTriggerRuleEntity } from "domain/entities/message-trigger-rule.entity";
+import { MessageTriggerEventType, MessageTriggerOffsetType, MessageTriggerRecipientType, MessageTriggerTemplateKey } from "domain/constants/message-trigger-catalog";
+
+jest.mock("infrastructure/database/schema-capabilities", () => ({ hasColumn: jest.fn().mockResolvedValue(true), hasTable: jest.fn().mockResolvedValue(true) }));
+
+describe("Phase6 CLIENT isolation", () => {
+    const client = { id: 1, name: "합성 고객", phone: "01000000001", branchId: "branch-1", createdAt: new Date("2026-11-01T00:00:00Z"), startDate: null, endDate: null, serviceEndNoticeSentAt: null };
+    const rule = (recipientType: MessageTriggerRecipientType) => MessageTriggerRuleEntity.create({
+        branchId: "branch-1", name: "인사", eventType: MessageTriggerEventType.CLIENT_CREATED,
+        offsetType: MessageTriggerOffsetType.IMMEDIATE, recipientType, templateKey: MessageTriggerTemplateKey.CLIENT_GREETING,
+    });
+    it.each([MessageTriggerRecipientType.PRIMARY_EMPLOYEE, MessageTriggerRecipientType.SECONDARY_EMPLOYEE])("refuses %s before producing any customer recipe", (recipient) => {
+        expect(buildClientMessageRecipe(rule(recipient), client as never, new Date("2026-11-01T00:00:00Z"))).toBeNull();
+    });
+    it("keeps the CLIENT positive recipe", () => {
+        expect(buildClientMessageRecipe(rule(MessageTriggerRecipientType.CLIENT), client as never, new Date("2026-11-01T00:00:00Z"))).toMatchObject({ recipientType: "CLIENT", recipientPhone: "01000000001" });
+    });
+});
+
+import { ConflictException, HttpException } from "@nestjs/common";
+import { Prisma } from "@prisma/client";
+import { MessageTriggerRuleGroupService } from "application/services/message-trigger-rule-group.service";
+import type { MessageTriggerRuleGroupDraft } from "application/services/message-trigger.service";
+import { MessageTriggerRuleGroupEntity } from "domain/entities/message-trigger-rule-group.entity";
+import { defaultMessageAutomationPolicy } from "domain/entities/system-setting.entity";
+import { SbMessageTriggerRuleRepository } from "infrastructure/database/repositories/sb.message-trigger-rule.repository";
+import { mapHttpProblem } from "infrastructure/filters/problem-response";
+
+const branch = "branch-1";
+const draft = (overrides: Partial<MessageTriggerRuleGroupDraft> = {}): MessageTriggerRuleGroupDraft => ({
+    name: "고객 시작 안내", recipientMode: MessageTriggerRecipientType.CLIENT,
+    eventType: MessageTriggerEventType.SERVICE_START, offsetType: MessageTriggerOffsetType.BEFORE_DAYS,
+    offsetDays: 3, sendTime: "10:30", isActive: false, targetClientStatus: "all", retryOnFailure: true,
+    recipientTemplates: { CLIENT: MessageTriggerTemplateKey.SERVICE_INFO }, ...overrides,
+});
+const cloneRule = (rule: MessageTriggerRuleEntity) => Object.assign(Object.create(MessageTriggerRuleEntity.prototype) as MessageTriggerRuleEntity, structuredClone(rule));
+
+describe("RULE-2 caregiver group projection", () => {
+    it("fences stale caregiver cancellation against the persisted pending status", async () => {
+        const f = coreFixture();
+        const group = await f.facade.create(branch, draft({ recipientMode: MessageTriggerRecipientType.PRIMARY_EMPLOYEE, recipientTemplates: {
+            PRIMARY_EMPLOYEE: MessageTriggerTemplateKey.CAREGIVER_SERVICE_START_NOTICE,
+        } }));
+        f.rules[0]!.isActive = true;
+        const stale = MessageTriggerJobEntity.create({ branchId: branch, ruleId: group.rules[0]!.id, clientId: 7,
+            employeeScheduleId: 91, recipientType: MessageTriggerRecipientType.PRIMARY_EMPLOYEE,
+            recipientPhone: "01000000011", templateKey: MessageTriggerTemplateKey.CAREGIVER_SERVICE_START_NOTICE,
+            scheduledFor: new Date("2026-11-10T01:30:00Z"), dedupeKey: "retired-caregiver-occurrence",
+            payload: { employeeId: 11, memberId: "11", recipientName: "합성 주", recipientPhone: "01000000011", templateVariables: {} } });
+        const updateMany = jest.fn().mockResolvedValue({ count: 1 });
+        Object.assign(f.tx, { message_trigger_job: { updateMany } });
+        Object.assign(f.core, { caregiverRecipients: { resolve: async () => ({ complete: true, recipients: [] }) },
+            jobRepository: { findForClientAutomationReview: async () => [stale] } });
+        await (f.core as unknown as { syncCaregiverRulesForClient: (scope: string, clientId: number, includePast: boolean) => Promise<void> })
+            .syncCaregiverRulesForClient(branch, 7, false);
+        expect(updateMany).toHaveBeenCalledWith({ where: { id: stale.id, branchId: branch, clientId: 7, status: "pending", canceledByUser: false },
+            data: expect.objectContaining({ status: "canceled", cancelReason: "Caregiver assignment changed", claimToken: null, nextAttemptAt: null }) });
+        expect(stale.status).toBe("canceled");
+    });
+    it("creates BOTH as two recipient children under one version and rejects overlapping PRIMARY", async () => {
+        const f = coreFixture();
+        const pair = draft({ recipientMode: "BOTH_EMPLOYEES", recipientTemplates: {
+            PRIMARY_EMPLOYEE: "CAREGIVER_SERVICE_START_NOTICE" as MessageTriggerTemplateKey,
+            SECONDARY_EMPLOYEE: "CAREGIVER_SERVICE_START_NOTICE" as MessageTriggerTemplateKey,
+        } });
+        const created = await f.facade.create(branch, pair);
+        expect(created.version).toBe(1);
+        expect(created.rules.map((rule) => rule.recipientType)).toEqual(["PRIMARY_EMPLOYEE", "SECONDARY_EMPLOYEE"]);
+        await expect(f.facade.create(branch, { ...pair, recipientMode: MessageTriggerRecipientType.PRIMARY_EMPLOYEE,
+            recipientTemplates: { PRIMARY_EMPLOYEE: "CAREGIVER_SERVICE_START_NOTICE" as MessageTriggerTemplateKey } })).rejects.toMatchObject({ status: 409 });
+        expect(f.groups).toHaveLength(1);
+        expect(f.rules).toHaveLength(2);
+    });
+    it.each([MessageTriggerEventType.SERVICE_START, MessageTriggerEventType.SERVICE_END])("preserves child identities while changing %s recipient mode and independent templates", async (eventType) => {
+        const f = coreFixture();
+        const pair = draft({ eventType, recipientMode: "BOTH_EMPLOYEES", recipientTemplates: {
+            PRIMARY_EMPLOYEE: MessageTriggerTemplateKey.CAREGIVER_SERVICE_START_NOTICE,
+            SECONDARY_EMPLOYEE: MessageTriggerTemplateKey.CAREGIVER_SERVICE_END_NOTICE,
+        } });
+        const created = await f.facade.create(branch, pair);
+        expect(created.rules.map((rule) => rule.templateKey)).toEqual(["CAREGIVER_SERVICE_START_NOTICE", "CAREGIVER_SERVICE_END_NOTICE"]);
+        const ids = created.rules.map((rule) => rule.id);
+        const singleton = await f.facade.update(branch, created.id, { ...pair, recipientMode: MessageTriggerRecipientType.PRIMARY_EMPLOYEE,
+            recipientTemplates: { PRIMARY_EMPLOYEE: MessageTriggerTemplateKey.CAREGIVER_SERVICE_START_NOTICE }, expectedVersion: 1 });
+        expect(singleton).toMatchObject({ version: 2, recipientMode: "PRIMARY_EMPLOYEE", rules: [{ id: ids[0] }] });
+        const restored = await f.facade.update(branch, created.id, { ...pair, name: "복원", sendTime: "12:15", expectedVersion: 2 });
+        expect(restored.version).toBe(3);
+        expect(restored.rules.map((rule) => rule.id)).toEqual(ids);
+        expect(restored.rules.map((rule) => [rule.name, rule.sendTime, rule.isActive])).toEqual([["복원", "12:15", false], ["복원", "12:15", false]]);
+        expect(f.jobs).toEqual([{ status: "canceled", canceledByUser: true }, { status: "sent", canceledByUser: false }, { status: "canceled", canceledByUser: false }]);
+    });
+
+});
+
+function coreFixture() {
+    const groups: MessageTriggerRuleGroupEntity[] = [];
+    const rules: MessageTriggerRuleEntity[] = [];
+    const removed = new Set<string>();
+    const jobs = [{ status: "canceled", canceledByUser: true }, { status: "sent", canceledByUser: false }, { status: "pending", canceledByUser: false }];
+    const locks: string[] = [];
+    const tx = {} as Prisma.TransactionClient;
+    let queue = Promise.resolve();
+    let parent = true;
+    let sequence = 0;
+    const repository = {
+        findActiveByEventTypes: jest.fn().mockResolvedValue([]),
+        findGroupDuplicateCandidates: jest.fn(async () => rules.filter((rule) => !removed.has(rule.id)).map(cloneRule)),
+        findAll: jest.fn(async () => rules.filter((rule) => !removed.has(rule.id)).map(cloneRule)),
+        findById: jest.fn(async (scope: string, id: string) => { const rule = rules.find((rule) => rule.id === id && rule.branchId === scope && !removed.has(id)); return rule ? cloneRule(rule) : null; }),
+        findGroups: jest.fn(async (scope: string) => groups.filter((group) => group.branchId === scope && !group.deletedAt).map((group) => ({ ...group }))),
+        findGroup: jest.fn(async (scope: string, id: string) => groups.find((group) => group.id === id && group.branchId === scope && !group.deletedAt) ?? null),
+        lockGroup: jest.fn(async (scope: string, id: string, transaction: Prisma.TransactionClient): Promise<MessageTriggerRuleGroupEntity | null> => { expect(transaction).toBe(tx); locks.push("group"); return repository.findGroup(scope, id); }),
+        lockGroupRules: jest.fn(async (_scope: string, _id: string, transaction: Prisma.TransactionClient) => { expect(transaction).toBe(tx); locks.push("children"); }),
+        findGroupRules: jest.fn(async (scope: string, id: string, _transaction?: Prisma.TransactionClient, includeDeleted = false) => rules.filter((rule) => rule.branchId === scope && rule.groupId === id && (includeDeleted || !removed.has(rule.id))).map(cloneRule)),
+        createGroup: jest.fn(async (scope: string, name: string, mode: MessageTriggerRuleGroupEntity["recipientMode"], transaction: Prisma.TransactionClient) => {
+            expect(transaction).toBe(tx); locks.push("group");
+            const group = new MessageTriggerRuleGroupEntity(`group-${++sequence}`, scope, name, mode, 1, new Date(), new Date()); groups.push(group); return group;
+        }),
+        create: jest.fn(async (_scope: string, rule: MessageTriggerRuleEntity, transaction: Prisma.TransactionClient) => { expect(transaction).toBe(tx); locks.push("children"); rule = cloneRule(rule); Object.assign(rule, { id: `rule-${++sequence}` }); rules.push(rule); return cloneRule(rule); }),
+        markJobsStale: jest.fn(async (_scope: string, id: string, transaction: Prisma.TransactionClient) => { expect(transaction).toBe(tx); const rule = rules.find((row) => row.id === id)!; rule.jobsStale = true; }),
+        restoreGroupRule: jest.fn(async (_scope: string, _groupId: string, next: MessageTriggerRuleEntity, transaction: Prisma.TransactionClient) => {
+            expect(transaction).toBe(tx); const stored = rules.find((row) => row.id === next.id);
+            if (!stored || !removed.has(next.id)) return null;
+            removed.delete(next.id); Object.assign(stored, cloneRule(next), { jobsStale: true }); return cloneRule(stored);
+        }),
+        updateGroupCAS: jest.fn(async (_scope: string, group: MessageTriggerRuleGroupEntity, version: number, transaction: Prisma.TransactionClient) => {
+            expect(transaction).toBe(tx); const stored = groups.find((row) => row.id === group.id)!;
+            if (stored.version !== version) return false; Object.assign(stored, { name: group.name, recipientMode: group.recipientMode, version: version + 1 }); return true;
+        }),
+        softDeleteGroup: jest.fn(async (_scope: string, id: string, transaction: Prisma.TransactionClient) => { expect(transaction).toBe(tx); const group = groups.find((row) => row.id === id)!; group.deletedAt = new Date(); group.version++; }),
+        updateIfTargetMatchesAndFenceJobs: jest.fn(async (_scope: string, expected: MessageTriggerRuleEntity, next: MessageTriggerRuleEntity, _reason: string, _at: Date, transaction: Prisma.TransactionClient) => {
+            expect(transaction).toBe(tx); locks.push("jobs"); const stored = rules.find((row) => row.id === expected.id)!;
+            if (stored.updatedAt.getTime() !== expected.updatedAt.getTime()) return null;
+            Object.assign(stored, cloneRule(next), { updatedAt: new Date(stored.updatedAt.getTime() + 1), jobsStale: true });
+            jobs.filter((job) => job.status === "pending").forEach((job) => { job.status = "canceled"; }); return cloneRule(stored);
+        }),
+        deleteIfTargetMatchesAndFenceJobs: jest.fn(async (_scope: string, expected: MessageTriggerRuleEntity, _reason: string, _at: Date, transaction: Prisma.TransactionClient) => {
+            expect(transaction).toBe(tx); locks.push("jobs"); const stored = rules.find((row) => row.id === expected.id)!;
+            if (stored.updatedAt.getTime() !== expected.updatedAt.getTime()) return false; removed.add(expected.id); jobs.filter((job) => job.status === "pending").forEach((job) => { job.status = "canceled"; }); return true;
+        }),
+    };
+    const lock = { runExclusive: jest.fn(async <T>(scope: string, work: (transaction: Prisma.TransactionClient) => Promise<T>, transaction?: Prisma.TransactionClient): Promise<T> => {
+        if (transaction) return work(transaction);
+        const previous = queue; let release!: () => void; queue = new Promise<void>((resolve) => { release = resolve; }); await previous;
+        locks.push("branch");
+        const beforeGroups = structuredClone(groups); const beforeRules = rules.map(cloneRule); const beforeJobs = structuredClone(jobs); const beforeRemoved = [...removed];
+        try { return await work(tx); } catch (error) { groups.splice(0, groups.length, ...beforeGroups); rules.splice(0, rules.length, ...beforeRules); jobs.splice(0, jobs.length, ...beforeJobs); removed.clear(); beforeRemoved.forEach((id) => removed.add(id)); throw error; } finally { release(); }
+    }) };
+    const approval = { ensureApproved: jest.fn().mockResolvedValue(undefined), isApproved: jest.fn().mockResolvedValue(true) };
+    const activation = {
+        getTriggerDispatchEnabled: jest.fn(async () => parent),
+        assertTriggerDispatchEnabled: jest.fn(async () => { if (!parent) throw new ConflictException("parent OFF"); }),
+        activateRuleWithParent: jest.fn(async (scope: string, id: string) => { parent = true; const rule = rules.find((row) => row.id === id && row.branchId === scope)!; rule.isActive = true; return cloneRule(rule); }),
+    };
+    const sources = { isMessageAutomationParentEnabled: async () => parent, resolvePersistedRules: jest.fn(async (scope: string) => ({ rules: (await repository.findAll()).filter((rule) => rule.branchId === scope || rule.branchId === null).map((rule) => { if (!parent) rule.isActive = false; return rule; }), parentEnabled: parent })) };
+    const templates = { getByKeyForBranch: jest.fn().mockResolvedValue({ customVariables: [] }) };
+    const core = new MessageTriggerService({} as never, {} as never, approval as never, repository as never, { findPendingByRuleIdsAndClientId: async () => [] } as never, {} as never,
+        templates as never, { runExclusive: async <T>(_key: unknown, work: (transaction: Prisma.TransactionClient) => Promise<T>, transaction: Prisma.TransactionClient) => { locks.push("template"); return work(transaction); } } as never,
+        { getMessageAutomationPolicyConfig: async () => ({ configuration: { ...defaultMessageAutomationPolicy(), defaultRuleSendTime: "11:45" } }) } as never,
+        undefined, activation as never, lock as never, sources as never);
+    jest.spyOn(core as unknown as { hasTriggerSchema: () => Promise<boolean> }, "hasTriggerSchema").mockResolvedValue(true);
+    const reconcile = jest.spyOn(core as unknown as { reconcileRuleGenerationAfterMutation: (scope: string, id: string) => Promise<MessageTriggerRuleEntity | null> }, "reconcileRuleGenerationAfterMutation").mockImplementation((scope, id) => repository.findById(scope, id));
+    return { core, facade: new MessageTriggerRuleGroupService(core), groups, rules, jobs, removed, repository, locks, lock, approval, activation, templates, reconcile, tx, setParent: (value: boolean) => { parent = value; } };
+}
+
+describe("MessageTriggerRuleGroupService through actual trigger core", () => {
+    it("creates, lists, reads, replaces and soft deletes a CLIENT singleton atomically", async () => {
+        const f = coreFixture(); const created = await f.facade.create(branch, draft());
+        expect(created).toMatchObject({ branchId: branch, version: 1, recipientMode: "CLIENT", sendTime: "10:30", rules: [{ groupId: created.id, recipientType: "CLIENT" }] });
+        expect(await f.facade.list(branch)).toMatchObject({ groups: [{ id: created.id }], standaloneRules: [] });
+        const updated = await f.facade.update(branch, created.id, { ...draft({ name: "변경", sendTime: "12:15", offsetDays: 5 }), expectedVersion: 1 });
+        expect(updated).toMatchObject({ version: 2, name: "변경", sendTime: "12:15", offsetDays: 5, rules: [{ id: created.rules[0]!.id, groupId: created.id, sendTime: "12:15" }] });
+        expect(f.locks.slice(-5)).toEqual(["branch", "template", "group", "children", "jobs"]);
+        await f.facade.delete(branch, created.id);
+        expect(f.removed.has(created.rules[0]!.id)).toBe(true); expect(f.groups[0]!.deletedAt).toBeInstanceOf(Date);
+        await expect(f.facade.get(branch, created.id)).rejects.toMatchObject({ status: 404 });
+        expect(f.jobs).toEqual([{ status: "canceled", canceledByUser: true }, { status: "sent", canceledByUser: false }, { status: "canceled", canceledByUser: false }]);
+    });
+    it("uses the validated source default only when sendTime is omitted", async () => {
+        const f = coreFixture(); expect(await f.facade.create(branch, draft({ sendTime: undefined }))).toMatchObject({ sendTime: "11:45" });
+        expect(await f.facade.create(branch, draft({ sendTime: "09:15" }))).toMatchObject({ sendTime: "09:15" });
+    });
+    it("locks the active template before parent/child writes on create and group update", async () => {
+        const f = coreFixture(); const created = await f.facade.create(branch, draft({ isActive: true }));
+        expect(f.locks.slice(0, 4)).toEqual(["branch", "template", "group", "children"]);
+        f.locks.length = 0;
+        await f.facade.update(branch, created.id, { ...draft({ isActive: true, name: "active" }), expectedVersion: 1 });
+        expect(f.locks.slice(0, 4)).toEqual(["branch", "template", "group", "children"]);
+    });
+    it("materializes no customer job for nonCLIENT rules and retains CLIENT positive creation", async () => {
+        const f = coreFixture();
+        const client = { id: 1, name: "합성", phone: "01000000001", createdAt: new Date("2026-11-01T00:00:00Z"), startDate: null, endDate: null, serviceEndNoticeSentAt: null };
+        jest.spyOn(f.core, "readClientAutomationSource").mockResolvedValue(client as never);
+        const persist = jest.spyOn(f.core as unknown as { persistPendingJob: (...args: unknown[]) => Promise<void> }, "persistPendingJob").mockResolvedValue(undefined);
+        const nonClient = MessageTriggerRuleEntity.create({ ...draftRule(), eventType: MessageTriggerEventType.CLIENT_CREATED, offsetType: MessageTriggerOffsetType.IMMEDIATE, recipientType: MessageTriggerRecipientType.PRIMARY_EMPLOYEE });
+        f.repository.findActiveByEventTypes.mockResolvedValue([nonClient]);
+        await f.core.syncClientRulesForClient(branch, 1, false); expect(persist).not.toHaveBeenCalled();
+        const customer = cloneRule(nonClient); customer.recipientType = MessageTriggerRecipientType.CLIENT;
+        f.repository.findActiveByEventTypes.mockResolvedValue([customer]);
+        await f.core.syncClientRulesForClient(branch, 1, false);
+        expect(persist).toHaveBeenCalledTimes(1); expect(persist.mock.calls[0]![0]).toMatchObject({ recipientType: "CLIENT", recipientPhone: "01000000001" });
+    });
+    it("sanitizes coded semantic400 without exposing its private cause", async () => {
+        const f = coreFixture(); let caught: unknown;
+        try { await f.facade.create(branch, draft({ sendTime: "25:61" })); } catch (error) { caught = error; }
+        const problem = mapHttpProblem(caught, { method: "POST", acceptsLanguages: () => "ko" } as never, { locals: {} } as never);
+        expect(problem).toMatchObject({ status: 400, code: "VALIDATION_FAILED", outcome: "NOT_APPLIED" });
+        expect(JSON.stringify(problem)).not.toMatch(/cause|stack|sendTime.*HH:mm/); expect(f.repository.create).not.toHaveBeenCalled();
+    });
+    it("retains branch/default/system standalone projections without duplicating children", async () => {
+        const f = coreFixture(); await f.facade.create(branch, draft());
+        const standalone = MessageTriggerRuleEntity.create({ ...draftRule(), isDefault: true }); Object.assign(standalone, { id: "default" }); f.rules.push(standalone);
+        const global = cloneRule(standalone); global.branchId = null; Object.assign(global, { id: "system:existing" }); f.rules.push(global);
+        expect((await f.facade.list(branch)).standaloneRules.map((rule) => rule.id)).toEqual(["default", "system:existing"]);
+    });
+    it.each(["PRIMARY_EMPLOYEE", "SECONDARY_EMPLOYEE", "BOTH_EMPLOYEES"] as const)("rejects new %s writes with no repository/provider effects", async (mode) => {
+        const f = coreFixture(); await expect(f.facade.create(branch, draft({ recipientMode: mode as MessageTriggerRuleGroupDraft["recipientMode"] }))).rejects.toMatchObject({ status: 400 });
+        expect(f.repository.createGroup).not.toHaveBeenCalled(); expect(f.repository.create).not.toHaveBeenCalled();
+    });
+    it.each([{ recipientTemplates: {} }, { recipientTemplates: { CLIENT: MessageTriggerTemplateKey.INFO, PRIMARY_EMPLOYEE: MessageTriggerTemplateKey.INFO } }, { sendTime: "24:00" }, { offsetDays: -1 }])("rejects invalid group draft %j", async (invalid) => {
+        const f = coreFixture(); await expect(f.facade.create(branch, draft(invalid))).rejects.toMatchObject({ status: 400 }); expect(f.groups).toHaveLength(0);
+    });
+    it("returns fresh groupId/version on stale CAS, sanitized through actual mapHttpProblem", async () => {
+        const f = coreFixture(); const created = await f.facade.create(branch, draft()); await f.facade.update(branch, created.id, { ...draft(), expectedVersion: 1 });
+        let caught: unknown; try { await f.facade.update(branch, created.id, { ...draft({ name: "stale" }), expectedVersion: 1 }); } catch (error) { caught = error; }
+        expect(caught).toBeInstanceOf(HttpException);
+        const problem = mapHttpProblem(caught, { method: "PUT", acceptsLanguages: () => "ko" } as never, { locals: {} } as never);
+        expect(problem).toMatchObject({ status: 409, code: "REQUEST_CONFLICT", groupId: created.id, currentVersion: 2, outcome: "NOT_APPLIED" });
+        expect(JSON.stringify(problem)).not.toMatch(/cause|stack|private|prisma|Rule changed/); expect(f.groups[0]!.version).toBe(2);
+    });
+    it("serializes equivalent branch creates to exactly one success and one duplicate409", async () => {
+        const f = coreFixture(); const results = await Promise.allSettled([f.facade.create(branch, draft()), f.facade.create(branch, draft({ name: "다른 이름", retryOnFailure: false, isActive: true }))]);
+        expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+        expect(results.find((result) => result.status === "rejected")).toMatchObject({ reason: { status: 409 } }); expect(f.groups).toHaveLength(1); expect(f.rules).toHaveLength(1);
+    });
+    it("normalizes SAME_DAY day counts and ignores activation/retry/name for duplicate semantics", async () => {
+        const f = coreFixture(); await f.facade.create(branch, draft({ offsetType: MessageTriggerOffsetType.SAME_DAY, offsetDays: 0 }));
+        await expect(f.facade.create(branch, draft({ offsetType: MessageTriggerOffsetType.SAME_DAY, offsetDays: 99, isActive: true, name: "새 이름", retryOnFailure: false }))).rejects.toMatchObject({ status: 409 });
+    });
+    it("rolls back both inserted parent and child if stale bookkeeping fails", async () => {
+        const f = coreFixture(); f.repository.markJobsStale.mockRejectedValueOnce(new Error("private failure"));
+        await expect(f.facade.create(branch, draft())).rejects.toThrow("private failure"); expect(f.groups).toHaveLength(0); expect(f.rules).toHaveLength(0);
+        expect(await f.facade.create(branch, draft())).toMatchObject({ version: 1 }); expect(f.groups).toHaveLength(1); expect(f.rules).toHaveLength(1);
+    });
+    it("rejects cross-branch reads/updates/deletes and leaves source untouched", async () => {
+        const f = coreFixture(); const created = await f.facade.create(branch, draft());
+        await expect(f.facade.get("other", created.id)).rejects.toMatchObject({ status: 404 });
+        await expect(f.facade.update("other", created.id, { ...draft(), expectedVersion: 1 })).rejects.toMatchObject({ status: 404 });
+        await expect(f.facade.delete("other", created.id)).rejects.toMatchObject({ status: 404 }); expect(f.groups[0]!.version).toBe(1);
+    });
+    it("legacy POST immediately groups its child and legacy update advances the same parent", async () => {
+        const f = coreFixture(); const rule = await f.core.createRule(branch, draftRule()); expect(rule.groupId).toBe(f.groups[0]!.id);
+        const updated = await f.core.updateRule(branch, rule.id, { name: "legacy", sendTime: "13:20" });
+        expect(updated).toMatchObject({ groupId: rule.groupId, sendTime: "13:20" }); expect(f.groups[0]).toMatchObject({ version: 2, name: "legacy" });
+        await f.core.deleteRule(branch, rule.id); expect(f.groups[0]!.deletedAt).toBeInstanceOf(Date);
+    });
+    it("retains caller-owned transaction and postcommit reconciliation ordering", async () => {
+        const f = coreFixture(); const rule = await f.core.createRule(branch, draftRule(), f.tx); expect(rule.groupId).toBe(f.groups[0]!.id); expect(f.reconcile).not.toHaveBeenCalled();
+    });
+    it("preserves parent OFF drafts and rejects explicit activation until enabled", async () => {
+        const f = coreFixture(); f.setParent(false);
+        const created = await f.facade.create(branch, draft()); expect(created.isActive).toBe(false);
+        expect(await f.facade.update(branch, created.id, { ...draft({ name: "metadata" }), expectedVersion: 1 })).toMatchObject({ isActive: false, version: 2 });
+        await expect(f.facade.update(branch, created.id, { ...draft({ isActive: true }), expectedVersion: 2 })).rejects.toMatchObject({ status: 409 }); expect(f.groups[0]!.version).toBe(2);
+    });
+    it.each(["update", "delete", "activation", "activationWithParent", "approvedUpdate", "approvedDelete"])("refuses BOTH child %s before jobs or template writes", async (writer) => {
+        const f = coreFixture(); const created = await f.facade.create(branch, draft()); f.groups[0]!.recipientMode = "BOTH_EMPLOYEES";
+        const rule = f.rules[0]!; const internals = f.core as unknown as { ruleTargetVersion: (rule: MessageTriggerRuleEntity) => string };
+        const snapshot = { ...rule, createdAt: rule.createdAt.toISOString(), updatedAt: rule.updatedAt.toISOString() }; const version = internals.ruleTargetVersion(rule);
+        const action = writer === "update" ? () => f.core.updateRule(branch, rule.id, { name: "bad" })
+            : writer === "delete" ? () => f.core.deleteRule(branch, rule.id)
+            : writer === "activation" ? () => f.core.updateRuleBranchActivation(branch, rule.id, true)
+            : writer === "activationWithParent" ? () => f.core.activateRuleWithParent(branch, rule.id)
+            : writer === "approvedUpdate" ? () => f.core.updateRuleApprovedTarget(branch, rule.id, { name: "bad" }, version, snapshot)
+            : () => f.core.deleteRuleApprovedTarget(branch, rule.id, version, snapshot);
+        await expect(action()).rejects.toMatchObject({ status: 409, response: { groupId: created.id } });
+        expect(f.repository.updateIfTargetMatchesAndFenceJobs).not.toHaveBeenCalled(); expect(f.repository.deleteIfTargetMatchesAndFenceJobs).not.toHaveBeenCalled(); expect(f.groups[0]!.version).toBe(1);
+    });
+    it("preserves groupId and group version on approved update/delete while refusing stale snapshots", async () => {
+        const f = coreFixture(); const created = await f.facade.create(branch, draft()); const rule = cloneRule(f.rules[0]!);
+        const version = (f.core as unknown as { ruleTargetVersion: (rule: MessageTriggerRuleEntity) => string }).ruleTargetVersion(rule);
+        const snapshot = { ...rule, createdAt: rule.createdAt.toISOString(), updatedAt: rule.updatedAt.toISOString() };
+        expect(await f.core.updateRuleApprovedTarget(branch, rule.id, { name: "approved" }, version, snapshot)).toMatchObject({ groupId: created.id }); expect(f.groups[0]!.version).toBe(2);
+        await expect(f.core.deleteRuleApprovedTarget(branch, rule.id, version, snapshot)).rejects.toMatchObject({ status: 400 }); expect(f.groups[0]!.deletedAt).toBeNull();
+    });
+});
+
+function draftRule() {
+    return { name: "고객 시작 안내", eventType: MessageTriggerEventType.SERVICE_START, offsetType: MessageTriggerOffsetType.BEFORE_DAYS, offsetDays: 3, sendTime: "10:30", isActive: false, recipientType: MessageTriggerRecipientType.CLIENT, templateKey: MessageTriggerTemplateKey.SERVICE_INFO, branchId: branch };
+}
+
+describe("Phase6 C1 effective optional group-update state", () => {
+    it("refuses the actual pre_booking duplicate when status is omitted and leaves state unchanged", async () => {
+        const f = coreFixture();
+        await f.facade.create(branch, draft({ sendTime: "09:00", targetClientStatus: "pre_booking" }));
+        const target = await f.facade.create(branch, draft({ sendTime: "10:00", targetClientStatus: "pre_booking" }));
+        const before = structuredClone({ groups: f.groups, rules: f.rules, jobs: f.jobs });
+        const update = { ...draft({ sendTime: "09:00" }), expectedVersion: 1 };
+        delete update.targetClientStatus;
+        await expect(f.facade.update(branch, target.id, update)).rejects.toMatchObject({ status: 409 });
+        expect(structuredClone({ groups: f.groups, rules: f.rules, jobs: f.jobs })).toEqual(before);
+        expect(f.repository.updateIfTargetMatchesAndFenceJobs).not.toHaveBeenCalled();
+    });
+
+    it("allows the distinct pre_booking rule when an all-status rule already uses the requested time", async () => {
+        const f = coreFixture();
+        await f.facade.create(branch, draft({ sendTime: "09:00", targetClientStatus: "all" }));
+        const target = await f.facade.create(branch, draft({ sendTime: "10:00", targetClientStatus: "pre_booking" }));
+        const update = { ...draft({ sendTime: "09:00" }), expectedVersion: 1 };
+        delete update.targetClientStatus;
+        await expect(f.facade.update(branch, target.id, update)).resolves.toMatchObject({
+            version: 2, sendTime: "09:00", targetClientStatus: "pre_booking",
+            rules: [{ targetClientStatus: "pre_booking", sendTime: "09:00" }],
+        });
+    });
+
+    it("keeps the public effective-state coded400 wrapper and excludes its private cause", async () => {
+        const f = coreFixture(); const target = await f.facade.create(branch, draft()); let caught: unknown;
+        try { await f.facade.update(branch, target.id, { ...draft({ eventType: MessageTriggerEventType.EMPLOYEE_ASSIGNED, offsetType: MessageTriggerOffsetType.IMMEDIATE }), expectedVersion: 1 }); }
+        catch (error) { caught = error; }
+        const problem = mapHttpProblem(caught, { method: "PUT", acceptsLanguages: () => "ko" } as never, { locals: {} } as never);
+        expect(problem).toMatchObject({ status: 400, code: "VALIDATION_FAILED", errors: [{ pointer: "/draft" }] });
+        expect(JSON.stringify(problem)).not.toMatch(/cause|stack|Invalid recipient/); expect(f.groups[0]!.version).toBe(1);
+        expect(f.repository.updateIfTargetMatchesAndFenceJobs).not.toHaveBeenCalled();
+    });
+
+    it("preserves every omitted optional field before validation and still applies explicit replacement values", async () => {
+        const f = coreFixture();
+        const target = await f.facade.create(branch, draft({ offsetDays: 3, sendTime: "10:30", retryOnFailure: false, isActive: false, targetClientStatus: "pre_booking" }));
+        const update = { ...draft({ name: "metadata only" }), expectedVersion: 1 };
+        delete update.offsetDays; delete update.sendTime; delete update.retryOnFailure; delete update.isActive; delete update.targetClientStatus;
+        await expect(f.facade.update(branch, target.id, update)).resolves.toMatchObject({
+            name: "metadata only", version: 2, offsetDays: 3, sendTime: "10:30", retryOnFailure: false, isActive: false, targetClientStatus: "pre_booking",
+            rules: [{ offsetDays: 3, sendTime: "10:30", retryOnFailure: false, isActive: false, targetClientStatus: "pre_booking" }],
+        });
+        await expect(f.facade.update(branch, target.id, { ...draft({ offsetDays: 5, sendTime: "12:15", retryOnFailure: true, isActive: true, targetClientStatus: "active" }), expectedVersion: 2 })).resolves.toMatchObject({
+            version: 3, offsetDays: 5, sendTime: "12:15", retryOnFailure: true, isActive: true, targetClientStatus: "active",
+        });
+    });
+});
+
+describe("Phase6 C2 public template input boundary", () => {
+    const malformedTemplates: unknown[] = ["NOT_A_TEMPLATE", 7, { toString: "x" }, "toString"];
+    it.each(malformedTemplates.flatMap((template) => [undefined, true, false].map((isActive) => ({ template, isActive }))))("rejects malformed update %j before lock-key lookup or mutation", async ({ template, isActive }) => {
+        const f = coreFixture(); const target = await f.facade.create(branch, draft());
+        const before = structuredClone({ groups: f.groups, rules: f.rules, jobs: f.jobs });
+        f.lock.runExclusive.mockClear(); f.templates.getByKeyForBranch.mockClear();
+        let caught: unknown;
+        try { await f.facade.update(branch, target.id, { ...draft({ isActive, recipientTemplates: { CLIENT: template as MessageTriggerTemplateKey } }), expectedVersion: 1 }); }
+        catch (error) { caught = error; }
+        expect(caught).toBeInstanceOf(HttpException);
+        const problem = mapHttpProblem(caught, { method: "PUT", acceptsLanguages: () => "ko" } as never, { locals: {} } as never);
+        expect(problem).toMatchObject({ status: 400, code: "VALIDATION_FAILED", errors: [{ pointer: "/draft" }] });
+        expect(JSON.stringify(problem)).not.toMatch(/TypeError|cause|stack|NOT_A_TEMPLATE/);
+        expect(structuredClone({ groups: f.groups, rules: f.rules, jobs: f.jobs })).toEqual(before);
+        expect(f.repository.updateIfTargetMatchesAndFenceJobs).not.toHaveBeenCalled();
+        expect(f.lock.runExclusive).not.toHaveBeenCalled(); expect(f.templates.getByKeyForBranch).not.toHaveBeenCalled();
+    });
+    it.each(malformedTemplates)("rejects malformed create template %j as coded400 without persistence", async (template) => {
+        const f = coreFixture(); let caught: unknown;
+        try { await f.facade.create(branch, draft({ recipientTemplates: { CLIENT: template as MessageTriggerTemplateKey } })); }
+        catch (error) { caught = error; }
+        const problem = mapHttpProblem(caught, { method: "POST", acceptsLanguages: () => "ko" } as never, { locals: {} } as never);
+        expect(problem).toMatchObject({ status: 400, code: "VALIDATION_FAILED", errors: [{ pointer: "/draft" }] });
+        expect(f.repository.createGroup).not.toHaveBeenCalled(); expect(f.repository.create).not.toHaveBeenCalled();
+    });
+    it("allows a registered CLIENT template with omitted and explicit active state", async () => {
+        const f = coreFixture(); const target = await f.facade.create(branch, draft());
+        const update = { ...draft({ name: "valid omitted active" }), expectedVersion: 1 }; delete update.isActive;
+        await expect(f.facade.update(branch, target.id, update)).resolves.toMatchObject({ version: 2, isActive: false, recipientTemplates: { CLIENT: "SERVICE_INFO" } });
+        await expect(f.facade.update(branch, target.id, { ...draft({ isActive: true }), expectedVersion: 2 })).resolves.toMatchObject({ version: 3, isActive: true, recipientTemplates: { CLIENT: "SERVICE_INFO" } });
+    });
+});
+
+describe("Phase6 C3 immediate effective-time duplicates", () => {
+    it("ignores stored HH:mm for immediate create duplicates while recipes use the same literal instant", async () => {
+        const f = coreFixture();
+        const immediate = draft({ eventType: MessageTriggerEventType.CLIENT_CREATED, offsetType: MessageTriggerOffsetType.IMMEDIATE,
+            offsetDays: 0, sendTime: "09:00", recipientTemplates: { CLIENT: MessageTriggerTemplateKey.CLIENT_GREETING } });
+        const first = await f.facade.create(branch, immediate);
+        const alternative = cloneRule(first.rules[0]!); Object.assign(alternative, { id: "other-immediate-rule", sendTime: "10:00" });
+        const client = { id: 1, name: "합성", phone: "01000000001", createdAt: new Date("2026-11-01T00:00:00Z"), startDate: null, endDate: null, serviceEndNoticeSentAt: null };
+        const fixedNow = new Date("2026-11-03T12:00:00Z");
+        const firstRecipe = buildClientMessageRecipe(first.rules[0]!, client as never, fixedNow);
+        const alternativeRecipe = buildClientMessageRecipe(alternative, client as never, fixedNow);
+        expect(firstRecipe?.scheduledFor.toISOString()).toBe("2026-11-03T12:00:00.000Z");
+        expect(alternativeRecipe?.scheduledFor.toISOString()).toBe("2026-11-03T12:00:00.000Z");
+        expect(firstRecipe).toMatchObject({ recipientPhone: "01000000001", recipientType: "CLIENT", templateKey: "CLIENT_GREETING" });
+        expect(alternativeRecipe).toMatchObject({ recipientPhone: "01000000001", recipientType: "CLIENT", templateKey: "CLIENT_GREETING" });
+        expect(alternativeRecipe?.dedupeKey).not.toBe(firstRecipe?.dedupeKey);
+        await expect(f.facade.create(branch, { ...immediate, sendTime: "10:00" })).rejects.toMatchObject({ status: 409 });
+        await expect(f.core.createRule(branch, { name: "legacy immediate", eventType: MessageTriggerEventType.CLIENT_CREATED,
+            offsetType: MessageTriggerOffsetType.IMMEDIATE, sendTime: "11:00", isActive: false,
+            recipientType: MessageTriggerRecipientType.CLIENT, templateKey: MessageTriggerTemplateKey.CLIENT_GREETING })).rejects.toMatchObject({ status: 409 });
+        expect(f.groups).toHaveLength(1); expect(f.rules).toHaveLength(1); expect(f.groups[0]!.version).toBe(1);
+    });
+    it("refuses a group or legacy update into existing immediate semantics without changing any state", async () => {
+        const f = coreFixture();
+        const immediate = draft({ eventType: MessageTriggerEventType.CLIENT_CREATED, offsetType: MessageTriggerOffsetType.IMMEDIATE,
+            offsetDays: 0, sendTime: "09:00", recipientTemplates: { CLIENT: MessageTriggerTemplateKey.CLIENT_GREETING } });
+        await f.facade.create(branch, immediate);
+        const target = await f.facade.create(branch, draft({ sendTime: "10:00" }));
+        const before = structuredClone({ groups: f.groups, rules: f.rules, jobs: f.jobs });
+        await expect(f.facade.update(branch, target.id, { ...immediate, sendTime: "10:00", expectedVersion: 1 })).rejects.toMatchObject({ status: 409 });
+        await expect(f.core.updateRule(branch, target.rules[0]!.id, { eventType: MessageTriggerEventType.CLIENT_CREATED,
+            offsetType: MessageTriggerOffsetType.IMMEDIATE, offsetDays: 0, sendTime: "11:00", templateKey: MessageTriggerTemplateKey.CLIENT_GREETING })).rejects.toMatchObject({ status: 409 });
+        expect(structuredClone({ groups: f.groups, rules: f.rules, jobs: f.jobs })).toEqual(before);
+        expect(f.repository.updateIfTargetMatchesAndFenceJobs).not.toHaveBeenCalled();
+    });
+    it("retains distinct calendar times and excludes the same group during metadata updates", async () => {
+        const f = coreFixture();
+        const first = await f.facade.create(branch, draft({ sendTime: "09:00" }));
+        const second = await f.facade.create(branch, draft({ sendTime: "10:00" }));
+        expect(second).toMatchObject({ version: 1, sendTime: "10:00" });
+        await expect(f.facade.update(branch, first.id, { ...draft({ name: "calendar metadata", sendTime: "09:00" }), expectedVersion: 1 })).resolves.toMatchObject({
+            version: 2, name: "calendar metadata", sendTime: "09:00", rules: [{ id: first.rules[0]!.id, sendTime: "09:00" }],
+        });
+        expect(f.groups).toHaveLength(2); expect(f.rules).toHaveLength(2);
+        const immediate = draft({ eventType: MessageTriggerEventType.CLIENT_CREATED, offsetType: MessageTriggerOffsetType.IMMEDIATE,
+            offsetDays: 0, sendTime: "09:00", recipientTemplates: { CLIENT: MessageTriggerTemplateKey.CLIENT_GREETING } });
+        const own = await f.facade.create(branch, immediate);
+        await expect(f.facade.update(branch, own.id, { ...immediate, name: "immediate metadata", sendTime: "10:00", expectedVersion: 1 })).resolves.toMatchObject({
+            version: 2, name: "immediate metadata", sendTime: "10:00", rules: [{ id: own.rules[0]!.id, sendTime: "10:00" }],
+        });
+    });
+});
+
+function c4Latch() {
+    let release!: () => void;
+    const promise = new Promise<void>((resolve) => { release = resolve; });
+    return { promise, release };
+}
+
+async function c4CoreInterleaving(options: { swap: boolean; explicitTemplate?: boolean; active?: boolean; parentOff?: boolean; requestActivation?: boolean; undefinedOptions?: boolean }) {
+    const fixtures = [coreFixture(), coreFixture()];
+    const scopes = ["c4-branch-a", "c4-branch-b"];
+    const initialKeys = [MessageTriggerTemplateKey.SERVICE_INFO, MessageTriggerTemplateKey.INFO];
+    const trace: Array<{ tx: string; kind: string; key?: string }> = [];
+    const owners = new Map<string, string>();
+    const waiting = new Map<string, string>();
+    const pending = new Map<string, Array<{ tx: string; resolve: () => void }>>();
+    const names = new Map<Prisma.TransactionClient, string>();
+    const firstTemplates = new Set<string>();
+    const firstKeysGate = c4Latch(); const readsGate = c4Latch(); const resumeGate = c4Latch();
+    let firstCount = 0; let readCount = 0; let sequence = 0; let legacyPhase = false; let cycle = false;
+    const release = (tx: string) => {
+        waiting.delete(tx);
+        for (const [key, owner] of owners) {
+            if (owner !== tx) continue;
+            owners.delete(key);
+            const next = pending.get(key)?.shift();
+            if (next) { owners.set(key, next.tx); waiting.delete(next.tx); next.resolve(); }
+        }
+    };
+    const acquire = async (tx: string, key: string) => {
+        trace.push({ tx, kind: "request", key });
+        const owner = owners.get(key);
+        if (owner && owner !== tx) {
+            waiting.set(tx, owner);
+            let cursor: string | undefined = owner;
+            while (cursor) {
+                if (cursor === tx) { cycle = true; throw new Error("simulated advisory request cycle"); }
+                cursor = waiting.get(cursor);
+            }
+            await new Promise<void>((resolve) => { const queue = pending.get(key) ?? []; queue.push({ tx, resolve }); pending.set(key, queue); });
+        } else owners.set(key, tx);
+        trace.push({ tx, kind: "held", key });
+        if (legacyPhase && !(options.swap && options.explicitTemplate) && key.startsWith("babyjamjam:message-template-automation:") && !firstTemplates.has(tx)) {
+            firstTemplates.add(tx); firstCount++;
+            if (firstCount === 2) firstKeysGate.release();
+            await firstKeysGate.promise;
+        }
+    };
+    for (const [index, f] of fixtures.entries()) {
+        const scope = scopes[index]!;
+        Object.assign(f.tx, { $executeRaw: async (query: Prisma.Sql) => { await acquire(names.get(f.tx)!, String(query.values[0])); return 1; } });
+        const database = { $transaction: async <T>(work: (transaction: Prisma.TransactionClient) => Promise<T>) => {
+            const txName = `${legacyPhase ? "legacy" : "setup"}:${scope}:${++sequence}`; names.set(f.tx, txName);
+            try { return await work(f.tx); } finally { release(txName); }
+        } };
+        Object.assign(f.core, { messageAutomationBranchLockService: new MessageAutomationBranchLockService(database as never),
+            templateAutomationLock: new MessageTemplateAutomationLockService(database as never) });
+        const lockGroup = f.repository.lockGroup.getMockImplementation()!;
+        f.repository.lockGroup.mockImplementation(async (...args) => { trace.push({ tx: names.get(f.tx)!, kind: "group" }); return lockGroup(...args); });
+        const lockChildren = f.repository.lockGroupRules.getMockImplementation()!;
+        f.repository.lockGroupRules.mockImplementation(async (...args) => { trace.push({ tx: names.get(f.tx)!, kind: "children" }); return lockChildren(...args); });
+        await f.facade.create(scope, draft({ isActive: options.active ?? true, recipientTemplates: { CLIENT: initialKeys[index]! } }));
+        const find = f.repository.findById.getMockImplementation()!; let paused = false;
+        f.repository.findById.mockImplementation(async (branchId: string, id: string, transaction?: Prisma.TransactionClient) => {
+            const snapshot = await find(branchId, id);
+            if (!transaction && !paused) { paused = true; readCount++; if (readCount === 2) readsGate.release(); await resumeGate.promise; }
+            return snapshot;
+        });
+    }
+    const updates = fixtures.map((f, index) => f.core.updateRule(scopes[index]!, f.rules[0]!.id, {
+        name: `legacy metadata ${index}`,
+        ...(options.explicitTemplate ? { templateKey: initialKeys[index] } : {}),
+        ...(options.requestActivation ? { isActive: true } : {}),
+        ...(options.undefinedOptions ? { templateKey: undefined, isActive: undefined } : {}),
+    }));
+    try {
+        await readsGate.promise;
+        if (options.swap) await Promise.all(fixtures.map((f, index) => f.facade.update(scopes[index]!, f.groups[0]!.id, {
+            ...draft({ isActive: options.active ?? true, recipientTemplates: { CLIENT: initialKeys[1 - index]! } }), expectedVersion: 1,
+        })));
+        if (options.parentOff) fixtures.forEach((f) => f.setParent(false));
+        trace.length = 0; legacyPhase = true;
+        if (options.swap && options.explicitTemplate) firstKeysGate.release();
+        resumeGate.release();
+        const results = await Promise.allSettled(updates);
+        return { fixtures, scopes, trace, cycle, results };
+    } finally { resumeGate.release(); firstKeysGate.release(); await Promise.allSettled(updates); }
+}
+
+describe("Phase6 C4 fresh legacy template lock resolution", () => {
+    it("uses fresh swapped templates before group/child locks without a cross-branch request cycle", async () => {
+        const result = await c4CoreInterleaving({ swap: true });
+        const firstKeys = result.scopes.map((scope) => result.trace.find((entry) => entry.tx.includes(scope) && entry.kind === "request" && entry.key?.startsWith("babyjamjam:message-template-automation:"))?.key);
+        expect({ firstKeys, cycle: result.cycle, statuses: result.results.map((entry) => entry.status) }).toEqual({
+            firstKeys: ["babyjamjam:message-template-automation:INFO", "babyjamjam:message-template-automation:SERVICE_INFO"], cycle: false, statuses: ["fulfilled", "fulfilled"],
+        });
+        for (const [index, scope] of result.scopes.entries()) {
+            const events = result.trace.filter((entry) => entry.tx.includes(scope));
+            const templateKeys = [...new Set(events.filter((entry) => entry.kind === "request" && entry.key?.startsWith("babyjamjam:message-template-automation:")).map((entry) => entry.key))];
+            expect(templateKeys).toEqual([index === 0 ? "babyjamjam:message-template-automation:INFO" : "babyjamjam:message-template-automation:SERVICE_INFO"]);
+            expect(events.findIndex((entry) => entry.kind === "held" && entry.key === templateKeys[0])).toBeLessThan(events.findIndex((entry) => entry.kind === "group"));
+            expect(result.fixtures[index]!.groups[0]!.version).toBe(3);
+            expect(result.fixtures[index]!.rules[0]!.templateKey).toBe(index === 0 ? "INFO" : "SERVICE_INFO");
+        }
+    });
+    it.each([false, true])("allows unchanged-template control with explicit requested template %s", async (explicitTemplate) => {
+        const result = await c4CoreInterleaving({ swap: explicitTemplate, explicitTemplate });
+        expect(result.cycle).toBe(false); expect(result.results.map((entry) => entry.status)).toEqual(["fulfilled", "fulfilled"]);
+        for (const [index, scope] of result.scopes.entries()) {
+            const keys = [...new Set(result.trace.filter((entry) => entry.tx.includes(scope) && entry.kind === "request" && entry.key?.startsWith("babyjamjam:message-template-automation:")).map((entry) => entry.key))];
+            expect(keys).toEqual(explicitTemplate
+                ? ["babyjamjam:message-template-automation:INFO", "babyjamjam:message-template-automation:SERVICE_INFO"]
+                : [index === 0 ? "babyjamjam:message-template-automation:SERVICE_INFO" : "babyjamjam:message-template-automation:INFO"]);
+            expect(result.fixtures[index]!.groups[0]!.version).toBe(explicitTemplate ? 3 : 2);
+        }
+    });
+    it.each(["missing-or-deleted", "reparented"])("refuses a %s fresh child before template/group writes", async (kind) => {
+        const f = coreFixture(); const created = await f.facade.create(branch, draft());
+        const initial = cloneRule(f.rules[0]!); const current = kind === "missing-or-deleted" ? null : cloneRule(initial);
+        if (current) current.groupId = "different-group";
+        f.repository.findById.mockClear();
+        f.repository.findById.mockResolvedValueOnce(initial).mockResolvedValue(current);
+        await expect(f.core.updateRule(branch, initial.id, { name: "stale writer" })).rejects.toMatchObject({
+            status: kind === "missing-or-deleted" ? 404 : 409, response: { code: kind === "missing-or-deleted" ? "RESOURCE_NOT_FOUND" : "REQUEST_CONFLICT" },
+        });
+        expect(f.repository.findById).toHaveBeenNthCalledWith(2, branch, initial.id, f.tx);
+        expect(f.repository.lockGroup).not.toHaveBeenCalled(); expect(f.repository.updateIfTargetMatchesAndFenceJobs).not.toHaveBeenCalled();
+        expect(f.groups[0]).toMatchObject({ id: created.id, version: 1 }); expect(f.rules[0]!.name).toBe("고객 시작 안내");
+    });
+    it("inherits current lock options when direct callers pass explicit undefined fields", async () => {
+        const result = await c4CoreInterleaving({ swap: false, undefinedOptions: true });
+        expect(result.results.map((entry) => entry.status)).toEqual(["fulfilled", "fulfilled"]);
+        expect(result.cycle).toBe(false);
+    });
+    it("acquires fresh current template keys before current inactive metadata updates", async () => {
+        const result = await c4CoreInterleaving({ swap: true, active: false });
+        expect(result.results.map((entry) => entry.status)).toEqual(["fulfilled", "fulfilled"]);
+        for (const [index, scope] of result.scopes.entries()) {
+            const events = result.trace.filter((entry) => entry.tx.includes(scope));
+            const keys = events.filter((entry) => entry.kind === "request" && entry.key?.startsWith("babyjamjam:message-template-automation:")).map((entry) => entry.key);
+            expect(keys).toEqual([index === 0 ? "babyjamjam:message-template-automation:INFO" : "babyjamjam:message-template-automation:SERVICE_INFO"]);
+            expect(events.findIndex((entry) => entry.kind === "held" && entry.key === keys[0])).toBeLessThan(events.findIndex((entry) => entry.kind === "group"));
+        }
+        expect(result.fixtures.map((f) => f.rules[0]!.isActive)).toEqual([false, false]);
+    });
+    it.each([false, true])("preserves parent-OFF metadata/explicit-activation gates (activation=%s)", async (requestActivation) => {
+        const result = await c4CoreInterleaving({ swap: false, parentOff: true, requestActivation });
+        expect(result.cycle).toBe(false);
+        expect(result.results.map((entry) => entry.status)).toEqual(requestActivation ? ["rejected", "rejected"] : ["fulfilled", "fulfilled"]);
+        if (requestActivation) result.results.forEach((entry) => expect(entry).toMatchObject({ reason: { status: 409 } }));
+        else expect(result.fixtures.map((f) => f.rules[0]!.isActive)).toEqual([false, false]);
+    });
+});
+
+describe("SbMessageTriggerRuleRepository generic group primitives", () => {
+    it.each(["CLIENT", "PRIMARY_EMPLOYEE", "SECONDARY_EMPLOYEE", "BOTH_EMPLOYEES"] as const)("persists %s without a CLIENT-only SQL gate and uses only the supplied transaction", async (mode) => {
+        const row = new MessageTriggerRuleGroupEntity("legacy-rule:opaque", branch, "group", mode as MessageTriggerRuleGroupEntity["recipientMode"], 4, new Date(), new Date());
+        const transaction = {
+            message_trigger_rule_group: { create: jest.fn().mockResolvedValue(row), findFirst: jest.fn().mockResolvedValue(row), updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
+            message_trigger_rule: { findMany: jest.fn().mockResolvedValue([]) },
+            $queryRaw: jest.fn().mockResolvedValue([{ id: row.id }]),
+        };
+        const repository = new SbMessageTriggerRuleRepository({} as never);
+        expect(await repository.createGroup(branch, row.name, row.recipientMode, transaction as never)).toMatchObject({ recipientMode: mode });
+        await repository.lockGroup(branch, row.id, transaction as never); await repository.lockGroupRules(branch, row.id, transaction as never);
+        await repository.findGroupRules(branch, row.id, transaction as never, true);
+        expect(transaction.message_trigger_rule.findMany).toHaveBeenCalledWith({ where: { branchId: branch, groupId: row.id }, orderBy: { id: "asc" } });
+        expect(await repository.updateGroupCAS(branch, row, 4, transaction as never)).toBe(true);
+        expect(transaction.message_trigger_rule_group.updateMany).toHaveBeenCalledWith({ where: { id: row.id, branchId: branch, deletedAt: null, version: 4 }, data: { name: "group", recipientMode: mode, version: { increment: 1 } } });
+    });
+});
+
+describe("RULE-2 actual core/template service/repository absence boundary", () => {
+    it.each([
+        { createdAt: "2026-11-03T16:00:00.000Z", anchorDate: "2026-11-04", scheduledFor: "2026-11-05T01:30:00.000Z" },
+        { createdAt: "2026-11-03T10:00:00.000Z", anchorDate: "2026-11-03", scheduledFor: "2026-11-04T01:30:00.000Z" },
+    ])("uses the Korean calendar for CLIENT_CREATED preview at $createdAt without writes", async ({ createdAt, anchorDate, scheduledFor }) => {
+        const f = coreFixture();
+        jest.spyOn(f.core, "readClientAutomationSource").mockResolvedValue({ id: 7, name: "합성 고객", phone: "01000000007", type: null,
+            createdAt: new Date(createdAt), startDate: null, endDate: null, serviceEndNoticeSentAt: null });
+        const writes = jest.fn();
+        Object.assign(f.core, { prisma: { $transaction: async <T>(work: (tx: unknown) => Promise<T>) => work({
+            client: { update: writes }, message_trigger_job: { create: writes }, service_record_token: { create: writes },
+        }) }, deliveryService: { resolveCanonicalDeliverySnapshot: async () => ({ message: "합성 preview 본문" }) } });
+        const preview = await f.facade.preview(branch, { draft: draft({ eventType: MessageTriggerEventType.CLIENT_CREATED,
+            offsetType: MessageTriggerOffsetType.AFTER_DAYS, offsetDays: 1, sendTime: "10:30",
+            recipientTemplates: { CLIENT: MessageTriggerTemplateKey.CLIENT_GREETING } }), clientId: 7 });
+        expect(preview).toMatchObject({ complete: true, count: 1, recipients: [{ recipientType: "CLIENT", body: "합성 preview 본문",
+            outcome: "ready", reason: null, anchorSource: "client.createdAt", anchorDate, scheduledFor }] });
+        expect(writes).not.toHaveBeenCalled();
+        expect(f.repository.createGroup).not.toHaveBeenCalled();
+        expect(f.repository.create).not.toHaveBeenCalled();
+        expect(f.locks).toEqual([]);
+    });
+    it("never freezes caregiver global text through active group validation or an unrelated first edit", async () => {
+        const f = coreFixture(); let snapshot: unknown = null;
+        const at = new Date("2026-10-01T00:00:00.000Z");
+        const client = { id: 7, branchId: branch, name: "합성 고객", phone: null, createdAt: at, deletedAt: null,
+            serviceStatus: "waiting", startDate: new Date("2026-12-01T00:00:00Z"), endDate: new Date("2026-12-31T00:00:00Z"), bookingConfirmedAt: at };
+        const schedule = { id: 91, incarnationId: "44000000-0000-4000-8000-000000000001", branchId: branch, clientId: 7,
+            startDate: new Date("2026-11-10T00:00:00Z"), endDate: new Date("2026-11-20T00:00:00Z"), replaced: false, terminatedAt: null,
+            primaryEmployeeId: 11, secondaryEmployeeId: null,
+            primaryEmployee: { id: 11, branchId: branch, name: "합성 주", phone: "01000000011", deletedAt: null, smsAutomationEnabled: true }, secondaryEmployee: null };
+        const tx = Object.assign(f.tx, {
+            $executeRaw: jest.fn(async () => 1), $queryRaw: jest.fn(async () => [{ id: branch, system_template_snapshot: snapshot }]),
+            branch: { findUnique: jest.fn(async () => ({ id: branch, name: "합성 지점", systemTemplateSnapshot: snapshot })),
+                update: jest.fn(async ({ data }: { data: { systemTemplateSnapshot: unknown } }) => { snapshot = data.systemTemplateSnapshot; }) },
+            client: { findFirst: jest.fn(async () => client) }, employee_schedule: { findMany: jest.fn(async () => [schedule]) },
+            system_template: { findMany: jest.fn(async () => [{ id: "global-caregiver", templateKey: "CAREGIVER_SERVICE_START_NOTICE", content: "GLOBAL MUST NOT LEAK", customVariables: [], createdAt: at, updatedAt: at }]),
+                findUnique: jest.fn(async () => null) },
+        });
+        const database = { ...tx, $transaction: async <T>(work: (value: typeof tx) => Promise<T>) => work(tx) };
+        const repository = new SbSystemTemplateRepository(database as never);
+        const lock = new MessageTemplateAutomationLockService(database as never);
+        const templates = new SystemTemplateService(new GetAllSystemTemplatesUseCase(repository), new GetSystemTemplateUseCase(repository), undefined as never,
+            new UpdateBranchSystemTemplateUseCase(repository, new SystemTemplateMutationGuardService(f.repository as never), lock),
+            undefined as never, undefined as never, undefined as never, undefined as never, undefined as never, undefined as never);
+        const reader = new ClientAutomationSourceReader(database as never, f.repository as never, {} as never, f.approval as never);
+        const caregiverTemplates = new CaregiverTemplateResolverService(database as never);
+        const recipients = new MessageTriggerRecipientResolverService(reader, caregiverTemplates, f.repository as never);
+        Object.assign(f.core, { systemTemplateService: templates, caregiverTemplates, caregiverRecipients: recipients });
+        const body = draft({ isActive: true, recipientMode: MessageTriggerRecipientType.PRIMARY_EMPLOYEE,
+            recipientTemplates: { PRIMARY_EMPLOYEE: MessageTriggerTemplateKey.CAREGIVER_SERVICE_START_NOTICE } });
+        await f.facade.create(branch, body);
+        expect(snapshot).toBeNull();
+        expect(tx.branch.update).not.toHaveBeenCalled();
+        expect(tx.system_template.findMany).not.toHaveBeenCalled();
+        const expected = "합성 주 관리사님, 합성 고객 고객님의 서비스가 2026-11-10에 시작됩니다. 배정 일정과 근무 안내를 확인해 주세요. - 합성 지점";
+        expect((await f.core.previewRuleGroup(branch, { draft: body, clientId: 7 })).recipients[0]?.body).toBe(expected);
+        await templates.updateForBranch(branch, "GREETING", "보존할 인사 편집", "user-a");
+        expect((snapshot as { version: number }).version).toBe(1);
+        expect((snapshot as { templates: Record<string, { content: string }> }).templates["CAREGIVER_SERVICE_START_NOTICE"]?.content)
+            .toBe("{{employeeName}} 관리사님, {{clientName}} 고객님의 서비스가 {{serviceStartDate}}에 시작됩니다. 배정 일정과 근무 안내를 확인해 주세요. - {{branchName}}");
+        const beforePreviewWrites = tx.branch.update.mock.calls.length;
+        expect((await templates.getByKeyForBranch(branch, "CAREGIVER_SERVICE_START_NOTICE")).content).not.toBe("GLOBAL MUST NOT LEAK");
+        expect((await f.core.previewRuleGroup(branch, { draft: body, clientId: 7 })).recipients[0]?.body).toBe(expected);
+        const rendered = await recipients.resolve(branch, 7, f.rules, tx);
+        const delivery = new SmsTriggerDeliveryService({} as never, templates, {} as never, undefined, undefined, undefined, undefined, undefined, caregiverTemplates);
+        expect((await delivery.resolveCanonicalDeliverySnapshot(MessageTriggerJobEntity.create(rendered.recipients[0]!.recipe!), tx)).message).toBe(expected);
+        expect(tx.branch.update.mock.calls.length).toBe(beforePreviewWrites);
+        const edited = "{{employeeName}} 관리사님 / {{clientName}} / {{serviceStartDate}} / {{branchName}} (지점 편집)";
+        await templates.updateForBranch(branch, "CAREGIVER_SERVICE_START_NOTICE", edited, "user-a");
+        await templates.updateForBranch(branch, "INFO", "무관한 정보 편집", "user-a");
+        expect((await templates.getByKeyForBranch(branch, "CAREGIVER_SERVICE_START_NOTICE")).content).toBe(edited);
+        expect((await templates.getByKeyForBranch(branch, "GREETING")).content).toBe("보존할 인사 편집");
+    });
+});
+
+// Phase7 C3: both projected children consume independent rows in the existing catch-up helper.
+describe("Phase7 C3 BOTH child catch-up projection", () => {
+    it("keeps stable CARE occurrence keys while sharing the configured CLIENT/secondary/primary order", async () => {
+        jest.useFakeTimers(); jest.setSystemTime(new Date("2026-11-05T12:00:00Z"));
+        try {
+            const make = (id: string, recipientType: MessageTriggerRecipientType, employeeId?: number) => {
+                const rule = Object.assign(MessageTriggerRuleEntity.create({ branchId: "branch-a", name: id, groupId: "group-a", isActive: true,
+                    eventType: MessageTriggerEventType.SERVICE_START, offsetType: MessageTriggerOffsetType.SAME_DAY, offsetDays: 0, sendTime: "09:00", recipientType,
+                    templateKey: employeeId ? MessageTriggerTemplateKey.CAREGIVER_SERVICE_START_NOTICE : MessageTriggerTemplateKey.INFO }), { id });
+                const job = MessageTriggerJobEntity.create({ branchId: "branch-a", ruleId: id, clientId: 7, employeeScheduleId: employeeId ? 91 : null, recipientType,
+                    templateKey: rule.templateKey, scheduledFor: new Date("2026-11-05T00:00:00Z"),
+                    dedupeKey: employeeId ? `group:group-a:child:${id}:schedule:91:event:SERVICE_START:employee:${employeeId}` : "old-client-key", payload: { templateVariables: {}, memberId: "7", recipientName: "합성", recipientPhone: "01000000007" } });
+                return { rule, job };
+            };
+            const primary = make("child-primary", MessageTriggerRecipientType.PRIMARY_EMPLOYEE, 11);
+            const secondary = make("child-secondary", MessageTriggerRecipientType.SECONDARY_EMPLOYEE, 12);
+            const client = make("child-client", MessageTriggerRecipientType.CLIENT);
+            const core: MessageTriggerService = Object.assign(Object.create(MessageTriggerService.prototype), { automationSources: {
+                getMessagePolicyEnabled: async () => true, getRetroactiveSendConfig: async () => ({ sendIntervalMinutes: 3, ruleOrder: ["child-client", "child-secondary", "child-primary"] }),
+            } });
+            const result = await (core as unknown as { applyRetroactiveSendConfig: (branch: string, rows: typeof primary[], stable: Date) => Promise<typeof primary[]> })
+                .applyRetroactiveSendConfig("branch-a", [primary, secondary, client], new Date("2026-11-05T12:00:00Z"));
+            expect(result.map(({ job }) => [job.ruleId, job.scheduledFor.toISOString(), job.dedupeKey, job.payload.catchUp?.sequence, job.payload.catchUp?.predecessorDedupeKey])).toEqual([
+                ["child-client", "2026-11-05T12:00:00.000Z", "child-client:client:7:CLIENT:2026-11-05T12:00:00.000Z", 1, null],
+                ["child-secondary", "2026-11-05T12:03:00.000Z", "group:group-a:child:child-secondary:schedule:91:event:SERVICE_START:employee:12", 2, "child-client:client:7:CLIENT:2026-11-05T12:00:00.000Z"],
+                ["child-primary", "2026-11-05T12:06:00.000Z", "group:group-a:child:child-primary:schedule:91:event:SERVICE_START:employee:11", 3, "group:group-a:child:child-secondary:schedule:91:event:SERVICE_START:employee:12"],
+            ]);
+        } finally { jest.useRealTimers(); }
+    });
+});

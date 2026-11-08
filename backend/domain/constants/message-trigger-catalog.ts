@@ -37,6 +37,8 @@ export function isMessageTriggerTargetClientStatus(
 }
 
 export enum MessageTriggerTemplateKey {
+    CAREGIVER_SERVICE_START_NOTICE = "CAREGIVER_SERVICE_START_NOTICE",
+    CAREGIVER_SERVICE_END_NOTICE = "CAREGIVER_SERVICE_END_NOTICE",
     CLIENT_WELCOME = "CLIENT_WELCOME",
     SERVICE_START_REMINDER = "SERVICE_START_REMINDER",
     SERVICE_INFO = "SERVICE_INFO",
@@ -52,6 +54,11 @@ export enum MessageTriggerTemplateKey {
     SERVICE_END_NOTICE = "SERVICE_END_NOTICE",
 }
 
+/** Reserved job identity, never an automatic template or public setting. */
+export const MANUAL_SMS_TEMPLATE_KEY = "MANUAL_SMS";
+export type MessageTriggerJobTemplateKey = MessageTriggerTemplateKey | typeof MANUAL_SMS_TEMPLATE_KEY;
+export const MANUAL_SMS_RULE_PREFIX = "system:manual-sms:";
+
 /**
  * Persisted rules and jobs may still contain these keys. Keep the wire values
  * readable, but never expose or deliver them as active templates.
@@ -64,15 +71,15 @@ export const RETIRED_FIXED_EVENT_TEMPLATE_KEYS = [
 ] as const;
 
 export function isRetiredFixedEventTemplate(
-    templateKey: MessageTriggerTemplateKey,
+    templateKey: unknown,
 ): boolean {
-    return RETIRED_FIXED_EVENT_TEMPLATE_KEYS.includes(
-        templateKey as (typeof RETIRED_FIXED_EVENT_TEMPLATE_KEYS)[number],
-    );
+    return RETIRED_FIXED_EVENT_TEMPLATE_KEYS.some(key => key === templateKey);
 }
 
 /** Templates whose variables and recipient can be produced by the generic rule engine. */
 export const CONFIGURABLE_SMS_TRIGGER_TEMPLATE_KEYS: readonly MessageTriggerTemplateKey[] = [
+    MessageTriggerTemplateKey.CAREGIVER_SERVICE_START_NOTICE,
+    MessageTriggerTemplateKey.CAREGIVER_SERVICE_END_NOTICE,
     MessageTriggerTemplateKey.SERVICE_INFO,
     MessageTriggerTemplateKey.CLIENT_GREETING,
     MessageTriggerTemplateKey.PRICE_INFO,
@@ -84,9 +91,9 @@ export const CONFIGURABLE_SMS_TRIGGER_TEMPLATE_KEYS: readonly MessageTriggerTemp
 ];
 
 export function isConfigurableSmsTriggerTemplate(
-    templateKey: MessageTriggerTemplateKey,
+    templateKey: unknown,
 ): boolean {
-    return CONFIGURABLE_SMS_TRIGGER_TEMPLATE_KEYS.includes(templateKey);
+    return CONFIGURABLE_SMS_TRIGGER_TEMPLATE_KEYS.some(key => key === templateKey);
 }
 
 export const AGENT_SMS_RULE_ID_PREFIX = "agent-sms:";
@@ -121,8 +128,8 @@ export const EVENT_RECIPIENT_OPTIONS: Record<
     readonly MessageTriggerRecipientType[]
 > = {
     [MessageTriggerEventType.CLIENT_CREATED]: [MessageTriggerRecipientType.CLIENT],
-    [MessageTriggerEventType.SERVICE_START]: [MessageTriggerRecipientType.CLIENT],
-    [MessageTriggerEventType.SERVICE_END]: [MessageTriggerRecipientType.CLIENT],
+    [MessageTriggerEventType.SERVICE_START]: [MessageTriggerRecipientType.CLIENT, MessageTriggerRecipientType.PRIMARY_EMPLOYEE, MessageTriggerRecipientType.SECONDARY_EMPLOYEE],
+    [MessageTriggerEventType.SERVICE_END]: [MessageTriggerRecipientType.CLIENT, MessageTriggerRecipientType.PRIMARY_EMPLOYEE, MessageTriggerRecipientType.SECONDARY_EMPLOYEE],
     [MessageTriggerEventType.EMPLOYEE_ASSIGNED]: [
         MessageTriggerRecipientType.PRIMARY_EMPLOYEE,
         MessageTriggerRecipientType.SECONDARY_EMPLOYEE,
@@ -154,6 +161,30 @@ export const MESSAGE_TRIGGER_TEMPLATE_CATALOG: Record<
     MessageTriggerTemplateKey,
     MessageTriggerTemplateCatalogItem
 > = {
+    [MessageTriggerTemplateKey.CAREGIVER_SERVICE_START_NOTICE]: {
+        key: MessageTriggerTemplateKey.CAREGIVER_SERVICE_START_NOTICE,
+        name: "제공인력 서비스 시작 안내",
+        description: "배정 일정 기준 제공인력 안내",
+        allowedEventTypes: [MessageTriggerEventType.SERVICE_START, MessageTriggerEventType.SERVICE_END],
+        allowedRecipientTypes: [MessageTriggerRecipientType.PRIMARY_EMPLOYEE, MessageTriggerRecipientType.SECONDARY_EMPLOYEE],
+        requiredVariables: [
+            { key: "employeeName", label: "제공인력명" }, { key: "clientName", label: "고객명" },
+            { key: "serviceStartDate", label: "배정 일정" }, { key: "branchName", label: "지점명" },
+        ],
+        providers: { sms: { templateKey: "CAREGIVER_SERVICE_START_NOTICE" } },
+    },
+    [MessageTriggerTemplateKey.CAREGIVER_SERVICE_END_NOTICE]: {
+        key: MessageTriggerTemplateKey.CAREGIVER_SERVICE_END_NOTICE,
+        name: "제공인력 서비스 종료 안내",
+        description: "배정 일정 기준 제공인력 안내",
+        allowedEventTypes: [MessageTriggerEventType.SERVICE_START, MessageTriggerEventType.SERVICE_END],
+        allowedRecipientTypes: [MessageTriggerRecipientType.PRIMARY_EMPLOYEE, MessageTriggerRecipientType.SECONDARY_EMPLOYEE],
+        requiredVariables: [
+            { key: "employeeName", label: "제공인력명" }, { key: "clientName", label: "고객명" },
+            { key: "serviceEndDate", label: "배정 일정" }, { key: "branchName", label: "지점명" },
+        ],
+        providers: { sms: { templateKey: "CAREGIVER_SERVICE_END_NOTICE" } },
+    },
     [MessageTriggerTemplateKey.CLIENT_WELCOME]: {
         key: MessageTriggerTemplateKey.CLIENT_WELCOME,
         name: "고객 등록 안내",
@@ -345,7 +376,16 @@ export function isCompatibleMessageTriggerTemplate(params: {
 }): boolean {
     const item = MESSAGE_TRIGGER_TEMPLATE_CATALOG[params.templateKey];
     return (
-        item.allowedEventTypes.includes(params.eventType) &&
+        !!item && item.allowedEventTypes.includes(params.eventType) &&
         item.allowedRecipientTypes.includes(params.recipientType)
     );
+}
+
+export function isCaregiverTriggerTemplate(key: unknown): key is MessageTriggerTemplateKey.CAREGIVER_SERVICE_START_NOTICE | MessageTriggerTemplateKey.CAREGIVER_SERVICE_END_NOTICE {
+    return key === MessageTriggerTemplateKey.CAREGIVER_SERVICE_START_NOTICE || key === MessageTriggerTemplateKey.CAREGIVER_SERVICE_END_NOTICE;
+}
+
+/** Safe lookup keeps private job keys out of the public template registry. */
+export function findMessageTriggerTemplate(key: unknown): MessageTriggerTemplateCatalogItem | undefined {
+    return Object.values(MESSAGE_TRIGGER_TEMPLATE_CATALOG).find(item => item.key === key);
 }

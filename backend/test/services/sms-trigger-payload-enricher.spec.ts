@@ -1,3 +1,4 @@
+import { SystemSettingService } from "application/services/system-setting.service";
 import { AgentAutomationDispatchUncertainError } from "../../domain/errors/agent-automation-dispatch-uncertain.error";
 import { createLegacyAutomationDeliveryGate } from "../fixtures/legacy-automation-delivery-gate";
 import { MessageTriggerRecipientType, MessageTriggerTemplateKey } from "domain/constants/message-trigger-catalog";
@@ -51,7 +52,7 @@ function makeService(registry: SmsTriggerPayloadEnricherRegistry) {
     const aligo = { sendSms: jest.fn() };
     const templates = { getByKeyForBranch: jest.fn().mockResolvedValue(defaultBranchTemplate()) };
     const logRepository = { create: jest.fn(), update: jest.fn() };
-    const service = new SmsTriggerDeliveryService(aligo as never, templates as never, logRepository as never, undefined, registry, createLegacyAutomationDeliveryGate());
+    const service = new SmsTriggerDeliveryService(aligo as never, templates as never, logRepository as never, undefined, registry, createLegacyAutomationDeliveryGate(), undefined, new SystemSettingService({ execute: jest.fn().mockResolvedValue(null) } as never, {} as never));
     const sendSmsJob = jest.spyOn(service as unknown as SendSmsJobSpy, "sendSmsJob").mockResolvedValue(true);
     return { service, sendSmsJob, aligo };
 }
@@ -257,7 +258,7 @@ describe("SmsTriggerDeliveryService prepared delivery boundary", () => {
             logRepository as never,
             undefined,
             registry,
-        createLegacyAutomationDeliveryGate());
+        createLegacyAutomationDeliveryGate(), undefined, new SystemSettingService({ execute: jest.fn().mockResolvedValue(null) } as never, {} as never));
         const sendSmsJob = jest
             .spyOn(service as unknown as { sendSmsJob: (...args: unknown[]) => Promise<boolean> }, "sendSmsJob")
             .mockResolvedValue(true);
@@ -299,7 +300,7 @@ describe("SmsTriggerDeliveryService prepared delivery boundary", () => {
             { save: jest.fn(), update: jest.fn() } as never,
             undefined,
             registry,
-        createLegacyAutomationDeliveryGate());
+        createLegacyAutomationDeliveryGate(), undefined, new SystemSettingService({ execute: jest.fn().mockResolvedValue(null) } as never, {} as never));
         const job = makeJob();
 
         await expect(service.prepareJob(job)).resolves.toBeNull();
@@ -322,7 +323,7 @@ describe("SmsTriggerDeliveryService prepared delivery boundary", () => {
             { save: jest.fn(), update: jest.fn() } as never,
             undefined,
             registry,
-        createLegacyAutomationDeliveryGate());
+        createLegacyAutomationDeliveryGate(), undefined, new SystemSettingService({ execute: jest.fn().mockResolvedValue(null) } as never, {} as never));
         const job = makeJob();
         const preparation = await service.prepareJob(job);
 
@@ -348,7 +349,7 @@ describe("SmsTriggerDeliveryService prepared delivery boundary", () => {
             { save: jest.fn(), update: jest.fn() } as never,
             undefined,
             registry,
-        createLegacyAutomationDeliveryGate());
+        createLegacyAutomationDeliveryGate(), undefined, new SystemSettingService({ execute: jest.fn().mockResolvedValue(null) } as never, {} as never));
         const sendSmsJob = jest
             .spyOn(service as unknown as { sendSmsJob: (...args: unknown[]) => Promise<boolean> }, "sendSmsJob")
             .mockResolvedValue(true);
@@ -410,7 +411,7 @@ describe("SmsTriggerDeliveryService.sendJob enricher vs duplicate-dispatch conve
             })),
             update: jest.fn(),
         };
-        const service = new SmsTriggerDeliveryService(aligo as never, templates as never, logRepository as never, undefined, registry, createLegacyAutomationDeliveryGate());
+        const service = new SmsTriggerDeliveryService(aligo as never, templates as never, logRepository as never, undefined, registry, createLegacyAutomationDeliveryGate(), undefined, new SystemSettingService({ execute: jest.fn().mockResolvedValue(null) } as never, {} as never));
         const job = makeJob();
 
         await expect(service.sendJob(job)).resolves.toBe(true);

@@ -9,13 +9,13 @@ import {
 
 const mockExistingClient: Client = {
   id: 55,
-  name: "송진호",
+  name: "정다라",
   createdAt: "2026-01-01",
   birthday: "960201",
   dueDate: "2026-06-10",
   birthDate: null,
   address: "경기도 고양시",
-  phone: "01066211878",
+  phone: "01000006621",
   primaryEmployee: null,
   secondaryEmployee: null,
   type: null,

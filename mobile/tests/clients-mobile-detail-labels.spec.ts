@@ -21,7 +21,7 @@ const CLIENT = {
   dueDate: "2026-05-30",
   address: "인천 남동구",
   phone: "010-1111-2222",
-  primaryEmployee: { id: 1, name: "김정인" },
+  primaryEmployee: { id: 1, name: "최가나" },
   secondaryEmployee: null,
   type: "A통합2형",
   duration: 10,

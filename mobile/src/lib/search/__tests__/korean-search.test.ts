@@ -331,25 +331,25 @@ describe("matchesKoreanSearch", () => {
 });
 
 describe("matchesSearchQuery", () => {
-    const fields = ["송진호", "010-6621-1878", "인천광역시 연수구", "Alpha Branch"];
+    const fields = ["정다라", "010-0000-6621", "인천광역시 연수구", "Alpha Branch"];
 
     it("matches NFC text, case-insensitive values, and initial consonants", () => {
-        expect(matchesSearchQuery("송진호", fields)).toBe(true);
+        expect(matchesSearchQuery("정다라", fields)).toBe(true);
         expect(matchesSearchQuery("alpha", fields)).toBe(true);
-        expect(matchesSearchQuery("ㅅㅈㅎ", fields)).toBe(true);
+        expect(matchesSearchQuery("ㅈㄷㄹ", fields)).toBe(true);
         expect(matchesSearchQuery("연수구", fields)).toBe(true);
     });
 
     it("matches formatted phone values across domestic and country-code queries", () => {
-        expect(matchesSearchQuery("0106621", fields)).toBe(true);
-        expect(matchesSearchQuery("010-6621", fields)).toBe(true);
-        expect(matchesSearchQuery("+82 10 6621", fields)).toBe(true);
-        expect(matchesSearchQuery("82 10 6621", fields)).toBe(true);
+        expect(matchesSearchQuery("0100000", fields)).toBe(true);
+        expect(matchesSearchQuery("010-0000", fields)).toBe(true);
+        expect(matchesSearchQuery("+82 10 0000", fields)).toBe(true);
+        expect(matchesSearchQuery("82 10 0000", fields)).toBe(true);
     });
 
     it("does not treat mixed alphanumeric input as a phone-only query", () => {
-        expect(isPhoneLikeSearchQuery("고객0106621")).toBe(false);
-        expect(matchesSearchQuery("고객0106621", fields)).toBe(false);
+        expect(isPhoneLikeSearchQuery("고객0100000")).toBe(false);
+        expect(matchesSearchQuery("고객0100000", fields)).toBe(false);
     });
 
     it("treats a whitespace-only query as no filtering", () => {

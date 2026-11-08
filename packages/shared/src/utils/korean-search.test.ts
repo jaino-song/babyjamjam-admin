@@ -24,24 +24,24 @@ describe("shared Korean search", () => {
   });
 
   it("matches any text field and formatted phone values", () => {
-    const fields = ["송진호", "010-6621-1878", "인천광역시 연수구"];
+    const fields = ["정다라", "010-0000-6621", "인천광역시 연수구"];
 
-    expect(matchesSearchQuery("ㅅㅈㅎ", fields)).toBe(true);
+    expect(matchesSearchQuery("ㅈㄷㄹ", fields)).toBe(true);
     expect(matchesSearchQuery("연수구", fields)).toBe(true);
-    expect(matchesSearchQuery("0106621", fields)).toBe(true);
-    expect(matchesSearchQuery("+82 10 6621", fields)).toBe(true);
+    expect(matchesSearchQuery("0100000", fields)).toBe(true);
+    expect(matchesSearchQuery("+82 10 0000", fields)).toBe(true);
     expect(matchesSearchQuery("없는 값", fields)).toBe(false);
     expect(matchesSearchQuery("   ", fields)).toBe(true);
   });
 
   it("only performs phone matching for explicitly phone-like queries", () => {
-    const fields = ["송진호", "010-6621-1878"];
+    const fields = ["정다라", "010-0000-6621"];
 
-    expect(isPhoneLikeSearchQuery("010-6621")).toBe(true);
-    expect(isPhoneLikeSearchQuery("+82 10 6621")).toBe(true);
-    expect(isPhoneLikeSearchQuery("고객0106621")).toBe(false);
-    expect(isPhoneLikeSearchQuery("0106621abc")).toBe(false);
-    expect(matchesSearchQuery("고객0106621", fields)).toBe(false);
-    expect(matchesSearchQuery("010-6621", fields)).toBe(true);
+    expect(isPhoneLikeSearchQuery("010-0000")).toBe(true);
+    expect(isPhoneLikeSearchQuery("+82 10 0000")).toBe(true);
+    expect(isPhoneLikeSearchQuery("고객0100000")).toBe(false);
+    expect(isPhoneLikeSearchQuery("0100000abc")).toBe(false);
+    expect(matchesSearchQuery("고객0100000", fields)).toBe(false);
+    expect(matchesSearchQuery("010-0000", fields)).toBe(true);
   });
 });

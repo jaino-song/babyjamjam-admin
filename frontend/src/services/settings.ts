@@ -102,6 +102,51 @@ export interface RibbonConfigResponse extends RibbonConfig {
     updatedAt?: string;
 }
 
+import type {
+    MessageAutomationPolicyConfigResponse, MessageAutomationPolicyPreviewResponse,
+    UpdateMessageAutomationPolicyConfigRequest, MessageTriggerRuleGroupList,
+    MessageTriggerRuleGroupView, CreateMessageTriggerRuleGroupDto,
+    UpdateMessageTriggerRuleGroupDto, PreviewMessageTriggerRuleGroupDto,
+    MessageTriggerRuleGroupPreviewResponse,
+} from "@babyjamjam/shared/types/message";
+export type {
+    MessageAutomationPolicyConfiguration, MessageAutomationPolicyConfigResponse,
+    MessageAutomationPolicyPreviewResponse, UpdateMessageAutomationPolicyConfigRequest,
+    MessageTriggerRuleGroupList, MessageTriggerRuleGroupView, CreateMessageTriggerRuleGroupDto,
+    UpdateMessageTriggerRuleGroupDto, PreviewMessageTriggerRuleGroupDto,
+    MessageTriggerRuleGroupPreviewResponse,
+} from "@babyjamjam/shared/types/message";
+
+const branchOptions = (expectedBranchId: string) => ({ params: { expectedBranchId } });
+export const messagePolicyApi = {
+    async getConfiguration(branchId: string): Promise<MessageAutomationPolicyConfigResponse> {
+        return (await api.get("/settings/message-automation-policies/config", branchOptions(branchId))).data;
+    },
+    async saveConfiguration(input: UpdateMessageAutomationPolicyConfigRequest, branchId: string): Promise<MessageAutomationPolicyConfigResponse> {
+        return (await api.put("/settings/message-automation-policies/config", input, branchOptions(branchId))).data;
+    },
+    async previewConfiguration(input: UpdateMessageAutomationPolicyConfigRequest, branchId: string): Promise<MessageAutomationPolicyPreviewResponse> {
+        return (await api.post("/settings/message-automation-policies/config/preview", input, branchOptions(branchId))).data;
+    },
+    async listGroups(branchId: string): Promise<MessageTriggerRuleGroupList> {
+        const { data } = await api.get("/message-trigger-rule-groups", branchOptions(branchId));
+        if (!data || !Array.isArray(data.groups) || !Array.isArray(data.standaloneRules)) throw new Error("자동 전송 루틴 응답을 확인할 수 없어요.");
+        return data;
+    },
+    async createGroup(input: CreateMessageTriggerRuleGroupDto, branchId: string): Promise<MessageTriggerRuleGroupView> {
+        return (await api.post("/message-trigger-rule-groups", input, branchOptions(branchId))).data;
+    },
+    async updateGroup(id: string, input: UpdateMessageTriggerRuleGroupDto, branchId: string): Promise<MessageTriggerRuleGroupView> {
+        return (await api.put(`/message-trigger-rule-groups/${encodeURIComponent(id)}`, input, branchOptions(branchId))).data;
+    },
+    async deleteGroup(id: string, branchId: string): Promise<void> {
+        await api.delete(`/message-trigger-rule-groups/${encodeURIComponent(id)}`, branchOptions(branchId));
+    },
+    async previewGroup(input: PreviewMessageTriggerRuleGroupDto, branchId: string): Promise<MessageTriggerRuleGroupPreviewResponse> {
+        return (await api.post("/message-trigger-rule-groups/preview", input, branchOptions(branchId))).data;
+    },
+};
+
 export const settingsApi = {
     getClientRegistrationPolicy: async (): Promise<ClientRegistrationPolicy> => {
         const { data } = await api.get("/settings/client-registration-policy");

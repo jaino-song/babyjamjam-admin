@@ -1,3 +1,6 @@
+import { GetSettingUsecase, UpdateSettingUsecase } from "application/usecases/system-setting";
+import { SbSystemSettingRepository } from "infrastructure/database/repositories/sb.system-setting.repository";
+import { SystemSettingService } from "application/services/system-setting.service";
 import { ConflictException } from "@nestjs/common";
 import { AligoService } from "application/services/aligo.service";
 import { SmsProviderAcceptanceService } from "application/services/sms-provider-acceptance.service";
@@ -103,7 +106,7 @@ describeReal("SMS concurrent manual retry family (real PostgreSQL)", () => {
             undefined,
             undefined,
             jobRepository,
-            undefined,
+            undefined,new SystemSettingService(new GetSettingUsecase(new SbSystemSettingRepository(handle.service)), new UpdateSettingUsecase(new SbSystemSettingRepository(handle.service))),
         );
     }
 

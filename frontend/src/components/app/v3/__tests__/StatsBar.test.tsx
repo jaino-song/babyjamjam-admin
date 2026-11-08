@@ -127,4 +127,15 @@ describe("StatsBar document jobs card", () => {
     expect(screen.queryByRole("button", CARD)).not.toBeInTheDocument();
     expect(screen.getByText("둘째")).toBeInTheDocument();
   });
+  it("supports independent item loading while retaining the shared default", () => {
+    const { container } = render(<StatsBar name="desktop_chat_stats" isLoading items={[
+      { icon: Clock3, value: 7, label: "공유 로딩" },
+      { icon: Clock3, value: 0, label: "독립 완료", isLoading: false },
+      { icon: Clock3, value: 9, label: "독립 로딩", isLoading: true },
+    ]} />);
+    expect(screen.getByText("0")).toBeInTheDocument();
+    expect(screen.queryByText("7")).not.toBeInTheDocument();
+    expect(screen.queryByText("9")).not.toBeInTheDocument();
+    expect(container.querySelector('[data-component="desktop_chat_stats_stats_item-1"]')).toHaveTextContent("독립 완료");
+  });
 });

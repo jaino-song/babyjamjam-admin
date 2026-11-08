@@ -14,6 +14,16 @@ import {
     VoidContractDocumentResponse,
 } from "@babyjamjam/shared/types/eformsign";
 import type {
+    MessageAutomationPolicyConfigResponse,
+    UpdateMessageAutomationPolicyConfigRequest,
+    MessageAutomationPolicyPreviewResponse,
+    MessageAutomationPolicyConfiguration,
+    MessageTriggerRuleGroupList,
+    MessageTriggerRuleGroupView,
+    CreateMessageTriggerRuleGroupDto,
+    UpdateMessageTriggerRuleGroupDto,
+    PreviewMessageTriggerRuleGroupDto,
+    MessageTriggerRuleGroupPreviewResponse,
     MessageAutomationPastTriggerConfig,
     MessageAutomationPoliciesResponse,
     MessageAutomationPolicy,
@@ -585,6 +595,18 @@ export interface NotificationPreferencesResponse {
 }
 
 export const settingsApi = {
+    getMessageAutomationConfig: async (branchId: string): Promise<MessageAutomationPolicyConfigResponse> => {
+        const { data } = await api.get('/settings/message-automation-policies/config', { params: { expectedBranchId: branchId } });
+        return data;
+    },
+    updateMessageAutomationConfig: async (request: UpdateMessageAutomationPolicyConfigRequest, branchId: string): Promise<MessageAutomationPolicyConfigResponse> => {
+        const { data } = await api.put('/settings/message-automation-policies/config', request, { params: { expectedBranchId: branchId } });
+        return data;
+    },
+    previewMessageAutomationConfig: async (configuration: MessageAutomationPolicyConfiguration, branchId: string, expectedVersion: string | null): Promise<MessageAutomationPolicyPreviewResponse> => {
+        const { data } = await api.post('/settings/message-automation-policies/config/preview', { expectedVersion, configuration }, { params: { expectedBranchId: branchId } });
+        return data;
+    },
     getClientRegistrationPolicy: async (): Promise<ClientRegistrationPolicy> => {
         const { data } = await api.get("/settings/client-registration-policy");
         return data;
@@ -646,3 +668,27 @@ export const settingsApi = {
         return data;
     },
 }
+
+/** Group transport is kept here so mobile branch-scoped orchestration owns its cache. */
+export const messageRuleGroupsApi = {
+    list: async (branchId: string): Promise<MessageTriggerRuleGroupList> => {
+        const { data } = await api.get('/message-trigger-rule-groups', { params: { expectedBranchId: branchId } });
+        if (!data || !Array.isArray(data.groups) || !Array.isArray(data.standaloneRules)) throw new Error('자동 전송 규칙을 불러오지 못했습니다.');
+        return data;
+    },
+    create: async (draft: CreateMessageTriggerRuleGroupDto, branchId: string): Promise<MessageTriggerRuleGroupView> => {
+        const { data } = await api.post('/message-trigger-rule-groups', draft, { params: { expectedBranchId: branchId } });
+        return data;
+    },
+    update: async (id: string, draft: UpdateMessageTriggerRuleGroupDto, branchId: string): Promise<MessageTriggerRuleGroupView> => {
+        const { data } = await api.put(`/message-trigger-rule-groups/${encodeURIComponent(id)}`, draft, { params: { expectedBranchId: branchId } });
+        return data;
+    },
+    remove: async (id: string, expectedVersion: number, branchId: string): Promise<void> => {
+        await api.delete(`/message-trigger-rule-groups/${encodeURIComponent(id)}`, { params: { expectedBranchId: branchId }, data: { expectedVersion } });
+    },
+    preview: async (draft: PreviewMessageTriggerRuleGroupDto, branchId: string): Promise<MessageTriggerRuleGroupPreviewResponse> => {
+        const { data } = await api.post('/message-trigger-rule-groups/preview', draft, { params: { expectedBranchId: branchId } });
+        return data;
+    },
+};

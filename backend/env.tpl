@@ -51,6 +51,8 @@ EFORMSIGN_FEEDBACK_TEMPLATE_ID_10="0dca5a5ace7d47e6a911c6bfa3103534"
 EFORMSIGN_FEEDBACK_TEMPLATE_ID_15="acc55dd658c6489f80e64bb3d3970140"
 EFORMSIGN_FEEDBACK_TEMPLATE_ID_20="7522d1e4786748068dc3a93e0bfb081a"
 EFORMSIGN_WEBHOOK_SECRET=
+# Bearer token for the daily backup script (/internal/eformsign-backup). Blank disables those routes (404).
+EFORMSIGN_BACKUP_TOKEN=
 # The 6-hourly eformsign mirror sweep (webhook safety net behind auto client
 # registration) requires a cross-instance lock from VALKEY_URL. This deployment
 # runs a single backend replica, so approve the in-process lock instead of

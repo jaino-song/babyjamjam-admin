@@ -276,7 +276,7 @@ test.describe("clients/new wizard", () => {
     const employeeInput = page.locator(`[data-component="${primaryAutocomplete}_input"]`);
 
     await employeeInput.click();
-    await employeeInput.fill("김정인");
+    await employeeInput.fill("최가나");
     await page.locator(`[data-component="${primaryAutocomplete}_toggle"]`).click();
 
     const dialog = page.locator('[data-component="employees-form-dialog"]');
@@ -302,7 +302,7 @@ test.describe("clients/new wizard", () => {
       }))
       .toBe(true);
     await expect(dialog.locator('[data-component="mobile_employees_form-dialog_card_assignment"]')).toContainText("제공인력 1에 배정");
-    await expect(dialog.locator('[data-component="mobile_employees_form-dialog_card_section-basic_field-name"] input')).toHaveValue("김정인");
+    await expect(dialog.locator('[data-component="mobile_employees_form-dialog_card_section-basic_field-name"] input')).toHaveValue("최가나");
     await expect(dialog.locator('[data-component="mobile_employees_form-dialog_card_section-basic_field-birthday"] input')).toHaveAttribute("placeholder", "1958-03-03");
     await expect(dialog.locator('[data-component="employees-form-dialog-submit"]')).toHaveText("등록");
     await expect(dialog.locator('[data-component="employees-form-dialog-cancel"]')).toHaveClass(/btn-press/);

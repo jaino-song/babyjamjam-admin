@@ -16,6 +16,8 @@ export interface RequiredMessageTemplateVariable {
 export const MESSAGE_TRIGGER_AUTOMATIC_VARIABLE_KEYS: Readonly<
     Record<MessageTriggerTemplateKey, readonly string[]>
 > = {
+    [MessageTriggerTemplateKey.CAREGIVER_SERVICE_START_NOTICE]: ["employeeName", "clientName", "serviceStartDate", "serviceEndDate", "branchName"],
+    [MessageTriggerTemplateKey.CAREGIVER_SERVICE_END_NOTICE]: ["employeeName", "clientName", "serviceStartDate", "serviceEndDate", "branchName"],
     [MessageTriggerTemplateKey.CLIENT_WELCOME]: [
         "name",
         "clientName",

@@ -195,7 +195,7 @@ describe("GET /api/employees/check-phone", () => {
         });
 
         const response = await checkEmployeePhone(
-            createRequest("/api/employees/check-phone?phone=01096411878"),
+            createRequest("/api/employees/check-phone?phone=01000009641"),
         );
 
         await expectSanitizedUpstreamFailure(response, 500);

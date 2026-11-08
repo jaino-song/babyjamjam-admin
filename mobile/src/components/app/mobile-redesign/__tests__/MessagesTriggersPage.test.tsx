@@ -1,5 +1,9 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render as renderBase, screen, waitFor } from "@testing-library/react";
 
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import type { ReactElement } from "react";
+import type { MessageTriggerRule, MessageTriggerRuleGroupList, MessageTriggerRuleGroupView } from "@babyjamjam/shared/types/message";
+import { messageRuleGroupsApi } from "@/services/api";
 import { MessagesTriggersPage } from "../MessagesTriggersPage";
 import { useGetAuthUser } from "@/hooks/useGetAuthUser";
 
@@ -7,19 +11,8 @@ const mockPush = jest.fn();
 const mockReplace = jest.fn();
 const mockBack = jest.fn();
 let mockSearchParams = new URLSearchParams();
-type MockRule = {
-  id: string;
-  branchId: string | null;
-  name: string;
-  isActive: boolean;
-  eventType: "SERVICE_START";
-  offsetType: "BEFORE_DAYS";
-  offsetDays: number;
-  recipientType: "CLIENT";
-  templateKey: "SERVICE_INFO";
-  createdAt: string;
-  updatedAt: string;
-};
+type MockRule = MessageTriggerRule;
+let mockGroups: MessageTriggerRuleGroupView[] = [];
 
 let mockRules: MockRule[] = [];
 let mockRulesQuery: {
@@ -40,14 +33,20 @@ jest.mock("@/hooks/useGetAuthUser", () => ({
 
 const mockUseGetAuthUser = useGetAuthUser as jest.Mock;
 
-jest.mock("@/features/message-triggers/hooks/use-message-triggers", () => ({
-  useMessageTriggerRules: () => ({
-    data: mockRulesQuery.data ?? mockRules,
-    isError: mockRulesQuery.isError,
-    isLoading: mockRulesQuery.isLoading,
-    isFetching: mockRulesQuery.isFetching,
-  }),
-}));
+jest.mock("@/services/api", () => ({ messageRuleGroupsApi: { list: jest.fn() } }));
+
+function render(ui: ReactElement, { seedGroups = true } = {}) {
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity, retryOnMount: false, refetchOnMount: false }, mutations: { retry: false } } });
+  const syncFixture = () => {
+    if (!seedGroups) return;
+    const query = queryClient.getQueryCache().build<MessageTriggerRuleGroupList, Error>(queryClient, { queryKey: ["message-trigger-rule-groups", "branch-1"] });
+    query.setState({ data: { groups: mockGroups, standaloneRules: mockRulesQuery.data ?? mockRules }, dataUpdatedAt: Date.now(), status: mockRulesQuery.isError ? "error" : "success", error: mockRulesQuery.isError ? new Error("group fetch failed") : null, fetchStatus: mockRulesQuery.isFetching ? "fetching" : "idle" });
+  };
+  syncFixture();
+  const tree = (element: ReactElement) => <QueryClientProvider client={queryClient}>{element}</QueryClientProvider>;
+  const view = renderBase(tree(ui));
+  return { ...view, rerender: (element: ReactElement) => { act(() => { syncFixture(); view.rerender(tree(element)); }); } };
+}
 
 jest.mock("@/components/app/mobile-redesign/ClientRegistrationPolicySettings", () => ({
   ClientRegistrationPolicySettings: () => <div data-testid="client-registration-policy" />,
@@ -58,13 +57,16 @@ jest.mock("@/components/app/mobile-redesign/MessageTriggerList", () => ({
     canManage,
     onCreate,
     onEdit,
+    onEditGroup,
   }: {
     canManage: boolean;
     onCreate?: () => void;
     onEdit?: (rule: MockRule) => void;
+    onEditGroup?: (group: MessageTriggerRuleGroupView) => void;
   }) => (
     <div data-testid="message-trigger-list">
       {canManage ? <button type="button" onClick={onCreate}>+ 규칙</button> : null}
+      {canManage && mockGroups[0] ? <button type="button" onClick={() => onEditGroup?.(mockGroups[0])}>그룹 편집 열기</button> : null}
       {canManage && mockRules[0] ? (
         <button type="button" onClick={() => onEdit?.(mockRules[0])}>규칙 편집 열기</button>
       ) : null}
@@ -93,6 +95,9 @@ describe("MessagesTriggersPage", () => {
   beforeEach(() => {
     mockSearchParams = new URLSearchParams();
     mockRules = [];
+    mockGroups = [];
+    jest.mocked(messageRuleGroupsApi.list).mockReset();
+    jest.mocked(messageRuleGroupsApi.list).mockImplementation(() => new Promise<MessageTriggerRuleGroupList>(() => undefined));
     mockRulesQuery = {
       data: undefined,
       isError: false,
@@ -103,7 +108,7 @@ describe("MessagesTriggersPage", () => {
     mockReplace.mockReset();
     mockBack.mockReset();
     mockUseGetAuthUser.mockReturnValue({
-      data: { role: "user", branchRole: "manager" },
+      data: { branchId: "branch-1", role: "user", branchRole: "manager" },
       isPending: false,
       isLoading: false,
       isFetching: false,
@@ -121,6 +126,8 @@ describe("MessagesTriggersPage", () => {
     offsetDays: 7,
     recipientType: "CLIENT",
     templateKey: "SERVICE_INFO",
+    targetClientStatus: "all",
+    retryOnFailure: true,
     createdAt: "2026-09-01T00:00:00.000Z",
     updatedAt: "2026-09-01T00:00:00.000Z",
   });
@@ -193,7 +200,7 @@ describe("MessagesTriggersPage", () => {
       mockRules = item === "new" ? [] : [createRule()];
       mockSearchParams = new URLSearchParams({ item });
       mockUseGetAuthUser.mockReturnValue({
-        data: { role: "user", branchRole: "user" },
+        data: { branchId: "branch-1", role: "user", branchRole: "user" },
         isPending: false,
         isLoading: false,
         isFetching: false,
@@ -224,7 +231,7 @@ describe("MessagesTriggersPage", () => {
     expect(mockReplace).not.toHaveBeenCalled();
 
     mockUseGetAuthUser.mockReturnValue({
-      data: { role: "user", branchRole: "manager" },
+      data: { branchId: "branch-1", role: "user", branchRole: "manager" },
       isPending: false,
       isLoading: false,
       isFetching: false,
@@ -245,7 +252,7 @@ describe("MessagesTriggersPage", () => {
 
     mockReplace.mockReset();
     mockUseGetAuthUser.mockReturnValue({
-      data: { role: "user", branchRole: "manager" },
+      data: { branchId: "branch-1", role: "user", branchRole: "manager" },
       isPending: false,
       isLoading: false,
       isFetching: true,
@@ -257,7 +264,7 @@ describe("MessagesTriggersPage", () => {
     expect(mockReplace).not.toHaveBeenCalled();
 
     mockUseGetAuthUser.mockReturnValue({
-      data: { role: "user", branchRole: "manager" },
+      data: { branchId: "branch-1", role: "user", branchRole: "manager" },
       isPending: false,
       isLoading: false,
       isFetching: false,
@@ -269,7 +276,7 @@ describe("MessagesTriggersPage", () => {
     expect(mockReplace).not.toHaveBeenCalled();
 
     mockUseGetAuthUser.mockReturnValue({
-      data: { role: "user", branchRole: "manager" },
+      data: { branchId: "branch-1", role: "user", branchRole: "manager" },
       isPending: false,
       isLoading: false,
       isFetching: false,
@@ -279,7 +286,7 @@ describe("MessagesTriggersPage", () => {
     expectDetailVisible(view.container);
 
     mockUseGetAuthUser.mockReturnValue({
-      data: { role: "user", branchRole: "user" },
+      data: { branchId: "branch-1", role: "user", branchRole: "user" },
       isPending: false,
       isLoading: false,
       isFetching: false,
@@ -320,7 +327,7 @@ describe("MessagesTriggersPage", () => {
     mockRules = [createRule()];
     mockSearchParams = new URLSearchParams({ item: "rule-1" });
     mockUseGetAuthUser.mockReturnValue({
-      data: { role: "user", branchRole: "manager" },
+      data: { branchId: "branch-1", role: "user", branchRole: "manager" },
       isPending: false,
       isLoading: false,
       isFetching: true,
@@ -333,7 +340,7 @@ describe("MessagesTriggersPage", () => {
     expect(mockReplace).not.toHaveBeenCalled();
 
     mockUseGetAuthUser.mockReturnValue({
-      data: { role: "user", branchRole: "manager" },
+      data: { branchId: "branch-1", role: "user", branchRole: "manager" },
       isPending: false,
       isLoading: false,
       isFetching: false,
@@ -345,7 +352,7 @@ describe("MessagesTriggersPage", () => {
     expect(mockReplace).not.toHaveBeenCalled();
 
     mockUseGetAuthUser.mockReturnValue({
-      data: { role: "user", branchRole: "user" },
+      data: { branchId: "branch-1", role: "user", branchRole: "user" },
       isPending: false,
       isLoading: false,
       isFetching: false,
@@ -356,4 +363,18 @@ describe("MessagesTriggersPage", () => {
     expectListVisible(view.container);
     expect(mockReplace).toHaveBeenCalledWith("/messages/automation", { scroll: false });
   });
+  it("opens the selected group from an actual branch-scoped response without rendering child detail rows", async () => {
+    const primary = { ...createRule("child-primary"), groupId: "group-both", recipientType: "PRIMARY_EMPLOYEE" as const, templateKey: "CAREGIVER_SERVICE_START_NOTICE" as const };
+    const secondary = { ...primary, id: "child-secondary", recipientType: "SECONDARY_EMPLOYEE" as const };
+    const group: MessageTriggerRuleGroupView = { id: "group-both", branchId: "branch-1", name: "주보조 안내", recipientMode: "BOTH_EMPLOYEES", version: 3, createdAt: "2026-11-01", updatedAt: "2026-11-01", deletedAt: null, rules: [primary, secondary], eventType: "SERVICE_START", offsetType: "BEFORE_DAYS", offsetDays: 7, sendTime: "09:00", targetClientStatus: "all", retryOnFailure: true, isActive: true, recipientTemplates: { PRIMARY_EMPLOYEE: "CAREGIVER_SERVICE_START_NOTICE", SECONDARY_EMPLOYEE: "CAREGIVER_SERVICE_START_NOTICE" } };
+    jest.mocked(messageRuleGroupsApi.list).mockResolvedValue({ groups: [group], standaloneRules: [] });
+    mockGroups = [group];
+    mockSearchParams = new URLSearchParams({ item: "group-both" });
+    const view = render(<MessagesTriggersPage />, { seedGroups: false });
+    await waitFor(() => expectDetailVisible(view.container));
+    expect(screen.getByText("규칙 편집 화면")).toHaveAttribute("data-component", "mobile_messages_automation_page_screen_content_sliding-card_stage_detail-pane_body_rule-group-both_editor");
+    expect(messageRuleGroupsApi.list).toHaveBeenCalledWith("branch-1");
+    expect(mockReplace).not.toHaveBeenCalled();
+  });
+
 });

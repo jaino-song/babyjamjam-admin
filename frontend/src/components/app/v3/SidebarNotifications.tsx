@@ -263,11 +263,7 @@ export function SidebarNotifications() {
                       isInteractive: Boolean(item),
                     })}
                     slotClassName={({ item }) =>
-                      cn(
-                        "hover:!border-transparent hover:!bg-v3-primary-light/55",
-                        item && "h-auto min-h-[calc(94px*var(--glint-ui-scale,1))] items-start overflow-visible",
-                        item?.unread && "border-v3-primary/20 bg-v3-primary-light/20 hover:!border-v3-primary/20 hover:!bg-v3-primary-light/65",
-                      )
+                      item ? "h-auto min-h-[calc(94px*var(--glint-ui-scale,1))] items-start overflow-visible" : ""
                     }
                     render={({ item }) => {
                       if (!item) return null;
@@ -284,6 +280,14 @@ export function SidebarNotifications() {
                           subtitleTextClassName="overflow-visible whitespace-normal break-words text-clip leading-[calc(16px*var(--glint-ui-scale,1))]"
                           status={
                             <div className="flex shrink-0 flex-col items-end gap-[calc(4px*var(--glint-ui-scale,1))]">
+                              {item.unread ? (
+                                <span
+                                  data-component="desktop_chrome_sidebar_notifications-modal_item_unread"
+                                  className="text-[calc(10.4px*var(--glint-ui-scale,1))] font-semibold text-v3-primary"
+                                >
+                                  읽지 않음
+                                </span>
+                              ) : null}
                               {item.actionReason ? (
                                 <StatusPill
                                   variant={getNotificationStatusVariant(item.actionPriority)}

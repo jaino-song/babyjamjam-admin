@@ -15,6 +15,7 @@ import { PrismaClientDashboardRepository } from "infrastructure/database/reposit
 import { DatabaseModule } from "infrastructure/database/database.module";
 import { ClientService } from "application/services/client.service";
 import { ClientDueDateSchedulerService } from "application/services/client-due-date-scheduler.service";
+import { ServiceRecordStartDateChangeService } from "application/services/service-record-start-date-change.service";
 import { ServiceRecordScheduleRealignmentService } from "application/services/service-record-schedule-realignment.service";
 import { ClientController } from "interface/controllers/client.controller";
 import { MessageModule } from "./message.module";
@@ -52,6 +53,7 @@ import { HolidayModule } from "./holiday.module";
         UpdateClientUsecase,
         ClientService,
         ServiceRecordScheduleRealignmentService,
+        ServiceRecordStartDateChangeService,
         ClientDueDateSchedulerService,
         ClientAgentCapabilitiesProvider,
         DashboardAgentCapabilitiesProvider,

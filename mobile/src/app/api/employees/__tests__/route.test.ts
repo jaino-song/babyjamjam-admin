@@ -372,7 +372,7 @@ describe("employee API routes", () => {
       });
 
       const response = await checkEmployeePhone(
-        new NextRequest("http://localhost/api/employees/check-phone?phone=01096411878", {
+        new NextRequest("http://localhost/api/employees/check-phone?phone=01000009641", {
           headers: { cookie: "auth_token=auth-token" },
         }),
       );

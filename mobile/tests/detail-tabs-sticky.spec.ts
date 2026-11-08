@@ -18,7 +18,7 @@ const CLIENT = {
   dueDate: "2026-05-30",
   address: "인천 남동구",
   phone: "010-1111-2222",
-  primaryEmployee: { id: 1, name: "김정인" },
+  primaryEmployee: { id: 1, name: "최가나" },
   secondaryEmployee: null,
   type: "A통합2형",
   duration: 10,
@@ -51,7 +51,7 @@ const EMPLOYEE_LIST_ROW =
 const MOCK_EMPLOYEES = [
   {
     id: 101,
-    name: "김정인",
+    name: "최가나",
     workArea: ["incheon-namdong"],
     phone: "010-1111-2222",
     grade: "A",
@@ -213,7 +213,7 @@ test.describe("mobile detail sheet sticky tabs", () => {
     });
 
     await page.goto("/employees");
-    const row = page.locator(`[data-component="${EMPLOYEE_LIST_ROW}"]`, { hasText: "김정인" });
+    const row = page.locator(`[data-component="${EMPLOYEE_LIST_ROW}"]`, { hasText: "최가나" });
     await expect(row).toBeVisible({ timeout: 15000 });
     await row.click();
 

@@ -10,6 +10,46 @@ import {
 const REQUEST_ID = "req-bjj-319-001";
 
 describe("problem details public contract", () => {
+    it.each([
+        { serviceStarted: true, recordedSessionCount: 3 },
+        { serviceStarted: false, recordedSessionCount: 0 },
+        { serviceStarted: true, recordedSessionCount: 10000 },
+    ])("keeps the bounded start-date lock extension %j", (startDateLock) => {
+        const problem = createProblemDetails({ code: "SERVICE_RECORD_START_DATE_LOCKED", requestId: REQUEST_ID });
+        expect(parseProblemDetails({ ...problem, startDateLock: { ...startDateLock, secret: "dropped" }, unknown: true }, 409))
+            .toEqual({ ...problem, startDateLock });
+    });
+
+    it.each([
+        ...[-1, "3", 1.5, 10001, Number.MAX_SAFE_INTEGER + 1, NaN, Infinity, null, undefined, true]
+            .map((recordedSessionCount) => ({ serviceStarted: true, recordedSessionCount })),
+        ...["yes", 1, null, undefined]
+            .map((serviceStarted) => ({ serviceStarted, recordedSessionCount: 3 })),
+        { serviceStarted: true },
+        { recordedSessionCount: 3 },
+        {}, null, undefined, [], "invalid", 3,
+        Object.assign([], { serviceStarted: true, recordedSessionCount: 3 }),
+        Object.assign(Object.create({ serviceStarted: true }), { recordedSessionCount: 3 }),
+        Object.assign(Object.create({ recordedSessionCount: 3 }), { serviceStarted: true }),
+        Object.defineProperty({ recordedSessionCount: 3 }, "serviceStarted", { get() { throw new Error("unreadable"); } }),
+        Object.defineProperty({ serviceStarted: true }, "recordedSessionCount", { get() { throw new Error("unreadable"); } }),
+    ])("drops malformed start-date lock extension %j without rejecting the problem", (startDateLock) => {
+        const problem = createProblemDetails({ code: "SERVICE_RECORD_START_DATE_LOCKED", requestId: REQUEST_ID });
+        expect(parseProblemDetails({ ...problem, startDateLock }, 409)).toEqual(problem);
+    });
+
+    it("drops a start-date lock extension on another problem code", () => {
+        const problem = createProblemDetails({ code: "SERVICE_RECORD_FINALIZED", requestId: REQUEST_ID });
+        const startDateLock = { serviceStarted: true, recordedSessionCount: 3 };
+        expect(parseProblemDetails({ ...problem, startDateLock }, 409)).toEqual(problem);
+    });
+
+    it("ignores an inherited start-date lock extension", () => {
+        const problem = createProblemDetails({ code: "SERVICE_RECORD_START_DATE_LOCKED", requestId: REQUEST_ID });
+        const payload = Object.assign(Object.create({ startDateLock: { serviceStarted: true, recordedSessionCount: 3 } }), problem);
+        expect(parseProblemDetails(payload, 409)).toEqual(problem);
+    });
+
     it("localizes the deleted employee phone conflict and only accepts its bounded extension", () => {
         const problem = createProblemDetails({ code: "EMPLOYEE_PHONE_HELD_BY_DELETED", requestId: REQUEST_ID });
         expect(problem.status).toBe(409);

@@ -1,5 +1,7 @@
 "use client";
 
+import { messagePolicyApi, type CreateMessageTriggerRuleGroupDto, type UpdateMessageTriggerRuleGroupDto, type PreviewMessageTriggerRuleGroupDto } from "@/services/settings";
+import { isBranchContextAligned } from "@/features/system-templates/branch-context";
 import { useMemo } from "react";
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -443,4 +445,29 @@ export function useDeleteMessageTriggerRule() {
             await queryClient.invalidateQueries({ queryKey: messageTriggerKeys.all });
         },
     });
+}
+
+// Group transport is partitioned by the branch captured for this editor.
+export function useMessageTriggerRuleGroups(branchId: string | null) {
+    return useQuery({
+        queryKey: ["message-trigger-rule-groups", branchId],
+        queryFn: () => messagePolicyApi.listGroups(branchId!),
+        enabled: !!branchId,
+    });
+}
+export function useMessageTriggerGroupMutations(branchId: string | null) {
+    const queryClient = useQueryClient();
+    const capturedBranch = () => {
+        if (!branchId || !isBranchContextAligned(branchId)) throw new Error("지점이 변경되어 요청할 수 없어요.");
+        return branchId;
+    };
+    const invalidate = async () => {
+        await queryClient.invalidateQueries({ queryKey: ["message-trigger-rule-groups", branchId] });
+        await queryClient.invalidateQueries({ queryKey: messageTriggerKeys.all });
+    };
+    const create = useMutation({ mutationFn: (draft: CreateMessageTriggerRuleGroupDto) => messagePolicyApi.createGroup(draft, capturedBranch()), onSuccess: invalidate });
+    const update = useMutation({ mutationFn: ({ id, draft }: { id: string; draft: UpdateMessageTriggerRuleGroupDto }) => messagePolicyApi.updateGroup(id, draft, capturedBranch()), onSuccess: invalidate });
+    const remove = useMutation({ mutationFn: (id: string) => messagePolicyApi.deleteGroup(id, capturedBranch()), onSuccess: invalidate });
+    const preview = useMutation({ mutationFn: (input: PreviewMessageTriggerRuleGroupDto) => messagePolicyApi.previewGroup(input, capturedBranch()) });
+    return { create, update, remove, preview };
 }

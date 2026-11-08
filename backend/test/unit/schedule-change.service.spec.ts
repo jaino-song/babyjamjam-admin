@@ -37,6 +37,8 @@ const createMockPrismaService = () => ({
     employee_schedule: {
         findFirst: jest.fn(),
         findUnique: jest.fn(),
+        // Every schedule of the client, read by the historical-writer guard of a canonical vector.
+        findMany: jest.fn().mockResolvedValue([]),
         update: jest.fn(),
     },
     service_record_day: {
@@ -1307,6 +1309,246 @@ describe("ScheduleChangeService", () => {
             await expectConflictCode(() => service.approve("request-1", tenant), "REQUEST_NOT_PENDING");
             expect(txPrismaService.employee_schedule.update).not.toHaveBeenCalled();
             expect(triggerService.syncEmployeeAssignmentRulesForSchedule).not.toHaveBeenCalled();
+        });
+    });
+
+    describe("a corrected record with a historical writer slot", () => {
+        // A from-1 resume left this state: A (schedule 11) was terminated on 07-03 and is stored
+        // [07-03, 07-03]; she wrote session 1 on 07-01 only, so that slot is a kept writer slot and A
+        // bears no period. B (schedule 12) owns sessions 2..5 and is stored [07-02, 07-10].
+        const A_SCHEDULE = 11;
+        const B_SCHEDULE = 12;
+        const correctedVector = () => [
+            ["2026-07-01", "asg-a", 11, 5],
+            ["2026-07-02", "asg-b", 12, 6],
+            ["2026-07-03", "asg-b", 12, 6],
+            ["2026-07-06", "asg-b", 12, 6],
+            ["2026-07-07", "asg-b", 12, 6],
+        ].map(([serviceDate, assignmentId, scheduleId, employeeId], offset) => ({
+            sessionIndex: offset + 1,
+            serviceDate,
+            originalDate: serviceDate,
+            assignmentId,
+            scheduleId,
+            employeeId,
+            provenanceVersion: "revision-1",
+        }));
+        const clientSchedules = () => [
+            {
+                id: A_SCHEDULE,
+                startDate: toDbDate("2026-07-03"),
+                endDate: toDbDate("2026-07-03"),
+                replaced: false,
+                terminatedAt: new Date("2026-07-03T03:00:00.000Z"),
+                primaryEmployeeId: 5,
+                serviceRecordAssignment: { id: "asg-a", employeeId: 5, startDate: toDbDate("2026-07-03"), endDate: toDbDate("2026-07-03") },
+            },
+            {
+                id: B_SCHEDULE,
+                startDate: toDbDate("2026-07-02"),
+                endDate: toDbDate("2026-07-10"),
+                replaced: false,
+                terminatedAt: null,
+                primaryEmployeeId: 6,
+                serviceRecordAssignment: { id: "asg-b", employeeId: 6, startDate: toDbDate("2026-07-02"), endDate: toDbDate("2026-07-10") },
+            },
+        ];
+        const scheduleOf = (id: number) => createSchedule({
+            id,
+            primaryEmployeeId: id === A_SCHEDULE ? 5 : 6,
+            primaryEmployee: { id: id === A_SCHEDULE ? 5 : 6, name: id === A_SCHEDULE ? "A" : "B" },
+            startDate: toDbDate(id === A_SCHEDULE ? "2026-07-03" : "2026-07-02"),
+            endDate: toDbDate(id === A_SCHEDULE ? "2026-07-03" : "2026-07-10"),
+            client: { id: CLIENT_ID, duration: 5 },
+        });
+        const recordOf = () => ({
+            id: "case-1",
+            branchId: BRANCH_ID,
+            clientId: CLIENT_ID,
+            formVersion: 1,
+            requiredSessionCount: 5,
+            plannedSessions: correctedVector(),
+        });
+        /** Session 1 is A's row; `locked` decides whether the first unlocked session is session 1 or 2. */
+        const rowOfA = (locked: boolean) => createDay(1, "2026-07-01", locked, { scheduleId: A_SCHEDULE, employeeId: 5 });
+
+        const arrangeAdmin = (db: ReturnType<typeof createMockPrismaService>, scheduleId: number, sessionOneLocked: boolean) => {
+            db.employee_schedule.findFirst.mockResolvedValue(scheduleOf(scheduleId));
+            db.employee_schedule.findMany.mockResolvedValue(clientSchedules());
+            db.service_record_case.findFirst.mockResolvedValue(recordOf());
+            db.schedule_change_request.findFirst.mockResolvedValue(null);
+            db.service_record_day.findMany
+                .mockResolvedValueOnce([rowOfA(sessionOneLocked)])
+                .mockResolvedValueOnce([]);
+        };
+        const arrangeApprove = (scheduleId: number, request: Record<string, unknown>, sessionOneLocked: boolean) => {
+            txPrismaService.schedule_change_request.findFirst.mockResolvedValue(createRequest({ scheduleId, ...request }));
+            txPrismaService.employee_schedule.findUnique.mockResolvedValue(scheduleOf(scheduleId));
+            txPrismaService.employee_schedule.findMany.mockResolvedValue(clientSchedules());
+            txPrismaService.service_record_case.findUnique.mockResolvedValue(recordOf());
+            txPrismaService.service_record_day.findMany
+                .mockResolvedValueOnce([rowOfA(sessionOneLocked)])
+                .mockResolvedValueOnce([]);
+        };
+        const expectNothingWritten = () => {
+            for (const db of [txPrismaService, prismaService]) {
+                expect(db.employee_schedule.update).not.toHaveBeenCalled();
+                expect(db.service_record_case.update).not.toHaveBeenCalled();
+                expect(db.client.update).not.toHaveBeenCalled();
+                expect(db.service_record_day.update).not.toHaveBeenCalled();
+                expect(db.service_record_day.upsert).not.toHaveBeenCalled();
+            }
+        };
+
+        describe("applyAdminChange", () => {
+            it("refuses a request on the historical-only caregiver's schedule and writes nothing", async () => {
+                // Session 1 is locked, so the target is session 2 (B's); the requested schedule is A's.
+                arrangeAdmin(txPrismaService, A_SCHEDULE, true);
+
+                await expectConflictCode(
+                    () => service.applyAdminChange(A_SCHEDULE, "2026-07-03", tenant),
+                    "SCHEDULE_CHANGE_UNCOMPUTABLE",
+                );
+
+                expectNothingWritten();
+                expect(txPrismaService.schedule_change_request.create).not.toHaveBeenCalled();
+            });
+
+            it("refuses a request whose first unlocked session is itself a historical writer slot", async () => {
+                // A's row for session 1 is still unlocked: B asks, but the session to move is A's kept slot.
+                arrangeAdmin(txPrismaService, B_SCHEDULE, false);
+
+                await expectConflictCode(
+                    () => service.applyAdminChange(B_SCHEDULE, "2026-07-02", tenant),
+                    "SCHEDULE_CHANGE_UNCOMPUTABLE",
+                );
+
+                expectNothingWritten();
+                expect(txPrismaService.schedule_change_request.create).not.toHaveBeenCalled();
+            });
+
+            it("still moves the real period owner's boundary and leaves the historical caregiver's dates alone", async () => {
+                // Session 1 is locked: B's session 2 (07-02) moves to Mon 07-06 and pulls 3..5 to 07-07, 07-08, 07-09.
+                arrangeAdmin(txPrismaService, B_SCHEDULE, true);
+                txPrismaService.service_record_case.update.mockResolvedValue({ id: "case-1" });
+                txPrismaService.schedule_change_request.create.mockResolvedValue(createRequest({
+                    scheduleId: B_SCHEDULE, status: "approved", sessionIndex: 2, newEndDate: toDbDate("2026-07-09"),
+                }));
+
+                await service.applyAdminChange(B_SCHEDULE, "2026-07-06", tenant);
+
+                expect(txPrismaService.employee_schedule.update.mock.calls.map(([call]) => call.where.id)).toEqual([B_SCHEDULE]);
+                expect(txPrismaService.employee_schedule.update).toHaveBeenCalledWith({
+                    where: { id: B_SCHEDULE },
+                    data: { endDate: toDbDate("2026-07-09") },
+                });
+                expect(txPrismaService.client.update).toHaveBeenCalledWith(expect.objectContaining({
+                    data: expect.objectContaining({ endDate: toDbDate("2026-07-09") }),
+                }));
+            });
+        });
+
+        describe("approve", () => {
+            it("marks a request on the historical-only caregiver's schedule stale and writes nothing", async () => {
+                arrangeApprove(A_SCHEDULE, {
+                    sessionIndex: 2,
+                    fromDate: toDbDate("2026-07-02"),
+                    toDate: toDbDate("2026-07-03"),
+                    newEndDate: toDbDate("2026-07-08"),
+                }, true);
+
+                await expectConflictCode(() => service.approve("request-1", tenant), "REQUEST_STALE");
+
+                expect(prismaService.schedule_change_request.updateMany).toHaveBeenCalledWith({
+                    where: { id: "request-1", branchId: BRANCH_ID, status: "pending" },
+                    data: { status: "stale", decidedAt: expect.any(Date) },
+                });
+                expectNothingWritten();
+                expect(txPrismaService.schedule_change_request.update).not.toHaveBeenCalled();
+            });
+
+            it("marks a request stale when its first unlocked session is a historical writer slot", async () => {
+                arrangeApprove(B_SCHEDULE, {
+                    sessionIndex: 1,
+                    fromDate: toDbDate("2026-07-01"),
+                    toDate: toDbDate("2026-07-02"),
+                    newEndDate: toDbDate("2026-07-08"),
+                }, false);
+
+                await expectConflictCode(() => service.approve("request-1", tenant), "REQUEST_STALE");
+
+                expect(prismaService.schedule_change_request.updateMany).toHaveBeenCalledWith({
+                    where: { id: "request-1", branchId: BRANCH_ID, status: "pending" },
+                    data: { status: "stale", decidedAt: expect.any(Date) },
+                });
+                expectNothingWritten();
+            });
+
+            it("still moves the real period owner's boundary and leaves the historical caregiver's dates alone", async () => {
+                // Session 2 (07-02) moves to 07-03; 3..5 follow on 07-06, 07-07, 07-08.
+                arrangeApprove(B_SCHEDULE, {
+                    sessionIndex: 2,
+                    fromDate: toDbDate("2026-07-02"),
+                    toDate: toDbDate("2026-07-03"),
+                    newEndDate: toDbDate("2026-07-08"),
+                }, true);
+                txPrismaService.service_record_case.update.mockResolvedValue({ id: "case-1" });
+                txPrismaService.schedule_change_request.update.mockResolvedValue(createRequest({ scheduleId: B_SCHEDULE, status: "approved" }));
+
+                await service.approve("request-1", tenant);
+
+                expect(txPrismaService.employee_schedule.update.mock.calls.map(([call]) => call.where.id)).toEqual([B_SCHEDULE]);
+                expect(txPrismaService.employee_schedule.update).toHaveBeenCalledWith({
+                    where: { id: B_SCHEDULE },
+                    data: { endDate: toDbDate("2026-07-08") },
+                });
+            });
+        });
+
+        describe("requests and previews", () => {
+            const arrangeRead = (scheduleId: number, sessionOneLocked: boolean) => {
+                prismaService.employee_schedule.findUnique.mockResolvedValue(scheduleOf(scheduleId));
+                prismaService.employee_schedule.findFirst.mockResolvedValue(scheduleOf(scheduleId));
+                prismaService.employee_schedule.findMany.mockResolvedValue(clientSchedules());
+                prismaService.service_record_case.findUnique.mockResolvedValue(recordOf());
+                prismaService.service_record_case.findFirst.mockResolvedValue(recordOf());
+                prismaService.schedule_change_request.findFirst.mockResolvedValue(null);
+                prismaService.service_record_day.findMany.mockResolvedValue([rowOfA(sessionOneLocked)]);
+            };
+            const historicalCtx = { ...ctx, scheduleId: A_SCHEDULE };
+
+            it("refuses to create a request on the historical-only caregiver's schedule", async () => {
+                arrangeRead(A_SCHEDULE, true);
+
+                await expectConflictCode(() => service.createRequest(historicalCtx), "SCHEDULE_CHANGE_UNCOMPUTABLE");
+
+                expect(prismaService.schedule_change_request.create).not.toHaveBeenCalled();
+            });
+
+            it("refuses to create a request whose first unlocked session is a historical writer slot", async () => {
+                arrangeRead(B_SCHEDULE, false);
+
+                await expectConflictCode(
+                    () => service.createRequest({ ...ctx, scheduleId: B_SCHEDULE }),
+                    "SCHEDULE_CHANGE_UNCOMPUTABLE",
+                );
+
+                expect(prismaService.schedule_change_request.create).not.toHaveBeenCalled();
+            });
+
+            it("refuses to preview either, instead of showing a date that cannot be saved", async () => {
+                arrangeRead(A_SCHEDULE, true);
+                await expectConflictCode(() => service.preview(historicalCtx), "SCHEDULE_CHANGE_UNCOMPUTABLE");
+                await expectConflictCode(() => service.previewAdminChange(BRANCH_ID, A_SCHEDULE), "SCHEDULE_CHANGE_UNCOMPUTABLE");
+            });
+
+            it("creates and previews the real period owner's request as before", async () => {
+                arrangeRead(B_SCHEDULE, true);
+                prismaService.schedule_change_request.create.mockResolvedValue(createRequest({ id: "request-b", scheduleId: B_SCHEDULE, sessionIndex: 2 }));
+
+                await expect(service.preview({ ...ctx, scheduleId: B_SCHEDULE })).resolves.toMatchObject({ sessionIndex: 2, fromDate: "2026-07-02" });
+                await expect(service.createRequest({ ...ctx, scheduleId: B_SCHEDULE })).resolves.toMatchObject({ id: "request-b", sessionIndex: 2 });
+            });
         });
     });
 

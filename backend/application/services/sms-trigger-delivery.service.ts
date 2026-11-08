@@ -1,6 +1,19 @@
+import { AligoDefaultSenderPolicyService } from "./aligo-default-sender-policy.service";
+import { normalizePhone } from "application/utils/normalize-phone";
+import { MANUAL_SMS_TEMPLATE_KEY, MANUAL_SMS_RULE_PREFIX, type MessageTriggerJobTemplateKey } from "domain/constants/message-trigger-catalog";
+import { publicMessageVariables, messageQuietHoldVariables, parseMessageQuietHold, type MessageQuietHold } from "domain/message-policy-evaluator";
+import { MESSAGE_TRIGGER_JOB_REPOSITORY, type IMessageTriggerJobRepository } from "domain/repositories/message-trigger-job.repository.interface";
+import { agentAutomationConcreteJobDigest } from "./agent-automation-job-binding";
+import { agentBindingHash } from "domain/repositories/agent-linked-action.types";
+import { MessageQuietHoursService, isQuietHoursCanceled, recordQuietHoursRefusal, runSmsQuietHoursAdmission, QUIET_HOURS_CANCEL_REASON } from "./message-quiet-hours.service";
+import { MessageTriggerRecipientType } from "domain/constants/message-trigger-catalog";
+import { isCaregiverTriggerTemplate } from "domain/constants/message-trigger-catalog";
+import { CaregiverTemplateResolverService } from "./caregiver-template-resolver.service";
+import { isCaregiverSystemTemplateKey } from "domain/constants/system-template-registry";
 import type { Prisma } from "@prisma/client";
 import { Inject, Injectable, Logger, Optional } from "@nestjs/common";
 import { createHash } from "node:crypto";
+import { SystemSettingService } from "./system-setting.service";
 import { AligoService } from "application/services/aligo.service";
 import { SystemTemplateService } from "application/services/system-template.service";
 import {
@@ -37,7 +50,6 @@ import { resolveRuleRetryPermission } from "application/services/message-automat
 import {
     MessageLogEntity,
     MessageLogStatus,
-    SMS_DELIVERY_RETRY_DELAY_MS,
 } from "domain/entities/message-log.entity";
 import {
     MESSAGE_LOG_REPOSITORY,
@@ -52,6 +64,9 @@ import {
 import { SmsTriggerDeliverySkipError, SmsTriggerPayloadEnricherRegistry } from "./sms-trigger-payload-enricher.registry";
 import { buildAutomationRetrySealVariables } from "./automation-retry-seal";
 import { classifySmsProviderOutcome, classifySmsProviderRejection, countSmsRecipients } from "./sms-provider-outcome.service";
+
+type ManualSourceCancellation = { valid: false; reason: "Manual sender changed" | "Manual recipient changed"; canceledAt: Date };
+type ManualSourceValidation = { valid: true } | ManualSourceCancellation;
 
 export interface SmsTemplateDeliveryConfig {
     smsLogTemplateKey: string;
@@ -71,14 +86,14 @@ export const SMS_DELIVERY_CONFIG_VERSION = "sms-template-delivery-v1";
 export { SMS_DELIVERY_SNAPSHOT_VARIABLE };
 
 export interface SmsTriggerDeliverySnapshot {
-    readonly templateKey: MessageTriggerTemplateKey;
+    readonly templateKey: MessageTriggerJobTemplateKey;
     /** The exact receiver value passed to AligoService (before provider normalization). */
     readonly receiver: string;
     readonly maskedReceiver: string;
     readonly recipientName: string;
     readonly message: string;
     readonly title: string;
-    readonly requestedDeliveryType: "AUTO";
+    readonly requestedDeliveryType: "AUTO" | AligoSmsMessageType;
     readonly deliveryType: AligoSmsMessageType;
     readonly estimatedCost: string;
     readonly templateVersion: string;
@@ -129,6 +144,14 @@ class MissingSmsTemplateVariablesError extends Error {
  * bumped and every pending approval re-approved.
  */
 export const SMS_TEMPLATE_DELIVERY: Partial<Record<MessageTriggerTemplateKey, SmsTemplateDeliveryConfig>> = {
+    [MessageTriggerTemplateKey.CAREGIVER_SERVICE_START_NOTICE]: {
+        smsLogTemplateKey: "caregiver_service_start_notice_sms", automationKey: "CAREGIVER_SERVICE_START_NOTICE_SMS",
+        triggerType: "caregiver_service_start", title: "제공인력 서비스 시작 안내", systemTemplateKey: SystemTemplateKey.CAREGIVER_SERVICE_START_NOTICE,
+    },
+    [MessageTriggerTemplateKey.CAREGIVER_SERVICE_END_NOTICE]: {
+        smsLogTemplateKey: "caregiver_service_end_notice_sms", automationKey: "CAREGIVER_SERVICE_END_NOTICE_SMS",
+        triggerType: "caregiver_service_end", title: "제공인력 서비스 종료 안내", systemTemplateKey: SystemTemplateKey.CAREGIVER_SERVICE_END_NOTICE,
+    },
     [MessageTriggerTemplateKey.SERVICE_INFO]: {
         smsLogTemplateKey: "service_info_sms",
         automationKey: "SERVICE_INFO_SMS",
@@ -212,6 +235,13 @@ export class SmsTriggerDeliveryService {
         @Optional()
         @Inject(MESSAGE_TRIGGER_RULE_REPOSITORY)
         private readonly ruleRepository?: IMessageTriggerRuleRepository,
+        // Mandatory Nest dependency; timing never falls back after a failed read.
+        private readonly systemSettingService?: SystemSettingService,
+        private readonly caregiverTemplates?: CaregiverTemplateResolverService,
+        // Required Nest provider; direct legacy builders must prove validated quiet-OFF.
+        private readonly quietHours?: MessageQuietHoursService,
+        @Inject(MESSAGE_TRIGGER_JOB_REPOSITORY) private readonly jobRepository?: IMessageTriggerJobRepository,
+        private readonly defaultSender?: AligoDefaultSenderPolicyService,
     ) {}
 
     /**
@@ -227,6 +257,7 @@ export class SmsTriggerDeliveryService {
      * can neither defer nor fail them.
      */
     private async readRuleRetryOnFailureOrDefer(job: MessageTriggerJobEntity): Promise<boolean> {
+        if (job.ruleId.startsWith(MANUAL_SMS_RULE_PREFIX)) return false;
         if (isManualMessageTriggerJob(job)) return true;
         if (!this.ruleRepository || !job.branchId) return true;
         try {
@@ -255,8 +286,8 @@ export class SmsTriggerDeliveryService {
         }
     }
 
-    canHandle(templateKey: MessageTriggerTemplateKey): boolean {
-        return Boolean(SMS_TEMPLATE_DELIVERY[templateKey]);
+    canHandle(templateKey: MessageTriggerJobTemplateKey): boolean {
+        return templateKey === MANUAL_SMS_TEMPLATE_KEY || Boolean(SMS_TEMPLATE_DELIVERY[templateKey]);
     }
 
     /**
@@ -270,7 +301,9 @@ export class SmsTriggerDeliveryService {
             throw new Error(`SMS trigger job ${job.id} is missing branchId`);
         }
 
-        const config = SMS_TEMPLATE_DELIVERY[job.templateKey];
+        const config = job.templateKey === MANUAL_SMS_TEMPLATE_KEY
+            ? { smsLogTemplateKey: "manual_sms", automationKey: "ADMIN_DIRECT", triggerType: "manual", title: job.payload.templateVariables["title"] ?? "", usePayloadMessage: true }
+            : SMS_TEMPLATE_DELIVERY[job.templateKey];
         if (!config) {
             throw new Error(`SMS trigger template ${job.templateKey} is not supported`);
         }
@@ -293,7 +326,9 @@ export class SmsTriggerDeliveryService {
         if (!job.branchId) {
             throw new Error(`SMS trigger job ${job.id} is missing branchId`);
         }
-        const config = SMS_TEMPLATE_DELIVERY[job.templateKey];
+        const config = job.templateKey === MANUAL_SMS_TEMPLATE_KEY
+            ? { smsLogTemplateKey: "manual_sms", automationKey: "ADMIN_DIRECT", triggerType: "manual", title: job.payload.templateVariables["title"] ?? "", usePayloadMessage: true }
+            : SMS_TEMPLATE_DELIVERY[job.templateKey];
         if (!config) {
             throw new Error(`SMS trigger template ${job.templateKey} is not supported`);
         }
@@ -328,7 +363,7 @@ export class SmsTriggerDeliveryService {
             recipientName: canonical.recipientName,
             message: readString("messageBody"),
             title: readString("title"),
-            requestedDeliveryType: "AUTO" as const,
+            requestedDeliveryType: "AUTO",
             deliveryType,
             estimatedCost: readString("estimatedCost"),
             templateVersion: readString("templateVersion"),
@@ -401,7 +436,9 @@ export class SmsTriggerDeliveryService {
             throw new Error(`SMS trigger job ${job.id} is missing branchId`);
         }
 
-        const config = SMS_TEMPLATE_DELIVERY[job.templateKey];
+        const config = job.templateKey === MANUAL_SMS_TEMPLATE_KEY
+            ? { smsLogTemplateKey: "manual_sms", automationKey: "ADMIN_DIRECT", triggerType: "manual", title: job.payload.templateVariables["title"] ?? "", usePayloadMessage: true }
+            : SMS_TEMPLATE_DELIVERY[job.templateKey];
         if (!config) {
             return false;
         }
@@ -415,7 +452,7 @@ export class SmsTriggerDeliveryService {
             // called. Skip mutating enrichment for a staged snapshot, while allowing its enricher
             // to validate that an approved external capability is still usable.
             const hasStagedSnapshot = this.hasStagedDeliverySnapshot(job);
-            const enricher = this.enricherRegistry?.get(job.templateKey) ?? null;
+            const enricher = job.templateKey === MANUAL_SMS_TEMPLATE_KEY ? null : this.enricherRegistry?.get(job.templateKey) ?? null;
             if (hasStagedSnapshot && job.templateKey === MessageTriggerTemplateKey.SERVICE_END_NOTICE) {
                 if (!enricher?.validateStagedSnapshot) {
                     throw new SmsTriggerDeliverySkipError(
@@ -471,7 +508,9 @@ export class SmsTriggerDeliveryService {
             throw new Error(`SMS trigger job ${job.id} is missing branchId`);
         }
 
-        const config = SMS_TEMPLATE_DELIVERY[job.templateKey];
+        const config = job.templateKey === MANUAL_SMS_TEMPLATE_KEY
+            ? { smsLogTemplateKey: "manual_sms", automationKey: "ADMIN_DIRECT", triggerType: "manual", title: job.payload.templateVariables["title"] ?? "", usePayloadMessage: true }
+            : SMS_TEMPLATE_DELIVERY[job.templateKey];
         if (!config) {
             return null;
         }
@@ -487,7 +526,7 @@ export class SmsTriggerDeliveryService {
             // the canonical snapshot check below still verifies the staged
             // values against the current recipient/template contract.
             const hasStagedSnapshot = this.hasStagedDeliverySnapshot(job);
-            const enricher = this.enricherRegistry?.get(job.templateKey) ?? null;
+            const enricher = job.templateKey === MANUAL_SMS_TEMPLATE_KEY ? null : this.enricherRegistry?.get(job.templateKey) ?? null;
             if (hasStagedSnapshot && job.templateKey === MessageTriggerTemplateKey.SERVICE_END_NOTICE) {
                 if (!enricher?.validateStagedSnapshot) {
                     throw new SmsTriggerDeliverySkipError(
@@ -558,7 +597,9 @@ export class SmsTriggerDeliveryService {
         if (!job.branchId) {
             throw new Error(`SMS trigger job ${job.id} is missing branchId`);
         }
-        const config = SMS_TEMPLATE_DELIVERY[job.templateKey];
+        const config = job.templateKey === MANUAL_SMS_TEMPLATE_KEY
+            ? { smsLogTemplateKey: "manual_sms", automationKey: "ADMIN_DIRECT", triggerType: "manual", title: job.payload.templateVariables["title"] ?? "", usePayloadMessage: true }
+            : SMS_TEMPLATE_DELIVERY[job.templateKey];
         if (!config) {
             return false;
         }
@@ -569,6 +610,23 @@ export class SmsTriggerDeliveryService {
     }
 
     private assertDeliveryJob(job: MessageTriggerJobEntity): void {
+        if (job.templateKey === MANUAL_SMS_TEMPLATE_KEY || job.ruleId.startsWith(MANUAL_SMS_RULE_PREFIX)) {
+            if (!job.branchId || job.ruleId !== MANUAL_SMS_RULE_PREFIX + job.branchId || job.templateKey !== MANUAL_SMS_TEMPLATE_KEY
+                || job.payload.origin !== "ADMIN_DIRECT" || !Number.isSafeInteger(job.payload.existingMessageLogId)
+                || !job.payload.existingMessageLogId || job.payload.agentAutomationSeal || job.payload.taskAutomationReference
+                || job.employeeScheduleId !== null || !job.dedupeKey.startsWith(`manual-sms:${job.branchId}:`)
+                || job.recipientPhone !== job.payload.recipientPhone || typeof job.payload.messageBody !== "string"
+                || !job.payload.messageBody.trim()) throw new SmsTriggerDeliverySkipError("Invalid manual SMS holder");
+        }
+        if (isCaregiverTriggerTemplate(job.templateKey)) {
+            const source = job.payload.caregiverSourceSnapshot;
+            if (isManualMessageTriggerJob(job) || !job.employeeScheduleId || !source || source.version !== 1
+                || !source.groupId || source.ruleId !== job.ruleId || source.schedule.id !== job.employeeScheduleId
+                || source.employee.id !== job.payload.employeeId
+                || ![MessageTriggerRecipientType.PRIMARY_EMPLOYEE, MessageTriggerRecipientType.SECONDARY_EMPLOYEE].includes(job.recipientType)) {
+                throw new SmsTriggerDeliverySkipError("Caregiver service source is unavailable");
+            }
+        }
         if (isReservedAutomationJob(job)) throw new SmsTriggerDeliverySkipError("Internal automation records cannot be delivered");
     }
 
@@ -592,6 +650,11 @@ export class SmsTriggerDeliveryService {
         const retryOnFailure = preparedSnapshot
             ? await this.readRuleRetryOnFailureForDispatchedJob(job)
             : await this.readRuleRetryOnFailureOrDefer(job);
+        if (!this.systemSettingService || !job.branchId) {
+            throw new Error("SMS retry timing policy is unavailable");
+        }
+        const { configuration } = await this.systemSettingService.getMessageAutomationPolicyConfig(job.branchId);
+        const retryDelayMs = configuration.smsRetryIntervalMinutes * 60 * 1000;
         const snapshot = preparedSnapshot ?? await this.resolveDeliverySnapshot(job);
 
         const pendingAttempt = this.buildSmsLog({
@@ -604,12 +667,18 @@ export class SmsTriggerDeliveryService {
             errorMessage: null,
             msgType: snapshot.requestedDeliveryType,
             templateVariables: payload.templateVariables,
+            retryDelayMs,
         });
         // A few legacy in-process adapters return void from save even though
         // the repository contract returns the persisted entity. Treat that as
         // the newly staged attempt; production repositories always return the
         // mapped row and therefore retain duplicate convergence semantics.
-        const persistedAttempt = (this.acceptanceService
+        const manualLog = job.templateKey === MANUAL_SMS_TEMPLATE_KEY
+            ? await this.logRepository.findByIdInBranch(job.branchId, job.payload.existingMessageLogId!) : null;
+        if (job.templateKey === MANUAL_SMS_TEMPLATE_KEY && (!manualLog || manualLog.triggerJobId !== job.id
+            || manualLog.providerAcceptanceState !== "prepared" || manualLog.providerCallStartedAt !== null
+            || manualLog.receiver !== snapshot.receiver || manualLog.messageBody !== snapshot.message)) throw new AgentAutomationDispatchUncertainError();
+        const persistedAttempt = manualLog ?? (this.acceptanceService
             ? await this.acceptanceService.prepare(pendingAttempt)
             : await this.logRepository.save(pendingAttempt)) ?? pendingAttempt;
 
@@ -628,9 +697,154 @@ export class SmsTriggerDeliveryService {
             );
         }
 
-        const attempt = (this.acceptanceService
-            ? await this.acceptanceService.beginProviderCall(persistedAttempt)
-            : this.beginProviderCallWithoutBoundary(persistedAttempt)) ?? persistedAttempt;
+        const admission = await runSmsQuietHoursAdmission(this.quietHours, this.systemSettingService, job.branchId, snapshot.receiver,
+            async (decision, transaction): Promise<
+                | { kind: "ready"; attempt: MessageLogEntity }
+                | { kind: "held"; hold: MessageQuietHold }
+                | { kind: "duplicate" }
+                | { kind: "source-canceled"; cancellation: ManualSourceCancellation }
+                | { kind: "refused"; decision: { action: "CANCEL"; reevaluateAt: null }; canceledAt: Date | null; durableCancellation?: true }
+            > => {
+                if (!transaction) {
+                    // Only the explicit schema-valid OFF direct-builder compatibility path.
+                    if (isQuietHoursCanceled(persistedAttempt)) return { kind: "refused", decision: { action: "CANCEL", reevaluateAt: null }, canceledAt: null };
+                    return { kind: "ready", attempt: (this.acceptanceService
+                        ? await this.acceptanceService.beginProviderCall(persistedAttempt)
+                        : this.beginProviderCallWithoutBoundary(persistedAttempt)) ?? persistedAttempt };
+                }
+                if (!persistedAttempt.providerAcceptanceKey || !persistedAttempt.providerAcceptanceFingerprint) throw new AgentAutomationDispatchUncertainError();
+                const current = await transaction.message_log.findUnique({ where: {
+                    id: persistedAttempt.id, branchId: job.branchId,
+                    providerAcceptanceKey: persistedAttempt.providerAcceptanceKey,
+                    providerAcceptanceFingerprint: persistedAttempt.providerAcceptanceFingerprint,
+                } });
+                if (!current || current.id !== persistedAttempt.id || current.branchId !== job.branchId
+                    || current.provider !== "aligo_sms" || current.triggerJobId !== job.id
+                    || !persistedAttempt.providerAcceptanceKey || current.providerAcceptanceKey !== persistedAttempt.providerAcceptanceKey
+                    || !persistedAttempt.providerAcceptanceFingerprint || current.providerAcceptanceFingerprint !== persistedAttempt.providerAcceptanceFingerprint
+                    || current.providerAcceptanceState !== "prepared" || current.providerCallStartedAt !== null) {
+                    throw new AgentAutomationDispatchUncertainError();
+                }
+                const variables = current.variables && typeof current.variables === "object" && !Array.isArray(current.variables)
+                    ? current.variables : {};
+                const currentHold = parseMessageQuietHold(variables);
+                if (variables["quietHoursDisposition"] === "DEFER" && !currentHold) throw new AgentAutomationDispatchUncertainError();
+                const canceled = variables["quietHoursDisposition"] === "CANCEL";
+                if (canceled && (current.status !== "failed" || current.errorMessage !== QUIET_HOURS_CANCEL_REASON || current.nextRetryAt !== null)) {
+                    throw new AgentAutomationDispatchUncertainError();
+                }
+                const currentJob = await transaction.message_trigger_job.findFirst({ where: { id: job.id, branchId: job.branchId } });
+                if (!currentJob || !this.matchesQuietCancellationJob(job, currentJob)
+                    || !(currentJob.status === "dispatching" && job.claimToken && currentJob.claimToken === job.claimToken
+                        && currentJob.processingDeadlineAt?.getTime() === job.processingDeadlineAt?.getTime())
+                    && !(canceled && currentJob.status === "canceled" && currentJob.cancelReason === QUIET_HOURS_CANCEL_REASON)) {
+                    throw new AgentAutomationDispatchUncertainError();
+                }
+                const finish = async (finalDecision: typeof decision, _tx?: Prisma.TransactionClient, revision?: string | null) => {
+                    if (finalDecision.action === "CANCEL") {
+                        if (currentJob.status === "canceled") return { kind: "refused" as const, decision: finalDecision, canceledAt: currentJob.canceledAt, durableCancellation: true as const };
+                        const canceledAt = new Date(Date.now());
+                        const canceledJob = await transaction.message_trigger_job.updateMany({
+                            where: { id: job.id, branchId: job.branchId, status: "dispatching", claimToken: job.claimToken,
+                                processingDeadlineAt: job.processingDeadlineAt, updatedAt: currentJob.updatedAt,
+                                ruleId: job.ruleId, clientId: job.clientId, employeeScheduleId: job.employeeScheduleId,
+                                recipientType: job.recipientType, recipientPhone: job.recipientPhone, templateKey: job.templateKey,
+                                dedupeKey: job.dedupeKey, scheduledFor: job.scheduledFor,
+                                payload: { equals: currentJob.payload as Prisma.InputJsonValue } },
+                            data: { status: "canceled", cancelReason: QUIET_HOURS_CANCEL_REASON, canceledAt,
+                                nextAttemptAt: null, claimToken: null, processingDeadlineAt: null },
+                        });
+                        if (canceledJob.count !== 1) throw new AgentAutomationDispatchUncertainError();
+                        const refused = await transaction.message_log.updateMany({
+                            where: { id: current.id, branchId: job.branchId, providerAcceptanceState: "prepared",
+                                providerAcceptanceKey: current.providerAcceptanceKey, providerAcceptanceFingerprint: current.providerAcceptanceFingerprint,
+                                updatedAt: current.updatedAt, variables: { equals: current.variables as Prisma.InputJsonValue } },
+                            data: { status: "failed", nextRetryAt: null, errorMessage: QUIET_HOURS_CANCEL_REASON,
+                                variables: { ...variables, quietHoursDisposition: "CANCEL",
+                                    ...(job.templateKey === MANUAL_SMS_TEMPLATE_KEY
+                                        ? { manualQueueStatus: "canceled", manualQueueReason: QUIET_HOURS_CANCEL_REASON } : {}) } },
+                        });
+                        if (refused.count !== 1) throw new AgentAutomationDispatchUncertainError();
+                        return { kind: "refused" as const, decision: finalDecision, canceledAt, durableCancellation: true as const };
+                    }
+                    if (finalDecision.action === "DEFER") {
+                        if (!this.jobRepository || !revision) throw new AgentAutomationDispatchUncertainError();
+                        const hold = await this.jobRepository.transitionQuietHold(job, current.id,
+                            persistedAttempt.providerAcceptanceKey!, persistedAttempt.providerAcceptanceFingerprint!, finalDecision, revision, transaction);
+                        if (!hold) throw new AgentAutomationDispatchUncertainError();
+                        return { kind: "held" as const, hold };
+                    }
+                    return { kind: "ready" as const, attempt: (this.acceptanceService
+                        ? await this.acceptanceService.beginProviderCall(persistedAttempt, transaction)
+                        : this.beginProviderCallWithoutBoundary(persistedAttempt)) ?? persistedAttempt };
+                };
+                if (job.templateKey === MANUAL_SMS_TEMPLATE_KEY) {
+                    const validation = await this.validateManualInlineSource(job, transaction);
+                    if (!validation.valid) return { kind: "source-canceled" as const, cancellation: validation };
+                    const duplicatesEnabled = await this.systemSettingService!.getMessageSettingsPolicyEnabled(job.branchId!, "duplicate-send-confirmation", async key => {
+                        const stored = await transaction.system_setting.findUnique({ where: { key } });
+                        if (stored && stored.value !== "true" && stored.value !== "false") throw new AgentAutomationDispatchUncertainError();
+                        return stored?.value ?? null;
+                    });
+                    if (duplicatesEnabled) {
+                        const policy = await this.systemSettingService!.getMessageAutomationPolicyConfig(job.branchId!, transaction);
+                        const now = new Date(Date.now());
+                        const matches = await this.logRepository.findSmsDuplicateMatches({ branchId: job.branchId!, receivers: [snapshot.receiver],
+                            messageBody: snapshot.message.replace(/\r\n/g, "\n").trim(),
+                            from: new Date(now.getTime() - policy.configuration.duplicateWindowHours * 3_600_000), to: now }, transaction);
+                        let confirmed: number[] = [];
+                        if (typeof variables["duplicateDecision"] === "string") {
+                            const previous = JSON.parse(variables["duplicateDecision"]);
+                            if (previous.confirmed === true && previous.payloadHash === current.providerAcceptanceFingerprint && Array.isArray(previous.matchIds)) confirmed = previous.matchIds;
+                        }
+                        if (matches.some(match => !confirmed.includes(match.id))) {
+                            if (!this.jobRepository) throw new AgentAutomationDispatchUncertainError();
+                            await this.jobRepository.transitionQuietHold(job, current.id, current.providerAcceptanceKey!, current.providerAcceptanceFingerprint!,
+                                { action: "CANCEL", reevaluateAt: null }, policy.version ?? "", transaction, "duplicate_at_release");
+                            return { kind: "duplicate" as const };
+                        }
+                    }
+                }
+                if (canceled) return finish({ action: "CANCEL", reevaluateAt: null });
+                // Fresh DB reads above may wait. Reuse the final gate in this SAME
+                // transaction so its actual clock is sampled immediately before CAS.
+                return runSmsQuietHoursAdmission(this.quietHours, this.systemSettingService, job.branchId, snapshot.receiver, finish, transaction, currentHold?.releaseAt);
+            });
+        if (admission.kind === "source-canceled") {
+            this.applyManualSourceCancellation(job, admission.cancellation);
+            return false;
+        }
+        if (admission.kind === "duplicate") {
+            job.cancel("duplicate_at_release"); job.nextAttemptAt = null; job.claimToken = null; job.processingDeadlineAt = null;
+            persistedAttempt.markRetrySuperseded("duplicate_at_release");
+            return false;
+        }
+        if (admission.kind === "held") {
+            job.status = "pending";
+            job.nextAttemptAt = admission.hold.releaseAt;
+            job.claimToken = null;
+            job.processingDeadlineAt = null;
+            job.quietHold = admission.hold;
+            persistedAttempt.variables = { ...persistedAttempt.variables, ...messageQuietHoldVariables(admission.hold) };
+            persistedAttempt.status = "pending";
+            persistedAttempt.nextRetryAt = null;
+            return false;
+        }
+        if (admission.kind === "refused") {
+            // No in-memory terminal transition is visible until the transaction commits.
+            recordQuietHoursRefusal(persistedAttempt, admission.decision);
+            if (admission.decision.action === "CANCEL") {
+                job.cancel(QUIET_HOURS_CANCEL_REASON);
+                job.nextAttemptAt = null;
+                if (admission.durableCancellation) {
+                    job.claimToken = null;
+                    job.processingDeadlineAt = null;
+                }
+                if (admission.canceledAt) job.canceledAt = admission.canceledAt;
+            }
+            return false;
+        }
+        const attempt = admission.attempt;
 
         try {
             const result = await this.aligoService.sendSms({
@@ -639,6 +853,7 @@ export class SmsTriggerDeliveryService {
                 recipientName: snapshot.recipientName,
                 title: snapshot.title,
                 msgType: snapshot.requestedDeliveryType,
+                ...(job.templateKey === MANUAL_SMS_TEMPLATE_KEY ? { testMode: job.payload.templateVariables["testMode"] === "true" } : {}),
             });
             const outcome = classifySmsProviderOutcome(result, countSmsRecipients(snapshot.receiver));
             attempt.aligoMid = result?.response?.msg_id ? String(result.response.msg_id) : null;
@@ -660,7 +875,7 @@ export class SmsTriggerDeliveryService {
             attempt.attempts += 1;
             attempt.lastAttemptAt = new Date(Date.now());
             attempt.nextRetryAt = !isAccepted && !isPermanent && retryOnFailure && attempt.canRetry()
-                ? new Date(Date.now() + SMS_DELIVERY_RETRY_DELAY_MS)
+                ? new Date(Date.now() + retryDelayMs)
                 : null;
             attempt.updatedAt = new Date(Date.now());
             if (isAccepted && attempt.aligoMid) {
@@ -688,6 +903,16 @@ export class SmsTriggerDeliveryService {
             }
             throw error;
         }
+    }
+
+    private matchesQuietCancellationJob(job: MessageTriggerJobEntity,
+        current: Awaited<ReturnType<Prisma.TransactionClient["message_trigger_job"]["findFirstOrThrow"]>>): boolean {
+        try {
+            const payload = current.payload as unknown as MessageTriggerJobEntity["payload"];
+            return agentAutomationConcreteJobDigest(current) === agentAutomationConcreteJobDigest(job)
+                && agentBindingHash(payload.agentAutomationSeal) === agentBindingHash(job.payload.agentAutomationSeal)
+                && payload.templateVariables?.[SMS_DELIVERY_SNAPSHOT_VARIABLE] === job.payload.templateVariables[SMS_DELIVERY_SNAPSHOT_VARIABLE];
+        } catch { return false; }
     }
 
     private beginProviderCallWithoutBoundary(log: MessageLogEntity): MessageLogEntity {
@@ -718,17 +943,22 @@ export class SmsTriggerDeliveryService {
             throw new Error(`SMS trigger job ${job.id} is missing branchId`);
         }
         const payload = job.payload;
+        if (job.templateKey === MANUAL_SMS_TEMPLATE_KEY) {
+            const validation = await this.validateManualInlineSource(job, transaction);
+            if (!validation.valid) throw new SmsTriggerDeliverySkipError(validation.reason);
+        }
         const baseVariables: Record<string, string> = {
             name: payload.recipientName,
             employeeName: payload.recipientName,
             clientName: payload.recipientName,
             buttonUrl: payload.buttonUrl ?? "",
             serviceRecordUrl: payload.buttonUrl ?? "",
-            ...payload.templateVariables,
+            ...publicMessageVariables(payload.templateVariables),
         };
         const usesPayloadMessage = config.usePayloadMessage || payload.templateVariables["triggerType"] === "agent_scheduled";
-        const template = usesPayloadMessage
-            ? this.resolvePayloadTemplate(job)
+        const template = job.templateKey === MANUAL_SMS_TEMPLATE_KEY
+            ? { content: payload.messageBody!, version: "manual-inline-v1", hash: this.hash(payload.messageBody), requiredVariableKeys: [] }
+            : usesPayloadMessage ? this.resolvePayloadTemplate(job)
             : await this.resolveSystemTemplate(config.systemTemplateKey, branchId, transaction);
         const missingVariableKeys = template.requiredVariableKeys.filter(
             (key) => !baseVariables[key]?.trim(),
@@ -750,17 +980,15 @@ export class SmsTriggerDeliveryService {
             throw new Error(`SMS recipient is missing for job ${job.id}`);
         }
 
-        const deliveryType = resolveAligoSmsMessageType({
-            message,
-            title,
-            requestedType: "AUTO",
-        });
+        const requestedDeliveryType: "AUTO" | AligoSmsMessageType = job.templateKey === MANUAL_SMS_TEMPLATE_KEY && (payload.templateVariables["msgType"] === "SMS" || payload.templateVariables["msgType"] === "LMS")
+            ? payload.templateVariables["msgType"] as AligoSmsMessageType : "AUTO";
+        const deliveryType = resolveAligoSmsMessageType({ message, title, requestedType: requestedDeliveryType });
         const configHash = this.hash({
             version: SMS_DELIVERY_CONFIG_VERSION,
             templateKey: job.templateKey,
             config,
             title,
-            requestedDeliveryType: "AUTO",
+            requestedDeliveryType,
         });
         const snapshotWithoutHash = {
             templateKey: job.templateKey,
@@ -769,7 +997,7 @@ export class SmsTriggerDeliveryService {
             recipientName: payload.recipientName,
             message,
             title,
-            requestedDeliveryType: "AUTO" as const,
+            requestedDeliveryType,
             deliveryType,
             estimatedCost: `${deliveryType} 요금제 기준`,
             templateVersion: template.version,
@@ -784,6 +1012,101 @@ export class SmsTriggerDeliveryService {
         });
     }
 
+    private applyManualSourceCancellation(job: MessageTriggerJobEntity, cancellation: ManualSourceCancellation): void {
+        job.cancel(`메시지 발송 건너뜀: ${cancellation.reason}`);
+        job.canceledAt = cancellation.canceledAt;
+        job.nextAttemptAt = null;
+        job.claimToken = null;
+        job.processingDeadlineAt = null;
+    }
+
+    private async validateManualInlineSource(job: MessageTriggerJobEntity, transaction?: Prisma.TransactionClient): Promise<ManualSourceValidation> {
+        if (!transaction) {
+            if (!this.quietHours) throw new AgentAutomationDispatchUncertainError();
+            const validation = await this.quietHours.runAdmission(job.branchId!, job.recipientPhone!, async (_decision, tx) => {
+                if (!tx) throw new AgentAutomationDispatchUncertainError();
+                return this.validateManualInlineSource(job, tx);
+            });
+            // 실패 결과는 트랜잭션 밖에서 전달해 terminal job/log 쓰기를 롤백하지 않는다.
+            if (!validation.valid) this.applyManualSourceCancellation(job, validation);
+            return validation;
+        }
+        const holder = await transaction.message_trigger_rule.findFirst({ where: { id: job.ruleId, branchId: job.branchId,
+            templateKey: MANUAL_SMS_TEMPLATE_KEY, isActive: false, groupId: null, deletedAt: null, retryOnFailure: false, jobsStale: false } });
+        const log = await transaction.message_log.findFirst({ where: { id: job.payload.existingMessageLogId, branchId: job.branchId,
+            triggerJobId: job.id, provider: "aligo_sms", providerAcceptanceState: "prepared", providerCallStartedAt: null } });
+        const v = log?.variables && typeof log.variables === "object" && !Array.isArray(log.variables) ? log.variables : {};
+        let fingerprint: Record<string, unknown>;
+        try { fingerprint = JSON.parse(String(v["manualQueueFingerprintInput"])); }
+        catch { throw new AgentAutomationDispatchUncertainError(); }
+        const requestKey = v["manualQueueRequestKey"];
+        const ordinal = Number(v["manualQueueOrdinal"]);
+        const rootKey = typeof requestKey === "string" && requestKey.length
+            ? buildSmsProviderAcceptanceKey("manual", `${job.branchId}:${requestKey}`) : null;
+        const expectedKey = rootKey && Number.isSafeInteger(ordinal) && ordinal >= 0
+            ? ordinal === 0 ? rootKey : buildSmsProviderAcceptanceKey("manual", `${rootKey}:ordinal:${ordinal}`) : null;
+        if (!holder || !log || !expectedKey || log.providerAcceptanceKey !== expectedKey
+            || job.dedupeKey !== `manual-sms:${job.branchId}:${expectedKey}` || !log.providerAcceptanceFingerprint
+            || String(ordinal) !== v["manualQueueOrdinal"] || ordinal >= Number(v["manualQueueCount"])
+            || v["origin"] !== "ADMIN_DIRECT" || v["manualQueueMode"] !== "internal"
+            || fingerprint["branchId"] !== job.branchId || fingerprint["message"] !== job.payload.messageBody
+            || typeof fingerprint["receiver"] !== "string" || !fingerprint["receiver"].split(",").includes(job.recipientPhone!)
+            || fingerprint["title"] !== (job.payload.templateVariables["title"]?.trim() || null)
+            || fingerprint["msgType"] !== (job.payload.templateVariables["msgType"] ?? "AUTO")
+            || fingerprint["testMode"] !== (job.payload.templateVariables["testMode"] === "true")
+            || buildSmsProviderAcceptanceFingerprint(fingerprint) !== log.providerAcceptanceFingerprint
+            || log.recipientPhone !== job.recipientPhone || log.receiver !== job.recipientPhone
+            || log.messageBody !== job.payload.messageBody || log.clientId !== job.clientId) throw new AgentAutomationDispatchUncertainError();
+        const sender = this.defaultSender?.read();
+        if (!sender || sender.availability !== "available" || sender.identityDigest !== job.payload.templateVariables["senderIdentityDigest"]
+            || sender.identityDigest !== v["manualQueueSenderIdentity"]) {
+            return this.cancelManualInlineSource(job, log, "Manual sender changed", transaction);
+        }
+        const identity = job.payload.employeeId != null
+            ? await transaction.employee.findFirst({ where: { id: job.payload.employeeId, branchId: job.branchId!, deletedAt: null }, select: { phone: true } })
+            : job.clientId != null ? await transaction.client.findFirst({ where: { id: job.clientId, branchId: job.branchId!, deletedAt: null }, select: { phone: true } }) : null;
+        if (identity && normalizePhone(identity.phone) === job.recipientPhone) return { valid: true };
+        return this.cancelManualInlineSource(job, log, "Manual recipient changed", transaction);
+    }
+
+    private async cancelManualInlineSource(job: MessageTriggerJobEntity,
+        log: Awaited<ReturnType<Prisma.TransactionClient["message_log"]["findFirstOrThrow"]>>,
+        rawReason: ManualSourceCancellation["reason"], transaction: Prisma.TransactionClient): Promise<ManualSourceCancellation> {
+        const current = await transaction.message_trigger_job.findFirst({ where: { id: job.id, branchId: job.branchId } });
+        const canceledAt = new Date(Date.now());
+        const reason = `메시지 발송 건너뜀: ${rawReason}`;
+        const variables = log.variables && typeof log.variables === "object" && !Array.isArray(log.variables) ? log.variables : {};
+        if (!current || !this.matchesQuietCancellationJob(job, current) || current.status !== job.status
+            || !["processing", "dispatching"].includes(current.status) || !job.claimToken || !job.processingDeadlineAt
+            || current.claimToken !== job.claimToken || current.processingDeadlineAt?.getTime() !== job.processingDeadlineAt.getTime()
+            || job.processingDeadlineAt.getTime() <= canceledAt.getTime() || current.attempts !== 0
+            || log.status !== "pending" || log.attempts !== 0 || log.providerAcceptanceState !== "prepared"
+            || log.providerCallStartedAt !== null || log.providerAcceptedAt !== null || log.aligoMid !== null) {
+            throw new AgentAutomationDispatchUncertainError();
+        }
+        const canceledJob = await transaction.message_trigger_job.updateMany({
+            where: { id: job.id, branchId: job.branchId, status: current.status, claimToken: job.claimToken,
+                processingDeadlineAt: job.processingDeadlineAt, updatedAt: current.updatedAt, attempts: 0,
+                ruleId: current.ruleId, templateKey: current.templateKey, dedupeKey: current.dedupeKey,
+                clientId: current.clientId, employeeScheduleId: current.employeeScheduleId,
+                recipientType: current.recipientType, recipientPhone: current.recipientPhone,
+                scheduledFor: current.scheduledFor, payload: { equals: current.payload as Prisma.InputJsonValue } },
+            data: { status: "canceled", cancelReason: reason, canceledAt,
+                nextAttemptAt: null, claimToken: null, processingDeadlineAt: null },
+        });
+        if (canceledJob.count !== 1) throw new AgentAutomationDispatchUncertainError();
+        const canceledLog = await transaction.message_log.updateMany({
+            where: { id: log.id, branchId: job.branchId, triggerJobId: job.id, status: "pending", attempts: 0,
+                providerAcceptanceKey: log.providerAcceptanceKey, providerAcceptanceFingerprint: log.providerAcceptanceFingerprint,
+                providerAcceptanceState: "prepared", providerCallStartedAt: null, providerAcceptedAt: null, aligoMid: null,
+                updatedAt: log.updatedAt, variables: { equals: log.variables as Prisma.InputJsonValue } },
+            data: { status: "failed", nextRetryAt: null, errorMessage: reason,
+                variables: { ...variables, quietHoursDisposition: "CANCEL", manualQueueStatus: "canceled", manualQueueReason: reason } },
+        });
+        if (canceledLog.count !== 1) throw new AgentAutomationDispatchUncertainError();
+        return { valid: false, reason: rawReason, canceledAt };
+    }
+
     private async resolveSystemTemplate(
         systemTemplateKey: SystemTemplateKey | undefined,
         branchId: string,
@@ -791,6 +1114,10 @@ export class SmsTriggerDeliveryService {
     ): Promise<ResolvedSmsTemplate> {
         if (!systemTemplateKey) {
             throw new Error("systemTemplateKey is required for templated SMS delivery");
+        }
+        if (isCaregiverSystemTemplateKey(systemTemplateKey)) {
+            if (!this.caregiverTemplates) throw new BranchSystemTemplateSnapshotError(branchId, systemTemplateKey, "resolver unavailable");
+            return this.caregiverTemplates.resolve(branchId, systemTemplateKey, transaction);
         }
         try {
             const template = transaction ? await this.systemTemplateService.getByKeyForBranch(branchId, systemTemplateKey, transaction)
@@ -854,10 +1181,12 @@ export class SmsTriggerDeliveryService {
         errorMessage: string | null;
         msgType: string;
         templateVariables: Record<string, string>;
+        retryDelayMs: number;
     }): MessageLogEntity {
         const now = new Date();
         const variables: Record<string, string> = {
             ...this.sanitizeLogVariables(params.templateVariables),
+            ...(params.job.quietHold ? messageQuietHoldVariables(params.job.quietHold) : {}),
             automationKey: params.config.automationKey,
             recipientName: params.job.payload.recipientName,
             title: params.snapshot.title,
@@ -906,7 +1235,7 @@ export class SmsTriggerDeliveryService {
             params.status === "pending" ? 0 : 1,
             params.status === "pending" ? null : now,
             params.status === "failed"
-                ? new Date(now.getTime() + SMS_DELIVERY_RETRY_DELAY_MS)
+                ? new Date(now.getTime() + params.retryDelayMs)
                 : null,
             now,
             now,
@@ -935,7 +1264,7 @@ export class SmsTriggerDeliveryService {
                 parsed.templateKey !== job.templateKey
                 || typeof parsed.message !== "string"
                 || typeof parsed.title !== "string"
-                || parsed.requestedDeliveryType !== "AUTO"
+                || parsed.requestedDeliveryType !== (job.templateKey === MANUAL_SMS_TEMPLATE_KEY ? canonical.requestedDeliveryType : "AUTO")
                 || (parsed.deliveryType !== "SMS" && parsed.deliveryType !== "LMS")
                 || typeof parsed.maskedReceiver !== "string"
                 || parsed.maskedReceiver !== canonical.maskedReceiver
@@ -957,7 +1286,7 @@ export class SmsTriggerDeliveryService {
                 recipientName: parsed.recipientName,
                 message: parsed.message,
                 title: parsed.title,
-                requestedDeliveryType: "AUTO",
+                requestedDeliveryType: canonical.requestedDeliveryType,
                 deliveryType: parsed.deliveryType as AligoSmsMessageType,
                 estimatedCost: parsed.estimatedCost,
                 templateVersion: parsed.templateVersion,
@@ -979,7 +1308,7 @@ export class SmsTriggerDeliveryService {
 
     private sanitizeLogVariables(templateVariables: Record<string, string>): Record<string, string> {
         return Object.fromEntries(
-            Object.entries(templateVariables).filter(([key]) =>
+            Object.entries(publicMessageVariables(templateVariables)).filter(([key]) =>
                 key !== SMS_DELIVERY_SNAPSHOT_VARIABLE
                 && !/(phone|receiver|telephone|mobile)/i.test(key)),
         );

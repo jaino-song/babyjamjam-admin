@@ -64,6 +64,20 @@ describe("AIChatService legacy session and confirmation boundary", () => {
         expect(repository.create).not.toHaveBeenCalled();
     });
 
+    it("forwards only the current verified principal roles to confirmation execution", async () => {
+        const { service, toolExecutor } = createService();
+        const principal = { branchId: context.branchId, globalRole: "user", branchRole: "manager" };
+
+        await service.confirmToolAction(
+            context.userId, context.branchId, { intentId: "intent-1", nonce: "nonce" }, context.sessionId, principal,
+        );
+
+        expect(toolExecutor.executeAuthorized).toHaveBeenCalledWith(
+            { ...context, globalRole: "user", branchRole: "manager" },
+            "createClient", { name: "A" }, expect.objectContaining({ id: "intent-1" }), principal,
+        );
+    });
+
     it("consumes the server intent and executes the stored payload, ignoring client action fields", async () => {
         const { service, toolExecutor, confirmationService } = createService();
 

@@ -53,7 +53,28 @@ export const MESSAGE_TRIGGER_RECIPIENT_TYPES = [
 
 export type MessageTriggerRecipientType = (typeof MESSAGE_TRIGGER_RECIPIENT_TYPES)[number];
 
+/** UI group mode; each projected child/job still has a single recipient type. */
+export const MESSAGE_TRIGGER_RECIPIENT_MODES = [
+  ...MESSAGE_TRIGGER_RECIPIENT_TYPES,
+  "BOTH_EMPLOYEES",
+] as const;
+
+export type MessageTriggerRecipientMode = (typeof MESSAGE_TRIGGER_RECIPIENT_MODES)[number];
+
+export interface MessageTriggerRuleGroup {
+  id: string;
+  branchId: string;
+  name: string;
+  recipientMode: MessageTriggerRecipientMode;
+  version: number;
+  createdAt: string;
+  updatedAt: string;
+  deletedAt: string | null;
+}
+
 export const MESSAGE_TRIGGER_TEMPLATE_KEYS = [
+  "CAREGIVER_SERVICE_START_NOTICE",
+  "CAREGIVER_SERVICE_END_NOTICE",
   "CLIENT_WELCOME",
   "SERVICE_START_REMINDER",
   "SERVICE_INFO",
@@ -100,6 +121,7 @@ export const MESSAGE_TRIGGER_TARGET_CLIENT_STATUS_LABELS: Readonly<
 export const messageTriggerEventTypeSchema = z.enum(MESSAGE_TRIGGER_EVENT_TYPES);
 export const messageTriggerOffsetTypeSchema = z.enum(MESSAGE_TRIGGER_OFFSET_TYPES);
 export const messageTriggerRecipientTypeSchema = z.enum(MESSAGE_TRIGGER_RECIPIENT_TYPES);
+export const messageTriggerRecipientModeSchema = z.enum(MESSAGE_TRIGGER_RECIPIENT_MODES);
 export const messageTriggerTemplateKeySchema = z.enum(MESSAGE_TRIGGER_TEMPLATE_KEYS);
 export const messageTriggerTargetClientStatusSchema = z.enum(
   MESSAGE_TRIGGER_TARGET_CLIENT_STATUSES,
@@ -112,6 +134,8 @@ export const messageTriggerTargetClientStatusSchema = z.enum(
 export const MESSAGE_TRIGGER_AUTOMATIC_VARIABLE_KEYS: Readonly<
   Record<MessageTriggerTemplateKey, readonly string[]>
 > = {
+  CAREGIVER_SERVICE_START_NOTICE: ["employeeName", "clientName", "serviceStartDate", "serviceEndDate", "branchName"],
+  CAREGIVER_SERVICE_END_NOTICE: ["employeeName", "clientName", "serviceStartDate", "serviceEndDate", "branchName"],
   CLIENT_WELCOME: ["name", "clientName", "registrationDate", "serviceType"],
   SERVICE_START_REMINDER: ["name", "clientName", "serviceStartDate", "timingText"],
   SERVICE_INFO: ["name", "clientName", "phone"],
@@ -152,6 +176,8 @@ export const MESSAGE_TRIGGER_AUTOMATIC_VARIABLE_KEYS: Readonly<
 export const SMS_TRIGGER_TO_SYSTEM_TEMPLATE: Partial<
   Record<MessageTriggerTemplateKey, SystemTemplateKey>
 > = {
+  CAREGIVER_SERVICE_START_NOTICE: "CAREGIVER_SERVICE_START_NOTICE",
+  CAREGIVER_SERVICE_END_NOTICE: "CAREGIVER_SERVICE_END_NOTICE",
   SERVICE_INFO: "SERVICE_INFO",
   SERVICE_RECORD_LINK: "SERVICE_RECORD_LINK",
   CLIENT_GREETING: "GREETING",
@@ -168,6 +194,8 @@ export const SMS_TRIGGER_TO_SYSTEM_TEMPLATE: Partial<
 // data-driven dropdowns, the channel filters, and the backend delivery drift
 // guard without hardcoded per-surface lists.
 export const SMS_TRIGGER_TEMPLATE_KEYS: MessageTriggerTemplateKey[] = [
+  "CAREGIVER_SERVICE_START_NOTICE",
+  "CAREGIVER_SERVICE_END_NOTICE",
   "SERVICE_INFO",
   "SERVICE_RECORD_LINK",
   "CLIENT_GREETING",
@@ -216,6 +244,8 @@ export interface MessageTriggerTemplateCatalogItem {
 
 export interface MessageTriggerRule {
   id: string;
+  /** Nullable for system/default rules; absent on older servers. */
+  groupId?: string | null;
   branchId: string | null;
   name: string;
   /**
@@ -247,6 +277,69 @@ export interface MessageTriggerRule {
   retryOnFailure: boolean;
   createdAt: string;
   updatedAt: string;
+}
+
+/** A group projects one execution rule per recipient; children never repeat in standaloneRules. */
+export interface MessageTriggerRuleGroupView extends MessageTriggerRuleGroup {
+  rules: MessageTriggerRule[];
+  eventType: MessageTriggerEventType;
+  offsetType: MessageTriggerOffsetType;
+  offsetDays: number;
+  sendTime: string;
+  targetClientStatus: MessageTriggerTargetClientStatus;
+  retryOnFailure: boolean;
+  isActive: boolean;
+  recipientTemplates: Partial<Record<MessageTriggerRecipientType, MessageTriggerTemplateKey>>;
+}
+
+export interface MessageTriggerRuleGroupList {
+  groups: MessageTriggerRuleGroupView[];
+  standaloneRules: MessageTriggerRule[];
+}
+
+export interface CreateMessageTriggerRuleGroupDto {
+  name: string;
+  recipientMode: MessageTriggerRecipientMode;
+  eventType: MessageTriggerEventType;
+  offsetType: MessageTriggerOffsetType;
+  offsetDays?: number;
+  sendTime?: string;
+  targetClientStatus?: MessageTriggerTargetClientStatus;
+  retryOnFailure?: boolean;
+  isActive?: boolean;
+  recipientTemplates: Partial<Record<MessageTriggerRecipientType, MessageTriggerTemplateKey>>;
+}
+
+export interface UpdateMessageTriggerRuleGroupDto extends CreateMessageTriggerRuleGroupDto {
+  expectedVersion: number;
+}
+
+export interface PreviewMessageTriggerRuleGroupDto {
+  draft: CreateMessageTriggerRuleGroupDto;
+  clientId?: number;
+  employeeScheduleId?: number;
+}
+
+export interface MessageTriggerRuleGroupPreviewRecipient {
+  ruleId: string;
+  recipientType: MessageTriggerRecipientType;
+  employeeId: number | null;
+  employeeScheduleId: number | null;
+  recipientName: string | null;
+  recipientPhone: string | null;
+  templateKey: MessageTriggerTemplateKey;
+  body: string | null;
+  count: number;
+  scheduledFor: string | null;
+  anchorSource: "client.createdAt" | "client.startDate" | "client.endDate" | "employee_schedule.startDate" | "employee_schedule.endDate";
+  anchorDate: string | null;
+  outcome: "ready" | "skip" | "needs_setup" | "unavailable";
+  reason: string | null;
+}
+export interface MessageTriggerRuleGroupPreviewResponse {
+  complete: boolean;
+  recipients: MessageTriggerRuleGroupPreviewRecipient[];
+  count: number;
 }
 
 /**
@@ -336,6 +429,8 @@ export interface UpcomingMessageTriggerJobPayload {
 
 export interface UpcomingMessageTriggerJob {
   id: string;
+  /** Claim policy snapshot; absent on older servers or null before claiming. */
+  processingDeadlineAt?: string | null;
   ruleId: string;
   ruleName: string;
   eventType: MessageTriggerEventType | null;
@@ -492,6 +587,23 @@ export type MessageDeliveryTriggerType = "immediate" | "scheduled";
 export type MessageDeliveryResolvedSmsType = "SMS" | "LMS";
 export type MessageDeliveryProviderSmsType = "SMS" | "LMS" | "MMS";
 
+export interface MessageDeliverySmsDuplicateDecision {
+  confirmed: true;
+  checkedAt: string;
+  matchIds: number[];
+  /** Optional on legacy input; the server requires a matching hash under ON. */
+  payloadHash?: string;
+}
+
+export interface MessageDeliverySmsDuplicateCheckResponse {
+  checkedAt: string;
+  matchIds: number[];
+  latestSentAt: string | null;
+  payloadHash: string;
+}
+
+export type MessageDeliverySmsDuplicateCheckRequest = SendMessageDeliverySmsRequest;
+
 export interface SendMessageDeliverySmsRequest {
   receiver: string;
   message: string;
@@ -506,9 +618,11 @@ export interface SendMessageDeliverySmsRequest {
   scheduledDate?: string;
   scheduledTime?: string;
   testMode?: boolean;
+  idempotencyKey?: string;
+  duplicateDecision?: MessageDeliverySmsDuplicateDecision;
 }
 
-export interface SendMessageDeliverySmsResponse {
+export interface SendMessageDeliverySmsSentResponse {
   provider: "aligo_sms";
   triggerType: MessageDeliveryTriggerType;
   request: {
@@ -527,6 +641,16 @@ export interface SendMessageDeliverySmsResponse {
     msgType?: MessageDeliveryProviderSmsType;
   };
 }
+
+export interface SendMessageDeliverySmsQueueResponse {
+  provider: "aligo_sms";
+  triggerType: MessageDeliveryTriggerType;
+  request: { senderPhone?: string; receiver: string; msgType: MessageDeliverySmsType; testMode: boolean; idempotencyKey: string };
+  outcome: "queued" | "deferred" | "canceled" | "mixed";
+  items: Array<{ jobId: string; messageLogId: number; recipientPhone: string; status: "queued" | "deferred" | "canceled"; scheduledAt: string; reason: string | null }>;
+}
+
+export type SendMessageDeliverySmsResponse = SendMessageDeliverySmsSentResponse | SendMessageDeliverySmsQueueResponse;
 
 export const MESSAGE_SENDER_APPROVAL_STATUSES = [
   "not_requested",
@@ -631,4 +755,49 @@ export interface SystemAdminBranchRequest {
   /** @deprecated Release-1 alias of `admin`; removed in Release 2. Do not read. */
   owner?: SystemAdminBranchUser | null;
   messageSenderApproval: SystemAdminBranchMessageSenderApproval;
+}
+
+export const MESSAGE_POLICY_RECIPIENT_GROUPS = ["CLIENT", "CAREGIVER", "STAFF"] as const;
+export type MessagePolicyRecipientGroup = typeof MESSAGE_POLICY_RECIPIENT_GROUPS[number];
+export interface MessageAutomationPolicyConfiguration {
+    schemaVersion: 1;
+    dispatchCheckIntervalMinutes: number;
+    defaultRuleSendTime: string;
+    triggerRetryIntervalMinutes: number;
+    processingReclaimMinutes: number;
+    smsRetryIntervalMinutes: number;
+    pastExpiryHours: number;
+    pastSendIntervalMinutes: number;
+    pastRuleOrder: string[];
+    duplicateWindowHours: number;
+    quietHours: {
+        enabled: boolean;
+        start: string;
+        end: string;
+        recipientGroups: MessagePolicyRecipientGroup[];
+        action: "DEFER" | "CANCEL";
+        timezone: "Asia/Seoul";
+    };
+}
+export interface MessagePolicyWarning { code: "ORDER_ENTRY_PRUNED"; ruleId: string }
+
+
+export interface MessageAutomationPolicyConfigResponse {
+  version: string | null;
+  configuration: MessageAutomationPolicyConfiguration;
+  permissions: { canRead: boolean; canWrite: boolean };
+  warnings: MessagePolicyWarning[];
+}
+export interface UpdateMessageAutomationPolicyConfigRequest {
+  expectedVersion: string | null;
+  configuration: MessageAutomationPolicyConfiguration;
+}
+export interface MessageAutomationPolicyPreviewResponse {
+  version: string | null;
+  deferredCount: number;
+  canceledCount: number;
+  reevaluateAt: string | null;
+  futureProviderReservations: number;
+  canEnableQuietHours: boolean;
+  warnings: MessagePolicyWarning[];
 }

@@ -1,4 +1,4 @@
-import type { AgentCapabilityMeta, AgentFormField } from "@babyjamjam/shared";
+import type { AgentActionPreview, AgentCapabilityMeta, AgentFormField } from "@babyjamjam/shared";
 import type { z } from "zod";
 
 import type { AgentContext } from "./agent-context";
@@ -28,6 +28,8 @@ export type AgentProposalInspection = {
     summary?: string;
     provider?: string;
     estimatedCost?: string;
+    /** Optional BEFORE -> AFTER table for the approval card; invalid previews fail the proposal. */
+    preview?: AgentActionPreview;
 };
 
 export interface CapabilityDefinition<TInput = unknown, TOutput = unknown> {

@@ -497,6 +497,24 @@ export function extractEformsignContractEndDate(
     }) ?? contractPeriodDates(document)[1];
 }
 
+/** Contract start date: explicit field, then year/month/day parts, then the first date of the period. */
+export function extractEformsignContractStartDate(
+    document: EformsignApiDocumentResponse,
+): Date | null {
+    return dateValue(eformsignDocumentFieldValue(document, [
+        "계약 시작일",
+        "계약시작일",
+        "서비스 시작일",
+        "서비스시작일",
+        "startDate",
+        "contractStartDate",
+    ])) ?? dateFromParts(document, {
+        year: ["계약 시작 년도", "계약시작년도", "서비스 시작 년도", "startYear"],
+        month: ["계약 시작 월", "계약시작월", "서비스 시작 월", "startMonth"],
+        day: ["계약 시작 일", "계약시작일", "서비스 시작 일", "startDay"],
+    }) ?? contractPeriodDates(document)[0];
+}
+
 function contractPeriodDates(
     document: EformsignApiDocumentResponse,
 ): [Date | null, Date | null] {
@@ -531,19 +549,7 @@ export function extractEformsignContractClientPrefillCandidate(
     if (!name || name === "고객 미지정" || name === "수신자") return null;
     const phone = eformsignCustomerPhone(document, name);
 
-    const [periodStartDate] = contractPeriodDates(document);
-    const startDate = dateValue(eformsignDocumentFieldValue(document, [
-        "계약 시작일",
-        "계약시작일",
-        "서비스 시작일",
-        "서비스시작일",
-        "startDate",
-        "contractStartDate",
-    ])) ?? dateFromParts(document, {
-        year: ["계약 시작 년도", "계약시작년도", "서비스 시작 년도", "startYear"],
-        month: ["계약 시작 월", "계약시작월", "서비스 시작 월", "startMonth"],
-        day: ["계약 시작 일", "계약시작일", "서비스 시작 일", "startDay"],
-    }) ?? periodStartDate;
+    const startDate = extractEformsignContractStartDate(document);
     const endDate = extractEformsignContractEndDate(document);
     const type = eformsignDocumentFieldValue(document, [
         "바우처 유형",

@@ -4,6 +4,8 @@ import { SystemTemplateVersionEntity } from '../entities/system-template-version
 import {
   BranchSystemTemplateSnapshot,
   BranchSystemTemplateSnapshotEntry,
+  CaregiverTemplateLifecycleAction,
+  CaregiverTemplateLifecycleResult,
 } from '../entities/branch-system-template-snapshot';
 import type { Prisma } from '@prisma/client';
 
@@ -24,7 +26,7 @@ export type ValidateBranchSystemTemplateCandidate = (
 export interface ISystemTemplateRepository {
   findByKey(key: SystemTemplateKey, transaction?: Prisma.TransactionClient): Promise<SystemTemplateEntity | null>;
   findAll(): Promise<SystemTemplateEntity[]>;
-  findBranchSnapshot(branchId: string): Promise<BranchSystemTemplateSnapshot | null>;
+  findBranchSnapshot(branchId: string, transaction?: Prisma.TransactionClient): Promise<BranchSystemTemplateSnapshot | null>;
   findByBranchKey(branchId: string, key: SystemTemplateKey, transaction?: Prisma.TransactionClient): Promise<SystemTemplateEntity | null>;
   findAllByBranch(branchId: string): Promise<SystemTemplateEntity[]>;
   updateBranchTemplate(
@@ -36,6 +38,7 @@ export interface ISystemTemplateRepository {
     validateCandidate: ValidateBranchSystemTemplateCandidate,
     transaction?: Prisma.TransactionClient,
   ): Promise<BranchSystemTemplateMutationResult>;
+  updateCaregiverTemplateLifecycle?(branchId: string, key: SystemTemplateKey, action: CaregiverTemplateLifecycleAction, userId: string, transaction: Prisma.TransactionClient): Promise<CaregiverTemplateLifecycleResult>;
   save(template: SystemTemplateEntity, transaction?: Prisma.TransactionClient): Promise<SystemTemplateEntity>;
   getVersionHistory(templateKey: SystemTemplateKey): Promise<SystemTemplateVersionEntity[]>;
   getVersionByNumber(

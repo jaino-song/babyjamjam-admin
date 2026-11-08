@@ -34,6 +34,10 @@
       "types": "./types/service-record.d.ts",
       "require": "./types/service-record.js"
     },
+    "./types/start-date-change": {
+      "types": "./types/start-date-change.d.ts",
+      "require": "./types/start-date-change.js"
+    },
     "./types/system-template": {
       "types": "./types/system-template.d.ts",
       "require": "./types/system-template.js"

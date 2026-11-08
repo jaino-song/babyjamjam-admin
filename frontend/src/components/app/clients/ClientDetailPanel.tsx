@@ -22,8 +22,10 @@ import {
     normalizeApiError,
 } from "@babyjamjam/shared";
 import { formatBirthdayYYMMDD } from "@babyjamjam/shared/utils/birthday";
+import { isRealIsoDate } from "@babyjamjam/shared/utils/field-validation-message";
 
 import { Button } from "@/components/ui/button";
+import { SelectableItemFrame } from "@/components/ui/selectable-item";
 import { TwoButtonModal } from "@/components/app/ui/TwoButtonModal";
 import { StatusBadge as MessageStatusBadge } from "@/components/app/ui/status-badge";
 import { QueryErrorState } from "@/components/app/ui/QueryErrorState";
@@ -33,9 +35,11 @@ import {
     useConfirmBooking,
 } from "@/features/clients/hooks/use-clients";
 import type { Client } from "@/lib/client/types";
+import { formatVoucherDurationLabel } from "@/lib/client/voucher-duration-label";
 import { getClientBadgeAvatarClassName, getClientBadges, getPrimaryClientBadge } from "@/lib/client/badges";
 import { useToast } from "@/hooks/use-toast";
 import { useGetAuthUser } from "@/hooks/useGetAuthUser";
+import { useVoucherPriceInfos, useVoucherYears } from "@/hooks/useVoucherData";
 import { canManageBranchFromAuthQuery } from "@/lib/auth/branch-role-policy";
 import { canRetryFailedHistory, canResendSetupJob, resendMessageTriggerJob, retryMessageHistory } from "@/features/message-triggers/retry-history";
 import {
@@ -301,9 +305,13 @@ function ClientMessageHistoryList({
                 aria-label="메시지 발송 내역을 불러오는 중"
                 className="w-full min-w-0 max-w-full"
             >
-                <div
+                <SelectableItemFrame
+                    isSelected={false}
                     data-component={`${dataComponentPrefix}_history-list_skeleton-item`}
-                    className="flex h-[calc(94px*var(--glint-ui-scale,1))] min-w-0 max-w-full items-center gap-[calc(12px*var(--glint-ui-scale,1))] overflow-hidden rounded-[18px] border-2 border-transparent bg-white p-[calc(16px*var(--glint-ui-scale,1))]"
+                    data-slot="message-history-skeleton-item"
+                    className={cn(
+                        "flex h-[calc(94px*var(--glint-ui-scale,1))] min-w-0 max-w-full items-center gap-[calc(12px*var(--glint-ui-scale,1))] overflow-hidden rounded-[18px] p-[calc(16px*var(--glint-ui-scale,1))]"
+                    )}
                 >
                     <Skeleton
                         data-component={`${dataComponentPrefix}_history-list_skeleton-icon`}
@@ -339,7 +347,7 @@ function ClientMessageHistoryList({
                             className="h-[calc(12px*var(--glint-ui-scale,1))] w-[calc(80px*var(--glint-ui-scale,1))] bg-v3-dim-white"
                         />
                     </div>
-                </div>
+                </SelectableItemFrame>
             </div>
         );
     }
@@ -1180,6 +1188,38 @@ function ClientDetailPanelBody({
     const client = useMemo(() => confirmedBooking && selectedClient.bookingConfirmedAt == null
         ? { ...selectedClient, bookingConfirmedAt: confirmedBooking.bookingConfirmedAt, serviceStatus: confirmedBooking.serviceStatus }
         : selectedClient, [selectedClient, confirmedBooking]);
+    const { data: voucherYears = [] } = useVoucherYears();
+    const resolvedVoucherYear = useMemo(() => {
+        let endDate = client?.endDate ?? "";
+        if (!isRealIsoDate(endDate)) {
+            // Validate the original calendar date before parsing can normalize a rollover.
+            const isIsoTimestamp = /^\d{4}-\d{2}-\d{2}T(?:[01]\d|2[0-3]):[0-5]\d(?::[0-5]\d(?:\.\d+)?)?(?:Z|[+-](?:[01]\d|2[0-3]):[0-5]\d)?$/.test(endDate)
+                && isRealIsoDate(endDate.slice(0, 10));
+            const parsedDate = isIsoTimestamp ? new Date(endDate) : null;
+            endDate = parsedDate && !Number.isNaN(parsedDate.getTime())
+                ? parsedDate.toISOString().slice(0, 10)
+                : "";
+        }
+        const endDateYear = isRealIsoDate(endDate)
+            ? Number.parseInt(endDate.slice(0, 4), 10)
+            : NaN;
+        if (Number.isFinite(endDateYear) && (voucherYears.length === 0 || voucherYears.includes(endDateYear))) {
+            return endDateYear;
+        }
+        const currentYear = new Date().getFullYear();
+        if (voucherYears.length === 0 || voucherYears.includes(currentYear)) return currentYear;
+        return Math.max(...voucherYears);
+    }, [client?.endDate, voucherYears]);
+    const voucherType = client?.voucherClient ? client.type || "" : "";
+    const {
+        data: voucherPriceInfos,
+        isLoading: isVoucherPriceLoading,
+        isError: isVoucherPriceError,
+    } = useVoucherPriceInfos(voucherType, resolvedVoucherYear);
+    const availableVoucherDurations = useMemo(() => {
+        if (!voucherType || isVoucherPriceLoading || isVoucherPriceError) return [];
+        return (voucherPriceInfos ?? []).map((info) => Number(info.duration));
+    }, [voucherType, voucherPriceInfos, isVoucherPriceLoading, isVoucherPriceError]);
     const [isBookingConfirmationOpen, setIsBookingConfirmationOpen] = useState(false);
     const [isConfirmingBooking, setIsConfirmingBooking] = useState(false);
     const bookingConfirmationInFlightRef = useRef(false);
@@ -1753,7 +1793,9 @@ function ClientDetailPanelBody({
                                             label={t(locale, "clients.form.duration")}
                                             value={
                                                 client.duration
-                                                    ? `${client.duration}일`
+                                                    ? client.voucherClient
+                                                        ? formatVoucherDurationLabel(client.duration, availableVoucherDurations)
+                                                        : `${client.duration}일`
                                                     : "-"
                                             }
                                         />

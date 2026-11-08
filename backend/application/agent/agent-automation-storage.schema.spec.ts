@@ -1,3 +1,4 @@
+import { AgentTaskSchema } from "@babyjamjam/shared";
 import type { AgentAutomationAuthority, AgentAutomationEffect } from "domain/entities/agent-automation-consent";
 import { agentAutomationEffectDigest, agentAutomationPolicyDigest, agentAutomationRecordDigest } from "./agent-automation-consent";
 import {
@@ -90,6 +91,36 @@ describe("strict private automation storage", () => {
         for (const invalid of [{ ...linkScope, recipientType: "secondary-employee" }, { ...linkScope, ruleId: "rule-a" },
             { ...linkScope, scheduleIdentity: null }, { ...linkScope, kind: "employee-assignment" }]) {
             expect(AgentAutomationScopeStorageSchema.safeParse(invalid).success).toBe(false);
+        }
+    });
+
+    it("RULE-2 shared consumer AgentTaskSchema accepts caregiver summaries and rejects cross-family relabeling", () => {
+        const summary = { effectRef: id(20), recipientRef: id(21), kind: "caregiver-service", recipientType: "primary-employee", change: "create", templateKey: "CAREGIVER_SERVICE_START_NOTICE" };
+        const task = { schemaVersion: 1, taskId: id(5), sessionId: id(9), kind: "clients.update", capabilityId: "clients.update", revision: 2,
+            state: "review_ready", confirmed: {}, tentative: {}, clearedFields: [], provenance: { confirmed: {}, tentative: {} }, issues: [],
+            constraints: { noSend: false }, choiceSets: [], orderedChoiceRefs: [], target: null, consent: { choice: "unanswered", binding: null }, action: null,
+            times: { createdAt: "2026-11-03T00:00:00.000Z", updatedAt: "2026-11-03T00:00:00.000Z" }, currentSnapshotRef: id(10),
+            automation: { questionRef: id(11), availability: "available", recipientSetRef: id(12), templateSetRef: id(13), effectDigest: hash, policyDigest: hash, effects: [summary] } };
+        expect(AgentTaskSchema.safeParse(task).success).toBe(true);
+        for (const changed of [{ ...summary, kind: "client-rule" }, { ...summary, recipientType: "client" }, { ...summary, templateKey: "INFO" }]) {
+            expect(AgentTaskSchema.safeParse({ ...task, automation: { ...task.automation, effects: [changed] } }).success).toBe(false);
+        }
+        expect(AgentTaskSchema.safeParse({ ...task, automation: undefined }).success).toBe(true);
+    });
+
+    it("RULE-2 keeps caregiver service effects in a separate strict family", () => {
+        const base = authority().effects[0]!;
+        for (const templateKey of ["CAREGIVER_SERVICE_START_NOTICE", "CAREGIVER_SERVICE_END_NOTICE"] as const) {
+            for (const recipientType of ["primary-employee", "secondary-employee"] as const) {
+                const effect = { ...base, kind: "caregiver-service", ruleId: "group-child", scheduleId: 91, recipientType, templateKey };
+                expect(AgentAutomationEffectStorageSchema.safeParse(effect).success).toBe(true);
+                for (const invalid of [{ ...effect, recipientType: "client" }, { ...effect, scheduleId: null },
+                    { ...effect, kind: "client-rule" }, { ...effect, kind: "employee-assignment" },
+                    { ...effect, ruleId: "system:forged" }, { ...effect, ruleId: "agent-sms:forged" },
+                    { ...effect, templateKey: "INFO" }, { ...effect, approved: true }]) {
+                    expect(AgentAutomationEffectStorageSchema.safeParse(invalid).success).toBe(false);
+                }
+            }
         }
     });
 

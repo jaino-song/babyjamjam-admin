@@ -65,3 +65,17 @@ describe("AgentController task restore composition", () => {
         expect(response.setHeader).toHaveBeenCalledWith("Cache-Control", "no-store");
     });
 });
+
+
+describe("AgentController client surface", () => {
+    it.each([undefined, "mobile", "desktop"])("passes request header %s to the capability gate without mutating tenant", async (header) => {
+        const tenant = Object.freeze({ userId: "u", branchId: "b", globalRole: "admin", branchRole: "admin" });
+        const flags = { getSnapshot: jest.fn().mockResolvedValue({}), isCapabilityEnabledFromSnapshot: jest.fn().mockReturnValue(true) };
+        const controller = new AgentController({} as never, {} as never, { list: () => [{ meta: { name: "clients.update" } }] } as never, flags as never, {} as never, {} as never);
+        await controller.capabilities({ tenant, headers: header === undefined ? {} : { "x-bjj-client": header } } as never);
+        const passed = flags.isCapabilityEnabledFromSnapshot.mock.calls[0][1];
+        expect(passed).toEqual({ ...tenant, ...(header === "mobile" ? { clientSurface: "mobile" } : {}) });
+        expect(passed).not.toBe(tenant);
+        expect(tenant).not.toHaveProperty("clientSurface");
+    });
+});

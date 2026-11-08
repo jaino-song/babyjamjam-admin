@@ -19,6 +19,11 @@ export interface ServiceRecordScheduleShiftResult {
     deltaBusinessDays: number;
     entries: ServiceRecordPlannedSession[];
 }
+export interface ServiceRecordScheduleReplanResult {
+    entries: ServiceRecordPlannedSession[];
+    /** Service date of the last session after the re-plan. */
+    endDate: string;
+}
 export declare class ServiceRecordScheduleValidationError extends Error {
     readonly code: string;
     readonly sessionIndex: number | null;
@@ -46,6 +51,14 @@ export declare function validateServiceRecordScheduleVector(entries: ReadonlyArr
 export declare function shiftServiceRecordScheduleSuffix(entries: ReadonlyArray<ServiceRecordPlannedSession>, sessionIndex: number, newDate: string, calendar?: KrBusinessDayCalendar, options?: {
     allowNonBusinessDay?: boolean;
 }): ServiceRecordScheduleShiftResult;
+/**
+ * Re-plans `fromSessionIndex..N` onto consecutive business days starting at
+ * `resumeDate` (or the next business day when it is not one). Unlike the suffix
+ * shift, old gaps are not preserved: used after a service pause plus caregiver
+ * replacement, where the remaining sessions run back to back from the resume.
+ * Only `serviceDate` changes; `originalDate` and provenance are kept.
+ */
+export declare function replanServiceRecordScheduleFromResume(entries: ReadonlyArray<ServiceRecordPlannedSession>, fromSessionIndex: number, resumeDate: string, calendar?: KrBusinessDayCalendar): ServiceRecordScheduleReplanResult;
 /** A per-session correction moves later dates only with explicit approval. */
 export declare function moveServiceRecordSessionDate(entries: ReadonlyArray<ServiceRecordPlannedSession>, sessionIndex: number, newDate: string, shiftFollowing: boolean, calendar?: KrBusinessDayCalendar): ServiceRecordScheduleShiftResult;
 /**

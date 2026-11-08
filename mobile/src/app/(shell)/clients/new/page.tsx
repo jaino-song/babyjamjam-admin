@@ -169,6 +169,13 @@ function Field({
   );
 }
 
+interface StartDateConfirmation {
+  id: number;
+  dto: UpdateClientDto;
+  lock: NonNullable<NonNullable<NormalizedApiError["problem"]>["startDateLock"]>;
+  step: "started" | "records";
+}
+
 const formatPrice = (price: number | string): string => {
   if (!price && price !== 0) return "";
   const cleaned = typeof price === "string" ? price.replace(/,/g, "") : String(price);
@@ -367,6 +374,14 @@ export default function NewClientPage() {
   const [isPhoneDuplicate, setIsPhoneDuplicate] = useState(false);
   const [hasPhoneDuplicateCheckFailed, setHasPhoneDuplicateCheckFailed] = useState(false);
   const [lastCheckedPhoneDigits, setLastCheckedPhoneDigits] = useState<string | null>(null);
+  const [startDateConfirmation, setStartDateConfirmation] = useState<StartDateConfirmation | null>(null);
+  const startDateRetryInFlightRef = useRef(false);
+  const [isRetryingStartDate, setIsRetryingStartDate] = useState(false);
+  const mountedRef = useRef(false);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => { mountedRef.current = false; };
+  }, []);
   const [pendingDurationConfirmation, setPendingDurationConfirmation] = useState<string | null>(null);
   const [pendingUnavailableEmployeeConfirmation, setPendingUnavailableEmployeeConfirmation] = useState<{
     employees: Array<{ id: number; name: string }>;
@@ -455,6 +470,7 @@ export default function NewClientPage() {
     previousServicePeriodRef.current = null;
     submissionInFlightRef.current = false;
     setPendingDurationConfirmation(null);
+    setStartDateConfirmation(null);
     setErrorState(null);
     setHasUnknownMutationOutcome(false);
     reset();
@@ -1050,11 +1066,136 @@ export default function NewClientPage() {
     setCurrentStep(newStep);
   };
 
+  const handleMutationError = async (
+    err: unknown,
+    endDateGuardSent: boolean,
+    allowStartDateConfirmation: boolean,
+    capturedKey: string,
+    updateDto?: UpdateClientDto,
+    confirmedPeriod?: string,
+  ): Promise<void> => {
+    const responseData = (err as { response?: { data?: unknown } } | null)?.response?.data;
+    if (
+      editingClientId === null
+      && responseData
+      && typeof responseData === "object"
+      && !Array.isArray(responseData)
+      && (responseData as { code?: unknown }).code === "EMPLOYEE_ACTIVATION_CONFIRMATION_REQUIRED"
+      && Array.isArray((responseData as { unavailableEmployees?: unknown }).unavailableEmployees)
+    ) {
+      const unavailableEmployees = (
+        responseData as { unavailableEmployees: unknown[] }
+      ).unavailableEmployees.flatMap((employee) => {
+        if (!employee || typeof employee !== "object" || Array.isArray(employee)) return [];
+        const { id, name } = employee as { id?: unknown; name?: unknown };
+        return Number.isInteger(id) && typeof name === "string"
+          ? [{ id: id as number, name }]
+          : [];
+      });
+      if (unavailableEmployees.length > 0) {
+        setPendingUnavailableEmployeeConfirmation({
+          employees: unavailableEmployees,
+          ...(confirmedPeriod ? { confirmedPeriod } : {}),
+        });
+        setErrorState(null);
+        setHasUnknownMutationOutcome(false);
+        return;
+      }
+    }
+    const normalized = normalizeApiError(err, {
+      locale: locale === "en" ? "en-US" : "ko-KR",
+      operation: "mutation",
+    });
+    // Only the initial update may open confirmations or silently retry a lock.
+    const lock = normalized.problem?.startDateLock;
+    if (
+      allowStartDateConfirmation && editingClientId !== null && updateDto
+      && normalized.status === 409
+      && normalized.problem?.code === "SERVICE_RECORD_START_DATE_LOCKED"
+      && lock
+    ) {
+      if (!mountedRef.current || lastInitializedFormKeyRef.current !== capturedKey) return;
+      setErrorState(null);
+      if (!lock.serviceStarted && lock.recordedSessionCount === 0) {
+        await retryStartDateChange("CONFIRM_STARTED", { id: editingClientId, dto: updateDto });
+      } else {
+        setStartDateConfirmation({
+          id: editingClientId,
+          dto: updateDto,
+          lock,
+          step: lock.serviceStarted ? "started" : "records",
+        });
+      }
+      return;
+    }
+    // The save carried the end date this form was opened with and the backend found it moved.
+    if (
+      endDateGuardSent
+      && normalized.status === 409
+      && normalized.problem?.code === END_DATE_CHANGED_PROBLEM_CODE
+    ) {
+      setErrorState({ ...normalized, message: CLIENT_END_DATE_CHANGED_MESSAGE });
+      setHasUnknownMutationOutcome(false);
+      return;
+    }
+    // A handover the server cannot re-lay on its own: send the admin to the schedule editor.
+    if (
+      normalized.status === 409
+      && responseData
+      && typeof responseData === "object"
+      && (responseData as { scheduleCode?: unknown }).scheduleCode === MANUAL_SCHEDULE_REQUIRED_CODE
+    ) {
+      setErrorState({ ...normalized, message: t(locale, "clients.form.error-manual-schedule") });
+      setHasUnknownMutationOutcome(false);
+      return;
+    }
+    setErrorState(normalized);
+    if (normalized.outcome === "UNKNOWN" || normalized.outcome === "PARTIALLY_APPLIED") {
+      setHasUnknownMutationOutcome(true);
+    }
+  };
+
+  const retryStartDateChange = async (
+    startDateChangeMode: NonNullable<UpdateClientDto["startDateChangeMode"]>,
+    request?: { id: number; dto: UpdateClientDto },
+  ) => {
+    const remembered = request ?? startDateConfirmation;
+    const capturedKey = formSessionKey;
+    if (!remembered || startDateRetryInFlightRef.current
+      || !mountedRef.current || lastInitializedFormKeyRef.current !== capturedKey) return;
+    startDateRetryInFlightRef.current = true;
+    setIsRetryingStartDate(true);
+    try {
+      await updateClient.mutateAsync({
+        id: remembered.id,
+        dto: { ...remembered.dto, startDateChangeMode },
+      });
+      if (!mountedRef.current || lastInitializedFormKeyRef.current !== capturedKey) return;
+      setStartDateConfirmation(null);
+      setErrorState(null);
+      setHasUnknownMutationOutcome(false);
+      startNavigation();
+      router.push(clientsReturnHref);
+    } catch (err: unknown) {
+      if (!mountedRef.current || lastInitializedFormKeyRef.current !== capturedKey) return;
+      setStartDateConfirmation(null);
+      await handleMutationError(err, remembered.dto.expectedEndDate !== undefined, false, capturedKey);
+    } finally {
+      startDateRetryInFlightRef.current = false;
+      setIsRetryingStartDate(false);
+    }
+  };
+
+  const dismissStartDateConfirmation = () => {
+    if (!startDateRetryInFlightRef.current) setStartDateConfirmation(null);
+  };
+
   const handleComplete = async (
     confirmedPeriod?: string,
     confirmedUnavailableEmployeeIds?: number[],
   ) => {
-    if (submissionInFlightRef.current || hasUnknownMutationOutcome) return;
+    if (submissionInFlightRef.current || hasUnknownMutationOutcome
+      || startDateConfirmation || startDateRetryInFlightRef.current) return;
     // The saved period and its duration check depend on the branch calendar.
     if (!calendarReady || endDateUnsupported) {
       // Close the confirmations so they do not hide the calendar notice.
@@ -1067,6 +1208,8 @@ export default function NewClientPage() {
     setPendingUnavailableEmployeeConfirmation(null);
     submissionInFlightRef.current = true;
     let endDateGuardSent = false;
+    let updateDto: UpdateClientDto | undefined;
+    const capturedKey = formSessionKey;
 
     try {
       const fresh = await refreshForSave();
@@ -1185,7 +1328,7 @@ export default function NewClientPage() {
       };
       if (editingClientId !== null && editBaseline) {
         // Send only what the user changed since the form was opened; see `editBaselineRef`.
-        const updateDto: UpdateClientDto = buildClientUpdatePayload({
+        updateDto = buildClientUpdatePayload({
           baseline: editBaseline,
           current: currentForm,
           allowBusinessDayMismatch: hasMismatch && confirmedPeriod === periodKey,
@@ -1200,63 +1343,7 @@ export default function NewClientPage() {
       startNavigation();
       router.push(clientsReturnHref);
     } catch (err: unknown) {
-      const responseData = (err as { response?: { data?: unknown } } | null)?.response?.data;
-      if (
-        editingClientId === null
-        && responseData
-        && typeof responseData === "object"
-        && !Array.isArray(responseData)
-        && (responseData as { code?: unknown }).code === "EMPLOYEE_ACTIVATION_CONFIRMATION_REQUIRED"
-        && Array.isArray((responseData as { unavailableEmployees?: unknown }).unavailableEmployees)
-      ) {
-        const unavailableEmployees = (
-          responseData as { unavailableEmployees: unknown[] }
-        ).unavailableEmployees.flatMap((employee) => {
-          if (!employee || typeof employee !== "object" || Array.isArray(employee)) return [];
-          const { id, name } = employee as { id?: unknown; name?: unknown };
-          return Number.isInteger(id) && typeof name === "string"
-            ? [{ id: id as number, name }]
-            : [];
-        });
-        if (unavailableEmployees.length > 0) {
-          setPendingUnavailableEmployeeConfirmation({
-            employees: unavailableEmployees,
-            ...(confirmedPeriod ? { confirmedPeriod } : {}),
-          });
-          setErrorState(null);
-          setHasUnknownMutationOutcome(false);
-          return;
-        }
-      }
-      const normalized = normalizeApiError(err, {
-        locale: locale === "en" ? "en-US" : "ko-KR",
-        operation: "mutation",
-      });
-      // The save carried the end date this form was opened with and the backend found it moved.
-      if (
-        endDateGuardSent
-        && normalized.status === 409
-        && normalized.problem?.code === END_DATE_CHANGED_PROBLEM_CODE
-      ) {
-        setErrorState({ ...normalized, message: CLIENT_END_DATE_CHANGED_MESSAGE });
-        setHasUnknownMutationOutcome(false);
-        return;
-      }
-      // A handover the server cannot re-lay on its own: send the admin to the schedule editor.
-      if (
-        normalized.status === 409
-        && responseData
-        && typeof responseData === "object"
-        && (responseData as { scheduleCode?: unknown }).scheduleCode === MANUAL_SCHEDULE_REQUIRED_CODE
-      ) {
-        setErrorState({ ...normalized, message: t(locale, "clients.form.error-manual-schedule") });
-        setHasUnknownMutationOutcome(false);
-        return;
-      }
-      setErrorState(normalized);
-      if (normalized.outcome === "UNKNOWN" || normalized.outcome === "PARTIALLY_APPLIED") {
-        setHasUnknownMutationOutcome(true);
-      }
+      await handleMutationError(err, endDateGuardSent, true, capturedKey, updateDto, confirmedPeriod);
     } finally {
       submissionInFlightRef.current = false;
     }
@@ -1284,7 +1371,7 @@ export default function NewClientPage() {
   });
   const isBookingUnconfirmed = !isEditMode || editingClient?.bookingConfirmedAt == null;
   const clientsReturnHref = editingClientId !== null ? `/clients?id=${editingClientId}` : "/clients";
-  const isSaving = createClient.isPending || updateClient.isPending || isNavigationPending;
+  const isSaving = createClient.isPending || updateClient.isPending || isNavigationPending || isRetryingStartDate;
   const structuredErrors = useMemo(
     () => presentClientWizardErrors(errorState?.problem?.errors ?? [], locale),
     [errorState, locale],
@@ -1912,6 +1999,41 @@ export default function NewClientPage() {
         }}
         onSuccess={handleEmployeeCreated}
         assignmentLabel={employeeDialogTarget === "secondary" ? "제공인력 2에 배정" : "제공인력 1에 배정"}
+      />
+      <MobileTwoButtonModal
+        data-component="mobile_clients-new_screen_root_start-date-started-confirmation"
+        open={startDateConfirmation?.step === "started"}
+        title="서비스 시작 후 변경"
+        description="서비스가 이미 시작되었어요. 그래도 변경할까요?"
+        cancelLabel="취소"
+        confirmLabel="진행"
+        confirmVariant="default"
+        actionOrder="cancel-confirm"
+        loading={isSaving}
+        onOpenChange={(isOpen) => { if (!isOpen) dismissStartDateConfirmation(); }}
+        onCancel={dismissStartDateConfirmation}
+        onConfirm={() => {
+          if (!startDateConfirmation || startDateRetryInFlightRef.current) return;
+          if (startDateConfirmation.lock.recordedSessionCount > 0) {
+            setStartDateConfirmation({ ...startDateConfirmation, step: "records" });
+          } else {
+            void retryStartDateChange("CONFIRM_STARTED");
+          }
+        }}
+      />
+      <MobileTwoButtonModal
+        data-component="mobile_clients-new_screen_root_start-date-records-confirmation"
+        open={startDateConfirmation?.step === "records"}
+        title="제공기록지 회차 처리"
+        description="이미 제출된 제공기록지 기록이 있어요. 새로운 시작일을 기준으로 1회차부터 작성된 회차까지 모두 옮길까요?"
+        cancelLabel="처음부터 시작"
+        confirmLabel="모두 옮기기"
+        confirmVariant="default"
+        actionOrder="cancel-confirm"
+        loading={isSaving}
+        onOpenChange={(isOpen) => { if (!isOpen) dismissStartDateConfirmation(); }}
+        onCancel={() => { void retryStartDateChange("RESTART"); }}
+        onConfirm={() => retryStartDateChange("MOVE")}
       />
       <MobileTwoButtonModal
         data-component="mobile_clients-new_screen_root_duration-confirmation"

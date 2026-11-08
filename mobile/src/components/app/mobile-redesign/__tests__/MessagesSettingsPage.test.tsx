@@ -1,5 +1,6 @@
 import type {
   MessageAutomationPoliciesResponse,
+  MessageAutomationPolicyConfigResponse,
   MessageSenderApprovalResponse,
 } from "@babyjamjam/shared/types/message";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -15,6 +16,11 @@ const mockBack = jest.fn();
 const mockToast = jest.fn();
 const mockUpdateBranchActivation = jest.fn();
 let mockSearchParams = new URLSearchParams();
+
+const CONFIG: MessageAutomationPolicyConfigResponse = {
+  version: "v1", permissions: { canRead: true, canWrite: true }, warnings: [],
+  configuration: { schemaVersion: 1, dispatchCheckIntervalMinutes: 5, defaultRuleSendTime: "09:00", triggerRetryIntervalMinutes: 5, processingReclaimMinutes: 10, smsRetryIntervalMinutes: 5, pastExpiryHours: 72, pastSendIntervalMinutes: 5, pastRuleOrder: [], duplicateWindowHours: 72, quietHours: { enabled: false, start: "21:00", end: "08:00", recipientGroups: ["CLIENT"], action: "DEFER", timezone: "Asia/Seoul" } },
+};
 
 const APPROVED: MessageSenderApprovalResponse = {
   approvalStatus: "approved",
@@ -152,7 +158,7 @@ jest.mock("next/navigation", () => ({
 }));
 
 jest.mock("@/hooks/useGetAuthUser", () => ({
-  useGetAuthUser: () => ({ data: { branchName: "인천점", role: "owner" } }),
+  useGetAuthUser: () => ({ data: { branchId: "branch-1", branchName: "인천점", role: "owner" } }),
 }));
 
 jest.mock("@/providers/UserProvider", () => ({
@@ -175,6 +181,9 @@ jest.mock("@/features/message-triggers/hooks/use-message-triggers", () => ({
 
 jest.mock("@/services/api", () => ({
   settingsApi: {
+    getMessageAutomationConfig: jest.fn(),
+    updateMessageAutomationConfig: jest.fn(),
+    previewMessageAutomationConfig: jest.fn(),
     getMessageSenderApproval: jest.fn(),
     getMessageAutomationPolicies: jest.fn(),
     getClientRegistrationPolicy: jest.fn(),
@@ -214,6 +223,8 @@ function renderPage() {
 
 describe("MessagesSettingsPage", () => {
   beforeEach(() => {
+    mockedSettingsApi.getMessageAutomationConfig.mockReset();
+    mockedSettingsApi.getMessageAutomationConfig.mockResolvedValue(CONFIG);
     mockSearchParams = new URLSearchParams();
     mockPush.mockReset();
     mockReplace.mockReset();
@@ -242,10 +253,10 @@ describe("MessagesSettingsPage", () => {
     mockedSettingsApi.requestMessageSenderApproval.mockResolvedValue(UNAPPROVED);
   });
 
-  it("shows seven settings without an application item for an approved user", async () => {
+  it("shows eight settings without an application item for an approved user", async () => {
     renderPage();
 
-    expect(await screen.findByText("7개")).toBeInTheDocument();
+    expect(await screen.findByText("8개")).toBeInTheDocument();
     expect(screen.queryByText("메시지 발송 기능 신청")).not.toBeInTheDocument();
     expect(screen.getByText("자동 전송 실행")).toBeInTheDocument();
     expect(screen.getByText("고객 자동 등록")).toBeInTheDocument();

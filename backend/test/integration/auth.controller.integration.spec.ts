@@ -571,11 +571,11 @@ describe("AuthController (Integration)", () => {
         it("should find an existing phone using normalized digits", async () => {
             (prismaService.user.findFirst as jest.Mock).mockResolvedValue({ id: mockUser.id });
 
-            const response = await authController.checkPhone("01066211878");
+            const response = await authController.checkPhone("01000006621");
 
             expect(response).toEqual({ exists: true });
             expect(prismaService.user.findFirst).toHaveBeenCalledWith({
-                where: { phone: { in: ["01066211878", "010-6621-1878"] } },
+                where: { phone: { in: ["01000006621", "010-0000-6621"] } },
                 select: { id: true },
             });
         });
