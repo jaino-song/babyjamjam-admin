@@ -1,11 +1,14 @@
 "use client";
 
+import { useEffect, useRef, useState } from "react";
 import { formatShortDate, resolvePlannedDates, type ServiceRecordWizardProps } from "@babyjamjam/service-record-ui";
 
 import { DayCard, DayCardGrid, type DayCardState } from "@/components/app/v3/DayCardGrid";
 import { StickyActionBar } from "@/components/app/v3/StickyActionBar";
 import { Button } from "@/components/ui/button";
+import { safeStorageGetItem, safeStorageSetItem } from "@/lib/safe-storage";
 
+import { GuideHintBubble } from "./GuideHintBubble";
 import {
     DAY_STATUS_DONE,
     DAY_STATUS_OPEN,
@@ -22,6 +25,7 @@ import {
 const SOURCE_COMPONENT = "OverviewStep";
 /** Reopens the how-to guide from the overview's title row. */
 const OPEN_GUIDE_LABEL = "사용방법";
+const GUIDE_HINT_STORAGE_KEY = "bjj:service-record:guide-hint-shown";
 
 export type OverviewStepProps = Pick<
     ServiceRecordWizardProps,
@@ -60,6 +64,18 @@ export function OverviewStep({
     onOpenScheduleChangePreview,
     onOpenGuide,
 }: OverviewStepProps) {
+    const [guideHintVisible, setGuideHintVisible] = useState(false);
+    const guideHintChecked = useRef(false);
+
+    useEffect(() => {
+        if (!onOpenGuide || guideHintChecked.current) return;
+        guideHintChecked.current = true;
+        if (safeStorageGetItem("session", GUIDE_HINT_STORAGE_KEY) !== null) return;
+        // eslint-disable-next-line react-hooks/set-state-in-effect -- Session storage is read after hydration to keep the initial render SSR-safe.
+        setGuideHintVisible(true);
+        safeStorageSetItem("session", GUIDE_HINT_STORAGE_KEY, "1");
+    }, [onOpenGuide]);
+
     const child = (suffix: string) => `${root}_${suffix}`;
     const { displayDateForSession } = resolvePlannedDates({ context, day, adminMode: false, draft, defaultDate });
     const openDay = nextOpenDay();
@@ -72,7 +88,7 @@ export function OverviewStep({
                 data-source-component={SOURCE_COMPONENT}
                 className="flex min-w-0 flex-1 flex-col gap-3.5 px-4 pb-6 pt-4"
             >
-                <div className="flex items-center justify-between gap-2">
+                <div className="relative flex items-center justify-between gap-2">
                     <div data-component={child("body_overview-title")} className="text-lg font-bold text-v3-dark">
                         {OVERVIEW_TITLE}
                     </div>
@@ -83,10 +99,19 @@ export function OverviewStep({
                             size="sm"
                             data-component={child("body_overview-guide")}
                             className="h-auto px-1 py-1 text-[13px] font-semibold text-v3-primary no-underline"
-                            onClick={onOpenGuide}
+                            onClick={() => {
+                                setGuideHintVisible(false);
+                                onOpenGuide();
+                            }}
                         >
                             {OPEN_GUIDE_LABEL}
                         </Button>
+                    ) : null}
+                    {onOpenGuide && guideHintVisible ? (
+                        <GuideHintBubble
+                            data-component={child("body_overview-guide-hint")}
+                            onClose={() => setGuideHintVisible(false)}
+                        />
                     ) : null}
                 </div>
                 <p data-component={child("body_overview-help")} className="text-sm text-v3-text-muted">
