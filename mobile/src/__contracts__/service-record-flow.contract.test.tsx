@@ -658,8 +658,8 @@ describe("service-record page contract", () => {
             expectSubmittedReview();
         });
 
-        it("6. another caregiver's submitted day opens read-only: the note, no 수정, no submit", async () => {
-            const { user } = await renderPage({
+        it("6. another caregiver's submitted day offers section edits and resubmits", async () => {
+            const { api, user } = await renderPage({
                 context: makeContext({
                     header: SAVED_HEADER,
                     sessions: [{ ...makeSubmittedFirstSession(), employeeId: 99 }, makeSession(2), makeSession(3)],
@@ -669,9 +669,13 @@ describe("service-record page contract", () => {
             await user.click(await screen.findByRole("button", dayCard(1)));
 
             expect(await screen.findByText(PINNED_COPY.reviewTitle)).toBeInTheDocument();
-            expect(screen.getByText("다른 제공인력이 제출한 회차라 수정할 수 없어요.")).toBeInTheDocument();
-            expect(screen.queryByRole("button", { name: /수정$/ })).toBeNull();
-            expect(screen.queryByRole("button", { name: PINNED_COPY.reviewSubmit })).toBeNull();
+            expect(screen.queryByText(/다른 제공인력이\s제출한 회차라 수정할 수 없어요\./)).toBeNull();
+            expect(screen.getAllByRole("button", { name: /수정$/ })).toHaveLength(3);
+            expect(screen.getByRole("button", { name: PINNED_COPY.reviewSubmit })).toBeEnabled();
+            const body = await signAndSubmit(api, user, { sign: false });
+            expect(api.callsTo("POST", "/sessions/1/submit")).toHaveLength(1);
+            expect(body.answers).toMatchObject(SUBMITTED_ANSWERS);
+            expect(body).not.toHaveProperty("clientSignature");
         });
 
         it("6. re-submitting a re-opened day sends the server's answers unchanged and keeps the saved signature", async () => {

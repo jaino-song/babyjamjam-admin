@@ -457,7 +457,7 @@ export class ServiceRecordEntryService {
 
     /**
      * Create/update one session record. Sessions are filled in order. A submitted (locked)
-     * session keeps its date, signature and approval; the caregiver who submitted it may
+     * session keeps its date, signature and approval; any caregiver with a valid token may
      * still change its answers, notes, etc. service and payment flag until the case is
      * finalized, and each real change is written to service_record_day_edit_log.
      */
@@ -616,8 +616,8 @@ export class ServiceRecordEntryService {
             }
 
             // Read this session's stored row before anything below can write.
-            // A submitted (locked) day may be edited by the caregiver who
-            // submitted it until the case is finalized; its date is immutable
+            // A submitted (locked) day may be edited by any caregiver with a
+            // valid token until the case is finalized; its date is immutable
             // and the end-date extension already ran at the first submit, so an
             // edit must not reach the extension block (it would otherwise
             // commit a schedule/client/token change on an edit).
@@ -631,13 +631,11 @@ export class ServiceRecordEntryService {
             });
             if (existing?.locked) {
                 // Draft saves stay refused; submits are refused for a changed
-                // date, a legacy day without a signature, or a different
-                // caregiver than the one who submitted the day.
+                // date or a legacy day without a signature.
                 if (
                     !lock
                     || toIso(serviceDate) !== toIso(existing.serviceDate)
                     || !existing.clientSignature
-                    || existing.employeeId !== ctx.employeeId
                 ) {
                     throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
                 }
