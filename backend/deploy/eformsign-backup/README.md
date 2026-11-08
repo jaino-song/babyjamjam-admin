@@ -8,13 +8,16 @@ Node.js 20 이상에서 매일 한국 시간 03시에 완료된 계약서와 제
 2. `sudo apt install rclone qpdf`로 도구를 설치합니다.
 3. `rclone config`에서 Google Drive 원격 저장소를 만들고 사용자가 최초 한 번 Google에 로그인합니다.
 4. 서버에 설정된 백업 전용 bearer 토큰을 `tokenFile` 경로의 파일에 저장하고 `chmod 600 ~/.config/eformsign-backup/token`을 실행합니다. 토큰을 명령 인자에 넣지 않습니다.
-5. `systemctl --user daemon-reload && systemctl --user enable --now eformsign-backup.timer`를 실행하고 `loginctl enable-linger "$USER"`로 로그아웃 후에도 예약 실행을 유지합니다.
+5. `systemctl --user daemon-reload`를 실행하고 `loginctl enable-linger "$USER"`로 로그아웃 후에도 예약 실행이 유지되게 합니다. 타이머는 아직 켜지 않습니다.
+6. 문서 20건까지만 수동으로 실행해 디스크·Drive·관리자 화면에 결과가 보이는지 확인합니다. 예약 실행과 겹치지 않게 같은 잠금을 사용합니다.
 
-최초 수동 확인은 다음 명령으로 문서 20건까지만 실행합니다. 예약 실행과 겹치지 않게 같은 잠금을 사용합니다.
+   ```sh
+   flock -n ~/.local/state/eformsign-backup/run.lock node ~/eformsign-backup/backup.mjs --settings ~/.config/eformsign-backup/settings.json --limit 20
+   ```
 
-```sh
-flock -n ~/.local/state/eformsign-backup/run.lock node ~/eformsign-backup/backup.mjs --settings ~/.config/eformsign-backup/settings.json --limit 20
-```
+7. 같은 명령을 `--limit 20` 없이 실행해 전체 백업을 한 번 끝냅니다. 종료 코드가 `0`이어야 합니다.
+8. 개수를 맞춰 봅니다. 운영 DB의 완료 문서 수가 결과 보고의 `totalDocs`와 같고, `archiveDir`의 PDF 수(`find <archiveDir> -name '*.pdf' | wc -l`)와 Drive의 파일 수(`rclone size <rcloneRemote>`)가 같아야 합니다. 하나라도 다르면 타이머를 켜지 않고 원인을 먼저 찾습니다.
+9. 개수가 맞고 결과가 `success`일 때만 `systemctl --user enable --now eformsign-backup.timer`로 매일 실행을 켭니다.
 
 `archiveDir`의 폴더 구성:
 
