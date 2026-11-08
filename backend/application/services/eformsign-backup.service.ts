@@ -1,10 +1,31 @@
 import { Inject, Injectable, NotFoundException } from "@nestjs/common";
 
+import { extractEformsignContractStartDate } from "application/utils/eformsign-contract-client-candidate";
 import { codeOnlyProblemBody } from "application/utils/problem-bodies";
 import { EFORMSIGN_COMPLETED_STATUS_STORAGE_VALUES } from "domain/constants/eformsign-doc-status.constants";
+import { EformsignApiDocumentResponse } from "domain/repositories/eformsign.client.interface";
 import {
-    BackupFailure, BackupRunInput, EFORMSIGN_BACKUP_REPOSITORY, IEformsignBackupRepository,
+    BackupDocumentRow, BackupFailure, BackupRunInput, EFORMSIGN_BACKUP_REPOSITORY, IEformsignBackupRepository,
 } from "domain/repositories/eformsign-backup.repository.interface";
+
+type BackupDocumentKind = "contract" | "service_record" | "other";
+
+const CONTRACT_NAME_PREFIX = "산모신생아건강관리서비스";
+const SERVICE_RECORD_NAME_PREFIX = "서비스 제공기록지";
+
+function backupDocumentKind(row: BackupDocumentRow): BackupDocumentKind {
+    if (row.documentKind === "service_record_snapshot") return "service_record";
+    if (row.documentKind === "contract") return "contract";
+    if (row.documentKind !== null) return "other";
+    if (row.documentName?.startsWith(CONTRACT_NAME_PREFIX)) return "contract";
+    if (row.documentName?.startsWith(SERVICE_RECORD_NAME_PREFIX)) return "service_record";
+    return "other";
+}
+
+function payloadStartDate(detailPayload: unknown): Date | null {
+    if (typeof detailPayload !== "object" || detailPayload === null || Array.isArray(detailPayload)) return null;
+    return extractEformsignContractStartDate(detailPayload as EformsignApiDocumentResponse);
+}
 
 @Injectable()
 export class EformsignBackupService {
@@ -13,12 +34,14 @@ export class EformsignBackupService {
     async listDocuments(cursor: number | undefined, limit: number) {
         const rows = await this.repository.listDocuments(cursor, limit);
         const items = rows.map((row) => {
-            const kind = row.documentKind === "service_record_snapshot" ? "service_record" : "contract";
+            const kind = backupDocumentKind(row);
             const start = kind === "service_record" ? row.serviceRecordCase?.startDate
-                : row.employeeSchedule?.startDate ?? row.client?.startDate;
+                : kind === "contract"
+                    ? row.employeeSchedule?.startDate ?? row.client?.startDate ?? payloadStartDate(row.detailPayload)
+                    : null;
             const chunk = row.serviceRecordSnapshotChunk;
             return {
-                docId: row.documentId, kind, customerName: row.customerName,
+                docId: row.documentId, kind, title: row.documentName, customerName: row.customerName,
                 serviceStartDate: start?.toISOString().slice(0, 10) ?? null,
                 createdAt: row.createdDate.toISOString(),
                 serviceRecordChunk: chunk ? {

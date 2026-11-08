@@ -17,7 +17,8 @@ export class SbEformsignBackupRepository implements IEformsignBackupRepository {
             },
             orderBy: { id: "asc" }, take: limit,
             select: {
-                id: true, documentId: true, documentKind: true, customerName: true, createdDate: true,
+                id: true, documentId: true, documentKind: true, documentName: true, detailPayload: true,
+                customerName: true, createdDate: true,
                 syncStatus: true, detailSourceUpdatedDate: true,
                 serviceRecordCase: { select: { startDate: true } },
                 employeeSchedule: { select: { startDate: true } }, client: { select: { startDate: true } },
