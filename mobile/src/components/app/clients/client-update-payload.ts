@@ -134,3 +134,21 @@ export function buildClientUpdatePayload({
 
     return payload as UpdateClientDto;
 }
+
+/** Splits a remembered start-date-change body: the backend refuses a start change and a caregiver change in one request. */
+export function splitEmployeeChangeFromStartDateChange(dto: UpdateClientDto): {
+    startDateDto: UpdateClientDto;
+    employeeDto: UpdateClientDto | null;
+} {
+    const startDateDto = { ...dto };
+    delete startDateDto.primaryEmployeeId;
+    delete startDateDto.secondaryEmployeeId;
+
+    const employeeDto: UpdateClientDto = {};
+    const hasPrimary = Object.prototype.hasOwnProperty.call(dto, "primaryEmployeeId");
+    const hasSecondary = Object.prototype.hasOwnProperty.call(dto, "secondaryEmployeeId");
+    if (hasPrimary) employeeDto.primaryEmployeeId = dto.primaryEmployeeId;
+    if (hasSecondary) employeeDto.secondaryEmployeeId = dto.secondaryEmployeeId;
+
+    return { startDateDto, employeeDto: hasPrimary || hasSecondary ? employeeDto : null };
+}

@@ -326,7 +326,8 @@
       "add-description": "Fill in the form to register a new client",
       "edit-description": "Modify the client information",
       "error-phone-duplicate": "이미 등록된 연락처예요",
-      "error-manual-schedule": "Choose the dates yourself in Change service record schedule"
+      "error-manual-schedule": "Choose the dates yourself in Change service record schedule",
+      "error-employee-after-start-date": "The start date change was saved, but the provider change was not. Close and reopen the form to change the provider."
     },
     "schedule-sheet": {
       "title": "Change service record schedule",

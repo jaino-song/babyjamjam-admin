@@ -20,6 +20,7 @@ import { EmployeeAutocomplete } from "./EmployeeAutocomplete";
 import { EmployeeFormDialog } from "../employees/EmployeeFormDialog";
 import {
     buildClientUpdatePayload,
+    splitEmployeeChangeFromStartDateChange,
     CLIENT_END_DATE_CHANGED_MESSAGE,
     END_DATE_CHANGED_PROBLEM_CODE,
 } from "./client-update-payload";
@@ -606,11 +607,40 @@ export function ClientFormDialog({ open, onClose, client, onSuccess }: ClientFor
         startDateRetryInFlightRef.current = true;
         setIsRetryingStartDate(true);
         try {
-            const updatedClient = await updateClient.mutateAsync({
+            const { startDateDto, employeeDto } = splitEmployeeChangeFromStartDateChange(remembered.dto);
+            let updatedClient = await updateClient.mutateAsync({
                 id: remembered.id,
-                dto: { ...remembered.dto, startDateChangeMode },
+                dto: { ...startDateDto, startDateChangeMode },
             });
             if (!session.open || session !== formSessionRef.current) return;
+            if (employeeDto) {
+                try {
+                    updatedClient = await updateClient.mutateAsync({ id: remembered.id, dto: employeeDto });
+                } catch (error: unknown) {
+                    if (!session.open || session !== formSessionRef.current) return;
+                    setStartDateConfirmation(null);
+                    const normalized = normalizeApiError(error, {
+                        locale: locale === "en" ? "en-US" : "ko-KR",
+                        operation: "mutation",
+                    });
+                    const responseData = error && typeof error === "object" && "response" in error
+                        ? (error.response as { data?: unknown } | undefined)?.data : error;
+                    const claimsProblem = responseData !== null && typeof responseData === "object"
+                        && ("type" in responseData || "requestId" in responseData);
+                    const isLegacyClientError = !normalized.verified && !claimsProblem
+                        && normalized.status !== undefined && normalized.status >= 400 && normalized.status < 500;
+                    const msg = t(locale, "clients.form.error-employee-after-start-date");
+                    if (isLegacyClientError) {
+                        setErrorAndScroll(msg);
+                    } else if (normalized.outcome === "UNKNOWN") {
+                        setErrorAndScroll(normalized.message, normalized);
+                    } else {
+                        setErrorAndScroll(msg, { ...normalized, message: msg });
+                    }
+                    return;
+                }
+                if (!session.open || session !== formSessionRef.current) return;
+            }
             setStartDateConfirmation(null);
             onSuccess?.(updatedClient);
             onClose();
