@@ -411,7 +411,8 @@
       "doc-voided": "Voided",
       "add-description": "Fill in the form to register a new client",
       "edit-description": "Modify the client information",
-      "error-manual-schedule-required": "Set the dates yourself in Change service record schedule"
+      "error-manual-schedule-required": "Set the dates yourself in Change service record schedule",
+      "error-employee-after-start-date": "The start date change was saved, but the provider change was not. Close and reopen the form to change the provider."
     },
     "detail": {
       "description": "View client information details"

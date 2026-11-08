@@ -31,7 +31,7 @@ import {
 } from "@/hooks/useVoucherData";
 import type { ClientFormData, UpdateClientDto } from "@/features/clients/types";
 import { readServiceRecordScheduleCode } from "@/features/service-records/types/admin-edit";
-import { buildClientUpdatePayload, hasServicePeriodChange } from "./client-update-payload";
+import { buildClientUpdatePayload, hasServicePeriodChange, splitEmployeeChangeFromStartDateChange } from "./client-update-payload";
 import { getStartDateLock } from "./start-date-lock";
 import { EmployeeAutocomplete } from "./EmployeeAutocomplete";
 import { EmployeeFormDialog } from "@/components/app/employees/EmployeeFormDialog";
@@ -1578,12 +1578,37 @@ function ClientFormContent({
         startDateChangeMode: StartDateChangeMode,
         session: typeof formSessionRef.current,
     ) => {
+        const { startDateDto, employeeDto } = splitEmployeeChangeFromStartDateChange(rememberedDto);
         try {
-            const updatedClient = await updateClient.mutateAsync({
+            let updatedClient = await updateClient.mutateAsync({
                 id,
-                dto: { ...rememberedDto, startDateChangeMode },
+                dto: { ...startDateDto, startDateChangeMode },
             });
             if (!session.open || session !== formSessionRef.current) return;
+            if (employeeDto) {
+                try {
+                    updatedClient = await updateClient.mutateAsync({ id, dto: employeeDto });
+                    if (!session.open || session !== formSessionRef.current) return;
+                } catch (cause: unknown) {
+                    if (!session.open || session !== formSessionRef.current) return;
+                    setPendingStartDateChange(null);
+                    const normalized = normalizeApiError(cause, {
+                        locale: locale === "en" ? "en-US" : "ko-KR",
+                        operation: "mutation",
+                    });
+                    if (normalized.outcome === "UNKNOWN" && !isUnstructuredLegacyClientError(cause, normalized)) {
+                        setMutationError(cause);
+                        return;
+                    }
+                    setError({
+                        message: t(locale, "clients.form.error-employee-after-start-date"),
+                        fieldErrors: [],
+                        requestId: normalized.problem?.requestId,
+                        outcome: isUnstructuredLegacyClientError(cause, normalized) ? undefined : normalized.outcome,
+                    });
+                    return;
+                }
+            }
             setPendingStartDateChange(null);
             onSuccess?.(updatedClient);
             onClose();

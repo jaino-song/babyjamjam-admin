@@ -37,6 +37,7 @@ import { api } from "@/lib/api/client";
 import { EmployeeAutocomplete } from "@/components/app/clients/EmployeeAutocomplete";
 import {
   buildClientUpdatePayload,
+  splitEmployeeChangeFromStartDateChange,
   CLIENT_END_DATE_CHANGED_MESSAGE,
   END_DATE_CHANGED_PROBLEM_CODE,
   hasServicePeriodChange,
@@ -1166,11 +1167,35 @@ export default function NewClientPage() {
     startDateRetryInFlightRef.current = true;
     setIsRetryingStartDate(true);
     try {
+      const { startDateDto, employeeDto } = splitEmployeeChangeFromStartDateChange(remembered.dto);
       await updateClient.mutateAsync({
         id: remembered.id,
-        dto: { ...remembered.dto, startDateChangeMode },
+        dto: { ...startDateDto, startDateChangeMode },
       });
       if (!mountedRef.current || lastInitializedFormKeyRef.current !== capturedKey) return;
+      if (employeeDto) {
+        try {
+          await updateClient.mutateAsync({ id: remembered.id, dto: employeeDto });
+        } catch (err: unknown) {
+          if (!mountedRef.current || lastInitializedFormKeyRef.current !== capturedKey) return;
+          setStartDateConfirmation(null);
+          const normalized = normalizeApiError(err, {
+            locale: locale === "en" ? "en-US" : "ko-KR",
+            operation: "mutation",
+          });
+          if (normalized.outcome === "UNKNOWN") {
+            setErrorState(normalized);
+          } else {
+            const msg = t(locale, "clients.form.error-employee-after-start-date");
+            setErrorState({ ...normalized, message: msg });
+          }
+          if (normalized.outcome === "UNKNOWN" || normalized.outcome === "PARTIALLY_APPLIED") {
+            setHasUnknownMutationOutcome(true);
+          }
+          return;
+        }
+        if (!mountedRef.current || lastInitializedFormKeyRef.current !== capturedKey) return;
+      }
       setStartDateConfirmation(null);
       setErrorState(null);
       setHasUnknownMutationOutcome(false);
