@@ -7,7 +7,7 @@ Node.js 20 이상에서 매일 한국 시간 03시에 완료된 계약서와 제
 1. `backup.mjs`를 `~/eformsign-backup/`에, service와 timer를 `~/.config/systemd/user/`에 복사합니다. `mkdir -p ~/.config/eformsign-backup ~/.local/state/eformsign-backup`을 실행하고, `settings.example.json`을 `~/.config/eformsign-backup/settings.json`으로 복사해 URL·경로·원격 저장소를 수정합니다. 경로는 절대 경로를 사용합니다.
 2. `sudo apt install rclone qpdf`로 도구를 설치합니다.
 3. `rclone config`에서 Google Drive 원격 저장소를 만들고 사용자가 최초 한 번 Google에 로그인합니다.
-4. 서버에 설정된 백업 전용 bearer 토큰을 `tokenFile` 경로의 파일에 저장하고 `chmod 600 ~/.config/eformsign-backup/token`을 실행합니다. 토큰을 명령 인자에 넣지 않습니다.
+4. 서버에 설정된 백업 전용 bearer 토큰을 `tokenFile` 경로의 파일에 저장하고 `chmod 600 ~/.config/eformsign-backup/token`을 실행합니다. 토큰을 명령 인자에 넣지 않습니다. 같은 값이 운영 API의 `EFORMSIGN_BACKUP_TOKEN`(LightNode `/opt/babyjamjam-fallback-server/backend.env`)에 있어야 하며, 운영 API는 이 값을 다음 배포 때 읽습니다. 그 전까지 백업 API는 404를 돌려줍니다.
 5. `systemctl --user daemon-reload`를 실행하고 `loginctl enable-linger "$USER"`로 로그아웃 후에도 예약 실행이 유지되게 합니다. 타이머는 아직 켜지 않습니다.
 6. 문서 20건까지만 수동으로 실행해 디스크·Drive·관리자 화면에 결과가 보이는지 확인합니다. 예약 실행과 겹치지 않게 같은 잠금을 사용합니다.
 
