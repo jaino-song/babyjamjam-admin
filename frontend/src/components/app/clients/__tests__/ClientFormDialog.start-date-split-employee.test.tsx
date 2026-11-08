@@ -226,6 +226,20 @@ describe("client start-date confirmation with an employee change", () => {
     expect(onClose).not.toHaveBeenCalled();
   });
 
+  it("treats an unstructured legacy 4xx employee response as a non-blocking partial save", async () => {
+    mockUpdateClient.mockReset()
+      .mockRejectedValueOnce(lockError({ serviceStarted: true, recordedSessionCount: 3 }))
+      .mockResolvedValueOnce(client)
+      .mockRejectedValueOnce({ response: { status: 400, data: { message: "legacy" } } });
+    const { onSuccess, onClose } = await submitChangedStartDateAndEmployee();
+    await confirmRecords();
+    expect(await screen.findByRole("alert")).toHaveTextContent(partialSaveMessage);
+    expect(screen.getByRole("button", { name: "저장" })).toBeEnabled();
+    expectSplitRequests("MOVE");
+    expect(onSuccess).not.toHaveBeenCalled();
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
   it.each([
     ["transport", new Error("transport failed")],
     ["server", { response: { status: 500, data: createProblemDetails({
@@ -297,6 +311,7 @@ describe("client start-date confirmation with an employee change", () => {
     await act(async () => { start.resolve(client); });
     expect(move).toBeDisabled();
     expect(restart).toBeDisabled();
+    // All submit/retry UI paths are disabled while pending; submissionInFlightRef is defense-in-depth here.
     fireEvent.click(move);
     fireEvent.click(saveButton);
     expectSplitRequests("MOVE");

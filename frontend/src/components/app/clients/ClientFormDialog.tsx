@@ -1596,7 +1596,7 @@ function ClientFormContent({
                         locale: locale === "en" ? "en-US" : "ko-KR",
                         operation: "mutation",
                     });
-                    if (normalized.outcome === "UNKNOWN") {
+                    if (normalized.outcome === "UNKNOWN" && !isUnstructuredLegacyClientError(cause, normalized)) {
                         setEditedServerErrorFields([]);
                         setError({
                             message: normalized.message,
@@ -1610,7 +1610,7 @@ function ClientFormContent({
                         message: t(locale, "clients.form.error-employee-after-start-date"),
                         fieldErrors: [],
                         requestId: normalized.problem?.requestId,
-                        outcome: normalized.outcome,
+                        outcome: isUnstructuredLegacyClientError(cause, normalized) ? undefined : normalized.outcome,
                     });
                     return;
                 }
