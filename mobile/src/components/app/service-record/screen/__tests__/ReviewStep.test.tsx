@@ -66,7 +66,6 @@ describe("ReviewStep", () => {
         render(<ReviewStep {...props} />);
 
         expect(document.querySelector(`[data-component="${ROOT}_body_resign-notice"]`)).toHaveTextContent("이미 제출된 회차입니다.");
-        expect(document.querySelector(`[data-component="${ROOT}_body_other-caregiver-notice"]`)).toBeNull();
         expect(screen.getByRole("button", { name: "산모 수정" })).toHaveTextContent("수정");
         await user.click(screen.getByRole("button", { name: "산모 수정" }));
         await user.click(screen.getByRole("button", { name: "신생아 수정" }));
@@ -135,13 +134,19 @@ describe("ReviewStep", () => {
         ["another caregiver", 99],
         ["no recorded caregiver (null)", null],
         ["no recorded caregiver (missing)", undefined],
-    ])("shows a day submitted by %s read-only with a note and no actions", (_label, employeeId) => {
-        render(<ReviewStep {...makeProps({ editing: true, context: lockedContext(employeeId) })} />);
+    ])("allows editing and resubmitting a day submitted by %s", async (_label, employeeId) => {
+        const user = userEvent.setup();
+        const props = makeProps({ editing: true, context: lockedContext(employeeId) });
+        render(<ReviewStep {...props} />);
 
-        expect(document.querySelector(`[data-component="${ROOT}_body_other-caregiver-notice"]`)).toHaveTextContent("다른 제공인력이 제출한 회차라 수정할 수 없어요.");
-        expect(document.querySelector(`[data-component="${ROOT}_body_resign-notice"]`)).toBeNull();
-        expect(screen.queryByRole("button", { name: /수정$/ })).toBeNull();
-        expect(screen.queryByRole("button", { name: "확인" })).toBeNull();
+        expect(screen.queryByText(/다른 제공인력이\s제출한 회차라 수정할 수 없어요\./)).toBeNull();
+        expect(document.querySelector(`[data-component="${ROOT}_body_resign-notice"]`)).toHaveTextContent("이미 제출된 회차입니다.");
+        expect(screen.getAllByRole("button", { name: /수정$/ })).toHaveLength(3);
+        await user.click(screen.getByRole("button", { name: "산모 수정" }));
+        expect(props.onEditSection).toHaveBeenCalledWith(0);
+        expect(screen.getByRole("button", { name: "확인" })).toBeEnabled();
+        await user.click(screen.getByRole("button", { name: "확인" }));
+        expect(props.onOpenSubmitModal).toHaveBeenCalledTimes(1);
         expect(screen.getByRole("region", { name: "산모" })).toBeInTheDocument();
     });
 });

@@ -1,6 +1,7 @@
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { DAY_PAGES } from "@babyjamjam/service-record-ui";
+import { ReviewStep } from "@/components/app/service-record/screen/ReviewStep";
 import type { MobileServiceRecordWizardProps } from "@/components/app/service-record/ServiceRecordWizard";
 import ServiceRecordPage from "../page";
 
@@ -14,6 +15,10 @@ jest.mock("@/hooks/useTokenBusinessDayCalendar", () => ({
         retry: jest.fn(),
     }),
 }));
+// jsdom cannot draw the canvas signature; keep the saved-signature seam.
+jest.mock("@/components/app/service-record/SignaturePad", () => ({
+    SignaturePad: () => <div>산모 서명</div>,
+}));
 jest.mock("@/components/app/service-record/ServiceRecordWizard", () => ({
     MobileServiceRecordWizard: (props: MobileServiceRecordWizardProps) => (
         <div>
@@ -22,6 +27,8 @@ jest.mock("@/components/app/service-record/ServiceRecordWizard", () => ({
             <button onClick={() => props.onOpenDay(1)}>open day 1</button>
             <button onClick={() => props.onOpenDay(2)}>open day 2</button>
             <button onClick={() => props.onOpenSubmitModal()}>open submit modal</button>
+            <button onClick={() => props.onNextPage()}>save section</button>
+            {props.screen === "day" && props.pageIdx === DAY_PAGES.length - 1 && <ReviewStep {...props} />}
             {props.slots?.submitModal}
             <span data-testid="editing">{String(props.editing)}</span>
             <span data-testid="page-idx">{props.pageIdx}</span>
@@ -32,8 +39,6 @@ jest.mock("@/components/app/service-record/ServiceRecordWizard", () => ({
 function jsonResponse(data: unknown, status = 200): Response {
     return { ok: status >= 200 && status < 300, status, json: async () => data } as Response;
 }
-
-const REVIEW_PAGE_IDX = DAY_PAGES.length - 1;
 
 function installFetch(sessionEmployeeId: number | null | undefined) {
     const context = {
@@ -75,19 +80,19 @@ describe("service-record page popstate restore of a submitted day", () => {
         window.history.replaceState(null, "", "/service-record/test-token");
     });
 
-    it("clamps another caregiver's submitted day to the review page", async () => {
+    it("keeps the restored input page for another caregiver's submitted day", async () => {
         installFetch(99);
         await restoreInputPageViaPopstate();
 
-        expect(screen.getByTestId("page-idx")).toHaveTextContent(String(REVIEW_PAGE_IDX));
+        expect(screen.getByTestId("page-idx")).toHaveTextContent("0");
         expect(screen.getByTestId("editing")).toHaveTextContent("true");
     });
 
-    it("clamps a submitted day with no recorded caregiver to the review page", async () => {
+    it("keeps the restored input page for a submitted day with no recorded caregiver", async () => {
         installFetch(null);
         await restoreInputPageViaPopstate();
 
-        expect(screen.getByTestId("page-idx")).toHaveTextContent(String(REVIEW_PAGE_IDX));
+        expect(screen.getByTestId("page-idx")).toHaveTextContent("0");
     });
 
     it("keeps the restored input page for the caregiver's own submitted day", async () => {
@@ -139,7 +144,7 @@ describe("service-record page submit dialog across a caregiver change", () => {
         window.history.replaceState(null, "", "/service-record/test-token");
     });
 
-    it("closes the submit dialog when Back lands on another caregiver's day, and sends nothing", async () => {
+    it("closes the submit dialog when Back changes the day without submitting", async () => {
         const fetchMock = installTwoDayFetch(99);
         const user = userEvent.setup();
         render(<ServiceRecordPage />);
@@ -157,18 +162,29 @@ describe("service-record page submit dialog across a caregiver change", () => {
         expect(submitCalls(fetchMock)).toHaveLength(0);
     });
 
-    it("never posts another caregiver's day even when the dialog is confirmed on it", async () => {
+    it("offers section edits and posts another caregiver's submitted day", async () => {
         const fetchMock = installTwoDayFetch(99);
         const user = userEvent.setup();
         render(<ServiceRecordPage />);
         await waitFor(() => expect(screen.getByTestId("screen")).toHaveTextContent("overview"));
 
         await user.click(screen.getByRole("button", { name: "open day 1" }));
-        await user.click(screen.getByRole("button", { name: "open submit modal" }));
-        await user.click(await screen.findByRole("button", { name: "확인" }));
+        expect(screen.getAllByRole("button", { name: /수정$/ })).toHaveLength(3);
+        expect(screen.queryByText(/다른 제공인력이\s제출한 회차라 수정할 수 없어요\./)).toBeNull();
+        expect(screen.getByRole("button", { name: "확인" })).toBeEnabled();
 
+        await user.click(screen.getByRole("button", { name: "산모 수정" }));
+        expect(screen.getByTestId("page-idx")).toHaveTextContent("0");
+        await user.click(screen.getByRole("button", { name: "save section" }));
+        await user.click(screen.getByRole("button", { name: "확인" }));
+        const dialog = await screen.findByRole("dialog");
+        await user.click(within(dialog).getByRole("button", { name: "확인" }));
+
+        await waitFor(() => expect(submitCalls(fetchMock)).toHaveLength(1));
+        const [url, init] = submitCalls(fetchMock)[0];
+        expect(String(url)).toContain("/sessions/1/submit");
+        expect(JSON.parse((init as RequestInit).body as string)).toMatchObject({ serviceDate: "2026-07-17" });
         await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
-        expect(submitCalls(fetchMock)).toHaveLength(0);
     });
 
     it("still posts the caregiver's own submitted day", async () => {
@@ -179,7 +195,7 @@ describe("service-record page submit dialog across a caregiver change", () => {
 
         await user.click(screen.getByRole("button", { name: "open day 2" }));
         await user.click(screen.getByRole("button", { name: "open submit modal" }));
-        await user.click(await screen.findByRole("button", { name: "확인" }));
+        await user.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "확인" }));
 
         await waitFor(() => expect(submitCalls(fetchMock)).toHaveLength(1));
     });

@@ -1132,20 +1132,26 @@ describe("ServiceRecordEntryService.upsertSession", () => {
             expect(result).toEqual(expect.objectContaining({ clientSignature: SIGNATURE }));
         });
 
-        it("refuses an edit by a caregiver other than the one who submitted the day", async () => {
+        it("allows a different caregiver to resubmit and keeps the original caregiver snapshot", async () => {
+            const storedCaregiver = { employeeId: 99, employeeNameSnapshot: "최초 제공자" };
             const { service, upsert, updateMany, editLogCreate, lifecycle } = createHarness({
-                existing: createDay({ employeeId: 99 }),
+                existing: createDay(storedCaregiver),
             });
 
-            await expectException(
-                service.upsertSession(context, 1, createDto({ notes: "수정" }), true),
-                ConflictException,
-                "REQUEST_CONFLICT",
-            );
-            expect(upsert).not.toHaveBeenCalled();
+            await expect(service.upsertSession(context, 1, createDto({ notes: "수정" }), true))
+                .resolves.toEqual(expect.objectContaining({ ...storedCaregiver, locked: true, notes: "수정" }));
+            expect(upsert).toHaveBeenCalledTimes(1);
+            expect(upsert.mock.calls[0][0]).toMatchObject({
+                create: storedCaregiver,
+                update: storedCaregiver,
+            });
             expect(updateMany).not.toHaveBeenCalled();
-            expect(editLogCreate).not.toHaveBeenCalled();
-            expect(lifecycle.recompute).not.toHaveBeenCalled();
+            expect(editLogCreate).toHaveBeenCalledTimes(1);
+            expect(editLogCreate.mock.calls[0][0].data).toMatchObject({
+                employeeId: context.employeeId,
+                employeeNameSnapshot: "제공자",
+            });
+            expect(lifecycle.recompute).toHaveBeenCalledTimes(1);
         });
 
         it("allows the edit when the same caregiver submits (ownership both directions)", async () => {
