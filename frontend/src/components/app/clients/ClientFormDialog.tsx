@@ -1597,13 +1597,7 @@ function ClientFormContent({
                         operation: "mutation",
                     });
                     if (normalized.outcome === "UNKNOWN" && !isUnstructuredLegacyClientError(cause, normalized)) {
-                        setEditedServerErrorFields([]);
-                        setError({
-                            message: normalized.message,
-                            fieldErrors: normalized.problem?.errors ?? [],
-                            requestId: normalized.problem?.requestId,
-                            outcome: normalized.outcome,
-                        });
+                        setMutationError(cause);
                         return;
                     }
                     setError({
