@@ -623,10 +623,18 @@ export function ClientFormDialog({ open, onClose, client, onSuccess }: ClientFor
                         locale: locale === "en" ? "en-US" : "ko-KR",
                         operation: "mutation",
                     });
-                    if (normalized.outcome === "UNKNOWN") {
+                    const responseData = error && typeof error === "object" && "response" in error
+                        ? (error.response as { data?: unknown } | undefined)?.data : error;
+                    const claimsProblem = responseData !== null && typeof responseData === "object"
+                        && ("type" in responseData || "requestId" in responseData);
+                    const isLegacyClientError = !normalized.verified && !claimsProblem
+                        && normalized.status !== undefined && normalized.status >= 400 && normalized.status < 500;
+                    const msg = t(locale, "clients.form.error-employee-after-start-date");
+                    if (isLegacyClientError) {
+                        setErrorAndScroll(msg);
+                    } else if (normalized.outcome === "UNKNOWN") {
                         setErrorAndScroll(normalized.message, normalized);
                     } else {
-                        const msg = t(locale, "clients.form.error-employee-after-start-date");
                         setErrorAndScroll(msg, { ...normalized, message: msg });
                     }
                     return;

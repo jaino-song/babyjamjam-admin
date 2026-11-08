@@ -161,6 +161,24 @@ describe("ClientFormDialog split employee save after start-date confirmation", (
         await waitFor(() => expect(updateMutateAsync).toHaveBeenCalledTimes(4));
     });
 
+    it("shows the partial-save message and allows another save after a legacy employee refusal", async () => {
+        updateMutateAsync
+            .mockRejectedValueOnce(lockedError({ serviceStarted: false, recordedSessionCount: 3 }))
+            .mockResolvedValueOnce(client)
+            .mockRejectedValueOnce({ response: { status: 400, data: { message: "legacy" } } });
+        const { props } = await renderDialog();
+        await submitChangedDate();
+        await chooseMode("MOVE");
+        expect(await screen.findByRole("alert")).toHaveTextContent(partialMessage);
+        expect(updateMutateAsync).toHaveBeenCalledTimes(3);
+        expect(updateMutateAsync.mock.calls[2][0]).toEqual({ id: client.id, dto: { primaryEmployeeId: 42 } });
+        expect(props.onSuccess).not.toHaveBeenCalled();
+        expect(props.onClose).not.toHaveBeenCalled();
+        expectNoConfirmation();
+        fireEvent.click(button("저장"));
+        await waitFor(() => expect(updateMutateAsync).toHaveBeenCalledTimes(4));
+    });
+
     it("uses the existing error when the start-date save fails, without saving employees", async () => {
         updateMutateAsync
             .mockRejectedValueOnce(lockedError({ serviceStarted: false, recordedSessionCount: 3 }))
