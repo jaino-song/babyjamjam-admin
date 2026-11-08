@@ -98,9 +98,9 @@ test("contract paths, duplicate numbering, mtime and success", async () => {
         assert.equal(await env.run(), 0);
         const base = join(env.archive, "서비스계약서");
         assert.equal(await readFile(join(base, "서비스계약서_홍길동_2026-11-01.pdf"), "utf8"), "A:document");
-        assert.equal(await readFile(join(base, "감사추적", "서비스계약서_홍길동_2026-11-01.pdf"), "utf8"), "A:audit_trail");
+        assert.equal(await readFile(join(base, "감사추적", "[감사추적]_서비스계약서_홍길동_2026-11-01.pdf"), "utf8"), "A:audit_trail");
         assert.equal(await readFile(join(base, "서비스계약서_홍길동_2026-11-01 (2).pdf"), "utf8"), "B:document");
-        assert.equal(await readFile(join(base, "감사추적", "서비스계약서_홍길동_2026-11-01 (2).pdf"), "utf8"), "B:audit_trail");
+        assert.equal(await readFile(join(base, "감사추적", "[감사추적]_서비스계약서_홍길동_2026-11-01 (2).pdf"), "utf8"), "B:audit_trail");
         const mtime = (await stat(join(base, "서비스계약서_홍길동_2026-11-01.pdf"))).mtimeMs;
         assert.equal(Math.round(mtime / 1000), Date.parse(contractA.createdAt) / 1000);
         const report = env.state.reports.at(-1);
@@ -151,9 +151,9 @@ test("a multi-chunk service record is merged oldest first and the originals are 
         env.state.docs = docs;
         assert.equal(await env.run(), 0);
         assert.equal(await readFile(join(sr, "제공기록지_김산모_2026-09-01.pdf"), "utf8"), "S0:documentS1:documentS2:document");
-        assert.equal(await readFile(join(sr, "감사추적", "제공기록지_김산모_2026-09-01.pdf"), "utf8"), "S0:audit_trailS1:audit_trailS2:audit_trail");
+        assert.equal(await readFile(join(sr, "감사추적", "[감사추적]_제공기록지_김산모_2026-09-01.pdf"), "utf8"), "S0:audit_trailS1:audit_trailS2:audit_trail");
         assert.equal(await readFile(join(sr, "원본", "제공기록지_김산모_2026-09-01_2장.pdf"), "utf8"), "S1:document");
-        assert.equal(await readFile(join(sr, "원본", "감사추적", "제공기록지_김산모_2026-09-01_3장.pdf"), "utf8"), "S2:audit_trail");
+        assert.equal(await readFile(join(sr, "원본", "감사추적", "[감사추적]_제공기록지_김산모_2026-09-01_3장.pdf"), "utf8"), "S2:audit_trail");
         const mtime = (await stat(join(sr, "제공기록지_김산모_2026-09-01.pdf"))).mtimeMs;
         assert.equal(Math.round(mtime / 1000), Date.parse("2026-10-01T00:00:00.000Z") / 1000);
         assert.equal(env.state.reports.at(-1).status, "success");
