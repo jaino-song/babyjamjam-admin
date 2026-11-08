@@ -58,6 +58,17 @@ describe("EformsignBackupService", () => {
             for (const spy of spies) spy.mockRestore();
         }
     });
+    it("never returns the stored detail or the rows used to derive the start date", async () => {
+        const result = await item({
+            documentKind: "contract", documentName: "계약서", employeeSchedule: { startDate: new Date("2020-01-01") },
+            client: { startDate: new Date("2020-01-02") }, serviceRecordCase: { startDate: new Date("2020-01-03") },
+            detailPayload: { fields: [{ id: "계약 시작일", value: "2026-11-07" }, { id: "고객 연락처", value: "010-0000-0000" }] },
+        });
+        expect(result).toBeDefined();
+        for (const key of ["detailPayload", "documentName", "employeeSchedule", "client", "serviceRecordCase"]) {
+            expect(result).not.toHaveProperty(key);
+        }
+    });
     it("maps the chunk fields", async () => {
         expect(await item({ serviceRecordSnapshotChunk: {
             serviceRecordCaseId: "case", snapshotVersion: 2, chunkIndex: 1, chunkCount: 3, firstSessionIndex: 5,

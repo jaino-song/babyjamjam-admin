@@ -99,7 +99,8 @@ describeReal("eformsign backup repository (real PostgreSQL, tenant enforce)", ()
         const listed = rows.find((row) => row.id === eligible[0]);
         expect(listed?.files[0]?.id).toBe(fileId);
         expect(listed).not.toHaveProperty("customerPhone");
-        expect(listed).not.toHaveProperty("detailPayload");
+        // detailPayload is selected only to derive the contract start date; the service never returns it.
+        expect(listed).toHaveProperty("detailPayload");
         expect(listed?.files[0]).not.toHaveProperty("content");
     });
     it("walks every row exactly once with limit 2", async () => {
