@@ -1,4 +1,5 @@
 import { StrictMode } from "react";
+import { renderToString } from "react-dom/server.node";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
@@ -31,6 +32,15 @@ describe("OverviewStep guide hint", () => {
 
     afterEach(() => {
         jest.restoreAllMocks();
+    });
+
+    it("renders hidden on the server without reading sessionStorage", () => {
+        const getItemSpy = jest.spyOn(Storage.prototype, "getItem");
+
+        const markup = renderToString(<OverviewStep {...makeProps()} />);
+
+        expect(markup).not.toContain(HINT_TEXT);
+        expect(getItemSpy).not.toHaveBeenCalled();
     });
 
     it("shows the hint on the first overview and marks it shown immediately", () => {
