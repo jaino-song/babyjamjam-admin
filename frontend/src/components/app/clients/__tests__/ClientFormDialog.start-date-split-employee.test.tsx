@@ -8,7 +8,7 @@ import { api } from "@/lib/api/client";
 
 import type { Client } from "@/lib/client/types";
 
-import { ClientFormDialog } from "../ClientFormDialog";
+import { ClientFormDialog, ClientFormPanel } from "../ClientFormDialog";
 
 const mockCreateClient = jest.fn();
 const mockUpdateClient = jest.fn();
@@ -108,13 +108,18 @@ function lockError(lock?: { serviceStarted: boolean; recordedSessionCount: numbe
 const partialSaveMessage = "시작일 변경은 저장했지만 담당 인력 변경은 저장하지 못했어요. 창을 닫고 다시 열어 담당 인력을 바꿔 주세요.";
 const employeeClient = { ...client, name: "담당 인력까지 저장한 고객" };
 
-async function submitChangedStartDateAndEmployee() {
+async function submitChangedStartDateAndEmployee(surface: "dialog" | "panel" = "dialog") {
   const onClose = jest.fn();
   const onSuccess = jest.fn();
   const props = { open: true, client, onClose, onSuccess };
-  const view = render(<ClientFormDialog {...props} />);
+  const view = render(surface === "panel" ? <ClientFormPanel {...props} /> : <ClientFormDialog {...props} />);
   await act(async () => { await Promise.resolve(); });
+  if (surface === "panel") fireEvent.click(screen.getByRole("button", { name: "다음" }));
   fireEvent.change(screen.getByRole("combobox", { name: "주 담당 인력" }), { target: { value: "99" } });
+  if (surface === "panel") {
+    fireEvent.click(screen.getByRole("button", { name: "다음" }));
+    fireEvent.click(screen.getByRole("button", { name: "다음" }));
+  }
   await act(async () => {
     fireEvent.change(screen.getByLabelText("시작일"), { target: { value: "2026-08-27" } });
   });
@@ -259,6 +264,28 @@ describe("client start-date confirmation with an employee change", () => {
     fireEvent.change(screen.getByLabelText(/주소/), { target: { value: "인천 새 주소" } });
     expect(save).toBeDisabled();
     fireEvent.click(save);
+    expectSplitRequests("MOVE");
+    expect(onSuccess).not.toHaveBeenCalled();
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it("returns the panel to the employee step for an UNKNOWN employee-field error", async () => {
+    mockUpdateClient.mockReset()
+      .mockRejectedValueOnce(lockError({ serviceStarted: true, recordedSessionCount: 3 }))
+      .mockResolvedValueOnce(client)
+      .mockRejectedValueOnce({ response: { status: 500, data: createProblemDetails({
+        code: "INTERNAL_ERROR", requestId: "req-unknown-employee-field", outcome: "UNKNOWN",
+        errors: [{ pointer: "/primaryEmployeeId", code: "REQUIRED", detail: "ignored" }],
+      }) } });
+    const { onSuccess, onClose } = await submitChangedStartDateAndEmployee("panel");
+    expect(screen.queryByRole("combobox", { name: "주 담당 인력" })).not.toBeInTheDocument();
+    await confirmRecords();
+
+    expect(await screen.findByText("다시 실행하기 전에 작업 상태를 확인해 주세요.")).toBeVisible();
+    expect(screen.getByRole("combobox", { name: "주 담당 인력" })).toHaveValue("99");
+    expect(screen.queryByLabelText("시작일")).not.toBeInTheDocument();
+    expect(screen.getByRole("alert")).toHaveTextContent("req-unknown-employee-field");
+    expect(screen.queryByText(partialSaveMessage)).not.toBeInTheDocument();
     expectSplitRequests("MOVE");
     expect(onSuccess).not.toHaveBeenCalled();
     expect(onClose).not.toHaveBeenCalled();
