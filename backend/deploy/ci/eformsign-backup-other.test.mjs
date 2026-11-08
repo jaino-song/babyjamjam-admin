@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
-import { mkdtemp, writeFile, readFile, stat, chmod, readdir } from "node:fs/promises";
+import { mkdtemp, writeFile, readFile, chmod, readdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
