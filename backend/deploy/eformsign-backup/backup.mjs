@@ -144,8 +144,10 @@ async function main() {
         if (doc.files.length !== 2 || selected.some((files) => files.length !== 1)) { failure(doc.docId, '필수 파일 없음'); continue; }
         const files = selected.map(([file]) => file);
         const chunk = doc.kind === 'service_record' && doc.serviceRecordChunk?.chunkCount > 1 ? doc.serviceRecordChunk : null;
-        const folder = doc.kind === 'contract' ? '서비스계약서' : '제공기록지';
-        const base = `${folder}_${sanitize(doc.customerName || '고객미상')}_${sanitize(doc.serviceStartDate || '시작일미상')}`;
+        const folder = doc.kind === 'contract' ? '서비스계약서' : doc.kind === 'service_record' ? '제공기록지' : '기타';
+        const base = doc.kind === 'other'
+            ? sanitize(doc.title || '문서명미상') || '문서명미상'
+            : `${folder}_${sanitize(doc.customerName || '고객미상')}_${sanitize(doc.serviceStartDate || '시작일미상')}`;
         const unit = {
             ...doc,
             key: `doc:${doc.docId}:${files[0].sha256}:${files[1].sha256}`,

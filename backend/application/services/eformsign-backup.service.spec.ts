@@ -6,7 +6,7 @@ import { EformsignBackupService } from "./eformsign-backup.service";
 const date = new Date("2026-11-07T00:00:00.000Z");
 const file = { id: "file", fileType: "document", sha256: "a".repeat(64), byteSize: 3, sourceUpdatedDate: date };
 const document = (patch: Partial<BackupDocumentRow> = {}): BackupDocumentRow => ({
-    id: 7, documentId: "doc", documentKind: null, customerName: null, createdDate: date,
+    id: 7, documentId: "doc", documentKind: null, documentName: null, detailPayload: null, customerName: null, createdDate: date,
     syncStatus: "ready", detailSourceUpdatedDate: date,
     serviceRecordCase: null, employeeSchedule: null, client: null,
     serviceRecordSnapshotChunk: null, files: [file], ...patch,
@@ -23,7 +23,7 @@ describe("EformsignBackupService", () => {
         return (await service.listDocuments(undefined, 200)).items[0];
     };
 
-    it.each([[null, "contract"], ["contract", "contract"], ["service_record_snapshot", "service_record"]])(
+    it.each([["contract", "contract"], ["service_record_snapshot", "service_record"], ["unknown_kind", "other"]])(
         "maps kind %p to %p", async (documentKind, kind) => {
             expect(await item({ documentKind })).toMatchObject({ kind });
         },
@@ -35,12 +35,12 @@ describe("EformsignBackupService", () => {
             .toMatchObject({ serviceStartDate: null });
     });
     it("prefers schedule then client, then null for contracts", async () => {
-        expect(await item({ serviceRecordCase: { startDate: new Date("2010-01-01") },
+        expect(await item({ documentKind: "contract", serviceRecordCase: { startDate: new Date("2010-01-01") },
             employeeSchedule: { startDate: date }, client: { startDate: new Date("2020-01-01") } }))
             .toMatchObject({ serviceStartDate: "2026-11-07" });
-        expect(await item({ employeeSchedule: { startDate: null }, client: { startDate: date } }))
+        expect(await item({ documentKind: "contract", employeeSchedule: { startDate: null }, client: { startDate: date } }))
             .toMatchObject({ serviceStartDate: "2026-11-07" });
-        expect(await item()).toMatchObject({ serviceStartDate: null, serviceRecordChunk: null });
+        expect(await item({ documentKind: "contract" })).toMatchObject({ serviceStartDate: null, serviceRecordChunk: null });
     });
     it("formats db.Date from its UTC calendar day, never from local-time getters", async () => {
         // A local-time formatter shifts the day for any zone west of UTC. Poison the local getters
@@ -51,11 +51,22 @@ describe("EformsignBackupService", () => {
             jest.spyOn(Date.prototype, "getDate").mockReturnValue(1),
         ];
         try {
-            expect(await item({ employeeSchedule: { startDate: date } })).toMatchObject({
+            expect(await item({ documentKind: "contract", employeeSchedule: { startDate: date } })).toMatchObject({
                 serviceStartDate: "2026-11-07", createdAt: "2026-11-07T00:00:00.000Z",
             });
         } finally {
             for (const spy of spies) spy.mockRestore();
+        }
+    });
+    it("never returns the stored detail or the rows used to derive the start date", async () => {
+        const result = await item({
+            documentKind: "contract", documentName: "계약서", employeeSchedule: { startDate: new Date("2020-01-01") },
+            client: { startDate: new Date("2020-01-02") }, serviceRecordCase: { startDate: new Date("2020-01-03") },
+            detailPayload: { fields: [{ id: "계약 시작일", value: "2026-11-07" }, { id: "고객 연락처", value: "010-0000-0000" }] },
+        });
+        expect(result).toBeDefined();
+        for (const key of ["detailPayload", "documentName", "employeeSchedule", "client", "serviceRecordCase"]) {
+            expect(result).not.toHaveProperty(key);
         }
     });
     it("maps the chunk fields", async () => {

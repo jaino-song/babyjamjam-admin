@@ -8,13 +8,16 @@ Node.js 20 이상에서 매일 한국 시간 03시에 완료된 계약서와 제
 2. `sudo apt install rclone qpdf`로 도구를 설치합니다.
 3. `rclone config`에서 Google Drive 원격 저장소를 만들고 사용자가 최초 한 번 Google에 로그인합니다.
 4. 서버에 설정된 백업 전용 bearer 토큰을 `tokenFile` 경로의 파일에 저장하고 `chmod 600 ~/.config/eformsign-backup/token`을 실행합니다. 토큰을 명령 인자에 넣지 않습니다.
-5. `systemctl --user daemon-reload && systemctl --user enable --now eformsign-backup.timer`를 실행하고 `loginctl enable-linger "$USER"`로 로그아웃 후에도 예약 실행을 유지합니다.
+5. `systemctl --user daemon-reload`를 실행하고 `loginctl enable-linger "$USER"`로 로그아웃 후에도 예약 실행이 유지되게 합니다. 타이머는 아직 켜지 않습니다.
+6. 문서 20건까지만 수동으로 실행해 디스크·Drive·관리자 화면에 결과가 보이는지 확인합니다. 예약 실행과 겹치지 않게 같은 잠금을 사용합니다.
 
-최초 수동 확인은 다음 명령으로 문서 20건까지만 실행합니다. 예약 실행과 겹치지 않게 같은 잠금을 사용합니다.
+   ```sh
+   flock -n ~/.local/state/eformsign-backup/run.lock node ~/eformsign-backup/backup.mjs --settings ~/.config/eformsign-backup/settings.json --limit 20
+   ```
 
-```sh
-flock -n ~/.local/state/eformsign-backup/run.lock node ~/eformsign-backup/backup.mjs --settings ~/.config/eformsign-backup/settings.json --limit 20
-```
+7. 같은 명령을 `--limit 20` 없이 실행해 전체 백업을 한 번 끝냅니다. 종료 코드가 `0`이어야 합니다.
+8. 개수를 맞춰 봅니다. 운영 DB의 완료 문서 수가 결과 보고의 `totalDocs`와 같고, `archiveDir`의 PDF 수(`find <archiveDir> -name '*.pdf' | wc -l`)와 Drive의 파일 수(`rclone size <rcloneRemote>`)가 같아야 합니다. 하나라도 다르면 타이머를 켜지 않고 원인을 먼저 찾습니다.
+9. 개수가 맞고 결과가 `success`일 때만 `systemctl --user enable --now eformsign-backup.timer`로 매일 실행을 켭니다.
 
 `archiveDir`의 폴더 구성:
 
@@ -25,9 +28,11 @@ flock -n ~/.local/state/eformsign-backup/run.lock node ~/eformsign-backup/backup
 제공기록지/감사추적/{동일한 이름}.pdf
 제공기록지/원본/제공기록지_{고객명}_{시작일}_{청크번호}장.pdf
 제공기록지/원본/감사추적/{동일한 청크 이름}.pdf
+기타/{문서명}.pdf
+기타/감사추적/{동일한 이름}.pdf
 ```
 
-이름이 겹치거나 재발행되면 ` (2)`, ` (3)`을 붙여 원본을 보존합니다. 분할 기록은 모든 청크가 모이면 날짜 순서로 병합합니다. `stateDir/state.json`은 재실행 시 이름과 저장 크기를 확인하는 상태 파일이므로 보관합니다. Drive에는 `rclone copy --immutable`로 복사합니다. `rcloneRemote`를 생략하면 Drive 복사는 건너뛰며 결과는 부분 완료입니다.
+제공인력 계약서나 안내문처럼 고객 계약서도 제공기록지도 아닌 문서는 eformsign 문서명 그대로 `기타`에 보관합니다. 이름이 겹치거나 재발행되면 ` (2)`, ` (3)`을 붙여 원본을 보존합니다. 분할 기록은 모든 청크가 모이면 날짜 순서로 병합합니다. `stateDir/state.json`은 재실행 시 이름과 저장 크기를 확인하는 상태 파일이므로 보관합니다. Drive에는 `rclone copy --immutable`로 복사합니다. `rcloneRemote`를 생략하면 Drive 복사는 건너뛰며 결과는 부분 완료입니다.
 
 복원은 필요한 PDF를 그대로 열면 됩니다. 병합된 기록의 서명 원본은 `제공기록지/원본/`에 있습니다.
 

@@ -2,6 +2,7 @@ import {
     eformsignCustomerPhone,
     extractEformsignContractClientCandidate,
     extractEformsignContractClientPrefillCandidate,
+    extractEformsignContractStartDate,
 } from "application/utils/eformsign-contract-client-candidate";
 import { EformsignApiDocumentResponse } from "domain/repositories/eformsign.client.interface";
 
@@ -469,5 +470,21 @@ describe("extractEformsignContractClientCandidate", () => {
 
         expect(extractEformsignContractClientPrefillCandidate(detail)?.actualPrice)
             .toBeNull();
+    });
+});
+
+describe("extractEformsignContractStartDate", () => {
+    it("reads the explicit start field, then the date parts, then the period start", () => {
+        expect(extractEformsignContractStartDate(documentDetail({
+            fields: [{ id: "계약 시작일", value: "2026-02-03", type: "text" }],
+        }))?.toISOString().slice(0, 10)).toBe("2026-02-03");
+        expect(extractEformsignContractStartDate(documentDetail())?.toISOString().slice(0, 10)).toBe("2026-08-01");
+        expect(extractEformsignContractStartDate(documentDetail({
+            fields: [{ id: "서비스 기간", value: "2025-11-02 ~ 2025-12-01", type: "text" }],
+        }))?.toISOString().slice(0, 10)).toBe("2025-11-02");
+    });
+
+    it("returns null when the document carries no start date", () => {
+        expect(extractEformsignContractStartDate(documentDetail({ fields: [] }))).toBeNull();
     });
 });
