@@ -100,7 +100,7 @@ test("other documents go to 기타 under their own name, numbered on a clash", a
         assert.equal(await env.run(), 0);
         const base = join(env.archive, "기타");
         assert.equal(await readFile(join(base, "제공인력 계약서_김관리.pdf"), "utf8"), "O1:document");
-        assert.equal(await readFile(join(base, "감사추적", "제공인력 계약서_김관리.pdf"), "utf8"), "O1:audit_trail");
+        assert.equal(await readFile(join(base, "감사추적", "[감사추적]_제공인력 계약서_김관리.pdf"), "utf8"), "O1:audit_trail");
         assert.equal(await readFile(join(base, "제공인력 계약서_김관리 (2).pdf"), "utf8"), "O2:document");
         assert.equal(await readFile(join(base, "안내문_ 산모님_전자.pdf"), "utf8"), "O3:document");
         assert.equal(await readFile(join(base, "문서명미상.pdf"), "utf8"), "O4:document");

@@ -134,9 +134,10 @@ test('1. two contracts and single record: exact paths, times, state, Drive argv'
     const env = await setup(t, docs);
     env.api.pageSize = 1;
     assert.equal((await env.run()).code, 0);
-    const expected = [`서비스계약서/${base}.pdf`, `서비스계약서/감사추적/${base}.pdf`,
-        '서비스계약서/서비스계약서_김산모_2026-11-01.pdf', '서비스계약서/감사추적/서비스계약서_김산모_2026-11-01.pdf',
-        `제공기록지/${srBase}.pdf`, `제공기록지/감사추적/${srBase}.pdf`];
+    const expected = [`서비스계약서/${base}.pdf`, `서비스계약서/감사추적/[감사추적]_${base}.pdf`,
+        '서비스계약서/서비스계약서_김산모_2026-11-01.pdf', '서비스계약서/감사추적/[감사추적]_서비스계약서_김산모_2026-11-01.pdf',
+        `제공기록지/${srBase}.pdf`, `제공기록지/감사추적/[감사추적]_${srBase}.pdf`];
+    await assert.rejects(env.bytes(`서비스계약서/감사추적/${base}.pdf`), { code: 'ENOENT' });
     assert.deepEqual(await env.files(), expected.sort());
     const state = await env.state();
     for (const doc of docs) {
@@ -179,7 +180,7 @@ test('3. naming uses createdAt, keeps names on run two, document-only reissue ta
     assert.equal((await env.run()).code, 0);
     for (const [suffix, content] of [['', '1:document'], [' (2)', '2:document'], [' (3)', 'reissued']]) {
         assert.equal(await env.bytes(`서비스계약서/${base}${suffix}.pdf`), content);
-        assert.equal(await env.bytes(`서비스계약서/감사추적/${base}${suffix}.pdf`), suffix === ' (2)' ? '2:audit_trail' : '1:audit_trail');
+        assert.equal(await env.bytes(`서비스계약서/감사추적/[감사추적]_${base}${suffix}.pdf`), suffix === ' (2)' ? '2:audit_trail' : '1:audit_trail');
     }
     const after = await env.state();
     for (const [unitKey, unit] of Object.entries(before.units)) assert.deepEqual(after.units[unitKey], unit);
@@ -226,24 +227,24 @@ test('6. missing required audit saves nothing and reports the exact reason', asy
 async function assertMerge(env, docs) {
     const ordered = [...docs].sort((a, b) => a.serviceRecordChunk.firstSessionIndex - b.serviceRecordChunk.firstSessionIndex);
     for (const [i, type] of ['document', 'audit_trail'].entries()) {
-        const path = `제공기록지/${i ? '감사추적/' : ''}${srBase}.pdf`;
+        const path = `제공기록지/${i ? '감사추적/[감사추적]_' : ''}${srBase}.pdf`;
         const info = await stat(join(env.archiveDir, path));
         assert.equal(info.mtimeMs, Date.parse(ordered[0].createdAt));
         assert.equal(info.atimeMs, Date.parse(ordered[0].createdAt));
         assert.equal(await env.bytes(path), ordered.map((doc) => doc.files[i].content.toString()).join(''));
         for (const doc of docs) {
-            assert.equal(await env.bytes(`제공기록지/원본/${i ? '감사추적/' : ''}${srBase}_${doc.serviceRecordChunk.chunkIndex + 1}장.pdf`), doc.files[i].content.toString());
+            assert.equal(await env.bytes(`제공기록지/원본/${i ? '감사추적/[감사추적]_' : ''}${srBase}_${doc.serviceRecordChunk.chunkIndex + 1}장.pdf`), doc.files[i].content.toString());
         }
         const args = JSON.parse(await readFile(env.qpdfLog, 'utf8'))[i];
         assert.deepEqual(args.slice(0, 2), ['--empty', '--pages']);
         assert.deepEqual(args.slice(2, -2), ordered.map((doc) => join(env.archiveDir,
-            `제공기록지/원본/${type === 'audit_trail' ? '감사추적/' : ''}${srBase}_${doc.serviceRecordChunk.chunkIndex + 1}장.pdf`)));
+            `제공기록지/원본/${type === 'audit_trail' ? '감사추적/[감사추적]_' : ''}${srBase}_${doc.serviceRecordChunk.chunkIndex + 1}장.pdf`)));
         assert.equal(args.at(-2), '--');
     }
     const state = await env.state();
     const chunk = ordered[0].serviceRecordChunk;
     const mergedKey = `merged:${chunk.caseId}:${chunk.snapshotVersion}:${ordered.map((doc) => doc.files[0].sha256).join(',')}`;
-    assert.deepEqual(state.units[mergedKey], { files: Object.fromEntries(['', '감사추적/'].map((folder, i) =>
+    assert.deepEqual(state.units[mergedKey], { files: Object.fromEntries(['', '감사추적/[감사추적]_'].map((folder, i) =>
         [`제공기록지/${folder}${srBase}.pdf`, docs.reduce((bytes, doc) => bytes + doc.files[i].byteSize, 0)])) });
     assert.equal(Object.keys(state.units).length, 4);
 }
@@ -411,9 +412,9 @@ test('file HTTP 404 and byte mismatch continue; partial pair is recovered with i
 test('a preexisting untracked audit path reserves the pair number', async (t) => {
     const env = await setup(t, [document('1')]);
     await mkdir(join(env.archiveDir, '서비스계약서', '감사추적'), { recursive: true });
-    await writeFile(join(env.archiveDir, '서비스계약서', '감사추적', `${base}.pdf`), 'preserve');
+    await writeFile(join(env.archiveDir, '서비스계약서', '감사추적', `[감사추적]_${base}.pdf`), 'preserve');
     assert.equal((await env.run()).code, 0);
-    assert.equal(await env.bytes(`서비스계약서/감사추적/${base}.pdf`), 'preserve');
+    assert.equal(await env.bytes(`서비스계약서/감사추적/[감사추적]_${base}.pdf`), 'preserve');
     assert.equal(await env.bytes(`서비스계약서/${base} (2).pdf`), '1:document');
     await assertReport(env, { status: 'success', savedFiles: 2 });
 });
@@ -449,7 +450,7 @@ test('merged pair is skipped on repeat and a missing merged audit recovers at th
     assert.equal((await env.run()).code, 0);
     await assert.rejects(readFile(env.qpdfLog), { code: 'ENOENT' });
     await assertReport(env, { status: 'success', savedFiles: 0, skippedFiles: 8 });
-    const auditPath = `제공기록지/감사추적/${srBase}.pdf`;
+    const auditPath = `제공기록지/감사추적/[감사추적]_${srBase}.pdf`;
     await rm(join(env.archiveDir, auditPath));
     assert.equal((await env.run()).code, 0);
     assert.equal(await env.bytes(auditPath), '1:audit_trail2:audit_trail3:audit_trail');

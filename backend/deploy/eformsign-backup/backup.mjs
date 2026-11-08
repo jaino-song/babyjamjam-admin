@@ -181,7 +181,7 @@ async function main() {
         if (Object.hasOwn(state.units, unit.key)) { unit.files = { ...state.units[unit.key].files }; return; }
         for (let n = 1; ; n += 1) {
             const name = `${unit.base}${n === 1 ? '' : ` (${n})`}.pdf`;
-            const paths = [`${unit.folder}/${name}`, `${unit.folder}/감사추적/${name}`];
+            const paths = [`${unit.folder}/${name}`, `${unit.folder}/감사추적/[감사추적]_${name}`];
             if (reserved.has(paths[0]) || reserved.has(paths[1]) || await size(paths[0]) !== null || await size(paths[1]) !== null) continue;
             unit.files = Object.fromEntries(paths.map((path, i) => [path, unit.inputs?.[i].byteSize ?? 0]));
             paths.forEach((path) => reserved.add(path));
