@@ -1167,7 +1167,7 @@ describe("ClientServiceRecordsTab", () => {
         expect(screen.getByText("서명 완료")).toBeInTheDocument();
     });
 
-    it("uses the Korean business-day calendar for empty session placeholders", () => {
+    it("shows unwritten sessions as undated even when business-day dates are available", () => {
         const assignment = {
             ...createAssignment(1, "none"),
             startDate: "2026-09-23T00:00:00.000Z",
@@ -1184,12 +1184,11 @@ describe("ClientServiceRecordsTab", () => {
             />,
         );
 
-        expect(screen.getByText("예정일 2026.09.23")).toBeInTheDocument();
-        expect(screen.getAllByText(/^예정일 /).map((node) => node.textContent)).toEqual(["예정일 2026.09.23", "예정일 2026.09.28"]);
-        expect(screen.queryByText("예정일 2026.09.24")).not.toBeInTheDocument();
+        expect(screen.getAllByText("날짜 미정")).toHaveLength(2);
+        expect(screen.queryByText(/^예정일 /)).not.toBeInTheDocument();
     });
 
-    it("uses the branch calendar for empty session placeholders", () => {
+    it("keeps empty session dates undecided with a branch holiday", () => {
         const branchCalendar = createKrBusinessDayCalendar(
             [...KR_BUILTIN_HOLIDAYS, "2026-09-28"],
             { version: "kr-db-test", supportedYears: [2025, 2026, 2027] },
@@ -1220,17 +1219,17 @@ describe("ClientServiceRecordsTab", () => {
                 />,
             );
 
-            // 09-28 is a branch holiday, so session 2 moves from 09-28 to 09-29.
-            expect(screen.getAllByText(/^예정일 /).map((node) => node.textContent)).toEqual(["예정일 2026.09.23", "예정일 2026.09.29"]);
+            expect(screen.getAllByText("날짜 미정")).toHaveLength(2);
+            expect(screen.queryByText(/^예정일 /)).not.toBeInTheDocument();
         } finally {
             jest.mocked(useBusinessDayCalendar).mockImplementation(defaultImplementation!);
         }
     });
 
     it.each([
-        ["without Saturday service", undefined, ["예정일 2026.12.17", "예정일 2026.12.18", "예정일 2026.12.21"]],
-        ["with Saturday service", { saturday: true, sunday: false, holiday: false }, ["예정일 2026.12.17", "예정일 2026.12.18", "예정일 2026.12.19"]],
-    ] as const)("computes fallback 예정일 %s", (_label, serviceDays, expected) => {
+        ["without Saturday service", undefined],
+        ["with Saturday service", { saturday: true, sunday: false, holiday: false }],
+    ] as const)("shows undated sessions %s", (_label, serviceDays) => {
         const assignment = {
             ...createAssignment(1, "none"),
             startDate: "2026-12-17T00:00:00.000Z",
@@ -1248,10 +1247,11 @@ describe("ClientServiceRecordsTab", () => {
             />,
         );
 
-        expect(screen.getAllByText(/^예정일 /).map((node) => node.textContent)).toEqual(expected);
+        expect(screen.getAllByText("날짜 미정")).toHaveLength(3);
+        expect(screen.queryByText(/^예정일 /)).not.toBeInTheDocument();
     });
 
-    it("chains an unwritten slot's 예정일 from the last written session's actual date", () => {
+    it("keeps unwritten slots undated alongside postponed written sessions", () => {
         function writtenSession(sessionIndex: number, serviceDate: string): ServiceRecordSession {
             return {
                 sessionIndex,
@@ -1286,16 +1286,11 @@ describe("ClientServiceRecordsTab", () => {
             />,
         );
 
-        // Slot 14 (unwritten) chains from session 13's actual date rather
-        // than counting business days from the assignment start date.
-        expect(screen.getByText("예정일 2026.09.01")).toBeInTheDocument();
-        expect(screen.getByText("예정일 2026.09.02")).toBeInTheDocument();
-        // Regression guard: the old start-date formula collided slot 15's
-        // 예정일 with session 13's own written date.
-        expect(screen.queryByText("예정일 2026.08.31")).not.toBeInTheDocument();
+        expect(screen.getAllByText("날짜 미정")).toHaveLength(13);
+        expect(screen.queryByText(/^예정일 /)).not.toBeInTheDocument();
     });
 
-    it("uses the revised authoritative date for an unwritten slot and keeps its original date visible", () => {
+    it("shows an unwritten slot as undated and keeps its original date visible", () => {
         const assignment = {
             ...createAssignment(7, "sent"),
             startDate: "2026-09-01T00:00:00.000Z",
@@ -1322,10 +1317,10 @@ describe("ClientServiceRecordsTab", () => {
             />,
         );
 
-        expect(screen.getAllByText("예정일 2026.09.08")).toHaveLength(1);
+        expect(screen.getAllByText("날짜 미정")).toHaveLength(2);
         expect(screen.getByText("원본 2026.09.01")).toBeInTheDocument();
-        expect(screen.getByText("예정일 2026.09.09")).toBeInTheDocument();
-        expect(screen.queryByText("예정일 2026.09.02")).not.toBeInTheDocument();
+        expect(screen.getByText("원본 2026.09.02")).toBeInTheDocument();
+        expect(screen.queryByText(/^예정일 /)).not.toBeInTheDocument();
     });
 
     it("uses revised projected dates for the missing-record threshold", () => {
@@ -1387,7 +1382,7 @@ describe("ClientServiceRecordsTab", () => {
         );
 
         expect(screen.getByText("예정 회차를 확인할 수 없습니다.")).toBeInTheDocument();
-        expect(screen.getAllByText("예정일 -")).toHaveLength(2);
+        expect(screen.getAllByText("날짜 미정")).toHaveLength(2);
         expect(screen.queryByText("예정일 2026.07.02")).not.toBeInTheDocument();
         expect(screen.queryByText("제공기록지 작성 확인이 필요해요")).not.toBeInTheDocument();
     });
@@ -1596,7 +1591,7 @@ describe("ClientServiceRecordsTab", () => {
         ).toHaveTextContent("0/6 제출완료");
         expect(screen.getAllByText("기간 외 기록")).toHaveLength(2);
         expect(screen.getByText(/7회차 · 2026.08.11/)).toBeInTheDocument();
-        expect(screen.queryByText("예정일 2026.08.11")).not.toBeInTheDocument();
+        expect(screen.getAllByText("날짜 미정")).toHaveLength(6);
         expect(
             container.querySelector(`[data-component="${TEST_COMPONENT}_out-of-period-sessions"]`),
         ).toBeInTheDocument();

@@ -125,15 +125,6 @@ const updateClientCacheData = (currentData: unknown, updatedClient: Client): unk
   return currentData;
 };
 
-interface ScheduleChangeMutationVariables {
-  requestId: string;
-  clientId: number;
-}
-
-interface RejectScheduleChangeMutationVariables extends ScheduleChangeMutationVariables {
-  reason?: string;
-}
-
 /**
  * Fetch paginated clients list
  */
@@ -511,39 +502,6 @@ export function useConfirmBooking() {
       await queryClient.invalidateQueries({ queryKey: clientKeys.all });
       await queryClient.invalidateQueries({ queryKey: clientKeys.detail(id) });
       await queryClient.invalidateQueries({ queryKey: messageTriggerKeys.upcoming() });
-    },
-  });
-}
-
-/**
- * Approve a pending schedule change request
- */
-export function useApproveScheduleChange() {
-  const queryClient = useQueryClient();
-
-  return useMutation({
-    mutationFn: ({ requestId }: ScheduleChangeMutationVariables) =>
-      clientsApi.approveScheduleChange(requestId).then(r => r.data),
-    onSuccess: async (_, { clientId }) => {
-      await queryClient.invalidateQueries({ queryKey: clientKeys.all });
-      await queryClient.invalidateQueries({ queryKey: clientKeys.detail(clientId) });
-      await queryClient.invalidateQueries({ queryKey: messageTriggerKeys.upcoming() });
-    },
-  });
-}
-
-/**
- * Reject a pending schedule change request
- */
-export function useRejectScheduleChange() {
-  const queryClient = useQueryClient();
-
-  return useMutation({
-    mutationFn: ({ requestId, reason }: RejectScheduleChangeMutationVariables) =>
-      clientsApi.rejectScheduleChange(requestId, reason).then(r => r.data),
-    onSuccess: async (_, { clientId }) => {
-      await queryClient.invalidateQueries({ queryKey: clientKeys.all });
-      await queryClient.invalidateQueries({ queryKey: clientKeys.detail(clientId) });
     },
   });
 }

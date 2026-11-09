@@ -1356,7 +1356,7 @@ function SessionRow({
                         <div className="min-w-0">
                             <div className="text-[calc(13px*var(--glint-ui-scale,1))] font-semibold text-v3-dark">{slot.sessionIndex}회차</div>
                             <div className="mt-0.5 flex flex-wrap gap-x-[calc(8px*var(--glint-ui-scale,1))] text-[calc(11.5px*var(--glint-ui-scale,1))] text-v3-text-muted">
-                                <span data-slot="revised-date">예정일 {formatDateKo(slot.expectedDate)}</span>
+                                <span data-slot="revised-date">날짜 미정</span>
                                 {getOriginalDateLabel(slot.plannedSession, slot.expectedDate) ? (
                                     <span data-slot="original-date">원본 {formatDateKo(slot.plannedSession?.originalDate ?? null)}</span>
                                 ) : null}

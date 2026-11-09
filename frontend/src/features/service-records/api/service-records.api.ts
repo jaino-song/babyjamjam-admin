@@ -6,14 +6,11 @@ import {
     normalizeServiceRecordRevisionHistory,
 } from "../types";
 import type {
-    ApplyServiceScheduleChangeRequest,
-    ApplyServiceScheduleChangeResponse,
     PrepareServiceRecordLinkRequest,
     PrepareServiceRecordLinkResponse,
     ResetServiceRecordLinkResponse,
     SendServiceRecordLinkRequest,
     SendServiceRecordLinkResponse,
-    ServiceScheduleChangePreviewResponse,
     ServiceRecordEditPreviewBlockingReason,
     ServiceRecordOverview,
     ServiceRecordPlannedSession,
@@ -191,15 +188,6 @@ export const serviceRecordsApi = {
         api.post<ResetServiceRecordLinkResponse>(
             `/admin/service-records/schedules/${scheduleId}/reset-link`,
             {},
-        ),
-    previewScheduleChange: (scheduleId: number) =>
-        api.get<ServiceScheduleChangePreviewResponse>(
-            `/schedule-change-requests/schedules/${scheduleId}/preview`,
-        ),
-    applyScheduleChange: (scheduleId: number, request: ApplyServiceScheduleChangeRequest) =>
-        api.post<ApplyServiceScheduleChangeResponse>(
-            `/schedule-change-requests/schedules/${scheduleId}/apply`,
-            request,
         ),
     sendLink: (scheduleId: number, request: SendServiceRecordLinkRequest = {}) =>
         api.post<SendServiceRecordLinkResponse>(
