@@ -1214,6 +1214,8 @@ describe("per-session administrator editing", () => {
 
     it.each([
         [400, "SERVICE_DATE_OUT_OF_RANGE", "고를 수 있는 기간이 아니에요 (3회차)"],
+        [400, "SCHEDULE_WITH_DATE_MOVE", "저장 결과를 확인하지 못했습니다. 수정사항은 이 화면에 남아 있어요."],
+        [400, "REALIGNMENT_REQUIRES_MANUAL_SCHEDULE", "저장 결과를 확인하지 못했습니다. 수정사항은 이 화면에 남아 있어요."],
         [400, "UNKNOWN_SCHEDULE_CODE", "저장 결과를 확인하지 못했습니다. 수정사항은 이 화면에 남아 있어요."],
         [500, "SERVICE_DATE_OUT_OF_RANGE", "저장 결과를 확인하지 못했습니다. 수정사항은 이 화면에 남아 있어요."],
     ])("explains a refused date move safely (status %s, code %s)", async (status, scheduleCode, label) => {

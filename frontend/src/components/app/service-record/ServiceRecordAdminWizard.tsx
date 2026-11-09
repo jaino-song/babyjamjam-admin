@@ -50,7 +50,7 @@ import {
 import { ServiceRecordEditPreviewDialog } from "./ServiceRecordEditPreviewDialog";
 import { ServiceRecordDateSelectionDialog } from "./ServiceRecordDateSelectionDialog";
 import { RevisionHistoryView } from "./RevisionHistoryView";
-import { describeScheduleBlockingReasons } from "./service-record-blocking-reasons";
+import { describeScheduleBlockingReasons, GENERIC_BLOCKING_REASON } from "./service-record-blocking-reasons";
 import { AdminServiceRecordScreen } from "./screen/AdminServiceRecordScreen";
 import { moveServiceRecordSessionDate } from "@babyjamjam/shared/utils/service-record-schedule";
 
@@ -824,10 +824,13 @@ export function ServiceRecordAdminWizard({
                 return;
             }
             if (failure.status === 400 && failure.scheduleCode) {
-                setError(describeScheduleBlockingReasons([{
+                const line = describeScheduleBlockingReasons([{
                     code: failure.scheduleCode, message: "", sessionIndex: failure.sessionIndex,
-                }])[0].label);
-                return;
+                }])[0];
+                if (line.text !== GENERIC_BLOCKING_REASON) {
+                    setError(line.label);
+                    return;
+                }
             }
             setError(failure.status === 403 ? "수정 권한이 없습니다. 수정사항은 이 화면에 남아 있어요."
                 : failure.status === 401 ? "로그인이 필요합니다. 수정사항은 이 화면에 남아 있어요."

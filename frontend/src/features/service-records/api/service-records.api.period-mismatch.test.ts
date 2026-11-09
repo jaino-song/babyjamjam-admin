@@ -21,7 +21,14 @@ it.each([{ keptSessionIndexes: [0] }, { keptSessionIndexes: ["1"] }, null, {}])(
     mockPost.mockResolvedValue({ data });
     await expect(serviceRecordsApi.keepPeriodMismatch(100, [1])).rejects.toThrow("Invalid period-mismatch keep response");
 });
-it.each([{ startDate: "2026-02-30", endDate: "2026-08-20" }, { startDate: "2026-08-07T00:00:00Z", endDate: "2026-08-20" }, null])("rejects malformed fit results %j", async (data) => {
+it.each([
+    { startDate: "2026-02-30", endDate: "2026-08-20" },
+    { startDate: "2026-08-07T00:00:00Z", endDate: "2026-08-20" },
+    null,
+    {},
+    { endDate: "2026-08-20" },
+    { startDate: "2026-08-07" },
+])("rejects malformed fit results %j", async (data) => {
     mockPost.mockResolvedValue({ data });
     await expect(serviceRecordsApi.fitPeriodMismatch(100)).rejects.toThrow("Invalid period-mismatch fit response");
 });
