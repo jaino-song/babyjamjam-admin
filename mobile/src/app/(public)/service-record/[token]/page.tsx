@@ -593,7 +593,7 @@ export default function ServiceRecordPage() {
                 setErrorNotificationMessage(problemMessage(res.status, body, "기록을 삭제하지 못했어요."));
                 return;
             }
-            clearStoredFormState(token);
+            if (readStoredFormState(token)?.day === deletedDay) clearStoredFormState(token);
             setDeleteModalOpen(false);
             await loadContext("push");
             toast({ variant: "success", title: `${deletedDay}회차 기록을 삭제했어요` });
