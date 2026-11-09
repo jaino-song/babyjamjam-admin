@@ -71,10 +71,11 @@ export function ServiceDateSheet({ "data-component": root, context, day, calenda
     const first = offsetServiceDate(context.startDate, -7);
     const last = offsetServiceDate(context.endDate, 7);
     const current = context.sessions.find((row) => row.sessionIndex === day)?.serviceDate.slice(0, 10) ?? "";
+    const pending = value !== current;
     const initial = value || context.startDate?.slice(0, 10) || isoDateInKorea();
     const boundedInitial = first && initial < first ? first : last && initial > last ? last : initial;
     const [month, setMonth] = useState(boundedInitial.slice(0, 7));
-    const [selected, setSelected] = useState("");
+    const [selected, setSelected] = useState(pending ? value : "");
     const [year, monthNumber] = month.split("-").map(Number);
     const startWeekday = new Date(Date.UTC(year, monthNumber - 1, 1)).getUTCDay();
     const count = new Date(Date.UTC(year, monthNumber, 0)).getUTCDate();
@@ -82,7 +83,8 @@ export function ServiceDateSheet({ "data-component": root, context, day, calenda
     const previous = shiftMonth(-1);
     const next = shiftMonth(1);
     const rules = { context, day, calendar, calendarReady };
-    const canSelect = selected !== "" && selected !== value && classifyServiceDate(selected, rules) === "available";
+    const selectedState = classifyServiceDate(selected, rules);
+    const canSelect = selected !== "" && selected !== value && (selectedState === "available" || (pending && selectedState === "current"));
     const child = (suffix: string) => `${root}_${suffix}`;
 
     return (
@@ -113,9 +115,9 @@ export function ServiceDateSheet({ "data-component": root, context, day, calenda
                             const isSelected = iso === selected;
                             const isCurrent = iso === current;
                             const blocked = state !== "available" && state !== "current";
-                            return <button key={iso} type="button" data-component={child(`calendar_days_day-${index + 1}`)} data-day-state={state} aria-label={`${formatServiceDate(iso)}${usedBy ? ` ${usedBy.sessionIndex}회차` : isCurrent ? " 지금" : ""}`} aria-pressed={isSelected} aria-disabled={blocked || isCurrent} onClick={() => {
+                            return <button key={iso} type="button" data-component={child(`calendar_days_day-${index + 1}`)} data-day-state={state} aria-label={`${formatServiceDate(iso)}${usedBy ? ` ${usedBy.sessionIndex}회차` : isCurrent ? " 지금" : ""}`} aria-pressed={isSelected} aria-disabled={blocked || (isCurrent && !pending)} onClick={() => {
                                 if (state === "before" || state === "after") onOrderBlocked(state === "before" ? ORDER_BEFORE : ORDER_AFTER);
-                                else if (state === "available") setSelected(iso);
+                                else if (state === "available" || (pending && state === "current")) setSelected(iso);
                             }} className={cn(MONTH_CELL_BASE, "border-v3-border bg-white text-v3-dark", blocked && HATCHED, isCurrent && "border-dashed border-v3-primary text-v3-primary", isSelected && "border-v3-primary bg-v3-primary text-white")}>
                                 <span>{index + 1}</span>
                                 {usedBy || isCurrent ? <small className="mt-0.5 text-[0.53rem] font-extrabold leading-none">{usedBy ? `${usedBy.sessionIndex}회차` : "지금"}</small> : null}

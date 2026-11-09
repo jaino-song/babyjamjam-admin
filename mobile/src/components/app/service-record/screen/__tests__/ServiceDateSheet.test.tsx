@@ -75,3 +75,25 @@ it("limits month navigation to window months and cancels without applying a sele
     expect(p.onClose).toHaveBeenCalledTimes(1);
     expect(p.onSelect).not.toHaveBeenCalled();
 });
+
+it("opens with the pending pick selected and lets it return to the stored 지금 day", () => {
+    const p = props({ editing: true, value: "2026-11-05", context: { ...props().context, sessions: [
+        { sessionIndex: 1, serviceDate: "2026-11-04", locked: true },
+    ] } });
+    render(<ServiceDateSheet {...p} />);
+    expect(screen.getByRole("button", { name: "2026.11.05(목)" })).toHaveAttribute("aria-pressed", "true");
+    const current = screen.getByRole("button", { name: "2026.11.04(수) 지금" });
+    expect(current).toHaveClass("border-dashed");
+    expect(current).toHaveAttribute("aria-disabled", "false");
+    fireEvent.click(current);
+    expect(current).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("button", { name: "선택" })).toBeEnabled();
+    fireEvent.click(screen.getByRole("button", { name: "선택" }));
+    expect(p.onSelect).toHaveBeenCalledWith("2026-11-04");
+});
+
+it("does not preselect a new empty day's initial calendar date", () => {
+    render(<ServiceDateSheet {...props()} />);
+    expect(screen.getByRole("button", { name: "2026.11.02(월)" })).toHaveAttribute("aria-pressed", "false");
+    expect(screen.getByRole("button", { name: "선택" })).toBeDisabled();
+});
