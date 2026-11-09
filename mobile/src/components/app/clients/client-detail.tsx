@@ -2,7 +2,7 @@
 
 
 import { useRef, useState, type KeyboardEvent, type ReactNode } from "react";
-import { CalendarCheck, CalendarDays, CircleAlert, FileCheck2, MessageCircle, MoreVertical, RotateCcw, Send, SquarePen, Trash2, User } from "lucide-react";
+import { CalendarCheck, CircleAlert, FileCheck2, MessageCircle, MoreVertical, RotateCcw, Send, SquarePen, Trash2, User } from "lucide-react";
 import { isAxiosError } from "axios";
 
 import { Client } from "@/lib/client/types";
@@ -20,13 +20,11 @@ import { isReviewerRejectedEformsignStatus } from "@babyjamjam/shared/constants/
 import type { StatusBadgeVariant } from "@babyjamjam/shared/tokens/status-badge";
 import { EformsignDocument } from "@/lib/eformsign/types";
 import {
-  applyServiceScheduleChange,
   fetchClientServiceRecords,
-  previewServiceScheduleChange,
   resetServiceRecordLink,
   useClientServiceRecords,
 } from "@/hooks/useServiceRecords";
-import { approveScheduleChange, fetchClient, rejectScheduleChange } from "@/hooks/useClients";
+import { fetchClient } from "@/hooks/useClients";
 import { useConfirmBooking } from "@/features/clients";
 import { canEditServiceRecordSchedule } from "@/features/clients/types";
 import { eformsignApi, type EformsignLinkConfirmation } from "@/services/api";
@@ -73,19 +71,10 @@ import {
 import { ClientMessageHistoryDetail } from "@/components/app/clients/client-message-history-detail";
 import { ClientServiceRecords } from "@/components/app/clients/client-service-records";
 import { ServiceRecordLinkResetResultModal } from "@/components/app/clients/ServiceRecordLinkResetResultModal";
-import { ServiceScheduleChangeModal } from "@/components/app/clients/ServiceScheduleChangeModal";
 import { ServiceRecordScheduleSheet } from "@/components/app/service-record/ServiceRecordScheduleSheet";
 import { scheduleText } from "@/components/app/service-record/service-record-schedule-messages";
 import { useLocale } from "@/providers/LocaleProvider";
-import {
-  ServiceScheduleContractResendModal,
-  type ContractReissueOptions,
-} from "@/components/app/clients/ServiceScheduleContractResendModal";
-import {
-  contractPaymentDateFromFields,
-  isCancellableContractStatus,
-} from "@babyjamjam/shared/eformsign/contract-reissue";
-import { getScheduleChangeErrorMessage } from "@/lib/service-records/schedule-change-error";
+import type { ContractReissueOptions } from "@/components/app/clients/ServiceScheduleContractResendModal";
 import { useSendClientReceipt } from "@/hooks/use-send-client-receipt";
 import { useGetAuthUser } from "@/hooks/useGetAuthUser";
 import { useResendMessageTriggerJob, useRetryMessageHistory } from "@/features/message-triggers/hooks/use-message-triggers";
@@ -94,18 +83,6 @@ import { canRetryFailedHistory, getResendableJobId, retryMessageHistory } from "
 import { ContractLinkConfirmSheet } from "./contract-link-confirm-sheet";
 
 type UnknownRecord = Record<string, unknown>;
-
-interface ServiceScheduleChangeTarget {
-  scheduleId: number;
-  sessionIndex: number;
-  currentDate: string;
-  minimumDate: string | null;
-}
-
-function formatScheduleChangeMonthDay(value: string): string {
-  const match = value.match(/^\d{4}-(\d{2})-(\d{2})$/);
-  return match ? `${Number(match[1])}월 ${Number(match[2])}일` : value;
-}
 
 function isRecord(value: unknown): value is UnknownRecord {
   return typeof value === "object" && value !== null;
@@ -500,7 +477,7 @@ export function shouldShowMissingContractBadge(client: Client): boolean {
   return client.serviceStatus === "active" && client.documentStatus !== "completed";
 }
 
-export type DetailTabId = "scheduleChange" | "basic" | "contracts" | "message" | "serviceRecords";
+export type DetailTabId = "basic" | "contracts" | "message" | "serviceRecords";
 
 export interface ClientNotificationLogRecord {
   id: number | string;
@@ -839,38 +816,6 @@ export function ClientDetailContent({
   const locale = useLocale();
   const [resetServiceRecordUrl, setResetServiceRecordUrl] = useState<string | null>(null);
   const [isResettingLink, setIsResettingLink] = useState(false);
-  const [scheduleChangeTarget, setScheduleChangeTarget] = useState<ServiceScheduleChangeTarget | null>(null);
-  const [selectedScheduleChangeDate, setSelectedScheduleChangeDate] = useState("");
-  const [contractResendClient, setContractResendClient] = useState<Client | null>(null);
-  const [isPreparingContractReissue, setIsPreparingContractReissue] = useState(false);
-
-  // 수정 전송: reopen contract creation with the new period, keeping the old payment date.
-  // An unsigned old contract is cancelled once the new one is sent.
-  const handleContractReissue = async (target: Client) => {
-    setIsPreparingContractReissue(true);
-    let paymentDate: string | undefined;
-    try {
-      const previousDocumentId = target.latestContractDocumentId ?? target.eDocId;
-      if (previousDocumentId) {
-        const previous = await eformsignApi.getDocument(previousDocumentId);
-        paymentDate = contractPaymentDateFromFields(previous.fields) ?? undefined;
-      }
-    } catch {
-      // Without the old document the payment date is left for the user to fill.
-    } finally {
-      setIsPreparingContractReissue(false);
-    }
-    setContractResendClient(null);
-    onIssueContract(target, {
-      paymentDate,
-      supersedeDocumentId: target.latestContractDocumentId && isCancellableContractStatus(target.documentStatus, { hasSigned: target.hasSigned })
-        ? target.latestContractDocumentId
-        : undefined,
-    });
-  };
-  const [isPreparingScheduleChange, setIsPreparingScheduleChange] = useState(false);
-  const [isApplyingScheduleChange, setIsApplyingScheduleChange] = useState(false);
-  const [isScheduleChangeDecisionPending, setIsScheduleChangeDecisionPending] = useState(false);
   const [receiptSendConfirmOpen, setReceiptSendConfirmOpen] = useState(false);
   const { isSending: isSendingReceipt, sendReceipt } = useSendClientReceipt();
   const confirmBookingMutation = useConfirmBooking();
@@ -903,71 +848,6 @@ export function ClientDetailContent({
       });
     } finally {
       setIsResettingLink(false);
-    }
-  };
-
-  const handleOpenServiceScheduleChange = async () => {
-    setIsPreparingScheduleChange(true);
-    try {
-      const overview = await fetchClientServiceRecords(client.id);
-      const assignments = overview.assignments ?? [];
-      const activeAssignment = assignments.find((assignment) => !assignment.replaced)
-        ?? assignments[0]
-        ?? null;
-      if (!activeAssignment) {
-        toast({
-          description: "관리사 배정이 없어 서비스 일정을 변경할 수 없어요",
-          variant: "destructive",
-        });
-        return;
-      }
-
-      const preview = await previewServiceScheduleChange(activeAssignment.scheduleId);
-      setSelectedScheduleChangeDate(preview.fromDate);
-      setScheduleChangeTarget({
-        scheduleId: activeAssignment.scheduleId,
-        sessionIndex: preview.sessionIndex,
-        currentDate: preview.fromDate,
-        minimumDate: preview.minimumDate,
-      });
-    } catch {
-      toast({
-        description: "변경할 수 있는 다음 서비스 일정을 불러오지 못했어요",
-        variant: "destructive",
-      });
-    } finally {
-      setIsPreparingScheduleChange(false);
-    }
-  };
-
-  const handleApplyServiceScheduleChange = async (allowNonBusinessDay: boolean) => {
-    if (!scheduleChangeTarget) return;
-
-    setIsApplyingScheduleChange(true);
-    try {
-      const changed = await applyServiceScheduleChange(scheduleChangeTarget.scheduleId, {
-        toDate: selectedScheduleChangeDate,
-        ...(allowNonBusinessDay ? { allowNonBusinessDay: true } : {}),
-      });
-      // The server decides whether the move also moved the service start.
-      const updatedClient: Client = {
-        ...client,
-        ...(changed.startDate ? { startDate: changed.startDate } : {}),
-        endDate: changed.newEndDate,
-        pendingScheduleChange: null,
-      };
-      onClientUpdated(updatedClient);
-      setContractResendClient(updatedClient);
-      setScheduleChangeTarget(null);
-      setSelectedScheduleChangeDate("");
-      toast({ variant: "success", description: `서비스 일정과 종료일(${changed.newEndDate})을 변경했어요` });
-    } catch (error) {
-      toast({
-        description: getScheduleChangeErrorMessage(error),
-        variant: "destructive",
-      });
-    } finally {
-      setIsApplyingScheduleChange(false);
     }
   };
 
@@ -1023,39 +903,6 @@ export function ClientDetailContent({
       });
     } finally {
       confirmBookingInFlightRef.current = false;
-    }
-  };
-
-  const handleScheduleChangeDecision = async (decision: "approve" | "reject") => {
-    const pendingScheduleChange = client.pendingScheduleChange;
-    if (!pendingScheduleChange) return;
-
-    setIsScheduleChangeDecisionPending(true);
-    try {
-      if (decision === "approve") {
-        await approveScheduleChange(pendingScheduleChange.id);
-      } else {
-        await rejectScheduleChange(pendingScheduleChange.id);
-      }
-      onClientUpdated({
-        ...client,
-        endDate: decision === "approve" ? pendingScheduleChange.newEndDate : client.endDate,
-        pendingScheduleChange: null,
-      });
-      onTabChange("basic");
-      toast({
-        variant: "success",
-        description: decision === "approve"
-          ? "일정 변경 요청을 승인했어요"
-          : "일정 변경 요청을 거부했어요",
-      });
-    } catch (error) {
-      toast({
-        description: getScheduleChangeErrorMessage(error),
-        variant: "destructive",
-      });
-    } finally {
-      setIsScheduleChangeDecisionPending(false);
     }
   };
 
@@ -1345,15 +1192,6 @@ export function ClientDetailContent({
                 수정
               </DropdownMenuItem>
               <DropdownMenuItem
-                disabled={isPreparingScheduleChange}
-                onClick={() => void handleOpenServiceScheduleChange()}
-                className="min-h-[44px] gap-2 rounded-md px-3 py-2 text-[0.82rem] leading-none"
-                data-component={`${dataComponent}_header_menu_change-service-schedule`}
-              >
-                <CalendarDays className="size-[15px]" strokeWidth={2} />
-                서비스 일정 변경
-              </DropdownMenuItem>
-              <DropdownMenuItem
                 disabled={isSendingReceipt}
                 onClick={() => setReceiptSendConfirmOpen(true)}
                 className="min-h-[44px] gap-2 rounded-md px-3 py-2 text-[0.82rem] leading-none"
@@ -1504,38 +1342,9 @@ export function ClientDetailContent({
         onCopy={(serviceRecordUrl) => void handleCopyResetServiceRecordLink(serviceRecordUrl)}
       />
 
-      {scheduleChangeTarget ? (
-        <ServiceScheduleChangeModal
-          data-component={`${dataComponent}_schedule-change-modal`}
-          open
-          sessionIndex={scheduleChangeTarget.sessionIndex}
-          currentDate={scheduleChangeTarget.currentDate}
-          minimumDate={scheduleChangeTarget.minimumDate}
-          selectedDate={selectedScheduleChangeDate}
-          isPending={isApplyingScheduleChange}
-          onDateChange={setSelectedScheduleChangeDate}
-          onClose={() => {
-            setScheduleChangeTarget(null);
-            setSelectedScheduleChangeDate("");
-          }}
-          onSubmit={(allowNonBusinessDay) => void handleApplyServiceScheduleChange(allowNonBusinessDay)}
-        />
-      ) : null}
-
-      {contractResendClient ? (
-        <ServiceScheduleContractResendModal
-          data-component={`${dataComponent}_schedule-contract-resend-modal`}
-          open
-          onKeep={() => setContractResendClient(null)}
-          isPending={isPreparingContractReissue}
-          onResend={() => void handleContractReissue(contractResendClient)}
-        />
-      ) : null}
-
       <DetailTabPills
         data-component={`${dataComponent}_tabs`}
         tabs={[
-          ...(client.pendingScheduleChange ? [{ id: "scheduleChange", label: "일정 변경" }] : []),
           { id: "basic", label: "기본 정보" },
           { id: "contracts", label: "계약서 정보" },
           { id: "message", label: "알림 발송" },
@@ -1544,46 +1353,6 @@ export function ClientDetailContent({
         activeTab={activeTab}
         onTabChange={(id) => onTabChange(id as DetailTabId)}
       />
-
-      {client.pendingScheduleChange ? (
-        <MobileDetailTabPanel data-component={`${dataComponent}_tab-panel_schedule-change`} name="clients" tabId="scheduleChange" activeTab={activeTab}>
-          <InfoCard data-component={`${dataComponent}_tab-panel_schedule-change_info-card`} title="서비스 일정 변경 요청이 있습니다.">
-            <InfoRow
-              label="기존 날짜"
-              value={formatScheduleChangeMonthDay(client.pendingScheduleChange.fromDate)}
-            />
-            <InfoRow
-              label="변경 날짜"
-              value={formatScheduleChangeMonthDay(client.pendingScheduleChange.toDate)}
-            />
-            <InfoRow label="회차" value={`${client.pendingScheduleChange.sessionIndex}회차`} />
-            <InfoRow
-              label="종료일"
-              value={`${client.pendingScheduleChange.oldEndDate} → ${client.pendingScheduleChange.newEndDate}`}
-            />
-            <div className="detail-actions card-actions mt-3">
-              <button
-                type="button"
-                className="btn btn-secondary"
-                disabled={isScheduleChangeDecisionPending}
-                onClick={() => void handleScheduleChangeDecision("reject")}
-                data-component={`${dataComponent}_tab-panel_schedule-change_info-card_reject`}
-              >
-                거부
-              </button>
-              <button
-                type="button"
-                className="btn btn-primary"
-                disabled={isScheduleChangeDecisionPending}
-                onClick={() => void handleScheduleChangeDecision("approve")}
-                data-component={`${dataComponent}_tab-panel_schedule-change_info-card_approve`}
-              >
-                승인
-              </button>
-            </div>
-          </InfoCard>
-        </MobileDetailTabPanel>
-      ) : null}
 
       <MobileDetailTabPanel data-component={`${dataComponent}_tab-panel_basic`} name="clients" tabId="basic" activeTab={activeTab}>
         <InfoCard data-component={`${dataComponent}_tab-panel_basic_client-card`} title="고객 정보">

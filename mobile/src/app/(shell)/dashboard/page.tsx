@@ -241,7 +241,7 @@ export default function DashboardPage() {
 
   const openClient = useCallback((c: Client) => {
     setSelectedClient(c);
-    setDetailTab(c.pendingScheduleChange ? "scheduleChange" : "basic");
+    setDetailTab("basic");
   }, []);
   const handleClientUpdated = useCallback((updatedClient: Client) => {
     setSelectedClient(updatedClient);

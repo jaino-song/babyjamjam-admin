@@ -560,7 +560,9 @@ describe("ClientServiceRecords", () => {
             ],
         });
 
+        expect(screen.getByText(/1회차 ·/)).toHaveTextContent("1회차 · 2026.07.16");
         await user.click(screen.getByText(/1회차 ·/));
+        expect(screen.getByText(/제공일 2026.07.16/)).toBeInTheDocument();
 
         expect(screen.getByText("1회차 제공기록")).toBeInTheDocument();
         const backButton = screen.getByRole("button", { name: "목록으로" });
@@ -578,9 +580,12 @@ describe("ClientServiceRecords", () => {
             ],
         });
 
+        expect(screen.getByRole("button", { name: /1회차/ })).toHaveTextContent("날짜 미정");
         await user.click(screen.getByRole("button", { name: /1회차/ }));
 
         expect(screen.getByText("1회차 제공기록")).toBeInTheDocument();
+        expect(screen.getByText("날짜 미정")).toBeInTheDocument();
+        expect(screen.queryByText(/예정일/)).not.toBeInTheDocument();
         expect(screen.getAllByText("-").length).toBeGreaterThan(0);
         expect(screen.getByRole("button", { name: "목록으로" })).toBeInTheDocument();
     });
@@ -615,7 +620,7 @@ describe("ClientServiceRecords", () => {
         animationFrame.mockRestore();
     });
 
-    it("shows expected session dates from the branch calendar", () => {
+    it("shows unwritten sessions as undated regardless of the branch calendar", () => {
         const assignment = { ...createAssignment(1, "none"), totalSessions: 3 };
         // 2026-07-17 is already a public holiday; 2026-07-21 (Tue) is a branch-added day off, so session 3 moves to 07-22.
         const branchCalendar = buildCalendarFromHolidayYears([
@@ -626,8 +631,8 @@ describe("ClientServiceRecords", () => {
         ]);
 
         const { unmount } = renderComponent({ assignments: [assignment] });
-        expect(screen.getAllByText(/예정일/).map((node) => node.textContent)).toEqual([
-            "예정일 2026.07.16", "예정일 2026.07.20", "예정일 2026.07.21",
+        expect(screen.getAllByText("날짜 미정").map((node) => node.textContent)).toEqual([
+            "날짜 미정", "날짜 미정", "날짜 미정",
         ]);
         unmount();
 
@@ -637,8 +642,8 @@ describe("ClientServiceRecords", () => {
             version: branchCalendar.version,
         }));
         renderComponent({ assignments: [assignment] });
-        expect(screen.getAllByText(/예정일/).map((node) => node.textContent)).toEqual([
-            "예정일 2026.07.16", "예정일 2026.07.20", "예정일 2026.07.22",
+        expect(screen.getAllByText("날짜 미정").map((node) => node.textContent)).toEqual([
+            "날짜 미정", "날짜 미정", "날짜 미정",
         ]);
         // The hook is asked for the years of the assignment's own dates.
         expect(mockUseBusinessDayCalendar).toHaveBeenCalledWith({ extraYears: expect.arrayContaining([2026, 2027]) });

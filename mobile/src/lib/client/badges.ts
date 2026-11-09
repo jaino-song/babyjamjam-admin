@@ -23,7 +23,6 @@ export interface MobileClientBadge {
 }
 
 const PRIMARY_CLIENT_BADGE_KEYS = ["contract_required", "contract_status", "service_status"] as const satisfies readonly ClientBadgeKey[];
-const SCHEDULE_CHANGE_BADGE_LABEL = "일정 변경";
 
 const CLIENT_BADGE_ORDER: Record<ClientBadgeKey, number> = {
   contract_required: 10,
@@ -50,26 +49,9 @@ const CLIENT_BADGE_TONE_BY_TONE = {
   neutral: "muted",
 } as const satisfies Record<ClientBadgeTone, MobileClientBadgeTone>;
 
-function applyScheduleChangeBadge(client: Client, badges: ClientBadge[]): ClientBadge[] {
-  if (!client.pendingScheduleChange) return badges;
-
-  const serviceStatusBadge = badges.find((badge) => badge.key === "service_status");
-  const scheduleChangeBadge: ClientBadge = {
-    key: "service_status",
-    status: "scheduleChange",
-    label: SCHEDULE_CHANGE_BADGE_LABEL,
-    tone: "danger",
-    priority: serviceStatusBadge?.priority ?? CLIENT_BADGE_ORDER.service_status,
-  };
-
-  if (!serviceStatusBadge) return [scheduleChangeBadge, ...badges];
-  return badges.map((badge) => badge === serviceStatusBadge ? scheduleChangeBadge : badge);
-}
-
 export function getClientBadges(client: Client | null | undefined): ClientBadge[] {
   if (!client) return [];
-  const badges = client.badges?.length ? client.badges : legacyClientBadges(client);
-  return applyScheduleChangeBadge(client, badges);
+  return client.badges?.length ? client.badges : legacyClientBadges(client);
 }
 
 export function prioritizeClientBadges(badges: ClientBadge[]): ClientBadge[] {
