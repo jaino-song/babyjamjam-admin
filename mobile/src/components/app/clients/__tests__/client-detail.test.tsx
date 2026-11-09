@@ -1,6 +1,6 @@
 import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { formatMessageDateTimeCompact, MESSAGE_JOB_RESEND_COPY } from "@babyjamjam/shared";
 import { AxiosError, AxiosHeaders } from "axios";
 import { CONTRACT_VOID_COPY } from "@babyjamjam/shared/constants/eformsign-doc-status";
@@ -242,6 +242,7 @@ const mockServiceRecordsQuery: {
   isFetching: boolean;
   refetch: jest.Mock;
 } = { data: undefined, isError: false, isLoading: false, isPaused: false, isFetching: false, refetch: jest.fn() };
+let mockOnPeriodFitted: (() => Promise<void>) | undefined;
 const mockServiceRecordsRenders: Array<{ isLoading: boolean; isError: boolean }> = [];
 
 jest.mock("@/hooks/useServiceRecords", () => ({
@@ -317,7 +318,8 @@ jest.mock("@/components/app/mobile-redesign/detail-sheet", () => ({
 }));
 
 jest.mock("../client-service-records", () => ({
-  ClientServiceRecords: (props: { isLoading: boolean; isError: boolean }) => {
+  ClientServiceRecords: (props: { isLoading: boolean; isError: boolean; onPeriodFitted?: () => Promise<void> }) => {
+    mockOnPeriodFitted = props.onPeriodFitted;
     mockServiceRecordsRenders.push({ isLoading: props.isLoading, isError: props.isError });
     return null;
   },
@@ -538,6 +540,36 @@ describe("contract void workflow", () => {
 });
 
 describe("ClientDetailContent", () => {
+  it("refetches the fitted client and displays its new start date in the open detail", async () => {
+    const { fetchClient } = await import("@/hooks/useClients");
+    const initial = { ...client, startDate: "2026-11-02", endDate: "2026-11-17" };
+    const fresh = { ...initial, startDate: "2026-10-30" };
+    jest.mocked(fetchClient).mockClear().mockResolvedValue(fresh);
+    const onClientUpdated = jest.fn();
+    mockOnPeriodFitted = undefined;
+    function OpenDetail({ activeTab }: { activeTab: DetailTabId }) {
+      const [detailClient, setDetailClient] = useState<Client>(initial);
+      return <ClientDetailContent
+        data-component="mobile_clients_detail-sheet_stack_detail-page_content"
+        client={detailClient} activeTab={activeTab}
+        onTabChange={jest.fn()} onMessage={jest.fn()} onIssueContract={jest.fn()}
+        onEdit={jest.fn()} onDelete={jest.fn()}
+        onClientUpdated={(updated) => { onClientUpdated(updated); setDetailClient(updated); }}
+      />;
+    }
+    const view = render(<OpenDetail activeTab="basic" />);
+    expect(screen.getByText("시작일").closest("div")).toHaveTextContent("2026.11.02");
+    view.rerender(<OpenDetail activeTab="serviceRecords" />);
+    expect(mockOnPeriodFitted).toEqual(expect.any(Function));
+    await act(async () => { await mockOnPeriodFitted?.(); });
+    expect(fetchClient).toHaveBeenCalledTimes(1);
+    expect(fetchClient).toHaveBeenCalledWith(client.id);
+    expect(onClientUpdated).toHaveBeenCalledTimes(1);
+    expect(onClientUpdated).toHaveBeenCalledWith(fresh);
+    view.rerender(<OpenDetail activeTab="basic" />);
+    expect(screen.getByText("시작일").closest("div")).toHaveTextContent("2026.10.30");
+    expect(screen.queryByText("2026.11.02")).not.toBeInTheDocument();
+  });
   it("keeps only the four supported detail tabs", () => {
     renderDetail(null, {
       ...client,
