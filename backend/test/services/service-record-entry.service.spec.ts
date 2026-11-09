@@ -1975,10 +1975,14 @@ describe("caregiver-selected service dates", () => {
     });
 
     it("edits locked session 3 after session 2 was deleted and pulls earlier unwritten entries back", async () => {
-        const h = createHarness({ existing: createDay({ caseSessionIndex: 3, sessionIndex: 3, serviceDate: new Date("2026-07-03") }), transactionRecord: createRecord({ plannedSessions: caregiverVector() }) });
+        const existing = createDay({ caseSessionIndex: 3, sessionIndex: 3, serviceDate: new Date("2026-07-03") });
+        const h = createHarness({ existing, transactionRecord: createRecord({ plannedSessions: caregiverVector() }) });
+        h.transactionClient.service_record_day.findUnique.mockImplementation(({ where }) =>
+            Promise.resolve(where.serviceRecordCaseId_caseSessionIndex.caseSessionIndex === 3 ? existing : null));
         await h.service.upsertSession(context, 3, createDto({ serviceDate: "2026-07-01" }), true);
         expect(h.transactionClient.service_record_case.update.mock.calls[0]![0].data.plannedSessions.map((e: { serviceDate: string }) => e.serviceDate)).toEqual(["2026-06-29", "2026-06-30", "2026-07-01", "2026-07-06", "2026-07-07"]);
         expect(h.upsert).toHaveBeenCalledTimes(1);
+        expect(h.editLogCreate).toHaveBeenCalledTimes(1);
     });
 
     it("still requires the immediately preceding session to be locked for a new write", async () => {
@@ -2030,6 +2034,27 @@ describe("caregiver-selected service dates", () => {
         const edit = createHarness({ existing, transactionRecord: createRecord({ plannedSessions: caregiverVector() }) });
         await edit.service.upsertSession(context, 1, createDto({ notes: "내용" }), false);
         expect(edit.transactionClient.service_record_case.update).not.toHaveBeenCalled();
+    });
+
+    it.each([false, true])("does not write the vector or increment its version for a new session on its planned date (submit=%s)", async (lock) => {
+        const plannedSessions = caregiverVector();
+        const previous = createDay();
+        const h = createHarness({
+            days: [previous],
+            transactionRecord: createRecord({ plannedSessions, version: 7 }),
+        });
+        h.transactionClient.service_record_day.findUnique.mockImplementation(({ where }) =>
+            Promise.resolve(where.serviceRecordCaseId_caseSessionIndex.caseSessionIndex === 1 ? previous : null));
+
+        await h.service.upsertSession(context, 2, createDto({ serviceDate: plannedSessions[1]!.serviceDate }), lock);
+
+        expect(h.upsert).toHaveBeenCalledTimes(1);
+        expect(h.upsert.mock.calls[0][0].create).toMatchObject({
+            caseSessionIndex: 2, serviceDate: new Date(plannedSessions[1]!.serviceDate), locked: lock,
+        });
+        expect(h.transactionClient.service_record_day.findMany).toHaveBeenCalledTimes(1);
+        expect(h.transactionClient.service_record_case.update).not.toHaveBeenCalled();
+        expect(h.lifecycle.recompute).toHaveBeenCalledTimes(1);
     });
 
     it.each([[3, "2026-07-06", forwardDetail], [5, "2026-07-06", backwardDetail]] as const)(
