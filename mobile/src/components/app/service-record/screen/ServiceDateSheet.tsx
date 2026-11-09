@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { ChevronLeft, ChevronRight, X } from "lucide-react";
+import { hasServiceDaysForGap } from "@babyjamjam/shared/utils/service-record-schedule";
 import type { ServiceRecordContext } from "@babyjamjam/service-record-ui";
 import { isoDateInKorea, type KrBusinessDayCalendar } from "@/lib/date/business-days";
 import { cn } from "@/lib/utils";
@@ -12,6 +13,7 @@ const WEEKDAYS = ["일", "월", "화", "수", "목", "금", "토"];
 // Keep the admin schedule sheet's cell sizing and blocked hatch unchanged.
 const MONTH_CELL_BASE = "relative flex min-h-11 min-w-0 flex-col items-center justify-center rounded-[10px] border text-sm font-bold leading-none";
 const HATCHED = "border-v3-border text-v3-text-muted/70 bg-[repeating-linear-gradient(135deg,#fff_0_5px,hsl(214_20%_96%)_5px_10px)]";
+export const GAP_ROOM = "사이에 아직 안 쓴 회차가 있어요. 그 회차의 날짜를 남겨 주세요.";
 export const ORDER_BEFORE = "앞 회차보다 이르게 바꿀 수 없어요. 앞 회차를 먼저 변경해 주세요.";
 export const ORDER_AFTER = "뒷 회차보다 늦게 바꿀 수 없어요. 뒷 회차를 먼저 변경해 주세요.";
 
@@ -29,7 +31,7 @@ export function formatServiceDate(iso: string, short = false): string {
     return `${iso.slice(short ? 5 : 0, 10).replaceAll("-", ".")}(${weekday})`;
 }
 
-type DateState = "available" | "current" | "used" | "before" | "after" | "blocked";
+type DateState = "available" | "current" | "used" | "before" | "after" | "blocked" | "gap";
 interface DateRules {
     context: ServiceRecordContext;
     day: number;
@@ -50,7 +52,8 @@ export function classifyServiceDate(iso: string, { context, day, calendar, calen
     const last = offsetServiceDate(context.endDate, 7);
     if ((first && iso < first) || (last && iso > last) || !calendarReady) return "blocked";
     try {
-        return calendar.isBusinessDay(iso) ? "available" : "blocked";
+        if (!calendar.isBusinessDay(iso)) return "blocked";
+        return hasServiceDaysForGap({ sessionIndex: day, serviceDate: iso, rows: context.sessions, calendar, first, last }) ? "available" : "gap";
     } catch {
         // Missing holiday data must never turn into an available day.
         return "blocked";
@@ -117,6 +120,7 @@ export function ServiceDateSheet({ "data-component": root, context, day, calenda
                             const blocked = state !== "available" && state !== "current";
                             return <button key={iso} type="button" data-component={child(`calendar_days_day-${index + 1}`)} data-day-state={state} aria-label={`${formatServiceDate(iso)}${usedBy ? ` ${usedBy.sessionIndex}회차` : isCurrent ? " 지금" : ""}`} aria-pressed={isSelected} aria-disabled={blocked || (isCurrent && !pending)} onClick={() => {
                                 if (state === "before" || state === "after") onOrderBlocked(state === "before" ? ORDER_BEFORE : ORDER_AFTER);
+                                else if (state === "gap") onOrderBlocked(GAP_ROOM);
                                 else if (state === "available" || (pending && state === "current")) setSelected(iso);
                             }} className={cn(MONTH_CELL_BASE, "border-v3-border bg-white text-v3-dark", blocked && HATCHED, isCurrent && "border-dashed border-v3-primary text-v3-primary", isSelected && "border-v3-primary bg-v3-primary text-white")}>
                                 <span>{index + 1}</span>

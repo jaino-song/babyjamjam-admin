@@ -1,6 +1,7 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.ServiceRecordScheduleValidationError = void 0;
+exports.hasServiceDaysForGap = hasServiceDaysForGap;
 exports.previousBusinessDay = previousBusinessDay;
 exports.validateServiceRecordScheduleVector = validateServiceRecordScheduleVector;
 exports.shiftServiceRecordScheduleSuffix = shiftServiceRecordScheduleSuffix;
@@ -8,6 +9,42 @@ exports.replanServiceRecordScheduleFromResume = replanServiceRecordScheduleFromR
 exports.moveServiceRecordSessionDate = moveServiceRecordSessionDate;
 exports.getExpectedSessionDateFromRecords = getExpectedSessionDateFromRecords;
 const business_days_1 = require("./business-days");
+/** Leave a selectable service day for each missing index between stored rows. */
+function hasServiceDaysForGap({ sessionIndex, serviceDate, rows, calendar, first, last }) {
+    const lower = rows.filter((row) => row.sessionIndex < sessionIndex)
+        .sort((a, b) => b.sessionIndex - a.sessionIndex)[0];
+    const upper = rows.filter((row) => row.sessionIndex > sessionIndex)
+        .sort((a, b) => a.sessionIndex - b.sessionIndex)[0];
+    const hasDays = (after, before, needed) => {
+        if (needed <= 0)
+            return true;
+        // A leading gap with neither a stored lower date nor a window is unbounded.
+        if (!after && !first)
+            return true;
+        const cursor = new Date(`${after ?? first}T00:00:00.000Z`);
+        if (after)
+            cursor.setUTCDate(cursor.getUTCDate() + 1);
+        if (first && cursor.toISOString().slice(0, 10) < first)
+            cursor.setTime(new Date(`${first}T00:00:00.000Z`).getTime());
+        for (let iso = cursor.toISOString().slice(0, 10); iso < before && (!last || iso <= last); iso = cursor.toISOString().slice(0, 10)) {
+            let serviceDay;
+            try {
+                serviceDay = calendar.isBusinessDay(iso);
+            }
+            catch (error) {
+                if (!(error instanceof business_days_1.UnsupportedKoreanHolidayYearError))
+                    throw error;
+                serviceDay = true;
+            }
+            if (serviceDay && --needed === 0)
+                return true;
+            cursor.setUTCDate(cursor.getUTCDate() + 1);
+        }
+        return false;
+    };
+    return hasDays(lower?.serviceDate.slice(0, 10) ?? null, serviceDate, sessionIndex - (lower?.sessionIndex ?? 0) - 1)
+        && (!upper || hasDays(serviceDate, upper.serviceDate.slice(0, 10), upper.sessionIndex - sessionIndex - 1));
+}
 class ServiceRecordScheduleValidationError extends Error {
     constructor(code, message, sessionIndex = null) {
         super(message);

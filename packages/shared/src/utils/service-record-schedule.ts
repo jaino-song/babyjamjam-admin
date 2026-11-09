@@ -1,8 +1,45 @@
-import { KR_BUILTIN_CALENDAR, type KrBusinessDayCalendar } from "./business-days";
+import { KR_BUILTIN_CALENDAR, UnsupportedKoreanHolidayYearError, type KrBusinessDayCalendar } from "./business-days";
 
 export interface ServiceRecordScheduleEntry {
     sessionIndex: number;
     serviceDate: string;
+}
+
+/** Leave a selectable service day for each missing index between stored rows. */
+export function hasServiceDaysForGap({ sessionIndex, serviceDate, rows, calendar, first, last }: {
+    sessionIndex: number;
+    serviceDate: string;
+    rows: ReadonlyArray<ServiceRecordScheduleEntry>;
+    calendar: KrBusinessDayCalendar;
+    first?: string | null;
+    last?: string | null;
+}): boolean {
+    const lower = rows.filter((row) => row.sessionIndex < sessionIndex)
+        .sort((a, b) => b.sessionIndex - a.sessionIndex)[0];
+    const upper = rows.filter((row) => row.sessionIndex > sessionIndex)
+        .sort((a, b) => a.sessionIndex - b.sessionIndex)[0];
+    const hasDays = (after: string | null, before: string, needed: number): boolean => {
+        if (needed <= 0) return true;
+        // A leading gap with neither a stored lower date nor a window is unbounded.
+        if (!after && !first) return true;
+        const cursor = new Date(`${after ?? first}T00:00:00.000Z`);
+        if (after) cursor.setUTCDate(cursor.getUTCDate() + 1);
+        if (first && cursor.toISOString().slice(0, 10) < first) cursor.setTime(new Date(`${first}T00:00:00.000Z`).getTime());
+        for (let iso = cursor.toISOString().slice(0, 10); iso < before && (!last || iso <= last); iso = cursor.toISOString().slice(0, 10)) {
+            let serviceDay: boolean;
+            try {
+                serviceDay = calendar.isBusinessDay(iso);
+            } catch (error) {
+                if (!(error instanceof UnsupportedKoreanHolidayYearError)) throw error;
+                serviceDay = true;
+            }
+            if (serviceDay && --needed === 0) return true;
+            cursor.setUTCDate(cursor.getUTCDate() + 1);
+        }
+        return false;
+    };
+    return hasDays(lower?.serviceDate.slice(0, 10) ?? null, serviceDate, sessionIndex - (lower?.sessionIndex ?? 0) - 1)
+        && (!upper || hasDays(serviceDate, upper.serviceDate.slice(0, 10), upper.sessionIndex - sessionIndex - 1));
 }
 
 /** Immutable ownership metadata carried by every authoritative planned slot. */

@@ -1376,7 +1376,7 @@ function parseProblemDetailsInternal(value, httpStatus, locale) {
         const serviceDateReason = readOwn(value, "serviceDateReason").value;
         if (serviceDateReason === "OUT_OF_RANGE" || serviceDateReason === "NOT_SERVICE_DAY"
             || serviceDateReason === "TAKEN" || serviceDateReason === "BEFORE_PREVIOUS"
-            || serviceDateReason === "AFTER_NEXT") {
+            || serviceDateReason === "AFTER_NEXT" || serviceDateReason === "NO_ROOM_FOR_GAP") {
             parsed.serviceDateReason = serviceDateReason;
         }
     }
