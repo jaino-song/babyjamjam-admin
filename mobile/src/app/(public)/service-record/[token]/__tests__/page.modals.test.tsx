@@ -14,6 +14,7 @@ jest.mock("@/components/app/service-record/ServiceRecordWizard", () => ({
         <span data-testid="page-index">{props.pageIdx}</span>
         <span data-testid="date-error">{props.serviceDateError}</span>
         <button onClick={() => props.onOpenDay(1, true)}>edit 1</button>
+        <button onClick={() => props.onOpenDay(3, true)}>edit 3</button>
         <button onClick={() => props.onOpenDay(2)}>new 2</button>
         <button onClick={props.onNextPage}>next</button>
         <button onClick={props.onOpenDateSheet}>date</button>
@@ -69,6 +70,8 @@ it("cancel leaves the record and DELETE untouched; confirm deletes then reloads 
     await openEdit();
     fireEvent.click(screen.getByText("delete"));
     expect(screen.getByText("기록과 고객 서명이 모두 삭제됩니다.")).toBeVisible();
+    expect(screen.getByText("기록과 고객 서명이 모두 삭제됩니다.")).not.toHaveClass("sr-only");
+    expect(screen.getByRole("button", { name: "삭제" })).toHaveAttribute("data-variant", "destructive");
     fireEvent.click(screen.getByRole("button", { name: "취소" }));
     expect(mockFetch.mock.calls.some(([, init]) => init?.method === "DELETE")).toBe(false);
     fireEvent.click(screen.getByText("delete"));
@@ -76,6 +79,22 @@ it("cancel leaves the record and DELETE untouched; confirm deletes then reloads 
     await waitFor(() => expect(screen.getByTestId("screen")).toHaveTextContent("overview"));
     expect(mockFetch).toHaveBeenCalledWith("/api/service-record/test-token/sessions/1", expect.objectContaining({ method: "DELETE" }));
     expect(toast).toHaveBeenCalledWith({ variant: "success", title: "1회차 기록을 삭제했어요" });
+});
+
+it.each([1, 3])("deleting day %s clears only that day's stored draft", async (deletedDay) => {
+    const storageKey = "daily-service-record-draft:test-token";
+    const storedDraft = JSON.stringify({ day: 3, draft: { notes: "typed but unsaved" } });
+    window.sessionStorage.setItem(storageKey, storedDraft);
+    sessions = [{ ...original, sessionIndex: deletedDay }];
+    deleteResponse = json({ deleted: true, sessionIndex: deletedDay });
+    render(<ServiceRecordPage />);
+    await waitFor(() => expect(screen.getByTestId("screen")).toHaveTextContent("overview"));
+    fireEvent.click(screen.getByText(`edit ${deletedDay}`));
+    fireEvent.click(screen.getByText("delete"));
+    fireEvent.click(screen.getByRole("button", { name: "삭제" }));
+    await waitFor(() => expect(screen.getByTestId("screen")).toHaveTextContent("overview"));
+    expect(mockFetch).toHaveBeenCalledWith(`/api/service-record/test-token/sessions/${deletedDay}`, expect.objectContaining({ method: "DELETE" }));
+    expect(window.sessionStorage.getItem(storageKey)).toBe(deletedDay === 3 ? null : storedDraft);
 });
 
 it.each<[string | undefined, string]>([
