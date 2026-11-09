@@ -631,7 +631,7 @@ function SessionRow({
         ? record.locked
             ? `제출 ${formatDateTimeKo(record.submittedAt ?? record.updatedAt)}`
             : `마지막 저장 ${formatDateTimeKo(record.updatedAt)} · 작성 중`
-        : `예정일 ${formatDateKo(slot.expectedDate)}`;
+        : "날짜 미정";
     const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
         if (event.key === "Enter" || event.key === " ") {
             event.preventDefault();
@@ -663,7 +663,6 @@ function SessionRow({
 function ServiceRecordSessionDetail({
     record,
     sessionIndex,
-    expectedDate,
     onBack,
 }: {
     record: ServiceRecordSession | null;
@@ -698,7 +697,7 @@ function ServiceRecordSessionDetail({
                             ? <>제공일 {formatDateKo(record.serviceDate)} · {record.locked
                                 ? `제출 ${formatTimeKo(record.submittedAt ?? record.updatedAt)}`
                                 : `마지막 저장 ${formatTimeKo(record.updatedAt)}`}</>
-                            : <>예정일 {formatDateKo(expectedDate)}</>}
+                            : <>날짜 미정</>}
                     </div>
                 </div>
                 <span className="message-detail-subtitle">

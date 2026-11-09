@@ -44,7 +44,7 @@ describe("getMobileClientBadges", () => {
     expect(getMobileClientBadges(BASE_CLIENT).map((badge) => badge.label)).not.toContain("발송 대기");
   });
 
-  it("replaces the service status with the schedule-change badge while a request is pending", () => {
+  it("keeps the service status badge when a legacy request is pending", () => {
     const badges = getMobileClientBadges({
       ...BASE_CLIENT,
       pendingScheduleChange: {
@@ -59,9 +59,9 @@ describe("getMobileClientBadges", () => {
 
     expect(badges.find((badge) => badge.key === "service_status")).toEqual(
       expect.objectContaining({
-        status: "scheduleChange",
-        label: "일정 변경",
-        tone: "burgundy",
+        status: "active",
+        label: "진행중",
+        tone: "primary",
       }),
     );
   });
