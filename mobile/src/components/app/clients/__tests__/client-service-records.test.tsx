@@ -2,12 +2,8 @@ import type { ReactElement } from "react";
 import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
-import { buildCalendarFromHolidayYears } from "@babyjamjam/shared/utils/holiday-calendar";
-
 import { ClientServiceRecords } from "../client-service-records";
-import { useBusinessDayCalendar } from "@/hooks/useBusinessDayCalendar";
 import { toast } from "@/hooks/use-toast";
-import { KR_BUILTIN_CALENDAR } from "@/lib/date/business-days";
 import type { Client } from "@/lib/client/types";
 import type {
     ServiceRecordAssignment,
@@ -57,21 +53,9 @@ jest.mock("@/hooks/use-toast", () => ({
     toast: jest.fn(),
 }));
 
-jest.mock("@/hooks/useBusinessDayCalendar");
-
 jest.mock("@/hooks/useGetAuthUser", () => ({
     useGetAuthUser: () => mockUseGetAuthUser(),
 }));
-
-const mockUseBusinessDayCalendar = useBusinessDayCalendar as jest.Mock;
-const builtinCalendarResult = {
-    calendar: KR_BUILTIN_CALENDAR,
-    ready: true,
-    error: null,
-    retry: jest.fn(),
-    refreshForSave: async () => ({ ok: true, calendar: KR_BUILTIN_CALENDAR, changed: false }),
-    version: KR_BUILTIN_CALENDAR.version,
-};
 
 const client = {
     id: 100,
@@ -153,7 +137,6 @@ describe("ClientServiceRecords", () => {
     beforeEach(() => {
         jest.clearAllMocks();
         mockResendModalRenders.length = 0;
-        mockUseBusinessDayCalendar.mockImplementation(() => builtinCalendarResult);
         mockMutateAsync.mockResolvedValue(undefined);
         mockUseGetAuthUser.mockReturnValue({
             data: { role: "user", branchRole: "manager" },
@@ -626,32 +609,12 @@ describe("ClientServiceRecords", () => {
         animationFrame.mockRestore();
     });
 
-    it("shows unwritten sessions as undated regardless of the branch calendar", () => {
+    it("shows unwritten sessions as undated", () => {
         const assignment = { ...createAssignment(1, "none"), totalSessions: 3 };
-        // 2026-07-17 is already a public holiday; 2026-07-21 (Tue) is a branch-added day off, so session 3 moves to 07-22.
-        const branchCalendar = buildCalendarFromHolidayYears([
-            { year: 2026, revision: 2, supported: true, holidays: [
-                { date: "2026-07-17", name: "제헌절" },
-                { date: "2026-07-21", name: "지점 휴무" },
-            ] },
-        ]);
-
-        const { unmount } = renderComponent({ assignments: [assignment] });
-        expect(screen.getAllByText("날짜 미정").map((node) => node.textContent)).toEqual([
-            "날짜 미정", "날짜 미정", "날짜 미정",
-        ]);
-        unmount();
-
-        mockUseBusinessDayCalendar.mockImplementation(() => ({
-            ...builtinCalendarResult,
-            calendar: branchCalendar,
-            version: branchCalendar.version,
-        }));
         renderComponent({ assignments: [assignment] });
         expect(screen.getAllByText("날짜 미정").map((node) => node.textContent)).toEqual([
             "날짜 미정", "날짜 미정", "날짜 미정",
         ]);
-        // The hook is asked for the years of the assignment's own dates.
     });
 });
 
@@ -662,7 +625,6 @@ describe("ClientServiceRecords: loading, failed and empty are different states",
     beforeEach(() => {
         jest.clearAllMocks();
         mockResendModalRenders.length = 0;
-        mockUseBusinessDayCalendar.mockImplementation(() => builtinCalendarResult);
         mockMutateAsync.mockResolvedValue(undefined);
         mockUseGetAuthUser.mockReturnValue({
             data: { role: "user", branchRole: "manager" },

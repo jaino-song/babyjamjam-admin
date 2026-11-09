@@ -155,9 +155,9 @@ function ClientServiceRecordsContent({
                 await keepMutation.mutateAsync({ clientId: client.id, sessionIndexes: unkept.map((session) => session.sessionIndex) });
             } else {
                 const result = await fitMutation.mutateAsync({ clientId: client.id });
-                await onPeriodFitted?.();
                 const description = periodFitToast(before, result);
                 if (description) toast({ variant: "success", description });
+                await onPeriodFitted?.();
             }
         } catch (error) {
             toast({ variant: "destructive", description: getErrorDescription(error, "서비스 기간을 처리하지 못했어요") });
