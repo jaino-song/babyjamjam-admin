@@ -6,7 +6,7 @@ import { EformsignBackupService } from "./eformsign-backup.service";
 const date = new Date("2026-11-07T00:00:00.000Z");
 const file = { id: "file", fileType: "document", sha256: "a".repeat(64), byteSize: 3, sourceUpdatedDate: date };
 const document = (patch: Partial<BackupDocumentRow> = {}): BackupDocumentRow => ({
-    id: 7, documentId: "doc", documentKind: null, documentName: null, detailPayload: null, customerName: null, createdDate: date,
+    id: 7, documentId: "doc", documentKind: null, documentName: null, statusType: "003", detailPayload: null, customerName: null, createdDate: date,
     syncStatus: "ready", detailSourceUpdatedDate: date,
     serviceRecordCase: null, employeeSchedule: null, client: null,
     serviceRecordSnapshotChunk: null, files: [file], ...patch,
@@ -82,6 +82,19 @@ describe("EformsignBackupService", () => {
         expect((await item({ detailSourceUpdatedDate: new Date("2020-01-01") }))?.files).toEqual([]);
         expect((await item({ detailSourceUpdatedDate: null }))?.files).toEqual([]);
     });
+    it("lists a review-stage document with its partial files and completed:false", async () => {
+        expect(await item({ statusType: "070", syncStatus: "partial" })).toMatchObject({
+            completed: false, files: [{ fileId: "file", fileType: "document", sha256: file.sha256, byteSize: 3 }],
+        });
+        expect(await item({ statusType: "071", syncStatus: "ready" })).toMatchObject({ completed: false, files: [expect.anything()] });
+        expect((await item({ statusType: "070", syncStatus: "partial", detailSourceUpdatedDate: new Date("2020-01-01") }))?.files).toEqual([]);
+    });
+    it("lists no files for a syncing review-stage document, or a completed document that is only partial", async () => {
+        expect(await item({ statusType: "070", syncStatus: "syncing" })).toMatchObject({ completed: false, files: [] });
+        expect(await item({ statusType: "070", syncStatus: "failed" })).toMatchObject({ files: [] });
+        expect(await item({ statusType: "003", syncStatus: "partial" })).toMatchObject({ completed: true, files: [] });
+        expect(await item({ statusType: "003", syncStatus: "ready" })).toMatchObject({ completed: true, files: [expect.anything()] });
+    });
     it("sets a cursor only for a full page", async () => {
         repository.listDocuments.mockResolvedValue([document()]);
         expect((await service.listDocuments(1, 1)).nextCursor).toBe(7);
@@ -109,6 +122,21 @@ describe("EformsignBackupService", () => {
         { detailSourceUpdatedDate: new Date("2020-01-01") }, { detailSourceUpdatedDate: null },
     ])("hides an ineligible file (%p)", async (patch) => {
         const stored = storedFile(); stored.eformsignDoc = { ...stored.eformsignDoc, ...patch };
+        repository.findFile.mockResolvedValue(stored);
+        await expect(service.getFile("file")).rejects.toThrow(NotFoundException);
+    });
+    it.each([["070", "partial"], ["071", "partial"], ["doc_request_reviewer", "ready"], ["070", "ready"]])(
+        "returns a review-stage file (%p, %p)", async (statusType, syncStatus) => {
+            const stored = storedFile(); stored.eformsignDoc = { ...stored.eformsignDoc, statusType, syncStatus };
+            repository.findFile.mockResolvedValue(stored);
+            expect(await service.getFile("file")).toEqual({ buffer: Buffer.from([0, 1, 255]), sha256: file.sha256 });
+        },
+    );
+    it.each([
+        { statusType: "070", syncStatus: "syncing" }, { statusType: "070", syncStatus: "failed" },
+        { statusType: "070", permanentPurgeRequestedAt: date }, { statusType: "070", detailSourceUpdatedDate: new Date("2020-01-01") },
+    ])("hides an ineligible review-stage file (%p)", async (patch) => {
+        const stored = storedFile(); stored.eformsignDoc = { ...stored.eformsignDoc, syncStatus: "partial", ...patch };
         repository.findFile.mockResolvedValue(stored);
         await expect(service.getFile("file")).rejects.toThrow(NotFoundException);
     });

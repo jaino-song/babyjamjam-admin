@@ -440,7 +440,8 @@
       "doc-voided": "파기됨",
       "add-description": "새로운 고객을 등록하기 위해 양식을 작성하세요",
       "edit-description": "고객 정보를 수정합니다",
-      "error-manual-schedule-required": "제공기록지 일정 변경에서 날짜를 직접 지정해 주세요"
+      "error-manual-schedule-required": "제공기록지 일정 변경에서 날짜를 직접 지정해 주세요",
+      "error-employee-after-start-date": "시작일 변경은 저장했지만 담당 인력 변경은 저장하지 못했어요. 창을 닫고 다시 열어 담당 인력을 바꿔 주세요."
     },
     "detail": {
       "description": "고객 상세 정보를 확인합니다"

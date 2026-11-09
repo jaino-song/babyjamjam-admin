@@ -24,6 +24,7 @@ export interface BackupDocumentRow {
     documentId: string;
     documentKind: string | null;
     documentName: string | null;
+    statusType: string;
     detailPayload: unknown;
     customerName: string | null;
     createdDate: Date;
