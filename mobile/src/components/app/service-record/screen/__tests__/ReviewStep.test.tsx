@@ -127,6 +127,22 @@ describe("ReviewStep", () => {
         await userEvent.setup().click(screen.getByRole("button", { name: "기록 삭제" }));
         expect(props.onDeleteSession).toHaveBeenCalledTimes(1);
     });
+    it("uses burgundy utilities for the delete action on a stored session", () => {
+        render(<ReviewStep {...makeProps({ editing: true, context: ownLockedContext })} />);
+
+        const deleteButton = screen.getByRole("button", { name: "기록 삭제" });
+        expect(deleteButton).toHaveClass("text-v3-burgundy", "border-v3-burgundy");
+        expect(deleteButton.className).not.toContain("[var(--v3-burgundy)]");
+    });
+
+    it("hides the delete action when no stored session exists for the selected day", () => {
+        const { rerender } = render(<ReviewStep {...makeProps({ context: ownLockedContext, day: 2 })} />);
+        expect(screen.queryByRole("button", { name: "기록 삭제" })).not.toBeInTheDocument();
+
+        rerender(<ReviewStep {...makeProps()} />);
+        expect(screen.queryByRole("button", { name: "기록 삭제" })).not.toBeInTheDocument();
+    });
+
     it("resubmits the caregiver's own submitted day: 수정 buttons and the submit action stay", async () => {
         const user = userEvent.setup();
         const props = makeProps({ editing: true, context: ownLockedContext });

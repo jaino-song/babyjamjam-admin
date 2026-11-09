@@ -159,7 +159,7 @@ export function ReviewStep({
                 />
             </div>
             <StickyActionBar data-component={child("body_confirmation-action")}>
-                {currentSession && <Button data-component={child("body_confirmation-action_delete")} type="button" variant="v3-outline" size="md" className="border-[var(--v3-burgundy)]! text-[var(--v3-burgundy)]" disabled={busy} onClick={onDeleteSession}>기록 삭제</Button>}
+                {currentSession && <Button data-component={child("body_confirmation-action_delete")} type="button" variant="v3-outline" size="md" className="border-v3-burgundy text-v3-burgundy" disabled={busy} onClick={onDeleteSession}>기록 삭제</Button>}
                 <Button type="button" variant="v3" size="md" disabled={submitDisabled} onClick={onOpenSubmitModal}>
                     {SUBMIT_LABEL}
                 </Button>
