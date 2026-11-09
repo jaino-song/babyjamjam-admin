@@ -24,7 +24,7 @@ import {
     SERVICE_RECORD_EDIT_REPOSITORY,
     type IServiceRecordEditRepository,
 } from "domain/repositories/service-record-edit.repository.interface";
-import { ServiceRecordPeriodMismatchService, servicePeriodSessionCount } from "./service-record-period-mismatch.service";
+import { ServiceRecordPeriodMismatchService, hasAuthoritativeServiceRecordCount, servicePeriodSessionCount } from "./service-record-period-mismatch.service";
 import { ServiceRecordLinkService } from "./service-record-link.service";
 import { MessageTriggerService } from "./message-trigger.service";
 import { ServiceRecordSecurityEventService } from "./service-record-security-event.service";
@@ -117,18 +117,6 @@ export interface ServiceRecordAdminActor {
     userId: string;
     globalRole: string;
     branchRole: string;
-}
-
-function hasAuthoritativeRevision(record: {
-    currentRevisionId?: string | null;
-    currentUsableRevisionId?: string | null;
-    currentUsableDocumentVersion?: number | null;
-    plannedSessions?: Prisma.JsonValue | null;
-}): boolean {
-    return record.currentRevisionId != null
-        || record.currentUsableRevisionId != null
-        || record.currentUsableDocumentVersion != null
-        || record.plannedSessions != null;
 }
 
 @Injectable()
@@ -450,7 +438,7 @@ export class AdminServiceRecordService {
                 // A stored N is the case's own count (display must agree with
                 // what the caregiver page accepts); a holiday-calendar edit
                 // never moves it. The period only derives N when none is stored.
-                hasAuthoritativeRevision(record) || record.requiredSessionCount !== null,
+                hasAuthoritativeServiceRecordCount(record),
             ),
             completedAt: record.completedAt,
             finalizationDueAt: record.finalizationDueAt,

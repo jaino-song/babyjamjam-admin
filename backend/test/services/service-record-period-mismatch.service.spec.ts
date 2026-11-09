@@ -49,9 +49,14 @@ function world(days = [day(1, "2026-11-06")]) {
         id: 10, branchId, clientId, primaryEmployeeId: 7, secondaryEmployeeId: null,
         startDate: date("2026-11-09"), endDate: date("2026-11-13"), replaced: false, terminatedAt: null,
     }];
+    const tokens = [{ branchId, serviceRecordCaseId: caseId, active: true, revokedAt: null,
+        expiresAt: date("2026-11-01") }];
     const whereMatches = (where: Record<string, unknown>, row: Record<string, unknown>) =>
         Object.entries(where).every(([key, value]) => {
             if (value && typeof value === "object" && "in" in value) return (value.in as unknown[]).includes(row[key]);
+            if (value && typeof value === "object" && "lt" in value) {
+                return row[key] instanceof Date && (row[key] as Date).getTime() < (value.lt as Date).getTime();
+            }
             return row[key] === value;
         });
     const tx = {
@@ -88,7 +93,11 @@ function world(days = [day(1, "2026-11-06")]) {
                 return { count: matching.length };
             }),
         },
-        service_record_token: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
+        service_record_token: { updateMany: jest.fn(async ({ where, data }) => {
+            const matching = tokens.filter((row) => whereMatches(where, row));
+            matching.forEach((row) => Object.assign(row, data));
+            return { count: matching.length };
+        }) },
         message_trigger_rule: { upsert: jest.fn() }, message_trigger_job: { upsert: jest.fn() },
     };
     const lifecycle = {
@@ -118,7 +127,7 @@ function world(days = [day(1, "2026-11-06")]) {
     }) };
     const holidayCalendar = createHolidayCalendarStub();
     const admin = new AdminServiceRecordService(prisma as never, {} as never, triggers as never, holidayCalendar, undefined, undefined, service);
-    return { record, client, days, schedules, tx, service, keep, fit, order, lifecycle, fence, admin, prisma, triggers, holidayCalendar };
+    return { tokens, record, client, days, schedules, tx, service, keep, fit, order, lifecycle, fence, admin, prisma, triggers, holidayCalendar };
 }
 
 const noWrites = (w: ReturnType<typeof world>) => {
@@ -210,11 +219,40 @@ describe("ServiceRecordPeriodMismatchService", () => {
         expect(w.tx.service_record_day.updateMany).not.toHaveBeenCalled();
         expect(w.lifecycle.recompute).toHaveBeenCalledWith(caseId, w.tx, expect.anything());
         expect(w.tx.service_record_token.updateMany).toHaveBeenCalledWith({
-            where: { branchId, serviceRecordCaseId: caseId, active: true, revokedAt: null },
+            where: { branchId, serviceRecordCaseId: caseId, active: true, revokedAt: null,
+                expiresAt: { lt: getServiceRecordTokenExpiresAt(date(endDate)) } },
             data: { expiresAt: getServiceRecordTokenExpiresAt(date(endDate)) },
         });
         expect(persistClientMessageAutomationIntent).toHaveBeenCalledWith(w.tx, expect.objectContaining({ branchId, clientId }));
         expect(persistScheduleMessageAutomationIntent).toHaveBeenCalledWith(w.tx, expect.objectContaining({ branchId, clientId, scheduleId: 10 }));
+    });
+
+    it("keeps index 6 beyond the five-day period when the authoritative N is 7", async () => {
+        const w = world([day(6, "2026-11-16")]);
+        w.record.requiredSessionCount = 7;
+        await expect(w.keep([6])).resolves.toEqual({ keptSessionIndexes: [6] });
+    });
+
+    it("fits index 6 beyond the five-day period when the authoritative N is 7", async () => {
+        const w = world([day(6, "2026-11-16")]);
+        w.record.requiredSessionCount = 7;
+        await expect(w.fit()).resolves.toMatchObject({ endDate: "2026-11-16", changed: true });
+        expect(w.record.requiredSessionCount).toBe(7);
+        expect(w.client.endDate).toEqual(date("2026-11-16"));
+    });
+
+    it("keeps a reissued token's later expiry on a start-only fit", async () => {
+        const w = world();
+        const reissuedExpiry = date("2026-11-20");
+        w.tokens[0]!.expiresAt = reissuedExpiry;
+        await expect(w.fit()).resolves.toMatchObject({ startDate: "2026-11-06", endDate: "2026-11-13", changed: true });
+        expect(w.tokens[0]!.expiresAt).toEqual(reissuedExpiry);
+    });
+
+    it("raises an earlier token expiry when fit widens the end", async () => {
+        const w = world([day(5, "2026-11-16")]);
+        await w.fit();
+        expect(w.tokens[0]!.expiresAt).toEqual(getServiceRecordTokenExpiresAt(date("2026-11-16")));
     });
 
     it("fits unkept dates only; a farther kept date is ignored", async () => {
