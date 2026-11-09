@@ -44,17 +44,9 @@ describe("getMobileClientBadges", () => {
     expect(getMobileClientBadges(BASE_CLIENT).map((badge) => badge.label)).not.toContain("발송 대기");
   });
 
-  it("keeps the service status badge when a legacy request is pending", () => {
+  it("keeps the service status badge for an active service", () => {
     const badges = getMobileClientBadges({
       ...BASE_CLIENT,
-      pendingScheduleChange: {
-        id: "request-1",
-        sessionIndex: 3,
-        fromDate: "2026-07-20",
-        toDate: "2026-07-21",
-        oldEndDate: "2026-07-31",
-        newEndDate: "2026-08-01",
-      },
     });
 
     expect(badges.find((badge) => badge.key === "service_status")).toEqual(

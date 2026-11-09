@@ -30,24 +30,25 @@ import {
     formatDateTimeKo,
     parseDateForDisplay,
 } from "@babyjamjam/shared/utils/date";
-import { getExpectedSessionDateFromRecords } from "@babyjamjam/shared/utils/service-record-schedule";
 
 import { InfoCard, InfoRow } from "@/components/app/mobile-redesign/detail-sheet";
 import { ApprovalTwoButtonModal } from "@/components/app/ui/ApprovalTwoButtonModal";
 import { QueryErrorState } from "@/components/app/ui/QueryErrorState";
 import { Button } from "@/components/ui/button";
+import { Alert, AlertTitle, AlertDescription } from "@/components/ui/alert";
+import { StatusBadge } from "@/components/app/ui/status-badge";
 import { Skeleton } from "@/components/ui/skeleton";
-import { useBusinessDayCalendar } from "@/hooks/useBusinessDayCalendar";
-import { useSendServiceRecordLink } from "@/hooks/useServiceRecords";
+import { useKeepPeriodMismatch, useFitPeriodMismatch, useSendServiceRecordLink } from "@/hooks/useServiceRecords";
 import { toast } from "@/hooks/use-toast";
 import type { Client } from "@/lib/client/types";
 import { formatKoreanPhoneNumber } from "@/lib/phone";
 import { ServiceRecordErrorBoundary } from "@/lib/observability/service-record-error-boundary";
 import { canManageBranchFromAuthQuery } from "@/lib/auth/branch-role-policy";
 import { getServiceRecordAdminHref } from "@/lib/frontend-origin";
-import type { KrBusinessDayCalendar } from "@/lib/date/business-days";
 import { cn } from "@/lib/utils";
 import { useGetAuthUser } from "@/hooks/useGetAuthUser";
+
+import { displayPeriodDate, outOfPeriodSessions, periodMismatchQuestion, periodFitToast } from "./period-mismatch";
 
 interface ClientServiceRecordsProps {
     "data-component": string;
@@ -58,6 +59,7 @@ interface ClientServiceRecordsProps {
     isError: boolean;
     isRefreshing?: boolean;
     onRefresh?: () => void;
+    onPeriodFitted?: () => Promise<void>;
 }
 
 const ClientServiceRecordsDataComponentContext = createContext<string | null>(null);
@@ -71,7 +73,6 @@ function useClientServiceRecordsDataComponent(...parts: string[]): string {
 interface SessionSlot {
     sessionIndex: number;
     record: ServiceRecordSession | null;
-    expectedDate: string | null;
 }
 
 type LinkBadgeTone = "gray" | "blue" | "green" | "burgundy";
@@ -123,16 +124,48 @@ function ClientServiceRecordsContent({
     isError,
     isRefreshing = false,
     onRefresh,
+    onPeriodFitted,
 }: Omit<ClientServiceRecordsProps, "data-component">) {
     const dataComponent = useClientServiceRecordsDataComponent();
+    const alertDataComponent = useClientServiceRecordsDataComponent("sessions-card", "out-of-period-alert");
     const record = overview?.record ?? null;
     const assignments = useMemo(
         () => sortAssignmentsNewestFirst(overview?.assignments ?? []),
         [overview?.assignments],
     );
-    // Display-only: expected session dates may use the built-in calendar while
-    // the branch calendar loads. Old assignments pull their own years in.
-    const { calendar } = useBusinessDayCalendar({ extraYears: assignmentCalendarYears(assignments) });
+    const keepMutation = useKeepPeriodMismatch();
+    const fitMutation = useFitPeriodMismatch();
+    const authUserQuery = useGetAuthUser();
+    const canEditServiceRecord = canManageBranchFromAuthQuery(authUserQuery);
+    const mismatches = outOfPeriodSessions(record, assignments);
+    const unkept = mismatches.filter((session) => session.periodMismatchKeptAt == null);
+    const mismatchDates = new Map(mismatches.map((session) => [session.sessionIndex, session.serviceDate.slice(0, 10)]));
+    const periodStart = record?.startDate;
+    const periodEnd = record?.endDate;
+    const mutationInFlight = useRef(false);
+    const [isMutating, setIsMutating] = useState(false);
+    const isPeriodPending = isMutating || keepMutation.isPending || fitMutation.isPending;
+    const handlePeriodMismatch = async (action: "keep" | "fit") => {
+        if (!canEditServiceRecord || !record?.startDate || !record.endDate || !unkept.length || mutationInFlight.current || isPeriodPending) return;
+        mutationInFlight.current = true;
+        setIsMutating(true);
+        const before = { startDate: record.startDate, endDate: record.endDate };
+        try {
+            if (action === "keep") {
+                await keepMutation.mutateAsync({ clientId: client.id, sessionIndexes: unkept.map((session) => session.sessionIndex) });
+            } else {
+                const result = await fitMutation.mutateAsync({ clientId: client.id });
+                const description = periodFitToast(before, result);
+                if (description) toast({ variant: "success", description });
+                await onPeriodFitted?.();
+            }
+        } catch (error) {
+            toast({ variant: "destructive", description: getErrorDescription(error, "서비스 기간을 처리하지 못했어요") });
+        } finally {
+            mutationInFlight.current = false;
+            setIsMutating(false);
+        }
+    };
     const [selectedEntry, setSelectedEntry] = useState<{
         key: string;
         assignmentScheduleId: number;
@@ -190,8 +223,6 @@ function ClientServiceRecordsContent({
     }
 
     if (selectedAssignment && selectedEntry) {
-        const selectedSlot = buildSessionSlots(selectedAssignment, calendar)
-            .find((slot) => slot.sessionIndex === selectedEntry.sessionIndex) ?? null;
         return (
             <div
                 data-component={dataComponent}
@@ -202,7 +233,6 @@ function ClientServiceRecordsContent({
                 <ServiceRecordSessionDetail
                     record={selectedSession ?? null}
                     sessionIndex={selectedEntry.sessionIndex}
-                    expectedDate={selectedSlot?.expectedDate ?? null}
                     onBack={() => setSelectedEntry(null)}
                 />
             </div>
@@ -236,7 +266,46 @@ function ClientServiceRecordsContent({
                     <ServiceSessionsCard
                         assignment={assignment}
                         delay={assignmentIndex * 180 + 120}
-                        calendar={calendar}
+                        mismatchDates={mismatchDates}
+                        periodMismatchAlert={assignmentIndex === 0 && periodStart && periodEnd && unkept.length > 0 ? (
+                            <Alert
+                                variant="warning"
+                                className="mt-1 mb-2.5"
+                                data-component={alertDataComponent}
+                                dataComponents={{ icon: `${alertDataComponent}_icon`, content: `${alertDataComponent}_content` }}
+                            >
+                                <AlertTitle className="leading-[1.35]" data-component={`${alertDataComponent}_content_title`}>서비스 기간 밖에 기록된 회차가 있어요</AlertTitle>
+                                <AlertDescription data-component={`${alertDataComponent}_content_description`}>
+                                    {[...unkept.map((session) =>
+                                        `${session.sessionIndex}회차 서비스 제공일(${displayPeriodDate(session.serviceDate)})이 고객의 서비스 기간(${displayPeriodDate(periodStart)} ~ ${displayPeriodDate(periodEnd)})보다 ${session.serviceDate.slice(0, 10) < periodStart.slice(0, 10) ? "앞이에요." : "뒤예요."}`,
+                                    ), periodMismatchQuestion(unkept, periodStart, periodEnd)].join(" ")}
+                                </AlertDescription>
+                                {canEditServiceRecord ? (
+                                    <div className="flex gap-2 mt-2.5" data-component={`${alertDataComponent}_content_actions`}>
+                                        <button
+                                            type="button"
+                                            data-component={`${alertDataComponent}_content_actions_keep`}
+                                            data-slot="period-mismatch-keep"
+                                            className="btn btn-secondary flex-1"
+                                            disabled={isPeriodPending}
+                                            onClick={() => void handlePeriodMismatch("keep")}
+                                        >
+                                            유지
+                                        </button>
+                                        <button
+                                            type="button"
+                                            data-component={`${alertDataComponent}_content_actions_fit`}
+                                            data-slot="period-mismatch-fit"
+                                            className="btn btn-primary flex-1"
+                                            disabled={isPeriodPending}
+                                            onClick={() => void handlePeriodMismatch("fit")}
+                                        >
+                                            변경
+                                        </button>
+                                    </div>
+                                ) : null}
+                            </Alert>
+                        ) : null}
                         isRefreshing={isRefreshing}
                         onRefresh={onRefresh}
                         onSelectSession={(sessionIndex, trigger) => {
@@ -550,20 +619,22 @@ function ServiceHeaderCard({
 function ServiceSessionsCard({
     assignment,
     delay,
-    calendar,
+    mismatchDates,
+    periodMismatchAlert,
     isRefreshing,
     onRefresh,
     onSelectSession,
 }: {
     assignment: ServiceRecordAssignment;
     delay: number;
-    calendar: KrBusinessDayCalendar;
+    mismatchDates: Map<number, string>;
+    periodMismatchAlert: ReactNode;
     isRefreshing: boolean;
     onRefresh?: () => void;
     onSelectSession: (sessionIndex: number, trigger: HTMLElement) => void;
 }) {
     const dataComponent = useClientServiceRecordsDataComponent("sessions-card");
-    const slots = buildSessionSlots(assignment, calendar);
+    const slots = buildSessionSlots(assignment);
     const lockedCount = assignment.sessions.filter((session) => session.locked).length;
     const draftCount = assignment.sessions.filter((session) => !session.locked).length;
 
@@ -604,10 +675,12 @@ function ServiceSessionsCard({
                     </span>
                 </div>
             </div>
+            {periodMismatchAlert}
             {slots.map((slot) => (
                 <SessionRow
                     key={slot.sessionIndex}
                     slot={slot}
+                    isOutOfPeriod={Boolean(slot.record?.locked && mismatchDates.get(slot.sessionIndex) === slot.record.serviceDate.slice(0, 10))}
                     onSelect={(trigger) => onSelectSession(slot.sessionIndex, trigger)}
                 />
             ))}
@@ -617,9 +690,11 @@ function ServiceSessionsCard({
 
 function SessionRow({
     slot,
+    isOutOfPeriod,
     onSelect,
 }: {
     slot: SessionSlot;
+    isOutOfPeriod: boolean;
     onSelect: (trigger: HTMLElement) => void;
 }) {
     const dataComponent = useClientServiceRecordsDataComponent("sessions-card", "row");
@@ -652,6 +727,7 @@ function SessionRow({
             <div className="doc-info">
                 <div className="doc-title">
                     {record && titleDate ? `${slot.sessionIndex}회차 · ${titleDate}` : `${slot.sessionIndex}회차`}
+                    {isOutOfPeriod ? <StatusBadge variant="warning" className="ml-1 px-2 py-0.5 text-[11px] font-bold" data-component={`${dataComponent}_period-badge`}>기간 밖</StatusBadge> : null}
                 </div>
                 <div className="doc-meta">{meta}</div>
             </div>
@@ -667,7 +743,6 @@ function ServiceRecordSessionDetail({
 }: {
     record: ServiceRecordSession | null;
     sessionIndex: number;
-    expectedDate: string | null;
     onBack: () => void;
 }) {
     const dataComponent = useClientServiceRecordsDataComponent("sessions-card", "row", "detail");
@@ -822,7 +897,7 @@ function sortAssignmentsNewestFirst(assignments: ServiceRecordAssignment[]): Ser
     });
 }
 
-function buildSessionSlots(assignment: ServiceRecordAssignment, calendar: KrBusinessDayCalendar): SessionSlot[] {
+function buildSessionSlots(assignment: ServiceRecordAssignment): SessionSlot[] {
     const total = Math.max(
         assignment.totalSessions,
         assignment.sessions.reduce((max, session) => Math.max(max, session.sessionIndex), 0),
@@ -833,40 +908,8 @@ function buildSessionSlots(assignment: ServiceRecordAssignment, calendar: KrBusi
         return {
             sessionIndex,
             record: sessionsByIndex.get(sessionIndex) ?? null,
-            expectedDate: getExpectedSessionDate(assignment.startDate, sessionIndex, assignment.sessions, calendar),
         };
     });
-}
-
-function getExpectedSessionDate(
-    startDate: string,
-    sessionIndex: number,
-    sessions: ServiceRecordSession[],
-    calendar: KrBusinessDayCalendar,
-): string | null {
-    try {
-        return getExpectedSessionDateFromRecords(startDate, sessionIndex, sessions, calendar);
-    } catch {
-        // The branch calendar does not cover this year: show "unknown" rather than a wrong date.
-        return null;
-    }
-}
-
-// Years of the dates an assignment holds, plus the following year so a schedule
-// that crosses New Year stays inside the loaded window.
-function assignmentCalendarYears(assignments: ServiceRecordAssignment[]): number[] {
-    const years = new Set<number>();
-    const addYear = (value: string | null) => {
-        const year = Number(datePartOf(value)?.slice(0, 4));
-        if (!Number.isInteger(year)) return;
-        years.add(year);
-        years.add(year + 1);
-    };
-    for (const assignment of assignments) {
-        addYear(assignment.startDate);
-        for (const session of assignment.sessions) addYear(session.serviceDate);
-    }
-    return [...years];
 }
 
 // Mirrors getServiceRecordTokenExpiresAt in backend/domain/constants/service-record-link-message.ts.
@@ -937,9 +980,9 @@ function formatUnknownValue(value: unknown): string {
 // Shared problem contract resolution — the raw `data.message`/`data.error`
 // strings and Error.message internals are never rendered; the normalized
 // catalog copy (or the locally authored fallback) is.
-function getErrorDescription(error: unknown): string {
+function getErrorDescription(error: unknown, fallback = "제공기록지 링크를 보내지 못했어요"): string {
     const normalized = normalizeApiError(error, { locale: "ko-KR", operation: "mutation" });
-    return normalized.verified ? normalized.message : "제공기록지 링크를 보내지 못했어요";
+    return normalized.verified ? normalized.message : fallback;
 }
 
 function SkeletonInfoRow({

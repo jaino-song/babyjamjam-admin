@@ -1,6 +1,6 @@
 import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { formatMessageDateTimeCompact, MESSAGE_JOB_RESEND_COPY } from "@babyjamjam/shared";
 import { AxiosError, AxiosHeaders } from "axios";
 import { CONTRACT_VOID_COPY } from "@babyjamjam/shared/constants/eformsign-doc-status";
@@ -242,12 +242,18 @@ const mockServiceRecordsQuery: {
   isFetching: boolean;
   refetch: jest.Mock;
 } = { data: undefined, isError: false, isLoading: false, isPaused: false, isFetching: false, refetch: jest.fn() };
+let mockRenderServiceRecords = false;
+const mockFitPeriod = jest.fn();
+let mockOnPeriodFitted: (() => Promise<void>) | undefined;
 const mockServiceRecordsRenders: Array<{ isLoading: boolean; isError: boolean }> = [];
 
 jest.mock("@/hooks/useServiceRecords", () => ({
   fetchClientServiceRecords: jest.fn(),
   resetServiceRecordLink: jest.fn(),
   useClientServiceRecords: () => mockServiceRecordsQuery,
+  useKeepPeriodMismatch: () => ({ isPending: false, mutateAsync: jest.fn() }),
+  useFitPeriodMismatch: () => ({ isPending: false, mutateAsync: mockFitPeriod }),
+  useSendServiceRecordLink: () => ({ isPending: false, mutateAsync: jest.fn() }),
 }));
 
 jest.mock("@/hooks/useClients", () => ({
@@ -317,7 +323,12 @@ jest.mock("@/components/app/mobile-redesign/detail-sheet", () => ({
 }));
 
 jest.mock("../client-service-records", () => ({
-  ClientServiceRecords: (props: { isLoading: boolean; isError: boolean }) => {
+  ClientServiceRecords: (props: { isLoading: boolean; isError: boolean; onPeriodFitted?: () => Promise<void> }) => {
+    if (mockRenderServiceRecords) {
+      const { ClientServiceRecords } = jest.requireActual("../client-service-records");
+      return <ClientServiceRecords {...props} />;
+    }
+    mockOnPeriodFitted = props.onPeriodFitted;
     mockServiceRecordsRenders.push({ isLoading: props.isLoading, isError: props.isError });
     return null;
   },
@@ -538,13 +549,91 @@ describe("contract void workflow", () => {
 });
 
 describe("ClientDetailContent", () => {
-  it("keeps only the four supported detail tabs even with a legacy pending request", () => {
+  it("keeps the fit success and shows the refresh notice when client reload rejects", async () => {
+    const { fetchClient } = await import("@/hooks/useClients");
+    let rejectReload!: (reason: Error) => void;
+    jest.mocked(fetchClient).mockClear().mockReturnValue(new Promise((_resolve, reject) => { rejectReload = reject; }));
+    mockFitPeriod.mockReset().mockResolvedValue({ startDate: "2026-10-30", endDate: "2026-11-17" });
+    jest.mocked(toast).mockClear();
+    const previousQuery = { ...mockServiceRecordsQuery };
+    Object.assign(mockServiceRecordsQuery, {
+      isError: false, isLoading: false, isPaused: false, isFetching: false,
+      data: {
+        record: { startDate: "2026-11-02", endDate: "2026-11-17", totalSessions: 1, signatureDocs: [], sessions: [], status: "IN_PROGRESS" },
+        assignments: [{
+          scheduleId: 1, startDate: "2026-11-02", endDate: "2026-11-17", replaced: false,
+          employee: { id: 1, name: "QA-provider", phone: null },
+          link: { status: "none", sentCount: 0, token: null }, totalSessions: 1, header: null, signatureDoc: null,
+          sessions: [{ sessionIndex: 1, serviceDate: "2026-10-30", locked: true, answers: {} }],
+        }],
+      },
+    });
+    const onClientUpdated = jest.fn();
+    mockRenderServiceRecords = true;
+    const view = render(<ClientDetailContent
+      data-component="mobile_clients_detail-sheet_stack_detail-page_content"
+      client={client} activeTab="serviceRecords"
+      onTabChange={jest.fn()} onMessage={jest.fn()} onIssueContract={jest.fn()}
+      onEdit={jest.fn()} onDelete={jest.fn()} onClientUpdated={onClientUpdated}
+    />);
+    try {
+      await userEvent.click(screen.getByRole("button", { name: "변경" }));
+      expect(mockFitPeriod).toHaveBeenCalledWith({ clientId: client.id });
+      expect(fetchClient).toHaveBeenCalledWith(client.id);
+      expect(screen.getByRole("button", { name: "유지" })).toBeDisabled();
+      expect(screen.getByRole("button", { name: "변경" })).toBeDisabled();
+      const toastsWhileReloading = jest.mocked(toast).mock.calls.slice();
+      await act(async () => { rejectReload(new Error("offline")); });
+      expect(toastsWhileReloading).toEqual([[{
+        variant: "success", description: "서비스 시작일을 2026.10.30으로 바꿨어요",
+      }]]);
+      expect(toast).toHaveBeenNthCalledWith(2, {
+        variant: "destructive",
+        description: "저장했어요. 고객 정보를 다시 불러오지 못했으니 화면을 새로고침해 주세요",
+      });
+      expect(toast).not.toHaveBeenCalledWith(expect.objectContaining({ description: "서비스 기간을 처리하지 못했어요" }));
+      expect(onClientUpdated).not.toHaveBeenCalled();
+      expect(screen.getByRole("button", { name: "유지" })).toBeEnabled();
+      expect(screen.getByRole("button", { name: "변경" })).toBeEnabled();
+    } finally {
+      view.unmount();
+      mockRenderServiceRecords = false;
+      Object.assign(mockServiceRecordsQuery, previousQuery);
+    }
+  });
+  it("refetches the fitted client and displays its new start date in the open detail", async () => {
+    const { fetchClient } = await import("@/hooks/useClients");
+    const initial = { ...client, startDate: "2026-11-02", endDate: "2026-11-17" };
+    const fresh = { ...initial, startDate: "2026-10-30" };
+    jest.mocked(fetchClient).mockClear().mockResolvedValue(fresh);
+    const onClientUpdated = jest.fn();
+    mockOnPeriodFitted = undefined;
+    function OpenDetail({ activeTab }: { activeTab: DetailTabId }) {
+      const [detailClient, setDetailClient] = useState<Client>(initial);
+      return <ClientDetailContent
+        data-component="mobile_clients_detail-sheet_stack_detail-page_content"
+        client={detailClient} activeTab={activeTab}
+        onTabChange={jest.fn()} onMessage={jest.fn()} onIssueContract={jest.fn()}
+        onEdit={jest.fn()} onDelete={jest.fn()}
+        onClientUpdated={(updated) => { onClientUpdated(updated); setDetailClient(updated); }}
+      />;
+    }
+    const view = render(<OpenDetail activeTab="basic" />);
+    expect(screen.getByText("시작일").closest("div")).toHaveTextContent("2026.11.02");
+    view.rerender(<OpenDetail activeTab="serviceRecords" />);
+    expect(mockOnPeriodFitted).toEqual(expect.any(Function));
+    await act(async () => { await mockOnPeriodFitted?.(); });
+    expect(fetchClient).toHaveBeenCalledTimes(1);
+    expect(fetchClient).toHaveBeenCalledWith(client.id);
+    expect(onClientUpdated).toHaveBeenCalledTimes(1);
+    expect(onClientUpdated).toHaveBeenCalledWith(fresh);
+    view.rerender(<OpenDetail activeTab="basic" />);
+    expect(screen.getByText("시작일").closest("div")).toHaveTextContent("2026.10.30");
+    expect(screen.queryByText("2026.11.02")).not.toBeInTheDocument();
+  });
+  it("keeps only the four supported detail tabs", () => {
     renderDetail(null, {
       ...client,
-      pendingScheduleChange: {
-        id: "legacy-request", sessionIndex: 1, fromDate: "2026-10-05", toDate: "2026-10-06",
-        oldEndDate: "2026-10-30", newEndDate: "2026-11-02",
-      },
     });
     expect(screen.getAllByRole("tab").map((tab) => tab.textContent)).toEqual([
       "기본 정보", "계약서 정보", "알림 발송", "제공기록지",

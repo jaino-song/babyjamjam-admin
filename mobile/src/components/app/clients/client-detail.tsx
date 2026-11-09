@@ -74,7 +74,7 @@ import { ServiceRecordLinkResetResultModal } from "@/components/app/clients/Serv
 import { ServiceRecordScheduleSheet } from "@/components/app/service-record/ServiceRecordScheduleSheet";
 import { scheduleText } from "@/components/app/service-record/service-record-schedule-messages";
 import { useLocale } from "@/providers/LocaleProvider";
-import type { ContractReissueOptions } from "@/components/app/clients/ServiceScheduleContractResendModal";
+import type { ContractReissueOptions } from "@/hooks/useIssueContract";
 import { useSendClientReceipt } from "@/hooks/use-send-client-receipt";
 import { useGetAuthUser } from "@/hooks/useGetAuthUser";
 import { useResendMessageTriggerJob, useRetryMessageHistory } from "@/features/message-triggers/hooks/use-message-triggers";
@@ -1625,6 +1625,13 @@ export function ClientDetailContent({
           isError={serviceRecordsQuery.isError}
           isRefreshing={serviceRecordsQuery.isFetching && !serviceRecordsQuery.isLoading}
           onRefresh={() => void serviceRecordsQuery.refetch()}
+          onPeriodFitted={async () => {
+            try {
+              onClientUpdated(await fetchClient(client.id));
+            } catch {
+              toast({ variant: "destructive", description: scheduleText(locale, "client-refresh-failed") });
+            }
+          }}
         />
       </MobileDetailTabPanel>
     </MobileDetailPage>

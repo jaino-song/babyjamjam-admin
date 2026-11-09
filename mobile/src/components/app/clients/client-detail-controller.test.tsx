@@ -218,13 +218,9 @@ describe("useClientDetailController", () => {
     } as unknown as ReturnType<typeof useDeleteClient>);
   });
 
-  it("opens basic information for selected rows and selection changes with legacy pending requests", async () => {
+  it("opens basic information for selected rows and selection changes", async () => {
     const first: Client = {
       ...makeClient(1),
-      pendingScheduleChange: {
-        id: "legacy-request", sessionIndex: 1, fromDate: "2026-10-05", toDate: "2026-10-06",
-        oldEndDate: "2026-10-30", newEndDate: "2026-11-02",
-      },
     };
     const second = { ...first, id: 2 };
     mockedFetchClient.mockImplementation(async (id) => id === 1 ? first : second);
@@ -241,13 +237,9 @@ describe("useClientDetailController", () => {
     expect(result.current.detailSheetTab).toBe("basic");
   });
 
-  it("opens basic information for a URL-selected legacy pending request", async () => {
+  it("opens basic information for a URL-selected client", async () => {
     const client: Client = {
       ...makeClient(7),
-      pendingScheduleChange: {
-        id: "legacy-request", sessionIndex: 1, fromDate: "2026-10-05", toDate: "2026-10-06",
-        oldEndDate: "2026-10-30", newEndDate: "2026-11-02",
-      },
     };
     mockedUseClient.mockReturnValue({ data: client } as ReturnType<typeof useClient>);
     mockedFetchClient.mockResolvedValue(client);

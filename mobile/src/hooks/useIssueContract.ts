@@ -3,9 +3,13 @@
 import { useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { useEmployees } from "@/hooks/useEmployees";
-import type { ContractReissueOptions } from "@/components/app/clients/ServiceScheduleContractResendModal";
 import { useFormStore } from "@/stores/form-store";
 import type { Client } from "@/lib/client/types";
+
+export interface ContractReissueOptions {
+  paymentDate?: string;
+  supersedeDocumentId?: string;
+}
 
 function contractPrefillDate(value: string | null | undefined): string | undefined {
   if (!value) return undefined;

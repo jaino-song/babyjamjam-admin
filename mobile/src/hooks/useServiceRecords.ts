@@ -2,6 +2,7 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
+import { clientQueryKeys } from "@/hooks/useClients";
 import { api } from "@/lib/api/client";
 import type {
     ResetServiceRecordLinkResponse,
@@ -69,6 +70,41 @@ export function useSendServiceRecordLink() {
             }
 
             await queryClient.invalidateQueries({ queryKey: serviceRecordQueryKeys.all });
+        },
+    });
+}
+
+export function useKeepPeriodMismatch() {
+    const queryClient = useQueryClient();
+    return useMutation({
+        mutationFn: async ({ clientId, sessionIndexes }: { clientId: number; sessionIndexes: number[] }) => {
+            const { data } = await api.post<{ keptSessionIndexes: number[] }>(
+                `/admin/service-records/client/${clientId}/period-mismatch/keep`,
+                { sessionIndexes },
+            );
+            return data;
+        },
+        onSuccess: async (_, { clientId }) => {
+            await queryClient.invalidateQueries({ queryKey: serviceRecordQueryKeys.clientOverview(clientId) });
+        },
+    });
+}
+
+export function useFitPeriodMismatch() {
+    const queryClient = useQueryClient();
+    return useMutation({
+        mutationFn: async ({ clientId }: { clientId: number }) => {
+            const { data } = await api.post<{ startDate: string; endDate: string }>(
+                `/admin/service-records/client/${clientId}/period-mismatch/fit`,
+                {},
+            );
+            return data;
+        },
+        onSuccess: async (_, { clientId }) => {
+            await Promise.all([
+                queryClient.invalidateQueries({ queryKey: serviceRecordQueryKeys.clientOverview(clientId) }),
+                queryClient.invalidateQueries({ queryKey: clientQueryKeys.detail(clientId) }),
+            ]);
         },
     });
 }
