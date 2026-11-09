@@ -127,6 +127,23 @@ describe("ServiceRecordEditPreviewDialog", () => {
         expect(onOpenChange).toHaveBeenCalledWith(false);
     });
 
+    it("shows Korean blocking reasons once per code with the affected session", () => {
+        render(
+            <ServiceRecordEditPreviewDialog
+                open
+                onOpenChange={jest.fn()}
+                preview={{ ...preview, blockingReasons: [
+                    { code: "SERVICE_DATE_OUT_OF_RANGE", message: "고를 수 있는 기간이 아니에요.", sessionIndex: 3 },
+                    { code: "MISSING_START_DATE", message: "Session 2 has no source start date", sessionIndex: 2 },
+                ] }}
+                data-component={DATA_COMPONENT}
+            />,
+        );
+        expect(screen.getByText("고를 수 있는 기간이 아니에요 (3회차)")).toBeInTheDocument();
+        expect(screen.getByText("서비스 시작일을 확인할 수 없는 회차가 있어요 (2회차)")).toBeInTheDocument();
+        expect(screen.queryByText(/Session 2/)).not.toBeInTheDocument();
+    });
+
     it("falls back to a generic caregiver name when details are missing or unnamed", () => {
         const legacyPreview: ServiceRecordEditPreviewResponse = { ...preview, impactedAssignmentDetails: undefined };
         const { unmount } = render(

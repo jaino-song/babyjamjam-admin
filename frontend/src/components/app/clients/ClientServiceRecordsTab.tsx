@@ -1226,6 +1226,7 @@ function ServiceSessionsCard({
                 });
             } else {
                 const result = await fitMutation.mutateAsync({ clientId });
+                if (result.startDate === null || result.endDate === null) return;
                 const startChanged = result.startDate !== datePartOf(startDate);
                 const endChanged = result.endDate !== datePartOf(endDate);
                 const description = startChanged && endChanged

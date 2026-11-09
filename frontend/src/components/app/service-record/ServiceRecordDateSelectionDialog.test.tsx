@@ -112,6 +112,12 @@ describe("ServiceRecordDateSelectionDialog", () => {
         expect(screen.getByRole("option", { name: "16일" })).toBeInTheDocument();
     });
 
+    it("clamps an out-of-window day off to the window edge month first", () => {
+        expect(getInitialServiceRecordDateSelection(
+            "2026-09-19", KR_BUILTIN_CALENDAR, "2026-07-06", "2026-08-07",
+        )).toEqual({ parts: { year: 2026, month: 8, day: null }, reason: null });
+    });
+
     it("treats each null window bound as unbounded", () => {
         expect(isSelectableServiceRecordDate("2026-07-13", KR_BUILTIN_CALENDAR, null, "2026-07-16")).toBe(true);
         expect(isSelectableServiceRecordDate("2026-07-20", KR_BUILTIN_CALENDAR, "2026-07-14", null)).toBe(true);

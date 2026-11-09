@@ -3,8 +3,8 @@ export interface KeepPeriodMismatchResponse {
 }
 
 export interface FitPeriodMismatchResponse {
-    startDate: string;
-    endDate: string;
+    startDate: string | null;
+    endDate: string | null;
 }
 
 export function normalizeKeepPeriodMismatch(value: unknown): KeepPeriodMismatchResponse {
@@ -17,7 +17,9 @@ export function normalizeKeepPeriodMismatch(value: unknown): KeepPeriodMismatchR
 
 export function normalizeFitPeriodMismatch(value: unknown): FitPeriodMismatchResponse {
     const result = value as FitPeriodMismatchResponse | null;
-    if (!result || !isDateOnly(result.startDate) || !isDateOnly(result.endDate)) {
+    if (!result
+        || (result.startDate !== null && !isDateOnly(result.startDate))
+        || (result.endDate !== null && !isDateOnly(result.endDate))) {
         throw new Error("Invalid period-mismatch fit response");
     }
     return { startDate: result.startDate, endDate: result.endDate };

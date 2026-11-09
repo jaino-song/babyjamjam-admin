@@ -560,7 +560,6 @@ describe("resolvePlannedDates", () => {
         const result = resolve(makeContext());
         expect(result.plannedDateVectorProvided).toBe(false);
         expect(result.plannedDateVectorValid).toBe(true);
-        expect(result.providerDateLocked).toBe(false);
         expect(result.currentServiceDate).toBe("");
         expect(result.plannedServiceDate).toBeUndefined();
         expect(result.displayDateForSession(2)).toBe("");
@@ -574,7 +573,6 @@ describe("resolvePlannedDates", () => {
         const result = resolve(makeContext({ plannedSessionDates: vector }), { day: 2, draft: { _date: "2026-10-01" } });
         expect(result.plannedDateVectorProvided).toBe(true);
         expect(result.plannedDateVectorValid).toBe(true);
-        expect(result.providerDateLocked).toBe(false);
         expect(result.plannedServiceDate).toBe("2026-09-22");
         expect(result.plannedDateBySession?.get(3)).toBe("2026-09-23");
         expect(result.currentServiceDate).toBe("2026-10-01");
@@ -585,7 +583,6 @@ describe("resolvePlannedDates", () => {
         const context = makeContext({ plannedSessionDates: vector, sessions });
         expect(resolve(context, { day: 2, adminMode: true, draft: { _date: "2026-10-01" } }).currentServiceDate).toBe("2026-10-01");
         const admin = resolve(context, { day: 2, adminMode: true });
-        expect(admin.providerDateLocked).toBe(false);
         expect(admin.currentSession?.sessionIndex).toBe(2);
         expect(admin.currentServiceDate).toBe("2026-09-25");
         expect(resolve(makeContext({ plannedSessionDates: vector }), { day: 2, adminMode: true }).currentServiceDate).toBe("2026-09-22");
@@ -615,7 +612,6 @@ describe("resolvePlannedDates", () => {
         expect(result.plannedDateVectorValid).toBe(false);
         expect(result.plannedDateBySession).toBeNull();
         expect(result.plannedServiceDate).toBeUndefined();
-        expect(result.providerDateLocked).toBe(false);
         expect(result.currentServiceDate).toBe("");
     });
     it("rejects a non-array vector", () => {

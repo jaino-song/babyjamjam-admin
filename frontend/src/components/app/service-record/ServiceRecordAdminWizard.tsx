@@ -823,6 +823,12 @@ export function ServiceRecordAdminWizard({
                 else showRefreshModal();
                 return;
             }
+            if (failure.status === 400 && failure.scheduleCode) {
+                setError(describeScheduleBlockingReasons([{
+                    code: failure.scheduleCode, message: "", sessionIndex: failure.sessionIndex,
+                }])[0].label);
+                return;
+            }
             setError(failure.status === 403 ? "수정 권한이 없습니다. 수정사항은 이 화면에 남아 있어요."
                 : failure.status === 401 ? "로그인이 필요합니다. 수정사항은 이 화면에 남아 있어요."
                 : "저장 결과를 확인하지 못했습니다. 수정사항은 이 화면에 남아 있어요.");

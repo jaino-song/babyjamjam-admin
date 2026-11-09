@@ -28,7 +28,6 @@ export interface PlannedDates {
     plannedDateVectorValid: boolean;
     plannedDateBySession: Map<number, string> | null;
     plannedServiceDate: string | undefined;
-    providerDateLocked: boolean;
     currentServiceDate: string;
     displayDateForSession: (sessionIndex: number, session?: { serviceDate: string }) => string;
 }
@@ -66,7 +65,6 @@ export function resolvePlannedDates({
             plannedDateVectorValid,
             plannedDateBySession,
             plannedServiceDate,
-            providerDateLocked: false,
             currentServiceDate: (draft._date as string) || currentSession?.serviceDate?.slice(0, 10) || "",
             displayDateForSession: (sessionIndex, session) => (
                 session?.serviceDate?.slice(0, 10)
@@ -75,9 +73,7 @@ export function resolvePlannedDates({
             ),
         };
     }
-    const providerDateLocked = !adminMode && plannedDateVectorProvided;
-    const currentServiceDate = (providerDateLocked ? plannedServiceDate : undefined)
-        || (draft._date as string | undefined)
+    const currentServiceDate = (draft._date as string | undefined)
         || currentSession?.serviceDate?.slice(0, 10)
         || plannedServiceDate
         || (plannedDateVectorProvided ? "" : defaultDate(day));
@@ -92,7 +88,6 @@ export function resolvePlannedDates({
         plannedDateVectorValid,
         plannedDateBySession,
         plannedServiceDate,
-        providerDateLocked,
         currentServiceDate,
         displayDateForSession,
     };

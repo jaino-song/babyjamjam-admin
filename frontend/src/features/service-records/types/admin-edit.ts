@@ -68,6 +68,7 @@ export interface AdminServiceRecordEditState {
 export const SERVICE_RECORD_SCHEDULE_CODES = [
     "INVALID_DATE",
     "NON_BUSINESS_DATE",
+    "SERVICE_DATE_OUT_OF_RANGE",
     "INVALID_SESSION_COUNT",
     "INVALID_SESSION_INDEX",
     "DUPLICATE_SESSION_INDEX",
@@ -107,6 +108,15 @@ export function readServiceRecordScheduleCode(body: unknown): ServiceRecordSched
         : null;
 }
 
+/** Only a positive safe integer may identify an affected session. */
+function readServiceRecordScheduleSessionIndex(body: unknown): number | undefined {
+    if (!isPlainRecord(body)) return undefined;
+    const { sessionIndex } = body;
+    return typeof sessionIndex === "number" && Number.isSafeInteger(sessionIndex) && sessionIndex > 0
+        ? sessionIndex
+        : undefined;
+}
+
 /** The body's `blockingReasons`, each cut down to a well-formed code and an optional session index. */
 export function readServiceRecordScheduleBlockingReasons(body: unknown): ServiceRecordScheduleBlockingReasonRef[] {
     if (!isPlainRecord(body) || !Array.isArray(body.blockingReasons)) return [];
@@ -127,20 +137,23 @@ export function readServiceRecordScheduleBlockingReasons(body: unknown): Service
 
 /**
  * What a Next.js proxy re-attaches to a sanitized 400/409 problem: the
- * validated `scheduleCode` and the reduced `blockingReasons`. `null` when the
- * upstream error carries neither, or is not a 400/409.
+ * validated `scheduleCode`, its optional `sessionIndex`, and reduced
+ * `blockingReasons`. `null` when the upstream error carries neither, or is not a 400/409.
  */
 export function pickServiceRecordScheduleErrorExtension(error: unknown): {
     scheduleCode?: ServiceRecordScheduleCode;
+    sessionIndex?: number;
     blockingReasons?: ServiceRecordScheduleBlockingReasonRef[];
 } | null {
     const response = isPlainRecord(error) && isPlainRecord(error.response) ? error.response : null;
     if (!response || (response.status !== 400 && response.status !== 409)) return null;
     const scheduleCode = readServiceRecordScheduleCode(response.data);
     const blockingReasons = readServiceRecordScheduleBlockingReasons(response.data);
+    const sessionIndex = scheduleCode ? readServiceRecordScheduleSessionIndex(response.data) : undefined;
     if (!scheduleCode && blockingReasons.length === 0) return null;
     return {
         ...(scheduleCode ? { scheduleCode } : {}),
+        ...(sessionIndex !== undefined ? { sessionIndex } : {}),
         ...(blockingReasons.length > 0 ? { blockingReasons } : {}),
     };
 }
@@ -159,6 +172,11 @@ export class AdminServiceRecordEditApiError extends Error {
     /** The known schedule rejection code the server attached, if any. */
     get scheduleCode(): ServiceRecordScheduleCode | null {
         return readServiceRecordScheduleCode(this.body);
+    }
+
+    /** The affected session, if the server supplied a positive safe integer. */
+    get sessionIndex(): number | undefined {
+        return readServiceRecordScheduleSessionIndex(this.body);
     }
 
     /** Blocking reasons a 409 carried (e.g. a session locked after the preview). */

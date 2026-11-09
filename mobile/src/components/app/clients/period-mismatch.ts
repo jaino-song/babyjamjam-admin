@@ -46,7 +46,8 @@ export function periodMismatchQuestion(sessions: PeriodMismatchSession[], startD
     return "";
 }
 
-export function periodFitToast(before: { startDate: string; endDate: string }, after: { startDate: string; endDate: string }): string | null {
+export function periodFitToast(before: { startDate: string; endDate: string }, after: { startDate: string | null; endDate: string | null }): string | null {
+    if (after.startDate === null || after.endDate === null) return null;
     const startChanged = before.startDate.slice(0, 10) !== after.startDate;
     const endChanged = before.endDate.slice(0, 10) !== after.endDate;
     if (startChanged && endChanged) return "서비스 시작일과 종료일을 바꿨어요";

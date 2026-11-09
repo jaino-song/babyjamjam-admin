@@ -131,9 +131,7 @@ jest.mock("@/components/app/clients/ClientFormDialog", () => ({
 }));
 
 jest.mock("@/components/app/clients/MaternityContractDialog", () => ({
-  MaternityContractDialog: () => (
-    <div data-testid="reissue-document">none</div>
-  ),
+  MaternityContractDialog: () => null,
 }));
 
 jest.mock("@/components/app/contracts/ContractClientSelector", () => ({

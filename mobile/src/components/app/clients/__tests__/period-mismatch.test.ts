@@ -12,3 +12,11 @@ describe("dateDirectionParticle", () => {
 it("does not claim an unchanged period was fitted", () => {
     expect(periodFitToast({ startDate: "2026-11-02T00:00:00+09:00", endDate: "2026-11-17" }, { startDate: "2026-11-02", endDate: "2026-11-17" })).toBeNull();
 });
+
+it.each([
+    { startDate: null, endDate: null },
+    { startDate: null, endDate: "2026-11-20" },
+    { startDate: "2026-11-01", endDate: null },
+])("does not claim an open period was fitted %j", (after) => {
+    expect(periodFitToast({ startDate: "2026-11-02", endDate: "2026-11-17" }, after)).toBeNull();
+});

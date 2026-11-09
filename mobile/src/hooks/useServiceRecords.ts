@@ -94,7 +94,7 @@ export function useFitPeriodMismatch() {
     const queryClient = useQueryClient();
     return useMutation({
         mutationFn: async ({ clientId }: { clientId: number }) => {
-            const { data } = await api.post<{ startDate: string; endDate: string }>(
+            const { data } = await api.post<{ startDate: string | null; endDate: string | null }>(
                 `/admin/service-records/client/${clientId}/period-mismatch/fit`,
                 {},
             );
