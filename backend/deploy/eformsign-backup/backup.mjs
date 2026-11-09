@@ -99,10 +99,33 @@ async function main() {
         return final;
     };
     const statePath = resolve(settings.stateDir, 'state.json');
-    let state = { version: 1, units: {} };
-    try { state = JSON.parse(await fs.readFile(statePath, 'utf8')); }
+    let loaded = { version: 2, units: {} };
+    try { loaded = JSON.parse(await fs.readFile(statePath, 'utf8')); }
     catch (error) { if (error.code !== 'ENOENT') throw error; }
-    if (state.version !== 1 || !state.units || typeof state.units !== 'object' || Array.isArray(state.units)) throw new Error('state.json 형식 오류');
+    if (!loaded || ![1, 2].includes(loaded.version) || !loaded.units || typeof loaded.units !== 'object' || Array.isArray(loaded.units)) throw new Error('state.json 형식 오류');
+    const validFiles = (files, nullable) => {
+        if (!files || typeof files !== 'object' || Array.isArray(files)) throw new Error('state.json 파일 정보 오류');
+        const entries = Object.entries(files);
+        if (entries.length !== 2 || entries.some(([path, bytes]) => !finalPath(path) ||
+            !(Number.isSafeInteger(bytes) && bytes >= 0 || nullable && bytes === null))) throw new Error('state.json 파일 정보 오류');
+        return files;
+    };
+    // Version 1 keyed a unit by its content hashes; version 2 keys it by the document.
+    const migrate = (units) => {
+        const migrated = {};
+        for (const [oldKey, unit] of Object.entries(units)) {
+            if (!unit) throw new Error('state.json 파일 정보 오류');
+            const files = validFiles(unit.files, false);
+            const doc = /^doc:(.+):([0-9a-fA-F]+):([0-9a-fA-F]+)$/.exec(oldKey);
+            const merged = /^merged:(.+:\d+):([0-9a-fA-F,]+)$/.exec(oldKey);
+            const [newKey, fingerprint] = doc ? [`doc:${doc[1]}`, `${doc[2]}:${doc[3]}`]
+                : merged ? [`merged:${merged[1]}`, `v1:${merged[2]}`] : [null, null];
+            if (newKey === null || Object.hasOwn(migrated, newKey)) throw new Error('state.json 형식 오류');
+            migrated[newKey] = { files, fingerprint, completed: true }; // version 1 only ever saved completed documents
+        }
+        return migrated;
+    };
+    const state = { version: 2, units: loaded.version === 1 ? migrate(loaded.units) : loaded.units };
     const saveState = async () => {
         const tmp = tempPath(statePath);
         try { await fs.writeFile(tmp, JSON.stringify(state, null, 2)); await fs.rename(tmp, statePath); }
@@ -110,10 +133,8 @@ async function main() {
     };
     const reserved = new Set();
     for (const unit of Object.values(state.units)) {
-        if (!unit || !unit.files || typeof unit.files !== 'object' || Array.isArray(unit.files)) throw new Error('state.json 파일 정보 오류');
-        const files = Object.entries(unit.files);
-        if (files.length !== 2 || files.some(([path, bytes]) => !finalPath(path) || !Number.isSafeInteger(bytes) || bytes < 0)) throw new Error('state.json 파일 정보 오류');
-        for (const [path] of files) reserved.add(path);
+        if (!unit || typeof unit.fingerprint !== 'string' || typeof unit.completed !== 'boolean') throw new Error('state.json 파일 정보 오류');
+        for (const path of Object.keys(validFiles(unit.files, true))) reserved.add(path);
     }
     await saveState();
 
@@ -140,9 +161,12 @@ async function main() {
     const units = [];
     const groups = new Map();
     for (const doc of docs) {
-        const selected = types.map((type) => doc.files.filter((file) => file.fileType === type));
-        if (doc.files.length !== 2 || selected.some((files) => files.length !== 1)) { failure(doc.docId, '필수 파일 없음'); continue; }
-        const files = selected.map(([file]) => file);
+        const [documents, audits] = types.map((type) => doc.files.filter((file) => file.fileType === type));
+        // A document still in review has no audit trail yet: eformsign produces it on completion.
+        const review = doc.completed === false;
+        if (doc.files.length !== documents.length + audits.length || documents.length !== 1 ||
+            (review ? audits.length > 1 : audits.length !== 1)) { failure(doc.docId, '필수 파일 없음'); continue; }
+        const inputs = [documents[0], audits[0] ?? null];
         const chunk = doc.kind === 'service_record' && doc.serviceRecordChunk?.chunkCount > 1 ? doc.serviceRecordChunk : null;
         const folder = doc.kind === 'contract' ? '서비스계약서' : doc.kind === 'service_record' ? '제공기록지' : '기타';
         const base = doc.kind === 'other'
@@ -150,8 +174,10 @@ async function main() {
             : `${folder}_${sanitize(doc.customerName || '고객미상')}_${sanitize(doc.serviceStartDate || '시작일미상')}`;
         const unit = {
             ...doc,
-            key: `doc:${doc.docId}:${files[0].sha256}:${files[1].sha256}`,
-            inputs: files,
+            key: `doc:${doc.docId}`,
+            fingerprint: `${inputs[0].sha256}:${inputs[1]?.sha256 ?? ''}`,
+            completed: !review,
+            inputs,
             folder: chunk ? `${folder}/원본` : folder,
             base: chunk ? `${base}_${chunk.chunkIndex + 1}장` : base,
             baseName: base,
@@ -173,17 +199,25 @@ async function main() {
         chunks.sort((a, b) => a.serviceRecordChunk.firstSessionIndex - b.serviceRecordChunk.firstSessionIndex);
         const first = chunks[0];
         merges.push({ docId: first.docId, createdAt: first.createdAt, folder: '제공기록지', base: first.baseName, chunks,
-            key: `merged:${first.serviceRecordChunk.caseId}:${first.serviceRecordChunk.snapshotVersion}:${chunks.map((unit) => unit.inputs[0].sha256).join(',')}` });
+            key: `merged:${first.serviceRecordChunk.caseId}:${first.serviceRecordChunk.snapshotVersion}`,
+            fingerprint: chunks.map((unit) => unit.fingerprint).join(',') });
     }
     // Reserve both paths together, including merged units in naming order.
     // Reservations become persistent only after a unit writes a file.
     const allocate = async (unit) => {
-        if (Object.hasOwn(state.units, unit.key)) { unit.files = { ...state.units[unit.key].files }; return; }
+        const entry = Object.hasOwn(state.units, unit.key) ? state.units[unit.key] : null;
+        // Completed content is never overwritten: changed content takes a fresh pair of paths (the old
+        // entry is archived under another key when the new files are recorded). Review-stage content
+        // is rewritten in place.
+        unit.fork = entry !== null && entry.completed && entry.fingerprint !== unit.fingerprint;
+        if (entry !== null && !unit.fork) { unit.files = { ...entry.files }; return; }
         for (let n = 1; ; n += 1) {
             const name = `${unit.base}${n === 1 ? '' : ` (${n})`}.pdf`;
             const paths = [`${unit.folder}/${name}`, `${unit.folder}/감사추적/[감사추적]_${name}`];
             if (reserved.has(paths[0]) || reserved.has(paths[1]) || await size(paths[0]) !== null || await size(paths[1]) !== null) continue;
-            unit.files = Object.fromEntries(paths.map((path, i) => [path, unit.inputs?.[i].byteSize ?? 0]));
+            // Expected sizes for a new document unit; null = nothing to write there yet (the audit trail of a
+            // document still in review, a merged output not built yet). The audit path stays reserved either way.
+            unit.files = Object.fromEntries(paths.map((path, i) => [path, unit.inputs?.[i]?.byteSize ?? null]));
             paths.forEach((path) => reserved.add(path));
             return;
         }
@@ -192,15 +226,8 @@ async function main() {
         try { await allocate(unit); }
         catch (error) { unit.broken = true; failure(unit.docId, error); }
     }
-    const check = async (unit) => {
-        const entries = Object.entries(unit.files);
-        const sizes = await Promise.all(entries.map(([path]) => size(path)));
-        for (let i = 0; i < entries.length; i += 1) {
-            if (sizes[i] !== null && sizes[i] !== entries[i][1]) throw new Error('기존 파일 크기 불일치');
-        }
-        return sizes;
-    };
-    const download = async (file, path, createdAt) => {
+    // A file is written beside its final path first, so a failed download never touches an existing file.
+    const fetchTemp = async (file, path, createdAt) => {
         const final = await prepare(path);
         const tmp = tempPath(final);
         try {
@@ -218,8 +245,47 @@ async function main() {
             } finally { await handle.close(); }
             if (bytes !== file.byteSize || hash.digest('hex') !== file.sha256.toLowerCase()) throw new Error('파일 크기 또는 sha256 불일치');
             await fs.utimes(tmp, new Date(createdAt), new Date(createdAt));
-            await fs.rename(tmp, final);
-        } finally { await fs.rm(tmp, { force: true }); }
+            return { tmp, final };
+        } catch (error) { await fs.rm(tmp, { force: true }); throw error; }
+    };
+    // Shared by documents and merges. `replace` = the recorded fingerprint differs, so every available
+    // output is rewritten over its recorded path; otherwise only missing files are (re)created.
+    const plan = async (unit, available) => {
+        const paths = Object.keys(unit.files);
+        const entry = unit.fork ? undefined : state.units[unit.key];
+        const replace = Boolean(entry) && entry.fingerprint !== unit.fingerprint;
+        const sizes = await Promise.all(paths.map(size));
+        if (!replace) {
+            for (let i = 0; i < paths.length; i += 1) {
+                if (sizes[i] !== null && sizes[i] !== unit.files[paths[i]]) throw new Error('기존 파일 크기 불일치');
+            }
+        }
+        const need = paths.map((_, i) => Boolean(available[i]) && (replace || sizes[i] === null));
+        return { paths, replace, sizes, need };
+    };
+    // Merged output counts as completed only when every chunk is and the merged audit trail exists.
+    const isCompleted = (unit) => unit.chunks
+        ? unit.chunks.every((chunk) => chunk.completed) && unit.files[Object.keys(unit.files)[1]] !== null
+        : unit.completed;
+    const record = async (unit) => {
+        const old = state.units[unit.key];
+        // Recording to the same paths can only tighten the flag; a fork is a new entry with its own flag.
+        const completed = isCompleted(unit) || (!unit.fork && old?.completed === true);
+        if (unit.fork) {
+            let archived = `${unit.key}@${old.fingerprint}`;
+            for (let n = 2; Object.hasOwn(state.units, archived); n += 1) archived = `${unit.key}@${old.fingerprint}@${n}`;
+            state.units[archived] = old;
+            unit.fork = false;
+        }
+        state.units[unit.key] = { files: unit.files, fingerprint: unit.fingerprint, completed };
+        await saveState();
+    };
+    // Same content, now reported as completed: tighten the stored flag (never loosen it).
+    const tighten = async (unit) => {
+        const entry = state.units[unit.key];
+        if (unit.fork || !entry || entry.completed || entry.fingerprint !== unit.fingerprint || !isCompleted(unit)) return;
+        entry.completed = true;
+        await saveState();
     };
     // Keep expected sizes for both paths even when a download fails mid-pair,
     // so the next run repairs the missing file under its recorded name.
@@ -228,64 +294,109 @@ async function main() {
         let changed = false;
         let unitError;
         try {
-            const sizes = await check(unit);
-            if (sizes.every((bytes) => bytes !== null)) { report.skippedFiles += sizes.length; unit.ready = true; continue; }
-            const paths = Object.keys(unit.files);
-            for (let i = 0; i < paths.length; i += 1) {
-                if (sizes[i] !== null) continue;
-                await download(unit.inputs[i], paths[i], unit.createdAt);
-                report.savedFiles += 1;
-                changed = true;
+            const { paths, replace, sizes, need } = await plan(unit, unit.inputs);
+            if (!need.some(Boolean)) {
+                report.skippedFiles += sizes.filter((bytes) => bytes !== null).length;
+                unit.ready = true;
+                await tighten(unit);
+                continue;
+            }
+            if (replace || unit.fork) {
+                const temps = [];
+                const renamed = [];
+                try {
+                    for (let i = 0; i < paths.length; i += 1) {
+                        if (need[i]) temps.push({ i, ...await fetchTemp(unit.inputs[i], paths[i], unit.createdAt) });
+                    }
+                    for (const { i, tmp, final } of temps) {
+                        await fs.rename(tmp, final);
+                        renamed.push(final);
+                        unit.files[paths[i]] = unit.inputs[i].byteSize;
+                        report.savedFiles += 1;
+                    }
+                    changed = true;
+                } catch (error) {
+                    // A fork writes only fresh, never-recorded paths: undo them so the next run retries cleanly.
+                    if (unit.fork) {
+                        await Promise.all(renamed.map((final) => fs.rm(final, { force: true })));
+                        report.savedFiles -= renamed.length;
+                    }
+                    throw error;
+                } finally { await Promise.all(temps.map(({ tmp }) => fs.rm(tmp, { force: true }))); }
+            } else {
+                for (let i = 0; i < paths.length; i += 1) {
+                    if (!need[i]) continue;
+                    const { tmp, final } = await fetchTemp(unit.inputs[i], paths[i], unit.createdAt);
+                    try { await fs.rename(tmp, final); } finally { await fs.rm(tmp, { force: true }); }
+                    unit.files[paths[i]] = unit.inputs[i].byteSize;
+                    report.savedFiles += 1;
+                    changed = true;
+                }
             }
             unit.ready = true;
         } catch (error) { unitError = error; }
         finally {
             if (changed) {
-                state.units[unit.key] = { files: unit.files };
-                try { await saveState(); } catch (error) { unit.ready = false; unitError ??= error; }
+                try { await record(unit); } catch (error) { unit.ready = false; unitError ??= error; }
             }
         }
         if (unitError) failure(unit.docId, unitError);
     }
-    // Prepare both merged outputs before publishing either final path.
+    // Prepare both merged outputs before publishing either final path. The merged audit trail exists
+    // only once every chunk has one.
     for (const unit of merges) {
         if (unit.broken || !unit.chunks.every((chunk) => chunk.ready)) continue;
         const temps = [];
+        const renamed = [];
         let changed = false;
         let unitError;
         try {
-            const sizes = await check(unit);
-            if (sizes.every((bytes) => bytes !== null)) { report.skippedFiles += sizes.length; continue; }
-            const paths = Object.keys(unit.files);
+            const { paths, replace, sizes, need } = await plan(unit, [true, unit.chunks.every((chunk) => chunk.inputs[1])]);
+            if (!need.some(Boolean)) {
+                report.skippedFiles += sizes.filter((bytes) => bytes !== null).length;
+                await tighten(unit);
+                continue;
+            }
             for (let i = 0; i < paths.length; i += 1) {
-                if (sizes[i] !== null) continue;
+                if (!need[i]) continue;
                 const final = await prepare(paths[i]);
                 const tmp = tempPath(final);
-                temps.push({ tmp, final });
+                temps.push({ tmp, final, path: paths[i] });
                 const inputs = unit.chunks.map((chunk) => finalPath(Object.keys(chunk.files)[i]));
                 await execute(settings.qpdfBin, ['--empty', '--pages', ...inputs, '--', tmp]);
-                unit.files[paths[i]] = (await fs.stat(tmp)).size;
+                temps.at(-1).bytes = (await fs.stat(tmp)).size;
                 await fs.utimes(tmp, new Date(unit.createdAt), new Date(unit.createdAt));
             }
-            for (const { tmp, final } of temps) {
-                await fs.rename(tmp, final);
-                report.savedFiles += 1;
-                changed = true;
+            try {
+                for (const { tmp, final, path, bytes } of temps) {
+                    await fs.rename(tmp, final);
+                    renamed.push(final);
+                    unit.files[path] = bytes;
+                    report.savedFiles += 1;
+                    // A partial rewrite must not mark the new fingerprint as done; a fork is all or nothing.
+                    if (!replace && !unit.fork) changed = true;
+                }
+            } catch (error) {
+                if (unit.fork) {
+                    await Promise.all(renamed.map((final) => fs.rm(final, { force: true })));
+                    report.savedFiles -= renamed.length;
+                }
+                throw error;
             }
+            changed = true;
         } catch (error) { unitError = error; }
         finally {
             for (const { tmp } of temps) {
                 try { await fs.rm(tmp, { force: true }); } catch (error) { unitError ??= error; }
             }
             if (changed) {
-                state.units[unit.key] = { files: unit.files };
-                try { await saveState(); } catch (error) { unitError ??= error; }
+                try { await record(unit); } catch (error) { unitError ??= error; }
             }
         }
         if (unitError) failure(unit.docId, unitError);
     }
     if (settings.rcloneRemote) {
-        try { await execute(settings.rcloneBin, ['copy', '--immutable', settings.archiveDir, settings.rcloneRemote]); report.driveStatus = 'ok'; }
+        try { await execute(settings.rcloneBin, ['copy', '--checksum', settings.archiveDir, settings.rcloneRemote]); report.driveStatus = 'ok'; }
         catch (error) { report.driveStatus = 'failed'; log({ reason: `Drive: ${cleanReason(error)}` }); }
     }
     report.status = listingFailed ? 'failed' : !listingComplete || report.failures.length || report.driveStatus !== 'ok' ? 'partial' : 'success';

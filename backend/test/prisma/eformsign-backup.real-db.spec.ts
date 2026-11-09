@@ -65,6 +65,9 @@ describeReal("eformsign backup repository (real PostgreSQL, tenant enforce)", ()
         eligible.push((await seed({ branchId: branches[0], voidedAt: date })).id);
         // "partial" is a valid sync-status CHECK value; such docs stay listed with no ready files.
         eligible.push((await seed({ branchId: branches[1], syncStatus: "partial" })).id);
+        // Review-stage docs (070 partial / 071 ready) are listed too; an open one (001) is not.
+        eligible.push((await seed({ branchId: branches[0], statusType: "070", syncStatus: "partial" })).id);
+        eligible.push((await seed({ branchId: null, statusType: "071" })).id);
         await seed({ branchId: branches[0], statusType: "001" });
         await seed({ branchId: branches[1], permanentPurgeRequestedAt: date });
         fileId = (await raw.eformsign_doc_file.create({ data: {
@@ -93,7 +96,7 @@ describeReal("eformsign backup repository (real PostgreSQL, tenant enforce)", ()
         await expect(asHttp(() => scoped.eformsign_doc.findMany({ take: 1 })))
             .rejects.toMatchObject({ kind: "http_no_tenant" });
     });
-    it("lists completed docs from both branches, null branch and voided docs, excluding purged/open docs", async () => {
+    it("lists completed and review-stage docs from both branches, null branch and voided docs, excluding purged/open docs", async () => {
         const rows = await asHttp(() => repository.listDocuments(baselineCursor, 200));
         expect(rows.map((row) => row.id)).toEqual(eligible);
         const listed = rows.find((row) => row.id === eligible[0]);

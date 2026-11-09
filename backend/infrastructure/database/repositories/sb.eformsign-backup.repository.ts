@@ -1,6 +1,8 @@
 import { Injectable } from "@nestjs/common";
 
-import { EFORMSIGN_COMPLETED_STATUS_STORAGE_VALUES } from "domain/constants/eformsign-doc-status.constants";
+import {
+    EFORMSIGN_COMPLETED_STATUS_STORAGE_VALUES, EFORMSIGN_REVIEW_STAGE_STATUS_STORAGE_VALUES,
+} from "domain/constants/eformsign-doc-status.constants";
 import { BackupRunInput, IEformsignBackupRepository } from "domain/repositories/eformsign-backup.repository.interface";
 import { PrismaService } from "infrastructure/database/prisma.service";
 import { runSystemScope } from "infrastructure/tenant/run-system-scope";
@@ -12,12 +14,12 @@ export class SbEformsignBackupRepository implements IEformsignBackupRepository {
     listDocuments(cursor: number | undefined, limit: number) {
         return runSystemScope(() => this.prisma.eformsign_doc.findMany({
             where: {
-                id: { gt: cursor }, statusType: { in: [...EFORMSIGN_COMPLETED_STATUS_STORAGE_VALUES] },
+                id: { gt: cursor }, statusType: { in: [...EFORMSIGN_COMPLETED_STATUS_STORAGE_VALUES, ...EFORMSIGN_REVIEW_STAGE_STATUS_STORAGE_VALUES] },
                 permanentPurgeRequestedAt: null,
             },
             orderBy: { id: "asc" }, take: limit,
             select: {
-                id: true, documentId: true, documentKind: true, documentName: true, detailPayload: true,
+                id: true, documentId: true, documentKind: true, documentName: true, statusType: true, detailPayload: true,
                 customerName: true, createdDate: true,
                 syncStatus: true, detailSourceUpdatedDate: true,
                 serviceRecordCase: { select: { startDate: true } },

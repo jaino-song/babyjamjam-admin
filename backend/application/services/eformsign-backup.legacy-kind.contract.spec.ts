@@ -6,7 +6,7 @@ const date = new Date("2026-11-07T00:00:00.000Z");
 const file = { id: "file", fileType: "document", sha256: "a".repeat(64), byteSize: 3, sourceUpdatedDate: date };
 const fields = (pairs: Record<string, string>) => ({ fields: Object.entries(pairs).map(([id, value]) => ({ id, value, type: "text" })) });
 const row = (patch: Partial<BackupDocumentRow>): BackupDocumentRow => ({
-    id: 7, documentId: "doc", documentKind: null, documentName: null, detailPayload: null, customerName: "홍길동", createdDate: date,
+    id: 7, documentId: "doc", documentKind: null, documentName: null, statusType: "003", detailPayload: null, customerName: "홍길동", createdDate: date,
     syncStatus: "ready", detailSourceUpdatedDate: date,
     serviceRecordCase: null, employeeSchedule: null, client: null,
     serviceRecordSnapshotChunk: null, files: [file], ...patch,
