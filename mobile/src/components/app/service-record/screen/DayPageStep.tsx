@@ -187,7 +187,7 @@ export function DayPageStep({
                 aria-haspopup="dialog"
                 placeholder={SERVICE_DATE_PLACEHOLDER}
                 disabled={isRecordFinalized}
-                value={currentServiceDate ? `${day}회차 · ${currentServiceDate.replaceAll("-", ".")}` : ""}
+                value={currentServiceDate}
                 onClick={onOpenDateSheet}
                 onKeyDown={(event) => {
                     if (event.key === "Enter" || event.key === " ") {

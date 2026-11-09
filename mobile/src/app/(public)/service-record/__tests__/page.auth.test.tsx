@@ -495,7 +495,7 @@ describe("ServiceRecordPage authentication restoration", () => {
 
         await user.click(await screen.findByRole("button", { name: "기록 시작" }));
 
-        expect(screen.getByDisplayValue("1회차 · 2026.08.11")).toBeInTheDocument();
+        expect(screen.getByDisplayValue("2026-08-11")).toBeInTheDocument();
         await user.click(screen.getByRole("button", { name: "다음" }));
         await user.click(screen.getByRole("button", { name: "다음" }));
         expect(screen.getByDisplayValue("서버가 보낸 기타서비스")).toBeInTheDocument();
@@ -521,7 +521,7 @@ describe("ServiceRecordPage authentication restoration", () => {
 
         await user.click(await screen.findByRole("button", { name: "기록 시작" }));
 
-        expect(screen.getByDisplayValue("1회차 · 2026.08.12")).toBeInTheDocument();
+        expect(screen.getByDisplayValue("2026-08-12")).toBeInTheDocument();
         await user.click(screen.getByRole("button", { name: "다음" }));
         await user.click(screen.getByRole("button", { name: "다음" }));
         expect(screen.getByDisplayValue("서버 기타 유지")).toBeInTheDocument();
@@ -695,7 +695,7 @@ describe("ServiceRecordPage authentication restoration", () => {
             expect(screen.getByRole("button", { name: "2026.08.12(수)" })).toHaveAttribute("aria-disabled", "true");
             fireEvent.click(day);
             fireEvent.click(screen.getByRole("button", { name: "선택" }));
-            expect(input).toHaveValue("1회차 · 2026.08.13");
+            expect(input).toHaveValue("2026-08-13");
         });
         it("fails closed and offers retry when branch holidays fail", async () => {
             holidayResponse = () => jsonResponse({}, 500);

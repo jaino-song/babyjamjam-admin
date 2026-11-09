@@ -233,11 +233,11 @@ describe("MobileServiceRecordScreen", () => {
         it("keeps the picked service date across review and back", () => {
             const props = makeProps({ screen: "day", day: 1, pageIdx: 0, draft: { _date: "2026-09-23" } });
             const { rerender } = render(<MobileServiceRecordScreen {...props} />);
-            expect(screen.getByLabelText("서비스 제공일")).toHaveValue("1회차 · 2026.09.23");
+            expect(screen.getByLabelText("서비스 제공일")).toHaveValue("2026-09-23");
             rerender(<MobileServiceRecordScreen {...props} pageIdx={3} />);
             expect(screen.queryByLabelText("서비스 제공일")).toBeNull();
             rerender(<MobileServiceRecordScreen {...props} pageIdx={0} />);
-            expect(screen.getByLabelText("서비스 제공일")).toHaveValue("1회차 · 2026.09.23");
+            expect(screen.getByLabelText("서비스 제공일")).toHaveValue("2026-09-23");
         });
 
         it("renders one body per screen: no hidden day page next to the review", () => {
