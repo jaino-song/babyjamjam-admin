@@ -13,7 +13,6 @@ export {
     type ClientBadgeKey,
     type ClientBadgeStatus,
     type ClientBadgeTone,
-    type PendingScheduleChange,
     type Client,
     type CreateClientDto,
     type TerminateServiceDto,

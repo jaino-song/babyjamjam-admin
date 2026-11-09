@@ -538,13 +538,9 @@ describe("contract void workflow", () => {
 });
 
 describe("ClientDetailContent", () => {
-  it("keeps only the four supported detail tabs even with a legacy pending request", () => {
+  it("keeps only the four supported detail tabs", () => {
     renderDetail(null, {
       ...client,
-      pendingScheduleChange: {
-        id: "legacy-request", sessionIndex: 1, fromDate: "2026-10-05", toDate: "2026-10-06",
-        oldEndDate: "2026-10-30", newEndDate: "2026-11-02",
-      },
     });
     expect(screen.getAllByRole("tab").map((tab) => tab.textContent)).toEqual([
       "기본 정보", "계약서 정보", "알림 발송", "제공기록지",
