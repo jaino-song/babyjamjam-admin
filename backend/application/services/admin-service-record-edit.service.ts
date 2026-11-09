@@ -17,7 +17,6 @@ import {
     validateServiceRecordEditText,
 } from "application/policies/service-record-answer-validation.policy";
 import {
-    assignmentWrites,
     buildServiceRecordEditPreview,
     confirmAssignmentWrites,
     draftResumeReplan,
@@ -80,8 +79,6 @@ import { HolidayCalendarService } from "application/services/holiday-calendar.se
 import { ServiceRecordCaseEventBus } from "application/services/service-record-case-event-bus.service";
 import { getServiceRecordFinalizationDueAt } from "domain/constants/service-record-link-message";
 
-// The schedule realignment service reuses the confirm's outer-edge rule from here.
-export { assignmentWrites };
 
 const EDITABLE_HEADER_KEYS = new Set([
     "momName",
