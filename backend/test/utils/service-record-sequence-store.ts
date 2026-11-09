@@ -110,11 +110,6 @@ const COLUMNS: Record<string, Record<string, () => unknown>> = {
         confirmedAt: now, payload: nul, beforeSnapshot: nul, plannedSessions: nul, provenance: nul,
         formVersionAtConfirm: nul, snapshotReference: nul,
     },
-    schedule_change_request: {
-        id: uuid, branchId: nul, scheduleId: nul, clientId: nul, sessionIndex: nul, fromDate: nul, toDate: nul,
-        oldEndDate: nul, newEndDate: nul, status: nul, reason: nul, decidedBy: nul, requestedAt: now,
-        decidedAt: nul,
-    },
     service_record: { id: nul, scheduleId: nul, branchId: nul, serviceRecordCaseId: nul },
     eformsign_doc: { id: nul, branchId: nul, employeeScheduleId: nul, documentKind: nul, serviceRecordCaseId: nul },
 };
@@ -136,7 +131,6 @@ const UNIQUES: Record<string, string[][]> = {
     service_record_token: [["id"]],
     service_record_edit_draft: [["id"]],
     service_record_revision: [["id"], ["serviceRecordCaseId", "revisionNumber"]],
-    schedule_change_request: [["id"]],
     service_record: [["id"], ["scheduleId"]],
     eformsign_doc: [["id"]],
 };
@@ -188,10 +182,6 @@ const KIND_COLUMNS: Record<string, Partial<Record<Kind, string>>> = {
         string: "id branchId serviceRecordCaseId confirmedByUserId snapshotReference",
         int: "revisionNumber formVersionAtConfirm", datetime: "confirmedAt",
         json: "payload beforeSnapshot plannedSessions provenance",
-    },
-    schedule_change_request: {
-        string: "id branchId status reason decidedBy", int: "scheduleId clientId sessionIndex",
-        datetime: "fromDate toDate oldEndDate newEndDate requestedAt decidedAt",
     },
     service_record: { string: "id branchId serviceRecordCaseId", int: "scheduleId" },
     eformsign_doc: { int: "id employeeScheduleId", string: "branchId documentKind serviceRecordCaseId" },
@@ -322,7 +312,6 @@ export class SequenceStore {
     readonly service_record_token: Delegate<"updateMany">;
     readonly service_record_edit_draft: Delegate<"findMany" | "findFirst" | "create" | "updateMany">;
     readonly service_record_revision: Delegate<"findMany" | "findFirst" | "findUnique" | "create">;
-    readonly schedule_change_request: Delegate<"findFirst" | "create" | "update">;
     readonly service_record: Delegate<"updateMany">;
     readonly eformsign_doc: Delegate<"updateMany">;
 
@@ -351,7 +340,6 @@ export class SequenceStore {
         this.service_record_revision = this.delegate("service_record_revision", [
             "findMany", "findFirst", "findUnique", "create",
         ]);
-        this.schedule_change_request = this.delegate("schedule_change_request", ["findFirst", "create", "update"]);
         this.service_record = this.delegate("service_record", ["updateMany"]);
         this.eformsign_doc = this.delegate("eformsign_doc", ["updateMany"]);
     }

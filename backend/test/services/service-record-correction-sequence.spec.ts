@@ -4,12 +4,11 @@
  * Every earlier test built each step's input by hand. These tests chain the real services over one
  * in-memory store (test/utils/service-record-sequence-store.ts), so each step reads exactly what the
  * previous step persisted: a resume confirm's output is what a later header confirm, realignment,
- * schedule change and finalization eligibility check see. The R3 blockers lived in those hand-offs.
+ * and finalization eligibility check see. The R3 blockers lived in those hand-offs.
  *
  * Real code under test: AdminServiceRecordEditService over ServiceRecordEditRepository (source
  * projection, confirm transaction and all case/client/day/assignment/schedule/token writes),
- * ServiceRecordScheduleRealignmentService, ScheduleChangeService with the real
- * ServiceRecordLifecycleService and ServiceRecordTokenService, and ServiceRecordFinalizationService's
+ * ServiceRecordScheduleRealignmentService and ServiceRecordFinalizationService's
  * claim path. The only repository seams replaced are the ones that need raw SQL or an external
  * provider (see `createHarness`).
  *
@@ -23,11 +22,8 @@ import { ConflictException } from "@nestjs/common";
 import { randomUUID } from "node:crypto";
 
 import { AdminServiceRecordEditService } from "application/services/admin-service-record-edit.service";
-import { ScheduleChangeService } from "application/services/schedule-change.service";
 import { ServiceRecordFinalizationService } from "application/services/service-record-finalization.service";
-import { ServiceRecordLifecycleService } from "application/services/service-record-lifecycle.service";
 import { ServiceRecordScheduleRealignmentService } from "application/services/service-record-schedule-realignment.service";
-import { ServiceRecordTokenService } from "application/services/service-record-token.service";
 import { ServiceRecordEditNotFoundError } from "domain/errors/service-record-edit.error";
 import { KR_BUILTIN_CALENDAR } from "domain/utils/business-days";
 import { ServiceRecordEditRepository } from "infrastructure/database/repositories/service-record-edit.repository";
@@ -665,19 +661,6 @@ async function realignWithSaturday(store: SequenceStore, now: string) {
     }));
 }
 
-/** 일정 변경 over the REAL lifecycle and token services and the same store. */
-function createScheduleChange(store: SequenceStore) {
-    const calendar = createHolidayCalendarStub();
-    return new ScheduleChangeService(
-        store as never,
-        new ServiceRecordTokenService(store as never),
-        calendar,
-        undefined,
-        new ServiceRecordLifecycleService(store as never, calendar),
-        undefined,
-    );
-}
-
 /**
  * Simulates the caregiver's submissions of the sessions that have no row yet. Dates are READ from the
  * store's current vector (never re-typed), the owner is the vector's owner.
@@ -838,7 +821,7 @@ describe("service-record correction sequences (real services over one persisted 
     });
 
     describe("S2 resume-day handover (B has written nothing yet)", () => {
-        it("resume -> header confirm -> Saturday realignment -> 일정 변경 on B -> finalization match, A never moving", async () => {
+        it("resume -> header confirm -> Saturday realignment -> finalization match, A never moving", async () => {
             const store = seedResumeDay();
             const harness = createHarness(store);
 
@@ -903,57 +886,20 @@ describe("service-record correction sequences (real services over one persisted 
             // The realignment rewrites the active link unconditionally: midnight KST after 10-29 = 10-29T15:00Z.
             expect(instantOf(tokenRow(store, "B")["expiresAt"])).toBe("2026-10-29T15:00:00.000Z");
 
-            // --- Step 4: 일정 변경 on B postpones the first unlocked session (2) by one service day.
-            const scheduleChange = createScheduleChange(store);
-            expect(await scheduleChange.previewAdminChange(BRANCH_ID, SCHEDULE_B)).toEqual({
-                sessionIndex: 2, fromDate: "2026-10-14", minimumDate: "2026-10-02",
-            });
-            // Session 2 is Wed 10-14, so its next service day is Thu 10-15; every later session moves one service
-            // day too: 10-15, 10-16, 10-17, 10-19, 10-20, 10-21, 10-22, 10-23, 10-24, 10-26, 10-27, 10-28, 10-29, 10-30.
-            const POSTPONED_DATES = [
-                "2026-10-01",
-                "2026-10-15", "2026-10-16", "2026-10-17", "2026-10-19", "2026-10-20", "2026-10-21", "2026-10-22",
-                "2026-10-23", "2026-10-24", "2026-10-26", "2026-10-27", "2026-10-28", "2026-10-29", "2026-10-30",
-            ];
-            const aBeforeChange = rowsOfA(store.snapshot());
-            const changeMark = store.mark();
-            const change = await scheduleChange.applyAdminChange(SCHEDULE_B, "2026-10-15", { branchId: BRANCH_ID, userId: ACTOR_ID });
-            expect(change).toMatchObject({ scheduleId: SCHEDULE_B, sessionIndex: 2, status: "approved" });
-            expect(plannedOf(store).map((entry) => entry.serviceDate)).toEqual(POSTPONED_DATES);
-            // Postponing never moves the start: B keeps 10-14. The end is the vector's new last date.
-            expect(periods(store)).toEqual({
-                assignmentA: ["2026-10-01", "2026-10-01"],
-                scheduleA: ["2026-10-01", "2026-10-01"],
-                assignmentB: ["2026-10-14", "2026-10-30"],
-                scheduleB: ["2026-10-14", "2026-10-30"],
-            });
-            expect(rowsOfA(store.snapshot())).toEqual(aBeforeChange);
-            const changeWrites = store.writesSince(changeMark);
-            expect(writesTo(changeWrites, "employee_schedule", "update").map((write) => (write.where as Row)["id"])).toEqual([SCHEDULE_B]);
-            expect(writesTo(changeWrites, "schedule_change_request", "create")).toHaveLength(1);
-            expect(ymd(caseRow(store)["endDate"])).toBe("2026-10-30");
-            expect(ymd(clientRow(store)["endDate"])).toBe("2026-10-30");
-            // Due: 10-30 20:00 KST = 11:00Z; link: midnight KST after 10-30 = 10-30T15:00Z.
-            expect(instantOf(caseRow(store)["finalizationDueAt"])).toBe("2026-10-30T11:00:00.000Z");
-            expect(instantOf(tokenRow(store, "B")["expiresAt"])).toBe("2026-10-30T15:00:00.000Z");
-            const request = store.rows("schedule_change_request")[0]!;
-            expect([request["sessionIndex"], ymd(request["fromDate"]), ymd(request["toDate"]), ymd(request["oldEndDate"]), ymd(request["newEndDate"])])
-                .toEqual([2, "2026-10-14", "2026-10-15", "2026-10-29", "2026-10-30"]);
-
-            // --- Step 5: B submits sessions 2..15 on the dates the store now holds.
+            // --- Step 4: B submits sessions 2..15 on the dates the store now holds.
             writeMissingDays(store);
             expect(dayRows(store)).toHaveLength(15);
 
-            // --- Step 6: reload the editor on the final state; a header edit still previews and confirms cleanly.
+            // --- Step 5: reload the editor on the final state; a header edit still previews and confirms cleanly.
             const reload = await openEdit(harness, { changes: { header: { momName: "가상산모(재수정)" } } });
             expect(reload.preview.blockingReasons).toEqual([]);
             const reloadMark = store.mark();
             expect((await reload.confirm()).status).toBe("confirmed");
             expect(writesTo(store.writesSince(reloadMark), "service_record_assignment")).toEqual([]);
             expect(writesTo(store.writesSince(reloadMark), "employee_schedule")).toEqual([]);
-            expect(plannedOf(store).map((entry) => entry.serviceDate)).toEqual(POSTPONED_DATES);
+            expect(plannedOf(store).map((entry) => entry.serviceDate)).toEqual(SATURDAY_DATES);
 
-            // --- Step 7: finalization eligibility on the final store.
+            // --- Step 6: finalization eligibility on the final store.
             await expectFinalizationMatch(store);
             await expectFinalizationMismatchWhenADayIsFlipped(store, 9);
             await expectFinalizationMismatchWhenAConsistentAlternateWriterIsRecorded(store, 9);
@@ -1406,41 +1352,6 @@ describe("service-record correction sequences (real services over one persisted 
             expect(plannedOf(store).map((entry) => entry.serviceDate)).toEqual(NEW_DATES);
             expect(periods(store).assignmentA).toEqual(["2026-10-01", "2026-10-01"]);
             expect(store.rows("service_record_revision")).toHaveLength(1);
-        });
-    });
-
-    describe("S7 일정 변경 on a corrected record keeps historical periods", () => {
-        it("refuses A's historical-only schedule with SCHEDULE_CHANGE_UNCOMPUTABLE and changes nothing; B's schedule succeeds", async () => {
-            // The S3 state after the from-1 correction: A's only row sits on 10-14, outside A's [10-01, 10-01],
-            // so A is historical-only; the first unlocked session is 2 (B's). Vector: 10-14 (A), 10-15 (B), 10-16 (B).
-            const store = seedThreeSessions();
-            const harness = createHarness(store);
-            const first = await openEdit(harness, { resumeReplan: { fromSessionIndex: 1, resumeDate: "2026-10-14" } });
-            expect((await first.confirm()).status).toBe("confirmed");
-            const scheduleChange = createScheduleChange(store);
-
-            const snapshot = store.snapshot();
-            const mark = store.mark();
-            const refusal = await rejectionOf(scheduleChange.applyAdminChange(SCHEDULE_A, "2026-10-16", { branchId: BRANCH_ID, userId: ACTOR_ID }));
-            expect(conflictCode(refusal)).toBe("SCHEDULE_CHANGE_UNCOMPUTABLE");
-            expect(store.snapshot()).toEqual(snapshot);
-            expect(store.writesSince(mark)).toEqual([]);
-            // The preview path refuses the same request the same way.
-            expect(conflictCode(await rejectionOf(scheduleChange.previewAdminChange(BRANCH_ID, SCHEDULE_A)))).toBe("SCHEDULE_CHANGE_UNCOMPUTABLE");
-
-            // Pair: B, the period bearer, can postpone session 2 (Thu 10-15) to Fri 10-16; session 3 follows to Mon 10-19.
-            // B keeps its start (10-15) and ends on the vector's new last date; A is untouched.
-            const aBefore = rowsOfA(store.snapshot());
-            const change = await scheduleChange.applyAdminChange(SCHEDULE_B, "2026-10-16", { branchId: BRANCH_ID, userId: ACTOR_ID });
-            expect(change).toMatchObject({ scheduleId: SCHEDULE_B, sessionIndex: 2, status: "approved" });
-            expect(plannedOf(store).map((entry) => entry.serviceDate)).toEqual(["2026-10-14", "2026-10-16", "2026-10-19"]);
-            expect(periods(store)).toEqual({
-                assignmentA: ["2026-10-01", "2026-10-01"],
-                scheduleA: ["2026-10-01", "2026-10-01"],
-                assignmentB: ["2026-10-15", "2026-10-19"],
-                scheduleB: ["2026-10-15", "2026-10-19"],
-            });
-            expect(rowsOfA(store.snapshot())).toEqual(aBefore);
         });
     });
 

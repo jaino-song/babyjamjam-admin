@@ -1,13 +1,10 @@
-import { ConflictException } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { Prisma, PrismaClient } from "@prisma/client";
 
-import { ScheduleChangeService } from "application/services/schedule-change.service";
 import {
     ExpectedEformsignMirrorGeneration,
     LinkMirroredEformsignDocByPhoneUsecase,
 } from "application/usecases/eformsign-doc/link-mirrored-eformsign-doc-by-phone.usecase";
-import { ServiceRecordTokenService } from "application/services/service-record-token.service";
 import { PrismaService } from "infrastructure/database/prisma.service";
 
 import {
@@ -28,7 +25,6 @@ type FixtureIds = {
     employeeIds: number[];
     scheduleIds: number[];
     caseIds: string[];
-    requestIds: string[];
     documentRowIds: number[];
 };
 
@@ -56,7 +52,6 @@ function newFixture(): FixtureIds {
         employeeIds: [],
         scheduleIds: [],
         caseIds: [],
-        requestIds: [],
         documentRowIds: [],
     };
 }
@@ -150,19 +145,6 @@ function withMirrorClientMatchBarrier(
     return withQueryBarrier(
         client,
         ({ model, operation }) => model === "client" && operation === "findMany",
-        barrier,
-        "after",
-    );
-}
-
-function withScheduleRequestReadBarrier(
-    client: PrismaClient,
-    barrier: Barrier,
-): PrismaClient {
-    return withQueryBarrier(
-        client,
-        ({ model, operation }) =>
-            model === "schedule_change_request" && operation === "findFirst",
         barrier,
         "after",
     );
@@ -332,104 +314,8 @@ async function createExistingClient(branchId: string, phone: string): Promise<{
     return { clientId: client.id, caseId: record.id };
 }
 
-async function createScheduleFixture(): Promise<{
-    branchId: string;
-    clientId: number;
-    employeeId: number;
-    scheduleId: number;
-    caseId: string;
-    requestId: string;
-    oldEndDate: Date;
-    expectedEndDate: Date;
-    expectedServiceDate: Date;
-}> {
-    const token = fixtureToken();
-    const branchId = await createBranch(`task3-schedule-race-${token}`);
-    const employee = await prisma.employee.create({
-        data: {
-            name: "Task 3 Race Employee",
-            phone: `010${String((process.pid * 3_000 + fixtureSequence) % 100_000_000).padStart(8, "0")}`,
-            workArea: ["task3"],
-            grade: "산모신생아 건강관리사",
-            branchId,
-        },
-        select: { id: true },
-    });
-    activeFixture.employeeIds.push(employee.id);
-    const oldEndDate = atUtcDate("2026-09-02");
-    const expectedEndDate = atUtcDate("2026-09-03");
-    const expectedServiceDate = atUtcDate("2026-09-02");
-    const client = await prisma.client.create({
-        data: {
-            name: "Task 3 Schedule Client",
-            bookingConfirmedAt: new Date("2026-01-01"),
-            voucherClient: false,
-            branchId,
-            duration: 2,
-            startDate: atUtcDate("2026-09-01"),
-            endDate: oldEndDate,
-        },
-        select: { id: true },
-    });
-    activeFixture.clientIds.push(client.id);
-    const schedule = await prisma.employee_schedule.create({
-        data: {
-            branchId,
-            clientId: client.id,
-            primaryEmployeeId: employee.id,
-            workAddress: "task3",
-            startDate: atUtcDate("2026-09-01"),
-            endDate: oldEndDate,
-        },
-        select: { id: true },
-    });
-    activeFixture.scheduleIds.push(schedule.id);
-    const record = await prisma.service_record_case.create({
-        data: {
-            branchId,
-            clientId: client.id,
-            startDate: atUtcDate("2026-09-01"),
-            endDate: oldEndDate,
-            requiredSessionCount: 2,
-        },
-        select: { id: true },
-    });
-    activeFixture.caseIds.push(record.id);
-    const request = await prisma.schedule_change_request.create({
-        data: {
-            branchId,
-            scheduleId: schedule.id,
-            clientId: client.id,
-            sessionIndex: 1,
-            fromDate: atUtcDate("2026-09-01"),
-            toDate: expectedServiceDate,
-            oldEndDate,
-            newEndDate: expectedEndDate,
-            status: "pending",
-        },
-        select: { id: true },
-    });
-    activeFixture.requestIds.push(request.id);
-    return {
-        branchId,
-        clientId: client.id,
-        employeeId: employee.id,
-        scheduleId: schedule.id,
-        caseId: record.id,
-        requestId: request.id,
-        oldEndDate,
-        expectedEndDate,
-        expectedServiceDate,
-    };
-}
-
 async function cleanupFixture(fixture: FixtureIds): Promise<void> {
     if (!prisma) return;
-    if (fixture.requestIds.length > 0) {
-        await prisma.schedule_change_request.deleteMany({
-            where: { id: { in: fixture.requestIds } },
-        });
-    }
     if (fixture.clientIds.length > 0) {
         // eDocId is a separate FK to eformsign_doc.document_id and must be
         // cleared before the exact document rows are removed.
@@ -476,19 +362,7 @@ async function cleanupFixture(fixture: FixtureIds): Promise<void> {
     }
 }
 
-function realTokenService(): ServiceRecordTokenService {
-    return new ServiceRecordTokenService(prisma as unknown as PrismaService);
-}
-
-function expectRequestNotPending(error: unknown): void {
-    expect(error).toBeInstanceOf(ConflictException);
-    expect((error as ConflictException).getStatus()).toBe(409);
-    expect((error as ConflictException).getResponse()).toEqual(
-        expect.objectContaining({ code: "REQUEST_NOT_PENDING" }),
-    );
-}
-
-describe("service-record mirror and schedule request races (real PostgreSQL)", () => {
+describe("service-record mirror races (real PostgreSQL)", () => {
     beforeAll(async () => {
         // This guard intentionally runs before createApproved... constructs a client.
         assertApprovedServiceRecordWriteLockDatabaseTarget();
@@ -716,161 +590,6 @@ describe("service-record mirror and schedule request races (real PostgreSQL)", (
                 detailSyncedAt: changedSync,
             });
             await expect(prisma.client.count({ where: { phoneNormalized: phone } })).resolves.toBe(0);
-        });
-    });
-
-    describeE2E("schedule-change request races", () => {
-        it("approves a duplicate request once and never downgrades the terminal row to stale", async () => {
-            const fixture = await createScheduleFixture();
-            const barrier = createBarrier(2);
-            const leftClient = createApprovedServiceRecordWriteLockClient();
-            const rightClient = createApprovedServiceRecordWriteLockClient();
-            await Promise.all([leftClient.$connect(), rightClient.$connect()]);
-            const leftService = new ScheduleChangeService(
-                withScheduleRequestReadBarrier(leftClient, barrier) as unknown as PrismaService,
-                realTokenService(), createHolidayCalendarStub(),
-            );
-            const rightService = new ScheduleChangeService(
-                withScheduleRequestReadBarrier(rightClient, barrier) as unknown as PrismaService,
-                realTokenService(), createHolidayCalendarStub(),
-            );
-            const leftUserId = crypto.randomUUID();
-            const rightUserId = crypto.randomUUID();
-            const leftApproval = leftService.approve(fixture.requestId, {
-                branchId: fixture.branchId,
-                userId: leftUserId,
-            });
-            const rightApproval = rightService.approve(fixture.requestId, {
-                branchId: fixture.branchId,
-                userId: rightUserId,
-            });
-
-            let results: PromiseSettledResult<unknown>[];
-            try {
-                await barrier.waitUntilReady();
-                barrier.release();
-                results = await withTimeout(
-                    Promise.allSettled([leftApproval, rightApproval]),
-                    "duplicate approve race",
-                );
-            } finally {
-                barrier.release();
-                await Promise.allSettled([leftApproval, rightApproval]);
-                await Promise.all([leftClient.$disconnect(), rightClient.$disconnect()]);
-            }
-
-            expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
-            const rejected = results.find((result) => result.status === "rejected");
-            expect(rejected?.status).toBe("rejected");
-            if (rejected?.status === "rejected") expectRequestNotPending(rejected.reason);
-
-            const request = await prisma.schedule_change_request.findUnique({
-                where: { id: fixture.requestId },
-                select: { status: true, decidedBy: true, reason: true },
-            });
-            expect(request?.status).toBe("approved");
-            expect([leftUserId, rightUserId]).toContain(request?.decidedBy);
-            const schedule = await prisma.employee_schedule.findUnique({
-                where: { id: fixture.scheduleId },
-                select: { endDate: true },
-            });
-            const client = await prisma.client.findUnique({
-                where: { id: fixture.clientId },
-                select: { endDate: true },
-            });
-            expect(schedule?.endDate).toEqual(fixture.expectedEndDate);
-            expect(client?.endDate).toEqual(fixture.expectedEndDate);
-            expect(await prisma.service_record_day.count({
-                where: { serviceRecordCaseId: fixture.caseId, caseSessionIndex: 1 },
-            })).toBe(1);
-            await expect(prisma.service_record_day.findFirst({
-                where: { serviceRecordCaseId: fixture.caseId, caseSessionIndex: 1 },
-                select: { serviceDate: true },
-            })).resolves.toEqual({ serviceDate: fixture.expectedServiceDate });
-        });
-
-        it("lets approve or reject win once while preserving the matching schedule outcome", async () => {
-            const fixture = await createScheduleFixture();
-            const barrier = createBarrier(2);
-            const approveClient = createApprovedServiceRecordWriteLockClient();
-            const rejectClient = createApprovedServiceRecordWriteLockClient();
-            await Promise.all([approveClient.$connect(), rejectClient.$connect()]);
-            const approvalService = new ScheduleChangeService(
-                withScheduleRequestReadBarrier(approveClient, barrier) as unknown as PrismaService,
-                realTokenService(), createHolidayCalendarStub(),
-            );
-            const rejectionService = new ScheduleChangeService(
-                withScheduleRequestReadBarrier(rejectClient, barrier) as unknown as PrismaService,
-                realTokenService(), createHolidayCalendarStub(),
-            );
-            const approvalUserId = crypto.randomUUID();
-            const rejectionUserId = crypto.randomUUID();
-            const approval = approvalService.approve(fixture.requestId, {
-                branchId: fixture.branchId,
-                userId: approvalUserId,
-            });
-            const rejection = rejectionService.reject(
-                fixture.requestId,
-                { branchId: fixture.branchId, userId: rejectionUserId },
-                "경합 회귀 테스트",
-            );
-
-            let results: PromiseSettledResult<unknown>[];
-            try {
-                await barrier.waitUntilReady();
-                barrier.release();
-                results = await withTimeout(
-                    Promise.allSettled([approval, rejection]),
-                    "approve/reject race",
-                );
-            } finally {
-                barrier.release();
-                await Promise.allSettled([approval, rejection]);
-                await Promise.all([approveClient.$disconnect(), rejectClient.$disconnect()]);
-            }
-
-            expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
-            const rejected = results.find((result) => result.status === "rejected");
-            expect(rejected?.status).toBe("rejected");
-            if (rejected?.status === "rejected") expectRequestNotPending(rejected.reason);
-
-            const request = await prisma.schedule_change_request.findUnique({
-                where: { id: fixture.requestId },
-                select: { status: true, decidedBy: true, reason: true },
-            });
-            const terminalStatus = request?.status;
-            expect(["approved", "rejected"]).toContain(terminalStatus);
-            expect(terminalStatus).not.toBe("stale");
-            const winnerUserId = terminalStatus === "approved"
-                ? approvalUserId
-                : rejectionUserId;
-            expect(request?.decidedBy).toBe(winnerUserId);
-            const schedule = await prisma.employee_schedule.findUnique({
-                where: { id: fixture.scheduleId },
-                select: { endDate: true },
-            });
-            const client = await prisma.client.findUnique({
-                where: { id: fixture.clientId },
-                select: { endDate: true },
-            });
-            const days = await prisma.service_record_day.findMany({
-                where: { serviceRecordCaseId: fixture.caseId },
-                select: { caseSessionIndex: true, serviceDate: true },
-            });
-            if (terminalStatus === "approved") {
-                expect(request?.reason).toBeNull();
-                expect(schedule?.endDate).toEqual(fixture.expectedEndDate);
-                expect(client?.endDate).toEqual(fixture.expectedEndDate);
-                expect(days).toEqual([{
-                    caseSessionIndex: 1,
-                    serviceDate: fixture.expectedServiceDate,
-                }]);
-            } else {
-                expect(request?.reason).toBe("경합 회귀 테스트");
-                expect(schedule?.endDate).toEqual(fixture.oldEndDate);
-                expect(client?.endDate).toEqual(fixture.oldEndDate);
-                expect(days).toEqual([]);
-            }
         });
     });
 });

@@ -7,12 +7,10 @@ import { SystemSettingModule } from "module/system-setting.module";
 import { EformsignDocModule } from "module/eformsign-doc.module";
 import { AdminServiceRecordController } from "interface/controllers/admin-service-record.controller";
 import { ServiceRecordEntryController } from "interface/controllers/service-record-entry.controller";
-import { ScheduleChangeController } from "interface/controllers/schedule-change.controller";
 import { AdminServiceRecordService } from "application/services/admin-service-record.service";
 import { AdminServiceRecordEditService } from "application/services/admin-service-record-edit.service";
 import { ServiceRecordCaseEventBus } from "application/services/service-record-case-event-bus.service";
 import { ServiceRecordEntryService } from "application/services/service-record-entry.service";
-import { ScheduleChangeService } from "application/services/schedule-change.service";
 import { ServiceRecordTokenService } from "application/services/service-record-token.service";
 import { ServiceRecordLinkService } from "application/services/service-record-link.service";
 import { ServiceRecordGuard } from "infrastructure/auth/service-record.guard";
@@ -37,13 +35,12 @@ import { HolidayModule } from "./holiday.module";
  */
 @Module({
     imports: [DatabaseModule, AligoModule, MessageModule, SystemTemplateModule, SystemSettingModule, EformsignDocModule, HolidayModule],
-    controllers: [ServiceRecordEntryController, ScheduleChangeController, AdminServiceRecordController],
+    controllers: [ServiceRecordEntryController, AdminServiceRecordController],
     providers: [
         AdminServiceRecordService,
         AdminServiceRecordEditService,
         ServiceRecordCaseEventBus,
         ServiceRecordEntryService,
-        ScheduleChangeService,
         ServiceRecordTokenService,
         ServiceRecordLinkService,
         ServiceRecordLifecycleService,

@@ -12,14 +12,12 @@ import { ClientController } from "interface/controllers/client.controller";
 import { DocumentCategoryController } from "interface/controllers/document-category.controller";
 import { EmployeeController } from "interface/controllers/employee.controller";
 import { EmployeeScheduleController } from "interface/controllers/employee-schedule.controller";
-import { ScheduleChangeController } from "interface/controllers/schedule-change.controller";
 import { CallIngestTokenController } from "interface/controllers/call-ingest-token.controller";
 import { BankAccountInfoService } from "application/services/bank-account-info.service";
 import { ClientService } from "application/services/client.service";
 import { DocumentCategoryService } from "application/services/document-category.service";
 import { EmployeeService } from "application/services/employee.service";
 import { EmployeeScheduleService } from "application/services/employee-schedule.service";
-import { ScheduleChangeService } from "application/services/schedule-change.service";
 import { CallIngestTokenService } from "application/services/call-ingest-token.service";
 import { BranchManagerGuard } from "infrastructure/auth/branch-manager.guard";
 import { JwtGuard } from "infrastructure/auth/jwt.guard";
@@ -59,7 +57,6 @@ describe("branch-manager role policy (HTTP integration)", () => {
     let clientService: Record<string, jest.Mock>;
     let categoryService: Record<string, jest.Mock>;
     let scheduleService: Record<string, jest.Mock>;
-    let scheduleChangeService: Record<string, jest.Mock>;
     let tokenService: Record<string, jest.Mock>;
     let branchFindUnique: jest.Mock;
     let membershipFindUnique: jest.Mock;
@@ -105,11 +102,6 @@ describe("branch-manager role policy (HTTP integration)", () => {
             update: jest.fn().mockResolvedValue({ id: 1 }),
             delete: jest.fn().mockResolvedValue(undefined),
         };
-        scheduleChangeService = {
-            applyAdminChange: jest.fn().mockResolvedValue({ id: "change-1" }),
-            approve: jest.fn().mockResolvedValue({ id: "change-1" }),
-            reject: jest.fn().mockResolvedValue({ id: "change-1" }),
-        };
         tokenService = {
             createToken: jest.fn().mockResolvedValue({ id: "token-1", token: "secret" }),
             list: jest.fn().mockResolvedValue([]),
@@ -125,7 +117,6 @@ describe("branch-manager role policy (HTTP integration)", () => {
                 DocumentCategoryController,
                 EmployeeController,
                 EmployeeScheduleController,
-                ScheduleChangeController,
                 CallIngestTokenController,
             ],
             providers: [
@@ -147,7 +138,6 @@ describe("branch-manager role policy (HTTP integration)", () => {
                 { provide: DocumentCategoryService, useValue: categoryService },
                 { provide: EmployeeService, useValue: employeeService },
                 { provide: EmployeeScheduleService, useValue: scheduleService },
-                { provide: ScheduleChangeService, useValue: scheduleChangeService },
                 { provide: CallIngestTokenService, useValue: tokenService },
             ],
         })
@@ -190,18 +180,6 @@ describe("branch-manager role policy (HTTP integration)", () => {
         {
             name: "employee schedule delete",
             invoke: () => request(app.getHttpServer()).delete("/employee-schedules").query({ id: "1" }),
-        },
-        {
-            name: "schedule change apply",
-            invoke: () => request(app.getHttpServer()).post("/schedule-change-requests/schedules/1/apply").send({ toDate: "2026-10-11" }),
-        },
-        {
-            name: "schedule change approve",
-            invoke: () => request(app.getHttpServer()).post("/schedule-change-requests/change-1/approve"),
-        },
-        {
-            name: "schedule change reject",
-            invoke: () => request(app.getHttpServer()).post("/schedule-change-requests/change-1/reject").send({ reason: "reschedule" }),
         },
         {
             name: "client activation",

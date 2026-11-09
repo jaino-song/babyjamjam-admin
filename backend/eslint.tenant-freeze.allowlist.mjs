@@ -37,7 +37,6 @@ export const prismaServiceImportAllowlist = [
     "application/services/message-sender-approval.service.ts",
     "application/services/message-template-automation-lock.service.ts",
     "application/services/message-trigger.service.ts",
-    "application/services/schedule-change.service.ts",
     "application/services/service-record-entry.service.ts",
     "application/services/service-record-finalization.service.ts",
     "application/services/service-record-lifecycle.service.ts",

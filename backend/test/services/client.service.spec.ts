@@ -137,9 +137,6 @@ describe("ClientService", () => {
                 findFirst: jest.fn().mockResolvedValue(null),
                 updateMany: jest.fn().mockResolvedValue({ count: 0 }),
             },
-            schedule_change_request: {
-                findMany: jest.fn().mockResolvedValue([]),
-            },
             service_record_case: {
                 findMany: jest.fn().mockResolvedValue([]),
             },

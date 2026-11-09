@@ -3,7 +3,7 @@ import { SERVICE_STATUS, type ServiceStatusType } from "domain/value-objects/ser
 
 import { assertThrowawayTarget, closeIntegrityPrisma, createIntegrityPrisma, describeReal, type IntegrityPrisma } from "../helpers/real-db";
 import { RowTracker } from "../helpers/tracker";
-import { createBranch, createClient, createEmployee, createEmployeeSchedule } from "../helpers/factories";
+import { createBranch, createClient } from "../helpers/factories";
 import { invariant } from "../helpers/known-defect";
 import {
     addDays,
@@ -11,7 +11,6 @@ import {
     isoDateInKorea,
     makeClientService,
     makeDueDateScheduler,
-    makeScheduleChangeService,
 } from "./test-helpers";
 
 jest.setTimeout(120_000);
@@ -21,11 +20,10 @@ jest.setTimeout(120_000);
  *
  * Invariant: after ANY write that moves `start_date` / `end_date`, the stored
  * `service_status` equals `computeServiceStatus(start, end, bookingConfirmedAt)`
- * unless the status is manual (`terminated` / `replacement_requested`). Three
+ * unless the status is manual (`terminated` / `replacement_requested`). Two
  * real writers are audited: the ordinary admin update
  * (`ClientService.update`), the hourly due-date scheduler
- * (`ClientDueDateSchedulerService`), and the admin session move
- * (`ScheduleChangeService.applyAdminChange`). The lazy background pass on the
+ * (`ClientDueDateSchedulerService`). The lazy background pass on the
  * next list read remains the safety net for time-based drift without a write.
  */
 describeReal("SI-CLIENT-01 stored service_status drifts from dates after real writes", () => {
@@ -147,48 +145,6 @@ describeReal("SI-CLIENT-01 stored service_status drifts from dates after real wr
             expect(row.startDate).toEqual(dbDate(kstToday));
             expect(row.serviceStatus).toBe(SERVICE_STATUS.ACTIVE);
             await assertStoredMatchesComputed(client.id, "transactional due-date scheduler");
-        },
-    );
-
-    invariant(
-        "SI-CLIENT-01",
-        "an admin session move via ScheduleChangeService.applyAdminChange leaves the stored serviceStatus stale",
-        async () => {
-            const startDate = addDays(kstToday, -20);
-            const client = await createConfirmedActiveClient({
-                startDate,
-                endDate: addDays(kstToday, 10),
-            });
-            await handle.raw.client.update({
-                where: { id: client.id },
-                data: { duration: 12 },
-            });
-            const employee = await createEmployee(handle.raw, tracker, { branchId });
-            const schedule = await createEmployeeSchedule(handle.raw, tracker, {
-                clientId: client.id,
-                primaryEmployeeId: employee.id,
-            }, {
-                branchId,
-                startDate: dbDate(startDate),
-                endDate: dbDate(addDays(kstToday, 10)),
-            });
-            await handle.raw.service_record_case.create({
-                data: { branchId, clientId: client.id, requiredSessionCount: 12 },
-            });
-
-            const changeService = makeScheduleChangeService(handle.service);
-            // Move session 1 (the service start) 40 days out: the client's
-            // start date moves with it, so the computed status becomes waiting.
-            const result = await changeService.applyAdminChange(
-                schedule.id,
-                addDays(kstToday, 40),
-                { branchId },
-                { allowNonBusinessDay: true },
-            );
-            if (!result || !result.startDate) {
-                throw new Error("SI-CLIENT-01 applyAdminChange did not move the client start date — write path did not run");
-            }
-            await assertStoredMatchesComputed(client.id, "ScheduleChangeService.applyAdminChange");
         },
     );
 
