@@ -77530,6 +77530,81 @@
       "spec_mapping_note": "Registered codes only"
     },
     {
+      "id": "owner-a270f4ad0a2a",
+      "path": "backend/application/services/service-record-period-mismatch.service.ts",
+      "root": "backend/application/",
+      "classification": "migrated",
+      "reason": "Added by locked-day-any-caregiver (admin [유지]/[변경] out-of-period keep/fit API, called from AdminServiceRecordService.keepPeriodMismatch/fitPeriodMismatch in one transaction); discovered unclassified by the raw-error intake gate. Fully on-contract: every throw is a registered problem body. Case or client missing for the caller branch on the first read -> NotFoundException(codeOnlyProblemBody RESOURCE_NOT_FOUND) 404; case/client gone or replaced on the locked reread -> ConflictException(codeOnlyProblemBody SERVICE_RECORD_WRITE_TARGET_CHANGED) 409; case in an immutable finalization status -> ConflictException(codeOnlyProblemBody SERVICE_RECORD_FINALIZED) 409; keep with empty/duplicate/non-integer/not-out-of-period sessionIndexes -> BadRequestException(problemBody VALIDATION_FAILED, pointer /sessionIndexes, INVALID_VALUE, body) 400. The catch in servicePeriodSessionCount swallows only UnsupportedKoreanHolidayYearError (returns the stored count) and rethrows everything else. No new codes.",
+      "seams": [
+        {
+          "line": 1,
+          "kinds": [
+            "raw_http_exception"
+          ]
+        },
+        {
+          "line": 63,
+          "kinds": [
+            "catch_boundary"
+          ]
+        },
+        {
+          "line": 68,
+          "kinds": [
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 84,
+          "kinds": [
+            "raw_http_exception",
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 97,
+          "kinds": [
+            "raw_http_exception",
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 100,
+          "kinds": [
+            "raw_http_exception",
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 127,
+          "kinds": [
+            "raw_http_exception",
+            "throw_or_reject"
+          ]
+        }
+      ],
+      "discovery_task_id": "locked-day-any-caregiver-period-mismatch-intake",
+      "spec_ids": [
+        "EM-CAT-01",
+        "EM-CORE-01",
+        "EM-ARCH-01"
+      ],
+      "public_codes": [],
+      "outcome_evidence": null,
+      "consumer_paths": [
+        "HTTP admin-service-record.controller (keepPeriodMismatch, fitPeriodMismatch) via AdminServiceRecordService"
+      ],
+      "test_evidence": [
+        "backend/test/services/service-record-period-mismatch.service.spec.ts",
+        "backend/test/services/admin-service-record.service.spec.ts",
+        "backend/interface/controllers/admin-service-record.controller.spec.ts"
+      ],
+      "followup_task": null,
+      "review_task": null,
+      "spec_mapping_status": "mapped-em-v1",
+      "spec_mapping_note": "Registered codes only"
+    },
+    {
       "id": "owner-202b8665a89c",
       "path": "backend/application/usecases/service-record/service-record-edit-agent-capabilities.provider.ts",
       "root": "backend/application/",
