@@ -227,3 +227,18 @@ describe("DailyItemField", () => {
         expect(document.getElementById(id!)).toBe(screen.getByRole("spinbutton", { name: "식사" }));
     });
 });
+
+it.each(["perineum", "sitzBath", "stool", "paymentConfirmed"])("enlarges %s options and their glyphs", (key) => {
+    setup(key);
+    for (const button of screen.getAllByRole("button")) {
+        expect(button).toHaveClass("text-base");
+        expect(button.querySelector('[aria-hidden="true"]')).toHaveClass("text-xs");
+    }
+});
+
+it("enlarges textarea and stool color input from 16px to 18px", () => {
+    setup("notes");
+    expect(screen.getByRole("textbox")).toHaveClass("text-lg");
+    setup("stool", { draft: { stool: "이상변" } });
+    expect(document.querySelector('input')).toHaveClass("text-lg");
+});

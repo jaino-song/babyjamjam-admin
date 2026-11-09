@@ -150,3 +150,12 @@ describe("ReviewRow", () => {
     expect(container.querySelector(`[data-component="${BASE}_row_value"]`)).not.toBeNull();
   });
 });
+
+it("enlarges the section tag, edit action and review row one step", () => {
+  render(<ReviewSection data-component={BASE} titleId="title" title="산모" tone="mom" onEdit={jest.fn()}>
+    <ReviewRow data-component={`${BASE}_row`} labelId="label" label="항목" value="기록" />
+  </ReviewSection>);
+  expect(screen.getByText("산모")).toHaveClass("text-xs");
+  expect(screen.getByRole("button", { name: "산모 수정" })).toHaveClass("text-sm");
+  expect(screen.getByRole("group", { name: "항목" })).toHaveClass("text-base");
+});

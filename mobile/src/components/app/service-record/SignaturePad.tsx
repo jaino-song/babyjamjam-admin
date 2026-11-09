@@ -133,9 +133,9 @@ export function SignaturePad({
         // The Tailwind classes are the v3 look outside `.srec`; the package's `.srec` classes (kept) still style the old wizard.
         <div data-component={dataComponent} className={`sign-fld mt-4 border-t border-dashed border-v3-border! pt-3.5 ${locked ? "locked" : ""}`}>
             <div className="sign-head mb-2 flex items-baseline justify-between">
-                <label className="lab m-0 text-sm font-semibold text-v3-text">산모 서명</label>
+                <label className="lab m-0 text-base font-semibold text-v3-text">산모 서명</label>
                 {!locked && (
-                    <button type="button" className="sign-clear cursor-pointer border-0 bg-transparent p-0 text-[12.5px] font-bold text-v3-primary" aria-label="서명 지우기" onClick={clearSignature}>
+                    <button type="button" className="sign-clear cursor-pointer border-0 bg-transparent p-0 text-sm font-bold text-v3-primary" aria-label="서명 지우기" onClick={clearSignature}>
                         지우기
                     </button>
                 )}
@@ -157,11 +157,11 @@ export function SignaturePad({
                     onPointerCancel={finishDrawing}
                     onPointerLeave={finishDrawing}
                 />
-                <div className={`pad-hint pointer-events-none absolute inset-0 flex items-center justify-center text-[13.5px] text-v3-text-muted transition-opacity duration-200 ${hasInk || locked ? "opacity-0" : ""}`}>여기에 손가락으로 서명해 주세요</div>
+                <div className={`pad-hint pointer-events-none absolute inset-0 flex items-center justify-center text-base text-v3-text-muted transition-opacity duration-200 ${hasInk || locked ? "opacity-0" : ""}`}>여기에 손가락으로 서명해 주세요</div>
             </div>
-            <p className="sign-note m-0 mt-2 text-xs leading-relaxed text-v3-text-muted">기록 내용을 확인하였음을 서명으로 확인합니다.</p>
+            <p className="sign-note m-0 mt-2 text-sm leading-relaxed text-v3-text-muted">기록 내용을 확인하였음을 서명으로 확인합니다.</p>
             {locked && signedAt && (
-                <span className="signed-chip show mt-2.5 inline-block rounded-full bg-v3-primary-light px-3 py-1 text-xs font-bold text-v3-primary">서명 완료 · {formatSignedAt(signedAt)}</span>
+                <span className="signed-chip show mt-2.5 inline-block rounded-full bg-v3-primary-light px-3 py-1 text-sm font-bold text-v3-primary">서명 완료 · {formatSignedAt(signedAt)}</span>
             )}
         </div>
     );

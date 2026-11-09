@@ -375,3 +375,33 @@ describe("MobileServiceRecordScreen: how-to guide", () => {
         expect(within(guide() as HTMLElement).getByText("1 / 6")).toBeInTheDocument();
     });
 });
+
+it("enlarges status titles while retaining the 48px completion emoji", () => {
+    const { rerender } = render(<MobileServiceRecordScreen {...makeProps({ screen: "invalid", context: null })} />);
+    expect(q("body_invalid-center_title")).toHaveClass("text-xl");
+    expect(q("body_invalid-center_title")?.nextElementSibling).toHaveClass("text-base");
+    rerender(<MobileServiceRecordScreen {...makeProps({ screen: "done" })} />);
+    expect(q("body_done-center_title")).toHaveClass("text-xl");
+    expect(screen.getByText("✅")).toHaveClass("text-5xl");
+});
+
+it("enlarges phone title, help, error, input and submit text one step", () => {
+    render(<MobileServiceRecordScreen {...makeProps({ screen: "phone", context: null, phoneError: "인증 오류", phoneNotice: "안내" })} />);
+    expect(q("body_phone-title")).toHaveClass("text-xl");
+    expect(q("body_phone-help")).toHaveClass("text-base");
+    expect(q("body_phone-notice")).toHaveClass("text-base");
+    expect(q("body_phone-error")).toHaveClass("text-base");
+    expect(q("body_phone-input")).toHaveClass("text-lg");
+    expect(q("body_phone-submit")).toHaveClass("text-base");
+});
+
+it("enlarges service details, fields, delivery options and navigation text one step", () => {
+    render(<MobileServiceRecordScreen {...makeProps({ screen: "service" })} />);
+    expect(q("body_service-title")).toHaveClass("text-xl");
+    expect(q("body_readonly-row")).toHaveClass("text-base");
+    expect(q("body_service-back")).toHaveClass("text-sm");
+    expect(q("body_service-next")).toHaveClass("text-base");
+    expect(document.querySelector('[data-component$="_control"]')).toHaveClass("text-lg");
+    expect(q("body_delivery-field_options_option-0")).toHaveClass("text-base");
+    expect(q("body_delivery-field_options_option-0_indicator")).toHaveClass("text-xs");
+});

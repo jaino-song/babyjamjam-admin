@@ -68,19 +68,19 @@ export function DayPageHead({
                 variant="ghost"
                 size="sm"
                 data-component={child("body_day-back")}
-                className="-ml-3 self-start text-v3-text-muted"
+                className="text-sm -ml-3 self-start text-v3-text-muted"
                 onClick={onBack}
             >
                 {BACK_LABEL}
             </Button>
             {!editing && <div
                 data-component={child("body_date-chip")}
-                className="self-start rounded-full bg-v3-primary-light px-3 py-1 text-sm font-bold text-v3-primary"
+                className="self-start rounded-full bg-v3-primary-light px-3 py-1 text-base font-bold text-v3-primary"
             >
                 {day}회차{currentServiceDate ? ` · ${currentServiceDate.replaceAll("-", ".")}` : ""}
             </div>}
             {dateField}
-            <div className="flex items-center justify-between gap-2"><div data-component={child("body_day-title")} className="text-lg font-bold text-v3-dark">{title}</div>{titleAccessory}</div>
+            <div className="flex items-center justify-between gap-2"><div data-component={child("body_day-title")} className="text-xl font-bold text-v3-dark">{title}</div>{titleAccessory}</div>
             {children}
         </div>
     );
@@ -179,7 +179,7 @@ export function DayPageStep({
             <Input
                 id={SERVICE_DATE_INPUT_ID}
                 data-component={child("body_service-date-field_date-input")}
-                className="text-base focus-visible:border-v3-primary! aria-[invalid=true]:border-v3-burgundy!"
+                className="text-lg focus-visible:border-v3-primary! aria-[invalid=true]:border-v3-burgundy!"
                 aria-describedby={SERVICE_DATE_HELPER_ID}
                 aria-invalid={serviceDateMessage?.tone === "error" ? "true" : undefined}
                 type="text"
@@ -234,7 +234,7 @@ export function DayPageStep({
                 })}
             </div>
             <StickyActionBar data-component={child("body_nav")}>
-                <Button type="button" variant="v3" size="md" onClick={handleNextPage}>
+                <Button className="text-base" type="button" variant="v3" size="md" onClick={handleNextPage}>
                     {editing ? SAVE_SECTION_LABEL : NEXT_LABEL}
                 </Button>
             </StickyActionBar>

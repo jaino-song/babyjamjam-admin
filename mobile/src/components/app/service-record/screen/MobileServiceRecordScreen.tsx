@@ -181,10 +181,10 @@ export function MobileServiceRecordScreen({
             {screen === "invalid" && (
                 <StatusBody data-component={child("body")}>
                     <div data-component={child("body_invalid-center")} className="flex flex-col gap-2">
-                        <div data-component={child("body_invalid-center_title")} className="text-lg font-bold text-v3-dark">
+                        <div data-component={child("body_invalid-center_title")} className="text-xl font-bold text-v3-dark">
                             {INVALID_TITLE}
                         </div>
-                        <p className="text-sm text-v3-text-muted">{invalidReason === "not_found" ? WRONG_LINK_COPY : INVALID_COPY}</p>
+                        <p className="text-base text-v3-text-muted">{invalidReason === "not_found" ? WRONG_LINK_COPY : INVALID_COPY}</p>
                     </div>
                 </StatusBody>
             )}
@@ -276,7 +276,7 @@ export function MobileServiceRecordScreen({
                 <StatusBody data-component={child("body")}>
                     <div data-component={child("body_done-center")} className="flex flex-col items-center gap-3">
                         <span data-component={child("body_done-center_icon")} aria-hidden="true" className="text-5xl">✅</span>
-                        <h2 data-component={child("body_done-center_title")} className="text-lg font-bold text-v3-dark">
+                        <h2 data-component={child("body_done-center_title")} className="text-xl font-bold text-v3-dark">
                             {DONE_TITLE}
                         </h2>
                     </div>

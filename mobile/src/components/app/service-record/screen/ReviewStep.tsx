@@ -116,7 +116,7 @@ export function ReviewStep({
                     onBack={onBack}
                     currentServiceDate={currentServiceDate}
                     title={editing ? `${day}회차 기록 수정` : currentDayPage.title}
-                    titleAccessory={editing ? <StatusBadge data-component={child("body_submitted-badge")} variant="primary">제출완료</StatusBadge> : undefined}
+                    titleAccessory={editing ? <StatusBadge data-component={child("body_submitted-badge")} variant="primary" className="text-xs">제출완료</StatusBadge> : undefined}
                 />
                 {editing && (
                     <ReviewSection data-component={child("body_service-date")} titleId={child("body_service-date_title")} title={SERVICE_DATE_LABEL} tone="baby" onEdit={onOpenDateSheet}>
@@ -130,8 +130,8 @@ export function ReviewStep({
                             </>}
                             tone={currentSession?.serviceDate.slice(0, 10) !== currentServiceDate ? "ok" : "default"}
                         />
-                        {currentSession?.serviceDate.slice(0, 10) !== currentServiceDate && <p data-component={child("body_service-date_help")} className="text-xs text-v3-text-muted">다른 회차 날짜는 바뀌지 않아요.</p>}
-                        {serviceDateError && <p data-component={child("body_service-date_error")} role="alert" className="text-xs text-v3-burgundy">{serviceDateError}</p>}
+                        {currentSession?.serviceDate.slice(0, 10) !== currentServiceDate && <p data-component={child("body_service-date_help")} className="text-sm text-v3-text-muted">다른 회차 날짜는 바뀌지 않아요.</p>}
+                        {serviceDateError && <p data-component={child("body_service-date_error")} role="alert" className="text-sm text-v3-burgundy">{serviceDateError}</p>}
                     </ReviewSection>
                 )}
                 <div data-component={reviewComponent}>
@@ -159,8 +159,8 @@ export function ReviewStep({
                 />
             </div>
             <StickyActionBar data-component={child("body_confirmation-action")}>
-                {currentSession && <Button data-component={child("body_confirmation-action_delete")} type="button" variant="v3-outline" size="md" className="border-v3-burgundy text-v3-burgundy" disabled={busy} onClick={onDeleteSession}>기록 삭제</Button>}
-                <Button type="button" variant="v3" size="md" disabled={submitDisabled} onClick={onOpenSubmitModal}>
+                {currentSession && <Button data-component={child("body_confirmation-action_delete")} type="button" variant="v3-outline" size="md" className="text-base border-v3-burgundy text-v3-burgundy" disabled={busy} onClick={onDeleteSession}>기록 삭제</Button>}
+                <Button className="text-base" type="button" variant="v3" size="md" disabled={submitDisabled} onClick={onOpenSubmitModal}>
                     {SUBMIT_LABEL}
                 </Button>
             </StickyActionBar>

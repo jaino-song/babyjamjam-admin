@@ -132,3 +132,9 @@ describe("CountUnitFieldRow", () => {
     expect(screen.getByLabelText("분유수유 회당")).toBeInTheDocument();
   });
 });
+
+it("enlarges the count to 20px and inherited label/unit to 16px", () => {
+  render(<Harness value="3" />);
+  expect(screen.getByLabelText("모유수유 횟수")).toHaveClass("text-xl");
+  expect(screen.getByText("횟수").closest("label")).toHaveClass("text-base");
+});

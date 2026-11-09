@@ -79,12 +79,12 @@ export function PhoneStep({
                 data-source-component={SOURCE_COMPONENT}
                 className="flex min-w-0 flex-1 flex-col gap-3.5 px-4 pb-6 pt-4"
             >
-                <div data-component={child("body_phone-title")} className="text-lg font-bold text-v3-dark">
+                <div data-component={child("body_phone-title")} className="text-xl font-bold text-v3-dark">
                     {PHONE_TITLE}
                 </div>
-                <p data-component={child("body_phone-help")} className="text-sm text-v3-text-muted">{PHONE_HELP_COPY}</p>
+                <p data-component={child("body_phone-help")} className="text-base text-v3-text-muted">{PHONE_HELP_COPY}</p>
                 {phoneNotice ? (
-                    <p data-component={child("body_phone-notice")} className="text-sm text-v3-text-muted">
+                    <p data-component={child("body_phone-notice")} className="text-base text-v3-text-muted">
                         {phoneNotice}
                     </p>
                 ) : null}
@@ -92,7 +92,7 @@ export function PhoneStep({
                     <p
                         data-component={child("body_phone-error")}
                         role="alert"
-                        className="rounded-[10px] bg-v3-burgundy-light px-3 py-2 text-[13px] font-semibold text-v3-burgundy"
+                        className="rounded-[10px] bg-v3-burgundy-light px-3 py-2 text-base font-semibold text-v3-burgundy"
                     >
                         {phoneError}
                     </p>
@@ -109,7 +109,7 @@ export function PhoneStep({
                     <Input
                         id={PHONE_INPUT_ID}
                         data-component={child("body_phone-input")}
-                        className="text-base focus-visible:border-v3-primary! aria-[invalid=true]:border-v3-burgundy!"
+                        className="text-lg focus-visible:border-v3-primary! aria-[invalid=true]:border-v3-burgundy!"
                         type="tel"
                         inputMode="numeric"
                         autoComplete="tel"
@@ -129,6 +129,7 @@ export function PhoneStep({
             </div>
             <StickyActionBar data-component={child("body_phone-actions")}>
                 <Button
+                    className="text-base"
                     type="button"
                     variant="v3"
                     size="md"

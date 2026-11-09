@@ -92,16 +92,16 @@ export function DayCard({
         CARD_STATE_CLASS[state],
       )}
     >
-      <span data-component={`${dataComponent}_date`} className="text-[11.5px] text-v3-text-muted">
+      <span data-component={`${dataComponent}_date`} className="text-sm text-v3-text-muted">
         {dateLabel}
       </span>
-      <span data-component={`${dataComponent}_title`} className="text-lg font-extrabold leading-tight text-v3-dark">
+      <span data-component={`${dataComponent}_title`} className="text-xl font-extrabold leading-tight text-v3-dark">
         {title}
       </span>
       <span
         data-component={`${dataComponent}_status`}
         className={cn(
-          "mt-[3px] text-[10.5px]",
+          "mt-[3px] text-xs",
           STATUS_EMPHASIS[state] ? "font-bold text-v3-primary" : "text-v3-text-muted",
         )}
       >

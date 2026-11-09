@@ -54,3 +54,11 @@ it("enables session 4 and opens it from the footer when sessions 1 through 3 are
     fireEvent.click(screen.getByRole("button", { name: "다음 회차 입력" }));
     expect(p.onOpenDay).toHaveBeenLastCalledWith(4);
 });
+
+it("enlarges the overview title, help and action text one step", () => {
+    render(<OverviewStep {...props()} onOpenGuide={jest.fn()} />);
+    expect(document.querySelector('[data-component$="_body_overview-title"]')).toHaveClass("text-xl");
+    expect(document.querySelector('[data-component$="_body_overview-help"]')).toHaveClass("text-base");
+    expect(screen.getByRole("button", { name: "사용방법" })).toHaveClass("text-base");
+    expect(screen.getByRole("button", { name: "다음 회차 입력" })).toHaveClass("text-base", "leading-tight");
+});

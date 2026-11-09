@@ -155,3 +155,12 @@ describe("DayPageStep", () => {
         });
     });
 });
+
+it("enlarges the day header, date and navigation text one step", () => {
+    render(<DayPageStep {...makeProps()} />);
+    expect(document.querySelector(`[data-component="${ROOT}_body_day-title"]`)).toHaveClass("text-xl");
+    expect(document.querySelector(`[data-component="${ROOT}_body_date-chip"]`)).toHaveClass("text-base");
+    expect(document.querySelector(`[data-component="${ROOT}_body_day-back"]`)).toHaveClass("text-sm");
+    expect(document.querySelector(`[data-component="${ROOT}_body_service-date-field_date-input"]`)).toHaveClass("text-lg");
+    expect(screen.getByRole("button", { name: "다음" })).toHaveClass("text-base");
+});

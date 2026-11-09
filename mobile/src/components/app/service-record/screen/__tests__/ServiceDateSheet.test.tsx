@@ -97,3 +97,14 @@ it("does not preselect a new empty day's initial calendar date", () => {
     expect(screen.getByRole("button", { name: "2026.11.02(월)" })).toHaveAttribute("aria-pressed", "false");
     expect(screen.getByRole("button", { name: "선택" })).toBeDisabled();
 });
+
+it("enlarges the date sheet title, calendar, annotations and actions one step", () => {
+    render(<ServiceDateSheet {...props({ value: "2026-11-02", context: { ...props().context, sessions: [{ sessionIndex: 1, serviceDate: "2026-11-02", locked: true }] } })} />);
+    expect(screen.getByRole("heading", { name: "1회차 서비스 제공일" })).toHaveClass("text-2xl");
+    expect(screen.getByText("날짜를 골라 주세요.")).toHaveClass("text-sm");
+    expect(screen.getByText("2026년 11월")).toHaveClass("text-base");
+    expect(screen.getByRole("button", { name: "2026.11.02(월) 지금" })).toHaveClass("text-sm", "leading-none");
+    expect(screen.getByText("지금")).toHaveClass("text-xs", "leading-none");
+    expect(screen.getByRole("button", { name: "취소" })).toHaveClass("text-base");
+    expect(screen.getByRole("button", { name: "선택" })).toHaveClass("text-base");
+});
