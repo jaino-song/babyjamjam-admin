@@ -56,6 +56,7 @@ export function OverviewStep({
 }: OverviewStepProps) {
     const child = (suffix: string) => `${root}_${suffix}`;
     const { displayDateForSession } = resolvePlannedDates({ context, day, adminMode: false, draft, defaultDate });
+    const nextSessionIndex = nextOpenDay();
 
     return (
         <>
@@ -88,9 +89,9 @@ export function OverviewStep({
                     {Array.from({ length: context.totalSessions }, (_, index) => index + 1).map((sessionIndex) => {
                         const session = context.sessions.find((row) => row.sessionIndex === sessionIndex);
                         const done = lockedDays.has(sessionIndex);
-                        const open = !done && (sessionIndex === 1 || lockedDays.has(sessionIndex - 1));
+                        const open = !done && sessionIndex === nextSessionIndex && (sessionIndex === 1 || lockedDays.has(sessionIndex - 1));
                         const serviceDate = displayDateForSession(sessionIndex, session);
-                        // Stored rows supply dates; every eligible gap remains independently enterable.
+                        // 저장된 회차만 날짜를 표시하고, 가장 이른 미제출 회차만 입력할 수 있다.
                         const state: DayCardState = done ? "done" : open ? "current" : "locked";
                         const disabled = (!done && !open) || isRecordFinalized;
                         return (
@@ -117,7 +118,7 @@ export function OverviewStep({
                         data-component={child("body_overview-start")}
                         className="h-auto min-h-[46px] whitespace-normal break-keep py-2 leading-tight"
                         disabled={isRecordFinalized}
-                        onClick={() => onOpenDay(nextOpenDay())}
+                        onClick={() => onOpenDay(nextSessionIndex)}
                     >
                         {lockedDays.size ? NEXT_SESSION_LABEL : START_RECORD_LABEL}
                     </Button>
