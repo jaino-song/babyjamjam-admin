@@ -923,13 +923,6 @@ export function ServiceRecordWizard({
                                     onBlur={handleServiceDateBlur}
                                     onChange={(event) => handleServiceDateInput(event.target.value)}
                                 />
-                                {providerDateLocked ? (
-                                    <>
-                                        <p data-component={child("body_service-date-field_schedule-help")} data-slot="muted" className="muted">
-                                            제공일자를 바꾸려면 일정 변경을 요청해 주세요.
-                                        </p>
-                                    </>
-                                ) : null}
                             </div>
                         )}
                         {/* Where no date field is on the page (later pages, admin edit) the date's caution still lives in a field slot: a compact read-only row. */}

@@ -124,7 +124,6 @@ const serviceRecordContext = {
     header: null,
     sessions: [],
     recordStatus: "IN_PROGRESS",
-    pendingScheduleChange: null,
 };
 
 const completeHeader = {

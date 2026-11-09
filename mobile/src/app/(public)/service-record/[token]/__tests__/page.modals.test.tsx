@@ -2,10 +2,16 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 import type { MobileServiceRecordWizardProps } from "@/components/app/service-record/ServiceRecordWizard";
 import { ReviewStep } from "@/components/app/service-record/screen/ReviewStep";
 import { toast } from "@/hooks/use-toast";
+import { captureServiceRecordResponseError } from "@/lib/observability/capture-service-record-error";
 import ServiceRecordPage from "../page";
 
 jest.mock("next/navigation", () => ({ useParams: () => ({ token: "test-token" }) }));
 jest.mock("@/hooks/use-toast", () => ({ toast: jest.fn() }));
+jest.mock("@/lib/observability/capture-service-record-error", () => ({
+    ...jest.requireActual("@/lib/observability/capture-service-record-error"),
+    captureServiceRecordError: jest.fn(),
+    captureServiceRecordResponseError: jest.fn(),
+}));
 jest.mock("@/components/app/service-record/SignaturePad", () => ({ SignaturePad: () => null }));
 jest.mock("@/hooks/useTokenBusinessDayCalendar", () => ({
     useTokenBusinessDayCalendar: () => ({ calendar: { isBusinessDay: () => true }, ready: true, error: null, retry: jest.fn() }),
@@ -108,6 +114,17 @@ it("cancel leaves the record and DELETE untouched; confirm deletes then reloads 
     await waitFor(() => expect(screen.getByTestId("screen")).toHaveTextContent("overview"));
     expect(mockFetch).toHaveBeenCalledWith("/api/service-record/test-token/sessions/1", expect.objectContaining({ method: "DELETE" }));
     expect(toast).toHaveBeenCalledWith({ variant: "success", title: "1회차 기록을 삭제했어요" });
+});
+
+it("captures a failed DELETE as a delete-session response error", async () => {
+    deleteResponse = json({}, 500);
+    await openEdit();
+    fireEvent.click(screen.getByText("delete"));
+    fireEvent.click(screen.getByRole("button", { name: "삭제" }));
+    await waitFor(() => expect(captureServiceRecordResponseError).toHaveBeenCalledWith(
+        expect.objectContaining({ status: 500 }),
+        expect.objectContaining({ operation: "delete-session", method: "DELETE" }),
+    ));
 });
 
 it.each([1, 3])("deleting day %s clears only that day's stored draft", async (deletedDay) => {
