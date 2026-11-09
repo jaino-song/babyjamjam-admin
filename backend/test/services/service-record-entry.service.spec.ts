@@ -1875,12 +1875,13 @@ function caregiverVector(dates = ["2026-07-01", "2026-07-02", "2026-07-03", "202
 }
 const forwardDetail = "뒷 회차보다 늦게 바꿀 수 없어요. 뒷 회차를 먼저 변경해 주세요.";
 const backwardDetail = "앞 회차보다 이르게 바꿀 수 없어요. 앞 회차를 먼저 변경해 주세요.";
-function expectDateFailure(promise: Promise<unknown>, detail: string) {
+function expectDateFailure(promise: Promise<unknown>, detail: string, serviceDateReason: string) {
     return expect(promise).rejects.toMatchObject({
         status: 400,
         response: {
             code: "VALIDATION_FAILED",
             errors: [{ pointer: "/serviceDate", code: "INVALID_VALUE", detail, location: "body" }],
+            serviceDateReason,
         },
     });
 }
@@ -1892,7 +1893,7 @@ describe("caregiver-selected service dates", () => {
             const action = h.service.upsertSession(context, 1, createDto({ serviceDate: date }), lock);
             if (accepted) await expect(action).resolves.toBeDefined();
             else {
-                await expectDateFailure(action, "고를 수 있는 기간이 아니에요.");
+                await expectDateFailure(action, "고를 수 있는 기간이 아니에요.", "OUT_OF_RANGE");
                 expect(h.upsert).not.toHaveBeenCalled();
             }
             expect(h.scheduleUpdate).not.toHaveBeenCalled();
@@ -1921,29 +1922,29 @@ describe("caregiver-selected service dates", () => {
         } });
         const action = h.service.upsertSession(context, 1, createDto({ serviceDate: date as string }), false);
         if (accepted) await expect(action).resolves.toBeDefined();
-        else await expectDateFailure(action, "서비스를 하지 않는 날이에요.");
+        else await expectDateFailure(action, "서비스를 하지 않는 날이에요.", "NOT_SERVICE_DAY");
     });
 
     it("refuses a holiday when holiday service is off", async () => {
         const h = createHarness({ holidayCalendar: branchHolidayCalendar("2026-07-02") });
-        await expectDateFailure(h.service.upsertSession(context, 1, createDto({ serviceDate: "2026-07-02" }), false), "서비스를 하지 않는 날이에요.");
+        await expectDateFailure(h.service.upsertSession(context, 1, createDto({ serviceDate: "2026-07-02" }), false), "서비스를 하지 않는 날이에요.", "NOT_SERVICE_DAY");
         expect(h.upsert).not.toHaveBeenCalled();
     });
 
     it("returns 400 for a year without holiday data", async () => {
         const h = createHarness({ transactionRecord: createRecord({ startDate: null, endDate: null }) });
-        await expectDateFailure(h.service.upsertSession(context, 1, createDto({ serviceDate: "2099-07-01" }), false), "서비스를 하지 않는 날이에요.");
+        await expectDateFailure(h.service.upsertSession(context, 1, createDto({ serviceDate: "2099-07-01" }), false), "서비스를 하지 않는 날이에요.", "NOT_SERVICE_DAY");
         expect(h.upsert).not.toHaveBeenCalled();
     });
 
     it.each([
-        ["2026-07-01", backwardDetail], ["2026-06-30", backwardDetail],
-        ["2026-07-06", forwardDetail], ["2026-07-07", forwardDetail],
-    ])("refuses out-of-order date %s with the exact field error", async (date, detail) => {
+        ["2026-07-01", backwardDetail, "BEFORE_PREVIOUS"], ["2026-06-30", backwardDetail, "BEFORE_PREVIOUS"],
+        ["2026-07-06", forwardDetail, "AFTER_NEXT"], ["2026-07-07", forwardDetail, "AFTER_NEXT"],
+    ])("refuses out-of-order date %s with the exact field error", async (date, detail, serviceDateReason) => {
         const h = createHarness({ days: [
             createDay(), createDay({ caseSessionIndex: 3, serviceDate: new Date("2026-07-06") , locked: false }),
         ] });
-        await expectDateFailure(h.service.upsertSession(context, 2, createDto({ serviceDate: date }), false), detail);
+        await expectDateFailure(h.service.upsertSession(context, 2, createDto({ serviceDate: date }), false), detail, serviceDateReason);
         expect(h.upsert).not.toHaveBeenCalled();
     });
 
@@ -2057,11 +2058,11 @@ describe("caregiver-selected service dates", () => {
         expect(h.lifecycle.recompute).toHaveBeenCalledTimes(1);
     });
 
-    it.each([[3, "2026-07-06", forwardDetail], [5, "2026-07-06", backwardDetail]] as const)(
-        "refuses gap collision moving session %s with nothing written", async (index, date, detail) => {
+    it.each([[3, "2026-07-06", forwardDetail, "AFTER_NEXT"], [5, "2026-07-06", backwardDetail, "BEFORE_PREVIOUS"]] as const)(
+        "refuses gap collision moving session %s with nothing written", async (index, date, detail, serviceDateReason) => {
             const days = [createDay({ caseSessionIndex: 3, sessionIndex: 3, serviceDate: new Date("2026-07-03") }), createDay({ caseSessionIndex: 5, sessionIndex: 5, serviceDate: new Date("2026-07-07") })];
             const h = createHarness({ existing: days.find((day) => day.caseSessionIndex === index), days, transactionRecord: createRecord({ plannedSessions: caregiverVector() }) });
-            await expectDateFailure(h.service.upsertSession(context, index, createDto({ serviceDate: date }), true), detail);
+            await expectDateFailure(h.service.upsertSession(context, index, createDto({ serviceDate: date }), true), detail, serviceDateReason);
             expect(h.upsert).not.toHaveBeenCalled();
             expect(h.editLogCreate).not.toHaveBeenCalled();
             expect(h.transactionClient.service_record_case.update).not.toHaveBeenCalled();
