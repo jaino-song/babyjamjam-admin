@@ -26,6 +26,7 @@ jest.mock("@/components/app/service-record/ServiceRecordWizard", () => ({
             <span data-testid="day">{props.day}</span>
             <button onClick={() => props.onOpenDay(1)}>open day 1</button>
             <button onClick={() => props.onOpenDay(2)}>open day 2</button>
+            <button onClick={() => props.onOpenDay(4)}>open day 4</button>
             <button onClick={() => props.onOpenSubmitModal()}>open submit modal</button>
             <button onClick={() => props.onNextPage()}>save section</button>
             {props.screen === "day" && props.pageIdx === DAY_PAGES.length - 1 && <ReviewStep {...props} />}
@@ -104,6 +105,92 @@ describe("service-record page popstate restore of a submitted day", () => {
     });
 });
 
+describe("service-record page earliest unsubmitted session guards", () => {
+    beforeEach(() => {
+        window.sessionStorage.clear();
+        window.history.replaceState(null, "", "/service-record/test-token");
+    });
+
+    async function renderOverview(submittedDays: number[]) {
+        const context = {
+            totalSessions: 5,
+            startDate: "2026-07-17",
+            header: { name: "x" },
+            employee: { id: 7, name: "김돌봄" },
+            sessions: submittedDays.map((sessionIndex) => ({
+                sessionIndex,
+                locked: true,
+                serviceDate: `2026-07-${16 + sessionIndex}`,
+                answers: {},
+                etcService: "",
+                notes: "",
+                paymentConfirmed: true,
+                clientSignature: "signed",
+                employeeId: 7,
+            })),
+        };
+        global.fetch = jest.fn((input: RequestInfo | URL) => {
+            const url = String(input);
+            if (url.endsWith("/link")) return Promise.resolve(jsonResponse({ valid: true }));
+            if (url.endsWith("/context")) return Promise.resolve(jsonResponse(context));
+            return Promise.resolve(jsonResponse({}, 404));
+        }) as unknown as typeof fetch;
+
+        render(<ServiceRecordPage />);
+        await waitFor(() => expect(screen.getByTestId("screen")).toHaveTextContent("overview"));
+    }
+
+    it("refuses popstate to day 4 after day 1 was deleted", async () => {
+        await renderOverview([2, 3]);
+
+        window.history.pushState(null, "", "/service-record/test-token?step=day&day=4&page=0");
+        act(() => { window.dispatchEvent(new PopStateEvent("popstate")); });
+
+        expect(screen.getByTestId("screen")).toHaveTextContent("overview");
+        expect(window.location.search).toBe("?step=overview");
+    });
+
+    it.each([
+        { submittedDays: [2, 3], targetDay: 1 },
+        { submittedDays: [1, 2, 3], targetDay: 4 },
+    ])("restores day $targetDay via popstate with submitted sessions $submittedDays", async ({ submittedDays, targetDay }) => {
+        await renderOverview(submittedDays);
+
+        window.history.pushState(null, "", `/service-record/test-token?step=day&day=${targetDay}&page=0`);
+        act(() => { window.dispatchEvent(new PopStateEvent("popstate")); });
+
+        expect(screen.getByTestId("screen")).toHaveTextContent("day");
+        expect(screen.getByTestId("day")).toHaveTextContent(String(targetDay));
+        expect(screen.getByTestId("editing")).toHaveTextContent("false");
+    });
+
+    it("refuses onOpenDay for day 4 after day 1 was deleted", async () => {
+        const user = userEvent.setup();
+        await renderOverview([2, 3]);
+        const overviewSearch = window.location.search;
+
+        await user.click(screen.getByRole("button", { name: "open day 4" }));
+
+        expect(screen.getByTestId("screen")).toHaveTextContent("overview");
+        expect(window.location.search).toBe(overviewSearch);
+        expect(window.location.search).not.toContain("step=day");
+    });
+
+    it.each([
+        { submittedDays: [2, 3], targetDay: 1 },
+        { submittedDays: [1, 2, 3], targetDay: 4 },
+    ])("opens day $targetDay via onOpenDay with submitted sessions $submittedDays", async ({ submittedDays, targetDay }) => {
+        const user = userEvent.setup();
+        await renderOverview(submittedDays);
+
+        await user.click(screen.getByRole("button", { name: `open day ${targetDay}` }));
+
+        expect(screen.getByTestId("screen")).toHaveTextContent("day");
+        expect(screen.getByTestId("day")).toHaveTextContent(String(targetDay));
+        expect(screen.getByTestId("editing")).toHaveTextContent("false");
+    });
+});
+
 describe("service-record page submit dialog across a caregiver change", () => {
     const row = (sessionIndex: number, employeeId: number | null) => ({
         sessionIndex,
@@ -169,7 +256,7 @@ describe("service-record page submit dialog across a caregiver change", () => {
         await waitFor(() => expect(screen.getByTestId("screen")).toHaveTextContent("overview"));
 
         await user.click(screen.getByRole("button", { name: "open day 1" }));
-        expect(screen.getAllByRole("button", { name: /수정$/ })).toHaveLength(3);
+        expect(screen.getAllByRole("button", { name: /수정$/ })).toHaveLength(4);
         expect(screen.queryByText(/다른 제공인력이\s제출한 회차라 수정할 수 없어요\./)).toBeNull();
         expect(screen.getByRole("button", { name: "확인" })).toBeEnabled();
 

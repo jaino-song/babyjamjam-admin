@@ -21,7 +21,7 @@ export const PHONE_HELPER_ID = "service-record-phone-helper";
 /** SRW:62 */
 export const SERVICE_DATE_INPUT_ID = "service-record-date";
 /** SRW:63 */
-export const SERVICE_DATE_PLACEHOLDER = "2026-12-01";
+export const SERVICE_DATE_PLACEHOLDER = "날짜를 선택하세요";
 /** SRW:916, :922 (the message slot of the service-date field) */
 export const SERVICE_DATE_HELPER_ID = "service-record-date-helper";
 /** Id of the service-date label (the shared wizard's label has none; the item label needs one). */
@@ -83,8 +83,6 @@ export function getDailyItemProblemId(
 
 /* ---- copy (SRW lines in the comment; none of it is exported by the package) ---- */
 
-/** FIELD_COPY.serviceDateMismatch (field-messages.ts:15 of the service-record-ui package), used at SRW:962. */
-export const SERVICE_DATE_MISMATCH_COPY = "오늘과 다른 날짜예요";
 /** SRW:888 */
 export const BACK_LABEL = "이전";
 /** SRW:1034 ("다음" / "저장" while editing a submitted day) */
@@ -93,18 +91,9 @@ export const SAVE_SECTION_LABEL = "저장";
 /** SRW:1024 */
 export const SUBMIT_LABEL = "확인";
 /** SRW:913 */
-export const SERVICE_DATE_LABEL = "제공일자";
+export const SERVICE_DATE_LABEL = "서비스 제공일";
 /** SRW:960 */
 export const SERVICE_DATE_READONLY_LABEL = "서비스 제공일자";
-/** SRW:939 */
-export const SCHEDULE_HELP_COPY = "제공일자를 바꾸려면 일정 변경을 요청해 주세요.";
-/** SRW:949 */
-export const SCHEDULE_CHANGE_LABEL = "서비스 일정 변경";
-export const SCHEDULE_CHANGE_PENDING_LABEL = "일정 변경 요청 대기 중";
-/** SRW:974 */
-export const RESIGN_NOTICE_COPY = "이미 제출된 회차입니다.";
-/** SRW:978 (non-admin branch) */
-export const HANDOVER_BANNER_COPY = "최종 기록을 확인해 주세요.";
 /** SRW:274, :277, :292 */
 export const STOOL_ABNORMAL_OPTION = "이상변";
 export const STOOL_COLOR_LABEL = "이상변의 색깔과 상태";
@@ -126,8 +115,6 @@ export const countPlaceholder = (count: { k: string; unit?: string }): string =>
 export const SCREEN_TITLE = "산모·신생아 건강관리 서비스 제공기록지";
 /** SRW:702 */
 export const LOADING_COPY = "불러오는 중…";
-/** SRW:705 */
-export const PLANNED_DATE_ERROR_COPY = "서버 일정 정보를 확인할 수 없습니다. 새로고침 후 다시 시도해 주세요.";
 /** SRW:711-712 */
 export const INVALID_TITLE = "링크를 사용할 수 없습니다";
 export const INVALID_COPY = "만료되었거나 더 이상 유효하지 않은 링크입니다. 지점에 문의해 주세요.";

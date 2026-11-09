@@ -3,15 +3,16 @@ import { serverAPIClient } from "@/lib/api/server";
 import { backendJsonResponse, errorResponse, withNoStore } from "@/lib/api/route-utils";
 import { getServiceRecordAuthorization } from "@/lib/api/service-record-auth";
 
-// Guarded by the minted access token from the path-scoped HttpOnly cookie.
-export async function POST(request: NextRequest) {
+export async function DELETE(request: NextRequest, { params }: { params: Promise<{ token: string; index: string }> }) {
+    const { index } = await params;
     const authorization = getServiceRecordAuthorization(request);
     try {
-        const response = await serverAPIClient.post("/service-record/schedule-change", {}, {
-            headers: { Authorization: authorization },
-        });
+        const response = await serverAPIClient.delete(
+            `/service-record/sessions/${encodeURIComponent(index)}`,
+            { headers: { Authorization: authorization } },
+        );
         return withNoStore(backendJsonResponse(response));
     } catch (error) {
-        return errorResponse(error, "schedule-change request");
+        return errorResponse(error, "delete service record session");
     }
 }

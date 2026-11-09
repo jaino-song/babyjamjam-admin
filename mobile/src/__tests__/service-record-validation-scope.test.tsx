@@ -126,3 +126,11 @@ describe.each(ROWS)("service record validation scope: employee header ($name)", 
         expect(toneOf(document.getElementById(birth.getAttribute("aria-describedby")!))).toBe("error");
     });
 });
+
+
+it("keeps date errors scoped to date entry, without blocking later answer sections", () => {
+    const next = jest.fn();
+    render(<MobileServiceRecordScreen {...makeProps({ screen: "day", pageIdx: 2, draft: { paymentConfirmed: true }, onNextPage: next })} serviceDateError="다른 회차가 이미 고른 날이에요." />);
+    fireEvent.click(screen.getByRole("button", { name: "다음" }));
+    expect(next).toHaveBeenCalledTimes(1);
+});
