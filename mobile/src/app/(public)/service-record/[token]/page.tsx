@@ -19,7 +19,7 @@ import { NotificationOneButtonModal } from "@/components/app/ui/NotificationOneB
 import { ToastAction } from "@/components/ui/toaster";
 import { toast } from "@/hooks/use-toast";
 import { MobileServiceRecordWizard } from "@/components/app/service-record/ServiceRecordWizard";
-import { ORDER_AFTER, ORDER_BEFORE, ServiceDateSheet } from "@/components/app/service-record/screen/ServiceDateSheet";
+import { GAP_ROOM, ORDER_AFTER, ORDER_BEFORE, ServiceDateSheet } from "@/components/app/service-record/screen/ServiceDateSheet";
 import { ServiceRecordCalendarBanner } from "@/components/app/service-record/ServiceRecordCalendarBanner";
 import { useTokenBusinessDayCalendar } from "@/hooks/useTokenBusinessDayCalendar";
 import { type ServiceDayPolicy } from "@/lib/date/business-days";
@@ -81,6 +81,7 @@ function serviceDateErrorMessage(reason: unknown): string {
         case "TAKEN": return "다른 회차가 이미 고른 날이에요.";
         case "BEFORE_PREVIOUS": return ORDER_BEFORE;
         case "AFTER_NEXT": return ORDER_AFTER;
+        case "NO_ROOM_FOR_GAP": return GAP_ROOM;
         default: return "고를 수 있는 날이 아니에요. 다른 날을 골라 주세요.";
     }
 }

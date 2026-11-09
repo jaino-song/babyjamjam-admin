@@ -193,6 +193,24 @@ describe("ServiceRecordPeriodMismatchService", () => {
         noWrites(w);
     });
 
+    it.each(["keep", "fit"] as const)("returns 409 without writes if the locked target changes on %s", async (method) => {
+        for (const target of ["case-missing", "case-replaced", "client-missing"] as const) {
+            const w = world();
+            if (target === "client-missing") {
+                w.tx.client.findFirst.mockResolvedValueOnce(clone(w.client)).mockResolvedValueOnce(null);
+            } else {
+                w.tx.service_record_case.findFirst.mockResolvedValueOnce(clone(w.record))
+                    .mockResolvedValueOnce(target === "case-missing" ? null : { ...clone(w.record), id: "replacement-case" });
+            }
+            await expect(method === "keep" ? w.keep() : w.fit()).rejects.toMatchObject({
+                status: 409, response: { code: "SERVICE_RECORD_WRITE_TARGET_CHANGED" },
+            });
+            noWrites(w);
+            expect(w.lifecycle.recompute).not.toHaveBeenCalled();
+            expect(persistScheduleMessageAutomationIntent).not.toHaveBeenCalled();
+        }
+    });
+
     it.each([...IMMUTABLE_FINALIZATION_STATUSES])("refuses both writes on immutable %s cases", async (status) => {
         const w = world();
         w.record.status = status;

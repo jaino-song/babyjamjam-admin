@@ -49,7 +49,7 @@ describe("start-date lock problem passthrough", () => {
 });
 
 describe("service-date reason problem passthrough", () => {
-    it.each(["OUT_OF_RANGE", "NOT_SERVICE_DAY", "TAKEN", "BEFORE_PREVIOUS", "AFTER_NEXT"])(
+    it.each(["OUT_OF_RANGE", "NOT_SERVICE_DAY", "TAKEN", "BEFORE_PREVIOUS", "AFTER_NEXT", "NO_ROOM_FOR_GAP"])(
         "forwards the validated reason %s on VALIDATION_FAILED", (serviceDateReason) => {
             const problem = createProblemDetails({ code: "VALIDATION_FAILED", requestId: "req-service-date" });
             expect(sanitizeUpstreamClientError({ ...problem, serviceDateReason }, "fallback", 400))

@@ -12,6 +12,7 @@ import { Prisma } from "@prisma/client";
 import {
     alignPlannedSessionsToCaregiverDate,
     CaregiverDateAlignmentError,
+    hasRoomForCaregiverDate,
 } from "application/policies/service-record-caregiver-date.policy";
 import {
     lockServiceRecordCaseForWrite,
@@ -566,7 +567,7 @@ export class ServiceRecordEntryService {
             const dateChanged = !existing || dateIso !== toIso(existing.serviceDate);
             const dateFailure = (
                 detail: string,
-                serviceDateReason: "OUT_OF_RANGE" | "NOT_SERVICE_DAY" | "TAKEN" | "BEFORE_PREVIOUS" | "AFTER_NEXT",
+                serviceDateReason: "OUT_OF_RANGE" | "NOT_SERVICE_DAY" | "TAKEN" | "BEFORE_PREVIOUS" | "AFTER_NEXT" | "NO_ROOM_FOR_GAP",
             ): BadRequestException => new BadRequestException({
                 ...problemBody("VALIDATION_FAILED", {
                     pointer: "/serviceDate", code: "INVALID_VALUE", detail, location: "body",
@@ -607,6 +608,9 @@ export class ServiceRecordEntryService {
                 if (next && dateIso >= toIso(next.serviceDate)) throw dateFailure(forwardDetail, "AFTER_NEXT");
                 if (others.some((day) => toIso(day.serviceDate) === dateIso)) {
                     throw dateFailure("다른 회차가 이미 고른 날이에요.", "TAKEN");
+                }
+                if (!hasRoomForCaregiverDate(others, sessionIndex, dateIso, clientCalendar, record.startDate, record.endDate)) {
+                    throw dateFailure("사이에 아직 안 쓴 회차가 있어요. 그 회차의 날짜를 남겨 주세요.", "NO_ROOM_FOR_GAP");
                 }
                 const vector = plannedSessionVector(record.plannedSessions, total, clientCalendar);
                 if (vector.state === "valid" && vector.entries) {

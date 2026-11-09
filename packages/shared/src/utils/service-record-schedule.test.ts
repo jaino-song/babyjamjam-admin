@@ -1,4 +1,5 @@
 import {
+    hasServiceDaysForGap,
     getExpectedSessionDateFromRecords,
     moveServiceRecordSessionDate,
     replanServiceRecordScheduleFromResume,
@@ -6,6 +7,55 @@ import {
     validateServiceRecordScheduleVector,
 } from "./service-record-schedule";
 import { createKrBusinessDayCalendar, KR_BUILTIN_CALENDAR, UnsupportedKoreanHolidayYearError } from "./business-days";
+
+describe("hasServiceDaysForGap", () => {
+    const calendar = createKrBusinessDayCalendar([], { supportedYears: [2026] });
+    const rows = [{ sessionIndex: 1, serviceDate: "2026-11-02" }];
+    it.each([
+        [3, "2026-11-03", false], [3, "2026-11-04", true],
+        [4, "2026-11-04", false], [4, "2026-11-05", true],
+    ])("leaves one service day per missing index for session %s on %s", (sessionIndex, serviceDate, expected) => {
+        expect(hasServiceDaysForGap({ sessionIndex, serviceDate, rows, calendar })).toBe(expected);
+    });
+
+    it("counts client service days, branch holidays and weekend flags", () => {
+        const input = { sessionIndex: 3, serviceDate: "2026-11-09", rows: [{ sessionIndex: 1, serviceDate: "2026-11-06" }], calendar };
+        expect(hasServiceDaysForGap(input)).toBe(false);
+        expect(hasServiceDaysForGap({ ...input, calendar: calendar.withServiceDays({ saturday: true, sunday: false, holiday: false }) })).toBe(true);
+        const holiday = createKrBusinessDayCalendar(["2026-11-03"], { supportedYears: [2026] });
+        expect(hasServiceDaysForGap({ sessionIndex: 3, serviceDate: "2026-11-04", rows, calendar: holiday })).toBe(false);
+        expect(hasServiceDaysForGap({ sessionIndex: 3, serviceDate: "2026-11-04", rows, calendar: holiday.withServiceDays({ saturday: false, sunday: false, holiday: true }) })).toBe(true);
+    });
+
+    it("clamps both sides to the inclusive selectable window", () => {
+        const input = { sessionIndex: 3, rows: [{ sessionIndex: 1, serviceDate: "2026-10-29" }], calendar, first: "2026-11-02" };
+        expect(hasServiceDaysForGap({ ...input, serviceDate: "2026-11-02" })).toBe(false);
+        expect(hasServiceDaysForGap({ ...input, serviceDate: "2026-11-03" })).toBe(true);
+        const upper = { sessionIndex: 1, serviceDate: "2026-11-02", rows: [{ sessionIndex: 3, serviceDate: "2026-11-05" }], calendar };
+        expect(hasServiceDaysForGap({ ...upper, last: "2026-11-02" })).toBe(false);
+        expect(hasServiceDaysForGap({ ...upper, last: "2026-11-03" })).toBe(true);
+    });
+
+    it("uses the first selectable day for leading gaps and skips an unbounded lower side", () => {
+        const input = { sessionIndex: 2, rows: [], calendar, first: "2026-10-26" };
+        expect(hasServiceDaysForGap({ ...input, serviceDate: "2026-10-26" })).toBe(false);
+        expect(hasServiceDaysForGap({ ...input, serviceDate: "2026-10-27" })).toBe(true);
+        expect(hasServiceDaysForGap({ ...input, first: null, serviceDate: "2026-10-26" })).toBe(true);
+    });
+
+    it("checks upper gaps only when an upper row exists and ignores the target row", () => {
+        const input = { sessionIndex: 2, rows: [...rows, { sessionIndex: 4, serviceDate: "2026-11-05" }], calendar };
+        expect(hasServiceDaysForGap({ ...input, serviceDate: "2026-11-04" })).toBe(false);
+        expect(hasServiceDaysForGap({ ...input, serviceDate: "2026-11-03" })).toBe(true);
+        expect(hasServiceDaysForGap({ sessionIndex: 1, serviceDate: "2026-11-13", rows: [{ sessionIndex: 1, serviceDate: "2026-11-02" }], calendar, last: "2026-11-13" })).toBe(true);
+    });
+
+    it("counts calendar days in an unsupported holiday year but propagates other errors", () => {
+        expect(hasServiceDaysForGap({ sessionIndex: 3, serviceDate: "2027-01-03", rows: [{ sessionIndex: 1, serviceDate: "2027-01-01" }], calendar })).toBe(true);
+        const broken = { ...calendar, isBusinessDay: () => { throw new Error("calendar failure"); } };
+        expect(() => hasServiceDaysForGap({ sessionIndex: 3, serviceDate: "2026-11-04", rows, calendar: broken })).toThrow("calendar failure");
+    });
+});
 
 describe("getExpectedSessionDateFromRecords", () => {
     it("falls back to the N-th business day from start when no records exist", () => {

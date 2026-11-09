@@ -1925,6 +1925,7 @@ function caregiverVector(dates = ["2026-07-01", "2026-07-02", "2026-07-03", "202
     }));
 }
 const forwardDetail = "뒷 회차보다 늦게 바꿀 수 없어요. 뒷 회차를 먼저 변경해 주세요.";
+const gapDetail = "사이에 아직 안 쓴 회차가 있어요. 그 회차의 날짜를 남겨 주세요.";
 const backwardDetail = "앞 회차보다 이르게 바꿀 수 없어요. 앞 회차를 먼저 변경해 주세요.";
 function expectDateFailure(promise: Promise<unknown>, detail: string, serviceDateReason: string) {
     return expect(promise).rejects.toMatchObject({
@@ -1938,6 +1939,37 @@ function expectDateFailure(promise: Promise<unknown>, detail: string, serviceDat
 }
 
 describe("caregiver-selected service dates", () => {
+    const gapRecord = () => createRecord({
+        startDate: new Date("2026-11-02"), endDate: new Date("2026-11-06"), requiredSessionCount: 5,
+        plannedSessions: caregiverVector(["2026-11-02", "2026-11-03", "2026-11-04", "2026-11-05", "2026-11-06"]),
+    });
+    const gapDays = () => [
+        createDay({ serviceDate: new Date("2026-11-02") }),
+        createDay({ caseSessionIndex: 4, sessionIndex: 4, serviceDate: new Date("2026-11-05") }),
+    ];
+
+    it.each([false, true])("refuses a date leaving no room for session 2 without writes (submit=%s)", async (lock) => {
+        const h = createHarness({ days: gapDays(), transactionRecord: gapRecord() });
+        await expectDateFailure(h.service.upsertSession(context, 3, createDto({ serviceDate: "2026-11-03" }), lock), gapDetail, "NO_ROOM_FOR_GAP");
+        expect(h.upsert).not.toHaveBeenCalled();
+        expect(h.transactionClient.service_record_case.update).not.toHaveBeenCalled();
+        expect(h.lifecycle.recompute).not.toHaveBeenCalled();
+    });
+
+    it.each([false, true])("accepts a date leaving room for session 2 (submit=%s)", async (lock) => {
+        const h = createHarness({ days: gapDays(), transactionRecord: gapRecord() });
+        await expect(h.service.upsertSession(context, 3, createDto({ serviceDate: "2026-11-04" }), lock)).resolves.toBeDefined();
+        expect(h.upsert).toHaveBeenCalledTimes(1);
+    });
+
+    it("keeps an unchanged locked date editable even when an empty session has no room", async () => {
+        const existing = createDay({ caseSessionIndex: 3, sessionIndex: 3, serviceDate: new Date("2026-11-03") });
+        const h = createHarness({ existing, days: [gapDays()[0]!], transactionRecord: gapRecord() });
+        await expect(h.service.upsertSession(context, 3, createDto({ serviceDate: "2026-11-03", notes: "내용만 수정" }), true)).resolves.toBeDefined();
+        expect(h.upsert).toHaveBeenCalledTimes(1);
+        expect(h.transactionClient.service_record_case.update).not.toHaveBeenCalled();
+    });
+
     it.each([false, true])("enforces inclusive calendar-day window edges (submit=%s)", async (lock) => {
         for (const [date, accepted] of [["2026-06-23", false], ["2026-06-24", true], ["2026-08-07", true], ["2026-08-08", false]] as const) {
             const h = createHarness();
@@ -2217,7 +2249,7 @@ describe("caregiver-selected service dates", () => {
         expect(h.lifecycle.recompute).toHaveBeenCalledTimes(1);
     });
 
-    it.each([[3, "2026-07-06", forwardDetail, "AFTER_NEXT"], [5, "2026-07-06", backwardDetail, "BEFORE_PREVIOUS"]] as const)(
+    it.each([[3, "2026-07-06", gapDetail, "NO_ROOM_FOR_GAP"], [5, "2026-07-06", gapDetail, "NO_ROOM_FOR_GAP"]] as const)(
         "refuses gap collision moving session %s with nothing written", async (index, date, detail, serviceDateReason) => {
             const days = [createDay({ caseSessionIndex: 3, sessionIndex: 3, serviceDate: new Date("2026-07-03") }), createDay({ caseSessionIndex: 5, sessionIndex: 5, serviceDate: new Date("2026-07-07") })];
             const h = createHarness({ existing: days.find((day) => day.caseSessionIndex === index), days, transactionRecord: createRecord({ plannedSessions: caregiverVector() }) });

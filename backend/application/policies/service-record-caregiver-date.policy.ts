@@ -1,4 +1,5 @@
 import {
+    hasServiceDaysForGap,
     previousBusinessDay,
     validateServiceRecordScheduleVector,
     type ServiceRecordPlannedSession,
@@ -16,6 +17,23 @@ function calendarDay(iso: string, offset: number): string {
     const date = new Date(`${iso}T00:00:00.000Z`);
     date.setUTCDate(date.getUTCDate() + offset);
     return date.toISOString().slice(0, 10);
+}
+
+/** Stored rows include drafts and use the caller's normalized legacy index. */
+export function hasRoomForCaregiverDate(
+    rows: ReadonlyArray<{ caseSessionIndex: number; serviceDate: Date }>,
+    sessionIndex: number,
+    serviceDate: string,
+    calendar: KrBusinessDayCalendar,
+    startDate: Date | null,
+    endDate: Date | null,
+): boolean {
+    return hasServiceDaysForGap({
+        rows: rows.map((row) => ({ sessionIndex: row.caseSessionIndex, serviceDate: row.serviceDate.toISOString().slice(0, 10) })),
+        sessionIndex, serviceDate, calendar,
+        first: startDate ? calendarDay(startDate.toISOString().slice(0, 10), -7) : null,
+        last: endDate ? calendarDay(endDate.toISOString().slice(0, 10), 7) : null,
+    });
 }
 
 /** Repair only adjacent unwritten slots; written dates are immovable boundaries. */

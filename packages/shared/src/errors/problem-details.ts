@@ -164,7 +164,7 @@ export interface ProblemDetails {
     /** Plain text only: consumers must never render this name as HTML. */
     deletedEmployee?: { id: number; name: string };
     startDateLock?: { serviceStarted: boolean; recordedSessionCount: number };
-    serviceDateReason?: "OUT_OF_RANGE" | "NOT_SERVICE_DAY" | "TAKEN" | "BEFORE_PREVIOUS" | "AFTER_NEXT";
+    serviceDateReason?: "OUT_OF_RANGE" | "NOT_SERVICE_DAY" | "TAKEN" | "BEFORE_PREVIOUS" | "AFTER_NEXT" | "NO_ROOM_FOR_GAP";
 }
 
 export interface ProblemCatalogEntry {
@@ -1647,7 +1647,7 @@ function parseProblemDetailsInternal(
         const serviceDateReason = readOwn(value, "serviceDateReason").value;
         if (serviceDateReason === "OUT_OF_RANGE" || serviceDateReason === "NOT_SERVICE_DAY"
             || serviceDateReason === "TAKEN" || serviceDateReason === "BEFORE_PREVIOUS"
-            || serviceDateReason === "AFTER_NEXT") {
+            || serviceDateReason === "AFTER_NEXT" || serviceDateReason === "NO_ROOM_FOR_GAP") {
             parsed.serviceDateReason = serviceDateReason;
         }
     }

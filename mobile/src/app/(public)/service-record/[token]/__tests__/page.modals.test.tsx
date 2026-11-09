@@ -146,6 +146,7 @@ it.each([1, 3])("deleting day %s clears only that day's stored draft", async (de
 it.each<[string | undefined, string]>([
     ["OUT_OF_RANGE", "고를 수 있는 기간이 아니에요."],
     ["NOT_SERVICE_DAY", "서비스를 하지 않는 날이에요."],
+    ["NO_ROOM_FOR_GAP", "사이에 아직 안 쓴 회차가 있어요. 그 회차의 날짜를 남겨 주세요."],
     ["TAKEN", "다른 회차가 이미 고른 날이에요."],
     ["BEFORE_PREVIOUS", "앞 회차보다 이르게 바꿀 수 없어요. 앞 회차를 먼저 변경해 주세요."],
     ["AFTER_NEXT", "뒷 회차보다 늦게 바꿀 수 없어요. 뒷 회차를 먼저 변경해 주세요."],

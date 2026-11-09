@@ -1,6 +1,6 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { createKrBusinessDayCalendar } from "@/lib/date/business-days";
-import { ServiceDateSheet, classifyServiceDate, ORDER_AFTER, ORDER_BEFORE } from "../ServiceDateSheet";
+import { ServiceDateSheet, classifyServiceDate, GAP_ROOM, ORDER_AFTER, ORDER_BEFORE } from "../ServiceDateSheet";
 import type { ServiceDateSheetProps } from "../ServiceDateSheet";
 
 const calendar = createKrBusinessDayCalendar(["2026-11-09"], { supportedYears: [2026] });
@@ -107,4 +107,39 @@ it("enlarges the date sheet title, calendar, annotations and actions one step", 
     expect(screen.getByText("지금")).toHaveClass("text-xs", "leading-none");
     expect(screen.getByRole("button", { name: "취소" })).toHaveClass("text-base");
     expect(screen.getByRole("button", { name: "선택" })).toHaveClass("text-base");
+});
+
+
+it("hatches a gap day, explains it on tap, and leaves the next service day available", () => {
+    const p = props({ day: 3, context: { ...props().context, sessions: [
+        { sessionIndex: 1, serviceDate: "2026-11-02", locked: true },
+        { sessionIndex: 4, serviceDate: "2026-11-05", locked: true },
+    ] } });
+    render(<ServiceDateSheet {...p} />);
+    const gap = screen.getByRole("button", { name: "2026.11.03(화)" });
+    expect(gap).toHaveAttribute("data-day-state", "gap");
+    expect(gap).toHaveAttribute("aria-disabled", "true");
+    expect(gap.className).toContain("bg-[repeating-linear-gradient");
+    fireEvent.click(gap);
+    expect(p.onOrderBlocked).toHaveBeenCalledWith(GAP_ROOM);
+    expect(screen.getByRole("button", { name: "선택" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "2026.11.04(수)" })).toHaveAttribute("data-day-state", "available");
+});
+
+it("reserves leading gaps inside the window after applying ordinary blocked rules", () => {
+    const rules = props({ day: 2, context: { ...props().context, sessions: [
+        { sessionIndex: 3, serviceDate: "2026-11-04", locked: true },
+    ] } });
+    expect(classifyServiceDate("2026-10-26", rules)).toBe("gap");
+    expect(classifyServiceDate("2026-10-27", rules)).toBe("available");
+    expect(classifyServiceDate("2026-10-23", rules)).toBe("blocked");
+});
+
+it("reserves a service day for an empty upper session", () => {
+    const rules = props({ day: 2, context: { ...props().context, sessions: [
+        { sessionIndex: 1, serviceDate: "2026-11-02", locked: true },
+        { sessionIndex: 4, serviceDate: "2026-11-05", locked: true },
+    ] } });
+    expect(classifyServiceDate("2026-11-04", rules)).toBe("gap");
+    expect(classifyServiceDate("2026-11-03", rules)).toBe("available");
 });

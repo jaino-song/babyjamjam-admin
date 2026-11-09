@@ -1,4 +1,4 @@
-import { alignPlannedSessionsToCaregiverDate, CaregiverDateAlignmentError } from "application/policies/service-record-caregiver-date.policy";
+import { alignPlannedSessionsToCaregiverDate, CaregiverDateAlignmentError, hasRoomForCaregiverDate } from "application/policies/service-record-caregiver-date.policy";
 import { createKrBusinessDayCalendar, KR_BUILTIN_CALENDAR, UnsupportedKoreanHolidayYearError } from "domain/utils/business-days";
 
 const entries = (dates: string[]) => dates.map((serviceDate, i) => ({
@@ -45,5 +45,53 @@ describe("alignPlannedSessionsToCaregiverDate", () => {
         const calendar = createKrBusinessDayCalendar([], { version: "only-2028", supportedYears: [2028] });
         const result = alignPlannedSessionsToCaregiverDate(entries(["2028-01-03", "2028-01-04"]), 2, "2028-01-01", new Set(), calendar);
         expect(result.map((entry) => entry.serviceDate)).toEqual(["2027-12-31", "2028-01-01"]);
+    });
+});
+
+describe("hasRoomForCaregiverDate", () => {
+    const calendar = createKrBusinessDayCalendar([], { supportedYears: [2026] });
+    const row = (caseSessionIndex: number, iso: string, locked = true) => ({ caseSessionIndex, serviceDate: new Date(iso), locked });
+    const check = (rows: ReturnType<typeof row>[], index: number, iso: string, start: string | null = "2026-11-02", end: string | null = "2026-11-06", cal = calendar) =>
+        hasRoomForCaregiverDate(rows, index, iso, cal, start ? new Date(start) : null, end ? new Date(end) : null);
+
+    it.each([
+        [3, "2026-11-03", false], [3, "2026-11-04", true],
+        [4, "2026-11-04", false], [4, "2026-11-05", true],
+    ])("reserves every lower gap for session %s at %s", (index, iso, expected) => {
+        expect(check([row(1, "2026-11-02")], index, iso)).toBe(expected);
+    });
+
+    it("respects Saturday service when counting a Friday-to-Monday gap", () => {
+        const rows = [row(1, "2026-11-06")];
+        expect(check(rows, 3, "2026-11-09")).toBe(false);
+        expect(check(rows, 3, "2026-11-09", undefined, undefined, calendar.withServiceDays({ saturday: true, sunday: false, holiday: false }))).toBe(true);
+    });
+
+    it("reserves leading gaps from start minus seven calendar days", () => {
+        expect(check([], 2, "2026-10-26")).toBe(false);
+        expect(check([], 2, "2026-10-27")).toBe(true);
+        expect(check([], 2, "2026-10-26", null)).toBe(true);
+    });
+
+    it("clamps counts even when the lower row predates the selectable window", () => {
+        const rows = [row(1, "2026-10-29")];
+        expect(check(rows, 3, "2026-11-02", "2026-11-09")).toBe(false);
+        expect(check(rows, 3, "2026-11-03", "2026-11-09")).toBe(true);
+    });
+
+    it("reserves upper gaps only up to a stored row", () => {
+        const rows = [row(1, "2026-11-02"), row(4, "2026-11-05")];
+        expect(check(rows, 2, "2026-11-04")).toBe(false);
+        expect(check(rows, 2, "2026-11-03")).toBe(true);
+        expect(check([], 1, "2026-11-13")).toBe(true);
+    });
+
+    it("counts a draft as an occupied index, not a gap", () => {
+        // 과거 토요일 초안도 현재 토요일 서비스 설정과 관계없이 2회차를 차지한다.
+        expect(check([row(1, "2026-11-06"), row(2, "2026-11-07", false)], 3, "2026-11-09")).toBe(true);
+    });
+
+    it("uses calendar days when holiday data is unsupported", () => {
+        expect(check([row(1, "2027-01-01")], 3, "2027-01-03", null, null)).toBe(true);
     });
 });

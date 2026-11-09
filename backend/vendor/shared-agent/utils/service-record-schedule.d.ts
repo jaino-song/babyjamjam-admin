@@ -3,6 +3,15 @@ export interface ServiceRecordScheduleEntry {
     sessionIndex: number;
     serviceDate: string;
 }
+/** Leave a selectable service day for each missing index between stored rows. */
+export declare function hasServiceDaysForGap({ sessionIndex, serviceDate, rows, calendar, first, last }: {
+    sessionIndex: number;
+    serviceDate: string;
+    rows: ReadonlyArray<ServiceRecordScheduleEntry>;
+    calendar: KrBusinessDayCalendar;
+    first?: string | null;
+    last?: string | null;
+}): boolean;
 /** Immutable ownership metadata carried by every authoritative planned slot. */
 export interface ServiceRecordScheduleProvenance {
     assignmentId: string;
