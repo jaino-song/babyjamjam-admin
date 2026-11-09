@@ -131,6 +131,7 @@ async function assertReport(env, expected) {
     for (const unit of Object.values(state.units)) {
         assert.equal(Object.keys(unit.files).length, 2);
         assert.equal(typeof unit.fingerprint, 'string');
+        assert.equal(typeof unit.completed, 'boolean');
         for (const [path, bytes] of Object.entries(unit.files)) {
             if (bytes === null) continue;
             try { assert.equal((await stat(join(env.archiveDir, path))).size, bytes); }
@@ -179,25 +180,28 @@ test('2. second run skips all six files without any file request', async (t) => 
     await assertReport(env, { status: 'success', savedFiles: 0, skippedFiles: 6 });
 });
 
-test('3. naming uses createdAt, keeps names on run two, a reissued document overwrites its own files', async (t) => {
+test('3. naming uses createdAt, keeps names on run two, a changed completed document takes (3) and archives its old entry', async (t) => {
     const early = document('1');
     const late = document('2');
     const env = await setup(t, [late, early]);
     assert.equal((await env.run()).code, 0);
     const before = await env.state();
+    const originals = await Promise.all((await env.files()).map(async (path) => [path, await env.bytes(path)]));
     assert.equal((await env.run()).code, 0);
+    const oldFingerprint = fingerprint(early);
     setFiles(early, { document: 'reissued', audit_trail: '1:audit_trail' });
     assert.equal((await env.run()).code, 0);
-    for (const [suffix, content] of [['', 'reissued'], [' (2)', '2:document']]) {
+    for (const [path, content] of originals) assert.equal(await env.bytes(path), content);
+    for (const [suffix, content] of [['', '1:document'], [' (2)', '2:document'], [' (3)', 'reissued']]) {
         assert.equal(await env.bytes(`서비스계약서/${base}${suffix}.pdf`), content);
-        assert.equal(await env.bytes(`서비스계약서/감사추적/[감사추적]_${base}${suffix}.pdf`), suffix === ' (2)' ? '2:audit_trail' : '1:audit_trail');
+        assert.equal(await env.bytes(auditPath(suffix)), suffix === ' (2)' ? '2:audit_trail' : '1:audit_trail');
     }
-    assert.equal((await env.files()).length, 4);
     const after = await env.state();
+    assert.deepEqual(after.units[`doc:1@${oldFingerprint}`], before.units[key(early)]);
     assert.deepEqual(after.units[key(late)], before.units[key(late)]);
-    assert.deepEqual(Object.keys(after.units[key(early)].files), Object.keys(before.units[key(early)].files));
     assert.equal(after.units[key(early)].fingerprint, fingerprint(early));
-    assert.equal(Object.keys(after.units).length, 2);
+    assert.ok(Object.keys(after.units[key(early)].files).every((path) => path.includes(' (3)')));
+    assert.equal(Object.keys(after.units).length, 3);
     await assertReport(env, { status: 'success', savedFiles: 2, skippedFiles: 2 });
 });
 
@@ -259,7 +263,7 @@ async function assertMerge(env, docs) {
     const mergedKey = `merged:${chunk.caseId}:${chunk.snapshotVersion}`;
     assert.deepEqual(state.units[mergedKey], { files: Object.fromEntries(['', '감사추적/[감사추적]_'].map((folder, i) =>
         [`제공기록지/${folder}${srBase}.pdf`, docs.reduce((bytes, doc) => bytes + doc.files[i].byteSize, 0)])),
-        fingerprint: ordered.map(fingerprint).join(',') });
+        fingerprint: ordered.map(fingerprint).join(','), completed: true });
     assert.equal(Object.keys(state.units).length, 4);
 }
 
@@ -514,7 +518,7 @@ test('review-stage document is saved with its document only, then skipped on the
     assert.deepEqual(await env.files(), [`서비스계약서/${base}.pdf`]);
     assert.equal(await env.bytes(`서비스계약서/${base}.pdf`), '1:review');
     const state = await env.state();
-    assert.deepEqual(state.units[key(doc)], { files: { [`서비스계약서/${base}.pdf`]: doc.files[0].byteSize, [auditPath()]: null }, fingerprint: fingerprint(doc) });
+    assert.deepEqual(state.units[key(doc)], { files: { [`서비스계약서/${base}.pdf`]: doc.files[0].byteSize, [auditPath()]: null }, fingerprint: fingerprint(doc), completed: false });
     await assertReport(env, { status: 'success', savedFiles: 1, skippedFiles: 0, failedFiles: 0 });
     env.api.fileRequests = [];
     assert.equal((await env.run()).code, 0);
@@ -538,7 +542,7 @@ test('a saved review document that completes overwrites the same file and adds t
     }
     const after = await env.state();
     assert.deepEqual(Object.keys(after.units[key(doc)].files), Object.keys(before.units[key(doc)].files));
-    assert.deepEqual(after.units[key(doc)], { files: { [`서비스계약서/${base}.pdf`]: doc.files[0].byteSize, [auditPath()]: doc.files[1].byteSize }, fingerprint: fingerprint(doc) });
+    assert.deepEqual(after.units[key(doc)], { files: { [`서비스계약서/${base}.pdf`]: doc.files[0].byteSize, [auditPath()]: doc.files[1].byteSize }, fingerprint: fingerprint(doc), completed: true });
     await assertReport(env, { status: 'success', savedFiles: 2, skippedFiles: 0 });
     env.api.fileRequests = [];
     assert.equal((await env.run()).code, 0);
@@ -613,6 +617,7 @@ test('review-stage chunks merge into a document only; completion overwrites it a
     const state = await env.state();
     const mergedKey = 'merged:case-1:1';
     assert.deepEqual(state.units[mergedKey].files, { [merged]: '1:review2:review3:review'.length, [mergedAudit]: null });
+    assert.equal(state.units[mergedKey].completed, false);
     await assertReport(env, { status: 'success', savedFiles: 4 });
     // Unchanged review state: nothing is rebuilt.
     await rm(env.qpdfLog);
@@ -633,10 +638,17 @@ test('review-stage chunks merge into a document only; completion overwrites it a
     assert.equal((await env.files()).length, 8);
     const after = await env.state();
     assert.deepEqual(Object.keys(after.units[mergedKey].files), Object.keys(state.units[mergedKey].files));
+    assert.equal(after.units[mergedKey].completed, true);
     assert.equal(after.units[mergedKey].fingerprint, [...docs].sort((a, b) => a.serviceRecordChunk.firstSessionIndex - b.serviceRecordChunk.firstSessionIndex).map(fingerprint).join(','));
     await assertReport(env, { status: 'success', failedFiles: 0 });
 });
 
+function v1Of(docs, v2) {
+    const ordered = docs.filter((doc) => doc.serviceRecordChunk).sort((a, b) => a.serviceRecordChunk.firstSessionIndex - b.serviceRecordChunk.firstSessionIndex);
+    const v1 = Object.fromEntries(docs.map((doc) => [`doc:${doc.docId}:${doc.files[0].sha256}:${doc.files[1].sha256}`, { files: v2.units[key(doc)].files }]));
+    if (ordered.length) v1[`merged:case-1:1:${ordered.map((doc) => doc.files[0].sha256).join(',')}`] = { files: v2.units['merged:case-1:1'].files };
+    return v1;
+}
 async function writeV1(env, units) {
     await mkdir(env.stateDir, { recursive: true });
     await writeFile(join(env.stateDir, 'state.json'), JSON.stringify({ version: 1, units }));
@@ -656,21 +668,39 @@ test('a version 1 state file migrates in place: files are skipped and the state 
     await assertReport(env, { status: 'success', savedFiles: 0, skippedFiles: 4 });
 });
 
-test('a version 1 merged entry rebuilds the merged files once under the same names', async (t) => {
+test('a version 1 merged entry with unchanged chunk hashes is adopted without rebuilding', async (t) => {
     const docs = chunks();
     const env = await setup(t, docs);
     assert.equal((await env.run()).code, 0);
     const v2 = await env.state();
-    const ordered = [...docs].sort((a, b) => a.serviceRecordChunk.firstSessionIndex - b.serviceRecordChunk.firstSessionIndex);
-    const v1 = Object.fromEntries(docs.map((doc) => [`doc:${doc.docId}:${doc.files[0].sha256}:${doc.files[1].sha256}`, { files: v2.units[key(doc)].files }]));
-    v1[`merged:case-1:1:${ordered.map((doc) => doc.files[0].sha256).join(',')}`] = { files: v2.units['merged:case-1:1'].files };
-    await writeV1(env, v1);
+    await writeV1(env, v1Of(docs, v2));
+    await rm(env.qpdfLog);
     env.api.fileRequests = [];
     assert.equal((await env.run()).code, 0);
     assert.deepEqual(env.api.fileRequests, []);
+    await assert.rejects(readFile(env.qpdfLog), { code: 'ENOENT' });
     assert.deepEqual(await env.state(), v2);
     assert.equal((await env.files()).length, 8);
-    await assertReport(env, { status: 'success', savedFiles: 2, skippedFiles: 6 });
+    await assertReport(env, { status: 'success', savedFiles: 0, skippedFiles: 8 });
+});
+
+test('a migrated version 1 document whose content changed is never overwritten: the new content takes (2)', async (t) => {
+    const doc = document('1');
+    const env = await setup(t, [doc]);
+    assert.equal((await env.run()).code, 0);
+    const v2 = await env.state();
+    await writeV1(env, v1Of([doc], v2));
+    const original = await env.bytes(`서비스계약서/${base}.pdf`);
+    setFiles(doc, { document: 'changed', audit_trail: 'changed:audit_trail' });
+    assert.equal((await env.run()).code, 0);
+    assert.equal(await env.bytes(`서비스계약서/${base}.pdf`), original);
+    assert.equal(await env.bytes(`서비스계약서/${base} (2).pdf`), 'changed');
+    assert.equal(await env.bytes(auditPath(' (2)')), 'changed:audit_trail');
+    const after = await env.state();
+    assert.equal(after.version, 2);
+    assert.deepEqual(after.units[`doc:1@${sha(Buffer.from('1:document'))}:${sha(Buffer.from('1:audit_trail'))}`], v2.units[key(doc)]);
+    assert.equal(after.units[key(doc)].completed, true);
+    await assertReport(env, { status: 'success', savedFiles: 2 });
 });
 
 test('two version 1 entries for one document stop the run with a state error', async (t) => {
@@ -695,15 +725,138 @@ test('unknown state versions and malformed version 2 entries are rejected', asyn
     const statePath = join(env.stateDir, 'state.json');
     for (const bad of [
         { version: 3, units: {} },
-        { version: 2, units: { 'doc:1': { files: { 'a.pdf': 1 }, fingerprint: 'x' } } },
-        { version: 2, units: { 'doc:1': { files: { 'a.pdf': 1, 'b.pdf': -1 }, fingerprint: 'x' } } },
+        { version: 2, units: { 'doc:1': { files: { 'a.pdf': 1 }, fingerprint: 'x', completed: true } } },
+        { version: 2, units: { 'doc:1': { files: { 'a.pdf': 1, 'b.pdf': -1 }, fingerprint: 'x', completed: true } } },
         { version: 2, units: { 'doc:1': { files: { 'a.pdf': 1, 'b.pdf': null } } } },
-        { version: 2, units: { 'doc:1': { files: { '../a.pdf': 1, 'b.pdf': null }, fingerprint: 'x' } } },
+        { version: 2, units: { 'doc:1': { files: { 'a.pdf': 1, 'b.pdf': null }, fingerprint: 'x' } } },
+        { version: 2, units: { 'doc:1': { files: { 'a.pdf': 1, 'b.pdf': null }, fingerprint: 'x', completed: 'yes' } } },
+        { version: 2, units: { 'doc:1': { files: { '../a.pdf': 1, 'b.pdf': null }, fingerprint: 'x', completed: false } } },
     ]) {
         await writeFile(statePath, JSON.stringify(bad));
         assert.equal((await env.run()).code, 1, JSON.stringify(bad));
     }
     assert.deepEqual(env.api.reports, []);
-    await writeFile(statePath, JSON.stringify({ version: 2, units: { 'doc:9': { files: { 'a.pdf': 1, 'b.pdf': null }, fingerprint: 'x' } } }));
+    await writeFile(statePath, JSON.stringify({ version: 2, units: { 'doc:9': { files: { 'a.pdf': 1, 'b.pdf': null }, fingerprint: 'x', completed: false } } }));
     assert.equal((await env.run()).code, 0);
+});
+
+test('review content resubmitted before completion overwrites in place and stays review-stage', async (t) => {
+    const doc = reviewDoc('1');
+    const env = await setup(t, [doc]);
+    assert.equal((await env.run()).code, 0);
+    setFiles(doc, { document: '1:resubmitted', audit_trail: null });
+    assert.equal((await env.run()).code, 0);
+    assert.deepEqual(await env.files(), [`서비스계약서/${base}.pdf`]);
+    assert.equal(await env.bytes(`서비스계약서/${base}.pdf`), '1:resubmitted');
+    const state = await env.state();
+    assert.deepEqual(Object.keys(state.units), [key(doc)]);
+    assert.equal(state.units[key(doc)].completed, false);
+    assert.equal(state.units[key(doc)].fingerprint, fingerprint(doc));
+    await assertReport(env, { status: 'success', savedFiles: 1 });
+});
+
+test('completed backup files are never overwritten: a repeated content change keeps every revision', async (t) => {
+    const doc = document('1');
+    const env = await setup(t, [doc]);
+    assert.equal((await env.run()).code, 0);
+    const first = await env.state();
+    const fp1 = fingerprint(doc);
+    setFiles(doc, { document: 'v2', audit_trail: 'v2:audit' });
+    assert.equal((await env.run()).code, 0);
+    const fp2 = fingerprint(doc);
+    setFiles(doc, { document: 'v3', audit_trail: 'v3:audit' });
+    assert.equal((await env.run()).code, 0);
+    assert.equal(await env.bytes(`서비스계약서/${base}.pdf`), '1:document');
+    assert.equal(await env.bytes(`서비스계약서/${base} (2).pdf`), 'v2');
+    assert.equal(await env.bytes(`서비스계약서/${base} (3).pdf`), 'v3');
+    const state = await env.state();
+    assert.deepEqual(state.units[`doc:1@${fp1}`], first.units[key(doc)]);
+    assert.equal(state.units[`doc:1@${fp2}`].fingerprint, fp2);
+    assert.equal(state.units[key(doc)].fingerprint, fingerprint(doc));
+    assert.equal(Object.keys(state.units).length, 3);
+    // Flip-flopping back to an archived revision is also a new revision; archive keys never collide.
+    const fp3 = fingerprint(doc);
+    setFiles(doc, { document: 'v2', audit_trail: 'v2:audit' });
+    assert.equal((await env.run()).code, 0);
+    assert.equal(await env.bytes(`서비스계약서/${base} (4).pdf`), 'v2');
+    setFiles(doc, { document: 'v3', audit_trail: 'v3:audit' });
+    assert.equal((await env.run()).code, 0);
+    assert.equal(await env.bytes(`서비스계약서/${base} (5).pdf`), 'v3');
+    const units = (await env.state()).units;
+    assert.ok(Object.hasOwn(units, `doc:1@${fp1}`) && Object.hasOwn(units, `doc:1@${fp2}`) && Object.hasOwn(units, `doc:1@${fp3}`));
+    assert.ok(Object.hasOwn(units, `doc:1@${fp2}@2`));
+    assert.equal(Object.keys(units).length, 5);
+    assert.equal(await env.bytes(`서비스계약서/${base}.pdf`), '1:document');
+});
+
+test('a failed write of changed completed content leaves the old entry and files untouched', async (t) => {
+    const doc = document('1');
+    const env = await setup(t, [doc]);
+    assert.equal((await env.run()).code, 0);
+    const before = await env.state();
+    setFiles(doc, { document: 'changed', audit_trail: 'changed:audit' });
+    env.api.fileFailure = '1-document';
+    assert.equal((await env.run()).code, 2);
+    assert.deepEqual(await env.state(), before);
+    assert.equal((await env.files()).length, 2);
+    env.api.fileFailure = null;
+    assert.equal((await env.run()).code, 0);
+    assert.equal(await env.bytes(`서비스계약서/${base} (2).pdf`), 'changed');
+});
+
+test('a changed completed merged group is rebuilt under (2) and the original merge is untouched', async (t) => {
+    const docs = chunks();
+    const env = await setup(t, docs);
+    assert.equal((await env.run()).code, 0);
+    const before = await env.state();
+    const merged = `제공기록지/${srBase}.pdf`;
+    const mergedAudit = `제공기록지/감사추적/[감사추적]_${srBase}.pdf`;
+    const originals = await Promise.all((await env.files()).map(async (path) => [path, await env.bytes(path)]));
+    const second = docs.find((doc) => doc.docId === '2');
+    const oldFingerprint = fingerprint(second);
+    setFiles(second, { document: '2:changed', audit_trail: '2:changed:audit' });
+    assert.equal((await env.run()).code, 0);
+    for (const [path, content] of originals) assert.equal(await env.bytes(path), content);
+    assert.equal(await env.bytes(`제공기록지/${srBase} (2).pdf`), '1:document2:changed3:document');
+    assert.equal(await env.bytes(`제공기록지/감사추적/[감사추적]_${srBase} (2).pdf`), '1:audit_trail2:changed:audit3:audit_trail');
+    assert.equal(await env.bytes(`제공기록지/원본/${srBase}_2장 (2).pdf`), '2:changed');
+    const after = await env.state();
+    assert.ok(Object.keys(after.units[`merged:case-1:1`].files).every((path) => path.includes(' (2)')));
+    const archivedMerged = Object.entries(after.units).filter(([unitKey]) => unitKey.startsWith('merged:case-1:1@'));
+    assert.equal(archivedMerged.length, 1);
+    assert.deepEqual(archivedMerged[0][1], before.units['merged:case-1:1']);
+    assert.deepEqual(after.units[`doc:2@${oldFingerprint}`], before.units[key(second)]);
+    assert.ok(Object.keys(before.units['merged:case-1:1'].files).includes(merged) && Object.keys(before.units['merged:case-1:1'].files).includes(mergedAudit));
+    await assertReport(env, { status: 'success', savedFiles: 4, skippedFiles: 4 });
+});
+
+test('a migrated version 1 merged entry whose chunk content changed is not overwritten', async (t) => {
+    const docs = chunks();
+    const env = await setup(t, docs);
+    assert.equal((await env.run()).code, 0);
+    const v2 = await env.state();
+    await writeV1(env, v1Of(docs, v2));
+    const merged = `제공기록지/${srBase}.pdf`;
+    const original = await env.bytes(merged);
+    setFiles(docs.find((doc) => doc.docId === '3'), { document: '3:changed', audit_trail: '3:changed:audit' });
+    assert.equal((await env.run()).code, 0);
+    assert.equal(await env.bytes(merged), original);
+    assert.equal(await env.bytes(`제공기록지/${srBase} (2).pdf`), '1:document2:document3:changed');
+    const after = await env.state();
+    assert.equal(after.units['merged:case-1:1'].completed, true);
+    assert.equal(Object.keys(after.units).filter((unitKey) => unitKey.startsWith('merged:case-1:1@')).length, 1);
+});
+
+test('a review-stage merged group becomes completed only once every chunk and the merged audit exist', async (t) => {
+    const docs = reviewChunks();
+    const env = await setup(t, docs);
+    assert.equal((await env.run()).code, 0);
+    for (const doc of docs) complete(doc);
+    // One chunk's completion fails to download: the merge is not touched and stays review-stage.
+    env.api.fileFailure = '3-audit_trail';
+    await env.run();
+    assert.equal((await env.state()).units['merged:case-1:1'].completed, false);
+    env.api.fileFailure = null;
+    assert.equal((await env.run()).code, 0);
+    assert.equal((await env.state()).units['merged:case-1:1'].completed, true);
 });

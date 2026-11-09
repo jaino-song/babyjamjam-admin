@@ -121,7 +121,7 @@ async function main() {
             const [newKey, fingerprint] = doc ? [`doc:${doc[1]}`, `${doc[2]}:${doc[3]}`]
                 : merged ? [`merged:${merged[1]}`, `v1:${merged[2]}`] : [null, null];
             if (newKey === null || Object.hasOwn(migrated, newKey)) throw new Error('state.json 형식 오류');
-            migrated[newKey] = { files, fingerprint };
+            migrated[newKey] = { files, fingerprint, completed: true }; // version 1 only ever saved completed documents
         }
         return migrated;
     };
@@ -133,7 +133,7 @@ async function main() {
     };
     const reserved = new Set();
     for (const unit of Object.values(state.units)) {
-        if (!unit || typeof unit.fingerprint !== 'string') throw new Error('state.json 파일 정보 오류');
+        if (!unit || typeof unit.fingerprint !== 'string' || typeof unit.completed !== 'boolean') throw new Error('state.json 파일 정보 오류');
         for (const path of Object.keys(validFiles(unit.files, true))) reserved.add(path);
     }
     await saveState();
@@ -176,6 +176,7 @@ async function main() {
             ...doc,
             key: `doc:${doc.docId}`,
             fingerprint: `${inputs[0].sha256}:${inputs[1]?.sha256 ?? ''}`,
+            completed: !review,
             inputs,
             folder: chunk ? `${folder}/원본` : folder,
             base: chunk ? `${base}_${chunk.chunkIndex + 1}장` : base,
@@ -203,8 +204,19 @@ async function main() {
     }
     // Reserve both paths together, including merged units in naming order.
     // Reservations become persistent only after a unit writes a file.
+    let adopted = false;
     const allocate = async (unit) => {
-        if (Object.hasOwn(state.units, unit.key)) { unit.files = { ...state.units[unit.key].files }; return; }
+        const entry = Object.hasOwn(state.units, unit.key) ? state.units[unit.key] : null;
+        // A migrated version 1 merge recorded only the chunk document hashes: unchanged hashes mean unchanged content.
+        if (entry !== null && unit.chunks && entry.fingerprint === `v1:${unit.chunks.map((chunk) => chunk.inputs[0].sha256).join(',')}`) {
+            entry.fingerprint = unit.fingerprint;
+            adopted = true;
+        }
+        // Completed content is never overwritten: changed content takes a fresh pair of paths (the old
+        // entry is archived under another key when the new files are recorded). Review-stage content
+        // is rewritten in place.
+        unit.fork = entry !== null && entry.completed && entry.fingerprint !== unit.fingerprint;
+        if (entry !== null && !unit.fork) { unit.files = { ...entry.files }; return; }
         for (let n = 1; ; n += 1) {
             const name = `${unit.base}${n === 1 ? '' : ` (${n})`}.pdf`;
             const paths = [`${unit.folder}/${name}`, `${unit.folder}/감사추적/[감사추적]_${name}`];
@@ -220,6 +232,7 @@ async function main() {
         try { await allocate(unit); }
         catch (error) { unit.broken = true; failure(unit.docId, error); }
     }
+    if (adopted) await saveState();
     // A file is written beside its final path first, so a failed download never touches an existing file.
     const fetchTemp = async (file, path, createdAt) => {
         const final = await prepare(path);
@@ -246,7 +259,7 @@ async function main() {
     // output is rewritten over its recorded path; otherwise only missing files are (re)created.
     const plan = async (unit, available) => {
         const paths = Object.keys(unit.files);
-        const entry = state.units[unit.key];
+        const entry = unit.fork ? undefined : state.units[unit.key];
         const replace = Boolean(entry) && entry.fingerprint !== unit.fingerprint;
         const sizes = await Promise.all(paths.map(size));
         if (!replace) {
@@ -257,8 +270,26 @@ async function main() {
         const need = paths.map((_, i) => Boolean(available[i]) && (replace || sizes[i] === null));
         return { paths, replace, sizes, need };
     };
+    // Merged output counts as completed only when every chunk is and the merged audit trail exists.
+    const isCompleted = (unit) => unit.chunks
+        ? unit.chunks.every((chunk) => chunk.completed) && unit.files[Object.keys(unit.files)[1]] !== null
+        : unit.completed;
     const record = async (unit) => {
-        state.units[unit.key] = { files: unit.files, fingerprint: unit.fingerprint };
+        if (unit.fork) {
+            const old = state.units[unit.key];
+            let archived = `${unit.key}@${old.fingerprint}`;
+            for (let n = 2; Object.hasOwn(state.units, archived); n += 1) archived = `${unit.key}@${old.fingerprint}@${n}`;
+            state.units[archived] = old;
+            unit.fork = false;
+        }
+        state.units[unit.key] = { files: unit.files, fingerprint: unit.fingerprint, completed: isCompleted(unit) };
+        await saveState();
+    };
+    // Same content, now reported as completed: tighten the stored flag (never loosen it).
+    const tighten = async (unit) => {
+        const entry = state.units[unit.key];
+        if (unit.fork || !entry || entry.completed || entry.fingerprint !== unit.fingerprint || !isCompleted(unit)) return;
+        entry.completed = true;
         await saveState();
     };
     // Keep expected sizes for both paths even when a download fails mid-pair,
@@ -269,7 +300,12 @@ async function main() {
         let unitError;
         try {
             const { paths, replace, sizes, need } = await plan(unit, unit.inputs);
-            if (!need.some(Boolean)) { report.skippedFiles += sizes.filter((bytes) => bytes !== null).length; unit.ready = true; continue; }
+            if (!need.some(Boolean)) {
+                report.skippedFiles += sizes.filter((bytes) => bytes !== null).length;
+                unit.ready = true;
+                await tighten(unit);
+                continue;
+            }
             if (replace) {
                 const temps = [];
                 try {
@@ -311,7 +347,11 @@ async function main() {
         let unitError;
         try {
             const { paths, replace, sizes, need } = await plan(unit, [true, unit.chunks.every((chunk) => chunk.inputs[1])]);
-            if (!need.some(Boolean)) { report.skippedFiles += sizes.filter((bytes) => bytes !== null).length; continue; }
+            if (!need.some(Boolean)) {
+                report.skippedFiles += sizes.filter((bytes) => bytes !== null).length;
+                await tighten(unit);
+                continue;
+            }
             for (let i = 0; i < paths.length; i += 1) {
                 if (!need[i]) continue;
                 const final = await prepare(paths[i]);
