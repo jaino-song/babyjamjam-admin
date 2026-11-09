@@ -563,11 +563,15 @@ export class ServiceRecordEntryService {
             const lockedEdit = Boolean(existing?.locked);
             const dateIso = toIso(serviceDate);
             const dateChanged = !existing || dateIso !== toIso(existing.serviceDate);
-            const dateFailure = (detail: string): BadRequestException => new BadRequestException(
-                problemBody("VALIDATION_FAILED", {
+            const dateFailure = (
+                detail: string,
+                serviceDateReason: "OUT_OF_RANGE" | "NOT_SERVICE_DAY" | "TAKEN" | "BEFORE_PREVIOUS" | "AFTER_NEXT",
+            ): BadRequestException => new BadRequestException({
+                ...problemBody("VALIDATION_FAILED", {
                     pointer: "/serviceDate", code: "INVALID_VALUE", detail, location: "body",
                 }),
-            );
+                serviceDateReason,
+            });
             const forwardDetail = "뒷 회차보다 늦게 바꿀 수 없어요. 뒷 회차를 먼저 변경해 주세요.";
             const backwardDetail = "앞 회차보다 이르게 바꿀 수 없어요. 앞 회차를 먼저 변경해 주세요.";
             let aligned: ServiceRecordPlannedSession[] | null = null;
@@ -579,7 +583,7 @@ export class ServiceRecordEntryService {
                 };
                 if ((record.startDate && dateIso < offsetDate(record.startDate, -7))
                     || (record.endDate && dateIso > offsetDate(record.endDate, 7))) {
-                    throw dateFailure("고를 수 있는 기간이 아니에요.");
+                    throw dateFailure("고를 수 있는 기간이 아니에요.", "OUT_OF_RANGE");
                 }
                 let isServiceDay = false;
                 try {
@@ -587,7 +591,7 @@ export class ServiceRecordEntryService {
                 } catch (error) {
                     if (!(error instanceof UnsupportedKoreanHolidayYearError)) throw error;
                 }
-                if (!isServiceDay) throw dateFailure("서비스를 하지 않는 날이에요.");
+                if (!isServiceDay) throw dateFailure("서비스를 하지 않는 날이에요.", "NOT_SERVICE_DAY");
                 const days = await tx.service_record_day.findMany({
                     where: { serviceRecordCaseId: record.id, branchId: ctx.branchId },
                     orderBy: { caseSessionIndex: "asc" },
@@ -598,10 +602,10 @@ export class ServiceRecordEntryService {
                     .sort((a, b) => a.caseSessionIndex - b.caseSessionIndex);
                 const prev = others.filter((day) => day.caseSessionIndex < sessionIndex).at(-1);
                 const next = others.find((day) => day.caseSessionIndex > sessionIndex);
-                if (prev && dateIso <= toIso(prev.serviceDate)) throw dateFailure(backwardDetail);
-                if (next && dateIso >= toIso(next.serviceDate)) throw dateFailure(forwardDetail);
+                if (prev && dateIso <= toIso(prev.serviceDate)) throw dateFailure(backwardDetail, "BEFORE_PREVIOUS");
+                if (next && dateIso >= toIso(next.serviceDate)) throw dateFailure(forwardDetail, "AFTER_NEXT");
                 if (others.some((day) => toIso(day.serviceDate) === dateIso)) {
-                    throw dateFailure("다른 회차가 이미 고른 날이에요.");
+                    throw dateFailure("다른 회차가 이미 고른 날이에요.", "TAKEN");
                 }
                 const vector = plannedSessionVector(record.plannedSessions, total, clientCalendar);
                 if (vector.state === "valid" && vector.entries) {
@@ -615,7 +619,10 @@ export class ServiceRecordEntryService {
                         const direction = error instanceof CaregiverDateAlignmentError
                             ? error.direction
                             : dateIso > vector.entries[sessionIndex - 1]!.serviceDate ? "forward" : "backward";
-                        throw dateFailure(direction === "forward" ? forwardDetail : backwardDetail);
+                        throw dateFailure(
+                            direction === "forward" ? forwardDetail : backwardDetail,
+                            direction === "forward" ? "AFTER_NEXT" : "BEFORE_PREVIOUS",
+                        );
                     }
                     if (isDeepStrictEqual(aligned, vector.entries)) aligned = null;
                 }

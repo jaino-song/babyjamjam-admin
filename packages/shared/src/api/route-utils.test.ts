@@ -48,6 +48,28 @@ describe("start-date lock problem passthrough", () => {
     });
 });
 
+describe("service-date reason problem passthrough", () => {
+    it.each(["OUT_OF_RANGE", "NOT_SERVICE_DAY", "TAKEN", "BEFORE_PREVIOUS", "AFTER_NEXT"])(
+        "forwards the validated reason %s on VALIDATION_FAILED", (serviceDateReason) => {
+            const problem = createProblemDetails({ code: "VALIDATION_FAILED", requestId: "req-service-date" });
+            expect(sanitizeUpstreamClientError({ ...problem, serviceDateReason }, "fallback", 400))
+                .toEqual({ ...problem, serviceDateReason, error: problem.detail });
+        },
+    );
+
+    it("drops an unknown service-date reason", () => {
+        const problem = createProblemDetails({ code: "VALIDATION_FAILED", requestId: "req-service-date" });
+        expect(sanitizeUpstreamClientError({ ...problem, serviceDateReason: "UNKNOWN_REASON" }, "fallback", 400))
+            .toEqual({ ...problem, error: problem.detail });
+    });
+
+    it("drops the service-date reason on another problem code", () => {
+        const problem = createProblemDetails({ code: "REQUEST_CONFLICT", requestId: "req-service-date" });
+        expect(sanitizeUpstreamClientError({ ...problem, serviceDateReason: "BEFORE_PREVIOUS" }, "fallback", 409))
+            .toEqual({ ...problem, error: problem.detail });
+    });
+});
+
 describe("logUpstreamError", () => {
     afterEach(() => {
         jest.restoreAllMocks();
