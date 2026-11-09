@@ -2,7 +2,9 @@ import { Inject, Injectable, NotFoundException } from "@nestjs/common";
 
 import { extractEformsignContractStartDate } from "application/utils/eformsign-contract-client-candidate";
 import { codeOnlyProblemBody } from "application/utils/problem-bodies";
-import { EFORMSIGN_COMPLETED_STATUS_STORAGE_VALUES } from "domain/constants/eformsign-doc-status.constants";
+import {
+    EFORMSIGN_COMPLETED_STATUS_STORAGE_VALUES, EFORMSIGN_REVIEW_STAGE_STATUS_STORAGE_VALUES,
+} from "domain/constants/eformsign-doc-status.constants";
 import { EformsignApiDocumentResponse } from "domain/repositories/eformsign.client.interface";
 import {
     BackupDocumentRow, BackupFailure, BackupRunInput, EFORMSIGN_BACKUP_REPOSITORY, IEformsignBackupRepository,
@@ -22,6 +24,13 @@ function backupDocumentKind(row: BackupDocumentRow): BackupDocumentKind {
     return "other";
 }
 
+const isCompletedStatus = (statusType: string) => EFORMSIGN_COMPLETED_STATUS_STORAGE_VALUES.includes(statusType);
+const isReviewStageStatus = (statusType: string) => EFORMSIGN_REVIEW_STAGE_STATUS_STORAGE_VALUES.includes(statusType);
+// Completed documents are backed up once fully synced; review-stage ones from the first (partial) sync on.
+const isBackupReadySync = (statusType: string, syncStatus: string) =>
+    syncStatus === "ready" ? isCompletedStatus(statusType) || isReviewStageStatus(statusType)
+        : syncStatus === "partial" && isReviewStageStatus(statusType);
+
 function payloadStartDate(detailPayload: unknown): Date | null {
     if (typeof detailPayload !== "object" || detailPayload === null || Array.isArray(detailPayload)) return null;
     return extractEformsignContractStartDate(detailPayload as EformsignApiDocumentResponse);
@@ -40,6 +49,7 @@ export class EformsignBackupService {
                     ? row.employeeSchedule?.startDate ?? row.client?.startDate ?? payloadStartDate(row.detailPayload)
                     : null;
             const chunk = row.serviceRecordSnapshotChunk;
+            const completed = isCompletedStatus(row.statusType);
             return {
                 docId: row.documentId, kind, title: row.documentName, customerName: row.customerName,
                 serviceStartDate: start?.toISOString().slice(0, 10) ?? null,
@@ -48,7 +58,8 @@ export class EformsignBackupService {
                     caseId: chunk.serviceRecordCaseId, snapshotVersion: chunk.snapshotVersion,
                     chunkIndex: chunk.chunkIndex, chunkCount: chunk.chunkCount, firstSessionIndex: chunk.firstSessionIndex,
                 } : null,
-                files: row.syncStatus === "ready" ? row.files
+                completed,
+                files: isBackupReadySync(row.statusType, row.syncStatus) ? row.files
                     .filter((file) => file.sourceUpdatedDate.getTime() === row.detailSourceUpdatedDate?.getTime())
                     .map((file) => ({ fileId: file.id, fileType: file.fileType, sha256: file.sha256, byteSize: file.byteSize })) : [],
             };
@@ -59,8 +70,8 @@ export class EformsignBackupService {
     async getFile(fileId: string) {
         const file = await this.repository.findFile(fileId);
         const doc = file?.eformsignDoc;
-        if (!file || !doc || !EFORMSIGN_COMPLETED_STATUS_STORAGE_VALUES.some((status) => status === doc.statusType)
-            || doc.permanentPurgeRequestedAt !== null || doc.syncStatus !== "ready"
+        if (!file || !doc || !isBackupReadySync(doc.statusType, doc.syncStatus)
+            || doc.permanentPurgeRequestedAt !== null
             || file.sourceUpdatedDate.getTime() !== doc.detailSourceUpdatedDate?.getTime()) {
             throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
         }

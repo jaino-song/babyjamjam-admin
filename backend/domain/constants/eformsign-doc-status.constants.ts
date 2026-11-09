@@ -228,3 +228,13 @@ export const EFORMSIGN_TERMINAL_STATUS_DETAILS: Readonly<Record<string, string>>
     "090": "철회",
     "099": "삭제됨",
 };
+
+/** Review-stage storage values (provider review request 070 / rejected 071, with legacy aliases) the daily backup also saves before completion. */
+export const EFORMSIGN_REVIEW_STAGE_STATUS_STORAGE_VALUES: readonly string[] = [
+    "070",
+    "071",
+    "70",
+    "71",
+    "doc_request_reviewer",
+    "doc_reject_reviewer",
+];
