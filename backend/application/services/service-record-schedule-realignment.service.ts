@@ -196,7 +196,7 @@ interface ScheduleRow {
  * the client -> employees -> case -> schedules/assignments/days lock order
  * (`lockServiceRecordWriteSet`); nothing here takes a lock of its own.
  *
- * Like the existing schedule-change flow it writes no revision or history entry.
+ * It updates the current schedule without creating a revision or history entry.
  * An open admin-edit draft turns stale through its source fingerprint.
  */
 @Injectable()
@@ -409,7 +409,11 @@ export class ServiceRecordScheduleRealignmentService {
             if (!row || row.locked || row.submittedAt) continue;
             await tx.service_record_day.updateMany({
                 where: { id: row.id, branchId, serviceRecordCaseId: record.id, locked: false },
-                data: { serviceDate: toDbDate(entries[sessionIndex - 1]!.serviceDate) },
+                data: {
+                    serviceDate: toDbDate(entries[sessionIndex - 1]!.serviceDate),
+                    ...(isoDate(row.serviceDate) !== entries[sessionIndex - 1]!.serviceDate
+                        ? { periodMismatchKeptAt: null } : {}),
+                },
             });
         }
         for (const write of changedWrites) {

@@ -5,7 +5,6 @@ export type ClientBadgeStatus =
     | "preBooking"
     | "pending"
     | "review"
-    | "scheduleChange"
     | "terminated"
     | "expired"
     | "completed"
@@ -29,7 +28,6 @@ export const CLIENT_BADGE_STATUS_TOKENS = {
         signed: { variant: "primary", defaultLabel: "서명 완료" },
         pending: { variant: "neutral", defaultLabel: "대기" },
         review: { variant: "warning", defaultLabel: "검토 필요" },
-        scheduleChange: { variant: "danger", defaultLabel: "일정 변경" },
         terminated: { variant: "danger", defaultLabel: "중단" },
         expired: { variant: "danger", defaultLabel: "만료" },
         completed: { variant: "success", defaultLabel: "완료" },
@@ -57,7 +55,6 @@ const DEFAULT_CLIENT_BADGE_KEY_BY_STATUS = {
     signed: "service_status",
     pending: "service_status",
     review: "service_status",
-    scheduleChange: "service_status",
     terminated: "service_status",
     expired: "service_status",
     completed: "service_status",

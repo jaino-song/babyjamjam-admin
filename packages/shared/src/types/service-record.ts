@@ -30,6 +30,7 @@ export interface ServiceRecordHeader {
 }
 
 export interface ServiceRecordSession {
+    periodMismatchKeptAt?: string | null;
     sessionIndex: number;
     serviceDate: string;
     locked: boolean;
@@ -530,36 +531,6 @@ export interface PrepareServiceRecordLinkResponse {
 export interface ResetServiceRecordLinkResponse {
     serviceRecordUrl: string;
     expiresAt: string;
-}
-
-export interface ServiceScheduleChangePreviewResponse {
-    sessionIndex: number;
-    fromDate: string;
-    /**
-     * Earliest selectable date: the later of the client's birth date and the day
-     * after the previous session. Null for session 1 with no birth date recorded.
-     */
-    minimumDate: string | null;
-}
-
-export interface ApplyServiceScheduleChangeRequest {
-    toDate: string;
-    /** The admin confirmed moving the session onto a weekend or holiday. */
-    allowNonBusinessDay?: boolean;
-}
-
-export interface ApplyServiceScheduleChangeResponse {
-    id: string;
-    scheduleId: number;
-    clientId: number;
-    sessionIndex: number;
-    fromDate: string;
-    toDate: string;
-    oldEndDate: string;
-    newEndDate: string;
-    status: "approved";
-    /** The client's service start date after the change. */
-    startDate: string | null;
 }
 
 export interface PrepareServiceRecordLinkRequest {

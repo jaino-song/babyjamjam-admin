@@ -15,7 +15,6 @@ export type ClientBadgeStatus =
     | "preBooking"
     | "pending"
     | "review"
-    | "scheduleChange"
     | "terminated"
     | "expired"
     | "completed"

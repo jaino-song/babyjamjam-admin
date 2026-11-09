@@ -304,11 +304,8 @@ describe("catalog coverage", () => {
         "SERVICE_RECORD_PLANNED_DATE_UNAVAILABLE",
         "INVALID_SCHEDULE_DATE",
         "ALL_SESSIONS_SUBMITTED",
-        "REQUEST_ALREADY_PENDING",
         "REQUEST_NOT_PENDING",
-        "SCHEDULE_DATE_NOT_POSTPONED",
         "REQUEST_STALE",
-        "SCHEDULE_CHANGE_UNCOMPUTABLE",
         "SERVICE_RECORD_FINALIZED",
         "SERVICE_RECORD_START_DATE_LOCKED",
         "SERVICE_RECORD_END_DATE_BEFORE_LOCKED_SESSION",
@@ -463,11 +460,8 @@ describe("catalog coverage", () => {
     const SCHEDULE_CHANGE_STATUS_409_CODES: Array<[ProblemCode, string]> = [
         ["SERVICE_RECORD_PLANNED_DATE_UNAVAILABLE", "service-record-planned-date-unavailable"],
         ["ALL_SESSIONS_SUBMITTED", "all-sessions-submitted"],
-        ["REQUEST_ALREADY_PENDING", "request-already-pending"],
         ["REQUEST_NOT_PENDING", "request-not-pending"],
-        ["SCHEDULE_DATE_NOT_POSTPONED", "schedule-date-not-postponed"],
         ["REQUEST_STALE", "request-stale"],
-        ["SCHEDULE_CHANGE_UNCOMPUTABLE", "schedule-change-uncomputable"],
     ];
 
     it.each(SCHEDULE_CHANGE_STATUS_409_CODES)("registers %s as status 409 with kebab-case type anchor", (code, anchor) => {
