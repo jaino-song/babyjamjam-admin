@@ -10,17 +10,47 @@ const props = (): OverviewStepProps => ({
     ] },
     lockedDays: new Set([2, 3]), nextOpenDay: () => 1, isRecordFinalized: false, onOpenDay: jest.fn(),
 });
-it("keeps blank date lines and enables multiple empty sessions after a delete", () => {
+it("keeps blank date lines and enables only the earliest empty session after a delete", () => {
     const p = props();
     const { container } = render(<OverviewStep {...p} />);
     const cards = Array.from(container.querySelectorAll<HTMLButtonElement>('[data-source-component="DayCard"]'));
     expect(cards[0]).toBeEnabled();
-    expect(cards[3]).toBeEnabled();
+    expect(cards[0]).toHaveTextContent("입력 가능");
+    expect(screen.getAllByText("입력 가능")).toHaveLength(1);
+    expect(cards[3]).toBeDisabled();
+    expect(cards[3]).toHaveTextContent("대기");
     expect(cards[4]).toBeDisabled();
     expect(cards[0].querySelector('[data-component$="_date"]')?.textContent?.trim()).toBe("");
     expect(cards[1]).toHaveTextContent("11.03");
     expect(cards[3].querySelector('[data-component$="_date"]')?.textContent?.trim()).toBe("");
     fireEvent.click(cards[3]);
-    expect(p.onOpenDay).toHaveBeenCalledWith(4, false);
-    expect(screen.getAllByRole("button").filter((button) => button.textContent === "다음 회차 입력")).toHaveLength(1);
+    expect(p.onOpenDay).not.toHaveBeenCalled();
+    fireEvent.click(cards[0]);
+    expect(p.onOpenDay).toHaveBeenLastCalledWith(1, false);
+    for (const index of [1, 2]) {
+        expect(cards[index]).toBeEnabled();
+        expect(cards[index]).toHaveTextContent("제출완료");
+        fireEvent.click(cards[index]);
+        expect(p.onOpenDay).toHaveBeenLastCalledWith(index + 1, true);
+    }
+    fireEvent.click(screen.getByRole("button", { name: "다음 회차 입력" }));
+    expect(p.onOpenDay).toHaveBeenLastCalledWith(1);
+});
+
+it("enables session 4 and opens it from the footer when sessions 1 through 3 are submitted", () => {
+    const p = props();
+    p.context.sessions.unshift({ sessionIndex: 1, serviceDate: "2026-11-02", locked: true });
+    p.lockedDays = new Set([1, 2, 3]);
+    p.nextOpenDay = () => 4;
+    const { container } = render(<OverviewStep {...p} />);
+    const cards = Array.from(container.querySelectorAll<HTMLButtonElement>('[data-source-component="DayCard"]'));
+    expect(screen.getAllByText("입력 가능")).toHaveLength(1);
+    expect(cards[3]).toBeEnabled();
+    expect(cards[3]).toHaveTextContent("입력 가능");
+    expect(cards[4]).toBeDisabled();
+    expect(cards[4]).toHaveTextContent("대기");
+    fireEvent.click(cards[3]);
+    expect(p.onOpenDay).toHaveBeenLastCalledWith(4, false);
+    fireEvent.click(screen.getByRole("button", { name: "다음 회차 입력" }));
+    expect(p.onOpenDay).toHaveBeenLastCalledWith(4);
 });
