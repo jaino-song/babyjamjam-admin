@@ -11,8 +11,11 @@ jest.mock("@/hooks/useTokenBusinessDayCalendar", () => ({
 jest.mock("@/components/app/service-record/ServiceRecordWizard", () => ({
     MobileServiceRecordWizard: (props: MobileServiceRecordWizardProps) => <div>
         <span data-testid="screen">{props.screen}</span>
+        <span data-testid="page-index">{props.pageIdx}</span>
         <span data-testid="date-error">{props.serviceDateError}</span>
         <button onClick={() => props.onOpenDay(1, true)}>edit 1</button>
+        <button onClick={() => props.onOpenDay(2)}>new 2</button>
+        <button onClick={props.onNextPage}>next</button>
         <button onClick={props.onOpenDateSheet}>date</button>
         <button onClick={props.onDeleteSession}>delete</button>
         <button onClick={props.onOpenSubmitModal}>submit</button>
@@ -75,13 +78,39 @@ it("cancel leaves the record and DELETE untouched; confirm deletes then reloads 
     expect(toast).toHaveBeenCalledWith({ variant: "success", title: "1회차 기록을 삭제했어요" });
 });
 
-it("shows a 400 date detail as a field error and closes the submit dialog", async () => {
-    submitResponse = json({ code: "VALIDATION_FAILED", detail: "뒷 회차보다 늦게 바꿀 수 없어요. 뒷 회차를 먼저 변경해 주세요.", errors: [{ pointer: "/serviceDate" }] }, 400);
+it.each<[string | undefined, string]>([
+    ["OUT_OF_RANGE", "고를 수 있는 기간이 아니에요."],
+    ["NOT_SERVICE_DAY", "서비스를 하지 않는 날이에요."],
+    ["TAKEN", "다른 회차가 이미 고른 날이에요."],
+    ["BEFORE_PREVIOUS", "앞 회차보다 이르게 바꿀 수 없어요. 앞 회차를 먼저 변경해 주세요."],
+    ["AFTER_NEXT", "뒷 회차보다 늦게 바꿀 수 없어요. 뒷 회차를 먼저 변경해 주세요."],
+    [undefined, "고를 수 있는 날이 아니에요. 다른 날을 골라 주세요."],
+    ["UNKNOWN", "고를 수 있는 날이 아니에요. 다른 날을 골라 주세요."],
+])("shows the %s date refusal reason as a field error and closes the submit dialog", async (serviceDateReason, message) => {
+    submitResponse = json({ code: "VALIDATION_FAILED", detail: "입력 내용을 확인해 주세요.", errors: [{ pointer: "/serviceDate" }], serviceDateReason }, 400);
     await openEdit();
     fireEvent.click(screen.getByText("submit"));
     fireEvent.click(screen.getByRole("button", { name: "확인" }));
-    await waitFor(() => expect(screen.getByTestId("date-error")).toHaveTextContent("뒷 회차보다 늦게 바꿀 수 없어요."));
+    await waitFor(() => expect(screen.getByTestId("date-error")).toHaveTextContent(message));
     expect(screen.queryByRole("dialog")).toBeNull();
+});
+
+it("shows a notes validation error in the notification without a date error or navigation", async () => {
+    submitResponse = json({ code: "VALIDATION_FAILED", detail: "입력 내용을 확인해 주세요.", errors: [{ pointer: "/notes" }] }, 400);
+    render(<ServiceRecordPage />);
+    await waitFor(() => expect(screen.getByTestId("screen")).toHaveTextContent("overview"));
+    fireEvent.click(screen.getByText("new 2"));
+    fireEvent.click(screen.getByText("next"));
+    expect(screen.getByTestId("page-index")).toHaveTextContent("1");
+    const historyState = window.history.state;
+    fireEvent.click(screen.getByText("submit"));
+    fireEvent.click(screen.getByRole("button", { name: "확인" }));
+    const notification = await screen.findByRole("dialog", { name: "요청을 완료하지 못했습니다." });
+    expect(within(notification).getByText("제출에 실패했어요.")).toBeVisible();
+    expect(screen.getByTestId("date-error")).toBeEmptyDOMElement();
+    expect(screen.getByTestId("screen")).toHaveTextContent("day");
+    expect(screen.getByTestId("page-index")).toHaveTextContent("1");
+    expect(window.history.state).toEqual(historyState);
 });
 
 it("returns a refused DELETE to phone verification and closes the modal", async () => {

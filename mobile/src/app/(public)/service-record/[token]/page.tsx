@@ -19,7 +19,7 @@ import { NotificationOneButtonModal } from "@/components/app/ui/NotificationOneB
 import { ToastAction } from "@/components/ui/toaster";
 import { toast } from "@/hooks/use-toast";
 import { MobileServiceRecordWizard } from "@/components/app/service-record/ServiceRecordWizard";
-import { ServiceDateSheet } from "@/components/app/service-record/screen/ServiceDateSheet";
+import { ORDER_AFTER, ORDER_BEFORE, ServiceDateSheet } from "@/components/app/service-record/screen/ServiceDateSheet";
 import { ServiceRecordCalendarBanner } from "@/components/app/service-record/ServiceRecordCalendarBanner";
 import { useTokenBusinessDayCalendar } from "@/hooks/useTokenBusinessDayCalendar";
 import { type ServiceDayPolicy } from "@/lib/date/business-days";
@@ -72,6 +72,17 @@ function problemCode(normalized: NormalizedApiError, body: unknown): string | un
         if (typeof code === "string" && code.length > 0) return code;
     }
     return undefined;
+}
+
+function serviceDateErrorMessage(reason: unknown): string {
+    switch (reason) {
+        case "OUT_OF_RANGE": return "고를 수 있는 기간이 아니에요.";
+        case "NOT_SERVICE_DAY": return "서비스를 하지 않는 날이에요.";
+        case "TAKEN": return "다른 회차가 이미 고른 날이에요.";
+        case "BEFORE_PREVIOUS": return ORDER_BEFORE;
+        case "AFTER_NEXT": return ORDER_AFTER;
+        default: return "고를 수 있는 날이 아니에요. 다른 날을 골라 주세요.";
+    }
 }
 
 interface StoredFormState {
@@ -535,9 +546,14 @@ export default function ServiceRecordPage() {
                 );
                 if (problemCode(normalized, e) === "CLIENT_SIGNATURE_REQUIRED") {
                     setErrorNotificationMessage("산모 서명이 필요합니다.");
-                } else if (res.status === 400 && problemCode(normalized, e) === "VALIDATION_FAILED" && e && typeof e === "object" && "detail" in e && typeof e.detail === "string") {
+                } else if (
+                    res.status === 400 && problemCode(normalized, e) === "VALIDATION_FAILED"
+                    && e && typeof e === "object" && "errors" in e && Array.isArray(e.errors)
+                    && e.errors.some((error: unknown) => error && typeof error === "object"
+                        && "pointer" in error && error.pointer === "/serviceDate")
+                ) {
                     if (!editing) navigateTo("day", { mode: "replace", day, pageIdx: 0 });
-                    setServiceDateError(e.detail);
+                    setServiceDateError(serviceDateErrorMessage("serviceDateReason" in e ? e.serviceDateReason : undefined));
                     setSubmitModalOpen(false);
                 } else if (problemCode(normalized, e) === "REQUEST_CONFLICT") {
                     setErrorNotificationMessage("이미 처리되었거나 수정할 수 없는 상태예요.");
