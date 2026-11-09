@@ -32,6 +32,18 @@ interface PeriodFitResult {
     scheduleIds: number[];
 }
 
+export function hasAuthoritativeServiceRecordCount(record: {
+    requiredSessionCount: number | null;
+    currentRevisionId?: string | null;
+    currentUsableRevisionId?: string | null;
+    currentUsableDocumentVersion?: number | null;
+    plannedSessions?: Prisma.JsonValue | null;
+}): boolean {
+    return record.requiredSessionCount !== null || record.currentRevisionId != null
+        || record.currentUsableRevisionId != null || record.currentUsableDocumentVersion != null
+        || record.plannedSessions != null;
+}
+
 export function servicePeriodSessionCount(
     startDate: Date | null | undefined,
     endDate: Date | null | undefined,
@@ -90,8 +102,7 @@ export class ServiceRecordPeriodMismatchService {
         const currentSchedules = await tx.employee_schedule.findMany({ where, orderBy: { id: "asc" } });
         const calendar = withClientServiceDays(params.calendar, client);
         const total = servicePeriodSessionCount(record.startDate, record.endDate, record.requiredSessionCount, calendar,
-            record.requiredSessionCount !== null || record.currentRevisionId != null
-            || record.currentUsableRevisionId != null || record.currentUsableDocumentVersion != null || record.plannedSessions != null);
+            hasAuthoritativeServiceRecordCount(record));
         const days = await tx.service_record_day.findMany({
             where: { branchId, serviceRecordCaseId: record.id, locked: true },
             orderBy: { caseSessionIndex: "asc" },
@@ -179,7 +190,7 @@ export class ServiceRecordPeriodMismatchService {
         await tx.service_record_case.update({
             where: { id: record.id, branchId }, data: { startDate: newStart, endDate: newEnd },
         });
-        await refreshTokenExpiry(tx, branchId, record.id, newEnd);
+        await refreshTokenExpiry(tx, branchId, record.id, newEnd, { raiseOnly: true });
         await persistReevaluationIntents(tx, { branchId, clientId, scheduleIds, intentAt: new Date() });
         return { startDate, endDate, changed: true, scheduleIds };
     }

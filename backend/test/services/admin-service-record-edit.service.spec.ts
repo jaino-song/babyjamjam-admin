@@ -270,6 +270,11 @@ function createHarness(options: {
             sourceSnapshot: input.sourceSnapshot,
             changes: input.changes ?? {},
         }))),
+        createDraftIfNoneActive: jest.fn().mockImplementation((input: { sourceFingerprint: string; sourceSnapshot: unknown; changes?: unknown }) => Promise.resolve(draft({
+            sourceFingerprint: input.sourceFingerprint,
+            sourceSnapshot: input.sourceSnapshot,
+            changes: input.changes ?? {},
+        }))),
         findActiveDraft: jest.fn().mockResolvedValue(options.activeDraft ?? null),
         findDraft: jest.fn().mockResolvedValue(options.activeDraft ?? draft()),
         findDraftById: jest.fn().mockResolvedValue(options.targetDraft ?? { serviceRecordCaseId: CASE_ID }),
@@ -293,8 +298,57 @@ function createHarness(options: {
 }
 
 describe("AdminServiceRecordEditService", () => {
+    describe.each(["startDraft", "startOwnDraft"] as const)("%s date validation", (method) => {
+        it.each(["2026-08-24", "2026-09-02"])("refuses changed date %s without dateMove before creating", async (serviceDate) => {
+            const harness = createHarness({ source: previewSourceSnapshot() });
+            await expect(harness.service[method](BRANCH_ID, CLIENT_ID, ACTOR_ID, {
+                changes: { sessions: [{ sessionIndex: 1, serviceDate }] },
+            })).rejects.toMatchObject({ status: 400, response: {
+                scheduleCode: "DATE_MOVE_REQUIRED", sessionIndex: 1,
+            } });
+            expect(harness.repository.createOrResumeDraft).not.toHaveBeenCalled();
+            expect(harness.repository.createDraftIfNoneActive).not.toHaveBeenCalled();
+            expect(harness.holidayCalendar.forBranch).toHaveBeenCalledWith(BRANCH_ID, { fresh: true });
+        });
+
+        it("accepts an unchanged business date echoed outside the period window", async () => {
+            const source = previewSourceSnapshot();
+            // The persisted vector and written day agree on Aug 24, a Monday,
+            // earlier than start Sep 1 minus seven days (Aug 25).
+            source.sessions[0]!.serviceDate = "2026-08-24";
+            (source.plannedSessions as Array<{ serviceDate: string }>)[0]!.serviceDate = "2026-08-24";
+            const harness = createHarness({ source });
+            const result = await harness.service[method](BRANCH_ID, CLIENT_ID, ACTOR_ID, {
+                changes: { sessions: [{ sessionIndex: 1, serviceDate: "2026-08-24" }] },
+            });
+            expect(result.draft?.id).toBe(DRAFT_ID);
+            const create = method === "startDraft" ? harness.repository.createOrResumeDraft : harness.repository.createDraftIfNoneActive;
+            expect(create).toHaveBeenCalledTimes(1);
+        });
+
+        it("stores content-only changes unchanged without loading a calendar", async () => {
+            const harness = createHarness();
+            const changes = { header: { momName: "수정산모" }, sessions: [{ sessionIndex: 1, notes: "메모" }] };
+            await harness.service[method](BRANCH_ID, CLIENT_ID, ACTOR_ID, { changes });
+            const create = method === "startDraft" ? harness.repository.createOrResumeDraft : harness.repository.createDraftIfNoneActive;
+            expect(create.mock.calls[0]![0].changes).toEqual(changes);
+            expect(harness.holidayCalendar.forBranch).not.toHaveBeenCalled();
+        });
+    });
+
+    it("resumes an ACTIVE draft without validating incoming dates the repository would ignore", async () => {
+        const active = draft({ changes: { header: { momName: "기존 초안" } } });
+        const harness = createHarness({ source: previewSourceSnapshot(), activeDraft: active });
+        const result = await harness.service.startDraft(BRANCH_ID, CLIENT_ID, ACTOR_ID, {
+            changes: { sessions: [{ sessionIndex: 1, serviceDate: "2026-08-24" }] },
+        });
+        expect(result.draft).toEqual(active);
+        expect(harness.holidayCalendar.forBranch).not.toHaveBeenCalled();
+        expect(harness.repository.createOrResumeDraft).not.toHaveBeenCalled();
+    });
+
     it("captures a realistic 14-field payload without mutating source provenance", async () => {
-        const harness = createHarness();
+        const harness = createHarness({ source: previewSourceSnapshot() });
         const changes = {
             header: { momName: "수정산모" },
             sessions: [{

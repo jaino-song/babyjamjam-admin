@@ -110,7 +110,6 @@ import { ServiceRecordStartDateChangeService } from "./service-record-start-date
 import { SystemSettingService } from "./system-setting.service";
 import { MessageAutomationBranchLockService } from "./message-automation-branch-lock.service";
 import {
-    ServiceRecordScheduleRealignmentService,
     manualScheduleConflict,
 } from "./service-record-schedule-realignment.service";
 import { AgentAutomationRecordStoreService } from "../agent/agent-automation-record-store.service";
@@ -279,7 +278,6 @@ export class ClientService {
         private readonly clientAutomationImpact?: ClientAutomationImpactPort,
         @Optional() private readonly agentAutomationRecordStore?: AgentAutomationRecordStoreService,
         @Optional() private readonly messageAutomationBranchLockService?: MessageAutomationBranchLockService,
-        @Optional() private readonly serviceRecordScheduleRealignmentService?: ServiceRecordScheduleRealignmentService,
         @Optional() private readonly serviceRecordStartDateChangeService?: ServiceRecordStartDateChangeService,
     ) {}
 

@@ -91,7 +91,7 @@ const COLUMNS: Record<string, Record<string, () => unknown>> = {
         sessionIndex: nul, employeeId: nul, employeeNameSnapshot: nul, formVersion: () => 1,
         serviceDate: nul, answers: () => ({}), etcService: nul, notes: nul, paymentConfirmed: no,
         momApproval: nul, clientSignature: nul, clientSignedAt: nul, locked: no, submittedAt: nul,
-        createdAt: now,
+        createdAt: now, periodMismatchKeptAt: nul,
     },
     service_record_token: {
         id: uuid, branchId: nul, scheduleId: nul, employeeId: nul, serviceRecordCaseId: nul,
@@ -167,7 +167,7 @@ const KIND_COLUMNS: Record<string, Partial<Record<Kind, string>>> = {
     service_record_day: {
         string: "id branchId serviceRecordCaseId employeeNameSnapshot etcService notes momApproval clientSignature",
         int: "scheduleId caseSessionIndex sessionIndex employeeId formVersion",
-        datetime: "serviceDate clientSignedAt submittedAt createdAt", boolean: "paymentConfirmed locked", json: "answers",
+        datetime: "serviceDate clientSignedAt submittedAt createdAt periodMismatchKeptAt", boolean: "paymentConfirmed locked", json: "answers",
     },
     service_record_token: {
         string: "id branchId serviceRecordCaseId linkTokenHash expectedPhoneHash accessTokenHash",
