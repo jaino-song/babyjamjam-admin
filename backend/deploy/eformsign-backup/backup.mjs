@@ -204,14 +204,8 @@ async function main() {
     }
     // Reserve both paths together, including merged units in naming order.
     // Reservations become persistent only after a unit writes a file.
-    let adopted = false;
     const allocate = async (unit) => {
         const entry = Object.hasOwn(state.units, unit.key) ? state.units[unit.key] : null;
-        // A migrated version 1 merge recorded only the chunk document hashes: unchanged hashes mean unchanged content.
-        if (entry !== null && unit.chunks && entry.fingerprint === `v1:${unit.chunks.map((chunk) => chunk.inputs[0].sha256).join(',')}`) {
-            entry.fingerprint = unit.fingerprint;
-            adopted = true;
-        }
         // Completed content is never overwritten: changed content takes a fresh pair of paths (the old
         // entry is archived under another key when the new files are recorded). Review-stage content
         // is rewritten in place.
@@ -232,7 +226,6 @@ async function main() {
         try { await allocate(unit); }
         catch (error) { unit.broken = true; failure(unit.docId, error); }
     }
-    if (adopted) await saveState();
     // A file is written beside its final path first, so a failed download never touches an existing file.
     const fetchTemp = async (file, path, createdAt) => {
         const final = await prepare(path);
@@ -275,14 +268,16 @@ async function main() {
         ? unit.chunks.every((chunk) => chunk.completed) && unit.files[Object.keys(unit.files)[1]] !== null
         : unit.completed;
     const record = async (unit) => {
+        const old = state.units[unit.key];
+        // Recording to the same paths can only tighten the flag; a fork is a new entry with its own flag.
+        const completed = isCompleted(unit) || (!unit.fork && old?.completed === true);
         if (unit.fork) {
-            const old = state.units[unit.key];
             let archived = `${unit.key}@${old.fingerprint}`;
             for (let n = 2; Object.hasOwn(state.units, archived); n += 1) archived = `${unit.key}@${old.fingerprint}@${n}`;
             state.units[archived] = old;
             unit.fork = false;
         }
-        state.units[unit.key] = { files: unit.files, fingerprint: unit.fingerprint, completed: isCompleted(unit) };
+        state.units[unit.key] = { files: unit.files, fingerprint: unit.fingerprint, completed };
         await saveState();
     };
     // Same content, now reported as completed: tighten the stored flag (never loosen it).
@@ -306,18 +301,27 @@ async function main() {
                 await tighten(unit);
                 continue;
             }
-            if (replace) {
+            if (replace || unit.fork) {
                 const temps = [];
+                const renamed = [];
                 try {
                     for (let i = 0; i < paths.length; i += 1) {
                         if (need[i]) temps.push({ i, ...await fetchTemp(unit.inputs[i], paths[i], unit.createdAt) });
                     }
                     for (const { i, tmp, final } of temps) {
                         await fs.rename(tmp, final);
+                        renamed.push(final);
                         unit.files[paths[i]] = unit.inputs[i].byteSize;
                         report.savedFiles += 1;
                     }
                     changed = true;
+                } catch (error) {
+                    // A fork writes only fresh, never-recorded paths: undo them so the next run retries cleanly.
+                    if (unit.fork) {
+                        await Promise.all(renamed.map((final) => fs.rm(final, { force: true })));
+                        report.savedFiles -= renamed.length;
+                    }
+                    throw error;
                 } finally { await Promise.all(temps.map(({ tmp }) => fs.rm(tmp, { force: true }))); }
             } else {
                 for (let i = 0; i < paths.length; i += 1) {
@@ -343,6 +347,7 @@ async function main() {
     for (const unit of merges) {
         if (unit.broken || !unit.chunks.every((chunk) => chunk.ready)) continue;
         const temps = [];
+        const renamed = [];
         let changed = false;
         let unitError;
         try {
@@ -362,12 +367,21 @@ async function main() {
                 temps.at(-1).bytes = (await fs.stat(tmp)).size;
                 await fs.utimes(tmp, new Date(unit.createdAt), new Date(unit.createdAt));
             }
-            for (const { tmp, final, path, bytes } of temps) {
-                await fs.rename(tmp, final);
-                unit.files[path] = bytes;
-                report.savedFiles += 1;
-                // A partial rewrite must not mark the new fingerprint as done.
-                if (!replace) changed = true;
+            try {
+                for (const { tmp, final, path, bytes } of temps) {
+                    await fs.rename(tmp, final);
+                    renamed.push(final);
+                    unit.files[path] = bytes;
+                    report.savedFiles += 1;
+                    // A partial rewrite must not mark the new fingerprint as done; a fork is all or nothing.
+                    if (!replace && !unit.fork) changed = true;
+                }
+            } catch (error) {
+                if (unit.fork) {
+                    await Promise.all(renamed.map((final) => fs.rm(final, { force: true })));
+                    report.savedFiles -= renamed.length;
+                }
+                throw error;
             }
             changed = true;
         } catch (error) { unitError = error; }
