@@ -12,6 +12,8 @@ import type {
     ServiceRecordPlannedSession,
 } from "@/features/service-records/types";
 
+import { describeScheduleBlockingReasons } from "./service-record-blocking-reasons";
+
 const SOURCE_COMPONENT = "ServiceRecordEditPreviewDialog";
 const DEFAULT_DATA_COMPONENT = "desktop_service-record-admin_edit-preview-dialog";
 
@@ -218,9 +220,9 @@ export function ServiceRecordEditPreviewDialog({
                                     <AlertTitle>현재 변경을 적용할 수 없습니다.</AlertTitle>
                                     <AlertDescription>
                                         <ul className="list-disc space-y-1 pl-5">
-                                            {blockingReasons.map((reason, index) => (
-                                                <li key={`${reason.code}-${reason.sessionIndex ?? "all"}-${index}`}>
-                                                    {reason.message}
+                                            {describeScheduleBlockingReasons(blockingReasons).map((reason) => (
+                                                <li key={reason.key}>
+                                                    {reason.label}
                                                 </li>
                                             ))}
                                         </ul>

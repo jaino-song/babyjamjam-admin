@@ -1212,6 +1212,28 @@ describe("per-session administrator editing", () => {
         fireEvent.click(screen.getByRole("option", { name: edge }));
     });
 
+    it.each([
+        [400, "SERVICE_DATE_OUT_OF_RANGE", "고를 수 있는 기간이 아니에요 (3회차)"],
+        [400, "UNKNOWN_SCHEDULE_CODE", "저장 결과를 확인하지 못했습니다. 수정사항은 이 화면에 남아 있어요."],
+        [500, "SERVICE_DATE_OUT_OF_RANGE", "저장 결과를 확인하지 못했습니다. 수정사항은 이 화면에 남아 있어요."],
+    ])("explains a refused date move safely (status %s, code %s)", async (status, scheduleCode, label) => {
+        jest.mocked(adminServiceRecordEditApi.updateDraft).mockRejectedValueOnce(new AdminServiceRecordEditApiError(status, {
+            code: "VALIDATION_FAILED", scheduleCode, sessionIndex: 3,
+        }));
+        const { container } = render(<ServiceRecordAdminWizard clientId="42" overview={sessionOverview} initialDraftState={{ ...makeDraftState(), draft: null }} />);
+        fireEvent.click(container.querySelectorAll('[data-slot="day"]')[2]);
+        pickDate(container, "3회차", "10일");
+        acceptEdit();
+        await screen.findByRole("button", { name: "수정 확정" });
+        fireEvent.click(screen.getByRole("button", { name: "수정 확정" }));
+        await screen.findByText(label);
+        expect(adminServiceRecordEditApi.updateDraft).toHaveBeenCalledWith("draft-1", 1, {}, {
+            sessionIndex: 3, toDate: "2026-09-10", shiftFollowing: false,
+        });
+        expect(adminServiceRecordEditApi.previewDraft).not.toHaveBeenCalled();
+        expect(container.querySelectorAll('[data-slot="day"]')[2]).toHaveTextContent("수정됨");
+    });
+
     it("shows the Korean out-of-window preview reason and prevents confirm", async () => {
         jest.mocked(adminServiceRecordEditApi.previewDraft).mockResolvedValue({
             ...confirmPreviewResponse,
@@ -1222,7 +1244,7 @@ describe("per-session administrator editing", () => {
         acceptEdit();
         await screen.findByRole("button", { name: "수정 확정" });
         await startCommit();
-        expect(within(previewDialog()).getByText("고를 수 있는 기간이 아니에요.")).toBeInTheDocument();
+        expect(within(previewDialog()).getByText("고를 수 있는 기간이 아니에요 (1회차)")).toBeInTheDocument();
         expect(within(previewDialog()).queryByRole("button", { name: "수정 확정" })).not.toBeInTheDocument();
         expect(adminServiceRecordEditApi.confirmDraft).not.toHaveBeenCalled();
     });

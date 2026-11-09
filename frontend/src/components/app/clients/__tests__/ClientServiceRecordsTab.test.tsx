@@ -1660,6 +1660,19 @@ describe("ClientServiceRecordsTab", () => {
             expect(screen.queryByText("기간 밖")).not.toBeInTheDocument();
         });
 
+        it.each([
+            { startDate: null, endDate: null },
+            { startDate: null, endDate: "2026-08-23" },
+            { startDate: "2026-08-07", endDate: null },
+        ])("does not toast for an open fit period %j", async (result) => {
+            mockFitPeriod.mockResolvedValue(result);
+            render(tab(overviewFor([session(1, "2026-08-07")])));
+            fireEvent.click(screen.getByRole("button", { name: "변경" }));
+            await waitFor(() => expect(mockFitPeriod).toHaveBeenCalledWith({ clientId: 100 }));
+            await waitFor(() => expect(screen.getByRole("button", { name: "변경" })).toBeEnabled());
+            expect(toast).not.toHaveBeenCalled();
+        });
+
         it("does not claim a period change when fit returns unchanged dates", async () => {
             mockFitPeriod.mockResolvedValue({ startDate: "2026-08-10", endDate: "2026-08-20" });
             render(tab(overviewFor([session(1, "2026-08-07")])));

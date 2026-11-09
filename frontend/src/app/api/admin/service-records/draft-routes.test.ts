@@ -2,6 +2,7 @@
  * @jest-environment node
  */
 import { NextRequest } from "next/server";
+import { createProblemDetails } from "@babyjamjam/shared";
 
 import { serverAPIClient } from "@/lib/api/server";
 
@@ -306,6 +307,35 @@ describe("service-record draft proxy routes", () => {
             consoleErrorSpy.mockRestore();
         }
     });
+
+    it.each(["SERVICE_DATE_OUT_OF_RANGE", "UNKNOWN_SCHEDULE_CODE"])(
+        "sanitizes a refused date move with schedule code %s", async (scheduleCode) => {
+            mockPatch.mockRejectedValue({ response: { status: 400, data: {
+                ...createProblemDetails({ code: "VALIDATION_FAILED", requestId: "req-date-move", outcome: "NOT_APPLIED" }),
+                message: "고를 수 있는 기간이 아니에요.",
+                sessionIndex: 3,
+                scheduleCode,
+            } } });
+            const response = await updateDraft(
+                createRequest("/api/admin/service-records/drafts/draft-1", "PATCH", {
+                    expectedDraftVersion: 1,
+                    changes: {},
+                    dateMove: { sessionIndex: 3, toDate: "2026-08-01", shiftFollowing: false },
+                }),
+                { params: Promise.resolve({ draftId: "draft-1" }) },
+            );
+            expect(response.status).toBe(400);
+            const body = await response.json();
+            expect(body).not.toHaveProperty("message");
+            expect(JSON.stringify(body)).not.toContain("고를 수 있는 기간이 아니에요.");
+            if (scheduleCode === "SERVICE_DATE_OUT_OF_RANGE") {
+                expect(body).toMatchObject({ scheduleCode, sessionIndex: 3 });
+            } else {
+                expect(body).not.toHaveProperty("scheduleCode");
+                expect(body).not.toHaveProperty("sessionIndex");
+            }
+        },
+    );
 
     it("keeps an upstream confirm conflict code without its private message", async () => {
         mockPost.mockRejectedValue({

@@ -567,7 +567,6 @@ export function ServiceRecordWizard({
         currentSession,
         plannedDateVectorProvided,
         plannedDateVectorValid,
-        providerDateLocked,
         currentServiceDate,
         displayDateForSession,
     } = resolvePlannedDates({ context, day, adminMode, draft, defaultDate });
@@ -628,7 +627,6 @@ export function ServiceRecordWizard({
         onHeaderChange(key, HEADER_DATE_KEYS.includes(key) ? formatIsoDateInput(raw) : raw);
     };
     const handleServiceDateInput = (raw: string) => {
-        if (providerDateLocked) return;
         const next = formatIsoDateInput(raw);
         setServiceDateEdit({ text: next, base: currentServiceDate, day });
         if (next.length === 10 && serviceDateIsReportable(next)) onServiceDateChange(next);
@@ -918,7 +916,6 @@ export function ServiceRecordWizard({
                                     maxLength={10}
                                     placeholder={SERVICE_DATE_PLACEHOLDER}
                                     className="dateinput"
-                                    disabled={providerDateLocked}
                                     value={serviceDateValue}
                                     onFocus={() => setServiceDateFocused(true)}
                                     onBlur={handleServiceDateBlur}

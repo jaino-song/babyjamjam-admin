@@ -25,3 +25,12 @@ it.each([{ startDate: "2026-02-30", endDate: "2026-08-20" }, { startDate: "2026-
     mockPost.mockResolvedValue({ data });
     await expect(serviceRecordsApi.fitPeriodMismatch(100)).rejects.toThrow("Invalid period-mismatch fit response");
 });
+
+it.each([
+    { startDate: null, endDate: null },
+    { startDate: null, endDate: "2026-08-20" },
+    { startDate: "2026-08-07", endDate: null },
+])("accepts open fit periods %j", async (data) => {
+    mockPost.mockResolvedValue({ data });
+    await expect(serviceRecordsApi.fitPeriodMismatch(100)).resolves.toMatchObject({ data });
+});
