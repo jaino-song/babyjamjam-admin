@@ -207,11 +207,14 @@ describe("MobileServiceRecordScreen", () => {
             expect(screen.getByRole("button", { name: "다음 회차 입력" })).toBeDisabled();
         });
 
-        it("allows every empty session whose predecessor is submitted after a delete", () => {
+        it("allows only the earliest unsubmitted session after a delete and keeps later sessions waiting", () => {
             render(<MobileServiceRecordScreen {...makeProps({ lockedDays: new Set([2]), nextOpenDay: () => 1 })} />);
             const cards = Array.from(q("body_day-grid")!.children);
             expect(cards[0]).toBeEnabled();
-            expect(cards[2]).toBeEnabled();
+            expect(cards[0]).toHaveTextContent("입력 가능");
+            expect(cards[1]).toHaveTextContent("제출완료");
+            expect(cards[2]).toBeDisabled();
+            expect(cards[2]).toHaveTextContent("대기");
             expect(cards[0]).not.toHaveTextContent("9.21");
         });
 
