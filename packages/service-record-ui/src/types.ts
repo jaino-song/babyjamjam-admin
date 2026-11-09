@@ -125,6 +125,7 @@ export interface ServiceRecordWizardProps {
     isRecordFinalized: boolean;
     lockedDays: ReadonlySet<number>;
     nextOpenDay: () => number;
+    openDays?: () => readonly number[];
     hasServiceDateMismatch: boolean;
     defaultDate: (day: number) => string;
     onPhoneChange: (value: string) => void;

@@ -197,3 +197,18 @@ it("uses a destructive toast when the date sheet rejects an order-blocked day", 
     expect(toast).toHaveBeenCalledWith({ variant: "destructive", title: "뒷 회차보다 늦게 바꿀 수 없어요. 뒷 회차를 먼저 변경해 주세요." });
     expect(screen.getByRole("button", { name: "선택" })).toBeDisabled();
 });
+
+it("deleting one day's draft preserves other sessions' drafts", async () => {
+    const storageKey = "daily-service-record-draft:test-token";
+    const otherDraft = { pageIdx: 1, draft: { notes: "keep fourth" } };
+    window.sessionStorage.setItem(storageKey, JSON.stringify({ drafts: {
+        1: { pageIdx: 0, draft: { notes: "remove first" } }, 4: otherDraft,
+    } }));
+    await openEdit();
+    fireEvent.click(screen.getByText("delete"));
+    fireEvent.click(screen.getByRole("button", { name: "삭제" }));
+    await waitFor(() => expect(screen.getByTestId("screen")).toHaveTextContent("overview"));
+    const stored = JSON.parse(window.sessionStorage.getItem(storageKey) ?? "null");
+    expect(stored.drafts[1]).toBeUndefined();
+    expect(stored.drafts[4]).toEqual(otherDraft);
+});

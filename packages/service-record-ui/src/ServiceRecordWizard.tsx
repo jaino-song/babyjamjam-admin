@@ -498,6 +498,7 @@ export function ServiceRecordWizard({
     isRecordFinalized,
     lockedDays,
     nextOpenDay,
+    openDays,
     hasServiceDateMismatch,
     defaultDate,
     onPhoneChange,
@@ -816,7 +817,7 @@ export function ServiceRecordWizard({
                             {Array.from({ length: context.totalSessions }, (_, index) => index + 1).map((sessionIndex) => {
                                 const session = context.sessions.find((row) => row.sessionIndex === sessionIndex);
                                 const done = lockedDays.has(sessionIndex);
-                                const open = sessionIndex === nextOpenDay();
+                                const open = !done && (openDays?.() ?? [nextOpenDay()]).includes(sessionIndex);
                                 const changed = Boolean(changedSessionIndexes?.has(sessionIndex));
                                 const serviceDate = displayDateForSession(sessionIndex, session);
                                 const className = adminEditing

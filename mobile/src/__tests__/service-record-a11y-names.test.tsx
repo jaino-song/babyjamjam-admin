@@ -85,3 +85,33 @@ it("names the calendar trigger, announces its dialog, and opens it with the keyb
     fireEvent.keyDown(input, { key: "Enter" });
     expect(open).toHaveBeenCalledTimes(1);
 });
+
+describe.each(ROWS)("open-session overview ($name)", ({ Component }) => {
+    it.each([true, false])("uses openDays when supplied and nextOpenDay as the fallback (explicit=%s)", (explicit) => {
+        const props = makeProps({
+            screen: "overview", lockedDays: new Set([2, 3]), nextOpenDay: () => 1,
+            ...(explicit ? { openDays: () => [1, 4] } : {}),
+            context: { totalSessions: 5, startDate: "2026-09-21", header: validHeader, sessions: [
+                { sessionIndex: 2, locked: true, serviceDate: "2026-09-22" },
+                { sessionIndex: 3, locked: true, serviceDate: "2026-09-23" },
+            ] },
+        });
+        const { container } = render(<Component {...props} />);
+        const cards = container.querySelectorAll<HTMLButtonElement>('[data-slot="day"], [data-source-component="DayCard"]');
+        expect(cards).toHaveLength(5);
+        expect(cards[0]).toBeEnabled();
+        expect(cards[0]).toHaveTextContent("입력 가능");
+        expect(cards[4]).toBeDisabled();
+        expect(cards[4]).toHaveTextContent("대기");
+        if (explicit) {
+            expect(cards[3]).toBeEnabled();
+            expect(cards[3]).toHaveTextContent("입력 가능");
+            fireEvent.click(cards[3]);
+            expect(props.onOpenDay).toHaveBeenLastCalledWith(4, false);
+        } else {
+            expect(cards[3]).toBeDisabled();
+        }
+        fireEvent.click(screen.getByRole("button", { name: "다음 회차 입력" }));
+        expect(props.onOpenDay).toHaveBeenLastCalledWith(1);
+    });
+});

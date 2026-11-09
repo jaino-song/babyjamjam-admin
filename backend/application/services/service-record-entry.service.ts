@@ -414,7 +414,8 @@ export class ServiceRecordEntryService {
     }
 
     /**
-     * Create/update one session record. Sessions are filled in order. A submitted (locked)
+     * Create/update one session record. A new session is written only at an unsubmitted
+     * session no later than the one right after the last submitted one. A submitted (locked)
      * session keeps its date, signature and approval; any caregiver with a valid token may
      * still change its answers, notes, etc. service and payment flag until the case is
      * finalized, and each real change is written to service_record_day_edit_log.
@@ -637,17 +638,20 @@ export class ServiceRecordEntryService {
                     },
                 });
             };
-            // 새 기록(미제출 초안 재저장 포함)은 앞선 모든 회차가 제출된 경우에만 쓸 수 있다.
-            if (!lockedEdit && sessionIndex > 1) {
-                const submittedCount = await tx.service_record_day.count({
+            // 새 기록(미제출 초안 재저장 포함)은 마지막 제출 회차 바로 다음 회차까지의 미제출 회차에만 쓸 수 있다.
+            if (!lockedEdit) {
+                const lockedRows = await tx.service_record_day.findMany({
                     where: {
                         serviceRecordCaseId: record.id,
                         branchId: ctx.branchId,
-                        caseSessionIndex: { lt: sessionIndex },
                         locked: true,
                     },
+                    select: { caseSessionIndex: true, locked: true },
                 });
-                if (submittedCount !== sessionIndex - 1) throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
+                const submitted = new Set(lockedRows
+                    .flatMap((row) => row.locked === true && row.caseSessionIndex != null ? [row.caseSessionIndex] : []));
+                const next = Math.max(0, ...submitted) + 1;
+                if (submitted.has(sessionIndex) || sessionIndex > next) throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
             }
 
             if (lock) {

@@ -154,12 +154,12 @@ describe("service-record page submit errors", () => {
             await user.click(screen.getByRole("button", { name: "open submit modal" }));
             await user.click(await screen.findByRole("button", { name: "확인" }));
             await expectSentToPhone();
-            expect(JSON.parse(window.sessionStorage.getItem(key) ?? "null")?.draft?.notes).toBe("keep me");
+            expect(JSON.parse(window.sessionStorage.getItem(key) ?? "null")?.drafts?.[1]?.draft?.notes).toBe("keep me");
 
             await user.click(screen.getByRole("button", { name: "type phone" }));
             await user.click(screen.getByRole("button", { name: "verify phone" }));
             await waitFor(() => expect(screen.getByTestId("screen")).toHaveTextContent("overview"));
-            expect(JSON.parse(window.sessionStorage.getItem(key) ?? "null")?.draft?.notes).toBe("keep me");
+            expect(JSON.parse(window.sessionStorage.getItem(key) ?? "null")?.drafts?.[1]?.draft?.notes).toBe("keep me");
         });
     });
 });

@@ -29,6 +29,7 @@ export type OverviewStepProps = Pick<
     | "defaultDate"
     | "lockedDays"
     | "nextOpenDay"
+    | "openDays"
     | "isRecordFinalized"
     | "onOpenDay"
 > & {
@@ -50,6 +51,7 @@ export function OverviewStep({
     defaultDate,
     lockedDays,
     nextOpenDay,
+    openDays,
     isRecordFinalized,
     onOpenDay,
     onOpenGuide,
@@ -57,6 +59,7 @@ export function OverviewStep({
     const child = (suffix: string) => `${root}_${suffix}`;
     const { displayDateForSession } = resolvePlannedDates({ context, day, adminMode: false, draft, defaultDate });
     const nextSessionIndex = nextOpenDay();
+    const openIndexes = openDays?.() ?? [nextSessionIndex];
 
     return (
         <>
@@ -89,9 +92,9 @@ export function OverviewStep({
                     {Array.from({ length: context.totalSessions }, (_, index) => index + 1).map((sessionIndex) => {
                         const session = context.sessions.find((row) => row.sessionIndex === sessionIndex);
                         const done = lockedDays.has(sessionIndex);
-                        const open = !done && sessionIndex === nextSessionIndex && (sessionIndex === 1 || lockedDays.has(sessionIndex - 1));
+                        const open = !done && openIndexes.includes(sessionIndex);
                         const serviceDate = displayDateForSession(sessionIndex, session);
-                        // 저장된 회차만 날짜를 표시하고, 가장 이른 미제출 회차만 입력할 수 있다.
+                        // 저장된 회차만 날짜를 표시하고, 마지막 제출 회차 바로 다음 회차까지의 모든 미제출 회차를 입력할 수 있다.
                         const state: DayCardState = done ? "done" : open ? "current" : "locked";
                         const disabled = (!done && !open) || isRecordFinalized;
                         return (

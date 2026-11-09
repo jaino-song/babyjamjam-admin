@@ -24,13 +24,19 @@ jest.mock("@/components/app/service-record/ServiceRecordWizard", () => ({
         <div>
             <span data-testid="screen">{props.screen}</span>
             <span data-testid="day">{props.day}</span>
+            <span data-testid="open-days">{props.openDays?.().join(",")}</span>
+            <button onClick={() => props.onOpenDay(props.nextOpenDay())}>다음 회차 입력</button>
+            <button onClick={props.onBack}>back</button>
+            <input aria-label="notes" value={String(props.draft.notes ?? "")} onChange={(e) => props.onFieldChange("notes", e.target.value)} />
             <button onClick={() => props.onOpenDay(1)}>open day 1</button>
             <button onClick={() => props.onOpenDay(2)}>open day 2</button>
             <button onClick={() => props.onOpenDay(4)}>open day 4</button>
+            <button onClick={() => props.onOpenDay(5)}>open day 5</button>
             <button onClick={() => props.onOpenSubmitModal()}>open submit modal</button>
             <button onClick={() => props.onNextPage()}>save section</button>
             {props.screen === "day" && props.pageIdx === DAY_PAGES.length - 1 && <ReviewStep {...props} />}
             {props.slots?.submitModal}
+            {props.slots?.errorNotification}
             <span data-testid="editing">{String(props.editing)}</span>
             <span data-testid="page-idx">{props.pageIdx}</span>
         </div>
@@ -105,13 +111,13 @@ describe("service-record page popstate restore of a submitted day", () => {
     });
 });
 
-describe("service-record page earliest unsubmitted session guards", () => {
+describe("service-record page every gap plus next session guards", () => {
     beforeEach(() => {
         window.sessionStorage.clear();
         window.history.replaceState(null, "", "/service-record/test-token");
     });
 
-    async function renderOverview(submittedDays: number[]) {
+    async function renderOverview(submittedDays: number[], submitStatus = 200) {
         const context = {
             totalSessions: 5,
             startDate: "2026-07-17",
@@ -133,17 +139,18 @@ describe("service-record page earliest unsubmitted session guards", () => {
             const url = String(input);
             if (url.endsWith("/link")) return Promise.resolve(jsonResponse({ valid: true }));
             if (url.endsWith("/context")) return Promise.resolve(jsonResponse(context));
+            if (url.endsWith("/submit")) return Promise.resolve(jsonResponse(submitStatus === 200 ? {} : { code: "REQUEST_CONFLICT" }, submitStatus));
             return Promise.resolve(jsonResponse({}, 404));
         }) as unknown as typeof fetch;
 
         render(<ServiceRecordPage />);
-        await waitFor(() => expect(screen.getByTestId("screen")).toHaveTextContent("overview"));
+        await waitFor(() => expect(screen.getByTestId("screen")).toHaveTextContent(submittedDays.length === 5 ? "done" : "overview"));
     }
 
-    it("refuses popstate to day 4 after day 1 was deleted", async () => {
+    it("refuses popstate to day 5 after day 1 was deleted", async () => {
         await renderOverview([2, 3]);
 
-        window.history.pushState(null, "", "/service-record/test-token?step=day&day=4&page=0");
+        window.history.pushState(null, "", "/service-record/test-token?step=day&day=5&page=0");
         act(() => { window.dispatchEvent(new PopStateEvent("popstate")); });
 
         expect(screen.getByTestId("screen")).toHaveTextContent("overview");
@@ -152,6 +159,8 @@ describe("service-record page earliest unsubmitted session guards", () => {
 
     it.each([
         { submittedDays: [2, 3], targetDay: 1 },
+        { submittedDays: [2, 3], targetDay: 4 },
+        { submittedDays: [3], targetDay: 2 },
         { submittedDays: [1, 2, 3], targetDay: 4 },
     ])("restores day $targetDay via popstate with submitted sessions $submittedDays", async ({ submittedDays, targetDay }) => {
         await renderOverview(submittedDays);
@@ -164,12 +173,12 @@ describe("service-record page earliest unsubmitted session guards", () => {
         expect(screen.getByTestId("editing")).toHaveTextContent("false");
     });
 
-    it("refuses onOpenDay for day 4 after day 1 was deleted", async () => {
+    it("refuses onOpenDay for day 5 after day 1 was deleted", async () => {
         const user = userEvent.setup();
         await renderOverview([2, 3]);
         const overviewSearch = window.location.search;
 
-        await user.click(screen.getByRole("button", { name: "open day 4" }));
+        await user.click(screen.getByRole("button", { name: "open day 5" }));
 
         expect(screen.getByTestId("screen")).toHaveTextContent("overview");
         expect(window.location.search).toBe(overviewSearch);
@@ -178,6 +187,8 @@ describe("service-record page earliest unsubmitted session guards", () => {
 
     it.each([
         { submittedDays: [2, 3], targetDay: 1 },
+        { submittedDays: [2, 3], targetDay: 4 },
+        { submittedDays: [3], targetDay: 2 },
         { submittedDays: [1, 2, 3], targetDay: 4 },
     ])("opens day $targetDay via onOpenDay with submitted sessions $submittedDays", async ({ submittedDays, targetDay }) => {
         const user = userEvent.setup();
@@ -189,6 +200,97 @@ describe("service-record page earliest unsubmitted session guards", () => {
         expect(screen.getByTestId("day")).toHaveTextContent(String(targetDay));
         expect(screen.getByTestId("editing")).toHaveTextContent("false");
     });
+    it.each([
+        { submitted: [2, 3], open: "1,4" },
+        { submitted: [3], open: "1,2,4" },
+        { submitted: [1, 2, 3], open: "4" },
+        { submitted: [], open: "1" },
+        { submitted: [1, 2, 3, 4, 5], open: "" },
+    ])("passes open days $open for submitted $submitted", async ({ submitted, open }) => {
+        await renderOverview(submitted);
+        expect(screen.getByTestId("open-days").textContent).toBe(open);
+    });
+
+    it("keeps the primary next-session action on the earliest gap", async () => {
+        await renderOverview([2, 3]);
+        await userEvent.setup().click(screen.getByRole("button", { name: "다음 회차 입력" }));
+        expect(screen.getByTestId("screen")).toHaveTextContent("day");
+        expect(screen.getByTestId("day")).toHaveTextContent("1");
+    });
+
+    it("restores page zero of session 4 after saving its first section", async () => {
+        const user = userEvent.setup();
+        await renderOverview([2, 3]);
+        await user.click(screen.getByRole("button", { name: "open day 4" }));
+        await user.click(screen.getByRole("button", { name: "save section" }));
+        expect(screen.getByTestId("page-idx")).toHaveTextContent("1");
+        window.history.pushState(null, "", "/service-record/test-token?step=day&day=4&page=0");
+        act(() => { window.dispatchEvent(new PopStateEvent("popstate")); });
+        expect(screen.getByTestId("screen")).toHaveTextContent("day");
+        expect(screen.getByTestId("day")).toHaveTextContent("4");
+        expect(screen.getByTestId("page-idx")).toHaveTextContent("0");
+    });
+
+    it("keeps independent typed drafts when moving between open sessions", async () => {
+        const user = userEvent.setup();
+        await renderOverview([2, 3]);
+        const back = async () => {
+            await user.click(screen.getByRole("button", { name: "back" }));
+            await waitFor(() => expect(screen.getByTestId("screen")).toHaveTextContent("overview"));
+        };
+        await user.click(screen.getByRole("button", { name: "open day 1" }));
+        await user.type(screen.getByRole("textbox", { name: "notes" }), "first draft");
+        await back();
+        await user.click(screen.getByRole("button", { name: "open day 4" }));
+        await user.type(screen.getByRole("textbox", { name: "notes" }), "fourth draft");
+        await back();
+        await user.click(screen.getByRole("button", { name: "open day 1" }));
+        expect(screen.getByRole("textbox", { name: "notes" })).toHaveValue("first draft");
+        await back();
+        await user.click(screen.getByRole("button", { name: "open day 4" }));
+        expect(screen.getByRole("textbox", { name: "notes" })).toHaveValue("fourth draft");
+    });
+
+    it("migrates a legacy draft for its own day while another day is opened first", async () => {
+        window.sessionStorage.setItem("daily-service-record-draft:test-token", JSON.stringify({
+            day: 1, pageIdx: 1, draft: { notes: "legacy first" },
+        }));
+        await renderOverview([2, 3]);
+        const user = userEvent.setup();
+        await user.click(screen.getByRole("button", { name: "open day 4" }));
+        await user.type(screen.getByRole("textbox", { name: "notes" }), "new fourth");
+        await user.click(screen.getByRole("button", { name: "open day 1" }));
+        expect(screen.getByRole("textbox", { name: "notes" })).toHaveValue("legacy first");
+        expect(screen.getByTestId("page-idx")).toHaveTextContent("1");
+        const stored = JSON.parse(window.sessionStorage.getItem("daily-service-record-draft:test-token") ?? "null");
+        expect(stored.day).toBeUndefined();
+        expect(stored.drafts[4].draft.notes).toBe("new fourth");
+    });
+
+    it.each([200, 409])("preserves other drafts and clears the submitted draft only on success (status=%s)", async (status) => {
+        const storageKey = "daily-service-record-draft:test-token";
+        window.sessionStorage.setItem(storageKey, JSON.stringify({
+            drafts: {
+                1: { pageIdx: 0, draft: { notes: "first draft" } },
+                4: { pageIdx: 2, draft: { notes: "fourth draft" } },
+            },
+        }));
+        await renderOverview([2, 3], status);
+        const user = userEvent.setup();
+        await user.click(screen.getByRole("button", { name: "open day 1" }));
+        await user.click(screen.getByRole("button", { name: "open submit modal" }));
+        await user.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "확인" }));
+        if (status === 200) {
+            await waitFor(() => expect(screen.getByTestId("screen")).toHaveTextContent("overview"));
+        } else {
+            await screen.findByText("이미 처리되었거나 수정할 수 없는 상태예요.");
+        }
+        const stored = JSON.parse(window.sessionStorage.getItem(storageKey) ?? "null");
+        expect(stored.drafts[4]).toEqual({ pageIdx: 2, draft: { notes: "fourth draft" } });
+        if (status === 200) expect(stored.drafts[1]).toBeUndefined();
+        else expect(stored.drafts[1].draft.notes).toBe("first draft");
+    });
+
 });
 
 describe("service-record page submit dialog across a caregiver change", () => {
