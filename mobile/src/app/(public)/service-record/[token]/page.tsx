@@ -392,7 +392,9 @@ export default function ServiceRecordPage() {
                     paymentConfirmed: Boolean(session.paymentConfirmed),
                 });
             } else {
-                if (targetDay !== 1 && !ctx.sessions.some((row) => row.sessionIndex === targetDay - 1 && row.locked)) {
+                let earliestOpenDay = 1;
+                while (ctx.sessions.some((row) => row.sessionIndex === earliestOpenDay && row.locked)) earliestOpenDay++;
+                if (targetDay !== earliestOpenDay) {
                     navigateTo("overview", { mode: "replace" });
                     return;
                 }
@@ -492,7 +494,7 @@ export default function ServiceRecordPage() {
         const session = ctx?.sessions.find((row) => row.sessionIndex === d);
         const shouldEdit = editExisting || Boolean(session?.locked);
         if (shouldEdit && !session?.locked) return;
-        if (!shouldEdit && d !== 1 && !lockedDays.has(d - 1)) return;
+        if (!shouldEdit && d !== nextOpenDay()) return;
         if (d < 1 || d > (ctx?.totalSessions ?? 0) || isRecordFinalizedStatus(ctx?.recordStatus)) return;
         setServiceDateError(null);
 
