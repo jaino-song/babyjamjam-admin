@@ -21,9 +21,7 @@ const MAX_CALENDAR_YEAR = 2100;
 
 export type ServiceRecordDateBlockReason =
     | "malformed"
-    | "unsupported-year"
-    | "non-business-day"
-    | "outside-window";
+    | "unsupported-year";
 
 export interface ServiceRecordDateParts {
     year: number;
@@ -32,7 +30,7 @@ export interface ServiceRecordDateParts {
 }
 
 export interface InitialServiceRecordDateSelection {
-    parts: ServiceRecordDateParts | null;
+    parts: (Omit<ServiceRecordDateParts, "day"> & { day: number | null }) | null;
     reason: ServiceRecordDateBlockReason | null;
 }
 
@@ -112,7 +110,7 @@ function toDraftSelection(
     return {
         year: String(parts.year),
         month: String(parts.month).padStart(2, "0"),
-        day: String(parts.day).padStart(2, "0"),
+        day: parts.day === null ? "" : String(parts.day).padStart(2, "0"),
         blockedReason: null,
     };
 }
@@ -171,11 +169,17 @@ export function getInitialServiceRecordDateSelection(
 
     if (!isSupportedYear(calendar, parts.year)) return { parts: null, reason: "unsupported-year" };
 
-    if (isOutsideWindow(value, windowStart, windowEnd)) return { parts: null, reason: "outside-window" };
+    const windowEdge = windowStart && value < windowStart
+        ? windowStart
+        : windowEnd && value > windowEnd ? windowEnd : null;
+    if (windowEdge) {
+        const [year, month] = windowEdge.split("-").map(Number);
+        return { parts: { year, month, day: null }, reason: null };
+    }
 
     return calendar.isBusinessDay(value)
         ? { parts, reason: null }
-        : { parts: null, reason: "non-business-day" };
+        : { parts: { ...parts, day: null }, reason: null };
 }
 
 export function isSelectableServiceRecordDate(
@@ -210,10 +214,6 @@ function getBlockedMessage(reason: ServiceRecordDateBlockReason): string {
             return "현재 제공일 형식이 올바르지 않아 변경할 수 없습니다.";
         case "unsupported-year":
             return "현재 제공일의 연도를 지원하지 않는 달력입니다.";
-        case "outside-window":
-            return "고를 수 있는 기간이 아니에요.";
-        case "non-business-day":
-            return "현재 제공일이 주말 또는 공휴일이어서 변경할 수 없습니다.";
     }
 }
 
