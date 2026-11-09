@@ -19,7 +19,6 @@ import {
     MESSAGE_RECORD_REASON_LABEL,
     MESSAGE_RECIPIENT_LABELS,
     getMessageTemplateLabel,
-    normalizeApiError,
 } from "@babyjamjam/shared";
 import { formatBirthdayYYMMDD } from "@babyjamjam/shared/utils/birthday";
 import { isRealIsoDate } from "@babyjamjam/shared/utils/field-validation-message";
@@ -29,11 +28,7 @@ import { SelectableItemFrame } from "@/components/ui/selectable-item";
 import { TwoButtonModal } from "@/components/app/ui/TwoButtonModal";
 import { StatusBadge as MessageStatusBadge } from "@/components/app/ui/status-badge";
 import { QueryErrorState } from "@/components/app/ui/QueryErrorState";
-import {
-    useApproveScheduleChange,
-    useRejectScheduleChange,
-    useConfirmBooking,
-} from "@/features/clients/hooks/use-clients";
+import { useConfirmBooking } from "@/features/clients/hooks/use-clients";
 import type { Client } from "@/lib/client/types";
 import { formatVoucherDurationLabel } from "@/lib/client/voucher-duration-label";
 import { getClientBadgeAvatarClassName, getClientBadges, getPrimaryClientBadge } from "@/lib/client/badges";
@@ -119,11 +114,7 @@ const CLIENT_DETAIL_TABS = [
     { key: "service-records", label: "제공기록지" },
 ] as const;
 
-const SCHEDULE_CHANGE_DETAIL_TAB = { key: "schedule-change", label: "일정 변경" } as const;
-
-type ClientDetailTabKey =
-    | (typeof CLIENT_DETAIL_TABS)[number]["key"]
-    | typeof SCHEDULE_CHANGE_DETAIL_TAB["key"];
+type ClientDetailTabKey = (typeof CLIENT_DETAIL_TABS)[number]["key"];
 
 const CLIENT_MESSAGE_HISTORY_PAGE_SIZE = 50;
 const CLIENT_UPCOMING_MESSAGE_LIMIT = 50;
@@ -180,28 +171,6 @@ const toPreviewDocument = (doc: LocalEformsignDocRecord): EformsignDocument => {
         created_date: Number.isNaN(createdAt) ? 0 : createdAt,
         template: doc.templateName ? { name: doc.templateName } : undefined,
     } as EformsignDocument;
-};
-
-const formatScheduleChangeMonthDay = (dateStr: string): string => {
-    return formatDateForDisplay(dateStr, dateStr);
-};
-
-const getScheduleChangeErrorCode = (error: unknown): string | null => {
-    if (!error || typeof error !== "object" || !("response" in error)) {
-        return null;
-    }
-
-    const response = error.response;
-    if (!response || typeof response !== "object" || !("data" in response)) {
-        return null;
-    }
-
-    const data = response.data;
-    if (!data || typeof data !== "object" || !("code" in data)) {
-        return null;
-    }
-
-    return typeof data.code === "string" ? data.code : null;
 };
 
 const getErrorResponseStatus = (error: unknown): number | undefined => {
@@ -1135,8 +1104,6 @@ export interface ClientDetailPanelProps {
     basicInfoColumns?: 1 | 2;
     /** Mobile presentation for an embedded sliding detail pane. */
     layout?: "desktop" | "mobile";
-    /** Called after a schedule-change request is approved/rejected so the caller can clear its own local client state. */
-    onScheduleChangeDecided?: (clientId: number) => void;
     /** Patch only booking fields into the caller's locally held client snapshot. */
     onBookingConfirmed?: (client: Pick<Client, "id" | "bookingConfirmedAt" | "serviceStatus">) => void;
     /** When set, the empty contracts tab offers a button that runs this (same action as the menu's contract item). */
@@ -1164,7 +1131,6 @@ function ClientDetailPanelBody({
     trailing,
     layout = "desktop",
     basicInfoColumns = layout === "mobile" ? 1 : 2,
-    onScheduleChangeDecided,
     onBookingConfirmed,
     onCreateContract,
     dataComponentPrefix = "desktop_clients-detail_panel",
@@ -1181,8 +1147,6 @@ function ClientDetailPanelBody({
     const locale = useLocale();
     const queryClient = useQueryClient();
     const { toast } = useToast();
-    const approveScheduleChange = useApproveScheduleChange();
-    const rejectScheduleChange = useRejectScheduleChange();
     const confirmBooking = useConfirmBooking();
     const [confirmedBooking, setConfirmedBooking] = useState<Pick<Client, "id" | "bookingConfirmedAt" | "serviceStatus"> | null>(null);
     const client = useMemo(() => confirmedBooking && selectedClient.bookingConfirmedAt == null
@@ -1228,10 +1192,7 @@ function ClientDetailPanelBody({
         && (client.serviceStatus ?? "pre_booking") === "pre_booking";
     const bookingDatesHelpId = `${dataComponentPrefix}_header_confirm-booking_help`;
 
-    const [detailTabState, setDetailTabState] = useState<{ key: ClientDetailTabKey; clientId: number | null }>({
-        key: "basic",
-        clientId: null,
-    });
+    const [activeDetailTab, setActiveDetailTab] = useState<ClientDetailTabKey>("basic");
     const [selectedMessageHistoryId, setSelectedMessageHistoryId] = useState<number | string | null>(null);
     const [isMessageHistoryDetailVisible, setIsMessageHistoryDetailVisible] = useState(false);
     const clearMessageHistorySelectionTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -1242,29 +1203,6 @@ function ClientDetailPanelBody({
         [client.phone]
     );
     const clientId = client.id;
-
-    const activeScheduleChange = client.pendingScheduleChange ?? null;
-    const hasActiveScheduleChange = Boolean(activeScheduleChange);
-    const activeClientDetailTabs = useMemo(
-        () => hasActiveScheduleChange ? [SCHEDULE_CHANGE_DETAIL_TAB, ...CLIENT_DETAIL_TABS] : [...CLIENT_DETAIL_TABS],
-        [hasActiveScheduleChange]
-    );
-
-    const activeDetailTab = useMemo<ClientDetailTabKey>(() => {
-        if (detailTabState.clientId !== clientId) {
-            if (activeScheduleChange) {
-                return "schedule-change";
-            }
-
-            return detailTabState.key === "schedule-change" ? "basic" : detailTabState.key;
-        }
-
-        if (detailTabState.key === "schedule-change" && !hasActiveScheduleChange) {
-            return "basic";
-        }
-
-        return detailTabState.key;
-    }, [activeScheduleChange, clientId, detailTabState, hasActiveScheduleChange]);
 
     // Read this client's history by client id from the server. The branch-wide
     // `/message-logs` window holds only the branch's newest rows, so filtering it
@@ -1281,11 +1219,6 @@ function ClientDetailPanelBody({
         limit: CLIENT_UPCOMING_MESSAGE_LIMIT,
     });
 
-    const setActiveDetailTab = (key: ClientDetailTabKey, nextClientId: number | null = clientId) => {
-        setDetailTabState({ key, clientId: nextClientId });
-    };
-
-    const isScheduleChangeActionPending = approveScheduleChange.isPending || rejectScheduleChange.isPending;
     const serviceRecordsQuery = useClientServiceRecords(clientId, {
         enabled: activeDetailTab === "service-records",
     });
@@ -1474,7 +1407,7 @@ function ClientDetailPanelBody({
     };
 
     const handleDetailTabChange = (nextTab: string) => {
-        const nextDetailTab = activeClientDetailTabs.find((tab) => tab.key === nextTab)?.key;
+        const nextDetailTab = CLIENT_DETAIL_TABS.find((tab) => tab.key === nextTab)?.key;
 
         if (!nextDetailTab) return;
         if (nextDetailTab === activeDetailTab) return;
@@ -1482,58 +1415,6 @@ function ClientDetailPanelBody({
         setActiveDetailTab(nextDetailTab);
         if (nextDetailTab !== "messages") {
             clearClientMessageHistoryDetail();
-        }
-    };
-
-    const showScheduleChangeErrorToast = (error: unknown, fallbackMessage: string) => {
-        // Registered-code copy first, then the problem contract, then locally
-        // authored copy — upstream internals are never rendered.
-        const stale = getScheduleChangeErrorCode(error) === "REQUEST_STALE";
-        const normalized = normalizeApiError(error, { locale: "ko-KR", operation: "mutation" });
-        toast({
-            variant: "destructive",
-            description: stale
-                ? "요청이 최신 상태와 달라 만료됐어요"
-                : (normalized.verified ? normalized.message : fallbackMessage),
-        });
-    };
-
-    const handleApproveScheduleChange = async () => {
-        const pendingScheduleChange = client.pendingScheduleChange;
-        if (!pendingScheduleChange) return;
-
-        try {
-            await approveScheduleChange.mutateAsync({
-                requestId: pendingScheduleChange.id,
-                clientId: client.id,
-            });
-            // The dashboard overview cache uses its own key namespace, and its list row
-            // wins over the locally cleared client (clients.find(...) ?? selectedClient),
-            // so the decision must invalidate it directly for the badge/tab to clear.
-            void queryClient.invalidateQueries({ queryKey: dashboardQueryKeys.overviewAll() });
-            onScheduleChangeDecided?.(client.id);
-            setActiveDetailTab("basic");
-            toast({ variant: "success", description: "일정 변경 요청을 승인했어요" });
-        } catch (error) {
-            showScheduleChangeErrorToast(error, "일정 변경 요청을 승인하지 못했어요");
-        }
-    };
-
-    const handleRejectScheduleChange = async () => {
-        const pendingScheduleChange = client.pendingScheduleChange;
-        if (!pendingScheduleChange) return;
-
-        try {
-            await rejectScheduleChange.mutateAsync({
-                requestId: pendingScheduleChange.id,
-                clientId: client.id,
-            });
-            void queryClient.invalidateQueries({ queryKey: dashboardQueryKeys.overviewAll() });
-            onScheduleChangeDecided?.(client.id);
-            setActiveDetailTab("basic");
-            toast({ variant: "success", description: "일정 변경 요청을 거부했어요" });
-        } catch (error) {
-            showScheduleChangeErrorToast(error, "일정 변경 요청을 거부하지 못했어요");
         }
     };
 
@@ -1645,7 +1526,7 @@ function ClientDetailPanelBody({
                 trailing={confirmButton || trailing ? <>{confirmButton}{trailing}</> : undefined}
                 tabs={
                     <DetailTabs
-                        tabs={activeClientDetailTabs}
+                        tabs={[...CLIENT_DETAIL_TABS]}
                         activeTab={activeDetailTab}
                         onTabChange={handleDetailTabChange}
                         ariaLabel={tabsAriaLabel}
@@ -1663,65 +1544,6 @@ function ClientDetailPanelBody({
                     trackClassName={cn(tabPanelsTrackClassName, layout === "mobile" && "flex-auto")}
                     panelClassName={cn(tabPanelsPanelClassName, layout === "mobile" && "flex flex-col [&[aria-hidden=false]]:self-stretch")}
                     panels={[
-                        ...(activeScheduleChange
-                            ? [
-                                {
-                                    key: "schedule-change",
-                                    children: (
-                                        <InfoCard
-                                            title="서비스 일정 변경 요청이 있습니다."
-                                            data-component={`${dataComponentPrefix}_content_schedule-change_info-card`}
-                                        >
-                                            <InfoRow
-                                                label="기존 날짜"
-                                                value={formatScheduleChangeMonthDay(activeScheduleChange.fromDate)}
-                                                size="compact"
-                                            />
-                                            <InfoRow
-                                                label="변경 날짜"
-                                                value={formatScheduleChangeMonthDay(activeScheduleChange.toDate)}
-                                                size="compact"
-                                            />
-                                            <InfoRow
-                                                label="회차"
-                                                value={`${activeScheduleChange.sessionIndex}회차`}
-                                                size="compact"
-                                            />
-                                            <InfoRow
-                                                label="종료일"
-                                                value={`${activeScheduleChange.oldEndDate} → ${activeScheduleChange.newEndDate}`}
-                                                size="compact"
-                                            />
-                                            <div
-                                                data-component={`${dataComponentPrefix}_content_schedule-change_info-card_actions`}
-                                                className="mt-[calc(14px*var(--glint-ui-scale,1))] flex flex-wrap items-center justify-end gap-[calc(12px*var(--glint-ui-scale,1))]"
-                                            >
-                                                <Button
-                                                    type="button"
-                                                    variant="outline"
-                                                    size="sm"
-                                                    width="sm"
-                                                    disabled={isScheduleChangeActionPending}
-                                                    onClick={() => void handleRejectScheduleChange()}
-                                                >
-                                                    거부
-                                                </Button>
-                                                <Button
-                                                    type="button"
-                                                    variant="positive"
-                                                    size="sm"
-                                                    width="sm"
-                                                    disabled={isScheduleChangeActionPending}
-                                                    onClick={() => void handleApproveScheduleChange()}
-                                                >
-                                                    승인
-                                                </Button>
-                                            </div>
-                                        </InfoCard>
-                                    ),
-                                },
-                            ]
-                            : []),
                         {
                             key: "basic",
                             children: (

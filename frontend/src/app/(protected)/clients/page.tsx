@@ -38,10 +38,8 @@ import {
 } from "@/features/clients/hooks/use-clients";
 import { useSendClientReceipt } from "@/features/clients/hooks/use-send-client-receipt";
 import { serviceRecordsApi } from "@/features/service-records/api/service-records.api";
-import { getScheduleChangeErrorMessage } from "@/features/service-records/utils/schedule-change-error";
 import { useToast } from "@/hooks/use-toast";
 import type { Client } from "@/lib/client/types";
-import { serviceDayPolicyOfClient } from "@/lib/date/service-day-policy";
 import { canEditServiceRecordSchedule, type ClientListTab } from "@/features/clients/types";
 import {
     getClientBadgeAvatarClassName,
@@ -55,11 +53,6 @@ import {
     ClientFormPanel,
 } from "@/components/app/clients/ClientFormDialog";
 import { MaternityContractDialog } from "@/components/app/clients/MaternityContractDialog";
-import { ServiceScheduleContractResendModal } from "@/components/app/clients/ServiceScheduleContractResendModal";
-import {
-    contractPaymentDateFromFields,
-    isCancellableContractStatus,
-} from "@babyjamjam/shared/eformsign/contract-reissue";
 import { canCreateNewContractDocument } from "@/components/app/contracts/ContractClientSelector";
 import { ClientDetailPanel } from "@/components/app/clients/ClientDetailPanel";
 import { getClientDisplayLabel } from "@/components/app/clients/client-display";
@@ -69,7 +62,6 @@ import { AutomationStatusNotice } from "@/components/app/ui/automation-status-no
 import { NotificationOneButtonModal } from "@/components/app/ui/NotificationOneButtonModal";
 import { ClientDetailModal } from "@/components/app/clients/ClientDetailModal";
 import { ServiceRecordLinkResetResultModal } from "@/components/app/clients/ServiceRecordLinkResetResultModal";
-import { ServiceScheduleChangeModal } from "@/components/app/clients/ServiceScheduleChangeModal";
 import { ServiceRecordScheduleDialog } from "@/components/app/service-record/ServiceRecordScheduleDialog";
 import { useLocale } from "@/providers/LocaleProvider";
 import { useGetAuthUser } from "@/hooks/useGetAuthUser";
@@ -96,7 +88,7 @@ import {
     SteppedWizardStepper,
 } from "@/components/app/v3";
 import { formatKoreanPhoneNumber } from "@/lib/phone";
-import { eformsignApi, settingsApi, type ClientRegistrationPolicy } from "@/services/api";
+import { settingsApi, type ClientRegistrationPolicy } from "@/services/api";
 
 const FILTER_CHIPS: Array<{ label: string; value: ClientListTab }> = [
     { label: "전체", value: "all" },
@@ -137,14 +129,6 @@ const CLIENT_AUTOMATION_ITEMS: readonly ClientAutomationItem[] = [
         icon: FileSignature,
     },
 ];
-
-interface ServiceScheduleChangeTarget {
-    client: Client;
-    scheduleId: number;
-    sessionIndex: number;
-    currentDate: string;
-    minimumDate: string | null;
-}
 
 function ClientAutomationSection() {
     const { toast } = useToast();
@@ -287,22 +271,12 @@ export default function ClientsPage() {
     const [formDialogOpen, setFormDialogOpen] = useState(false);
     const [editingClient, setEditingClient] = useState<Client | null>(null);
     const [maternityContractClient, setMaternityContractClient] = useState<Client | null>(null);
-    const [contractReissue, setContractReissue] = useState<{
-        paymentDate?: string;
-        supersedeDocumentId?: string;
-    } | null>(null);
-    const [isPreparingContractReissue, setIsPreparingContractReissue] = useState(false);
     const [deleteTargetClientId, setDeleteTargetClientId] = useState<number | null>(null);
     const [deleteErrorMessage, setDeleteErrorMessage] = useState<string | null>(null);
     const [resetLinkTargetClientId, setResetLinkTargetClientId] = useState<number | null>(null);
     const [resetServiceRecordUrl, setResetServiceRecordUrl] = useState<string | null>(null);
     const [isResettingLink, setIsResettingLink] = useState(false);
-    const [scheduleChangeTarget, setScheduleChangeTarget] = useState<ServiceScheduleChangeTarget | null>(null);
     const [serviceRecordScheduleClient, setServiceRecordScheduleClient] = useState<Client | null>(null);
-    const [contractResendClient, setContractResendClient] = useState<Client | null>(null);
-    const [selectedScheduleChangeDate, setSelectedScheduleChangeDate] = useState("");
-    const [isPreparingScheduleChange, setIsPreparingScheduleChange] = useState(false);
-    const [isApplyingScheduleChange, setIsApplyingScheduleChange] = useState(false);
     const { toast } = useToast();
     const queryClient = useQueryClient();
     const [searchQuery, setSearchQuery] = useState("");
@@ -523,81 +497,6 @@ export default function ClientsPage() {
         }
     };
 
-    const handleOpenServiceScheduleChange = async (client: Client) => {
-        const clientId = client.id;
-        setIsPreparingScheduleChange(true);
-        try {
-            const overview = await serviceRecordsApi.getClientOverview(clientId);
-            const assignments = overview.data.assignments ?? [];
-            const activeAssignment = assignments.find((assignment) => !assignment.replaced)
-                ?? assignments[0]
-                ?? null;
-            if (!activeAssignment) {
-                toast({
-                    description: "관리사 배정이 없어 서비스 일정을 변경할 수 없어요",
-                    variant: "destructive",
-                });
-                return;
-            }
-
-            const preview = await serviceRecordsApi.previewScheduleChange(activeAssignment.scheduleId);
-            setSelectedScheduleChangeDate(preview.data.fromDate);
-            setScheduleChangeTarget({
-                client,
-                scheduleId: activeAssignment.scheduleId,
-                sessionIndex: preview.data.sessionIndex,
-                currentDate: preview.data.fromDate,
-                minimumDate: preview.data.minimumDate,
-            });
-        } catch {
-            toast({
-                description: "변경할 수 있는 다음 서비스 일정을 불러오지 못했어요",
-                variant: "destructive",
-            });
-        } finally {
-            setIsPreparingScheduleChange(false);
-        }
-    };
-
-    const handleApplyServiceScheduleChange = async (allowNonBusinessDay: boolean) => {
-        if (!scheduleChangeTarget) return;
-
-        setIsApplyingScheduleChange(true);
-        try {
-            const changed = await serviceRecordsApi.applyScheduleChange(scheduleChangeTarget.scheduleId, {
-                toDate: selectedScheduleChangeDate,
-                ...(allowNonBusinessDay ? { allowNonBusinessDay: true } : {}),
-            });
-            // The server decides whether the move also moved the service start.
-            const withNewPeriod = (currentClient: Client): Client => ({
-                ...currentClient,
-                ...(changed.data.startDate ? { startDate: changed.data.startDate } : {}),
-                endDate: changed.data.newEndDate,
-                pendingScheduleChange: null,
-            });
-            setSelectedClient((currentClient) => {
-                if (!currentClient || currentClient.id !== changed.data.clientId) return currentClient;
-                return withNewPeriod(currentClient);
-            });
-            setContractResendClient(withNewPeriod(scheduleChangeTarget.client));
-            setScheduleChangeTarget(null);
-            setSelectedScheduleChangeDate("");
-            await queryClient.invalidateQueries({ queryKey: ["clients"] });
-            toast({
-              variant: "success",
-                description: `서비스 일정과 종료일(${changed.data.newEndDate})을 변경했어요`,
-            });
-        } catch (error) {
-            toast({
-                // Registered-code mapper output is policy-safe copy.
-                description: getScheduleChangeErrorMessage(error),
-                variant: "destructive",
-            });
-        } finally {
-            setIsApplyingScheduleChange(false);
-        }
-    };
-
     const handleServiceRecordScheduleSaved = async () => {
         // The client form reads the toggles and dates from the client query.
         await queryClient.invalidateQueries({ queryKey: ["clients"] });
@@ -635,16 +534,6 @@ export default function ClientsPage() {
                 normalized.verified ? normalized.message : "고객 삭제에 실패했어요. 다시 시도해 주세요.",
             );
         }
-    };
-
-    const clearSelectedClientScheduleChange = (clientId: number) => {
-        setSelectedClient((currentClient) => {
-            if (!currentClient || currentClient.id !== clientId) {
-                return currentClient;
-            }
-
-            return { ...currentClient, pendingScheduleChange: null };
-        });
     };
 
     const applyFilterChange = (nextFilter: ClientListTab) => {
@@ -714,32 +603,6 @@ export default function ClientsPage() {
             currentClient?.id === client.id ? client : currentClient
         ));
     };
-    // 수정 전송: reopen the contract wizard with the new period, keeping the old payment date.
-    // An unsigned old contract is cancelled by the wizard once the new one is sent.
-    const handleContractReissue = async (client: Client) => {
-        setIsPreparingContractReissue(true);
-        let paymentDate: string | undefined;
-        try {
-            const previousDocumentId = client.latestContractDocumentId ?? client.eDocId;
-            if (previousDocumentId) {
-                const previous = await eformsignApi.getDocument(previousDocumentId);
-                paymentDate = contractPaymentDateFromFields(previous.fields) ?? undefined;
-            }
-        } catch {
-            // Without the old document the payment date is simply left for the user to fill.
-        } finally {
-            setIsPreparingContractReissue(false);
-        }
-        setContractReissue({
-            paymentDate,
-            supersedeDocumentId: client.latestContractDocumentId && isCancellableContractStatus(client.documentStatus, { hasSigned: client.hasSigned })
-                ? client.latestContractDocumentId
-                : undefined,
-        });
-        setMaternityContractClient(client);
-        setContractResendClient(null);
-    };
-
     const handleMaternityContractSuccess = async () => {
         await queryClient.invalidateQueries({ queryKey: ["clients"] });
     };
@@ -1124,7 +987,6 @@ export default function ClientsPage() {
                             dataComponentPrefix="desktop_clients_sections_section-content_list-section_split-layout_detail-selection_detail-panel"
                             messageHistoryDataComponentPrefix="desktop_clients_sections_section-content_list-section_split-layout_detail-selection_detail-panel_message-history"
                             compactBackLabel="고객 목록으로 돌아가기"
-                            onScheduleChangeDecided={clearSelectedClientScheduleChange}
                             onBookingConfirmed={handleBookingConfirmed}
                             onCreateContract={
                                 canCreateNewContractDocument(activeSelectedClient)
@@ -1160,15 +1022,6 @@ export default function ClientsPage() {
                                                 서비스 계약서 생성
                                             </DropdownMenuItem>
                                         )}
-                                        <DropdownMenuItem
-                                            data-component="desktop_clients_sections_section-content_list-section_split-layout_detail-selection_detail-panel_header_menu_change-service-schedule"
-                                            disabled={isPreparingScheduleChange}
-                                            onClick={() => void handleOpenServiceScheduleChange(activeSelectedClient)}
-                                            className="gap-2"
-                                        >
-                                            <CalendarDays className="w-4 h-4" />
-                                            서비스 일정 변경
-                                        </DropdownMenuItem>
                                         <DropdownMenuItem
                                             data-component="desktop_clients_sections_section-content_list-section_split-layout_detail-selection_detail-panel_header_menu_send-copayment-receipt"
                                             disabled={isSendingReceipt}
@@ -1266,25 +1119,12 @@ export default function ClientsPage() {
                 onSuccess={handleClientFormDialogSuccess}
             />
 
-            {contractResendClient ? (
-                <ServiceScheduleContractResendModal
-                    open
-                    dataComponent="desktop_clients-detail_service-schedule-contract-resend-modal"
-                    onKeep={() => setContractResendClient(null)}
-                    isPending={isPreparingContractReissue}
-                    onResend={() => void handleContractReissue(contractResendClient)}
-                />
-            ) : null}
-
             {maternityContractClient ? (
                 <MaternityContractDialog
                     open
                     client={maternityContractClient}
-                    initialPaymentDate={contractReissue?.paymentDate}
-                    supersedeDocumentId={contractReissue?.supersedeDocumentId}
                     onClose={() => {
                         setMaternityContractClient(null);
-                        setContractReissue(null);
                     }}
                     onSuccess={() => void handleMaternityContractSuccess()}
                 />
@@ -1311,24 +1151,6 @@ export default function ClientsPage() {
                 onClose={() => setResetServiceRecordUrl(null)}
                 onCopy={(serviceRecordUrl) => void handleCopyResetServiceRecordLink(serviceRecordUrl)}
             />
-
-            {scheduleChangeTarget ? (
-                <ServiceScheduleChangeModal
-                    open
-                    sessionIndex={scheduleChangeTarget.sessionIndex}
-                    currentDate={scheduleChangeTarget.currentDate}
-                    minimumDate={scheduleChangeTarget.minimumDate}
-                    selectedDate={selectedScheduleChangeDate}
-                    isPending={isApplyingScheduleChange}
-                    onDateChange={setSelectedScheduleChangeDate}
-                    onClose={() => {
-                        setScheduleChangeTarget(null);
-                        setSelectedScheduleChangeDate("");
-                    }}
-                    onSubmit={(allowNonBusinessDay) => void handleApplyServiceScheduleChange(allowNonBusinessDay)}
-                    serviceDays={serviceDayPolicyOfClient(scheduleChangeTarget.client)}
-                />
-            ) : null}
 
             {serviceRecordScheduleClient ? (
                 <ServiceRecordScheduleDialog

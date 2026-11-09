@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import type { ReactNode } from "react";
 
 import { ClientDetailPanel } from "../ClientDetailPanel";
@@ -14,8 +14,6 @@ jest.mock("@/providers/LocaleProvider", () => ({
 }));
 
 jest.mock("@/features/clients/hooks/use-clients", () => ({
-    useApproveScheduleChange: () => ({ isPending: false, mutateAsync: jest.fn() }),
-    useRejectScheduleChange: () => ({ isPending: false, mutateAsync: jest.fn() }),
     useConfirmBooking: () => ({ isPending: false, mutateAsync: jest.fn() }),
 }));
 
@@ -178,6 +176,26 @@ describe("ClientDetailPanel employee phones", () => {
             queryClient,
         };
     }
+
+    it("keeps the basic tab selected and the four regular tabs for a legacy pending request", () => {
+        const legacyClient = {
+            ...client,
+            pendingScheduleChange: {
+                id: "legacy-request",
+                sessionIndex: 3,
+                fromDate: "2026-07-20",
+                toDate: "2026-07-21",
+                oldEndDate: "2026-08-01",
+                newEndDate: "2026-08-02",
+            },
+        };
+        renderPanel(legacyClient);
+
+        expect(within(screen.getByRole("navigation")).getAllByRole("button").map((button) => button.textContent)).toEqual([
+            "기본 정보", "계약서 정보", "알림 발송", "제공기록지",
+        ]);
+        expect(screen.getByText("주 담당 인력 연락처")).toBeInTheDocument();
+    });
 
     it("should render both currently assigned employee phone numbers", () => {
         renderPanel();

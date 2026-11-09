@@ -25,8 +25,6 @@ jest.mock("../api/clients.api", () => ({
     terminateService: jest.fn(),
     requestReplacement: jest.fn(),
     completeReplacement: jest.fn(),
-    approveScheduleChange: jest.fn(),
-    rejectScheduleChange: jest.fn(),
   },
 }));
 

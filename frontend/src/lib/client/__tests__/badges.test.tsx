@@ -23,7 +23,7 @@ describe("pre-booking client badge", () => {
   });
 });
 
-describe("schedule-change badge priority", () => {
+describe("client badge priority", () => {
   const badges: ClientBadge[] = [
     {
       key: "contract_required",
@@ -57,27 +57,35 @@ describe("schedule-change badge priority", () => {
 
   const orderedBadges = prioritizeClientBadges(getClientBadges({
     badges,
-    pendingScheduleChange: {
-      id: "schedule-change-1",
-      sessionIndex: 3,
-      fromDate: "2026-07-20",
-      toDate: "2026-07-21",
-      oldEndDate: "2026-08-01",
-      newEndDate: "2026-08-02",
-    },
   }));
 
-  it("places schedule change before contract required across client surfaces", () => {
+  it("keeps normal badges when a legacy payload includes a pending request", () => {
+    const legacyClient = {
+      badges,
+      pendingScheduleChange: {
+        id: "legacy-request",
+        sessionIndex: 3,
+        fromDate: "2026-07-20",
+        toDate: "2026-07-21",
+        oldEndDate: "2026-08-01",
+        newEndDate: "2026-08-02",
+      },
+    };
+
+    expect(getClientBadges(legacyClient)).toEqual(orderedBadges);
+  });
+
+  it("places contract required before the service status across client surfaces", () => {
     expect(orderedBadges.map((badge) => badge.label)).toEqual([
-      "일정 변경",
       "계약서 필요",
+      "진행중",
       "조리원 이용",
       "유축기 대여",
     ]);
-    expect(getPrimaryClientBadge(orderedBadges)?.label).toBe("일정 변경");
+    expect(getPrimaryClientBadge(orderedBadges)?.label).toBe("계약서 필요");
   });
 
-  it("shows schedule change and folds contract required into the dashboard count", () => {
+  it("shows contract required and folds other badges into the dashboard count", () => {
     render(
       <AnimatedSlotListItemContent
         dataComponent="desktop_dashboard_split-list-item-content"
@@ -93,8 +101,8 @@ describe("schedule-change badge priority", () => {
       />,
     );
 
-    expect(screen.getByText("일정 변경")).toBeInTheDocument();
-    expect(screen.queryByText("계약서 필요")).not.toBeInTheDocument();
+    expect(screen.getByText("계약서 필요")).toBeInTheDocument();
+    expect(screen.queryByText("진행중")).not.toBeInTheDocument();
     expect(screen.getByText("+3")).toBeInTheDocument();
   });
 });
@@ -102,7 +110,6 @@ describe("schedule-change badge priority", () => {
 describe("getClientBadges legacy fallback for a revoke-requested contract (040/045)", () => {
   const legacyClient = (documentStatus: string) => ({
     badges: [],
-    pendingScheduleChange: null,
     serviceStatus: "active",
     documentStatus,
     breastPump: false,

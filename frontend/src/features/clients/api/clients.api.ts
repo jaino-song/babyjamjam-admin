@@ -103,15 +103,4 @@ export const clientsApi = {
   confirmBooking: (id: number) =>
     api.patch<Client>(`/clients/${id}/confirm-booking`, {}),
 
-  /**
-   * Approve a pending schedule change request
-   */
-  approveScheduleChange: (id: string) =>
-    api.post<void>(`/schedule-change-requests/${id}/approve`, {}),
-
-  /**
-   * Reject a pending schedule change request
-   */
-  rejectScheduleChange: (id: string, reason?: string) =>
-    api.post<void>(`/schedule-change-requests/${id}/reject`, { reason }),
 };
