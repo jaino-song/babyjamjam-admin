@@ -35,8 +35,8 @@ interface GuidePanelProps {
 }
 
 /**
- * Seven-slide, animated how-to for the caregiver service-record flow. It is a modal bottom sheet over
- * the current step: progress bars, `n / 7`, 건너뛰기, swipe / arrow-key paging and 이전 / 다음. Six slides
+ * Six-slide, animated how-to for the caregiver service-record flow. It is a modal bottom sheet over
+ * the current step: progress bars, `n / 6`, 건너뛰기, swipe / arrow-key paging and 이전 / 다음. Five slides
  * carry a looping demo of the real screens (see `guideDemos`); under reduced motion they show a still.
  * The content mounts only while open, so each opening starts on slide 1.
  */
@@ -52,6 +52,7 @@ export function ServiceRecordGuide({ "data-component": base, open, onClose }: Se
                 side="bottom"
                 data-component={sheet}
                 data-source-component={SOURCE_COMPONENT}
+                data-slot="sheet"
                 className={styles.sheet}
                 aria-modal="true"
                 aria-describedby={undefined}
@@ -120,16 +121,16 @@ function GuidePanel({ sheet, open, onClose, nextRef }: GuidePanelProps) {
 
     return (
         <>
-            <div className={styles["sheet-top"]}>
-                <ol data-component={`${sheet}_progress`} className={styles.bars} aria-hidden="true">
+            <div data-slot="sheet-top" className={styles["sheet-top"]}>
+                <ol data-component={`${sheet}_progress`} data-slot="bars" className={styles.bars} aria-hidden="true">
                     {GUIDE_SLIDES.map((slide, slideIndex) => (
-                        <li key={slide.key} className={styles.bar} data-done={slideIndex <= index}>
-                            <span className={styles["bar-fill"]} />
+                        <li key={slide.key} data-slot="bar" className={styles.bar} data-done={slideIndex <= index}>
+                            <span data-slot="bar-fill" className={styles["bar-fill"]} />
                         </li>
                     ))}
                 </ol>
-                <div className={styles["top-row"]}>
-                    <span data-component={`${sheet}_count`} className={styles.count} aria-live="polite">
+                <div data-slot="top-row" className={styles["top-row"]}>
+                    <span data-component={`${sheet}_count`} data-slot="count" className={styles.count} aria-live="polite">
                         {index + 1} / {SLIDE_COUNT}
                     </span>
                     <Button
@@ -137,6 +138,7 @@ function GuidePanel({ sheet, open, onClose, nextRef }: GuidePanelProps) {
                         variant="ghost"
                         size="sm"
                         data-component={`${sheet}_skip`}
+                        data-slot="skip"
                         className={styles.skip}
                         onClick={onClose}
                     >
@@ -145,8 +147,9 @@ function GuidePanel({ sheet, open, onClose, nextRef }: GuidePanelProps) {
                 </div>
             </div>
 
-            <div className={styles.viewport} onPointerDown={onPointerDown} onPointerUp={onPointerUp}>
+            <div data-slot="viewport" className={styles.viewport} onPointerDown={onPointerDown} onPointerUp={onPointerUp}>
                 <div
+                    data-slot="track"
                     className={styles.track}
                     style={{
                         transform: `translateX(${-index * 100}%)`,
@@ -160,6 +163,7 @@ function GuidePanel({ sheet, open, onClose, nextRef }: GuidePanelProps) {
                             <article
                                 key={slide.key}
                                 data-component={slideBase}
+                                data-slot="slide"
                                 className={styles.slide}
                                 data-active={active}
                                 aria-hidden={!active}
@@ -174,10 +178,10 @@ function GuidePanel({ sheet, open, onClose, nextRef }: GuidePanelProps) {
                                 ) : (
                                     <GuideIntroStage data-component={`${slideBase}_stage`} />
                                 )}
-                                <div data-component={`${slideBase}_caption`} className={styles.cap}>
-                                    <span className={styles.chip}>{slide.chip}</span>
-                                    <h2 data-component={`${slideBase}_caption_title`} className={styles["cap-title"]}>{slide.title}</h2>
-                                    <p data-component={`${slideBase}_caption_body`} className={styles["cap-body"]}>{slide.body}</p>
+                                <div data-component={`${slideBase}_caption`} data-slot="cap" className={styles.cap}>
+                                    <span data-slot="chip" className={styles.chip}>{slide.chip}</span>
+                                    <h2 data-component={`${slideBase}_caption_title`} data-slot="cap-title" className={styles["cap-title"]}>{slide.title}</h2>
+                                    <p data-component={`${slideBase}_caption_body`} data-slot="cap-body" className={styles["cap-body"]}>{slide.body}</p>
                                 </div>
                             </article>
                         );
@@ -185,11 +189,12 @@ function GuidePanel({ sheet, open, onClose, nextRef }: GuidePanelProps) {
                 </div>
             </div>
 
-            <div data-component={nav} className={styles["sheet-nav"]}>
+            <div data-component={nav} data-slot="sheet-nav" className={styles["sheet-nav"]}>
                 <Button
                     type="button"
                     variant="ghost"
                     data-component={`${nav}_prev`}
+                    data-slot="nav-btn"
                     className={`${styles["nav-btn"]} ${styles["nav-prev"]}`}
                     disabled={index === 0}
                     onClick={() => setIndex((current) => clampIndex(current - 1))}
@@ -201,6 +206,7 @@ function GuidePanel({ sheet, open, onClose, nextRef }: GuidePanelProps) {
                     type="button"
                     variant="v3"
                     data-component={`${nav}_next`}
+                    data-slot="nav-btn"
                     className={styles["nav-btn"]}
                     onClick={() => (isLast ? onClose() : setIndex((current) => clampIndex(current + 1)))}
                 >

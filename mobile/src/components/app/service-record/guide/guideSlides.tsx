@@ -2,7 +2,7 @@ import type { ReactNode } from "react";
 
 import type { DemoName } from "./guideDemos";
 
-/** One guide slide: its caption (final approved copy) and, for the six demos, which script plays. */
+/** One guide slide: its caption (final approved copy) and, for the five demos, which script plays. */
 export interface GuideSlide {
     /** Segment of the slide's `data-component` (`…_slide-<key>`). */
     key: "intro" | DemoName;
@@ -33,8 +33,8 @@ export const GUIDE_SLIDES: readonly GuideSlide[] = [
     {
         key: "grid",
         chip: "제공기록표",
-        title: "오늘 날짜 버튼을 눌러 기록을 시작하세요",
-        body: "\"입력 가능 날짜\"로 표시된 버튼을 누르면 돼요.",
+        title: "\"입력 가능\" 회차를 눌러 기록을 시작하세요",
+        body: "기록할 서비스 제공일을 선택해 주세요.",
         demo: "grid",
     },
     {
@@ -54,23 +54,17 @@ export const GUIDE_SLIDES: readonly GuideSlide[] = [
     {
         key: "edit",
         chip: "제출한 기록 수정",
-        title: "이미 제출한 기록도 수정이 가능해요",
-        body: "수정이 필요한 부분만 수정하고 제출해 주세요.",
+        title: "제출한 기록도 고치거나 지울 수 있어요",
+        body: <><b>서비스 제공일</b>과 내용을 고쳐 다시 제출할 수 있어요. 필요한 경우엔 기록을 삭제할 수도 있어요.</>,
         demo: "edit",
-    },
-    {
-        key: "sched",
-        chip: "서비스 일정 변경",
-        title: "하루 쉬어가나요? 일정을 변경해 보세요",
-        body: "서비스 제공일을 하루 늦출 수 있어요. 최종 처리는 본사에서 승인 후 완료돼요.",
-        demo: "sched",
     },
 ];
 
-/** The intro slide's four step cards. */
+/** The intro slide's five step cards. */
 export const INTRO_STEPS: readonly { title: string; sub: string }[] = [
     { title: "서비스 기본정보", sub: "처음 한 번만 입력" },
-    { title: "회차 카드 선택", sub: "제공기록표에서 오늘 회차" },
+    { title: "회차 카드 선택", sub: "제공기록표에서 입력 가능 회차" },
+    { title: "서비스 제공일 선택", sub: "달력에서 날짜 고르기" },
     { title: "회차 기록 작성", sub: "산모 · 신생아 · 서비스" },
     { title: "산모 서명 후 제출", sub: "확인 → 제출완료" },
 ];

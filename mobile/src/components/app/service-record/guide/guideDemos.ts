@@ -1,5 +1,5 @@
 /**
- * The guide's demo player: six scripted loops that act on a miniature, decorative copy of the
+ * The guide's demo player: five scripted loops that act on a miniature, decorative copy of the
  * service-record screens (touch indicator, typing, page swaps, signature, modal, spotlight).
  *
  * It drives plain DOM through refs (the mini screen is not React state), so every wait goes through a
@@ -9,11 +9,11 @@
  */
 import styles from "./ServiceRecordGuide.module.css";
 
-export type DemoName = "basics" | "grid" | "form" | "sign" | "edit" | "sched";
+export type DemoName = "basics" | "grid" | "form" | "sign" | "edit";
 
 /** Loop lengths in ms, refined from every completed loop so the progress bar stays honest. */
 const EXPECTED_LOOP_MS: Record<DemoName, number> = {
-    basics: 13700, grid: 6100, form: 21200, sign: 13700, edit: 16300, sched: 12100,
+    basics: 14000, grid: 12000, form: 22000, sign: 16000, edit: 24000,
 };
 const loopMs: Record<DemoName, number> = { ...EXPECTED_LOOP_MS };
 
@@ -121,81 +121,98 @@ interface DemoCtx {
 
 /* ---------- markup ---------- */
 
-function field(id: string, label: string, placeholder: string, extra = ""): string {
-    return `<div class="${cls("fld")}"><span class="${cls("fld-l")}">${label}</span><div class="${cls(`inp ${extra}`.trim())}" data-g="${id}"><span class="${cls("ph")}">${placeholder}</span><span class="${cls("v")}"></span></div></div>`;
+function markSlots(root: HTMLElement) {
+    // These decorative slots belong to the stage's mini-screen, never to document-wide IDs.
+    const names = new Map(Object.entries(styles).map(([slot, className]) => [className, slot]));
+    root.querySelectorAll<HTMLElement>("[class]").forEach((el) => {
+        const slot = names.get(el.classList[0]) ?? el.classList[0];
+        el.dataset.slot = slot;
+    });
+}
+/** App coordinates (390px wide) are scaled by CSS into the 290px miniature. */
+function setScreen(m: HTMLElement, html: string) {
+    m.innerHTML = `<div class="${cls("m-app")}">${html}</div>`;
+    markSlots(m);
 }
 
-function chips(id: string, question: string, options: string[]): string {
-    return `<div class="${cls("grp")}"><div class="${cls("q")}">${question}</div><div class="${cls("chips")}">${options.map((option, index) => `<span class="${cls("ch")}" data-g="${id}${index}">${option}</span>`).join("")}</div></div>`;
+function field(id: string, label: string, placeholder: string, extra = "", unit = ""): string {
+    return `<div class="${cls("fld")}"><span class="${cls("fld-l")}">${label}</span><div class="${cls(`inp ${extra} ${unit ? "with-unit" : ""}`.trim())}" data-g="${id}"><span class="${cls("ph")}">${placeholder}</span><span class="${cls("v")}"></span>${unit ? `<span class="${cls("unit")}">${unit}</span>` : ""}</div></div>`;
 }
 
-function head(crumb: string, title: string, progress?: number): string {
-    const bar = progress == null ? "" : `<div class="${cls("m-prog")}">${[0, 1, 2, 3].map((index) => `<i class="${index < progress ? cls("on") : ""}"></i>`).join("")}</div>`;
-    return `<div class="${cls("m-head")}"><div class="${cls("m-crumb")}">${crumb}</div><div class="${cls("m-title")}">${title}</div>${bar}</div>`;
+function chips(id: string, question: string, options: string[], selected = false, kind: "radio" | "check" = "radio"): string {
+    return `<div class="${cls("grp")}"><div class="${cls("q")}">${question}</div><div class="${cls("chips")}">${options.map((option, index) => `<span class="${cls(`ch ${kind} ${selected && index === 0 ? "on" : ""}`.trim())}" data-g="${id}${index}">${option}</span>`).join("")}</div></div>`;
 }
 
-const modal = (title: string, body: string): string => `<div class="${cls("m-modal")}"><div class="${cls("m-box")}"><h4>${title}</h4><p>${body}</p><div class="${cls("acts")}"><div class="${cls("m-btn cancel")}">취소</div><div class="${cls("m-btn")}" data-g="mok">확인</div></div></div></div><div class="${cls("toast")}"></div>`;
+function head(crumb: string, progress = 3): string {
+    return `<div class="${cls("m-head")}"><div class="${cls("m-brand")}">산모·신생아 건강관리 서비스 제공기록지</div><div class="${cls("m-meta")}"><span>인천 아이미래로</span><span class="${cls("m-crumb")}">${crumb}</span></div><div class="${cls("m-prog")}"><i style="width:${progress / 4 * 100}%"></i></div></div>`;
+}
+const back = () => `<div class="${cls("m-back")}">이전</div>`;
+const title = (text: string, badge = "") => `<div class="${cls("m-title")}">${text}${badge ? `<span class="${cls("status")}">${badge}</span>` : ""}</div>`;
+const footer = (label = "다음", disabled = false, deletable = false) => `<div class="${cls("m-foot")}">${deletable ? `<div class="${cls("m-btn delete-outline")}" data-g="del">기록 삭제</div>` : ""}<div class="${cls(`m-btn ${disabled ? "off" : ""}`.trim())}" data-g="go">${label}</div></div>`;
+const modal = (): string => `<div class="${cls("m-modal")}"><div class="${cls("m-box")}"><h4></h4><p></p><div class="${cls("acts")}"><div class="${cls("m-btn cancel")}">취소</div><div class="${cls("m-btn")}" data-g="mok">확인</div></div></div></div><div class="${cls("toast")}"></div>`;
 
 type CardState = "done" | "current" | "locked";
-
 function cardHTML(index: number, state: CardState): string {
     const label = { done: "제출완료", current: "입력 가능", locked: "대기" }[state];
-    return `<div class="${cls(`card ${state}`)}" data-g="c${index}"><div class="${cls("d")}">2026.12.0${index}</div><div class="${cls("n")}">${index}</div><div class="${cls("s")}">${label}</div></div>`;
+    const date = state === "done" ? `2026.11.${String(index + 1).padStart(2, "0")}` : "";
+    return `<div class="${cls(`card ${state}`)}" data-g="c${index}"><div class="${cls("d")}">${date}</div><div class="${cls("n")}">${index}</div><div class="${cls("s")}">${label}</div></div>`;
 }
-
-function gridScreen(states: CardState[], buttonLabel: string): string {
-    return `${head("3단계 · 일자별 기록", "제공기록표")}<div class="${cls("m-body")}"><div class="${cls("m-help")}">제출된 기록은 눌러서 수정할 수 있습니다.</div><div class="${cls("cards")}">${states.map((state, index) => cardHTML(index + 1, state)).join("")}</div></div><div class="${cls("m-foot")}"><div class="${cls("m-btn")}">${buttonLabel}</div><div class="${cls("m-btn ghost")}">서비스 일정 변경</div></div>${modal("", "")}`;
+function gridScreen(states: CardState[]): string {
+    return `${head("3단계 · 일자별 기록")}<div class="${cls("m-body")}"><div class="${cls("grid-heading")}">${title("제공기록표")}<span>사용방법</span></div><div class="${cls("m-help")}">제출된 기록은 눌러서 수정할 수 있습니다.</div><div class="${cls("cards")}">${states.map((state, index) => cardHTML(index + 1, state)).join("")}</div></div>${footer("다음 회차 입력")}${modal()}`;
 }
 
 const PAGES = {
-    mom: chips("p", "① 회음절개부위 (또는 수술부위)", ["이상없음", "열상", "혈종", "불편감"])
-        + chips("b", "② 유방상태", ["이상없음", "울혈", "통증"])
-        + chips("u", "③ 배뇨/배변", ["이상없음", "불편감"])
-        + chips("z", "④ 좌욕", ["실시", "미실시"])
-        + `<div class="${cls("grp")}"><div class="${cls("q")}">⑤ 식사/간식</div><div class="${cls("nums")}">${field("meal", "식사 (회)", "0")}${field("snack", "간식 (회)", "0")}</div></div>`,
-    baby: field("temp", "⑥ 체온 (℃)", "36.5")
-        + chips("sl", "⑦ 수면 양상", ["잘 잠", "잘 못 잠"])
-        + `<div class="${cls("nums")}">${field("bf", "⑧ 모유수유 (회)", "0")}${field("ff", "⑨ 분유수유 (회)", "0")}</div>`
-        + chips("pp", "⑩ 배변양상", ["정상변", "이상변"])
-        + chips("bt", "⑪ 목욕·제대관리", ["실시", "미실시"]),
+    mom: chips("p", "① 회음절개부위 (또는 수술부위)", ["이상없음", "열상", "혈종", "불편감"], true, "check")
+        + chips("b", "② 유방상태", ["이상없음", "울혈", "통증"], true, "check")
+        + chips("u", "③ 배뇨/배변", ["이상없음", "불편감"], true, "check")
+        + chips("z", "④ 좌욕", ["실시", "미실시"], true)
+        + `<div class="${cls("grp")}"><div class="${cls("q")}">⑤ 식사/간식</div><div class="${cls("nums")}">${field("meal", "식사", "횟수", "", "회")}${field("snack", "간식", "횟수", "", "회")}</div></div>`,
+    baby: field("temp", "⑥ 체온", "체온", "", "℃")
+        + chips("sl", "⑦ 수면 양상", ["잘 잠", "잘 못 잠"], true)
+        + field("bf", "⑧ 모유수유", "횟수", "", "회")
+        + `<div class="${cls("nums")}">${field("ff", "⑨ 분유수유", "횟수", "", "회")}${field("amount", "", "회당", "", "ml")}</div>`
+        + chips("pp", "⑩ 배변양상", ["정상변", "이상변"], true)
+        + chips("bt", "⑪ 목욕·제대관리", ["실시", "미실시"], true),
     svc: field("etc", "기타 서비스 (필요 시 기재)", "예: 신생아 옷 정리", "area")
         + field("note", "특이사항 (필요 시 기재)", "예: 산모 요청으로 간식 시간을 변경함", "area")
-        + chips("pay", "결제 확인", ["결제 확인 완료"]),
+        + chips("pay", "결제 확인", ["결제 확인 완료"], false, "check"),
 };
 
-const basicsScreen = (): string => `${head("2단계 · 서비스 기본정보", "서비스 기본정보")}<div class="${cls("m-body")}"><div class="${cls("ro")}"><span>제공인력</span><b>김도우미</b></div>${field("f1", "산모 성명", "예: 이예지")}${field("f2", "산모 생년월일", "1994-03-15")}${field("f3", "신생아 성명", "예: 이아기")}${field("f4", "신생아 출생일자", "2026-09-20")}<div class="${cls("fld")}"><span class="${cls("fld-l")}">분만형태</span><div class="${cls("chips")}"><span class="${cls("ch on")}" data-g="d0">자연분만</span><span class="${cls("ch")}" data-g="d1">제왕절개</span></div></div>${field("f5", "신생아 몸무게 (kg)", "예: 3.2")}</div><div class="${cls("m-foot")}"><div class="${cls("m-btn")}" data-g="go">다음</div></div>${modal("", "")}`;
+const basicsScreen = (): string => `${head("2단계 · 서비스 기본정보", 1)}<div class="${cls("m-body")}">${back()}${title("서비스 기본정보")}<div class="${cls("ro")}"><span>제공인력</span><b>미나미</b></div><div class="${cls("ro")}"><span>제공기관</span><b>인천 아이미래로</b></div>${field("f1", "산모 성명", "예: 이예지")}${field("f2", "산모 생년월일", "1994-03-15")}${field("f3", "신생아 성명", "예: 이아기")}${field("f4", "신생아 출생일자", "2026-09-20")}<div class="${cls("fld")}"><span class="${cls("fld-l")}">분만형태</span><div class="${cls("chips")}"><span class="${cls("ch on")}" data-g="d0">자연분만</span><span class="${cls("ch")}" data-g="d1">제왕절개</span></div></div>${field("f5", "신생아 몸무게 (kg)", "예: 3.2")}</div>${footer()}${modal()}`;
 
 const SIGN_PATH = "M18 50 C 26 18, 40 18, 36 44 C 33 60, 50 56, 58 34 C 62 22, 70 22, 68 40 C 66 56, 84 54, 92 36 C 98 24, 110 26, 106 44 C 104 56, 122 52, 132 30 C 138 20, 146 34, 150 46 C 156 58, 170 44, 178 34 L 190 40";
 
-function reviewHTML({ submitted, temp = "36.5℃", signed = false }: { submitted: boolean; temp?: string; signed?: boolean }): string {
-    const editButton = (section: string) => (submitted ? `<div class="${cls("edit")}" data-g="e-${section}">수정</div>` : "");
-    const banner = submitted
-        ? `<div class="${cls("banner warn")}">이미 제출된 회차입니다.</div>`
-        : `<div class="${cls("banner")}">최종 기록을 확인해 주세요.</div>`;
-    const signature = signed
-        ? `<span class="${cls("done-chip on")}">서명 완료 · 2026.12.02</span>`
-        : `<div class="${cls("sig-l")}">산모 서명 <small>지우기</small></div>
-     <div class="${cls("sig")}"><span class="${cls("hint")}">여기에 손가락으로 서명해 주세요</span>
-       <svg viewBox="0 0 208 74"><path data-g="sigpath" d="${SIGN_PATH}" fill="none" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
-     </div>
-     <div class="${cls("sig-note")}">기록 내용을 확인하였음을 서명으로 확인합니다.</div>
-     <span class="${cls("done-chip")}" data-g="sigok">서명 완료 · 2026.12.03</span>`;
-    return `${banner}
-    <div class="${cls("sec")}"><div class="${cls("sec-h")}">산모${editButton("mom")}</div><div class="${cls("rw")}"><span>회음절개부위</span><b>이상없음</b></div><div class="${cls("rw")}"><span>좌욕</span><b>실시</b></div></div>
-    <div class="${cls("sec")}"><div class="${cls("sec-h")}">신생아${editButton("baby")}</div><div class="${cls("rw")}"><span>체온</span><b data-g="r-temp">${temp}</b></div><div class="${cls("rw")}"><span>수면 양상</span><b>잘 잠</b></div></div>
-    <div class="${cls("sec")}"><div class="${cls("sec-h")}">서비스 기록${editButton("svc")}</div><div class="${cls("rw")}"><span>결제 확인</span><b>✓ 확인 완료</b></div></div>
-    ${signature}`;
+function reviewRow(label: string, value: string, id = "", extra = ""): string {
+    return `<div class="${cls(`rw ${extra}`.trim())}"><span>${label}</span><b${id ? ` data-g="${id}"` : ""}>${value}</b></div>`;
 }
+function section(label: string, content: string, editId = "", tone = ""): string {
+    return `<div class="${cls("sec")}"><div class="${cls("sec-h")}"><span class="${cls(`section-tag ${tone}`.trim())}">${label}</span>${editId ? `<span class="${cls("edit")}" data-g="${editId}">수정</span>` : ""}</div>${content}</div>`;
+}
+function reviewHTML(submitted: boolean): string {
+    return section("산모", reviewRow("① 회음절개부위 (또는 수술부위)", "이상없음") + reviewRow("② 유방상태", "이상없음") + reviewRow("③ 배뇨/배변", "이상없음") + reviewRow("④ 좌욕", "실시") + reviewRow("⑤ 식사/간식", "식사 2회 · 간식 1회"), submitted ? "e-mom" : "", "warm")
+        + section("신생아", reviewRow("⑥ 체온", "36.6℃") + reviewRow("⑦ 수면 양상", "잘 잠") + reviewRow("⑧ 모유수유", "6회") + reviewRow("⑨ 분유수유", "1회 · 회당 60ml") + reviewRow("⑩ 배변양상", "정상변 (노란색)") + reviewRow("⑪ 목욕·제대관리", "실시"), submitted ? "e-baby" : "")
+        + section("서비스 기록", reviewRow("기타 서비스 (필요 시 기재)", "입력 없음", "", "rw-note") + reviewRow("특이사항 (필요 시 기재)", "오후 수유 시간 조정", "", "rw-note") + reviewRow("결제 확인", "✓ 확인 완료", "", "payment"), submitted ? "e-svc" : "")
+        + (submitted ? `<span class="${cls("done-chip on")}">서명 완료 · 2026.11.02</span>` : `<div class="${cls("signature")}"><div class="${cls("sig-l")}">산모 서명 <small>지우기</small></div><div class="${cls("sig")}"><span class="${cls("hint")}">여기에 손가락으로 서명해 주세요</span><svg viewBox="0 0 208 74"><path data-g="sigpath" d="${SIGN_PATH}" fill="none" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" visibility="hidden"/></svg></div><div class="${cls("sig-note")}">기록 내용을 확인하였음을 서명으로 확인합니다.</div><span class="${cls("done-chip")}" data-g="sigok">서명 완료 · 2026.11.05</span></div>`);
+}
+const signScreen = (): string => `${head("4회차 · 기록 내용 확인 (4/4)", 4)}<div class="${cls("m-body")}">${back()}${title("기록 내용 확인")}${reviewHTML(false)}</div>${footer("확인", true)}${modal()}`;
+const reviewScreen = (changed = false): string => `${head("1회차 · 기록 수정 (4/4)", 4)}<div class="${cls("m-body")}">${back()}${title("1회차 기록 수정", "제출완료")}${section("서비스 제공일", reviewRow("서비스 제공일", changed ? `<del>11.02</del> <strong>2026.11.05 (목)</strong>` : "2026.11.02 (월)", "r-date") + (changed ? `<p class="${cls("date-note")}">다른 회차 날짜는 바뀌지 않아요.</p>` : ""), "e-date", changed ? "warm" : "")}${reviewHTML(true)}</div>${footer("확인", false, true)}${modal()}`;
+const momScreen = (filled = true): string => `${head("4회차 · 산모 기록 (1/4)", 1)}<div class="${cls("m-body")}">${back()}<div class="${cls("session-chip")}" data-g="session">${filled ? "4회차 · 2026.11.05" : "4회차"}</div>${field("sd", "서비스 제공일", filled ? "2026-11-05" : "날짜를 선택하세요", filled ? "date-filled" : "")}${title("산모 기록")}${PAGES.mom}</div>${footer()}${modal()}`;
+const recordScreen = (step: "baby" | "svc"): string => `${head(`4회차 · ${step === "baby" ? "신생아 기록 (2/4)" : "서비스 기록 (3/4)"}`, step === "baby" ? 2 : 3)}<div class="${cls("m-body")}">${back()}${title(step === "baby" ? "신생아 기록" : "서비스 기록")}${PAGES[step]}</div>${footer()}${modal()}`;
 
-const signScreen = (): string => `${head("3회차 · 기록 내용 확인 (4/4)", "기록 내용 확인", 4)}<div class="${cls("m-body")}">${reviewHTML({ submitted: false })}</div><div class="${cls("m-foot")}"><div class="${cls("m-btn off")}" data-g="go">확인</div></div>${modal("제출하시겠어요?", "")}`;
+const GRID_STATES: CardState[] = ["done", "done", "done", "current", "locked", "locked", "locked", "locked", "locked", "locked"];
 
-const reviewScreen = (temp: string): string => `${head("2회차 · 기록 내용 확인 (4/4)", "기록 내용 확인", 4)}<div class="${cls("m-body")}">${reviewHTML({ submitted: true, temp, signed: true })}</div><div class="${cls("m-foot")}"><div class="${cls("m-btn")}" data-g="go">확인</div></div>${modal("", "")}`;
-
-const momScreen = (): string => `${head("3회차 · 산모 기록 (1/4)", "산모 기록", 1)}<div class="${cls("m-body")}"><div class="${cls("page")}">${PAGES.mom}</div></div><div class="${cls("m-foot")}"><div class="${cls("m-btn")}" data-g="go">다음</div></div>${modal("", "")}`;
-
-const babyEditScreen = (): string => `${head("2회차 · 신생아 기록 (2/4)", "신생아 기록", 2)}<div class="${cls("m-body")}"><div class="${cls("page")}">${PAGES.baby}</div></div><div class="${cls("m-foot")}"><div class="${cls("m-btn")}" data-g="go">저장</div></div>${modal("", "")}`;
-
-const GRID_STATES: CardState[] = ["done", "done", "current", "locked", "locked", "locked"];
+/** A miniature of the captured November sheet; its body never shares the background scroll area. */
+function calendarHTML(edit: boolean): string {
+    const taken: Record<number, string> = edit ? { 3: "2회차", 4: "3회차" } : { 2: "1회차", 3: "2회차", 4: "3회차" };
+    const weekdays = ["일", "월", "화", "수", "목", "금", "토"];
+    const days = Array.from({ length: 30 }, (_, index) => {
+        const day = index + 1;
+        const own = edit && day === 2;
+        const blocked = !own && (index % 7 === 0 || index % 7 === 6 || day > 24 || Boolean(taken[day]));
+        return `<div class="${cls(`cal-day ${own ? "own" : blocked ? "blocked" : ""}`.trim())}" data-g="day-${day}" data-blocked="${blocked}" data-current="${own}"><b>${day}</b>${own || taken[day] ? `<small>${own ? "지금" : taken[day]}</small>` : ""}</div>`;
+    }).join("");
+    return `<div class="${cls("cal-overlay")}" data-slot="cal-overlay"><div class="${cls("cal-sheet")}" data-slot="cal-sheet"><i class="${cls("cal-handle")}"></i><div class="${cls("cal-title")}">${edit ? 1 : 4}회차 서비스 제공일<span>×</span></div><p class="${cls("cal-sub")}">${edit ? "지금 2026.11.02(월)" : "날짜를 골라 주세요."}</p><p class="${cls("cal-range")}">고를 수 있는 기간: 10.26(월) ~ 11.24(화)</p><div class="${cls("cal-month")}"><b>2026년 11월</b><span>‹</span><span>›</span></div><div class="${cls("cal-grid")}">${weekdays.map((day) => `<span class="${cls("weekday")}">${day}</span>`).join("")}${days}</div><div class="${cls("cal-legend")}"><span><i class="${cls("selected-key")}"></i>선택한 날</span><span><i></i>선택 가능</span><span><i class="${cls("blocked")}"></i>고를 수 없음 (주말·기간 밖·다른 회차)</span></div><div class="${cls("cal-actions acts")}"><div class="${cls("m-btn cancel")}">취소</div><div class="${cls("m-btn off")}" data-g="calok" data-disabled="true">선택</div></div></div></div>`;
+}
 
 /* ---------- touch indicator and actions ---------- */
 
@@ -219,7 +236,7 @@ async function moveTo(ctx: DemoCtx, el: HTMLElement, ms = 520) {
 /** Scrolls the mini body just enough that `el` is visible. */
 async function reveal(ctx: DemoCtx, el: HTMLElement) {
     const body = find(ctx.m, ".m-body");
-    if (!body || !body.contains(el)) return;
+    if (!body || !body.contains(el) || ctx.m.dataset.overlay === "true") return;
     const b = body.getBoundingClientRect();
     const r = el.getBoundingClientRect();
     const k = b.height / body.offsetHeight || 1;
@@ -271,36 +288,37 @@ async function toast(ctx: DemoCtx, text: string, ms = 1300) {
     removeClass(t, "on");
 }
 
-async function confirmModal(ctx: DemoCtx, title: string, body: string) {
+async function confirmModal(ctx: DemoCtx) {
     const md = $(ctx.m, ".m-modal");
-    $(md, "h4").textContent = title;
-    $(md, "p").textContent = body;
+    $(md, "h4").textContent = "제출하시겠어요?";
+    $(md, "p").textContent = "확인하면 4회차 기록이 제출됩니다.";
+    ctx.m.dataset.overlay = "true";
     addClass(md, "on");
-    await ctx.run.sleep(700);
-    await tap(ctx, "#mok", async (button) => {
-        button.textContent = "제출 중…";
-        await ctx.run.sleep(600);
-    });
+    await ctx.run.sleep(900);
+    await tap(ctx, "#mok");
     removeClass(md, "on");
-    await ctx.run.sleep(300);
+    ctx.m.dataset.overlay = "false";
 }
 
-async function swapPage(ctx: DemoCtx, crumb: string, title: string, progress: number, html: string) {
-    const body = $(ctx.m, ".m-body");
-    scrollBodyTo(body, 0, false);
-    const old = find(body, ".page");
-    const page = document.createElement("div");
-    page.className = cls("page in");
-    page.innerHTML = html;
-    body.appendChild(page);
-    $(ctx.m, ".m-crumb").textContent = crumb;
-    $(ctx.m, ".m-title").textContent = title;
-    ctx.m.querySelectorAll(toSelector(".m-prog i")).forEach((bar, index) => bar.classList.toggle(styles.on ?? "on", index < progress));
-    void page.offsetWidth;
-    if (old) addClass(old, "out");
-    removeClass(page, "in");
-    await ctx.run.sleep(450);
-    old?.remove();
+async function openCalendar(ctx: DemoCtx, edit: boolean) {
+    ctx.m.dataset.overlay = "true";
+    $(ctx.m, ".m-app").insertAdjacentHTML("beforeend", calendarHTML(edit));
+    markSlots(ctx.m);
+    await ctx.run.sleep(edit ? 900 : 800);
+}
+async function pickDay(ctx: DemoCtx) {
+    await tap(ctx, "#day-5", (day) => {
+        addClass(day, "selected");
+        const ok = $(ctx.m, "#calok");
+        removeClass(ok, "off");
+        ok.dataset.disabled = "false";
+    });
+    await ctx.run.sleep(400);
+}
+async function closeCalendar(ctx: DemoCtx) {
+    await tap(ctx, "#calok");
+    $(ctx.m, ".cal-overlay").remove();
+    ctx.m.dataset.overlay = "false";
 }
 
 /** A dark frame closes in from the stage edges onto `el`, like a crop box. */
@@ -334,9 +352,11 @@ async function showDone(ctx: DemoCtx) {
     done.className = cls("m-done");
     done.innerHTML = `<span class="${cls("ok")}">✓</span><b>완료</b>`;
     ctx.m.appendChild(done);
+    markSlots(ctx.m);
     void done.offsetWidth;
     addClass(done, "on");
     await ctx.run.sleep(2000);
+    done.remove();
 }
 
 /** The touch follows the pen stroke while the signature is drawn along its path. */
@@ -346,13 +366,15 @@ async function drawSign(ctx: DemoCtx) {
     if (!path || !length || typeof path.getPointAtLength !== "function") {
         // No SVG geometry here (jsdom): keep the loop's timing, skip the stroke.
         await ctx.run.sleep(900);
-        await reveal(ctx, $(ctx.m, "#sigok"));
+        await reveal(ctx, $(ctx.m, ".signature"));
         await ctx.run.sleep(550 + 1700 + 200);
+        path?.removeAttribute("visibility");
+        $(ctx.m, ".sig .hint").style.opacity = "0";
     } else {
         path.style.strokeDasharray = String(length);
         path.style.strokeDashoffset = String(length);
         await ctx.run.sleep(900);
-        await reveal(ctx, $(ctx.m, "#sigok"));
+        await reveal(ctx, $(ctx.m, ".signature"));
         const svg = path.ownerSVGElement ?? path;
         const s = ctx.stage.getBoundingClientRect();
         const r = svg.getBoundingClientRect();
@@ -365,6 +387,7 @@ async function drawSign(ctx: DemoCtx) {
         ctx.touch.style.transform = `translate(${x0}px,${y0}px)`;
         await ctx.run.sleep(550);
         $(ctx.m, ".sig .hint").style.opacity = "0";
+        path.removeAttribute("visibility");
         ctx.touch.style.transition = "opacity .25s";
         const duration = 1700;
         const t0 = performance.now();
@@ -386,131 +409,112 @@ async function drawSign(ctx: DemoCtx) {
 
 const DEMOS: Record<DemoName, (ctx: DemoCtx) => Promise<void>> = {
     async basics(ctx) {
-        ctx.m.innerHTML = basicsScreen();
+        renderInitialFrame("basics", ctx.m);
         await ctx.run.sleep(500);
-        await type(ctx, "#f1", "이예지");
-        await type(ctx, "#f2", "1994-03-15", 55);
-        await type(ctx, "#f3", "이아기");
-        await type(ctx, "#f4", "2026-09-20", 55);
+        await type(ctx, "#f1", "이예지", 110);
+        await type(ctx, "#f2", "1994-03-15", 60);
+        await type(ctx, "#f3", "이아기", 110);
+        await type(ctx, "#f4", "2026-09-20", 60);
         await tap(ctx, "#d1", () => { removeClass($(ctx.m, "#d0"), "on"); turnOn(ctx, "#d1"); });
-        await type(ctx, "#f5", "3.2");
-        await tap(ctx, "#go", async (button) => {
-            button.textContent = "저장 중";
-            await ctx.run.sleep(700);
-            button.textContent = "다음";
-        });
+        await type(ctx, "#f5", "3.2", 110);
+        await tap(ctx, "#go");
         hideTouch(ctx);
         await showDone(ctx);
     },
 
     async grid(ctx) {
-        ctx.m.innerHTML = gridScreen(GRID_STATES, "다음 회차 입력");
-        const current = $(ctx.m, "#c3");
+        renderInitialFrame("grid", ctx.m);
+        const current = $(ctx.m, "#c4");
         await spotlight(ctx, current);
-        await tap(ctx, current);
-        hideTouch(ctx);
         await spotOff(ctx);
-        ctx.m.innerHTML = `${head("3회차 · 산모 기록 (1/4)", "산모 기록", 1)}<div class="${cls("m-body")}"><div class="${cls("page")}">${PAGES.mom}</div></div><div class="${cls("m-foot")}"><div class="${cls("m-btn")}">다음</div></div>`;
-        await ctx.run.sleep(1400);
+        await tap(ctx, current);
+        setScreen(ctx.m, momScreen(false));
+        await ctx.run.sleep(700);
+        await tap(ctx, "#sd");
+        await openCalendar(ctx, false);
+        await pickDay(ctx);
+        await closeCalendar(ctx);
+        fillValue(ctx.m, "sd", "2026-11-05");
+        $(ctx.m, "#session").textContent = "4회차 · 2026.11.05";
+        addClass($(ctx.m, "#sd"), "date-filled");
+        hideTouch(ctx);
+        await ctx.run.sleep(1300);
     },
 
     async form(ctx) {
-        ctx.m.innerHTML = momScreen();
-        const pick = (selector: string) => tap(ctx, selector, (el) => addClass(el, "on"));
-        await ctx.run.sleep(400);
-        await pick("#p0"); await pick("#b0"); await pick("#u0"); await pick("#z0");
-        await type(ctx, "#meal", "3", 120); await type(ctx, "#snack", "2", 120);
+        renderInitialFrame("form", ctx.m);
+        await ctx.run.sleep(600);
+        await type(ctx, "#meal", "2", 110);
+        await type(ctx, "#snack", "1", 110);
         await tap(ctx, "#go");
-        await swapPage(ctx, "3회차 · 신생아 기록 (2/4)", "신생아 기록", 2, PAGES.baby);
-        await type(ctx, "#temp", "36.6", 100);
-        await pick("#sl0");
-        await type(ctx, "#bf", "6", 120);
-        await pick("#pp0"); await pick("#bt0");
+        setScreen(ctx.m, recordScreen("baby"));
+        await ctx.run.sleep(500);
+        await type(ctx, "#temp", "36.6", 110);
+        await type(ctx, "#bf", "6", 110);
         await tap(ctx, "#go");
-        await swapPage(ctx, "3회차 · 서비스 기록 (3/4)", "서비스 기록", 3, PAGES.svc);
-        await type(ctx, "#note", "오후 수유 시간 조정", 80);
+        setScreen(ctx.m, recordScreen("svc"));
+        await ctx.run.sleep(500);
+        await type(ctx, "#note", "오후 수유 시간 조정", 90);
         await tap(ctx, "#pay0", (el) => addClass(el, "on"));
         await tap(ctx, "#go");
+        setScreen(ctx.m, signScreen());
         hideTouch(ctx);
-        await ctx.run.sleep(600);
+        await ctx.run.sleep(1200);
     },
 
     async sign(ctx) {
-        ctx.m.innerHTML = signScreen();
+        renderInitialFrame("sign", ctx.m);
+        await ctx.run.sleep(600);
         await drawSign(ctx);
         await ctx.run.sleep(500);
         await tap(ctx, "#go");
-        await confirmModal(ctx, "제출하시겠어요?", "확인하면 3회차 기록이 제출됩니다.");
+        await confirmModal(ctx);
         hideTouch(ctx);
         await showDone(ctx);
-        ctx.m.innerHTML = gridScreen(GRID_STATES, "다음 회차 입력");
-        await ctx.run.sleep(500);
-        const c3 = $(ctx.m, "#c3");
-        addClass(c3, "flip");
-        await ctx.run.sleep(300);
-        c3.className = cls("card done flip");
-        $(c3, ".s").textContent = "제출완료";
-        await ctx.run.sleep(450);
-        const c4 = $(ctx.m, "#c4");
-        c4.className = cls("card current pulse");
-        $(c4, ".s").textContent = "입력 가능";
-        await toast(ctx, "3회차 기록이 제출됐어요", 1700);
+        setScreen(ctx.m, gridScreen(["done", "done", "done", "done", "current", "locked", "locked", "locked", "locked", "locked"]));
+        await ctx.run.sleep(400);
+        await toast(ctx, "4회차 기록이 제출됐어요", 1800);
     },
 
     async edit(ctx) {
-        ctx.m.innerHTML = gridScreen(GRID_STATES, "다음 회차 입력");
-        const c2 = $(ctx.m, "#c2");
-        await spotlight(ctx, c2);
-        await tap(ctx, c2);
+        renderInitialFrame("edit", ctx.m);
+        const submitted = $(ctx.m, "#c1");
+        await spotlight(ctx, submitted);
         await spotOff(ctx);
-        ctx.m.innerHTML = reviewScreen("36.5℃");
-        await ctx.run.sleep(900);
-        await tap(ctx, "#e-baby");
-        ctx.m.innerHTML = babyEditScreen();
-        fillValue(ctx.m, "temp", "36.5");
-        fillValue(ctx.m, "bf", "6");
-        for (const selector of ["#sl0", "#pp0", "#bt0"]) turnOn(ctx, selector);
-        await ctx.run.sleep(500);
-        await type(ctx, "#temp", "36.8", 140);
-        await tap(ctx, "#go");
-        ctx.m.innerHTML = reviewScreen("36.8℃");
-        addClass($(ctx.m, "#r-temp"), "hl");
-        await ctx.run.sleep(900);
-        await tap(ctx, "#go");
-        await confirmModal(ctx, "제출하시겠어요?", "확인하면 2회차 기록이 수정 제출됩니다.");
-        hideTouch(ctx);
-        await showDone(ctx);
-    },
-
-    async sched(ctx) {
-        ctx.m.innerHTML = gridScreen(GRID_STATES, "다음 회차 입력");
-        const foot = $(ctx.m, ".m-foot .ghost");
-        const md = $(ctx.m, ".m-modal");
-        $(md, "h4").textContent = SCHEDULE_MODAL_TITLE;
-        $(md, "p").textContent = SCHEDULE_MODAL_BODY;
-        const ok = $(md, "#mok");
-        ok.textContent = "승인 요청";
-        await spotlight(ctx, foot);
-        await tap(ctx, foot);
-        await spotOff(ctx);
-        addClass(md, "on");
-        await ctx.run.sleep(1600);
-        await tap(ctx, ok, async (button) => {
-            button.textContent = "요청 중…";
-            await ctx.run.sleep(700);
-        });
-        removeClass(md, "on");
-        hideTouch(ctx);
-        await ctx.run.sleep(300);
-        foot.textContent = "일정 변경 요청 대기 중";
-        addClass(foot, "pending");
+        await tap(ctx, submitted);
+        setScreen(ctx.m, reviewScreen());
+        await ctx.run.sleep(800);
+        await tap(ctx, "#e-date");
+        await openCalendar(ctx, true);
+        await pickDay(ctx);
+        await closeCalendar(ctx);
+        setScreen(ctx.m, reviewScreen(true));
         await ctx.run.sleep(1200);
+        await tap(ctx, "#go");
+        hideTouch(ctx);
         await showDone(ctx);
+        setScreen(ctx.m, reviewScreen(true));
+        await ctx.run.sleep(500);
+        const del = $(ctx.m, "#del");
+        await spotlight(ctx, del);
+        await spotOff(ctx);
+        await tap(ctx, del);
+        const md = $(ctx.m, ".m-modal");
+        $(md, "h4").textContent = "1회차 기록을 삭제할까요?";
+        $(md, "p").textContent = "기록과 고객 서명이 모두 삭제됩니다.";
+        const ok = $(md, "#mok");
+        ok.textContent = "삭제";
+        addClass(ok, "destructive");
+        ctx.m.dataset.overlay = "true";
+        addClass(md, "on");
+        await ctx.run.sleep(1300);
+        await tap(ctx, ok);
+        hideTouch(ctx);
+        ctx.m.dataset.overlay = "false";
+        setScreen(ctx.m, gridScreen(["current", "done", "done", "locked", "locked", "locked", "locked", "locked", "locked", "locked"]));
+        await toast(ctx, "1회차 기록을 삭제했어요", 1400);
     },
 };
-
-const SCHEDULE_MODAL_TITLE = "3회차 서비스 일정을 조정할까요?";
-const SCHEDULE_MODAL_BODY = "3회차 서비스를 12월 3일에서 12월 4일로 변경을 요청할까요? 본사 승인 후 일정이 조정됩니다.";
 
 function fillValue(root: HTMLElement, id: string, text: string) {
     const el = $(root, `#${id}`);
@@ -523,12 +527,11 @@ function fillValue(root: HTMLElement, id: string, text: string) {
 async function play(name: DemoName, ctx: DemoCtx, fill: HTMLElement) {
     const { run } = ctx;
     let t0 = 0;
-    let done = false;
     const tick = async () => {
         try {
             for (;;) {
                 const now = await run.frame();
-                const f = done ? 1 : Math.min(0.99, (now - t0) / loopMs[name]);
+                const f = Math.min(0.99, (now - t0) / loopMs[name]);
                 fill.style.transform = `scaleX(${f})`;
             }
         } catch {
@@ -538,15 +541,15 @@ async function play(name: DemoName, ctx: DemoCtx, fill: HTMLElement) {
     void tick();
     try {
         for (;;) {
+            ctx.m.dataset.overlay = "false";
+            if (ctx.spot) ctx.spot.dataset.on = "false";
+            ctx.touch.dataset.tap = "false";
             ctx.touch.style.transition = "none";
             ctx.touch.style.opacity = "0";
             t0 = performance.now();
-            done = false;
             await DEMOS[name](ctx);
-            await run.sleep(900);
+            await run.sleep(250);
             loopMs[name] = performance.now() - t0;
-            done = true;
-            await run.sleep(120);
         }
     } catch (error) {
         if (!(error instanceof DemoStop)) console.error(error);
@@ -560,11 +563,23 @@ export function startDemo(name: DemoName, els: DemoElements): () => void {
     return () => run.stop();
 }
 
-/** The `prefers-reduced-motion` frame: the mini screen in its end state, nothing scheduled. */
-export function renderStaticFrame(name: DemoName, m: HTMLElement) {
+/** Build the first frame before the browser paints, also used to synchronously reset each loop. */
+export function renderInitialFrame(name: DemoName, m: HTMLElement): void {
+    const screens: Record<DemoName, () => string> = {
+        basics: basicsScreen,
+        grid: () => gridScreen(GRID_STATES),
+        form: momScreen,
+        sign: signScreen,
+        edit: () => gridScreen(GRID_STATES),
+    };
+    setScreen(m, screens[name]());
+}
+
+/** The `prefers-reduced-motion` frame: useful date/review states, with nothing scheduled. */
+export function renderStaticFrame(name: DemoName, m: HTMLElement): void {
+    renderInitialFrame(name, m);
     switch (name) {
         case "basics": {
-            m.innerHTML = basicsScreen();
             const values: Record<string, string> = { f1: "이예지", f2: "1994-03-15", f3: "이아기", f4: "2026-09-20", f5: "3.2" };
             for (const [id, text] of Object.entries(values)) fillValue(m, id, text);
             removeClass($(m, "#d0"), "on");
@@ -572,30 +587,21 @@ export function renderStaticFrame(name: DemoName, m: HTMLElement) {
             break;
         }
         case "grid":
-            m.innerHTML = gridScreen(GRID_STATES, "다음 회차 입력");
+            setScreen(m, momScreen());
             break;
         case "form":
-            m.innerHTML = momScreen();
-            for (const selector of ["#p0", "#b0", "#u0", "#z0"]) addClass($(m, selector), "on");
-            fillValue(m, "meal", "3");
-            fillValue(m, "snack", "2");
+            fillValue(m, "meal", "2");
+            fillValue(m, "snack", "1");
             break;
         case "sign":
-            m.innerHTML = signScreen();
             $(m, "#sigok").className = cls("done-chip on");
             $(m, ".sig .hint").style.opacity = "0";
+            $(m, "#sigpath").removeAttribute("visibility");
             removeClass($(m, "#go"), "off");
+            scrollBodyTo($(m, ".m-body"), $(m, ".m-body").scrollHeight, false);
             break;
         case "edit":
-            m.innerHTML = reviewScreen("36.8℃");
-            addClass($(m, "#r-temp"), "hl");
+            setScreen(m, reviewScreen(true));
             break;
-        case "sched": {
-            m.innerHTML = gridScreen(GRID_STATES, "다음 회차 입력");
-            const button = $(m, ".m-foot .ghost");
-            button.textContent = "일정 변경 요청 대기 중";
-            addClass(button, "pending");
-            break;
-        }
     }
 }
