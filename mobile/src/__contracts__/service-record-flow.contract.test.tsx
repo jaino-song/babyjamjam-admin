@@ -475,6 +475,7 @@ describe("service-record page contract", () => {
 
             expect(await screen.findByText(ITEM.perineum)).toBeInTheDocument();
             expect(screen.getByText(SERVER_NAMES.provider)).toBeInTheDocument();
+            expect(screen.queryByText(/서비스 일정 변경|일정 변경 요청/)).toBeNull();
         });
 
         it("5. next with an unanswered required item does not advance and shows that item's message", async () => {
@@ -693,6 +694,7 @@ describe("service-record page contract", () => {
             const { api } = await renderPage(overviewScript());
             expect(await screen.findByRole("button", dayCard(1))).toBeEnabled();
             expect(screen.getAllByRole("button").map((button) => button.textContent)).not.toContain("승인 요청");
+            expect(screen.queryByText(/서비스 일정 변경|일정 변경 요청/)).toBeNull();
             expect(api.calls.every((call) => ["/link", "/context", "/holidays"].includes(call.path))).toBe(true);
         });
 

@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import type { MobileServiceRecordWizardProps } from "@/components/app/service-record/ServiceRecordWizard";
 import ServiceRecordPage from "../page";
 
@@ -14,7 +14,9 @@ jest.mock("@/components/app/service-record/ServiceRecordWizard", () => ({
         <div>
             <span data-testid="screen">{props.screen}</span>
             <button onClick={() => props.onOpenDay(6)}>open day 6</button>
+            <button onClick={props.onOpenDateSheet}>open date sheet</button>
             <span data-testid="date">{String(props.draft._date ?? "")}</span>
+            {props.slots?.serviceDateSheet}
         </div>
     ),
 }));
@@ -25,7 +27,7 @@ const DONE_SESSIONS = [14, 15, 16, 17, 18].map((date, index) => ({
     serviceDate: `2026-12-${date}`,
     locked: true,
 }));
-const BASE_CONTEXT = { totalSessions: 7, startDate: "2026-12-14", sessions: DONE_SESSIONS, header: {} };
+const BASE_CONTEXT = { totalSessions: 7, startDate: "2026-12-14", endDate: "2026-12-21", sessions: DONE_SESSIONS, header: {} };
 
 describe("token service-record page and per-client service days", () => {
     beforeEach(() => {
@@ -57,5 +59,33 @@ describe("token service-record page and per-client service days", () => {
         await openDaySix({ serviceDays: { saturday: true, sunday: false, holiday: false } });
         expect(screen.getByTestId("date")).toBeEmptyDOMElement();
         expect(new Date("2026-12-19T00:00:00Z").getUTCDay()).toBe(6);
+    });
+
+    it("lets the caregiver pick an in-window Saturday when the client allows Saturday service", async () => {
+        await openDaySix({ serviceDays: { saturday: true, sunday: false, holiday: false } });
+        fireEvent.click(screen.getByText("open date sheet"));
+
+        const sheet = within(screen.getByRole("dialog", { name: "6회차 서비스 제공일" }));
+        const saturday = sheet.getByRole("button", { name: "2026.12.19(토)" });
+        expect(saturday).toHaveAttribute("aria-disabled", "false");
+        fireEvent.click(saturday);
+        expect(sheet.getByRole("button", { name: "선택" })).toBeEnabled();
+        fireEvent.click(sheet.getByRole("button", { name: "선택" }));
+
+        expect(screen.queryByRole("dialog")).toBeNull();
+        expect(screen.getByTestId("date")).toHaveTextContent("2026-12-19");
+    });
+
+    it("blocks the same in-window Saturday when Saturday service is off", async () => {
+        await openDaySix({ serviceDays: { saturday: false, sunday: false, holiday: false } });
+        fireEvent.click(screen.getByText("open date sheet"));
+
+        const sheet = within(screen.getByRole("dialog", { name: "6회차 서비스 제공일" }));
+        const saturday = sheet.getByRole("button", { name: "2026.12.19(토)" });
+        expect(saturday).toHaveAttribute("aria-disabled", "true");
+        fireEvent.click(saturday);
+        expect(saturday).toHaveAttribute("aria-pressed", "false");
+        expect(sheet.getByRole("button", { name: "선택" })).toBeDisabled();
+        expect(screen.getByTestId("date")).toBeEmptyDOMElement();
     });
 });
