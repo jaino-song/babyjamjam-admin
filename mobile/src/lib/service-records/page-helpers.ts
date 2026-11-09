@@ -39,6 +39,7 @@ export function getServiceDateShiftBusinessDays(
 
 interface LegacyServiceDateContext {
     startDate?: string | null;
+    endDate?: string | null;
     sessions?: ReadonlyArray<{ sessionIndex: number; serviceDate: string }>;
 }
 
@@ -87,6 +88,22 @@ export function serviceRecordCalendarYears(
     };
     addYear(ctx?.startDate, 1);
     addYear(ctx?.startDate);
+    addYear(ctx?.endDate);
+    const offset = (iso: string | null | undefined, days: number) => {
+        if (!iso) return undefined;
+        const date = new Date(`${iso.slice(0, 10)}T00:00:00Z`);
+        if (Number.isNaN(date.getTime())) return undefined;
+        date.setUTCDate(date.getUTCDate() + days);
+        return date.toISOString().slice(0, 10);
+    };
+    const first = offset(ctx?.startDate, -7);
+    const last = offset(ctx?.endDate, 7);
+    addYear(first);
+    addYear(last);
+    // Long cases need every intervening year's branch holidays as well.
+    if (first && last) {
+        for (let year = Number(first.slice(0, 4)); year <= Number(last.slice(0, 4)); year++) years.add(year);
+    }
     for (const session of ctx?.sessions ?? []) addYear(session.serviceDate);
     const planned = ctx?.plannedSessionDates;
     if (Array.isArray(planned)) {

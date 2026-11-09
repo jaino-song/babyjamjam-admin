@@ -1,185 +1,105 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import type { MobileServiceRecordWizardProps } from "@/components/app/service-record/ServiceRecordWizard";
+import { toast } from "@/hooks/use-toast";
 import ServiceRecordPage from "../page";
 
-// The real ApprovalTwoButtonModal (Radix) is deliberately NOT mocked here.
 jest.mock("next/navigation", () => ({ useParams: () => ({ token: "test-token" }) }));
-
-const calendarState: { ready: boolean; error: "load-failed" | null } = { ready: true, error: null };
+jest.mock("@/hooks/use-toast", () => ({ toast: jest.fn() }));
 jest.mock("@/hooks/useTokenBusinessDayCalendar", () => ({
-    useTokenBusinessDayCalendar: () => ({
-        calendar: { isBusinessDay: () => true, diffBusinessDays: () => 5 },
-        ready: calendarState.ready,
-        error: calendarState.error,
-        retry: jest.fn(),
-    }),
+    useTokenBusinessDayCalendar: () => ({ calendar: { isBusinessDay: () => true }, ready: true, error: null, retry: jest.fn() }),
 }));
 jest.mock("@/components/app/service-record/ServiceRecordWizard", () => ({
-    MobileServiceRecordWizard: (props: MobileServiceRecordWizardProps) => (
-        <div>
-            <span data-testid="screen">{props.screen}</span>
-            <button onClick={() => props.onOpenDay(1)}>open day</button>
-            <button onClick={() => props.onServiceDateChange("2026-07-24")}>change date</button>
-            <button onClick={() => void props.onOpenScheduleChangePreview()}>open schedule preview</button>
-            <span data-testid="date">{String(props.draft._date ?? "")}</span>
-            {props.slots?.scheduleChangeModal}
-            {props.slots?.serviceDateChangeModal}
-        </div>
-    ),
+    MobileServiceRecordWizard: (props: MobileServiceRecordWizardProps) => <div>
+        <span data-testid="screen">{props.screen}</span>
+        <span data-testid="date-error">{props.serviceDateError}</span>
+        <button onClick={() => props.onOpenDay(1, true)}>edit 1</button>
+        <button onClick={props.onOpenDateSheet}>date</button>
+        <button onClick={props.onDeleteSession}>delete</button>
+        <button onClick={props.onOpenSubmitModal}>submit</button>
+        {props.slots?.serviceDateSheet}{props.slots?.deleteModal}{props.slots?.submitModal}{props.slots?.errorNotification}
+    </div>,
 }));
+const json = (data: unknown, status = 200) => ({ ok: status < 400, status, json: async () => data }) as Response;
+const original = { sessionIndex: 1, serviceDate: "2026-11-02", locked: true, clientSignature: "saved" };
+const mockFetch = jest.fn();
+let sessions = [original];
+let submitResponse: Response;
+let deleteResponse: Response;
 
-type Responder = (url: string, init?: RequestInit) => Response | Promise<Response>;
-
-function jsonResponse(data: unknown, status = 200): Response {
-    return { ok: status >= 200 && status < 300, status, json: async () => data } as Response;
+beforeEach(() => {
+    jest.clearAllMocks();
+    window.sessionStorage.clear();
+    window.history.replaceState(null, "", "/service-record/test-token");
+    sessions = [original];
+    submitResponse = json({});
+    deleteResponse = json({ deleted: true, sessionIndex: 1 });
+    mockFetch.mockImplementation(async (input: string, init?: RequestInit) => {
+        if (input.endsWith("/link")) return json({ valid: true });
+        if (input.endsWith("/context")) return json({ totalSessions: 3, startDate: "2026-11-02", endDate: "2026-11-17", header: {}, sessions });
+        if (input.endsWith("/submit")) return submitResponse;
+        if (init?.method === "DELETE") { if (deleteResponse.ok) sessions = []; return deleteResponse; }
+        return json({}, 404);
+    });
+    global.fetch = mockFetch;
+});
+async function openEdit() {
+    render(<ServiceRecordPage />);
+    await waitFor(() => expect(screen.getByTestId("screen")).toHaveTextContent("overview"));
+    fireEvent.click(screen.getByText("edit 1"));
+    expect(screen.getByTestId("screen")).toHaveTextContent("day");
 }
 
-function deferredResponse() {
-    let resolve!: (response: Response) => void;
-    const promise = new Promise<Response>((resolver) => {
-        resolve = resolver;
-    });
-    return { promise, resolve };
-}
+it("resubmits the newly picked date rather than the stored date", async () => {
+    await openEdit();
+    fireEvent.click(screen.getByText("date"));
+    const sheet = screen.getByRole("dialog");
+    fireEvent.click(within(sheet).getByRole("button", { name: "2026.11.05(목)" }));
+    fireEvent.click(within(sheet).getByRole("button", { name: "선택" }));
+    fireEvent.click(screen.getByText("submit"));
+    fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "확인" }));
+    await waitFor(() => expect(mockFetch.mock.calls.some(([url]) => url.endsWith("/submit"))).toBe(true));
+    const [, init] = mockFetch.mock.calls.find(([url]) => url.endsWith("/submit"))!;
+    expect(JSON.parse(init.body).serviceDate).toBe("2026-11-05");
+});
 
-const context = {
-    totalSessions: 1, startDate: "2026-07-17", sessions: [], header: {},
-};
-const preview = { sessionIndex: 1, fromDate: "2026-07-20", toDate: "2026-07-21" };
+it("cancel leaves the record and DELETE untouched; confirm deletes then reloads and toasts", async () => {
+    await openEdit();
+    fireEvent.click(screen.getByText("delete"));
+    expect(screen.getByText("기록과 고객 서명이 모두 삭제됩니다.")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "취소" }));
+    expect(mockFetch.mock.calls.some(([, init]) => init?.method === "DELETE")).toBe(false);
+    fireEvent.click(screen.getByText("delete"));
+    fireEvent.click(screen.getByRole("button", { name: "삭제" }));
+    await waitFor(() => expect(screen.getByTestId("screen")).toHaveTextContent("overview"));
+    expect(mockFetch).toHaveBeenCalledWith("/api/service-record/test-token/sessions/1", expect.objectContaining({ method: "DELETE" }));
+    expect(toast).toHaveBeenCalledWith({ variant: "success", title: "1회차 기록을 삭제했어요" });
+});
 
-let requests: Array<{ url: string; method: string }>;
+it("shows a 400 date detail as a field error and closes the submit dialog", async () => {
+    submitResponse = json({ code: "VALIDATION_FAILED", detail: "뒷 회차보다 늦게 바꿀 수 없어요. 뒷 회차를 먼저 변경해 주세요.", errors: [{ pointer: "/serviceDate" }] }, 400);
+    await openEdit();
+    fireEvent.click(screen.getByText("submit"));
+    fireEvent.click(screen.getByRole("button", { name: "확인" }));
+    await waitFor(() => expect(screen.getByTestId("date-error")).toHaveTextContent("뒷 회차보다 늦게 바꿀 수 없어요."));
+    expect(screen.queryByRole("dialog")).toBeNull();
+});
 
-function installFetch(extra: Responder) {
-    requests = [];
-    global.fetch = jest.fn((input: RequestInfo | URL, init?: RequestInit) => {
-        const url = String(input);
-        requests.push({ url, method: init?.method ?? "GET" });
-        if (url.endsWith("/link")) return Promise.resolve(jsonResponse({ valid: true }));
-        if (url.endsWith("/context")) return Promise.resolve(jsonResponse(context));
-        return Promise.resolve(extra(url, init));
-    }) as unknown as typeof fetch;
-}
+it("returns a refused DELETE to phone verification and closes the modal", async () => {
+    deleteResponse = json({ code: "AUTH_REQUIRED" }, 401);
+    await openEdit();
+    fireEvent.click(screen.getByText("delete"));
+    fireEvent.click(screen.getByRole("button", { name: "삭제" }));
+    await waitFor(() => expect(screen.getByTestId("screen")).toHaveTextContent("phone"));
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(toast).not.toHaveBeenCalled();
+});
 
-function scheduleRequests(method: string) {
-    return requests.filter((r) => r.url.endsWith("/schedule-change") && r.method === method);
-}
 
-describe("service-record page approval modals", () => {
-    beforeEach(() => {
-        calendarState.ready = true;
-        calendarState.error = null;
-        window.sessionStorage.clear();
-        window.history.replaceState(null, "", "/service-record/test-token");
-    });
-
-    async function renderOverview() {
-        render(<ServiceRecordPage />);
-        await waitFor(() => expect(screen.getByTestId("screen")).toHaveTextContent("overview"));
-    }
-
-    describe("schedule change", () => {
-        it("shows the loading state, then the previewed change with a visible description", async () => {
-            const previewResponse = deferredResponse();
-            installFetch((url) => (url.endsWith("/schedule-change/preview")
-                ? previewResponse.promise
-                : jsonResponse({}, 404)));
-            await renderOverview();
-
-            fireEvent.click(screen.getByRole("button", { name: "open schedule preview" }));
-
-            expect(await screen.findByRole("dialog")).toBeInTheDocument();
-            expect(screen.getByText("서비스 일정 변경")).toBeInTheDocument();
-            expect(screen.getByText("변경 가능한 일정을 확인하고 있어요.")).not.toHaveClass("sr-only");
-            const loading = screen.getByRole("button", { name: "불러오는 중…" });
-            expect(loading).toBeDisabled();
-
-            previewResponse.resolve(jsonResponse(preview));
-
-            expect(await screen.findByText("1회차 서비스 일정을 조정할까요?")).toBeInTheDocument();
-            const description = screen.getByText(/본사 승인 후 일정이 조정됩니다/);
-            expect(description).not.toHaveClass("sr-only");
-            expect(screen.getByRole("button", { name: "승인 요청" })).toBeEnabled();
-            expect(screen.getByRole("button", { name: "취소" })).toBeEnabled();
-        });
-
-        it("closes on 취소 without sending a change request", async () => {
-            const user = userEvent.setup();
-            installFetch((url) => (url.endsWith("/schedule-change/preview")
-                ? jsonResponse(preview)
-                : jsonResponse({}, 404)));
-            await renderOverview();
-
-            await user.click(screen.getByRole("button", { name: "open schedule preview" }));
-            await user.click(await screen.findByRole("button", { name: "취소" }));
-
-            await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
-            expect(scheduleRequests("POST")).toHaveLength(0);
-        });
-
-        it("sends the schedule-change request exactly once on 승인 요청", async () => {
-            const user = userEvent.setup();
-            installFetch((url, init) => {
-                if (url.endsWith("/schedule-change/preview")) return jsonResponse(preview);
-                if (url.endsWith("/schedule-change") && init?.method === "POST") return jsonResponse({});
-                return jsonResponse({}, 404);
-            });
-            await renderOverview();
-
-            await user.click(screen.getByRole("button", { name: "open schedule preview" }));
-            await user.click(await screen.findByRole("button", { name: "승인 요청" }));
-
-            await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
-            expect(scheduleRequests("POST")).toHaveLength(1);
-        });
-    });
-
-    describe("service-date change", () => {
-        async function openServiceDateModal() {
-            await renderOverview();
-            fireEvent.click(screen.getByText("open day"));
-            await waitFor(() => expect(screen.getByTestId("screen")).toHaveTextContent("day"));
-            expect(screen.getByTestId("date")).toHaveTextContent("2026-07-17");
-        }
-
-        it("shows a visible description and the calendar notice", async () => {
-            installFetch(() => jsonResponse({}, 404));
-            await openServiceDateModal();
-            calendarState.ready = false;
-
-            fireEvent.click(screen.getByRole("button", { name: "change date" }));
-
-            expect(await screen.findByRole("dialog")).toBeInTheDocument();
-            expect(screen.getByText("1회차 제공일을 변경할까요?")).toBeInTheDocument();
-            expect(screen.getByText("공휴일 정보를 확인한 뒤 제공일을 변경할 수 있어요.")).not.toHaveClass("sr-only");
-            expect(screen.getByRole("status")).toHaveTextContent("공휴일 정보를 불러오는 중이에요…");
-            expect(screen.getByRole("button", { name: "확인" })).toBeDisabled();
-        });
-
-        it("reverts the date on 취소", async () => {
-            const user = userEvent.setup();
-            installFetch(() => jsonResponse({}, 404));
-            await openServiceDateModal();
-
-            fireEvent.click(screen.getByRole("button", { name: "change date" }));
-            const description = await screen.findByText(/서비스 제공일을/);
-            expect(description).not.toHaveClass("sr-only");
-            await user.click(screen.getByRole("button", { name: "취소" }));
-
-            await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
-            expect(screen.getByTestId("date")).toHaveTextContent("2026-07-17");
-        });
-
-        it("applies the new date on 확인", async () => {
-            const user = userEvent.setup();
-            installFetch(() => jsonResponse({}, 404));
-            await openServiceDateModal();
-
-            fireEvent.click(screen.getByRole("button", { name: "change date" }));
-            await user.click(await screen.findByRole("button", { name: "확인" }));
-
-            await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
-            expect(screen.getByTestId("date")).toHaveTextContent("2026-07-24");
-        });
-    });
+it("uses a destructive toast when the date sheet rejects an order-blocked day", async () => {
+    sessions = [original, { ...original, sessionIndex: 2, serviceDate: "2026-11-04" }];
+    await openEdit();
+    fireEvent.click(screen.getByText("date"));
+    fireEvent.click(screen.getByRole("button", { name: "2026.11.05(목)" }));
+    expect(toast).toHaveBeenCalledWith({ variant: "destructive", title: "뒷 회차보다 늦게 바꿀 수 없어요. 뒷 회차를 먼저 변경해 주세요." });
+    expect(screen.getByRole("button", { name: "선택" })).toBeDisabled();
 });

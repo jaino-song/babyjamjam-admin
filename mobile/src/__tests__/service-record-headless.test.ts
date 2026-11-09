@@ -556,29 +556,29 @@ describe("resolvePlannedDates", () => {
         resolvePlannedDates({ context, day: 1, adminMode: false, draft: {}, defaultDate, ...overrides })
     );
 
-    it("without a vector falls back to the default date", () => {
+    it("without a row leaves the caregiver date empty", () => {
         const result = resolve(makeContext());
         expect(result.plannedDateVectorProvided).toBe(false);
         expect(result.plannedDateVectorValid).toBe(true);
         expect(result.providerDateLocked).toBe(false);
-        expect(result.currentServiceDate).toBe("2026-09-21");
+        expect(result.currentServiceDate).toBe("");
         expect(result.plannedServiceDate).toBeUndefined();
-        expect(result.displayDateForSession(2)).toBe("2026-09-22");
+        expect(result.displayDateForSession(2)).toBe("");
     });
     it("works without a context", () => {
         const result = resolve(null, { day: 2 });
         expect(result.currentSession).toBeUndefined();
-        expect(result.currentServiceDate).toBe("2026-09-22");
+        expect(result.currentServiceDate).toBe("");
     });
-    it("a valid vector locks the provider's date to the planned date", () => {
+    it("a legacy vector never locks or supplies the caregiver date", () => {
         const result = resolve(makeContext({ plannedSessionDates: vector }), { day: 2, draft: { _date: "2026-10-01" } });
         expect(result.plannedDateVectorProvided).toBe(true);
         expect(result.plannedDateVectorValid).toBe(true);
-        expect(result.providerDateLocked).toBe(true);
+        expect(result.providerDateLocked).toBe(false);
         expect(result.plannedServiceDate).toBe("2026-09-22");
         expect(result.plannedDateBySession?.get(3)).toBe("2026-09-23");
-        expect(result.currentServiceDate).toBe("2026-09-22");
-        expect(result.displayDateForSession(3)).toBe("2026-09-23");
+        expect(result.currentServiceDate).toBe("2026-10-01");
+        expect(result.displayDateForSession(3)).toBe("");
     });
     it("an administrator is not locked and prefers the draft date, then the session, then the plan", () => {
         const sessions = [{ sessionIndex: 2, serviceDate: "2026-09-25T00:00:00Z", locked: false }];
@@ -593,7 +593,7 @@ describe("resolvePlannedDates", () => {
     it("a session date is shown ahead of the plan and default in displayDateForSession", () => {
         const result = resolve(makeContext({ plannedSessionDates: vector }));
         expect(result.displayDateForSession(1, { serviceDate: "2026-09-30T10:00:00Z" })).toBe("2026-09-30");
-        expect(result.displayDateForSession(1, { serviceDate: "" })).toBe("2026-09-21");
+        expect(result.displayDateForSession(1, { serviceDate: "" })).toBe("");
     });
     it("a provided vector never falls back to the default date", () => {
         const result = resolve(makeContext({ plannedSessionDates: [], totalSessions: 0 }), { day: 1 });
@@ -615,7 +615,7 @@ describe("resolvePlannedDates", () => {
         expect(result.plannedDateVectorValid).toBe(false);
         expect(result.plannedDateBySession).toBeNull();
         expect(result.plannedServiceDate).toBeUndefined();
-        expect(result.providerDateLocked).toBe(true);
+        expect(result.providerDateLocked).toBe(false);
         expect(result.currentServiceDate).toBe("");
     });
     it("rejects a non-array vector", () => {

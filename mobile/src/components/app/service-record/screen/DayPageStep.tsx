@@ -1,17 +1,13 @@
 "use client";
 
 import type { ReactNode } from "react";
-import { formatIsoDateInput } from "@babyjamjam/shared/utils/date-input";
 import {
     DAILY_ITEMS,
     DAY_PAGES,
     focusFirstProblem,
-    formatMonthDayKo,
     getFirstDayPageProblem,
     getServiceDateMessage,
-    getServiceDateMin,
     getServiceRecordNumericErrors,
-    hintMessage,
     resolvePlannedDates,
     type ServiceRecordWizardProps,
 } from "@babyjamjam/service-record-ui";
@@ -26,18 +22,11 @@ import {
     BACK_LABEL,
     NEXT_LABEL,
     SAVE_SECTION_LABEL,
-    SCHEDULE_CHANGE_LABEL,
-    SCHEDULE_CHANGE_PENDING_LABEL,
-    SCHEDULE_HELP_COPY,
     SERVICE_DATE_HELPER_ID,
     SERVICE_DATE_INPUT_ID,
     SERVICE_DATE_LABEL,
     SERVICE_DATE_LABEL_ID,
-    SERVICE_DATE_MISMATCH_COPY,
     SERVICE_DATE_PLACEHOLDER,
-    SERVICE_DATE_READONLY_HELPER_ID,
-    SERVICE_DATE_READONLY_LABEL,
-    SERVICE_DATE_READONLY_LABEL_ID,
     dailyFieldComponent,
     getDailyItemProblemId,
 } from "./ids";
@@ -46,33 +35,32 @@ import type { ServiceDateFieldState } from "./serviceDateFieldState";
 const HEAD_SOURCE_COMPONENT = "DayPageHead";
 const STEP_SOURCE_COMPONENT = "DayPageStep";
 
-type DayPageHeadProps = Pick<ServiceRecordWizardProps, "data-component" | "day" | "pageIdx" | "editing" | "hasServiceDateMismatch" | "onBack"> & {
+type DayPageHeadProps = Pick<ServiceRecordWizardProps, "data-component" | "day" | "pageIdx" | "editing" | "onBack"> & {
     currentServiceDate: string;
-    /** The service-date field (page 0 only); it sits between the date chip and the read-only date row. */
+    /** The service-date sheet trigger (page 0 only). */
     dateField?: ReactNode;
     /** The step title shown under the date rows. */
     title: string;
     children?: ReactNode;
+    titleAccessory?: ReactNode;
 };
 
 /**
- * Back button, date chip, service-date field slot, read-only date row and step
+ * Back button, date chip, service-date field slot and step
  * title: the top of every day page, including the review page (SRW:879-969).
  */
 export function DayPageHead({
     "data-component": root,
     day,
-    pageIdx,
     editing,
-    hasServiceDateMismatch,
     onBack,
     currentServiceDate,
     dateField,
     title,
     children,
+    titleAccessory,
 }: DayPageHeadProps) {
     const child = (suffix: string) => `${root}_${suffix}`;
-    const serviceDateFieldVisible = !editing && pageIdx === 0;
     return (
         <div data-component={child("body_day-head")} data-source-component={HEAD_SOURCE_COMPONENT} className="flex flex-col gap-3.5">
             <Button
@@ -85,34 +73,14 @@ export function DayPageHead({
             >
                 {BACK_LABEL}
             </Button>
-            <div
+            {!editing && <div
                 data-component={child("body_date-chip")}
                 className="self-start rounded-full bg-v3-primary-light px-3 py-1 text-sm font-bold text-v3-primary"
             >
-                {day}회차{editing ? " · " : ""}
-                {editing ? formatMonthDayKo(currentServiceDate) : null}
-            </div>
+                {day}회차{currentServiceDate ? ` · ${currentServiceDate.replaceAll("-", ".")}` : ""}
+            </div>}
             {dateField}
-            {/* Where no date field is on the page (later pages) the date's caution still lives in a field slot: a compact read-only row. */}
-            {(!editing) && hasServiceDateMismatch && !serviceDateFieldVisible && (
-                <div data-component={child("body_service-date-readonly")}>
-                    <ServiceRecordItemLabel
-                        data-component={child("body_service-date-readonly_date")}
-                        labelId={SERVICE_DATE_READONLY_LABEL_ID}
-                        label={SERVICE_DATE_READONLY_LABEL}
-                        messageId={SERVICE_DATE_READONLY_HELPER_ID}
-                        message={hintMessage(SERVICE_DATE_MISMATCH_COPY)}
-                    />
-                    <div
-                        data-component={child("body_service-date-readonly_value")}
-                        data-slot="ro"
-                        className="flex h-11 items-center rounded-[12px] border-[1.5px] border-v3-border! bg-v3-dim-white px-3.5 text-base text-v3-dark"
-                    >
-                        <b>{currentServiceDate}</b>
-                    </div>
-                </div>
-            )}
-            <div data-component={child("body_day-title")} className="text-lg font-bold text-v3-dark">{title}</div>
+            <div className="flex items-center justify-between gap-2"><div data-component={child("body_day-title")} className="text-lg font-bold text-v3-dark">{title}</div>{titleAccessory}</div>
             {children}
         </div>
     );
@@ -127,18 +95,16 @@ export type DayPageStepProps = Pick<
     | "draft"
     | "editing"
     | "isRecordFinalized"
-    | "scheduleChangeBusy"
-    | "hasServiceDateMismatch"
     | "defaultDate"
     | "onBack"
-    | "onServiceDateChange"
-    | "onOpenScheduleChangePreview"
     | "onFieldChange"
     | "onToggleMulti"
     | "onNextPage"
 > & {
     /** The service-date field's state, owned by the screen root so it outlives this step (SRW:529-536). */
     dateState: ServiceDateFieldState;
+    onOpenDateSheet?: () => void;
+    serviceDateError?: string | null;
 };
 
 /**
@@ -156,58 +122,30 @@ export function DayPageStep({
     draft,
     editing,
     isRecordFinalized,
-    scheduleChangeBusy,
-    hasServiceDateMismatch,
     defaultDate,
     onBack,
-    onServiceDateChange,
-    onOpenScheduleChangePreview,
     onFieldChange,
     onToggleMulti,
     onNextPage,
     dateState,
+    onOpenDateSheet,
+    serviceDateError,
 }: DayPageStepProps) {
     const child = (suffix: string) => `${root}_${suffix}`;
-    const {
-        focused: serviceDateFocused,
-        setFocused: setServiceDateFocused,
-        touched: serviceDateTouched,
-        setTouched: setServiceDateTouched,
-        edit: serviceDateEdit,
-        setEdit: setServiceDateEdit,
-        submittedPageKey,
-        setSubmittedPageKey,
-        hadValue: hadServiceDateValue,
-    } = dateState;
+    const { submittedPageKey, setSubmittedPageKey } = dateState;
 
     const currentDayPage = DAY_PAGES[pageIdx] ?? DAY_PAGES[0];
-    const { providerDateLocked, currentServiceDate } = resolvePlannedDates({
+    const { currentServiceDate } = resolvePlannedDates({
         context, day, adminMode: false, draft, defaultDate,
     });
     const numericErrors = getServiceRecordNumericErrors(draft);
     const currentPageKey = `${day}:${pageIdx}`;
     const daySubmitted = submittedPageKey === currentPageKey;
-    // The service date is typed as YYYY-MM-DD; state stays ISO and only a complete valid date is reported.
-    const serviceDateMin = getServiceDateMin({ day, context, defaultDate });
-    const serviceDateText = serviceDateEdit && serviceDateEdit.base === currentServiceDate && serviceDateEdit.day === day
-        ? serviceDateEdit.text : null;
-    const serviceDateValue = serviceDateText ?? currentServiceDate;
     const serviceDateFieldVisible = !editing && pageIdx === 0;
-    const {
-        reportable: serviceDateIsReportable,
-        blocked: serviceDateBlocked,
-        message: serviceDateMessage,
-        slot: serviceDateSlot,
-    } = getServiceDateMessage({
-        text: serviceDateText,
-        hadValue: hadServiceDateValue,
-        touched: serviceDateTouched,
-        focused: serviceDateFocused,
-        submitted: daySubmitted,
-        min: serviceDateMin,
-        mismatch: hasServiceDateMismatch,
-        fieldVisible: serviceDateFieldVisible,
-    });
+    const serviceDateBlocked = !currentServiceDate || Boolean(serviceDateError);
+    const serviceDateMessage = serviceDateError
+        ? { tone: "error" as const, text: serviceDateError }
+        : getServiceDateMessage({ label: SERVICE_DATE_LABEL, text: currentServiceDate, hadValue: false, touched: false, focused: false, submitted: daySubmitted, min: undefined, mismatch: false, fieldVisible: serviceDateFieldVisible }).message;
 
     const firstDayProblemId = (): string | null => {
         const problem = getFirstDayPageProblem(currentDayPage.items, draft, numericErrors, {
@@ -217,19 +155,6 @@ export function DayPageStep({
         if (!problem) return null;
         if (problem.kind === "serviceDate") return SERVICE_DATE_INPUT_ID;
         return getDailyItemProblemId(problem.item, dailyFieldComponent(root, problem.item), problem.problem);
-    };
-    const handleServiceDateInput = (raw: string) => {
-        if (providerDateLocked) return;
-        const next = formatIsoDateInput(raw);
-        setServiceDateEdit({ text: next, base: currentServiceDate, day });
-        if (next.length === 10 && serviceDateIsReportable(next)) onServiceDateChange(next);
-    };
-    const handleServiceDateBlur = () => {
-        setServiceDateFocused(false);
-        if (serviceDateText === null) return;
-        if (serviceDateText !== "") setServiceDateTouched(true);
-        // A date that was handed to the caller is shown from the caller's state again.
-        if (serviceDateIsReportable(serviceDateText)) setServiceDateEdit(null);
     };
     const handleNextPage = () => {
         const problemId = firstDayProblemId();
@@ -241,8 +166,6 @@ export function DayPageStep({
         onNextPage();
     };
 
-    const scheduleChangeDisabled = isRecordFinalized || scheduleChangeBusy || Boolean(context?.pendingScheduleChange);
-
     const dateField = serviceDateFieldVisible ? (
         <div data-component={child("body_service-date-field")}>
             <ServiceRecordItemLabel
@@ -251,7 +174,7 @@ export function DayPageStep({
                 label={SERVICE_DATE_LABEL}
                 htmlFor={SERVICE_DATE_INPUT_ID}
                 messageId={SERVICE_DATE_HELPER_ID}
-                message={serviceDateSlot}
+                message={serviceDateMessage}
             />
             <Input
                 id={SERVICE_DATE_INPUT_ID}
@@ -260,34 +183,19 @@ export function DayPageStep({
                 aria-describedby={SERVICE_DATE_HELPER_ID}
                 aria-invalid={serviceDateMessage?.tone === "error" ? "true" : undefined}
                 type="text"
-                inputMode="numeric"
-                autoComplete="off"
-                maxLength={10}
+                readOnly
+                aria-haspopup="dialog"
                 placeholder={SERVICE_DATE_PLACEHOLDER}
-                disabled={providerDateLocked}
-                value={serviceDateValue}
-                onFocus={() => setServiceDateFocused(true)}
-                onBlur={handleServiceDateBlur}
-                onChange={(event) => handleServiceDateInput(event.target.value)}
+                disabled={isRecordFinalized}
+                value={currentServiceDate ? `${day}회차 · ${currentServiceDate.replaceAll("-", ".")}` : ""}
+                onClick={onOpenDateSheet}
+                onKeyDown={(event) => {
+                    if (event.key === "Enter" || event.key === " ") {
+                        event.preventDefault();
+                        onOpenDateSheet?.();
+                    }
+                }}
             />
-            {providerDateLocked ? (
-                <>
-                    <p data-component={child("body_service-date-field_schedule-help")} className="mt-2 text-xs text-v3-text-muted">
-                        {SCHEDULE_HELP_COPY}
-                    </p>
-                    <Button
-                        type="button"
-                        variant="v3-outline"
-                        size="md"
-                        data-component={child("body_service-date-field_schedule-change")}
-                        className="mt-2 w-full"
-                        disabled={scheduleChangeDisabled}
-                        onClick={() => onOpenScheduleChangePreview()}
-                    >
-                        {context?.pendingScheduleChange ? SCHEDULE_CHANGE_PENDING_LABEL : SCHEDULE_CHANGE_LABEL}
-                    </Button>
-                </>
-            ) : null}
         </div>
     ) : null;
 
@@ -303,7 +211,6 @@ export function DayPageStep({
                     day={day}
                     pageIdx={pageIdx}
                     editing={editing}
-                    hasServiceDateMismatch={hasServiceDateMismatch}
                     onBack={onBack}
                     currentServiceDate={currentServiceDate}
                     dateField={dateField}

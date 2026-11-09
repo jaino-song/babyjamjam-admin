@@ -8,8 +8,14 @@ import type {
 import { MobileServiceRecordScreen } from "./screen/MobileServiceRecordScreen";
 import type { ServiceRecordLinkInvalidReason } from "@/lib/service-records/page-helpers";
 
-export type MobileServiceRecordWizardProps = Omit<ServiceRecordWizardProps, "slots"> & {
-    slots?: Omit<ServiceRecordWizardSlots, "provider" | "signature">;
+export type MobileServiceRecordWizardProps = Omit<ServiceRecordWizardProps, "slots" | "scheduleChangeBusy" | "onOpenScheduleChangePreview" | "hasServiceDateMismatch"> & {
+    slots?: Omit<ServiceRecordWizardSlots, "provider" | "signature" | "scheduleChangeModal" | "serviceDateChangeModal"> & {
+        serviceDateSheet?: React.ReactNode;
+        deleteModal?: React.ReactNode;
+    };
+    onOpenDateSheet?: () => void;
+    onDeleteSession?: () => void;
+    serviceDateError?: string | null;
     /** Mobile-only muted line on the phone step, e.g. why the caregiver was sent back to verification. */
     phoneNotice?: string | null;
     /** Mobile-only: why the link is unusable; `not_found` shows the wrong-link copy instead of the expired one. */
@@ -33,8 +39,8 @@ export function MobileServiceRecordWizard({
             {...props}
             slots={{
                 submitModal: slots?.submitModal,
-                scheduleChangeModal: slots?.scheduleChangeModal,
-                serviceDateChangeModal: slots?.serviceDateChangeModal,
+                serviceDateSheet: slots?.serviceDateSheet,
+                deleteModal: slots?.deleteModal,
                 errorNotification: slots?.errorNotification,
             }}
         />

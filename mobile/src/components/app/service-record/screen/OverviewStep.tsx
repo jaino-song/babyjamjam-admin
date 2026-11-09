@@ -13,8 +13,6 @@ import {
     NEXT_SESSION_LABEL,
     OVERVIEW_HELP_COPY,
     OVERVIEW_TITLE,
-    SCHEDULE_CHANGE_LABEL,
-    SCHEDULE_CHANGE_PENDING_LABEL,
     START_RECORD_LABEL,
 } from "./ids";
 
@@ -32,9 +30,7 @@ export type OverviewStepProps = Pick<
     | "lockedDays"
     | "nextOpenDay"
     | "isRecordFinalized"
-    | "scheduleChangeBusy"
     | "onOpenDay"
-    | "onOpenScheduleChangePreview"
 > & {
     /** The step only renders with a loaded context (SRW:813). */
     context: NonNullable<ServiceRecordWizardProps["context"]>;
@@ -55,15 +51,11 @@ export function OverviewStep({
     lockedDays,
     nextOpenDay,
     isRecordFinalized,
-    scheduleChangeBusy,
     onOpenDay,
-    onOpenScheduleChangePreview,
     onOpenGuide,
 }: OverviewStepProps) {
     const child = (suffix: string) => `${root}_${suffix}`;
     const { displayDateForSession } = resolvePlannedDates({ context, day, adminMode: false, draft, defaultDate });
-    const openDay = nextOpenDay();
-    const scheduleChangeLabel = context.pendingScheduleChange ? SCHEDULE_CHANGE_PENDING_LABEL : SCHEDULE_CHANGE_LABEL;
 
     return (
         <>
@@ -96,9 +88,9 @@ export function OverviewStep({
                     {Array.from({ length: context.totalSessions }, (_, index) => index + 1).map((sessionIndex) => {
                         const session = context.sessions.find((row) => row.sessionIndex === sessionIndex);
                         const done = lockedDays.has(sessionIndex);
-                        const open = sessionIndex === openDay;
+                        const open = !done && (sessionIndex === 1 || lockedDays.has(sessionIndex - 1));
                         const serviceDate = displayDateForSession(sessionIndex, session);
-                        // SRW:826 / :833 / :846 for the public flow.
+                        // Stored rows supply dates; every eligible gap remains independently enterable.
                         const state: DayCardState = done ? "done" : open ? "current" : "locked";
                         const disabled = (!done && !open) || isRecordFinalized;
                         return (
@@ -107,7 +99,7 @@ export function OverviewStep({
                                 data-component={child("body_day-grid_day")}
                                 state={state}
                                 disabled={disabled}
-                                dateLabel={formatShortDate(serviceDate)}
+                                dateLabel={serviceDate ? formatShortDate(serviceDate) : "\u00a0"}
                                 title={<span data-component={child("body_day-grid_day_number")}>{sessionIndex}</span>}
                                 statusLabel={done ? DAY_STATUS_DONE : open ? DAY_STATUS_OPEN : DAY_STATUS_WAITING}
                                 onClick={() => onOpenDay(sessionIndex, done)}
@@ -128,17 +120,6 @@ export function OverviewStep({
                         onClick={() => onOpenDay(nextOpenDay())}
                     >
                         {lockedDays.size ? NEXT_SESSION_LABEL : START_RECORD_LABEL}
-                    </Button>
-                    <Button
-                        type="button"
-                        variant="v3-outline"
-                        size="md"
-                        data-component={child("body_overview-schedule-change")}
-                        className="h-auto min-h-[46px] whitespace-normal break-keep py-2 leading-tight"
-                        disabled={isRecordFinalized || scheduleChangeBusy || Boolean(context.pendingScheduleChange)}
-                        onClick={() => onOpenScheduleChangePreview()}
-                    >
-                        {scheduleChangeLabel}
                     </Button>
                 </StickyActionBar>
             )}

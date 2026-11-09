@@ -51,9 +51,8 @@ export function makeContext(overrides: Partial<ServiceRecordContext> = {}): Serv
         startDate: PLANNED_DATES[0].serviceDate,
         header: null,
         sessions: [],
-        plannedSessionDates: PLANNED_DATES,
+        endDate: "2026-09-23",
         recordStatus: null,
-        pendingScheduleChange: null,
         ...overrides,
     };
 }
@@ -168,10 +167,12 @@ export function installApi(script: Partial<ApiScript> = {}) {
             return respond(200, { ok: true });
         }
         if (method === "GET" && path === "/holidays") return respond(200, { year: 2026, holidays: [] });
-        if (method === "GET" && path === "/schedule-change/preview") {
-            return respond(200, { sessionIndex: 2, fromDate: "2026-09-22", toDate: "2026-09-23" });
+        const deletion = /^\/sessions\/(\d+)$/.exec(path);
+        if (method === "DELETE" && deletion) {
+            const sessionIndex = Number(deletion[1]);
+            state.context = { ...state.context, sessions: state.context.sessions.filter((row) => row.sessionIndex !== sessionIndex) };
+            return respond(200, { deleted: true, sessionIndex });
         }
-        if (method === "POST" && path === "/schedule-change") return respond(200, { ok: true });
         throw new Error(`unrouted request: ${method} ${rest}`);
     };
 

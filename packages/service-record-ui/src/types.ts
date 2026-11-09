@@ -30,6 +30,7 @@ export interface ServiceRecordContext {
     startDate: string | null;
     header: Record<string, unknown> | null;
     sessions: ServiceRecordSession[];
+    endDate?: string | null;
     /** Server-authoritative dates for every planned session. Public-safe: no admin provenance or originals. */
     plannedSessionDates?: Array<{ sessionIndex: number; serviceDate: string }>;
     recordStatus?: string | null;

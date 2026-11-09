@@ -1,4 +1,4 @@
-import { render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { ServiceRecordWizard } from "../../../packages/service-record-ui/src/ServiceRecordWizard";
 import { DEFAULT_DAILY_ANSWERS } from "../../../packages/service-record-ui/src/form-definition";
 import type { ServiceRecordWizardProps } from "../../../packages/service-record-ui/src/types";
@@ -73,4 +73,15 @@ describe.each(ROWS)("service record accessible names ($name)", ({ Component }) =
         expect(screen.getByRole("button", { name: "신생아 수정" })).toBeInTheDocument();
         expect(screen.getByRole("button", { name: "서비스 기록 수정" })).toBeInTheDocument();
     });
+});
+
+
+it("names the calendar trigger, announces its dialog, and opens it with the keyboard", () => {
+    const open = jest.fn();
+    render(<MobileServiceRecordScreen {...makeProps()} onOpenDateSheet={open} />);
+    const input = screen.getByRole("textbox", { name: "서비스 제공일" });
+    expect(input).toHaveAttribute("aria-haspopup", "dialog");
+    expect(input).toHaveAttribute("readonly");
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(open).toHaveBeenCalledTimes(1);
 });

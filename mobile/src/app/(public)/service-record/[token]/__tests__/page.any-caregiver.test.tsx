@@ -169,7 +169,7 @@ describe("service-record page submit dialog across a caregiver change", () => {
         await waitFor(() => expect(screen.getByTestId("screen")).toHaveTextContent("overview"));
 
         await user.click(screen.getByRole("button", { name: "open day 1" }));
-        expect(screen.getAllByRole("button", { name: /수정$/ })).toHaveLength(3);
+        expect(screen.getAllByRole("button", { name: /수정$/ })).toHaveLength(4);
         expect(screen.queryByText(/다른 제공인력이\s제출한 회차라 수정할 수 없어요\./)).toBeNull();
         expect(screen.getByRole("button", { name: "확인" })).toBeEnabled();
 

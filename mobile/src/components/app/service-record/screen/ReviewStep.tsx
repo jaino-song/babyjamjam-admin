@@ -18,7 +18,9 @@ import { Button } from "@/components/ui/button";
 
 import { SignaturePad } from "../SignaturePad";
 import { DayPageHead } from "./DayPageStep";
-import { HANDOVER_BANNER_COPY, RESIGN_NOTICE_COPY, SUBMIT_LABEL } from "./ids";
+import { SERVICE_DATE_LABEL, SUBMIT_LABEL } from "./ids";
+import { StatusBadge } from "@/components/app/ui/status-badge";
+import { formatServiceDate } from "./ServiceDateSheet";
 
 const SOURCE_COMPONENT = "ReviewStep";
 
@@ -32,13 +34,16 @@ export type ReviewStepProps = Pick<
     | "editing"
     | "clientSignature"
     | "busy"
-    | "hasServiceDateMismatch"
     | "defaultDate"
     | "onBack"
     | "onSignatureChange"
     | "onOpenSubmitModal"
     | "onEditSection"
->;
+> & {
+    onOpenDateSheet?: () => void;
+    onDeleteSession?: () => void;
+    serviceDateError?: string | null;
+};
 
 function ReviewFieldRow({
     dataComponent,
@@ -76,12 +81,14 @@ export function ReviewStep({
     editing,
     clientSignature,
     busy,
-    hasServiceDateMismatch,
     defaultDate,
     onBack,
     onSignatureChange,
     onOpenSubmitModal,
     onEditSection,
+    onOpenDateSheet,
+    onDeleteSession,
+    serviceDateError,
 }: ReviewStepProps) {
     const child = (suffix: string) => `${root}_${suffix}`;
     const reviewComponent = child("body_review");
@@ -92,7 +99,7 @@ export function ReviewStep({
     const signatureValue = currentSession?.clientSignature ?? clientSignature;
     const isSignatureLocked = Boolean(currentSession?.clientSignature);
     const hasInvalidNumericAnswers = Object.keys(getServiceRecordNumericErrors(draft)).length > 0;
-    const submitDisabled = busy || !signatureValue || hasInvalidNumericAnswers || hasInvalidTextAnswers(draft);
+    const submitDisabled = busy || !currentServiceDate || Boolean(serviceDateError) || !signatureValue || hasInvalidNumericAnswers || hasInvalidTextAnswers(draft);
 
     return (
         <>
@@ -106,26 +113,27 @@ export function ReviewStep({
                     day={day}
                     pageIdx={pageIdx}
                     editing={editing}
-                    hasServiceDateMismatch={hasServiceDateMismatch}
                     onBack={onBack}
                     currentServiceDate={currentServiceDate}
-                    title={currentDayPage.title}
-                >
-                    {editing && (
-                        <div
-                            data-component={child("body_resign-notice")}
-                            className="rounded-[10px] bg-v3-dim-white px-3 py-2 text-[13px] text-v3-text"
-                        >
-                            <span>{RESIGN_NOTICE_COPY}</span>
-                        </div>
-                    )}
-                    <div
-                        data-component={child("body_handover-banner")}
-                        className="rounded-[10px] bg-v3-primary-light px-3 py-2.5 text-[13px] text-v3-primary"
-                    >
-                        <b>{HANDOVER_BANNER_COPY}</b>
-                    </div>
-                </DayPageHead>
+                    title={editing ? `${day}회차 기록 수정` : currentDayPage.title}
+                    titleAccessory={editing ? <StatusBadge data-component={child("body_submitted-badge")} variant="primary">제출완료</StatusBadge> : undefined}
+                />
+                {editing && (
+                    <ReviewSection data-component={child("body_service-date")} titleId={child("body_service-date_title")} title={SERVICE_DATE_LABEL} tone="baby" onEdit={onOpenDateSheet}>
+                        <ReviewRow
+                            data-component={child("body_service-date_row")}
+                            labelId={child("body_service-date_row_label")}
+                            label={SERVICE_DATE_LABEL}
+                            value={<>
+                                {currentSession?.serviceDate.slice(0, 10) !== currentServiceDate && <del className="mr-2 text-v3-text-muted">{currentSession?.serviceDate.slice(5, 10).replace("-", ".")}</del>}
+                                {formatServiceDate(currentServiceDate)}
+                            </>}
+                            tone={currentSession?.serviceDate.slice(0, 10) !== currentServiceDate ? "ok" : "default"}
+                        />
+                        {currentSession?.serviceDate.slice(0, 10) !== currentServiceDate && <p data-component={child("body_service-date_help")} className="text-xs text-v3-text-muted">다른 회차 날짜는 바뀌지 않아요.</p>}
+                        {serviceDateError && <p data-component={child("body_service-date_error")} role="alert" className="text-xs text-v3-burgundy">{serviceDateError}</p>}
+                    </ReviewSection>
+                )}
                 <div data-component={reviewComponent}>
                     {REVIEW_SECTIONS.map((section, sectionIndex) => (
                         <ReviewSection
@@ -151,6 +159,7 @@ export function ReviewStep({
                 />
             </div>
             <StickyActionBar data-component={child("body_confirmation-action")}>
+                {currentSession && <Button data-component={child("body_confirmation-action_delete")} type="button" variant="v3-outline" size="md" className="border-[var(--v3-burgundy)]! text-[var(--v3-burgundy)]" disabled={busy} onClick={onDeleteSession}>기록 삭제</Button>}
                 <Button type="button" variant="v3" size="md" disabled={submitDisabled} onClick={onOpenSubmitModal}>
                     {SUBMIT_LABEL}
                 </Button>

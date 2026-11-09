@@ -17,7 +17,7 @@ jest.mock("@/components/app/service-record/ServiceRecordWizard", () => ({
             <button onClick={() => props.onServiceDateChange("2026-07-24")}>change date</button>
             <span data-testid="date">{String(props.draft._date ?? "")}</span>
             <span data-testid="notes">{String(props.draft.notes ?? "")}</span>
-            {props.slots?.serviceDateChangeModal}
+            {props.slots?.serviceDateSheet}
         </div>
     ),
 }));
@@ -46,25 +46,25 @@ describe("token planned-date drafts", () => {
         await waitFor(() => expect(screen.getByTestId("screen")).toHaveTextContent("day"));
     }
 
-    it("discards a mismatching stored date but preserves other answers", async () => {
+    it("restores the caregiver-picked date and answers despite a stale legacy vector", async () => {
         await openStoredDraft(true);
-        expect(screen.getByTestId("date")).toHaveTextContent("2026-07-17");
+        expect(screen.getByTestId("date")).toHaveTextContent("2026-07-24");
         expect(screen.getByTestId("notes")).toHaveTextContent("saved notes");
         const stored = JSON.parse(window.sessionStorage.getItem("daily-service-record-draft:test-token")!);
-        expect(stored.draft._date).toBe("2026-07-17");
+        expect(stored.draft._date).toBe("2026-07-24");
     });
 
-    it("does not open an extension confirmation for planned dates", async () => {
+    it("applies a calendar selection immediately to the draft", async () => {
         await openStoredDraft(true, "2026-07-17");
         fireEvent.click(screen.getByText("change date"));
         expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
-        expect(screen.getByTestId("date")).toHaveTextContent("2026-07-17");
+        expect(screen.getByTestId("date")).toHaveTextContent("2026-07-24");
     });
 
-    it("preserves unplanned stored date overrides and their confirmation", async () => {
+    it("preserves a picked date without an extension confirmation", async () => {
         await openStoredDraft(false);
         expect(screen.getByTestId("date")).toHaveTextContent("2026-07-24");
         fireEvent.click(screen.getByText("change date"));
-        expect(screen.getByRole("dialog")).toBeInTheDocument();
+        expect(screen.queryByRole("dialog")).toBeNull();
     });
 });

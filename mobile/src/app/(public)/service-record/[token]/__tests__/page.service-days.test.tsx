@@ -1,6 +1,5 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { MobileServiceRecordWizardProps } from "@/components/app/service-record/ServiceRecordWizard";
-import { KR_BUILTIN_CALENDAR } from "@/lib/date/business-days";
 import ServiceRecordPage from "../page";
 
 jest.mock("next/navigation", () => ({ useParams: () => ({ token: "test-token" }) }));
@@ -20,9 +19,7 @@ jest.mock("@/components/app/service-record/ServiceRecordWizard", () => ({
     ),
 }));
 
-// Sessions 1-5 are done on Monday 12-14 .. Friday 12-18, so session 6 is the next one to open. Its
-// default date is Monday 12-21 with weekends skipped, and Saturday 12-19 when the client's Saturday
-// service is on.
+// Sessions 1-5 are submitted, so session 6 is enterable. It stays dateless until picked.
 const DONE_SESSIONS = [14, 15, 16, 17, 18].map((date, index) => ({
     sessionIndex: index + 1,
     serviceDate: `2026-12-${date}`,
@@ -46,20 +43,19 @@ describe("token service-record page and per-client service days", () => {
         await waitFor(() => expect(screen.getByTestId("screen")).toHaveTextContent("day"));
     }
 
-    it("is unchanged when the context carries no service days", async () => {
+    it("leaves an unwritten session dateless with no policy", async () => {
         await openDaySix({});
-        expect(screen.getByTestId("date")).toHaveTextContent("2026-12-21");
+        expect(screen.getByTestId("date")).toBeEmptyDOMElement();
     });
 
-    it("is unchanged when every service day is off", async () => {
+    it("leaves an unwritten session dateless with weekends off", async () => {
         await openDaySix({ serviceDays: { saturday: false, sunday: false, holiday: false } });
-        expect(screen.getByTestId("date")).toHaveTextContent("2026-12-21");
+        expect(screen.getByTestId("date")).toBeEmptyDOMElement();
     });
 
-    it("lands a later session on Saturday when Saturday service is on", async () => {
+    it("does not seed a date even when Saturday service is on", async () => {
         await openDaySix({ serviceDays: { saturday: true, sunday: false, holiday: false } });
-        expect(screen.getByTestId("date")).toHaveTextContent("2026-12-19");
+        expect(screen.getByTestId("date")).toBeEmptyDOMElement();
         expect(new Date("2026-12-19T00:00:00Z").getUTCDay()).toBe(6);
-        expect(KR_BUILTIN_CALENDAR.isBusinessDay("2026-12-19")).toBe(false);
     });
 });

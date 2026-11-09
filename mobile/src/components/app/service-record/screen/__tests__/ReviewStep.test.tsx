@@ -17,16 +17,17 @@ const makeProps = (overrides: Partial<ReviewStepProps> = {}): ReviewStepProps =>
     context: { totalSessions: 5, startDate: "2026-09-21", header: null, sessions: [] },
     day: 1,
     pageIdx: 3,
-    draft: { perineum: ["이상없음"], sitzBath: "실시", notes: "산모 요청", paymentConfirmed: true },
+    draft: { _date: "2026-09-21", perineum: ["이상없음"], sitzBath: "실시", notes: "산모 요청", paymentConfirmed: true },
     editing: false,
     clientSignature: null,
     busy: false,
-    hasServiceDateMismatch: false,
+
     defaultDate: () => "2026-09-21",
     onBack: jest.fn(),
     onSignatureChange: jest.fn(),
     onOpenSubmitModal: jest.fn(),
     onEditSection: jest.fn(),
+    onOpenDateSheet: jest.fn(),
     ...overrides,
 });
 
@@ -51,7 +52,7 @@ describe("ReviewStep", () => {
         expect(within(finish).getByRole("group", { name: /결제 확인/ })).toHaveTextContent("✓ 확인 완료");
         expect(within(finish).getByRole("group", { name: /기타 서비스/ })).toHaveTextContent("입력 없음");
         expect(document.querySelector(`[data-component="${ROOT}_body_day-title"]`)).toHaveTextContent("기록 내용 확인");
-        expect(document.querySelector(`[data-component="${ROOT}_body_handover-banner"]`)).toHaveTextContent("최종 기록을 확인해 주세요.");
+        expect(document.querySelector(`[data-component="${ROOT}_body_handover-banner"]`)).toBeNull();
     });
 
     it("offers no edit buttons or resign notice before a day is submitted", () => {
@@ -65,7 +66,7 @@ describe("ReviewStep", () => {
         const props = makeProps({ editing: true, context: ownLockedContext });
         render(<ReviewStep {...props} />);
 
-        expect(document.querySelector(`[data-component="${ROOT}_body_resign-notice"]`)).toHaveTextContent("이미 제출된 회차입니다.");
+        expect(document.querySelector(`[data-component="${ROOT}_body_day-title"]`)).toHaveTextContent("1회차 기록 수정");
         expect(screen.getByRole("button", { name: "산모 수정" })).toHaveTextContent("수정");
         await user.click(screen.getByRole("button", { name: "산모 수정" }));
         await user.click(screen.getByRole("button", { name: "신생아 수정" }));
@@ -115,10 +116,16 @@ describe("ReviewStep", () => {
         expect(screen.getByRole("button", { name: "확인" })).toBeDisabled();
     });
 
-    it("keeps the date caution row on the review page", () => {
-        render(<ReviewStep {...makeProps({ hasServiceDateMismatch: true })} />);
-        const row = document.querySelector(`[data-component="${ROOT}_body_service-date-readonly"]`) as HTMLElement;
-        expect(row.querySelector('[data-slot="lab-msg"]')).toHaveTextContent("오늘과 다른 날짜예요");
+    it("shows a changed date with the old date struck out and opens date editing", async () => {
+        const props = makeProps({ editing: true, context: ownLockedContext, draft: { _date: "2026-09-23" }, onOpenDateSheet: jest.fn(), onDeleteSession: jest.fn() });
+        const { container } = render(<ReviewStep {...props} />);
+        expect(container.querySelector("del")).toHaveTextContent("09.21");
+        expect(screen.getByText("2026.09.23(수)")).toBeInTheDocument();
+        expect(screen.getByText("다른 회차 날짜는 바뀌지 않아요.")).toBeInTheDocument();
+        await userEvent.setup().click(screen.getByRole("button", { name: "서비스 제공일 수정" }));
+        expect(props.onOpenDateSheet).toHaveBeenCalledTimes(1);
+        await userEvent.setup().click(screen.getByRole("button", { name: "기록 삭제" }));
+        expect(props.onDeleteSession).toHaveBeenCalledTimes(1);
     });
     it("resubmits the caregiver's own submitted day: 수정 buttons and the submit action stay", async () => {
         const user = userEvent.setup();
@@ -140,8 +147,8 @@ describe("ReviewStep", () => {
         render(<ReviewStep {...props} />);
 
         expect(screen.queryByText(/다른 제공인력이\s제출한 회차라 수정할 수 없어요\./)).toBeNull();
-        expect(document.querySelector(`[data-component="${ROOT}_body_resign-notice"]`)).toHaveTextContent("이미 제출된 회차입니다.");
-        expect(screen.getAllByRole("button", { name: /수정$/ })).toHaveLength(3);
+        expect(document.querySelector(`[data-component="${ROOT}_body_day-title"]`)).toHaveTextContent("1회차 기록 수정");
+        expect(screen.getAllByRole("button", { name: /수정$/ })).toHaveLength(4);
         await user.click(screen.getByRole("button", { name: "산모 수정" }));
         expect(props.onEditSection).toHaveBeenCalledWith(0);
         expect(screen.getByRole("button", { name: "확인" })).toBeEnabled();

@@ -1,4 +1,3 @@
-import { useState } from "react";
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { DAILY_ITEMS, DEFAULT_DAILY_ANSWERS, getDailyItemProblem, resolvePlannedDates } from "@babyjamjam/service-record-ui";
@@ -25,15 +24,15 @@ const makeProps = (overrides: Partial<DayPageStepProps> = {}): DayPageStepProps 
     context: { totalSessions: 5, startDate: "2026-09-21", header: null, sessions: [] },
     day: 1,
     pageIdx: 0,
-    draft: { ...DEFAULT_DAILY_ANSWERS },
+    draft: { _date: "2026-09-21", ...DEFAULT_DAILY_ANSWERS },
     editing: false,
     isRecordFinalized: false,
-    scheduleChangeBusy: false,
-    hasServiceDateMismatch: false,
+
+
     defaultDate: () => "2026-09-21",
     onBack: jest.fn(),
-    onServiceDateChange: jest.fn(),
-    onOpenScheduleChangePreview: jest.fn(),
+
+
     onFieldChange: jest.fn(),
     onToggleMulti: jest.fn(),
     onNextPage: jest.fn(),
@@ -43,22 +42,9 @@ const makeProps = (overrides: Partial<DayPageStepProps> = {}): DayPageStepProps 
 const mealKeys = () => DAILY_ITEMS.find((item) => item.key === "meals")!.counts!.map((count) => `meals_${count.k}`);
 const completeFirstPage = () => ({
     ...DEFAULT_DAILY_ANSWERS,
+    _date: "2026-09-21",
     ...Object.fromEntries(mealKeys().map((key) => [key, "1"])),
 });
-
-/** Keeps the draft in state like the screen root will. */
-function Harness(props: Partial<DayPageStepProps>) {
-    const [draft, setDraft] = useState<Record<string, unknown>>({ ...DEFAULT_DAILY_ANSWERS });
-    return (
-        <DayPageStep
-            {...makeProps({
-                draft,
-                onFieldChange: (key, value) => setDraft((current) => ({ ...current, [key]: value })),
-                ...props,
-            })}
-        />
-    );
-}
 
 describe("DayPageStep", () => {
     it("renders the first page: back, date chip, service date field, items and next", () => {
@@ -67,7 +53,7 @@ describe("DayPageStep", () => {
         expect(screen.getByRole("button", { name: "이전" })).toBeInTheDocument();
         expect(document.querySelector(`[data-component="${ROOT}_body_date-chip"]`)).toHaveTextContent("1회차");
         expect(document.querySelector(`[data-component="${ROOT}_body_day-title"]`)).toHaveTextContent("산모 기록");
-        expect(screen.getByRole("textbox", { name: "제공일자" })).toHaveValue("2026-09-21");
+        expect(screen.getByRole("textbox", { name: "서비스 제공일" })).toHaveValue("1회차 · 2026.09.21");
         expect(screen.getByRole("group", { name: /회음절개부위/ })).toBeInTheDocument();
         expect(screen.getByRole("radiogroup", { name: /좌욕/ })).toBeInTheDocument();
         expect(screen.getByRole("spinbutton", { name: "식사" })).toBeInTheDocument();
@@ -137,99 +123,33 @@ describe("DayPageStep", () => {
         render(<DayPageStep {...makeProps({ editing: true, draft: completeFirstPage() })} />);
         expect(screen.getByRole("button", { name: "저장" })).toBeInTheDocument();
         expect(screen.queryByRole("button", { name: "다음" })).toBeNull();
-        expect(screen.queryByRole("textbox", { name: "제공일자" })).toBeNull();
-        expect(document.querySelector(`[data-component="${ROOT}_body_date-chip"]`)).toHaveTextContent("1회차 · 2026.09.21");
+        expect(screen.queryByRole("textbox", { name: "서비스 제공일" })).toBeNull();
+        expect(document.querySelector(`[data-component="${ROOT}_body_date-chip"]`)).toBeNull();
     });
 
-    describe("service date", () => {
-        it("shows the mismatch caution in the field's own message slot", () => {
-            render(<DayPageStep {...makeProps({ hasServiceDateMismatch: true })} />);
-            const slot = document.getElementById("service-record-date-helper")!;
-            expect(slot).toHaveTextContent("오늘과 다른 날짜예요");
-            expect(slot).toHaveAttribute("data-tone", "hint");
-            expect(slot).toHaveAttribute("data-slot", "lab-msg");
-            expect(screen.getByRole("textbox", { name: "제공일자" })).toHaveAttribute("aria-describedby", "service-record-date-helper");
-            expect(document.querySelector(`[data-component="${ROOT}_body_service-date-readonly"]`)).toBeNull();
-            expect(document.querySelector(`[data-component="${ROOT}_body_date-mismatch-notice"]`)).toBeNull();
-        });
-
-        it("keeps the caution in a read-only row on later pages", () => {
-            render(<DayPageStep {...makeProps({ pageIdx: 1, hasServiceDateMismatch: true })} />);
-            const row = document.querySelector(`[data-component="${ROOT}_body_service-date-readonly"]`) as HTMLElement;
-            expect(row).not.toBeNull();
-            expect(row).toHaveTextContent("서비스 제공일자");
-            expect(row.querySelector('[data-slot="ro"]')).toHaveTextContent("2026-09-21");
-            expect(row.querySelector('[data-slot="lab-msg"]')).toHaveTextContent("오늘과 다른 날짜예요");
-            expect(document.getElementById("service-record-date-helper")).toBeNull();
-            expect(screen.queryByRole("textbox", { name: "제공일자" })).toBeNull();
-        });
-
-        it("shows no date row on later pages when the date matches today", () => {
-            render(<DayPageStep {...makeProps({ pageIdx: 1 })} />);
-            expect(document.querySelector(`[data-component="${ROOT}_body_service-date-readonly"]`)).toBeNull();
-            expect(screen.queryByText("오늘과 다른 날짜예요")).toBeNull();
-        });
-
-        it("reports a complete valid date and shows the range message for an earlier one", async () => {
+    describe("service date sheet trigger", () => {
+        it("starts empty, opens the sheet, and requires a date before Next", async () => {
             const user = userEvent.setup();
-            const props = makeProps();
-            render(<Harness {...props} />);
-            const input = screen.getByRole("textbox", { name: "제공일자" });
-
-            await user.clear(input);
-            await user.type(input, "2026-09-25");
-            expect(props.onServiceDateChange).toHaveBeenCalledWith("2026-09-25");
-
-            await user.clear(input);
-            await user.type(input, "2020-01-01");
-            await user.tab();
-            expect(document.getElementById("service-record-date-helper")).toHaveTextContent("이전 날짜는 선택할 수 없어요");
-            expect(input).toHaveAttribute("aria-invalid", "true");
-        });
-
-        it("focuses a blocked service date before any item on 다음", async () => {
-            const user = userEvent.setup();
-            const props = makeProps();
-            render(<Harness {...props} />);
-            const input = screen.getByRole("textbox", { name: "제공일자" });
-
-            await user.clear(input);
-            await user.type(input, "2020-01-01");
+            const props = makeProps({ draft: { ...completeFirstPage(), _date: "" }, onOpenDateSheet: jest.fn() });
+            const { rerender } = render(<DayPageStep {...props} />);
+            const input = screen.getByRole("textbox", { name: "서비스 제공일" });
+            expect(input).toHaveValue("");
+            expect(input).toHaveAttribute("placeholder", "날짜를 선택하세요");
+            expect(input).toHaveAttribute("readonly");
+            await user.click(input);
+            expect(props.onOpenDateSheet).toHaveBeenCalledTimes(1);
             await user.click(screen.getByRole("button", { name: "다음" }));
-
             expect(props.onNextPage).not.toHaveBeenCalled();
-            expect(document.activeElement).toBe(input);
-            expect(document.activeElement?.id).toBe("service-record-date");
+            expect(input).toHaveFocus();
+            expect(input).toHaveAttribute("aria-invalid", "true");
+            rerender(<DayPageStep {...props} draft={completeFirstPage()} />);
+            expect(input).toHaveValue("1회차 · 2026.09.21");
+            await user.click(screen.getByRole("button", { name: "다음" }));
+            expect(props.onNextPage).toHaveBeenCalledTimes(1);
         });
-
-        it("locks the date to the planned dates and offers the schedule change", async () => {
-            const user = userEvent.setup();
-            const props = makeProps({
-                context: {
-                    totalSessions: 2, startDate: "2026-09-21", header: null, sessions: [],
-                    plannedSessionDates: [
-                        { sessionIndex: 1, serviceDate: "2026-09-21" },
-                        { sessionIndex: 2, serviceDate: "2026-09-22" },
-                    ],
-                },
-            });
-            render(<DayPageStep {...props} />);
-
-            expect(screen.getByRole("textbox", { name: "제공일자" })).toBeDisabled();
-            expect(screen.getByText("제공일자를 바꾸려면 일정 변경을 요청해 주세요.")).toBeInTheDocument();
-            await user.click(screen.getByRole("button", { name: "서비스 일정 변경" }));
-            expect(props.onOpenScheduleChangePreview).toHaveBeenCalledTimes(1);
-        });
-
-        it("disables the schedule change while a request is pending", () => {
-            render(<DayPageStep {...makeProps({
-                context: {
-                    totalSessions: 1, startDate: "2026-09-21", header: null, sessions: [],
-                    plannedSessionDates: [{ sessionIndex: 1, serviceDate: "2026-09-21" }],
-                    pendingScheduleChange: { id: "p", sessionIndex: 1, fromDate: "2026-09-21", toDate: "2026-09-22" },
-                },
-            })} />);
-            expect(screen.getByRole("button", { name: "일정 변경 요청 대기 중" })).toBeDisabled();
+        it("shows the server's date refusal in the date field", () => {
+            render(<DayPageStep {...makeProps({ serviceDateError: "고를 수 있는 기간이 아니에요." })} />);
+            expect(document.getElementById("service-record-date-helper")).toHaveTextContent("고를 수 있는 기간이 아니에요.");
         });
     });
 });
