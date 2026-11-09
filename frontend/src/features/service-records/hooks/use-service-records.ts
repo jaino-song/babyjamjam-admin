@@ -3,6 +3,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { clientKeys } from "@/features/clients/hooks/keys";
+import { dashboardQueryKeys } from "@/hooks/useDashboardStats";
 
 import { serviceRecordsApi } from "../api/service-records.api";
 import type {
@@ -138,6 +139,8 @@ export function useFitPeriodMismatch() {
             await Promise.all([
                 queryClient.invalidateQueries({ queryKey: serviceRecordKeys.clientOverview(clientId) }),
                 queryClient.invalidateQueries({ queryKey: clientKeys.detail(clientId) }),
+                queryClient.invalidateQueries({ queryKey: clientKeys.all }),
+                queryClient.invalidateQueries({ queryKey: dashboardQueryKeys.overviewAll() }),
             ]);
         },
     });
