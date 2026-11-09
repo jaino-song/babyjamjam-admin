@@ -78,8 +78,8 @@ function makeProps(overrides: Partial<ServiceRecordWizardProps> = {}): ServiceRe
 }
 
 describe("shared service-record UI contract", () => {
-    it.each(["overview", "day"] as const)("does not offer schedule-change actions on %s", (screenName) => {
-        render(<ServiceRecordWizard {...makeProps({ screen: screenName })} />);
+    it("does not offer schedule-change actions on overview", () => {
+        render(<ServiceRecordWizard {...makeProps({ screen: "overview" })} />);
         expect(screen.queryByRole("button", { name: /서비스 일정 변경|일정 변경 요청 대기 중/ })).not.toBeInTheDocument();
     });
 
@@ -386,6 +386,7 @@ describe("shared service-record UI contract", () => {
             .join("\n");
 
         expect(source).not.toMatch(/(?:next\/navigation|@\/|\/api\/|@sentry|sessionStorage|localStorage|\bfetch\s*\()/);
+        expect(source).not.toMatch(/일정 변경|schedule-help/);
     });
 });
 
