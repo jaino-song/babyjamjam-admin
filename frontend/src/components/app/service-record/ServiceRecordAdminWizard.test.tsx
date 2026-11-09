@@ -1060,7 +1060,7 @@ describe("per-session administrator editing", () => {
         expect(screen.getByRole("button", { name: "확인" })).toBeInTheDocument();
     });
 
-    it("cancels a date collision without changing dates or writing, then stages an approved move", async () => {
+    it("picking the next session date opens the follow prompt with only the suffix move enabled, then stages it", async () => {
         const { container } = open();
         fireEvent.click(container.querySelector('[data-component$="_body_date-edit"]')!);
         fireEvent.click(screen.getAllByRole("combobox")[2]);
@@ -1070,6 +1070,7 @@ describe("per-session administrator editing", () => {
         expect(modal).toHaveTextContent("1회차의 서비스 제공일을 1영업일만큼 변경합니다. 뒷 회차들도 동일하게 변경할까요?");
         expect(modal).toHaveTextContent("다음 회차와 날짜가 겹쳐 뒷 회차들을 그대로 둘 수 없어요.");
         expect(within(modal).getByRole("button", { name: "그대로 두기" })).toBeDisabled();
+        expect(within(modal).getByRole("button", { name: "변경하기" })).toBeEnabled();
         fireEvent.keyDown(modal, { key: "Escape" });
         expect(adminServiceRecordEditApi.updateDraft).not.toHaveBeenCalled();
         fireEvent.click(screen.getAllByRole("combobox")[2]);
@@ -1186,6 +1187,44 @@ describe("per-session administrator editing", () => {
         const calls = jest.mocked(adminServiceRecordEditApi.confirmDraft).mock.calls;
         expect(calls[1]).toEqual(calls[0]);
         expect(adminServiceRecordEditApi.startDraft).toHaveBeenCalledTimes(1);
+    });
+
+    it.each([
+        ["2026-09-07", "16일", "17일"],
+        ["2026-08-31", "31일", "28일"],
+    ])("uses the case window's inclusive edges in the date dialog (current %s)", (firstDate, edge, outside) => {
+        const record = sessionOverview.record!;
+        const projection = sessionOverview.scheduleProjection!;
+        const boundedOverview = {
+            ...sessionOverview,
+            record: { ...record, sessions: record.sessions.map((session) => session.sessionIndex === 1
+                ? { ...session, serviceDate: firstDate } : session) },
+            scheduleProjection: { ...projection, entries: projection.entries.map((entry) => entry.sessionIndex === 1
+                ? { ...entry, serviceDate: firstDate, originalDate: firstDate } : entry) },
+        };
+        const { container } = render(<ServiceRecordAdminWizard clientId="42" overview={boundedOverview} initialDraftState={{ ...makeDraftState(), draft: null }} />);
+        fireEvent.click(container.querySelectorAll('[data-slot="day"]')[0]);
+        fireEvent.click(container.querySelector('[data-component$="_body_date-edit"]')!);
+        fireEvent.click(screen.getByRole("combobox", { name: "일" }));
+        // Case 09-07 .. 09-09 allows 08-31 .. 09-16, regardless of the current session date.
+        expect(screen.getByRole("option", { name: edge })).toBeInTheDocument();
+        expect(screen.queryByRole("option", { name: outside })).not.toBeInTheDocument();
+        fireEvent.click(screen.getByRole("option", { name: edge }));
+    });
+
+    it("shows the Korean out-of-window preview reason and prevents confirm", async () => {
+        jest.mocked(adminServiceRecordEditApi.previewDraft).mockResolvedValue({
+            ...confirmPreviewResponse,
+            blockingReasons: [{ code: "SERVICE_DATE_OUT_OF_RANGE", message: "고를 수 있는 기간이 아니에요.", sessionIndex: 1 }],
+        } as Awaited<ReturnType<typeof adminServiceRecordEditApi.previewDraft>>);
+        const { container } = open();
+        editNote(container);
+        acceptEdit();
+        await screen.findByRole("button", { name: "수정 확정" });
+        await startCommit();
+        expect(within(previewDialog()).getByText("고를 수 있는 기간이 아니에요.")).toBeInTheDocument();
+        expect(within(previewDialog()).queryByRole("button", { name: "수정 확정" })).not.toBeInTheDocument();
+        expect(adminServiceRecordEditApi.confirmDraft).not.toHaveBeenCalled();
     });
 
     it("stages an approved collision shift and sends it with the explicit suffix flag on 수정 확정", async () => {

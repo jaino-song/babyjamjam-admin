@@ -92,6 +92,109 @@ describe("ServiceRecordDateSelectionDialog", () => {
         expect(screen.queryByRole("combobox", { name: "연도" })).not.toBeInTheDocument();
     });
 
+    it("omits days outside the inclusive window from the helper and rendered options", () => {
+        const windowStart = "2026-07-14";
+        const windowEnd = "2026-07-16";
+        expect(getBusinessDayOptions(2026, 7, KR_BUILTIN_CALENDAR, windowStart, windowEnd).map((option) => option.value))
+            .toEqual(["14", "15", "16"]);
+        expect(isSelectableServiceRecordDate("2026-07-13", KR_BUILTIN_CALENDAR, windowStart, windowEnd)).toBe(false);
+        expect(isSelectableServiceRecordDate("2026-07-20", KR_BUILTIN_CALENDAR, windowStart, windowEnd)).toBe(false);
+        expect(getInitialServiceRecordDateSelection("2026-07-13", KR_BUILTIN_CALENDAR, windowStart, windowEnd))
+            .toEqual({ parts: { year: 2026, month: 7, day: null }, reason: null });
+        expect(getInitialServiceRecordDateSelection(windowStart, KR_BUILTIN_CALENDAR, windowStart, windowEnd).reason).toBeNull();
+        expect(isSelectableServiceRecordDate(windowEnd, KR_BUILTIN_CALENDAR, windowStart, windowEnd)).toBe(true);
+
+        renderDialog({ windowStart, windowEnd });
+        fireEvent.click(screen.getByRole("combobox", { name: "일" }));
+        expect(screen.queryByRole("option", { name: "13일" })).not.toBeInTheDocument();
+        expect(screen.queryByRole("option", { name: "20일" })).not.toBeInTheDocument();
+        expect(screen.getByRole("option", { name: "14일" })).toBeInTheDocument();
+        expect(screen.getByRole("option", { name: "16일" })).toBeInTheDocument();
+    });
+
+    it("treats each null window bound as unbounded", () => {
+        expect(isSelectableServiceRecordDate("2026-07-13", KR_BUILTIN_CALENDAR, null, "2026-07-16")).toBe(true);
+        expect(isSelectableServiceRecordDate("2026-07-20", KR_BUILTIN_CALENDAR, "2026-07-14", null)).toBe(true);
+    });
+
+    it.each([
+        {
+            position: "after",
+            currentServiceDate: "2026-09-14",
+            currentDateLabel: "현재 2026년 9월 14일",
+            month: "8월",
+            allowedDay: "7일",
+            excludedDay: "10일",
+            expectedDate: "2026-08-07",
+        },
+        {
+            position: "before",
+            currentServiceDate: "2026-06-15",
+            currentDateLabel: "현재 2026년 6월 15일",
+            month: "7월",
+            allowedDay: "6일",
+            excludedDay: "3일",
+            expectedDate: "2026-07-06",
+        },
+    ])("allows moving a session $position the window from the nearest edge month", ({
+        currentServiceDate, currentDateLabel, month, allowedDay, excludedDay, expectedDate,
+    }) => {
+        const { props } = renderDialog({
+            currentServiceDate,
+            windowStart: "2026-07-06",
+            windowEnd: "2026-08-07",
+        });
+
+        expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+        expect(screen.getByText(currentDateLabel)).toBeInTheDocument();
+        expect(screen.getByRole("combobox", { name: "연도" })).toHaveTextContent("2026년");
+        expect(screen.getByRole("combobox", { name: "월" })).toHaveTextContent(month);
+        expect(screen.getByRole("combobox", { name: "일" })).toHaveTextContent(/^일$/);
+        expect(screen.getByRole("button", { name: "수정" })).toBeDisabled();
+
+        fireEvent.click(screen.getByRole("combobox", { name: "일" }));
+        expect(screen.getByRole("option", { name: allowedDay })).toBeInTheDocument();
+        expect(screen.queryByRole("option", { name: excludedDay })).not.toBeInTheDocument();
+        fireEvent.click(screen.getByRole("option", { name: allowedDay }));
+        expect(screen.getByRole("button", { name: "수정" })).toBeEnabled();
+        fireEvent.click(screen.getByRole("button", { name: "수정" }));
+        expect(props.onApply).toHaveBeenCalledTimes(1);
+        expect(props.onApply).toHaveBeenCalledWith(expectedDate);
+    });
+
+    it.each([
+        { selectedServiceDate: "2026-09-14", month: "8월", day: "7일", expectedDate: "2026-08-07" },
+        { selectedServiceDate: "2026-07-18", month: "7월", day: "16일", expectedDate: "2026-07-16" },
+    ])("allows replacing an unselectable retained source date $selectedServiceDate", ({
+        selectedServiceDate, month, day, expectedDate,
+    }) => {
+        const { props } = renderDialog({
+            currentServiceDate: "2026-07-13",
+            selectedServiceDate,
+            windowStart: "2026-07-06",
+            windowEnd: "2026-08-07",
+        });
+
+        expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+        expect(screen.getByText("현재 2026년 7월 13일")).toBeInTheDocument();
+        expect(screen.getByRole("combobox", { name: "월" })).toHaveTextContent(month);
+        expect(screen.getByRole("combobox", { name: "일" })).toHaveTextContent(/^일$/);
+        expect(screen.getByRole("button", { name: "수정" })).toBeDisabled();
+        chooseOption("일", day);
+        fireEvent.click(screen.getByRole("button", { name: "수정" }));
+        expect(props.onApply).toHaveBeenCalledTimes(1);
+        expect(props.onApply).toHaveBeenCalledWith(expectedDate);
+    });
+
+    it("refuses a retained provisional date at apply time if the window has narrowed", () => {
+        const { rerender, props } = renderDialog({ windowStart: "2026-07-13", windowEnd: "2026-07-20" });
+        chooseOption("일", "14일");
+        rerender(<ServiceRecordDateSelectionDialog {...props} windowStart="2026-07-15" />);
+        fireEvent.click(screen.getByRole("button", { name: "수정" }));
+        expect(props.onApply).not.toHaveBeenCalled();
+        expect(screen.getByRole("alert")).toHaveTextContent("고를 수 있는 기간이 아니에요.");
+    });
+
     it("does not apply a provisional choice when cancelled", () => {
         const onApply = jest.fn();
         const onOpenChange = jest.fn();
@@ -195,8 +298,21 @@ describe("ServiceRecordDateSelectionDialog", () => {
         expect(isSelectableServiceRecordDate("2026-07-15", branchCalendar)).toBe(false);
         expect(getBusinessDayOptions(2026, 7, branchCalendar).map((option) => option.value)).not.toContain("15");
 
-        renderDialog({ calendar: branchCalendar, currentServiceDate: "2026-07-15" });
-        expect(screen.getByRole("alert")).toHaveTextContent("주말 또는 공휴일");
+        const { props } = renderDialog({ calendar: branchCalendar, currentServiceDate: "2026-07-15" });
+        expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+        expect(screen.getByText("현재 2026년 7월 15일")).toBeInTheDocument();
+        expect(screen.getByRole("combobox", { name: "연도" })).toHaveTextContent("2026년");
+        expect(screen.getByRole("combobox", { name: "월" })).toHaveTextContent("7월");
+        expect(screen.getByRole("combobox", { name: "일" })).toHaveTextContent(/^일$/);
+        expect(screen.getByRole("button", { name: "수정" })).toBeDisabled();
+
+        fireEvent.click(screen.getByRole("combobox", { name: "일" }));
+        expect(screen.queryByRole("option", { name: "15일" })).not.toBeInTheDocument();
+        fireEvent.click(screen.getByRole("option", { name: "16일" }));
+        expect(screen.getByRole("button", { name: "수정" })).toBeEnabled();
+        fireEvent.click(screen.getByRole("button", { name: "수정" }));
+        expect(props.onApply).toHaveBeenCalledTimes(1);
+        expect(props.onApply).toHaveBeenCalledWith("2026-07-16");
     });
 
     it("offers only the years the branch calendar covers and blocks a date outside them", () => {

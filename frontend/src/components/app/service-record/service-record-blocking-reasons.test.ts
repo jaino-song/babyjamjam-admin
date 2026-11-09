@@ -17,6 +17,12 @@ describe("describeScheduleBlockingReasons", () => {
         expect(lines[0].label).not.toMatch(/[A-Za-z]/);
     });
 
+    it("maps an out-of-window reason to the approved Korean copy", () => {
+        expect(describeScheduleBlockingReasons([
+            { code: "SERVICE_DATE_OUT_OF_RANGE", message: "Outside the allowed date window", sessionIndex: 2 },
+        ])[0].text).toBe("고를 수 있는 기간이 아니에요.");
+    });
+
     it("keeps one line per code for mixed codes, in first-seen order", () => {
         const lines = describeScheduleBlockingReasons([
             { code: "NON_SERVICE_DAY", message: "Session 5 is dated x", sessionIndex: 5 },

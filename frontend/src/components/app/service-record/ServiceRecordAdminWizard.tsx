@@ -182,6 +182,16 @@ function dateOnly(value: unknown): string {
     return /^\d{4}-\d{2}-\d{2}/.test(normalized) ? normalized.slice(0, 10) : "";
 }
 
+const CAREGIVER_DATE_WINDOW_DAYS = 7;
+
+function offsetCaseDate(value: unknown, days: number): string | null {
+    const date = dateOnly(value);
+    if (!date) return null;
+    const copy = new Date(`${date}T00:00:00.000Z`);
+    copy.setUTCDate(copy.getUTCDate() + days);
+    return copy.toISOString().slice(0, 10);
+}
+
 function isOutsidePeriod(serviceDate: string, startDate: unknown, endDate: unknown): boolean {
     const date = dateOnly(serviceDate);
     if (!date) return false;
@@ -1182,6 +1192,8 @@ export function ServiceRecordAdminWizard({
                 confirmBusy={busy} confirmError={error} data-component={`${ADMIN_WIZARD_COMPONENT}_commit-preview`} />
             <ServiceRecordDateSelectionDialog open={dateDialogOpen} onOpenChange={setDateDialogOpen}
                 currentServiceDate={String(draft._date || sourceDate)} calendar={calendar} sessionLabel={`${day}회차`}
+                windowStart={offsetCaseDate(overview.record?.startDate, -CAREGIVER_DATE_WINDOW_DAYS)}
+                windowEnd={offsetCaseDate(overview.record?.endDate, CAREGIVER_DATE_WINDOW_DAYS)}
                 onApply={selectDate} error={dateError} disabled={locked || !calendarReady}
                 data-component={`${ADMIN_WIZARD_COMPONENT}_date-selection-dialog`} />
             <Dialog open={Boolean(followPrompt)} onOpenChange={(open) => { if (!open) { setFollowPrompt(null); setDateDialogOpen(true); } }}>
