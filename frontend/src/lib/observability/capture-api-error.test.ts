@@ -63,6 +63,16 @@ describe("captureApiError", () => {
     expect(mockCaptureException).not.toHaveBeenCalled();
   });
 
+  it("ignores failures from removed schedule-change routes", () => {
+    captureApiError(createAxiosError({
+      status: 503,
+      method: "post",
+      url: "/schedule-change-requests/schedules/431/apply",
+    }));
+
+    expect(mockCaptureException).not.toHaveBeenCalled();
+  });
+
   it("reports a service-record server error once with sanitized endpoint context", () => {
     const error = createAxiosError({
       status: 503,

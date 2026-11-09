@@ -82,6 +82,17 @@ describe("mobile service-record Sentry scope", () => {
     });
   });
 
+  it("excludes removed schedule-change routes from feature errors and traces", () => {
+    const options = getSentryRuntimeOptions();
+    const path = "/api/schedule-change-requests/schedules/431/preview";
+
+    expect(options.beforeSend({ type: undefined, request: { url: path } })).toBeNull();
+    expect(options.tracesSampler({
+      name: `POST ${path}`,
+      inheritOrSampleWith: (rate: number) => rate,
+    })).toBe(0);
+  });
+
   it("samples only service-record traces", () => {
     const previousRate = process.env.NEXT_PUBLIC_SENTRY_TRACES_SAMPLE_RATE;
     process.env.NEXT_PUBLIC_SENTRY_TRACES_SAMPLE_RATE = "0.3";

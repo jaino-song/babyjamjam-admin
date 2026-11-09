@@ -498,7 +498,6 @@ export function ServiceRecordWizard({
     isRecordFinalized,
     lockedDays,
     nextOpenDay,
-    scheduleChangeBusy,
     hasServiceDateMismatch,
     defaultDate,
     onPhoneChange,
@@ -508,7 +507,6 @@ export function ServiceRecordWizard({
     onDeliveryTypeChange,
     onSaveHeader,
     onOpenDay,
-    onOpenScheduleChangePreview,
     onOpenServiceDateEditor,
     onServiceDateChange,
     onFieldChange,
@@ -863,14 +861,6 @@ export function ServiceRecordWizard({
                         {!readOnly && !adminMode && lockedDays.size < context.totalSessions && (
                             <div data-component={child("body_overview-actions")} data-slot="overview-actions" className="overview-actions">
                                 <button data-slot="btn" className="btn primary" disabled={isRecordFinalized} onClick={() => onOpenDay(nextOpenDay())}>{lockedDays.size ? "다음 회차 입력" : "기록 시작"}</button>
-                                <button
-                                    data-slot="btn"
-                                    className="btn ghost schedule-change"
-                                    disabled={isRecordFinalized || scheduleChangeBusy || Boolean(context.pendingScheduleChange)}
-                                    onClick={() => onOpenScheduleChangePreview()}
-                                >
-                                    {context.pendingScheduleChange ? "일정 변경 요청 대기 중" : "서비스 일정 변경"}
-                                </button>
                             </div>
                         )}
                     </>
@@ -938,16 +928,6 @@ export function ServiceRecordWizard({
                                         <p data-component={child("body_service-date-field_schedule-help")} data-slot="muted" className="muted">
                                             제공일자를 바꾸려면 일정 변경을 요청해 주세요.
                                         </p>
-                                        <button
-                                            data-component={child("body_service-date-field_schedule-change")}
-                                            data-slot="btn"
-                                            className="btn ghost"
-                                            type="button"
-                                            disabled={isRecordFinalized || scheduleChangeBusy || Boolean(context?.pendingScheduleChange)}
-                                            onClick={() => onOpenScheduleChangePreview()}
-                                        >
-                                            {context?.pendingScheduleChange ? "일정 변경 요청 대기 중" : "서비스 일정 변경"}
-                                        </button>
                                     </>
                                 ) : null}
                             </div>
@@ -1046,7 +1026,6 @@ export function ServiceRecordWizard({
                 )}
             </div>
             {slots?.submitModal}
-            {slots?.scheduleChangeModal}
             {slots?.serviceDateChangeModal}
             {slots?.errorNotification}
         </div>

@@ -19,7 +19,6 @@ export type ServiceRecordOperation =
   | "save-session"
   | "submit-session"
   | "finalize"
-  | "schedule-change"
   | "render";
 
 function getRequestPath(url: string | undefined): string {
@@ -36,7 +35,6 @@ function getServiceRecordOperation(path: string): ServiceRecordOperation {
   if (path.includes("/verify")) return "verify";
   if (path.includes("/context")) return "context";
   if (path.includes("/header")) return "save-header";
-  if (path.includes("/schedule-change")) return "schedule-change";
   if (path.includes("/finalize")) return "finalize";
   if (path.includes("/sessions/") && path.includes("/submit")) return "submit-session";
   if (path.includes("/sessions/")) return "save-session";

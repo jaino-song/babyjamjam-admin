@@ -28,8 +28,6 @@ const UUID_PATH_SEGMENT_PATTERN =
   /\/[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}(?=\/|$)/gi;
 const SERVICE_RECORD_SIGNAL_PATTERN =
   /service-record(?:s)?|service_record(?:s)?|service-feedback|service_feedback/i;
-const SERVICE_RECORD_SCHEDULE_CHANGE_PATTERN =
-  /\/schedule-change-requests\/schedules\/[^/]+\/(?:preview|apply)(?:\/|$)/i;
 
 function readSampleRate(value: string | undefined, fallback: number): number {
   if (!value) return fallback;
@@ -84,8 +82,7 @@ export function isServiceRecordSentrySignal(value: string | undefined): boolean 
   if (!value) return false;
 
   const path = value.split(/[?#]/, 1)[0] ?? value;
-  return SERVICE_RECORD_SIGNAL_PATTERN.test(path)
-    || SERVICE_RECORD_SCHEDULE_CHANGE_PATTERN.test(path);
+  return SERVICE_RECORD_SIGNAL_PATTERN.test(path);
 }
 
 function sanitizeUnknown(value: unknown, depth = 0): unknown {

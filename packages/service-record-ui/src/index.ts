@@ -34,7 +34,6 @@ export type {
 export type {
     PendingServiceDate,
     ProviderSlotProps,
-    ScheduleChangePreview,
     ServiceDateDisplaySlotProps,
     ServiceDateEditorSlotProps,
     ServiceRecordAdminSessionActionProps,

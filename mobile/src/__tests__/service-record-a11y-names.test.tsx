@@ -29,10 +29,10 @@ const makeProps = (overrides: Partial<ServiceRecordWizardProps> = {}): ServiceRe
     context: { totalSessions: 5, startDate: "2026-09-21", header: null, sessions: [] },
     header: validHeader, day: 1, pageIdx: 0, draft: { ...DEFAULT_DAILY_ANSWERS }, editing: false, clientSignature: null,
     busy: false, isRecordFinalized: false, lockedDays: new Set<number>(), nextOpenDay: () => 1,
-    scheduleChangeBusy: false, hasServiceDateMismatch: false, defaultDate: () => "2026-09-21",
+    hasServiceDateMismatch: false, defaultDate: () => "2026-09-21",
     onPhoneChange: jest.fn(), onSubmitPhone: jest.fn(), onBack: jest.fn(), onHeaderChange: jest.fn(),
     onDeliveryTypeChange: jest.fn(), onSaveHeader: jest.fn(), onOpenDay: jest.fn(),
-    onOpenScheduleChangePreview: jest.fn(), onServiceDateChange: jest.fn(), onFieldChange: jest.fn(),
+    onServiceDateChange: jest.fn(), onFieldChange: jest.fn(),
     onToggleMulti: jest.fn(), onSignatureChange: jest.fn(), onNextPage: jest.fn(),
     onOpenSubmitModal: jest.fn(), onEditSection: jest.fn(), ...overrides,
 });

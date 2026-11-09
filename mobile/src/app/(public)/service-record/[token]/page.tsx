@@ -246,7 +246,7 @@ export default function ServiceRecordPage() {
         ) => {
             const method = init.method ?? "GET";
             const monitoredPath = `/api/service-record/[Filtered]${path}`;
-            const operation = getServiceRecordOperation(path);
+            const operation = getServiceRecordOperation(path, method);
 
             try {
                 const url = `/api/service-record/${token}${path}`;
