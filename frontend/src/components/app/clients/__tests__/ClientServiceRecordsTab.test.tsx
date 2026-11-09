@@ -1,5 +1,7 @@
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 
+import { createProblemDetails } from "@babyjamjam/shared";
+
 import { ClientServiceRecordsTab } from "../ClientServiceRecordsTab";
 import { STATUS_SURFACE } from "@/components/app/ui/status-surface";
 import { useBusinessDayCalendar } from "@/hooks/useBusinessDayCalendar";
@@ -13,10 +15,15 @@ import type {
 
 const mutateAsync = jest.fn();
 const toast = jest.fn();
+const mockKeepPeriod = jest.fn();
+const mockFitPeriod = jest.fn();
+let mockPeriodPending = false;
 const mockUseGetAuthUser = jest.fn();
 const TEST_COMPONENT = "desktop_clients-detail_panel_service-records";
 
 jest.mock("@/features/service-records/hooks/use-service-records", () => ({
+    useKeepPeriodMismatch: () => ({ isPending: mockPeriodPending, mutateAsync: mockKeepPeriod }),
+    useFitPeriodMismatch: () => ({ isPending: mockPeriodPending, mutateAsync: mockFitPeriod }),
     useSendServiceRecordLink: () => ({
         isPending: false,
         mutateAsync,
@@ -134,6 +141,9 @@ describe("ClientServiceRecordsTab", () => {
     beforeEach(() => {
         mutateAsync.mockReset();
         toast.mockReset();
+        mockKeepPeriod.mockReset();
+        mockFitPeriod.mockReset();
+        mockPeriodPending = false;
         mockResendModalRenders.length = 0;
         mockUseGetAuthUser.mockReturnValue({
             data: { role: "user", branchRole: "manager" },
@@ -1544,6 +1554,159 @@ describe("ClientServiceRecordsTab", () => {
         expect(screen.getAllByRole("alert")).toHaveLength(1);
     });
 
+    describe("period mismatch", () => {
+        function overviewFor(sessions: ServiceRecordSession[]): ServiceRecordOverview {
+            return {
+                assignments: [createAssignment(1, "none")],
+                record: {
+                    id: "case-1", status: "IN_PROGRESS", startDate: "2026-08-10", endDate: "2026-08-20",
+                    totalSessions: 6, completedAt: null, finalizationDueAt: null, finalizedAt: null,
+                    documentsCompletedAt: null, lastError: null, header: null, sessions, signatureDocs: [],
+                },
+            };
+        }
+        function session(index: number, date: string, keptAt: string | null = null): ServiceRecordSession {
+            return { ...createSession(index), serviceDate: `${date}T00:00:00.000Z`, locked: true, periodMismatchKeptAt: keptAt };
+        }
+        function tab(overview: ServiceRecordOverview) {
+            return <ClientServiceRecordsTab data-component={TEST_COMPONENT} overview={overview} clientId={100} isLoading={false} isError={false} />;
+        }
+        const title = "서비스 기간 밖에 기록된 회차가 있어요";
+
+        it.each([
+            ["2026-08-10", 1, false, false],
+            ["2026-08-20", 1, false, false],
+            ["2026-08-03", 1, true, false],
+            ["2026-08-27", 1, true, false],
+            ["2026-08-02", 1, false, true],
+            ["2026-08-28", 1, false, true],
+            ["2026-08-15", 7, false, true],
+        ])("partitions %s index %s (badge=%s legacy=%s)", (date, index, badge, legacy) => {
+            const { container } = render(tab(overviewFor([session(index, date)])));
+            const main = container.querySelector(`[data-component="${TEST_COMPONENT}_sessions"]`)!;
+            const outside = container.querySelector(`[data-component="${TEST_COMPONENT}_out-of-period-sessions"]`);
+            expect(Boolean(outside)).toBe(legacy);
+            expect(within(main as HTMLElement).queryByText("기간 밖") !== null).toBe(badge);
+            expect(screen.queryByText(title) !== null).toBe(badge);
+            expect(legacy ? outside : main).toHaveTextContent(`${index}회차 · ${date.replaceAll("-", ".")}`);
+        });
+
+        it.each([
+            [[session(1, "2026-08-07")], "고객 정보의 서비스 시작일을 2026.08.07로 바꿀까요?"],
+            [[session(1, "2026-08-23")], "고객 정보의 서비스 종료일을 2026.08.23으로 바꿀까요?"],
+            [[session(3, "2026-08-23"), session(1, "2026-08-07"), session(2, "2026-08-05")], "고객 정보의 서비스 시작일을 2026.08.05로, 종료일을 2026.08.23으로 바꿀까요?"],
+        ])("describes only the unkept dates and proposes their extremes", (sessions, question) => {
+            render(tab(overviewFor(sessions)));
+            const alert = screen.getByText(title).closest('[role="alert"]')!;
+            expect(within(alert as HTMLElement).getByText(question)).toBeInTheDocument();
+            const lines = [...alert.querySelectorAll("p")].map((line) => line.textContent);
+            expect(lines[0]).toContain("1회차 서비스 제공일");
+            for (const item of sessions) {
+                expect(lines).toContain(`${item.sessionIndex}회차 서비스 제공일(${item.serviceDate.slice(0, 10).replaceAll("-", ".")})이 고객의 서비스 기간(2026.08.10 ~ 2026.08.20)보다 ${item.serviceDate.slice(0, 10) < "2026-08-10" ? "앞이에요." : "뒤예요."}`);
+            }
+        });
+
+        it("keeps the badge but hides the alert for kept sessions", () => {
+            render(tab(overviewFor([session(1, "2026-08-07", "2026-08-08T00:00:00Z")])));
+            expect(screen.getByText("기간 밖")).toBeInTheDocument();
+            expect(screen.queryByText(title)).not.toBeInTheDocument();
+            expect(screen.queryByRole("button", { name: "유지" })).not.toBeInTheDocument();
+        });
+
+        it("ignores drafts, missing periods, and assignment-only records for mismatch UI", () => {
+            const overview = overviewFor([{ ...session(1, "2026-08-07"), locked: false }]);
+            const { rerender } = render(tab(overview));
+            expect(screen.queryByText("기간 밖")).not.toBeInTheDocument();
+            overview.record!.sessions = [session(1, "2026-08-07")];
+            overview.record!.startDate = null;
+            rerender(tab(overview));
+            expect(screen.queryByText(title)).not.toBeInTheDocument();
+            overview.record!.startDate = "2026-08-10";
+            overview.record!.endDate = null;
+            rerender(tab(overview));
+            expect(screen.queryByText(title)).not.toBeInTheDocument();
+            rerender(tab({ assignments: [{ ...createAssignment(1, "none"), sessions: [session(1, "2026-06-30")] }] }));
+            expect(screen.queryByText("기간 밖")).not.toBeInTheDocument();
+            expect(screen.queryByText(title)).not.toBeInTheDocument();
+        });
+
+        it("keeps all and only unkept mismatch indexes, then retains badges after refresh", async () => {
+            mockKeepPeriod.mockResolvedValue({ keptSessionIndexes: [1, 3] });
+            const overview = overviewFor([session(3, "2026-08-23"), session(2, "2026-08-05", "kept"), session(1, "2026-08-07")]);
+            const { rerender } = render(tab(overview));
+            expect(screen.getByText("고객 정보의 서비스 시작일을 2026.08.07로, 종료일을 2026.08.23으로 바꿀까요?")).toBeInTheDocument();
+            fireEvent.click(screen.getByRole("button", { name: "유지" }));
+            await waitFor(() => expect(mockKeepPeriod).toHaveBeenCalledWith({ clientId: 100, sessionIndexes: [1, 3] }));
+            await waitFor(() => expect(screen.getByRole("button", { name: "유지" })).toBeEnabled());
+            rerender(tab(overviewFor(overview.record!.sessions.map((item) => ({ ...item, periodMismatchKeptAt: "2026-08-08T00:00:00Z" })))));
+            expect(screen.queryByText(title)).not.toBeInTheDocument();
+            expect(screen.getAllByText("기간 밖")).toHaveLength(3);
+        });
+
+        it.each([
+            ["2026-08-07", "2026-08-20", "서비스 시작일을 2026.08.07로 바꿨어요"],
+            ["2026-08-10", "2026-08-23", "서비스 종료일을 2026.08.23으로 바꿨어요"],
+            ["2026-08-07", "2026-08-23", "서비스 시작일과 종료일을 바꿨어요"],
+        ])("uses the fit response for toast (%s – %s)", async (startDate, endDate, description) => {
+            mockFitPeriod.mockResolvedValue({ startDate, endDate });
+            const overview = overviewFor([session(1, "2026-08-07")]);
+            const { rerender } = render(tab(overview));
+            fireEvent.click(screen.getByRole("button", { name: "변경" }));
+            await waitFor(() => expect(toast).toHaveBeenCalledWith({ variant: "success", description }));
+            expect(mockFitPeriod).toHaveBeenCalledWith({ clientId: 100 });
+            // A refetched case whose period covers the date has neither warning nor badge.
+            rerender(tab({ ...overview, record: { ...overview.record!, startDate: "2026-08-07" } }));
+            expect(screen.queryByText(title)).not.toBeInTheDocument();
+            expect(screen.queryByText("기간 밖")).not.toBeInTheDocument();
+        });
+
+        it("does not claim a period change when fit returns unchanged dates", async () => {
+            mockFitPeriod.mockResolvedValue({ startDate: "2026-08-10", endDate: "2026-08-20" });
+            render(tab(overviewFor([session(1, "2026-08-07")])));
+            fireEvent.click(screen.getByRole("button", { name: "변경" }));
+            await waitFor(() => expect(screen.getByRole("button", { name: "변경" })).toBeEnabled());
+            expect(toast).not.toHaveBeenCalled();
+        });
+
+        it.each(["유지", "변경"])("disables both actions during %s and preserves the alert on failure", async (label) => {
+            let reject!: (error: Error) => void;
+            const mutation = label === "유지" ? mockKeepPeriod : mockFitPeriod;
+            mutation.mockImplementation(() => new Promise((_, fail) => { reject = fail; }));
+            render(tab(overviewFor([session(1, "2026-08-07")])));
+            fireEvent.click(screen.getByRole("button", { name: label }));
+            expect(screen.getByRole("button", { name: "유지" })).toBeDisabled();
+            expect(screen.getByRole("button", { name: "변경" })).toBeDisabled();
+            await act(async () => reject(new Error("private transport detail")));
+            expect(toast).toHaveBeenCalledWith({ variant: "destructive", description: "서비스 기간 처리에 실패했어요" });
+            expect(screen.getByText(title)).toBeInTheDocument();
+            expect(screen.getByRole("button", { name: label })).toBeEnabled();
+        });
+
+        it("shows a registered conflict message and leaves the warning available", async () => {
+            const problem = createProblemDetails({ code: "EMPLOYEE_SCHEDULE_OVERLAP", requestId: "req-period", outcome: "NOT_APPLIED" });
+            mockFitPeriod.mockRejectedValue({ response: { status: 409, data: problem } });
+            render(tab(overviewFor([session(1, "2026-08-07")])));
+            fireEvent.click(screen.getByRole("button", { name: "변경" }));
+            await waitFor(() => expect(toast).toHaveBeenCalledWith({ variant: "destructive", description: "같은 고객의 활성 일정과 기간이 겹쳐요." }));
+            expect(screen.getByText(title)).toBeInTheDocument();
+        });
+
+        it("disables both actions while a mutation hook remains pending during refetch", () => {
+            mockPeriodPending = true;
+            render(tab(overviewFor([session(1, "2026-08-07")])));
+            expect(screen.getByRole("button", { name: "유지" })).toBeDisabled();
+            expect(screen.getByRole("button", { name: "변경" })).toBeDisabled();
+        });
+
+        it("hides mutation controls for lower branch roles while leaving the warning visible", () => {
+            mockUseGetAuthUser.mockReturnValue({ data: { role: "admin", branchRole: "user" } });
+            render(tab(overviewFor([session(1, "2026-08-07")])));
+            expect(screen.getByText(title)).toBeInTheDocument();
+            expect(screen.queryByRole("button", { name: "유지" })).not.toBeInTheDocument();
+            expect(screen.queryByRole("button", { name: "변경" })).not.toBeInTheDocument();
+        });
+    });
+
     it("shows actual-period slots separately from preserved outside-period records", () => {
         const assignment = createAssignment(1, "none");
         const outsideSession: ServiceRecordSession = {
@@ -1571,7 +1734,11 @@ describe("ClientServiceRecordsTab", () => {
                 documentsCompletedAt: null,
                 lastError: null,
                 header: null,
-                sessions: [outsideSession],
+                sessions: [outsideSession, {
+                    ...createSession(1),
+                    locked: true,
+                    serviceDate: "2026-08-02T00:00:00.000Z",
+                }],
                 signatureDocs: [],
             },
             assignments: [assignment],
@@ -1588,10 +1755,11 @@ describe("ClientServiceRecordsTab", () => {
 
         expect(
             container.querySelector(`[data-component="${TEST_COMPONENT}_sessions"]`),
-        ).toHaveTextContent("0/6 제출완료");
+        ).toHaveTextContent("1/6 제출완료");
+        expect(screen.getByText("기간 밖")).toBeInTheDocument();
         expect(screen.getAllByText("기간 외 기록")).toHaveLength(2);
         expect(screen.getByText(/7회차 · 2026.08.11/)).toBeInTheDocument();
-        expect(screen.getAllByText("날짜 미정")).toHaveLength(6);
+        expect(screen.getAllByText("날짜 미정")).toHaveLength(5);
         expect(
             container.querySelector(`[data-component="${TEST_COMPONENT}_out-of-period-sessions"]`),
         ).toBeInTheDocument();

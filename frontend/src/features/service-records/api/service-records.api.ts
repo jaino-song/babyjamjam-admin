@@ -1,5 +1,7 @@
 import { api } from "@/lib/api/client";
 import {
+    normalizeKeepPeriodMismatch,
+    normalizeFitPeriodMismatch,
     normalizeServiceRecordCaregiverEditChanges,
     normalizeServiceRecordRevisionChanges,
     normalizeServiceRecordRevisionDocumentSummary,
@@ -179,6 +181,12 @@ export const serviceRecordsApi = {
             ...response,
             data: normalizeServiceRecordRevisionDocumentSummary(response.data),
         } as typeof response & { data: ServiceRecordRevisionDocumentSummary })),
+    keepPeriodMismatch: (clientId: number, sessionIndexes: number[]) =>
+        api.post<unknown>(`/admin/service-records/client/${clientId}/period-mismatch/keep`, { sessionIndexes })
+            .then((response) => ({ ...response, data: normalizeKeepPeriodMismatch(response.data) })),
+    fitPeriodMismatch: (clientId: number) =>
+        api.post<unknown>(`/admin/service-records/client/${clientId}/period-mismatch/fit`, {})
+            .then((response) => ({ ...response, data: normalizeFitPeriodMismatch(response.data) })),
     prepareLink: (scheduleId: number, request: PrepareServiceRecordLinkRequest = {}) =>
         api.post<PrepareServiceRecordLinkResponse>(
             `/admin/service-records/schedules/${scheduleId}/prepare-link`,
