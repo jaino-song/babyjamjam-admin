@@ -156,3 +156,19 @@ describe("OptionButtonGroup", () => {
     expect(new Set(values).size).toBe(values.length);
   });
 });
+
+it("preserves shared default option and check glyph sizes", () => {
+  setup({ selected: ["none"] });
+  expect(screen.getByRole("button", { name: "이상없음" })).toHaveClass("text-sm");
+  expect(document.querySelector(`[data-component="${BASE}_option-0_indicator"]`)).toHaveClass("text-[10px]", "leading-none");
+});
+
+it.each(["multi", "single"] as const)("allows caregiver option and glyph sizes in %s mode", (mode) => {
+  setup({ mode, selected: ["none"], optionClassNames: { option: "text-base", indicator: "text-xs leading-none" } });
+  for (const button of screen.getAllByRole("button")) {
+    expect(button).toHaveClass("text-base");
+    expect(button).not.toHaveClass("text-sm");
+    expect(button.querySelector('[aria-hidden="true"]')).toHaveClass("text-xs", "leading-none");
+    expect(button.querySelector('[aria-hidden="true"]')).not.toHaveClass("text-[10px]");
+  }
+});

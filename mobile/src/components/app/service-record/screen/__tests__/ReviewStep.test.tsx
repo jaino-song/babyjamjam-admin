@@ -173,3 +173,12 @@ describe("ReviewStep", () => {
         expect(screen.getByRole("region", { name: "산모" })).toBeInTheDocument();
     });
 });
+
+it("enlarges date feedback, submitted badge and footer text one step", () => {
+    render(<ReviewStep {...makeProps({ editing: true, context: ownLockedContext, draft: { _date: "2026-09-22" }, serviceDateError: "날짜 오류" })} />);
+    expect(screen.getByText("다른 회차 날짜는 바뀌지 않아요.")).toHaveClass("text-sm");
+    expect(screen.getByRole("alert")).toHaveClass("text-sm");
+    expect(screen.getByText("제출완료")).toHaveClass("text-xs");
+    expect(screen.getByRole("button", { name: "기록 삭제" })).toHaveClass("text-base");
+    expect(document.querySelector('[data-component$="_body_confirmation-action"] > button:last-child')).toHaveClass("text-base");
+});

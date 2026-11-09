@@ -52,14 +52,14 @@ export function ServiceRecordStepHeader({
     >
       <h1
         data-component={`${dataComponent}_title`}
-        className="m-0 text-[15px] font-bold tracking-tight"
+        className="m-0 text-lg font-bold tracking-tight"
       >
         {title}
       </h1>
       {meta || crumbs ? (
         <div
           data-component={`${dataComponent}_meta-row`}
-          className="mt-0.5 flex items-center justify-between gap-3 text-[11.5px]"
+          className="mt-0.5 flex items-center justify-between gap-3 text-sm"
         >
           <div data-component={`${dataComponent}_meta-row_meta`} className="min-w-0 opacity-90">
             {meta}

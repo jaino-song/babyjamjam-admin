@@ -66,7 +66,7 @@ export function CountUnitField({
       data-component={dataComponent}
       data-source-component={SOURCE_COMPONENT}
       className={cn(
-        "flex h-12 min-w-0 items-center gap-2 rounded-[12px] border-[1.5px] bg-white px-3 text-sm text-v3-text transition-colors",
+        "flex h-12 min-w-0 items-center gap-2 rounded-[12px] border-[1.5px] bg-white px-3 text-base text-v3-text transition-colors",
         invalid ? "border-v3-burgundy!" : "border-v3-border! focus-within:border-v3-primary!",
         disabled && "bg-v3-dim-white",
         className,
@@ -96,7 +96,7 @@ export function CountUnitField({
         onBlur={onBlur}
         onFocus={onFocus}
         className={cn(
-          "h-full min-w-0 flex-1 bg-transparent text-right text-[17px] font-semibold text-v3-dark outline-none placeholder:font-normal placeholder:text-v3-text-muted placeholder:opacity-60 disabled:cursor-not-allowed disabled:text-v3-text-muted",
+          "h-full min-w-0 flex-1 bg-transparent text-right text-xl font-semibold text-v3-dark outline-none placeholder:font-normal placeholder:text-v3-text-muted placeholder:opacity-60 disabled:cursor-not-allowed disabled:text-v3-text-muted",
           type === "number" &&
             "[appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none",
         )}

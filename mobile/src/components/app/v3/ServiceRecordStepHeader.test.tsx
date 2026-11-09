@@ -74,3 +74,9 @@ describe("ServiceRecordStepHeader", () => {
     }
   });
 });
+
+it("enlarges the title to 18px and metadata to 14px", () => {
+  render(<ServiceRecordStepHeader data-component={BASE} title="제목" meta="관리사" progress={0} />);
+  expect(screen.getByRole("heading")).toHaveClass("text-lg");
+  expect(screen.getByText("관리사").parentElement).toHaveClass("text-sm");
+});

@@ -98,3 +98,10 @@ describe("DayCard", () => {
     }
   });
 });
+
+it("enlarges the session number, date and status by one size step", () => {
+  render(card());
+  expect(screen.getByText("3")).toHaveClass("text-xl", "leading-tight");
+  expect(screen.getByText("2026.09.21")).toHaveClass("text-sm");
+  expect(screen.getByText("입력 가능")).toHaveClass("text-xs");
+});

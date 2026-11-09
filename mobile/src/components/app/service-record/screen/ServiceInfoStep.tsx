@@ -42,7 +42,7 @@ const SOURCE_COMPONENT = "ServiceInfoStep";
 
 const FIELD_KEYS = ["momName", "momBirth", "babyName", "babyBirth", "deliveryType", "babyWeight"] as const;
 
-const READONLY_ROW_CLASS = "flex min-h-11 items-center justify-between gap-3 rounded-[12px] bg-v3-dim-white px-3.5 py-2 text-sm text-v3-text";
+const READONLY_ROW_CLASS = "flex min-h-11 items-center justify-between gap-3 rounded-[12px] bg-v3-dim-white px-3.5 py-2 text-base text-v3-text";
 
 export type ServiceInfoStepProps = Pick<
     ServiceRecordWizardProps,
@@ -123,12 +123,12 @@ export function ServiceInfoStep({
                     variant="ghost"
                     size="sm"
                     data-component={child("body_service-back")}
-                    className="-ml-3 self-start text-v3-text-muted"
+                    className="text-sm -ml-3 self-start text-v3-text-muted"
                     onClick={onBack}
                 >
                     {BACK_LABEL}
                 </Button>
-                <div data-component={child("body_service-title")} className="text-lg font-bold text-v3-dark">
+                <div data-component={child("body_service-title")} className="text-xl font-bold text-v3-dark">
                     {SERVICE_TITLE}
                 </div>
                 <div data-component={child("body_readonly-row")} data-slot="ro" className={READONLY_ROW_CLASS}>
@@ -156,6 +156,7 @@ export function ServiceInfoStep({
                                     message={message}
                                 />
                                 <OptionButtonGroup
+                                    optionClassNames={{ option: "text-base", indicator: "text-xs leading-none" }}
                                     data-component={deliveryComponent}
                                     mode="single"
                                     labelledBy={labelId}
@@ -190,7 +191,7 @@ export function ServiceInfoStep({
                             <Input
                                 id={inputId}
                                 data-component={`${inputComponent}_control`}
-                                className="text-base focus-visible:border-v3-primary! aria-[invalid=true]:border-v3-burgundy!"
+                                className="text-lg focus-visible:border-v3-primary! aria-[invalid=true]:border-v3-burgundy!"
                                 placeholder={field.ph}
                                 inputMode={field.inputMode}
                                 maxLength={HEADER_DATE_KEYS.includes(key) ? 10 : undefined}
@@ -213,6 +214,7 @@ export function ServiceInfoStep({
             </div>
             <StickyActionBar data-component={child("body_service-actions")}>
                 <Button
+                    className="text-base"
                     type="button"
                     variant="v3"
                     size="md"

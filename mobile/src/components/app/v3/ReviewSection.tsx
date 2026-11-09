@@ -51,7 +51,7 @@ export function ReviewSection({
         <span
           id={titleId}
           data-component={`${dataComponent}_header_title`}
-          className={cn("inline-block rounded-[6px] px-[7px] py-0.5 text-[10.5px] font-extrabold", TAG_TONE_CLASS[tone])}
+          className={cn("inline-block rounded-[6px] px-[7px] py-0.5 text-xs font-extrabold", TAG_TONE_CLASS[tone])}
         >
           {title}
         </span>
@@ -61,7 +61,7 @@ export function ReviewSection({
             data-component={`${dataComponent}_header_edit`}
             aria-label={`${title} 수정`}
             onClick={onEdit}
-            className="min-h-8 rounded-[6px] px-1 text-[12.5px] font-bold text-v3-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-v3-primary"
+            className="min-h-8 rounded-[6px] px-1 text-sm font-bold text-v3-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-v3-primary"
           >
             {editLabel}
           </button>
@@ -111,7 +111,7 @@ export function ReviewRow({
       data-component={dataComponent}
       data-source-component={ROW_SOURCE_COMPONENT}
       className={cn(
-        "min-w-0 rounded-[10px] border border-v3-border! bg-v3-dim-white px-2.5 py-2 text-[13px]",
+        "min-w-0 rounded-[10px] border border-v3-border! bg-v3-dim-white px-2.5 py-2 text-base",
         note ? "block" : "flex justify-between gap-3",
         className,
       )}

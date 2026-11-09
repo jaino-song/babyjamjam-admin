@@ -66,7 +66,7 @@ export function OverviewStep({
                 className="flex min-w-0 flex-1 flex-col gap-3.5 px-4 pb-6 pt-4"
             >
                 <div className="flex items-center justify-between gap-2">
-                    <div data-component={child("body_overview-title")} className="text-lg font-bold text-v3-dark">
+                    <div data-component={child("body_overview-title")} className="text-xl font-bold text-v3-dark">
                         {OVERVIEW_TITLE}
                     </div>
                     {onOpenGuide ? (
@@ -75,14 +75,14 @@ export function OverviewStep({
                             variant="link"
                             size="sm"
                             data-component={child("body_overview-guide")}
-                            className="h-auto px-1 py-1 text-[13px] font-semibold text-v3-primary no-underline"
+                            className="h-auto px-1 py-1 text-base font-semibold text-v3-primary no-underline"
                             onClick={onOpenGuide}
                         >
                             {OPEN_GUIDE_LABEL}
                         </Button>
                     ) : null}
                 </div>
-                <p data-component={child("body_overview-help")} className="text-sm text-v3-text-muted">
+                <p data-component={child("body_overview-help")} className="text-base text-v3-text-muted">
                     {OVERVIEW_HELP_COPY}
                 </p>
                 <DayCardGrid data-component={child("body_day-grid")}>
@@ -116,7 +116,7 @@ export function OverviewStep({
                         variant="v3"
                         size="md"
                         data-component={child("body_overview-start")}
-                        className="h-auto min-h-[46px] whitespace-normal break-keep py-2 leading-tight"
+                        className="text-base h-auto min-h-[46px] whitespace-normal break-keep py-2 leading-tight"
                         disabled={isRecordFinalized}
                         onClick={() => onOpenDay(nextSessionIndex)}
                     >
