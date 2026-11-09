@@ -51,9 +51,9 @@ describe("DayPageStep", () => {
         render(<DayPageStep {...makeProps()} />);
 
         expect(screen.getByRole("button", { name: "이전" })).toBeInTheDocument();
-        expect(document.querySelector(`[data-component="${ROOT}_body_date-chip"]`)).toHaveTextContent("1회차");
+        expect(document.querySelector(`[data-component="${ROOT}_body_date-chip"]`)).toHaveTextContent(/^1회차 · 2026\.09\.21$/);
         expect(document.querySelector(`[data-component="${ROOT}_body_day-title"]`)).toHaveTextContent("산모 기록");
-        expect(screen.getByRole("textbox", { name: "서비스 제공일" })).toHaveValue("1회차 · 2026.09.21");
+        expect(screen.getByRole("textbox", { name: "서비스 제공일" })).toHaveValue("2026-09-21");
         expect(screen.getByRole("group", { name: /회음절개부위/ })).toBeInTheDocument();
         expect(screen.getByRole("radiogroup", { name: /좌욕/ })).toBeInTheDocument();
         expect(screen.getByRole("spinbutton", { name: "식사" })).toBeInTheDocument();
@@ -134,6 +134,7 @@ describe("DayPageStep", () => {
             const { rerender } = render(<DayPageStep {...props} />);
             const input = screen.getByRole("textbox", { name: "서비스 제공일" });
             expect(input).toHaveValue("");
+            expect(document.querySelector(`[data-component="${ROOT}_body_date-chip"]`)).toHaveTextContent(/^1회차$/);
             expect(input).toHaveAttribute("placeholder", "날짜를 선택하세요");
             expect(input).toHaveAttribute("readonly");
             await user.click(input);
@@ -143,7 +144,8 @@ describe("DayPageStep", () => {
             expect(input).toHaveFocus();
             expect(input).toHaveAttribute("aria-invalid", "true");
             rerender(<DayPageStep {...props} draft={completeFirstPage()} />);
-            expect(input).toHaveValue("1회차 · 2026.09.21");
+            expect(input).toHaveValue("2026-09-21");
+            expect(document.querySelector(`[data-component="${ROOT}_body_date-chip"]`)).toHaveTextContent(/^1회차 · 2026\.09\.21$/);
             await user.click(screen.getByRole("button", { name: "다음" }));
             expect(props.onNextPage).toHaveBeenCalledTimes(1);
         });
