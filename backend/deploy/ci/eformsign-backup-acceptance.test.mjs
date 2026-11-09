@@ -119,15 +119,16 @@ test("contract paths, duplicate numbering, mtime and success", async () => {
     } finally { env.close(); }
 });
 
-test("a reissued document keeps the old file and takes the next number", async () => {
+test("a reissued document overwrites its own files instead of taking the next number", async () => {
     const env = await setup([contractA]);
     try {
         assert.equal(await env.run(), 0);
         env.state.docs = [makeDoc({ ...contractA, body: "A-v2" })];
         assert.equal(await env.run(), 0);
         const base = join(env.archive, "서비스계약서");
-        assert.equal(await readFile(join(base, "서비스계약서_홍길동_2026-11-01.pdf"), "utf8"), "A:document");
-        assert.equal(await readFile(join(base, "서비스계약서_홍길동_2026-11-01 (2).pdf"), "utf8"), "A-v2:document");
+        assert.equal(await readFile(join(base, "서비스계약서_홍길동_2026-11-01.pdf"), "utf8"), "A-v2:document");
+        assert.equal(await readFile(join(base, "감사추적", "[감사추적]_서비스계약서_홍길동_2026-11-01.pdf"), "utf8"), "A-v2:audit_trail");
+        assert.deepEqual((await readdir(base)).filter((n) => n.endsWith(".pdf")), ["서비스계약서_홍길동_2026-11-01.pdf"]);
     } finally { env.close(); }
 });
 

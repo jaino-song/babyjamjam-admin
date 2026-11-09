@@ -26,7 +26,17 @@ function chunks() {
     return [2, 0, 1].map((i) => document(String(i + 1), { kind: 'service_record',
         serviceRecordChunk: { caseId: 'case-1', snapshotVersion: 1, chunkIndex: i, chunkCount: 3, firstSessionIndex: i * 10 + 1 } }));
 }
-const key = (doc) => `doc:${doc.docId}:${doc.files[0].sha256}:${doc.files[1].sha256}`;
+const key = (doc) => `doc:${doc.docId}`;
+const fingerprint = (doc) => ['document', 'audit_trail'].map((type) => doc.files.find((file) => file.fileType === type)?.sha256 ?? '').join(':');
+// Replace a document's files in place (same fileIds, new content); a null body removes that file.
+function setFiles(doc, bodies) {
+    doc.files = Object.entries(bodies).filter(([, body]) => body !== null).map(([fileType, body]) => {
+        const content = Buffer.from(body);
+        return { fileId: `${doc.docId}-${fileType}`, fileType, content, sha256: sha(content), byteSize: content.length };
+    });
+    return doc;
+}
+const reviewDoc = (id, overrides = {}) => setFiles(document(id, { completed: false, ...overrides }), { document: `${id}:review`, audit_trail: null });
 async function tree(root, prefix = '') {
     const result = [];
     for (const entry of await readdir(join(root, prefix), { withFileTypes: true })) {
@@ -117,10 +127,12 @@ async function assertReport(env, expected) {
     assert.ok(Date.parse(body.finishedAt) >= Date.parse(body.startedAt));
     for (const [field, value] of Object.entries(expected)) assert.deepEqual(body[field], value, field);
     const state = await env.state();
-    assert.equal(state.version, 1);
+    assert.equal(state.version, 2);
     for (const unit of Object.values(state.units)) {
         assert.equal(Object.keys(unit.files).length, 2);
+        assert.equal(typeof unit.fingerprint, 'string');
         for (const [path, bytes] of Object.entries(unit.files)) {
+            if (bytes === null) continue;
             try { assert.equal((await stat(join(env.archiveDir, path))).size, bytes); }
             catch (error) { if (error.code !== 'ENOENT') throw error; }
         }
@@ -151,7 +163,7 @@ test('1. two contracts and single record: exact paths, times, state, Drive argv'
     }
     assert.equal(env.api.listRequests.length, 3);
     await assertReport(env, { status: 'success', driveStatus: 'ok', totalDocs: 3, savedFiles: 6, skippedFiles: 0, failedFiles: 0, limited: false, failures: [] });
-    assert.deepEqual(JSON.parse(await readFile(env.rcloneLog, 'utf8')), ['copy', '--immutable', env.archiveDir, 'fake:archive']);
+    assert.deepEqual(JSON.parse(await readFile(env.rcloneLog, 'utf8')), ['copy', '--checksum', env.archiveDir, 'fake:archive']);
 });
 
 test('2. second run skips all six files without any file request', async (t) => {
@@ -167,24 +179,25 @@ test('2. second run skips all six files without any file request', async (t) => 
     await assertReport(env, { status: 'success', savedFiles: 0, skippedFiles: 6 });
 });
 
-test('3. naming uses createdAt, keeps names on run two, document-only reissue takes (3)', async (t) => {
+test('3. naming uses createdAt, keeps names on run two, a reissued document overwrites its own files', async (t) => {
     const early = document('1');
     const late = document('2');
     const env = await setup(t, [late, early]);
     assert.equal((await env.run()).code, 0);
     const before = await env.state();
     assert.equal((await env.run()).code, 0);
-    early.files[0] = { ...early.files[0], content: Buffer.from('reissued') };
-    early.files[0].sha256 = sha(early.files[0].content);
-    early.files[0].byteSize = early.files[0].content.length;
+    setFiles(early, { document: 'reissued', audit_trail: '1:audit_trail' });
     assert.equal((await env.run()).code, 0);
-    for (const [suffix, content] of [['', '1:document'], [' (2)', '2:document'], [' (3)', 'reissued']]) {
+    for (const [suffix, content] of [['', 'reissued'], [' (2)', '2:document']]) {
         assert.equal(await env.bytes(`서비스계약서/${base}${suffix}.pdf`), content);
         assert.equal(await env.bytes(`서비스계약서/감사추적/[감사추적]_${base}${suffix}.pdf`), suffix === ' (2)' ? '2:audit_trail' : '1:audit_trail');
     }
+    assert.equal((await env.files()).length, 4);
     const after = await env.state();
-    for (const [unitKey, unit] of Object.entries(before.units)) assert.deepEqual(after.units[unitKey], unit);
-    assert.equal(Object.keys(after.units).length, 3);
+    assert.deepEqual(after.units[key(late)], before.units[key(late)]);
+    assert.deepEqual(Object.keys(after.units[key(early)].files), Object.keys(before.units[key(early)].files));
+    assert.equal(after.units[key(early)].fingerprint, fingerprint(early));
+    assert.equal(Object.keys(after.units).length, 2);
     await assertReport(env, { status: 'success', savedFiles: 2, skippedFiles: 2 });
 });
 
@@ -243,9 +256,10 @@ async function assertMerge(env, docs) {
     }
     const state = await env.state();
     const chunk = ordered[0].serviceRecordChunk;
-    const mergedKey = `merged:${chunk.caseId}:${chunk.snapshotVersion}:${ordered.map((doc) => doc.files[0].sha256).join(',')}`;
+    const mergedKey = `merged:${chunk.caseId}:${chunk.snapshotVersion}`;
     assert.deepEqual(state.units[mergedKey], { files: Object.fromEntries(['', '감사추적/[감사추적]_'].map((folder, i) =>
-        [`제공기록지/${folder}${srBase}.pdf`, docs.reduce((bytes, doc) => bytes + doc.files[i].byteSize, 0)])) });
+        [`제공기록지/${folder}${srBase}.pdf`, docs.reduce((bytes, doc) => bytes + doc.files[i].byteSize, 0)])),
+        fingerprint: ordered.map(fingerprint).join(',') });
     assert.equal(Object.keys(state.units).length, 4);
 }
 
@@ -487,4 +501,209 @@ test('createdAt ties use docId and absent customer/date use fallback names', asy
     assert.equal(await env.bytes(`서비스계약서/${name}.pdf`), 'a:document');
     assert.equal(await env.bytes(`서비스계약서/${name} (2).pdf`), 'b:document');
     await assertReport(env, { status: 'success', savedFiles: 4 });
+});
+
+const auditPath = (suffix = '') => `서비스계약서/감사추적/[감사추적]_${base}${suffix}.pdf`;
+const reviewChunks = () => chunks().map((doc) => setFiles(Object.assign(doc, { completed: false }), { document: `${doc.docId}:review`, audit_trail: null }));
+const complete = (doc) => { doc.completed = true; return setFiles(doc, { document: `${doc.docId}:final`, audit_trail: `${doc.docId}:audit_trail` }); };
+
+test('review-stage document is saved with its document only, then skipped on the next run', async (t) => {
+    const doc = reviewDoc('1');
+    const env = await setup(t, [doc]);
+    assert.equal((await env.run()).code, 0);
+    assert.deepEqual(await env.files(), [`서비스계약서/${base}.pdf`]);
+    assert.equal(await env.bytes(`서비스계약서/${base}.pdf`), '1:review');
+    const state = await env.state();
+    assert.deepEqual(state.units[key(doc)], { files: { [`서비스계약서/${base}.pdf`]: doc.files[0].byteSize, [auditPath()]: null }, fingerprint: fingerprint(doc) });
+    await assertReport(env, { status: 'success', savedFiles: 1, skippedFiles: 0, failedFiles: 0 });
+    env.api.fileRequests = [];
+    assert.equal((await env.run()).code, 0);
+    assert.deepEqual(env.api.fileRequests, []);
+    assert.deepEqual(await env.state(), state);
+    await assertReport(env, { status: 'success', savedFiles: 0, skippedFiles: 1 });
+});
+
+test('a saved review document that completes overwrites the same file and adds the reserved audit trail', async (t) => {
+    const doc = reviewDoc('1');
+    const env = await setup(t, [doc]);
+    assert.equal((await env.run()).code, 0);
+    const before = await env.state();
+    complete(doc);
+    assert.equal((await env.run()).code, 0);
+    assert.deepEqual(await env.files(), [auditPath(), `서비스계약서/${base}.pdf`].sort());
+    assert.equal(await env.bytes(`서비스계약서/${base}.pdf`), '1:final');
+    assert.equal(await env.bytes(auditPath()), '1:audit_trail');
+    for (const path of [`서비스계약서/${base}.pdf`, auditPath()]) {
+        assert.equal((await stat(join(env.archiveDir, path))).mtimeMs, Date.parse(doc.createdAt));
+    }
+    const after = await env.state();
+    assert.deepEqual(Object.keys(after.units[key(doc)].files), Object.keys(before.units[key(doc)].files));
+    assert.deepEqual(after.units[key(doc)], { files: { [`서비스계약서/${base}.pdf`]: doc.files[0].byteSize, [auditPath()]: doc.files[1].byteSize }, fingerprint: fingerprint(doc) });
+    await assertReport(env, { status: 'success', savedFiles: 2, skippedFiles: 0 });
+    env.api.fileRequests = [];
+    assert.equal((await env.run()).code, 0);
+    assert.deepEqual(env.api.fileRequests, []);
+    await assertReport(env, { status: 'success', savedFiles: 0, skippedFiles: 2 });
+});
+
+test('a failed overwrite download leaves the old file and state, and the next run completes it', async (t) => {
+    const doc = reviewDoc('1');
+    const env = await setup(t, [doc]);
+    assert.equal((await env.run()).code, 0);
+    const before = await env.state();
+    complete(doc);
+    env.api.fileFailure = '1-audit_trail';
+    assert.equal((await env.run()).code, 2);
+    assert.equal(await env.bytes(`서비스계약서/${base}.pdf`), '1:review');
+    assert.deepEqual(await env.files(), [`서비스계약서/${base}.pdf`]);
+    assert.deepEqual(await env.state(), before);
+    await assertReport(env, { status: 'partial', savedFiles: 0, failedFiles: 1 });
+    env.api.fileFailure = null;
+    assert.equal((await env.run()).code, 0);
+    assert.equal(await env.bytes(`서비스계약서/${base}.pdf`), '1:final');
+    assert.equal(await env.bytes(auditPath()), '1:audit_trail');
+    await assertReport(env, { status: 'success', savedFiles: 2 });
+});
+
+test('review documents need exactly one document file; an audit file is accepted', async (t) => {
+    const noDocument = setFiles(document('1', { completed: false }), { document: null, audit_trail: '1:audit_trail' });
+    const twoDocuments = reviewDoc('2');
+    twoDocuments.files.push({ ...twoDocuments.files[0], fileId: '2-document-b' });
+    const withAudit = setFiles(document('3', { completed: false }), { document: '3:review', audit_trail: '3:audit_trail' });
+    const empty = setFiles(document('4', { completed: false }), { document: null, audit_trail: null });
+    const env = await setup(t, [noDocument, twoDocuments, withAudit, empty]);
+    assert.equal((await env.run()).code, 2);
+    assert.deepEqual(env.api.reports.at(-1).failures.map((failure) => failure.docId).sort(), ['1', '2', '4']);
+    for (const failure of env.api.reports.at(-1).failures) assert.equal(failure.reason, '필수 파일 없음');
+    assert.equal(await env.bytes(`서비스계약서/${base}.pdf`), '3:review');
+    assert.equal(await env.bytes(auditPath()), '3:audit_trail');
+    assert.deepEqual(Object.keys((await env.state()).units), [key(withAudit)]);
+    await assertReport(env, { status: 'partial', savedFiles: 2, failedFiles: 3 });
+});
+
+test('a completed document still needs both files', async (t) => {
+    const doc = setFiles(document('1', { completed: true }), { document: '1:document', audit_trail: null });
+    const env = await setup(t, [doc]);
+    assert.equal((await env.run()).code, 2);
+    assert.deepEqual(await env.files(), []);
+    await assertReport(env, { status: 'partial', failures: [{ docId: '1', reason: '필수 파일 없음' }] });
+});
+
+test('a document that leaves the listing keeps its saved files and state', async (t) => {
+    const env = await setup(t, [reviewDoc('1'), document('2')]);
+    assert.equal((await env.run()).code, 0);
+    const files = await env.files();
+    const state = await env.state();
+    env.api.docs = [];
+    assert.equal((await env.run()).code, 0);
+    assert.deepEqual(await env.files(), files);
+    assert.deepEqual(await env.state(), state);
+    await assertReport(env, { status: 'success', totalDocs: 0, savedFiles: 0, skippedFiles: 0 });
+});
+
+test('review-stage chunks merge into a document only; completion overwrites it and builds the merged audit trail', async (t) => {
+    const docs = reviewChunks();
+    const env = await setup(t, docs);
+    assert.equal((await env.run()).code, 0);
+    const merged = `제공기록지/${srBase}.pdf`;
+    const mergedAudit = `제공기록지/감사추적/[감사추적]_${srBase}.pdf`;
+    assert.equal(await env.bytes(merged), '1:review2:review3:review');
+    assert.ok(!(await env.files()).includes(mergedAudit));
+    assert.equal((await env.files()).length, 4);
+    const state = await env.state();
+    const mergedKey = 'merged:case-1:1';
+    assert.deepEqual(state.units[mergedKey].files, { [merged]: '1:review2:review3:review'.length, [mergedAudit]: null });
+    await assertReport(env, { status: 'success', savedFiles: 4 });
+    // Unchanged review state: nothing is rebuilt.
+    await rm(env.qpdfLog);
+    assert.equal((await env.run()).code, 0);
+    await assert.rejects(readFile(env.qpdfLog), { code: 'ENOENT' });
+    await assertReport(env, { status: 'success', savedFiles: 0, skippedFiles: 4 });
+    // Only the first chunk completes: its audit exists, the merged audit still cannot.
+    complete(docs.find((doc) => doc.docId === '1'));
+    assert.equal((await env.run()).code, 0);
+    assert.equal(await env.bytes(merged), '1:final2:review3:review');
+    assert.ok(!(await env.files()).includes(mergedAudit));
+    // All chunks complete.
+    for (const doc of docs) complete(doc);
+    assert.equal((await env.run()).code, 0);
+    assert.equal(await env.bytes(merged), '1:final2:final3:final');
+    assert.equal(await env.bytes(mergedAudit), '1:audit_trail2:audit_trail3:audit_trail');
+    assert.equal(await env.bytes(`제공기록지/원본/${srBase}_2장.pdf`), '2:final');
+    assert.equal((await env.files()).length, 8);
+    const after = await env.state();
+    assert.deepEqual(Object.keys(after.units[mergedKey].files), Object.keys(state.units[mergedKey].files));
+    assert.equal(after.units[mergedKey].fingerprint, [...docs].sort((a, b) => a.serviceRecordChunk.firstSessionIndex - b.serviceRecordChunk.firstSessionIndex).map(fingerprint).join(','));
+    await assertReport(env, { status: 'success', failedFiles: 0 });
+});
+
+async function writeV1(env, units) {
+    await mkdir(env.stateDir, { recursive: true });
+    await writeFile(join(env.stateDir, 'state.json'), JSON.stringify({ version: 1, units }));
+}
+
+test('a version 1 state file migrates in place: files are skipped and the state is saved as version 2', async (t) => {
+    const docs = [document('1'), document('2', { kind: 'service_record' })];
+    const env = await setup(t, docs);
+    assert.equal((await env.run()).code, 0);
+    const v2 = await env.state();
+    const v1 = Object.fromEntries(docs.map((doc) => [`doc:${doc.docId}:${doc.files[0].sha256}:${doc.files[1].sha256}`, { files: v2.units[key(doc)].files }]));
+    await writeV1(env, v1);
+    env.api.fileRequests = [];
+    assert.equal((await env.run()).code, 0);
+    assert.deepEqual(env.api.fileRequests, []);
+    assert.deepEqual(await env.state(), v2);
+    await assertReport(env, { status: 'success', savedFiles: 0, skippedFiles: 4 });
+});
+
+test('a version 1 merged entry rebuilds the merged files once under the same names', async (t) => {
+    const docs = chunks();
+    const env = await setup(t, docs);
+    assert.equal((await env.run()).code, 0);
+    const v2 = await env.state();
+    const ordered = [...docs].sort((a, b) => a.serviceRecordChunk.firstSessionIndex - b.serviceRecordChunk.firstSessionIndex);
+    const v1 = Object.fromEntries(docs.map((doc) => [`doc:${doc.docId}:${doc.files[0].sha256}:${doc.files[1].sha256}`, { files: v2.units[key(doc)].files }]));
+    v1[`merged:case-1:1:${ordered.map((doc) => doc.files[0].sha256).join(',')}`] = { files: v2.units['merged:case-1:1'].files };
+    await writeV1(env, v1);
+    env.api.fileRequests = [];
+    assert.equal((await env.run()).code, 0);
+    assert.deepEqual(env.api.fileRequests, []);
+    assert.deepEqual(await env.state(), v2);
+    assert.equal((await env.files()).length, 8);
+    await assertReport(env, { status: 'success', savedFiles: 2, skippedFiles: 6 });
+});
+
+test('two version 1 entries for one document stop the run with a state error', async (t) => {
+    const doc = document('1');
+    const env = await setup(t, [doc]);
+    assert.equal((await env.run()).code, 0);
+    const files = (await env.state()).units[key(doc)].files;
+    await writeV1(env, { [`doc:1:${'a'.repeat(64)}:${'b'.repeat(64)}`]: { files }, [`doc:1:${'c'.repeat(64)}:${'d'.repeat(64)}`]: { files } });
+    const before = env.api.reports.length;
+    env.api.fileRequests = [];
+    const result = await env.run();
+    assert.equal(result.code, 1);
+    assert.match(result.stdout, /state\.json 형식 오류/);
+    assert.equal(env.api.reports.length, before);
+    assert.deepEqual(env.api.fileRequests, []);
+    assert.equal(JSON.parse(await readFile(join(env.stateDir, 'state.json'), 'utf8')).version, 1);
+});
+
+test('unknown state versions and malformed version 2 entries are rejected', async (t) => {
+    const env = await setup(t, [document('1')]);
+    await mkdir(env.stateDir, { recursive: true });
+    const statePath = join(env.stateDir, 'state.json');
+    for (const bad of [
+        { version: 3, units: {} },
+        { version: 2, units: { 'doc:1': { files: { 'a.pdf': 1 }, fingerprint: 'x' } } },
+        { version: 2, units: { 'doc:1': { files: { 'a.pdf': 1, 'b.pdf': -1 }, fingerprint: 'x' } } },
+        { version: 2, units: { 'doc:1': { files: { 'a.pdf': 1, 'b.pdf': null } } } },
+        { version: 2, units: { 'doc:1': { files: { '../a.pdf': 1, 'b.pdf': null }, fingerprint: 'x' } } },
+    ]) {
+        await writeFile(statePath, JSON.stringify(bad));
+        assert.equal((await env.run()).code, 1, JSON.stringify(bad));
+    }
+    assert.deepEqual(env.api.reports, []);
+    await writeFile(statePath, JSON.stringify({ version: 2, units: { 'doc:9': { files: { 'a.pdf': 1, 'b.pdf': null }, fingerprint: 'x' } } }));
+    assert.equal((await env.run()).code, 0);
 });
