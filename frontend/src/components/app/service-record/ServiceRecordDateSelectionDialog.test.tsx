@@ -92,6 +92,40 @@ describe("ServiceRecordDateSelectionDialog", () => {
         expect(screen.queryByRole("combobox", { name: "연도" })).not.toBeInTheDocument();
     });
 
+    it("omits days outside the inclusive window from the helper and rendered options", () => {
+        const windowStart = "2026-07-14";
+        const windowEnd = "2026-07-16";
+        expect(getBusinessDayOptions(2026, 7, KR_BUILTIN_CALENDAR, windowStart, windowEnd).map((option) => option.value))
+            .toEqual(["14", "15", "16"]);
+        expect(isSelectableServiceRecordDate("2026-07-13", KR_BUILTIN_CALENDAR, windowStart, windowEnd)).toBe(false);
+        expect(isSelectableServiceRecordDate("2026-07-20", KR_BUILTIN_CALENDAR, windowStart, windowEnd)).toBe(false);
+        expect(getInitialServiceRecordDateSelection("2026-07-13", KR_BUILTIN_CALENDAR, windowStart, windowEnd))
+            .toEqual({ parts: null, reason: "outside-window" });
+        expect(getInitialServiceRecordDateSelection(windowStart, KR_BUILTIN_CALENDAR, windowStart, windowEnd).reason).toBeNull();
+        expect(isSelectableServiceRecordDate(windowEnd, KR_BUILTIN_CALENDAR, windowStart, windowEnd)).toBe(true);
+
+        renderDialog({ windowStart, windowEnd });
+        fireEvent.click(screen.getByRole("combobox", { name: "일" }));
+        expect(screen.queryByRole("option", { name: "13일" })).not.toBeInTheDocument();
+        expect(screen.queryByRole("option", { name: "20일" })).not.toBeInTheDocument();
+        expect(screen.getByRole("option", { name: "14일" })).toBeInTheDocument();
+        expect(screen.getByRole("option", { name: "16일" })).toBeInTheDocument();
+    });
+
+    it("treats each null window bound as unbounded", () => {
+        expect(isSelectableServiceRecordDate("2026-07-13", KR_BUILTIN_CALENDAR, null, "2026-07-16")).toBe(true);
+        expect(isSelectableServiceRecordDate("2026-07-20", KR_BUILTIN_CALENDAR, "2026-07-14", null)).toBe(true);
+    });
+
+    it("refuses a retained provisional date at apply time if the window has narrowed", () => {
+        const { rerender, props } = renderDialog({ windowStart: "2026-07-13", windowEnd: "2026-07-20" });
+        chooseOption("일", "14일");
+        rerender(<ServiceRecordDateSelectionDialog {...props} windowStart="2026-07-15" />);
+        fireEvent.click(screen.getByRole("button", { name: "수정" }));
+        expect(props.onApply).not.toHaveBeenCalled();
+        expect(screen.getByRole("alert")).toHaveTextContent("고를 수 있는 기간이 아니에요.");
+    });
+
     it("does not apply a provisional choice when cancelled", () => {
         const onApply = jest.fn();
         const onOpenChange = jest.fn();

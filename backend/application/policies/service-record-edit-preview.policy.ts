@@ -800,6 +800,43 @@ export function resolveServiceRecordScheduleProjection(
     return projectLegacy(source, calendar);
 }
 
+const CAREGIVER_DATE_WINDOW_DAYS = 7;
+
+function isOutsideCaregiverDateWindow(source: ServiceRecordEditSource, serviceDate: string): boolean {
+    if (!source.startDate || !source.endDate) return false;
+    const offset = (date: string, days: number): string => {
+        const copy = new Date(`${date}T00:00:00.000Z`);
+        copy.setUTCDate(copy.getUTCDate() + days);
+        return copy.toISOString().slice(0, 10);
+    };
+    return serviceDate < offset(source.startDate, -CAREGIVER_DATE_WINDOW_DAYS)
+        || serviceDate > offset(source.endDate, CAREGIVER_DATE_WINDOW_DAYS);
+}
+
+/** 작성된 기록의 날짜 수정만 제공인력과 같은 기간·서비스일 조건으로 판단해요. */
+function writtenDateCorrectionReasons(
+    source: ServiceRecordEditSource,
+    before: SharedPlannedSession[],
+    after: SharedPlannedSession[],
+    calendar: KrBusinessDayCalendar,
+): ServiceRecordEditPreviewBlockingReason[] {
+    const writtenIndexes = new Set(source.sessions
+        .filter((session) => session.locked || session.submittedAt)
+        .map((session) => session.sessionIndex));
+    const beforeByIndex = new Map(before.map((entry) => [entry.sessionIndex, entry.serviceDate]));
+    const reasons: ServiceRecordEditPreviewBlockingReason[] = [];
+    for (const entry of after) {
+        if (!writtenIndexes.has(entry.sessionIndex) || beforeByIndex.get(entry.sessionIndex) === entry.serviceDate) continue;
+        if (isOutsideCaregiverDateWindow(source, entry.serviceDate)) {
+            reasons.push(reason("SERVICE_DATE_OUT_OF_RANGE", "고를 수 있는 기간이 아니에요.", entry.sessionIndex, entry.assignmentId));
+        }
+        if (!calendar.isBusinessDay(entry.serviceDate)) {
+            reasons.push(reason("NON_SERVICE_DAY", "서비스를 하지 않는 날이에요.", entry.sessionIndex, entry.assignmentId));
+        }
+    }
+    return reasons;
+}
+
 /**
  * A schedule replacement leaves the date of a session the caregiver already
  * locked or submitted alone: the record exists and was signed against that
@@ -1937,6 +1974,13 @@ export function normalizeServiceRecordEditChanges(
     }
     let sessions = normalizedSessionChanges(projection.entries, previousSessions, incomingForDates, pendingCalendar);
     if (dateMove) {
+        if (!draftPolicy && !resumeMarker && isOutsideCaregiverDateWindow(source, dateMove.toDate)) {
+            throw new ServiceRecordScheduleValidationError(
+                "SERVICE_DATE_OUT_OF_RANGE",
+                "고를 수 있는 기간이 아니에요.",
+                dateMove.sessionIndex,
+            );
+        }
         const shifted = moveServiceRecordSessionDate(
             current,
             dateMove.sessionIndex,
@@ -2149,11 +2193,13 @@ export function buildServiceRecordEditPreview(
             after = validateServiceRecordScheduleVector(after, input.source.requiredSessionCount ?? undefined, pendingCalendar, { persisted: true });
             if (resumeResolution?.plan) after = applyResumeHandover(after, resumeResolution.plan.entries);
             blockingReasons.push(...assignmentRangeReasons(input.source, after, periodOf));
-            // Only a schedule replacement (marked by its toggles) is held to the locked-session
-            // and service-day rules; a single-session dateMove keeps its pre-schedule behaviour.
+            // 일정 전체 교체는 작성된 날짜를 유지하고, 단일 회차 수정은 작성된 기록을
+            // 옮길 수 있지만 제공인력과 같은 기간·서비스일 조건을 지켜야 해요.
             if (draftPolicy) {
                 blockingReasons.push(...lockedSessionReasons(input.source, before, after));
                 blockingReasons.push(...scheduleReplacementReasons(input.source, before, after, pendingCalendar));
+            } else if (!resumeMarker) {
+                blockingReasons.push(...writtenDateCorrectionReasons(input.source, before, after, pendingCalendar));
             }
         } catch (error) {
             blockingReasons.push(error instanceof UnsupportedKoreanHolidayYearError

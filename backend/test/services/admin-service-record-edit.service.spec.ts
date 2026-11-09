@@ -2554,7 +2554,8 @@ describe("AdminServiceRecordEditService confirm assignment dates", () => {
         // (the replacement flow cannot edit a replaced schedule, so a throw would make the case uneditable);
         // the next assignment's start is an inner boundary and stays. B, the latest, ends on the last session.
         const source: ServiceRecordEditSource = {
-            ...handoverSource(dates.map((_, index) => written(index + 1, caregiverB))),
+            // The written first session moves within the window; its unwritten followers are plan dates.
+            ...handoverSource([written(1, caregiverB)]),
             plannedSessions: dates.map((serviceDate, index) => ({
                 sessionIndex: index + 1,
                 serviceDate,
@@ -2939,8 +2940,13 @@ describe("AdminServiceRecordEditService confirm assignment dates", () => {
         // (first now 10-03): an inward move never pulls the shared boundary apart, so T and B keep their dates.
         const placeholder = placeholderOn("2026-10-01", "01", 704);
         const successor = { ...caregiverB, startDate: "2026-10-01", scheduleStartDate: "2026-10-01" };
+        const source = successorOwnsAllSource(successor, [placeholder]);
+        // These inward corrections use weekends (10-03 is also a holiday).
+        source.client.allowSaturdayService = true;
+        source.client.allowSundayService = true;
+        source.client.allowHolidayService = true;
         const plan = await confirmedAssignments(
-            successorOwnsAllSource(successor, [placeholder]),
+            source,
             { sessions: [{ sessionIndex: 1, serviceDate: "2026-10-03" }, { sessionIndex: 2, serviceDate: "2026-10-04" }] },
         );
         expect(plan.assignments).toEqual([
@@ -2952,8 +2958,12 @@ describe("AdminServiceRecordEditService confirm assignment dates", () => {
     it("keeps the placeholder and the last active end when the last session moves earlier (inward)", async () => {
         const placeholder = placeholderOn("2026-10-23", "03", 704);
         const successor = { ...caregiverB, startDate: "2026-10-01", scheduleStartDate: "2026-10-01" };
+        const source = successorOwnsAllSource(successor, [placeholder], "others-last");
+        // These inward corrections use the client's weekend service days.
+        source.client.allowSaturdayService = true;
+        source.client.allowSundayService = true;
         const plan = await confirmedAssignments(
-            successorOwnsAllSource(successor, [placeholder], "others-last"),
+            source,
             {
                 sessions: [
                     { sessionIndex: 11, serviceDate: "2026-10-17" },
@@ -3148,6 +3158,40 @@ describe("AdminServiceRecordEditService service-day schedule replacement", () =>
     function savedChanges(harness: ReturnType<typeof createHarness>) {
         return (harness.repository.updateDraft.mock.calls.at(-1)?.[0] as { changes: Record<string, unknown> }).changes;
     }
+
+    it.each([
+        ["start minus eight", 1, "2026-08-24", false, "SERVICE_DATE_OUT_OF_RANGE"],
+        ["end plus eight", 3, "2026-09-11", false, "SERVICE_DATE_OUT_OF_RANGE"],
+        ["Saturday off", 3, "2026-09-05", false, "NON_BUSINESS_DATE"],
+        ["branch holiday off", 3, "2026-09-04", false, "NON_BUSINESS_DATE"],
+    ] as const)("rejects an admin dateMove at %s", async (_label, sessionIndex, toDate, shiftFollowing, scheduleCode) => {
+        const calendar = createKrBusinessDayCalendar([...KOREAN_HOLIDAY_CALENDAR[2026]!, "2026-09-04"], {
+            version: "branch-admin-dates", supportedYears: [2026],
+        });
+        const harness = createHarness({ source: previewSourceSnapshot(), calendar });
+        const error = await rejection(() => patch(harness, { dateMove: { sessionIndex, toDate, shiftFollowing } }));
+        expect(error.getStatus()).toBe(400);
+        expect(error.getResponse()).toMatchObject({ scheduleCode, sessionIndex });
+        expect(harness.repository.updateDraft).not.toHaveBeenCalled();
+        expect(harness.holidayCalendar.forBranch).toHaveBeenCalledWith(BRANCH_ID, { fresh: true });
+    });
+
+    it.each([
+        ["start minus seven", 1, "2026-08-25", false, false],
+        ["end plus seven", 3, "2026-09-10", false, false],
+        ["Saturday on", 3, "2026-09-05", true, false],
+        ["branch holiday on", 3, "2026-09-04", false, true],
+    ] as const)("allows an admin dateMove at %s", async (_label, sessionIndex, toDate, saturday, holiday) => {
+        const source = previewSourceSnapshot();
+        source.client.allowSaturdayService = saturday;
+        source.client.allowHolidayService = holiday;
+        const calendar = createKrBusinessDayCalendar([...KOREAN_HOLIDAY_CALENDAR[2026]!, "2026-09-04"], {
+            version: "branch-admin-dates", supportedYears: [2026],
+        });
+        const harness = createHarness({ source, calendar });
+        await patch(harness, { dateMove: { sessionIndex, toDate, shiftFollowing: false } });
+        expect(savedChanges(harness)["sessions"]).toEqual(expect.arrayContaining([{ sessionIndex, serviceDate: toDate }]));
+    });
 
     it("normalizes a schedule into every session date plus the server-produced toggles", async () => {
         const harness = createHarness({ source: previewSourceSnapshot() });
