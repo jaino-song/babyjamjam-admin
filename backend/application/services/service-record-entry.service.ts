@@ -637,15 +637,17 @@ export class ServiceRecordEntryService {
                     },
                 });
             };
+            // 새 기록(미제출 초안 재저장 포함)은 앞선 모든 회차가 제출된 경우에만 쓸 수 있다.
             if (!lockedEdit && sessionIndex > 1) {
-                const prev = await tx.service_record_day.findUnique({
+                const submittedCount = await tx.service_record_day.count({
                     where: {
-                        serviceRecordCaseId_caseSessionIndex: {
-                            serviceRecordCaseId: record.id, caseSessionIndex: sessionIndex - 1,
-                        },
+                        serviceRecordCaseId: record.id,
+                        branchId: ctx.branchId,
+                        caseSessionIndex: { lt: sessionIndex },
+                        locked: true,
                     },
                 });
-                if (!prev?.locked) throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
+                if (submittedCount !== sessionIndex - 1) throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
             }
 
             if (lock) {

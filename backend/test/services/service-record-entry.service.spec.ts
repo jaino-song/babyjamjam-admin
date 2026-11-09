@@ -122,6 +122,9 @@ function createHarness(options: {
     const aggregate = createRecord();
     const existing = options.existing === undefined ? null : options.existing;
     const transactionRecord = options.transactionRecord ?? aggregate;
+    const days = [...(options.days ?? [])];
+    if (existing && !days.some((day) => day.serviceRecordCaseId === existing.serviceRecordCaseId
+        && day.caseSessionIndex === existing.caseSessionIndex)) days.push(existing);
     const upsert = jest.fn().mockImplementation((args) => {
         expect(checkWriteArgs("upsert", args, BRANCH_ID)).toBeNull();
         return Promise.resolve({
@@ -165,9 +168,23 @@ function createHarness(options: {
             updateMany: reviewItemUpdateMany,
         },
         service_record_day: {
-            findUnique: jest.fn().mockResolvedValue(existing),
+            findUnique: jest.fn().mockImplementation(({ where }) => {
+                const key = where.serviceRecordCaseId_caseSessionIndex;
+                return Promise.resolve(days.find((day) => day.serviceRecordCaseId === key.serviceRecordCaseId
+                    && day.caseSessionIndex === key.caseSessionIndex) ?? null);
+            }),
+            count: jest.fn().mockImplementation(({ where }: { where: {
+                serviceRecordCaseId?: string;
+                branchId?: string;
+                caseSessionIndex?: { lt: number };
+                locked?: boolean;
+            } }) => Promise.resolve(days.filter((day) =>
+                (where.serviceRecordCaseId === undefined || day.serviceRecordCaseId === where.serviceRecordCaseId)
+                && (where.branchId === undefined || day.branchId === where.branchId)
+                && (where.caseSessionIndex === undefined || day.caseSessionIndex < where.caseSessionIndex.lt)
+                && (where.locked === undefined || day.locked === where.locked)).length)),
             upsert,
-            findMany: jest.fn().mockResolvedValue(options.days ?? (existing ? [existing] : [])),
+            findMany: jest.fn().mockResolvedValue(days),
             delete: jest.fn().mockResolvedValue(existing),
             updateMany,
         },
@@ -1218,6 +1235,7 @@ describe("ServiceRecordEntryService.upsertSession", () => {
             }),
         });
         // Session 2 has no row yet; session 1 was written and locked by the outgoing caregiver.
+        transactionClient.service_record_day.count.mockResolvedValue(1);
         transactionClient.service_record_day.findUnique
             .mockResolvedValueOnce(null)
             .mockResolvedValueOnce(createDay({
@@ -1277,6 +1295,7 @@ describe("ServiceRecordEntryService.upsertSession", () => {
             ensureForClient,
             extendExpiryForCase,
         });
+        transactionClient.service_record_day.count.mockResolvedValue(13);
         transactionClient.service_record_day.findUnique.mockImplementation(
             ({ where }: { where: { serviceRecordCaseId_caseSessionIndex: { caseSessionIndex: number } } }) => {
                 const idx = where.serviceRecordCaseId_caseSessionIndex.caseSessionIndex;
@@ -1529,7 +1548,8 @@ describe("ServiceRecordEntryService branch calendar", () => {
             transactionRecord: record,
             holidayCalendar: branchHolidayCalendar("2026-09-14"),
         });
-        // No row for session 15 yet; session 14 is locked.
+        // All 14 earlier sessions are submitted; session 15 has no row yet.
+        harness.transactionClient.service_record_day.count.mockResolvedValue(14);
         harness.transactionClient.service_record_day.findUnique
             .mockResolvedValueOnce(null)
             .mockResolvedValueOnce(createDay({ caseSessionIndex: 14, sessionIndex: 14, serviceDate: new Date("2026-09-28T00:00:00.000Z") }));
@@ -1990,10 +2010,82 @@ describe("caregiver-selected service dates", () => {
         expect(h.editLogCreate).toHaveBeenCalledTimes(1);
     });
 
-    it("still requires the immediately preceding session to be locked for a new write", async () => {
-        const h = createHarness({ existing: createDay({ locked: false, caseSessionIndex: 2, serviceDate: new Date("2026-07-02") }) });
-        h.transactionClient.service_record_day.findUnique.mockResolvedValueOnce(null).mockResolvedValueOnce(null);
-        await expectException(h.service.upsertSession(context, 3, createDto({ serviceDate: "2026-07-03" }), false), ConflictException, "REQUEST_CONFLICT");
+    it.each([false, true])("refuses new session 4 when session 1 was deleted but 2 and 3 are submitted (submit=%s)", async (lock) => {
+        const h = createHarness({ days: [
+            createDay({ caseSessionIndex: 2, sessionIndex: 2, serviceDate: new Date("2026-07-02") }),
+            createDay({ caseSessionIndex: 3, sessionIndex: 3, serviceDate: new Date("2026-07-03") }),
+        ] });
+
+        await expectException(h.service.upsertSession(context, 4, createDto({ serviceDate: "2026-07-06" }), lock), ConflictException, "REQUEST_CONFLICT");
+
+        expect(h.upsert).not.toHaveBeenCalled();
+    });
+
+    it.each([false, true])("accepts new session 4 when all earlier sessions are submitted (submit=%s)", async (lock) => {
+        const h = createHarness({ days: [
+            createDay(),
+            createDay({ caseSessionIndex: 2, sessionIndex: 2, serviceDate: new Date("2026-07-02") }),
+            createDay({ caseSessionIndex: 3, sessionIndex: 3, serviceDate: new Date("2026-07-03") }),
+        ] });
+
+        await expect(h.service.upsertSession(context, 4, createDto({ serviceDate: "2026-07-06" }), lock)).resolves.toBeDefined();
+
+        expect(h.upsert).toHaveBeenCalledTimes(1);
+    });
+
+    it.each([false, true])("accepts new session 1 when later sessions are already submitted (submit=%s)", async (lock) => {
+        const h = createHarness({ days: [
+            createDay({ caseSessionIndex: 2, sessionIndex: 2, serviceDate: new Date("2026-07-02") }),
+            createDay({ caseSessionIndex: 3, sessionIndex: 3, serviceDate: new Date("2026-07-03") }),
+        ] });
+
+        await expect(h.service.upsertSession(context, 1, createDto(), lock)).resolves.toBeDefined();
+
+        expect(h.upsert).toHaveBeenCalledTimes(1);
+    });
+
+    it.each([false, true])("accepts new session 2 between submitted sessions 1 and 3 after a delete (submit=%s)", async (lock) => {
+        const h = createHarness({ days: [
+            createDay(),
+            createDay({ caseSessionIndex: 3, sessionIndex: 3, serviceDate: new Date("2026-07-03") }),
+        ] });
+
+        await expect(h.service.upsertSession(context, 2, createDto({ serviceDate: "2026-07-02" }), lock)).resolves.toBeDefined();
+
+        expect(h.upsert).toHaveBeenCalledTimes(1);
+    });
+
+    it.each([false, true])("requires every earlier session to be submitted for a new write, including drafts (submit=%s)", async (lock) => {
+        const h = createHarness({ days: [
+            createDay(),
+            createDay({ caseSessionIndex: 2, sessionIndex: 2, serviceDate: new Date("2026-07-02"), locked: false }),
+        ] });
+
+        await expectException(h.service.upsertSession(context, 3, createDto({ serviceDate: "2026-07-03" }), lock), ConflictException, "REQUEST_CONFLICT");
+
+        expect(h.upsert).not.toHaveBeenCalled();
+    });
+
+    it("refuses re-saving an unsubmitted draft while an earlier submitted row is missing", async () => {
+        const h = createHarness({ existing: createDay({ caseSessionIndex: 4, sessionIndex: 4,
+            serviceDate: new Date("2026-07-06"), locked: false }), days: [
+            createDay({ caseSessionIndex: 2, sessionIndex: 2, serviceDate: new Date("2026-07-02") }),
+            createDay({ caseSessionIndex: 3, sessionIndex: 3, serviceDate: new Date("2026-07-03") }),
+        ] });
+
+        await expectException(h.service.upsertSession(context, 4, createDto({ serviceDate: "2026-07-06" }), false), ConflictException, "REQUEST_CONFLICT");
+
+        expect(h.upsert).not.toHaveBeenCalled();
+    });
+
+    it("returns TAKEN when a non-monotonic earlier session already uses the selected date", async () => {
+        const h = createHarness({ days: [
+            createDay({ serviceDate: new Date("2026-07-06") }),
+            createDay({ caseSessionIndex: 2, sessionIndex: 2, serviceDate: new Date("2026-07-02") }),
+        ] });
+
+        await expectDateFailure(h.service.upsertSession(context, 3, createDto({ serviceDate: "2026-07-06" }), false), "다른 회차가 이미 고른 날이에요.", "TAKEN");
+
         expect(h.upsert).not.toHaveBeenCalled();
     });
 
