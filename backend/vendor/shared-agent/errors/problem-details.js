@@ -1383,7 +1383,7 @@ function parseProblemDetailsInternal(value, httpStatus, locale) {
     if (parsed.outcome === "UNKNOWN") {
         parsed.recovery = { action: "CHECK_STATUS", retry: { mode: "NEVER" } };
     }
-    // deletedEmployee and startDateLock are the only data-bearing extensions allowed through the BFF.
+    // Only validated, code-specific extensions are allowed through the BFF.
     if (parsed.code === "EMPLOYEE_PHONE_HELD_BY_DELETED") {
         const deletedEmployee = readOwn(value, "deletedEmployee").value;
         if (isRecord(deletedEmployee)) {
@@ -1406,6 +1406,14 @@ function parseProblemDetailsInternal(value, httpStatus, locale) {
                 && recordedSessionCount >= 0 && recordedSessionCount <= MAX_START_DATE_LOCK_SESSION_COUNT) {
                 parsed.startDateLock = { serviceStarted, recordedSessionCount };
             }
+        }
+    }
+    if (parsed.code === "VALIDATION_FAILED") {
+        const serviceDateReason = readOwn(value, "serviceDateReason").value;
+        if (serviceDateReason === "OUT_OF_RANGE" || serviceDateReason === "NOT_SERVICE_DAY"
+            || serviceDateReason === "TAKEN" || serviceDateReason === "BEFORE_PREVIOUS"
+            || serviceDateReason === "AFTER_NEXT") {
+            parsed.serviceDateReason = serviceDateReason;
         }
     }
     return parsed;
