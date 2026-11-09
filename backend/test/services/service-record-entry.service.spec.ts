@@ -1905,10 +1905,12 @@ describe("caregiver-selected service dates", () => {
     });
 
     it.each(["startDate", "endDate"] as const)("treats null %s as unbounded", async (side) => {
-        const h = createHarness({ transactionRecord: createRecord({ [side]: null }) });
+        const holidayCalendar = createHolidayCalendarStub();
+        const h = createHarness({ transactionRecord: createRecord({ [side]: null }), holidayCalendar });
         await expect(h.service.upsertSession(context, 1, createDto({
             serviceDate: side === "startDate" ? "2026-06-01" : "2026-09-01",
         }), false)).resolves.toBeDefined();
+        expect(holidayCalendar.forBranch).toHaveBeenCalledWith(BRANCH_ID, { fresh: true });
     });
 
     it.each([
@@ -1926,8 +1928,10 @@ describe("caregiver-selected service dates", () => {
     });
 
     it("refuses a holiday when holiday service is off", async () => {
-        const h = createHarness({ holidayCalendar: branchHolidayCalendar("2026-07-02") });
+        const holidayCalendar = branchHolidayCalendar("2026-07-02");
+        const h = createHarness({ holidayCalendar });
         await expectDateFailure(h.service.upsertSession(context, 1, createDto({ serviceDate: "2026-07-02" }), false), "서비스를 하지 않는 날이에요.", "NOT_SERVICE_DAY");
+        expect(holidayCalendar.forBranch).toHaveBeenCalledWith(BRANCH_ID, { fresh: true });
         expect(h.upsert).not.toHaveBeenCalled();
     });
 
@@ -2072,6 +2076,39 @@ describe("caregiver-selected service dates", () => {
 });
 
 describe("caregiver deleteSession", () => {
+    it("returns 404 without writes when the transaction record belongs to another branch", async () => {
+        const h = createHarness({
+            existing: createDay(),
+            transactionRecord: createRecord({ branchId: "another-branch" }),
+        });
+
+        await expect(h.service.deleteSession(context, 1)).rejects.toMatchObject({
+            status: 404, response: { code: "RESOURCE_NOT_FOUND" },
+        });
+
+        expect(h.transactionClient.service_record_day_archive.create).not.toHaveBeenCalled();
+        expect(h.transactionClient.service_record_day.delete).not.toHaveBeenCalled();
+    });
+
+    it("locks the deleted session index in the real write-set day query", async () => {
+        const sessionIndex = 3;
+        const h = createHarness({
+            existing: createDay({ sessionIndex, caseSessionIndex: sessionIndex }),
+            schedule: { id: 10, clientId: 100, primaryEmployeeId: 20, primaryEmployee: { name: "제공자" } },
+        });
+
+        await expect(h.service.deleteSession(context, sessionIndex)).resolves.toEqual({ deleted: true, sessionIndex });
+
+        const dayLockCall = h.transactionClient.$queryRaw.mock.calls.find(([query]) => {
+            const sql = (query as { strings: string[] }).strings.join(" ").toLowerCase();
+            return sql.includes('"service_record_day"') && sql.includes("for update");
+        });
+        expect(dayLockCall).toBeDefined();
+        const dayLock = dayLockCall![0] as { strings: string[]; values: unknown[] };
+        expect(dayLock.strings.join(" ")).toContain('case_session_index" IN');
+        expect(dayLock.values).toContain(sessionIndex);
+    });
+
     it.each([true, false])("archives a full row before deletion and recomputes (locked=%s)", async (locked) => {
         const existing = createDay({ locked });
         const h = createHarness({ existing, schedule: { id: 10, clientId: 100, primaryEmployeeId: 20, primaryEmployee: { name: "제공자" } } });
