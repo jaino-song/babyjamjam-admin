@@ -1256,6 +1256,22 @@ describe("service-record correction sequences (real services over one persisted 
     });
 
     describe("the store refuses what it does not model (a silent no-op can never pass a test)", () => {
+        it.each(["update", "updateMany"] as const)("models periodMismatchKeptAt as a nullable datetime through %s and reads", async (method) => {
+            const store = new SequenceStore();
+            const id = "period-mismatch-day";
+            const keptAt = new Date("2026-10-14T09:00:00.000Z");
+            const created = await store.service_record_day.create({ data: { id } });
+            expect(created).toMatchObject({ id, periodMismatchKeptAt: null });
+            expect(await store.service_record_day.findMany({ select: { periodMismatchKeptAt: true } }))
+                .toEqual([{ periodMismatchKeptAt: null }]);
+
+            for (const value of [keptAt, null]) {
+                await store.service_record_day[method]({ where: { id }, data: { periodMismatchKeptAt: value } });
+                expect(await store.service_record_day.findMany({ where: { id }, select: { periodMismatchKeptAt: true } }))
+                    .toEqual([{ periodMismatchKeptAt: value }]);
+            }
+        });
+
         it("an unmodelled table and unmodelled methods are absent, and there is no raw SQL", () => {
             const store = seedGoldenIncident();
             const surface = store as unknown as Record<string, Record<string, unknown> | undefined>;
