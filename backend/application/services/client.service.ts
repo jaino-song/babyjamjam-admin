@@ -181,15 +181,6 @@ export interface ClientBadge {
     priority: number;
 }
 
-export interface PendingScheduleChange {
-    id: string;
-    sessionIndex: number;
-    fromDate: string;
-    toDate: string;
-    oldEndDate: string;
-    newEndDate: string;
-}
-
 // Response type that includes employee information
 export interface ClientWithEmployees {
     id: number;
@@ -228,7 +219,6 @@ export interface ClientWithEmployees {
     serviceRecordPeriodLocked?: boolean;
     primaryEmployee: { id: number; name: string; phone: string | null } | null;
     secondaryEmployee: { id: number; name: string; phone: string | null } | null;
-    pendingScheduleChange?: PendingScheduleChange | null;
 }
 
 export interface PaginatedClientWithEmployees {
@@ -1769,20 +1759,6 @@ export class ClientService {
         // Create a map of clientId to schedule
         const scheduleMap = new Map(schedules.map(s => [s.clientId, s]));
 
-        const pendingScheduleChanges = await this.prismaService.schedule_change_request.findMany({
-            where: { clientId: { in: clientIds }, status: "pending" },
-            select: {
-                id: true,
-                clientId: true,
-                sessionIndex: true,
-                fromDate: true,
-                toDate: true,
-                oldEndDate: true,
-                newEndDate: true,
-            },
-        });
-        const pendingScheduleChangeMap = new Map(pendingScheduleChanges.map(change => [change.clientId, change]));
-
         // 확정 단계 서비스 기록은 계약 기간을 바꿀 수 없으니 고객 목록과 같은 조회 범위에서 한 번에 확인해요.
         const finalizedServiceRecordCases = await this.prismaService.service_record_case.findMany({
             where: { clientId: { in: clientIds }, status: { in: [...IMMUTABLE_FINALIZATION_STATUSES] } },
@@ -1805,7 +1781,6 @@ export class ClientService {
 
         const result = clients.map(client => {
             const schedule = scheduleMap.get(client.id);
-            const pendingScheduleChange = pendingScheduleChangeMap.get(client.id);
 
             // Compute current service status based on dates
             const computedStatus = getEffectiveClientServiceStatus(
@@ -1894,24 +1869,6 @@ export class ClientService {
                             id: schedule.secondaryEmployee.id,
                             name: schedule.secondaryEmployee.name,
                             phone: schedule.secondaryEmployee.phone ?? null,
-                        }
-                        : null,
-                    // Guard against legacy rows whose date columns are null at the DB
-                    // level even though the schema now types them non-null — calling
-                    // toISOString() on such a null throws and 500s the whole overview.
-                    pendingScheduleChange:
-                        pendingScheduleChange
-                        && pendingScheduleChange.fromDate
-                        && pendingScheduleChange.toDate
-                        && pendingScheduleChange.oldEndDate
-                        && pendingScheduleChange.newEndDate
-                        ? {
-                            id: pendingScheduleChange.id,
-                            sessionIndex: pendingScheduleChange.sessionIndex,
-                            fromDate: pendingScheduleChange.fromDate.toISOString().slice(0, 10),
-                            toDate: pendingScheduleChange.toDate.toISOString().slice(0, 10),
-                            oldEndDate: pendingScheduleChange.oldEndDate.toISOString().slice(0, 10),
-                            newEndDate: pendingScheduleChange.newEndDate.toISOString().slice(0, 10),
                         }
                         : null,
                 };

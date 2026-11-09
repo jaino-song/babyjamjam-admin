@@ -307,6 +307,9 @@ describe("service-record backend Sentry contract", () => {
         expect(
             sanitizeSentryUrl("/schedule-change-requests/schedules/431/preview"),
         ).toBe("/schedule-change-requests/schedules/[Filtered]/preview");
+        expect(
+            sanitizeSentryUrl("/api/schedule-change-requests/schedules/431/apply"),
+        ).toBe("/api/schedule-change-requests/schedules/[Filtered]/apply");
         expect(sanitizeSentryUrl("/service-record/link/efl_secret")).toBe(
             "/service-record/link/[Filtered]",
         );

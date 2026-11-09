@@ -4,8 +4,6 @@ import { ClientService } from "application/services/client.service";
 import { ClientDueDateSchedulerService } from "application/services/client-due-date-scheduler.service";
 import { ServiceRecordLifecycleService } from "application/services/service-record-lifecycle.service";
 import { MessageAutomationIntentService } from "application/services/message-automation-intent.service";
-import { ScheduleChangeService } from "application/services/schedule-change.service";
-import { ServiceRecordTokenService } from "application/services/service-record-token.service";
 import { CreateClientUsecase } from "application/usecases/client/create-client.usecase";
 import { UpdateClientUsecase } from "application/usecases/client/update-client.usecase";
 import { HolidayCalendarService } from "application/services/holiday-calendar.service";
@@ -124,15 +122,6 @@ export function makeDueDateScheduler(
             ? new MessageAutomationIntentService(prisma, {} as never, {} as never, lease as never)
             : undefined,
     );
-}
-
-/** `ScheduleChangeService` with a real prisma and inert token writes. */
-export function makeScheduleChangeService(prisma: PrismaService): ScheduleChangeService {
-    const tokenService = {
-        extendExpiryForCase: async () => undefined,
-        extendExpiryForSchedule: async () => undefined,
-    };
-    return new ScheduleChangeService(prisma, tokenService as unknown as ServiceRecordTokenService, calendarStub);
 }
 
 /** The `KrBusinessDayCalendar` handed to domain entities by the calendar stub. */
