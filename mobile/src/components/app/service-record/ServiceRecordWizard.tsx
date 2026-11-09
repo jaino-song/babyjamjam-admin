@@ -8,8 +8,8 @@ import type {
 import { MobileServiceRecordScreen } from "./screen/MobileServiceRecordScreen";
 import type { ServiceRecordLinkInvalidReason } from "@/lib/service-records/page-helpers";
 
-export type MobileServiceRecordWizardProps = Omit<ServiceRecordWizardProps, "slots" | "scheduleChangeBusy" | "onOpenScheduleChangePreview" | "hasServiceDateMismatch"> & {
-    slots?: Omit<ServiceRecordWizardSlots, "provider" | "signature" | "scheduleChangeModal" | "serviceDateChangeModal"> & {
+export type MobileServiceRecordWizardProps = Omit<ServiceRecordWizardProps, "slots" | "hasServiceDateMismatch"> & {
+    slots?: Omit<ServiceRecordWizardSlots, "provider" | "signature" | "serviceDateChangeModal"> & {
         serviceDateSheet?: React.ReactNode;
         deleteModal?: React.ReactNode;
     };

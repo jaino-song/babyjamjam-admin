@@ -34,7 +34,6 @@ const makeProps = (overrides: Partial<ServiceRecordWizardProps> = {}): ServiceRe
     isRecordFinalized: false,
     lockedDays: new Set([1]),
     nextOpenDay: () => 1,
-    scheduleChangeBusy: false,
     hasServiceDateMismatch: false,
     defaultDate: (index) => `2026-09-${20 + index}`,
     onPhoneChange: jest.fn(),
@@ -44,7 +43,6 @@ const makeProps = (overrides: Partial<ServiceRecordWizardProps> = {}): ServiceRe
     onDeliveryTypeChange: jest.fn(),
     onSaveHeader: jest.fn(),
     onOpenDay: jest.fn(),
-    onOpenScheduleChangePreview: jest.fn(),
     onOpenServiceDateEditor: jest.fn(),
     onServiceDateChange: jest.fn(),
     onFieldChange: jest.fn(),
@@ -97,7 +95,6 @@ describe("AdminServiceRecordScreen", () => {
                 slots: {
                     adminToolbar: <span>툴바</span>,
                     submitModal: <div role="dialog" aria-label="제출 확인" />,
-                    scheduleChangeModal: <div role="dialog" aria-label="일정 변경" />,
                     serviceDateChangeModal: <div role="dialog" aria-label="제공일 변경" />,
                     errorNotification: <div role="status">오류 알림</div>,
                 },
@@ -105,7 +102,7 @@ describe("AdminServiceRecordScreen", () => {
 
             expect(byComponent("top-bar_admin-toolbar")).toHaveAttribute("data-slot", "admin-toolbar");
             expect(byComponent("top-bar_admin-toolbar")).toHaveTextContent("툴바");
-            for (const name of ["제출 확인", "일정 변경", "제공일 변경"]) expect(screen.getByRole("dialog", { name })).toBeInTheDocument();
+            for (const name of ["제출 확인", "제공일 변경"]) expect(screen.getByRole("dialog", { name })).toBeInTheDocument();
             expect(screen.getByRole("status")).toHaveTextContent("오류 알림");
         });
 

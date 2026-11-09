@@ -24,8 +24,8 @@ const sharedProps = (
     header: {}, day: 1, pageIdx, draft, editing: false, clientSignature: null,
     busy: false, isRecordFinalized: false, lockedDays: new Set<number>(), nextOpenDay: () => 1,
 
-    scheduleChangeBusy: false, hasServiceDateMismatch: false, defaultDate: () => "2026-09-21",
-    onOpenScheduleChangePreview: jest.fn(), onServiceDateChange: jest.fn(), onFieldChange,
+    hasServiceDateMismatch: false, defaultDate: () => "2026-09-21",
+    onServiceDateChange: jest.fn(), onFieldChange,
     onPhoneChange: jest.fn(), onSubmitPhone: jest.fn(), onBack: jest.fn(), onHeaderChange: jest.fn(),
     onDeliveryTypeChange: jest.fn(), onSaveHeader: jest.fn(), onOpenDay: jest.fn(),
 

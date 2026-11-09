@@ -333,7 +333,6 @@ export function buildAdminServiceRecordView(
             header,
             sessions,
             recordStatus: record?.status ?? null,
-            pendingScheduleChange: null,
         },
         supplementalSessions,
         plannedSessions: projectionIsComplete ? [...projectionEntries].sort((left, right) => left.sessionIndex - right.sessionIndex) : [],
@@ -1084,14 +1083,14 @@ export function ServiceRecordAdminWizard({
                     readOnly={locked} adminMode clientSignature={currentSession?.clientSignature ?? null}
                     busy={busy} isRecordFinalized={false}
                     lockedDays={new Set(baseView.context.sessions.filter((item) => item.submittedAt || item.locked).map((item) => item.sessionIndex))}
-                    nextOpenDay={() => 1} scheduleChangeBusy={false} hasServiceDateMismatch={false}
+                    nextOpenDay={() => 1} hasServiceDateMismatch={false}
                     defaultDate={(index) => dateOnly(displayContext.sessions.find((item) => item.sessionIndex === index)?.serviceDate)
                         || baseView.plannedSessions.find((item) => item.sessionIndex === index)?.serviceDate || ""}
                     onPhoneChange={() => undefined} onSubmitPhone={() => undefined}
                     onBack={back}
                     onHeaderChange={(key, value) => { if (!locked) setHeaderDraft((current) => ({ ...current, [key]: value })); }}
                     onDeliveryTypeChange={(value) => { if (!locked) setHeaderDraft((current) => ({ ...current, deliveryType: value })); }}
-                    onSaveHeader={() => void accept()} onOpenDay={openDay} onOpenScheduleChangePreview={() => undefined}
+                    onSaveHeader={() => void accept()} onOpenDay={openDay}
                     onOpenServiceDateEditor={() => { if (!locked && calendarReady && !baseView.scheduleProjectionBlockingReasons.length) { setDateError(null); setDateDialogOpen(true); } }}
                     onServiceDateChange={selectDate}
                     onFieldChange={(key, value) => { if (!locked) setDraft((current) => ({ ...current, [key]: value })); }}

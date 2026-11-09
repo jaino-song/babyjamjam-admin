@@ -81,7 +81,7 @@
 .srec .btn{font-family:inherit;font-size:15px;font-weight:700;border-radius:12px;border:none;padding:14px 16px;cursor:pointer;width:100%;margin-top:16px}
 .srec .nav .btn,.srec .overview-actions .btn{margin-top:0}
 .srec .btn.primary,.srec .btn.submit{background:var(--primary);color:#fff;flex:1}
-.srec .btn.ghost,.srec .btn.ghost.schedule-change{width:100%;background:var(--soft);color:var(--ink);flex:1}
+.srec .btn.ghost{width:100%;background:var(--soft);color:var(--ink);flex:1}
 .srec .btn:disabled{background:#c5cad3;color:#fff;opacity:1;cursor:not-allowed}
 .srec .completion-icon{font-size:28px;line-height:1;margin-bottom:18px}
 .srec .completion-title{margin:0;color:var(--primary);font-size:20px;font-weight:700;letter-spacing:-.2px}
