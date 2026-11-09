@@ -59,6 +59,7 @@ interface ClientServiceRecordsProps {
     isError: boolean;
     isRefreshing?: boolean;
     onRefresh?: () => void;
+    onPeriodFitted?: () => Promise<void>;
 }
 
 const ClientServiceRecordsDataComponentContext = createContext<string | null>(null);
@@ -123,8 +124,10 @@ function ClientServiceRecordsContent({
     isError,
     isRefreshing = false,
     onRefresh,
+    onPeriodFitted,
 }: Omit<ClientServiceRecordsProps, "data-component">) {
     const dataComponent = useClientServiceRecordsDataComponent();
+    const alertDataComponent = useClientServiceRecordsDataComponent("sessions-card", "out-of-period-alert");
     const record = overview?.record ?? null;
     const assignments = useMemo(
         () => sortAssignmentsNewestFirst(overview?.assignments ?? []),
@@ -152,6 +155,7 @@ function ClientServiceRecordsContent({
                 await keepMutation.mutateAsync({ clientId: client.id, sessionIndexes: unkept.map((session) => session.sessionIndex) });
             } else {
                 const result = await fitMutation.mutateAsync({ clientId: client.id });
+                await onPeriodFitted?.();
                 const description = periodFitToast(before, result);
                 if (description) toast({ variant: "success", description });
             }
@@ -259,33 +263,49 @@ function ClientServiceRecordsContent({
                         showStatus={!record}
                     />
                     {!record ? <ServiceHeaderCard header={assignment.header} delay={assignmentIndex * 180 + 60} /> : null}
-                    {assignmentIndex === 0 && periodStart && periodEnd && unkept.length > 0 ? (
-                        <Alert
-                            variant="warning"
-                            data-component={`${dataComponent}_assignment_period-mismatch`}
-                            dataComponents={{ icon: `${dataComponent}_assignment_period-mismatch_icon`, content: `${dataComponent}_assignment_period-mismatch_content` }}
-                        >
-                            <AlertTitle data-component={`${dataComponent}_assignment_period-mismatch_content_title`}>서비스 기간 밖에 기록된 회차가 있어요</AlertTitle>
-                            <AlertDescription data-component={`${dataComponent}_assignment_period-mismatch_content_description`}>
-                                {unkept.map((session) => (
-                                    <p key={session.sessionIndex}>
-                                        {`${session.sessionIndex}회차 서비스 제공일(${displayPeriodDate(session.serviceDate)})이 고객의 서비스 기간(${displayPeriodDate(periodStart)} ~ ${displayPeriodDate(periodEnd)})보다 ${session.serviceDate.slice(0, 10) < periodStart.slice(0, 10) ? "앞이에요." : "뒤예요."}`}
-                                    </p>
-                                ))}
-                                <p>{periodMismatchQuestion(unkept, periodStart, periodEnd)}</p>
-                            </AlertDescription>
-                            {canEditServiceRecord ? (
-                                <div className="flex gap-2 mt-3" data-component={`${dataComponent}_assignment_period-mismatch_content_actions`}>
-                                    <Button className="flex-1" variant="outline" disabled={isPeriodPending} data-component={`${dataComponent}_assignment_period-mismatch_content_actions_keep`} onClick={() => void handlePeriodMismatch("keep")}>유지</Button>
-                                    <Button className="flex-1" disabled={isPeriodPending} data-component={`${dataComponent}_assignment_period-mismatch_content_actions_fit`} onClick={() => void handlePeriodMismatch("fit")}>변경</Button>
-                                </div>
-                            ) : null}
-                        </Alert>
-                    ) : null}
                     <ServiceSessionsCard
                         assignment={assignment}
                         delay={assignmentIndex * 180 + 120}
                         mismatchDates={mismatchDates}
+                        periodMismatchAlert={assignmentIndex === 0 && periodStart && periodEnd && unkept.length > 0 ? (
+                            <Alert
+                                variant="warning"
+                                className="mt-1 mb-2.5"
+                                data-component={alertDataComponent}
+                                dataComponents={{ icon: `${alertDataComponent}_icon`, content: `${alertDataComponent}_content` }}
+                            >
+                                <AlertTitle className="leading-[1.35]" data-component={`${alertDataComponent}_content_title`}>서비스 기간 밖에 기록된 회차가 있어요</AlertTitle>
+                                <AlertDescription data-component={`${alertDataComponent}_content_description`}>
+                                    {[...unkept.map((session) =>
+                                        `${session.sessionIndex}회차 서비스 제공일(${displayPeriodDate(session.serviceDate)})이 고객의 서비스 기간(${displayPeriodDate(periodStart)} ~ ${displayPeriodDate(periodEnd)})보다 ${session.serviceDate.slice(0, 10) < periodStart.slice(0, 10) ? "앞이에요." : "뒤예요."}`,
+                                    ), periodMismatchQuestion(unkept, periodStart, periodEnd)].join(" ")}
+                                </AlertDescription>
+                                {canEditServiceRecord ? (
+                                    <div className="flex gap-2 mt-2.5" data-component={`${alertDataComponent}_content_actions`}>
+                                        <button
+                                            type="button"
+                                            data-component={`${alertDataComponent}_content_actions_keep`}
+                                            data-slot="period-mismatch-keep"
+                                            className="btn btn-secondary flex-1"
+                                            disabled={isPeriodPending}
+                                            onClick={() => void handlePeriodMismatch("keep")}
+                                        >
+                                            유지
+                                        </button>
+                                        <button
+                                            type="button"
+                                            data-component={`${alertDataComponent}_content_actions_fit`}
+                                            data-slot="period-mismatch-fit"
+                                            className="btn btn-primary flex-1"
+                                            disabled={isPeriodPending}
+                                            onClick={() => void handlePeriodMismatch("fit")}
+                                        >
+                                            변경
+                                        </button>
+                                    </div>
+                                ) : null}
+                            </Alert>
+                        ) : null}
                         isRefreshing={isRefreshing}
                         onRefresh={onRefresh}
                         onSelectSession={(sessionIndex, trigger) => {
@@ -600,6 +620,7 @@ function ServiceSessionsCard({
     assignment,
     delay,
     mismatchDates,
+    periodMismatchAlert,
     isRefreshing,
     onRefresh,
     onSelectSession,
@@ -607,6 +628,7 @@ function ServiceSessionsCard({
     assignment: ServiceRecordAssignment;
     delay: number;
     mismatchDates: Map<number, string>;
+    periodMismatchAlert: ReactNode;
     isRefreshing: boolean;
     onRefresh?: () => void;
     onSelectSession: (sessionIndex: number, trigger: HTMLElement) => void;
@@ -653,6 +675,7 @@ function ServiceSessionsCard({
                     </span>
                 </div>
             </div>
+            {periodMismatchAlert}
             {slots.map((slot) => (
                 <SessionRow
                     key={slot.sessionIndex}

@@ -1625,6 +1625,7 @@ export function ClientDetailContent({
           isError={serviceRecordsQuery.isError}
           isRefreshing={serviceRecordsQuery.isFetching && !serviceRecordsQuery.isLoading}
           onRefresh={() => void serviceRecordsQuery.refetch()}
+          onPeriodFitted={async () => onClientUpdated(await fetchClient(client.id))}
         />
       </MobileDetailTabPanel>
     </MobileDetailPage>

@@ -132,7 +132,7 @@ function createRecord(status: string): ServiceRecordCase {
 
 function renderComponent(
     overview: ServiceRecordOverview,
-    options: { isRefreshing?: boolean; onRefresh?: () => void } = {},
+    options: { isRefreshing?: boolean; onRefresh?: () => void; onPeriodFitted?: () => Promise<void> } = {},
 ) {
     return render(
         <ClientServiceRecords
@@ -144,6 +144,7 @@ function renderComponent(
             isError={false}
             isRefreshing={options.isRefreshing}
             onRefresh={options.onRefresh}
+            onPeriodFitted={options.onPeriodFitted}
         />,
     );
 }
@@ -777,17 +778,20 @@ describe("ClientServiceRecords period mismatch", () => {
         mockUseGetAuthUser.mockReturnValue({ data: { role: "user", branchRole: "manager" }, isPending: false, isLoading: false, isFetching: false, isError: false });
     });
 
-    it("shows the exact early copy once above the first sessions card and badges the row", () => {
+    it("shows the exact early copy once inside the first sessions card and badges the row", () => {
         const data = overview([session(1, "2026-10-30T23:00:00+09:00")]);
         data.assignments.push(createAssignment(2, "sent", data.assignments[0].sessions));
         renderComponent(data);
         expect(screen.getAllByText(title)).toHaveLength(1);
-        expect(screen.getByText("1회차 서비스 제공일(2026.10.30)이 고객의 서비스 기간(2026.11.02 ~ 2026.11.17)보다 앞이에요.")).toBeInTheDocument();
-        expect(screen.getByText("고객 정보의 서비스 시작일을 2026.10.30으로 바꿀까요?")).toBeInTheDocument();
+        expect(screen.getByText("1회차 서비스 제공일(2026.10.30)이 고객의 서비스 기간(2026.11.02 ~ 2026.11.17)보다 앞이에요. 고객 정보의 서비스 시작일을 2026.10.30으로 바꿀까요?")).toBeInTheDocument();
         expect(screen.getAllByText("기간 밖")).toHaveLength(2);
         const alert = screen.getByRole("alert");
         const card = document.querySelector(`[data-component="${TEST_COMPONENT}_sessions-card"]`)!;
-        expect(alert.compareDocumentPosition(card) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+        expect(card).toContainElement(alert);
+        expect(card.firstElementChild?.nextElementSibling).toBe(alert);
+        expect(alert).toHaveAttribute("data-component", `${TEST_COMPONENT}_sessions-card_out-of-period-alert`);
+        expect(screen.getByRole("button", { name: "유지" })).toHaveClass("btn", "btn-secondary");
+        expect(screen.getByRole("button", { name: "변경" })).toHaveClass("btn", "btn-primary");
     });
 
     it("does not badge empty or in-period rows in another assignment", () => {
@@ -808,15 +812,15 @@ describe("ClientServiceRecords period mismatch", () => {
 
     it("asks about the latest late date and lists sessions in index order", () => {
         renderComponent(overview([session(2, "2026-11-19"), session(1, "2026-11-18")]));
-        expect(screen.getByText("1회차 서비스 제공일(2026.11.18)이 고객의 서비스 기간(2026.11.02 ~ 2026.11.17)보다 뒤예요.")).toBeInTheDocument();
-        expect(screen.getByText("고객 정보의 서비스 종료일을 2026.11.19로 바꿀까요?")).toBeInTheDocument();
-        const description = screen.getByText(/1회차 서비스 제공일/).parentElement!;
+        expect(screen.getByText(/1회차 서비스 제공일\(2026.11.18\)이 고객의 서비스 기간\(2026.11.02 ~ 2026.11.17\)보다 뒤예요\./)).toBeInTheDocument();
+        expect(screen.getByText(/고객 정보의 서비스 종료일을 2026.11.19로 바꿀까요\?/)).toBeInTheDocument();
+        const description = screen.getByText(/1회차 서비스 제공일/);
         expect(description.textContent!.indexOf("1회차")).toBeLessThan(description.textContent!.indexOf("2회차"));
     });
 
     it("asks for both boundaries using only unkept sessions", () => {
         renderComponent(overview([session(1, "2026-10-30"), session(2, "2026-11-19"), session(3, "2026-10-29", "kept")]));
-        expect(screen.getByText("고객 정보의 서비스 시작일을 2026.10.30으로, 종료일을 2026.11.19로 바꿀까요?")).toBeInTheDocument();
+        expect(screen.getByText(/고객 정보의 서비스 시작일을 2026.10.30으로, 종료일을 2026.11.19로 바꿀까요\?/)).toBeInTheDocument();
         expect(screen.queryByText(/3회차 서비스 제공일/)).not.toBeInTheDocument();
     });
 
@@ -866,9 +870,11 @@ describe("ClientServiceRecords period mismatch", () => {
         [{ startDate: "2026-10-30", endDate: "2026-11-19" }, "서비스 시작일과 종료일을 바꿨어요"],
     ])("fits and derives the toast from the response %j", async (result, description) => {
         mockFit.mockResolvedValue(result);
-        renderComponent(overview([session(1, "2026-10-30")]));
+        const onPeriodFitted = jest.fn().mockResolvedValue(undefined);
+        renderComponent(overview([session(1, "2026-10-30")]), { onPeriodFitted });
         await userEvent.click(screen.getByRole("button", { name: "변경" }));
         expect(mockFit).toHaveBeenCalledWith({ clientId: 100 });
+        expect(onPeriodFitted).toHaveBeenCalledTimes(1);
         expect(toast).toHaveBeenCalledWith({ variant: "success", description });
     });
 
@@ -902,10 +908,12 @@ describe("ClientServiceRecords period mismatch", () => {
 
     it.each(["유지", "변경"])("keeps the alert and shows a safe mutation error on %s failure", async (action) => {
         (action === "유지" ? mockKeep : mockFit).mockRejectedValue(new Error("internal detail"));
-        renderComponent(overview([session(1, "2026-10-30")]));
+        const onPeriodFitted = jest.fn().mockResolvedValue(undefined);
+        renderComponent(overview([session(1, "2026-10-30")]), { onPeriodFitted });
         await userEvent.click(screen.getByRole("button", { name: action }));
         expect(screen.getByText(title)).toBeInTheDocument();
         expect(toast).toHaveBeenCalledWith({ variant: "destructive", description: "서비스 기간을 처리하지 못했어요" });
+        expect(onPeriodFitted).not.toHaveBeenCalled();
     });
 
     it("follows the existing manager restriction for actions", () => {
