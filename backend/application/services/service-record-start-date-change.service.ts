@@ -114,7 +114,10 @@ export class ServiceRecordStartDateChangeService {
                 if (!date) continue;
                 await tx.service_record_day.updateMany({
                     where: { ...caseWhere, id: day.id },
-                    data: { serviceDate: toDbDate(date) },
+                    data: {
+                        serviceDate: toDbDate(date),
+                        ...(day.serviceDate.toISOString().slice(0, 10) !== date ? { periodMismatchKeptAt: null } : {}),
+                    },
                 });
             }
         }

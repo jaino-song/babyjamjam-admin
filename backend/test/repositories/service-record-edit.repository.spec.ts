@@ -1030,6 +1030,17 @@ describe("ServiceRecordEditRepository", () => {
             return { tx, prisma, order, response, source };
         }
 
+        it.each(["2026-09-01", "2026-09-02"])("clears confirmation only when the admin-confirm date changes to %s", async (serviceDate) => {
+            const session = futureSource().sessions[0]!;
+            const { tx } = await confirmWith({ sessions: [{ ...session, serviceDate }] });
+            const data = tx.service_record_day.updateMany.mock.calls[0]![0].data;
+            if (serviceDate !== session.serviceDate) {
+                expect(data.periodMismatchKeptAt).toBeNull();
+            } else {
+                expect(data).not.toHaveProperty("periodMismatchKeptAt");
+            }
+        });
+
         const toggles = { saturday: true, sunday: false, holiday: true };
         const flagWrite = (source: ServiceRecordEditSource) => ({
             where: { id: source.client.id, branchId },

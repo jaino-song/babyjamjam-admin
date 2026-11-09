@@ -56,6 +56,7 @@ function world(options: { count?: number; total?: number | null; planned?: Servi
         serviceDate: date(oldDates[index] ?? "2026-12-24"),
         answers: { nested: { fed: true }, amount: index + 1 }, etcService: "care", notes: "note",
         paymentConfirmed: true, momApproval: "approved", clientSignature: `signature-${index}`,
+        periodMismatchKeptAt: null as Date | null,
         clientSignedAt: date("2026-12-18"), locked: index < 2, submittedAt: index < 2 ? date("2026-12-18") : null,
         createdAt: date("2026-12-14"), updatedAt: date("2026-12-18"),
     }));
@@ -119,6 +120,19 @@ function world(options: { count?: number; total?: number | null; planned?: Servi
 
 describe("ServiceRecordStartDateChangeService", () => {
     beforeEach(() => jest.clearAllMocks());
+
+    it("MOVE clears confirmation for changed dates and keeps it for unchanged dates", async () => {
+        const w = world();
+        const keptAt = date("2026-12-10");
+        w.days.forEach((day) => { day.periodMismatchKeptAt = keptAt; });
+        // The first row already lies on its destination; the other rows move.
+        w.days[0]!.serviceDate = date(newDates[0]!);
+        await w.apply("MOVE");
+        expect(w.days[0]!.periodMismatchKeptAt).toBe(keptAt);
+        expect(w.days[1]!.periodMismatchKeptAt).toBeNull();
+        expect(w.days[2]!.periodMismatchKeptAt).toBeNull();
+        expect(w.tx.service_record_day.updateMany.mock.calls[0]![0].data).not.toHaveProperty("periodMismatchKeptAt");
+    });
 
     it("RESTART archives every full row in one batch before deleting, then resets dates and keeps N", async () => {
         const w = world();

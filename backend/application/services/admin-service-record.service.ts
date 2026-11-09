@@ -16,8 +16,7 @@ import {
     SERVICE_RECORD_LINK_SMS_LOG_TEMPLATE_KEY,
 } from "domain/constants/service-record-link-message";
 import { EFORMSIGN_DOCUMENT_KIND } from "domain/entities/eformsign-doc.entity";
-import { type KrBusinessDayCalendar, UnsupportedKoreanHolidayYearError } from "domain/utils/business-days";
-import { serviceRecordSessionCount } from "domain/utils/service-record-session-count";
+import { type KrBusinessDayCalendar } from "domain/utils/business-days";
 import {
     resolveServiceRecordScheduleProjection,
 } from "application/policies/service-record-edit-preview.policy";
@@ -25,6 +24,7 @@ import {
     SERVICE_RECORD_EDIT_REPOSITORY,
     type IServiceRecordEditRepository,
 } from "domain/repositories/service-record-edit.repository.interface";
+import { ServiceRecordPeriodMismatchService, servicePeriodSessionCount } from "./service-record-period-mismatch.service";
 import { ServiceRecordLinkService } from "./service-record-link.service";
 import { MessageTriggerService } from "./message-trigger.service";
 import { ServiceRecordSecurityEventService } from "./service-record-security-event.service";
@@ -131,34 +131,6 @@ function hasAuthoritativeRevision(record: {
         || record.plannedSessions != null;
 }
 
-function isoDate(date: Date | null | undefined): string | null {
-    return date ? date.toISOString().slice(0, 10) : null;
-}
-
-function servicePeriodSessionCount(
-    startDate: Date | null | undefined,
-    endDate: Date | null | undefined,
-    fallback: number | null,
-    calendar: KrBusinessDayCalendar,
-    authoritative = false,
-): number {
-    // Confirmed revision rows carry the authoritative actual N. Legacy rows
-    // retain the existing in-period cap used by the provider flow, while a
-    // postponed span never inflates the stored count.
-    if (authoritative) return fallback ?? 0;
-    const startDateIso = isoDate(startDate);
-    const endDateIso = isoDate(endDate);
-    if (!startDateIso || !endDateIso) return fallback ?? 0;
-    try {
-        return serviceRecordSessionCount(startDate, endDate, fallback, calendar) ?? 0;
-    } catch (error) {
-        // Unsupported legacy years remain viewable. A presentation total of
-        // zero means the authoritative N is unknown; the editor projection
-        // carries the explicit blocker and never invents a weekday fallback.
-        if (error instanceof UnsupportedKoreanHolidayYearError) return fallback ?? 0;
-        throw error;
-    }
-}
 @Injectable()
 export class AdminServiceRecordService {
     private readonly logger = new Logger(AdminServiceRecordService.name);
@@ -172,7 +144,38 @@ export class AdminServiceRecordService {
         @Optional()
         @Inject(SERVICE_RECORD_EDIT_REPOSITORY)
         private readonly editRepository?: IServiceRecordEditRepository,
+        @Optional() private readonly periodMismatchService?: ServiceRecordPeriodMismatchService,
     ) {}
+
+    async keepPeriodMismatch(branchId: string, clientId: number, sessionIndexes: number[]): Promise<{ keptSessionIndexes: number[] }> {
+        if (!branchId) throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
+        const calendar = await this.holidayCalendar.forBranch(branchId, { fresh: true });
+        return this.prisma.$transaction((tx) => this.periodMismatchService!.keepInTransaction(tx, {
+            branchId, clientId, sessionIndexes, calendar,
+        }));
+    }
+
+    async fitPeriodMismatch(branchId: string, clientId: number): Promise<{ startDate: string | null; endDate: string | null }> {
+        if (!branchId) throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
+        const calendar = await this.holidayCalendar.forBranch(branchId, { fresh: true });
+        let committed: { scheduleIds: number[] } | undefined;
+        try {
+            const result = await this.prisma.$transaction((tx) => this.periodMismatchService!.fitInTransaction(tx, {
+                branchId, clientId, calendar,
+            }));
+            if (result.changed) committed = { scheduleIds: result.scheduleIds };
+            return { startDate: result.startDate, endDate: result.endDate };
+        } finally {
+            if (committed) {
+                for (const scheduleId of committed.scheduleIds) {
+                    await this.messageTriggerService.syncEmployeeAssignmentRulesForSchedule(branchId, scheduleId, true)
+                        .catch((error) => this.logger.error("Failed to resync assignment trigger rules after period fit", error));
+                }
+                await this.messageTriggerService.syncClientRulesForClient(branchId, clientId, false)
+                    .catch((error) => this.logger.error("Failed to resync client trigger rules after period fit", error));
+            }
+        }
+    }
 
     async getClientOverview(
         branchId: string,
@@ -727,6 +730,7 @@ export class AdminServiceRecordService {
             serviceDate: session.serviceDate,
             locked: session.locked,
             submittedAt: session.submittedAt,
+            periodMismatchKeptAt: session.periodMismatchKeptAt?.toISOString() ?? null,
             updatedAt: session.updatedAt,
             answers: session.answers,
             etcService: session.etcService,

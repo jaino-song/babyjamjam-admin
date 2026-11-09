@@ -1,5 +1,5 @@
 import { Prisma } from "@prisma/client";
-import { IsOptional, IsString, Matches, MaxLength } from "class-validator";
+import { ArrayNotEmpty, ArrayUnique, IsArray, IsInt, Min, IsOptional, IsString, Matches, MaxLength } from "class-validator";
 import type {
     ServiceRecordEditServiceDays,
     ServiceRecordScheduleProjection,
@@ -79,7 +79,19 @@ export interface AdminServiceRecordHeaderDto {
     updatedAt: Date;
 }
 
+export class KeepServiceRecordPeriodMismatchDto {
+    @IsArray()
+    @ArrayNotEmpty()
+    @ArrayUnique()
+    @IsInt({ each: true })
+    @Min(1, { each: true })
+    sessionIndexes!: number[];
+}
+
+export class FitServiceRecordPeriodMismatchDto {}
+
 export interface AdminServiceRecordSessionDto {
+    periodMismatchKeptAt: string | null;
     sessionIndex: number;
     serviceDate: Date;
     locked: boolean;

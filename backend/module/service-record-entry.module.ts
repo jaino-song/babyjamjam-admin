@@ -7,6 +7,7 @@ import { SystemSettingModule } from "module/system-setting.module";
 import { EformsignDocModule } from "module/eformsign-doc.module";
 import { AdminServiceRecordController } from "interface/controllers/admin-service-record.controller";
 import { ServiceRecordEntryController } from "interface/controllers/service-record-entry.controller";
+import { ServiceRecordPeriodMismatchService } from "application/services/service-record-period-mismatch.service";
 import { AdminServiceRecordService } from "application/services/admin-service-record.service";
 import { AdminServiceRecordEditService } from "application/services/admin-service-record-edit.service";
 import { ServiceRecordCaseEventBus } from "application/services/service-record-case-event-bus.service";
@@ -38,6 +39,7 @@ import { HolidayModule } from "./holiday.module";
     controllers: [ServiceRecordEntryController, AdminServiceRecordController],
     providers: [
         AdminServiceRecordService,
+        ServiceRecordPeriodMismatchService,
         AdminServiceRecordEditService,
         ServiceRecordCaseEventBus,
         ServiceRecordEntryService,

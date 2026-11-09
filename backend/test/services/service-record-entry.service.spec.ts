@@ -87,6 +87,7 @@ function createDay(overrides: Record<string, unknown> = {}) {
         momApproval: "approved",
         locked: true,
         submittedAt: new Date("2026-07-01T01:00:00.000Z"),
+        periodMismatchKeptAt: null as Date | null,
         clientSignature: SIGNATURE,
         clientSignedAt: new Date("2026-07-01T01:00:00.000Z"),
         ...overrides,
@@ -181,7 +182,7 @@ function createHarness(options: {
             } }) => Promise.resolve(days.filter((day) =>
                 (where.serviceRecordCaseId === undefined || day.serviceRecordCaseId === where.serviceRecordCaseId)
                 && (where.branchId === undefined || day.branchId === where.branchId)
-                && (where.caseSessionIndex === undefined || day.caseSessionIndex < where.caseSessionIndex.lt)
+                && (where.caseSessionIndex === undefined || (day.caseSessionIndex != null && day.caseSessionIndex < where.caseSessionIndex.lt))
                 && (where.locked === undefined || day.locked === where.locked)).length)),
             upsert,
             findMany: jest.fn().mockResolvedValue(days),
@@ -421,6 +422,28 @@ describe("caregiver context session counts", () => {
 describe("ServiceRecordEntryService.upsertSession", () => {
     afterEach(() => {
         jest.useRealTimers();
+    });
+
+    it.each([true, false])("clears the keep timestamp only on an actual date change (locked=%s)", async (locked) => {
+        const keptAt = new Date("2026-06-30T01:00:00.000Z");
+        const existing = createDay({ locked, periodMismatchKeptAt: keptAt });
+        const h = createHarness({ existing });
+        const changed = await h.service.upsertSession(context, 1, createDto({ serviceDate: "2026-07-02", notes: "edited" }), locked);
+        expect(changed.periodMismatchKeptAt).toBeNull();
+        expect(h.upsert.mock.calls[0]![0].update.periodMismatchKeptAt).toBeNull();
+
+        const same = createHarness({ existing });
+        const unchanged = await same.service.upsertSession(context, 1, createDto({ notes: "edited" }), locked);
+        expect(unchanged.periodMismatchKeptAt).toBe(keptAt);
+        expect(same.upsert.mock.calls[0]![0].update).not.toHaveProperty("periodMismatchKeptAt");
+    });
+
+    it("does not count a legacy null-index row as a previously submitted session", async () => {
+        const h = createHarness({ days: [createDay({ caseSessionIndex: null, sessionIndex: 1, serviceDate: new Date("2026-06-29T00:00:00Z") })] });
+        await expect(h.service.upsertSession(context, 2, createDto({ serviceDate: "2026-07-02" }), false))
+            .rejects.toMatchObject({ response: { code: "REQUEST_CONFLICT" } });
+        expect(h.transactionClient.service_record_day.count).toHaveBeenCalled();
+        expect(h.upsert).not.toHaveBeenCalled();
     });
 
     it("uses the common client, employee, case, schedule, assignment, day lock order for an owned assignment", async () => {
