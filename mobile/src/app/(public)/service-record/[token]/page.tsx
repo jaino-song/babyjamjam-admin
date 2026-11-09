@@ -85,18 +85,38 @@ function serviceDateErrorMessage(reason: unknown): string {
     }
 }
 
+interface StoredSessionDraft {
+    pageIdx: number;
+    draft: Record<string, unknown>;
+}
 interface StoredFormState {
     header?: Record<string, string>;
+    drafts?: Record<number, StoredSessionDraft>;
+}
+interface LegacyStoredFormState extends StoredFormState {
     day?: number;
     pageIdx?: number;
     draft?: Record<string, unknown>;
 }
+
+function openSessionIndexes(lockedDays: ReadonlySet<number>, totalSessions: number): number[] {
+    const next = Math.max(0, ...lockedDays) + 1;
+    return Array.from({ length: Math.min(totalSessions, next) }, (_, index) => index + 1)
+        .filter((index) => !lockedDays.has(index));
+}
+
 const draftStorageKey = (token: string) => `${DRAFT_STORAGE_PREFIX}:${token}`;
 const readStoredFormState = (token: string): StoredFormState | null => {
     if (typeof window === "undefined" || !token) return null;
     try {
         const raw = window.sessionStorage.getItem(draftStorageKey(token));
-        return raw ? JSON.parse(raw) as StoredFormState : null;
+        if (!raw) return null;
+        const stored = JSON.parse(raw) as LegacyStoredFormState;
+        const drafts = { ...stored.drafts };
+        if (stored.day != null && stored.draft && !drafts[stored.day]) {
+            drafts[stored.day] = { pageIdx: stored.pageIdx ?? 0, draft: stored.draft };
+        }
+        return { header: stored.header, drafts };
     } catch {
         return null;
     }
@@ -117,6 +137,15 @@ const clearStoredFormState = (token: string) => {
         // Ignore storage cleanup failures after a successful server submission.
     }
 };
+
+function clearStoredSessionDraft(token: string, day: number): void {
+    const stored = readStoredFormState(token);
+    if (!stored?.drafts?.[day]) return;
+    const drafts = { ...stored.drafts };
+    delete drafts[day];
+    if (Object.keys(drafts).length === 0) clearStoredFormState(token);
+    else writeStoredFormState(token, { header: stored.header, drafts });
+}
 
 function isRecordFinalizedStatus(recordStatus?: string | null): boolean {
     return Boolean(recordStatus && FINALIZED_RECORD_STATUSES.has(recordStatus));
@@ -392,9 +421,8 @@ export default function ServiceRecordPage() {
                     paymentConfirmed: Boolean(session.paymentConfirmed),
                 });
             } else {
-                let earliestOpenDay = 1;
-                while (ctx.sessions.some((row) => row.sessionIndex === earliestOpenDay && row.locked)) earliestOpenDay++;
-                if (targetDay !== earliestOpenDay) {
+                const submitted = new Set(ctx.sessions.filter((row) => row.locked).map((row) => row.sessionIndex));
+                if (!openSessionIndexes(submitted, ctx.totalSessions).includes(targetDay)) {
                     navigateTo("overview", { mode: "replace" });
                     return;
                 }
@@ -412,6 +440,7 @@ export default function ServiceRecordPage() {
     }, [ctx, navigateTo, token]);
 
     const lockedDays = useMemo(() => new Set((ctx?.sessions ?? []).filter((s) => s.locked).map((s) => s.sessionIndex)), [ctx]);
+    const openDays = useCallback(() => openSessionIndexes(lockedDays, ctx?.totalSessions ?? 0), [lockedDays, ctx?.totalSessions]);
     const nextOpenDay = useCallback(() => {
         let d = 1;
         while (lockedDays.has(d)) d++;
@@ -471,7 +500,8 @@ export default function ServiceRecordPage() {
             return;
         }
         if (screen === "day" && !editing) {
-            writeStoredFormState(token, { header, day, pageIdx, draft });
+            const stored = readStoredFormState(token);
+            writeStoredFormState(token, { header, drafts: { ...stored?.drafts, [day]: { pageIdx, draft } } });
         }
     }, [day, draft, editing, header, pageIdx, screen, token]);
 
@@ -494,7 +524,7 @@ export default function ServiceRecordPage() {
         const session = ctx?.sessions.find((row) => row.sessionIndex === d);
         const shouldEdit = editExisting || Boolean(session?.locked);
         if (shouldEdit && !session?.locked) return;
-        if (!shouldEdit && d !== nextOpenDay()) return;
+        if (!shouldEdit && !openDays().includes(d)) return;
         if (d < 1 || d > (ctx?.totalSessions ?? 0) || isRecordFinalizedStatus(ctx?.recordStatus)) return;
         setServiceDateError(null);
 
@@ -511,10 +541,9 @@ export default function ServiceRecordPage() {
                 paymentConfirmed: Boolean(session.paymentConfirmed),
             });
         } else {
-            const stored = readStoredFormState(token);
-            const canRestoreDraft = stored?.day === d && Boolean(stored.draft);
-            initialPageIdx = canRestoreDraft
-                ? Math.min(Math.max(stored?.pageIdx ?? 0, 0), DAY_PAGES.length - 1)
+            const storedDraft = readStoredFormState(token)?.drafts?.[d];
+            initialPageIdx = storedDraft
+                ? Math.min(Math.max(storedDraft.pageIdx, 0), DAY_PAGES.length - 1)
                 : 0;
             setDraft(initializeUnlockedDraft(token, d, ctx?.sessions ?? []));
         }
@@ -564,7 +593,7 @@ export default function ServiceRecordPage() {
                 }
                 return;
             }
-            if (!editing) clearStoredFormState(token);
+            if (!editing) clearStoredSessionDraft(token, submittedDay);
             setSubmitModalOpen(false);
             setEditing(false);
             setMomSignature(null);
@@ -595,7 +624,7 @@ export default function ServiceRecordPage() {
                 setErrorNotificationMessage(problemMessage(res.status, body, "기록을 삭제하지 못했어요."));
                 return;
             }
-            if (readStoredFormState(token)?.day === deletedDay) clearStoredFormState(token);
+            clearStoredSessionDraft(token, deletedDay);
             setDeleteModalOpen(false);
             await loadContext("push");
             toast({ variant: "success", title: `${deletedDay}회차 기록을 삭제했어요` });
@@ -650,6 +679,7 @@ export default function ServiceRecordPage() {
             isRecordFinalized={isRecordFinalized}
             lockedDays={lockedDays}
             nextOpenDay={nextOpenDay}
+            openDays={openDays}
             defaultDate={defaultDate}
             onPhoneChange={handlePhoneChange}
             onSubmitPhone={submitPhone}
@@ -772,8 +802,8 @@ function initializeUnlockedDraft(
             }
             : {}),
     };
-    const stored = readStoredFormState(token);
-    if (stored?.day !== day || !stored.draft) return serverDraft;
-    const restoredDraft = { ...serverDraft, ...stored.draft };
+    const storedDraft = readStoredFormState(token)?.drafts?.[day];
+    if (!storedDraft) return serverDraft;
+    const restoredDraft = { ...serverDraft, ...storedDraft.draft };
     return restoredDraft;
 }

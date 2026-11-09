@@ -105,6 +105,7 @@ export function MobileServiceRecordScreen({
     isRecordFinalized,
     lockedDays,
     nextOpenDay,
+    openDays,
     defaultDate,
     onPhoneChange,
     onSubmitPhone,
@@ -226,6 +227,7 @@ export function MobileServiceRecordScreen({
                     defaultDate={defaultDate}
                     lockedDays={lockedDays}
                     nextOpenDay={nextOpenDay}
+                    openDays={openDays}
                     isRecordFinalized={isRecordFinalized}
                     onOpenDay={onOpenDay}
                     onOpenGuide={() => setGuideRequested(true)}

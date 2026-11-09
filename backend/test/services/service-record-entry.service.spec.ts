@@ -442,7 +442,9 @@ describe("ServiceRecordEntryService.upsertSession", () => {
         const h = createHarness({ days: [createDay({ caseSessionIndex: null, sessionIndex: 1, serviceDate: new Date("2026-06-29T00:00:00Z") })] });
         await expect(h.service.upsertSession(context, 2, createDto({ serviceDate: "2026-07-02" }), false))
             .rejects.toMatchObject({ response: { code: "REQUEST_CONFLICT" } });
-        expect(h.transactionClient.service_record_day.count).toHaveBeenCalled();
+        expect(h.transactionClient.service_record_day.findMany).toHaveBeenCalledWith(expect.objectContaining({
+            where: { serviceRecordCaseId: CASE_ID, branchId: BRANCH_ID, locked: true },
+        }));
         expect(h.upsert).not.toHaveBeenCalled();
     });
 
@@ -1258,7 +1260,9 @@ describe("ServiceRecordEntryService.upsertSession", () => {
             }),
         });
         // Session 2 has no row yet; session 1 was written and locked by the outgoing caregiver.
-        transactionClient.service_record_day.count.mockResolvedValue(1);
+        transactionClient.service_record_day.findMany.mockResolvedValue([createDay({
+            scheduleId: 701, employeeId: 31, serviceDate: new Date("2026-10-01T00:00:00.000Z"),
+        })]);
         transactionClient.service_record_day.findUnique
             .mockResolvedValueOnce(null)
             .mockResolvedValueOnce(createDay({
@@ -1318,7 +1322,9 @@ describe("ServiceRecordEntryService.upsertSession", () => {
             ensureForClient,
             extendExpiryForCase,
         });
-        transactionClient.service_record_day.count.mockResolvedValue(13);
+        transactionClient.service_record_day.findMany.mockResolvedValue(Array.from({ length: 13 }, (_, index) => createDay({
+            caseSessionIndex: index + 1, sessionIndex: index + 1, serviceDate: new Date("2026-08-28T00:00:00.000Z"),
+        })));
         transactionClient.service_record_day.findUnique.mockImplementation(
             ({ where }: { where: { serviceRecordCaseId_caseSessionIndex: { caseSessionIndex: number } } }) => {
                 const idx = where.serviceRecordCaseId_caseSessionIndex.caseSessionIndex;
@@ -1572,7 +1578,9 @@ describe("ServiceRecordEntryService branch calendar", () => {
             holidayCalendar: branchHolidayCalendar("2026-09-14"),
         });
         // All 14 earlier sessions are submitted; session 15 has no row yet.
-        harness.transactionClient.service_record_day.count.mockResolvedValue(14);
+        harness.transactionClient.service_record_day.findMany.mockResolvedValue(Array.from({ length: 14 }, (_, index) => createDay({
+            caseSessionIndex: index + 1, sessionIndex: index + 1, serviceDate: new Date("2026-09-28T00:00:00.000Z"),
+        })));
         harness.transactionClient.service_record_day.findUnique
             .mockResolvedValueOnce(null)
             .mockResolvedValueOnce(createDay({ caseSessionIndex: 14, sessionIndex: 14, serviceDate: new Date("2026-09-28T00:00:00.000Z") }));
@@ -2033,15 +2041,15 @@ describe("caregiver-selected service dates", () => {
         expect(h.editLogCreate).toHaveBeenCalledTimes(1);
     });
 
-    it.each([false, true])("refuses new session 4 when session 1 was deleted but 2 and 3 are submitted (submit=%s)", async (lock) => {
+    it.each([false, true])("accepts new session 4 when session 1 was deleted but 2 and 3 are submitted (submit=%s)", async (lock) => {
         const h = createHarness({ days: [
             createDay({ caseSessionIndex: 2, sessionIndex: 2, serviceDate: new Date("2026-07-02") }),
             createDay({ caseSessionIndex: 3, sessionIndex: 3, serviceDate: new Date("2026-07-03") }),
         ] });
 
-        await expectException(h.service.upsertSession(context, 4, createDto({ serviceDate: "2026-07-06" }), lock), ConflictException, "REQUEST_CONFLICT");
+        await expect(h.service.upsertSession(context, 4, createDto({ serviceDate: "2026-07-06" }), lock)).resolves.toBeDefined();
 
-        expect(h.upsert).not.toHaveBeenCalled();
+        expect(h.upsert).toHaveBeenCalledTimes(1);
     });
 
     it.each([false, true])("accepts new session 4 when all earlier sessions are submitted (submit=%s)", async (lock) => {
@@ -2078,7 +2086,7 @@ describe("caregiver-selected service dates", () => {
         expect(h.upsert).toHaveBeenCalledTimes(1);
     });
 
-    it.each([false, true])("requires every earlier session to be submitted for a new write, including drafts (submit=%s)", async (lock) => {
+    it.each([false, true])("counts an unsubmitted draft as not submitted for a new write (submit=%s)", async (lock) => {
         const h = createHarness({ days: [
             createDay(),
             createDay({ caseSessionIndex: 2, sessionIndex: 2, serviceDate: new Date("2026-07-02"), locked: false }),
@@ -2089,16 +2097,48 @@ describe("caregiver-selected service dates", () => {
         expect(h.upsert).not.toHaveBeenCalled();
     });
 
-    it("refuses re-saving an unsubmitted draft while an earlier submitted row is missing", async () => {
-        const h = createHarness({ existing: createDay({ caseSessionIndex: 4, sessionIndex: 4,
-            serviceDate: new Date("2026-07-06"), locked: false }), days: [
+    it.each([4, 5])("re-saves an unsubmitted draft only through the next session (day=%s)", async (sessionIndex) => {
+        const serviceDate = sessionIndex === 4 ? "2026-07-06" : "2026-07-07";
+        const h = createHarness({ existing: createDay({ caseSessionIndex: sessionIndex, sessionIndex,
+            serviceDate: new Date(serviceDate), locked: false }), days: [
             createDay({ caseSessionIndex: 2, sessionIndex: 2, serviceDate: new Date("2026-07-02") }),
             createDay({ caseSessionIndex: 3, sessionIndex: 3, serviceDate: new Date("2026-07-03") }),
         ] });
 
-        await expectException(h.service.upsertSession(context, 4, createDto({ serviceDate: "2026-07-06" }), false), ConflictException, "REQUEST_CONFLICT");
+        const write = h.service.upsertSession(context, sessionIndex, createDto({ serviceDate }), false);
+        if (sessionIndex === 4) {
+            await expect(write).resolves.toBeDefined();
+            expect(h.upsert).toHaveBeenCalledTimes(1);
+        } else {
+            await expectException(write, ConflictException, "REQUEST_CONFLICT");
+            expect(h.upsert).not.toHaveBeenCalled();
+        }
+    });
 
-        expect(h.upsert).not.toHaveBeenCalled();
+    describe.each([
+        { submitted: [2, 3], open: [1, 4], refused: [5] },
+        { submitted: [3], open: [1, 2, 4], refused: [5] },
+        { submitted: [1, 2, 3], open: [4], refused: [5] },
+        { submitted: [2], open: [1, 3], refused: [4] },
+        { submitted: [2, 4], open: [1, 3, 5], refused: [] },
+        { submitted: [], open: [1], refused: [2] },
+    ])("every gap plus next with submitted $submitted", ({ submitted, open, refused }) => {
+        const dates: Record<number, string> = { 1: "2026-07-01", 2: "2026-07-02", 3: "2026-07-03", 4: "2026-07-06", 5: "2026-07-07" };
+        it.each([false, true])("accepts each open session and refuses later sessions (submit=%s)", async (lock) => {
+            for (const sessionIndex of [...open, ...refused]) {
+                const h = createHarness({ days: submitted.map((index) => createDay({
+                    caseSessionIndex: index, sessionIndex: index, serviceDate: new Date(dates[index] ?? ""),
+                })) });
+                const write = h.service.upsertSession(context, sessionIndex, createDto({ serviceDate: dates[sessionIndex] ?? "" }), lock);
+                if (open.includes(sessionIndex)) {
+                    await expect(write).resolves.toBeDefined();
+                    expect(h.upsert).toHaveBeenCalledTimes(1);
+                } else {
+                    await expectException(write, ConflictException, "REQUEST_CONFLICT");
+                    expect(h.upsert).not.toHaveBeenCalled();
+                }
+            }
+        });
     });
 
     it("returns TAKEN when a non-monotonic earlier session already uses the selected date", async () => {
@@ -2172,7 +2212,7 @@ describe("caregiver-selected service dates", () => {
         expect(h.upsert.mock.calls[0][0].create).toMatchObject({
             caseSessionIndex: 2, serviceDate: new Date(plannedSessions[1]!.serviceDate), locked: lock,
         });
-        expect(h.transactionClient.service_record_day.findMany).toHaveBeenCalledTimes(1);
+        expect(h.transactionClient.service_record_day.findMany).toHaveBeenCalledTimes(2);
         expect(h.transactionClient.service_record_case.update).not.toHaveBeenCalled();
         expect(h.lifecycle.recompute).toHaveBeenCalledTimes(1);
     });

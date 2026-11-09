@@ -51,7 +51,7 @@ describe("token planned-date drafts", () => {
         expect(screen.getByTestId("date")).toHaveTextContent("2026-07-24");
         expect(screen.getByTestId("notes")).toHaveTextContent("saved notes");
         const stored = JSON.parse(window.sessionStorage.getItem("daily-service-record-draft:test-token")!);
-        expect(stored.draft._date).toBe("2026-07-24");
+        expect(stored.drafts[1].draft._date).toBe("2026-07-24");
     });
 
     it("applies a calendar selection immediately to the draft", async () => {

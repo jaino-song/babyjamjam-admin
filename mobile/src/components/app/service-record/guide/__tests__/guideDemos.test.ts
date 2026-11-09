@@ -147,7 +147,8 @@ describe("guideDemos", () => {
             await until(() => els.m.querySelector(".toast")?.textContent === "1회차 기록을 삭제했어요");
             expect(element(els.m, "c1")).toHaveTextContent("입력 가능");
             expect(element(els.m, "c1")?.querySelector(".d")?.textContent).toBe("");
-            expect(element(els.m, "c4")).toHaveTextContent("대기");
+            expect(element(els.m, "c4")).toHaveTextContent("입력 가능");
+            expect(element(els.m, "c5")).toHaveTextContent("대기");
             expect(element(els.m, "c4")?.querySelector(".d")?.textContent).toBe("");
             expect(element(els.m, "c2")).toHaveTextContent("2026.11.03");
             expect(element(els.m, "c3")).toHaveTextContent("2026.11.04");

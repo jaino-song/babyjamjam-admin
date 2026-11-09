@@ -511,7 +511,7 @@ const DEMOS: Record<DemoName, (ctx: DemoCtx) => Promise<void>> = {
         await tap(ctx, ok);
         hideTouch(ctx);
         ctx.m.dataset.overlay = "false";
-        setScreen(ctx.m, gridScreen(["current", "done", "done", "locked", "locked", "locked", "locked", "locked", "locked", "locked"]));
+        setScreen(ctx.m, gridScreen(["current", "done", "done", "current", "locked", "locked", "locked", "locked", "locked", "locked"]));
         await toast(ctx, "1회차 기록을 삭제했어요", 1400);
     },
 };
