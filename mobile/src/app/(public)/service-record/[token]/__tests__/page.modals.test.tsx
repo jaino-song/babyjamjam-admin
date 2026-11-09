@@ -1,10 +1,12 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import type { MobileServiceRecordWizardProps } from "@/components/app/service-record/ServiceRecordWizard";
+import { ReviewStep } from "@/components/app/service-record/screen/ReviewStep";
 import { toast } from "@/hooks/use-toast";
 import ServiceRecordPage from "../page";
 
 jest.mock("next/navigation", () => ({ useParams: () => ({ token: "test-token" }) }));
 jest.mock("@/hooks/use-toast", () => ({ toast: jest.fn() }));
+jest.mock("@/components/app/service-record/SignaturePad", () => ({ SignaturePad: () => null }));
 jest.mock("@/hooks/useTokenBusinessDayCalendar", () => ({
     useTokenBusinessDayCalendar: () => ({ calendar: { isBusinessDay: () => true }, ready: true, error: null, retry: jest.fn() }),
 }));
@@ -20,6 +22,7 @@ jest.mock("@/components/app/service-record/ServiceRecordWizard", () => ({
         <button onClick={props.onOpenDateSheet}>date</button>
         <button onClick={props.onDeleteSession}>delete</button>
         <button onClick={props.onOpenSubmitModal}>submit</button>
+        {props.screen === "day" && props.editing && <ReviewStep {...props} />}
         {props.slots?.serviceDateSheet}{props.slots?.deleteModal}{props.slots?.submitModal}{props.slots?.errorNotification}
     </div>,
 }));
@@ -64,6 +67,32 @@ it("resubmits the newly picked date rather than the stored date", async () => {
     await waitFor(() => expect(mockFetch.mock.calls.some(([url]) => url.endsWith("/submit"))).toBe(true));
     const [, init] = mockFetch.mock.calls.find(([url]) => url.endsWith("/submit"))!;
     expect(JSON.parse(init.body).serviceDate).toBe("2026-11-05");
+});
+
+it("reopens with the unsaved date selected and clears the review change by returning to 지금", async () => {
+    await openEdit();
+    fireEvent.click(screen.getByRole("button", { name: "서비스 제공일 수정" }));
+    fireEvent.click(screen.getByRole("button", { name: "2026.11.05(목)" }));
+    fireEvent.click(screen.getByRole("button", { name: "선택" }));
+    expect(screen.queryByRole("dialog")).toBeNull();
+    const reviewDate = screen.getByRole("group", { name: "서비스 제공일" });
+    expect(reviewDate.querySelector("del")).toHaveTextContent("11.02");
+    expect(reviewDate).toHaveTextContent("2026.11.05(목)");
+
+    fireEvent.click(screen.getByRole("button", { name: "서비스 제공일 수정" }));
+    expect(screen.getByRole("button", { name: "2026.11.05(목)" })).toHaveAttribute("aria-pressed", "true");
+    fireEvent.click(screen.getByRole("button", { name: "2026.11.02(월) 지금" }));
+    fireEvent.click(screen.getByRole("button", { name: "선택" }));
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(reviewDate.querySelector("del")).toBeNull();
+    expect(reviewDate).toHaveTextContent("2026.11.02(월)");
+    expect(mockFetch.mock.calls.some(([url]) => url.endsWith("/submit"))).toBe(false);
+
+    fireEvent.click(screen.getByRole("button", { name: "서비스 제공일 수정" }));
+    const current = screen.getByRole("button", { name: "2026.11.02(월) 지금" });
+    expect(current).toHaveAttribute("aria-disabled", "true");
+    expect(current).toHaveAttribute("aria-pressed", "false");
+    expect(screen.getByRole("button", { name: "선택" })).toBeDisabled();
 });
 
 it("cancel leaves the record and DELETE untouched; confirm deletes then reloads and toasts", async () => {
