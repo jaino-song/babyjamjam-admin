@@ -96,6 +96,19 @@ class ProbeController {
         });
     }
 
+    @Post("service-date-validation")
+    serviceDateValidation() {
+        throw new BadRequestException({
+            ...problemBody("VALIDATION_FAILED", {
+                pointer: "/serviceDate",
+                code: "INVALID_VALUE",
+                detail: "앞 회차보다 이르게 바꿀 수 없어요. 앞 회차를 먼저 변경해 주세요.",
+                location: "body",
+            }),
+            serviceDateReason: "BEFORE_PREVIOUS",
+        });
+    }
+
     @Post("period-finalized")
     periodFinalized() {
         // validatePeriodChange 이전 응답 모양: 코드만 있는 본문도 카탈로그가 채워야 해요.
@@ -216,6 +229,25 @@ describe("problem contract over HTTP", () => {
         // 나가요(생산자 message 텍스트는 와이어로 나가지 않는 기존 불변식).
         expect(response.body.message).toBe(PROBLEM_CATALOG.VALIDATION_FAILED.detail["ko-KR"]);
         expect(response.body.message).not.toBe("2회차 날짜가 다른 회차와 겹칩니다.");
+    });
+
+    it("keeps the serviceDateReason extra while using catalogue validation details", async () => {
+        const response = await request(app.getHttpServer()).post("/problem-probe/service-date-validation").expect(400);
+        expect(response.headers["content-type"]).toContain("application/problem+json");
+        expect(response.body).toMatchObject({
+            code: "VALIDATION_FAILED",
+            status: 400,
+            serviceDateReason: "BEFORE_PREVIOUS",
+            detail: PROBLEM_CATALOG.VALIDATION_FAILED.detail["ko-KR"],
+            message: PROBLEM_CATALOG.VALIDATION_FAILED.detail["ko-KR"],
+            errors: [{
+                pointer: "/serviceDate",
+                code: "INVALID_VALUE",
+                detail: "허용되지 않는 값이에요.",
+                location: "body",
+            }],
+        });
+        expect(JSON.stringify(response.body)).not.toContain("앞 회차보다 이르게");
     });
 
     it("never lets a thrown body override boundary-owned members or leak producer texts", async () => {

@@ -2,7 +2,6 @@ import { ExecutionContext, RequestMethod } from "@nestjs/common";
 import { METHOD_METADATA, PATH_METADATA } from "@nestjs/common/constants";
 import { Test, TestingModule } from "@nestjs/testing";
 import { HolidayCalendarService } from "application/services/holiday-calendar.service";
-import { ScheduleChangeService } from "application/services/schedule-change.service";
 import { ServiceRecordEntryService } from "application/services/service-record-entry.service";
 import { RateLimitGuard } from "infrastructure/auth/rate-limit.guard";
 import { ServiceRecordGuard } from "infrastructure/auth/service-record.guard";
@@ -13,11 +12,6 @@ import {
 } from "interface/controllers/service-record-entry.controller";
 import { createHolidayCalendarStub } from "../utils/holiday-calendar.stub";
 
-type MockScheduleChangeService = {
-    preview: jest.Mock;
-    createRequest: jest.Mock;
-};
-
 const expectRoute = (
     handler: object,
     method: RequestMethod,
@@ -27,7 +21,7 @@ const expectRoute = (
     expect(Reflect.getMetadata(PATH_METADATA, handler)).toBe(path);
 };
 
-describe("ServiceRecordEntryController schedule-change endpoints (Integration)", () => {
+describe("ServiceRecordEntryController caregiver endpoints (Integration)", () => {
     const serviceRecordContext = {
         tokenId: "t1",
         branchId: "org-1",
@@ -37,7 +31,6 @@ describe("ServiceRecordEntryController schedule-change endpoints (Integration)",
 
     let moduleFixture: TestingModule;
     let controller: ServiceRecordEntryController;
-    let scheduleChangeService: MockScheduleChangeService;
     let holidayCalendar: HolidayCalendarService;
 
     beforeEach(async () => {
@@ -47,11 +40,8 @@ describe("ServiceRecordEntryController schedule-change endpoints (Integration)",
             getContext: jest.fn(),
             saveHeader: jest.fn(),
             upsertSession: jest.fn(),
+            deleteSession: jest.fn().mockResolvedValue({ deleted: true, sessionIndex: 3 }),
             finalize: jest.fn(),
-        };
-        scheduleChangeService = {
-            preview: jest.fn(),
-            createRequest: jest.fn(),
         };
         holidayCalendar = createHolidayCalendarStub();
         const mockServiceRecordGuard = {
@@ -69,10 +59,6 @@ describe("ServiceRecordEntryController schedule-change endpoints (Integration)",
                     provide: ServiceRecordEntryService,
                     useValue: serviceRecordService,
                 },
-                {
-                    provide: ScheduleChangeService,
-                    useValue: scheduleChangeService,
-                },
                 { provide: HolidayCalendarService, useValue: holidayCalendar },
             ],
         })
@@ -89,52 +75,17 @@ describe("ServiceRecordEntryController schedule-change endpoints (Integration)",
         await moduleFixture.close();
     });
 
-    describe("GET /service-record/schedule-change/preview", () => {
-        it("should expose the preview route and call the schedule-change service with service-record context", async () => {
-            scheduleChangeService.preview.mockResolvedValue({
-                sessionIndex: 3,
-                fromDate: "2026-07-03",
-                toDate: "2026-07-06",
-            });
-
-            expect(Reflect.getMetadata(PATH_METADATA, ServiceRecordEntryController)).toBe(
-                "service-record",
-            );
-            expectRoute(
-                ServiceRecordEntryController.prototype.previewScheduleChange,
-                RequestMethod.GET,
-                "schedule-change/preview",
-            );
-
-            await controller.previewScheduleChange({ serviceRecordContext } as Parameters<
-                ServiceRecordEntryController["previewScheduleChange"]
-            >[0]);
-
-            expect(scheduleChangeService.preview).toHaveBeenCalledWith(serviceRecordContext);
-        });
-    });
-
-    describe("POST /service-record/schedule-change", () => {
-        it("should expose the create route and call the schedule-change service with service-record context", async () => {
-            scheduleChangeService.createRequest.mockResolvedValue({
-                id: "request-1",
-                sessionIndex: 3,
-                fromDate: "2026-07-03",
-                toDate: "2026-07-06",
-            });
-
-            expectRoute(
-                ServiceRecordEntryController.prototype.createScheduleChange,
-                RequestMethod.POST,
-                "schedule-change",
-            );
-
-            await controller.createScheduleChange({ serviceRecordContext } as Parameters<
-                ServiceRecordEntryController["createScheduleChange"]
-            >[0]);
-
-            expect(scheduleChangeService.createRequest).toHaveBeenCalledWith(serviceRecordContext);
-        });
+    it("deletes a session through the guarded token-context route", async () => {
+        const handler = ServiceRecordEntryController.prototype.deleteSession;
+        expectRoute(handler, RequestMethod.DELETE, "sessions/:index");
+        expect(Reflect.getMetadata("__guards__", handler)).toEqual([ServiceRecordGuard]);
+        const result = await controller.deleteSession({ serviceRecordContext } as Parameters<
+            ServiceRecordEntryController["deleteSession"]
+        >[0], 3);
+        expect(result).toEqual({ deleted: true, sessionIndex: 3 });
+        expect(moduleFixture.get(ServiceRecordEntryService).deleteSession).toHaveBeenCalledWith(serviceRecordContext, 3);
+        expect(ServiceRecordEntryController.prototype).not.toHaveProperty("previewScheduleChange");
+        expect(ServiceRecordEntryController.prototype).not.toHaveProperty("createScheduleChange");
     });
 
     describe("GET /service-record/holidays", () => {

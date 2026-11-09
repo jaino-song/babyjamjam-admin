@@ -2,16 +2,14 @@ import { checkWriteArgs } from "infrastructure/database/tenant-isolation.extensi
 import { BadRequestException, ConflictException } from "@nestjs/common";
 import { validate } from "class-validator";
 
-import { EMPLOYEE_SCHEDULE_OVERLAP_CODE } from "application/policies/employee-schedule-invariants.policy";
 import { ServiceRecordEntryService } from "application/services/service-record-entry.service";
 import {
     SERVICE_RECORD_CASE_STATUS,
     ServiceRecordLifecycleService,
 } from "application/services/service-record-lifecycle.service";
 import { ServiceRecordTokenService } from "application/services/service-record-token.service";
-import { getServiceRecordTokenExpiresAt } from "domain/constants/service-record-link-message";
 import { HolidayCalendarService } from "application/services/holiday-calendar.service";
-import { KOREAN_HOLIDAY_CALENDAR, addBusinessDaysKr, createKrBusinessDayCalendar } from "domain/utils/business-days";
+import { KOREAN_HOLIDAY_CALENDAR, createKrBusinessDayCalendar } from "domain/utils/business-days";
 import { PrismaService } from "infrastructure/database/prisma.service";
 import { UpsertSessionDto } from "interface/dto/service-record-entry.dto";
 import { createHolidayCalendarStub } from "../utils/holiday-calendar.stub";
@@ -108,6 +106,7 @@ function createDto(overrides: Partial<UpsertSessionDto> = {}): UpsertSessionDto 
 
 function createHarness(options: {
     existing?: ReturnType<typeof createDay> | null;
+    days?: ReturnType<typeof createDay>[];
     transactionRecord?: ReturnType<typeof createRecord>;
     updateSignature?: (args: Record<string, unknown>) => Promise<{ count: number }>;
     schedule?: Record<string, unknown>;
@@ -115,7 +114,7 @@ function createHarness(options: {
     ensureForClient?: jest.Mock;
     extendExpiryForCase?: jest.Mock;
     holidayCalendar?: HolidayCalendarService;
-    /** The client's open end_date_review_item, if any (what the auto-extend sees inside the tx). */
+    /** Assert caregiver writes leave an existing review item untouched. */
     openReviewItem?: { id: string; recalculatedEnd: Date } | null;
     /** Overrides for the caregiver token row re-read inside the transaction. */
     token?: Record<string, unknown> | null;
@@ -123,6 +122,9 @@ function createHarness(options: {
     const aggregate = createRecord();
     const existing = options.existing === undefined ? null : options.existing;
     const transactionRecord = options.transactionRecord ?? aggregate;
+    const days = [...(options.days ?? [])];
+    if (existing && !days.some((day) => day.serviceRecordCaseId === existing.serviceRecordCaseId
+        && day.caseSessionIndex === existing.caseSessionIndex)) days.push(existing);
     const upsert = jest.fn().mockImplementation((args) => {
         expect(checkWriteArgs("upsert", args, BRANCH_ID)).toBeNull();
         return Promise.resolve({
@@ -137,29 +139,11 @@ function createHarness(options: {
     const schedule = options.schedule ?? { primaryEmployee: { name: "제공자" } };
     const scheduleUpdate = jest.fn().mockImplementation(({ data }: { data: Record<string, unknown> }) =>
         Promise.resolve({ ...schedule, ...data }));
-    // Track the extension's end-date write separately from the object
-    // `service_record_case.findUnique` returns, and only surface it to a
-    // *subsequent* findUnique call after `ensureForClient` has run (the
-    // point at which upsertSession performs its post-extension re-read).
-    // A prior version of this harness mutated `transactionRecord` in place
-    // and had every findUnique call resolve that same shared object, so the
-    // extended end date was visible even if the re-read line were deleted
-    // entirely -- the mutation checks below exist to guard against that.
-    let pendingEndDate: Date | undefined;
-    let visibleEndDate = transactionRecord.endDate as Date | undefined;
-    const clientUpdate = jest.fn().mockImplementation(({ data }: { data: { endDate?: Date } }) => {
-        if (data.endDate !== undefined) pendingEndDate = data.endDate;
-        return Promise.resolve({});
-    });
+    const clientUpdate = jest.fn().mockResolvedValue({});
     const reviewItemFindFirst = jest.fn().mockResolvedValue(options.openReviewItem ?? null);
     const reviewItemUpdateMany = jest.fn().mockResolvedValue({ count: 1 });
-    const caseFindUnique = jest.fn().mockImplementation(() =>
-        Promise.resolve({ ...transactionRecord, endDate: visibleEndDate }));
-    const ensureForClientInner = options.ensureForClient ?? jest.fn().mockResolvedValue(null);
-    const ensureForClient = jest.fn(async (...args: unknown[]) => {
-        if (pendingEndDate !== undefined) visibleEndDate = pendingEndDate;
-        return ensureForClientInner(...(args as [number, unknown]));
-    });
+    const caseFindUnique = jest.fn().mockResolvedValue(transactionRecord);
+    const ensureForClient = options.ensureForClient ?? jest.fn().mockResolvedValue(null);
     const transactionClient = {
         $queryRaw: jest.fn().mockResolvedValue([{ id: CASE_ID }]),
         service_record_token: {
@@ -169,6 +153,7 @@ function createHarness(options: {
         },
         service_record_case: {
             findUnique: caseFindUnique,
+            update: jest.fn().mockResolvedValue(transactionRecord),
         },
         employee_schedule: {
             findUnique: jest.fn().mockResolvedValue(schedule),
@@ -183,10 +168,27 @@ function createHarness(options: {
             updateMany: reviewItemUpdateMany,
         },
         service_record_day: {
-            findUnique: jest.fn().mockResolvedValue(existing),
+            findUnique: jest.fn().mockImplementation(({ where }) => {
+                const key = where.serviceRecordCaseId_caseSessionIndex;
+                return Promise.resolve(days.find((day) => day.serviceRecordCaseId === key.serviceRecordCaseId
+                    && day.caseSessionIndex === key.caseSessionIndex) ?? null);
+            }),
+            count: jest.fn().mockImplementation(({ where }: { where: {
+                serviceRecordCaseId?: string;
+                branchId?: string;
+                caseSessionIndex?: { lt: number };
+                locked?: boolean;
+            } }) => Promise.resolve(days.filter((day) =>
+                (where.serviceRecordCaseId === undefined || day.serviceRecordCaseId === where.serviceRecordCaseId)
+                && (where.branchId === undefined || day.branchId === where.branchId)
+                && (where.caseSessionIndex === undefined || day.caseSessionIndex < where.caseSessionIndex.lt)
+                && (where.locked === undefined || day.locked === where.locked)).length)),
             upsert,
+            findMany: jest.fn().mockResolvedValue(days),
+            delete: jest.fn().mockResolvedValue(existing),
             updateMany,
         },
+        service_record_day_archive: { create: jest.fn().mockResolvedValue({}) },
         service_record_day_edit_log: {
             create: editLogCreate,
         },
@@ -297,6 +299,7 @@ function createConcurrentHarness() {
         findUnique: jest.fn().mockResolvedValue({ primaryEmployee: { name: "제공자" } }),
     };
     const dayModel = {
+        findMany: jest.fn(async () => persistedDay ? [{ ...persistedDay }] : []),
         findUnique: jest.fn(async () => {
             dayReadCount += 1;
             if (dayReadCount === 2) releaseSecondDayRead?.();
@@ -378,224 +381,40 @@ async function expectException(
     }
 }
 
-describe("ServiceRecordEntryService planned-session dates", () => {
-    const plannedSessions = [
-        "2026-07-01",
-        "2026-07-02",
-        "2026-07-03",
-        "2026-07-06",
-        "2026-07-07",
-    ].map((serviceDate, offset) => ({
-        sessionIndex: offset + 1,
-        serviceDate,
-        originalDate: serviceDate,
-        assignmentId: `assignment-${offset + 1}`,
-        scheduleId: 10,
-        employeeId: 20,
-        provenanceVersion: "revision-1",
-    }));
-    const authoritativeRevisionSessions = Array.from({ length: 13 }, (_, offset) => {
-        const serviceDate = addBusinessDaysKr("2026-09-03", offset);
-        return {
-            sessionIndex: offset + 1,
-            serviceDate,
-            originalDate: serviceDate,
-            assignmentId: `assignment-${offset + 1}`,
-            scheduleId: 10,
-            employeeId: 20,
-            provenanceVersion: "revision-1",
-        };
-    });
-    const authoritativeRevisionPrevious = authoritativeRevisionSessions[11]!;
-    const authoritativeRevisionLast = authoritativeRevisionSessions[12]!;
+describe("ServiceRecordEntryService context dates", () => {
+    it.each([null, { invalid: true }, [{ sessionIndex: 1 }]])(
+        "omits planned and pending-change fields even without a usable vector: %j", async (plannedSessions) => {
+            const record = createRecord({ plannedSessions, currentRevisionId: "revision-1" });
+            const prisma = createContextPrisma(record);
+            const service = new ServiceRecordEntryService(
+                prisma as unknown as PrismaService, {} as ServiceRecordTokenService,
+                {} as ServiceRecordLifecycleService, createHolidayCalendarStub(),
+            );
+            const result = await service.getContext(context);
+            expect(result).not.toHaveProperty("plannedSessionDates");
+            expect(result).not.toHaveProperty("pendingScheduleChange");
+            expect(result.totalSessions).toBe(5);
+            expect(result.startDate).toEqual(record.startDate);
+            expect(result.endDate).toEqual(record.endDate);
+            expect(result.sessions).toEqual([]);
+            expect(prisma.schedule_change_request.findFirst).not.toHaveBeenCalled();
+        },
+    );
+});
 
-    it("exposes the complete persisted planned vector, including future unwritten sessions", async () => {
-        const record = createRecord({ plannedSessions });
-        const prisma = createContextPrisma(record);
+describe("caregiver context session counts", () => {
+    it.each([
+        { startDate: new Date("2026-09-03"), endDate: new Date("2026-09-08"), requiredSessionCount: 13, currentRevisionId: "revision-1" },
+        { startDate: new Date("2099-01-01"), endDate: new Date("2099-01-05"), requiredSessionCount: 5 },
+    ])("preserves stored totals across short periods and unsupported years: %j", async (overrides) => {
+        const record = createRecord(overrides);
         const service = new ServiceRecordEntryService(
-            prisma as unknown as PrismaService,
-            {} as ServiceRecordTokenService,
+            createContextPrisma(record) as unknown as PrismaService, {} as ServiceRecordTokenService,
             {} as ServiceRecordLifecycleService, createHolidayCalendarStub(),
         );
-
-        const result = await service.getContext(context);
-
-        expect(result.plannedSessionDates).toEqual(plannedSessions.map(({ sessionIndex, serviceDate }) => ({
-            sessionIndex,
-            serviceDate,
-        })));
-    });
-
-    it("fails closed when a persisted planned vector is malformed instead of omitting it", async () => {
-        const record = createRecord({ plannedSessions: plannedSessions.slice(0, -1) });
-        const service = new ServiceRecordEntryService(
-            createContextPrisma(record) as unknown as PrismaService,
-            {} as ServiceRecordTokenService,
-            {} as ServiceRecordLifecycleService, createHolidayCalendarStub(),
-        );
-
-        await expect(service.getContext(context)).rejects.toMatchObject({
-            response: { code: "SERVICE_RECORD_PLANNED_DATE_UNAVAILABLE" },
+        expect(await service.getContext(context)).toMatchObject({
+            totalSessions: overrides.requiredSessionCount, startDate: overrides.startDate, endDate: overrides.endDate,
         });
-    });
-
-    it("keeps the legacy provider date fallback only for an unrevisioned absent vector", async () => {
-        const record = createRecord({ plannedSessions: null });
-        const service = new ServiceRecordEntryService(
-            createContextPrisma(record) as unknown as PrismaService,
-            {} as ServiceRecordTokenService,
-            {} as ServiceRecordLifecycleService, createHolidayCalendarStub(),
-        );
-
-        const result = await service.getContext(context);
-
-        expect(result.plannedSessionDates).toBeUndefined();
-        expect(result.totalSessions).toBe(record.requiredSessionCount);
-    });
-
-    it("preserves the authoritative revision N when the current period is a shorter transfer span", async () => {
-        const record = createRecord({
-            requiredSessionCount: 13,
-            startDate: new Date("2026-09-03T00:00:00.000Z"),
-            endDate: new Date("2026-09-08T00:00:00.000Z"),
-            currentRevisionId: "revision-1",
-            plannedSessions: authoritativeRevisionSessions,
-        });
-        const service = new ServiceRecordEntryService(
-            createContextPrisma(record) as unknown as PrismaService,
-            {} as ServiceRecordTokenService,
-            {} as ServiceRecordLifecycleService, createHolidayCalendarStub(),
-        );
-
-        const result = await service.getContext(context);
-
-        expect(result.totalSessions).toBe(13);
-        expect(result.plannedSessionDates).toHaveLength(13);
-        expect(result.plannedSessionDates?.at(-1)).toEqual({
-            sessionIndex: 13,
-            serviceDate: authoritativeRevisionLast.serviceDate,
-        });
-    });
-
-    it("keeps unsupported-year legacy totals viewable using the stored count", async () => {
-        const record = createRecord({
-            requiredSessionCount: 5,
-            startDate: new Date("2028-01-03T00:00:00.000Z"),
-            endDate: new Date("2028-01-05T00:00:00.000Z"),
-            plannedSessions: null,
-        });
-        const service = new ServiceRecordEntryService(
-            createContextPrisma(record) as unknown as PrismaService,
-            {} as ServiceRecordTokenService,
-            {} as ServiceRecordLifecycleService, createHolidayCalendarStub(),
-        );
-
-        const result = await service.getContext(context);
-        expect(result.totalSessions).toBe(5);
-        expect(result.plannedSessionDates).toBeUndefined();
-    });
-
-    it("uses the authoritative revision N for a later provider slot after a transfer span shortens", async () => {
-        const transactionRecord = createRecord({
-            requiredSessionCount: 13,
-            startDate: new Date("2026-09-03T00:00:00.000Z"),
-            endDate: new Date("2026-09-08T00:00:00.000Z"),
-            currentRevisionId: "revision-1",
-            plannedSessions: authoritativeRevisionSessions,
-        });
-        const { service, upsert, transactionClient } = createHarness({ transactionRecord });
-        transactionClient.service_record_day.findUnique.mockImplementation(({ where }: {
-            where: { serviceRecordCaseId_caseSessionIndex?: { caseSessionIndex?: number } };
-        }) => {
-            const sessionIndex = where.serviceRecordCaseId_caseSessionIndex?.caseSessionIndex;
-            if (sessionIndex === 12) {
-                return Promise.resolve(createDay({
-                    caseSessionIndex: 12,
-                    sessionIndex: 12,
-                    serviceDate: new Date(`${authoritativeRevisionPrevious.serviceDate}T00:00:00.000Z`),
-                    locked: true,
-                }));
-            }
-            return Promise.resolve(null);
-        });
-
-        await service.upsertSession(
-            context,
-            13,
-            createDto({ serviceDate: `${authoritativeRevisionLast.serviceDate}T00:00:00.000Z` }),
-            false,
-        );
-
-        expect(upsert).toHaveBeenCalledWith(expect.objectContaining({
-            create: expect.objectContaining({ caseSessionIndex: 13 }),
-            update: expect.objectContaining({ caseSessionIndex: 13 }),
-        }));
-    });
-
-    it("fails closed when a revision pointer has no persisted planned vector", async () => {
-        const record = createRecord({ plannedSessions: null, currentRevisionId: "revision-1" });
-        const service = new ServiceRecordEntryService(
-            createContextPrisma(record) as unknown as PrismaService,
-            {} as ServiceRecordTokenService,
-            {} as ServiceRecordLifecycleService, createHolidayCalendarStub(),
-        );
-
-        await expect(service.getContext(context)).rejects.toMatchObject({
-            response: { code: "SERVICE_RECORD_PLANNED_DATE_UNAVAILABLE" },
-        });
-    });
-
-    it("rejects provider dates that disagree with the canonical vector before any period write", async () => {
-        const transactionRecord = createRecord({ plannedSessions });
-        const { service, upsert, scheduleUpdate, transactionClient } = createHarness({ transactionRecord });
-
-        await expect(service.upsertSession(
-            context,
-            3,
-            createDto({ serviceDate: "2026-07-08T00:00:00.000Z" }),
-            false,
-        )).rejects.toMatchObject({ response: { code: "REQUEST_CONFLICT" } });
-
-        expect(upsert).not.toHaveBeenCalled();
-        expect(scheduleUpdate).not.toHaveBeenCalled();
-        expect(transactionClient.client.update).not.toHaveBeenCalled();
-    });
-
-    it("rejects provider writes when the persisted planned vector is malformed", async () => {
-        const transactionRecord = createRecord({ plannedSessions: plannedSessions.slice(0, -1) });
-        const { service, upsert } = createHarness({ transactionRecord });
-
-        await expect(service.upsertSession(context, 1, createDto(), false)).rejects.toMatchObject({
-            response: { code: "SERVICE_RECORD_PLANNED_DATE_UNAVAILABLE" },
-        });
-        expect(upsert).not.toHaveBeenCalled();
-    });
-
-    it("rejects provider writes when a revised case has no planned vector", async () => {
-        const transactionRecord = createRecord({ plannedSessions: null, currentRevisionId: "revision-1" });
-        const { service, upsert } = createHarness({ transactionRecord });
-
-        await expect(service.upsertSession(context, 1, createDto(), false)).rejects.toMatchObject({
-            response: { code: "SERVICE_RECORD_PLANNED_DATE_UNAVAILABLE" },
-        });
-        expect(upsert).not.toHaveBeenCalled();
-    });
-
-    it("persists a provider submission only when its date matches the canonical vector", async () => {
-        const transactionRecord = createRecord({ plannedSessions });
-        const { service, upsert } = createHarness({ transactionRecord });
-
-        await service.upsertSession(
-            context,
-            1,
-            createDto({ serviceDate: "2026-07-01T00:00:00.000Z" }),
-            false,
-        );
-
-        expect(upsert).toHaveBeenCalledWith(expect.objectContaining({
-            create: expect.objectContaining({ serviceDate: new Date("2026-07-01T00:00:00.000Z") }),
-            update: expect.objectContaining({ serviceDate: new Date("2026-07-01T00:00:00.000Z") }),
-        }));
     });
 });
 
@@ -1018,21 +837,6 @@ describe("ServiceRecordEntryService.upsertSession", () => {
             expect(lifecycle.recompute).not.toHaveBeenCalled();
         });
 
-        it("rejects a different service date on a locked session with no writes", async () => {
-            const { service, upsert, updateMany, editLogCreate, lifecycle } = createHarness({ existing: createDay() });
-
-            await expectException(service.upsertSession(
-                context,
-                1,
-                createDto({ serviceDate: "2026-07-02T00:00:00.000Z", notes: "수정" }),
-                true,
-            ), ConflictException, "REQUEST_CONFLICT");
-            expect(upsert).not.toHaveBeenCalled();
-            expect(updateMany).not.toHaveBeenCalled();
-            expect(editLogCreate).not.toHaveBeenCalled();
-            expect(lifecycle.recompute).not.toHaveBeenCalled();
-        });
-
         it("allows the same calendar date sent with a non-midnight time of day and keeps the stored date", async () => {
             const { service, upsert, editLogCreate } = createHarness({ existing: createDay() });
 
@@ -1067,23 +871,12 @@ describe("ServiceRecordEntryService.upsertSession", () => {
             expect(editLogCreate).toHaveBeenCalledTimes(1);
         });
 
-        it("still rejects an unlocked non-midnight date past the end date (unlocked behaviour unchanged)", async () => {
-            const { service, upsert } = createHarness({
-                existing: null,
-                transactionRecord: createRecord({
-                    requiredSessionCount: 1,
-                    startDate: new Date("2027-12-01T00:00:00.000Z"),
-                    endDate: new Date("2027-12-31T00:00:00.000Z"),
-                }),
-            });
-
-            await expectException(service.upsertSession(
-                context,
-                1,
-                createDto({ serviceDate: "2027-12-31T09:00:00.000Z" }),
-                true,
-            ), BadRequestException, "VALIDATION_FAILED");
-            expect(upsert).not.toHaveBeenCalled();
+        it("accepts an unlocked non-midnight service date on the inclusive end date", async () => {
+            const h = createHarness({ transactionRecord: createRecord({
+                requiredSessionCount: 1, startDate: new Date("2027-12-01"), endDate: new Date("2027-12-31"),
+            }) });
+            await h.service.upsertSession(context, 1, createDto({ serviceDate: "2027-12-31T09:00:00.000Z" }), true);
+            expect(h.upsert.mock.calls[0][0].update.serviceDate).toEqual(new Date("2027-12-31"));
         });
 
         it.each([
@@ -1154,7 +947,7 @@ describe("ServiceRecordEntryService.upsertSession", () => {
             expect(lifecycle.recompute).toHaveBeenCalledTimes(1);
         });
 
-        it("allows the edit when the same caregiver submits (ownership both directions)", async () => {
+        it("allows a content edit by the original caregiver", async () => {
             const { service, upsert, editLogCreate } = createHarness({
                 existing: createDay({ employeeId: context.employeeId }),
             });
@@ -1166,9 +959,8 @@ describe("ServiceRecordEntryService.upsertSession", () => {
         });
 
         it("does not extend the end date, schedule, client or token on an edit, changed or not", async () => {
-            // Five sessions starting 2026-07-01 need business days through
-            // 2026-07-07, but the stored end date is 2026-07-03: a first submit
-            // of session 1 would extend. An edit must not.
+            // The planned service days extend past the period. A caregiver
+            // content edit must leave the period and review items untouched.
             const transactionRecord = createRecord({
                 requiredSessionCount: 5,
                 endDate: new Date("2026-07-03T00:00:00.000Z"),
@@ -1202,32 +994,6 @@ describe("ServiceRecordEntryService.upsertSession", () => {
                 expect(harness.lifecycle.ensureForClient).not.toHaveBeenCalled();
                 expect(extendExpiryForCase).not.toHaveBeenCalled();
             }
-        });
-
-        it("a first submit with the same calendar still extends (control for the no-extension edit test)", async () => {
-            const transactionRecord = createRecord({
-                requiredSessionCount: 5,
-                endDate: new Date("2026-07-03T00:00:00.000Z"),
-                startDate: new Date("2026-07-01T00:00:00.000Z"),
-            });
-            const schedule = {
-                id: 10,
-                clientId: 100,
-                primaryEmployeeId: 20,
-                secondaryEmployeeId: null,
-                startDate: new Date("2026-07-01T00:00:00.000Z"),
-                endDate: new Date("2026-07-03T00:00:00.000Z"),
-                replaced: false,
-                primaryEmployee: { name: "제공자" },
-            };
-            const extendExpiryForCase = jest.fn();
-            const harness = createHarness({ existing: null, transactionRecord, schedule, extendExpiryForCase });
-
-            await harness.service.upsertSession(context, 1, createDto(), true);
-
-            expect(harness.scheduleUpdate).toHaveBeenCalledTimes(1);
-            expect(harness.clientUpdate).toHaveBeenCalledTimes(1);
-            expect(extendExpiryForCase).toHaveBeenCalledTimes(1);
         });
 
         it("does not write an edit log for a first submit", async () => {
@@ -1419,193 +1185,6 @@ describe("ServiceRecordEntryService.upsertSession", () => {
         }));
     });
 
-    it("extends the schedule and client end date, re-syncs the case, and extends the token when a session date runs past the current end date", async () => {
-        // A single-session case (requiredSessionCount 1) keeps the math
-        // simple: the required end date for session 1 is the service date
-        // itself. Saving it later than the current end date must postpone
-        // the schedule/client/case/token end dates while leaving the
-        // contracted session count untouched.
-        const transactionRecord = createRecord({
-            requiredSessionCount: 1,
-            endDate: new Date("2026-07-05T00:00:00.000Z"),
-        });
-        const schedule = {
-            id: 10,
-            clientId: 100,
-            primaryEmployeeId: 20,
-            secondaryEmployeeId: null,
-            startDate: new Date("2026-07-01T00:00:00.000Z"),
-            endDate: new Date("2026-07-05T00:00:00.000Z"),
-            replaced: false,
-            primaryEmployee: { name: "제공자" },
-        };
-        const ensureForClient = jest.fn().mockResolvedValue(null);
-        const extendExpiryForCase = jest.fn().mockResolvedValue(undefined);
-        // A holiday far from the period: only here to make the branch calendar a distinct object.
-        const holidayCalendar = branchHolidayCalendar("2026-12-01");
-        const { service, scheduleUpdate, clientUpdate, upsert } = createHarness({
-            existing: null,
-            transactionRecord,
-            schedule,
-            ensureForClient,
-            extendExpiryForCase,
-            holidayCalendar,
-        });
-        const newEndDate = new Date("2026-07-10T00:00:00.000Z");
-
-        const result = await service.upsertSession(
-            context,
-            1,
-            createDto({ serviceDate: "2026-07-10T00:00:00.000Z" }),
-            false,
-        );
-
-        expect(result).toEqual(expect.objectContaining({ sessionIndex: 1 }));
-        expect(scheduleUpdate).toHaveBeenCalledWith({
-            where: { id: 10, branchId: BRANCH_ID },
-            data: { endDate: newEndDate },
-        });
-        expect(clientUpdate).toHaveBeenCalledWith({
-            where: { id: 100, branchId: BRANCH_ID },
-            data: { endDate: newEndDate },
-        });
-        expect(ensureForClient).toHaveBeenCalledWith(100, expect.anything(), expect.anything());
-        // N1: the auto-extend hands over the (fresh) calendar it already holds instead of letting
-        // the lifecycle service load another one on a second pooled connection.
-        const savedCalendar = await (holidayCalendar.forBranch as jest.Mock).mock.results[0]?.value;
-        expect(ensureForClient.mock.calls[0]?.[2]).toBe(savedCalendar);
-        expect(holidayCalendar.forBranch).toHaveBeenCalledWith(BRANCH_ID, { fresh: true });
-        expect(extendExpiryForCase).toHaveBeenCalledWith(
-            CASE_ID,
-            new Date("2026-07-10T15:00:00.000Z"),
-            expect.anything(),
-        );
-        // requiredSessionCount is never touched by the extension.
-        expect(transactionRecord.requiredSessionCount).toBe(1);
-        expect(upsert).toHaveBeenCalled();
-    });
-
-    it("extends the end date by the correct remaining-session count mid-contract (requiredSessionCount 15, session 13)", async () => {
-        // Regression coverage for the extension arithmetic: n = total -
-        // sessionIndex is the number of Korean business days still owed
-        // AFTER this session. total=15, sessionIndex=13 -> n=2, so saving
-        // session 13 on 2026-08-31 (the current end date) must push the end
-        // date to 2026-09-02 (2 business days later), not 2026-09-01 or
-        // 2026-09-03.
-        const transactionRecord = createRecord({
-            requiredSessionCount: 15,
-            endDate: new Date("2026-08-31T00:00:00.000Z"),
-        });
-        const schedule = {
-            id: 10,
-            clientId: 100,
-            primaryEmployeeId: 20,
-            secondaryEmployeeId: null,
-            startDate: new Date("2026-07-01T00:00:00.000Z"),
-            endDate: new Date("2026-08-31T00:00:00.000Z"),
-            replaced: false,
-            primaryEmployee: { name: "제공자" },
-        };
-        const ensureForClient = jest.fn().mockResolvedValue(null);
-        const extendExpiryForCase = jest.fn().mockResolvedValue(undefined);
-        const { service, transactionClient, scheduleUpdate, clientUpdate } = createHarness({
-            existing: null,
-            transactionRecord,
-            schedule,
-            ensureForClient,
-            extendExpiryForCase,
-        });
-        transactionClient.service_record_day.findUnique.mockImplementation(
-            ({ where }: { where: { serviceRecordCaseId_caseSessionIndex: { caseSessionIndex: number } } }) => {
-                const idx = where.serviceRecordCaseId_caseSessionIndex.caseSessionIndex;
-                if (idx === 12) {
-                    return Promise.resolve(createDay({
-                        caseSessionIndex: 12,
-                        sessionIndex: 12,
-                        serviceDate: new Date("2026-08-28T00:00:00.000Z"),
-                        locked: true,
-                    }));
-                }
-                return Promise.resolve(null);
-            },
-        );
-        const newEndDate = new Date("2026-09-02T00:00:00.000Z");
-
-        const result = await service.upsertSession(
-            context,
-            13,
-            createDto({ serviceDate: "2026-08-31T00:00:00.000Z" }),
-            false,
-        );
-
-        expect(result).toEqual(expect.objectContaining({ sessionIndex: 13 }));
-        expect(scheduleUpdate).toHaveBeenCalledWith({
-            where: { id: 10, branchId: BRANCH_ID },
-            data: { endDate: newEndDate },
-        });
-        expect(clientUpdate).toHaveBeenCalledWith({
-            where: { id: 100, branchId: BRANCH_ID },
-            data: { endDate: newEndDate },
-        });
-        expect(extendExpiryForCase).toHaveBeenCalledWith(
-            CASE_ID,
-            new Date("2026-09-02T15:00:00.000Z"),
-            expect.anything(),
-        );
-        expect(transactionRecord.requiredSessionCount).toBe(15);
-    });
-
-    it("re-reads the case after extending the end date instead of relying on a stale snapshot", async () => {
-        // requiredSessionCount 15, old endDate 2026-08-31. Saving session 14
-        // at service date 2026-09-01 extends the end date to 2026-09-02 (1
-        // remaining business day). The save's own "cannot exceed the end
-        // date" guard runs AFTER the extension and must see the NEW end
-        // date: 2026-09-01 exceeds the OLD end date (2026-08-31) but not the
-        // new one, so this save must succeed. If the post-extension re-read
-        // is ever dropped, this guard would compare against the stale
-        // 2026-08-31 snapshot and wrongly reject the save.
-        const transactionRecord = createRecord({
-            requiredSessionCount: 15,
-            endDate: new Date("2026-08-31T00:00:00.000Z"),
-        });
-        const schedule = {
-            id: 10,
-            clientId: 100,
-            primaryEmployeeId: 20,
-            secondaryEmployeeId: null,
-            startDate: new Date("2026-07-01T00:00:00.000Z"),
-            endDate: new Date("2026-08-31T00:00:00.000Z"),
-            replaced: false,
-            primaryEmployee: { name: "제공자" },
-        };
-        const { service, transactionClient } = createHarness({
-            existing: null,
-            transactionRecord,
-            schedule,
-        });
-        transactionClient.service_record_day.findUnique.mockImplementation(
-            ({ where }: { where: { serviceRecordCaseId_caseSessionIndex: { caseSessionIndex: number } } }) => {
-                const idx = where.serviceRecordCaseId_caseSessionIndex.caseSessionIndex;
-                if (idx === 13) {
-                    return Promise.resolve(createDay({
-                        caseSessionIndex: 13,
-                        sessionIndex: 13,
-                        serviceDate: new Date("2026-08-31T00:00:00.000Z"),
-                        locked: true,
-                    }));
-                }
-                return Promise.resolve(null);
-            },
-        );
-
-        await expect(service.upsertSession(
-            context,
-            14,
-            createDto({ serviceDate: "2026-09-01T00:00:00.000Z" }),
-            false,
-        )).resolves.toEqual(expect.objectContaining({ sessionIndex: 14 }));
-    });
-
     it("does not extend the end date when the service date fits within the current schedule", async () => {
         const schedule = {
             id: 10,
@@ -1656,6 +1235,7 @@ describe("ServiceRecordEntryService.upsertSession", () => {
             }),
         });
         // Session 2 has no row yet; session 1 was written and locked by the outgoing caregiver.
+        transactionClient.service_record_day.count.mockResolvedValue(1);
         transactionClient.service_record_day.findUnique
             .mockResolvedValueOnce(null)
             .mockResolvedValueOnce(createDay({
@@ -1680,47 +1260,6 @@ describe("ServiceRecordEntryService.upsertSession", () => {
                 serviceDate: new Date("2026-10-02T00:00:00.000Z"),
             }),
         }));
-    });
-
-    it("rejects the upsert with a Korean conflict message when extending the end date would overlap another active schedule", async () => {
-        const transactionRecord = createRecord({
-            requiredSessionCount: 1,
-            endDate: new Date("2026-07-05T00:00:00.000Z"),
-        });
-        const schedule = {
-            id: 10,
-            clientId: 100,
-            primaryEmployeeId: 20,
-            secondaryEmployeeId: null,
-            startDate: new Date("2026-07-01T00:00:00.000Z"),
-            endDate: new Date("2026-07-05T00:00:00.000Z"),
-            replaced: false,
-            primaryEmployee: { name: "제공자" },
-        };
-        const employeeScheduleFindFirst = jest.fn().mockResolvedValue({
-            id: 99,
-            clientId: 100,
-            primaryEmployeeId: 20,
-            secondaryEmployeeId: null,
-        });
-        const { service, upsert } = createHarness({
-            existing: null,
-            transactionRecord,
-            schedule,
-            employeeScheduleFindFirst,
-        });
-
-        await expect(service.upsertSession(
-            context,
-            1,
-            createDto({ serviceDate: "2026-07-10T00:00:00.000Z" }),
-            false,
-        )).rejects.toMatchObject({
-            response: {
-                code: EMPLOYEE_SCHEDULE_OVERLAP_CODE,
-            },
-        });
-        expect(upsert).not.toHaveBeenCalled();
     });
 
     it("allows a caregiver to save a session while the case is AWAITING_COMPLETION, inside the link grace window", async () => {
@@ -1756,6 +1295,7 @@ describe("ServiceRecordEntryService.upsertSession", () => {
             ensureForClient,
             extendExpiryForCase,
         });
+        transactionClient.service_record_day.count.mockResolvedValue(13);
         transactionClient.service_record_day.findUnique.mockImplementation(
             ({ where }: { where: { serviceRecordCaseId_caseSessionIndex: { caseSessionIndex: number } } }) => {
                 const idx = where.serviceRecordCaseId_caseSessionIndex.caseSessionIndex;
@@ -1779,76 +1319,6 @@ describe("ServiceRecordEntryService.upsertSession", () => {
         )).resolves.toEqual(expect.objectContaining({ sessionIndex: 14 }));
     });
 
-    it("auto-extends the end date for an AWAITING_COMPLETION case when a grace-window save runs past it", async () => {
-        // Companion to the previous test: saving session 14 (of 15) two days
-        // after the current end date must push the end date out by the
-        // correct remaining-session math (addBusinessDaysKr(serviceDate, 1))
-        // rather than being rejected as "Service date cannot exceed the
-        // service end date" -- the post-extension re-read (see the
-        // "re-reads the case" test above) is what makes that guard see the
-        // new end date instead of the stale one.
-        const transactionRecord = createRecord({
-            status: SERVICE_RECORD_CASE_STATUS.AWAITING_COMPLETION,
-            requiredSessionCount: 15,
-            endDate: new Date("2026-09-02T00:00:00.000Z"),
-        });
-        const schedule = {
-            id: 10,
-            clientId: 100,
-            primaryEmployeeId: 20,
-            secondaryEmployeeId: null,
-            startDate: new Date("2026-08-01T00:00:00.000Z"),
-            endDate: new Date("2026-09-02T00:00:00.000Z"),
-            replaced: false,
-            primaryEmployee: { name: "제공자" },
-        };
-        const ensureForClient = jest.fn().mockResolvedValue(null);
-        const extendExpiryForCase = jest.fn().mockResolvedValue(undefined);
-        const { service, transactionClient, scheduleUpdate, clientUpdate } = createHarness({
-            existing: null,
-            transactionRecord,
-            schedule,
-            ensureForClient,
-            extendExpiryForCase,
-        });
-        transactionClient.service_record_day.findUnique.mockImplementation(
-            ({ where }: { where: { serviceRecordCaseId_caseSessionIndex: { caseSessionIndex: number } } }) => {
-                const idx = where.serviceRecordCaseId_caseSessionIndex.caseSessionIndex;
-                if (idx === 13) {
-                    return Promise.resolve(createDay({
-                        caseSessionIndex: 13,
-                        sessionIndex: 13,
-                        serviceDate: new Date("2026-08-28T00:00:00.000Z"),
-                        locked: true,
-                    }));
-                }
-                return Promise.resolve(null);
-            },
-        );
-        const newEndDate = new Date(`${addBusinessDaysKr("2026-09-04", 1)}T00:00:00.000Z`);
-
-        const result = await service.upsertSession(
-            context,
-            14,
-            createDto({ serviceDate: "2026-09-04T00:00:00.000Z" }),
-            false,
-        );
-
-        expect(result).toEqual(expect.objectContaining({ sessionIndex: 14 }));
-        expect(scheduleUpdate).toHaveBeenCalledWith({
-            where: { id: 10, branchId: BRANCH_ID },
-            data: { endDate: newEndDate },
-        });
-        expect(clientUpdate).toHaveBeenCalledWith({
-            where: { id: 100, branchId: BRANCH_ID },
-            data: { endDate: newEndDate },
-        });
-        expect(extendExpiryForCase).toHaveBeenCalledWith(
-            CASE_ID,
-            getServiceRecordTokenExpiresAt(newEndDate),
-            expect.anything(),
-        );
-    });
 });
 
 describe("UpsertSessionDto.clientSignature", () => {
@@ -1990,9 +1460,9 @@ describe("ServiceRecordEntryService transaction recompute calendar", () => {
             }
         });
         const realLifecycle = new ServiceRecordLifecycleService(harness.prisma as unknown as PrismaService, holidayCalendar);
-        harness.lifecycle.recompute.mockImplementation(async (id, tx, passedCalendar) => {
+        harness.lifecycle.recompute.mockImplementation(async (id, tx, passedCalendar, options) => {
             if (!tx) return record;
-            return realLifecycle.recompute(id, tx, passedCalendar);
+            return realLifecycle.recompute(id, tx, passedCalendar, options);
         });
 
         if (method === "saveHeader") {
@@ -2005,7 +1475,7 @@ describe("ServiceRecordEntryService transaction recompute calendar", () => {
         }
 
         expect(readsWhileOpen).toEqual([false]);
-        expect(harness.lifecycle.recompute).toHaveBeenCalledWith(CASE_ID, harness.transactionClient, calendar);
+        expect(harness.lifecycle.recompute).toHaveBeenCalledWith(CASE_ID, harness.transactionClient, calendar, ...(method === "upsertSession" ? [{ preserveVersion: false }] : []));
     });
 });
 
@@ -2078,7 +1548,8 @@ describe("ServiceRecordEntryService branch calendar", () => {
             transactionRecord: record,
             holidayCalendar: branchHolidayCalendar("2026-09-14"),
         });
-        // No row for session 15 yet; session 14 is locked.
+        // All 14 earlier sessions are submitted; session 15 has no row yet.
+        harness.transactionClient.service_record_day.count.mockResolvedValue(14);
         harness.transactionClient.service_record_day.findUnique
             .mockResolvedValueOnce(null)
             .mockResolvedValueOnce(createDay({ caseSessionIndex: 14, sessionIndex: 14, serviceDate: new Date("2026-09-28T00:00:00.000Z") }));
@@ -2092,141 +1563,12 @@ describe("ServiceRecordEntryService branch calendar", () => {
         expect(harness.upsert).toHaveBeenCalled();
     });
 
-    it("getContext preserves a persisted planned vector after a branch holiday is added", async () => {
+    it("getContext remains available after a branch holiday is added", async () => {
         const record = createRecord({ plannedSessions: plannedThroughJuly6 });
 
         await expect(contextService(record, createHolidayCalendarStub()).getContext(context)).resolves.toBeDefined();
         const result = await contextService(record, branchHolidayCalendar("2026-07-06")).getContext(context);
-        expect(result.plannedSessionDates).toEqual(plannedThroughJuly6.map(({ sessionIndex, serviceDate }) => ({
-            sessionIndex,
-            serviceDate,
-        })));
-    });
-
-    it("upsertSession reads the branch calendar fresh before its transaction and extends the end date over a branch holiday", async () => {
-        // Session 1 of 2 on Fri 2026-07-03: the last session lands on Mon 07-06 in the built-in
-        // calendar (no extension), but on Tue 07-07 when the branch closed on 07-06.
-        const record = createRecord({
-            requiredSessionCount: 2,
-            endDate: new Date("2026-07-06T00:00:00.000Z"),
-        });
-        const schedule = {
-            id: 10,
-            clientId: 100,
-            primaryEmployeeId: 20,
-            secondaryEmployeeId: null,
-            startDate: new Date("2026-07-01T00:00:00.000Z"),
-            endDate: new Date("2026-07-06T00:00:00.000Z"),
-            replaced: false,
-            primaryEmployee: { name: "제공자" },
-        };
-        const dto = () => createDto({ serviceDate: "2026-07-03T00:00:00.000Z" });
-
-        const builtin = createHarness({ existing: null, transactionRecord: record, schedule });
-        await builtin.service.upsertSession(context, 1, dto(), false);
-        expect(builtin.scheduleUpdate).not.toHaveBeenCalled();
-
-        const holidayCalendar = branchHolidayCalendar("2026-07-06");
-        const branch = createHarness({ existing: null, transactionRecord: record, schedule, holidayCalendar });
-        await branch.service.upsertSession(context, 1, dto(), false);
-
-        expect(holidayCalendar.forBranch).toHaveBeenCalledWith(BRANCH_ID, { fresh: true });
-        const calendarCall = (holidayCalendar.forBranch as jest.Mock).mock.invocationCallOrder[0]!;
-        const transactionCall = branch.prisma.$transaction.mock.invocationCallOrder[0]!;
-        expect(calendarCall).toBeLessThan(transactionCall);
-        expect(branch.scheduleUpdate).toHaveBeenCalledWith({
-            where: { id: 10, branchId: BRANCH_ID },
-            data: { endDate: new Date("2026-07-07T00:00:00.000Z") },
-        });
-    });
-
-    describe("auto-extend closes the client's open holiday review item", () => {
-        // Case 2026-09-07..2026-09-29, N = 15 (추석 closes 09-24 and 09-25). The branch then adds
-        // 09-14, so saving session 1 on 09-07 needs end date 09-30 (a business day) instead of 09-29.
-        const record = () => createRecord({
-            requiredSessionCount: 15,
-            startDate: new Date("2026-09-07T00:00:00.000Z"),
-            endDate: new Date("2026-09-29T00:00:00.000Z"),
-            plannedSessions: null,
-        });
-        const schedule = {
-            id: 10,
-            clientId: 100,
-            primaryEmployeeId: 20,
-            secondaryEmployeeId: null,
-            startDate: new Date("2026-09-07T00:00:00.000Z"),
-            endDate: new Date("2026-09-29T00:00:00.000Z"),
-            replaced: false,
-            primaryEmployee: { name: "제공자" },
-        };
-        const save = (harness: ReturnType<typeof createHarness>, serviceDate = "2026-09-07T00:00:00.000Z") =>
-            harness.service.upsertSession(context, 1, createDto({ serviceDate }), false);
-        const harnessWith = (openReviewItem: { id: string; recalculatedEnd: Date } | null) => createHarness({
-            existing: null,
-            transactionRecord: record(),
-            schedule,
-            holidayCalendar: branchHolidayCalendar("2026-09-14"),
-            openReviewItem,
-        });
-
-        it("marks the item fixed when the extended end date is the one the review recommended", async () => {
-            const harness = harnessWith({ id: "item-1", recalculatedEnd: new Date("2026-09-30T00:00:00.000Z") });
-
-            await save(harness);
-
-            expect(harness.scheduleUpdate).toHaveBeenCalledWith({
-                where: { id: 10, branchId: BRANCH_ID },
-                data: { endDate: new Date("2026-09-30T00:00:00.000Z") },
-            });
-            expect(harness.reviewItemFindFirst).toHaveBeenCalledWith(expect.objectContaining({
-                where: { clientId: 100, branchId: BRANCH_ID, status: "open" },
-            }));
-            expect(harness.reviewItemUpdateMany).toHaveBeenCalledTimes(1);
-            expect(harness.reviewItemUpdateMany).toHaveBeenCalledWith({
-                where: { id: "item-1", clientId: 100, branchId: BRANCH_ID, status: "open" },
-                data: { status: "fixed", resolvedAt: expect.any(Date) },
-            });
-            // System resolution: resolvedBy is never written.
-            expect(harness.reviewItemUpdateMany.mock.calls[0]![0].data).not.toHaveProperty("resolvedBy");
-            // Same transaction: the harness hands the callback its one tx client, and the write ran on it.
-            expect(harness.prisma.$transaction).toHaveBeenCalledTimes(1);
-        });
-
-        it("marks the item obsolete when the extended end date differs from the recommendation", async () => {
-            const harness = harnessWith({ id: "item-2", recalculatedEnd: new Date("2026-09-29T00:00:00.000Z") });
-
-            await save(harness);
-
-            expect(harness.reviewItemUpdateMany).toHaveBeenCalledWith({
-                where: { id: "item-2", clientId: 100, branchId: BRANCH_ID, status: "open" },
-                data: { status: "obsolete", resolvedAt: expect.any(Date) },
-            });
-        });
-
-        it("writes no review item when the client has no open one", async () => {
-            const harness = harnessWith(null);
-
-            await save(harness);
-
-            expect(harness.scheduleUpdate).toHaveBeenCalled();
-            expect(harness.reviewItemFindFirst).toHaveBeenCalled();
-            expect(harness.reviewItemUpdateMany).not.toHaveBeenCalled();
-        });
-
-        it("leaves the review item alone when no auto-extend is needed", async () => {
-            const harness = createHarness({
-                existing: null,
-                transactionRecord: record(),
-                schedule,
-                openReviewItem: { id: "item-3", recalculatedEnd: new Date("2026-09-30T00:00:00.000Z") },
-            });
-
-            await save(harness);
-
-            expect(harness.scheduleUpdate).not.toHaveBeenCalled();
-            expect(harness.reviewItemFindFirst).not.toHaveBeenCalled();
-            expect(harness.reviewItemUpdateMany).not.toHaveBeenCalled();
-        });
+        expect(result).not.toHaveProperty("plannedSessionDates");
     });
 
     it("upsertSession preserves the existing vector after a branch holiday is added", async () => {
@@ -2291,47 +1633,6 @@ describe("ServiceRecordEntryService client service days", () => {
         expect(result.serviceDays).toEqual({ saturday: false, sunday: false, holiday: false });
     });
 
-    // Session 1 of 2 on Fri 2026-12-18, case ending that day: the last session is the
-    // next service day, Sat 12-19 for a Saturday-enabled client and Mon 12-21 otherwise.
-    it.each([
-        ["a Saturday-enabled client", saturdayOnly, "2026-12-19"],
-        ["a default client", weekdayOnly, "2026-12-21"],
-    ])("upsertSession auto-extend lands on %s's next service day", async (_label, flags, expectedEnd) => {
-        const record = createRecord({
-            requiredSessionCount: 2,
-            startDate: new Date("2026-12-14T00:00:00.000Z"),
-            endDate: new Date("2026-12-18T00:00:00.000Z"),
-        });
-        const schedule = {
-            id: 10,
-            clientId: 100,
-            primaryEmployeeId: 20,
-            secondaryEmployeeId: null,
-            startDate: new Date("2026-12-14T00:00:00.000Z"),
-            endDate: new Date("2026-12-18T00:00:00.000Z"),
-            replaced: false,
-            primaryEmployee: { name: "제공자" },
-            client: flags,
-        };
-        const harness = createHarness({ existing: null, transactionRecord: record, schedule });
-
-        await harness.service.upsertSession(
-            context,
-            1,
-            createDto({ serviceDate: "2026-12-18T00:00:00.000Z" }),
-            false,
-        );
-
-        expect(harness.scheduleUpdate).toHaveBeenCalledWith({
-            where: { id: 10, branchId: BRANCH_ID },
-            data: { endDate: new Date(`${expectedEnd}T00:00:00.000Z`) },
-        });
-        // The calendar handed to the lifecycle carries the client's policy.
-        const handedOn = harness.lifecycle.ensureForClient.mock.calls[0]![2] as {
-            isBusinessDay(iso: string): boolean;
-        };
-        expect(handedOn.isBusinessDay("2026-12-19")).toBe(expectedEnd === "2026-12-19");
-    });
 });
 
 describe("caregiver access token re-check inside the write transaction", () => {
@@ -2582,5 +1883,375 @@ describe("ServiceRecordEntryService.linkStatus", () => {
         const { service } = createLinkStatusService(null, true);
 
         await expect(service.linkStatus("efl_expired")).resolves.toEqual({ valid: false, reason: "unavailable" });
+    });
+});
+
+function caregiverVector(dates = ["2026-07-01", "2026-07-02", "2026-07-03", "2026-07-06", "2026-07-07"]) {
+    return dates.map((serviceDate, index) => ({
+        sessionIndex: index + 1, serviceDate, originalDate: serviceDate,
+        assignmentId: `assignment-${index}`, scheduleId: 10, employeeId: 20, provenanceVersion: "revision-1",
+        extra: "preserved",
+    }));
+}
+const forwardDetail = "뒷 회차보다 늦게 바꿀 수 없어요. 뒷 회차를 먼저 변경해 주세요.";
+const backwardDetail = "앞 회차보다 이르게 바꿀 수 없어요. 앞 회차를 먼저 변경해 주세요.";
+function expectDateFailure(promise: Promise<unknown>, detail: string, serviceDateReason: string) {
+    return expect(promise).rejects.toMatchObject({
+        status: 400,
+        response: {
+            code: "VALIDATION_FAILED",
+            errors: [{ pointer: "/serviceDate", code: "INVALID_VALUE", detail, location: "body" }],
+            serviceDateReason,
+        },
+    });
+}
+
+describe("caregiver-selected service dates", () => {
+    it.each([false, true])("enforces inclusive calendar-day window edges (submit=%s)", async (lock) => {
+        for (const [date, accepted] of [["2026-06-23", false], ["2026-06-24", true], ["2026-08-07", true], ["2026-08-08", false]] as const) {
+            const h = createHarness();
+            const action = h.service.upsertSession(context, 1, createDto({ serviceDate: date }), lock);
+            if (accepted) await expect(action).resolves.toBeDefined();
+            else {
+                await expectDateFailure(action, "고를 수 있는 기간이 아니에요.", "OUT_OF_RANGE");
+                expect(h.upsert).not.toHaveBeenCalled();
+            }
+            expect(h.scheduleUpdate).not.toHaveBeenCalled();
+            expect(h.clientUpdate).not.toHaveBeenCalled();
+            expect(h.lifecycle.ensureForClient).not.toHaveBeenCalled();
+            expect(h.tokenService.extendExpiryForCase).not.toHaveBeenCalled();
+            expect(h.reviewItemFindFirst).not.toHaveBeenCalled();
+        }
+    });
+
+    it.each(["startDate", "endDate"] as const)("treats null %s as unbounded", async (side) => {
+        const holidayCalendar = createHolidayCalendarStub();
+        const h = createHarness({ transactionRecord: createRecord({ [side]: null }), holidayCalendar });
+        await expect(h.service.upsertSession(context, 1, createDto({
+            serviceDate: side === "startDate" ? "2026-06-01" : "2026-09-01",
+        }), false)).resolves.toBeDefined();
+        expect(holidayCalendar.forBranch).toHaveBeenCalledWith(BRANCH_ID, { fresh: true });
+    });
+
+    it.each([
+        ["2026-07-04", false, false], ["2026-07-04", true, true],
+        ["2026-07-05", false, false], ["2026-07-05", true, true],
+    ])("checks weekend service flags for %s (allowed=%s)", async (date, allowed, accepted) => {
+        const h = createHarness({ schedule: {
+            id: 10, clientId: 100, branchId: BRANCH_ID, primaryEmployeeId: 20,
+            primaryEmployee: { name: "제공자" },
+            client: { allowSaturdayService: allowed, allowSundayService: allowed, allowHolidayService: false },
+        } });
+        const action = h.service.upsertSession(context, 1, createDto({ serviceDate: date as string }), false);
+        if (accepted) await expect(action).resolves.toBeDefined();
+        else await expectDateFailure(action, "서비스를 하지 않는 날이에요.", "NOT_SERVICE_DAY");
+    });
+
+    it("refuses a holiday when holiday service is off", async () => {
+        const holidayCalendar = branchHolidayCalendar("2026-07-02");
+        const h = createHarness({ holidayCalendar });
+        await expectDateFailure(h.service.upsertSession(context, 1, createDto({ serviceDate: "2026-07-02" }), false), "서비스를 하지 않는 날이에요.", "NOT_SERVICE_DAY");
+        expect(holidayCalendar.forBranch).toHaveBeenCalledWith(BRANCH_ID, { fresh: true });
+        expect(h.upsert).not.toHaveBeenCalled();
+    });
+
+    it("returns 400 for a year without holiday data", async () => {
+        const h = createHarness({ transactionRecord: createRecord({ startDate: null, endDate: null }) });
+        await expectDateFailure(h.service.upsertSession(context, 1, createDto({ serviceDate: "2099-07-01" }), false), "서비스를 하지 않는 날이에요.", "NOT_SERVICE_DAY");
+        expect(h.upsert).not.toHaveBeenCalled();
+    });
+
+    it.each([
+        ["2026-07-01", backwardDetail, "BEFORE_PREVIOUS"], ["2026-06-30", backwardDetail, "BEFORE_PREVIOUS"],
+        ["2026-07-06", forwardDetail, "AFTER_NEXT"], ["2026-07-07", forwardDetail, "AFTER_NEXT"],
+    ])("refuses out-of-order date %s with the exact field error", async (date, detail, serviceDateReason) => {
+        const h = createHarness({ days: [
+            createDay(), createDay({ caseSessionIndex: 3, serviceDate: new Date("2026-07-06") , locked: false }),
+        ] });
+        await expectDateFailure(h.service.upsertSession(context, 2, createDto({ serviceDate: date }), false), detail, serviceDateReason);
+        expect(h.upsert).not.toHaveBeenCalled();
+    });
+
+    it("keeps an unchanged-date content edit working after calendar and period changes", async () => {
+        const existing = createDay({ serviceDate: new Date("2026-07-04") });
+        const h = createHarness({ existing, transactionRecord: createRecord({
+            startDate: new Date("2026-08-01"), endDate: new Date("2026-08-31"), plannedSessions: caregiverVector(),
+        }), holidayCalendar: branchHolidayCalendar("2026-07-04") });
+        await h.service.upsertSession(context, 1, createDto({ serviceDate: "2026-07-04", notes: "수정" }), true);
+        expect(h.upsert).toHaveBeenCalledTimes(1);
+        expect(h.transactionClient.service_record_day.findMany).not.toHaveBeenCalled();
+        expect(h.transactionClient.service_record_case.update).not.toHaveBeenCalled();
+    });
+
+    it("changes a locked session's date, preserves its author, logs the date and pushes unwritten slots", async () => {
+        const plannedSessions = caregiverVector();
+        const existing = createDay({ employeeId: 99, employeeNameSnapshot: "최초 제공자" });
+        const h = createHarness({ existing, transactionRecord: createRecord({ plannedSessions }) });
+        await h.service.upsertSession(context, 1, createDto({ serviceDate: "2026-07-03" }), true);
+        expect(h.upsert.mock.calls[0][0].update).toMatchObject({ serviceDate: new Date("2026-07-03"), employeeId: 99, employeeNameSnapshot: "최초 제공자" });
+        expect(h.editLogCreate.mock.calls[0][0].data).toMatchObject({
+            before: { serviceDate: "2026-07-01" }, after: { serviceDate: "2026-07-03" },
+        });
+        const write = h.transactionClient.service_record_case.update.mock.calls[0]![0];
+        expect(write).toMatchObject({ where: { id: CASE_ID, branchId: BRANCH_ID }, data: { version: { increment: 1 } } });
+        expect(write.data.plannedSessions.map((e: { serviceDate: string }) => e.serviceDate)).toEqual(["2026-07-03", "2026-07-06", "2026-07-07", "2026-07-08", "2026-07-09"]);
+        expect(write.data.plannedSessions[0]).toMatchObject({ originalDate: "2026-07-01", extra: "preserved" });
+        expect(h.transactionClient.service_record_case.update.mock.invocationCallOrder[0]).toBeLessThan(h.lifecycle.recompute.mock.invocationCallOrder[0]!);
+    });
+
+    it("edits locked session 3 after session 2 was deleted and pulls earlier unwritten entries back", async () => {
+        const existing = createDay({ caseSessionIndex: 3, sessionIndex: 3, serviceDate: new Date("2026-07-03") });
+        const h = createHarness({ existing, transactionRecord: createRecord({ plannedSessions: caregiverVector() }) });
+        h.transactionClient.service_record_day.findUnique.mockImplementation(({ where }) =>
+            Promise.resolve(where.serviceRecordCaseId_caseSessionIndex.caseSessionIndex === 3 ? existing : null));
+        await h.service.upsertSession(context, 3, createDto({ serviceDate: "2026-07-01" }), true);
+        expect(h.transactionClient.service_record_case.update.mock.calls[0]![0].data.plannedSessions.map((e: { serviceDate: string }) => e.serviceDate)).toEqual(["2026-06-29", "2026-06-30", "2026-07-01", "2026-07-06", "2026-07-07"]);
+        expect(h.upsert).toHaveBeenCalledTimes(1);
+        expect(h.editLogCreate).toHaveBeenCalledTimes(1);
+    });
+
+    it.each([false, true])("refuses new session 4 when session 1 was deleted but 2 and 3 are submitted (submit=%s)", async (lock) => {
+        const h = createHarness({ days: [
+            createDay({ caseSessionIndex: 2, sessionIndex: 2, serviceDate: new Date("2026-07-02") }),
+            createDay({ caseSessionIndex: 3, sessionIndex: 3, serviceDate: new Date("2026-07-03") }),
+        ] });
+
+        await expectException(h.service.upsertSession(context, 4, createDto({ serviceDate: "2026-07-06" }), lock), ConflictException, "REQUEST_CONFLICT");
+
+        expect(h.upsert).not.toHaveBeenCalled();
+    });
+
+    it.each([false, true])("accepts new session 4 when all earlier sessions are submitted (submit=%s)", async (lock) => {
+        const h = createHarness({ days: [
+            createDay(),
+            createDay({ caseSessionIndex: 2, sessionIndex: 2, serviceDate: new Date("2026-07-02") }),
+            createDay({ caseSessionIndex: 3, sessionIndex: 3, serviceDate: new Date("2026-07-03") }),
+        ] });
+
+        await expect(h.service.upsertSession(context, 4, createDto({ serviceDate: "2026-07-06" }), lock)).resolves.toBeDefined();
+
+        expect(h.upsert).toHaveBeenCalledTimes(1);
+    });
+
+    it.each([false, true])("accepts new session 1 when later sessions are already submitted (submit=%s)", async (lock) => {
+        const h = createHarness({ days: [
+            createDay({ caseSessionIndex: 2, sessionIndex: 2, serviceDate: new Date("2026-07-02") }),
+            createDay({ caseSessionIndex: 3, sessionIndex: 3, serviceDate: new Date("2026-07-03") }),
+        ] });
+
+        await expect(h.service.upsertSession(context, 1, createDto(), lock)).resolves.toBeDefined();
+
+        expect(h.upsert).toHaveBeenCalledTimes(1);
+    });
+
+    it.each([false, true])("accepts new session 2 between submitted sessions 1 and 3 after a delete (submit=%s)", async (lock) => {
+        const h = createHarness({ days: [
+            createDay(),
+            createDay({ caseSessionIndex: 3, sessionIndex: 3, serviceDate: new Date("2026-07-03") }),
+        ] });
+
+        await expect(h.service.upsertSession(context, 2, createDto({ serviceDate: "2026-07-02" }), lock)).resolves.toBeDefined();
+
+        expect(h.upsert).toHaveBeenCalledTimes(1);
+    });
+
+    it.each([false, true])("requires every earlier session to be submitted for a new write, including drafts (submit=%s)", async (lock) => {
+        const h = createHarness({ days: [
+            createDay(),
+            createDay({ caseSessionIndex: 2, sessionIndex: 2, serviceDate: new Date("2026-07-02"), locked: false }),
+        ] });
+
+        await expectException(h.service.upsertSession(context, 3, createDto({ serviceDate: "2026-07-03" }), lock), ConflictException, "REQUEST_CONFLICT");
+
+        expect(h.upsert).not.toHaveBeenCalled();
+    });
+
+    it("refuses re-saving an unsubmitted draft while an earlier submitted row is missing", async () => {
+        const h = createHarness({ existing: createDay({ caseSessionIndex: 4, sessionIndex: 4,
+            serviceDate: new Date("2026-07-06"), locked: false }), days: [
+            createDay({ caseSessionIndex: 2, sessionIndex: 2, serviceDate: new Date("2026-07-02") }),
+            createDay({ caseSessionIndex: 3, sessionIndex: 3, serviceDate: new Date("2026-07-03") }),
+        ] });
+
+        await expectException(h.service.upsertSession(context, 4, createDto({ serviceDate: "2026-07-06" }), false), ConflictException, "REQUEST_CONFLICT");
+
+        expect(h.upsert).not.toHaveBeenCalled();
+    });
+
+    it("returns TAKEN when a non-monotonic earlier session already uses the selected date", async () => {
+        const h = createHarness({ days: [
+            createDay({ serviceDate: new Date("2026-07-06") }),
+            createDay({ caseSessionIndex: 2, sessionIndex: 2, serviceDate: new Date("2026-07-02") }),
+        ] });
+
+        await expectDateFailure(h.service.upsertSession(context, 3, createDto({ serviceDate: "2026-07-06" }), false), "다른 회차가 이미 고른 날이에요.", "TAKEN");
+
+        expect(h.upsert).not.toHaveBeenCalled();
+    });
+
+    it.each([null, { invalid: true }])("leaves absent or invalid legacy vector untouched: %j", async (plannedSessions) => {
+        const h = createHarness({ transactionRecord: createRecord({ plannedSessions }) });
+        await h.service.upsertSession(context, 1, createDto({ serviceDate: "2026-07-02" }), false);
+        expect(h.upsert).toHaveBeenCalled();
+        expect(h.transactionClient.service_record_case.update).not.toHaveBeenCalled();
+    });
+
+    it.each([true, false])("keeps the case version unchanged on content-only edits with the real lifecycle (locked=%s)", async (locked) => {
+        const existing = createDay({ locked });
+        const record = createRecord({
+            version: 7, days: [existing], assignments: [{ schedule: { replaced: false } }],
+            plannedSessions: caregiverVector(),
+        });
+        const h = createHarness({ existing, transactionRecord: record });
+        let persistedVersion = 7;
+        h.transactionClient.service_record_case.update.mockImplementation(({ data }) => {
+            persistedVersion += data.version?.increment ?? 0;
+            return Promise.resolve({ ...record, ...data, version: persistedVersion });
+        });
+        const lifecycle = new ServiceRecordLifecycleService(h.prisma as unknown as PrismaService, createHolidayCalendarStub());
+        h.lifecycle.recompute.mockImplementation((id, tx, calendar, options) => lifecycle.recompute(id, tx, calendar, options));
+        await h.service.upsertSession(context, 1, createDto({ notes: "내용만 수정" }), locked);
+        expect(h.upsert).toHaveBeenCalled();
+        expect(h.transactionClient.service_record_case.update).toHaveBeenCalledTimes(1);
+        expect(h.transactionClient.service_record_case.update.mock.calls[0]![0].data).not.toHaveProperty("version");
+        expect(persistedVersion).toBe(7);
+    });
+
+    it("increments the lifecycle version when an existing draft becomes submitted", async () => {
+        const h = createHarness({ existing: createDay({ locked: false }) });
+        await h.service.upsertSession(context, 1, createDto(), true);
+        expect(h.lifecycle.recompute).toHaveBeenCalledWith(CASE_ID, h.transactionClient, expect.anything(), { preserveVersion: false });
+    });
+
+    it("writes an aligned vector for a draft and does not bump version for a content-only draft edit", async () => {
+        const h = createHarness({ transactionRecord: createRecord({ plannedSessions: caregiverVector() }) });
+        await h.service.upsertSession(context, 1, createDto({ serviceDate: "2026-07-02" }), false);
+        expect(h.transactionClient.service_record_case.update).toHaveBeenCalledTimes(1);
+        const existing = createDay({ locked: false });
+        const edit = createHarness({ existing, transactionRecord: createRecord({ plannedSessions: caregiverVector() }) });
+        await edit.service.upsertSession(context, 1, createDto({ notes: "내용" }), false);
+        expect(edit.transactionClient.service_record_case.update).not.toHaveBeenCalled();
+    });
+
+    it.each([false, true])("does not write the vector or increment its version for a new session on its planned date (submit=%s)", async (lock) => {
+        const plannedSessions = caregiverVector();
+        const previous = createDay();
+        const h = createHarness({
+            days: [previous],
+            transactionRecord: createRecord({ plannedSessions, version: 7 }),
+        });
+        h.transactionClient.service_record_day.findUnique.mockImplementation(({ where }) =>
+            Promise.resolve(where.serviceRecordCaseId_caseSessionIndex.caseSessionIndex === 1 ? previous : null));
+
+        await h.service.upsertSession(context, 2, createDto({ serviceDate: plannedSessions[1]!.serviceDate }), lock);
+
+        expect(h.upsert).toHaveBeenCalledTimes(1);
+        expect(h.upsert.mock.calls[0][0].create).toMatchObject({
+            caseSessionIndex: 2, serviceDate: new Date(plannedSessions[1]!.serviceDate), locked: lock,
+        });
+        expect(h.transactionClient.service_record_day.findMany).toHaveBeenCalledTimes(1);
+        expect(h.transactionClient.service_record_case.update).not.toHaveBeenCalled();
+        expect(h.lifecycle.recompute).toHaveBeenCalledTimes(1);
+    });
+
+    it.each([[3, "2026-07-06", forwardDetail, "AFTER_NEXT"], [5, "2026-07-06", backwardDetail, "BEFORE_PREVIOUS"]] as const)(
+        "refuses gap collision moving session %s with nothing written", async (index, date, detail, serviceDateReason) => {
+            const days = [createDay({ caseSessionIndex: 3, sessionIndex: 3, serviceDate: new Date("2026-07-03") }), createDay({ caseSessionIndex: 5, sessionIndex: 5, serviceDate: new Date("2026-07-07") })];
+            const h = createHarness({ existing: days.find((day) => day.caseSessionIndex === index), days, transactionRecord: createRecord({ plannedSessions: caregiverVector() }) });
+            await expectDateFailure(h.service.upsertSession(context, index, createDto({ serviceDate: date }), true), detail, serviceDateReason);
+            expect(h.upsert).not.toHaveBeenCalled();
+            expect(h.editLogCreate).not.toHaveBeenCalled();
+            expect(h.transactionClient.service_record_case.update).not.toHaveBeenCalled();
+            expect(h.lifecycle.recompute).not.toHaveBeenCalled();
+        },
+    );
+});
+
+describe("caregiver deleteSession", () => {
+    it("returns 404 without writes when the transaction record belongs to another branch", async () => {
+        const h = createHarness({
+            existing: createDay(),
+            transactionRecord: createRecord({ branchId: "another-branch" }),
+        });
+
+        await expect(h.service.deleteSession(context, 1)).rejects.toMatchObject({
+            status: 404, response: { code: "RESOURCE_NOT_FOUND" },
+        });
+
+        expect(h.transactionClient.service_record_day_archive.create).not.toHaveBeenCalled();
+        expect(h.transactionClient.service_record_day.delete).not.toHaveBeenCalled();
+    });
+
+    it("locks the deleted session index in the real write-set day query", async () => {
+        const sessionIndex = 3;
+        const h = createHarness({
+            existing: createDay({ sessionIndex, caseSessionIndex: sessionIndex }),
+            schedule: { id: 10, clientId: 100, primaryEmployeeId: 20, primaryEmployee: { name: "제공자" } },
+        });
+
+        await expect(h.service.deleteSession(context, sessionIndex)).resolves.toEqual({ deleted: true, sessionIndex });
+
+        const dayLockCall = h.transactionClient.$queryRaw.mock.calls.find(([query]) => {
+            const sql = (query as { strings: string[] }).strings.join(" ").toLowerCase();
+            return sql.includes('"service_record_day"') && sql.includes("for update");
+        });
+        expect(dayLockCall).toBeDefined();
+        const dayLock = dayLockCall![0] as { strings: string[]; values: unknown[] };
+        expect(dayLock.strings.join(" ")).toContain('case_session_index" IN');
+        expect(dayLock.values).toContain(sessionIndex);
+    });
+
+    it.each([true, false])("archives a full row before deletion and recomputes (locked=%s)", async (locked) => {
+        const existing = createDay({ locked });
+        const h = createHarness({ existing, schedule: { id: 10, clientId: 100, primaryEmployeeId: 20, primaryEmployee: { name: "제공자" } } });
+        await expect(h.service.deleteSession(context, 1)).resolves.toEqual({ deleted: true, sessionIndex: 1 });
+        const archive = h.transactionClient.service_record_day_archive.create;
+        expect(archive).toHaveBeenCalledWith({ data: expect.objectContaining({
+            branchId: BRANCH_ID, serviceRecordCaseId: CASE_ID, clientId: 100,
+            reason: "caregiver_delete", originalDayId: existing.id, caseSessionIndex: 1,
+            serviceDate: SERVICE_DATE, previousStartDate: SERVICE_DATE, newStartDate: SERVICE_DATE,
+            archivedByUserId: null, batchId: expect.any(String), payload: JSON.parse(JSON.stringify(existing)),
+        }) });
+        expect(h.transactionClient.service_record_day.delete).toHaveBeenCalledWith({ where: { id: existing.id, branchId: BRANCH_ID } });
+        expect(archive.mock.invocationCallOrder[0]).toBeLessThan(h.transactionClient.service_record_day.delete.mock.invocationCallOrder[0]!);
+        expect(h.transactionClient.service_record_day.delete.mock.invocationCallOrder[0]).toBeLessThan(h.lifecycle.recompute.mock.invocationCallOrder[0]!);
+        expect(h.lifecycle.recompute).toHaveBeenCalledWith(CASE_ID, h.transactionClient, expect.anything());
+        expect(h.transactionClient.service_record_case.update).not.toHaveBeenCalled();
+    });
+
+    it.each(["FINALIZING", "FINALIZATION_FAILED", "DOCUMENTS_CREATED", "COMPLETED"])("refuses deletion at %s", async (status) => {
+        const h = createHarness({ existing: createDay(), transactionRecord: createRecord({ status }) });
+        await expectException(h.service.deleteSession(context, 1), ConflictException, "REQUEST_CONFLICT");
+        expect(h.transactionClient.service_record_day_archive.create).not.toHaveBeenCalled();
+        expect(h.transactionClient.service_record_day.delete).not.toHaveBeenCalled();
+    });
+
+    it.each([
+        { replaced: true }, { primaryEmployeeId: 99 }, { clientId: 999 }, { branchId: "another-branch" },
+    ])("refuses a changed schedule after the write lock: %j", async (change) => {
+        const schedule = { id: 10, clientId: 100, branchId: BRANCH_ID, primaryEmployeeId: 20, primaryEmployee: { name: "제공자" } };
+        const h = createHarness({ existing: createDay(), schedule });
+        h.transactionClient.employee_schedule.findUnique.mockResolvedValueOnce(schedule).mockResolvedValueOnce({ ...schedule, ...change });
+        await expectException(h.service.deleteSession(context, 1), ConflictException, "SERVICE_RECORD_WRITE_TARGET_CHANGED");
+        expect(h.transactionClient.service_record_day_archive.create).not.toHaveBeenCalled();
+        expect(h.transactionClient.service_record_day.delete).not.toHaveBeenCalled();
+    });
+
+    it("uses the archived service date as the new start when the case has no start date", async () => {
+        const h = createHarness({ existing: createDay(), transactionRecord: createRecord({ startDate: null }) });
+        await h.service.deleteSession(context, 1);
+        expect(h.transactionClient.service_record_day_archive.create).toHaveBeenCalledWith({ data: expect.objectContaining({ previousStartDate: null, newStartDate: SERVICE_DATE }) });
+    });
+
+    it("returns 404 for a missing record", async () => {
+        const h = createHarness();
+        await expect(h.service.deleteSession(context, 1)).rejects.toMatchObject({ status: 404, response: { code: "RESOURCE_NOT_FOUND" } });
+        expect(h.transactionClient.service_record_day_archive.create).not.toHaveBeenCalled();
+    });
+
+    it("rechecks token validity before deletion", async () => {
+        const h = createHarness({ existing: createDay(), token: { active: false } });
+        await expect(h.service.deleteSession(context, 1)).rejects.toMatchObject({ status: 401 });
+        expect(h.transactionClient.service_record_day.delete).not.toHaveBeenCalled();
     });
 });

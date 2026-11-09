@@ -53,6 +53,7 @@ export interface ProblemDetails {
         serviceStarted: boolean;
         recordedSessionCount: number;
     };
+    serviceDateReason?: "OUT_OF_RANGE" | "NOT_SERVICE_DAY" | "TAKEN" | "BEFORE_PREVIOUS" | "AFTER_NEXT";
 }
 export interface ProblemCatalogEntry {
     code: ProblemCode;
