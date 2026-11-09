@@ -196,7 +196,7 @@ function reviewHTML(submitted: boolean): string {
 }
 const signScreen = (): string => `${head("4회차 · 기록 내용 확인 (4/4)", 4)}<div class="${cls("m-body")}">${back()}${title("기록 내용 확인")}${reviewHTML(false)}</div>${footer("확인", true)}${modal()}`;
 const reviewScreen = (changed = false): string => `${head("1회차 · 기록 수정 (4/4)", 4)}<div class="${cls("m-body")}">${back()}${title("1회차 기록 수정", "제출완료")}${section("서비스 제공일", reviewRow("서비스 제공일", changed ? `<del>11.02</del> <strong>2026.11.05 (목)</strong>` : "2026.11.02 (월)", "r-date") + (changed ? `<p class="${cls("date-note")}">다른 회차 날짜는 바뀌지 않아요.</p>` : ""), "e-date", changed ? "warm" : "")}${reviewHTML(true)}</div>${footer("확인", false, true)}${modal()}`;
-const momScreen = (filled = true): string => `${head("4회차 · 산모 기록 (1/4)", 1)}<div class="${cls("m-body")}">${back()}<div class="${cls("session-chip")}" data-g="session">${filled ? "4회차 · 2026.11.05" : "4회차"}</div>${field("sd", "서비스 제공일", filled ? "4회차 · 2026.11.05" : "날짜를 선택하세요", filled ? "date-filled" : "")}${title("산모 기록")}${PAGES.mom}</div>${footer()}${modal()}`;
+const momScreen = (filled = true): string => `${head("4회차 · 산모 기록 (1/4)", 1)}<div class="${cls("m-body")}">${back()}<div class="${cls("session-chip")}" data-g="session">${filled ? "4회차 · 2026.11.05" : "4회차"}</div>${field("sd", "서비스 제공일", filled ? "2026-11-05" : "날짜를 선택하세요", filled ? "date-filled" : "")}${title("산모 기록")}${PAGES.mom}</div>${footer()}${modal()}`;
 const recordScreen = (step: "baby" | "svc"): string => `${head(`4회차 · ${step === "baby" ? "신생아 기록 (2/4)" : "서비스 기록 (3/4)"}`, step === "baby" ? 2 : 3)}<div class="${cls("m-body")}">${back()}${title(step === "baby" ? "신생아 기록" : "서비스 기록")}${PAGES[step]}</div>${footer()}${modal()}`;
 
 const GRID_STATES: CardState[] = ["done", "done", "done", "current", "locked", "locked", "locked", "locked", "locked", "locked"];
@@ -434,7 +434,7 @@ const DEMOS: Record<DemoName, (ctx: DemoCtx) => Promise<void>> = {
         await openCalendar(ctx, false);
         await pickDay(ctx);
         await closeCalendar(ctx);
-        fillValue(ctx.m, "sd", "4회차 · 2026.11.05");
+        fillValue(ctx.m, "sd", "2026-11-05");
         $(ctx.m, "#session").textContent = "4회차 · 2026.11.05";
         addClass($(ctx.m, "#sd"), "date-filled");
         hideTouch(ctx);
@@ -511,7 +511,7 @@ const DEMOS: Record<DemoName, (ctx: DemoCtx) => Promise<void>> = {
         await tap(ctx, ok);
         hideTouch(ctx);
         ctx.m.dataset.overlay = "false";
-        setScreen(ctx.m, gridScreen(["current", "done", "done", "current", "locked", "locked", "locked", "locked", "locked", "locked"]));
+        setScreen(ctx.m, gridScreen(["current", "done", "done", "locked", "locked", "locked", "locked", "locked", "locked", "locked"]));
         await toast(ctx, "1회차 기록을 삭제했어요", 1400);
     },
 };
