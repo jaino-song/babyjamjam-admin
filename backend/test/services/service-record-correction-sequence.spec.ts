@@ -649,7 +649,7 @@ function createRealignment() {
     return new ServiceRecordScheduleRealignmentService();
 }
 
-/** The Saturday toggle flips on, then the realignment runs in one transaction, as the client update does. */
+/** Models the realignment service on its own; no client save runs it any more. */
 async function realignWithSaturday(store: SequenceStore, now: string) {
     // Direct, documented mutation: the client's own flag write that triggers the realignment.
     clientRow(store)["allowSaturdayService"] = true;
