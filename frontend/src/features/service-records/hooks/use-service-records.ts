@@ -2,6 +2,8 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
+import { clientKeys } from "@/features/clients/hooks/keys";
+
 import { serviceRecordsApi } from "../api/service-records.api";
 import type {
     RetryServiceRecordDocumentInput,
@@ -112,6 +114,31 @@ export function useSendServiceRecordLink() {
             }
 
             await queryClient.invalidateQueries({ queryKey: serviceRecordKeys.all });
+        },
+    });
+}
+
+export function useKeepPeriodMismatch() {
+    const queryClient = useQueryClient();
+    return useMutation({
+        mutationFn: ({ clientId, sessionIndexes }: { clientId: number; sessionIndexes: number[] }) =>
+            serviceRecordsApi.keepPeriodMismatch(clientId, sessionIndexes).then((response) => response.data),
+        onSuccess: async (_, { clientId }) => {
+            await queryClient.invalidateQueries({ queryKey: serviceRecordKeys.clientOverview(clientId) });
+        },
+    });
+}
+
+export function useFitPeriodMismatch() {
+    const queryClient = useQueryClient();
+    return useMutation({
+        mutationFn: ({ clientId }: { clientId: number }) =>
+            serviceRecordsApi.fitPeriodMismatch(clientId).then((response) => response.data),
+        onSuccess: async (_, { clientId }) => {
+            await Promise.all([
+                queryClient.invalidateQueries({ queryKey: serviceRecordKeys.clientOverview(clientId) }),
+                queryClient.invalidateQueries({ queryKey: clientKeys.detail(clientId) }),
+            ]);
         },
     });
 }
