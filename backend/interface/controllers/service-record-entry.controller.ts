@@ -3,6 +3,7 @@ import {
     Get,
     Post,
     Put,
+    Delete,
     Body,
     Param,
     Req,
@@ -16,7 +17,6 @@ import { Request } from "express";
 import type { HolidayYearPayload } from "@babyjamjam/shared/utils/holiday-calendar";
 import { HolidayCalendarService } from "application/services/holiday-calendar.service";
 import { ServiceRecordEntryService } from "application/services/service-record-entry.service";
-import { ScheduleChangeService } from "application/services/schedule-change.service";
 import { ServiceRecordGuard } from "infrastructure/auth/service-record.guard";
 import { RateLimitGuard } from "infrastructure/auth/rate-limit.guard";
 import { ServiceRecordTokenContext } from "application/services/service-record-token.service";
@@ -47,7 +47,6 @@ export class ServiceRecordHolidaysQueryDto {
 export class ServiceRecordEntryController {
     constructor(
         private readonly service: ServiceRecordEntryService,
-        private readonly scheduleChangeService: ScheduleChangeService,
         private readonly holidayCalendar: HolidayCalendarService,
     ) {}
 
@@ -96,18 +95,6 @@ export class ServiceRecordEntryController {
     }
 
     @UseGuards(ServiceRecordGuard)
-    @Get("schedule-change/preview")
-    previewScheduleChange(@Req() req: ServiceRecordRequest) {
-        return this.scheduleChangeService.preview(req.serviceRecordContext);
-    }
-
-    @UseGuards(ServiceRecordGuard)
-    @Post("schedule-change")
-    createScheduleChange(@Req() req: ServiceRecordRequest) {
-        return this.scheduleChangeService.createRequest(req.serviceRecordContext);
-    }
-
-    @UseGuards(ServiceRecordGuard)
     @Put("header")
     saveHeader(@Req() req: ServiceRecordRequest, @Body() dto: SaveServiceHeaderDto) {
         return this.service.saveHeader(req.serviceRecordContext, dto);
@@ -121,6 +108,15 @@ export class ServiceRecordEntryController {
         @Body() dto: UpsertSessionDto,
     ) {
         return this.service.upsertSession(req.serviceRecordContext, index, dto, false);
+    }
+
+    @UseGuards(ServiceRecordGuard)
+    @Delete("sessions/:index")
+    deleteSession(
+        @Req() req: ServiceRecordRequest,
+        @Param("index", ParseIntPipe) index: number,
+    ) {
+        return this.service.deleteSession(req.serviceRecordContext, index);
     }
 
     @UseGuards(ServiceRecordGuard)

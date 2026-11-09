@@ -1867,6 +1867,58 @@ describe("ServiceRecordLifecycleService", () => {
         }));
     });
 
+    it("counts a submitted day at start minus three toward completion", async () => {
+        jest.useFakeTimers({ now: new Date("2026-09-08T00:00:00.000Z") });
+        const record = {
+            id: "case-1",
+            status: SERVICE_RECORD_CASE_STATUS.IN_PROGRESS,
+            startDate: date("2026-09-03"),
+            endDate: date("2026-09-08"),
+            requiredSessionCount: 4,
+            finalizationDueAt: new Date("2026-09-08T11:00:00.000Z"),
+            completedAt: null,
+            momName: "산모",
+            momBirth: "900101",
+            babyName: "아기",
+            babyBirth: "260701",
+            deliveryType: "자연분만",
+            babyWeight: "3.2",
+            assignments: [{ schedule: { replaced: false } }],
+            days: [
+                ...["2026-08-31", "2026-09-04", "2026-09-07", "2026-09-08"]
+                    .map((serviceDate, index) => ({
+                        caseSessionIndex: index + 1,
+                        serviceDate: date(serviceDate),
+                        locked: true,
+                        momApproval: "approved",
+                    })),
+                {
+                    caseSessionIndex: 5,
+                    serviceDate: date("2026-09-09"),
+                    locked: true,
+                    momApproval: "approved",
+                },
+            ],
+        };
+        const prisma = {
+            service_record_case: {
+                findUnique: jest.fn().mockResolvedValue(record),
+                update: jest.fn().mockImplementation(({ data }) => Promise.resolve({ ...record, ...data })),
+            },
+        };
+        const service = new ServiceRecordLifecycleService(prisma as unknown as PrismaService, createHolidayCalendarStub());
+
+        await service.recompute("case-1");
+
+        expect(prisma.service_record_case.update).toHaveBeenCalledWith(expect.objectContaining({
+            data: expect.objectContaining({
+                status: SERVICE_RECORD_CASE_STATUS.READY_TO_FINALIZE,
+                completedAt: expect.any(Date),
+                requiredSessionCount: 4,
+            }),
+        }));
+    });
+
     it("uses the moved future end date before selecting an incomplete lifecycle status", async () => {
         jest.useFakeTimers({ now: new Date("2026-09-08T00:00:00.000Z") });
         const movedEndDate = date("2026-09-20");

@@ -6,20 +6,18 @@ import {
     BadRequestException,
     ConflictException,
 } from "@nestjs/common";
+import { randomUUID } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 import { Prisma } from "@prisma/client";
 import {
-    assertNoActiveEmployeeScheduleOverlap,
-    EMPLOYEE_SCHEDULE_OVERLAP_CODE,
-    lockClientForScheduleWrite,
-    lockEmployeesForScheduleWrite,
-} from "application/policies/employee-schedule-invariants.policy";
+    alignPlannedSessionsToCaregiverDate,
+    CaregiverDateAlignmentError,
+} from "application/policies/service-record-caregiver-date.policy";
 import {
     lockServiceRecordCaseForWrite,
     lockServiceRecordWriteSet,
 } from "application/policies/service-record-write-lock.policy";
 import { validateServiceRecordAnswers } from "application/policies/service-record-answer-validation.policy";
-import { getServiceRecordTokenExpiresAt } from "domain/constants/service-record-link-message";
 import { SERVICE_RECORD_TEXT_LIMITS } from "domain/constants/service-record-text-limits";
 import { UnsupportedKoreanHolidayYearError, type KrBusinessDayCalendar } from "domain/utils/business-days";
 import { withClientServiceDays } from "domain/utils/client-service-days";
@@ -48,7 +46,7 @@ function toIso(d: Date): string {
     return d.toISOString().slice(0, 10);
 }
 
-/** The four caregiver-editable fields of a submitted day, plus its immutable service date. */
+/** The four caregiver-editable fields of a submitted day, plus its service date. */
 type EditableDaySnapshot = {
     serviceDate: string;
     answers: Prisma.JsonValue;
@@ -86,9 +84,8 @@ type PlannedSessionVectorResult = {
 
 /**
  * Read the persisted, complete planned-session vector without inventing
- * provenance or dates.  Provider callers only need the date projection, but
- * validating the full row here prevents a malformed/partial admin revision
- * from silently falling back to the legacy start-date calculation.
+ * provenance or dates. Only valid vectors can follow caregiver dates; legacy
+ * absent or malformed vectors remain untouched.
  */
 function plannedSessionVector(
     raw: Prisma.JsonValue | null | undefined,
@@ -138,6 +135,7 @@ function plannedSessionVector(
             return { state: "invalid", entries: null };
         }
         entries.push({
+            ...row,
             sessionIndex,
             serviceDate,
             originalDate,
@@ -155,14 +153,6 @@ function plannedSessionVector(
     } catch {
         return { state: "invalid", entries: null };
     }
-}
-
-function persistedPlannedSessionDates(
-    raw: Prisma.JsonValue | null | undefined,
-    requiredSessionCount: number | null | undefined,
-    calendar: KrBusinessDayCalendar,
-): PlannedSessionVectorResult {
-    return plannedSessionVector(raw, requiredSessionCount, calendar);
 }
 
 function hasAuthoritativeRevision(record: {
@@ -210,10 +200,6 @@ function entrySessionCount(record: {
     }
 }
 
-function plannedSessionDateUnavailable(): ConflictException {
-    return new ConflictException(codeOnlyProblemBody("SERVICE_RECORD_PLANNED_DATE_UNAVAILABLE"));
-}
-
 export type ServiceRecordLinkStatus =
     | { valid: true }
     | { valid: false; reason: "not_found" | "unavailable" };
@@ -249,7 +235,7 @@ export class ServiceRecordEntryService {
     /** Full wizard context: header + existing sessions + how many sessions are contracted. */
     async getContext(ctx: ServiceRecordTokenContext) {
         const serviceRecordCase = await this.resolveCase(ctx);
-        const [schedule, record, pendingScheduleChange] = await Promise.all([
+        const [schedule, record] = await Promise.all([
             this.prisma.employee_schedule.findUnique({
                 where: { id: ctx.scheduleId },
                 include: {
@@ -263,10 +249,6 @@ export class ServiceRecordEntryService {
                     days: { orderBy: { caseSessionIndex: "asc" } },
                 },
             }),
-            this.prisma.schedule_change_request.findFirst({
-                where: { scheduleId: ctx.scheduleId, status: "pending" },
-                select: { id: true, sessionIndex: true, fromDate: true, toDate: true },
-            }),
         ]);
         if (!schedule) throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
         if (!record) throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
@@ -277,21 +259,6 @@ export class ServiceRecordEntryService {
             await this.holidayCalendar.forBranch(ctx.branchId, { fresh: true }),
             schedule.client,
         );
-        const persistedDates = persistedPlannedSessionDates(
-            record.plannedSessions,
-            record.requiredSessionCount,
-            calendar,
-        );
-        if (
-            persistedDates.state === "invalid"
-            || (persistedDates.state === "absent" && hasAuthoritativeRevision(record))
-        ) {
-            throw plannedSessionDateUnavailable();
-        }
-        const plannedSessionDates = persistedDates.state === "valid"
-            ? persistedDates.entries?.map(({ sessionIndex, serviceDate }) => ({ sessionIndex, serviceDate })) ?? null
-            : null;
-
         return {
             employee: { id: schedule.primaryEmployee.id, name: schedule.primaryEmployee.name },
             client: { id: schedule.client.id, name: schedule.client.name },
@@ -312,15 +279,6 @@ export class ServiceRecordEntryService {
                 ...day,
                 sessionIndex: day.caseSessionIndex ?? day.sessionIndex,
             })),
-            ...(plannedSessionDates ? { plannedSessionDates } : {}),
-            pendingScheduleChange: pendingScheduleChange
-                ? {
-                    id: pendingScheduleChange.id,
-                    sessionIndex: pendingScheduleChange.sessionIndex,
-                    fromDate: toIso(pendingScheduleChange.fromDate),
-                    toDate: toIso(pendingScheduleChange.toDate),
-                }
-                : null,
         };
     }
 
@@ -584,43 +542,7 @@ export class ServiceRecordEntryService {
                     location: "body",
                 }));
             }
-            if (record.startDate && serviceDate < record.startDate) {
-                throw new BadRequestException(problemBody("VALIDATION_FAILED", {
-                    pointer: "/serviceDate",
-                    code: "INVALID_VALUE",
-                    detail: "Service date cannot precede the service start date.",
-                    location: "body",
-                }));
-            }
-
-            // A confirmed administrator revision is authoritative for every
-            // provider slot, including slots that do not yet have a day row.
-            // Check the persisted vector after the common lock/reread and
-            // before any schedule/client extension so stale provider input can
-            // never mutate derived periods first.
-            const persistedDates = plannedSessionVector(record.plannedSessions, total, clientCalendar);
-            if (
-                persistedDates.state === "invalid"
-                || (persistedDates.state === "absent" && hasAuthoritativeRevision(record))
-            ) {
-                throw plannedSessionDateUnavailable();
-            }
-            if (persistedDates.state === "valid") {
-                const plannedDate = persistedDates.entries?.find((entry) => entry.sessionIndex === sessionIndex)?.serviceDate;
-                if (!plannedDate) {
-                    throw plannedSessionDateUnavailable();
-                }
-                if (toIso(serviceDate) !== plannedDate) {
-                    throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
-                }
-            }
-
-            // Read this session's stored row before anything below can write.
-            // A submitted (locked) day may be edited by any caregiver with a
-            // valid token until the case is finalized; its date is immutable
-            // and the end-date extension already ran at the first submit, so an
-            // edit must not reach the extension block (it would otherwise
-            // commit a schedule/client/token change on an edit).
+            serviceDate.setUTCHours(0, 0, 0, 0);
             const existing = await tx.service_record_day.findUnique({
                 where: {
                     serviceRecordCaseId_caseSessionIndex: {
@@ -630,156 +552,93 @@ export class ServiceRecordEntryService {
                 },
             });
             if (existing?.locked) {
-                // Draft saves stay refused; submits are refused for a changed
-                // date or a legacy day without a signature.
+                // Draft saves and legacy days without a signature stay refused.
                 if (
                     !lock
-                    || toIso(serviceDate) !== toIso(existing.serviceDate)
                     || !existing.clientSignature
                 ) {
                     throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
                 }
             }
             const lockedEdit = Boolean(existing?.locked);
-            // On a locked edit the stored date is the verified one (same
-            // calendar day as the request); the request's time of day must not
-            // take part in any later date comparison.
-            const checkedServiceDate = existing?.locked ? existing.serviceDate : serviceDate;
-
-            // A postponed session (a later serviceDate than originally
-            // scheduled) can push the remaining sessions past the current
-            // end date. requiredSessionCount stays fixed; the end date
-            // extends automatically so the case can still fit every
-            // session, no admin approval needed.
-            if (!lockedEdit) {
-                const serviceDateIso = toIso(serviceDate);
-                const currentEndIso = record.endDate ? toIso(record.endDate) : null;
-                let requiredEndIso: string;
+            const dateIso = toIso(serviceDate);
+            const dateChanged = !existing || dateIso !== toIso(existing.serviceDate);
+            const dateFailure = (detail: string): BadRequestException => new BadRequestException(
+                problemBody("VALIDATION_FAILED", {
+                    pointer: "/serviceDate", code: "INVALID_VALUE", detail, location: "body",
+                }),
+            );
+            const forwardDetail = "뒷 회차보다 늦게 바꿀 수 없어요. 뒷 회차를 먼저 변경해 주세요.";
+            const backwardDetail = "앞 회차보다 이르게 바꿀 수 없어요. 앞 회차를 먼저 변경해 주세요.";
+            let aligned: ServiceRecordPlannedSession[] | null = null;
+            if (dateChanged) {
+                const offsetDate = (date: Date, days: number): string => {
+                    const copy = new Date(`${toIso(date)}T00:00:00.000Z`);
+                    copy.setUTCDate(copy.getUTCDate() + days);
+                    return toIso(copy);
+                };
+                if ((record.startDate && dateIso < offsetDate(record.startDate, -7))
+                    || (record.endDate && dateIso > offsetDate(record.endDate, 7))) {
+                    throw dateFailure("고를 수 있는 기간이 아니에요.");
+                }
+                let isServiceDay = false;
                 try {
-                    requiredEndIso = clientCalendar.addBusinessDays(serviceDateIso, total - sessionIndex);
-                } catch {
-                    throw new BadRequestException(problemBody("VALIDATION_FAILED", {
-                        pointer: "/serviceDate",
-                        code: "INVALID_VALUE",
-                        detail: "서비스 제공일자를 계산할 수 없습니다. 날짜를 확인해 주세요.",
-                        location: "body",
-                    }));
+                    isServiceDay = clientCalendar.isBusinessDay(dateIso);
+                } catch (error) {
+                    if (!(error instanceof UnsupportedKoreanHolidayYearError)) throw error;
                 }
-                if (currentEndIso && requiredEndIso > currentEndIso) {
-                    const newEndDate = new Date(`${requiredEndIso}T00:00:00.000Z`);
-                    // Production already owns these locks from the common set
-                    // above. Keep the helper calls only for legacy unit doubles
-                    // that omit client ownership fields.
-                    if (typeof schedule.clientId !== "number") {
-                        await lockClientForScheduleWrite(tx, ctx.branchId, schedule.clientId);
-                        await lockEmployeesForScheduleWrite(tx, ctx.branchId, [
-                            schedule.primaryEmployeeId,
-                            schedule.secondaryEmployeeId,
-                        ]);
+                if (!isServiceDay) throw dateFailure("서비스를 하지 않는 날이에요.");
+                const days = await tx.service_record_day.findMany({
+                    where: { serviceRecordCaseId: record.id, branchId: ctx.branchId },
+                    orderBy: { caseSessionIndex: "asc" },
+                });
+                const others = days
+                    .map((day) => ({ ...day, caseSessionIndex: day.caseSessionIndex ?? day.sessionIndex }))
+                    .filter((day) => day.caseSessionIndex !== sessionIndex)
+                    .sort((a, b) => a.caseSessionIndex - b.caseSessionIndex);
+                const prev = others.filter((day) => day.caseSessionIndex < sessionIndex).at(-1);
+                const next = others.find((day) => day.caseSessionIndex > sessionIndex);
+                if (prev && dateIso <= toIso(prev.serviceDate)) throw dateFailure(backwardDetail);
+                if (next && dateIso >= toIso(next.serviceDate)) throw dateFailure(forwardDetail);
+                if (others.some((day) => toIso(day.serviceDate) === dateIso)) {
+                    throw dateFailure("다른 회차가 이미 고른 날이에요.");
+                }
+                const vector = plannedSessionVector(record.plannedSessions, total, clientCalendar);
+                if (vector.state === "valid" && vector.entries) {
+                    try {
+                        aligned = alignPlannedSessionsToCaregiverDate(
+                            vector.entries, sessionIndex, dateIso,
+                            new Set(others.map((day) => day.caseSessionIndex)), clientCalendar,
+                        );
+                        aligned = validateServiceRecordScheduleVector(aligned, total, clientCalendar, { persisted: true });
+                    } catch (error) {
+                        const direction = error instanceof CaregiverDateAlignmentError
+                            ? error.direction
+                            : dateIso > vector.entries[sessionIndex - 1]!.serviceDate ? "forward" : "backward";
+                        throw dateFailure(direction === "forward" ? forwardDetail : backwardDetail);
                     }
-                    if (schedule.startDate) {
-                        try {
-                            await assertNoActiveEmployeeScheduleOverlap(tx, {
-                                branchId: ctx.branchId,
-                                clientId: schedule.clientId,
-                                primaryEmployeeId: schedule.primaryEmployeeId,
-                                secondaryEmployeeId: schedule.secondaryEmployeeId,
-                                startDate: schedule.startDate,
-                                endDate: newEndDate,
-                                replaced: schedule.replaced,
-                                excludeScheduleId: schedule.id,
-                            });
-                        } catch (error) {
-                            if (error instanceof ConflictException) {
-                                const response = error.getResponse();
-                                const code = typeof response === "object" && response !== null && "code" in response
-                                    ? (response as { code?: unknown }).code
-                                    : undefined;
-                                if (code === EMPLOYEE_SCHEDULE_OVERLAP_CODE) {
-                                    throw new ConflictException(codeOnlyProblemBody(EMPLOYEE_SCHEDULE_OVERLAP_CODE));
-                                }
-                            }
-                            throw error;
-                        }
-                    }
-                    await tx.employee_schedule.update({
-                        where: { id: schedule.id, branchId: ctx.branchId },
-                        data: { endDate: newEndDate },
-                    });
-                    await tx.client.update({
-                        where: { id: schedule.clientId, branchId: ctx.branchId },
-                        data: { endDate: newEndDate },
-                    });
-                    // The client's end date just moved, so its open holiday review
-                    // item (at most one per client) no longer describes the stored
-                    // end date. Close it in this same transaction so the review
-                    // card stays accurate: "fixed" when the auto-extend landed on
-                    // the date the review recommended (resolvedBy stays null: the
-                    // system did it), otherwise "obsolete" because the item's
-                    // recommendation is now stale. branchId is pinned for tenant
-                    // isolation; the item id never leaves the transaction.
-                    const openReviewItem = await tx.end_date_review_item.findFirst({
-                        where: { clientId: schedule.clientId, branchId: ctx.branchId, status: "open" },
-                        select: { id: true, recalculatedEnd: true },
-                    });
-                    if (openReviewItem) {
-                        await tx.end_date_review_item.updateMany({
-                            where: {
-                                id: openReviewItem.id,
-                                clientId: schedule.clientId,
-                                branchId: ctx.branchId,
-                                status: "open",
-                            },
-                            data: {
-                                status: toIso(openReviewItem.recalculatedEnd) === requiredEndIso ? "fixed" : "obsolete",
-                                resolvedAt: new Date(),
-                            },
-                        });
-                    }
-                    // Hand over the calendar this auto-extend already holds: without it ensureForClient
-                    // loads its own, on a second pooled connection while these locks are held.
-                    await this.lifecycleService.ensureForClient(schedule.clientId, tx, clientCalendar);
-                    await this.tokenService.extendExpiryForCase(
-                        record.id,
-                        getServiceRecordTokenExpiresAt(newEndDate),
-                        tx,
-                    );
-                    this.logger.log(
-                        `Service-record session ${sessionIndex} for case ${record.id} extended end date ${currentEndIso} -> ${requiredEndIso}`,
-                    );
-                    record = await tx.service_record_case.findUnique({ where: { id: record.id } }) ?? record;
+                    if (isDeepStrictEqual(aligned, vector.entries)) aligned = null;
                 }
             }
-
-            if (record.endDate && checkedServiceDate > record.endDate) {
-                throw new BadRequestException(problemBody("VALIDATION_FAILED", {
-                    pointer: "/serviceDate",
-                    code: "INVALID_VALUE",
-                    detail: "Service date cannot exceed the service end date.",
-                    location: "body",
-                }));
-            }
-
-            if (sessionIndex > 1) {
+            const writeAlignedVector = async (): Promise<void> => {
+                if (!aligned) return;
+                await tx.service_record_case.update({
+                    where: { id: record.id, branchId: ctx.branchId },
+                    data: {
+                        plannedSessions: aligned as unknown as Prisma.InputJsonValue,
+                        version: { increment: 1 },
+                    },
+                });
+            };
+            if (!lockedEdit && sessionIndex > 1) {
                 const prev = await tx.service_record_day.findUnique({
                     where: {
                         serviceRecordCaseId_caseSessionIndex: {
-                            serviceRecordCaseId: record.id,
-                            caseSessionIndex: sessionIndex - 1,
+                            serviceRecordCaseId: record.id, caseSessionIndex: sessionIndex - 1,
                         },
                     },
                 });
-                if (!prev?.locked) {
-                    throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
-                }
-                if (checkedServiceDate < prev.serviceDate) {
-                    throw new BadRequestException(problemBody("VALIDATION_FAILED", {
-                        pointer: "/serviceDate",
-                        code: "INVALID_VALUE",
-                        detail: "Service date cannot precede the previous session's date.",
-                        location: "body",
-                    }));
-                }
+                if (!prev?.locked) throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
             }
 
             if (lock) {
@@ -822,14 +681,14 @@ export class ServiceRecordEntryService {
             const paymentConfirmed = dto.paymentConfirmed ?? false;
 
             if (existing && lockedEdit) {
-                // Caregiver edit of a submitted day. Only the four editable
+                // Caregiver edit of a submitted day. The date and editable
                 // fields come from the request; every other column is the
                 // stored fact (original submit time, approval, signature,
                 // author, schedule, form version). The request's
                 // clientSignature is deliberately ignored.
                 const before = editableDaySnapshot(existing);
                 const after: EditableDaySnapshot = {
-                    serviceDate: toIso(existing.serviceDate),
+                    serviceDate: dateIso,
                     answers: toPlainJson(answers),
                     etcService,
                     notes,
@@ -850,7 +709,7 @@ export class ServiceRecordEntryService {
                     employeeNameSnapshot: existing.employeeNameSnapshot,
                     formVersion: existing.formVersion,
                     sessionIndex: existing.sessionIndex,
-                    serviceDate: existing.serviceDate,
+                    serviceDate,
                     answers: answers as Prisma.InputJsonValue,
                     etcService,
                     notes,
@@ -883,7 +742,8 @@ export class ServiceRecordEntryService {
                     },
                 });
                 lockedEditOutcome = "edited";
-                await this.lifecycleService.recompute(record.id, tx, calendar);
+                await writeAlignedVector();
+                await this.lifecycleService.recompute(record.id, tx, calendar, { preserveVersion: !dateChanged });
                 return editedRow;
             }
 
@@ -936,7 +796,10 @@ export class ServiceRecordEntryService {
                     row = { ...row, clientSignature: dto.clientSignature, clientSignedAt };
                 }
             }
-            await this.lifecycleService.recompute(record.id, tx, calendar);
+            await writeAlignedVector();
+            await this.lifecycleService.recompute(record.id, tx, calendar, {
+                preserveVersion: !dateChanged && existing?.locked === lock,
+            });
             return row;
         });
         if (lockedEditOutcome === "edited") {
@@ -945,6 +808,121 @@ export class ServiceRecordEntryService {
             this.logger.log(`Service-record session ${sessionIndex} submitted + locked for case ${aggregate.id}`);
         }
         return { ...saved, sessionIndex: saved.caseSessionIndex ?? saved.sessionIndex };
+    }
+
+    /** Archive the complete submitted or draft row before removing it. */
+    async deleteSession(ctx: ServiceRecordTokenContext, sessionIndex: number) {
+        const aggregate = await this.resolveCase(ctx);
+        const calendar = await this.holidayCalendar.forBranch(ctx.branchId, { fresh: true });
+        await this.prisma.$transaction(async (tx) => {
+            // Discover the assignment before locking. Production rows carry a
+            // client id, so the common policy then locks client -> employees ->
+            // case -> schedule/assignment/day and rereads both owner rows. The
+            // fallback preserves narrow unit-test doubles that expose only the
+            // historical case lock seam.
+            let schedule = await tx.employee_schedule.findUnique({
+                where: { id: ctx.scheduleId },
+                include: { primaryEmployee: true },
+            });
+            if (!schedule) throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
+            let record = await tx.service_record_case.findUnique({ where: { id: aggregate.id } });
+            if (typeof schedule.clientId === "number") {
+                await lockServiceRecordWriteSet(tx, {
+                    branchId: ctx.branchId,
+                    clientId: schedule.clientId,
+                    caseId: aggregate.id,
+                    scheduleIds: [schedule.id],
+                    employeeIds: [schedule.primaryEmployeeId, schedule.secondaryEmployeeId],
+                    sessionIndexes: [sessionIndex],
+                });
+                const rereadSchedule = await tx.employee_schedule.findUnique({
+                    where: { id: ctx.scheduleId },
+                    include: {
+                        primaryEmployee: true,
+                        client: {
+                            select: {
+                                allowSaturdayService: true,
+                                allowSundayService: true,
+                                allowHolidayService: true,
+                            },
+                        },
+                    },
+                });
+                // A replacement commits `replaced=true` under these same locks
+                // while this request may still hold a context resolved before
+                // it. The token proves who was the provider at request start,
+                // so refuse once the schedule is replaced or no longer owned
+                // by the context's employee.
+                if (
+                    !rereadSchedule
+                    || rereadSchedule.clientId !== schedule.clientId
+                    || (
+                        rereadSchedule.branchId !== undefined
+                        && rereadSchedule.branchId !== ctx.branchId
+                    )
+                    || rereadSchedule.replaced === true
+                    || rereadSchedule.primaryEmployeeId !== ctx.employeeId
+                ) {
+                    throw new ConflictException(codeOnlyProblemBody("SERVICE_RECORD_WRITE_TARGET_CHANGED"));
+                }
+                schedule = rereadSchedule;
+                record = await tx.service_record_case.findUnique({ where: { id: aggregate.id } });
+            } else {
+                // Serialize all entry writes for this case before reading a
+                // session snapshot when a legacy test adapter omits ownership
+                // fields. Real Prisma transactions never take this branch.
+                const locked = await lockServiceRecordCaseForWrite(tx, ctx.branchId, aggregate.id);
+                if (typeof tx.$queryRaw === "function" && !locked) {
+                    throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
+                }
+                record = await tx.service_record_case.findUnique({ where: { id: aggregate.id } });
+            }
+            // Token lock goes after the write-set lock (documented lock order)
+            // and before any write below.
+            await this.assertTokenStillValid(tx, ctx);
+            if (!record) throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
+            if (record.branchId !== ctx.branchId) {
+                throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
+            }
+            if ([
+                SERVICE_RECORD_CASE_STATUS.FINALIZING,
+                SERVICE_RECORD_CASE_STATUS.FINALIZATION_FAILED,
+                SERVICE_RECORD_CASE_STATUS.DOCUMENTS_CREATED,
+                SERVICE_RECORD_CASE_STATUS.COMPLETED,
+            ].includes(record.status as never)) {
+                throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
+            }
+
+            const row = await tx.service_record_day.findUnique({
+                where: {
+                    serviceRecordCaseId_caseSessionIndex: {
+                        serviceRecordCaseId: record.id, caseSessionIndex: sessionIndex,
+                    },
+                    branchId: ctx.branchId,
+                },
+            });
+            if (!row) throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
+            await tx.service_record_day_archive.create({
+                data: {
+                    branchId: ctx.branchId,
+                    serviceRecordCaseId: record.id,
+                    clientId: schedule.clientId,
+                    batchId: randomUUID(),
+                    reason: "caregiver_delete",
+                    originalDayId: row.id,
+                    caseSessionIndex: row.caseSessionIndex,
+                    serviceDate: row.serviceDate,
+                    previousStartDate: record.startDate,
+                    newStartDate: record.startDate ?? row.serviceDate,
+                    archivedByUserId: null,
+                    payload: JSON.parse(JSON.stringify(row)) as Prisma.InputJsonValue,
+                },
+            });
+            await tx.service_record_day.delete({ where: { id: row.id, branchId: ctx.branchId } });
+            await this.lifecycleService.recompute(record.id, tx, calendar);
+        });
+        this.logger.log(`Service-record session ${sessionIndex} deleted for case ${aggregate.id}`);
+        return { deleted: true, sessionIndex };
     }
 
     /** Backward-compatible completion acknowledgement. Snapshot creation is scheduler-owned. */
@@ -981,7 +959,7 @@ export class ServiceRecordEntryService {
      * The token row is locked (`FOR UPDATE`) so a concurrent revoke/replace
      * serialises with this write. Call it AFTER the service-record write-set /
      * case lock: `service-record-write-lock.policy` fixes client -> employees ->
-     * case -> schedules/assignments/days, and `schedule-change.service` takes
+     * case -> schedules/assignments/days, and other schedule writers take
      * those locks before updating token rows, so locking the token earlier here
      * would invert that order.
      *

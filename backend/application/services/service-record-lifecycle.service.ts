@@ -179,6 +179,19 @@ function isWithinServicePeriod(serviceDate: Date, startDate: Date | null, endDat
     return serviceDateIso >= startDateIso && serviceDateIso <= endDateIso;
 }
 
+function isWithinCaregiverDateWindow(serviceDate: Date, startDate: Date | null, endDate: Date | null): boolean {
+    const offset = (date: Date, days: number): Date => {
+        const copy = new Date(`${date.toISOString().slice(0, 10)}T00:00:00.000Z`);
+        copy.setUTCDate(copy.getUTCDate() + days);
+        return copy;
+    };
+    return isWithinServicePeriod(
+        new Date(`${serviceDate.toISOString().slice(0, 10)}T00:00:00.000Z`),
+        startDate ? offset(startDate, -7) : serviceDate,
+        endDate ? offset(endDate, 7) : serviceDate,
+    );
+}
+
 function hasCompleteHeader(record: {
     momName: string | null;
     momBirth: string | null;
@@ -1333,6 +1346,7 @@ export class ServiceRecordLifecycleService {
         serviceRecordCaseId: string,
         tx?: Prisma.TransactionClient,
         calendar?: KrBusinessDayCalendar,
+        options?: { preserveVersion: boolean },
     ) {
         // A root recompute is itself a business write. Discover only the
         // owning identifiers before opening the transaction, then acquire the
@@ -1383,10 +1397,10 @@ export class ServiceRecordLifecycleService {
                         if (typeof transaction.$queryRaw === "function" && !caseLocked) {
                             throw new ConflictException(codeOnlyProblemBody("SERVICE_RECORD_WRITE_TARGET_CHANGED"));
                         }
-                        return this.recomputeInTransaction(serviceRecordCaseId, transaction, rootCalendar);
+                        return this.recomputeInTransaction(serviceRecordCaseId, transaction, rootCalendar, options);
                     });
                 }
-                return this.recomputeInTransaction(serviceRecordCaseId, this.prisma, rootCalendar);
+                return this.recomputeInTransaction(serviceRecordCaseId, this.prisma, rootCalendar, options);
             }
 
             return this.prisma.$transaction(async (transaction) => {
@@ -1395,11 +1409,11 @@ export class ServiceRecordLifecycleService {
                     clientId: discoveredClientId,
                     caseId: serviceRecordCaseId,
                 });
-                return this.recomputeInTransaction(serviceRecordCaseId, transaction, rootCalendar);
+                return this.recomputeInTransaction(serviceRecordCaseId, transaction, rootCalendar, options);
             });
         }
 
-        return this.recomputeInTransaction(serviceRecordCaseId, tx ?? this.prisma, calendar);
+        return this.recomputeInTransaction(serviceRecordCaseId, tx ?? this.prisma, calendar, options);
     }
 
     /**
@@ -1411,6 +1425,7 @@ export class ServiceRecordLifecycleService {
         serviceRecordCaseId: string,
         db: DbClient,
         calendar?: KrBusinessDayCalendar,
+        options?: { preserveVersion: boolean },
     ) {
         const loaded = await db.service_record_case.findUnique({
             where: { id: serviceRecordCaseId },
@@ -1466,7 +1481,7 @@ export class ServiceRecordLifecycleService {
             );
         const usableRequired = required ?? 0;
         const inPeriodDays = record.days.filter((day) => (
-            isWithinServicePeriod(day.serviceDate, record.startDate, record.endDate)
+            isWithinCaregiverDateWindow(day.serviceDate, record.startDate, record.endDate)
             && (day.caseSessionIndex === null || day.caseSessionIndex <= usableRequired)
         ));
         const submitted = inPeriodDays.filter((day) => day.locked && day.momApproval === "approved").length;
@@ -1510,7 +1525,8 @@ export class ServiceRecordLifecycleService {
                 // READY/WAITING transition cannot retain the old deadline.
                 finalizationDueAt: effectiveFinalizationDueAt,
                 requiredSessionCount: required,
-                version: { increment: 1 },
+                // Caregiver content edits do not move the schedule version.
+                ...(!options?.preserveVersion ? { version: { increment: 1 } } : {}),
             },
         });
     }
