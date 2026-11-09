@@ -52,6 +52,15 @@ describe("guideDemos", () => {
 
     it("picks a free service date, with a disabled initial selection and no completion overlay", async () => {
         const els = makeStage();
+        let completionAppeared = false;
+        const observer = new MutationObserver((records) => {
+            for (const record of records) {
+                for (const added of record.addedNodes) {
+                    if (added instanceof HTMLElement && (added.matches(".m-done") || added.querySelector(".m-done"))) completionAppeared = true;
+                }
+            }
+        });
+        observer.observe(els.m, { childList: true, subtree: true });
         const stop = startDemo("grid", els);
         try {
             expect(element(els.m, "c4")).toHaveTextContent("입력 가능");
@@ -70,17 +79,25 @@ describe("guideDemos", () => {
             await until(() => element(els.m, "calok")?.dataset.disabled === "false");
             expect(body.scrollTop).toBe(83);
             expect(els.m).toHaveAttribute("data-overlay", "true");
-            await until(() => element(els.m, "sd")?.textContent?.includes("4회차 · 2026.11.05") === true);
+            await until(() => element(els.m, "sd")?.classList.contains("date-filled") === true);
+            expect(element(els.m, "sd")?.querySelector(".v")?.textContent).toBe("2026-11-05");
+            expect(element(els.m, "session")).toHaveTextContent("4회차 · 2026.11.05");
             expect(els.m).toHaveAttribute("data-overlay", "false");
-            expect(els.m.querySelector(".m-done")).toBeNull();
-        } finally { stop(); }
+            // Observe through the loop restart so a late completion overlay cannot escape the check.
+            await until(() => Boolean(element(els.m, "c4")));
+            expect(completionAppeared).toBe(false);
+        } finally {
+            stop();
+            observer.disconnect();
+        }
     });
 
     it("starts the form with its date filled, types every temperature character, then reaches review", async () => {
         const els = makeStage();
         const stop = startDemo("form", els);
         try {
-            expect(element(els.m, "sd")).toHaveTextContent("4회차 · 2026.11.05");
+            expect(element(els.m, "sd")).toHaveTextContent("2026-11-05");
+            expect(element(els.m, "session")).toHaveTextContent("4회차 · 2026.11.05");
             await until(() => element(els.m, "snack")?.querySelector(".v")?.textContent === "1");
             expect(element(els.m, "meal")?.querySelector(".v")).toHaveTextContent("2");
             await until(() => element(els.m, "temp")?.querySelector(".v")?.textContent === "36.6");
@@ -130,6 +147,8 @@ describe("guideDemos", () => {
             await until(() => els.m.querySelector(".toast")?.textContent === "1회차 기록을 삭제했어요");
             expect(element(els.m, "c1")).toHaveTextContent("입력 가능");
             expect(element(els.m, "c1")?.querySelector(".d")?.textContent).toBe("");
+            expect(element(els.m, "c4")).toHaveTextContent("대기");
+            expect(element(els.m, "c4")?.querySelector(".d")?.textContent).toBe("");
             expect(element(els.m, "c2")).toHaveTextContent("2026.11.03");
             expect(element(els.m, "c3")).toHaveTextContent("2026.11.04");
         } finally { stop(); }
