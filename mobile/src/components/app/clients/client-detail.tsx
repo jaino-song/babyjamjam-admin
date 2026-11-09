@@ -1625,7 +1625,13 @@ export function ClientDetailContent({
           isError={serviceRecordsQuery.isError}
           isRefreshing={serviceRecordsQuery.isFetching && !serviceRecordsQuery.isLoading}
           onRefresh={() => void serviceRecordsQuery.refetch()}
-          onPeriodFitted={async () => onClientUpdated(await fetchClient(client.id))}
+          onPeriodFitted={async () => {
+            try {
+              onClientUpdated(await fetchClient(client.id));
+            } catch {
+              toast({ variant: "destructive", description: scheduleText(locale, "client-refresh-failed") });
+            }
+          }}
         />
       </MobileDetailTabPanel>
     </MobileDetailPage>
