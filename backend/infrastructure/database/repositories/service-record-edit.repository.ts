@@ -2434,6 +2434,30 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
         } : null;
     }
 
+    async listRevisionsForChanges(branchId: string, clientId: number) {
+        assertUuid(branchId, "branch");
+        assertClientId(clientId);
+        const revisions = await this.prisma.service_record_revision.findMany({
+            where: { branchId, serviceRecordCase: { branchId, clientId } },
+            orderBy: { revisionNumber: "asc" },
+            select: {
+                id: true,
+                revisionNumber: true,
+                confirmedAt: true,
+                formVersionAtConfirm: true,
+                payload: true,
+                plannedSessions: true,
+                beforeSnapshot: true,
+            },
+        });
+        return revisions.map((revision) => ({
+            ...revision,
+            payload: toDomainJson(revision.payload),
+            plannedSessions: toDomainJson(revision.plannedSessions),
+            beforeSnapshot: toDomainJson(revision.beforeSnapshot),
+        }));
+    }
+
     async findCaregiverEditForChanges(branchId: string, clientId: number, editId: string) {
         assertUuid(branchId, "branch");
         assertClientId(clientId);

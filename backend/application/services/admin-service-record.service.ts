@@ -280,6 +280,22 @@ export class AdminServiceRecordService {
     async getClientEditor(branchId: string, clientId: number): Promise<AdminServiceRecordOverviewDto> {
         await this.assertClientBelongsToBranch(branchId, clientId);
         const overview = await this.getClientOverview(branchId, clientId, { includeSignatures: true });
+        if (this.editRepository) {
+            const revisions = await this.editRepository.listRevisionsForChanges(branchId, clientId);
+            const confirmedAtBySession = new Map<number, Date>();
+            for (const revision of revisions) {
+                const changes = buildServiceRecordRevisionChanges(revision);
+                for (const { sessionIndex } of changes.sessions) {
+                    const previous = confirmedAtBySession.get(sessionIndex);
+                    if (!previous || revision.confirmedAt > previous) {
+                        confirmedAtBySession.set(sessionIndex, revision.confirmedAt);
+                    }
+                }
+            }
+            overview.adminEditConfirmedAtBySession = [...confirmedAtBySession]
+                .sort(([left], [right]) => left - right)
+                .map(([sessionIndex, confirmedAt]) => ({ sessionIndex, confirmedAt: confirmedAt.toISOString() }));
+        }
         // getClientOverview carries the projection for the production DI
         // graph.  Keep the editor's explicit unavailable result for tests or
         // legacy modules that omit the optional edit repository.

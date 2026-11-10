@@ -43,9 +43,18 @@ describe("GET /api/admin/service-records/client/[clientId]/editor", () => {
     });
 
     it("forwards a bearer token, encodes the id, and disables caching", async () => {
+        const data = {
+            record: null, assignments: [],
+            adminEditConfirmedAtBySession: [
+                { sessionIndex: 1, confirmedAt: "2026-11-01T01:00:00.000Z" },
+                { sessionIndex: 3, confirmedAt: "2026-11-02T01:00:00.000Z" },
+                { sessionIndex: 5, confirmedAt: "2026-11-03T01:00:00.000Z" },
+                { sessionIndex: 6, confirmedAt: "2026-11-03T01:00:00.000Z" },
+            ],
+        };
         mockGet.mockResolvedValue({
             status: 200,
-            data: { record: null, assignments: [] },
+            data,
         });
 
         const response = await GET(
@@ -59,7 +68,7 @@ describe("GET /api/admin/service-records/client/[clientId]/editor", () => {
             "/admin/service-records/client/17%2Feditor/editor",
             { headers: { Authorization: "Bearer token-1" } },
         );
-        await expect(response.json()).resolves.toEqual({ record: null, assignments: [] });
+        await expect(response.json()).resolves.toEqual(data);
     });
 
     it.each([401, 403, 404])("preserves upstream authorization/not-found status %s", async (status) => {
