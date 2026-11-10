@@ -605,6 +605,7 @@ describe("per-session administrator editing", () => {
     async function startCommit() {
         fireEvent.click(screen.getByRole("button", { name: "수정 확정" }));
         await screen.findByRole("dialog", { name: "초안 변경 미리보기" });
+        await waitFor(() => expect(within(previewDialog()).queryByRole("status")).not.toBeInTheDocument());
     }
     function confirmInPreview() {
         fireEvent.click(within(previewDialog()).getByRole("button", { name: "수정 확정" }));
@@ -732,6 +733,59 @@ describe("per-session administrator editing", () => {
         expect(screen.getByRole("button", { name: "수정 이력 보기" })).toBeEnabled();
     });
 
+    it("sends three staged date moves in order with one PATCH and at most four API calls", async () => {
+        movedDates = { 3: "2026-09-10", 1: "2026-09-04", 2: "2026-09-07" };
+        jest.mocked(adminServiceRecordEditApi.previewDraft).mockResolvedValue({ ...confirmPreviewResponse, draftVersion: 2 } as Awaited<ReturnType<typeof adminServiceRecordEditApi.previewDraft>>);
+        const { container } = render(<ServiceRecordAdminWizard clientId="42" overview={sessionOverview} initialDraftState={{ ...makeDraftState(), draft: null }} />);
+        for (const [sessionIndex, dayOption] of [[3, "10일"], [1, "4일"], [2, "7일"]] as const) {
+            fireEvent.click(container.querySelectorAll('[data-slot="day"]')[sessionIndex - 1]);
+            pickDate(container, `${sessionIndex}회차`, dayOption, sessionIndex === 3 ? undefined : "그대로 두기");
+            acceptEdit();
+            await screen.findByRole("button", { name: "수정 확정" });
+        }
+        fireEvent.click(screen.getByRole("button", { name: "수정 확정" }));
+        await waitFor(() => expect(adminServiceRecordEditApi.previewDraft).toHaveBeenCalledTimes(1));
+        expect(adminServiceRecordEditApi.updateDraft).toHaveBeenCalledTimes(1);
+        expect(adminServiceRecordEditApi.updateDraft).toHaveBeenCalledWith("draft-1", 1, {}, undefined, undefined, [
+            { sessionIndex: 3, toDate: "2026-09-10", shiftFollowing: false },
+            { sessionIndex: 1, toDate: "2026-09-04", shiftFollowing: false },
+            { sessionIndex: 2, toDate: "2026-09-07", shiftFollowing: false },
+        ]);
+        const requestCount = [adminServiceRecordEditApi.getDraft, adminServiceRecordEditApi.startDraft,
+            adminServiceRecordEditApi.updateDraft, adminServiceRecordEditApi.previewDraft,
+            adminServiceRecordEditApi.discardDraft, adminServiceRecordEditApi.confirmDraft]
+            .reduce((count, method) => count + jest.mocked(method).mock.calls.length, 0);
+        expect(requestCount).toBeLessThanOrEqual(4);
+        expect(adminServiceRecordEditApi.previewDraft).toHaveBeenCalledWith("draft-1", 2);
+    });
+
+    it("opens a loading preview immediately and marks only preparation as busy on the commit button", async () => {
+        let resolvePreview!: (result: Awaited<ReturnType<typeof adminServiceRecordEditApi.previewDraft>>) => void;
+        jest.mocked(adminServiceRecordEditApi.previewDraft).mockReturnValue(new Promise((resolve) => { resolvePreview = resolve; }));
+        let resolveConfirm!: (result: Awaited<ReturnType<typeof adminServiceRecordEditApi.confirmDraft>>) => void;
+        jest.mocked(adminServiceRecordEditApi.confirmDraft).mockReturnValue(new Promise((resolve) => { resolveConfirm = resolve; }));
+        const { container } = open();
+        editNote(container);
+        acceptEdit();
+        const button = await screen.findByRole("button", { name: "수정 확정" });
+        fireEvent.click(button);
+        expect(within(previewDialog()).getByRole("status")).toHaveTextContent("미리보기를 불러오는 중…");
+        expect(button).toHaveTextContent("확인 중…");
+        expect(button).toHaveAttribute("aria-busy", "true");
+        expect(button.querySelector('[data-slot="spinner"]')).toBeInTheDocument();
+        await waitFor(() => expect(adminServiceRecordEditApi.previewDraft).toHaveBeenCalledTimes(1));
+        await act(async () => { resolvePreview(confirmPreviewResponse as Awaited<ReturnType<typeof adminServiceRecordEditApi.previewDraft>>); });
+        expect(button).toHaveTextContent("수정 확정");
+        expect(button).not.toHaveAttribute("aria-busy", "true");
+        expect(button.querySelector('[data-slot="spinner"]')).not.toBeInTheDocument();
+        confirmInPreview();
+        await waitFor(() => expect(adminServiceRecordEditApi.confirmDraft).toHaveBeenCalledTimes(1));
+        expect(button).toHaveTextContent("수정 확정");
+        expect(button).not.toHaveAttribute("aria-busy", "true");
+        expect(within(previewDialog()).queryByText("미리보기를 불러오는 중…")).not.toBeInTheDocument();
+        await act(async () => { resolveConfirm(confirmResult as Awaited<ReturnType<typeof adminServiceRecordEditApi.confirmDraft>>); });
+    });
+
     it("batches two sessions, a header edit and a date move into one 수정 확정 with one confirm", async () => {
         movedDates = { 3: "2026-09-10" };
         jest.mocked(adminServiceRecordEditApi.previewDraft).mockResolvedValue({
@@ -770,7 +824,7 @@ describe("per-session administrator editing", () => {
             ],
         });
         expect(adminServiceRecordEditApi.updateDraft).toHaveBeenCalledTimes(1);
-        expect(adminServiceRecordEditApi.updateDraft).toHaveBeenCalledWith("draft-1", 1, {}, { sessionIndex: 3, toDate: "2026-09-10", shiftFollowing: false });
+        expect(adminServiceRecordEditApi.updateDraft).toHaveBeenCalledWith("draft-1", 1, {}, undefined, undefined, [{ sessionIndex: 3, toDate: "2026-09-10", shiftFollowing: false }]);
         expect(adminServiceRecordEditApi.previewDraft).toHaveBeenCalledWith("draft-1", 2);
         expect(adminServiceRecordEditApi.confirmDraft).not.toHaveBeenCalled();
 
@@ -1331,9 +1385,9 @@ describe("per-session administrator editing", () => {
         await screen.findByRole("button", { name: "수정 확정" });
         fireEvent.click(screen.getByRole("button", { name: "수정 확정" }));
         await screen.findByText(label);
-        expect(adminServiceRecordEditApi.updateDraft).toHaveBeenCalledWith("draft-1", 1, {}, {
+        expect(adminServiceRecordEditApi.updateDraft).toHaveBeenCalledWith("draft-1", 1, {}, undefined, undefined, [{
             sessionIndex: 3, toDate: "2026-09-10", shiftFollowing: false,
-        });
+        }]);
         expect(adminServiceRecordEditApi.previewDraft).not.toHaveBeenCalled();
         expect(container.querySelectorAll('[data-slot="day"]')[2]).toHaveTextContent("수정됨");
     });
@@ -1372,7 +1426,7 @@ describe("per-session administrator editing", () => {
         expect(adminServiceRecordEditApi.updateDraft).not.toHaveBeenCalled();
         await startCommit();
         expect(adminServiceRecordEditApi.startDraft).toHaveBeenCalledWith("42", undefined);
-        expect(adminServiceRecordEditApi.updateDraft).toHaveBeenCalledWith("draft-1", 1, {}, { sessionIndex: 1, toDate: "2026-09-08", shiftFollowing: true });
+        expect(adminServiceRecordEditApi.updateDraft).toHaveBeenCalledWith("draft-1", 1, {}, undefined, undefined, [{ sessionIndex: 1, toDate: "2026-09-08", shiftFollowing: true }]);
         confirmInPreview();
         await waitFor(() => expect(adminServiceRecordEditApi.confirmDraft).toHaveBeenCalledTimes(1));
     });
@@ -1403,7 +1457,7 @@ describe("per-session administrator editing", () => {
         await screen.findByRole("button", { name: "수정 확정" });
         expect(adminServiceRecordEditApi.updateDraft).not.toHaveBeenCalled();
         await startCommit();
-        expect(adminServiceRecordEditApi.updateDraft).toHaveBeenCalledWith("draft-1", 1, {}, { sessionIndex: 1, toDate: "2026-09-04", shiftFollowing });
+        expect(adminServiceRecordEditApi.updateDraft).toHaveBeenCalledWith("draft-1", 1, {}, undefined, undefined, [{ sessionIndex: 1, toDate: "2026-09-04", shiftFollowing }]);
         confirmInPreview();
         await waitFor(() => expect(adminServiceRecordEditApi.confirmDraft).toHaveBeenCalledTimes(1));
     });
@@ -1522,7 +1576,7 @@ describe("per-session administrator editing", () => {
                 // A plain calendar would refuse Saturday 12-19 on the save-time refresh and block the commit.
                 expect(refreshForSave).toHaveBeenCalled();
                 expect(screen.queryByText("공휴일 정보를 불러오지 못했어요.")).not.toBeInTheDocument();
-                expect(adminServiceRecordEditApi.updateDraft).toHaveBeenCalledWith("draft-1", 1, {}, { sessionIndex: 1, toDate: "2026-12-19", shiftFollowing: true });
+                expect(adminServiceRecordEditApi.updateDraft).toHaveBeenCalledWith("draft-1", 1, {}, undefined, undefined, [{ sessionIndex: 1, toDate: "2026-12-19", shiftFollowing: true }]);
             } finally {
                 jest.mocked(useBusinessDayCalendar).mockImplementation(() => ({
                     calendar: KR_BUILTIN_CALENDAR_FOR_TEST,
@@ -1864,6 +1918,7 @@ describe("per-session administrator editing", () => {
 
             await screen.findByRole("dialog", { name: refreshModalTitle });
             expectNothingPreviewedOrDiscarded();
+            expect(screen.queryByRole("dialog", { name: "초안 변경 미리보기" })).not.toBeInTheDocument();
             expect(adminServiceRecordEditApi.updateDraft).not.toHaveBeenCalled();
             expect(container.querySelectorAll('[data-slot="day"]')[0]).toHaveTextContent("수정됨");
         });
@@ -1911,6 +1966,22 @@ describe("per-session administrator editing", () => {
             document.body.appendChild(link);
         });
         afterEach(() => { link.remove(); });
+
+        it("prevents unloading while preparing and while the preview stays open", async () => {
+            let resolvePreview!: (result: Awaited<ReturnType<typeof adminServiceRecordEditApi.previewDraft>>) => void;
+            jest.mocked(adminServiceRecordEditApi.previewDraft).mockReturnValue(new Promise((resolve) => { resolvePreview = resolve; }));
+            const { container } = open();
+            editNote(container);
+            acceptEdit();
+            fireEvent.click(await screen.findByRole("button", { name: "수정 확정" }));
+            expect(beforeUnload().defaultPrevented).toBe(true);
+            await waitFor(() => expect(adminServiceRecordEditApi.previewDraft).toHaveBeenCalledTimes(1));
+            expect(within(previewDialog()).getByRole("status")).toHaveTextContent("미리보기를 불러오는 중…");
+            expect(beforeUnload().defaultPrevented).toBe(true);
+            await act(async () => { resolvePreview(confirmPreviewResponse as Awaited<ReturnType<typeof adminServiceRecordEditApi.previewDraft>>); });
+            expect(within(previewDialog()).getByRole("button", { name: "수정 확정" })).toBeEnabled();
+            expect(beforeUnload().defaultPrevented).toBe(true);
+        });
 
         it("prevents unloading only while edits are pending", async () => {
             const { container } = open();

@@ -161,7 +161,7 @@ function renderWizard(props: Partial<React.ComponentProps<typeof ServiceRecordAd
 
 /**
  * Content and date moves reach the server only on 수정 확정:
- * getDraft -> (discardDraft) -> startDraft(content) -> updateDraft per date move -> previewDraft -> confirmDraft.
+ * getDraft -> (discardDraft) -> startDraft(content) -> updateDraft(dateMoves) -> previewDraft -> confirmDraft.
  * The wizard checks the draft it gets back against what it sent, so the mocks
  * store (echo) what they receive, as the real server does.
  */
@@ -300,7 +300,7 @@ describe("service-record admin editor contract", () => {
 
             const preview = await startCommit();
             // The preview names the changed session, and nothing else as changed.
-            expect(within(preview).getByText(PINNED_COPY.previewSessions([1]))).toBeInTheDocument();
+            expect(await within(preview).findByText(PINNED_COPY.previewSessions([1]))).toBeInTheDocument();
             expect(within(preview).getByText(PINNED_COPY.previewHeader(false))).toBeInTheDocument();
             expect(adminServiceRecordEditApi.confirmDraft).not.toHaveBeenCalled();
             expect(adminServiceRecordEditApi.discardDraft).toHaveBeenCalledWith("draft-1", 2);
@@ -355,7 +355,7 @@ describe("service-record admin editor contract", () => {
             expect(await screen.findByRole("button", { name: PINNED_COPY.commit })).toBeEnabled();
             expect(adminServiceRecordEditApi.startDraft).not.toHaveBeenCalled();
             const preview = await startCommit();
-            expect(within(preview).getByText(PINNED_COPY.previewHeader(true))).toBeInTheDocument();
+            expect(await within(preview).findByText(PINNED_COPY.previewHeader(true))).toBeInTheDocument();
             expect(within(preview).getByText(PINNED_COPY.previewSessions([]))).toBeInTheDocument();
             expect(jest.mocked(adminServiceRecordEditApi.startDraft).mock.calls[0]).toEqual([CLIENT_ID, { header: { momBirth: "1999-01-01" } }]);
             expect(adminServiceRecordEditApi.updateDraft).not.toHaveBeenCalled();
@@ -378,7 +378,7 @@ describe("service-record admin editor contract", () => {
             fireEvent.click(screen.getByRole("button", { name: PINNED_COPY.keepChange }));
             expect(await screen.findByRole("button", { name: PINNED_COPY.commit })).toBeEnabled();
             const preview = await startCommit();
-            expect(within(preview).getByText(PINNED_COPY.previewHeader(true))).toBeInTheDocument();
+            expect(await within(preview).findByText(PINNED_COPY.previewHeader(true))).toBeInTheDocument();
             expect(within(preview).getByText(PINNED_COPY.previewSessions([]))).toBeInTheDocument();
             fireEvent.click(within(preview).getByRole("button", { name: PINNED_COPY.commit }));
 
@@ -421,14 +421,14 @@ describe("service-record admin editor contract", () => {
             expect(await screen.findByRole("button", { name: PINNED_COPY.commit })).toBeEnabled();
             const preview = await startCommit();
             // The preview shows the moved 1회차 date; the server reports every session whose date moved as changed (service-record-edit-preview.policy.ts:755-764).
-            expect(within(preview).getByText(PINNED_COPY.previewDate("2026-09-10"))).toBeInTheDocument();
+            expect(await within(preview).findByText(PINNED_COPY.previewDate("2026-09-10"))).toBeInTheDocument();
             expect(within(preview).getByText(PINNED_COPY.previewHeader(false))).toBeInTheDocument();
             expect(within(preview).getByText(PINNED_COPY.previewSessions([1, 2, 3]))).toBeInTheDocument();
             // No content changed, so the draft starts empty and the move is applied on top.
             expect(jest.mocked(adminServiceRecordEditApi.startDraft).mock.calls[0]).toEqual([CLIENT_ID, undefined]);
             expect(adminServiceRecordEditApi.updateDraft).toHaveBeenCalledTimes(1);
             expect(adminServiceRecordEditApi.updateDraft).toHaveBeenCalledWith(
-                "draft-1", 1, {}, { sessionIndex: 1, toDate: "2026-09-10", shiftFollowing: true },
+                "draft-1", 1, {}, undefined, undefined, [{ sessionIndex: 1, toDate: "2026-09-10", shiftFollowing: true }],
             );
             expect(adminServiceRecordEditApi.previewDraft).toHaveBeenCalledWith("draft-1", 2);
             fireEvent.click(within(preview).getByRole("button", { name: PINNED_COPY.commit }));
