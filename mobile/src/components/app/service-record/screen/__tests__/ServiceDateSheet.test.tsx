@@ -116,6 +116,26 @@ describe("service-period borders", () => {
         expect(screen.getByRole("button", { name: "선택" })).toBeEnabled();
     });
 
+    it("forces the primary border and selected fill on an available margin day", () => {
+        render(<ServiceDateSheet {...props({ context, day: 12 })} />);
+        const cell = screen.getByRole("button", { name: "2026.11.12(목)" });
+        expect(cell).toHaveAttribute("data-day-state", "available");
+        fireEvent.click(cell);
+        expect(cell).toHaveAttribute("aria-pressed", "true");
+        expect(cell).toHaveClass("border-v3-primary!", "bg-v3-primary");
+        expect(cell).not.toHaveAttribute("data-in-period");
+    });
+
+    it("forces the dashed primary border on the current margin day", () => {
+        const editingContext = { ...context, sessions: [...context.sessions, { sessionIndex: 12, serviceDate: "2026-11-12", locked: true }] };
+        render(<ServiceDateSheet {...props({ context: editingContext, day: 12, editing: true, value: "2026-11-12" })} />);
+        const cell = screen.getByRole("button", { name: "2026.11.12(목) 지금" });
+        expect(cell).toHaveAttribute("data-day-state", "current");
+        expect(cell).toHaveAttribute("aria-pressed", "false");
+        expect(cell).toHaveClass("border-dashed", "border-v3-primary!");
+        expect(cell).not.toHaveAttribute("data-in-period");
+    });
+
     it("preserves the current dashed primary border and selected fill", () => {
         const editingContext = { ...context, sessions: [...context.sessions, { sessionIndex: 12, serviceDate: "2026-11-10", locked: true }] };
         render(<ServiceDateSheet {...props({ context: editingContext, day: 12, editing: true, value: "2026-11-11" })} />);
