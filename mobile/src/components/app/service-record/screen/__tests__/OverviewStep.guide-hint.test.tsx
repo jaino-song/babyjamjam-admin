@@ -18,9 +18,7 @@ const makeProps = (overrides: Partial<OverviewStepProps> = {}): OverviewStepProp
     lockedDays: new Set<number>(),
     nextOpenDay: () => 1,
     isRecordFinalized: false,
-    scheduleChangeBusy: false,
     onOpenDay: jest.fn(),
-    onOpenScheduleChangePreview: jest.fn(),
     onOpenGuide: jest.fn(),
     ...overrides,
 });
