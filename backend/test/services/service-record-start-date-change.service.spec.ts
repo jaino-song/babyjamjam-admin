@@ -8,7 +8,6 @@ import {
     persistScheduleMessageAutomationIntent,
 } from "application/services/message-automation-intent-writer";
 import { KR_BUILTIN_CALENDAR } from "domain/utils/business-days";
-import { getServiceRecordTokenExpiresAt } from "domain/constants/service-record-link-message";
 import { createHolidayCalendarStub } from "../utils/holiday-calendar.stub";
 
 jest.mock("application/services/message-automation-intent-writer", () => ({
@@ -314,7 +313,7 @@ describe("ServiceRecordStartDateChangeService", () => {
         expect(w.schedules[2]).toEqual(unowned);
         expect(w.tx.service_record_token.updateMany).toHaveBeenCalledWith({
             where: { branchId, serviceRecordCaseId: caseId, active: true, revokedAt: null },
-            data: { expiresAt: getServiceRecordTokenExpiresAt(date("2026-12-09")) },
+            data: { expiresAt: new Date("2026-12-16T15:00:00.000Z") },
         });
     });
 

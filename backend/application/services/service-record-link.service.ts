@@ -20,6 +20,7 @@ import {
     SERVICE_RECORD_LINK_SMS_TRIGGER_TYPE,
     getServiceRecordLinkScheduledFor,
     getServiceRecordTokenExpiresAt,
+    getServiceRecordServiceEndedAt,
 } from "domain/constants/service-record-link-message";
 import {
     MessageTriggerEventType,
@@ -421,7 +422,7 @@ export class ServiceRecordLinkService {
                 ) === "pre_booking"
                 || schedule.client?.serviceStatus === "completed"
                 || schedule.client?.serviceStatus === "terminated"
-                || getServiceRecordTokenExpiresAt(schedule.endDate).getTime() <= Date.now()
+                || getServiceRecordServiceEndedAt(schedule.endDate).getTime() <= Date.now()
             ) {
                 return { scheduledFor, employeeId: employee.id, jobEnqueued: false, jobId: null };
             }

@@ -4321,9 +4321,9 @@ describe("AdminServiceRecordEditService resume replan", () => {
                         serviceRecordCaseId: CASE_ID,
                         active: true,
                         revokedAt: null,
-                        expiresAt: { lt: new Date("2026-11-02T15:00:00.000Z") },
+                        expiresAt: { lt: new Date("2026-11-09T15:00:00.000Z") },
                     },
-                    data: { expiresAt: new Date("2026-11-02T15:00:00.000Z") },
+                    data: { expiresAt: new Date("2026-11-09T15:00:00.000Z") },
                 });
                 expect(tx.service_record_case.update).not.toHaveBeenCalled();
                 expect(draftUpdate).toHaveBeenCalledWith(expect.objectContaining({

@@ -23,6 +23,8 @@ import type {
     ServiceRecordPlannedSession,
 } from "@babyjamjam/shared/types/service-record";
 
+import { CAREGIVER_DATE_WINDOW_DAYS } from "domain/constants/service-record-link-message";
+
 import { IMMUTABLE_FINALIZATION_STATUSES } from "application/services/service-record-lifecycle.service";
 import { ServiceRecordEditConflictError } from "domain/errors/service-record-edit.error";
 import type {
@@ -800,7 +802,7 @@ export function resolveServiceRecordScheduleProjection(
     return projectLegacy(source, calendar);
 }
 
-export const CAREGIVER_DATE_WINDOW_DAYS = 7;
+export { CAREGIVER_DATE_WINDOW_DAYS };
 
 function isOutsideCaregiverDateWindow(source: ServiceRecordEditSource, serviceDate: string): boolean {
     if (!source.startDate || !source.endDate) return false;

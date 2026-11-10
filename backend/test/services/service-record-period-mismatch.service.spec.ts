@@ -7,7 +7,6 @@ import {
     persistScheduleMessageAutomationIntent,
 } from "application/services/message-automation-intent-writer";
 import { KR_BUILTIN_CALENDAR } from "domain/utils/business-days";
-import { getServiceRecordTokenExpiresAt } from "domain/constants/service-record-link-message";
 import { createHolidayCalendarStub } from "../utils/holiday-calendar.stub";
 
 jest.mock("application/services/message-automation-intent-writer", () => ({
@@ -220,10 +219,10 @@ describe("ServiceRecordPeriodMismatchService", () => {
     });
 
     it.each([
-        [[day(1, "2026-11-06")], "2026-11-06", "2026-11-13"],
-        [[day(5, "2026-11-16")], "2026-11-09", "2026-11-16"],
-        [[day(1, "2026-11-06"), day(5, "2026-11-16")], "2026-11-06", "2026-11-16"],
-    ] as const)("widens only the necessary boundaries without moving a session", async (rows, startDate, endDate) => {
+        [[day(1, "2026-11-06")], "2026-11-06", "2026-11-13", "2026-11-20T15:00:00.000Z"],
+        [[day(5, "2026-11-16")], "2026-11-09", "2026-11-16", "2026-11-23T15:00:00.000Z"],
+        [[day(1, "2026-11-06"), day(5, "2026-11-16")], "2026-11-06", "2026-11-16", "2026-11-23T15:00:00.000Z"],
+    ] as const)("widens only the necessary boundaries without moving a session", async (rows, startDate, endDate, expectedExpiry) => {
         const w = world([...rows]);
         w.record.plannedSessions = [{ sessionIndex: 1, serviceDate: "2026-11-09" }];
         const beforeDays = clone(w.days);
@@ -238,8 +237,8 @@ describe("ServiceRecordPeriodMismatchService", () => {
         expect(w.lifecycle.recompute).toHaveBeenCalledWith(caseId, w.tx, expect.anything());
         expect(w.tx.service_record_token.updateMany).toHaveBeenCalledWith({
             where: { branchId, serviceRecordCaseId: caseId, active: true, revokedAt: null,
-                expiresAt: { lt: getServiceRecordTokenExpiresAt(date(endDate)) } },
-            data: { expiresAt: getServiceRecordTokenExpiresAt(date(endDate)) },
+                expiresAt: { lt: new Date(expectedExpiry) } },
+            data: { expiresAt: new Date(expectedExpiry) },
         });
         expect(persistClientMessageAutomationIntent).toHaveBeenCalledWith(w.tx, expect.objectContaining({ branchId, clientId }));
         expect(persistScheduleMessageAutomationIntent).toHaveBeenCalledWith(w.tx, expect.objectContaining({ branchId, clientId, scheduleId: 10 }));
@@ -261,7 +260,7 @@ describe("ServiceRecordPeriodMismatchService", () => {
 
     it("keeps a reissued token's later expiry on a start-only fit", async () => {
         const w = world();
-        const reissuedExpiry = date("2026-11-20");
+        const reissuedExpiry = date("2026-11-30");
         w.tokens[0]!.expiresAt = reissuedExpiry;
         await expect(w.fit()).resolves.toMatchObject({ startDate: "2026-11-06", endDate: "2026-11-13", changed: true });
         expect(w.tokens[0]!.expiresAt).toEqual(reissuedExpiry);
@@ -270,7 +269,7 @@ describe("ServiceRecordPeriodMismatchService", () => {
     it("raises an earlier token expiry when fit widens the end", async () => {
         const w = world([day(5, "2026-11-16")]);
         await w.fit();
-        expect(w.tokens[0]!.expiresAt).toEqual(getServiceRecordTokenExpiresAt(date("2026-11-16")));
+        expect(w.tokens[0]!.expiresAt).toEqual(new Date("2026-11-23T15:00:00.000Z"));
     });
 
     it("fits unkept dates only; a farther kept date is ignored", async () => {

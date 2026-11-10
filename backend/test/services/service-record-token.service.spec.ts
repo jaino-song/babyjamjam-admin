@@ -1,8 +1,10 @@
+import { getServiceRecordTokenExpiresAt } from "domain/constants/service-record-link-message";
 import { checkWriteArgs } from "infrastructure/database/tenant-isolation.extension";
 import { tenantContextStore } from "infrastructure/tenant/tenant-context.store";
 import {
     SERVICE_RECORD_PHONE_CHALLENGE_WINDOW_MS,
     ServiceRecordTokenService,
+    isServiceRecordAccessTokenUsable,
 } from "../../application/services/service-record-token.service";
 
 /** Minimal in-memory fake of the prisma service_record_token delegate. */
@@ -841,5 +843,27 @@ describe("ServiceRecordTokenService", () => {
         expect(prepared.linkToken).toBe(previous.linkToken);
         expect(await svc.resolveLink(previous.linkToken)).toMatchObject({ active: true });
         expect(await svc.resolveLink(prepared.linkToken)).toMatchObject({ active: true });
+    });
+});
+
+describe("caregiver token expiry window", () => {
+    it("expires at end + 8 midnight KST", () => {
+        const expiresAt = getServiceRecordTokenExpiresAt(new Date("2026-11-17T00:00:00.000Z"));
+        expect(expiresAt.toISOString()).toBe("2026-11-24T15:00:00.000Z");
+    });
+
+    it.each([
+        ["2026-11-24T23:59:59+09:00", true],
+        ["2026-11-25T00:00:00+09:00", false],
+    ] as const)("is usable at %s: %s", (now, expected) => {
+        const token = {
+            active: true,
+            revokedAt: null,
+            verifiedAt: new Date("2026-11-17T00:00:00.000Z"),
+            lockedAt: null,
+            failedAttempts: 0,
+            expiresAt: getServiceRecordTokenExpiresAt(new Date("2026-11-17T00:00:00.000Z")),
+        };
+        expect(isServiceRecordAccessTokenUsable(token, Date.parse(now))).toBe(expected);
     });
 });

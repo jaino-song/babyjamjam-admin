@@ -3,6 +3,7 @@ import {
     getServiceRecordFinalizationDueAt,
     getServiceRecordLinkScheduledFor,
     getServiceRecordTokenExpiresAt,
+    getServiceRecordServiceEndedAt,
 } from "domain/constants/service-record-link-message";
 
 /**
@@ -114,22 +115,31 @@ describe("service-record-link-message date contract (P2-9)", () => {
         });
     });
 
+    describe("getServiceRecordServiceEndedAt", () => {
+        it.each([
+            ["2026-11-14", "2026-11-14T15:00:00.000Z"],
+            ["2026-08-31", "2026-08-31T15:00:00.000Z"],
+        ])("ends service %s at next-day midnight KST", (end, expected) => {
+            expect(getServiceRecordServiceEndedAt(new Date(`${end}T00:00:00.000Z`)).toISOString()).toBe(expected);
+        });
+    });
+
     describe("getServiceRecordTokenExpiresAt", () => {
-        it("expires the access token at midnight KST after the service end date", () => {
+        it("expires the access token at midnight KST on end + 8", () => {
             const endDate = new Date("2026-11-14T00:00:00.000Z");
 
             const result = getServiceRecordTokenExpiresAt(endDate);
 
-            expect(result.toISOString()).toBe("2026-11-14T15:00:00.000Z");
+            expect(result.toISOString()).toBe("2026-11-21T15:00:00.000Z");
             expect(getServiceRecordFinalizationDueAt(endDate).toISOString()).toBe("2026-11-14T11:00:00.000Z");
         });
 
-        it("rolls over the calendar month at next-day midnight", () => {
+        it("rolls over the calendar month at end + 8 midnight", () => {
             const endDate = new Date("2026-08-31T00:00:00.000Z");
 
             const result = getServiceRecordTokenExpiresAt(endDate);
 
-            expect(result.toISOString()).toBe("2026-08-31T15:00:00.000Z");
+            expect(result.toISOString()).toBe("2026-09-07T15:00:00.000Z");
         });
     });
 });
