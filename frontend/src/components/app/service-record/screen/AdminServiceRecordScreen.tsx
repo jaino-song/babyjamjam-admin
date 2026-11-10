@@ -20,6 +20,7 @@ const SOURCE_COMPONENT = "AdminServiceRecordScreen";
 
 export type AdminServiceRecordScreenProps = ServiceRecordWizardProps & {
     adminEditedSessionIndexes?: ReadonlySet<number>;
+    baseSessionDraft?: Record<string, unknown>;
 };
 
 /** `ReviewStep` requires an action; the admin wizard always passes one, so the shared wizard's fallback button (SRW:1024) is not built. */
@@ -51,6 +52,7 @@ export function AdminServiceRecordScreen({
     readOnly = false,
     changedSessionIndexes,
     adminEditedSessionIndexes,
+    baseSessionDraft,
     clientSignature,
     busy,
     lockedDays,
@@ -163,6 +165,9 @@ export function AdminServiceRecordScreen({
             {/* One element type per page kind and no key on pageIdx: the input pages stay mounted while the page index moves between them. */}
             {screen === "day" && (currentDayPage.confirmation ? (
                 <ReviewStep
+                    baseSessionDraft={baseSessionDraft}
+                    changedSessionIndexes={changedSessionIndexes}
+                    lockedDays={lockedDays}
                     adminEditedSessionIndexes={adminEditedSessionIndexes}
                     data-component={root}
                     context={context}

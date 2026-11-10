@@ -14,6 +14,8 @@ export interface ReviewSectionProps {
   title: string;
   tone: "mom" | "baby" | "etc";
   onEdit?: () => void;
+  /** Optional caller-owned edit action, including its disabled state. */
+  headerAction?: ReactNode;
   /** Visible text of the edit button (its accessible name is `${title} 수정`). */
   editLabel?: string;
   children: ReactNode;
@@ -34,6 +36,7 @@ export function ReviewSection({
   title,
   tone,
   onEdit,
+  headerAction,
   editLabel = "수정",
   children,
   className,
@@ -59,7 +62,7 @@ export function ReviewSection({
         >
           {title}
         </span>
-        {onEdit ? (
+        {headerAction ?? (onEdit ? (
           <button
             type="button"
             data-component={`${dataComponent}_header_edit`}
@@ -70,7 +73,7 @@ export function ReviewSection({
           >
             {editLabel}
           </button>
-        ) : null}
+        ) : null)}
       </div>
       <div
         data-component={`${dataComponent}_rows`}
