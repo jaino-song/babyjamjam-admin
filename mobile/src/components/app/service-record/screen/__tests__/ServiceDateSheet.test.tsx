@@ -246,7 +246,16 @@ it("shows 지금 and other session labels, refuses order clicks with the exact f
     fireEvent.click(screen.getByRole("button", { name: "2026.11.05(목)" }));
     expect(select).toBeEnabled();
     fireEvent.click(select);
+    expect(p.onSelect).toHaveBeenCalledTimes(1);
     expect(p.onSelect).toHaveBeenCalledWith("2026-11-05");
+});
+
+it("closes once from the header without applying a selection", () => {
+    const p = props();
+    render(<ServiceDateSheet {...p} />);
+    fireEvent.click(screen.getByRole("button", { name: "닫기" }));
+    expect(p.onClose).toHaveBeenCalledTimes(1);
+    expect(p.onSelect).not.toHaveBeenCalled();
 });
 
 it("limits month navigation to window months and cancels without applying a selection", () => {
@@ -274,6 +283,7 @@ it("opens with the pending pick selected and lets it return to the stored 지금
     expect(current).toHaveAttribute("aria-pressed", "true");
     expect(screen.getByRole("button", { name: "선택" })).toBeEnabled();
     fireEvent.click(screen.getByRole("button", { name: "선택" }));
+    expect(p.onSelect).toHaveBeenCalledTimes(1);
     expect(p.onSelect).toHaveBeenCalledWith("2026-11-04");
 });
 
