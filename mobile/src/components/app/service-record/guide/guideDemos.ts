@@ -325,8 +325,6 @@ async function closeCalendar(ctx: DemoCtx) {
 async function spotlight(ctx: DemoCtx, el: HTMLElement) {
     const spot = ctx.spot;
     if (!spot) return;
-    const st = ctx.stage.getBoundingClientRect();
-    const k = st.width / ctx.stage.offsetWidth || 1;
     const box = (left: number, top: number, width: number, height: number, radius: number) => Object.assign(spot.style, {
         left: `${left}px`, top: `${top}px`, width: `${width}px`, height: `${height}px`, borderRadius: `${radius}px`,
     });
@@ -334,6 +332,8 @@ async function spotlight(ctx: DemoCtx, el: HTMLElement) {
     spot.dataset.on = "false";
     box(0, 0, ctx.stage.offsetWidth, ctx.stage.offsetHeight, 20);
     await ctx.run.sleep(700);
+    const st = ctx.stage.getBoundingClientRect();
+    const k = st.width / ctx.stage.offsetWidth || 1;
     const c = el.getBoundingClientRect();
     const pad = 5;
     spot.style.transition = "left .9s cubic-bezier(.6,0,.2,1), top .9s cubic-bezier(.6,0,.2,1), width .9s cubic-bezier(.6,0,.2,1), height .9s cubic-bezier(.6,0,.2,1), border-radius .9s, box-shadow .4s, opacity .3s";

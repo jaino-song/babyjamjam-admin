@@ -13,6 +13,10 @@ function makeStage() {
     return { stage, m, touch, spot, fill };
 }
 
+function rect(left: number, top: number, width: number, height: number): DOMRect {
+    return { x: left, y: top, left, top, width, height, right: left + width, bottom: top + height, toJSON: () => ({ left, top, width, height }) };
+}
+
 describe("guideDemos", () => {
     beforeEach(() => { jest.useFakeTimers(); });
     afterEach(() => {
@@ -49,6 +53,25 @@ describe("guideDemos", () => {
         }
         throw new Error("Expected demo step did not appear within 40s");
     };
+
+    it("positions the first grid spotlight relative to the stage after its slide-in", async () => {
+        const els = makeStage();
+        let stageLeft = 400;
+        jest.spyOn(els.stage, "getBoundingClientRect").mockImplementation(() => rect(stageLeft, 0, 0, 0));
+        const stop = startDemo("grid", els);
+        try {
+            const c4 = els.m.querySelector('[data-g="c4"]');
+            if (!c4) throw new Error("Expected the grid's first frame to render synchronously");
+            jest.spyOn(c4, "getBoundingClientRect").mockImplementation(() => rect(stageLeft + 100, 200, 60, 40));
+
+            await jest.advanceTimersByTimeAsync(300);
+            stageLeft = 20;
+            await jest.advanceTimersByTimeAsync(500);
+
+            expect(els.spot.style.left).toBe("95px");
+            expect(els.spot.style.top).toBe("195px");
+        } finally { stop(); }
+    });
 
     it("picks a free service date, with a disabled initial selection and no completion overlay", async () => {
         const els = makeStage();
