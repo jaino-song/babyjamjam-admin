@@ -85,6 +85,8 @@ export function ServiceDateSheet({ "data-component": root, context, day, calenda
     const shiftMonth = (delta: number) => new Date(Date.UTC(year, monthNumber - 1 + delta, 1)).toISOString().slice(0, 7);
     const previous = shiftMonth(-1);
     const next = shiftMonth(1);
+    const prevMonthNumber = Number(previous.slice(5, 7));
+    const nextMonthNumber = Number(next.slice(5, 7));
     const rules = { context, day, calendar, calendarReady };
     const selectedState = classifyServiceDate(selected, rules);
     const canSelect = selected !== "" && selected !== value && (selectedState === "available" || (pending && selectedState === "current"));
@@ -100,12 +102,11 @@ export function ServiceDateSheet({ "data-component": root, context, day, calenda
                     <Button data-component={child("header_close")} type="button" variant="ghost" size="icon" aria-label="닫기" className="text-base absolute right-2 top-3 h-11 w-11 text-v3-text-muted" onClick={onClose}><X size={20} /></Button>
                 </SheetHeader>
                 <div data-component={child("calendar")} className="min-h-0 flex-1 overflow-y-auto px-4 pb-4">
-                    <p data-component={child("calendar_window")} className="mb-2 text-sm font-semibold text-v3-text-muted">고를 수 있는 기간: {first ? formatServiceDate(first, true) : "제한 없음"} ~ {last ? formatServiceDate(last, true) : "제한 없음"}</p>
                     <div data-component={child("calendar_navigation")} className="mb-2 flex items-center justify-between gap-2">
                         <b className="text-base text-v3-dark">{year}년 {monthNumber}월</b>
                         <div className="flex gap-1">
-                            <Button data-component={child("calendar_navigation_previous")} type="button" variant="v3-outline" size="icon" className="text-base h-11 w-11 rounded-xl" aria-label="이전 달" disabled={Boolean(first && previous < first.slice(0, 7))} onClick={() => setMonth(previous)}><ChevronLeft size={18} /></Button>
-                            <Button data-component={child("calendar_navigation_next")} type="button" variant="v3-outline" size="icon" className="text-base h-11 w-11 rounded-xl" aria-label="다음 달" disabled={Boolean(last && next > last.slice(0, 7))} onClick={() => setMonth(next)}><ChevronRight size={18} /></Button>
+                            <Button data-component={child("calendar_navigation_previous")} type="button" variant="v3-outline" className="text-base h-11 gap-1 rounded-xl px-3 font-bold" aria-label={`이전 달 ${prevMonthNumber}월`} disabled={Boolean(first && previous < first.slice(0, 7))} onClick={() => setMonth(previous)}><ChevronLeft size={16} aria-hidden="true" />{prevMonthNumber}월</Button>
+                            <Button data-component={child("calendar_navigation_next")} type="button" variant="v3-outline" className="text-base h-11 gap-1 rounded-xl px-3 font-bold" aria-label={`다음 달 ${nextMonthNumber}월`} disabled={Boolean(last && next > last.slice(0, 7))} onClick={() => setMonth(next)}>{nextMonthNumber}월<ChevronRight size={16} aria-hidden="true" /></Button>
                         </div>
                     </div>
                     <div data-component={child("calendar_weekdays")} aria-hidden="true" className="mb-2 grid grid-cols-7 gap-1 text-center text-sm font-bold text-v3-text-muted">{WEEKDAYS.map((label) => <span key={label}>{label}</span>)}</div>

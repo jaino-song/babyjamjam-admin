@@ -23,7 +23,7 @@ describe("initial calendar month", () => {
     it("opens an empty session on today's month within the selectable window", () => {
         render(<ServiceDateSheet {...props({ context, day: 12 })} />);
         expect(screen.getByText("2026년 11월")).toBeInTheDocument();
-        expect(screen.getByText("고를 수 있는 기간: 10.15(목) ~ 11.18(수)")).toBeInTheDocument();
+        expect(screen.queryByText(/고를 수 있는 기간/)).toBeNull();
     });
 
     it.each([
@@ -39,6 +39,34 @@ describe("initial calendar month", () => {
     it("opens an edited session on its value's month instead of today's month", () => {
         render(<ServiceDateSheet {...props({ context, day: 12, editing: true, value: "2026-10-22" })} />);
         expect(screen.getByText("2026년 10월")).toBeInTheDocument();
+    });
+});
+
+describe("month navigation labels and sheet structure", () => {
+    it("shows the adjacent month numbers in November", () => {
+        render(<ServiceDateSheet {...props()} />);
+        expect(screen.getByText("2026년 11월")).toBeInTheDocument();
+        expect(screen.getByRole("button", { name: "이전 달 10월" })).toHaveTextContent(/^10월$/);
+        expect(screen.getByRole("button", { name: "다음 달 12월" })).toHaveTextContent(/^12월$/);
+    });
+
+    it("labels January without a year when viewing December", () => {
+        const context = { ...props().context, endDate: "2027-01-15" };
+        render(<ServiceDateSheet {...props({ context, value: "2026-12-15" })} />);
+        expect(screen.getByText("2026년 12월")).toBeInTheDocument();
+        expect(screen.getByRole("button", { name: "이전 달 11월" })).toHaveTextContent(/^11월$/);
+        const next = screen.getByRole("button", { name: "다음 달 1월" });
+        expect(next).toHaveTextContent(/^1월$/);
+        expect(next).toBeEnabled();
+        fireEvent.click(next);
+        expect(screen.getByText("2027년 1월")).toBeInTheDocument();
+    });
+
+    it("renders the bottom sheet directly after its overlay", () => {
+        render(<ServiceDateSheet {...props()} />);
+        const dialog = screen.getByRole("dialog");
+        expect(dialog).toHaveAttribute("data-side", "bottom");
+        expect(dialog.previousElementSibling).toHaveAttribute("data-slot", "sheet-overlay");
     });
 });
 
@@ -92,7 +120,7 @@ describe("service-period borders", () => {
 
     it("includes the first period day while leaving the preceding hatched margin unchanged", () => {
         render(<ServiceDateSheet {...props({ context, day: 12 })} />);
-        fireEvent.click(screen.getByRole("button", { name: "이전 달" }));
+        fireEvent.click(screen.getByRole("button", { name: "이전 달 10월" }));
         const first = screen.getByRole("button", { name: "2026.10.22(목) 1회차" });
         expect(first).toHaveAttribute("data-in-period", "true");
         expect(first).toHaveClass(hatch, "border-v3-primary!", "border-[1.5px]");
@@ -224,9 +252,9 @@ it("shows 지금 and other session labels, refuses order clicks with the exact f
 it("limits month navigation to window months and cancels without applying a selection", () => {
     const p = props();
     render(<ServiceDateSheet {...p} />);
-    expect(screen.getByRole("button", { name: "다음 달" })).toBeDisabled();
-    fireEvent.click(screen.getByRole("button", { name: "이전 달" }));
-    expect(screen.getByRole("button", { name: "이전 달" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "다음 달 12월" })).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "이전 달 10월" }));
+    expect(screen.getByRole("button", { name: "이전 달 9월" })).toBeDisabled();
     fireEvent.click(screen.getByRole("button", { name: "2026.10.26(월)" }));
     fireEvent.click(screen.getByRole("button", { name: "취소" }));
     expect(p.onClose).toHaveBeenCalledTimes(1);
