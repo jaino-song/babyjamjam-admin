@@ -11,14 +11,11 @@ import { DayCard, DayCardGrid, StickyActionBar, type DayCardState } from "@/comp
 
 import { ADMIN_MODE } from "./DayPageStep";
 import {
-    DAY_STATUS_CHANGED,
-    DAY_STATUS_DONE,
-    DAY_STATUS_EDITABLE,
-    DAY_STATUS_READONLY,
     OVERVIEW_HELP_COPY,
     OVERVIEW_HELP_READONLY_COPY,
     OVERVIEW_TITLE,
 } from "./ids";
+import { getAdminSessionStatus } from "./sessionStatus";
 
 const SOURCE_COMPONENT = "OverviewStep";
 
@@ -33,12 +30,13 @@ export type OverviewStepProps = Pick<
     | "lockedDays"
     | "onOpenDay"
 > & {
+    adminEditedSessionIndexes?: ReadonlySet<number>;
     /** The step only renders with a loaded context (SRW:813). */
     context: NonNullable<ServiceRecordWizardProps["context"]>;
     serviceDateDisplay?: ServiceRecordWizardSlots["serviceDateDisplay"];
     /** Rendered under the day grid (SRW:852). */
     overviewSupplemental?: ServiceRecordWizardSlots["overviewSupplemental"];
-    /** Basic-information control: the sticky bar's leading end (SRW:858, the slot of the public schedule button). */
+    /** Basic-information/history controls shown when no edits are pending. */
     adminConfirmAction?: ServiceRecordWizardSlots["adminConfirmAction"];
     /** 수정 취소 / 수정 확정: the sticky bar's actions (SRW:853). */
     adminCommitActions?: ServiceRecordWizardSlots["adminCommitActions"];
@@ -57,6 +55,7 @@ export function OverviewStep({
     draft,
     readOnly = false,
     changedSessionIndexes,
+    adminEditedSessionIndexes,
     defaultDate,
     lockedDays,
     onOpenDay,
@@ -74,17 +73,17 @@ export function OverviewStep({
             <div
                 data-component={child("body")}
                 data-source-component={SOURCE_COMPONENT}
-                className="flex min-w-0 flex-1 flex-col gap-[calc(14px*var(--glint-ui-scale,1))] px-[calc(16px*var(--glint-ui-scale,1))] pb-[calc(24px*var(--glint-ui-scale,1))] pt-[calc(16px*var(--glint-ui-scale,1))] sm:px-[calc(24px*var(--glint-ui-scale,1))]"
+                className="flex min-w-0 flex-1 flex-col gap-[calc(14px*var(--glint-ui-scale,1))] px-[calc(16px*var(--glint-ui-scale,1))] pb-[calc(24px*var(--glint-ui-scale,1))] pt-[calc(16px*var(--glint-ui-scale,1))]"
             >
                 <div
                     data-component={child("body_overview-title")}
-                    className="text-[calc(17px*var(--glint-ui-scale,1))] font-extrabold text-v3-dark"
+                    className="text-[calc(20px*var(--glint-ui-scale,1))] leading-[calc(28px*var(--glint-ui-scale,1))] font-bold text-v3-dark"
                 >
                     {OVERVIEW_TITLE}
                 </div>
                 <p
                     data-component={child("body_overview-help")}
-                    className="text-[calc(12px*var(--glint-ui-scale,1))] text-v3-text-muted"
+                    className="text-[calc(16px*var(--glint-ui-scale,1))] text-v3-text-muted"
                 >
                     {readOnly ? OVERVIEW_HELP_READONLY_COPY : OVERVIEW_HELP_COPY}
                 </p>
@@ -94,13 +93,9 @@ export function OverviewStep({
                         const done = lockedDays.has(sessionIndex);
                         const changed = Boolean(changedSessionIndexes?.has(sessionIndex));
                         const serviceDate = displayDateForSession(sessionIndex, session);
-                        // SRW:824-826 and :846. Admin never disables a card (SRW:833: the public gating needs !readOnly and !adminEditing).
-                        const state: DayCardState = adminEditing
-                            ? changed ? "changed" : "readonly"
-                            : done ? "done" : "readonly";
-                        const statusLabel = adminEditing
-                            ? changed ? DAY_STATUS_CHANGED : done ? DAY_STATUS_DONE : DAY_STATUS_EDITABLE
-                            : done ? DAY_STATUS_DONE : DAY_STATUS_READONLY;
+                        const adminEdited = Boolean(adminEditedSessionIndexes?.has(sessionIndex));
+                        const state: DayCardState = changed ? "changed" : adminEdited || done ? "done" : "readonly";
+                        const status = getAdminSessionStatus({ pending: changed, adminEdited, done, adminEditing });
                         return (
                             <DayCard
                                 key={sessionIndex}
@@ -113,7 +108,8 @@ export function OverviewStep({
                                     serviceDate,
                                 }) ?? formatShortDate(serviceDate)}
                                 title={<span data-component={child("body_day-grid_day_number")}>{sessionIndex}</span>}
-                                statusLabel={statusLabel}
+                                statusLabel={status.label}
+                                statusTone={status.tone}
                                 onClick={() => onOpenDay(sessionIndex, done)}
                             />
                         );

@@ -172,13 +172,13 @@ describe("AdminServiceRecordScreen", () => {
     });
 
     describe("overview", () => {
-        it("renders the day cards, labelling a pending edit 수정됨", () => {
+        it("renders the day cards, labelling a pending edit 수정중", () => {
             render(<AdminServiceRecordScreen {...makeProps({ changedSessionIndexes: new Set([2]) })} />);
 
             const days = document.querySelectorAll('[data-slot="day"]');
             expect(days).toHaveLength(3);
             expect(days[0]).toHaveTextContent("제출완료");
-            expect(days[1]).toHaveTextContent("수정됨");
+            expect(days[1]).toHaveTextContent("수정중");
             expect(days[2]).toHaveTextContent("편집 가능");
         });
 

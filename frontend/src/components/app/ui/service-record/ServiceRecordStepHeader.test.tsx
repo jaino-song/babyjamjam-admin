@@ -32,6 +32,15 @@ describe("ServiceRecordStepHeader", () => {
     expect(bar).toHaveAttribute("aria-valuenow", "40");
   });
 
+  it("reports unknown progress without a percentage and animates the fill", () => {
+    const { container } = render(<ServiceRecordStepHeader data-component={BASE} title="제목" progress={0.7} indeterminate />);
+    expect(screen.getByRole("progressbar")).toHaveAttribute("aria-busy", "true");
+    expect(screen.getByRole("progressbar")).not.toHaveAttribute("aria-valuenow");
+    const fill = container.querySelector('[data-indeterminate="true"]');
+    expect(fill).toHaveClass("w-2/5", "animate-indeterminate-bar", "motion-reduce:animate-none");
+    expect(fill).not.toHaveAttribute("style");
+  });
+
   it("clamps progress to 0..100 and tolerates NaN", () => {
     const { rerender } = render(<ServiceRecordStepHeader data-component={BASE} title="제목" progress={1.7} />);
     expect(screen.getByRole("progressbar")).toHaveAttribute("aria-valuenow", "100");
@@ -48,12 +57,13 @@ describe("ServiceRecordStepHeader", () => {
     expect(screen.getByRole("progressbar", { name: "작성 진행률" })).toBeInTheDocument();
   });
 
-  it("pads 16px below sm and 24px from sm up", () => {
+  it("uses the caregiver header padding at every width", () => {
     const { container } = render(<ServiceRecordStepHeader data-component={BASE} title="제목" progress={0.2} />);
     expect(container.firstElementChild).toHaveClass(
       "bg-v3-primary",
       "px-[calc(16px*var(--glint-ui-scale,1))]",
-      "sm:px-[calc(24px*var(--glint-ui-scale,1))]",
+      "pt-[calc(14px*var(--glint-ui-scale,1))]",
+      "pb-[calc(12px*var(--glint-ui-scale,1))]",
     );
   });
 

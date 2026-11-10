@@ -33,7 +33,7 @@ describe("OverviewStep", () => {
         render(<OverviewStep {...makeProps()} />);
 
         expect(byComponent("body_overview-title")).toHaveTextContent("제공기록표");
-        expect(byComponent("body_overview-help")).toHaveTextContent("제출된 기록은 눌러서 수정할 수 있습니다.");
+        expect(byComponent("body_overview-help")).toHaveTextContent("회차를 눌러 기록을 확인하고 수정할 수 있습니다.");
         expect(days()).toHaveLength(4);
         expect(byComponent("body_day-grid")).toHaveAttribute("data-source-component", "DayCardGrid");
         expect(byComponent("body_day-grid_day_number")).toHaveTextContent("1");
@@ -41,13 +41,13 @@ describe("OverviewStep", () => {
         expect(screen.getByRole("button", { name: /2026\.09\.21/ })).toBe(days()[0]);
     });
 
-    it("labels cards while editing: 수정됨 for a pending edit, 제출완료, 편집 가능 - none disabled", () => {
+    it("labels cards while editing: 수정중 for a pending edit, 제출완료, 편집 가능 - none disabled", () => {
         render(<OverviewStep {...makeProps({ changedSessionIndexes: new Set([2]) })} />);
 
         const [first, second, third] = days();
         expect(first).toHaveTextContent("제출완료");
-        expect(first).toHaveAttribute("data-state", "readonly");
-        expect(second).toHaveTextContent("수정됨");
+        expect(first).toHaveAttribute("data-state", "done");
+        expect(second).toHaveTextContent("수정중");
         expect(second).not.toHaveTextContent("초안 변경");
         expect(second).toHaveAttribute("data-state", "changed");
         expect(third).toHaveTextContent("편집 가능");
@@ -55,9 +55,9 @@ describe("OverviewStep", () => {
         expect(document.body).not.toHaveTextContent("초안 변경");
     });
 
-    it("labels an edited submitted session 수정됨: an edit wins over 제출완료, as in the shared wizard", () => {
+    it("labels an edited submitted session 수정중: an edit wins over 제출완료, as in the shared wizard", () => {
         render(<OverviewStep {...makeProps({ changedSessionIndexes: new Set([1]) })} />);
-        expect(days()[0]).toHaveTextContent("수정됨");
+        expect(days()[0]).toHaveTextContent("수정중");
     });
 
     it("read-only: 조회 가능 for a session without a submission, 제출완료 for a submitted one, never disabled", () => {
@@ -67,11 +67,24 @@ describe("OverviewStep", () => {
         const [first, second, third] = days();
         expect(first).toHaveTextContent("제출완료");
         expect(first).toHaveAttribute("data-state", "done");
-        // A pending edit is not shown while read-only (SRW:846 gates it on adminEditing).
-        expect(second).toHaveTextContent("조회 가능");
-        expect(second).toHaveAttribute("data-state", "readonly");
+        // Pending status stays visible while the editor is read-only or busy.
+        expect(second).toHaveTextContent("수정중");
+        expect(second).toHaveAttribute("data-state", "changed");
         expect(third).toHaveTextContent("조회 가능");
         expect(days().every((card) => !card.disabled)).toBe(true);
+    });
+
+    it.each([false, true])("shows confirmed success and gives pending warning precedence (readOnly=%s)", (readOnly) => {
+        const props = makeProps({ readOnly, adminEditedSessionIndexes: new Set([1]) });
+        const { rerender } = render(<OverviewStep {...props} />);
+        expect(days()[0]).toHaveAttribute("data-state", "done");
+        expect(within(days()[0]).getByText("수정 완료")).toHaveClass("font-bold", "text-status-success-fg");
+
+        rerender(<OverviewStep {...props} changedSessionIndexes={new Set([1])} />);
+        expect(days()[0]).toHaveAttribute("data-state", "changed");
+        expect(days()[0]).toHaveClass("border-v3-primary-medium!", "bg-v3-primary-light");
+        expect(within(days()[0]).getByText("수정중")).toHaveClass("font-bold", "text-status-warning-fg");
+        expect(within(days()[0]).queryByText("수정 완료")).not.toBeInTheDocument();
     });
 
     it("opens a day with the session index and whether it was submitted", () => {

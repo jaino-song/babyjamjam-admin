@@ -1681,6 +1681,18 @@
         ]
       },
       {
+        "name": "ServiceRecordLoadingBody",
+        "layer": "molecule",
+        "import": "@/components/app/ui/service-record",
+        "file": "frontend/src/components/app/ui/service-record/ServiceRecordLoadingBody.tsx",
+        "exports": [
+          "ServiceRecordLoadingBody"
+        ],
+        "requiredFor": [
+          "admin service-record loading skeleton"
+        ]
+      },
+      {
         "name": "OptionButtonGroup",
         "layer": "molecule",
         "import": "@/components/app/ui/service-record",

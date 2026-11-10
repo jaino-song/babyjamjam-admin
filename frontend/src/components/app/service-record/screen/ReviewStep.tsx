@@ -37,6 +37,7 @@ export type ReviewStepProps = Pick<
     | "onOpenServiceDateEditor"
     | "onEditSection"
 > & {
+    adminEditedSessionIndexes?: ReadonlySet<number>;
     serviceDateDisplay?: ServiceRecordWizardSlots["serviceDateDisplay"];
     serviceDateEditor?: ServiceRecordWizardSlots["serviceDateEditor"];
     /** Rendered under the review, called as SRW:987-993 does. Admin passes a read-only signature. */
