@@ -11,7 +11,7 @@ import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "
 
 const WEEKDAYS = ["일", "월", "화", "수", "목", "금", "토"];
 // Keep the admin schedule sheet's cell sizing and blocked hatch unchanged.
-const MONTH_CELL_BASE = "relative flex min-h-11 min-w-0 flex-col items-center justify-center rounded-[10px] border text-sm font-bold leading-none";
+const MONTH_CELL_BASE = "relative flex min-h-11 min-w-0 flex-col items-center justify-center rounded-[10px] border text-base font-bold leading-none";
 const HATCHED = "border-v3-border text-v3-text-muted/70 bg-[repeating-linear-gradient(135deg,#fff_0_5px,hsl(214_20%_96%)_5px_10px)]";
 export const GAP_ROOM = "사이에 아직 안 쓴 회차가 있어요. 그 회차의 날짜를 남겨 주세요.";
 export const ORDER_BEFORE = "앞 회차보다 이르게 바꿀 수 없어요. 앞 회차를 먼저 변경해 주세요.";
@@ -75,7 +75,8 @@ export function ServiceDateSheet({ "data-component": root, context, day, calenda
     const last = offsetServiceDate(context.endDate, 7);
     const current = context.sessions.find((row) => row.sessionIndex === day)?.serviceDate.slice(0, 10) ?? "";
     const pending = value !== current;
-    const initial = value || isoDateInKorea();
+    const today = isoDateInKorea();
+    const initial = value || today;
     const boundedInitial = first && initial < first ? first : last && initial > last ? last : initial;
     const [month, setMonth] = useState(boundedInitial.slice(0, 7));
     const [selected, setSelected] = useState(pending ? value : "");
@@ -96,10 +97,10 @@ export function ServiceDateSheet({ "data-component": root, context, day, calenda
                 <div aria-hidden="true" data-slot="date-sheet-handle" className="mx-auto mt-3 h-1 w-9 shrink-0 rounded-full bg-v3-border" />
                 <SheetHeader data-component={child("header")} className="gap-0.5 px-[22px] pb-2 pt-3 pr-16">
                     <SheetTitle className="text-2xl font-bold text-v3-dark">{day}회차 서비스 제공일</SheetTitle>
-                    <SheetDescription className="text-sm font-semibold text-v3-text-muted">{editing && current ? `지금 ${formatServiceDate(current)}` : "날짜를 골라 주세요."}</SheetDescription>
+                    <SheetDescription className="text-sm font-semibold text-v3-text-muted">{editing && current ? `현재 ${formatServiceDate(current)}` : "날짜를 골라 주세요."}</SheetDescription>
                     <Button data-component={child("header_close")} type="button" variant="ghost" size="icon" aria-label="닫기" className="text-base absolute right-2 top-3 h-11 w-11 text-v3-text-muted" onClick={onClose}><X size={20} /></Button>
                 </SheetHeader>
-                <div data-component={child("calendar")} className="min-h-0 flex-1 overflow-y-auto px-4 pb-4">
+                <div data-component={child("calendar")} className="flex min-h-0 flex-1 flex-col overflow-y-auto px-4 pb-4">
                     {context.startDate && context.endDate ? <p data-component={child("calendar_window")} className="mb-2 text-sm font-semibold text-v3-text-muted">서비스 기간: {formatServiceDate(context.startDate, true)} ~ {formatServiceDate(context.endDate, true)}</p> : null}
                     <div data-component={child("calendar_navigation")} className="mb-2 flex items-center justify-between gap-2">
                         <b className="text-base text-v3-dark">{year}년 {monthNumber}월</b>
@@ -109,7 +110,7 @@ export function ServiceDateSheet({ "data-component": root, context, day, calenda
                         </div>
                     </div>
                     <div data-component={child("calendar_weekdays")} aria-hidden="true" className="mb-2 grid grid-cols-7 gap-1 text-center text-sm font-bold text-v3-text-muted">{WEEKDAYS.map((label) => <span key={label}>{label}</span>)}</div>
-                    <div data-component={child("calendar_days")} className="grid grid-cols-7 gap-1">
+                    <div data-component={child("calendar_days")} className="grid flex-1 auto-rows-[minmax(2.75rem,4.5rem)] grid-cols-7 gap-1">
                         {Array.from({ length: startWeekday }, (_, index) => <span key={`empty-${index}`} />)}
                         {Array.from({ length: count }, (_, index) => {
                             const iso = `${month}-${String(index + 1).padStart(2, "0")}`;
@@ -117,15 +118,17 @@ export function ServiceDateSheet({ "data-component": root, context, day, calenda
                             const usedBy = context.sessions.find((row) => row.sessionIndex !== day && row.serviceDate.slice(0, 10) === iso);
                             const isSelected = iso === selected;
                             const isCurrent = iso === current;
+                            const showCurrent = editing && isCurrent;
+                            const showToday = !editing && iso === today && !usedBy;
                             const blocked = state !== "available" && state !== "current";
                             const isInPeriod = Boolean(context.startDate && context.endDate && context.startDate.slice(0, 10) <= iso && iso <= context.endDate.slice(0, 10));
-                            return <button key={iso} type="button" data-component={child(`calendar_days_day-${index + 1}`)} data-day-state={state} data-in-period={isInPeriod ? "true" : undefined} aria-label={`${formatServiceDate(iso)}${usedBy ? ` ${usedBy.sessionIndex}회차` : isCurrent ? " 지금" : ""}`} aria-pressed={isSelected} aria-disabled={blocked || (isCurrent && !pending)} onClick={() => {
+                            return <button key={iso} type="button" data-component={child(`calendar_days_day-${index + 1}`)} data-day-state={state} data-in-period={isInPeriod ? "true" : undefined} aria-label={`${formatServiceDate(iso)}${usedBy ? ` ${usedBy.sessionIndex}회차` : showCurrent ? " 현재" : showToday ? " 오늘" : ""}`} aria-pressed={isSelected} aria-disabled={blocked || (isCurrent && !pending)} onClick={() => {
                                 if (state === "before" || state === "after") onOrderBlocked(state === "before" ? ORDER_BEFORE : ORDER_AFTER);
                                 else if (state === "gap") onOrderBlocked(GAP_ROOM);
                                 else if (state === "available" || (pending && state === "current")) setSelected(iso);
-                            }} className={cn(MONTH_CELL_BASE, "border-v3-border bg-white text-v3-dark", blocked && HATCHED, isInPeriod && (!blocked || usedBy ? "border-[1.5px] border-v3-primary!" : "border-[1.5px] border-v3-primary/40!"), isCurrent && "border-dashed border-v3-primary! text-v3-primary", isSelected && "border-v3-primary! bg-v3-primary text-white")}>
+                            }} className={cn(MONTH_CELL_BASE, "border-v3-border bg-white text-v3-dark", blocked && HATCHED, isInPeriod && (!blocked || usedBy ? "border-[1.5px] border-v3-primary!" : "border-[1.5px] border-v3-primary/40!"), showCurrent && "border-dashed border-v3-primary! text-v3-primary", isSelected && "border-v3-primary! bg-v3-primary text-white")}>
                                 <span>{index + 1}</span>
-                                {usedBy || isCurrent ? <small className="mt-0.5 text-xs font-extrabold leading-none">{usedBy ? `${usedBy.sessionIndex}회차` : "지금"}</small> : null}
+                                {usedBy || showCurrent || showToday ? <small className={cn("mt-0.5 text-xs font-extrabold leading-none", showToday && "text-v3-primary")}>{usedBy ? `${usedBy.sessionIndex}회차` : showCurrent ? "현재" : "오늘"}</small> : null}
                             </button>;
                         })}
                     </div>
