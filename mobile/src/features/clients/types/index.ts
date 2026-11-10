@@ -31,15 +31,6 @@ export interface ClientBadge {
     priority?: number;
 }
 
-export interface PendingScheduleChange {
-    id: string;
-    sessionIndex: number;
-    fromDate: string;
-    toDate: string;
-    oldEndDate: string;
-    newEndDate: string;
-}
-
 // Client entity types
 export interface Client {
     id: number;
@@ -82,7 +73,6 @@ export interface Client {
     latestContractDocumentId?: string | null;
     badges?: ClientBadge[];
     actionRequired?: ClientActionRequired | null;
-    pendingScheduleChange?: PendingScheduleChange | null;
     /** 서비스 기록이 확정 단계라 시작일·종료일·서비스 기간을 바꿀 수 없어요. */
     serviceRecordPeriodLocked?: boolean;
 }

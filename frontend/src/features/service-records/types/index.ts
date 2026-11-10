@@ -1,12 +1,11 @@
+import type { ServiceRecordSession as SharedServiceRecordSession } from "@babyjamjam/shared/types/service-record";
+
 export type {
-    ApplyServiceScheduleChangeRequest,
-    ApplyServiceScheduleChangeResponse,
     PrepareServiceRecordLinkRequest,
     PrepareServiceRecordLinkResponse,
     ResetServiceRecordLinkResponse,
     SendServiceRecordLinkRequest,
     SendServiceRecordLinkResponse,
-    ServiceScheduleChangePreviewResponse,
     ServiceRecordAssignment,
     ServiceRecordCase,
     ServiceRecordEditPreviewAssignmentRange,
@@ -28,7 +27,6 @@ export type {
     ServiceRecordLink,
     ServiceRecordLinkStatus,
     ServiceRecordOverview,
-    ServiceRecordSession,
     ServiceRecordPlannedSession,
     ServiceRecordScheduleProjection,
     ServiceRecordToken,
@@ -71,3 +69,10 @@ export {
     normalizeServiceRecordRevisionDocumentSummary,
     normalizeServiceRecordRevisionHistory,
 } from "./revisions";
+
+// Compatibility until the backend's shared overview contract is merged.
+export interface ServiceRecordSession extends SharedServiceRecordSession {
+    periodMismatchKeptAt?: string | null;
+}
+
+export * from "./period-mismatch";

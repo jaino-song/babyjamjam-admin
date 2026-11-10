@@ -35,17 +35,12 @@ jest.mock("@/hooks/useGetAuthUser", () => ({
 }));
 
 jest.mock("@/hooks/useServiceRecords", () => ({
-  applyServiceScheduleChange: jest.fn(),
   fetchClientServiceRecords: jest.fn(),
-  previewServiceScheduleChange: jest.fn(),
   resetServiceRecordLink: jest.fn(),
   useClientServiceRecords: () => ({ data: undefined, isError: false, isLoading: false }),
 }));
 
-jest.mock("@/hooks/useClients", () => ({
-  approveScheduleChange: jest.fn(),
-  rejectScheduleChange: jest.fn(),
-}));
+jest.mock("@/hooks/useClients", () => ({ fetchClient: jest.fn() }));
 
 jest.mock("@/hooks/use-toast", () => ({
   toast: jest.fn(),
@@ -58,7 +53,6 @@ jest.mock("@/hooks/use-send-client-receipt", () => ({
 
 jest.mock("../client-service-records", () => ({ ClientServiceRecords: () => null }));
 jest.mock("../ServiceRecordLinkResetResultModal", () => ({ ServiceRecordLinkResetResultModal: () => null }));
-jest.mock("../ServiceScheduleChangeModal", () => ({ ServiceScheduleChangeModal: () => null }));
 jest.mock("@/services/api", () => ({
   eformsignApi: { getDocument: jest.fn(), getLinkConfirmations: jest.fn().mockResolvedValue([]) },
 }));

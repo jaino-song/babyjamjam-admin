@@ -10,16 +10,14 @@ jest.mock("next/navigation", () => ({ usePathname: () => "/clients", useRouter: 
 jest.mock("@/features/message-triggers/hooks/use-message-triggers", () => ({ useRetryMessageHistory: () => ({ mutateAsync: jest.fn(), isPending: false }), useResendMessageTriggerJob: () => ({ mutateAsync: jest.fn(), isPending: false }) }));
 jest.mock("@/hooks/useEmployees", () => ({ useEmployees: () => ({ data: [] }) }));
 jest.mock("@/hooks/useGetAuthUser", () => ({ useGetAuthUser: () => ({ data: { role: "user", branchRole: "manager" } }) }));
-jest.mock("@/hooks/useServiceRecords", () => ({ useClientServiceRecords: () => ({ data: undefined }), applyServiceScheduleChange: jest.fn(), fetchClientServiceRecords: jest.fn(), previewServiceScheduleChange: jest.fn(), resetServiceRecordLink: jest.fn() }));
-jest.mock("@/hooks/useClients", () => ({ approveScheduleChange: jest.fn(), rejectScheduleChange: jest.fn() }));
+jest.mock("@/hooks/useServiceRecords", () => ({ useClientServiceRecords: () => ({ data: undefined }), fetchClientServiceRecords: jest.fn(), resetServiceRecordLink: jest.fn() }));
+jest.mock("@/hooks/useClients", () => ({ fetchClient: jest.fn() }));
 jest.mock("@/features/clients", () => ({ useConfirmBooking: () => ({ mutateAsync: jest.fn(), isPending: false }) }));
 jest.mock("@/hooks/use-toast", () => ({ toast: jest.fn() }));
 jest.mock("@/hooks/use-send-client-receipt", () => ({ useSendClientReceipt: () => ({ isSending: false, sendReceipt: jest.fn() }) }));
 jest.mock("@/services/api", () => ({ eformsignApi: { getDocument: jest.fn(), getLinkConfirmations: jest.fn() } }));
 jest.mock("./client-service-records", () => ({ ClientServiceRecords: () => null }));
-jest.mock("./ServiceScheduleChangeModal", () => ({ ServiceScheduleChangeModal: () => null }));
 jest.mock("./ServiceRecordLinkResetResultModal", () => ({ ServiceRecordLinkResetResultModal: () => null }));
-jest.mock("./ServiceScheduleContractResendModal", () => ({ ServiceScheduleContractResendModal: () => null }));
 jest.mock("./contract-link-confirm-sheet", () => ({ ContractLinkConfirmSheet: ({ entry }: { entry: EformsignLinkConfirmation }) => <div role="dialog">{entry.documentId}</div> }));
 jest.mock("@/components/app/mobile-redesign/detail-sheet", () => ({
   DetailTabPills: () => null, MobileDetailActions: () => null, MobileDetailHeader: () => null,

@@ -3494,6 +3494,8 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
                     where: { id: session.sourceRowId, branchId: input.branchId, serviceRecordCaseId: source.caseId },
                     data: {
                         serviceDate: dateValue(session.serviceDate) ?? undefined,
+                        ...(session.serviceDate && source.sessions.find((row) => row.sourceRowId === session.sourceRowId)?.serviceDate !== session.serviceDate
+                            ? { periodMismatchKeptAt: null } : {}),
                         answers: toPrismaJson(session.answers),
                         etcService: session.etcService,
                         notes: session.notes,

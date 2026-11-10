@@ -39,10 +39,10 @@ function makeProps(overrides: Partial<ServiceRecordWizardProps> = {}): ServiceRe
         context: { totalSessions: 5, startDate: "2026-09-21", header: null, sessions: [] },
         header: legacyHeader, day: 1, pageIdx: 0, draft: {}, editing: false, clientSignature: null,
         busy: false, isRecordFinalized: false, lockedDays: new Set<number>(), nextOpenDay: () => 1,
-        scheduleChangeBusy: false, hasServiceDateMismatch: false, defaultDate: () => "2026-09-21",
+        hasServiceDateMismatch: false, defaultDate: () => "2026-09-21",
         onPhoneChange: jest.fn(), onSubmitPhone: jest.fn(), onBack: jest.fn(), onHeaderChange: jest.fn(),
         onDeliveryTypeChange: jest.fn(), onSaveHeader: jest.fn(), onOpenDay: jest.fn(),
-        onOpenScheduleChangePreview: jest.fn(), onServiceDateChange: jest.fn(), onFieldChange: jest.fn(),
+        onServiceDateChange: jest.fn(), onFieldChange: jest.fn(),
         onToggleMulti: jest.fn(), onSignatureChange: jest.fn(), onNextPage: jest.fn(),
         onOpenSubmitModal: jest.fn(), onEditSection: jest.fn(), ...overrides,
     };
@@ -125,4 +125,12 @@ describe.each(ROWS)("service record validation scope: employee header ($name)", 
         expect(birth).toHaveAttribute("aria-invalid", "true");
         expect(toneOf(document.getElementById(birth.getAttribute("aria-describedby")!))).toBe("error");
     });
+});
+
+
+it("keeps date errors scoped to date entry, without blocking later answer sections", () => {
+    const next = jest.fn();
+    render(<MobileServiceRecordScreen {...makeProps({ screen: "day", pageIdx: 2, draft: { paymentConfirmed: true }, onNextPage: next })} serviceDateError="다른 회차가 이미 고른 날이에요." />);
+    fireEvent.click(screen.getByRole("button", { name: "다음" }));
+    expect(next).toHaveBeenCalledTimes(1);
 });

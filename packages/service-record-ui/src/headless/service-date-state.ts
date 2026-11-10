@@ -28,7 +28,6 @@ export interface PlannedDates {
     plannedDateVectorValid: boolean;
     plannedDateBySession: Map<number, string> | null;
     plannedServiceDate: string | undefined;
-    providerDateLocked: boolean;
     currentServiceDate: string;
     displayDateForSession: (sessionIndex: number, session?: { serviceDate: string }) => string;
 }
@@ -59,9 +58,22 @@ export function resolvePlannedDates({
         ? new Map(plannedDateVector?.map((session) => [session.sessionIndex, session.serviceDate]))
         : null;
     const plannedServiceDate = plannedDateBySession?.get(day);
-    const providerDateLocked = !adminMode && plannedDateVectorProvided;
-    const currentServiceDate = (providerDateLocked ? plannedServiceDate : undefined)
-        || (draft._date as string | undefined)
+    if (!adminMode) {
+        return {
+            currentSession,
+            plannedDateVectorProvided,
+            plannedDateVectorValid,
+            plannedDateBySession,
+            plannedServiceDate,
+            currentServiceDate: (draft._date as string) || currentSession?.serviceDate?.slice(0, 10) || "",
+            displayDateForSession: (sessionIndex, session) => (
+                session?.serviceDate?.slice(0, 10)
+                || context?.sessions.find((row) => row.sessionIndex === sessionIndex)?.serviceDate?.slice(0, 10)
+                || ""
+            ),
+        };
+    }
+    const currentServiceDate = (draft._date as string | undefined)
         || currentSession?.serviceDate?.slice(0, 10)
         || plannedServiceDate
         || (plannedDateVectorProvided ? "" : defaultDate(day));
@@ -76,7 +88,6 @@ export function resolvePlannedDates({
         plannedDateVectorValid,
         plannedDateBySession,
         plannedServiceDate,
-        providerDateLocked,
         currentServiceDate,
         displayDateForSession,
     };
@@ -96,6 +107,7 @@ export function getServiceDateMin({
 }
 
 export interface ServiceDateMessageInput {
+    label?: string;
     /** The text being typed, or null when the field is not being edited. */
     text: string | null;
     hadValue: boolean;
@@ -120,6 +132,7 @@ export interface ServiceDateMessage {
 }
 
 export function getServiceDateMessage({
+    label = "제공일자",
     text,
     hadValue,
     touched,
@@ -144,7 +157,7 @@ export function getServiceDateMessage({
             submitted,
             dateRange: min ? { notBefore: min } : undefined,
         }),
-        { label: "제공일자", rangeText: FIELD_COPY.serviceDateBefore },
+        { label, rangeText: FIELD_COPY.serviceDateBefore },
     );
     // A date that differs from today is a caution about this field: it sits in the field's slot
     // (below any error or format hint) while the field is on screen.

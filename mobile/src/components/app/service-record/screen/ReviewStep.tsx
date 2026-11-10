@@ -18,23 +18,11 @@ import { Button } from "@/components/ui/button";
 
 import { SignaturePad } from "../SignaturePad";
 import { DayPageHead } from "./DayPageStep";
-import { HANDOVER_BANNER_COPY, RESIGN_NOTICE_COPY, SUBMIT_LABEL } from "./ids";
+import { SERVICE_DATE_LABEL, SUBMIT_LABEL } from "./ids";
+import { StatusBadge } from "@/components/app/ui/status-badge";
+import { formatServiceDate } from "./ServiceDateSheet";
 
 const SOURCE_COMPONENT = "ReviewStep";
-
-/** Shown instead of the edit and submit actions on a day another caregiver submitted. */
-const OTHER_CAREGIVER_NOTICE_COPY = "다른 제공인력이 제출한 회차라 수정할 수 없어요.";
-
-/**
- * The server lets only the caregiver who submitted a locked day resubmit it; a locked
- * day with no recorded submitter is treated as not editable, like the server does.
- */
-export function isLockedByOtherCaregiver(
-    session: { locked?: boolean; employeeId?: number | null } | null | undefined,
-    context: { employee?: { id: number } } | null | undefined,
-): boolean {
-    return Boolean(session?.locked) && session?.employeeId !== context?.employee?.id;
-}
 
 export type ReviewStepProps = Pick<
     ServiceRecordWizardProps,
@@ -46,13 +34,16 @@ export type ReviewStepProps = Pick<
     | "editing"
     | "clientSignature"
     | "busy"
-    | "hasServiceDateMismatch"
     | "defaultDate"
     | "onBack"
     | "onSignatureChange"
     | "onOpenSubmitModal"
     | "onEditSection"
->;
+> & {
+    onOpenDateSheet?: () => void;
+    onDeleteSession?: () => void;
+    serviceDateError?: string | null;
+};
 
 function ReviewFieldRow({
     dataComponent,
@@ -90,12 +81,14 @@ export function ReviewStep({
     editing,
     clientSignature,
     busy,
-    hasServiceDateMismatch,
     defaultDate,
     onBack,
     onSignatureChange,
     onOpenSubmitModal,
     onEditSection,
+    onOpenDateSheet,
+    onDeleteSession,
+    serviceDateError,
 }: ReviewStepProps) {
     const child = (suffix: string) => `${root}_${suffix}`;
     const reviewComponent = child("body_review");
@@ -103,11 +96,10 @@ export function ReviewStep({
     const { currentSession, currentServiceDate } = resolvePlannedDates({
         context, day, adminMode: false, draft, defaultDate,
     });
-    const readOnlyOther = isLockedByOtherCaregiver(currentSession, context);
     const signatureValue = currentSession?.clientSignature ?? clientSignature;
     const isSignatureLocked = Boolean(currentSession?.clientSignature);
     const hasInvalidNumericAnswers = Object.keys(getServiceRecordNumericErrors(draft)).length > 0;
-    const submitDisabled = busy || !signatureValue || hasInvalidNumericAnswers || hasInvalidTextAnswers(draft);
+    const submitDisabled = busy || !currentServiceDate || Boolean(serviceDateError) || !signatureValue || hasInvalidNumericAnswers || hasInvalidTextAnswers(draft);
 
     return (
         <>
@@ -121,34 +113,27 @@ export function ReviewStep({
                     day={day}
                     pageIdx={pageIdx}
                     editing={editing}
-                    hasServiceDateMismatch={hasServiceDateMismatch}
                     onBack={onBack}
                     currentServiceDate={currentServiceDate}
-                    title={currentDayPage.title}
-                >
-                    {readOnlyOther && (
-                        <div
-                            data-component={child("body_other-caregiver-notice")}
-                            className="rounded-[10px] bg-v3-dim-white px-3 py-2 text-[13px] text-v3-text-muted"
-                        >
-                            <span>{OTHER_CAREGIVER_NOTICE_COPY}</span>
-                        </div>
-                    )}
-                    {editing && !readOnlyOther && (
-                        <div
-                            data-component={child("body_resign-notice")}
-                            className="rounded-[10px] bg-v3-dim-white px-3 py-2 text-[13px] text-v3-text"
-                        >
-                            <span>{RESIGN_NOTICE_COPY}</span>
-                        </div>
-                    )}
-                    <div
-                        data-component={child("body_handover-banner")}
-                        className="rounded-[10px] bg-v3-primary-light px-3 py-2.5 text-[13px] text-v3-primary"
-                    >
-                        <b>{HANDOVER_BANNER_COPY}</b>
-                    </div>
-                </DayPageHead>
+                    title={editing ? `${day}회차 기록 수정` : currentDayPage.title}
+                    titleAccessory={editing ? <StatusBadge data-component={child("body_submitted-badge")} variant="primary" className="text-xs">제출완료</StatusBadge> : undefined}
+                />
+                {editing && (
+                    <ReviewSection data-component={child("body_service-date")} titleId={child("body_service-date_title")} title={SERVICE_DATE_LABEL} tone="baby" onEdit={onOpenDateSheet}>
+                        <ReviewRow
+                            data-component={child("body_service-date_row")}
+                            labelId={child("body_service-date_row_label")}
+                            label={SERVICE_DATE_LABEL}
+                            value={<>
+                                {currentSession?.serviceDate.slice(0, 10) !== currentServiceDate && <del className="mr-2 text-v3-text-muted">{currentSession?.serviceDate.slice(5, 10).replace("-", ".")}</del>}
+                                {formatServiceDate(currentServiceDate)}
+                            </>}
+                            tone={currentSession?.serviceDate.slice(0, 10) !== currentServiceDate ? "ok" : "default"}
+                        />
+                        {currentSession?.serviceDate.slice(0, 10) !== currentServiceDate && <p data-component={child("body_service-date_help")} className="text-sm text-v3-text-muted">다른 회차 날짜는 바뀌지 않아요.</p>}
+                        {serviceDateError && <p data-component={child("body_service-date_error")} role="alert" className="text-sm text-v3-burgundy">{serviceDateError}</p>}
+                    </ReviewSection>
+                )}
                 <div data-component={reviewComponent}>
                     {REVIEW_SECTIONS.map((section, sectionIndex) => (
                         <ReviewSection
@@ -157,7 +142,7 @@ export function ReviewStep({
                             titleId={`${reviewComponent}_section_${section.id}-title`}
                             title={section.title}
                             tone={section.tone === "finish" ? "etc" : section.tone}
-                            onEdit={editing && !readOnlyOther ? () => onEditSection(sectionIndex) : undefined}
+                            onEdit={editing ? () => onEditSection(sectionIndex) : undefined}
                         >
                             {section.fields.map((field) => (
                                 <ReviewFieldRow key={field.key} dataComponent={reviewComponent} field={field} draft={draft} />
@@ -173,13 +158,12 @@ export function ReviewStep({
                     locked={isSignatureLocked}
                 />
             </div>
-            {!readOnlyOther && (
-                <StickyActionBar data-component={child("body_confirmation-action")}>
-                    <Button type="button" variant="v3" size="md" disabled={submitDisabled} onClick={onOpenSubmitModal}>
-                        {SUBMIT_LABEL}
-                    </Button>
-                </StickyActionBar>
-            )}
+            <StickyActionBar data-component={child("body_confirmation-action")}>
+                {currentSession && <Button data-component={child("body_confirmation-action_delete")} type="button" variant="v3-outline" size="md" className="text-base border-v3-burgundy text-v3-burgundy" disabled={busy} onClick={onDeleteSession}>기록 삭제</Button>}
+                <Button className="text-base" type="button" variant="v3" size="md" disabled={submitDisabled} onClick={onOpenSubmitModal}>
+                    {SUBMIT_LABEL}
+                </Button>
+            </StickyActionBar>
         </>
     );
 }

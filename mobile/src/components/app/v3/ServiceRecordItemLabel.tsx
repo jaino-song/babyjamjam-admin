@@ -29,7 +29,7 @@ const MESSAGE_TONE_CLASS: Record<SlotMessage["tone"], string> = {
 };
 
 const TITLE_CLASS =
-  "min-w-0 [word-break:keep-all] [overflow-wrap:anywhere] text-sm font-semibold leading-snug text-v3-text";
+  "min-w-0 [word-break:keep-all] [overflow-wrap:anywhere] text-base font-semibold leading-snug text-v3-text";
 
 /**
  * One item's title row plus its single message slot at the right. The slot is
@@ -85,7 +85,7 @@ export function ServiceRecordItemLabel({
         aria-live="polite"
         title={message?.text}
         className={cn(
-          "max-w-full min-w-0 justify-self-end truncate text-right text-xs font-semibold leading-tight",
+          "max-w-full min-w-0 justify-self-end truncate text-right text-sm font-semibold leading-tight",
           MESSAGE_TONE_CLASS[message?.tone ?? "hint"],
         )}
       >

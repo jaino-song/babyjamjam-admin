@@ -82,6 +82,28 @@ describe("AdminServiceRecordService", () => {
         serviceRecordTokens: [],
     });
 
+    it.each([null, new Date("2026-11-09T06:00:00.000Z")])("includes the ISO keep timestamp in overview sessions: %s", async (keptAt) => {
+        const prisma = createPrisma();
+        const session = {
+            caseSessionIndex: 1, sessionIndex: 11, serviceDate: new Date("2026-07-01"), locked: true,
+            submittedAt: new Date("2026-07-01"), updatedAt: new Date("2026-07-01"),
+            answers: {}, etcService: null, notes: null, paymentConfirmed: true, momApproval: "approved",
+            employeeId: 31, employeeNameSnapshot: "Provider", formVersion: 1, periodMismatchKeptAt: keptAt,
+        };
+        const schedule = { ...createSchedule(1, "2026-07-01"), serviceRecordDays: [session] };
+        prisma.employee_schedule.findMany.mockResolvedValue([schedule]);
+        prisma.message_trigger_job.findMany.mockResolvedValue([]);
+        prisma.message_log.findMany.mockResolvedValue([]);
+        prisma.service_record_case.findFirst.mockResolvedValue({
+            id: "case-1", status: "IN_PROGRESS", startDate: schedule.startDate, endDate: schedule.endDate,
+            requiredSessionCount: 5, days: [session],
+        });
+        const service = new AdminServiceRecordService(prisma as never, createLinkService() as never, createTriggerService() as never, createHolidayCalendarStub());
+        const overview = await service.getClientOverview("branch-1", 100);
+        expect(overview.record?.sessions[0]).toMatchObject({ sessionIndex: 1, periodMismatchKeptAt: keptAt?.toISOString() ?? null });
+        expect(overview.assignments[0]?.sessions[0]).toMatchObject({ sessionIndex: 1, periodMismatchKeptAt: keptAt?.toISOString() ?? null });
+    });
+
     it.each([
         ["2026-07-12T14:59:59.999Z", "active"],
         ["2026-07-12T15:00:00.000Z", "expired"],

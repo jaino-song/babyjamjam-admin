@@ -109,3 +109,9 @@ describe("ServiceRecordItemLabel", () => {
     expect(container.querySelector(`[data-component="${BASE}_message"]`)).not.toBeNull();
   });
 });
+
+it("enlarges item titles and helper messages one step", () => {
+  render(<ServiceRecordItemLabel data-component={BASE} labelId="title" label="항목" messageId="message" message={{ tone: "hint", text: "안내" }} />);
+  expect(screen.getByText("항목")).toHaveClass("text-base", "leading-snug");
+  expect(screen.getByText("안내")).toHaveClass("text-sm", "leading-tight");
+});

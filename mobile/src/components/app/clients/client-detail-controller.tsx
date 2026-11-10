@@ -68,9 +68,7 @@ export function useClientDetailController({
     : null;
   const detailQuery = useClient(resolvedClientId ?? 0);
   const [detailClient, setDetailClient] = useState<Client | null>(resolvedClient);
-  const [detailSheetTab, setDetailSheetTab] = useState<DetailTabId>(
-    resolvedClient?.pendingScheduleChange ? "scheduleChange" : "basic",
-  );
+  const [detailSheetTab, setDetailSheetTab] = useState<DetailTabId>("basic");
   const [isDetailRefreshing, setIsDetailRefreshing] = useState(false);
   const [detailRefreshError, setDetailRefreshError] = useState(false);
   const [deleteTargetClientId, setDeleteTargetClientId] = useState<number | null>(null);
@@ -102,7 +100,7 @@ export function useClientDetailController({
     if (deletedDetailIdRef.current !== resolvedClientId) deletedDetailIdRef.current = null;
     /* eslint-disable-next-line react-hooks/set-state-in-effect -- selected-row or URL identity changes reset controller state. */
     setDetailClient(resolvedClient);
-    setDetailSheetTab(resolvedClient?.pendingScheduleChange ? "scheduleChange" : "basic");
+    setDetailSheetTab("basic");
     setIsDetailRefreshing(false);
     setDetailRefreshError(false);
     setDeleteTargetClientId(null);
@@ -119,7 +117,7 @@ export function useClientDetailController({
     ) return;
     /* eslint-disable-next-line react-hooks/set-state-in-effect -- query completion supplies the URL-selected client. */
     setDetailClient(detailQuery.data);
-    setDetailSheetTab(detailQuery.data.pendingScheduleChange ? "scheduleChange" : "basic");
+    setDetailSheetTab("basic");
   }, [detailClient, detailQuery.data, resolvedClient, resolvedClientId]);
 
   const retryDetail = useCallback(() => {

@@ -43,6 +43,7 @@ const BLOCKING_REASON_COPY: Readonly<Record<string, string>> = {
     MISSING_PLANNED_DATE: "예정된 제공일이 없는 회차가 있어요.",
     LOCKED_SESSION_DATE_CHANGED: "작성이 끝났거나 제출된 회차는 제공일을 바꿀 수 없어요.",
     SCHEDULE_BEFORE_START: "서비스 시작일보다 이른 날짜가 있어요.",
+    SERVICE_DATE_OUT_OF_RANGE: "고를 수 있는 기간이 아니에요.",
     NON_SERVICE_DAY: "서비스일이 아닌 날짜가 있어요.",
     SCHEDULE_COUNT_MISMATCH: "제공일 개수가 회차 수와 맞지 않아요.",
     DATE_MOVE_REQUIRED: "회차의 제공일은 날짜 이동으로 바꿔 주세요.",

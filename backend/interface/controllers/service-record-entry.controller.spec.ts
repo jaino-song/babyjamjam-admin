@@ -13,7 +13,6 @@ describe("ServiceRecordEntryController.getHolidays", () => {
         };
         const controller = new ServiceRecordEntryController(
             {} as never,
-            {} as never,
             holidayCalendar as never,
         );
         const req = {

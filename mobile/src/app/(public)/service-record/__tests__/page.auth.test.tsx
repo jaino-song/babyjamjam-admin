@@ -124,7 +124,6 @@ const serviceRecordContext = {
     header: null,
     sessions: [],
     recordStatus: "IN_PROGRESS",
-    pendingScheduleChange: null,
 };
 
 const completeHeader = {
@@ -354,7 +353,7 @@ describe("ServiceRecordPage authentication restoration", () => {
         expect(notes).toHaveValue(` ${"특".repeat(79)}`);
     });
 
-    it("allows entry for a different service date while showing a warning", async () => {
+    it("restores a picked date with no extra warning", async () => {
         const user = userEvent.setup();
         window.sessionStorage.setItem("daily-service-record-draft:link-token", JSON.stringify({
             header: { momName: "홍길동" },
@@ -384,42 +383,10 @@ describe("ServiceRecordPage authentication restoration", () => {
         await user.click(screen.getByRole("button", { name: "기록 시작" }));
 
         // The warning lives in the date field's own label-row slot, not in a separate notice.
-        expect(document.getElementById("service-record-date-helper")).toHaveTextContent("오늘과 다른 날짜예요");
+        expect(document.getElementById("service-record-date-helper")).toBeEmptyDOMElement();
         expect(document.querySelector('[data-component="mobile_service-record_wizard_body_date-mismatch-notice"]')).toBeNull();
         expect(screen.getAllByRole("button", { name: /이상없음/ })[0]).toBeEnabled();
         expect(screen.getByRole("button", { name: "다음" })).toBeEnabled();
-    });
-
-    it("keeps the date caution in a read-only field row on later pages", async () => {
-        const user = userEvent.setup();
-        window.sessionStorage.setItem("daily-service-record-draft:link-token", JSON.stringify({
-            header: { momName: "홍길동" },
-            day: 1,
-            pageIdx: 1,
-            draft: { _date: "2026-07-20" },
-        }));
-        fetchMock
-            .mockResolvedValueOnce(jsonResponse({ valid: true }))
-            .mockResolvedValueOnce(jsonResponse({
-                ...serviceRecordContext,
-                totalSessions: 2,
-                header: { momName: "홍길동" },
-            }));
-
-        render(<ServiceRecordPage />);
-
-        expect(await screen.findByText("제공기록표")).toBeInTheDocument();
-        await user.click(screen.getByRole("button", { name: "기록 시작" }));
-
-        const row = document.querySelector('[data-component="mobile_service-record_wizard_body_service-date-readonly"]') as HTMLElement;
-        expect(row).not.toBeNull();
-        expect(row).toHaveTextContent("서비스 제공일자");
-        expect(row.querySelector('[data-slot="ro"]')).toHaveTextContent("2026-07-20");
-        expect(row.querySelector('[data-slot="lab-msg"]')).toHaveTextContent("오늘과 다른 날짜예요");
-        // No separate notice, no date input, and the old sentence is gone.
-        expect(document.querySelector('[data-component="mobile_service-record_wizard_body_date-mismatch-notice"]')).toBeNull();
-        expect(document.getElementById("service-record-date-helper")).toBeNull();
-        expect(screen.queryByText(/가 오늘과 달라요/)).not.toBeInTheDocument();
     });
 
     it("shows no date row on later pages when the date matches today", async () => {
@@ -446,7 +413,7 @@ describe("ServiceRecordPage authentication restoration", () => {
         await user.click(screen.getByRole("button", { name: "기록 시작" }));
 
         expect(document.querySelector('[data-component="mobile_service-record_wizard_body_service-date-readonly"]')).toBeNull();
-        expect(screen.queryByText("오늘과 다른 날짜예요")).not.toBeInTheDocument();
+        expect(document.querySelector('[data-component="mobile_service-record_wizard_body_service-date-readonly"]')).toBeNull();
     });
 
     it("does not allow navigation back to submitted service information from the overview", async () => {
@@ -461,60 +428,6 @@ describe("ServiceRecordPage authentication restoration", () => {
 
         expect(await screen.findByText("제공기록표")).toBeInTheDocument();
         expect(document.querySelector('[data-component="mobile_service-record_wizard_body_overview-back"]')).not.toBeInTheDocument();
-    });
-
-    it("opens a loading schedule-change modal before the preview request resolves", async () => {
-        const user = userEvent.setup();
-        const previewResponse = deferredResponse();
-        fetchMock
-            .mockResolvedValueOnce(jsonResponse({ valid: true }))
-            .mockResolvedValueOnce(jsonResponse({
-                ...serviceRecordContext,
-                header: { momName: "홍길동" },
-            }))
-            .mockReturnValueOnce(previewResponse.promise);
-
-        render(<ServiceRecordPage />);
-
-        await user.click(await screen.findByRole("button", { name: "서비스 일정 변경" }));
-
-        expect(screen.getByRole("button", { name: "불러오는 중…" })).toHaveAttribute("aria-busy", "true");
-        expect(screen.getByRole("heading", { name: "서비스 일정 변경" })).toBeInTheDocument();
-        expect(screen.getByText("변경 가능한 일정을 확인하고 있어요.")).toBeInTheDocument();
-        expect(screen.getByRole("button", { name: "불러오는 중…" })).toBeDisabled();
-
-        previewResponse.resolve(jsonResponse({
-            sessionIndex: 1,
-            fromDate: "2026-07-20",
-            toDate: "2026-07-21",
-        }));
-
-        expect(await screen.findByRole("heading", { name: "1회차 서비스 일정을 조정할까요?" }))
-            .toBeInTheDocument();
-        expect(screen.getByRole("button", { name: "승인 요청" })).not.toHaveAttribute("aria-busy");
-        expect(screen.getByRole("button", { name: "승인 요청" })).toBeEnabled();
-    });
-
-    it("closes the loading modal and shows the existing error notice when preview loading fails", async () => {
-        const user = userEvent.setup();
-        const previewResponse = deferredResponse();
-        fetchMock
-            .mockResolvedValueOnce(jsonResponse({ valid: true }))
-            .mockResolvedValueOnce(jsonResponse({
-                ...serviceRecordContext,
-                header: { momName: "홍길동" },
-            }))
-            .mockReturnValueOnce(previewResponse.promise);
-
-        render(<ServiceRecordPage />);
-
-        await user.click(await screen.findByRole("button", { name: "서비스 일정 변경" }));
-        expect(screen.getByRole("button", { name: "불러오는 중…" })).toHaveAttribute("aria-busy", "true");
-
-        previewResponse.reject(new Error("network unavailable"));
-
-        expect(await screen.findByRole("alertdialog")).toHaveTextContent("일정 변경 정보를 불러오지 못했습니다.");
-        expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     });
 
     it("maps daily pages to browser history so Back restores the previous wizard page", async () => {
@@ -694,7 +607,7 @@ describe("ServiceRecordPage authentication restoration", () => {
             draft: { etcService: "1회차 로컬 메모" },
         }));
         queueContext(makeContext([
-            makeSession(1, { etcService: "1회차 서버 기타", notes: "1회차 서버 메모" }),
+            makeSession(1, { locked: true, etcService: "1회차 서버 기타", notes: "1회차 서버 메모" }),
             makeSession(2, { etcService: "2회차 서버 기타", notes: "2회차 서버 메모" }),
         ], 2));
 
@@ -756,127 +669,42 @@ describe("ServiceRecordPage authentication restoration", () => {
         });
     });
     describe("branch holiday calendar", () => {
-        const plannedContext = {
-            ...serviceRecordContext,
-            totalSessions: 1,
-            startDate: "2026-08-10",
-            header: completeHeader,
-            sessions: [],
-            plannedSessionDates: [{ sessionIndex: 1, serviceDate: "2026-08-10" }],
-        };
-
-        function holdHolidays() {
+        const context = { ...serviceRecordContext, totalSessions: 2, startDate: "2026-08-10", endDate: "2026-08-24", header: completeHeader, sessions: [] };
+        async function openSheet() {
+            fetchMock.mockResolvedValueOnce(jsonResponse({ valid: true })).mockResolvedValueOnce(jsonResponse(context));
+            render(<ServiceRecordPage />);
+            const user = userEvent.setup();
+            await user.click(await screen.findByRole("button", { name: "기록 시작" }));
+            const input = screen.getByLabelText("서비스 제공일");
+            expect(input).toHaveValue("");
+            await user.click(input);
+            return { user, input };
+        }
+        it("holds all choices until branch holidays arrive and then blocks the branch holiday", async () => {
+            branchHolidays = { 2026: [{ date: "2026-08-12", name: "지점 휴무" }] };
             const gate = deferredResponse();
             holidayResponse = (year) => gate.promise.then(() => jsonResponse(holidayYearPayload(year)));
-            return { release: () => gate.resolve(jsonResponse(null)) };
-        }
-
-        async function openDayOne(user: ReturnType<typeof userEvent.setup>) {
-            await user.click(await screen.findByRole("button", { name: "기록 시작" }));
-            return screen.findByDisplayValue("2026-08-10");
-        }
-
-        it("loads the token calendar for the window plus the case's years only after the context loaded", async () => {
-            fetchMock
-                .mockResolvedValueOnce(jsonResponse({ valid: true }))
-                .mockResolvedValueOnce(jsonResponse({ message: "Unauthorized" }, 401));
-            const { unmount } = render(<ServiceRecordPage />);
-            expect(await screen.findByText("제공인력 본인 확인")).toBeInTheDocument();
-            expect(holidayRequests).toEqual([]);
-            unmount();
-
-            fetchMock.mockReset();
-            fetchMock
-                .mockResolvedValueOnce(jsonResponse({ valid: true }))
-                .mockResolvedValueOnce(jsonResponse({ ...plannedContext, startDate: "2024-12-30", plannedSessionDates: [{ sessionIndex: 1, serviceDate: "2024-12-30" }] }));
-            render(<ServiceRecordPage />);
-            await screen.findByText("제공기록표");
-            const thisYear = Number(isoDateInKorea().slice(0, 4));
-            const expectedYears = [...new Set([2024, 2025, thisYear - 1, thisYear, thisYear + 1])].sort((a, b) => a - b);
-            await waitFor(() => expect(holidayRequests.slice().sort()).toEqual(
-                expectedYears.map((year) => `/api/service-record/link-token/holidays?year=${year}`).sort(),
-            ));
+            const { input } = await openSheet();
+            const day = screen.getByRole("button", { name: "2026.08.13(목)" });
+            expect(day).toHaveAttribute("aria-disabled", "true");
+            fireEvent.click(day);
+            expect(screen.getByRole("button", { name: "선택" })).toBeDisabled();
+            await act(async () => { gate.resolve(jsonResponse(null)); });
+            await waitFor(() => expect(day).toHaveAttribute("aria-disabled", "false"));
+            expect(screen.getByRole("button", { name: "2026.08.12(수)" })).toHaveAttribute("aria-disabled", "true");
+            fireEvent.click(day);
+            fireEvent.click(screen.getByRole("button", { name: "선택" }));
+            expect(input).toHaveValue("2026-08-13");
         });
-
-        it("keeps a planned date locked before and after the branch calendar loads", async () => {
-            const user = userEvent.setup();
-            branchHolidays = { 2026: [{ date: "2026-08-12", name: "지점 휴무" }] };
-            const hold = holdHolidays();
-            fetchMock
-                .mockResolvedValueOnce(jsonResponse({ valid: true }))
-                .mockResolvedValueOnce(jsonResponse(plannedContext));
-            render(<ServiceRecordPage />);
-
-            const dateInput = await openDayOne(user);
-            expect(dateInput).toBeDisabled();
-            fireEvent.change(dateInput, { target: { value: "2026-08-13" } });
-            expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
-
-            await act(async () => { hold.release(); });
-
-            expect(dateInput).toBeDisabled();
-            expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
-        });
-
-        it("counts the same shift without the branch holiday when the branch has none", async () => {
-            const user = userEvent.setup();
-            fetchMock
-                .mockResolvedValueOnce(jsonResponse({ valid: true }))
-                .mockResolvedValueOnce(jsonResponse({ ...plannedContext, plannedSessionDates: undefined }));
-            render(<ServiceRecordPage />);
-
-            const dateInput = await openDayOne(user);
-            await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
-            fireEvent.change(dateInput, { target: { value: "2026-08-13" } });
-
-            await waitFor(() => expect(screen.getByRole("dialog")).toHaveTextContent("3 영업일 만큼"));
-        });
-
-        it("shows a retryable notice without allowing a planned date change when the calendar fails", async () => {
-            const user = userEvent.setup();
-            holidayResponse = () => jsonResponse({ message: "boom" }, 500);
-            fetchMock
-                .mockResolvedValueOnce(jsonResponse({ valid: true }))
-                .mockResolvedValueOnce(jsonResponse(plannedContext));
-            render(<ServiceRecordPage />);
-
-            const dateInput = await openDayOne(user);
-            expect(dateInput).toBeDisabled();
-            fireEvent.change(dateInput, { target: { value: "2026-08-13" } });
+        it("fails closed and offers retry when branch holidays fail", async () => {
+            holidayResponse = () => jsonResponse({}, 500);
+            const { user } = await openSheet();
+            expect(screen.getByRole("button", { name: "2026.08.13(목)" })).toHaveAttribute("aria-disabled", "true");
+            await user.click(screen.getByRole("button", { name: "취소" }));
             await screen.findByText("공휴일 정보를 불러오지 못했어요.");
-            expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
-
             holidayResponse = null;
             await user.click(screen.getByRole("button", { name: "다시 시도" }));
-            await waitFor(() => expect(screen.queryByText("공휴일 정보를 불러오지 못했어요.")).not.toBeInTheDocument());
-            expect(dateInput).toBeDisabled();
-        });
-
-        it("does not seed a legacy day's default date from the built-in list while the calendar loads", async () => {
-            const user = userEvent.setup();
-            // 2026-08-12 is a business day on the built-in list but a branch holiday.
-            branchHolidays = { 2026: [{ date: "2026-08-12", name: "지점 휴무" }] };
-            const hold = holdHolidays();
-            fetchMock
-                .mockResolvedValueOnce(jsonResponse({ valid: true }))
-                .mockResolvedValueOnce(jsonResponse({
-                    ...serviceRecordContext,
-                    totalSessions: 1,
-                    startDate: "2026-08-12",
-                    header: completeHeader,
-                    sessions: [],
-                }));
-            render(<ServiceRecordPage />);
-
-            await user.click(await screen.findByRole("button", { name: "기록 시작" }));
-            expect(document.querySelector('[data-component="mobile_service-record_wizard_body_day-title"]')).not.toBeInTheDocument();
-            expect(document.querySelector('[data-component="mobile_service-record_calendar-notice"]'))
-                .toHaveTextContent("공휴일 정보를 불러오는 중이에요…");
-
-            await act(async () => { hold.release(); });
-
-            expect(await screen.findByDisplayValue("2026-08-13")).toBeInTheDocument();
-            expect(screen.queryByDisplayValue("2026-08-12")).not.toBeInTheDocument();
+            await waitFor(() => expect(screen.queryByText("공휴일 정보를 불러오지 못했어요.")).toBeNull());
         });
     });
 });

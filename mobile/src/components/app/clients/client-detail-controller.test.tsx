@@ -26,8 +26,6 @@ jest.mock("@/hooks/useClients", () => ({
   fetchClient: jest.fn(),
   useClient: jest.fn(),
   useDeleteClient: jest.fn(),
-  approveScheduleChange: jest.fn(),
-  rejectScheduleChange: jest.fn(),
 }));
 
 jest.mock("@/hooks/useEmployees", () => ({
@@ -69,9 +67,7 @@ jest.mock("@/hooks/use-send-client-receipt", () => ({
 }));
 
 jest.mock("@/hooks/useServiceRecords", () => ({
-  applyServiceScheduleChange: jest.fn(),
   fetchClientServiceRecords: jest.fn(),
-  previewServiceScheduleChange: jest.fn(),
   resetServiceRecordLink: jest.fn(),
   useClientServiceRecords: () => ({ data: undefined, isError: false, isLoading: false }),
 }));
@@ -220,6 +216,40 @@ describe("useClientDetailController", () => {
       isPending: false,
       mutateAsync: jest.fn(),
     } as unknown as ReturnType<typeof useDeleteClient>);
+  });
+
+  it("opens basic information for selected rows and selection changes", async () => {
+    const first: Client = {
+      ...makeClient(1),
+    };
+    const second = { ...first, id: 2 };
+    mockedFetchClient.mockImplementation(async (id) => id === 1 ? first : second);
+    const { result, rerender } = renderHook(
+      ({ client }) => useClientDetailController({ client, dataComponent: "mobile_clients_detail-sheet_detail" }),
+      { wrapper: createWrapper(), initialProps: { client: first } },
+    );
+    expect(result.current.detailSheetTab).toBe("basic");
+    await waitFor(() => expect(result.current.isDetailRefreshing).toBe(false));
+    act(() => result.current.setDetailSheetTab("contracts"));
+    rerender({ client: second });
+    await waitFor(() => expect(result.current.detailClient?.id).toBe(2));
+    await waitFor(() => expect(result.current.isDetailRefreshing).toBe(false));
+    expect(result.current.detailSheetTab).toBe("basic");
+  });
+
+  it("opens basic information for a URL-selected client", async () => {
+    const client: Client = {
+      ...makeClient(7),
+    };
+    mockedUseClient.mockReturnValue({ data: client } as ReturnType<typeof useClient>);
+    mockedFetchClient.mockResolvedValue(client);
+    const { result } = renderHook(
+      () => useClientDetailController({ clientId: client.id, dataComponent: "mobile_clients_detail-sheet_detail" }),
+      { wrapper: createWrapper() },
+    );
+    await waitFor(() => expect(result.current.detailClient?.id).toBe(7));
+    await waitFor(() => expect(result.current.isDetailRefreshing).toBe(false));
+    expect(result.current.detailSheetTab).toBe("basic");
   });
 
   it("does not let a stale fresh response for a previous selection replace the current client", async () => {

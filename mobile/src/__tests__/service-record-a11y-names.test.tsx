@@ -1,4 +1,4 @@
-import { render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { ServiceRecordWizard } from "../../../packages/service-record-ui/src/ServiceRecordWizard";
 import { DEFAULT_DAILY_ANSWERS } from "../../../packages/service-record-ui/src/form-definition";
 import type { ServiceRecordWizardProps } from "../../../packages/service-record-ui/src/types";
@@ -29,10 +29,10 @@ const makeProps = (overrides: Partial<ServiceRecordWizardProps> = {}): ServiceRe
     context: { totalSessions: 5, startDate: "2026-09-21", header: null, sessions: [] },
     header: validHeader, day: 1, pageIdx: 0, draft: { ...DEFAULT_DAILY_ANSWERS }, editing: false, clientSignature: null,
     busy: false, isRecordFinalized: false, lockedDays: new Set<number>(), nextOpenDay: () => 1,
-    scheduleChangeBusy: false, hasServiceDateMismatch: false, defaultDate: () => "2026-09-21",
+    hasServiceDateMismatch: false, defaultDate: () => "2026-09-21",
     onPhoneChange: jest.fn(), onSubmitPhone: jest.fn(), onBack: jest.fn(), onHeaderChange: jest.fn(),
     onDeliveryTypeChange: jest.fn(), onSaveHeader: jest.fn(), onOpenDay: jest.fn(),
-    onOpenScheduleChangePreview: jest.fn(), onServiceDateChange: jest.fn(), onFieldChange: jest.fn(),
+    onServiceDateChange: jest.fn(), onFieldChange: jest.fn(),
     onToggleMulti: jest.fn(), onSignatureChange: jest.fn(), onNextPage: jest.fn(),
     onOpenSubmitModal: jest.fn(), onEditSection: jest.fn(), ...overrides,
 });
@@ -72,5 +72,46 @@ describe.each(ROWS)("service record accessible names ($name)", ({ Component }) =
         expect(screen.getByRole("button", { name: "산모 수정" })).toHaveTextContent("수정");
         expect(screen.getByRole("button", { name: "신생아 수정" })).toBeInTheDocument();
         expect(screen.getByRole("button", { name: "서비스 기록 수정" })).toBeInTheDocument();
+    });
+});
+
+
+it("names the calendar trigger, announces its dialog, and opens it with the keyboard", () => {
+    const open = jest.fn();
+    render(<MobileServiceRecordScreen {...makeProps()} onOpenDateSheet={open} />);
+    const input = screen.getByRole("textbox", { name: "서비스 제공일" });
+    expect(input).toHaveAttribute("aria-haspopup", "dialog");
+    expect(input).toHaveAttribute("readonly");
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(open).toHaveBeenCalledTimes(1);
+});
+
+describe.each(ROWS)("open-session overview ($name)", ({ Component }) => {
+    it.each([true, false])("uses openDays when supplied and nextOpenDay as the fallback (explicit=%s)", (explicit) => {
+        const props = makeProps({
+            screen: "overview", lockedDays: new Set([2, 3]), nextOpenDay: () => 1,
+            ...(explicit ? { openDays: () => [1, 4] } : {}),
+            context: { totalSessions: 5, startDate: "2026-09-21", header: validHeader, sessions: [
+                { sessionIndex: 2, locked: true, serviceDate: "2026-09-22" },
+                { sessionIndex: 3, locked: true, serviceDate: "2026-09-23" },
+            ] },
+        });
+        const { container } = render(<Component {...props} />);
+        const cards = container.querySelectorAll<HTMLButtonElement>('[data-slot="day"], [data-source-component="DayCard"]');
+        expect(cards).toHaveLength(5);
+        expect(cards[0]).toBeEnabled();
+        expect(cards[0]).toHaveTextContent("입력 가능");
+        expect(cards[4]).toBeDisabled();
+        expect(cards[4]).toHaveTextContent("대기");
+        if (explicit) {
+            expect(cards[3]).toBeEnabled();
+            expect(cards[3]).toHaveTextContent("입력 가능");
+            fireEvent.click(cards[3]);
+            expect(props.onOpenDay).toHaveBeenLastCalledWith(4, false);
+        } else {
+            expect(cards[3]).toBeDisabled();
+        }
+        fireEvent.click(screen.getByRole("button", { name: "다음 회차 입력" }));
+        expect(props.onOpenDay).toHaveBeenLastCalledWith(1);
     });
 });

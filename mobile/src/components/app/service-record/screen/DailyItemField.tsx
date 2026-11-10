@@ -99,6 +99,7 @@ export function DailyItemField({
             {label}
             {item.type === "multi" && (
                 <OptionButtonGroup
+                    optionClassNames={{ option: "text-base", indicator: "text-xs leading-none" }}
                     data-component={`${dataComponent}_options`}
                     mode="multi"
                     labelledBy={labelId}
@@ -114,6 +115,7 @@ export function DailyItemField({
             {(item.type === "radio" || item.type === "stool") && (
                 <>
                     <OptionButtonGroup
+                        optionClassNames={{ option: "text-base", indicator: "text-xs leading-none" }}
                         data-component={`${dataComponent}_radio-options`}
                         mode="single"
                         labelledBy={labelId}
@@ -137,7 +139,7 @@ export function DailyItemField({
                             <Input
                                 id={stoolColorInputId(dataComponent)}
                                 data-component={`${dataComponent}_stool-color-input`}
-                                className="text-base focus-visible:border-v3-primary! aria-[invalid=true]:border-v3-burgundy!"
+                                className="text-lg focus-visible:border-v3-primary! aria-[invalid=true]:border-v3-burgundy!"
                                 placeholder={STOOL_COLOR_PLACEHOLDER}
                                 value={(draft[`${item.key}_color`] as string | undefined) ?? ""}
                                 aria-required
@@ -181,7 +183,7 @@ export function DailyItemField({
                 <Textarea
                     id={textareaInputId(dataComponent, item.key)}
                     data-component={`${dataComponent}_${item.key === "etcService" ? "etc-service" : "notes"}`}
-                    className="rounded-[12px] border-[1.5px] bg-white text-base focus-visible:border-v3-primary! aria-[invalid=true]:border-v3-burgundy!"
+                    className="rounded-[12px] border-[1.5px] bg-white text-lg focus-visible:border-v3-primary! aria-[invalid=true]:border-v3-burgundy!"
                     aria-label={item.label}
                     aria-describedby={slotId}
                     aria-invalid={hasError ? "true" : undefined}
@@ -196,6 +198,7 @@ export function DailyItemField({
 
             {item.type === "confirm" && (
                 <OptionButtonGroup
+                    optionClassNames={{ option: "text-base", indicator: "text-xs leading-none" }}
                     data-component={`${dataComponent}_confirm-options`}
                     mode="multi"
                     labelledBy={labelId}

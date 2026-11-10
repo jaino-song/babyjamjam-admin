@@ -131,6 +131,12 @@ const overview = {
     ],
 } as unknown as AdminServiceRecordEditorOverview;
 
+const windowOverview = (sessions: Record<string, unknown>[]) => ({
+    ...overview,
+    record: { ...overview.record, totalSessions: 5, sessions },
+    assignments: [],
+}) as unknown as AdminServiceRecordEditorOverview;
+
 const plannedDates = [
     "2026-07-01",
     "2026-07-02",
@@ -348,6 +354,102 @@ describe("ServiceRecordAdminWizard", () => {
         fireEvent.click(screen.getByRole("button", { name: /5회차/ }));
         expect(container).toHaveTextContent("5회차 ·");
         expect(container).toHaveTextContent("2026.07.20");
+    });
+
+    it("keeps a submitted case session at end + 7 in the lifecycle window", () => {
+        const view = buildAdminServiceRecordView(windowOverview([
+            makeSession(4, {
+                serviceDate: "2026-07-21",
+                locked: true,
+                submittedAt: "2026-07-21T01:00:00.000Z",
+            }),
+        ]));
+
+        expect(view.context.sessions).toEqual(expect.arrayContaining([
+            expect.objectContaining({ sessionIndex: 4, serviceDate: "2026-07-21" }),
+        ]));
+        expect(view.supplementalSessions.some((item) => item.sessionIndex === 4)).toBe(false);
+    });
+
+    it("archives a case session at end + 8 outside the lifecycle window", () => {
+        const view = buildAdminServiceRecordView(windowOverview([
+            makeSession(4, {
+                serviceDate: "2026-07-22",
+                locked: true,
+                submittedAt: "2026-07-22T01:00:00.000Z",
+            }),
+        ]));
+
+        expect(view.context.sessions.some((session) => session.sessionIndex === 4)).toBe(false);
+        expect(view.supplementalSessions).toEqual(expect.arrayContaining([
+            expect.objectContaining({
+                sessionIndex: 4,
+                session: expect.objectContaining({ serviceDate: "2026-07-22" }),
+                sourceLabel: expect.stringContaining("기간 밖 보관회차"),
+            }),
+        ]));
+    });
+
+    it("keeps a case session at start - 7 in the lifecycle window", () => {
+        const view = buildAdminServiceRecordView(windowOverview([
+            makeSession(1, { serviceDate: "2026-07-03" }),
+        ]));
+
+        expect(view.context.sessions).toEqual(expect.arrayContaining([
+            expect.objectContaining({ sessionIndex: 1, serviceDate: "2026-07-03" }),
+        ]));
+        expect(view.supplementalSessions.some((item) => item.sessionIndex === 1)).toBe(false);
+    });
+
+    it("archives a case session at start - 8 outside the lifecycle window", () => {
+        const view = buildAdminServiceRecordView(windowOverview([
+            makeSession(1, { serviceDate: "2026-07-02" }),
+        ]));
+
+        expect(view.context.sessions.some((session) => session.sessionIndex === 1)).toBe(false);
+        expect(view.supplementalSessions).toEqual(expect.arrayContaining([
+            expect.objectContaining({
+                sessionIndex: 1,
+                session: expect.objectContaining({ serviceDate: "2026-07-02" }),
+                sourceLabel: expect.stringContaining("기간 밖 보관회차"),
+            }),
+        ]));
+    });
+
+    it("keeps an assignment-only session inside the lifecycle window", () => {
+        const view = buildAdminServiceRecordView({
+            ...overview,
+            record: null,
+            assignments: [assignment(7, [makeSession(2, { serviceDate: "2026-07-16" })])],
+        } as unknown as AdminServiceRecordEditorOverview);
+
+        expect(view.context.sessions).toEqual(expect.arrayContaining([
+            expect.objectContaining({ sessionIndex: 2, serviceDate: "2026-07-16" }),
+        ]));
+        expect(view.supplementalSessions).toEqual([]);
+    });
+
+    it("renders a submitted lifecycle window session with its signature in editing mode", () => {
+        const { container } = render(
+            <ServiceRecordAdminWizard clientId="42" initialDraftState={makeDraftState()} overview={windowOverview([
+                makeSession(4, {
+                    serviceDate: "2026-07-21",
+                    locked: true,
+                    submittedAt: "2026-07-21T01:00:00.000Z",
+                    clientSignature: "data:image/png;base64,window-signature",
+                    clientSignedAt: "2026-07-21T01:00:00.000Z",
+                }),
+            ])} />,
+        );
+
+        const dayCard = container.querySelectorAll('[data-slot="day"]')[3];
+        expect(dayCard).toHaveTextContent("제출완료");
+        expect(dayCard).not.toHaveTextContent("편집 가능");
+        expect([...container.querySelectorAll('[data-slot="supplemental"] button')]
+            .some((button) => /4회차/.test(button.textContent ?? ""))).toBe(false);
+        fireEvent.click(dayCard);
+        expect(screen.getByRole("img", { name: "산모 서명" }))
+            .toHaveAttribute("src", "data:image/png;base64,window-signature");
     });
 
     it("renders all sessions as navigable read-only days and preserves out-of-period dates", () => {
@@ -1060,7 +1162,7 @@ describe("per-session administrator editing", () => {
         expect(screen.getByRole("button", { name: "확인" })).toBeInTheDocument();
     });
 
-    it("cancels a date collision without changing dates or writing, then stages an approved move", async () => {
+    it("picking the next session date opens the follow prompt with only the suffix move enabled, then stages it", async () => {
         const { container } = open();
         fireEvent.click(container.querySelector('[data-component$="_body_date-edit"]')!);
         fireEvent.click(screen.getAllByRole("combobox")[2]);
@@ -1070,6 +1172,7 @@ describe("per-session administrator editing", () => {
         expect(modal).toHaveTextContent("1회차의 서비스 제공일을 1영업일만큼 변경합니다. 뒷 회차들도 동일하게 변경할까요?");
         expect(modal).toHaveTextContent("다음 회차와 날짜가 겹쳐 뒷 회차들을 그대로 둘 수 없어요.");
         expect(within(modal).getByRole("button", { name: "그대로 두기" })).toBeDisabled();
+        expect(within(modal).getByRole("button", { name: "변경하기" })).toBeEnabled();
         fireEvent.keyDown(modal, { key: "Escape" });
         expect(adminServiceRecordEditApi.updateDraft).not.toHaveBeenCalled();
         fireEvent.click(screen.getAllByRole("combobox")[2]);
@@ -1186,6 +1289,68 @@ describe("per-session administrator editing", () => {
         const calls = jest.mocked(adminServiceRecordEditApi.confirmDraft).mock.calls;
         expect(calls[1]).toEqual(calls[0]);
         expect(adminServiceRecordEditApi.startDraft).toHaveBeenCalledTimes(1);
+    });
+
+    it.each([
+        ["2026-09-07", "16일", "17일"],
+        ["2026-08-31", "31일", "28일"],
+    ])("uses the case window's inclusive edges in the date dialog (current %s)", (firstDate, edge, outside) => {
+        const record = sessionOverview.record!;
+        const projection = sessionOverview.scheduleProjection!;
+        const boundedOverview = {
+            ...sessionOverview,
+            record: { ...record, sessions: record.sessions.map((session) => session.sessionIndex === 1
+                ? { ...session, serviceDate: firstDate } : session) },
+            scheduleProjection: { ...projection, entries: projection.entries.map((entry) => entry.sessionIndex === 1
+                ? { ...entry, serviceDate: firstDate, originalDate: firstDate } : entry) },
+        };
+        const { container } = render(<ServiceRecordAdminWizard clientId="42" overview={boundedOverview} initialDraftState={{ ...makeDraftState(), draft: null }} />);
+        fireEvent.click(container.querySelectorAll('[data-slot="day"]')[0]);
+        fireEvent.click(container.querySelector('[data-component$="_body_date-edit"]')!);
+        fireEvent.click(screen.getByRole("combobox", { name: "일" }));
+        // Case 09-07 .. 09-09 allows 08-31 .. 09-16, regardless of the current session date.
+        expect(screen.getByRole("option", { name: edge })).toBeInTheDocument();
+        expect(screen.queryByRole("option", { name: outside })).not.toBeInTheDocument();
+        fireEvent.click(screen.getByRole("option", { name: edge }));
+    });
+
+    it.each([
+        [400, "SERVICE_DATE_OUT_OF_RANGE", "고를 수 있는 기간이 아니에요 (3회차)"],
+        [400, "SCHEDULE_WITH_DATE_MOVE", "저장 결과를 확인하지 못했습니다. 수정사항은 이 화면에 남아 있어요."],
+        [400, "REALIGNMENT_REQUIRES_MANUAL_SCHEDULE", "저장 결과를 확인하지 못했습니다. 수정사항은 이 화면에 남아 있어요."],
+        [400, "UNKNOWN_SCHEDULE_CODE", "저장 결과를 확인하지 못했습니다. 수정사항은 이 화면에 남아 있어요."],
+        [500, "SERVICE_DATE_OUT_OF_RANGE", "저장 결과를 확인하지 못했습니다. 수정사항은 이 화면에 남아 있어요."],
+    ])("explains a refused date move safely (status %s, code %s)", async (status, scheduleCode, label) => {
+        jest.mocked(adminServiceRecordEditApi.updateDraft).mockRejectedValueOnce(new AdminServiceRecordEditApiError(status, {
+            code: "VALIDATION_FAILED", scheduleCode, sessionIndex: 3,
+        }));
+        const { container } = render(<ServiceRecordAdminWizard clientId="42" overview={sessionOverview} initialDraftState={{ ...makeDraftState(), draft: null }} />);
+        fireEvent.click(container.querySelectorAll('[data-slot="day"]')[2]);
+        pickDate(container, "3회차", "10일");
+        acceptEdit();
+        await screen.findByRole("button", { name: "수정 확정" });
+        fireEvent.click(screen.getByRole("button", { name: "수정 확정" }));
+        await screen.findByText(label);
+        expect(adminServiceRecordEditApi.updateDraft).toHaveBeenCalledWith("draft-1", 1, {}, {
+            sessionIndex: 3, toDate: "2026-09-10", shiftFollowing: false,
+        });
+        expect(adminServiceRecordEditApi.previewDraft).not.toHaveBeenCalled();
+        expect(container.querySelectorAll('[data-slot="day"]')[2]).toHaveTextContent("수정됨");
+    });
+
+    it("shows the Korean out-of-window preview reason and prevents confirm", async () => {
+        jest.mocked(adminServiceRecordEditApi.previewDraft).mockResolvedValue({
+            ...confirmPreviewResponse,
+            blockingReasons: [{ code: "SERVICE_DATE_OUT_OF_RANGE", message: "고를 수 있는 기간이 아니에요.", sessionIndex: 1 }],
+        } as Awaited<ReturnType<typeof adminServiceRecordEditApi.previewDraft>>);
+        const { container } = open();
+        editNote(container);
+        acceptEdit();
+        await screen.findByRole("button", { name: "수정 확정" });
+        await startCommit();
+        expect(within(previewDialog()).getByText("고를 수 있는 기간이 아니에요 (1회차)")).toBeInTheDocument();
+        expect(within(previewDialog()).queryByRole("button", { name: "수정 확정" })).not.toBeInTheDocument();
+        expect(adminServiceRecordEditApi.confirmDraft).not.toHaveBeenCalled();
     });
 
     it("stages an approved collision shift and sends it with the explicit suffix flag on 수정 확정", async () => {
@@ -1819,10 +1984,10 @@ describe("administrator mode never flags a cleared answer", () => {
         context: { totalSessions: 5, startDate: "2026-09-21", header: null, sessions: [] },
         header: wizardHeader, day: 1, pageIdx: 0, draft: {}, editing: true, clientSignature: null,
         busy: false, isRecordFinalized: false, lockedDays: new Set<number>(), nextOpenDay: () => 1,
-        scheduleChangeBusy: false, hasServiceDateMismatch: false, defaultDate: () => "2026-09-21",
+        hasServiceDateMismatch: false, defaultDate: () => "2026-09-21",
         onPhoneChange: jest.fn(), onSubmitPhone: jest.fn(), onBack: jest.fn(), onHeaderChange: jest.fn(),
         onDeliveryTypeChange: jest.fn(), onSaveHeader: jest.fn(), onOpenDay: jest.fn(),
-        onOpenScheduleChangePreview: jest.fn(), onServiceDateChange: jest.fn(), onFieldChange: jest.fn(),
+        onServiceDateChange: jest.fn(), onFieldChange: jest.fn(),
         onToggleMulti: jest.fn(), onSignatureChange: jest.fn(), onNextPage: jest.fn(),
         onOpenSubmitModal: jest.fn(), onEditSection: jest.fn(), ...overrides,
     });

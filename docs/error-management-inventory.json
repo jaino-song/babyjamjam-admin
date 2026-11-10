@@ -2695,14 +2695,6 @@
       "discovery_task_id": "1.1.01"
     },
     {
-      "path": "backend/application/services/schedule-change.service.ts",
-      "root": "backend/application/",
-      "kind": "runtime",
-      "candidate_count": 57,
-      "review_status": "reviewed",
-      "discovery_task_id": "1.1.01"
-    },
-    {
       "path": "backend/application/services/scheduler-execution.guard.ts",
       "root": "backend/application/",
       "kind": "runtime",
@@ -6631,14 +6623,6 @@
       "discovery_task_id": "1.1.04"
     },
     {
-      "path": "backend/interface/controllers/schedule-change.controller.ts",
-      "root": "backend/interface/",
-      "kind": "runtime",
-      "candidate_count": 4,
-      "review_status": "reviewed",
-      "discovery_task_id": "1.1.04"
-    },
-    {
       "path": "backend/interface/controllers/service-record-entry.controller.ts",
       "root": "backend/interface/",
       "kind": "runtime",
@@ -6952,14 +6936,6 @@
     },
     {
       "path": "backend/interface/dto/refresh-token.dto.ts",
-      "root": "backend/interface/",
-      "kind": "runtime",
-      "candidate_count": 0,
-      "review_status": "unverified",
-      "discovery_task_id": "1.1.04"
-    },
-    {
-      "path": "backend/interface/dto/schedule-change.dto.ts",
       "root": "backend/interface/",
       "kind": "runtime",
       "candidate_count": 0,
@@ -9279,14 +9255,6 @@
       "discovery_task_id": "1.1.07"
     },
     {
-      "path": "backend/test/integration/schedule-change.controller.integration.spec.ts",
-      "root": "backend/test/",
-      "kind": "test",
-      "candidate_count": 7,
-      "review_status": "unverified",
-      "discovery_task_id": "1.1.07"
-    },
-    {
       "path": "backend/test/integration/service-record.schedule-change.integration.spec.ts",
       "root": "backend/test/",
       "kind": "test",
@@ -10491,14 +10459,6 @@
       "root": "backend/test/",
       "kind": "test",
       "candidate_count": 4,
-      "review_status": "unverified",
-      "discovery_task_id": "1.1.07"
-    },
-    {
-      "path": "backend/test/unit/schedule-change.service.spec.ts",
-      "root": "backend/test/",
-      "kind": "test",
-      "candidate_count": 7,
       "review_status": "unverified",
       "discovery_task_id": "1.1.07"
     },
@@ -13119,46 +13079,6 @@
       "discovery_task_id": "1.1.08"
     },
     {
-      "path": "frontend/src/app/api/schedule-change-requests/[id]/approve/route.ts",
-      "root": "frontend/src/",
-      "kind": "runtime",
-      "candidate_count": 2,
-      "review_status": "reviewed",
-      "discovery_task_id": "1.1.08"
-    },
-    {
-      "path": "frontend/src/app/api/schedule-change-requests/[id]/reject/route.ts",
-      "root": "frontend/src/",
-      "kind": "runtime",
-      "candidate_count": 3,
-      "review_status": "reviewed",
-      "discovery_task_id": "1.1.08"
-    },
-    {
-      "path": "frontend/src/app/api/schedule-change-requests/schedules/[scheduleId]/apply/route.ts",
-      "root": "frontend/src/",
-      "kind": "runtime",
-      "candidate_count": 3,
-      "review_status": "reviewed",
-      "discovery_task_id": "1.1.08"
-    },
-    {
-      "path": "frontend/src/app/api/schedule-change-requests/schedules/[scheduleId]/preview/route.ts",
-      "root": "frontend/src/",
-      "kind": "runtime",
-      "candidate_count": 2,
-      "review_status": "reviewed",
-      "discovery_task_id": "1.1.08"
-    },
-    {
-      "path": "frontend/src/app/api/schedule-change-requests/schedules/__tests__/schedule-change-routes.test.ts",
-      "root": "frontend/src/",
-      "kind": "test",
-      "candidate_count": 0,
-      "review_status": "unverified",
-      "discovery_task_id": "1.1.08"
-    },
-    {
       "path": "frontend/src/app/api/settings/client-registration-policy/route.ts",
       "root": "frontend/src/",
       "kind": "runtime",
@@ -13847,14 +13767,6 @@
       "discovery_task_id": "1.1.08"
     },
     {
-      "path": "frontend/src/components/app/clients/ServiceScheduleChangeModal.tsx",
-      "root": "frontend/src/",
-      "kind": "runtime",
-      "candidate_count": 0,
-      "review_status": "unverified",
-      "discovery_task_id": "1.1.08"
-    },
-    {
       "path": "frontend/src/components/app/clients/__tests__/ClientAutocomplete.test.tsx",
       "root": "frontend/src/",
       "kind": "test",
@@ -13976,14 +13888,6 @@
     },
     {
       "path": "frontend/src/components/app/clients/__tests__/ServiceRecordLinkResetResultModal.test.tsx",
-      "root": "frontend/src/",
-      "kind": "test",
-      "candidate_count": 0,
-      "review_status": "unverified",
-      "discovery_task_id": "1.1.08"
-    },
-    {
-      "path": "frontend/src/components/app/clients/__tests__/ServiceScheduleChangeModal.test.tsx",
       "root": "frontend/src/",
       "kind": "test",
       "candidate_count": 0,
@@ -16943,22 +16847,6 @@
       "discovery_task_id": "1.1.08"
     },
     {
-      "path": "frontend/src/features/service-records/utils/schedule-change-error.test.ts",
-      "root": "frontend/src/",
-      "kind": "test",
-      "candidate_count": 0,
-      "review_status": "unverified",
-      "discovery_task_id": "1.1.08"
-    },
-    {
-      "path": "frontend/src/features/service-records/utils/schedule-change-error.ts",
-      "root": "frontend/src/",
-      "kind": "runtime",
-      "candidate_count": 0,
-      "review_status": "unverified",
-      "discovery_task_id": "1.1.08"
-    },
-    {
       "path": "frontend/src/features/system-templates/catalog.test.ts",
       "root": "frontend/src/",
       "kind": "test",
@@ -18608,14 +18496,6 @@
     },
     {
       "path": "frontend/tests/clients-service-record-link-reset.spec.ts",
-      "root": "frontend/tests/",
-      "kind": "test",
-      "candidate_count": 0,
-      "review_status": "unverified",
-      "discovery_task_id": "1.1.09"
-    },
-    {
-      "path": "frontend/tests/clients-service-schedule-change.spec.ts",
       "root": "frontend/tests/",
       "kind": "test",
       "candidate_count": 0,
@@ -21143,46 +21023,6 @@
       "discovery_task_id": "1.1.10"
     },
     {
-      "path": "mobile/src/app/api/schedule-change-requests/[id]/approve/route.ts",
-      "root": "mobile/src/",
-      "kind": "runtime",
-      "candidate_count": 3,
-      "review_status": "reviewed",
-      "discovery_task_id": "1.1.10"
-    },
-    {
-      "path": "mobile/src/app/api/schedule-change-requests/[id]/reject/route.ts",
-      "root": "mobile/src/",
-      "kind": "runtime",
-      "candidate_count": 4,
-      "review_status": "reviewed",
-      "discovery_task_id": "1.1.10"
-    },
-    {
-      "path": "mobile/src/app/api/schedule-change-requests/__tests__/schedule-change-routes.test.ts",
-      "root": "mobile/src/",
-      "kind": "test",
-      "candidate_count": 0,
-      "review_status": "unverified",
-      "discovery_task_id": "1.1.10"
-    },
-    {
-      "path": "mobile/src/app/api/schedule-change-requests/schedules/[scheduleId]/apply/route.ts",
-      "root": "mobile/src/",
-      "kind": "runtime",
-      "candidate_count": 4,
-      "review_status": "reviewed",
-      "discovery_task_id": "1.1.10"
-    },
-    {
-      "path": "mobile/src/app/api/schedule-change-requests/schedules/[scheduleId]/preview/route.ts",
-      "root": "mobile/src/",
-      "kind": "runtime",
-      "candidate_count": 3,
-      "review_status": "reviewed",
-      "discovery_task_id": "1.1.10"
-    },
-    {
       "path": "mobile/src/app/api/service-record/[token]/__tests__/auth-routes.test.ts",
       "root": "mobile/src/",
       "kind": "test",
@@ -21216,14 +21056,6 @@
     },
     {
       "path": "mobile/src/app/api/service-record/[token]/link/route.ts",
-      "root": "mobile/src/",
-      "kind": "runtime",
-      "candidate_count": 3,
-      "review_status": "reviewed",
-      "discovery_task_id": "1.1.10"
-    },
-    {
-      "path": "mobile/src/app/api/service-record/[token]/schedule-change/preview/route.ts",
       "root": "mobile/src/",
       "kind": "runtime",
       "candidate_count": 3,
@@ -21791,14 +21623,6 @@
       "discovery_task_id": "1.1.10"
     },
     {
-      "path": "mobile/src/components/app/clients/ServiceScheduleChangeModal.tsx",
-      "root": "mobile/src/",
-      "kind": "runtime",
-      "candidate_count": 0,
-      "review_status": "unverified",
-      "discovery_task_id": "1.1.10"
-    },
-    {
       "path": "mobile/src/components/app/clients/__tests__/ClientAutocomplete.test.tsx",
       "root": "mobile/src/",
       "kind": "test",
@@ -21824,14 +21648,6 @@
     },
     {
       "path": "mobile/src/components/app/clients/__tests__/ServiceRecordLinkResetResultModal.test.tsx",
-      "root": "mobile/src/",
-      "kind": "test",
-      "candidate_count": 0,
-      "review_status": "unverified",
-      "discovery_task_id": "1.1.10"
-    },
-    {
-      "path": "mobile/src/components/app/clients/__tests__/ServiceScheduleChangeModal.test.tsx",
       "root": "mobile/src/",
       "kind": "test",
       "candidate_count": 0,
@@ -25260,22 +25076,6 @@
       "kind": "runtime",
       "candidate_count": 1,
       "review_status": "reviewed",
-      "discovery_task_id": "1.1.10"
-    },
-    {
-      "path": "mobile/src/lib/service-records/schedule-change-error.test.ts",
-      "root": "mobile/src/",
-      "kind": "test",
-      "candidate_count": 0,
-      "review_status": "unverified",
-      "discovery_task_id": "1.1.10"
-    },
-    {
-      "path": "mobile/src/lib/service-records/schedule-change-error.ts",
-      "root": "mobile/src/",
-      "kind": "runtime",
-      "candidate_count": 0,
-      "review_status": "unverified",
       "discovery_task_id": "1.1.10"
     },
     {
@@ -33664,422 +33464,6 @@
       "spec_mapping_note": "issue() generic Errors remapped to INTERNAL_ERROR; status/verify use result unions"
     },
     {
-      "id": "owner-ae01a698138b",
-      "path": "backend/application/services/schedule-change.service.ts",
-      "root": "backend/application/",
-      "classification": "migrated",
-      "reason": "Converted in 4c-2 (83dc3bcdb): all throws → codeOnlyProblemBody — 7 codes registered verbatim (PLANNED_DATE_UNAVAILABLE/INVALID_SCHEDULE_DATE/ALL_SESSIONS_SUBMITTED/REQUEST_ALREADY_PENDING/REQUEST_NOT_PENDING/SCHEDULE_DATE_NOT_POSTPONED/REQUEST_STALE), new SCHEDULE_CHANGE_UNCOMPUTABLE(409) for missing duration/date preconditions, 16 NFs → RESOURCE_NOT_FOUND, 7 lock conflicts → SERVICE_RECORD_WRITE_TARGET_CHANGED. Payload-only change; control flow identical.",
-      "seams": [
-        {
-          "line": 2,
-          "kinds": [
-            "raw_http_exception"
-          ]
-        },
-        {
-          "line": 3,
-          "kinds": [
-            "raw_http_exception"
-          ]
-        },
-        {
-          "line": 6,
-          "kinds": [
-            "raw_http_exception"
-          ]
-        },
-        {
-          "line": 103,
-          "kinds": [
-            "catch_boundary"
-          ]
-        },
-        {
-          "line": 121,
-          "kinds": [
-            "raw_http_exception",
-            "throw_or_reject"
-          ]
-        },
-        {
-          "line": 125,
-          "kinds": [
-            "catch_boundary"
-          ]
-        },
-        {
-          "line": 126,
-          "kinds": [
-            "raw_http_exception",
-            "throw_or_reject"
-          ]
-        },
-        {
-          "line": 192,
-          "kinds": [
-            "raw_http_exception",
-            "throw_or_reject"
-          ]
-        },
-        {
-          "line": 196,
-          "kinds": [
-            "raw_http_exception",
-            "throw_or_reject"
-          ]
-        },
-        {
-          "line": 202,
-          "kinds": [
-            "raw_http_exception",
-            "throw_or_reject"
-          ]
-        },
-        {
-          "line": 210,
-          "kinds": [
-            "raw_http_exception",
-            "throw_or_reject"
-          ]
-        },
-        {
-          "line": 223,
-          "kinds": [
-            "raw_http_exception",
-            "throw_or_reject"
-          ]
-        },
-        {
-          "line": 260,
-          "kinds": [
-            "raw_http_exception",
-            "throw_or_reject"
-          ]
-        },
-        {
-          "line": 261,
-          "kinds": [
-            "raw_http_exception",
-            "throw_or_reject"
-          ]
-        },
-        {
-          "line": 288,
-          "kinds": [
-            "raw_http_exception",
-            "throw_or_reject"
-          ]
-        },
-        {
-          "line": 289,
-          "kinds": [
-            "raw_http_exception",
-            "throw_or_reject"
-          ]
-        },
-        {
-          "line": 295,
-          "kinds": [
-            "raw_http_exception",
-            "throw_or_reject"
-          ]
-        },
-        {
-          "line": 308,
-          "kinds": [
-            "raw_http_exception",
-            "throw_or_reject"
-          ]
-        },
-        {
-          "line": 332,
-          "kinds": [
-            "catch_boundary"
-          ]
-        },
-        {
-          "line": 334,
-          "kinds": [
-            "raw_http_exception",
-            "throw_or_reject"
-          ]
-        },
-        {
-          "line": 336,
-          "kinds": [
-            "throw_or_reject"
-          ]
-        },
-        {
-          "line": 348,
-          "kinds": [
-            "raw_http_exception",
-            "throw_or_reject"
-          ]
-        },
-        {
-          "line": 353,
-          "kinds": [
-            "raw_http_exception",
-            "throw_or_reject"
-          ]
-        },
-        {
-          "line": 384,
-          "kinds": [
-            "raw_http_exception",
-            "throw_or_reject"
-          ]
-        },
-        {
-          "line": 396,
-          "kinds": [
-            "raw_http_exception",
-            "throw_or_reject"
-          ]
-        },
-        {
-          "line": 398,
-          "kinds": [
-            "raw_http_exception",
-            "throw_or_reject"
-          ]
-        },
-        {
-          "line": 404,
-          "kinds": [
-            "raw_http_exception",
-            "throw_or_reject"
-          ]
-        },
-        {
-          "line": 430,
-          "kinds": [
-            "raw_http_exception",
-            "throw_or_reject"
-          ]
-        },
-        {
-          "line": 449,
-          "kinds": [
-            "raw_http_exception",
-            "throw_or_reject"
-          ]
-        },
-        {
-          "line": 459,
-          "kinds": [
-            "raw_http_exception",
-            "throw_or_reject"
-          ]
-        },
-        {
-          "line": 597,
-          "kinds": [
-            "catch_boundary"
-          ]
-        },
-        {
-          "line": 602,
-          "kinds": [
-            "catch_boundary"
-          ]
-        },
-        {
-          "line": 622,
-          "kinds": [
-            "raw_http_exception",
-            "throw_or_reject"
-          ]
-        },
-        {
-          "line": 624,
-          "kinds": [
-            "raw_http_exception",
-            "throw_or_reject"
-          ]
-        },
-        {
-          "line": 631,
-          "kinds": [
-            "raw_http_exception",
-            "throw_or_reject"
-          ]
-        },
-        {
-          "line": 633,
-          "kinds": [
-            "raw_http_exception",
-            "throw_or_reject"
-          ]
-        },
-        {
-          "line": 648,
-          "kinds": [
-            "raw_http_exception",
-            "throw_or_reject"
-          ]
-        },
-        {
-          "line": 653,
-          "kinds": [
-            "raw_http_exception",
-            "throw_or_reject"
-          ]
-        },
-        {
-          "line": 655,
-          "kinds": [
-            "raw_http_exception",
-            "throw_or_reject"
-          ]
-        },
-        {
-          "line": 662,
-          "kinds": [
-            "raw_http_exception",
-            "throw_or_reject"
-          ]
-        },
-        {
-          "line": 679,
-          "kinds": [
-            "raw_http_exception",
-            "throw_or_reject"
-          ]
-        },
-        {
-          "line": 694,
-          "kinds": [
-            "throw_or_reject"
-          ]
-        },
-        {
-          "line": 823,
-          "kinds": [
-            "catch_boundary"
-          ]
-        },
-        {
-          "line": 833,
-          "kinds": [
-            "raw_http_exception",
-            "throw_or_reject"
-          ]
-        },
-        {
-          "line": 835,
-          "kinds": [
-            "throw_or_reject"
-          ]
-        },
-        {
-          "line": 840,
-          "kinds": [
-            "catch_boundary"
-          ]
-        },
-        {
-          "line": 845,
-          "kinds": [
-            "catch_boundary"
-          ]
-        },
-        {
-          "line": 859,
-          "kinds": [
-            "raw_http_exception",
-            "throw_or_reject"
-          ]
-        },
-        {
-          "line": 861,
-          "kinds": [
-            "raw_http_exception",
-            "throw_or_reject"
-          ]
-        },
-        {
-          "line": 879,
-          "kinds": [
-            "raw_http_exception",
-            "throw_or_reject"
-          ]
-        },
-        {
-          "line": 881,
-          "kinds": [
-            "raw_http_exception",
-            "throw_or_reject"
-          ]
-        },
-        {
-          "line": 909,
-          "kinds": [
-            "raw_http_exception",
-            "throw_or_reject"
-          ]
-        },
-        {
-          "line": 920,
-          "kinds": [
-            "raw_http_exception",
-            "throw_or_reject"
-          ]
-        },
-        {
-          "line": 935,
-          "kinds": [
-            "raw_http_exception",
-            "throw_or_reject"
-          ]
-        },
-        {
-          "line": 940,
-          "kinds": [
-            "raw_http_exception",
-            "throw_or_reject"
-          ]
-        },
-        {
-          "line": 942,
-          "kinds": [
-            "raw_http_exception",
-            "throw_or_reject"
-          ]
-        },
-        {
-          "line": 949,
-          "kinds": [
-            "raw_http_exception",
-            "throw_or_reject"
-          ]
-        }
-      ],
-      "discovery_task_id": "1.1.01",
-      "spec_ids": [
-        "EM-CAT-01",
-        "EM-CORE-01",
-        "EM-ARCH-01",
-        "EM-MAP-03"
-      ],
-      "public_codes": [],
-      "outcome_evidence": null,
-      "consumer_paths": [
-        "HTTP schedule-change.controller + service-record-entry.controller"
-      ],
-      "test_evidence": [
-        "backend/test/unit/schedule-change.service.spec.ts",
-        "backend/test/e2e/service-record-mirror-request-races.e2e.spec.ts",
-        "backend/test/integration/schedule-change.controller.integration.spec.ts",
-        "backend/test/integration/service-record.schedule-change.integration.spec.ts"
-      ],
-      "followup_task": null,
-      "review_task": "1.1-batch-b",
-      "spec_mapping_status": "mapped-em-v1",
-      "spec_mapping_note": "Non-catalog codes incl REQUEST_STALE and raw strings; concurrency-safe constraint handling"
-    },
-    {
       "id": "owner-1d1eaa6caa6e",
       "path": "backend/application/services/scheduler-lease.service.ts",
       "root": "backend/application/",
@@ -35275,8 +34659,7 @@
         "backend/test/e2e/service-record-confirm-provider-races.e2e.spec.ts",
         "backend/test/e2e/service-record-mirror-request-races.e2e.spec.ts",
         "backend/test/e2e/service-record-write-lock-races-lifecycle-client.e2e.spec.ts",
-        "backend/test/services/service-record-entry.service.spec.ts",
-        "backend/test/unit/schedule-change.service.spec.ts"
+        "backend/test/services/service-record-entry.service.spec.ts"
       ],
       "followup_task": null,
       "review_task": "1.1-batch-b",
@@ -50298,58 +49681,6 @@
       "spec_mapping_note": "raw NotFound/Gone/Unauthorized; expiry raw 410 should be REQUEST_EXPIRED"
     },
     {
-      "id": "owner-f48eaee777e7",
-      "path": "backend/interface/controllers/schedule-change.controller.ts",
-      "root": "backend/interface/",
-      "classification": "migrated",
-      "reason": "Converted in 6.1c (eae8a9849, audit SHIP 61cb, merge b4d08fea2): controller bodies -> registered problem codes; statuses preserved; tombstone 410s kept; receipts-lockout 423 + OAuth ?authError= redirect gaps carried.",
-      "seams": [
-        {
-          "line": 13,
-          "kinds": [
-            "http_endpoint"
-          ]
-        },
-        {
-          "line": 21,
-          "kinds": [
-            "http_endpoint"
-          ]
-        },
-        {
-          "line": 31,
-          "kinds": [
-            "http_endpoint"
-          ]
-        },
-        {
-          "line": 37,
-          "kinds": [
-            "http_endpoint"
-          ]
-        }
-      ],
-      "discovery_task_id": "1.1.04",
-      "spec_ids": [
-        "EM-API-01",
-        "EM-CAT-01",
-        "EM-VAL-04",
-        "EM-API-02"
-      ],
-      "public_codes": [],
-      "outcome_evidence": "Raw 400 and {code} bodies; no registered code/outcome.",
-      "consumer_paths": [
-        "/schedule-change-requests/*; web/mobile schedule UI"
-      ],
-      "test_evidence": [
-        "backend/test/integration/schedule-change.controller.integration.spec.ts"
-      ],
-      "followup_task": null,
-      "review_task": "1.1-batch-a",
-      "spec_mapping_status": "mapped-em-v1",
-      "spec_mapping_note": "ParseIntPipe raw and delegated raw strings/{code}; register codes in problem body 4c-2 서비스 throw는 전환됨; 컨트롤러 ParseIntPipe raw 400은 별도 단위(carried)."
-    },
-    {
       "id": "owner-2eed8aeecd0a",
       "path": "backend/interface/controllers/service-record-entry.controller.ts",
       "root": "backend/interface/",
@@ -57471,178 +56802,6 @@
       "review_task": "1.1-batch-c",
       "spec_mapping_status": "mapped-em-v1",
       "spec_mapping_note": "410 tombstone emits non-catalog EFORMSIGN_CREDENTIALS_SERVER_ONLY with raw English body"
-    },
-    {
-      "id": "owner-aa0104d3eb83",
-      "path": "frontend/src/app/api/schedule-change-requests/[id]/approve/route.ts",
-      "root": "frontend/src/",
-      "classification": "migrated",
-      "reason": "Converted in 4c-3 (4ec3297e8): raw 401 → unauthorizedResponse, upstream/raw-500 catch → errorResponse problem passthrough, success → backendJsonResponse+withNoStore.",
-      "seams": [
-        {
-          "line": 11,
-          "kinds": [
-            "http_endpoint"
-          ]
-        },
-        {
-          "line": 25,
-          "kinds": [
-            "catch_boundary"
-          ]
-        }
-      ],
-      "discovery_task_id": "1.1.08",
-      "spec_ids": [
-        "EM-API-01",
-        "EM-API-02",
-        "EM-API-04",
-        "EM-API-05",
-        "EM-CAT-01"
-      ],
-      "public_codes": [],
-      "outcome_evidence": null,
-      "consumer_paths": [
-        "frontend/src/features/clients/api/clients.api.ts"
-      ],
-      "test_evidence": [],
-      "followup_task": null,
-      "review_task": "1.1-batch-c",
-      "spec_mapping_status": "mapped-em-v1",
-      "spec_mapping_note": "Raw 401 and upstream body passthrough or raw 500; ignores problem contract"
-    },
-    {
-      "id": "owner-13a9a980c377",
-      "path": "frontend/src/app/api/schedule-change-requests/[id]/reject/route.ts",
-      "root": "frontend/src/",
-      "classification": "migrated",
-      "reason": "Converted in 4c-3 (4ec3297e8): raw 401 → unauthorizedResponse, upstream/raw-500 catch → errorResponse problem passthrough, success → backendJsonResponse+withNoStore.",
-      "seams": [
-        {
-          "line": 11,
-          "kinds": [
-            "http_endpoint"
-          ]
-        },
-        {
-          "line": 18,
-          "kinds": [
-            "catch_boundary"
-          ]
-        },
-        {
-          "line": 26,
-          "kinds": [
-            "catch_boundary"
-          ]
-        }
-      ],
-      "discovery_task_id": "1.1.08",
-      "spec_ids": [
-        "EM-API-01",
-        "EM-API-02",
-        "EM-API-04",
-        "EM-API-05",
-        "EM-CAT-01"
-      ],
-      "public_codes": [],
-      "outcome_evidence": null,
-      "consumer_paths": [
-        "frontend/src/features/clients/api/clients.api.ts"
-      ],
-      "test_evidence": [],
-      "followup_task": null,
-      "review_task": "1.1-batch-c",
-      "spec_mapping_status": "mapped-em-v1",
-      "spec_mapping_note": "Raw 401 and upstream passthrough or raw 500"
-    },
-    {
-      "id": "owner-114e6f1d3549",
-      "path": "frontend/src/app/api/schedule-change-requests/schedules/[scheduleId]/apply/route.ts",
-      "root": "frontend/src/",
-      "classification": "migrated",
-      "reason": "Converted in 4c-3 (4ec3297e8): raw 401 → unauthorizedResponse, upstream/raw-500 catch → errorResponse problem passthrough, success → backendJsonResponse+withNoStore.",
-      "seams": [
-        {
-          "line": 15,
-          "kinds": [
-            "http_endpoint"
-          ]
-        },
-        {
-          "line": 21,
-          "kinds": [
-            "catch_boundary"
-          ]
-        },
-        {
-          "line": 40,
-          "kinds": [
-            "catch_boundary"
-          ]
-        }
-      ],
-      "discovery_task_id": "1.1.08",
-      "spec_ids": [
-        "EM-API-01",
-        "EM-API-02",
-        "EM-API-04",
-        "EM-API-05",
-        "EM-CAT-01"
-      ],
-      "public_codes": [],
-      "outcome_evidence": null,
-      "consumer_paths": [
-        "frontend/src/features/service-records/api/service-records.api.ts"
-      ],
-      "test_evidence": [
-        "frontend/src/app/api/schedule-change-requests/schedules/__tests__/schedule-change-routes.test.ts"
-      ],
-      "followup_task": null,
-      "review_task": "1.1-batch-c",
-      "spec_mapping_status": "mapped-em-v1",
-      "spec_mapping_note": "Raw 401/400/500 plus upstream passthrough; no shared helper"
-    },
-    {
-      "id": "owner-c3f4352ee375",
-      "path": "frontend/src/app/api/schedule-change-requests/schedules/[scheduleId]/preview/route.ts",
-      "root": "frontend/src/",
-      "classification": "migrated",
-      "reason": "Converted in 4c-3 (4ec3297e8): raw 401 → unauthorizedResponse, upstream/raw-500 catch → errorResponse problem passthrough, success → backendJsonResponse+withNoStore.",
-      "seams": [
-        {
-          "line": 8,
-          "kinds": [
-            "http_endpoint"
-          ]
-        },
-        {
-          "line": 24,
-          "kinds": [
-            "catch_boundary"
-          ]
-        }
-      ],
-      "discovery_task_id": "1.1.08",
-      "spec_ids": [
-        "EM-API-01",
-        "EM-API-02",
-        "EM-API-04",
-        "EM-API-05",
-        "EM-CAT-01"
-      ],
-      "public_codes": [],
-      "outcome_evidence": null,
-      "consumer_paths": [
-        "frontend/src/features/service-records/api/service-records.api.ts"
-      ],
-      "test_evidence": [
-        "frontend/src/app/api/schedule-change-requests/schedules/__tests__/schedule-change-routes.test.ts"
-      ],
-      "followup_task": null,
-      "review_task": "1.1-batch-c",
-      "spec_mapping_status": "mapped-em-v1",
-      "spec_mapping_note": "Raw 401, upstream passthrough and raw 500 instead of shared contract"
     },
     {
       "id": "owner-8d8fc45ea99e",
@@ -70170,202 +69329,6 @@
       "spec_mapping_note": "tombstone raw body with non-catalog EFORMSIGN_CREDENTIALS_SERVER_ONLY and English error"
     },
     {
-      "id": "owner-0e8c77fa0adc",
-      "path": "mobile/src/app/api/schedule-change-requests/[id]/approve/route.ts",
-      "root": "mobile/src/",
-      "classification": "migrated",
-      "reason": "Converted in 4c-3 (4ec3297e8): raw English 400s → local problem helper (VALIDATION_FAILED, path/body pointers); shared-helper flow unchanged.",
-      "seams": [
-        {
-          "line": 19,
-          "kinds": [
-            "http_endpoint"
-          ]
-        },
-        {
-          "line": 35,
-          "kinds": [
-            "catch_boundary"
-          ]
-        },
-        {
-          "line": 36,
-          "kinds": [
-            "ui_error_handler"
-          ]
-        }
-      ],
-      "discovery_task_id": "1.1.10",
-      "spec_ids": [
-        "EM-API-01",
-        "EM-API-02",
-        "EM-CAT-01",
-        "EM-VAL-03"
-      ],
-      "public_codes": [],
-      "outcome_evidence": null,
-      "consumer_paths": [
-        "mobile/src/hooks/useClients.ts:46"
-      ],
-      "test_evidence": [
-        "mobile/src/app/api/schedule-change-requests/__tests__/schedule-change-routes.test.ts"
-      ],
-      "followup_task": null,
-      "review_task": "1.1-batch-d",
-      "spec_mapping_status": "mapped-em-v1",
-      "spec_mapping_note": "raw English {error} 400 for invalid request id; shared helpers otherwise"
-    },
-    {
-      "id": "owner-912f7e71d61c",
-      "path": "mobile/src/app/api/schedule-change-requests/[id]/reject/route.ts",
-      "root": "mobile/src/",
-      "classification": "migrated",
-      "reason": "Converted in 4c-3 (4ec3297e8): raw English 400s → local problem helper (VALIDATION_FAILED, path/body pointers); shared-helper flow unchanged.",
-      "seams": [
-        {
-          "line": 25,
-          "kinds": [
-            "http_endpoint"
-          ]
-        },
-        {
-          "line": 35,
-          "kinds": [
-            "catch_boundary"
-          ]
-        },
-        {
-          "line": 42,
-          "kinds": [
-            "catch_boundary"
-          ]
-        },
-        {
-          "line": 43,
-          "kinds": [
-            "ui_error_handler"
-          ]
-        }
-      ],
-      "discovery_task_id": "1.1.10",
-      "spec_ids": [
-        "EM-API-01",
-        "EM-API-02",
-        "EM-CAT-01",
-        "EM-VAL-03"
-      ],
-      "public_codes": [],
-      "outcome_evidence": null,
-      "consumer_paths": [
-        "mobile/src/hooks/useClients.ts:50"
-      ],
-      "test_evidence": [
-        "mobile/src/app/api/schedule-change-requests/__tests__/schedule-change-routes.test.ts"
-      ],
-      "followup_task": null,
-      "review_task": "1.1-batch-d",
-      "spec_mapping_status": "mapped-em-v1",
-      "spec_mapping_note": "raw English {error} 400 for invalid request id; shared helpers otherwise"
-    },
-    {
-      "id": "owner-ca6f0bc8cd97",
-      "path": "mobile/src/app/api/schedule-change-requests/schedules/[scheduleId]/apply/route.ts",
-      "root": "mobile/src/",
-      "classification": "migrated",
-      "reason": "Converted in 4c-3 (4ec3297e8): raw English 400s → local problem helper (VALIDATION_FAILED, path/body pointers); shared-helper flow unchanged.",
-      "seams": [
-        {
-          "line": 27,
-          "kinds": [
-            "http_endpoint"
-          ]
-        },
-        {
-          "line": 37,
-          "kinds": [
-            "catch_boundary"
-          ]
-        },
-        {
-          "line": 51,
-          "kinds": [
-            "catch_boundary"
-          ]
-        },
-        {
-          "line": 52,
-          "kinds": [
-            "ui_error_handler"
-          ]
-        }
-      ],
-      "discovery_task_id": "1.1.10",
-      "spec_ids": [
-        "EM-API-01",
-        "EM-API-02",
-        "EM-CAT-01",
-        "EM-VAL-03"
-      ],
-      "public_codes": [],
-      "outcome_evidence": null,
-      "consumer_paths": [
-        "mobile/src/hooks/useServiceRecords.ts:53"
-      ],
-      "test_evidence": [
-        "mobile/src/app/api/schedule-change-requests/__tests__/schedule-change-routes.test.ts"
-      ],
-      "followup_task": null,
-      "review_task": "1.1-batch-d",
-      "spec_mapping_status": "mapped-em-v1",
-      "spec_mapping_note": "raw English {error} bodies for invalid schedule id/date instead of validation helpers"
-    },
-    {
-      "id": "owner-39c924ef92ca",
-      "path": "mobile/src/app/api/schedule-change-requests/schedules/[scheduleId]/preview/route.ts",
-      "root": "mobile/src/",
-      "classification": "migrated",
-      "reason": "Converted in 4c-3 (4ec3297e8): raw English 400s → local problem helper (VALIDATION_FAILED, path/body pointers); shared-helper flow unchanged.",
-      "seams": [
-        {
-          "line": 19,
-          "kinds": [
-            "http_endpoint"
-          ]
-        },
-        {
-          "line": 34,
-          "kinds": [
-            "catch_boundary"
-          ]
-        },
-        {
-          "line": 35,
-          "kinds": [
-            "ui_error_handler"
-          ]
-        }
-      ],
-      "discovery_task_id": "1.1.10",
-      "spec_ids": [
-        "EM-API-01",
-        "EM-API-02",
-        "EM-CAT-01",
-        "EM-VAL-03"
-      ],
-      "public_codes": [],
-      "outcome_evidence": null,
-      "consumer_paths": [
-        "mobile/src/hooks/useServiceRecords.ts:43"
-      ],
-      "test_evidence": [
-        "mobile/src/app/api/schedule-change-requests/__tests__/schedule-change-routes.test.ts"
-      ],
-      "followup_task": null,
-      "review_task": "1.1-batch-d",
-      "spec_mapping_status": "mapped-em-v1",
-      "spec_mapping_note": "raw English {error} 400 invalid schedule id alongside shared helper delegation"
-    },
-    {
       "id": "owner-4d1d47241f4a",
       "path": "mobile/src/app/api/service-record/[token]/context/route.ts",
       "root": "mobile/src/",
@@ -70539,49 +69502,6 @@
       "outcome_evidence": "Owns no error boundary; upstream failures are shaped by shared errorResponse.",
       "consumer_paths": [
         "mobile/src/app/(public)/service-record/[token]/page.tsx:250"
-      ],
-      "test_evidence": [],
-      "followup_task": null,
-      "review_task": "1.1-batch-d",
-      "spec_mapping_status": "mapped-em-v1",
-      "spec_mapping_note": "catch delegates to shared errorResponse; no authored error body"
-    },
-    {
-      "id": "owner-1346a026c3ed",
-      "path": "mobile/src/app/api/service-record/[token]/schedule-change/preview/route.ts",
-      "root": "mobile/src/",
-      "classification": "no-direct-error-boundary",
-      "reason": "Catch at L14-L16 delegates to shared errorResponse; authors no error body.",
-      "seams": [
-        {
-          "line": 7,
-          "kinds": [
-            "http_endpoint"
-          ]
-        },
-        {
-          "line": 14,
-          "kinds": [
-            "catch_boundary"
-          ]
-        },
-        {
-          "line": 15,
-          "kinds": [
-            "ui_error_handler"
-          ]
-        }
-      ],
-      "discovery_task_id": "1.1.10",
-      "spec_ids": [
-        "EM-API-01",
-        "EM-API-02",
-        "EM-CAT-01"
-      ],
-      "public_codes": [],
-      "outcome_evidence": "Owns no error boundary; upstream failures are shaped by shared errorResponse.",
-      "consumer_paths": [
-        "mobile/src/app/(public)/service-record/[token]/page.tsx:492"
       ],
       "test_evidence": [],
       "followup_task": null,
@@ -77332,118 +76252,30 @@
       "path": "backend/application/services/service-record-schedule-realignment.service.ts",
       "root": "backend/application/",
       "classification": "migrated",
-      "reason": "Added by client-service-day-toggles Task 4.1 (re-lay a client's remaining service-record sessions when its service-day flags change, called from ClientService.update and reuse-create); discovered unclassified by the raw-error intake gate. Fully on-contract: every throw is a registered problem body. Client missing on the locked reread or client/case outside the caller branch -> ConflictException(codeOnlyProblemBody SERVICE_RECORD_WRITE_TARGET_CHANGED) 409; stored planned vector unreadable -> ConflictException(codeOnlyProblemBody SERVICE_RECORD_PLANNED_DATE_UNAVAILABLE) 409; re-lay crossing an inner handover boundary, failing the vector validation or the employee-schedule overlap check, or a ServiceRecordEditConflictError from assignmentWrites -> ConflictException(problemBody REQUEST_CONFLICT) 409 with the scheduleCode extension REALIGNMENT_REQUIRES_MANUAL_SCHEDULE; any other error rethrown unchanged. BadRequestException is referenced only in an instanceof check. No new codes.",
+      "reason": "Added by client-service-day-toggles Task 4.1; the realignment class and its specs were removed by locked-day-any-caregiver (client 토·일·공휴일 saves no longer re-lay dates), leaving shared helpers only. Helpers: manualScheduleConflict builds ConflictException(problemBody REQUEST_CONFLICT) 409 with the scheduleCode extension REALIGNMENT_REQUIRES_MANUAL_SCHEDULE (thrown by ClientService.update when a start-date change needs a manual schedule); parsePlannedVector swallows only the vector validation error and returns null so callers map it to their own registered code; refreshTokenExpiry and persistReevaluationIntents do not throw on their own. No new codes.",
       "seams": [
         {
-          "line": 1,
+          "line": 2,
           "kinds": [
             "raw_http_exception"
           ]
         },
         {
-          "line": 78,
+          "line": 23,
           "kinds": [
             "raw_http_exception"
           ]
         },
         {
-          "line": 79,
-          "kinds": [
-            "raw_http_exception",
-            "throw_or_reject"
-          ]
-        },
-        {
-          "line": 160,
-          "kinds": [
-            "catch_boundary"
-          ]
-        },
-        {
-          "line": 222,
-          "kinds": [
-            "throw_or_reject"
-          ]
-        },
-        {
-          "line": 245,
-          "kinds": [
-            "raw_http_exception",
-            "throw_or_reject"
-          ]
-        },
-        {
-          "line": 251,
-          "kinds": [
-            "raw_http_exception",
-            "throw_or_reject"
-          ]
-        },
-        {
-          "line": 284,
-          "kinds": [
-            "raw_http_exception",
-            "throw_or_reject"
-          ]
-        },
-        {
-          "line": 325,
-          "kinds": [
-            "catch_boundary"
-          ]
-        },
-        {
-          "line": 326,
-          "kinds": [
-            "throw_or_reject"
-          ]
-        },
-        {
-          "line": 345,
-          "kinds": [
-            "catch_boundary"
-          ]
-        },
-        {
-          "line": 346,
-          "kinds": [
-            "throw_or_reject"
-          ]
-        },
-        {
-          "line": 347,
-          "kinds": [
-            "throw_or_reject"
-          ]
-        },
-        {
-          "line": 594,
-          "kinds": [
-            "throw_or_reject"
-          ]
-        },
-        {
-          "line": 617,
-          "kinds": [
-            "catch_boundary"
-          ]
-        },
-        {
-          "line": 618,
+          "line": 24,
           "kinds": [
             "raw_http_exception"
           ]
         },
         {
-          "line": 619,
+          "line": 91,
           "kinds": [
-            "throw_or_reject"
-          ]
-        },
-        {
-          "line": 621,
-          "kinds": [
-            "throw_or_reject"
+            "catch_boundary"
           ]
         }
       ],
@@ -77456,7 +76288,9 @@
       "public_codes": [],
       "outcome_evidence": null,
       "consumer_paths": [
-        "HTTP client.controller (update, create reuseExistingClient) via ClientService"
+        "HTTP client.controller (update) via ClientService (manualScheduleConflict)",
+        "ServiceRecordStartDateChangeService (parsePlannedVector, persistReevaluationIntents, refreshTokenExpiry)",
+        "ServiceRecordPeriodMismatchService (persistReevaluationIntents, refreshTokenExpiry)"
       ],
       "test_evidence": [
         "backend/test/services/service-record-schedule-realignment.service.spec.ts",
@@ -77523,6 +76357,81 @@
       "test_evidence": [
         "backend/test/services/service-record-start-date-change.service.spec.ts",
         "backend/test/services/client.service.spec.ts"
+      ],
+      "followup_task": null,
+      "review_task": null,
+      "spec_mapping_status": "mapped-em-v1",
+      "spec_mapping_note": "Registered codes only"
+    },
+    {
+      "id": "owner-a270f4ad0a2a",
+      "path": "backend/application/services/service-record-period-mismatch.service.ts",
+      "root": "backend/application/",
+      "classification": "migrated",
+      "reason": "Added by locked-day-any-caregiver (admin [유지]/[변경] out-of-period keep/fit API, called from AdminServiceRecordService.keepPeriodMismatch/fitPeriodMismatch in one transaction); discovered unclassified by the raw-error intake gate. Fully on-contract: every throw is a registered problem body. Case or client missing for the caller branch on the first read -> NotFoundException(codeOnlyProblemBody RESOURCE_NOT_FOUND) 404; case/client gone or replaced on the locked reread -> ConflictException(codeOnlyProblemBody SERVICE_RECORD_WRITE_TARGET_CHANGED) 409; case in an immutable finalization status -> ConflictException(codeOnlyProblemBody SERVICE_RECORD_FINALIZED) 409; keep with empty/duplicate/non-integer/not-out-of-period sessionIndexes -> BadRequestException(problemBody VALIDATION_FAILED, pointer /sessionIndexes, INVALID_VALUE, body) 400. The catch in servicePeriodSessionCount swallows only UnsupportedKoreanHolidayYearError (returns the stored count) and rethrows everything else. No new codes.",
+      "seams": [
+        {
+          "line": 1,
+          "kinds": [
+            "raw_http_exception"
+          ]
+        },
+        {
+          "line": 63,
+          "kinds": [
+            "catch_boundary"
+          ]
+        },
+        {
+          "line": 68,
+          "kinds": [
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 84,
+          "kinds": [
+            "raw_http_exception",
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 97,
+          "kinds": [
+            "raw_http_exception",
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 100,
+          "kinds": [
+            "raw_http_exception",
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 127,
+          "kinds": [
+            "raw_http_exception",
+            "throw_or_reject"
+          ]
+        }
+      ],
+      "discovery_task_id": "locked-day-any-caregiver-period-mismatch-intake",
+      "spec_ids": [
+        "EM-CAT-01",
+        "EM-CORE-01",
+        "EM-ARCH-01"
+      ],
+      "public_codes": [],
+      "outcome_evidence": null,
+      "consumer_paths": [
+        "HTTP admin-service-record.controller (keepPeriodMismatch, fitPeriodMismatch) via AdminServiceRecordService"
+      ],
+      "test_evidence": [
+        "backend/test/services/service-record-period-mismatch.service.spec.ts",
+        "backend/test/services/admin-service-record.service.spec.ts",
+        "backend/interface/controllers/admin-service-record.controller.spec.ts"
       ],
       "followup_task": null,
       "review_task": null,

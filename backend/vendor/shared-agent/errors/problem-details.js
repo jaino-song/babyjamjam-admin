@@ -69,11 +69,8 @@ const PROBLEM_CODES = [
     "SERVICE_RECORD_PLANNED_DATE_UNAVAILABLE",
     "INVALID_SCHEDULE_DATE",
     "ALL_SESSIONS_SUBMITTED",
-    "REQUEST_ALREADY_PENDING",
     "REQUEST_NOT_PENDING",
-    "SCHEDULE_DATE_NOT_POSTPONED",
     "REQUEST_STALE",
-    "SCHEDULE_CHANGE_UNCOMPUTABLE",
     // Registered service-record period-lock codes (thrown by validatePeriodChange; shipped identifiers verbatim).
     "SERVICE_RECORD_FINALIZED",
     "SERVICE_RECORD_START_DATE_LOCKED",
@@ -641,17 +638,6 @@ const PROBLEM_DEFINITIONS = {
             "en-US": "Every session has already been submitted, so the schedule cannot be changed.",
         },
     },
-    REQUEST_ALREADY_PENDING: {
-        status: 409,
-        title: {
-            "ko-KR": "대기 중인 일정 변경 요청이 있어요",
-            "en-US": "A schedule change request is pending",
-        },
-        detail: {
-            "ko-KR": "처리 대기 중인 일정 변경 요청이 있어 새 요청을 만들 수 없어요.",
-            "en-US": "A schedule change request is already pending, so a new one cannot be created.",
-        },
-    },
     REQUEST_NOT_PENDING: {
         status: 409,
         title: {
@@ -663,17 +649,6 @@ const PROBLEM_DEFINITIONS = {
             "en-US": "This request was already approved or canceled, so it cannot be processed again.",
         },
     },
-    SCHEDULE_DATE_NOT_POSTPONED: {
-        status: 409,
-        title: {
-            "ko-KR": "이후 날짜로만 변경할 수 있어요",
-            "en-US": "Only a later date is allowed",
-        },
-        detail: {
-            "ko-KR": "기존 회차보다 이후 날짜로만 일정을 적용할 수 있어요.",
-            "en-US": "The schedule can only be applied to a date after the existing session.",
-        },
-    },
     REQUEST_STALE: {
         status: 409,
         title: {
@@ -683,17 +658,6 @@ const PROBLEM_DEFINITIONS = {
         detail: {
             "ko-KR": "요청 이후 일정이 바뀌어 적용할 수 없어요. 최신 상태를 확인해 주세요.",
             "en-US": "The schedule changed after the request was created, so it cannot be applied. Check the latest state.",
-        },
-    },
-    SCHEDULE_CHANGE_UNCOMPUTABLE: {
-        status: 409,
-        title: {
-            "ko-KR": "일정을 계산할 수 없어요",
-            "en-US": "The schedule could not be calculated",
-        },
-        detail: {
-            "ko-KR": "고객 회기 정보나 배정 기간이 없어 일정을 계산할 수 없어요. 정보를 확인한 뒤 다시 시도해 주세요.",
-            "en-US": "The client's session count or assignment period is missing, so the schedule could not be calculated. Check the information and try again.",
         },
     },
     // Registered service-record period-lock codes (thrown by validatePeriodChange; shipped identifiers verbatim).
@@ -1383,7 +1347,7 @@ function parseProblemDetailsInternal(value, httpStatus, locale) {
     if (parsed.outcome === "UNKNOWN") {
         parsed.recovery = { action: "CHECK_STATUS", retry: { mode: "NEVER" } };
     }
-    // deletedEmployee and startDateLock are the only data-bearing extensions allowed through the BFF.
+    // Only validated, code-specific extensions are allowed through the BFF.
     if (parsed.code === "EMPLOYEE_PHONE_HELD_BY_DELETED") {
         const deletedEmployee = readOwn(value, "deletedEmployee").value;
         if (isRecord(deletedEmployee)) {
@@ -1406,6 +1370,14 @@ function parseProblemDetailsInternal(value, httpStatus, locale) {
                 && recordedSessionCount >= 0 && recordedSessionCount <= MAX_START_DATE_LOCK_SESSION_COUNT) {
                 parsed.startDateLock = { serviceStarted, recordedSessionCount };
             }
+        }
+    }
+    if (parsed.code === "VALIDATION_FAILED") {
+        const serviceDateReason = readOwn(value, "serviceDateReason").value;
+        if (serviceDateReason === "OUT_OF_RANGE" || serviceDateReason === "NOT_SERVICE_DAY"
+            || serviceDateReason === "TAKEN" || serviceDateReason === "BEFORE_PREVIOUS"
+            || serviceDateReason === "AFTER_NEXT" || serviceDateReason === "NO_ROOM_FOR_GAP") {
+            parsed.serviceDateReason = serviceDateReason;
         }
     }
     return parsed;

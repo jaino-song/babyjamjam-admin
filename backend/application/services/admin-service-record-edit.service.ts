@@ -17,7 +17,6 @@ import {
     validateServiceRecordEditText,
 } from "application/policies/service-record-answer-validation.policy";
 import {
-    assignmentWrites,
     buildServiceRecordEditPreview,
     confirmAssignmentWrites,
     draftResumeReplan,
@@ -80,8 +79,6 @@ import { HolidayCalendarService } from "application/services/holiday-calendar.se
 import { ServiceRecordCaseEventBus } from "application/services/service-record-case-event-bus.service";
 import { getServiceRecordFinalizationDueAt } from "domain/constants/service-record-link-message";
 
-// The schedule realignment service reuses the confirm's outer-edge rule from here.
-export { assignmentWrites };
 
 const EDITABLE_HEADER_KEYS = new Set([
     "momName",
@@ -549,7 +546,14 @@ export class AdminServiceRecordEditService {
         dto: CreateServiceRecordEditDraftDto = {},
     ): Promise<AdminServiceRecordEditStateDto> {
         const loaded = await this.loadSource(branchId, { clientId });
-        const changes = this.validateChanges(dto.changes, loaded.source);
+        const validatedChanges = this.validateChanges(dto.changes, loaded.source);
+        if (this.changesCarryServiceDate(validatedChanges)) {
+            const existing = await this.repository.findActiveDraft(branchId, loaded.source.caseId);
+            // createOrResumeDraft ignores input.changes on ACTIVE rows. Resume that
+            // row without normalizing dates which will never be applied.
+            if (existing) return this.state(existing, loaded);
+        }
+        const changes = await this.normalizeStartChanges(branchId, loaded.source, validatedChanges);
         const input: CreateServiceRecordEditDraftInput = {
             branchId,
             serviceRecordCaseId: loaded.source.caseId,
@@ -581,7 +585,9 @@ export class AdminServiceRecordEditService {
         dto: CreateServiceRecordEditDraftDto = {},
     ): Promise<AdminServiceRecordEditStateDto> {
         const loaded = await this.loadSource(branchId, { clientId });
-        const changes = this.validateChanges(dto.changes, loaded.source);
+        const changes = await this.normalizeStartChanges(
+            branchId, loaded.source, this.validateChanges(dto.changes, loaded.source),
+        );
         const input: CreateServiceRecordEditDraftInput = {
             branchId,
             serviceRecordCaseId: loaded.source.caseId,
@@ -662,47 +668,15 @@ export class AdminServiceRecordEditService {
         }
         // The normalized dates are persisted into the draft, so they are SAVED computations.
         const calendar = await this.holidayCalendar.forBranch(branchId, { fresh: true });
-        let changes: ServiceRecordEditJsonObject;
-        try {
-            changes = normalizeServiceRecordEditChanges(
-                target.loaded.source,
-                target.draft.changes,
-                validatedChanges,
-                calendar,
-                dto.dateMove as ServiceRecordEditDateMove | undefined,
-                schedule,
-                resumeReplan,
-            ).changes;
-        } catch (error) {
-            if (error instanceof ServiceRecordScheduleValidationError) {
-                // 일정 벡터 사유 코드는 카탈로그에 없는 실행시점 표기라서(EM-CAT-01)
-                // 등록된 검증 코드로 응답하고, 구체 사유는 호환 확장 키 scheduleCode로
-                // 전달해 화면이 사유를 구분할 수 있게 해요. 원인 텍스트는 호환 message로만 남겨요.
-                throw new BadRequestException({
-                    ...problemBody("VALIDATION_FAILED", {
-                        pointer: "/changes",
-                        code: "INVALID_VALUE",
-                        detail: "제공기록 일정 변경을 적용할 수 없어요.",
-                        location: "body",
-                    }),
-                    message: error.message,
-                    sessionIndex: error.sessionIndex,
-                    scheduleCode: error.code,
-                    // The chat agent asks the operator and retries with an explicit incomingAssignmentId.
-                    ...(error instanceof ServiceRecordResumeAssignmentError ? { candidates: error.candidates } : {}),
-                });
-            }
-            if (error instanceof UnsupportedKoreanHolidayYearError) {
-                // 공휴일 데이터가 없는 연도의 날짜는 서버 오류가 아니라 입력 거절이에요.
-                throw this.scheduleRejection(
-                    "UNSUPPORTED_HOLIDAY_YEAR",
-                    "/changes",
-                    "공휴일 정보가 없는 연도의 날짜는 선택할 수 없어요.",
-                    error.message,
-                );
-            }
-            throw error;
-        }
+        const changes = this.normalizeChanges(
+            target.loaded.source,
+            target.draft.changes,
+            validatedChanges,
+            calendar,
+            dto.dateMove as ServiceRecordEditDateMove | undefined,
+            schedule,
+            resumeReplan,
+        );
 
         let draft: ServiceRecordEditDraft;
         try {
@@ -1588,6 +1562,53 @@ export class AdminServiceRecordEditService {
             message,
             scheduleCode,
         });
+    }
+
+    private normalizeChanges(
+        ...args: Parameters<typeof normalizeServiceRecordEditChanges>
+    ): ServiceRecordEditJsonObject {
+        try {
+            return normalizeServiceRecordEditChanges(...args).changes;
+        } catch (error) {
+            if (error instanceof ServiceRecordScheduleValidationError) {
+                // 일정 벡터 사유 코드는 카탈로그에 없는 실행시점 표기라서(EM-CAT-01)
+                // 등록된 검증 코드로 응답하고, 구체 사유는 호환 확장 키 scheduleCode로
+                // 전달해 화면이 사유를 구분할 수 있게 해요. 원인 텍스트는 호환 message로만 남겨요.
+                throw new BadRequestException({
+                    ...problemBody("VALIDATION_FAILED", {
+                        pointer: "/changes",
+                        code: "INVALID_VALUE",
+                        detail: "제공기록 일정 변경을 적용할 수 없어요.",
+                        location: "body",
+                    }),
+                    message: error.message,
+                    sessionIndex: error.sessionIndex,
+                    scheduleCode: error.code,
+                    // The chat agent asks the operator and retries with an explicit incomingAssignmentId.
+                    ...(error instanceof ServiceRecordResumeAssignmentError ? { candidates: error.candidates } : {}),
+                });
+            }
+            if (error instanceof UnsupportedKoreanHolidayYearError) {
+                // 공휴일 데이터가 없는 연도의 날짜는 서버 오류가 아니라 입력 거절이에요.
+                throw this.scheduleRejection(
+                    "UNSUPPORTED_HOLIDAY_YEAR",
+                    "/changes",
+                    "공휴일 정보가 없는 연도의 날짜는 선택할 수 없어요.",
+                    error.message,
+                );
+            }
+            throw error;
+        }
+    }
+
+    private async normalizeStartChanges(
+        branchId: string,
+        source: ServiceRecordEditSource,
+        changes: ServiceRecordEditJsonObject | undefined,
+    ): Promise<ServiceRecordEditJsonObject | undefined> {
+        if (!this.changesCarryServiceDate(changes)) return changes;
+        const calendar = await this.holidayCalendar.forBranch(branchId, { fresh: true });
+        return this.normalizeChanges(source, undefined, changes!, calendar);
     }
 
     private changesCarryServiceDate(changes: ServiceRecordEditJsonObject | undefined): boolean {

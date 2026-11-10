@@ -10,8 +10,6 @@ jest.mock("@/providers/LocaleProvider", () => ({ useLocale: () => "ko" }));
 jest.mock("@/hooks/use-toast", () => ({ useToast: () => ({ toast: mockToast }) }));
 jest.mock("@/features/clients/hooks/use-clients", () => ({
   useConfirmBooking: () => ({ mutateAsync: mockConfirm, isPending: false }),
-  useApproveScheduleChange: () => ({ mutateAsync: jest.fn(), isPending: false }),
-  useRejectScheduleChange: () => ({ mutateAsync: jest.fn(), isPending: false }),
 }));
 jest.mock("@/features/message-triggers/hooks/use-message-triggers", () => ({
     useRetryMessageHistory: () => ({ mutateAsync: jest.fn(), isPending: false }),

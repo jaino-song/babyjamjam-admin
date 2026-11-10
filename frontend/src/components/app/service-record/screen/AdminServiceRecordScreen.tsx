@@ -201,7 +201,6 @@ export function AdminServiceRecordScreen({
 
             {/* SRW:1048-1051 */}
             {slots?.submitModal}
-            {slots?.scheduleChangeModal}
             {slots?.serviceDateChangeModal}
             {slots?.errorNotification}
         </div>

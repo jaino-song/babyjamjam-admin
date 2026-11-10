@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { ConflictException } from "@nestjs/common";
+import { BadRequestException, ConflictException } from "@nestjs/common";
 import { Prisma, PrismaClient } from "@prisma/client";
 
 import { AdminServiceRecordEditService } from "application/services/admin-service-record-edit.service";
@@ -253,8 +253,8 @@ describeE2E("service-record confirmation/provider lock races (real disposable Po
                 clientId: fixture.client.id,
             });
             const staleProviderError = await providerPromise.then(() => undefined, (error) => error);
-            expect(staleProviderError).toBeInstanceOf(ConflictException);
-            expect(conflictCode(staleProviderError)).toBe("REQUEST_CONFLICT");
+            expect(staleProviderError).toBeInstanceOf(BadRequestException);
+            expect(staleProviderError.getResponse()).toMatchObject({ code: "VALIDATION_FAILED" });
 
             const beforeRefresh = await readCaseState(prisma, fixture);
             expect(beforeRefresh.days).toHaveLength(3);

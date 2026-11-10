@@ -5,7 +5,6 @@ import {
     DAY_PAGES,
     getWizardProgress,
     resolvePlannedDates,
-    type ServiceRecordWizardSlots,
 } from "@babyjamjam/service-record-ui";
 
 import { ServiceRecordStepHeader } from "@/components/app/v3/ServiceRecordStepHeader";
@@ -20,7 +19,6 @@ import {
     INVALID_COPY,
     INVALID_TITLE,
     LOADING_COPY,
-    PLANNED_DATE_ERROR_COPY,
     SCREEN_TITLE,
     WRONG_LINK_COPY,
 } from "./ids";
@@ -43,7 +41,7 @@ export type MobileServiceRecordScreenProps = Omit<
     MobileServiceRecordWizardProps,
     "adminMode" | "readOnly" | "headerErrors" | "changedSessionIndexes" | "onOpenServiceDateEditor" | "slots"
 > & {
-    slots?: Pick<ServiceRecordWizardSlots, "submitModal" | "scheduleChangeModal" | "serviceDateChangeModal" | "errorNotification">;
+    slots?: MobileServiceRecordWizardProps["slots"];
 };
 
 /** A screen with no step of its own (loading / invalid / done): the root supplies the body. */
@@ -107,8 +105,7 @@ export function MobileServiceRecordScreen({
     isRecordFinalized,
     lockedDays,
     nextOpenDay,
-    scheduleChangeBusy,
-    hasServiceDateMismatch,
+    openDays,
     defaultDate,
     onPhoneChange,
     onSubmitPhone,
@@ -117,8 +114,6 @@ export function MobileServiceRecordScreen({
     onDeliveryTypeChange,
     onSaveHeader,
     onOpenDay,
-    onOpenScheduleChangePreview,
-    onServiceDateChange,
     onFieldChange,
     onToggleMulti,
     onSignatureChange,
@@ -126,6 +121,9 @@ export function MobileServiceRecordScreen({
     onOpenSubmitModal,
     onEditSection,
     slots,
+    onOpenDateSheet,
+    onDeleteSession,
+    serviceDateError,
     invalidReason,
 }: MobileServiceRecordScreenProps) {
     const child = (suffix: string) => `${root}_${suffix}`;
@@ -140,7 +138,7 @@ export function MobileServiceRecordScreen({
         setGuideRequested(false);
     };
     const currentDayPage = DAY_PAGES[pageIdx] ?? DAY_PAGES[0];
-    const { plannedDateVectorProvided, plannedDateVectorValid, currentServiceDate } = resolvePlannedDates({
+    const { currentServiceDate } = resolvePlannedDates({
         context, day, adminMode: false, draft, defaultDate,
     });
     // The service-date field's state outlives the day pages (SRW:529-536), so it lives here.
@@ -179,25 +177,15 @@ export function MobileServiceRecordScreen({
                 progress={progress / 100}
                 indeterminate={screen === "loading"}
             />
-            {context && plannedDateVectorProvided && !plannedDateVectorValid ? (
-                <p
-                    data-component={child("body_planned-date-error")}
-                    role="alert"
-                    className="mx-4 mt-4 rounded-[10px] bg-v3-burgundy-light px-3 py-2 text-[13px] font-semibold text-v3-burgundy"
-                >
-                    {PLANNED_DATE_ERROR_COPY}
-                </p>
-            ) : null}
-
             {screen === "loading" && <LoadingBody data-component={child("body_loading")} />}
 
             {screen === "invalid" && (
                 <StatusBody data-component={child("body")}>
                     <div data-component={child("body_invalid-center")} className="flex flex-col gap-2">
-                        <div data-component={child("body_invalid-center_title")} className="text-lg font-bold text-v3-dark">
+                        <div data-component={child("body_invalid-center_title")} className="text-xl font-bold text-v3-dark">
                             {INVALID_TITLE}
                         </div>
-                        <p className="text-sm text-v3-text-muted">{invalidReason === "not_found" ? WRONG_LINK_COPY : INVALID_COPY}</p>
+                        <p className="text-base text-v3-text-muted">{invalidReason === "not_found" ? WRONG_LINK_COPY : INVALID_COPY}</p>
                     </div>
                 </StatusBody>
             )}
@@ -239,10 +227,9 @@ export function MobileServiceRecordScreen({
                     defaultDate={defaultDate}
                     lockedDays={lockedDays}
                     nextOpenDay={nextOpenDay}
+                    openDays={openDays}
                     isRecordFinalized={isRecordFinalized}
-                    scheduleChangeBusy={scheduleChangeBusy}
                     onOpenDay={onOpenDay}
-                    onOpenScheduleChangePreview={onOpenScheduleChangePreview}
                     onOpenGuide={() => setGuideRequested(true)}
                 />
             )}
@@ -258,12 +245,14 @@ export function MobileServiceRecordScreen({
                     editing={editing}
                     clientSignature={clientSignature}
                     busy={busy}
-                    hasServiceDateMismatch={hasServiceDateMismatch}
                     defaultDate={defaultDate}
                     onBack={onBack}
                     onSignatureChange={onSignatureChange}
                     onOpenSubmitModal={onOpenSubmitModal}
                     onEditSection={onEditSection}
+                    onOpenDateSheet={onOpenDateSheet}
+                    onDeleteSession={onDeleteSession}
+                    serviceDateError={serviceDateError}
                 />
             ) : (
                 <DayPageStep
@@ -274,16 +263,14 @@ export function MobileServiceRecordScreen({
                     draft={draft}
                     editing={editing}
                     isRecordFinalized={isRecordFinalized}
-                    scheduleChangeBusy={scheduleChangeBusy}
-                    hasServiceDateMismatch={hasServiceDateMismatch}
                     defaultDate={defaultDate}
                     onBack={onBack}
-                    onServiceDateChange={onServiceDateChange}
-                    onOpenScheduleChangePreview={onOpenScheduleChangePreview}
                     onFieldChange={onFieldChange}
                     onToggleMulti={onToggleMulti}
                     onNextPage={onNextPage}
                     dateState={dateState}
+                    onOpenDateSheet={onOpenDateSheet}
+                    serviceDateError={serviceDateError}
                 />
             ))}
 
@@ -291,7 +278,7 @@ export function MobileServiceRecordScreen({
                 <StatusBody data-component={child("body")}>
                     <div data-component={child("body_done-center")} className="flex flex-col items-center gap-3">
                         <span data-component={child("body_done-center_icon")} aria-hidden="true" className="text-5xl">✅</span>
-                        <h2 data-component={child("body_done-center_title")} className="text-lg font-bold text-v3-dark">
+                        <h2 data-component={child("body_done-center_title")} className="text-xl font-bold text-v3-dark">
                             {DONE_TITLE}
                         </h2>
                     </div>
@@ -299,8 +286,8 @@ export function MobileServiceRecordScreen({
             )}
             <ServiceRecordGuide data-component={child("guide")} open={guideOpen} onClose={closeGuide} />
             {slots?.submitModal}
-            {slots?.scheduleChangeModal}
-            {slots?.serviceDateChangeModal}
+            {slots?.serviceDateSheet}
+            {slots?.deleteModal}
             {slots?.errorNotification}
         </div>
     );

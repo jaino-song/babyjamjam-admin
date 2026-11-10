@@ -2,11 +2,10 @@ import type {
   ActionRequiredReason,
   ActionRequiredStatus,
 } from "@/lib/client/action-required";
-import type { Client, PendingScheduleChange } from "@/lib/client/types";
+import type { Client } from "@/lib/client/types";
 
 type DashboardAttentionClient = {
   actionRequired?: ActionRequiredStatus | null;
-  pendingScheduleChange?: PendingScheduleChange | null;
 };
 
 const UNPRIORITIZED_ATTENTION_SORT_ORDER = Number.MAX_SAFE_INTEGER;
@@ -32,7 +31,7 @@ export function getDashboardAttentionItems<
       }];
     }
 
-    return client.pendingScheduleChange ? [{ client }] : [];
+    return [];
   });
 
   return items.sort((a, b) => (

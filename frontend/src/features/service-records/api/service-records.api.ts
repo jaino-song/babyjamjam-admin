@@ -1,19 +1,18 @@
 import { api } from "@/lib/api/client";
 import {
+    normalizeKeepPeriodMismatch,
+    normalizeFitPeriodMismatch,
     normalizeServiceRecordCaregiverEditChanges,
     normalizeServiceRecordRevisionChanges,
     normalizeServiceRecordRevisionDocumentSummary,
     normalizeServiceRecordRevisionHistory,
 } from "../types";
 import type {
-    ApplyServiceScheduleChangeRequest,
-    ApplyServiceScheduleChangeResponse,
     PrepareServiceRecordLinkRequest,
     PrepareServiceRecordLinkResponse,
     ResetServiceRecordLinkResponse,
     SendServiceRecordLinkRequest,
     SendServiceRecordLinkResponse,
-    ServiceScheduleChangePreviewResponse,
     ServiceRecordEditPreviewBlockingReason,
     ServiceRecordOverview,
     ServiceRecordPlannedSession,
@@ -182,6 +181,12 @@ export const serviceRecordsApi = {
             ...response,
             data: normalizeServiceRecordRevisionDocumentSummary(response.data),
         } as typeof response & { data: ServiceRecordRevisionDocumentSummary })),
+    keepPeriodMismatch: (clientId: number, sessionIndexes: number[]) =>
+        api.post<unknown>(`/admin/service-records/client/${clientId}/period-mismatch/keep`, { sessionIndexes })
+            .then((response) => ({ ...response, data: normalizeKeepPeriodMismatch(response.data) })),
+    fitPeriodMismatch: (clientId: number) =>
+        api.post<unknown>(`/admin/service-records/client/${clientId}/period-mismatch/fit`, {})
+            .then((response) => ({ ...response, data: normalizeFitPeriodMismatch(response.data) })),
     prepareLink: (scheduleId: number, request: PrepareServiceRecordLinkRequest = {}) =>
         api.post<PrepareServiceRecordLinkResponse>(
             `/admin/service-records/schedules/${scheduleId}/prepare-link`,
@@ -191,15 +196,6 @@ export const serviceRecordsApi = {
         api.post<ResetServiceRecordLinkResponse>(
             `/admin/service-records/schedules/${scheduleId}/reset-link`,
             {},
-        ),
-    previewScheduleChange: (scheduleId: number) =>
-        api.get<ServiceScheduleChangePreviewResponse>(
-            `/schedule-change-requests/schedules/${scheduleId}/preview`,
-        ),
-    applyScheduleChange: (scheduleId: number, request: ApplyServiceScheduleChangeRequest) =>
-        api.post<ApplyServiceScheduleChangeResponse>(
-            `/schedule-change-requests/schedules/${scheduleId}/apply`,
-            request,
         ),
     sendLink: (scheduleId: number, request: SendServiceRecordLinkRequest = {}) =>
         api.post<SendServiceRecordLinkResponse>(

@@ -43,14 +43,6 @@ export async function fetchClient(id: number): Promise<Client> {
     return data;
 }
 
-export async function approveScheduleChange(requestId: string): Promise<void> {
-    await api.post(`/schedule-change-requests/${encodeURIComponent(requestId)}/approve`, {});
-}
-
-export async function rejectScheduleChange(requestId: string, reason?: string): Promise<void> {
-    await api.post(`/schedule-change-requests/${encodeURIComponent(requestId)}/reject`, { reason });
-}
-
 // Fetch all clients (paginated)
 export function useClients(
     page: number = 1,
@@ -219,34 +211,6 @@ export function useDeleteClient() {
             queryClient.invalidateQueries({ queryKey: dashboardQueryKeys.analytics() });
             // Backend client deletion also cancels that client's pending jobs.
             queryClient.invalidateQueries({ queryKey: messageTriggerKeys.upcoming() });
-        },
-    });
-}
-
-export function useApproveScheduleChange() {
-    const queryClient = useQueryClient();
-
-    return useMutation({
-        mutationFn: ({ requestId }: { requestId: string; clientId: number }) =>
-            approveScheduleChange(requestId),
-        onSuccess: (_, { clientId }) => {
-            queryClient.invalidateQueries({ queryKey: clientQueryKeys.all });
-            queryClient.invalidateQueries({ queryKey: clientQueryKeys.detail(clientId) });
-            queryClient.invalidateQueries({ queryKey: dashboardQueryKeys.analytics() });
-        },
-    });
-}
-
-export function useRejectScheduleChange() {
-    const queryClient = useQueryClient();
-
-    return useMutation({
-        mutationFn: ({ requestId, reason }: { requestId: string; clientId: number; reason?: string }) =>
-            rejectScheduleChange(requestId, reason),
-        onSuccess: (_, { clientId }) => {
-            queryClient.invalidateQueries({ queryKey: clientQueryKeys.all });
-            queryClient.invalidateQueries({ queryKey: clientQueryKeys.detail(clientId) });
-            queryClient.invalidateQueries({ queryKey: dashboardQueryKeys.analytics() });
         },
     });
 }

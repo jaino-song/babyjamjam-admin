@@ -20,7 +20,6 @@ import { dismissServiceRecordGuide, queryServiceRecordGuide, SERVICE_RECORD_GUID
 
 import {
     NOW,
-    PLANNED_DATES,
     SAVED_HEADER,
     SERVER_NAMES,
     SUBMITTED_ANSWERS,
@@ -74,8 +73,6 @@ const PINNED_COPY = {
     paymentOption: "결제 확인 완료",
     /** Label of the stool-colour text input that "이상변" reveals (ServiceRecordWizard.tsx:317). */
     stoolColorLabel: "이상변의 색깔과 상태",
-    scheduleChange: "서비스 일정 변경",
-    scheduleChangeApprove: "승인 요청",
 };
 
 const HEADER_LABELS = {
@@ -98,25 +95,8 @@ const FAKE_DATE_ONLY = [
 
 type User = ReturnType<typeof userEvent.setup>;
 
-/**
- * A day card is identified by its service date, never by its session number or
- * status words (a card may also show unrelated numbers such as "담당자 1명").
- * The date is matched in any of the formats below so the rebuilt UI can choose one.
- */
-// The rebuilt UI's day card accessible name must contain the service date in one of these formats (Phase 3 brief input).
-const dayCardByDate = (isoDate: string) => {
-    const [year, month, day] = isoDate.split("-").map(Number);
-    const m = `0?${month}`;
-    const d = `0?${day}`;
-    const formats = [
-        `${year}[.-]${m}[.-]${d}`, // 2026.09.21, 2026-09-21
-        `${m}/${d}`, // 9/21, 09/21
-        `${m}\\.${d}`, // 9.21, 09.21
-        `${m}월\\s*${d}일`, // 9월 21일
-    ];
-    return { name: new RegExp(`(?<!\\d)(?:${formats.join("|")})(?!\\d)`) };
-};
-const dayCard = (sessionIndex: number) => dayCardByDate(PLANNED_DATES[sessionIndex - 1].serviceDate);
+/** Unwritten cards intentionally have no date; match the session number and its status. */
+const dayCard = (sessionIndex: number) => ({ name: new RegExp(`(?:^|\\s)${sessionIndex}\\s*(?:제출완료|입력 가능|대기)$`) });
 
 const decoration = /^[✓●]\s*/;
 
@@ -203,6 +183,13 @@ const overviewScript = (): Partial<ApiScript> => ({ context: makeContext({ heade
 async function openFirstDay(user: User) {
     await user.click(await screen.findByRole("button", dayCard(1)));
     await screen.findByText(ITEM.perineum);
+    const input = screen.getByLabelText("서비스 제공일");
+    if (!(input as HTMLInputElement).value) {
+        await user.click(input);
+        const sheet = screen.getByRole("dialog");
+        await user.click(within(sheet).getByRole("button", { name: "2026.09.21(월)" }));
+        await user.click(within(sheet).getByRole("button", { name: "선택" }));
+    }
 }
 
 /** The 결제 확인 row of a day answered with the payment confirmed (the row reads "✓ 확인 완료"). */
@@ -488,6 +475,7 @@ describe("service-record page contract", () => {
 
             expect(await screen.findByText(ITEM.perineum)).toBeInTheDocument();
             expect(screen.getByText(SERVER_NAMES.provider)).toBeInTheDocument();
+            expect(screen.queryByText(/서비스 일정 변경|일정 변경 요청/)).toBeNull();
         });
 
         it("5. next with an unanswered required item does not advance and shows that item's message", async () => {
@@ -654,12 +642,12 @@ describe("service-record page contract", () => {
 
             await user.click(await screen.findByRole("button", dayCard(1)));
 
-            expect(await screen.findByText(PINNED_COPY.reviewTitle)).toBeInTheDocument();
+            expect(await screen.findByText("1회차 기록 수정")).toBeInTheDocument();
             expectSubmittedReview();
         });
 
-        it("6. another caregiver's submitted day opens read-only: the note, no 수정, no submit", async () => {
-            const { user } = await renderPage({
+        it("6. another caregiver's submitted day offers section edits and resubmits", async () => {
+            const { api, user } = await renderPage({
                 context: makeContext({
                     header: SAVED_HEADER,
                     sessions: [{ ...makeSubmittedFirstSession(), employeeId: 99 }, makeSession(2), makeSession(3)],
@@ -668,10 +656,14 @@ describe("service-record page contract", () => {
 
             await user.click(await screen.findByRole("button", dayCard(1)));
 
-            expect(await screen.findByText(PINNED_COPY.reviewTitle)).toBeInTheDocument();
-            expect(screen.getByText("다른 제공인력이 제출한 회차라 수정할 수 없어요.")).toBeInTheDocument();
-            expect(screen.queryByRole("button", { name: /수정$/ })).toBeNull();
-            expect(screen.queryByRole("button", { name: PINNED_COPY.reviewSubmit })).toBeNull();
+            expect(await screen.findByText("1회차 기록 수정")).toBeInTheDocument();
+            expect(screen.queryByText(/다른 제공인력이\s제출한 회차라 수정할 수 없어요\./)).toBeNull();
+            expect(screen.getAllByRole("button", { name: /수정$/ })).toHaveLength(4);
+            expect(screen.getByRole("button", { name: PINNED_COPY.reviewSubmit })).toBeEnabled();
+            const body = await signAndSubmit(api, user, { sign: false });
+            expect(api.callsTo("POST", "/sessions/1/submit")).toHaveLength(1);
+            expect(body.answers).toMatchObject(SUBMITTED_ANSWERS);
+            expect(body).not.toHaveProperty("clientSignature");
         });
 
         it("6. re-submitting a re-opened day sends the server's answers unchanged and keeps the saved signature", async () => {
@@ -679,7 +671,7 @@ describe("service-record page contract", () => {
                 context: makeContext({ header: SAVED_HEADER, sessions: [ownSubmittedFirstSession(), makeSession(2), makeSession(3)] }),
             });
             await user.click(await screen.findByRole("button", dayCard(1)));
-            await screen.findByText(PINNED_COPY.reviewTitle);
+            await screen.findByText("1회차 기록 수정");
 
             await user.click(screen.getByRole("button", { name: PINNED_COPY.reviewSubmit }));
             const dialog = await screen.findByRole("dialog");
@@ -698,19 +690,12 @@ describe("service-record page contract", () => {
             expect(body).not.toHaveProperty("clientSignature");
         });
 
-        // Extra (not numbered in the brief): the schedule-change request is an overview action that reaches the server.
-        it("a schedule change is requested only after the previewed change is approved", async () => {
-            const { api, user } = await renderPage(overviewScript());
-
-            await user.click(await screen.findByRole("button", { name: PINNED_COPY.scheduleChange }));
-            const dialog = await screen.findByRole("dialog");
-            await waitFor(() => expect(api.callsTo("GET", "/schedule-change/preview")).toHaveLength(1));
-            expect(api.callsTo("POST", "/schedule-change")).toHaveLength(0);
-            const approve = await within(dialog).findByRole("button", { name: PINNED_COPY.scheduleChangeApprove });
-            await waitFor(() => expect(approve).toBeEnabled());
-            await user.click(approve);
-
-            await waitFor(() => expect(api.callsTo("POST", "/schedule-change")).toHaveLength(1));
+        it("offers only record entry on the overview and no retired request action", async () => {
+            const { api } = await renderPage(overviewScript());
+            expect(await screen.findByRole("button", dayCard(1))).toBeEnabled();
+            expect(screen.getAllByRole("button").map((button) => button.textContent)).not.toContain("승인 요청");
+            expect(screen.queryByText(/서비스 일정 변경|일정 변경 요청/)).toBeNull();
+            expect(api.calls.every((call) => ["/link", "/context", "/holidays"].includes(call.path))).toBe(true);
         });
 
         it("6. 신생아 수정 on the review of a submitted day opens the 신생아 page, and a change made there is what gets re-submitted", async () => {
@@ -718,7 +703,7 @@ describe("service-record page contract", () => {
                 context: makeContext({ header: SAVED_HEADER, sessions: [ownSubmittedFirstSession(), makeSession(2), makeSession(3)] }),
             });
             await user.click(await screen.findByRole("button", dayCard(1)));
-            await screen.findByText(PINNED_COPY.reviewTitle);
+            await screen.findByText("1회차 기록 수정");
             expectSubmittedReview();
 
             await user.click(screen.getByRole("button", { name: "신생아 수정" }));
@@ -731,7 +716,7 @@ describe("service-record page contract", () => {
             await user.click(screen.getByRole("button", { name: PINNED_COPY.saveSectionEdit }));
 
             // Back on the review, the changed answer sits in its own row; the others are untouched.
-            await screen.findByText(PINNED_COPY.reviewTitle);
+            await screen.findByText("1회차 기록 수정");
             expectReviewRow("신생아", ITEM.sleep, "잘 잠");
             expectNotInReviewRow("신생아", ITEM.sleep, "잘 못 잠");
             expectReviewRow("신생아", ITEM.stool, "이상변", "연두색");

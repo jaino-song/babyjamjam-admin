@@ -17,16 +17,15 @@ const q = (suffix: string) => document.querySelector<HTMLElement>(`[data-compone
 const TITLES = [
     "처음이세요? 사용방법을 알려드려요",
     "산모·신생아 정보를 먼저 입력해요",
-    "오늘 날짜 버튼을 눌러 기록을 시작하세요",
+    '"입력 가능" 회차를 눌러 기록을 시작하세요',
     "서비스 제공 기록을 작성해 주세요",
     "최종 확인 후 산모님께 서명을 받아요",
-    "이미 제출한 기록도 수정이 가능해요",
-    "하루 쉬어가나요? 일정을 변경해 보세요",
+    "제출한 기록도 고치거나 지울 수 있어요",
 ];
-const SLIDE_KEYS = ["intro", "basics", "grid", "form", "sign", "edit", "sched"] as const;
+const SLIDE_KEYS = ["intro", "basics", "grid", "form", "sign", "edit"] as const;
 
 const dialog = () => screen.getByRole("dialog", { name: "제공기록지 작성 가이드" });
-const counter = () => within(dialog()).getByText(/^\d \/ 7$/).textContent;
+const counter = () => within(dialog()).getByText(/^\d \/ 6$/).textContent;
 const nextButton = () => within(dialog()).getByRole("button", { name: /^(다음|기본정보 입력 시작)$/ });
 const prevButton = () => within(dialog()).getByRole("button", { name: "이전" });
 
@@ -56,19 +55,19 @@ describe("ServiceRecordGuide", () => {
         expect(screen.queryByRole("dialog")).toBeNull();
     });
 
-    it("opens as a modal dialog on slide 1 / 7 with 다음 focused and 이전 disabled", () => {
+    it("opens as a modal dialog on slide 1 / 6 with 다음 focused and 이전 disabled", () => {
         renderGuide();
         expect(dialog()).toHaveAttribute("aria-modal", "true");
-        expect(counter()).toBe("1 / 7");
+        expect(counter()).toBe("1 / 6");
         expect(prevButton()).toBeDisabled();
         expect(nextButton()).toHaveFocus();
         expect(q("sheet")).toBe(dialog());
     });
 
-    it("shows the final copy of all seven slides, one active at a time", async () => {
+    it("shows the final copy of all six slides, one active at a time", async () => {
         renderGuide();
         for (const [index, title] of TITLES.entries()) {
-            expect(counter()).toBe(`${index + 1} / 7`);
+            expect(counter()).toBe(`${index + 1} / 6`);
             const active = document.querySelector('[data-active="true"]');
             expect(active).toHaveTextContent(title);
             expect(active).toBe(q(`sheet_slide-${SLIDE_KEYS[index]}`));
@@ -82,13 +81,13 @@ describe("ServiceRecordGuide", () => {
     it("moves with 다음 / 이전 and ends on 기본정보 입력 시작, which closes the guide", async () => {
         renderGuide();
         await user.click(nextButton());
-        expect(counter()).toBe("2 / 7");
+        expect(counter()).toBe("2 / 6");
         expect(prevButton()).toBeEnabled();
         await user.click(prevButton());
-        expect(counter()).toBe("1 / 7");
+        expect(counter()).toBe("1 / 6");
 
-        for (let i = 0; i < 6; i += 1) await user.click(nextButton());
-        expect(counter()).toBe("7 / 7");
+        for (let i = 0; i < 5; i += 1) await user.click(nextButton());
+        expect(counter()).toBe("6 / 6");
         expect(nextButton()).toHaveTextContent("기본정보 입력 시작");
         expect(onClose).not.toHaveBeenCalled();
         await user.click(nextButton());
@@ -106,13 +105,13 @@ describe("ServiceRecordGuide", () => {
     it("pages with ArrowRight / ArrowLeft and stops at both ends", async () => {
         renderGuide();
         await user.keyboard("{ArrowLeft}");
-        expect(counter()).toBe("1 / 7");
+        expect(counter()).toBe("1 / 6");
         await user.keyboard("{ArrowRight}{ArrowRight}");
-        expect(counter()).toBe("3 / 7");
+        expect(counter()).toBe("3 / 6");
         await user.keyboard("{ArrowLeft}");
-        expect(counter()).toBe("2 / 7");
+        expect(counter()).toBe("2 / 6");
         await user.keyboard("{ArrowRight>8/}");
-        expect(counter()).toBe("7 / 7");
+        expect(counter()).toBe("6 / 6");
     });
 
     describe("focus stays inside the dialog", () => {
@@ -120,7 +119,7 @@ describe("ServiceRecordGuide", () => {
             renderGuide();
             await user.click(nextButton());
             await user.click(prevButton());
-            expect(counter()).toBe("1 / 7");
+            expect(counter()).toBe("1 / 6");
             expect(prevButton()).toBeDisabled();
             expect(nextButton()).toHaveFocus();
         });
@@ -131,7 +130,7 @@ describe("ServiceRecordGuide", () => {
             prevButton().focus();
             expect(prevButton()).toHaveFocus();
             await user.keyboard("{ArrowLeft}");
-            expect(counter()).toBe("1 / 7");
+            expect(counter()).toBe("1 / 6");
             expect(nextButton()).toHaveFocus();
         });
 
@@ -140,7 +139,7 @@ describe("ServiceRecordGuide", () => {
             const skip = within(dialog()).getByRole("button", { name: "건너뛰기" });
             skip.focus();
             await user.keyboard("{ArrowRight}");
-            expect(counter()).toBe("2 / 7");
+            expect(counter()).toBe("2 / 6");
             expect(skip).toHaveFocus();
         });
     });
@@ -151,17 +150,17 @@ describe("ServiceRecordGuide", () => {
         afterAll(() => clientHeight.mockRestore());
 
         it("scales the illustration down with a short stage frame, on the intro and on a demo", () => {
-            clientHeight.mockReturnValue(206);
+            clientHeight.mockReturnValue(235);
             renderGuide();
-            for (const key of ["intro", "sched"]) {
+            for (const [key, height] of [["intro", 470], ["edit", 520]] as const) {
                 const frame = q(`sheet_slide-${key}_stage`) as HTMLElement;
-                expect(frame.style.getPropertyValue("--fit")).toBe("0.5");
+                expect(frame.style.getPropertyValue("--fit")).toBe(String(235 / height));
                 expect(q(`sheet_slide-${key}_stage_fit`)?.parentElement).toBe(frame);
             }
         });
 
         it("never scales up a tall frame", () => {
-            clientHeight.mockReturnValue(430);
+            clientHeight.mockReturnValue(540);
             renderGuide();
             expect((q("sheet_slide-intro_stage") as HTMLElement).style.getPropertyValue("--fit")).toBe("1");
         });
@@ -183,16 +182,18 @@ describe("ServiceRecordGuide", () => {
         rerender(<ServiceRecordGuide data-component={BASE} open={false} onClose={onClose} />);
         expect(screen.queryByRole("dialog")).toBeNull();
         rerender(<ServiceRecordGuide data-component={BASE} open onClose={onClose} />);
-        expect(counter()).toBe("1 / 7");
+        expect(counter()).toBe("1 / 6");
     });
 
-    it("gives the last demo the corrected 본사 approval copy", async () => {
+    it("shows five intro steps, the service-date caption and the edit/delete caption", () => {
         renderGuide();
-        for (let i = 0; i < 6; i += 1) await user.click(nextButton());
-        await act(async () => { await jest.advanceTimersByTimeAsync(700); });
-        const mini = q("sheet_slide-sched_stage_mini-screen");
-        expect(mini).toHaveTextContent("3회차 서비스를 12월 3일에서 12월 4일로 변경을 요청할까요? 본사 승인 후 일정이 조정됩니다.");
-        expect(mini).not.toHaveTextContent("관리자");
+        const intro = q("sheet_slide-intro_stage") as HTMLElement;
+        expect(within(intro).getAllByRole("listitem")).toHaveLength(5);
+        expect(intro).toHaveTextContent("서비스 제공일 선택달력에서 날짜 고르기");
+        expect(intro).toHaveTextContent("회차 카드 선택제공기록표에서 입력 가능 회차");
+        expect(q("sheet_slide-grid_caption")).toHaveTextContent("기록할 서비스 제공일을 선택해 주세요.");
+        expect(q("sheet_slide-edit_caption")).toHaveTextContent("서비스 제공일과 내용을 고쳐 다시 제출할 수 있어요. 필요한 경우엔 기록을 삭제할 수도 있어요.");
+        expect(q("sheet_progress")?.children).toHaveLength(6);
     });
 
     describe("focus restoration", () => {
@@ -222,7 +223,7 @@ describe("ServiceRecordGuide", () => {
             render(<Harness />);
             const opener = screen.getByRole("button", { name: "사용방법" });
             await user.click(opener);
-            for (let i = 0; i < 6; i += 1) await user.click(nextButton());
+            for (let i = 0; i < 5; i += 1) await user.click(nextButton());
             await user.click(nextButton());
             settle();
             expect(screen.queryByRole("dialog")).toBeNull();
@@ -264,6 +265,7 @@ describe("ServiceRecordGuide", () => {
         it("stops the previous slide's script as soon as the slide changes", async () => {
             renderGuide();
             await user.click(nextButton());
+            expect(q("sheet_slide-basics_stage_mini-screen")).toHaveTextContent("미나미");
             await act(async () => { await jest.advanceTimersByTimeAsync(3_000); });
             const mini = q("sheet_slide-basics_stage_mini-screen") as HTMLElement;
             expect(mini.textContent).not.toBe("");
@@ -310,7 +312,7 @@ describe("ServiceRecordGuide", () => {
             expect(jest.getTimerCount()).toBe(0);
             expect(q("sheet_slide-basics_stage_mini-screen")).toHaveTextContent("이예지");
             expect(q("sheet_slide-sign_stage_mini-screen")).toHaveTextContent("서명 완료");
-            expect(q("sheet_slide-sched_stage_mini-screen")).toHaveTextContent("일정 변경 요청 대기 중");
+            expect(q("sheet_slide-edit_stage_mini-screen")).toHaveTextContent("다른 회차 날짜는 바뀌지 않아요.");
         });
 
         it("turns the slide track without a transition", () => {

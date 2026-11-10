@@ -8,11 +8,9 @@ import { useParams } from "next/navigation";
 import {
     DAY_PAGES,
     DEFAULT_DAILY_ANSWERS,
-    formatMonthDayKo,
 } from "@babyjamjam/service-record-ui";
 import type { HolidayYearPayload } from "@babyjamjam/shared/utils/holiday-calendar";
 import type {
-    ScheduleChangePreview,
     ServiceRecordContext,
 } from "@babyjamjam/service-record-ui";
 
@@ -21,15 +19,11 @@ import { NotificationOneButtonModal } from "@/components/app/ui/NotificationOneB
 import { ToastAction } from "@/components/ui/toaster";
 import { toast } from "@/hooks/use-toast";
 import { MobileServiceRecordWizard } from "@/components/app/service-record/ServiceRecordWizard";
-import { CalendarLoadNotice } from "@/components/app/holidays/calendar-load-notice";
-import { isLockedByOtherCaregiver } from "@/components/app/service-record/screen/ReviewStep";
+import { GAP_ROOM, ORDER_AFTER, ORDER_BEFORE, ServiceDateSheet } from "@/components/app/service-record/screen/ServiceDateSheet";
 import { ServiceRecordCalendarBanner } from "@/components/app/service-record/ServiceRecordCalendarBanner";
 import { useTokenBusinessDayCalendar } from "@/hooks/useTokenBusinessDayCalendar";
-import { type KrBusinessDayCalendar, type ServiceDayPolicy } from "@/lib/date/business-days";
+import { type ServiceDayPolicy } from "@/lib/date/business-days";
 import {
-    getServiceDateShiftBusinessDays,
-    isServiceDateMismatch,
-    legacyDefaultServiceDate,
     serviceRecordCalendarYears,
     normalizeServiceRecordLinkToken,
     type ServiceRecordLinkInvalidReason,
@@ -80,18 +74,50 @@ function problemCode(normalized: NormalizedApiError, body: unknown): string | un
     return undefined;
 }
 
+function serviceDateErrorMessage(reason: unknown): string {
+    switch (reason) {
+        case "OUT_OF_RANGE": return "고를 수 있는 기간이 아니에요.";
+        case "NOT_SERVICE_DAY": return "서비스를 하지 않는 날이에요.";
+        case "TAKEN": return "다른 회차가 이미 고른 날이에요.";
+        case "BEFORE_PREVIOUS": return ORDER_BEFORE;
+        case "AFTER_NEXT": return ORDER_AFTER;
+        case "NO_ROOM_FOR_GAP": return GAP_ROOM;
+        default: return "고를 수 있는 날이 아니에요. 다른 날을 골라 주세요.";
+    }
+}
+
+interface StoredSessionDraft {
+    pageIdx: number;
+    draft: Record<string, unknown>;
+}
 interface StoredFormState {
     header?: Record<string, string>;
+    drafts?: Record<number, StoredSessionDraft>;
+}
+interface LegacyStoredFormState extends StoredFormState {
     day?: number;
     pageIdx?: number;
     draft?: Record<string, unknown>;
 }
+
+function openSessionIndexes(lockedDays: ReadonlySet<number>, totalSessions: number): number[] {
+    const next = Math.max(0, ...lockedDays) + 1;
+    return Array.from({ length: Math.min(totalSessions, next) }, (_, index) => index + 1)
+        .filter((index) => !lockedDays.has(index));
+}
+
 const draftStorageKey = (token: string) => `${DRAFT_STORAGE_PREFIX}:${token}`;
 const readStoredFormState = (token: string): StoredFormState | null => {
     if (typeof window === "undefined" || !token) return null;
     try {
         const raw = window.sessionStorage.getItem(draftStorageKey(token));
-        return raw ? JSON.parse(raw) as StoredFormState : null;
+        if (!raw) return null;
+        const stored = JSON.parse(raw) as LegacyStoredFormState;
+        const drafts = { ...stored.drafts };
+        if (stored.day != null && stored.draft && !drafts[stored.day]) {
+            drafts[stored.day] = { pageIdx: stored.pageIdx ?? 0, draft: stored.draft };
+        }
+        return { header: stored.header, drafts };
     } catch {
         return null;
     }
@@ -112,6 +138,15 @@ const clearStoredFormState = (token: string) => {
         // Ignore storage cleanup failures after a successful server submission.
     }
 };
+
+function clearStoredSessionDraft(token: string, day: number): void {
+    const stored = readStoredFormState(token);
+    if (!stored?.drafts?.[day]) return;
+    const drafts = { ...stored.drafts };
+    delete drafts[day];
+    if (Object.keys(drafts).length === 0) clearStoredFormState(token);
+    else writeStoredFormState(token, { header: stored.header, drafts });
+}
 
 function isRecordFinalizedStatus(recordStatus?: string | null): boolean {
     return Boolean(recordStatus && FINALIZED_RECORD_STATUSES.has(recordStatus));
@@ -212,12 +247,10 @@ export default function ServiceRecordPage() {
     const [clientSignature, setMomSignature] = useState<string | null>(null);
     const [busy, setBusy] = useState(false);
     const [submitModalOpen, setSubmitModalOpen] = useState(false);
-    const [scheduleChangePreview, setScheduleChangePreview] = useState<ScheduleChangePreview | null>(null);
-    const [scheduleChangeModalOpen, setScheduleChangeModalOpen] = useState(false);
-    const [scheduleChangeBusy, setScheduleChangeBusy] = useState(false);
     const [errorNotificationMessage, setErrorNotificationMessage] = useState<string | null>(null);
-    const [pendingServiceDate, setPendingServiceDate] = useState<{ next: string } | null>(null);
-    const [pendingOpenDay, setPendingOpenDay] = useState<{ day: number; editExisting: boolean } | null>(null);
+    const [dateSheetOpen, setDateSheetOpen] = useState(false);
+    const [deleteModalOpen, setDeleteModalOpen] = useState(false);
+    const [serviceDateError, setServiceDateError] = useState<string | null>(null);
     const navigateTo = useCallback((
         nextScreen: Screen,
         options: { mode?: HistoryMode; day?: number; pageIdx?: number } = {},
@@ -225,6 +258,9 @@ export default function ServiceRecordPage() {
         setScreen(nextScreen);
         // The submit dialog describes the day that was open when it was raised; any navigation retires it.
         setSubmitModalOpen(false);
+        setDateSheetOpen(false);
+        setDeleteModalOpen(false);
+        setServiceDateError(null);
         if (options.day !== undefined) setDay(options.day);
         if (options.pageIdx !== undefined) setPageIdx(options.pageIdx);
         if (options.mode && options.mode !== "none") {
@@ -240,7 +276,7 @@ export default function ServiceRecordPage() {
         ) => {
             const method = init.method ?? "GET";
             const monitoredPath = `/api/service-record/[Filtered]${path}`;
-            const operation = getServiceRecordOperation(path);
+            const operation = getServiceRecordOperation(path, method);
 
             try {
                 const url = `/api/service-record/${token}${path}`;
@@ -293,10 +329,6 @@ export default function ServiceRecordPage() {
         () => (serviceDays ? calendar.withServiceDays(serviceDays) : calendar),
         [calendar, serviceDays],
     );
-    // Legacy contexts (no planned date vector) derive the default session dates
-    // from the calendar, and those dates are submitted: wait for the branch calendar.
-    const defaultsGated = ctx !== null && ctx.plannedSessionDates === undefined && !calendarReady;
-
     const loadContext = useCallback(async (historyMode: HistoryMode = "replace") => {
         const res = await api("/context");
         if (!res.ok) {
@@ -378,11 +410,7 @@ export default function ServiceRecordPage() {
             const targetDay = Math.min(Math.max(target.day, 1), Math.max(ctx.totalSessions, 1));
             const session = ctx.sessions.find((row) => row.sessionIndex === targetDay);
             const isLockedSession = Boolean(session?.locked);
-            // A day another caregiver submitted is read-only: land on its review page, never on an input page.
-            const isOtherCaregiverSession = isLockedByOtherCaregiver(session, ctx);
-            const targetPageIdx = isOtherCaregiverSession
-                ? DAY_PAGES.length - 1
-                : Math.min(Math.max(target.pageIdx, 0), DAY_PAGES.length - 1);
+            const targetPageIdx = Math.min(Math.max(target.pageIdx, 0), DAY_PAGES.length - 1);
             setEditing(isLockedSession);
             setMomSignature(null);
             if (isLockedSession && session) {
@@ -394,13 +422,12 @@ export default function ServiceRecordPage() {
                     paymentConfirmed: Boolean(session.paymentConfirmed),
                 });
             } else {
-                if (defaultsGated) {
-                    // The default date would come from the built-in calendar; open the day once the branch calendar is ready.
-                    setPendingOpenDay({ day: targetDay, editExisting: false });
+                const submitted = new Set(ctx.sessions.filter((row) => row.locked).map((row) => row.sessionIndex));
+                if (!openSessionIndexes(submitted, ctx.totalSessions).includes(targetDay)) {
                     navigateTo("overview", { mode: "replace" });
                     return;
                 }
-                setDraft(initializeUnlockedDraft(token, targetDay, ctx.sessions, defaultDateFromContext(ctx, targetDay, serviceCalendar), ctx.plannedSessionDates !== undefined));
+                setDraft(initializeUnlockedDraft(token, targetDay, ctx.sessions));
             }
             navigateTo("day", {
                 mode: "none",
@@ -411,45 +438,18 @@ export default function ServiceRecordPage() {
 
         window.addEventListener("popstate", handlePopState);
         return () => window.removeEventListener("popstate", handlePopState);
-    }, [serviceCalendar, ctx, defaultsGated, navigateTo, token]);
+    }, [ctx, navigateTo, token]);
 
     const lockedDays = useMemo(() => new Set((ctx?.sessions ?? []).filter((s) => s.locked).map((s) => s.sessionIndex)), [ctx]);
+    const openDays = useCallback(() => openSessionIndexes(lockedDays, ctx?.totalSessions ?? 0), [lockedDays, ctx?.totalSessions]);
     const nextOpenDay = useCallback(() => {
         let d = 1;
         while (lockedDays.has(d)) d++;
         return d;
     }, [lockedDays]);
-    const plannedDateVectorValid = useMemo(() => {
-        const plannedDates = ctx?.plannedSessionDates;
-        if (plannedDates === undefined) return true;
-        const isValidDateOnly = (value: string) => {
-            if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
-            const [year, month, day] = value.split("-").map(Number);
-            const parsed = new Date(Date.UTC(year, month - 1, day));
-            return parsed.getUTCFullYear() === year
-                && parsed.getUTCMonth() === month - 1
-                && parsed.getUTCDate() === day;
-        };
-        return Array.isArray(plannedDates)
-            && plannedDates.length === (ctx?.totalSessions ?? 0)
-            && new Set(plannedDates.map((session) => session.sessionIndex)).size === plannedDates.length
-            && new Set(plannedDates.map((session) => session.serviceDate)).size === plannedDates.length
-            && plannedDates.every((session) => (
-                Number.isSafeInteger(session.sessionIndex)
-                && session.sessionIndex > 0
-                && session.sessionIndex <= (ctx?.totalSessions ?? 0)
-                && isValidDateOnly(session.serviceDate)
-            ));
-    }, [ctx?.plannedSessionDates, ctx?.totalSessions]);
     const defaultDate = useCallback(
-        (d: number) => {
-            if (ctx?.plannedSessionDates !== undefined) {
-                if (!plannedDateVectorValid) return "";
-                return ctx.plannedSessionDates.find((session) => session.sessionIndex === d)?.serviceDate ?? "";
-            }
-            return legacyDefaultServiceDate(ctx, d, serviceCalendar);
-        },
-        [serviceCalendar, ctx, plannedDateVectorValid],
+        (index: number) => ctx?.sessions.find((row) => row.sessionIndex === index)?.serviceDate.slice(0, 10) ?? "",
+        [ctx],
     );
     /**
      * A write refused for auth (401 / 403) means the caregiver's access is gone: send them back to phone verification.
@@ -458,9 +458,8 @@ export default function ServiceRecordPage() {
      */
     function handleAuthLost(res: Response): boolean {
         if (res.status !== 401 && res.status !== 403) return false;
-        setScheduleChangeModalOpen(false);
-        setScheduleChangePreview(null);
-        setScheduleChangeBusy(false);
+        setDateSheetOpen(false);
+        setDeleteModalOpen(false);
         setPhoneError(null);
         setPhoneFieldError(null);
         setPhoneNotice(AUTH_LOST_PHONE_NOTICE);
@@ -502,7 +501,8 @@ export default function ServiceRecordPage() {
             return;
         }
         if (screen === "day" && !editing) {
-            writeStoredFormState(token, { header, day, pageIdx, draft });
+            const stored = readStoredFormState(token);
+            writeStoredFormState(token, { header, drafts: { ...stored?.drafts, [day]: { pageIdx, draft } } });
         }
     }, [day, draft, editing, header, pageIdx, screen, token]);
 
@@ -525,11 +525,9 @@ export default function ServiceRecordPage() {
         const session = ctx?.sessions.find((row) => row.sessionIndex === d);
         const shouldEdit = editExisting || Boolean(session?.locked);
         if (shouldEdit && !session?.locked) return;
-        if (!shouldEdit && d !== nextOpenDay()) return;
-        if (!shouldEdit && defaultsGated) {
-            setPendingOpenDay({ day: d, editExisting });
-            return;
-        }
+        if (!shouldEdit && !openDays().includes(d)) return;
+        if (d < 1 || d > (ctx?.totalSessions ?? 0) || isRecordFinalizedStatus(ctx?.recordStatus)) return;
+        setServiceDateError(null);
 
         setEditing(shouldEdit);
         setMomSignature(null);
@@ -544,23 +542,16 @@ export default function ServiceRecordPage() {
                 paymentConfirmed: Boolean(session.paymentConfirmed),
             });
         } else {
-            const stored = readStoredFormState(token);
-            const canRestoreDraft = stored?.day === d && Boolean(stored.draft);
-            initialPageIdx = canRestoreDraft
-                ? Math.min(Math.max(stored?.pageIdx ?? 0, 0), DAY_PAGES.length - 1)
+            const storedDraft = readStoredFormState(token)?.drafts?.[d];
+            initialPageIdx = storedDraft
+                ? Math.min(Math.max(storedDraft.pageIdx, 0), DAY_PAGES.length - 1)
                 : 0;
-            setDraft(initializeUnlockedDraft(token, d, ctx?.sessions ?? [], defaultDateFromContext(ctx, d, serviceCalendar), ctx?.plannedSessionDates !== undefined));
+            setDraft(initializeUnlockedDraft(token, d, ctx?.sessions ?? []));
         }
         navigateTo("day", { mode: "push", day: d, pageIdx: initialPageIdx });
     }
 
     async function submitDay() {
-        if (defaultsGated) return;
-        // Same rule as the review page: another caregiver's submitted day is never resubmitted from here.
-        if (isLockedByOtherCaregiver(ctx?.sessions.find((session) => session.sessionIndex === day), ctx)) {
-            setSubmitModalOpen(false);
-            return;
-        }
         // Captured before any await: the toast fires after the context reloads.
         const submittedDay = day;
         const wasEditing = editing;
@@ -569,7 +560,7 @@ export default function ServiceRecordPage() {
         try {
             const currentSession = ctx?.sessions.find((session) => session.sessionIndex === day);
             const body = {
-                serviceDate: editing ? currentSession?.serviceDate.slice(0, 10) ?? serviceDate : serviceDate,
+                serviceDate,
                 answers: Object.fromEntries(Object.entries(draft).filter(([k]) => !k.startsWith("_"))),
                 etcService: (draft["etcService"] as string) ?? undefined,
                 notes: (draft["notes"] as string) ?? undefined,
@@ -587,8 +578,15 @@ export default function ServiceRecordPage() {
                 );
                 if (problemCode(normalized, e) === "CLIENT_SIGNATURE_REQUIRED") {
                     setErrorNotificationMessage("산모 서명이 필요합니다.");
-                } else if (problemCode(normalized, e) === "SERVICE_DATE_IMMUTABLE") {
-                    setErrorNotificationMessage("제공일자는 변경할 수 없어요.");
+                } else if (
+                    res.status === 400 && problemCode(normalized, e) === "VALIDATION_FAILED"
+                    && e && typeof e === "object" && "errors" in e && Array.isArray(e.errors)
+                    && e.errors.some((error: unknown) => error && typeof error === "object"
+                        && "pointer" in error && error.pointer === "/serviceDate")
+                ) {
+                    if (!editing) navigateTo("day", { mode: "replace", day, pageIdx: 0 });
+                    setServiceDateError(serviceDateErrorMessage("serviceDateReason" in e ? e.serviceDateReason : undefined));
+                    setSubmitModalOpen(false);
                 } else if (problemCode(normalized, e) === "REQUEST_CONFLICT") {
                     setErrorNotificationMessage("이미 처리되었거나 수정할 수 없는 상태예요.");
                 } else {
@@ -596,7 +594,7 @@ export default function ServiceRecordPage() {
                 }
                 return;
             }
-            if (!editing) clearStoredFormState(token);
+            if (!editing) clearStoredSessionDraft(token, submittedDay);
             setSubmitModalOpen(false);
             setEditing(false);
             setMomSignature(null);
@@ -615,104 +613,36 @@ export default function ServiceRecordPage() {
         } finally { setBusy(false); }
     }
 
-    async function openScheduleChangePreview() {
-        setScheduleChangePreview(null);
-        setScheduleChangeModalOpen(true);
-        setScheduleChangeBusy(true);
+    async function deleteSession() {
+        const deletedDay = day;
+        if (busy || !ctx?.sessions.some((row) => row.sessionIndex === deletedDay)) return;
+        setBusy(true);
         try {
-            const res = await api("/schedule-change/preview");
+            const res = await api(`/sessions/${deletedDay}`, { method: "DELETE" });
             if (handleAuthLost(res)) return;
-            const data = await res.json().catch(() => ({}));
             if (!res.ok) {
-                setScheduleChangeModalOpen(false);
-                setErrorNotificationMessage(problemMessage(res.status, data, "일정 변경 정보를 불러오지 못했습니다."));
+                const body: unknown = await res.json().catch(() => ({}));
+                setErrorNotificationMessage(problemMessage(res.status, body, "기록을 삭제하지 못했어요."));
                 return;
             }
-            setScheduleChangePreview(data as ScheduleChangePreview);
+            clearStoredSessionDraft(token, deletedDay);
+            setDeleteModalOpen(false);
+            await loadContext("push");
+            toast({ variant: "success", title: `${deletedDay}회차 기록을 삭제했어요` });
         } catch {
-            setScheduleChangeModalOpen(false);
-            setErrorNotificationMessage("일정 변경 정보를 불러오지 못했습니다.");
+            setErrorNotificationMessage("기록을 삭제하지 못했어요.");
         } finally {
-            setScheduleChangeBusy(false);
+            setBusy(false);
         }
     }
 
-    function closeScheduleChangeModal() {
-        if (scheduleChangeBusy) return;
-        setScheduleChangeModalOpen(false);
-        setScheduleChangePreview(null);
-    }
-
-    async function submitScheduleChangeRequest() {
-        setScheduleChangeBusy(true);
-        try {
-            const res = await api("/schedule-change", { method: "POST" });
-            if (handleAuthLost(res)) return;
-            const data = await res.json().catch(() => ({}));
-            // Registered-code comparison only — the raw body text is never read.
-            if (res.ok || (res.status === 409 && problemCode(normalizeApiError(
-                { response: { status: res.status, data } },
-                { locale: "ko-KR", operation: "mutation" },
-            ), data) === "REQUEST_ALREADY_PENDING")) {
-                setScheduleChangeModalOpen(false);
-                setScheduleChangePreview(null);
-                await loadContext();
-                return;
-            }
-            setErrorNotificationMessage(problemMessage(res.status, data, "일정 변경 요청에 실패했어요."));
-        } finally {
-            setScheduleChangeBusy(false);
-        }
-    }
-
-    // The shift decides the schedule-shift confirmation, so it is only computed
-    // from the loaded branch calendar (never the built-in list).
-    const pendingShift = useMemo(
-        () => (pendingServiceDate && calendarReady
-            ? getServiceDateShiftBusinessDays(defaultDate(day), pendingServiceDate.next, serviceCalendar)
-            : null),
-        [serviceCalendar, calendarReady, day, defaultDate, pendingServiceDate],
-    );
-
-    // A day opened while the calendar was loading runs once when it becomes ready.
     const openDayRef = useRef(openDay);
-    useEffect(() => {
-        openDayRef.current = openDay;
-    });
-    useEffect(() => {
-        if (!calendarReady || pendingOpenDay === null) return;
-        setPendingOpenDay(null);
-        openDayRef.current(pendingOpenDay.day, pendingOpenDay.editExisting);
-    }, [calendarReady, pendingOpenDay]);
+    useEffect(() => { openDayRef.current = openDay; });
 
     function handleServiceDateChange(next: string) {
-        if (ctx?.plannedSessionDates !== undefined) return;
-        const expected = defaultDate(day);
-        if (next === expected) {
-            setField("_date", next);
-            return;
-        }
-        if (next < expected) {
-            // Only reachable by typing into the field; the `min` attribute
-            // already blocks the date picker from offering an earlier date.
-            return;
-        }
-        // While the branch calendar loads the change is held open with the
-        // confirm action disabled; the shift is computed once it is ready.
-        if (calendarReady && getServiceDateShiftBusinessDays(expected, next, serviceCalendar) === null) {
-            // An unsupported year (or invalid date) cannot be shifted: ignore the change.
-            return;
-        }
-        setPendingServiceDate({ next });
-    }
-
-    function confirmServiceDateChange() {
-        if (ctx?.plannedSessionDates === undefined && pendingServiceDate && calendarReady && pendingShift !== null) setField("_date", pendingServiceDate.next);
-        setPendingServiceDate(null);
-    }
-
-    function cancelServiceDateChange() {
-        setPendingServiceDate(null);
+        setServiceDateError(null);
+        setField("_date", next);
+        setDateSheetOpen(false);
     }
 
     const setField = (k: string, v: unknown) => setDraft((d) => ({ ...d, [k]: v }));
@@ -724,24 +654,10 @@ export default function ServiceRecordPage() {
             return { ...d, [k]: arr };
         });
 
-    let serviceDateChangeDescription = "";
-    if (pendingServiceDate) {
-        if (pendingShift !== null) {
-            serviceDateChangeDescription = `${day}회차의 서비스 제공일을 ${formatMonthDayKo(defaultDate(day))}에서 ${formatMonthDayKo(pendingServiceDate.next)}로 변경하시겠어요? ${pendingShift} 영업일 만큼 서비스 종료 날짜가 미뤄집니다.`;
-        } else if (!calendarReady) {
-            serviceDateChangeDescription = "공휴일 정보를 확인한 뒤 제공일을 변경할 수 있어요.";
-        } else {
-            serviceDateChangeDescription = "선택한 날짜의 영업일 수를 계산할 수 없어요.";
-        }
-    }
-
-    const currentServiceDate = (draft["_date"] as string | undefined) || defaultDate(day);
-    const hasServiceDateMismatch = isServiceDateMismatch(currentServiceDate);
     const isRecordFinalized = isRecordFinalizedStatus(ctx?.recordStatus);
-
     const showCalendarNotice = ctx !== null
         && (screen === "overview" || screen === "day")
-        && (calendarError !== null || pendingOpenDay !== null);
+        && calendarError !== null;
 
     return (
         <>
@@ -760,12 +676,11 @@ export default function ServiceRecordPage() {
             draft={draft}
             editing={editing}
             clientSignature={clientSignature}
-            busy={busy || (screen === "day" && defaultsGated)}
+            busy={busy}
             isRecordFinalized={isRecordFinalized}
             lockedDays={lockedDays}
             nextOpenDay={nextOpenDay}
-            scheduleChangeBusy={scheduleChangeBusy}
-            hasServiceDateMismatch={hasServiceDateMismatch}
+            openDays={openDays}
             defaultDate={defaultDate}
             onPhoneChange={handlePhoneChange}
             onSubmitPhone={submitPhone}
@@ -774,7 +689,9 @@ export default function ServiceRecordPage() {
             onDeliveryTypeChange={(value) => setHeader((current) => ({ ...current, deliveryType: value }))}
             onSaveHeader={saveHeader}
             onOpenDay={openDay}
-            onOpenScheduleChangePreview={openScheduleChangePreview}
+            onOpenDateSheet={() => setDateSheetOpen(true)}
+            onDeleteSession={() => setDeleteModalOpen(true)}
+            serviceDateError={serviceDateError}
             onServiceDateChange={handleServiceDateChange}
             onFieldChange={setField}
             onToggleMulti={toggleMulti}
@@ -808,49 +725,34 @@ export default function ServiceRecordPage() {
                         onApprove={submitDay}
                     />
                 ),
-                scheduleChangeModal: (
-                    <ApprovalTwoButtonModal
-                        data-component="mobile_service-record_schedule-change-modal"
-                        open={scheduleChangeModalOpen}
-                        title={scheduleChangePreview ? `${scheduleChangePreview.sessionIndex}회차 서비스 일정을 조정할까요?` : "서비스 일정 변경"}
-                        description={scheduleChangePreview
-                            ? `${scheduleChangePreview.sessionIndex}회차 서비스를 ${formatMonthDayKo(scheduleChangePreview.fromDate)}에서 ${formatMonthDayKo(scheduleChangePreview.toDate)}로 변경을 요청할까요? 본사 승인 후 일정이 조정됩니다.`
-                            : "변경 가능한 일정을 확인하고 있어요."}
-                        isDescriptionVisuallyHidden={false}
-                        cancelLabel="취소"
-                        approvalLabel="승인 요청"
-                        pendingLabel={scheduleChangePreview ? "요청 중…" : "불러오는 중…"}
-                        isPending={scheduleChangeBusy}
-                        approvalDisabled={!scheduleChangePreview}
-                        onOpenChange={(open) => {
-                            if (!open) closeScheduleChangeModal();
-                        }}
-                        onApprove={submitScheduleChangeRequest}
+                serviceDateSheet: dateSheetOpen && ctx ? (
+                    <ServiceDateSheet
+                        data-component="mobile_service-record_wizard_service-date-sheet"
+                        context={ctx}
+                        day={day}
+                        value={(draft._date as string) || defaultDate(day)}
+                        editing={editing}
+                        calendar={serviceCalendar}
+                        calendarReady={calendarReady}
+                        onClose={() => setDateSheetOpen(false)}
+                        onSelect={handleServiceDateChange}
+                        onOrderBlocked={(message) => toast({ variant: "destructive", title: message })}
                     />
-                ),
-                serviceDateChangeModal: (
+                ) : null,
+                deleteModal: (
                     <ApprovalTwoButtonModal
-                        data-component="mobile_service-record_service-date-change-modal"
-                        open={ctx?.plannedSessionDates === undefined && pendingServiceDate !== null}
-                        title={`${day}회차 제공일을 변경할까요?`}
-                        description={serviceDateChangeDescription}
+                        data-component="mobile_service-record_wizard_delete-modal"
+                        open={deleteModalOpen}
+                        onOpenChange={(open) => { if (!busy) setDeleteModalOpen(open); }}
+                        title={`${day}회차 기록을 삭제할까요?`}
+                        description="기록과 고객 서명이 모두 삭제됩니다."
                         isDescriptionVisuallyHidden={false}
-                        size="detail"
                         cancelLabel="취소"
-                        approvalLabel="확인"
-                        approvalDisabled={!calendarReady || pendingShift === null}
-                        onOpenChange={(open) => {
-                            if (!open) cancelServiceDateChange();
-                        }}
-                        onApprove={confirmServiceDateChange}
-                    >
-                        <CalendarLoadNotice
-                            error={calendarError}
-                            onRetry={retryCalendar}
-                            loading={!calendarReady && calendarError === null}
-                            dataComponent="mobile_service-record_service-date-change-modal_calendar-notice"
-                        />
-                    </ApprovalTwoButtonModal>
+                        approvalLabel="삭제"
+                        approvalVariant="destructive"
+                        isPending={busy}
+                        onApprove={deleteSession}
+                    />
                 ),
                 errorNotification: (
                     <NotificationOneButtonModal
@@ -879,47 +781,14 @@ export default function ServiceRecordPage() {
     );
 }
 
-function defaultDateFromContext(
-    ctx: ServiceRecordContext | null,
-    day: number,
-    calendar: KrBusinessDayCalendar,
-): string {
-    const plannedDates = ctx?.plannedSessionDates;
-    if (plannedDates !== undefined) {
-        const isValidDateOnly = (value: string) => {
-            if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
-            const [year, month, dayOfMonth] = value.split("-").map(Number);
-            const parsed = new Date(Date.UTC(year, month - 1, dayOfMonth));
-            return parsed.getUTCFullYear() === year
-                && parsed.getUTCMonth() === month - 1
-                && parsed.getUTCDate() === dayOfMonth;
-        };
-        const plannedDateVectorValid = Array.isArray(plannedDates)
-            && plannedDates.length === (ctx?.totalSessions ?? 0)
-            && new Set(plannedDates.map((session) => session.sessionIndex)).size === plannedDates.length
-            && new Set(plannedDates.map((session) => session.serviceDate)).size === plannedDates.length
-            && plannedDates.every((session) => (
-                Number.isSafeInteger(session.sessionIndex)
-                && session.sessionIndex > 0
-                && session.sessionIndex <= (ctx?.totalSessions ?? 0)
-                && isValidDateOnly(session.serviceDate)
-            ));
-        if (!plannedDateVectorValid) return "";
-        return plannedDates.find((session) => session.sessionIndex === day)?.serviceDate ?? "";
-    }
-    return legacyDefaultServiceDate(ctx, day, calendar);
-}
-
 function initializeUnlockedDraft(
     token: string,
     day: number,
     sessions: ServiceRecordContext["sessions"],
-    defaultDate: string,
-    hasPlannedDate = false,
 ): Record<string, unknown> {
     const session = sessions.find((row) => row.sessionIndex === day);
     const serverDraft: Record<string, unknown> = {
-        _date: defaultDate,
+        _date: "",
         ...DEFAULT_DAILY_ANSWERS,
         etcService: "",
         notes: "",
@@ -934,10 +803,8 @@ function initializeUnlockedDraft(
             }
             : {}),
     };
-    const stored = readStoredFormState(token);
-    if (stored?.day !== day || !stored.draft) return serverDraft;
-    const restoredDraft = { ...serverDraft, ...stored.draft };
-    // The server plan is authoritative; keep the answers, not a stale date override.
-    if (hasPlannedDate && restoredDraft._date !== defaultDate) restoredDraft._date = defaultDate;
+    const storedDraft = readStoredFormState(token)?.drafts?.[day];
+    if (!storedDraft) return serverDraft;
+    const restoredDraft = { ...serverDraft, ...storedDraft.draft };
     return restoredDraft;
 }

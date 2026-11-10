@@ -18,10 +18,11 @@ const makeProps = (overrides: Partial<MobileServiceRecordScreenProps> = {}): Mob
     context: { totalSessions: 3, startDate: "2026-09-21", header: {}, sessions: [], org: { name: "테스트 기관" } },
     header: {}, day: 1, pageIdx: 0, draft: { ...DEFAULT_DAILY_ANSWERS }, editing: false, clientSignature: null,
     busy: false, isRecordFinalized: false, lockedDays: new Set<number>(), nextOpenDay: () => 1,
-    scheduleChangeBusy: false, hasServiceDateMismatch: false, defaultDate: (day) => `2026-09-${20 + day}`,
+
+    defaultDate: () => "2026-09-21", onServiceDateChange: jest.fn(), onFieldChange: jest.fn(),
     onPhoneChange: jest.fn(), onSubmitPhone: jest.fn(), onBack: jest.fn(), onHeaderChange: jest.fn(),
     onDeliveryTypeChange: jest.fn(), onSaveHeader: jest.fn(), onOpenDay: jest.fn(),
-    onOpenScheduleChangePreview: jest.fn(), onServiceDateChange: jest.fn(), onFieldChange: jest.fn(),
+
     onToggleMulti: jest.fn(), onSignatureChange: jest.fn(), onNextPage: jest.fn(),
     onOpenSubmitModal: jest.fn(), onEditSection: jest.fn(), ...overrides,
 });
@@ -89,22 +90,20 @@ describe("MobileServiceRecordScreen", () => {
             expect(q("top-bar")).toHaveTextContent("2회차 · 신생아 기록 (2/4)");
         });
 
-        it("alerts about an unreadable planned-date vector above the step", () => {
-            render(<MobileServiceRecordScreen {...makeProps({
-                context: { totalSessions: 3, startDate: "2026-09-21", header: null, sessions: [], plannedSessionDates: [] },
-            })} />);
-            expect(screen.getByRole("alert")).toHaveTextContent("서버 일정 정보를 확인할 수 없습니다. 새로고침 후 다시 시도해 주세요.");
-            expect(q("body_planned-date-error")).not.toBeNull();
+        it("leaves unwritten cards dateless even with a stale planned vector", () => {
+            render(<MobileServiceRecordScreen {...makeProps({ context: { totalSessions: 3, startDate: "2026-09-21", header: null, sessions: [], plannedSessionDates: [] } })} />);
+            expect(screen.queryByRole("alert")).toBeNull();
+            expect(q("body_day-grid")).not.toHaveTextContent("9.21");
         });
 
         it("renders the four modal slots after the step", () => {
             render(<MobileServiceRecordScreen {...makeProps({
                 slots: {
-                    submitModal: <i>submit-slot</i>, scheduleChangeModal: <i>schedule-slot</i>,
-                    serviceDateChangeModal: <i>date-slot</i>, errorNotification: <i>error-slot</i>,
+                    submitModal: <i>submit-slot</i>, deleteModal: <i>delete-slot</i>,
+                    serviceDateSheet: <i>date-slot</i>, errorNotification: <i>error-slot</i>,
                 },
             })} />);
-            for (const text of ["submit-slot", "schedule-slot", "date-slot", "error-slot"]) {
+            for (const text of ["submit-slot", "delete-slot", "date-slot", "error-slot"]) {
                 expect(screen.getByText(text)).toBeInTheDocument();
             }
         });
@@ -187,7 +186,6 @@ describe("MobileServiceRecordScreen", () => {
             expect(q("body_day-grid_day_number")).toHaveTextContent("1");
             expect(q("body_overview-back")).toBeNull();
             expect(screen.getByRole("button", { name: "기록 시작" })).toBeEnabled();
-            expect(screen.getByRole("button", { name: "서비스 일정 변경" })).toBeEnabled();
         });
 
         it("opens a submitted day for editing and the next open day from the action bar", async () => {
@@ -207,17 +205,17 @@ describe("MobileServiceRecordScreen", () => {
             render(<MobileServiceRecordScreen {...makeProps({ isRecordFinalized: true, lockedDays: new Set([1]), nextOpenDay: () => 2 })} />);
             for (const card of Array.from((q("body_day-grid") as HTMLElement).children)) expect(card).toBeDisabled();
             expect(screen.getByRole("button", { name: "다음 회차 입력" })).toBeDisabled();
-            expect(screen.getByRole("button", { name: "서비스 일정 변경" })).toBeDisabled();
         });
 
-        it("shows the pending label and disables the schedule change while a request waits", () => {
-            render(<MobileServiceRecordScreen {...makeProps({
-                context: {
-                    totalSessions: 3, startDate: "2026-09-21", header: null, sessions: [],
-                    pendingScheduleChange: { id: "p", sessionIndex: 1, fromDate: "2026-09-21", toDate: "2026-09-22" },
-                },
-            })} />);
-            expect(screen.getByRole("button", { name: "일정 변경 요청 대기 중" })).toBeDisabled();
+        it("allows every gap and the next session after a delete", () => {
+            render(<MobileServiceRecordScreen {...makeProps({ lockedDays: new Set([2]), nextOpenDay: () => 1, openDays: () => [1, 3] })} />);
+            const cards = Array.from(q("body_day-grid")!.children);
+            expect(cards[0]).toBeEnabled();
+            expect(cards[0]).toHaveTextContent("입력 가능");
+            expect(cards[1]).toHaveTextContent("제출완료");
+            expect(cards[2]).toBeEnabled();
+            expect(cards[2]).toHaveTextContent("입력 가능");
+            expect(cards[0]).not.toHaveTextContent("9.21");
         });
 
         it("has no action bar once every session is submitted", () => {
@@ -229,33 +227,26 @@ describe("MobileServiceRecordScreen", () => {
         it("names each day card by its date", () => {
             render(<MobileServiceRecordScreen {...makeProps()} />);
             const first = (q("body_day-grid") as HTMLElement).children[0];
-            expect(first).toHaveAccessibleName(expect.stringContaining("9.21"));
+            expect(first).toHaveAccessibleName(expect.stringContaining("1"));
+            expect(first).not.toHaveAccessibleName(expect.stringContaining("9.21"));
         });
     });
 
     describe("day pages", () => {
-        it("keeps what was typed in the service date across the review page and back", () => {
-            const props = makeProps({ screen: "day", day: 1, pageIdx: 0 });
+        it("keeps the picked service date across review and back", () => {
+            const props = makeProps({ screen: "day", day: 1, pageIdx: 0, draft: { _date: "2026-09-23" } });
             const { rerender } = render(<MobileServiceRecordScreen {...props} />);
-            const date = screen.getByLabelText("제공일자");
-            fireEvent.change(date, { target: { value: "2026092" } });
-            fireEvent.blur(date);
-            expect(date).toHaveValue("2026-09-2");
-            expect(document.getElementById("service-record-date-helper")).toHaveTextContent("8자리로 입력해 주세요");
-
+            expect(screen.getByLabelText("서비스 제공일")).toHaveValue("2026-09-23");
             rerender(<MobileServiceRecordScreen {...props} pageIdx={3} />);
-            expect(screen.queryByLabelText("제공일자")).toBeNull();
-            expect(q("body_handover-banner")).not.toBeNull();
-
+            expect(screen.queryByLabelText("서비스 제공일")).toBeNull();
             rerender(<MobileServiceRecordScreen {...props} pageIdx={0} />);
-            expect(screen.getByLabelText("제공일자")).toHaveValue("2026-09-2");
-            expect(document.getElementById("service-record-date-helper")).toHaveTextContent("8자리로 입력해 주세요");
+            expect(screen.getByLabelText("서비스 제공일")).toHaveValue("2026-09-23");
         });
 
         it("renders one body per screen: no hidden day page next to the review", () => {
             render(<MobileServiceRecordScreen {...makeProps({ screen: "day", pageIdx: 3 })} />);
             expect(document.querySelectorAll(`[data-component="${ROOT}_body"]`)).toHaveLength(1);
-            expect(screen.queryByLabelText("제공일자")).toBeNull();
+            expect(screen.queryByLabelText("서비스 제공일")).toBeNull();
         });
     });
 });
@@ -319,7 +310,7 @@ describe("MobileServiceRecordScreen: how-to guide", () => {
     it("opens over the service step when the customer has no saved header", () => {
         render(<MobileServiceRecordScreen {...makeProps({ screen: "service", context: FIRST_TIME })} />);
         expect(guide()).toBeInTheDocument();
-        expect(within(guide() as HTMLElement).getByText("1 / 7")).toBeInTheDocument();
+        expect(within(guide() as HTMLElement).getByText("1 / 6")).toBeInTheDocument();
         expect(q("guide_sheet")).toBe(guide());
     });
 
@@ -362,7 +353,7 @@ describe("MobileServiceRecordScreen: how-to guide", () => {
         expect(props.onSaveHeader).toHaveBeenCalledTimes(1);
     });
 
-    it("shows 사용방법 in the overview title row, which opens the guide on 1 / 7", async () => {
+    it("shows 사용방법 in the overview title row, which opens the guide on 1 / 6", async () => {
         const user = userEvent.setup();
         render(<MobileServiceRecordScreen {...makeProps({ screen: "overview", context: SAVED })} />);
         expect(guide()).toBeNull();
@@ -373,7 +364,7 @@ describe("MobileServiceRecordScreen: how-to guide", () => {
         expect(open.parentElement).toBe(title.parentElement);
 
         await user.click(open);
-        expect(within(guide() as HTMLElement).getByText("1 / 7")).toBeInTheDocument();
+        expect(within(guide() as HTMLElement).getByText("1 / 6")).toBeInTheDocument();
 
         await user.click(within(guide() as HTMLElement).getByRole("button", { name: "다음" }));
         await user.click(within(guide() as HTMLElement).getByRole("button", { name: "건너뛰기" }));
@@ -381,6 +372,36 @@ describe("MobileServiceRecordScreen: how-to guide", () => {
 
         // Opened again, it starts from the first slide.
         await user.click(screen.getByRole("button", { name: "사용방법" }));
-        expect(within(guide() as HTMLElement).getByText("1 / 7")).toBeInTheDocument();
+        expect(within(guide() as HTMLElement).getByText("1 / 6")).toBeInTheDocument();
     });
+});
+
+it("enlarges status titles while retaining the 48px completion emoji", () => {
+    const { rerender } = render(<MobileServiceRecordScreen {...makeProps({ screen: "invalid", context: null })} />);
+    expect(q("body_invalid-center_title")).toHaveClass("text-xl");
+    expect(q("body_invalid-center_title")?.nextElementSibling).toHaveClass("text-base");
+    rerender(<MobileServiceRecordScreen {...makeProps({ screen: "done" })} />);
+    expect(q("body_done-center_title")).toHaveClass("text-xl");
+    expect(screen.getByText("✅")).toHaveClass("text-5xl");
+});
+
+it("enlarges phone title, help, error, input and submit text one step", () => {
+    render(<MobileServiceRecordScreen {...makeProps({ screen: "phone", context: null, phoneError: "인증 오류", phoneNotice: "안내" })} />);
+    expect(q("body_phone-title")).toHaveClass("text-xl");
+    expect(q("body_phone-help")).toHaveClass("text-base");
+    expect(q("body_phone-notice")).toHaveClass("text-base");
+    expect(q("body_phone-error")).toHaveClass("text-base");
+    expect(q("body_phone-input")).toHaveClass("text-lg");
+    expect(q("body_phone-submit")).toHaveClass("text-base");
+});
+
+it("enlarges service details, fields, delivery options and navigation text one step", () => {
+    render(<MobileServiceRecordScreen {...makeProps({ screen: "service" })} />);
+    expect(q("body_service-title")).toHaveClass("text-xl");
+    expect(q("body_readonly-row")).toHaveClass("text-base");
+    expect(q("body_service-back")).toHaveClass("text-sm");
+    expect(q("body_service-next")).toHaveClass("text-base");
+    expect(document.querySelector('[data-component$="_control"]')).toHaveClass("text-lg");
+    expect(q("body_delivery-field_options_option-0")).toHaveClass("text-base");
+    expect(q("body_delivery-field_options_option-0_indicator")).toHaveClass("text-xs");
 });

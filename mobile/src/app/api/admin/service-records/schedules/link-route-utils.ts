@@ -3,8 +3,8 @@ import { NextResponse } from "next/server";
 import { validationProblemResponse } from "@/lib/api/problem-responses";
 
 /**
- * Local path validation for the admin service-record link proxies. Mirrors
- * the schedule-change sibling: only positive integers count as schedule ids,
+ * Local path validation for the admin service-record link proxies. Only
+ * positive integers count as schedule ids,
  * and the rejection is a registered VALIDATION_FAILED problem (400) whose
  * `detail` is re-stamped from the shared catalog locale copy.
  */

@@ -50,7 +50,7 @@ import {
 import { ServiceRecordEditPreviewDialog } from "./ServiceRecordEditPreviewDialog";
 import { ServiceRecordDateSelectionDialog } from "./ServiceRecordDateSelectionDialog";
 import { RevisionHistoryView } from "./RevisionHistoryView";
-import { describeScheduleBlockingReasons } from "./service-record-blocking-reasons";
+import { describeScheduleBlockingReasons, GENERIC_BLOCKING_REASON } from "./service-record-blocking-reasons";
 import { AdminServiceRecordScreen } from "./screen/AdminServiceRecordScreen";
 import { moveServiceRecordSessionDate } from "@babyjamjam/shared/utils/service-record-schedule";
 
@@ -182,18 +182,29 @@ function dateOnly(value: unknown): string {
     return /^\d{4}-\d{2}-\d{2}/.test(normalized) ? normalized.slice(0, 10) : "";
 }
 
+const CAREGIVER_DATE_WINDOW_DAYS = 7;
+
+function offsetCaseDate(value: unknown, days: number): string | null {
+    const date = dateOnly(value);
+    if (!date) return null;
+    const copy = new Date(`${date}T00:00:00.000Z`);
+    copy.setUTCDate(copy.getUTCDate() + days);
+    return copy.toISOString().slice(0, 10);
+}
+
 function isOutsidePeriod(serviceDate: string, startDate: unknown, endDate: unknown): boolean {
     const date = dateOnly(serviceDate);
     if (!date) return false;
-    const start = dateOnly(startDate);
-    const end = dateOnly(endDate);
+    const start = offsetCaseDate(startDate, -CAREGIVER_DATE_WINDOW_DAYS);
+    const end = offsetCaseDate(endDate, CAREGIVER_DATE_WINDOW_DAYS);
     return Boolean((start && date < start) || (end && date > end));
 }
 
 /**
  * Case rows are the canonical aggregate. Assignment rows fill gaps for old
- * records, and distinct or out-of-period projections are retained as
- * selectable supplemental rows instead of being silently dropped.
+ * records. Distinct rows, rows outside the start−7..end+7 lifecycle window,
+ * or rows outside 1..N are kept as selectable supplemental rows instead of
+ * being silently dropped.
  */
 export function buildAdminServiceRecordView(
     overview: AdminServiceRecordEditorOverview,
@@ -333,7 +344,6 @@ export function buildAdminServiceRecordView(
             header,
             sessions,
             recordStatus: record?.status ?? null,
-            pendingScheduleChange: null,
         },
         supplementalSessions,
         plannedSessions: projectionIsComplete ? [...projectionEntries].sort((left, right) => left.sessionIndex - right.sessionIndex) : [],
@@ -814,6 +824,15 @@ export function ServiceRecordAdminWizard({
                 else showRefreshModal();
                 return;
             }
+            if (failure.status === 400 && failure.scheduleCode) {
+                const line = describeScheduleBlockingReasons([{
+                    code: failure.scheduleCode, message: "", sessionIndex: failure.sessionIndex,
+                }])[0];
+                if (line.text !== GENERIC_BLOCKING_REASON) {
+                    setError(line.label);
+                    return;
+                }
+            }
             setError(failure.status === 403 ? "수정 권한이 없습니다. 수정사항은 이 화면에 남아 있어요."
                 : failure.status === 401 ? "로그인이 필요합니다. 수정사항은 이 화면에 남아 있어요."
                 : "저장 결과를 확인하지 못했습니다. 수정사항은 이 화면에 남아 있어요.");
@@ -1084,14 +1103,14 @@ export function ServiceRecordAdminWizard({
                     readOnly={locked} adminMode clientSignature={currentSession?.clientSignature ?? null}
                     busy={busy} isRecordFinalized={false}
                     lockedDays={new Set(baseView.context.sessions.filter((item) => item.submittedAt || item.locked).map((item) => item.sessionIndex))}
-                    nextOpenDay={() => 1} scheduleChangeBusy={false} hasServiceDateMismatch={false}
+                    nextOpenDay={() => 1} hasServiceDateMismatch={false}
                     defaultDate={(index) => dateOnly(displayContext.sessions.find((item) => item.sessionIndex === index)?.serviceDate)
                         || baseView.plannedSessions.find((item) => item.sessionIndex === index)?.serviceDate || ""}
                     onPhoneChange={() => undefined} onSubmitPhone={() => undefined}
                     onBack={back}
                     onHeaderChange={(key, value) => { if (!locked) setHeaderDraft((current) => ({ ...current, [key]: value })); }}
                     onDeliveryTypeChange={(value) => { if (!locked) setHeaderDraft((current) => ({ ...current, deliveryType: value })); }}
-                    onSaveHeader={() => void accept()} onOpenDay={openDay} onOpenScheduleChangePreview={() => undefined}
+                    onSaveHeader={() => void accept()} onOpenDay={openDay}
                     onOpenServiceDateEditor={() => { if (!locked && calendarReady && !baseView.scheduleProjectionBlockingReasons.length) { setDateError(null); setDateDialogOpen(true); } }}
                     onServiceDateChange={selectDate}
                     onFieldChange={(key, value) => { if (!locked) setDraft((current) => ({ ...current, [key]: value })); }}
@@ -1183,6 +1202,8 @@ export function ServiceRecordAdminWizard({
                 confirmBusy={busy} confirmError={error} data-component={`${ADMIN_WIZARD_COMPONENT}_commit-preview`} />
             <ServiceRecordDateSelectionDialog open={dateDialogOpen} onOpenChange={setDateDialogOpen}
                 currentServiceDate={String(draft._date || sourceDate)} calendar={calendar} sessionLabel={`${day}회차`}
+                windowStart={offsetCaseDate(overview.record?.startDate, -CAREGIVER_DATE_WINDOW_DAYS)}
+                windowEnd={offsetCaseDate(overview.record?.endDate, CAREGIVER_DATE_WINDOW_DAYS)}
                 onApply={selectDate} error={dateError} disabled={locked || !calendarReady}
                 data-component={`${ADMIN_WIZARD_COMPONENT}_date-selection-dialog`} />
             <Dialog open={Boolean(followPrompt)} onOpenChange={(open) => { if (!open) { setFollowPrompt(null); setDateDialogOpen(true); } }}>

@@ -21,12 +21,10 @@ jest.mock("@/components/app/service-record/ServiceRecordWizard", () => ({
             <span data-testid="phone-notice">{props.phoneNotice ?? ""}</span>
             <button onClick={() => props.onOpenSubmitModal()}>open submit modal</button>
             <button onClick={() => void props.onSaveHeader()}>save header</button>
-            <button onClick={() => void props.onOpenScheduleChangePreview()}>open schedule preview</button>
             <button onClick={() => props.onOpenDay(1)}>open day 1</button>
             <button onClick={() => props.onPhoneChange("01012345678")}>type phone</button>
             <button onClick={() => void props.onSubmitPhone()}>verify phone</button>
             {props.slots?.submitModal}
-            {props.slots?.scheduleChangeModal}
             {props.slots?.errorNotification}
         </div>
     ),
@@ -125,28 +123,9 @@ describe("service-record page submit errors", () => {
             await expectSentToPhone();
         });
 
-        it("sends a 401 on the schedule-change preview to the phone screen and closes the modal", async () => {
-            installFetch(jsonResponse({}), {
-                "/schedule-change/preview": jsonResponse({ code: "AUTH_REQUIRED" }, 401),
-            });
-            const user = await renderOverview();
-            await user.click(screen.getByRole("button", { name: "open schedule preview" }));
-            await expectSentToPhone();
-            expect(screen.queryByText("서비스 일정 변경")).not.toBeInTheDocument();
-        });
 
-        it("sends a 401 on the schedule-change request to the phone screen and closes the modal", async () => {
-            const preview = { sessionIndex: 1, fromDate: "2026-07-20", toDate: "2026-07-21" };
-            installFetch(jsonResponse({}), {
-                "/schedule-change/preview": jsonResponse(preview),
-                "/schedule-change": jsonResponse({ code: "AUTH_REQUIRED" }, 401),
-            });
-            const user = await renderOverview();
-            await user.click(screen.getByRole("button", { name: "open schedule preview" }));
-            await user.click(await screen.findByRole("button", { name: "승인 요청" }));
-            await expectSentToPhone();
-            expect(screen.queryByRole("button", { name: "승인 요청" })).not.toBeInTheDocument();
-        });
+
+
 
         it("clears the notice once the caregiver verifies again", async () => {
             installFetch(jsonResponse({ code: "AUTH_REQUIRED" }, 401), { "/verify": jsonResponse({ ok: true }) });
@@ -175,12 +154,12 @@ describe("service-record page submit errors", () => {
             await user.click(screen.getByRole("button", { name: "open submit modal" }));
             await user.click(await screen.findByRole("button", { name: "확인" }));
             await expectSentToPhone();
-            expect(JSON.parse(window.sessionStorage.getItem(key) ?? "null")?.draft?.notes).toBe("keep me");
+            expect(JSON.parse(window.sessionStorage.getItem(key) ?? "null")?.drafts?.[1]?.draft?.notes).toBe("keep me");
 
             await user.click(screen.getByRole("button", { name: "type phone" }));
             await user.click(screen.getByRole("button", { name: "verify phone" }));
             await waitFor(() => expect(screen.getByTestId("screen")).toHaveTextContent("overview"));
-            expect(JSON.parse(window.sessionStorage.getItem(key) ?? "null")?.draft?.notes).toBe("keep me");
+            expect(JSON.parse(window.sessionStorage.getItem(key) ?? "null")?.drafts?.[1]?.draft?.notes).toBe("keep me");
         });
     });
 });

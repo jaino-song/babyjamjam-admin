@@ -46,3 +46,13 @@ describe("SignaturePad layout outside the package's .srec styles", () => {
         expect(screen.getByRole("button", { name: "서명 지우기" })).toHaveClass("sign-clear");
     });
 });
+
+it("enlarges the signature caption, actions, hint, note and signed chip one step", () => {
+    const { rerender } = render(<SignaturePad {...props} />);
+    expect(screen.getByText("산모 서명")).toHaveClass("text-base");
+    expect(screen.getByRole("button", { name: "서명 지우기" })).toHaveClass("text-sm");
+    expect(screen.getByText("여기에 손가락으로 서명해 주세요")).toHaveClass("text-base");
+    expect(screen.getByText("기록 내용을 확인하였음을 서명으로 확인합니다.")).toHaveClass("text-sm", "leading-relaxed");
+    rerender(<SignaturePad {...props} locked signedAt="2026-09-21T01:02:00Z" />);
+    expect(screen.getByText(/서명 완료/)).toHaveClass("text-sm");
+});

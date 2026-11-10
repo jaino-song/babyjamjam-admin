@@ -16,9 +16,9 @@ export type ServiceRecordOperation =
   | "holidays"
   | "save-header"
   | "save-session"
+  | "delete-session"
   | "submit-session"
   | "finalize"
-  | "schedule-change"
   | "render";
 
 interface ServiceRecordErrorContext {
@@ -50,15 +50,16 @@ function getRequestPath(url: string | undefined): string {
   }
 }
 
-export function getServiceRecordOperation(path: string): ServiceRecordOperation {
+export function getServiceRecordOperation(path: string, method?: string): ServiceRecordOperation {
   if (path.includes("/verify")) return "verify";
   if (path.includes("/context")) return "context";
   if (path.includes("/holidays")) return "holidays";
   if (path.includes("/header")) return "save-header";
-  if (path.includes("/schedule-change")) return "schedule-change";
   if (path.includes("/finalize")) return "finalize";
   if (path.includes("/sessions/") && path.includes("/submit")) return "submit-session";
-  if (path.includes("/sessions/")) return "save-session";
+  if (path.includes("/sessions/")) {
+    return method?.toUpperCase() === "DELETE" ? "delete-session" : "save-session";
+  }
   return "public-link";
 }
 
@@ -88,7 +89,7 @@ export function captureServiceRecordError(
 
   const path = sanitizeSentryUrl(rawPath) ?? "unknown";
   const statusLabel = status ? String(status) : "network";
-  const operation = context?.operation ?? getServiceRecordOperation(rawPath);
+  const operation = context?.operation ?? getServiceRecordOperation(rawPath, method);
   const capturedError = Object.assign(
     new Error(`Service-record ${operation} failed: ${method} ${path} (${statusLabel})`),
     { name: "ServiceRecordError" },

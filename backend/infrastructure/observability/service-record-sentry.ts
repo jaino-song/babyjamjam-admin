@@ -44,7 +44,6 @@ export type ServiceRecordOperation =
     | "save-session"
     | "submit-session"
     | "finalize"
-    | "schedule-change"
     | "auto-finalize"
     | "snapshot-create"
     | "webhook"
@@ -138,8 +137,6 @@ const UUID_PATH_SEGMENT_PATTERN =
     /\/[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}(?=\/|$)/gi;
 const SERVICE_RECORD_SIGNAL_PATTERN =
     /service-record(?:s)?|service_record(?:s)?|service-feedback|service_feedback/i;
-const SCHEDULE_CHANGE_PATTERN =
-    /\/schedule-change-requests\/schedules\/[^/]+\/(?:preview|apply)(?:\/|$)/i;
 const SAFE_TAG_KEYS = new Set([
     "app",
     "runtime",
@@ -405,14 +402,13 @@ export function sanitizeSentryEvent(event: Event): Event {
 export function isServiceRecordSignal(value: string | undefined): boolean {
     if (!value) return false;
     const path = value.split(/[?#]/, 1)[0] ?? value;
-    return SERVICE_RECORD_SIGNAL_PATTERN.test(path) || SCHEDULE_CHANGE_PATTERN.test(path);
+    return SERVICE_RECORD_SIGNAL_PATTERN.test(path);
 }
 
 export function getServiceRecordOperation(path: string): ServiceRecordOperation {
     if (path.includes("/verify")) return "verify";
     if (path.includes("/context")) return "context";
     if (path.includes("/header")) return "save-header";
-    if (path.includes("/schedule-change")) return "schedule-change";
     if (path.includes("/finalize")) return "finalize";
     if (path.includes("/sessions/") && path.includes("/submit")) return "submit-session";
     if (path.includes("/sessions/")) return "save-session";

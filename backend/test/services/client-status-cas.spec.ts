@@ -39,7 +39,6 @@ function createClient(serviceStatus: string | null): ClientEntity {
 function createService(client: ClientEntity) {
     const prisma = {
         employee_schedule: { findMany: jest.fn().mockResolvedValue([]) },
-        schedule_change_request: { findMany: jest.fn().mockResolvedValue([]) },
         service_record_case: { findMany: jest.fn().mockResolvedValue([]) },
         eformsign_doc: { findMany: jest.fn().mockResolvedValue([]) },
         client: { update: jest.fn(), updateMany: jest.fn() },
@@ -182,7 +181,6 @@ describe("ClientService automatic service-status CAS", () => {
         await flushBackgroundWork();
 
         expect(prisma.employee_schedule.findMany).toHaveBeenCalledTimes(1);
-        expect(prisma.schedule_change_request.findMany).toHaveBeenCalledTimes(1);
         expect(prisma.eformsign_doc.findMany).toHaveBeenCalledTimes(1);
         expect(client.serviceStatus).toBe("waiting");
         expect(clientRepository.updateServiceStatusIfCurrent).toHaveBeenCalledTimes(1);

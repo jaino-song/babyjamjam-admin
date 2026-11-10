@@ -89,7 +89,7 @@ describe("PATCH /api/admin/service-records/drafts/[draftId]", () => {
         );
     });
 
-    it("keeps a known scheduleCode on a 400 and drops every other unknown member", async () => {
+    it("keeps a known scheduleCode and safe sessionIndex on a 400 and drops unknown members", async () => {
         const problem = createProblemDetails({
             code: "VALIDATION_FAILED",
             requestId: "req-draft-schedule",
@@ -116,9 +116,9 @@ describe("PATCH /api/admin/service-records/drafts/[draftId]", () => {
 
         expect(response.status).toBe(400);
         const body = await response.json();
-        expect(body).toMatchObject({ code: "VALIDATION_FAILED", scheduleCode: "SCHEDULE_COUNT_MISMATCH" });
+        expect(body).toMatchObject({ code: "VALIDATION_FAILED", scheduleCode: "SCHEDULE_COUNT_MISMATCH", sessionIndex: 3 });
         expect(body).not.toHaveProperty("stack");
-        expect(body).not.toHaveProperty("sessionIndex");
+        expect(body).not.toHaveProperty("message");
         expect(JSON.stringify(body)).not.toContain("Session 3 must use");
     });
 

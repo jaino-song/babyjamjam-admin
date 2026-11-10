@@ -77,6 +77,21 @@ describe("captureServiceRecordError", () => {
     expect(mockScope.setTag).toHaveBeenCalledWith("operation", "submit-session");
   });
 
+  it("labels an Axios DELETE failure as delete-session and redacts identifiers", () => {
+    captureServiceRecordError(createAxiosError({
+      status: 503,
+      method: "delete",
+      url: "/service-record/efl_secret/sessions/1",
+    }));
+
+    expect(mockScope.setTag).toHaveBeenCalledWith("operation", "delete-session");
+    expect(mockScope.setContext).toHaveBeenCalledWith("serviceRecord", expect.objectContaining({
+      operation: "delete-session",
+      method: "DELETE",
+      path: "/service-record/[Filtered]/sessions/[Filtered]",
+    }));
+  });
+
   it("captures resolved 5xx responses but ignores resolved 4xx responses", () => {
     captureServiceRecordResponseError(
       { status: 503 },
@@ -125,6 +140,19 @@ describe("captureServiceRecordError", () => {
 });
 
 describe("getServiceRecordOperation", () => {
+  it.each([
+    ["DELETE", "delete-session"],
+    ["delete", "delete-session"],
+    ["PUT", "save-session"],
+    [undefined, "save-session"],
+  ])("labels a session request with method %s as %s", (method, operation) => {
+    expect(getServiceRecordOperation("/service-record/efl_secret/sessions/1", method)).toBe(operation);
+  });
+
+  it("keeps session submission labelled separately", () => {
+    expect(getServiceRecordOperation("/service-record/efl_secret/sessions/1/submit", "POST")).toBe("submit-session");
+  });
+
   it("labels token-page holiday calendar requests as holidays", () => {
     expect(getServiceRecordOperation("/holidays?year=2026")).toBe("holidays");
     expect(getServiceRecordOperation("/context")).toBe("context");

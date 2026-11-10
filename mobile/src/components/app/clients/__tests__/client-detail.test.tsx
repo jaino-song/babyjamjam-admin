@@ -1,6 +1,6 @@
-import { act, render, renderHook, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { formatMessageDateTimeCompact, MESSAGE_JOB_RESEND_COPY } from "@babyjamjam/shared";
 import { AxiosError, AxiosHeaders } from "axios";
 import { CONTRACT_VOID_COPY } from "@babyjamjam/shared/constants/eformsign-doc-status";
@@ -14,8 +14,6 @@ import {
 } from "../client-detail";
 import type { Client } from "@/lib/client/types";
 import type { EformsignDocument } from "@/lib/eformsign/types";
-import { useIssueContract } from "@/hooks/useIssueContract";
-import { useFormStore } from "@/stores/form-store";
 
 const mockRetryHistory = jest.fn();
 const mockResendJob = jest.fn();
@@ -244,20 +242,22 @@ const mockServiceRecordsQuery: {
   isFetching: boolean;
   refetch: jest.Mock;
 } = { data: undefined, isError: false, isLoading: false, isPaused: false, isFetching: false, refetch: jest.fn() };
+let mockRenderServiceRecords = false;
+const mockFitPeriod = jest.fn();
+let mockOnPeriodFitted: (() => Promise<void>) | undefined;
 const mockServiceRecordsRenders: Array<{ isLoading: boolean; isError: boolean }> = [];
 
 jest.mock("@/hooks/useServiceRecords", () => ({
-  applyServiceScheduleChange: jest.fn(),
   fetchClientServiceRecords: jest.fn(),
-  previewServiceScheduleChange: jest.fn(),
   resetServiceRecordLink: jest.fn(),
   useClientServiceRecords: () => mockServiceRecordsQuery,
+  useKeepPeriodMismatch: () => ({ isPending: false, mutateAsync: jest.fn() }),
+  useFitPeriodMismatch: () => ({ isPending: false, mutateAsync: mockFitPeriod }),
+  useSendServiceRecordLink: () => ({ isPending: false, mutateAsync: jest.fn() }),
 }));
 
 jest.mock("@/hooks/useClients", () => ({
-  approveScheduleChange: jest.fn(),
   fetchClient: jest.fn(),
-  rejectScheduleChange: jest.fn(),
 }));
 
 jest.mock("@/components/app/service-record/ServiceRecordScheduleSheet", () => ({
@@ -293,7 +293,9 @@ jest.mock("@/hooks/use-send-client-receipt", () => ({
 }));
 
 jest.mock("@/components/app/mobile-redesign/detail-sheet", () => ({
-  DetailTabPills: () => null,
+  DetailTabPills: ({ tabs }: { tabs: Array<{ id: string; label: string }> }) => (
+    <div role="tablist">{tabs.map((tab) => <button role="tab" key={tab.id}>{tab.label}</button>)}</div>
+  ),
   InfoCard: ({ children, title }: { children: ReactNode; title?: string }) => (
     <section>
       {title ? <h2>{title}</h2> : null}
@@ -321,7 +323,12 @@ jest.mock("@/components/app/mobile-redesign/detail-sheet", () => ({
 }));
 
 jest.mock("../client-service-records", () => ({
-  ClientServiceRecords: (props: { isLoading: boolean; isError: boolean }) => {
+  ClientServiceRecords: (props: { isLoading: boolean; isError: boolean; onPeriodFitted?: () => Promise<void> }) => {
+    if (mockRenderServiceRecords) {
+      const { ClientServiceRecords } = jest.requireActual("../client-service-records");
+      return <ClientServiceRecords {...props} />;
+    }
+    mockOnPeriodFitted = props.onPeriodFitted;
     mockServiceRecordsRenders.push({ isLoading: props.isLoading, isError: props.isError });
     return null;
   },
@@ -329,12 +336,6 @@ jest.mock("../client-service-records", () => ({
 
 jest.mock("../ServiceRecordLinkResetResultModal", () => ({
   ServiceRecordLinkResetResultModal: () => null,
-}));
-
-jest.mock("../ServiceScheduleChangeModal", () => ({
-  ServiceScheduleChangeModal: ({ onSubmit }: { onSubmit: (allow: boolean) => void }) => (
-    <button onClick={() => onSubmit(false)}>일정 변경 적용</button>
-  ),
 }));
 
 jest.mock("@/services/api", () => ({
@@ -548,81 +549,98 @@ describe("contract void workflow", () => {
 });
 
 describe("ClientDetailContent", () => {
-  it("leaves the payment date blank when the old document fetch fails during reissue", async () => {
-    const { fetchClientServiceRecords, previewServiceScheduleChange, applyServiceScheduleChange } = await import("@/hooks/useServiceRecords");
-    const { eformsignApi } = await import("@/services/api");
-    jest.mocked(fetchClientServiceRecords).mockResolvedValue({ assignments: [{ scheduleId: 7, replaced: false }] } as never);
-    jest.mocked(previewServiceScheduleChange).mockResolvedValue({
-      fromDate: "2026-10-05", minimumDate: "2026-10-05", sessionIndex: 1,
-    } as never);
-    jest.mocked(applyServiceScheduleChange).mockResolvedValue({ newEndDate: "2026-10-30" } as never);
-    jest.mocked(eformsignApi.getDocument).mockRejectedValueOnce(new Error("Document unavailable"));
-    useFormStore.getState().resetAll();
-    const { result } = renderHook(() => useIssueContract());
-    render(
-      <ClientDetailContent
-        data-component="mobile_clients_detail"
-        client={{ ...client, eDocId: "old-document", documentStatus: "completed" }}
-        activeTab="basic"
-        onTabChange={jest.fn()}
-        onMessage={jest.fn()}
-        onIssueContract={result.current}
-        onEdit={jest.fn()}
-        onDelete={jest.fn()}
-        onClientUpdated={jest.fn()}
-      />,
-    );
-    const user = userEvent.setup();
-    await user.click(screen.getByRole("button", { name: "고객 옵션" }));
-    await user.click(screen.getByText("서비스 일정 변경"));
-    await user.click(await screen.findByText("일정 변경 적용"));
-    await user.click(await screen.findByText("수정 전송"));
-
-    expect(eformsignApi.getDocument).toHaveBeenCalledWith("old-document");
-    expect(useFormStore.getState().paymentDate).toBe("");
-    expect(useFormStore.getState().isContractReissue).toBe(true);
-    expect(useFormStore.getState().supersede).toBeNull();
+  it("keeps the fit success and shows the refresh notice when client reload rejects", async () => {
+    const { fetchClient } = await import("@/hooks/useClients");
+    let rejectReload!: (reason: Error) => void;
+    jest.mocked(fetchClient).mockClear().mockReturnValue(new Promise((_resolve, reject) => { rejectReload = reject; }));
+    mockFitPeriod.mockReset().mockResolvedValue({ startDate: "2026-10-30", endDate: "2026-11-17" });
+    jest.mocked(toast).mockClear();
+    const previousQuery = { ...mockServiceRecordsQuery };
+    Object.assign(mockServiceRecordsQuery, {
+      isError: false, isLoading: false, isPaused: false, isFetching: false,
+      data: {
+        record: { startDate: "2026-11-02", endDate: "2026-11-17", totalSessions: 1, signatureDocs: [], sessions: [], status: "IN_PROGRESS" },
+        assignments: [{
+          scheduleId: 1, startDate: "2026-11-02", endDate: "2026-11-17", replaced: false,
+          employee: { id: 1, name: "QA-provider", phone: null },
+          link: { status: "none", sentCount: 0, token: null }, totalSessions: 1, header: null, signatureDoc: null,
+          sessions: [{ sessionIndex: 1, serviceDate: "2026-10-30", locked: true, answers: {} }],
+        }],
+      },
+    });
+    const onClientUpdated = jest.fn();
+    mockRenderServiceRecords = true;
+    const view = render(<ClientDetailContent
+      data-component="mobile_clients_detail-sheet_stack_detail-page_content"
+      client={client} activeTab="serviceRecords"
+      onTabChange={jest.fn()} onMessage={jest.fn()} onIssueContract={jest.fn()}
+      onEdit={jest.fn()} onDelete={jest.fn()} onClientUpdated={onClientUpdated}
+    />);
+    try {
+      await userEvent.click(screen.getByRole("button", { name: "변경" }));
+      expect(mockFitPeriod).toHaveBeenCalledWith({ clientId: client.id });
+      expect(fetchClient).toHaveBeenCalledWith(client.id);
+      expect(screen.getByRole("button", { name: "유지" })).toBeDisabled();
+      expect(screen.getByRole("button", { name: "변경" })).toBeDisabled();
+      const toastsWhileReloading = jest.mocked(toast).mock.calls.slice();
+      await act(async () => { rejectReload(new Error("offline")); });
+      expect(toastsWhileReloading).toEqual([[{
+        variant: "success", description: "서비스 시작일을 2026.10.30으로 바꿨어요",
+      }]]);
+      expect(toast).toHaveBeenNthCalledWith(2, {
+        variant: "destructive",
+        description: "저장했어요. 고객 정보를 다시 불러오지 못했으니 화면을 새로고침해 주세요",
+      });
+      expect(toast).not.toHaveBeenCalledWith(expect.objectContaining({ description: "서비스 기간을 처리하지 못했어요" }));
+      expect(onClientUpdated).not.toHaveBeenCalled();
+      expect(screen.getByRole("button", { name: "유지" })).toBeEnabled();
+      expect(screen.getByRole("button", { name: "변경" })).toBeEnabled();
+    } finally {
+      view.unmount();
+      mockRenderServiceRecords = false;
+      Object.assign(mockServiceRecordsQuery, previousQuery);
+    }
   });
-  it.each([
-    ["requested", "latest-document"],
-    ["completed", undefined],
-  ] as const)("reissues using the latest document's %s status, not the stale pin", async (documentStatus, expected) => {
-    const { eformsignApi } = await import("@/services/api");
-    const { fetchClientServiceRecords, previewServiceScheduleChange, applyServiceScheduleChange } = await import("@/hooks/useServiceRecords");
-    jest.mocked(fetchClientServiceRecords).mockResolvedValue({
-      assignments: [{ scheduleId: 7, replaced: false }],
-    } as never);
-    jest.mocked(previewServiceScheduleChange).mockResolvedValue({
-      fromDate: "2026-10-05", minimumDate: "2026-10-05", sessionIndex: 1,
-    } as never);
-    jest.mocked(applyServiceScheduleChange).mockResolvedValue({ newEndDate: "2026-10-30" } as never);
-    const target = {
-      ...client, eDocId: "old-document", latestContractDocumentId: "latest-document", documentStatus,
-    };
-    const onIssueContract = jest.fn();
-    render(
-      <ClientDetailContent
-        data-component="mobile_clients_detail"
-        client={target}
-        activeTab="basic"
-        onTabChange={jest.fn()}
-        onMessage={jest.fn()}
-        onIssueContract={onIssueContract}
-        onEdit={jest.fn()}
-        onDelete={jest.fn()}
-        onClientUpdated={jest.fn()}
-      />,
-    );
-    const user = userEvent.setup();
-    await user.click(screen.getByRole("button", { name: "고객 옵션" }));
-    await user.click(screen.getByText("서비스 일정 변경"));
-    await user.click(await screen.findByText("일정 변경 적용"));
-    await user.click(await screen.findByText("수정 전송"));
-
-    expect(onIssueContract).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
-      supersedeDocumentId: expected,
-    }));
-    expect(eformsignApi.getDocument).toHaveBeenLastCalledWith("latest-document");
+  it("refetches the fitted client and displays its new start date in the open detail", async () => {
+    const { fetchClient } = await import("@/hooks/useClients");
+    const initial = { ...client, startDate: "2026-11-02", endDate: "2026-11-17" };
+    const fresh = { ...initial, startDate: "2026-10-30" };
+    jest.mocked(fetchClient).mockClear().mockResolvedValue(fresh);
+    const onClientUpdated = jest.fn();
+    mockOnPeriodFitted = undefined;
+    function OpenDetail({ activeTab }: { activeTab: DetailTabId }) {
+      const [detailClient, setDetailClient] = useState<Client>(initial);
+      return <ClientDetailContent
+        data-component="mobile_clients_detail-sheet_stack_detail-page_content"
+        client={detailClient} activeTab={activeTab}
+        onTabChange={jest.fn()} onMessage={jest.fn()} onIssueContract={jest.fn()}
+        onEdit={jest.fn()} onDelete={jest.fn()}
+        onClientUpdated={(updated) => { onClientUpdated(updated); setDetailClient(updated); }}
+      />;
+    }
+    const view = render(<OpenDetail activeTab="basic" />);
+    expect(screen.getByText("시작일").closest("div")).toHaveTextContent("2026.11.02");
+    view.rerender(<OpenDetail activeTab="serviceRecords" />);
+    expect(mockOnPeriodFitted).toEqual(expect.any(Function));
+    await act(async () => { await mockOnPeriodFitted?.(); });
+    expect(fetchClient).toHaveBeenCalledTimes(1);
+    expect(fetchClient).toHaveBeenCalledWith(client.id);
+    expect(onClientUpdated).toHaveBeenCalledTimes(1);
+    expect(onClientUpdated).toHaveBeenCalledWith(fresh);
+    view.rerender(<OpenDetail activeTab="basic" />);
+    expect(screen.getByText("시작일").closest("div")).toHaveTextContent("2026.10.30");
+    expect(screen.queryByText("2026.11.02")).not.toBeInTheDocument();
+  });
+  it("keeps only the four supported detail tabs", () => {
+    renderDetail(null, {
+      ...client,
+    });
+    expect(screen.getAllByRole("tab").map((tab) => tab.textContent)).toEqual([
+      "기본 정보", "계약서 정보", "알림 발송", "제공기록지",
+    ]);
+    expect(screen.queryByRole("tab", { name: "일정 변경" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "승인" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "거부" })).not.toBeInTheDocument();
   });
   it.each([
     ["unsigned", false, "고객 (고객)"],
@@ -762,43 +780,6 @@ describe("ClientDetailContent", () => {
 
     expect(screen.getByText("현재 단계").closest("div")).toHaveTextContent("서명 완료");
     expect(screen.queryAllByText("반려됨")).toHaveLength(0);
-  });
-
-  it("does not supersede a signed contract that still reports documentStatus requested", async () => {
-    const { fetchClientServiceRecords, previewServiceScheduleChange, applyServiceScheduleChange } = await import("@/hooks/useServiceRecords");
-    jest.mocked(fetchClientServiceRecords).mockResolvedValue({
-      assignments: [{ scheduleId: 7, replaced: false }],
-    } as never);
-    jest.mocked(previewServiceScheduleChange).mockResolvedValue({
-      fromDate: "2026-10-05", minimumDate: "2026-10-05", sessionIndex: 1,
-    } as never);
-    jest.mocked(applyServiceScheduleChange).mockResolvedValue({ newEndDate: "2026-10-30" } as never);
-    const onIssueContract = jest.fn();
-    render(
-      <ClientDetailContent
-        data-component="mobile_clients_detail"
-        client={{
-          ...client, eDocId: "old-document", latestContractDocumentId: "latest-document",
-          documentStatus: "requested", hasSigned: true,
-        }}
-        activeTab="basic"
-        onTabChange={jest.fn()}
-        onMessage={jest.fn()}
-        onIssueContract={onIssueContract}
-        onEdit={jest.fn()}
-        onDelete={jest.fn()}
-        onClientUpdated={jest.fn()}
-      />,
-    );
-    const user = userEvent.setup();
-    await user.click(screen.getByRole("button", { name: "고객 옵션" }));
-    await user.click(screen.getByText("서비스 일정 변경"));
-    await user.click(await screen.findByText("일정 변경 적용"));
-    await user.click(await screen.findByText("수정 전송"));
-
-    expect(onIssueContract).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
-      supersedeDocumentId: undefined,
-    }));
   });
 
   it("keeps the completed contract badge for completed documents", () => {
@@ -1523,7 +1504,7 @@ describe("제공기록지 일정 변경 menu item", () => {
     await userEvent.setup().click(screen.getByRole("button", { name: "고객 옵션" }));
 
     const labels = menuLabels();
-    expect(labels).toContain("서비스 일정 변경");
+    expect(labels).not.toContain("서비스 일정 변경");
     const scheduleAt = labels.indexOf("제공기록지 일정 변경");
     expect(scheduleAt).toBeGreaterThan(-1);
     expect(labels[scheduleAt + 1]).toBe("제공기록지 링크 재설정");
@@ -1551,7 +1532,7 @@ describe("제공기록지 일정 변경 menu item", () => {
     renderDetail(null, confirmedClient);
     await userEvent.setup().click(screen.getByRole("button", { name: "고객 옵션" }));
 
-    expect(menuLabels()).toContain("서비스 일정 변경");
+    expect(menuLabels()).not.toContain("서비스 일정 변경");
     expect(menuLabels()).not.toContain("제공기록지 일정 변경");
     expect(menuLabels()).not.toContain("제공기록지 링크 재설정");
   });
@@ -1563,7 +1544,7 @@ describe("제공기록지 일정 변경 menu item", () => {
     renderDetail(null, { ...client, ...overrides });
     await userEvent.setup().click(screen.getByRole("button", { name: "고객 옵션" }));
 
-    expect(menuLabels()).toContain("서비스 일정 변경");
+    expect(menuLabels()).not.toContain("서비스 일정 변경");
     expect(menuLabels()).toContain("제공기록지 링크 재설정");
     expect(menuLabels()).not.toContain("제공기록지 일정 변경");
   });

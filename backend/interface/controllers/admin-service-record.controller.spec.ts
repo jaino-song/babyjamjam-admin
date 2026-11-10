@@ -26,6 +26,8 @@ describe("AdminServiceRecordController query boundary", () => {
     let app: INestApplication;
     const adminService = {
         getClientEditor: jest.fn(),
+        keepPeriodMismatch: jest.fn(),
+        fitPeriodMismatch: jest.fn(),
     };
     const editService = {
         startDraft: jest.fn(),
@@ -79,6 +81,45 @@ describe("AdminServiceRecordController query boundary", () => {
         jest.clearAllMocks();
         adminService.getClientEditor.mockResolvedValue({ record: null, assignments: [] });
         editService.startDraft.mockResolvedValue({ draft: null, sourceChanged: false });
+    });
+
+    it.each(["keep", "fit"])("exposes period-mismatch/%s with manager and tenant guards", (action) => {
+        const handler = action === "keep" ? AdminServiceRecordController.prototype.keepPeriodMismatch : AdminServiceRecordController.prototype.fitPeriodMismatch;
+        expect(Reflect.getMetadata(PATH_METADATA, handler)).toBe(`client/:clientId/period-mismatch/${action}`);
+        expect(Reflect.getMetadata(GUARDS_METADATA, handler)).toEqual([BranchManagerGuard]);
+        expect(Reflect.getMetadata(GUARDS_METADATA, AdminServiceRecordController)).toEqual([JwtGuard, TenantGuard]);
+    });
+
+    it("keeps and fits via the verified tenant with HTTP 200", async () => {
+        adminService.keepPeriodMismatch.mockResolvedValue({ keptSessionIndexes: [1, 3] });
+        adminService.fitPeriodMismatch.mockResolvedValue({ startDate: "2026-11-02", endDate: "2026-11-13" });
+        await request(app.getHttpServer()).post("/admin/service-records/client/42/period-mismatch/keep")
+            .send({ sessionIndexes: [1, 3] }).expect(200, { keptSessionIndexes: [1, 3] });
+        expect(adminService.keepPeriodMismatch).toHaveBeenCalledWith(BRANCH_ID, 42, [1, 3]);
+        await request(app.getHttpServer()).post("/admin/service-records/client/42/period-mismatch/fit")
+            .send({}).expect(200, { startDate: "2026-11-02", endDate: "2026-11-13" });
+        expect(adminService.fitPeriodMismatch).toHaveBeenCalledWith(BRANCH_ID, 42);
+    });
+
+    it.each([{}, { sessionIndexes: [] }, { sessionIndexes: [1, 1] }, { sessionIndexes: [0] },
+        { sessionIndexes: [1.5] }, { sessionIndexes: ["1"] }, { sessionIndexes: "1" }])
+        ("rejects invalid keep input with a /sessionIndexes validation pointer: %j", async (body) => {
+            await request(app.getHttpServer()).post("/admin/service-records/client/42/period-mismatch/keep")
+                .send(body).expect(400).expect((res) => {
+                    expect(res.body.code).toBe("VALIDATION_FAILED");
+                    expect(res.body.errors).toEqual(expect.arrayContaining([expect.objectContaining({ pointer: "/sessionIndexes" })]));
+                });
+            expect(adminService.keepPeriodMismatch).not.toHaveBeenCalled();
+        });
+
+    it.each(["keep", "fit"])("rejects forged body/query and invalid client ids on %s", async (action) => {
+        const body = action === "keep" ? { sessionIndexes: [1] } : {};
+        const route = `/admin/service-records/client/42/period-mismatch/${action}`;
+        await request(app.getHttpServer()).post(route).send({ ...body, branchId: "forged" }).expect(400);
+        await request(app.getHttpServer()).post(route).query({ branchId: "forged" }).send(body).expect(400);
+        await request(app.getHttpServer()).post(route.replace("42", "invalid")).send(body).expect(400);
+        expect(adminService.keepPeriodMismatch).not.toHaveBeenCalled();
+        expect(adminService.fitPeriodMismatch).not.toHaveBeenCalled();
     });
 
     it("rejects a forged query on a read route before the service sees the request", async () => {

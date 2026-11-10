@@ -30,7 +30,6 @@ const context = {
     },
     sessions: [],
     recordStatus: "IN_PROGRESS",
-    pendingScheduleChange: null,
 };
 
 function makeProps(overrides: Partial<ServiceRecordWizardProps> = {}): ServiceRecordWizardProps {
@@ -50,7 +49,6 @@ function makeProps(overrides: Partial<ServiceRecordWizardProps> = {}): ServiceRe
         isRecordFinalized: false,
         lockedDays: new Set<number>(),
         nextOpenDay: () => 1,
-        scheduleChangeBusy: false,
         hasServiceDateMismatch: false,
         defaultDate: () => "2026-07-17",
         onPhoneChange: jest.fn(),
@@ -60,7 +58,6 @@ function makeProps(overrides: Partial<ServiceRecordWizardProps> = {}): ServiceRe
         onDeliveryTypeChange: jest.fn(),
         onSaveHeader: jest.fn(),
         onOpenDay: jest.fn(),
-        onOpenScheduleChangePreview: jest.fn(),
         onServiceDateChange: jest.fn(),
         onFieldChange: jest.fn(),
         onToggleMulti: jest.fn(),
@@ -81,27 +78,15 @@ function makeProps(overrides: Partial<ServiceRecordWizardProps> = {}): ServiceRe
 }
 
 describe("shared service-record UI contract", () => {
-    it("locks a planned provider date and uses the existing schedule-change action", () => {
-        const onServiceDateChange = jest.fn();
-        const onOpenServiceDateEditor = jest.fn();
-        const onOpenScheduleChangePreview = jest.fn();
-        const { container } = render(<ServiceRecordWizard {...makeProps({
-            context: { ...context, plannedSessionDates: [
-                { sessionIndex: 1, serviceDate: "2026-07-17" },
-                { sessionIndex: 2, serviceDate: "2026-07-23" },
-            ] },
-            draft: { ...DEFAULT_DAILY_ANSWERS, _date: "2026-07-24" },
-            onServiceDateChange,
-            onOpenServiceDateEditor,
-            onOpenScheduleChangePreview,
-        })} />);
-        expect(screen.getByLabelText("제공일자")).toBeDisabled();
-        expect(screen.getByLabelText("제공일자")).toHaveValue("2026-07-17");
-        expect(container).toHaveTextContent("제공일자를 바꾸려면 일정 변경을 요청해 주세요.");
-        fireEvent.click(screen.getByRole("button", { name: "서비스 일정 변경" }));
-        expect(onOpenScheduleChangePreview).toHaveBeenCalledTimes(1);
-        expect(onServiceDateChange).not.toHaveBeenCalled();
-        expect(onOpenServiceDateEditor).not.toHaveBeenCalled();
+    it("does not offer schedule-change actions on overview", () => {
+        render(<ServiceRecordWizard {...makeProps({ screen: "overview" })} />);
+        expect(screen.queryByRole("button", { name: /서비스 일정 변경|일정 변경 요청 대기 중/ })).not.toBeInTheDocument();
+    });
+
+    it("leaves the legacy caregiver date unlocked despite a supplied plan", () => {
+        render(<ServiceRecordWizard {...makeProps({ context: { ...context, plannedSessionDates: [{ sessionIndex: 1, serviceDate: "2026-07-17" }, { sessionIndex: 2, serviceDate: "2026-07-20" }] } })} />);
+        expect(screen.getByLabelText("제공일자")).toBeEnabled();
+        expect(screen.getByLabelText("제공일자")).toHaveValue("");
     });
 
     it("keeps an unplanned provider date editable", () => {
@@ -217,7 +202,7 @@ describe("shared service-record UI contract", () => {
             />,
         );
 
-        expect(container).toHaveTextContent("2026.07.23");
+        expect(container).not.toHaveTextContent("2026.07.23");
     });
 
     it("fails closed for an invalid supplied date vector without recalculating a date", () => {
@@ -401,5 +386,17 @@ describe("shared service-record UI contract", () => {
             .join("\n");
 
         expect(source).not.toMatch(/(?:next\/navigation|@\/|\/api\/|@sentry|sessionStorage|localStorage|\bfetch\s*\()/);
+        expect(source).not.toMatch(/일정 변경|schedule-help/);
     });
+});
+
+// Public mobile assembly uses the app's screen and a single calendar trigger.
+import { MobileServiceRecordWizard } from "./ServiceRecordWizard";
+it("connects the mobile calendar action through the existing wizard wrapper", () => {
+    const open = jest.fn();
+    render(<MobileServiceRecordWizard {...makeProps()} onOpenDateSheet={open} />);
+    const input = screen.getByLabelText("서비스 제공일");
+    expect(input).toHaveValue("");
+    fireEvent.click(input);
+    expect(open).toHaveBeenCalledTimes(1);
 });

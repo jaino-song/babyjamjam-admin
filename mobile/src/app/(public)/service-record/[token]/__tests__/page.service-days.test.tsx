@@ -1,6 +1,5 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import type { MobileServiceRecordWizardProps } from "@/components/app/service-record/ServiceRecordWizard";
-import { KR_BUILTIN_CALENDAR } from "@/lib/date/business-days";
 import ServiceRecordPage from "../page";
 
 jest.mock("next/navigation", () => ({ useParams: () => ({ token: "test-token" }) }));
@@ -15,20 +14,20 @@ jest.mock("@/components/app/service-record/ServiceRecordWizard", () => ({
         <div>
             <span data-testid="screen">{props.screen}</span>
             <button onClick={() => props.onOpenDay(6)}>open day 6</button>
+            <button onClick={props.onOpenDateSheet}>open date sheet</button>
             <span data-testid="date">{String(props.draft._date ?? "")}</span>
+            {props.slots?.serviceDateSheet}
         </div>
     ),
 }));
 
-// Sessions 1-5 are done on Monday 12-14 .. Friday 12-18, so session 6 is the next one to open. Its
-// default date is Monday 12-21 with weekends skipped, and Saturday 12-19 when the client's Saturday
-// service is on.
+// Sessions 1-5 are submitted, so session 6 is enterable. It stays dateless until picked.
 const DONE_SESSIONS = [14, 15, 16, 17, 18].map((date, index) => ({
     sessionIndex: index + 1,
     serviceDate: `2026-12-${date}`,
     locked: true,
 }));
-const BASE_CONTEXT = { totalSessions: 7, startDate: "2026-12-14", sessions: DONE_SESSIONS, header: {} };
+const BASE_CONTEXT = { totalSessions: 7, startDate: "2026-12-14", endDate: "2026-12-21", sessions: DONE_SESSIONS, header: {} };
 
 describe("token service-record page and per-client service days", () => {
     beforeEach(() => {
@@ -46,20 +45,47 @@ describe("token service-record page and per-client service days", () => {
         await waitFor(() => expect(screen.getByTestId("screen")).toHaveTextContent("day"));
     }
 
-    it("is unchanged when the context carries no service days", async () => {
+    it("leaves an unwritten session dateless with no policy", async () => {
         await openDaySix({});
-        expect(screen.getByTestId("date")).toHaveTextContent("2026-12-21");
+        expect(screen.getByTestId("date")).toBeEmptyDOMElement();
     });
 
-    it("is unchanged when every service day is off", async () => {
+    it("leaves an unwritten session dateless with weekends off", async () => {
         await openDaySix({ serviceDays: { saturday: false, sunday: false, holiday: false } });
-        expect(screen.getByTestId("date")).toHaveTextContent("2026-12-21");
+        expect(screen.getByTestId("date")).toBeEmptyDOMElement();
     });
 
-    it("lands a later session on Saturday when Saturday service is on", async () => {
+    it("does not seed a date even when Saturday service is on", async () => {
         await openDaySix({ serviceDays: { saturday: true, sunday: false, holiday: false } });
-        expect(screen.getByTestId("date")).toHaveTextContent("2026-12-19");
+        expect(screen.getByTestId("date")).toBeEmptyDOMElement();
         expect(new Date("2026-12-19T00:00:00Z").getUTCDay()).toBe(6);
-        expect(KR_BUILTIN_CALENDAR.isBusinessDay("2026-12-19")).toBe(false);
+    });
+
+    it("lets the caregiver pick an in-window Saturday when the client allows Saturday service", async () => {
+        await openDaySix({ serviceDays: { saturday: true, sunday: false, holiday: false } });
+        fireEvent.click(screen.getByText("open date sheet"));
+
+        const sheet = within(screen.getByRole("dialog", { name: "6회차 서비스 제공일" }));
+        const saturday = sheet.getByRole("button", { name: "2026.12.19(토)" });
+        expect(saturday).toHaveAttribute("aria-disabled", "false");
+        fireEvent.click(saturday);
+        expect(sheet.getByRole("button", { name: "선택" })).toBeEnabled();
+        fireEvent.click(sheet.getByRole("button", { name: "선택" }));
+
+        expect(screen.queryByRole("dialog")).toBeNull();
+        expect(screen.getByTestId("date")).toHaveTextContent("2026-12-19");
+    });
+
+    it("blocks the same in-window Saturday when Saturday service is off", async () => {
+        await openDaySix({ serviceDays: { saturday: false, sunday: false, holiday: false } });
+        fireEvent.click(screen.getByText("open date sheet"));
+
+        const sheet = within(screen.getByRole("dialog", { name: "6회차 서비스 제공일" }));
+        const saturday = sheet.getByRole("button", { name: "2026.12.19(토)" });
+        expect(saturday).toHaveAttribute("aria-disabled", "true");
+        fireEvent.click(saturday);
+        expect(saturday).toHaveAttribute("aria-pressed", "false");
+        expect(sheet.getByRole("button", { name: "선택" })).toBeDisabled();
+        expect(screen.getByTestId("date")).toBeEmptyDOMElement();
     });
 });

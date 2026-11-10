@@ -40,9 +40,6 @@ export interface MaternityContractDialogProps {
   onClose: () => void;
   client: Client;
   onSuccess?: () => void;
-  /** Re-issue after a schedule change: keep the old payment date and cancel the replaced unsigned contract. */
-  initialPaymentDate?: string;
-  supersedeDocumentId?: string;
 }
 
 export function MaternityContractDialog({
@@ -50,8 +47,6 @@ export function MaternityContractDialog({
   onClose,
   client,
   onSuccess,
-  initialPaymentDate,
-  supersedeDocumentId,
 }: MaternityContractDialogProps) {
   const [activeStep, setActiveStep] = useState(0);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -140,8 +135,6 @@ export function MaternityContractDialog({
         <ContractCreationForm
           key={`${client.id}-${open}`}
           initialClient={client}
-          initialPaymentDate={initialPaymentDate}
-          supersedeDocumentId={supersedeDocumentId}
           activeStep={activeStep}
           onActiveStepChange={setActiveStep}
           onClose={requestClose}

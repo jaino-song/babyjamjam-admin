@@ -498,7 +498,7 @@ export function ServiceRecordWizard({
     isRecordFinalized,
     lockedDays,
     nextOpenDay,
-    scheduleChangeBusy,
+    openDays,
     hasServiceDateMismatch,
     defaultDate,
     onPhoneChange,
@@ -508,7 +508,6 @@ export function ServiceRecordWizard({
     onDeliveryTypeChange,
     onSaveHeader,
     onOpenDay,
-    onOpenScheduleChangePreview,
     onOpenServiceDateEditor,
     onServiceDateChange,
     onFieldChange,
@@ -568,7 +567,6 @@ export function ServiceRecordWizard({
         currentSession,
         plannedDateVectorProvided,
         plannedDateVectorValid,
-        providerDateLocked,
         currentServiceDate,
         displayDateForSession,
     } = resolvePlannedDates({ context, day, adminMode, draft, defaultDate });
@@ -629,7 +627,6 @@ export function ServiceRecordWizard({
         onHeaderChange(key, HEADER_DATE_KEYS.includes(key) ? formatIsoDateInput(raw) : raw);
     };
     const handleServiceDateInput = (raw: string) => {
-        if (providerDateLocked) return;
         const next = formatIsoDateInput(raw);
         setServiceDateEdit({ text: next, base: currentServiceDate, day });
         if (next.length === 10 && serviceDateIsReportable(next)) onServiceDateChange(next);
@@ -818,7 +815,7 @@ export function ServiceRecordWizard({
                             {Array.from({ length: context.totalSessions }, (_, index) => index + 1).map((sessionIndex) => {
                                 const session = context.sessions.find((row) => row.sessionIndex === sessionIndex);
                                 const done = lockedDays.has(sessionIndex);
-                                const open = sessionIndex === nextOpenDay();
+                                const open = !done && (openDays?.() ?? [nextOpenDay()]).includes(sessionIndex);
                                 const changed = Boolean(changedSessionIndexes?.has(sessionIndex));
                                 const serviceDate = displayDateForSession(sessionIndex, session);
                                 const className = adminEditing
@@ -863,14 +860,6 @@ export function ServiceRecordWizard({
                         {!readOnly && !adminMode && lockedDays.size < context.totalSessions && (
                             <div data-component={child("body_overview-actions")} data-slot="overview-actions" className="overview-actions">
                                 <button data-slot="btn" className="btn primary" disabled={isRecordFinalized} onClick={() => onOpenDay(nextOpenDay())}>{lockedDays.size ? "다음 회차 입력" : "기록 시작"}</button>
-                                <button
-                                    data-slot="btn"
-                                    className="btn ghost schedule-change"
-                                    disabled={isRecordFinalized || scheduleChangeBusy || Boolean(context.pendingScheduleChange)}
-                                    onClick={() => onOpenScheduleChangePreview()}
-                                >
-                                    {context.pendingScheduleChange ? "일정 변경 요청 대기 중" : "서비스 일정 변경"}
-                                </button>
                             </div>
                         )}
                     </>
@@ -927,29 +916,11 @@ export function ServiceRecordWizard({
                                     maxLength={10}
                                     placeholder={SERVICE_DATE_PLACEHOLDER}
                                     className="dateinput"
-                                    disabled={providerDateLocked}
                                     value={serviceDateValue}
                                     onFocus={() => setServiceDateFocused(true)}
                                     onBlur={handleServiceDateBlur}
                                     onChange={(event) => handleServiceDateInput(event.target.value)}
                                 />
-                                {providerDateLocked ? (
-                                    <>
-                                        <p data-component={child("body_service-date-field_schedule-help")} data-slot="muted" className="muted">
-                                            제공일자를 바꾸려면 일정 변경을 요청해 주세요.
-                                        </p>
-                                        <button
-                                            data-component={child("body_service-date-field_schedule-change")}
-                                            data-slot="btn"
-                                            className="btn ghost"
-                                            type="button"
-                                            disabled={isRecordFinalized || scheduleChangeBusy || Boolean(context?.pendingScheduleChange)}
-                                            onClick={() => onOpenScheduleChangePreview()}
-                                        >
-                                            {context?.pendingScheduleChange ? "일정 변경 요청 대기 중" : "서비스 일정 변경"}
-                                        </button>
-                                    </>
-                                ) : null}
                             </div>
                         )}
                         {/* Where no date field is on the page (later pages, admin edit) the date's caution still lives in a field slot: a compact read-only row. */}
@@ -1046,7 +1017,6 @@ export function ServiceRecordWizard({
                 )}
             </div>
             {slots?.submitModal}
-            {slots?.scheduleChangeModal}
             {slots?.serviceDateChangeModal}
             {slots?.errorNotification}
         </div>

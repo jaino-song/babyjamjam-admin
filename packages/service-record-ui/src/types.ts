@@ -30,21 +30,10 @@ export interface ServiceRecordContext {
     startDate: string | null;
     header: Record<string, unknown> | null;
     sessions: ServiceRecordSession[];
+    endDate?: string | null;
     /** Server-authoritative dates for every planned session. Public-safe: no admin provenance or originals. */
     plannedSessionDates?: Array<{ sessionIndex: number; serviceDate: string }>;
     recordStatus?: string | null;
-    pendingScheduleChange?: {
-        id: string;
-        sessionIndex: number;
-        fromDate: string;
-        toDate: string;
-    } | null;
-}
-
-export interface ScheduleChangePreview {
-    sessionIndex: number;
-    fromDate: string;
-    toDate: string;
 }
 
 export interface PendingServiceDate {
@@ -102,7 +91,6 @@ export interface ServiceRecordWizardSlots {
     serviceDateEditor?: (props: ServiceDateEditorSlotProps) => ReactNode;
     overviewSupplemental?: ReactNode;
     submitModal?: ReactNode;
-    scheduleChangeModal?: ReactNode;
     serviceDateChangeModal?: ReactNode;
     errorNotification?: ReactNode;
 }
@@ -137,7 +125,7 @@ export interface ServiceRecordWizardProps {
     isRecordFinalized: boolean;
     lockedDays: ReadonlySet<number>;
     nextOpenDay: () => number;
-    scheduleChangeBusy: boolean;
+    openDays?: () => readonly number[];
     hasServiceDateMismatch: boolean;
     defaultDate: (day: number) => string;
     onPhoneChange: (value: string) => void;
@@ -147,7 +135,6 @@ export interface ServiceRecordWizardProps {
     onDeliveryTypeChange: (value: string) => void;
     onSaveHeader: () => void | Promise<void>;
     onOpenDay: (day: number, editExisting?: boolean) => void;
-    onOpenScheduleChangePreview: () => void | Promise<void>;
     /** Optional administrator-only date editor trigger. Public flows do not use it. */
     onOpenServiceDateEditor?: (sessionIndex: number) => void;
     onServiceDateChange: (next: string) => void;

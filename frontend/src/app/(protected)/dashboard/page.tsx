@@ -222,16 +222,6 @@ export default function DashboardPage() {
     return listedClient ?? selectedClient;
   }, [clients, selectedClient]);
 
-  const handleScheduleChangeDecided = useCallback((clientId: number) => {
-    setSelectedClient((currentClient) => {
-      if (!currentClient || currentClient.id !== clientId) {
-        return currentClient;
-      }
-
-      return { ...currentClient, pendingScheduleChange: null };
-    });
-  }, []);
-
   const handleBookingConfirmed = useCallback((booking: Pick<Client, "id" | "bookingConfirmedAt" | "serviceStatus">) => {
     setSelectedClient((currentClient) => currentClient?.id === booking.id
       ? { ...currentClient, bookingConfirmedAt: booking.bookingConfirmedAt, serviceStatus: booking.serviceStatus }
@@ -306,7 +296,6 @@ export default function DashboardPage() {
               messageHistoryDataComponentPrefix="desktop_dashboard_client-detail_panel_message-history"
               idPrefix="dashboard-client-detail"
               tabsAriaLabel="고객 상세 정보"
-              onScheduleChangeDecided={handleScheduleChangeDecided}
               onBookingConfirmed={handleBookingConfirmed}
               trailing={
                 <DropdownMenu>

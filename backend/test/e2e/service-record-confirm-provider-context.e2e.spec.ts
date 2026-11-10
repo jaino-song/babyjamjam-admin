@@ -1,5 +1,4 @@
 import { randomUUID } from "node:crypto";
-import { ConflictException } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import { AdminServiceRecordEditService } from "application/services/admin-service-record-edit.service";
 import { ServiceRecordEntryService } from "application/services/service-record-entry.service";
@@ -9,7 +8,6 @@ import {
     assertApprovedServiceRecordConfirmDatabaseTarget,
     createApprovedServiceRecordConfirmClient,
     createServiceRecordConfirmFixture,
-    SHIFTED_THIRTEEN_DATES,
 } from "./helpers/service-record-confirm.helper";
 import { createHolidayCalendarStub } from "../utils/holiday-calendar.stub";
 
@@ -55,31 +53,29 @@ describeE2E("provider authoritative date context (actual disposable PostgreSQL)"
         { invalid: true },
         [{ sessionIndex: 1, serviceDate: "2026-09-07" }],
         Array.from({ length: 13 }, () => ({ sessionIndex: 1, serviceDate: "2026-09-07" })),
-    ])("rejects supplied invalid persisted vector instead of omitting it: %j", async (vector) => {
+    ])("omits supplied invalid persisted vector from context: %j", async (vector) => {
         const fixture = await createServiceRecordConfirmFixture(prisma);
         await prisma.service_record_case.update({ where: { id: fixture.record.id }, data: { plannedSessions: vector } });
-        await expect(provider.getContext(context(fixture))).rejects.toBeInstanceOf(ConflictException);
+        expect(await provider.getContext(context(fixture))).not.toHaveProperty("plannedSessionDates");
     });
 
     it("retains only genuine absent legacy-vector compatibility", async () => {
         const fixture = await createServiceRecordConfirmFixture(prisma);
         await prisma.service_record_case.update({ where: { id: fixture.record.id }, data: { plannedSessions: Prisma.DbNull } });
         const result = await provider.getContext(context(fixture));
-        expect(result.plannedSessionDates).toBeUndefined();
+        expect(result).not.toHaveProperty("plannedSessionDates");
         expect(result.totalSessions).toBe(13);
     });
 
-    it("returns all revised dates and no admin originals for a valid canonical vector", async () => {
+    it("omits planned dates for a valid canonical vector", async () => {
         const fixture = await revisedFixture();
         const result = await provider.getContext(context(fixture));
-        expect(result.plannedSessionDates).toEqual(SHIFTED_THIRTEEN_DATES.map((serviceDate, index) => ({
-            sessionIndex: index + 1, serviceDate,
-        })));
+        expect(result).not.toHaveProperty("plannedSessionDates");
     });
 
-    it("rejects a revised case whose authoritative vector has become absent", async () => {
+    it("keeps a revised case viewable when its vector becomes absent", async () => {
         const fixture = await revisedFixture();
         await prisma.service_record_case.update({ where: { id: fixture.record.id }, data: { plannedSessions: Prisma.DbNull } });
-        await expect(provider.getContext(context(fixture))).rejects.toBeInstanceOf(ConflictException);
+        expect(await provider.getContext(context(fixture))).not.toHaveProperty("plannedSessionDates");
     });
 });

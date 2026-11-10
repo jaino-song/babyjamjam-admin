@@ -37,7 +37,7 @@ import {
     type ServiceRecordFieldDescriptor,
 } from "@/features/service-records/constants/form-layout";
 import { ServiceRecordHeaderCard } from "@/features/service-records/components/ServiceRecordHeaderCard";
-import { useSendServiceRecordLink } from "@/features/service-records/hooks/use-service-records";
+import { useKeepPeriodMismatch, useFitPeriodMismatch, useSendServiceRecordLink } from "@/features/service-records/hooks/use-service-records";
 import type {
     ServiceRecordAssignment,
     ServiceRecordCase,
@@ -52,6 +52,7 @@ import type {
     ServiceRecordPlannedSession,
     SignatureDocStatus,
 } from "@/features/service-records/types";
+import { dateDirectionParticle } from "./service-record-period-mismatch";
 
 interface ClientServiceRecordsTabProps {
     "data-component": string;
@@ -379,6 +380,8 @@ function ClientServiceRecordsTabContent({
                         </div>
                         {assignments.length > 1 && <AssignmentHistoryCard assignments={assignments} isRefreshing={isTextRefreshing} />}
                         <ServiceSessionsCard
+                            clientId={clientId}
+                            enablePeriodMismatch
                             startDate={record.startDate}
                             endDate={record.endDate}
                             totalSessions={record.totalSessions}
@@ -430,6 +433,7 @@ function ClientServiceRecordsTabContent({
                             isLoading={isTextRefreshing}
                         />
                         <ServiceSessionsCard
+                            clientId={clientId}
                             startDate={assignment.startDate}
                             endDate={assignment.endDate}
                             totalSessions={assignment.totalSessions}
@@ -1133,6 +1137,8 @@ function TokenVerificationValue({ assignment }: { assignment: ServiceRecordAssig
 }
 
 function ServiceSessionsCard({
+    clientId,
+    enablePeriodMismatch = false,
     startDate,
     endDate,
     totalSessions: configuredSessions,
@@ -1145,6 +1151,8 @@ function ServiceSessionsCard({
     isRefreshing,
     onRefresh,
 }: {
+    clientId: number;
+    enablePeriodMismatch?: boolean;
     startDate: string | null;
     endDate: string | null;
     totalSessions: number;
@@ -1158,6 +1166,14 @@ function ServiceSessionsCard({
     onRefresh?: () => void;
 }) {
     const dataComponent = useClientServiceRecordsDataComponent("sessions");
+    const { toast } = useToast();
+    const keepMutation = useKeepPeriodMismatch();
+    const fitMutation = useFitPeriodMismatch();
+    const authUserQuery = useGetAuthUser();
+    const canManagePeriod = canManageBranchFromAuthQuery(authUserQuery);
+    const [isUpdatingPeriod, setIsUpdatingPeriod] = useState(false);
+    const periodRequestInFlight = useRef(false);
+    const isPeriodPending = isUpdatingPeriod || keepMutation.isPending || fitMutation.isPending;
     // Display-only: the built-in calendar stands in until the branch calendar loads.
     const calendarYears = useMemo(() => {
         const years = new Set<number>();
@@ -1190,6 +1206,45 @@ function ServiceSessionsCard({
         ),
         [configuredSessions, endDate, sessions, startDate],
     );
+    const mismatchSessions = enablePeriodMismatch
+        ? activeSessions.filter((session) => isPeriodMismatch(session, startDate, endDate))
+            .sort((left, right) => left.sessionIndex - right.sessionIndex)
+        : [];
+    const unkeptSessions = mismatchSessions.filter((session) => session.periodMismatchKeptAt == null);
+    const mismatchIndexes = new Set(mismatchSessions.map((session) => session.sessionIndex));
+    const question = getPeriodMismatchQuestion(unkeptSessions, startDate, endDate);
+
+    const updatePeriod = async (action: "keep" | "fit") => {
+        if (periodRequestInFlight.current || isPeriodPending || !canManagePeriod) return;
+        periodRequestInFlight.current = true;
+        setIsUpdatingPeriod(true);
+        try {
+            if (action === "keep") {
+                await keepMutation.mutateAsync({
+                    clientId,
+                    sessionIndexes: unkeptSessions.map((session) => session.sessionIndex),
+                });
+            } else {
+                const result = await fitMutation.mutateAsync({ clientId });
+                if (result.startDate === null || result.endDate === null) return;
+                const startChanged = result.startDate !== datePartOf(startDate);
+                const endChanged = result.endDate !== datePartOf(endDate);
+                const description = startChanged && endChanged
+                    ? "서비스 시작일과 종료일을 바꿨어요"
+                    : startChanged
+                        ? `서비스 시작일을 ${formatDateKo(result.startDate)}${dateDirectionParticle(result.startDate)} 바꿨어요`
+                        : endChanged
+                            ? `서비스 종료일을 ${formatDateKo(result.endDate)}${dateDirectionParticle(result.endDate)} 바꿨어요`
+                            : null;
+                if (description) toast({ variant: "success", description });
+            }
+        } catch (error) {
+            toast({ variant: "destructive", description: getErrorDescription(error, "서비스 기간 처리에 실패했어요") });
+        } finally {
+            periodRequestInFlight.current = false;
+            setIsUpdatingPeriod(false);
+        }
+    };
     const slots = useMemo(
         () => buildSessionSlots(
             startDate,
@@ -1264,11 +1319,51 @@ function ServiceSessionsCard({
                         </AlertDescription>
                     </Alert>
                 ) : null}
+                {unkeptSessions.length > 0 ? (
+                    <Alert
+                        data-component={`${dataComponent}_out-of-period-alert`}
+                        variant="warning"
+                        className="mb-[calc(12px*var(--glint-ui-scale,1))]"
+                    >
+                        <AlertTitle data-component={`${dataComponent}_out-of-period-alert_title`}>
+                            서비스 기간 밖에 기록된 회차가 있어요
+                        </AlertTitle>
+                        <AlertDescription data-component={`${dataComponent}_out-of-period-alert_description`}>
+                            {unkeptSessions.map((session) => (
+                                <p key={session.sessionIndex}>
+                                    {session.sessionIndex}회차 서비스 제공일({formatDateKo(session.serviceDate)})이 고객의 서비스 기간({formatDateKo(startDate)} ~ {formatDateKo(endDate)})보다 {datePartOf(session.serviceDate)! < datePartOf(startDate)! ? "앞이에요." : "뒤예요."}
+                                </p>
+                            ))}
+                            <p>{question}</p>
+                        </AlertDescription>
+                        {canManagePeriod ? (
+                            <div data-component={`${dataComponent}_out-of-period-alert_actions`} className="mt-2 flex justify-end gap-2">
+                                <Button
+                                    data-component={`${dataComponent}_out-of-period-alert_actions_keep`}
+                                    variant="outline"
+                                    size="sm"
+                                    className="w-[calc(88px*var(--glint-ui-scale,1))]"
+                                    disabled={isPeriodPending}
+                                    onClick={() => void updatePeriod("keep")}
+                                >유지</Button>
+                                <Button
+                                    data-component={`${dataComponent}_out-of-period-alert_actions_change`}
+                                    variant="positive"
+                                    size="sm"
+                                    className="w-[calc(88px*var(--glint-ui-scale,1))]"
+                                    disabled={isPeriodPending}
+                                    onClick={() => void updatePeriod("fit")}
+                                >변경</Button>
+                            </div>
+                        ) : null}
+                    </Alert>
+                ) : null}
                 <div data-component={`${dataComponent}_list`} className="mt-[calc(8px*var(--glint-ui-scale,1))]">
                     {slots.map((slot, index) => (
                         <SessionRow
                             key={slot.sessionIndex}
                             slot={slot}
+                            periodMismatch={mismatchIndexes.has(slot.sessionIndex)}
                             isRefreshing={isTextRefreshing}
                             defaultOpen={Boolean(slot.record && index === 0)}
                         />
@@ -1328,11 +1423,13 @@ function SessionRow({
     defaultOpen,
     isRefreshing = false,
     outsidePeriod = false,
+    periodMismatch = false,
 }: {
     slot: SessionSlot;
     defaultOpen: boolean;
     isRefreshing?: boolean;
     outsidePeriod?: boolean;
+    periodMismatch?: boolean;
 }) {
     const dataComponent = useClientServiceRecordsDataComponent(
         outsidePeriod ? "out-of-period-sessions" : "sessions",
@@ -1356,7 +1453,7 @@ function SessionRow({
                         <div className="min-w-0">
                             <div className="text-[calc(13px*var(--glint-ui-scale,1))] font-semibold text-v3-dark">{slot.sessionIndex}회차</div>
                             <div className="mt-0.5 flex flex-wrap gap-x-[calc(8px*var(--glint-ui-scale,1))] text-[calc(11.5px*var(--glint-ui-scale,1))] text-v3-text-muted">
-                                <span data-slot="revised-date">예정일 {formatDateKo(slot.expectedDate)}</span>
+                                <span data-slot="revised-date">날짜 미정</span>
                                 {getOriginalDateLabel(slot.plannedSession, slot.expectedDate) ? (
                                     <span data-slot="original-date">원본 {formatDateKo(slot.plannedSession?.originalDate ?? null)}</span>
                                 ) : null}
@@ -1396,6 +1493,11 @@ function SessionRow({
                     <div className="min-w-0">
                         <div className="flex flex-wrap items-center gap-[calc(8px*var(--glint-ui-scale,1))] text-[calc(13px*var(--glint-ui-scale,1))] font-semibold text-v3-dark">
                             <span data-slot="revised-date">{slot.sessionIndex}회차 · {formatDateKo(record.serviceDate)}</span>
+                            {periodMismatch ? (
+                                <StatusPill data-component={`${dataComponent}_period-mismatch-status`} variant="warning">
+                                    기간 밖
+                                </StatusPill>
+                            ) : null}
                             {getOriginalDateLabel(slot.plannedSession, record.serviceDate) ? (
                                 <span data-slot="original-date" className="text-[calc(11.5px*var(--glint-ui-scale,1))] font-normal text-v3-text-muted">
                                     원본 {formatDateKo(slot.plannedSession?.originalDate ?? null)}
@@ -1770,6 +1872,31 @@ function useIsThresholdReached(threshold: number | null): boolean {
     return isThresholdReached;
 }
 
+function shiftDatePart(value: string, days: number): string {
+    const date = new Date(`${value}T00:00:00.000Z`);
+    date.setUTCDate(date.getUTCDate() + days);
+    return date.toISOString().slice(0, 10);
+}
+
+// Called only for case sessions already partitioned into the configured ±7-day window.
+function isPeriodMismatch(session: ServiceRecordSession, start: string | null, end: string | null): boolean {
+    const date = datePartOf(session.serviceDate);
+    const first = datePartOf(start);
+    const last = datePartOf(end);
+    return Boolean(session.locked && date && first && last && (date < first || date > last));
+}
+
+function getPeriodMismatchQuestion(sessions: ServiceRecordSession[], start: string | null, end: string | null): string {
+    const dates = sessions.map((session) => datePartOf(session.serviceDate)!).sort();
+    const early = dates.find((date) => date < (datePartOf(start) ?? ""));
+    const late = dates.findLast((date) => date > (datePartOf(end) ?? "9999"));
+    const target = (date: string) => `${formatDateKo(date)}${dateDirectionParticle(date)}`;
+    if (early && late) return `고객 정보의 서비스 시작일을 ${target(early)}, 종료일을 ${target(late)} 바꿀까요?`;
+    if (early) return `고객 정보의 서비스 시작일을 ${target(early)} 바꿀까요?`;
+    if (late) return `고객 정보의 서비스 종료일을 ${target(late)} 바꿀까요?`;
+    return "";
+}
+
 function partitionSessionsByPeriod(
     startDate: string | null,
     endDate: string | null,
@@ -1787,12 +1914,14 @@ function partitionSessionsByPeriod(
 
     const activeSessions: ServiceRecordSession[] = [];
     const outsideSessions: ServiceRecordSession[] = [];
+    const windowStart = shiftDatePart(startDatePart, -7);
+    const windowEnd = shiftDatePart(endDatePart, 7);
     for (const session of sessions) {
         const serviceDate = datePartOf(session.serviceDate);
         const isWithinDates = Boolean(
             serviceDate
-            && serviceDate >= startDatePart
-            && serviceDate <= endDatePart,
+            && serviceDate >= windowStart
+            && serviceDate <= windowEnd,
         );
         if (isWithinDates && session.sessionIndex <= configuredSessions) {
             activeSessions.push(session);
@@ -1852,9 +1981,9 @@ function formatUnknownValue(value: unknown): string {
     return String(value);
 }
 
-function getErrorDescription(error: unknown): string {
+function getErrorDescription(error: unknown, fallback = SEND_LINK_FAILURE_DESCRIPTION): string {
     // Registered problem message (verified) or locally authored copy —
     // upstream body messages are never rendered.
     const normalized = normalizeApiError(error, { locale: "ko-KR", operation: "mutation" });
-    return normalized.verified ? normalized.message : SEND_LINK_FAILURE_DESCRIPTION;
+    return normalized.verified ? normalized.message : fallback;
 }

@@ -50,10 +50,10 @@ const makeProps = (overrides: Partial<ServiceRecordWizardProps> = {}): ServiceRe
     context: { totalSessions: 5, startDate: "2026-09-21", header: null, sessions: [] },
     header: validHeader, day: 1, pageIdx: 0, draft: {}, editing: false, clientSignature: null,
     busy: false, isRecordFinalized: false, lockedDays: new Set<number>(), nextOpenDay: () => 1,
-    scheduleChangeBusy: false, hasServiceDateMismatch: false, defaultDate: () => "2026-09-21",
+    hasServiceDateMismatch: false, defaultDate: () => "2026-09-21",
     onPhoneChange: jest.fn(), onSubmitPhone: jest.fn(), onBack: jest.fn(), onHeaderChange: jest.fn(),
     onDeliveryTypeChange: jest.fn(), onSaveHeader: jest.fn(), onOpenDay: jest.fn(),
-    onOpenScheduleChangePreview: jest.fn(), onServiceDateChange: jest.fn(), onFieldChange: jest.fn(),
+    onServiceDateChange: jest.fn(), onFieldChange: jest.fn(),
     onToggleMulti: jest.fn(), onSignatureChange: jest.fn(), onNextPage: jest.fn(),
     onOpenSubmitModal: jest.fn(), onEditSection: jest.fn(), ...overrides,
 });
@@ -319,7 +319,7 @@ describe.each(ROWS)("employee service record day step ($name)", (row) => {
     });
     it("keeps Next enabled, blocks it and shows the required count messages after pressing it", () => {
         const next = jest.fn();
-        render(<Component {...makeProps({ screen: "day", pageIdx: 0, onNextPage: next, draft: { ...DEFAULT_DAILY_ANSWERS } })} />);
+        render(<Component {...makeProps({ screen: "day", pageIdx: 0, onNextPage: next, draft: { ...DEFAULT_DAILY_ANSWERS, _date: "2026-09-21" } })} />);
         const button = screen.getByRole("button", { name: "다음" });
         expect(button).toBeEnabled();
         fireEvent.click(button);
@@ -332,7 +332,7 @@ describe.each(ROWS)("employee service record day step ($name)", (row) => {
     });
     it("advances when the page is complete", () => {
         const next = jest.fn();
-        render(<Component {...makeProps({ screen: "day", pageIdx: 0, onNextPage: next, draft: { ...DEFAULT_DAILY_ANSWERS, meals_meal: "2", meals_snack: "1" } })} />);
+        render(<Component {...makeProps({ screen: "day", pageIdx: 0, onNextPage: next, draft: { ...DEFAULT_DAILY_ANSWERS, _date: "2026-09-21", meals_meal: "2", meals_snack: "1" } })} />);
         fireEvent.click(screen.getByRole("button", { name: "다음" }));
         expect(next).toHaveBeenCalledTimes(1);
     });
@@ -340,7 +340,7 @@ describe.each(ROWS)("employee service record day step ($name)", (row) => {
         const { rerender } = render(<Component {...makeProps({ screen: "day", pageIdx: 0, draft: { ...DEFAULT_DAILY_ANSWERS } })} />);
         const slot = () => document.getElementById(PERINEUM_SLOT_ID)!;
         expect(slot()).toBeEmptyDOMElement();
-        rerender(<Component {...makeProps({ screen: "day", pageIdx: 0, draft: { ...DEFAULT_DAILY_ANSWERS, perineum: [] } })} />);
+        rerender(<Component {...makeProps({ screen: "day", pageIdx: 0, draft: { ...DEFAULT_DAILY_ANSWERS, _date: "2026-09-21", perineum: [] } })} />);
         expect(slot()).toHaveTextContent("회음절개부위를 선택해 주세요");
     });
     it("asks for the payment confirmation only after the page was submitted", () => {
@@ -352,9 +352,9 @@ describe.each(ROWS)("employee service record day step ($name)", (row) => {
     });
 });
 
-describe.each(ROWS)("employee service record service date ($name)", (row) => {
+describe.each([SHARED_ROW])("employee service record service date ($name)", (row) => {
     const { Component } = row;
-    const dayProps = (overrides: Partial<ServiceRecordWizardProps> = {}) => makeProps({ screen: "day", pageIdx: 0, draft: { ...DEFAULT_DAILY_ANSWERS, meals_meal: "2", meals_snack: "1" }, ...overrides });
+    const dayProps = (overrides: Partial<ServiceRecordWizardProps> = {}) => makeProps({ screen: "day", pageIdx: 0, draft: { ...DEFAULT_DAILY_ANSWERS, _date: "2026-09-21", meals_meal: "2", meals_snack: "1" }, ...overrides });
     it("is a typed YYYY-MM-DD field, empty of messages on first load, with an example placeholder", () => {
         render(<Component {...dayProps()} />);
         const date = screen.getByLabelText("제공일자");

@@ -3,6 +3,7 @@ import {
     Body,
     Controller,
     Get,
+    HttpCode,
     MessageEvent,
     Param,
     ParseIntPipe,
@@ -25,6 +26,8 @@ import { BranchManagerGuard } from "infrastructure/auth/branch-manager.guard";
 import { CurrentTenant, TenantGuard, VerifiedTenantPrincipal } from "infrastructure/tenant";
 import { problemBody } from "application/utils/problem-bodies";
 import {
+    KeepServiceRecordPeriodMismatchDto,
+    FitServiceRecordPeriodMismatchDto,
     PrepareAdminServiceRecordLinkDto,
     SendAdminServiceRecordLinkDto,
 } from "interface/dto/admin-service-record.dto";
@@ -114,6 +117,33 @@ export class AdminServiceRecordController {
         @Query(new AdminServiceRecordNoQueryPipe()) _query?: Record<string, never>,
     ) {
         return this.adminServiceRecordService.getClientOverview(tenant.branchId ?? "", clientId);
+    }
+
+    @Post("client/:clientId/period-mismatch/keep")
+    @HttpCode(200)
+    @UseGuards(BranchManagerGuard)
+    keepPeriodMismatch(
+        @CurrentTenant() tenant: VerifiedTenantPrincipal,
+        @Param("clientId", ParseIntPipe) clientId: number,
+        @Body() body: KeepServiceRecordPeriodMismatchDto,
+        @Query(new AdminServiceRecordNoQueryPipe()) _query?: Record<string, never>,
+    ) {
+        void _query;
+        return this.adminServiceRecordService.keepPeriodMismatch(tenant.branchId, clientId, body.sessionIndexes);
+    }
+
+    @Post("client/:clientId/period-mismatch/fit")
+    @HttpCode(200)
+    @UseGuards(BranchManagerGuard)
+    fitPeriodMismatch(
+        @CurrentTenant() tenant: VerifiedTenantPrincipal,
+        @Param("clientId", ParseIntPipe) clientId: number,
+        @Body() _body: FitServiceRecordPeriodMismatchDto,
+        @Query(new AdminServiceRecordNoQueryPipe()) _query?: Record<string, never>,
+    ) {
+        void _body;
+        void _query;
+        return this.adminServiceRecordService.fitPeriodMismatch(tenant.branchId, clientId);
     }
 
     @Get("client/:clientId/editor")

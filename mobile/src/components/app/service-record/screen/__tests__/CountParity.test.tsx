@@ -23,10 +23,12 @@ const sharedProps = (
     context: { totalSessions: 5, startDate: "2026-09-21", header: null, sessions: [] },
     header: {}, day: 1, pageIdx, draft, editing: false, clientSignature: null,
     busy: false, isRecordFinalized: false, lockedDays: new Set<number>(), nextOpenDay: () => 1,
-    scheduleChangeBusy: false, hasServiceDateMismatch: false, defaultDate: () => "2026-09-21",
+
+    hasServiceDateMismatch: false, defaultDate: () => "2026-09-21",
+    onServiceDateChange: jest.fn(), onFieldChange,
     onPhoneChange: jest.fn(), onSubmitPhone: jest.fn(), onBack: jest.fn(), onHeaderChange: jest.fn(),
     onDeliveryTypeChange: jest.fn(), onSaveHeader: jest.fn(), onOpenDay: jest.fn(),
-    onOpenScheduleChangePreview: jest.fn(), onServiceDateChange: jest.fn(), onFieldChange,
+
     onToggleMulti: jest.fn(), onSignatureChange: jest.fn(), onNextPage: jest.fn(),
     onOpenSubmitModal: jest.fn(), onEditSection: jest.fn(),
 });
@@ -41,7 +43,7 @@ function SharedHarness({ pageIdx, calls }: { pageIdx: number; calls: Calls }) {
 
 function ScreenHarness({ pageIdx, calls }: { pageIdx: number; calls: Calls }) {
     const [draft, setDraft] = useState<Record<string, unknown>>({ ...DEFAULT_DAILY_ANSWERS });
-    const { onBack, onServiceDateChange, onOpenScheduleChangePreview, onToggleMulti, onNextPage } = sharedProps(pageIdx, draft, jest.fn());
+    const { onBack, onToggleMulti, onNextPage } = sharedProps(pageIdx, draft, jest.fn());
     const dateState = useServiceDateFieldState({ currentServiceDate: "2026-09-21", day: 1 });
     return (
         <DayPageStep
@@ -52,12 +54,12 @@ function ScreenHarness({ pageIdx, calls }: { pageIdx: number; calls: Calls }) {
             draft={draft}
             editing={false}
             isRecordFinalized={false}
-            scheduleChangeBusy={false}
-            hasServiceDateMismatch={false}
+
+
             defaultDate={() => "2026-09-21"}
             onBack={onBack}
-            onServiceDateChange={onServiceDateChange}
-            onOpenScheduleChangePreview={onOpenScheduleChangePreview}
+
+
             onToggleMulti={onToggleMulti}
             onNextPage={onNextPage}
             dateState={dateState}
