@@ -634,7 +634,10 @@ export function ServiceRecordAdminWizard({
     const [pageIdx, setPageIdx] = useState(DAY_PAGES.length - 1);
     const [draft, setDraft] = useState<Record<string, unknown>>({});
     const [supplementalKey, setSupplementalKey] = useState<string | null>(null);
-    const baseSessionDraft = supplementalKey ? undefined : draftForSession(baseView.context.sessions.find((session) => session.sessionIndex === day));
+    const baseSession = baseView.context.sessions.find((session) => session.sessionIndex === day);
+    const baseSessionDraft = supplementalKey ? undefined : baseSession
+        ? draftForSession(baseSession)
+        : { _date: baseVector.find((entry) => entry.sessionIndex === day)?.serviceDate ?? "" };
     const [dateMove, setDateMove] = useState<AdminServiceRecordEditDateMove | null>(null);
     const dateMoveEntriesRef = useRef<PlannedVector | null>(null);
     const [followPrompt, setFollowPrompt] = useState<{ date: string; delta: number; canKeep: boolean; canShift: boolean } | null>(null);
