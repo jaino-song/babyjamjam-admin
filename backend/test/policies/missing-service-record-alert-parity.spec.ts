@@ -220,9 +220,11 @@ describe("missing service record parity regressions (carried F1/F2)", () => {
 
     it.each([
         { boundary: "start (inclusive)", start: "2026-09-07", end: "2026-09-09", index: 1, serviceDate: "2026-09-07", written: true },
-        { boundary: "before start", start: "2026-09-08", end: "2026-09-09", index: 1, serviceDate: "2026-09-07", written: false },
+        { boundary: "before start", start: "2026-09-15", end: "2026-09-16", index: 1, serviceDate: "2026-09-07", written: false },
+        { boundary: "window start (start - 7, inclusive)", start: "2026-09-14", end: "2026-09-16", index: 1, serviceDate: "2026-09-07", written: true },
         { boundary: "end (inclusive)", start: "2026-09-07", end: "2026-09-08", index: 2, serviceDate: "2026-09-08", written: true },
-        { boundary: "after end", start: "2026-09-07", end: "2026-09-07", index: 2, serviceDate: "2026-09-08", written: false },
+        { boundary: "after end", start: "2026-08-31", end: "2026-08-31", index: 2, serviceDate: "2026-09-08", written: false },
+        { boundary: "window end (end + 7, inclusive)", start: "2026-09-01", end: "2026-09-01", index: 2, serviceDate: "2026-09-08", written: true },
     ])("case period: $boundary partitions written evidence independently of the active schedule", async ({ start, end, index, serviceDate, written }) => {
         const { db, record, load } = fixture();
         record.startDate = date(start);

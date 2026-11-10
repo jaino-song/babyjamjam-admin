@@ -800,7 +800,7 @@ export function resolveServiceRecordScheduleProjection(
     return projectLegacy(source, calendar);
 }
 
-const CAREGIVER_DATE_WINDOW_DAYS = 7;
+export const CAREGIVER_DATE_WINDOW_DAYS = 7;
 
 function isOutsideCaregiverDateWindow(source: ServiceRecordEditSource, serviceDate: string): boolean {
     if (!source.startDate || !source.endDate) return false;

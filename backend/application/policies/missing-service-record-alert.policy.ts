@@ -1,7 +1,7 @@
 import type { ServiceRecordAlertCandidate } from "domain/repositories/client.repository.interface";
 import type { KrBusinessDayCalendar } from "domain/utils/business-days";
 import { serviceRecordSessionCount } from "domain/utils/service-record-session-count";
-import { resolveServiceRecordScheduleProjection, storedServiceDays } from "./service-record-edit-preview.policy";
+import { CAREGIVER_DATE_WINDOW_DAYS, resolveServiceRecordScheduleProjection, storedServiceDays } from "./service-record-edit-preview.policy";
 
 export interface MissingServiceRecordAlert {
     clientId: number;
@@ -57,10 +57,16 @@ export function findMissingServiceRecordAlerts(
             const second = projection.entries.find((entry) => entry.sessionIndex === 2);
             if (!second) continue;
             // mapCase includes all case rows; the card partitions them by the
-            // inclusive case period before matching canonical indexes to slots.
+            // inclusive start−7..end+7 lifecycle window before matching canonical indexes to slots.
+            const windowStart = new Date(`${source.startDate}T00:00:00Z`);
+            windowStart.setUTCDate(windowStart.getUTCDate() - CAREGIVER_DATE_WINDOW_DAYS);
+            const windowEnd = new Date(`${source.endDate}T00:00:00Z`);
+            windowEnd.setUTCDate(windowEnd.getUTCDate() + CAREGIVER_DATE_WINDOW_DAYS);
+            const windowStartDate = windowStart.toISOString().slice(0, 10);
+            const windowEndDate = windowEnd.toISOString().slice(0, 10);
             const written = source.sessions.some((session) => (session.sessionIndex === 1 || session.sessionIndex === 2)
                 && validDate(session.serviceDate)
-                && session.serviceDate >= source.startDate! && session.serviceDate <= source.endDate!);
+                && session.serviceDate >= windowStartDate && session.serviceDate <= windowEndDate);
             if (written) continue;
             const secondDate = second.serviceDate;
             if (!validDate(secondDate)) continue;
