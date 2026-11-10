@@ -1,17 +1,20 @@
 "use client";
 
+import { X } from "lucide-react";
+import { REVIEW_EMPTY_LABEL } from "@babyjamjam/service-record-ui";
+
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Dialog } from "@/components/ui/dialog";
-import { FormDialogShell } from "@/components/app/ui/FormDialogShell";
+import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from "@/components/ui/sheet";
+import { Skeleton } from "@/components/ui/skeleton";
+import { Spinner } from "@/components/ui/spinner";
 import type {
     ServiceRecordEditConfirmResponse,
     ServiceRecordEditPreviewImpactedAssignment,
     ServiceRecordEditPreviewResponse,
-    ServiceRecordPlannedSession,
 } from "@/features/service-records/types";
 
+import type { PendingChangeRow, PendingSessionChange } from "./pending-session-changes";
 import { describeScheduleBlockingReasons } from "./service-record-blocking-reasons";
 
 const SOURCE_COMPONENT = "ServiceRecordEditPreviewDialog";
@@ -22,6 +25,8 @@ export interface ServiceRecordEditPreviewDialogProps {
     onOpenChange: (open: boolean) => void;
     preview: ServiceRecordEditPreviewResponse | null;
     busy?: boolean;
+    sessionChanges?: ReadonlyArray<PendingSessionChange>;
+    headerChanges?: ReadonlyArray<PendingChangeRow>;
     error?: string | null;
     onConfirm?: () => void | Promise<void>;
     confirmBusy?: boolean;
@@ -49,16 +54,6 @@ function formatTimestamp(value: string | null): string {
     return value.replace("T", " ").replace(/\.\d{3}Z$/, "").replace(/Z$/, "");
 }
 
-function formatEvidence(value: "observed" | "unverified"): string {
-    return value === "observed" ? "서버 확인됨" : "확인되지 않음";
-}
-
-function formatSignatureTreatment(value: "preserve_existing" | "manual_review"): string {
-    return value === "preserve_existing"
-        ? "기존 제공기록지 서명과 실제 서명·제출 시각 보존"
-        : "서명 보존 근거가 없어 수동 검토 필요";
-}
-
 function formatContractStage(value: string | null): string {
     switch (value) {
         case "completed":
@@ -81,30 +76,31 @@ function formatConfirmDocumentStatus(value: ServiceRecordEditConfirmResponse["do
     }
 }
 
-function SessionDateList({
-    dataComponent,
-    sessions,
-}: {
-    dataComponent: string;
-    sessions: ServiceRecordPlannedSession[];
-}) {
-    if (sessions.length === 0) {
-        return <p data-component={`${dataComponent}_empty`} data-slot="empty">계산된 회차가 없습니다.</p>;
-    }
+function formatSessionDate(value: string | undefined): string {
+    if (!value) return REVIEW_EMPTY_LABEL;
+    const iso = value.slice(0, 10);
+    const weekday = new Date(`${iso}T00:00:00Z`).getUTCDay();
+    return `${iso.slice(5).replace("-", ".")}(${"일월화수목금토"[weekday]})`;
+}
+
+function ChangeRows({ rows, dataComponent }: { rows: ReadonlyArray<PendingChangeRow>; dataComponent: string }) {
     return (
-        <ol data-component={dataComponent} data-slot="session-dates" className="flex flex-col gap-2">
-            {sessions.map((session) => (
-                <li
-                    data-component={`${dataComponent}_item-${session.sessionIndex}`}
-                    data-slot="session-date"
-                    className="flex items-center justify-between gap-3 rounded-md border border-border px-3 py-2 text-sm"
-                    key={`${session.sessionIndex}-${session.assignmentId}`}
-                >
-                    <span>{session.sessionIndex}회차</span>
-                    <span className="font-semibold text-v3-dark">{formatDate(session.serviceDate)}</span>
-                </li>
-            ))}
-        </ol>
+        <div data-component={dataComponent} data-slot="change-rows" data-source-component="ChangeRows" className="flex flex-col gap-[calc(6px*var(--glint-ui-scale,1))]">
+            {rows.map((row) => {
+                const rowId = row.key.replace(/[A-Z]/g, (letter) => `-${letter.toLowerCase()}`);
+                return (
+                    <div key={row.key} role="group" data-component={`${dataComponent}_${rowId}`} data-slot="change-row"
+                        className="flex min-w-0 justify-between gap-[calc(12px*var(--glint-ui-scale,1))] rounded-[calc(10px*var(--glint-ui-scale,1))] border border-v3-border! bg-v3-dim-white px-[calc(10px*var(--glint-ui-scale,1))] py-[calc(8px*var(--glint-ui-scale,1))] text-[length:calc(16px*var(--glint-ui-scale,1))] leading-[calc(24px*var(--glint-ui-scale,1))]">
+                        <span data-component={`${dataComponent}_${rowId}_label`} data-slot="change-label" className="shrink-0 text-v3-text-muted">{row.label}</span>
+                        <span data-component={`${dataComponent}_${rowId}_value`} data-slot="change-value" className="min-w-0 text-right font-bold break-keep [overflow-wrap:anywhere]">
+                            <span data-component={`${dataComponent}_${rowId}_value_before`} data-slot="before" className="text-v3-text-muted font-medium">{row.before || REVIEW_EMPTY_LABEL}</span>
+                            {" → "}
+                            <span data-component={`${dataComponent}_${rowId}_value_after`} data-slot="after" className="text-v3-burgundy">{row.after || REVIEW_EMPTY_LABEL}</span>
+                        </span>
+                    </div>
+                );
+            })}
+        </div>
     );
 }
 
@@ -113,6 +109,8 @@ export function ServiceRecordEditPreviewDialog({
     onOpenChange,
     preview,
     busy = false,
+    sessionChanges = [],
+    headerChanges = [],
     error = null,
     onConfirm,
     confirmBusy = false,
@@ -135,42 +133,80 @@ export function ServiceRecordEditPreviewDialog({
         preview?.impactedAssignmentDetails?.find((detail) => detail.assignmentId === assignmentId)
             ?? { assignmentId, employeeName: null, startDate: null, endDate: null });
 
+    const loading = busy && preview === null;
+    const closeDisabled = busy || confirmBusy;
+    const sessionIndexes = new Set(sessionChanges.map((change) => change.sessionIndex));
+    const beforeDates = new Map(preview?.before.sessions.map((session) => [session.sessionIndex, session.serviceDate]) ?? []);
+    const afterDates = new Map(preview?.after.sessions.map((session) => [session.sessionIndex, session.serviceDate]) ?? []);
+    const movedSessionIndexes = new Set<number>();
+    for (const index of new Set([...beforeDates.keys(), ...afterDates.keys()])) {
+        if (beforeDates.get(index) !== afterDates.get(index)) {
+            movedSessionIndexes.add(index);
+            sessionIndexes.add(index);
+        }
+    }
+    const movedAssignmentIds = new Set(preview?.after.sessions
+        .filter((session) => movedSessionIndexes.has(session.sessionIndex))
+        .map((session) => session.assignmentId) ?? []);
+    const movedAssignments = impactedAssignments.filter((assignment) => movedAssignmentIds.has(assignment.assignmentId));
+    const groups = [...sessionIndexes].sort((left, right) => left - right).map((sessionIndex) => ({
+        sessionIndex,
+        rows: [
+            ...(beforeDates.get(sessionIndex) !== afterDates.get(sessionIndex) ? [{
+                key: "service-date", label: "서비스 제공일",
+                before: formatSessionDate(beforeDates.get(sessionIndex)), after: formatSessionDate(afterDates.get(sessionIndex)),
+            }] : []),
+            ...(sessionChanges.find((change) => change.sessionIndex === sessionIndex)?.rows ?? []),
+        ],
+    })).filter((group) => group.rows.length > 0);
+    const periodChanged = preview !== null && (preview.before.startDate !== preview.after.startDate
+        || preview.before.endDate !== preview.after.endDate);
+    // Match confirm's contract/receipt operations; snapshot jobs alone need no operator section.
+    const contractAffected = periodChanged && (preview.documentScope.evidence !== "observed"
+        || preview.documentScope.contract.currentDocumentId !== null);
+    const receipt = preview?.documentScope.receipt;
+    const receiptAffected = periodChanged && (receipt?.evidence !== "observed" || receipt.tokenIds.length > 0);
+    const documentsAffected = contractAffected || receiptAffected;
+    const affectedSignatureSessions = preview?.signatureMetadata.sessions.filter((session) => session.hasSignature
+        && (sessionIndexes.has(session.sessionIndex) || contentChanges.changedSessionIndexes.includes(session.sessionIndex))) ?? [];
+    const signatureReviewRequired = preview?.signatureMetadata.treatment === "manual_review" && affectedSignatureSessions.length > 0;
+    const hasPreviewChanges = groups.length > 0 || contentChanges.headerChanged || movedAssignments.length > 0
+        || signatureReviewRequired || documentsAffected;
+
     return (
-        <Dialog open={open} onOpenChange={(nextOpen) => !busy && onOpenChange(nextOpen)}>
-            <FormDialogShell
-                data-component={dataComponent}
-                size="form"
-                title="초안 변경 미리보기"
-                description="저장된 관리자 초안이 적용될 때의 날짜, 배정 영향, 내용 변경을 확인한 뒤 수정 확정을 처리합니다."
-                contentClassName="max-h-[min(72vh,720px)] overflow-y-auto flex flex-col gap-5"
-                footer={(
-                    <div data-component={`${dataComponent}_actions`} data-slot="actions" className="flex flex-wrap justify-end gap-2">
-                        {preview && !hasBlockingReasons && onConfirm ? (
-                            <Button
-                                type="button"
-                                variant="positive"
-                                data-component={`${dataComponent}_actions_confirm`}
-                                disabled={busy || confirmBusy || Boolean(confirmResult)}
-                                onClick={() => { void onConfirm(); }}
-                            >
-                                {confirmBusy ? "확정 처리 중…" : confirmResult ? "수정 확정됨" : "수정 확정"}
-                            </Button>
-                        ) : null}
-                        <Button
-                            type="button"
-                            variant="neutral"
-                            data-component={`${dataComponent}_actions_close`}
-                            disabled={busy || confirmBusy}
-                            onClick={() => onOpenChange(false)}
-                        >
-                            닫기
-                        </Button>
-                    </div>
-                )}
-            >
-                <div data-component={`${dataComponent}_content`} data-source-component={SOURCE_COMPONENT} className="flex flex-col gap-5">
-                    {busy ? (
-                        <p data-component={`${dataComponent}_content_loading`} data-slot="loading" role="status">미리보기를 불러오는 중…</p>
+        <Sheet open={open} onOpenChange={(nextOpen) => !closeDisabled && onOpenChange(nextOpen)}>
+            <SheetContent side="bottom" data-component={dataComponent} data-source-component={SOURCE_COMPONENT}
+                className="h-[86dvh] max-h-[94dvh] min-w-0 gap-0 overflow-hidden rounded-t-[calc(28px*var(--glint-ui-scale,1))] bg-white p-0 sm:h-auto sm:max-h-[86dvh] sm:left-1/2 sm:right-auto sm:bottom-6 sm:w-[calc(480px*var(--glint-ui-scale,1))] sm:max-w-[calc(100vw-32px)] sm:-translate-x-1/2 sm:rounded-[calc(28px*var(--glint-ui-scale,1))]"
+                onEscapeKeyDown={(event) => { if (closeDisabled) event.preventDefault(); }}
+                onInteractOutside={(event) => { if (closeDisabled) event.preventDefault(); }}>
+                <div data-component={`${dataComponent}_handle`} data-slot="sheet-handle" aria-hidden="true"
+                    className="mx-auto mt-[calc(12px*var(--glint-ui-scale,1))] h-[calc(4px*var(--glint-ui-scale,1))] w-[calc(36px*var(--glint-ui-scale,1))] shrink-0 rounded-full bg-v3-border" />
+                <SheetHeader data-component={`${dataComponent}_header`}
+                    className="gap-[calc(2px*var(--glint-ui-scale,1))] px-[calc(22px*var(--glint-ui-scale,1))] pb-[calc(8px*var(--glint-ui-scale,1))] pt-[calc(12px*var(--glint-ui-scale,1))] pr-[calc(64px*var(--glint-ui-scale,1))]">
+                    <SheetTitle data-component={`${dataComponent}_header_title`} className="text-[length:calc(24px*var(--glint-ui-scale,1))] leading-[calc(32px*var(--glint-ui-scale,1))] font-bold text-v3-dark">수정 내용 확인</SheetTitle>
+                    <SheetDescription data-component={`${dataComponent}_header_description`} className="text-[length:calc(14px*var(--glint-ui-scale,1))] leading-[calc(20px*var(--glint-ui-scale,1))] font-semibold text-v3-text-muted">
+                        {loading ? "바뀌는 내용을 확인하고 있어요. 창을 닫거나 새로고침하지 마세요." : "확인 후 수정 확정을 눌러주세요."}
+                    </SheetDescription>
+                    <Button type="button" variant="ghost" size="icon" aria-label="닫기" disabled={closeDisabled}
+                        data-component={`${dataComponent}_header_close`} onClick={() => onOpenChange(false)}
+                        className="absolute right-[calc(8px*var(--glint-ui-scale,1))] top-[calc(12px*var(--glint-ui-scale,1))] size-[calc(44px*var(--glint-ui-scale,1))] border-0 text-v3-text-muted">
+                        <X data-component={`${dataComponent}_header_close_icon`} aria-hidden="true" />
+                    </Button>
+                </SheetHeader>
+                <div data-component={`${dataComponent}_content`} data-slot="content" className="flex min-h-0 flex-1 flex-col gap-[calc(14px*var(--glint-ui-scale,1))] overflow-y-auto px-[calc(16px*var(--glint-ui-scale,1))] pb-[calc(16px*var(--glint-ui-scale,1))]">
+                    {loading ? (
+                        <div data-component={`${dataComponent}_content_loading`} data-slot="loading">
+                            <p data-component={`${dataComponent}_content_loading_status`} data-slot="loading-status" role="status" aria-busy="true"
+                                className="flex items-center gap-[calc(8px*var(--glint-ui-scale,1))] px-[calc(6px*var(--glint-ui-scale,1))] pt-[calc(14px*var(--glint-ui-scale,1))] pb-[calc(18px*var(--glint-ui-scale,1))] text-[length:calc(16px*var(--glint-ui-scale,1))] leading-[calc(24px*var(--glint-ui-scale,1))] font-semibold text-v3-primary">
+                                <Spinner data-component={`${dataComponent}_content_loading_status_spinner`} size="sm" aria-hidden="true" />수정사항 정리하는 중...
+                            </p>
+                            <Skeleton data-component={`${dataComponent}_content_loading_skeleton-1`} aria-hidden="true" className="mb-[calc(12px*var(--glint-ui-scale,1))] h-[calc(22px*var(--glint-ui-scale,1))] w-3/5 rounded-lg! bg-v3-dim-white" />
+                            <Skeleton data-component={`${dataComponent}_content_loading_skeleton-2`} aria-hidden="true" className="mb-[calc(8px*var(--glint-ui-scale,1))] h-[calc(12px*var(--glint-ui-scale,1))] w-[90%] rounded-lg! bg-v3-dim-white" />
+                            <Skeleton data-component={`${dataComponent}_content_loading_skeleton-3`} aria-hidden="true" className="mb-[calc(24px*var(--glint-ui-scale,1))] h-[calc(12px*var(--glint-ui-scale,1))] w-[70%] rounded-lg! bg-v3-dim-white" />
+                            <Skeleton data-component={`${dataComponent}_content_loading_skeleton-4`} aria-hidden="true" className="mb-[calc(10px*var(--glint-ui-scale,1))] h-[calc(14px*var(--glint-ui-scale,1))] w-[28%] rounded-lg! bg-v3-dim-white" />
+                            <Skeleton data-component={`${dataComponent}_content_loading_skeleton-5`} aria-hidden="true" className="mb-[calc(16px*var(--glint-ui-scale,1))] h-[calc(50px*var(--glint-ui-scale,1))] w-full rounded-xl! bg-v3-dim-white" />
+                            <Skeleton data-component={`${dataComponent}_content_loading_skeleton-6`} aria-hidden="true" className="h-[calc(46px*var(--glint-ui-scale,1))] w-full rounded-full bg-v3-dim-white" />
+                        </div>
                     ) : null}
                     {error ? (
                         <Alert variant="destructive" data-component={`${dataComponent}_content_error`} data-slot="error">
@@ -210,11 +246,6 @@ export function ServiceRecordEditPreviewDialog({
                     ) : null}
                     {!busy && !error && preview ? (
                         <>
-                            <div data-component={`${dataComponent}_content_meta`} data-slot="meta" className="flex flex-wrap gap-2">
-                                <Badge variant="secondary">초안 버전 {preview.draftVersion}</Badge>
-                                {preview.requiredSessionCount ? <Badge variant="secondary">총 {preview.requiredSessionCount}회차</Badge> : null}
-                            </div>
-
                             {hasBlockingReasons ? (
                                 <Alert variant="warning" data-component={`${dataComponent}_content_blocking-reasons`} data-slot="blocking-reasons">
                                     <AlertTitle>현재 변경을 적용할 수 없습니다.</AlertTitle>
@@ -230,93 +261,76 @@ export function ServiceRecordEditPreviewDialog({
                                 </Alert>
                             ) : null}
 
-                            <section data-component={`${dataComponent}_content_dates`} data-slot="dates" className="grid gap-4 md:grid-cols-2">
-                                <div data-component={`${dataComponent}_content_dates_before`} data-slot="before" className="flex flex-col gap-2">
-                                    <h3 className="text-sm font-semibold text-v3-dark">변경 전</h3>
-                                    <p className="text-sm text-v3-text-muted">{formatDate(preview.before.startDate)} ~ {formatDate(preview.before.endDate)}</p>
-                                    <SessionDateList dataComponent={`${dataComponent}_content_dates_before_sessions`} sessions={preview.before.sessions} />
-                                </div>
-                                <div data-component={`${dataComponent}_content_dates_after`} data-slot="after" className="flex flex-col gap-2">
-                                    <h3 className="text-sm font-semibold text-v3-dark">변경 후</h3>
-                                    <p className="text-sm text-v3-text-muted">{formatDate(preview.after.startDate)} ~ {formatDate(preview.after.endDate)}</p>
-                                    <SessionDateList dataComponent={`${dataComponent}_content_dates_after_sessions`} sessions={preview.after.sessions} />
-                                </div>
-                            </section>
-
-                            <section data-component={`${dataComponent}_content_assignments`} data-slot="assignments" className="flex flex-col gap-2">
-                                <h3 className="text-sm font-semibold text-v3-dark">배정 영향</h3>
-                                {impactedAssignments.length > 0 ? (
-                                    <ul className="list-disc space-y-1 pl-5 text-sm text-v3-text-muted">
-                                        {impactedAssignments.map((assignment) => (
-                                            <li key={assignment.assignmentId} data-component={`${dataComponent}_content_assignments_item`} data-slot="assignment-item">
-                                                {formatImpactedAssignment(assignment)}
+                            {!hasPreviewChanges && !hasBlockingReasons ? (
+                                <p data-component={`${dataComponent}_content_no-changes`} data-slot="no-changes" className="text-sm text-v3-text-muted">변경된 내용이 없어요.</p>
+                            ) : null}
+                            {groups.map((group) => (
+                                <section key={group.sessionIndex} data-component={`${dataComponent}_content_dates_session-${group.sessionIndex}`} data-slot="session-change"
+                                    className="border-[1.5px] border-v3-primary! rounded-[calc(14px*var(--glint-ui-scale,1))] bg-white px-[calc(12px*var(--glint-ui-scale,1))] pt-[calc(10px*var(--glint-ui-scale,1))] pb-[calc(12px*var(--glint-ui-scale,1))] first:mt-[calc(14px*var(--glint-ui-scale,1))]">
+                                    <h3 data-component={`${dataComponent}_content_dates_session-${group.sessionIndex}_title`} data-slot="session-heading"
+                                        className="mb-[calc(6px*var(--glint-ui-scale,1))] w-fit rounded-[calc(6px*var(--glint-ui-scale,1))] bg-v3-primary-light px-[calc(7px*var(--glint-ui-scale,1))] py-[calc(2px*var(--glint-ui-scale,1))] text-[length:calc(12px*var(--glint-ui-scale,1))] leading-[calc(16px*var(--glint-ui-scale,1))] font-extrabold text-v3-primary">{group.sessionIndex}회차</h3>
+                                    <ChangeRows dataComponent={`${dataComponent}_content_dates_session-${group.sessionIndex}_rows`} rows={group.rows} />
+                                </section>
+                            ))}
+                            {contentChanges.headerChanged ? (
+                                <section data-component={`${dataComponent}_content_changes`} data-slot="content-changes" className="flex flex-col gap-2">
+                                    <h3 data-component={`${dataComponent}_content_changes_title`} data-slot="title" className="text-sm font-semibold text-v3-dark">기본정보</h3>
+                                    <ChangeRows dataComponent={`${dataComponent}_content_changes_rows`} rows={headerChanges} />
+                                </section>
+                            ) : null}
+                            {movedAssignments.length > 0 ? (
+                                <section data-component={`${dataComponent}_content_assignments`} data-slot="assignments" className="flex flex-col gap-2">
+                                    <h3 data-component={`${dataComponent}_content_assignments_title`} data-slot="title" className="text-sm font-semibold text-v3-dark">배정 영향</h3>
+                                    <ul data-component={`${dataComponent}_content_assignments_list`} data-slot="assignments-list" className="list-disc space-y-1 pl-5 text-sm text-v3-text-muted">
+                                        {movedAssignments.map((assignment) => (
+                                            <li key={assignment.assignmentId} data-component={`${dataComponent}_content_assignments_item`} data-slot="assignment-item">{formatImpactedAssignment(assignment)}</li>
+                                        ))}
+                                    </ul>
+                                </section>
+                            ) : null}
+                            {signatureReviewRequired ? (
+                                <section data-component={`${dataComponent}_content_signature-metadata`} data-slot="signature-metadata" className="flex flex-col gap-2">
+                                    <h3 data-component={`${dataComponent}_content_signature-metadata_title`} data-slot="title" className="text-sm font-semibold text-v3-dark">서명</h3>
+                                    <ul data-component={`${dataComponent}_content_signature-metadata_sessions`} data-slot="signature-sessions" className="list-disc space-y-1 pl-5 text-sm text-v3-text-muted">
+                                        {affectedSignatureSessions.map((session) => (
+                                            <li key={session.sessionIndex} data-component={`${dataComponent}_content_signature-metadata_sessions_item-${session.sessionIndex}`} data-slot="signature-session">
+                                                {session.sessionIndex}회차 · 서명 보존 근거가 없어 수동 검토 필요
                                             </li>
                                         ))}
                                     </ul>
-                                ) : (
-                                    <p data-slot="none" className="text-sm text-v3-text-muted">변경되는 배정이 없습니다.</p>
-                                )}
-                            </section>
-
-                            <section data-component={`${dataComponent}_content_changes`} data-slot="content-changes" className="flex flex-col gap-2">
-                                <h3 className="text-sm font-semibold text-v3-dark">내용 변경</h3>
-                                <p className="text-sm text-v3-text-muted">기본정보: {contentChanges.headerChanged ? "변경됨" : "변경 없음"}</p>
-                                <p className="text-sm text-v3-text-muted">
-                                    기록 회차: {contentChanges.changedSessionIndexes.length > 0
-                                        ? contentChanges.changedSessionIndexes.map((sessionIndex) => `${sessionIndex}회차`).join(", ")
-                                        : "변경 없음"}
-                                </p>
-                            </section>
-
-                            <section data-component={`${dataComponent}_content_signature-metadata`} data-slot="signature-metadata" className="flex flex-col gap-2">
-                                <h3 className="text-sm font-semibold text-v3-dark">제공기록지 서명 메타데이터</h3>
-                                <p className="text-sm text-v3-text-muted">처리: {formatSignatureTreatment(preview.signatureMetadata.treatment)}</p>
-                                <p className="text-sm text-v3-text-muted">근거: {formatEvidence(preview.signatureMetadata.evidence)}</p>
-                                <p className="text-xs text-v3-text-muted">이 항목은 제공기록지 서명만 다루며 계약서 서명을 재사용하지 않습니다.</p>
-                                {preview.signatureMetadata.sessions.length > 0 ? (
-                                    <ul className="list-disc space-y-1 pl-5 text-sm text-v3-text-muted">
-                                        {preview.signatureMetadata.sessions.map((session) => (
-                                            <li key={session.sessionIndex}>
-                                                {session.sessionIndex}회차 · {session.hasSignature ? "서명 있음" : "서명 없음"}
-                                                · 서명 시각 {formatTimestamp(session.signedAt)}
-                                                · 제출 시각 {formatTimestamp(session.submittedAt)}
-                                            </li>
-                                        ))}
-                                    </ul>
-                                ) : (
-                                    <p data-slot="none" className="text-sm text-v3-text-muted">회차별 서명 메타데이터가 없습니다.</p>
-                                )}
-                            </section>
-
-                            <section data-component={`${dataComponent}_content_document-scope`} data-slot="document-scope" className="flex flex-col gap-2">
-                                <h3 className="text-sm font-semibold text-v3-dark">전자문서 영향 범위</h3>
-                                <p className="text-sm text-v3-text-muted">근거: {formatEvidence(preview.documentScope.evidence)}</p>
-                                <p className="text-sm text-v3-text-muted">계약 상태: {formatContractStage(preview.documentScope.contract.stage)}</p>
-                                <p className="text-sm text-v3-text-muted">
-                                    현재 계약 문서: {preview.documentScope.contract.currentDocumentId ?? "확인되지 않음"}
-                                </p>
-                                <p className="text-sm text-v3-text-muted">
-                                    제공기록지 문서: {preview.documentScope.serviceRecordSnapshot.documentIds.length > 0
-                                        ? preview.documentScope.serviceRecordSnapshot.documentIds.join(", ")
-                                        : "확인되지 않음"}
-                                </p>
-                                <p className="text-sm text-v3-text-muted">
-                                    문서·버전 범위: snapshot {preview.documentScope.serviceRecordSnapshot.snapshotVersion ?? "확인되지 않음"}
-                                    · 청크 {preview.documentScope.serviceRecordSnapshot.chunks.length}개
-                                    · 현재 수정본 {preview.documentScope.currentRevision.revisionNumber ?? "확인되지 않음"}
-                                    · 양식 {preview.documentScope.form.version ?? "확인되지 않음"}
-                                </p>
-                                <p className="text-xs text-v3-text-muted">
-                                    날짜 표시 변경 범위와 문서 재생성 범위는 서버가 확인한 값만 표시합니다.
-                                </p>
-                            </section>
+                                </section>
+                            ) : null}
+                            {documentsAffected ? (
+                                <section data-component={`${dataComponent}_content_document-scope`} data-slot="document-scope" className="flex flex-col gap-2">
+                                    <h3 data-component={`${dataComponent}_content_document-scope_title`} data-slot="title" className="text-sm font-semibold text-v3-dark">전자문서</h3>
+                                    {contractAffected ? (
+                                        <p data-component={`${dataComponent}_content_document-scope_contract`} data-slot="contract" className="text-sm text-v3-text-muted">{formatContractStage(preview.documentScope.contract.stage)}</p>
+                                    ) : null}
+                                    {receiptAffected ? (
+                                        <p data-component={`${dataComponent}_content_document-scope_receipt`} data-slot="receipt" className="text-sm text-v3-text-muted">영수증 · 변경된 서비스 기간에 맞춰 처리가 필요합니다.</p>
+                                    ) : null}
+                                </section>
+                            ) : null}
                         </>
                     ) : null}
                     {!busy && !error && !preview ? (
                         <p data-component={`${dataComponent}_content_empty`} data-slot="empty">미리보기 데이터가 없습니다.</p>
                     ) : null}
                 </div>
-            </FormDialogShell>
-        </Dialog>
+                <div data-component={`${dataComponent}_actions`} data-slot="actions"
+                    className="flex shrink-0 gap-[calc(8px*var(--glint-ui-scale,1))] border-t border-v3-border px-[calc(16px*var(--glint-ui-scale,1))] pt-[calc(16px*var(--glint-ui-scale,1))] pb-[calc(16px*var(--glint-ui-scale,1)+env(safe-area-inset-bottom))] [&>*]:flex-1">
+                    <Button type="button" variant="outline" data-component={`${dataComponent}_actions_close`} disabled={closeDisabled}
+                        className="h-[calc(46px*var(--glint-ui-scale,1))] rounded-full text-v3-primary text-[length:calc(16px*var(--glint-ui-scale,1))] leading-[calc(24px*var(--glint-ui-scale,1))]" onClick={() => onOpenChange(false)}>닫기</Button>
+                    {loading || (preview && !hasBlockingReasons && onConfirm) ? (
+                        <Button type="button" variant="positive" data-component={`${dataComponent}_actions_confirm`}
+                            className="h-[calc(46px*var(--glint-ui-scale,1))] rounded-full text-[length:calc(16px*var(--glint-ui-scale,1))] leading-[calc(24px*var(--glint-ui-scale,1))]"
+                            disabled={busy || confirmBusy || Boolean(confirmResult)} onClick={() => { void onConfirm?.(); }}>
+                            {loading ? <Spinner data-component={`${dataComponent}_actions_confirm_spinner`} size="sm" aria-hidden="true" /> : null}
+                            {loading ? "확인 중…" : confirmBusy ? "확정 처리 중…" : confirmResult ? "수정 확정됨" : "수정 확정"}
+                        </Button>
+                    ) : null}
+                </div>
+            </SheetContent>
+        </Sheet>
     );
 }

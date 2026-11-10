@@ -615,11 +615,11 @@ describe("per-session administrator editing", () => {
         fireEvent.click(within(screen.getByRole("dialog", { name: `${sessionLabel} 서비스 제공일 수정` })).getByRole("button", { name: "선택" }));
         if (follow) fireEvent.click(within(screen.getByRole("dialog", { name: "뒷 회차들도 변경할까요?" })).getByRole("button", { name: follow }));
     }
-    const previewDialog = () => screen.getByRole("dialog", { name: "초안 변경 미리보기" });
+    const previewDialog = () => screen.getByRole("dialog", { name: "수정 내용 확인" });
     /** 수정 확정 on the overview, waiting for the preview dialog. */
     async function startCommit() {
         fireEvent.click(screen.getByRole("button", { name: "수정 확정" }));
-        await screen.findByRole("dialog", { name: "초안 변경 미리보기" });
+        await screen.findByRole("dialog", { name: "수정 내용 확인" });
         await waitFor(() => expect(within(previewDialog()).queryByRole("status")).not.toBeInTheDocument());
     }
     function confirmInPreview() {
@@ -798,7 +798,7 @@ describe("per-session administrator editing", () => {
         acceptEdit();
         const button = await screen.findByRole("button", { name: "수정 확정" });
         fireEvent.click(button);
-        expect(within(previewDialog()).getByRole("status")).toHaveTextContent("미리보기를 불러오는 중…");
+        expect(within(previewDialog()).getByRole("status")).toHaveTextContent("수정사항 정리하는 중...");
         expect(button).toHaveTextContent("확인 중…");
         expect(button).toHaveAttribute("aria-busy", "true");
         expect(button.querySelector('[data-slot="spinner"]')).toBeInTheDocument();
@@ -811,7 +811,7 @@ describe("per-session administrator editing", () => {
         await waitFor(() => expect(adminServiceRecordEditApi.confirmDraft).toHaveBeenCalledTimes(1));
         expect(button).toHaveTextContent("수정 확정");
         expect(button).not.toHaveAttribute("aria-busy", "true");
-        expect(within(previewDialog()).queryByText("미리보기를 불러오는 중…")).not.toBeInTheDocument();
+        expect(within(previewDialog()).queryByText("수정사항 정리하는 중...")).not.toBeInTheDocument();
         await act(async () => { resolveConfirm(confirmResult as Awaited<ReturnType<typeof adminServiceRecordEditApi.confirmDraft>>); });
     });
 
@@ -872,11 +872,11 @@ describe("per-session administrator editing", () => {
         await screen.findByRole("button", { name: "수정 확정" });
         await startCommit();
 
-        fireEvent.click(within(previewDialog()).getByRole("button", { name: "닫기" }));
+        fireEvent.click(previewDialog().querySelector('[data-component$="_commit-preview_actions_close"]')!);
 
         await waitFor(() => expect(adminServiceRecordEditApi.discardDraft).toHaveBeenCalledWith("draft-1", 1));
         expect(adminServiceRecordEditApi.confirmDraft).not.toHaveBeenCalled();
-        await waitFor(() => expect(screen.queryByRole("dialog", { name: "초안 변경 미리보기" })).not.toBeInTheDocument());
+        await waitFor(() => expect(screen.queryByRole("dialog", { name: "수정 내용 확인" })).not.toBeInTheDocument());
         expect(screen.getByRole("button", { name: "수정 확정" })).toBeEnabled();
         expect(container.querySelectorAll('[data-slot="day"]')[0]).toHaveTextContent("수정중");
     });
@@ -889,7 +889,7 @@ describe("per-session administrator editing", () => {
         await screen.findByRole("button", { name: "수정 확정" });
         await startCommit();
 
-        fireEvent.click(within(previewDialog()).getByRole("button", { name: "닫기" }));
+        fireEvent.click(previewDialog().querySelector('[data-component$="_commit-preview_actions_close"]')!);
 
         const alert = await screen.findByRole("alert");
         expect(alert).toHaveTextContent("수정 초안을 정리하지 못했어요");
@@ -1119,7 +1119,7 @@ describe("per-session administrator editing", () => {
         expect(adminServiceRecordEditApi.discardDraft).not.toHaveBeenCalled();
 
         fireEvent.click(screen.getByRole("button", { name: "수정 확정" }));
-        await screen.findByRole("dialog", { name: "초안 변경 미리보기" });
+        await screen.findByRole("dialog", { name: "수정 내용 확인" });
 
         expect(adminServiceRecordEditApi.discardDraft).toHaveBeenCalledWith("draft-1", 2);
         expect(jest.mocked(adminServiceRecordEditApi.discardDraft).mock.invocationCallOrder[0])
@@ -1929,7 +1929,7 @@ describe("per-session administrator editing", () => {
             await startCommit();
             confirmInPreview();
 
-            await waitFor(() => expect(screen.queryByRole("dialog", { name: "초안 변경 미리보기" })).not.toBeInTheDocument());
+            await waitFor(() => expect(screen.queryByRole("dialog", { name: "수정 내용 확인" })).not.toBeInTheDocument());
             expect(screen.queryByRole("dialog", { name: refreshModalTitle })).not.toBeInTheDocument();
             expect(screen.getByRole("alert")).toHaveTextContent(closedDraftMessage);
             expect(container.querySelectorAll('[data-slot="day"]')[0]).toHaveTextContent("수정중");
@@ -1947,7 +1947,7 @@ describe("per-session administrator editing", () => {
 
             await screen.findByText(closedDraftMessage);
             expect(screen.queryByRole("dialog", { name: refreshModalTitle })).not.toBeInTheDocument();
-            expect(screen.queryByRole("dialog", { name: "초안 변경 미리보기" })).not.toBeInTheDocument();
+            expect(screen.queryByRole("dialog", { name: "수정 내용 확인" })).not.toBeInTheDocument();
             expect(container.querySelectorAll('[data-slot="day"]')[0]).toHaveTextContent("수정중");
             await waitFor(() => expect(screen.getByRole("button", { name: "수정 확정" })).toBeEnabled());
             expect(global.fetch).not.toHaveBeenCalled();
@@ -1974,8 +1974,8 @@ describe("per-session administrator editing", () => {
             expect(screen.queryByRole("dialog", { name: refreshModalTitle })).not.toBeInTheDocument();
 
             // Closing the preview leaves the line under 수정 취소, and the edits stay.
-            fireEvent.click(within(previewDialog()).getByRole("button", { name: "닫기" }));
-            await waitFor(() => expect(screen.queryByRole("dialog", { name: "초안 변경 미리보기" })).not.toBeInTheDocument());
+            fireEvent.click(previewDialog().querySelector('[data-component$="_commit-preview_actions_close"]')!);
+            await waitFor(() => expect(screen.queryByRole("dialog", { name: "수정 내용 확인" })).not.toBeInTheDocument());
             expect(screen.getByRole("alert")).toHaveTextContent(message);
             expect(screen.getByRole("button", { name: "수정 확정" })).toBeEnabled();
         });
@@ -2008,7 +2008,7 @@ describe("per-session administrator editing", () => {
 
             await screen.findByRole("dialog", { name: refreshModalTitle });
             expectNothingPreviewedOrDiscarded();
-            expect(screen.queryByRole("dialog", { name: "초안 변경 미리보기" })).not.toBeInTheDocument();
+            expect(screen.queryByRole("dialog", { name: "수정 내용 확인" })).not.toBeInTheDocument();
             expect(adminServiceRecordEditApi.updateDraft).not.toHaveBeenCalled();
             expect(container.querySelectorAll('[data-slot="day"]')[0]).toHaveTextContent("수정중");
         });
@@ -2066,7 +2066,7 @@ describe("per-session administrator editing", () => {
             fireEvent.click(await screen.findByRole("button", { name: "수정 확정" }));
             expect(beforeUnload().defaultPrevented).toBe(true);
             await waitFor(() => expect(adminServiceRecordEditApi.previewDraft).toHaveBeenCalledTimes(1));
-            expect(within(previewDialog()).getByRole("status")).toHaveTextContent("미리보기를 불러오는 중…");
+            expect(within(previewDialog()).getByRole("status")).toHaveTextContent("수정사항 정리하는 중...");
             expect(beforeUnload().defaultPrevented).toBe(true);
             await act(async () => { resolvePreview(confirmPreviewResponse as Awaited<ReturnType<typeof adminServiceRecordEditApi.previewDraft>>); });
             expect(within(previewDialog()).getByRole("button", { name: "수정 확정" })).toBeEnabled();

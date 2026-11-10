@@ -1,5 +1,5 @@
 import "@testing-library/jest-dom";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 
 import type { ServiceRecordEditPreviewResponse } from "@/features/service-records/types";
 
@@ -90,41 +90,209 @@ const preview: ServiceRecordEditPreviewResponse = {
 };
 
 describe("ServiceRecordEditPreviewDialog", () => {
-    it("shows full before/after dates, assignment impact, content changes, and blocking reasons without a confirm action", () => {
+    it("groups changed dates and content into ascending primary-bordered session boxes", () => {
         const onOpenChange = jest.fn();
-        render(
-            <ServiceRecordEditPreviewDialog
-                open
-                onOpenChange={onOpenChange}
-                preview={preview}
-                data-component={DATA_COMPONENT}
-            />,
-        );
-
-        expect(screen.getByText("변경 전")).toBeInTheDocument();
-        expect(screen.getByText("변경 후")).toBeInTheDocument();
-        expect(screen.getByText("2026.07.10 ~ 2026.07.14")).toBeInTheDocument();
-        expect(screen.getByText("2026.07.13 ~ 2026.07.17")).toBeInTheDocument();
-        expect(screen.getAllByText("2026.07.13").length).toBeGreaterThan(0);
-        // The calendar version is an opaque fingerprint now; it is not shown.
-        expect(screen.getByText("초안 버전 4")).toBeInTheDocument();
-        expect(screen.queryByText(/달력/)).not.toBeInTheDocument();
+        render(<ServiceRecordEditPreviewDialog open onOpenChange={onOpenChange} preview={preview}
+            sessionChanges={[
+                { sessionIndex: 2, rows: [{ key: "notes", label: "특이사항", before: "입력 없음", after: "간식 시간 변경" }] },
+                { sessionIndex: 1, rows: [{ key: "breast", label: "② 유방상태", before: "이상없음", after: "울혈" }] },
+            ]}
+            headerChanges={[{ key: "momName", label: "산모 성명", before: "기존", after: "변경" }]}
+            data-component={DATA_COMPONENT} />);
+        expect(screen.getByRole("dialog", { name: "수정 내용 확인" })).toHaveAttribute("data-side", "bottom");
+        expect(screen.getByText("확인 후 수정 확정을 눌러주세요.")).toBeVisible();
+        expect(screen.queryByRole("status")).not.toBeInTheDocument();
+        const boxes = document.querySelectorAll('[data-slot="session-change"]');
+        expect(boxes).toHaveLength(2);
+        expect(within(boxes[0] as HTMLElement).getByText("1회차")).toBeInTheDocument();
+        expect(within(boxes[1] as HTMLElement).getByText("2회차")).toBeInTheDocument();
+        for (const box of boxes) expect(box).toHaveClass("border-[1.5px]", "border-v3-primary!", "bg-white");
+        const firstRows = within(boxes[0] as HTMLElement).getAllByRole("group");
+        expect(firstRows[0]).toHaveTextContent("07.10(금) → 07.13(월)");
+        expect(firstRows[1]).toHaveTextContent("② 유방상태이상없음 → 울혈");
+        expect(screen.getByText("이상없음")).toHaveClass("text-v3-text-muted", "font-medium");
+        expect(screen.getByText("울혈")).toHaveClass("text-v3-burgundy");
+        expect(screen.getByText("입력 없음")).toHaveClass("text-v3-text-muted");
+        expect(screen.queryByText(/초안 버전/)).not.toBeInTheDocument();
+        expect(screen.getByText("기본정보")).toBeInTheDocument();
+        expect(screen.getByText("산모 성명").parentElement).toHaveTextContent("기존 → 변경");
         expect(screen.getByText("임선녀 · 2026.10.14 ~ 2026.10.23")).toBeInTheDocument();
         expect(screen.queryByText(/assignment-1/)).not.toBeInTheDocument();
         expect(screen.getByText("원본 기록이 변경되어 확인이 필요합니다.")).toBeInTheDocument();
-        expect(screen.getByText("기본정보: 변경됨")).toBeInTheDocument();
-        expect(screen.getByText("기록 회차: 1회차, 2회차")).toBeInTheDocument();
-        expect(screen.getByText(/기존 제공기록지 서명과 실제 서명·제출 시각 보존/)).toBeInTheDocument();
-        expect(screen.getByText(/계약 상태: 완료 계약 · 새 계약과 새 이용자 서명이 필요합니다/)).toBeInTheDocument();
-        expect(screen.getByText(/문서·버전 범위: snapshot 2/)).toBeInTheDocument();
         expect(screen.queryByRole("button", { name: /확정|완료|저장/ })).not.toBeInTheDocument();
-        expect(document.querySelector(`[data-component="${DATA_COMPONENT}"]`)).toHaveAttribute(
-            "data-source-component",
-            "FormDialogShell",
-        );
-
-        fireEvent.click(screen.getByRole("button", { name: "닫기" }));
+        expect(screen.queryByText("서명")).not.toBeInTheDocument();
+        expect(screen.getByText("전자문서")).toBeInTheDocument();
+        expect(screen.getByText(/완료 계약 · 새 계약과 새 이용자 서명이 필요합니다/)).toBeInTheDocument();
+        fireEvent.click(document.querySelector(`[data-component="${DATA_COMPONENT}_actions_close"]`)!);
         expect(onOpenChange).toHaveBeenCalledWith(false);
+    });
+
+    it("omits all unaffected sections even with stored signatures and documents", () => {
+        render(<ServiceRecordEditPreviewDialog open onOpenChange={jest.fn()} preview={{ ...preview,
+            after: preview.before, contentChanges: { headerChanged: false, changedSessionIndexes: [] },
+            impactedAssignments: [],
+        }} />);
+        for (const slot of ["content-changes", "assignments", "signature-metadata", "document-scope", "session-change"]) {
+            expect(document.querySelector(`[data-slot="${slot}"]`)).not.toBeInTheDocument();
+        }
+        expect(screen.getByText("원본 기록이 변경되어 확인이 필요합니다.")).toBeInTheDocument();
+        expect(screen.queryByText("변경된 내용이 없어요.")).not.toBeInTheDocument();
+    });
+
+    it("omits assignment impact for a note-only edit despite non-empty impacted assignments", () => {
+        render(<ServiceRecordEditPreviewDialog open onOpenChange={jest.fn()} preview={{ ...preview,
+            after: preview.before, blockingReasons: [],
+            contentChanges: { headerChanged: false, changedSessionIndexes: [1] },
+        }} sessionChanges={[
+            { sessionIndex: 1, rows: [{ key: "notes", label: "특이사항", before: "입력 없음", after: "간식 시간 변경" }] },
+        ]} />);
+        expect(screen.getByText("간식 시간 변경")).toBeVisible();
+        expect(screen.queryByText("배정 영향")).not.toBeInTheDocument();
+        expect(document.querySelector('[data-slot="assignments"]')).not.toBeInTheDocument();
+    });
+
+    it("shows assignment impact for the owner of a date-moved session", () => {
+        render(<ServiceRecordEditPreviewDialog open onOpenChange={jest.fn()} preview={{ ...preview,
+            contentChanges: { headerChanged: false, changedSessionIndexes: [] }, blockingReasons: [],
+        }} />);
+        const section = document.querySelector('[data-slot="assignments"]')!;
+        expect(section).toHaveTextContent("배정 영향");
+        expect(within(section as HTMLElement).getAllByRole("listitem")).toHaveLength(1);
+        expect(section).toHaveTextContent("임선녀 · 2026.10.14 ~ 2026.10.23");
+    });
+
+    it("lists only the moved session's owner when another caregiver's session has a note edit", () => {
+        const unchangedSession = { ...preview.before.sessions[0], sessionIndex: 2,
+            assignmentId: "assignment-2", employeeId: 13, scheduleId: 8 };
+        render(<ServiceRecordEditPreviewDialog open onOpenChange={jest.fn()} preview={{ ...preview,
+            before: { ...preview.before, sessions: [...preview.before.sessions, unchangedSession] },
+            after: { ...preview.after, sessions: [unchangedSession, ...preview.after.sessions] },
+            contentChanges: { headerChanged: false, changedSessionIndexes: [2] }, blockingReasons: [],
+            impactedAssignments: ["assignment-1", "assignment-2"],
+            impactedAssignmentDetails: [...preview.impactedAssignmentDetails!, {
+                assignmentId: "assignment-2", employeeName: "내용 수정 관리사", startDate: null, endDate: null,
+            }],
+        }} sessionChanges={[
+            { sessionIndex: 2, rows: [{ key: "notes", label: "특이사항", before: "입력 없음", after: "간식 시간 변경" }] },
+        ]} />);
+        const section = document.querySelector('[data-slot="assignments"]')!;
+        expect(within(section as HTMLElement).getAllByRole("listitem")).toHaveLength(1);
+        expect(section).toHaveTextContent("임선녀 · 2026.10.14 ~ 2026.10.23");
+        expect(screen.queryByText("내용 수정 관리사")).not.toBeInTheDocument();
+        expect(screen.getByText("간식 시간 변경")).toBeVisible();
+    });
+
+    it("shows the empty message when unchanged dates leave no assignment impact", () => {
+        render(<ServiceRecordEditPreviewDialog open onOpenChange={jest.fn()} preview={{ ...preview,
+            after: preview.before, contentChanges: { headerChanged: false, changedSessionIndexes: [] },
+            blockingReasons: [],
+        }} />);
+        expect(screen.getByText("변경된 내용이 없어요.")).toBeVisible();
+        expect(document.querySelector('[data-slot="assignments"]')).not.toBeInTheDocument();
+    });
+
+    it("omits assignment impact when no impacted id belongs to the moved session", () => {
+        render(<ServiceRecordEditPreviewDialog open onOpenChange={jest.fn()} preview={{ ...preview,
+            impactedAssignments: ["assignment-other"],
+        }} />);
+        expect(screen.getByText("서비스 제공일")).toBeVisible();
+        expect(document.querySelector('[data-slot="assignments"]')).not.toBeInTheDocument();
+    });
+
+    it("shows only changed signed sessions when manual review is required", () => {
+        render(<ServiceRecordEditPreviewDialog open onOpenChange={jest.fn()} preview={{ ...preview,
+            signatureMetadata: { ...preview.signatureMetadata, treatment: "manual_review", sessions: [
+                ...preview.signatureMetadata.sessions,
+                { sessionIndex: 2, hasSignature: false, signedAt: null, submittedAt: null },
+                { sessionIndex: 3, hasSignature: true, signedAt: null, submittedAt: null },
+            ] },
+        }} />);
+        const section = document.querySelector('[data-slot="signature-metadata"]')!;
+        expect(section).toHaveTextContent("서명");
+        expect(section).toHaveTextContent("1회차 · 서명 보존 근거가 없어 수동 검토 필요");
+        expect(section).not.toHaveTextContent("2회차");
+        expect(section).not.toHaveTextContent("3회차");
+    });
+
+    it("omits signature review when only unsigned sessions changed", () => {
+        render(<ServiceRecordEditPreviewDialog open onOpenChange={jest.fn()} preview={{ ...preview,
+            after: preview.before,
+            contentChanges: { headerChanged: false, changedSessionIndexes: [2] },
+            signatureMetadata: { ...preview.signatureMetadata, treatment: "manual_review", sessions: [
+                ...preview.signatureMetadata.sessions,
+                { sessionIndex: 2, hasSignature: false, signedAt: null, submittedAt: null },
+            ] },
+        }} />);
+        expect(screen.queryByText("서명")).not.toBeInTheDocument();
+        expect(document.querySelector('[data-slot="signature-metadata"]')).not.toBeInTheDocument();
+    });
+
+    it.each(["header", "content"])("omits document work for %s-only edits", (kind) => {
+        render(<ServiceRecordEditPreviewDialog open onOpenChange={jest.fn()} preview={{ ...preview,
+            after: preview.before,
+            contentChanges: { headerChanged: kind === "header", changedSessionIndexes: kind === "content" ? [1] : [] },
+        }} />);
+        expect(screen.queryByText("전자문서")).not.toBeInTheDocument();
+    });
+
+    it("shows contract work for a period change with a linked contract", () => {
+        render(<ServiceRecordEditPreviewDialog open onOpenChange={jest.fn()} preview={{ ...preview,
+            documentScope: { ...preview.documentScope, receipt: {
+                evidence: "observed", eformsignDocId: null, tokenIds: [], sourceDocumentId: null,
+            } },
+        }} />);
+        const section = document.querySelector('[data-slot="document-scope"]')!;
+        expect(section).toHaveTextContent("전자문서");
+        expect(section).toHaveTextContent("완료 계약 · 새 계약과 새 이용자 서명이 필요합니다.");
+        expect(within(section as HTMLElement).queryByText(/영수증/)).not.toBeInTheDocument();
+    });
+
+    it("shows contract and receipt review for a period change with unverified scope", () => {
+        render(<ServiceRecordEditPreviewDialog open onOpenChange={jest.fn()} preview={{ ...preview,
+            documentScope: { ...preview.documentScope, evidence: "unverified",
+                contract: { currentDocumentId: null, stage: null },
+                receipt: { evidence: "unverified", eformsignDocId: null, tokenIds: [], sourceDocumentId: null },
+            },
+        }} />);
+        const section = document.querySelector('[data-slot="document-scope"]')!;
+        expect(section).toHaveTextContent("계약 상태 확인 필요");
+        expect(section).toHaveTextContent("영수증");
+    });
+
+    it("omits document work for a period change with observed empty contract and receipt scopes", () => {
+        render(<ServiceRecordEditPreviewDialog open onOpenChange={jest.fn()} preview={{ ...preview,
+            documentScope: { ...preview.documentScope,
+                contract: { currentDocumentId: null, stage: null },
+                receipt: { evidence: "observed", eformsignDocId: null, tokenIds: [], sourceDocumentId: null },
+            },
+        }} />);
+        expect(screen.queryByText("전자문서")).not.toBeInTheDocument();
+    });
+
+    it.each(["linked", "missing"])("shows only receipt work for a period change with %s receipt evidence", (kind) => {
+        render(<ServiceRecordEditPreviewDialog open onOpenChange={jest.fn()} preview={{ ...preview,
+            documentScope: { ...preview.documentScope,
+                contract: { currentDocumentId: null, stage: null },
+                receipt: kind === "missing" ? undefined : {
+                    evidence: "observed", eformsignDocId: null, tokenIds: ["receipt-token"], sourceDocumentId: null,
+                },
+            },
+        }} />);
+        const section = document.querySelector('[data-slot="document-scope"]')!;
+        expect(section).toHaveTextContent("영수증");
+        expect(within(section as HTMLElement).queryByText(/계약/)).not.toBeInTheDocument();
+    });
+
+    it("shows a muted empty message for a loaded preview with all edits reverted and keeps confirmation available", () => {
+        const onConfirm = jest.fn();
+        render(<ServiceRecordEditPreviewDialog open onOpenChange={jest.fn()} onConfirm={onConfirm} preview={{ ...preview,
+            after: preview.before, contentChanges: { headerChanged: false, changedSessionIndexes: [] },
+            impactedAssignments: [], blockingReasons: [],
+        }} />);
+        expect(document.querySelector('[data-slot="content"]')).toHaveTextContent(/^변경된 내용이 없어요\.$/);
+        expect(screen.getByText("변경된 내용이 없어요.")).toHaveClass("text-v3-text-muted");
+        fireEvent.click(screen.getByRole("button", { name: "수정 확정" }));
+        expect(onConfirm).toHaveBeenCalledTimes(1);
     });
 
     it("shows Korean blocking reasons once per code with the affected session", () => {
@@ -167,7 +335,7 @@ describe("ServiceRecordEditPreviewDialog", () => {
         expect(screen.getByText("이름 없는 관리사 · 2026.10.14 ~ 없음")).toBeInTheDocument();
     });
 
-    it("still lists every impacted id when details are empty", () => {
+    it("keeps the moved owner visible when details are empty", () => {
         render(
             <ServiceRecordEditPreviewDialog
                 open
@@ -177,7 +345,6 @@ describe("ServiceRecordEditPreviewDialog", () => {
             />,
         );
         expect(screen.getByText("이름 없는 관리사")).toBeInTheDocument();
-        expect(screen.queryByText("변경되는 배정이 없습니다.")).not.toBeInTheDocument();
     });
 
     it("retains a visible error and does not expose preview controls while loading", () => {
@@ -192,8 +359,14 @@ describe("ServiceRecordEditPreviewDialog", () => {
             />,
         );
 
-        expect(screen.getByRole("status")).toHaveTextContent("미리보기를 불러오는 중");
-        expect(screen.getByRole("button", { name: "닫기" })).toBeDisabled();
+        expect(screen.getByRole("status")).toHaveTextContent("수정사항 정리하는 중...");
+        expect(document.querySelector(`[data-component="${DATA_COMPONENT}_actions_close"]`)).toBeDisabled();
+        expect(screen.getAllByRole("button", { name: "닫기" })[0]).toBeDisabled();
+        expect(screen.getByRole("button", { name: "확인 중…" })).toBeDisabled();
+        expect(document.querySelectorAll('[data-slot="skeleton"]')).toHaveLength(6);
+        expect(screen.getByText("바뀌는 내용을 확인하고 있어요. 창을 닫거나 새로고침하지 마세요.")).toBeVisible();
+        fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
+        expect(onOpenChange).not.toHaveBeenCalled();
 
         rerender(
             <ServiceRecordEditPreviewDialog
