@@ -9,6 +9,7 @@ import {
     StoredMessageSettingsPolicyId,
 } from "domain/constants/message-settings-policy";
 import {
+    CAREGIVER_DATE_WINDOW_DAYS,
     getServiceRecordLinkScheduledFor,
     getServiceRecordTokenExpiresAt,
     SERVICE_RECORD_LINK_RULE_ID,
@@ -270,7 +271,7 @@ export class MessageAutomationPoliciesResponseDto {
                     {
                         id: "token-expires-at",
                         label: "링크 만료",
-                        value: `서비스 종료일 다음 날 ${formatKstDateHour(getServiceRecordTokenExpiresAt(REFERENCE_SERVICE_DATE))} KST`,
+                        value: `서비스 종료일 ${CAREGIVER_DATE_WINDOW_DAYS + 1}일 후 ${formatKstDateHour(getServiceRecordTokenExpiresAt(REFERENCE_SERVICE_DATE))} KST`,
                     },
                     {
                         id: "rule-id",

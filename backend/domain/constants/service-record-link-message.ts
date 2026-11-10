@@ -19,6 +19,9 @@ export function isServiceRecordLinkManualDedupeKey(value: string): boolean {
     return new RegExp(SERVICE_RECORD_LINK_MANUAL_DEDUPE_PATTERN).test(value);
 }
 
+// The caregiver date window and link validity share this allowance.
+export const CAREGIVER_DATE_WINDOW_DAYS = 7;
+
 const KST_OFFSET = "+09:00";
 
 export function atKstHour(date: Date, hour: number): Date {
@@ -41,11 +44,17 @@ export function getServiceRecordFinalizationDueAt(endDate: Date): Date {
 }
 
 /**
- * When the caregiver's 제공기록지 link expires: midnight KST after the end date.
+ * When the caregiver's 제공기록지 link expires: 00:00 KST on end + CAREGIVER_DATE_WINDOW_DAYS + 1 (end + 8).
  * `endDate` values are UTC-midnight `@db.Date` values and `atKstHour` reads the date
  * portion via `toISOString().slice(0, 10)`, so plain UTC day arithmetic is correct here.
  */
 export function getServiceRecordTokenExpiresAt(endDate: Date): Date {
+    const nextDate = new Date(endDate.getTime() + (CAREGIVER_DATE_WINDOW_DAYS + 1) * 86_400_000);
+    return atKstHour(nextDate, 0);
+}
+
+/** When service has ended: 00:00 KST on the day after the end date. */
+export function getServiceRecordServiceEndedAt(endDate: Date): Date {
     const nextDate = new Date(endDate.getTime() + 86_400_000);
     return atKstHour(nextDate, 0);
 }

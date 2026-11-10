@@ -6,7 +6,6 @@ import {
 } from "application/services/service-record-lifecycle.service";
 import {
     getServiceRecordFinalizationDueAt,
-    getServiceRecordTokenExpiresAt,
 } from "domain/constants/service-record-link-message";
 import { PrismaService } from "infrastructure/database/prisma.service";
 import { HolidayCalendarService } from "application/services/holiday-calendar.service";
@@ -620,12 +619,12 @@ describe("ServiceRecordLifecycleService", () => {
         await service.ensureForClient(1);
 
         const finalizationDueAt = getServiceRecordFinalizationDueAt(newEndDate);
-        const tokenExpiresAt = getServiceRecordTokenExpiresAt(newEndDate);
+        const tokenExpiresAt = new Date("2026-09-16T15:00:00.000Z");
 
         // The two values diverge once the grace period is non-zero.
         expect(finalizationDueAt.getTime()).not.toBe(tokenExpiresAt.getTime());
         expect(finalizationDueAt.toISOString()).toBe("2026-09-09T11:00:00.000Z");
-        expect(tokenExpiresAt.toISOString()).toBe("2026-09-09T15:00:00.000Z");
+        expect(tokenExpiresAt.toISOString()).toBe("2026-09-16T15:00:00.000Z");
 
         expect(prisma.service_record_case.upsert).toHaveBeenCalledWith(expect.objectContaining({
             update: expect.objectContaining({ finalizationDueAt }),
@@ -680,7 +679,7 @@ describe("ServiceRecordLifecycleService", () => {
 
         await service.ensureForClient(1);
 
-        const tokenExpiresAt = getServiceRecordTokenExpiresAt(endDate);
+        const tokenExpiresAt = new Date("2026-09-09T15:00:00.000Z");
         expect(tokenExpiresAt.getTime()).toBeGreaterThan(oldExpiresAt.getTime());
 
         expect(prisma.service_record_token.updateMany).toHaveBeenCalledWith({
@@ -733,7 +732,7 @@ describe("ServiceRecordLifecycleService", () => {
 
         await service.ensureForClient(1);
 
-        const tokenExpiresAt = getServiceRecordTokenExpiresAt(endDate);
+        const tokenExpiresAt = new Date("2026-09-16T15:00:00.000Z");
         expect(prisma.service_record_token.updateMany).toHaveBeenCalledWith(
             expect.objectContaining({
                 where: expect.objectContaining({

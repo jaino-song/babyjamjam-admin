@@ -678,9 +678,9 @@ describe("ServiceRecordEditAgentCapabilitiesProvider", () => {
                         title: "서비스 기간·마감",
                         rows: [
                             row("서비스 종료일", "2026-10-23", "2026-11-02"),
-                            // 2026-11-02T11:00Z and 2026-11-02T15:00Z, shown in Korean time.
+                            // Finalization: 2026-11-02T11:00Z; link: 2026-11-09T15:00Z, shown in Korean time.
                             row("최종 확정 마감", "2026-10-23 20:00 KST", "2026-11-02 20:00 KST"),
-                            row("제공기록 링크 만료", "2026-10-24 00:00 KST", "2026-11-03 00:00 KST",
+                            row("제공기록 링크 만료", "2026-10-31 00:00 KST", "2026-11-10 00:00 KST",
                                 "연장만 반영돼요(raise-only): 이미 더 늦게 만료되는 링크는 그대로 둬요"),
                         ],
                     },
@@ -731,7 +731,7 @@ describe("ServiceRecordEditAgentCapabilitiesProvider", () => {
                         rows: [
                             row("서비스 종료일", "2026-10-23", "2026-10-26"),
                             row("최종 확정 마감", "2026-10-23 20:00 KST", "2026-10-26 20:00 KST"),
-                            row("제공기록 링크 만료", "2026-10-24 00:00 KST", "2026-10-27 00:00 KST", "새 종료일 기준으로 맞춰요"),
+                            row("제공기록 링크 만료", "2026-10-31 00:00 KST", "2026-11-03 00:00 KST", "새 종료일 기준으로 맞춰요"),
                         ],
                     },
                     { title: "확인할 사항", rows: [CONTRACT_NOTE] },
@@ -785,7 +785,7 @@ describe("ServiceRecordEditAgentCapabilitiesProvider", () => {
                         rows: [
                             row("서비스 종료일", "2026-09-03", "2026-09-05"),
                             row("최종 확정 마감", null, "2026-09-05 20:00 KST"),
-                            row("제공기록 링크 만료", "2026-09-04 00:00 KST", "2026-09-06 00:00 KST", "새 종료일 기준으로 맞춰요"),
+                            row("제공기록 링크 만료", "2026-09-11 00:00 KST", "2026-09-13 00:00 KST", "새 종료일 기준으로 맞춰요"),
                         ],
                     },
                     { title: "서비스 요일", rows: [row("토요일 서비스", "아니오", "예")] },
@@ -843,7 +843,7 @@ describe("ServiceRecordEditAgentCapabilitiesProvider", () => {
                         rows: [
                             row("서비스 종료일", "2026-09-03", "2026-09-04"),
                             row("최종 확정 마감", null, "2026-09-04 20:00 KST"),
-                            row("제공기록 링크 만료", "2026-09-04 00:00 KST", "2026-09-05 00:00 KST", "새 종료일 기준으로 맞춰요"),
+                            row("제공기록 링크 만료", "2026-09-11 00:00 KST", "2026-09-12 00:00 KST", "새 종료일 기준으로 맞춰요"),
                         ],
                     },
                     { title: "제공기록지 헤더", rows: [row("신생아 몸무게", "3.2", "3.5")] },
@@ -1240,7 +1240,7 @@ describe("ServiceRecordEditAgentCapabilitiesProvider", () => {
                 ["서비스 종료일", "2026-09-15", "2026-09-03"],
                 ["고객 정보의 서비스 종료일", "2026-09-10", "2026-09-03"],
                 ["최종 확정 마감", null, "2026-09-03 20:00 KST"],
-                ["제공기록 링크 만료", null, "2026-09-04 00:00 KST"],
+                ["제공기록 링크 만료", null, "2026-09-11 00:00 KST"],
             ]);
             await (await approve(harness, parsed, inspection)).run();
             expect(harness.state.source.endDate).toBe("2026-09-03");
@@ -1270,7 +1270,7 @@ describe("ServiceRecordEditAgentCapabilitiesProvider", () => {
             expect(harness.state.source.endDate).toBe("2026-09-03");
             expect(harness.state.source.client.endDate).toBe("2026-09-03");
             expect(sectionRows(inspection, "서비스 기간·마감").find((entry) => entry.label === "제공기록 링크 만료"))
-                .toEqual(row("제공기록 링크 만료", null, "2026-09-04 00:00 KST", LEGACY_EXPIRY_NOTE));
+                .toEqual(row("제공기록 링크 만료", null, "2026-09-11 00:00 KST", LEGACY_EXPIRY_NOTE));
             expect(harness.state.tokenWrites).toEqual([["2026-09-03", "exact"]]);
         });
 
@@ -1313,7 +1313,7 @@ describe("ServiceRecordEditAgentCapabilitiesProvider", () => {
             const { parsed, inspection } = await propose(harness, { clientId: CLIENT_ID, operations: [GOLDEN_RESUME] });
             expect(sectionTitles(inspection)).toContain("서비스 기간·마감");
             expect(sectionRows(inspection, "서비스 기간·마감")).toEqual([
-                row("제공기록 링크 만료", null, "2026-11-03 00:00 KST", "연장만 반영돼요(raise-only): 이미 더 늦게 만료되는 링크는 그대로 둬요"),
+                row("제공기록 링크 만료", null, "2026-11-10 00:00 KST", "연장만 반영돼요(raise-only): 이미 더 늦게 만료되는 링크는 그대로 둬요"),
             ]);
             expect(sectionTitles(inspection)).not.toContain("관리사 근무 기간");
             const { run } = await approve(harness, parsed, inspection);

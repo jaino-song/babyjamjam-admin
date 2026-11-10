@@ -1215,7 +1215,7 @@ describe("ServiceRecordEditRepository", () => {
 
     describe("resume replan plan", () => {
         type FakeToken = { id: string; active: boolean; revokedAt: Date | null; expiresAt: Date };
-        const GOLDEN_NEW_EXPIRY = new Date("2026-11-02T15:00:00.000Z");
+        const GOLDEN_NEW_EXPIRY = new Date("2026-11-09T15:00:00.000Z");
 
         async function confirmWith(
             planOverrides: Partial<ServiceRecordEditConfirmPlan>,
@@ -1355,7 +1355,7 @@ describe("ServiceRecordEditRepository", () => {
                 data: { expiresAt: GOLDEN_NEW_EXPIRY },
             });
             expect(tokens.map(({ id, expiresAt }) => [id, expiresAt.toISOString()])).toEqual([
-                ["b-active", "2026-11-02T15:00:00.000Z"],
+                ["b-active", "2026-11-09T15:00:00.000Z"],
                 ["a-revoked", "2026-10-13T15:00:00.000Z"],
                 ["a-inactive", "2026-10-13T15:00:00.000Z"],
             ]);
@@ -1416,7 +1416,7 @@ describe("ServiceRecordEditRepository", () => {
                     data: { expiresAt: GOLDEN_NEW_EXPIRY },
                 });
                 expect(tokens.map(({ id, expiresAt }) => [id, expiresAt.toISOString()])).toEqual([
-                    ["b-active", "2026-11-02T15:00:00.000Z"],
+                    ["b-active", "2026-11-09T15:00:00.000Z"],
                     ["a-revoked", "2026-10-13T15:00:00.000Z"],
                 ]);
                 // A token raise is not a business change: no case write, no revision, no document.
