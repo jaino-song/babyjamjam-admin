@@ -42,6 +42,112 @@ describe("initial calendar month", () => {
     });
 });
 
+describe("service-period borders", () => {
+    const context = {
+        totalSessions: 12, startDate: "2026-10-22", endDate: "2026-11-11", header: {},
+        sessions: [
+            "2026-10-22", "2026-10-23", "2026-10-26", "2026-10-27", "2026-10-28", "2026-10-29", "2026-10-30",
+            "2026-11-02", "2026-11-03", "2026-11-04", "2026-11-05",
+        ].map((serviceDate, index) => ({ sessionIndex: index + 1, serviceDate, locked: true })),
+    };
+    const hatch = "bg-[repeating-linear-gradient(135deg,#fff_0_5px,hsl(214_20%_96%)_5px_10px)]";
+
+    it.each(["2026.11.06(금)", "2026.11.11(수)"])("outlines available in-period day %s inclusively", (name) => {
+        render(<ServiceDateSheet {...props({ context, day: 12 })} />);
+        const cell = screen.getByRole("button", { name });
+        expect(cell).toHaveAttribute("data-day-state", "available");
+        expect(cell).toHaveAttribute("data-in-period", "true");
+        expect(cell).toHaveClass("border-v3-primary", "border-[1.5px]");
+        expect(cell).not.toHaveClass("border-v3-border");
+    });
+
+    it("keeps the used-day border strong even when session order classifies it as before", () => {
+        render(<ServiceDateSheet {...props({ context, day: 12 })} />);
+        const cell = screen.getByRole("button", { name: "2026.11.02(월) 8회차" });
+        expect(cell).toHaveAttribute("data-day-state", "before");
+        expect(cell).toHaveAttribute("data-in-period", "true");
+        expect(cell).toHaveClass(hatch, "border-v3-primary", "border-[1.5px]");
+        expect(cell).not.toHaveClass("border-v3-primary/40");
+        expect(cell).toHaveTextContent("8회차");
+    });
+
+    it.each(["2026.11.07(토)", "2026.11.09(월)", "2026.11.01(일)"])("softens the border on hatched in-period day %s without another session", (name) => {
+        render(<ServiceDateSheet {...props({ context, day: 12 })} />);
+        const cell = screen.getByRole("button", { name });
+        expect(cell).toHaveAttribute("data-in-period", "true");
+        expect(cell).toHaveClass(hatch, "border-v3-primary/40", "border-[1.5px]");
+        expect(cell).not.toHaveClass("border-v3-primary");
+    });
+
+    it.each(["2026.11.12(목)", "2026.11.13(금)"])("leaves available margin day %s unchanged", (name) => {
+        render(<ServiceDateSheet {...props({ context, day: 12 })} />);
+        const cell = screen.getByRole("button", { name });
+        expect(cell).toHaveAttribute("data-day-state", "available");
+        expect(cell).not.toHaveAttribute("data-in-period");
+        expect(cell).toHaveClass("border", "border-v3-border", "bg-white", "text-v3-dark");
+        expect(cell).not.toHaveClass("border-v3-primary");
+        expect(cell).not.toHaveClass("border-v3-primary/40");
+        expect(cell).not.toHaveClass("border-[1.5px]");
+    });
+
+    it("includes the first period day while leaving the preceding hatched margin unchanged", () => {
+        render(<ServiceDateSheet {...props({ context, day: 12 })} />);
+        fireEvent.click(screen.getByRole("button", { name: "이전 달" }));
+        const first = screen.getByRole("button", { name: "2026.10.22(목) 1회차" });
+        expect(first).toHaveAttribute("data-in-period", "true");
+        expect(first).toHaveClass(hatch, "border-v3-primary", "border-[1.5px]");
+        expect(first).not.toHaveClass("border-v3-primary/40");
+        expect(first).toHaveTextContent("1회차");
+        const margin = screen.getByRole("button", { name: "2026.10.21(수)" });
+        expect(margin).toHaveAttribute("data-day-state", "before");
+        expect(margin).not.toHaveAttribute("data-in-period");
+        expect(margin).toHaveClass(hatch, "border", "border-v3-border");
+        expect(margin).not.toHaveClass("border-v3-primary");
+        expect(margin).not.toHaveClass("border-v3-primary/40");
+    });
+
+    it("preserves the selected fill on an in-period day", () => {
+        render(<ServiceDateSheet {...props({ context, day: 12 })} />);
+        const cell = screen.getByRole("button", { name: "2026.11.06(금)" });
+        fireEvent.click(cell);
+        expect(cell).toHaveAttribute("aria-pressed", "true");
+        expect(cell).toHaveClass("border-v3-primary", "bg-v3-primary", "text-white");
+        expect(cell).not.toHaveClass("bg-white");
+        expect(screen.getByRole("button", { name: "선택" })).toBeEnabled();
+    });
+
+    it("preserves the current dashed primary border and selected fill", () => {
+        const editingContext = { ...context, sessions: [...context.sessions, { sessionIndex: 12, serviceDate: "2026-11-10", locked: true }] };
+        render(<ServiceDateSheet {...props({ context: editingContext, day: 12, editing: true, value: "2026-11-11" })} />);
+        const current = screen.getByRole("button", { name: "2026.11.10(화) 지금" });
+        expect(current).toHaveAttribute("data-in-period", "true");
+        expect(current).toHaveClass("border-dashed", "border-v3-primary", "text-v3-primary");
+        expect(current).not.toHaveClass("border-v3-primary/40");
+        fireEvent.click(current);
+        expect(current).toHaveClass("border-dashed", "border-v3-primary", "bg-v3-primary", "text-white");
+        expect(current).not.toHaveClass("text-v3-primary");
+    });
+
+    it("adds the service period first in the legend and keeps the existing items", () => {
+        render(<ServiceDateSheet {...props({ context, day: 12 })} />);
+        const legend = screen.getByText("서비스 기간 (10.22~11.11)");
+        expect(legend.parentElement?.firstElementChild).toBe(legend);
+        expect(legend.querySelector("i")).toHaveClass("mr-1", "inline-block", "h-3", "w-3", "rounded", "align-middle", "border-[1.5px]", "border-v3-primary");
+        expect(screen.getByText("선택한 날")).toBeInTheDocument();
+        expect(screen.getByText("선택 가능")).toBeInTheDocument();
+        expect(screen.getByText("고를 수 없음 (주말·기간 밖·다른 회차·회차 순서)")).toBeInTheDocument();
+    });
+
+    it.each([
+        { ...context, endDate: null },
+        { ...context, startDate: null },
+    ])("omits period markers and legend without both bounds (case %#)", (incompleteContext) => {
+        render(<ServiceDateSheet {...props({ context: incompleteContext, day: 12 })} />);
+        expect(screen.queryByText(/^서비스 기간/)).not.toBeInTheDocument();
+        for (const cell of screen.getAllByRole("button")) expect(cell).not.toHaveAttribute("data-in-period");
+    });
+});
+
 it("allows inclusive window edges and blocks weekends, holidays, and unloaded years", () => {
     const rules = props();
     expect(classifyServiceDate("2026-10-26", rules)).toBe("available");
