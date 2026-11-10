@@ -131,6 +131,12 @@ const overview = {
     ],
 } as unknown as AdminServiceRecordEditorOverview;
 
+const windowOverview = (sessions: Record<string, unknown>[]) => ({
+    ...overview,
+    record: { ...overview.record, totalSessions: 5, sessions },
+    assignments: [],
+}) as unknown as AdminServiceRecordEditorOverview;
+
 const plannedDates = [
     "2026-07-01",
     "2026-07-02",
@@ -348,6 +354,102 @@ describe("ServiceRecordAdminWizard", () => {
         fireEvent.click(screen.getByRole("button", { name: /5회차/ }));
         expect(container).toHaveTextContent("5회차 ·");
         expect(container).toHaveTextContent("2026.07.20");
+    });
+
+    it("keeps a submitted case session at end + 7 in the lifecycle window", () => {
+        const view = buildAdminServiceRecordView(windowOverview([
+            makeSession(4, {
+                serviceDate: "2026-07-21",
+                locked: true,
+                submittedAt: "2026-07-21T01:00:00.000Z",
+            }),
+        ]));
+
+        expect(view.context.sessions).toEqual(expect.arrayContaining([
+            expect.objectContaining({ sessionIndex: 4, serviceDate: "2026-07-21" }),
+        ]));
+        expect(view.supplementalSessions.some((item) => item.sessionIndex === 4)).toBe(false);
+    });
+
+    it("archives a case session at end + 8 outside the lifecycle window", () => {
+        const view = buildAdminServiceRecordView(windowOverview([
+            makeSession(4, {
+                serviceDate: "2026-07-22",
+                locked: true,
+                submittedAt: "2026-07-22T01:00:00.000Z",
+            }),
+        ]));
+
+        expect(view.context.sessions.some((session) => session.sessionIndex === 4)).toBe(false);
+        expect(view.supplementalSessions).toEqual(expect.arrayContaining([
+            expect.objectContaining({
+                sessionIndex: 4,
+                session: expect.objectContaining({ serviceDate: "2026-07-22" }),
+                sourceLabel: expect.stringContaining("기간 밖 보관회차"),
+            }),
+        ]));
+    });
+
+    it("keeps a case session at start - 7 in the lifecycle window", () => {
+        const view = buildAdminServiceRecordView(windowOverview([
+            makeSession(1, { serviceDate: "2026-07-03" }),
+        ]));
+
+        expect(view.context.sessions).toEqual(expect.arrayContaining([
+            expect.objectContaining({ sessionIndex: 1, serviceDate: "2026-07-03" }),
+        ]));
+        expect(view.supplementalSessions.some((item) => item.sessionIndex === 1)).toBe(false);
+    });
+
+    it("archives a case session at start - 8 outside the lifecycle window", () => {
+        const view = buildAdminServiceRecordView(windowOverview([
+            makeSession(1, { serviceDate: "2026-07-02" }),
+        ]));
+
+        expect(view.context.sessions.some((session) => session.sessionIndex === 1)).toBe(false);
+        expect(view.supplementalSessions).toEqual(expect.arrayContaining([
+            expect.objectContaining({
+                sessionIndex: 1,
+                session: expect.objectContaining({ serviceDate: "2026-07-02" }),
+                sourceLabel: expect.stringContaining("기간 밖 보관회차"),
+            }),
+        ]));
+    });
+
+    it("keeps an assignment-only session inside the lifecycle window", () => {
+        const view = buildAdminServiceRecordView({
+            ...overview,
+            record: null,
+            assignments: [assignment(7, [makeSession(2, { serviceDate: "2026-07-16" })])],
+        } as unknown as AdminServiceRecordEditorOverview);
+
+        expect(view.context.sessions).toEqual(expect.arrayContaining([
+            expect.objectContaining({ sessionIndex: 2, serviceDate: "2026-07-16" }),
+        ]));
+        expect(view.supplementalSessions).toEqual([]);
+    });
+
+    it("renders a submitted lifecycle window session with its signature in editing mode", () => {
+        const { container } = render(
+            <ServiceRecordAdminWizard clientId="42" initialDraftState={makeDraftState()} overview={windowOverview([
+                makeSession(4, {
+                    serviceDate: "2026-07-21",
+                    locked: true,
+                    submittedAt: "2026-07-21T01:00:00.000Z",
+                    clientSignature: "data:image/png;base64,window-signature",
+                    clientSignedAt: "2026-07-21T01:00:00.000Z",
+                }),
+            ])} />,
+        );
+
+        const dayCard = container.querySelectorAll('[data-slot="day"]')[3];
+        expect(dayCard).toHaveTextContent("제출완료");
+        expect(dayCard).not.toHaveTextContent("편집 가능");
+        expect([...container.querySelectorAll('[data-slot="supplemental"] button')]
+            .some((button) => /4회차/.test(button.textContent ?? ""))).toBe(false);
+        fireEvent.click(dayCard);
+        expect(screen.getByRole("img", { name: "산모 서명" }))
+            .toHaveAttribute("src", "data:image/png;base64,window-signature");
     });
 
     it("renders all sessions as navigable read-only days and preserves out-of-period dates", () => {
