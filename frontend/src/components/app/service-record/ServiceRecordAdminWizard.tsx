@@ -52,6 +52,7 @@ import { ServiceRecordEditPreviewDialog } from "./ServiceRecordEditPreviewDialog
 import { ServiceRecordDateSelectionDialog } from "./ServiceRecordDateSelectionDialog";
 import { RevisionHistoryView } from "./RevisionHistoryView";
 import { describeScheduleBlockingReasons, GENERIC_BLOCKING_REASON } from "./service-record-blocking-reasons";
+import { computePendingHeaderChanges, computePendingSessionChanges } from "./pending-session-changes";
 import { AdminServiceRecordScreen } from "./screen/AdminServiceRecordScreen";
 import { moveServiceRecordSessionDate } from "@babyjamjam/shared/utils/service-record-schedule";
 
@@ -1078,6 +1079,11 @@ export function ServiceRecordAdminWizard({
         if (changed) setLeaveModalOpen(true);
         else resetLocal();
     };
+    const previewSessionChanges = computePendingSessionChanges(
+        baseView.context.sessions.map((session) => ({ sessionIndex: session.sessionIndex, draft: draftForSession(session) })),
+        pending.sessions,
+    );
+    const previewHeaderChanges = computePendingHeaderChanges(headerToInput(baseView.context.header), pending.header);
     const errorLine = error || needsReload ? (
         <div data-component={`${ADMIN_WIZARD_COMPONENT}_body_overview-commit_error`} data-slot="commit-error" className="flex flex-col items-start gap-2">
             <p role="alert" className="text-sm text-v3-burgundy">
@@ -1230,6 +1236,7 @@ export function ServiceRecordAdminWizard({
             )}
             <ServiceRecordEditPreviewDialog open={previewOpen} onOpenChange={(open) => { if (!open) void closePreview(); }}
                 preview={preview} busy={preparing} onConfirm={confirmCommit}
+                sessionChanges={previewSessionChanges} headerChanges={previewHeaderChanges}
                 confirmBusy={busy} confirmError={error} data-component={`${ADMIN_WIZARD_COMPONENT}_commit-preview`} />
             <ServiceRecordDateSelectionDialog open={dateDialogOpen} onOpenChange={setDateDialogOpen}
                 currentServiceDate={String(draft._date || sourceDate)} calendar={calendar} sessionLabel={`${day}회차`}
