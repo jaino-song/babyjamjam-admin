@@ -29,6 +29,7 @@ describe("initial calendar month", () => {
     it.each([
         ["2026-10-01T03:00:00Z", "2026년 10월"],
         ["2026-12-05T03:00:00Z", "2026년 11월"],
+        ["2026-10-31T15:30:00Z", "2026년 11월"],
     ])("clamps today %s to the window month %s", (today, month) => {
         jest.setSystemTime(new Date(today));
         render(<ServiceDateSheet {...props({ context, day: 12 })} />);
