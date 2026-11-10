@@ -232,15 +232,15 @@ describe("ClientServiceRecords", () => {
         expect(screen.getByRole("button", { name: "제공기록지 링크 발송" })).toBeEnabled();
     });
 
-    it("shows midnight after the end date as fallback expiry before a link is issued", () => {
+    it("shows midnight after the seven-day window as fallback expiry before a link is issued", () => {
         // Assignment 1 has status "none" (link.token is null), so the
         // displayed expiry falls back to endDateExpiry(assignment.endDate).
-        // Mirrors getServiceRecordTokenExpiresAt: 2026-07-31 00:00 KST.
+        // Mirrors getServiceRecordTokenExpiresAt: 2026-08-07 00:00 KST.
         renderComponent({
             assignments: [createAssignment(1, "none")],
         });
 
-        expect(screen.getByText("링크 만료").closest("div")).toHaveTextContent("2026.07.31 00:00");
+        expect(screen.getByText("링크 만료").closest("div")).toHaveTextContent("2026.08.07 00:00");
     });
 
     it("formats the newborn birth date instead of exposing raw YYMMDD", () => {
@@ -785,6 +785,22 @@ describe("ClientServiceRecords period mismatch", () => {
         expect(screen.getByText(/고객 정보의 서비스 시작일을 2026.10.30으로, 종료일을 2026.11.19로 바꿀까요\?/)).toBeInTheDocument();
         expect(screen.queryByText(/3회차 서비스 제공일/)).not.toBeInTheDocument();
     });
+
+    it.each(["FINALIZING", "FINALIZATION_FAILED", "DOCUMENTS_CREATED", "COMPLETED"])(
+        "hides mismatch actions for %s while keeping the out-of-period mark",
+        (status) => {
+            const data = overview([session(1, "2026-10-30")]);
+            data.record = { ...createRecord(status), startDate: "2026-11-02", endDate: "2026-11-17", totalSessions: 10 };
+            renderComponent(data);
+
+            expect(screen.queryByText(title)).not.toBeInTheDocument();
+            expect(screen.queryByText(/1회차 서비스 제공일/)).not.toBeInTheDocument();
+            expect(screen.queryByText(/고객 정보의 서비스 시작일을/)).not.toBeInTheDocument();
+            expect(screen.queryByRole("button", { name: "유지" })).not.toBeInTheDocument();
+            expect(screen.queryByRole("button", { name: "변경" })).not.toBeInTheDocument();
+            expect(screen.getByText("기간 밖")).toBeInTheDocument();
+        },
+    );
 
     it("keeps the badge without alert or actions for a kept session", () => {
         renderComponent(overview([session(1, "2026-10-30", "2026-11-01T00:00:00Z")]));

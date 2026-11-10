@@ -90,7 +90,7 @@ import {
 import { isManualMessageTriggerJob, isManualMessageTriggerRule } from "domain/constants/message-trigger-job-ownership";
 import { AGENT_AUTOMATION_JOB_SEAL_PAYLOAD_KEY, isReservedAutomationJob } from "domain/constants/agent-automation-storage";
 import { SERVICE_END_NOTICE_ALREADY_SENT_CANCEL_REASON } from "domain/constants/service-end-notice-message";
-import { SERVICE_RECORD_LINK_ENDED_REASON, SERVICE_RECORD_LINK_PRE_BOOKING_REASON, SERVICE_RECORD_LINK_RULE_ID, getServiceRecordTokenExpiresAt } from "domain/constants/service-record-link-message";
+import { SERVICE_RECORD_LINK_ENDED_REASON, SERVICE_RECORD_LINK_PRE_BOOKING_REASON, SERVICE_RECORD_LINK_RULE_ID, getServiceRecordServiceEndedAt } from "domain/constants/service-record-link-message";
 import { getEffectiveClientServiceStatus } from "domain/repositories/client.repository.interface";
 import {
     MESSAGE_TRIGGER_JOB_REPOSITORY,
@@ -3892,7 +3892,7 @@ export class MessageTriggerService {
                 await this.persistTriggerJobStatus(job, "persist ended service record link job");
                 return true;
             }
-            if (getServiceRecordTokenExpiresAt(schedule.endDate).getTime() <= Date.now()) {
+            if (getServiceRecordServiceEndedAt(schedule.endDate).getTime() <= Date.now()) {
                 job.cancel(SERVICE_RECORD_LINK_ENDED_REASON);
                 await this.persistTriggerJobStatus(job, "persist ended service record link job");
                 return true;

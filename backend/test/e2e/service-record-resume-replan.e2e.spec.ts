@@ -309,7 +309,7 @@ describeE2E("service-record resume replan (real disposable PostgreSQL)", () => {
             prisma.service_record_token.findUniqueOrThrow({ where: { id: fixture.tokenA.id } }),
             prisma.service_record_token.findUniqueOrThrow({ where: { id: fixture.tokenB.id } }),
         ]);
-        expect(tokenB.expiresAt.toISOString()).toBe("2026-11-02T15:00:00.000Z");
+        expect(tokenB.expiresAt.toISOString()).toBe("2026-11-09T15:00:00.000Z");
         expect(tokenA.expiresAt.toISOString()).toBe(fixture.tokenA.expiresAt.toISOString());
         expect(tokenA.revokedAt?.toISOString()).toBe(fixture.tokenA.revokedAt?.toISOString());
     });
@@ -384,7 +384,7 @@ describeE2E("service-record resume replan (real disposable PostgreSQL)", () => {
             prisma.service_record_token.findUniqueOrThrow({ where: { id: fixture.tokenA.id } }),
             prisma.service_record_token.findUniqueOrThrow({ where: { id: fixture.tokenB.id } }),
         ]);
-        expect(tokenB.expiresAt.toISOString()).toBe("2026-11-02T15:00:00.000Z");
+        expect(tokenB.expiresAt.toISOString()).toBe("2026-11-09T15:00:00.000Z");
         expect(tokenA.expiresAt.toISOString()).toBe(fixture.tokenA.expiresAt.toISOString());
     });
 

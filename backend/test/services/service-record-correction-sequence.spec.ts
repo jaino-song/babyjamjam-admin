@@ -735,11 +735,11 @@ describe("service-record correction sequences (real services over one persisted 
                 assignmentB: ["2026-10-14", "2026-11-02"],
                 scheduleB: ["2026-10-14", "2026-11-02"],
             });
-            // Case, client, due time, link expiry. Due: 11-02 20:00 KST = 11:00Z. Link: midnight KST after 11-02 = 11-02T15:00Z.
+            // Case, client, due time, link expiry. Due: 11-02 20:00 KST = 11:00Z. Link: end + 8 midnight KST = 11-09T15:00Z.
             expect(ymd(caseRow(store)["endDate"])).toBe("2026-11-02");
             expect(ymd(clientRow(store)["endDate"])).toBe("2026-11-02");
             expect(instantOf(caseRow(store)["finalizationDueAt"])).toBe("2026-11-02T11:00:00.000Z");
-            expect(instantOf(tokenRow(store, "B")["expiresAt"])).toBe("2026-11-02T15:00:00.000Z");
+            expect(instantOf(tokenRow(store, "B")["expiresAt"])).toBe("2026-11-09T15:00:00.000Z");
             expect(instantOf(tokenRow(store, "A")["expiresAt"])).toBe("2026-10-14T15:00:00.000Z");
             expect(tokenRow(store, "A")["active"]).toBe(false);
             // Version, revision pointer and draft.
@@ -820,7 +820,7 @@ describe("service-record correction sequences (real services over one persisted 
                 scheduleB: ["2026-10-14", "2026-11-02"],
             });
             expect(instantOf(caseRow(store)["finalizationDueAt"])).toBe("2026-11-02T11:00:00.000Z");
-            expect(instantOf(tokenRow(store, "B")["expiresAt"])).toBe("2026-11-02T15:00:00.000Z");
+            expect(instantOf(tokenRow(store, "B")["expiresAt"])).toBe("2026-11-09T15:00:00.000Z");
 
             // --- Step 2: header-only confirm on the reloaded state.
             const header = await openEdit(harness, { changes: { header: { momName: "가상산모(수정)" } } });
@@ -877,7 +877,7 @@ describe("service-record correction sequences (real services over one persisted 
             expect(dayRows(store).map((row) => [ymd(row["serviceDate"]), row["scheduleId"], row["locked"]])).toEqual([["2026-10-14", SCHEDULE_A, true]]);
             expect(ymd(caseRow(store)["endDate"])).toBe("2026-10-16");
             expect(instantOf(caseRow(store)["finalizationDueAt"])).toBe("2026-10-16T11:00:00.000Z");
-            expect(instantOf(tokenRow(store, "B")["expiresAt"])).toBe("2026-10-16T15:00:00.000Z");
+            expect(instantOf(tokenRow(store, "B")["expiresAt"])).toBe("2026-10-23T15:00:00.000Z");
 
             // --- Step 2: resume again from session 2 on Tue 10-20. The whole kept prefix (session 1) is A's
             // historical slot, so A is not the outgoing caregiver and is not extended; B, the only caregiver bearing
@@ -894,7 +894,7 @@ describe("service-record correction sequences (real services over one persisted 
                 scheduleB: ["2026-10-20", "2026-10-21"],
             });
             expect(ymd(caseRow(store)["endDate"])).toBe("2026-10-21");
-            expect(instantOf(tokenRow(store, "B")["expiresAt"])).toBe("2026-10-21T15:00:00.000Z");
+            expect(instantOf(tokenRow(store, "B")["expiresAt"])).toBe("2026-10-28T15:00:00.000Z");
 
             // --- Step 3: header-only confirm on the reloaded state: no boundary moves (A's row on 10-14 is not a period).
             const header = await openEdit(harness, { changes: { header: { momName: "가상산모(수정)" } } });
@@ -1155,7 +1155,7 @@ describe("service-record correction sequences (real services over one persisted 
             expect(plannedOf(store).map((entry) => entry.serviceDate)).toEqual(NEW_DATES);
             expect(dayRows(store).map((row) => ymd(row["serviceDate"]))).toEqual(NEW_DATES);
             expect(store.snapshot()["service_record_token"]).toEqual(before["service_record_token"]);
-            expect(instantOf(tokenRow(store, "B")["expiresAt"])).toBe("2026-11-02T15:00:00.000Z");
+            expect(instantOf(tokenRow(store, "B")["expiresAt"])).toBe("2026-11-09T15:00:00.000Z");
         });
 
         it("(b) a link-only difference raises the link and closes the draft without a revision", async () => {
@@ -1178,7 +1178,7 @@ describe("service-record correction sequences (real services over one persisted 
             expect(store.rows("service_record_revision")).toHaveLength(revisionsBefore);
             expect(store.one("service_record_edit_draft", { id: resume.draftId })["status"]).toBe("CONFIRMED");
             // B's link is raised to midnight KST after 11-02; A's revoked link is untouched.
-            expect(instantOf(tokenRow(store, "B")["expiresAt"])).toBe("2026-11-02T15:00:00.000Z");
+            expect(instantOf(tokenRow(store, "B")["expiresAt"])).toBe("2026-11-09T15:00:00.000Z");
             expect(store.snapshot()["service_record_token"]!.find((row) => row["scheduleId"] === SCHEDULE_A))
                 .toEqual(before["service_record_token"]!.find((row) => row["scheduleId"] === SCHEDULE_A));
             // The only writes: the link and the draft.

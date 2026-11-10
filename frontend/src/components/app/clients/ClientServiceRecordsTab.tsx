@@ -382,6 +382,7 @@ function ClientServiceRecordsTabContent({
                         <ServiceSessionsCard
                             clientId={clientId}
                             enablePeriodMismatch
+                            periodMismatchActionsLocked={PERIOD_MISMATCH_ACTIONS_LOCKED_STATUSES.has(record.status)}
                             startDate={record.startDate}
                             endDate={record.endDate}
                             totalSessions={record.totalSessions}
@@ -1136,9 +1137,19 @@ function TokenVerificationValue({ assignment }: { assignment: ServiceRecordAssig
     return token?.verifiedAt ? "완료" : "미완료";
 }
 
+// Mirrors IMMUTABLE_FINALIZATION_STATUSES in backend/application/services/service-record-lifecycle.service.ts
+// used by service-record-period-mismatch.service.ts.
+const PERIOD_MISMATCH_ACTIONS_LOCKED_STATUSES = new Set<string>([
+    "FINALIZING",
+    "FINALIZATION_FAILED",
+    "DOCUMENTS_CREATED",
+    "COMPLETED",
+]);
+
 function ServiceSessionsCard({
     clientId,
     enablePeriodMismatch = false,
+    periodMismatchActionsLocked = false,
     startDate,
     endDate,
     totalSessions: configuredSessions,
@@ -1153,6 +1164,7 @@ function ServiceSessionsCard({
 }: {
     clientId: number;
     enablePeriodMismatch?: boolean;
+    periodMismatchActionsLocked?: boolean;
     startDate: string | null;
     endDate: string | null;
     totalSessions: number;
@@ -1319,7 +1331,7 @@ function ServiceSessionsCard({
                         </AlertDescription>
                     </Alert>
                 ) : null}
-                {unkeptSessions.length > 0 ? (
+                {!periodMismatchActionsLocked && unkeptSessions.length > 0 ? (
                     <Alert
                         data-component={`${dataComponent}_out-of-period-alert`}
                         variant="warning"
@@ -1941,13 +1953,13 @@ function getExpectedSessionDate(
     return getExpectedSessionDateFromRecords(startDate, sessionIndex, sessions, calendar);
 }
 
-// Mirrors getServiceRecordTokenExpiresAt in backend/domain/constants/service-record-link-message.ts.
+// Mirrors getServiceRecordTokenExpiresAt (end + CAREGIVER_DATE_WINDOW_DAYS + 1)
 function endDateExpiry(endDate: string | null): string | null {
     const datePart = datePartOf(endDate);
     if (!datePart) return null;
     const nextDate = new Date(`${datePart}T00:00:00.000Z`);
     if (Number.isNaN(nextDate.getTime())) return null;
-    nextDate.setUTCDate(nextDate.getUTCDate() + 1);
+    nextDate.setUTCDate(nextDate.getUTCDate() + 8);
     return `${nextDate.toISOString().slice(0, 10)}T00:00:00+09:00`;
 }
 

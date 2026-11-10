@@ -254,7 +254,7 @@ describe("ServiceRecordLinkService", () => {
         for (const mock of Object.values(logs)) expect(mock).not.toHaveBeenCalled();
     });
 
-    it("issues a token expiring at next-day midnight and schedules SMS for previous-day noon KST", async () => {
+    it("issues a token expiring at end + 8 midnight and schedules SMS for previous-day noon KST", async () => {
         const prisma = createPrisma();
         const tokenService = createTokenService();
         const jobRepository = createJobRepository();
@@ -279,7 +279,7 @@ describe("ServiceRecordLinkService", () => {
             scheduleId: 10,
             employeeId: 30,
             expectedPhone: "010-1111-2222",
-            expiresAt: new Date("2026-07-12T15:00:00.000Z"),
+            expiresAt: new Date("2026-07-19T15:00:00.000Z"),
         });
         const job = jobRepository.promoteAutomaticSchedulingClaim.mock.calls[0]?.[2] as MessageTriggerJobEntity;
         expect(job.ruleId).toBe(SERVICE_RECORD_LINK_RULE_ID);
@@ -338,7 +338,7 @@ describe("ServiceRecordLinkService", () => {
         }
     });
 
-    it("refuses automatic scheduling exactly at next-day midnight expiry", async () => {
+    it("refuses automatic scheduling exactly at next-day midnight service end", async () => {
         jest.setSystemTime(new Date("2026-11-14T15:00:00.000Z"));
         const prisma = createPrisma();
         const tokenService = createTokenService();
@@ -363,9 +363,9 @@ describe("ServiceRecordLinkService", () => {
         expect(jobRepository.promoteAutomaticSchedulingClaim).not.toHaveBeenCalled();
     });
 
-    describe("expiry at the next-day midnight boundary", () => {
-        // Schedule end date 2026-07-12 (KST) -> normal expiry 2026-07-12T15:00:00.000Z.
-        const NORMAL_EXPIRY = new Date("2026-07-12T15:00:00.000Z");
+    describe("expiry at the end + 8 midnight boundary", () => {
+        // Schedule end date 2026-07-12 (KST) -> normal expiry 2026-07-19T15:00:00.000Z.
+        const NORMAL_EXPIRY = new Date("2026-07-19T15:00:00.000Z");
         const buildBoundaryService = () => {
             const prisma = createPrisma();
             const tokenService = createTokenService();
@@ -390,7 +390,7 @@ describe("ServiceRecordLinkService", () => {
             await service.sendNow(10);
 
             const issuedExpiry = tokenService.issueLink.mock.calls[0]?.[0].expiresAt as Date;
-            expect(issuedExpiry).toEqual(new Date(NORMAL_EXPIRY.getTime() + 24 * 60 * 60 * 1000));
+            expect(issuedExpiry).toEqual(new Date("2026-07-20T15:00:00.000Z"));
         });
 
         it("late reissue one millisecond before the expiry keeps the normal expiry", async () => {
@@ -402,8 +402,8 @@ describe("ServiceRecordLinkService", () => {
             expect(tokenService.issueLink.mock.calls[0]?.[0].expiresAt).toEqual(NORMAL_EXPIRY);
         });
 
-        it("automatic scheduling one millisecond before the expiry issues the normal expiry", async () => {
-            jest.setSystemTime(new Date(NORMAL_EXPIRY.getTime() - 1));
+        it("automatic scheduling one millisecond before service ends issues the end + 8 expiry", async () => {
+            jest.setSystemTime(new Date("2026-07-12T14:59:59.999Z"));
             const { service, tokenService } = buildBoundaryService();
 
             expect(await service.scheduleForServiceStart(10)).toBe(true);
@@ -412,7 +412,7 @@ describe("ServiceRecordLinkService", () => {
         });
     });
 
-    it("extends the stored token expiry to midnight after the extended end date", async () => {
+    it("extends the stored token expiry to midnight on extended end + 8", async () => {
         const prisma = createPrisma();
         const tokenService = createTokenService();
         const service = new ServiceRecordLinkService(
@@ -423,7 +423,7 @@ describe("ServiceRecordLinkService", () => {
             createOverrideRepository() as unknown as IMessageTriggerRuleBranchOverrideRepository,
         );
         await service.extendExpiryForEndDate(10, new Date("2026-11-17T00:00:00.000Z"));
-        expect(tokenService.extendExpiryForSchedule).toHaveBeenCalledWith(10, new Date("2026-11-17T15:00:00.000Z"));
+        expect(tokenService.extendExpiryForSchedule).toHaveBeenCalledWith(10, new Date("2026-11-24T15:00:00.000Z"));
     });
 
     it("keeps expiry extension and revoke available when the pre_booking lifecycle returns null", async () => {
@@ -444,7 +444,7 @@ describe("ServiceRecordLinkService", () => {
         await expect(service.extendExpiryForEndDate(10, new Date("2026-11-17"))).resolves.toBeUndefined();
         await expect(service.revoke(10)).resolves.toBeUndefined();
         expect(lifecycle.ensureForSchedule).toHaveBeenCalledWith(10);
-        expect(tokens.extendExpiryForSchedule).toHaveBeenCalledWith(10, new Date("2026-11-17T15:00:00.000Z"));
+        expect(tokens.extendExpiryForSchedule).toHaveBeenCalledWith(10, new Date("2026-11-24T15:00:00.000Z"));
         expect(tokens.revokeForSchedule).toHaveBeenCalledWith(10, FENCE_TRANSACTION);
     });
 
@@ -466,7 +466,7 @@ describe("ServiceRecordLinkService", () => {
         }));
         expect(await service.sendNow(10)).toMatchObject({ jobId: "job-1", scheduledFor: new Date() });
         expect(tokenService.issueLink).toHaveBeenCalledWith(expect.objectContaining({
-            expiresAt: new Date("2026-11-16T00:00:00.000Z"),
+            expiresAt: new Date("2026-11-21T15:00:00.000Z"),
         }));
         expect(jobRepository.promoteAutomaticSchedulingClaim).not.toHaveBeenCalled();
     });
@@ -1721,7 +1721,7 @@ describe("ServiceRecordLinkService", () => {
         await expect(service.scheduleForServiceStart(10)).rejects.toThrow("token unavailable");
     });
 
-    it("extends an existing token to midnight KST after the end date", async () => {
+    it("extends an existing token to midnight KST on end + 8", async () => {
         const tokenService = createTokenService();
         const service = new ServiceRecordLinkService(
             createPrisma() as unknown as PrismaService,
@@ -1736,7 +1736,7 @@ describe("ServiceRecordLinkService", () => {
 
         expect(tokenService.extendExpiryForSchedule).toHaveBeenCalledWith(
             10,
-            new Date("2026-07-12T15:00:00.000Z"),
+            new Date("2026-07-19T15:00:00.000Z"),
         );
     });
 
