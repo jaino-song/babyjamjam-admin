@@ -266,6 +266,38 @@ describe("ServiceRecordLifecycleService", () => {
                 ...change, startDate: record.startDate, endDate: date("2026-07-02"), startDateChangeMode: mode,
             })).rejects.toMatchObject({ response: { code: "SERVICE_RECORD_END_DATE_BEFORE_LOCKED_SESSION" } });
         });
+
+        it("allows an unchanged end date with a kept locked session after it", async () => {
+            const { service, record } = setup(3);
+            record.days.push({ serviceDate: date("2026-07-23"), locked: true, caseSessionIndex: 4, sessionIndex: 4 });
+            await expect(service.validatePeriodChange({
+                clientId: 1, startDate: record.startDate, endDate: date("2026-07-20"), now: change.now,
+            })).resolves.toBeNull();
+        });
+
+        it("allows increasing duration with an unchanged end date and a kept locked session after it", async () => {
+            const { service, record } = setup(3);
+            record.days.push({ serviceDate: date("2026-07-23"), locked: true, caseSessionIndex: 4, sessionIndex: 4 });
+            await expect(service.validatePeriodChange({
+                clientId: 1, startDate: record.startDate, endDate: date("2026-07-20"), duration: 12, now: change.now,
+            })).resolves.toBeNull();
+        });
+
+        it("rejects a changed end date that remains before a kept locked session", async () => {
+            const { service, record } = setup(3);
+            record.days.push({ serviceDate: date("2026-07-23"), locked: true, caseSessionIndex: 4, sessionIndex: 4 });
+            await expect(service.validatePeriodChange({
+                clientId: 1, startDate: record.startDate, endDate: date("2026-07-21"), now: change.now,
+            })).rejects.toMatchObject({ response: { code: "SERVICE_RECORD_END_DATE_BEFORE_LOCKED_SESSION" } });
+        });
+
+        it("allows changing the end date to the kept locked session date", async () => {
+            const { service, record } = setup(3);
+            record.days.push({ serviceDate: date("2026-07-23"), locked: true, caseSessionIndex: 4, sessionIndex: 4 });
+            await expect(service.validatePeriodChange({
+                clientId: 1, startDate: record.startDate, endDate: date("2026-07-23"), now: change.now,
+            })).resolves.toBeNull();
+        });
     });
 
     it("allows extending the end date without deleting existing sessions", async () => {

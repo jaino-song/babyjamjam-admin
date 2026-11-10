@@ -694,6 +694,7 @@ export class ServiceRecordLifecycleService {
         if (
             params.endDate !== undefined
             && params.endDate !== null
+            && isoDate(params.endDate) !== isoDate(record.endDate)
             && decision?.mode !== "RESTART"
             && record.days.some((day) => {
                 // MOVE가 재배치하는 회차는 기존 날짜로 종료일을 제한하지 않는다.
