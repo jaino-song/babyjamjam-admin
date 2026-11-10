@@ -3,12 +3,42 @@ import { createKrBusinessDayCalendar } from "@/lib/date/business-days";
 import { ServiceDateSheet, classifyServiceDate, GAP_ROOM, ORDER_AFTER, ORDER_BEFORE } from "../ServiceDateSheet";
 import type { ServiceDateSheetProps } from "../ServiceDateSheet";
 
+beforeEach(() => {
+    jest.useFakeTimers();
+    jest.setSystemTime(new Date("2026-11-11T03:00:00Z"));
+});
+afterEach(() => { jest.useRealTimers(); });
+
 const calendar = createKrBusinessDayCalendar(["2026-11-09"], { supportedYears: [2026] });
 const props = (overrides: Partial<ServiceDateSheetProps> = {}): ServiceDateSheetProps => ({
     "data-component": "mobile_service-record_wizard_service-date-sheet",
     context: { totalSessions: 4, startDate: "2026-11-02", endDate: "2026-11-17", header: {}, sessions: [] },
     day: 1, value: "", editing: false, calendar, calendarReady: true,
     onClose: jest.fn(), onSelect: jest.fn(), onOrderBlocked: jest.fn(), ...overrides,
+});
+
+describe("initial calendar month", () => {
+    const context = { totalSessions: 12, startDate: "2026-10-22", endDate: "2026-11-11", header: {}, sessions: [] };
+
+    it("opens an empty session on today's month within the selectable window", () => {
+        render(<ServiceDateSheet {...props({ context, day: 12 })} />);
+        expect(screen.getByText("2026년 11월")).toBeInTheDocument();
+        expect(screen.getByText("고를 수 있는 기간: 10.15(목) ~ 11.18(수)")).toBeInTheDocument();
+    });
+
+    it.each([
+        ["2026-10-01T03:00:00Z", "2026년 10월"],
+        ["2026-12-05T03:00:00Z", "2026년 11월"],
+    ])("clamps today %s to the window month %s", (today, month) => {
+        jest.setSystemTime(new Date(today));
+        render(<ServiceDateSheet {...props({ context, day: 12 })} />);
+        expect(screen.getByText(month)).toBeInTheDocument();
+    });
+
+    it("opens an edited session on its value's month instead of today's month", () => {
+        render(<ServiceDateSheet {...props({ context, day: 12, editing: true, value: "2026-10-22" })} />);
+        expect(screen.getByText("2026년 10월")).toBeInTheDocument();
+    });
 });
 
 it("allows inclusive window edges and blocks weekends, holidays, and unloaded years", () => {

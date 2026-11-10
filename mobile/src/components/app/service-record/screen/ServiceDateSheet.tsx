@@ -75,7 +75,7 @@ export function ServiceDateSheet({ "data-component": root, context, day, calenda
     const last = offsetServiceDate(context.endDate, 7);
     const current = context.sessions.find((row) => row.sessionIndex === day)?.serviceDate.slice(0, 10) ?? "";
     const pending = value !== current;
-    const initial = value || context.startDate?.slice(0, 10) || isoDateInKorea();
+    const initial = value || isoDateInKorea();
     const boundedInitial = first && initial < first ? first : last && initial > last ? last : initial;
     const [month, setMonth] = useState(boundedInitial.slice(0, 7));
     const [selected, setSelected] = useState(pending ? value : "");
