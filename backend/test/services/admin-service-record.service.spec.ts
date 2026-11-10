@@ -9,6 +9,7 @@ import {
     SERVICE_RECORD_LINK_SMS_LOG_TEMPLATE_KEY,
 } from "domain/constants/service-record-link-message";
 import { EFORMSIGN_DOCUMENT_KIND } from "domain/entities/eformsign-doc.entity";
+import type { IServiceRecordEditRepository } from "domain/repositories/service-record-edit.repository.interface";
 import { KOREAN_HOLIDAY_CALENDAR, createKrBusinessDayCalendar } from "domain/utils/business-days";
 import { PrismaService } from "infrastructure/database/prisma.service";
 import { createHolidayCalendarStub } from "../utils/holiday-calendar.stub";
@@ -277,6 +278,111 @@ describe("AdminServiceRecordService", () => {
         expect(prisma.employee_schedule.findMany).toHaveBeenCalled();
     });
 
+    describe("getClientEditor admin edit confirmations", () => {
+        type Revision = NonNullable<Awaited<ReturnType<IServiceRecordEditRepository["findRevisionForChanges"]>>>;
+        const t1 = "2026-11-01T01:00:00.000Z";
+        const t2 = "2026-11-02T01:00:00.000Z";
+        const t3 = "2026-11-03T01:00:00.000Z";
+
+        function createEditor(revisions: Revision[] = [], withProjection = true, withRepository = true) {
+            const prisma = createPrisma();
+            prisma.client.findFirst.mockResolvedValue({ id: 100 });
+            const repository = {
+                loadSource: jest.fn().mockResolvedValue(null),
+                listRevisionsForChanges: jest.fn().mockResolvedValue(revisions),
+            };
+            const service = new AdminServiceRecordService(
+                prisma as never, createLinkService() as never, createTriggerService() as never,
+                createHolidayCalendarStub(), undefined, withRepository ? repository as never : undefined,
+            );
+            jest.spyOn(service, "getClientOverview").mockResolvedValue({
+                record: null, assignments: [],
+                ...(withProjection ? { scheduleProjection: { entries: [], blockingReasons: [] } } : {}),
+            });
+            return { service, repository, prisma };
+        }
+
+        function revisionFixture(): Revision[] {
+            const before = [1, 2, 3, 4].map((sessionIndex) => ({
+                sessionIndex, serviceDate: `2026-11-0${sessionIndex}`, answers: {}, notes: null,
+            }));
+            const after1 = before.map((session) => ({
+                ...session,
+                ...(session.sessionIndex === 1 ? { answers: { care: "done" } } : {}),
+                ...(session.sessionIndex === 3 ? { serviceDate: "2026-11-05" } : {}),
+            }));
+            const after2 = after1.map((session) => ({
+                ...session, ...(session.sessionIndex === 3 ? { notes: "admin correction" } : {}),
+            }));
+            const plansBefore = [
+                { sessionIndex: 5, serviceDate: "2026-11-06" },
+                { sessionIndex: 6, serviceDate: "2026-11-09" },
+            ];
+            const plansAfter = [
+                { sessionIndex: 5, serviceDate: "2026-11-09" },
+                { sessionIndex: 6, serviceDate: "2026-11-10" },
+            ];
+            return [
+                {
+                    id: "revision-1", revisionNumber: 1, confirmedAt: new Date(t1), formVersionAtConfirm: 1,
+                    beforeSnapshot: { sessions: before }, payload: { sessions: after1 }, plannedSessions: [],
+                },
+                {
+                    id: "revision-2", revisionNumber: 2, confirmedAt: new Date(t2), formVersionAtConfirm: 1,
+                    beforeSnapshot: { sessions: after1 }, payload: { sessions: after2 }, plannedSessions: [],
+                },
+                {
+                    id: "revision-3", revisionNumber: 3, confirmedAt: new Date(t3), formVersionAtConfirm: 1,
+                    beforeSnapshot: { sessions: after2, plannedSessions: plansBefore },
+                    payload: { sessions: after2 }, plannedSessions: plansAfter,
+                },
+                {
+                    id: "legacy", revisionNumber: 4, confirmedAt: new Date("2026-11-04T01:00:00.000Z"),
+                    formVersionAtConfirm: 1, beforeSnapshot: null, payload: { sessions: before }, plannedSessions: [],
+                },
+                {
+                    id: "header-only", revisionNumber: 5, confirmedAt: new Date("2026-11-05T01:00:00.000Z"),
+                    formVersionAtConfirm: 1,
+                    beforeSnapshot: { header: { momName: "Before" }, sessions: after2, plannedSessions: plansAfter },
+                    payload: { header: { momName: "After" }, sessions: after2 }, plannedSessions: plansAfter,
+                },
+            ];
+        }
+
+        it.each([true, false])("returns latest confirmations including planned-only followers (projection: %s)", async (withProjection) => {
+            const { service, repository } = createEditor(revisionFixture(), withProjection);
+            const editor = await service.getClientEditor("branch-1", 100);
+            expect(editor.adminEditConfirmedAtBySession).toEqual([
+                { sessionIndex: 1, confirmedAt: t1 },
+                { sessionIndex: 3, confirmedAt: t2 },
+                { sessionIndex: 5, confirmedAt: t3 },
+                { sessionIndex: 6, confirmedAt: t3 },
+            ]);
+            expect(repository.listRevisionsForChanges).toHaveBeenCalledTimes(1);
+            expect(repository.listRevisionsForChanges).toHaveBeenCalledWith("branch-1", 100);
+            expect(service.getClientOverview).toHaveBeenCalledWith("branch-1", 100, { includeSignatures: true });
+        });
+
+        it("returns an empty list when there are no revisions", async () => {
+            const { service } = createEditor();
+            expect((await service.getClientEditor("branch-1", 100)).adminEditConfirmedAtBySession).toEqual([]);
+        });
+
+        it("omits confirmations without throwing when the edit repository is unbound", async () => {
+            const { service, repository } = createEditor([], false, false);
+            expect(await service.getClientEditor("branch-1", 100)).not.toHaveProperty("adminEditConfirmedAtBySession");
+            expect(repository.listRevisionsForChanges).not.toHaveBeenCalled();
+        });
+
+        it("does not read revisions before rejecting a foreign client", async () => {
+            const { service, repository, prisma } = createEditor();
+            // The branch-owned client lookup must precede every history read.
+            prisma.client.findFirst.mockResolvedValue(null);
+            await expect(service.getClientEditor("foreign-branch", 100)).rejects.toBeInstanceOf(NotFoundException);
+            expect(repository.listRevisionsForChanges).not.toHaveBeenCalled();
+        });
+    });
+
     it("adds the canonical all-session projection to the regular overview for unwritten slots", async () => {
         const prisma = createPrisma();
         const assignmentId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
@@ -358,6 +464,7 @@ describe("AdminServiceRecordService", () => {
             employeeId: 9,
         }));
         expect(editRepository.loadSource).toHaveBeenCalledWith("branch-1", { clientId: 100 });
+        expect(overview).not.toHaveProperty("adminEditConfirmedAtBySession");
     });
 
     describe("client service days", () => {
@@ -410,7 +517,10 @@ describe("AdminServiceRecordService", () => {
             prisma.service_record_case.findFirst.mockResolvedValue(null);
             // No schedules at all: the schedules' client include cannot carry the flags.
             prisma.employee_schedule.findMany.mockResolvedValue([]);
-            const editRepository = { loadSource: jest.fn().mockResolvedValue(legacySource()) };
+            const editRepository = {
+                loadSource: jest.fn().mockResolvedValue(legacySource()),
+                listRevisionsForChanges: jest.fn().mockResolvedValue([]),
+            };
             const service = new AdminServiceRecordService(
                 prisma as unknown as PrismaService,
                 createLinkService() as unknown as ServiceRecordLinkService,
@@ -516,6 +626,7 @@ describe("AdminServiceRecordService", () => {
         } as never);
         prisma.employee_schedule.findMany.mockResolvedValue([]);
         const editRepository = {
+            listRevisionsForChanges: jest.fn().mockResolvedValue([]),
             loadSource: jest.fn().mockResolvedValue({
                 caseId: "case-unsupported",
                 caseVersion: 1,

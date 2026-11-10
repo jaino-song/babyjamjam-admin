@@ -1620,6 +1620,29 @@ describe("ServiceRecordEditRepository", () => {
         expect(await repository.findRevisionForChanges(branchId, 42, id)).toBeNull();
     });
 
+    it("lists revision changes in one query scoped by revision branch and case branch/client", async () => {
+        const row = {
+            id: revisionRow().id, revisionNumber: 1, confirmedAt: revisionRow().confirmedAt,
+            formVersionAtConfirm: 1, payload: { sessions: [{ sessionIndex: 1, clientSignature: "signature" }] },
+            plannedSessions: [{ sessionIndex: 2, serviceDate: "2026-09-09" }],
+            beforeSnapshot: { sessions: [] },
+        };
+        const findMany = jest.fn().mockResolvedValue([row, { ...row, revisionNumber: 2, beforeSnapshot: null }]);
+        const repository = new ServiceRecordEditRepository({ service_record_revision: { findMany } } as never);
+
+        expect(await repository.listRevisionsForChanges(branchId, 42)).toEqual([
+            row, { ...row, revisionNumber: 2, beforeSnapshot: null },
+        ]);
+        expect(findMany).toHaveBeenCalledTimes(1);
+        expect(findMany).toHaveBeenCalledWith({
+            where: { branchId, serviceRecordCase: { branchId, clientId: 42 } },
+            orderBy: { revisionNumber: "asc" },
+            select: { id: true, revisionNumber: true, confirmedAt: true, formVersionAtConfirm: true, payload: true, plannedSessions: true, beforeSnapshot: true },
+        });
+        findMany.mockResolvedValue([]);
+        expect(await repository.listRevisionsForChanges(branchId, 42)).toEqual([]);
+    });
+
     it("reads a caregiver edit scoped by branch AND client (never by id alone) and rejects malformed IDs before querying", async () => {
         const editId = "66666666-6666-4666-8666-666666666666";
         const row = {

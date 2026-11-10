@@ -153,6 +153,8 @@ export interface AdminServiceRecordAssignmentDto {
 export interface AdminServiceRecordOverviewDto {
     record: AdminServiceRecordCaseDto | null;
     assignments: AdminServiceRecordAssignmentDto[];
+    /** Editor-only latest confirmation for each session reported by the revision changes policy. */
+    adminEditConfirmedAtBySession?: { sessionIndex: number; confirmedAt: string }[];
     /** Canonical all-session projection used by the administrator date editor. */
     scheduleProjection?: ServiceRecordScheduleProjection;
     /** The client's service-day toggles, which the projection and session counts above already follow. */
