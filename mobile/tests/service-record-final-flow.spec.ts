@@ -91,12 +91,19 @@ test("백엔드 서비스 일수만큼 제공기록표를 생성한다", async (
   await expect(page.locator('[data-component="mobile_service-record_wizard_body_day-grid_day_number"]').filter({ hasText: "20" })).toHaveCount(1);
 });
 
-test("서비스 제공일자가 오늘과 달라도 경고만 표시하고 기록을 작성한다", async ({ page }) => {
-  const token = "service-date-mismatch-warning";
+test("서비스 제공일을 달력에서 골라 기록을 작성한다", async ({ page }) => {
+  const token = "service-date-calendar";
+  let submitted = false;
+  let submittedBody: Record<string, unknown> | null = null;
 
   await mockShellRequests(page);
   await page.route(`**/api/service-record/${token}/link`, (route) => route.fulfill({ json: { valid: true } }));
   await page.route(`**/api/service-record/${token}/verify`, (route) => route.fulfill({ status: 201, json: { ok: true, accessToken: "access-token" } }));
+  await page.route(`**/api/service-record/${token}/sessions/1/submit`, async (route) => {
+    submittedBody = route.request().postDataJSON() as Record<string, unknown>;
+    submitted = true;
+    await route.fulfill({ status: 201, json: { ok: true } });
+  });
   await page.route(`**/api/service-record/${token}/context`, (route) => route.fulfill({
     json: {
       org: { name: "테스트 제공기관", hours: "" },
@@ -104,8 +111,9 @@ test("서비스 제공일자가 오늘과 달라도 경고만 표시하고 기�
       client: { id: 1, name: "테스트 고객" },
       totalSessions: 2,
       startDate: "2026-07-20",
+      endDate: "2026-07-31",
       header,
-      sessions: [],
+      sessions: submitted ? [{ sessionIndex: 1, serviceDate: "2026-07-21", locked: true, momApproval: "approved" }] : [],
       recordStatus: "IN_PROGRESS",
     },
   }));
@@ -114,8 +122,15 @@ test("서비스 제공일자가 오늘과 달라도 경고만 표시하고 기�
   await expect(page.getByText("서비스 제공 기록은 해당 날짜에만 기록이 가능합니다.", { exact: false })).toHaveCount(0);
   await page.getByRole("button", { name: "기록 시작" }).click();
 
-  // The warning lives in the date field's own label-row slot.
-  await expect(page.locator("#service-record-date-helper")).toHaveText("오늘과 다른 날짜예요");
+  const serviceDate = page.getByLabel("서비스 제공일");
+  await expect(serviceDate).toHaveValue("");
+  await serviceDate.click();
+  const dateSheet = page.getByRole("dialog");
+  await dateSheet.getByRole("button", { name: "2026.07.21(화)", exact: true }).click();
+  await dateSheet.getByRole("button", { name: "선택", exact: true }).click();
+  await expect(dateSheet).toBeHidden();
+  await expect(serviceDate).toHaveValue(/2026-07-21/);
+  await expect(page.locator("#service-record-date-helper")).toHaveText("");
   await expect(page.getByRole("button", { name: "열상" })).toBeEnabled();
   await page.getByRole("button", { name: "열상" }).click();
   await page.getByLabel("식사").fill("3");
@@ -123,6 +138,27 @@ test("서비스 제공일자가 오늘과 달라도 경고만 표시하고 기�
   await page.getByRole("button", { name: "다음", exact: true }).click();
 
   await expect(page.locator('[data-component="mobile_service-record_wizard_body_day-title"]')).toHaveText("신생아 기록");
+  await page.getByLabel("체온").fill("36.5");
+  const breastFeedingField = page.locator('[data-component="mobile_service-record_wizard_body_day-field_breast-feeding"]');
+  const formulaFeedingField = page.locator('[data-component="mobile_service-record_wizard_body_day-field_formula-feeding"]');
+  await breastFeedingField.getByRole("spinbutton").fill("5");
+  await formulaFeedingField.getByLabel("횟수").fill("4");
+  await formulaFeedingField.getByLabel("회당").fill("80");
+  await page.getByRole("button", { name: "다음", exact: true }).click();
+
+  await page.getByRole("button", { name: "다음", exact: true }).click();
+  await expect(page.locator('[data-slot="lab-msg"][data-tone="error"]').filter({ hasText: "결제 확인을 눌러 주세요" })).toBeVisible();
+  await page.getByRole("button", { name: "결제 확인 완료" }).click();
+  await page.getByRole("button", { name: "다음", exact: true }).click();
+
+  await signServiceRecord(page);
+  await page.getByRole("button", { name: "확인", exact: true }).click();
+  const submitDialog = page.getByRole("dialog", { name: "제출하시겠어요?" });
+  await expect(submitDialog).toBeVisible();
+  await submitDialog.getByRole("button", { name: "확인", exact: true }).click();
+
+  await expect(submitDialog).toBeHidden();
+  expect(submittedBody).toMatchObject({ serviceDate: "2026-07-21" });
 });
 
 test("마지막 회차 제출 후 별도 버튼 없이 최종 제출을 완료한다", async ({ page }) => {
@@ -158,7 +194,7 @@ test("마지막 회차 제출 후 별도 버튼 없이 최종 제출을 완료�
       totalSessions: 1,
       startDate: todayKst,
       header: headerSaved ? header : null,
-      sessions: submitted ? [{ sessionIndex: 1, serviceDate: todayKst, locked: true, momApproval: "approved" }] : [],
+      sessions: submitted ? [{ sessionIndex: 1, serviceDate: "2026-07-15", locked: true, momApproval: "approved" }] : [],
       recordStatus: submitted ? "WAITING_FOR_END" : "IN_PROGRESS",
     },
   }));
@@ -188,6 +224,11 @@ test("마지막 회차 제출 후 별도 버튼 없이 최종 제출을 완료�
   await page.getByRole("button", { name: "다음", exact: true }).click();
   await expect(page.locator('[data-slot="lab-msg"][data-tone="error"]').first()).toBeVisible();
   await expect(page.locator('[data-component="mobile_service-record_wizard_body_day-title"]')).not.toHaveText("신생아 기록");
+  await page.getByLabel("서비스 제공일").click();
+  const dateSheet = page.getByRole("dialog");
+  await dateSheet.getByRole("button", { name: "2026.07.15(수)", exact: true }).click();
+  await dateSheet.getByRole("button", { name: "선택", exact: true }).click();
+  await expect(dateSheet).toBeHidden();
   await page.getByLabel("식사").fill("3");
   await page.getByLabel("간식").fill("2");
   await page.getByRole("button", { name: "다음", exact: true }).click();
@@ -223,6 +264,7 @@ test("마지막 회차 제출 후 별도 버튼 없이 최종 제출을 완료�
     deliveryType: header.deliveryType,
   });
   expect(submittedBody).toMatchObject({
+    serviceDate: "2026-07-15",
     clientSignature: expect.any(String),
     momApproval: "approved",
     paymentConfirmed: true,
