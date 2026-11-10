@@ -945,6 +945,12 @@ describeE2E("job-producing message-automation crons (real DB)", () => {
         })).toBe(0);
     }, 30_000);
     it.each(["SERVICE_START", "SERVICE_END"] as const)("RULE-2 r4.19 actual reviewed caregiver-only %s provider→RecordStore→client intent→core→seal→fake provider", async (event) => {
+        const realNow = Date.now();
+        const dayMs = 24 * 60 * 60 * 1000;
+        const kstOffsetMs = 9 * 60 * 60 * 1000;
+        const startIso = new Date(realNow + kstOffsetMs + 10 * dayMs).toISOString().slice(0, 10);
+        const endIso = new Date(new Date(`${startIso}T00:00:00.000Z`).getTime() + 10 * dayMs).toISOString().slice(0, 10);
+        const fixtureExpiresAt = new Date(realNow + 365 * dayMs);
         const activation = harness.app.get(MessageAutomationActivationService);
         const config = harness.app.get(ConfigService);
         const readConfig = config.get.bind(config);
@@ -968,15 +974,15 @@ describeE2E("job-producing message-automation crons (real DB)", () => {
         const secondary = await prisma.employee.create({ data: { branchId: MESSAGE_CRON_BRANCH_ID, name: "합성 보조", phone: event === "SERVICE_START" ? "01000000112" : "01000000212", grade: "스탠다드" } });
         employeeIds.add(primary.id); employeeIds.add(secondary.id);
         const client = await prisma.client.create({ data: { branchId: MESSAGE_CRON_BRANCH_ID, name: "변경 전 합성 고객", phone: event === "SERVICE_START" ? "01000000113" : "01000000213", voucherClient: false,
-            startDate: new Date("2026-11-10T00:00:00.000Z"), endDate: new Date("2026-11-20T00:00:00.000Z"), bookingConfirmedAt: new Date("2026-10-01T00:00:00.000Z"), serviceStatus: "waiting" } });
+            startDate: new Date(`${startIso}T00:00:00.000Z`), endDate: new Date(`${endIso}T00:00:00.000Z`), bookingConfirmedAt: new Date("2026-10-01T00:00:00.000Z"), serviceStatus: "waiting" } });
         clientIds.add(client.id);
         const schedule = await prisma.employee_schedule.create({ data: { branchId: MESSAGE_CRON_BRANCH_ID, clientId: client.id, primaryEmployeeId: primary.id, secondaryEmployeeId: secondary.id,
-            workAddress: "합성 주소", startDate: new Date("2026-11-10T00:00:00.000Z"), endDate: new Date("2026-11-20T00:00:00.000Z") } });
+            workAddress: "합성 주소", startDate: new Date(`${startIso}T00:00:00.000Z`), endDate: new Date(`${endIso}T00:00:00.000Z`) } });
         scheduleIds.add(schedule.id);
         const serviceRecordCase = await prisma.service_record_case.create({ data: { branchId: MESSAGE_CRON_BRANCH_ID, clientId: client.id,
-            startDate: new Date("2026-11-10T00:00:00.000Z"), endDate: new Date("2026-11-20T00:00:00.000Z"), requiredSessionCount: 9 } });
+            startDate: new Date(`${startIso}T00:00:00.000Z`), endDate: new Date(`${endIso}T00:00:00.000Z`), requiredSessionCount: 9 } });
         const preservedToken = await prisma.service_record_token.create({ data: { branchId: MESSAGE_CRON_BRANCH_ID, scheduleId: schedule.id, employeeId: primary.id, serviceRecordCaseId: serviceRecordCase.id,
-            linkTokenHash: `phase7_${randomUUID().replace(/-/g, "")}`, expectedPhoneHash: createHash("sha256").update(primary.phone).digest("hex"), expiresAt: new Date("2026-12-01T00:00:00.000Z") } });
+            linkTokenHash: `phase7_${randomUUID().replace(/-/g, "")}`, expectedPhoneHash: createHash("sha256").update(primary.phone).digest("hex"), expiresAt: fixtureExpiresAt } });
         await prisma.message_trigger_rule.upsert({ where: { id: SERVICE_RECORD_LINK_RULE_ID }, update: {}, create: { id: SERVICE_RECORD_LINK_RULE_ID,
             branchId: null, name: "제공기록지 링크", isActive: true, eventType: "SERVICE_START", offsetType: "SAME_DAY", offsetDays: 0,
             sendTime: "15:00", recipientType: "PRIMARY_EMPLOYEE", templateKey: "SERVICE_RECORD_LINK", isDefault: true } });
@@ -994,8 +1000,8 @@ describeE2E("job-producing message-automation crons (real DB)", () => {
             status: "sent", sentAt: new Date("2026-11-01T00:00:00.000Z"), scheduledFor: new Date("2026-11-01T00:00:00.000Z"), dedupeKey,
             recipientPhone: "01000000999", payload: { memberId: String(client.id), recipientName: "보존할 이력", recipientPhone: "01000000999", templateVariables: {}, legacyAuthorityMarker: "preserve" } } }));
         const sessionId = randomUUID(); const taskId = randomUUID(); const actionId = randomUUID(); caregiverSessionIds.push(sessionId);
-        await prisma.agent_session.create({ data: { id: sessionId, userId: MESSAGE_CRON_OWNER_USER_ID, branchId: MESSAGE_CRON_BRANCH_ID, model: "fixture", agentVersion: "fixture", expiresAt: new Date("2027-01-01T00:00:00Z") } });
-        await prisma.agent_task.create({ data: { id: taskId, sessionId, userId: MESSAGE_CRON_OWNER_USER_ID, branchId: MESSAGE_CRON_BRANCH_ID, capabilityId: "clients.update", status: "executing", revision: 2, expiresAt: new Date("2027-01-01T00:00:00Z") } });
+        await prisma.agent_session.create({ data: { id: sessionId, userId: MESSAGE_CRON_OWNER_USER_ID, branchId: MESSAGE_CRON_BRANCH_ID, model: "fixture", agentVersion: "fixture", expiresAt: fixtureExpiresAt } });
+        await prisma.agent_task.create({ data: { id: taskId, sessionId, userId: MESSAGE_CRON_OWNER_USER_ID, branchId: MESSAGE_CRON_BRANCH_ID, capabilityId: "clients.update", status: "executing", revision: 2, expiresAt: fixtureExpiresAt } });
         const capability = harness.app.get(ClientWriteAgentCapabilitiesProvider).getCapabilities().find((entry) => entry.meta.name === "clients.update")!;
         const context: AgentContext = { principal: { userId: MESSAGE_CRON_OWNER_USER_ID, branchId: MESSAGE_CRON_BRANCH_ID, globalRole: "owner", branchRole: "owner" } as never,
             sessionId, actionId, traceId: randomUUID(), locale: "ko" };
@@ -1013,8 +1019,8 @@ describeE2E("job-producing message-automation crons (real DB)", () => {
             expect(artifact).not.toBeNull();
             await prisma.agent_action.create({ data: { id: actionId, sessionId, userId: MESSAGE_CRON_OWNER_USER_ID, branchId: MESSAGE_CRON_BRANCH_ID, taskId, taskRevision: 2,
                 capability: "clients.update", capabilityVersion: "1.0.0", risk: "external-side-effect", status: "executing", proposal: { _taskAutomation: artifact } as Prisma.InputJsonValue,
-                proposalRevision: "fixture", inputHash: artifact!.inputHash, targetVersion: inspection.targetVersion, authorizationContext: { approvalPolicy: "strong" }, expiresAt: new Date("2027-01-01T00:00:00Z"),
-                idempotencyKey: randomUUID(), requestDedupeKey: randomUUID(), dedupeExpiresAt: new Date("2027-01-01T00:00:00Z") } });
+                proposalRevision: "fixture", inputHash: artifact!.inputHash, targetVersion: inspection.targetVersion, authorizationContext: { approvalPolicy: "strong" }, expiresAt: fixtureExpiresAt,
+                idempotencyKey: randomUUID(), requestDedupeKey: randomUUID(), dedupeExpiresAt: fixtureExpiresAt } });
             context.taskAutomation = artifact!; context.approvedTargetVersion = inspection.targetVersion;
             const callsBefore = aligoStub.sendCalls.length;
             expect(await capability.executeApprovedTarget!(context, input, inspection.targetVersion!)).toEqual({ id: client.id, name: "변경 후 합성 고객", status: "updated" });
@@ -1029,7 +1035,7 @@ describeE2E("job-producing message-automation crons (real DB)", () => {
             expect(generated).toHaveLength(2);
             for (const row of generated) {
                 expect(row.status).toBe("pending");
-                expect(row.scheduledFor.toISOString()).toBe(event === "SERVICE_START" ? "2026-11-10T01:30:00.000Z" : "2026-11-20T01:30:00.000Z");
+                expect(row.scheduledFor.toISOString()).toBe(`${event === "SERVICE_START" ? startIso : endIso}T01:30:00.000Z`);
                 expect(row.payload).toMatchObject({ caregiverSourceSnapshot: { version: 1, groupId: group.id, groupVersion: 1 }, agentAutomationSeal: { version: 1 } });
             }
             const gate = harness.app.get(AgentAutomationDeliveryGateService); const delivery = harness.app.get(SmsTriggerDeliveryService); const jobs = new SbMessageTriggerJobRepository(prisma);
@@ -1047,8 +1053,8 @@ describeE2E("job-producing message-automation crons (real DB)", () => {
                 job!.markSent(); await jobs.update(job!);
             }
             expect(aligoStub.sendCalls.slice(callsBefore).map((call) => [call.receiver, call.message]).sort()).toEqual([
-                [event === "SERVICE_START" ? "01000000111" : "01000000211", "합성 주 관리사님, 변경 후 합성 고객 고객님의 서비스가 2026-11-10에 시작됩니다. 배정 일정과 근무 안내를 확인해 주세요. - Phase7 합성 지점"],
-                [event === "SERVICE_START" ? "01000000112" : "01000000212", "합성 보조 관리사님, 변경 후 합성 고객 고객님의 서비스가 2026-11-20에 종료됩니다. 마무리 안내를 확인해 주세요. - Phase7 합성 지점"],
+                [event === "SERVICE_START" ? "01000000111" : "01000000211", `합성 주 관리사님, 변경 후 합성 고객 고객님의 서비스가 ${startIso}에 시작됩니다. 배정 일정과 근무 안내를 확인해 주세요. - Phase7 합성 지점`],
+                [event === "SERVICE_START" ? "01000000112" : "01000000212", `합성 보조 관리사님, 변경 후 합성 고객 고객님의 서비스가 ${endIso}에 종료됩니다. 마무리 안내를 확인해 주세요. - Phase7 합성 지점`],
             ].sort());
             await triggers.syncClientRulesForClient(MESSAGE_CRON_BRANCH_ID, client.id, true, false, { preserveExisting: true, stableBatchAt: new Date(), taskOrigin: true, taskAutomationReference: reference });
             expect(await prisma.message_trigger_job.count({ where: { clientId: client.id, ruleId: { in: group.rules.map((rule) => rule.id) } } })).toBe(2);
