@@ -477,7 +477,7 @@ describeE2E("service-record lifecycle/client lock races (real PostgreSQL)", () =
         await waitForLock(prisma, updatePid);
         release();
         await expect(submit).resolves.toEqual(expect.objectContaining({ locked: true }));
-        await expect(update).rejects.toMatchObject({ response: { code: "REQUEST_CONFLICT" } });
+        await expect(update).rejects.toMatchObject({ response: { code: "SERVICE_RECORD_START_DATE_LOCKED", startDateLock: { serviceStarted: true, recordedSessionCount: 1 } } });
         await expect(held).resolves.toBeUndefined();
         await expect(prisma.client.findUnique({ where: { id: f.clientIds[0] }, select: { startDate: true } })).resolves.toEqual({ startDate: d("2026-09-01") });
         await Promise.all([holder.$disconnect(), submitDb.$disconnect(), updateDb.$disconnect()]);

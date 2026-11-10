@@ -90,6 +90,7 @@ describe('Multi-Tenancy E2E Tests', () => {
                         tenantContext.branchId = req.user.branchId;
                         tenantContext.role = req.user.role;
                         tenantContext.branchRole = req.user.branchRole;
+                        req.tenant = { userId: req.user.userId, branchId: req.user.branchId, globalRole: req.user.role, branchRole: req.user.branchRole };
                         return true;
                     },
                 })
@@ -123,6 +124,7 @@ describe('Multi-Tenancy E2E Tests', () => {
                 expect(response.body).toHaveLength(2);
                 // Verify service was called (repository filters by org)
                 expect(clientService.findAll).toHaveBeenCalled();
+                expect(clientService.findAll).toHaveBeenCalledWith(ORG_A_ID);
             });
 
             it('should not receive clients from Org B', async () => {
@@ -135,6 +137,7 @@ describe('Multi-Tenancy E2E Tests', () => {
                 // Assert
                 expect(response.status).toBe(200);
                 expect(response.body).toHaveLength(0);
+                expect(clientService.findAll).toHaveBeenCalledWith(ORG_A_ID);
             });
         });
 
@@ -149,6 +152,7 @@ describe('Multi-Tenancy E2E Tests', () => {
                 // Assert
                 expect(response.status).toBe(200);
                 expect(response.body).toEqual({});
+                expect(clientService.findById).toHaveBeenCalledWith(ORG_A_ID, 999);
             });
         });
     });
@@ -244,6 +248,7 @@ describe('Multi-Tenancy E2E Tests', () => {
                         userId: USER_B_ID,
                         branchId: ORG_B_ID,
                     },
+                    select: { role: true, branch: { select: { isActive: true } } },
                 });
             });
         });
@@ -252,9 +257,8 @@ describe('Multi-Tenancy E2E Tests', () => {
             it('should allow access and populate TenantContext', async () => {
                 // Arrange - User is a member
                 mockPrismaService.user_branch.findFirst.mockResolvedValue({
-                    user_id: USER_A_ID,
-                    branch_id: ORG_B_ID,
                     role: 'member',
+                    branch: { isActive: true },
                 });
 
                 const mockContext = {
@@ -303,9 +307,8 @@ describe('Multi-Tenancy E2E Tests', () => {
             it('should populate TenantContext with all user and org information', async () => {
                 // Arrange
                 mockPrismaService.user_branch.findFirst.mockResolvedValue({
-                    user_id: USER_A_ID,
-                    branch_id: ORG_A_ID,
                     role: 'admin',
+                    branch: { isActive: true },
                 });
 
                 const mockContext = {
@@ -356,9 +359,8 @@ describe('Multi-Tenancy E2E Tests', () => {
             it('should set branchRole to member in TenantContext', async () => {
                 // Arrange
                 mockPrismaService.user_branch.findFirst.mockResolvedValue({
-                    user_id: USER_A_ID,
-                    branch_id: ORG_A_ID,
                     role: 'member',
+                    branch: { isActive: true },
                 });
 
                 const mockContext = {
@@ -386,9 +388,8 @@ describe('Multi-Tenancy E2E Tests', () => {
             it('should set branchRole to admin in TenantContext', async () => {
                 // Arrange
                 mockPrismaService.user_branch.findFirst.mockResolvedValue({
-                    user_id: USER_A_ID,
-                    branch_id: ORG_A_ID,
                     role: 'admin',
+                    branch: { isActive: true },
                 });
 
                 const mockContext = {
