@@ -195,15 +195,16 @@ function offsetCaseDate(value: unknown, days: number): string | null {
 function isOutsidePeriod(serviceDate: string, startDate: unknown, endDate: unknown): boolean {
     const date = dateOnly(serviceDate);
     if (!date) return false;
-    const start = dateOnly(startDate);
-    const end = dateOnly(endDate);
+    const start = offsetCaseDate(startDate, -CAREGIVER_DATE_WINDOW_DAYS);
+    const end = offsetCaseDate(endDate, CAREGIVER_DATE_WINDOW_DAYS);
     return Boolean((start && date < start) || (end && date > end));
 }
 
 /**
  * Case rows are the canonical aggregate. Assignment rows fill gaps for old
- * records, and distinct or out-of-period projections are retained as
- * selectable supplemental rows instead of being silently dropped.
+ * records. Distinct rows, rows outside the start−7..end+7 lifecycle window,
+ * or rows outside 1..N are kept as selectable supplemental rows instead of
+ * being silently dropped.
  */
 export function buildAdminServiceRecordView(
     overview: AdminServiceRecordEditorOverview,
