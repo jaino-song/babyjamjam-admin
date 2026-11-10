@@ -167,6 +167,15 @@ export class UpdateServiceRecordEditDraftDto {
     @Type(() => ServiceRecordEditDateMoveDto)
     dateMove?: ServiceRecordEditDateMoveDto;
 
+    /** Ordered server-normalized moves, persisted with a single draft version check. */
+    @IsOptional()
+    @IsArray()
+    @ArrayMinSize(1)
+    @ArrayMaxSize(200)
+    @ValidateNested({ each: true })
+    @Type(() => ServiceRecordEditDateMoveDto)
+    dateMoves?: ServiceRecordEditDateMoveDto[];
+
     /** Replaces every session date at once; mutually exclusive with `dateMove`. */
     @IsOptional()
     @ValidateNested()

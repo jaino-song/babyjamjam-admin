@@ -44,6 +44,38 @@ describe("admin service-record edit DTO", () => {
         expect(errors).toHaveLength(0);
     });
 
+    describe("dateMoves batch", () => {
+        const move = { sessionIndex: 1, toDate: "2026-09-08" };
+        const body = (dateMoves: unknown, extra: Record<string, unknown> = {}) => ({
+            expectedDraftVersion: 1, changes: {}, dateMoves, ...extra,
+        });
+
+        it("accepts ordered moves and the maximum 200 items", async () => {
+            expect(await validateStrict(UpdateServiceRecordEditDraftDto, body([move, { ...move, sessionIndex: 2 }])))
+                .toHaveLength(0);
+            expect(await validateStrict(UpdateServiceRecordEditDraftDto, body(Array.from({ length: 200 }, () => move))))
+                .toHaveLength(0);
+        });
+
+        it.each<[string, unknown]>([
+            ["empty array", []],
+            ["201 items", Array.from({ length: 201 }, () => move)],
+            ["non-array", move],
+            ["bad toDate", [{ ...move, toDate: "2026/09/08" }]],
+            ...["branchId", "actorUserId", "assignmentId", "employeeId", "sourceFingerprint", "clientSignature"]
+                .map((field): [string, unknown] => [field, [{ ...move, [field]: "forged" }]]),
+        ])("rejects %s", async (_label, dateMoves) => {
+            expect((await validateStrict(UpdateServiceRecordEditDraftDto, body(dateMoves))).length).toBeGreaterThan(0);
+        });
+
+        it("leaves dateMove/dateMoves and schedule/dateMoves combinations to the service", async () => {
+            expect(await validateStrict(UpdateServiceRecordEditDraftDto, body([move], { dateMove: move }))).toHaveLength(0);
+            expect(await validateStrict(UpdateServiceRecordEditDraftDto, body([move], {
+                schedule: { serviceDays: { saturday: false, sunday: false, holiday: false }, dates: [move.toDate] },
+            }))).toHaveLength(0);
+        });
+    });
+
     it.each([true, false])("accepts explicit suffix approval %s", async (shiftFollowing) => {
         expect(await validateStrict(UpdateServiceRecordEditDraftDto, {
             expectedDraftVersion: 1, changes: {}, dateMove: { sessionIndex: 1, toDate: "2026-09-08", shiftFollowing },

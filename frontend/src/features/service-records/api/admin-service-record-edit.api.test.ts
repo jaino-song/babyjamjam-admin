@@ -161,6 +161,29 @@ describe("admin service-record edit API adapter", () => {
         expect(global.fetch).not.toHaveBeenCalled();
     });
 
+    it("serializes ordered dateMoves in one PATCH", async () => {
+        global.fetch = jest.fn().mockResolvedValue(response({ draft: { id: "d-1", status: "ACTIVE", changes: {}, draftVersion: 2 } }, 200));
+        const dateMoves = [
+            { sessionIndex: 3, toDate: "2026-07-13", shiftFollowing: false },
+            { sessionIndex: 1, toDate: "2026-07-10", shiftFollowing: true },
+        ];
+        await adminServiceRecordEditApi.updateDraft("d-1", 1, {}, undefined, undefined, dateMoves);
+        expect(global.fetch).toHaveBeenCalledTimes(1);
+        expect(global.fetch).toHaveBeenCalledWith("/api/admin/service-records/drafts/d-1", expect.objectContaining({
+            method: "PATCH", body: JSON.stringify({ expectedDraftVersion: 1, changes: {}, dateMoves }),
+        }));
+    });
+
+    it.each(["dateMove", "schedule"])("rejects dateMoves with %s before fetch", async (field) => {
+        global.fetch = jest.fn();
+        const move = { sessionIndex: 2, toDate: "2026-07-13" };
+        const schedule = { serviceDays: { saturday: false, sunday: false, holiday: false }, dates: [move.toDate] };
+        await expect(adminServiceRecordEditApi.updateDraft(
+            "d-1", 1, {}, field === "dateMove" ? move : undefined, field === "schedule" ? schedule : undefined, [move],
+        )).rejects.toThrow("cannot be sent together");
+        expect(global.fetch).not.toHaveBeenCalled();
+    });
+
     it("exposes the schedule code and blocking reasons of a rejected request", async () => {
         global.fetch = jest.fn()
             .mockResolvedValueOnce(response({ code: "VALIDATION_FAILED", scheduleCode: "SCHEDULE_COUNT_MISMATCH" }, 400))

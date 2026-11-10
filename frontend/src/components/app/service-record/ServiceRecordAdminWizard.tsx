@@ -20,6 +20,7 @@ import { TwoButtonModal } from "@/components/app/ui/TwoButtonModal";
 import { ReadOnlySignature as ReadOnlySignaturePart } from "@/components/app/ui/service-record";
 import { Button } from "@/components/ui/button";
 import { Dialog } from "@/components/ui/dialog";
+import { Spinner } from "@/components/ui/spinner";
 import { FormDialogShell } from "@/components/app/ui/FormDialogShell";
 import { CalendarLoadNotice } from "@/components/app/holidays/CalendarLoadNotice";
 import { useBusinessDayCalendar } from "@/hooks/useBusinessDayCalendar";
@@ -636,6 +637,7 @@ export function ServiceRecordAdminWizard({
     const [cleanupFailed, setCleanupFailed] = useState(false);
     const [refreshFailed, setRefreshFailed] = useState(false);
     const [busy, setBusy] = useState(false);
+    const [preparing, setPreparing] = useState(false);
     const [error, setError] = useState<string | null>(initialDraftErrorStatus ? draftErrorMessage(initialDraftErrorStatus) : null);
     const [dateError, setDateError] = useState<string | null>(null);
     const [needsReload, setNeedsReload] = useState(!initialDraftState?.sourceFingerprint);
@@ -868,37 +870,61 @@ export function ServiceRecordAdminWizard({
         if (saving.current || !hasPending || needsReload || refreshModalOpen) return;
         saving.current = true;
         setBusy(true);
+        setPreparing(true);
+        setPreview(null);
+        setPreviewOpen(true);
         setError(null);
         setCleanupFailed(false);
         commitRequest.current = null;
         let prepared: { id: string; version: number } | null = null;
         try {
             const existing = await adminServiceRecordEditApi.getDraft(clientId);
-            if (!sameSource(sourceIdentity, existing)) { showRefreshModal(); return; }
+            if (!sameSource(sourceIdentity, existing)) {
+                setPreviewOpen(false);
+                setPreview(null);
+                showRefreshModal();
+                return;
+            }
             // A draft left by an earlier session must not leak into this one.
             if (existing.draft?.status === "ACTIVE") {
                 await adminServiceRecordEditApi.discardDraft(existing.draft.id, existing.draft.draftVersion);
             }
             const changes = pendingToChanges(pending);
             let state = await adminServiceRecordEditApi.startDraft(clientId, changes);
-            if (!state.draft || state.draft.status !== "ACTIVE") throw new Error("수정을 시작하지 못했습니다.");
+            if (!state.draft || state.draft.status !== "ACTIVE") {
+                setPreviewOpen(false);
+                setPreview(null);
+                throw new Error("수정을 시작하지 못했습니다.");
+            }
             // Not this tab's batch (another session got there first): never preview, confirm
             // or discard it, and never merge local edits into it.
-            if (!draftMatchesBatch(state.draft.changes, changes, baseVector, baseVector)) { showRefreshModal(); return; }
+            if (!draftMatchesBatch(state.draft.changes, changes, baseVector, baseVector)) {
+                setPreviewOpen(false);
+                setPreview(null);
+                showRefreshModal();
+                return;
+            }
             prepared = { id: state.draft.id, version: state.draft.draftVersion };
             if (!sameSource(sourceIdentity, state) || state.sourceChanged
                 || state.draft.sourceFingerprint !== sourceIdentity?.sourceFingerprint
                 || state.draft.sourceCaseVersion !== sourceIdentity?.sourceCaseVersion) {
+                setPreviewOpen(false);
+                setPreview(null);
                 await adminServiceRecordEditApi.discardDraft(prepared.id, prepared.version).catch(() => undefined);
                 showRefreshModal();
                 return;
             }
-            for (const [index, move] of pending.moves.entries()) {
-                state = await adminServiceRecordEditApi.updateDraft(state.draft.id, state.draft.draftVersion, {}, move);
-                if (!state.draft || state.draft.status !== "ACTIVE") throw new Error("수정 내용을 저장하지 못했습니다.");
-                const last = index === pending.moves.length - 1;
-                if (!draftMatchesBatch(state.draft.changes, changes, last ? vector : null, baseVector)) {
+            if (pending.moves.length > 0) {
+                state = await adminServiceRecordEditApi.updateDraft(state.draft.id, state.draft.draftVersion, {}, undefined, undefined, pending.moves);
+                if (!state.draft || state.draft.status !== "ACTIVE") {
+                    setPreviewOpen(false);
+                    setPreview(null);
+                    throw new Error("수정 내용을 저장하지 못했습니다.");
+                }
+                if (!draftMatchesBatch(state.draft.changes, changes, vector, baseVector)) {
                     prepared = null;
+                    setPreviewOpen(false);
+                    setPreview(null);
                     showRefreshModal();
                     return;
                 }
@@ -906,17 +932,20 @@ export function ServiceRecordAdminWizard({
             }
             const result = await adminServiceRecordEditApi.previewDraft(prepared.id, prepared.version);
             if (result.draftId !== prepared.id || result.draftVersion !== prepared.version) {
+                setPreviewOpen(false);
+                setPreview(null);
                 await adminServiceRecordEditApi.discardDraft(prepared.id, prepared.version).catch(() => undefined);
                 showRefreshModal();
                 return;
             }
             commitRequest.current = { draftId: prepared.id, draftVersion: prepared.version, previewId: result.previewId, idempotencyKey: createIdempotencyKey() };
             setPreview(result);
-            setPreviewOpen(true);
         } catch (failure) {
+            setPreviewOpen(false);
+            setPreview(null);
             if (prepared) await adminServiceRecordEditApi.discardDraft(prepared.id, prepared.version).catch(() => undefined);
             await handleCommitFailure(failure);
-        } finally { saving.current = false; setBusy(false); }
+        } finally { saving.current = false; setBusy(false); setPreparing(false); }
     };
     /** Open the blocking refresh modal for a case event that is newer than this tab's data. */
     const applyCaseEvent = (event: ServiceRecordRevisionSyncEvent) => {
@@ -1134,7 +1163,9 @@ export function ServiceRecordAdminWizard({
                                     disabled={busy} onClick={() => setDiscardModalOpen(true)}>수정 취소</Button>
                                 <Button data-component={`${ADMIN_WIZARD_COMPONENT}_body_overview-commit_confirm`} type="button" variant="positive"
                                     className="min-w-0 w-full sm:w-auto"
-                                    disabled={busy || needsReload} onClick={() => void startCommit()}>수정 확정</Button>
+                                    disabled={busy || needsReload} aria-busy={preparing} onClick={() => void startCommit()}>
+                                    {preparing ? <><Spinner data-component={`${ADMIN_WIZARD_COMPONENT}_body_overview-commit_confirm_spinner`} size="sm" />확인 중…</> : "수정 확정"}
+                                </Button>
                             </>
                         ) : null,
                         adminConfirmAction: (
@@ -1198,7 +1229,7 @@ export function ServiceRecordAdminWizard({
                 />
             )}
             <ServiceRecordEditPreviewDialog open={previewOpen} onOpenChange={(open) => { if (!open) void closePreview(); }}
-                preview={preview} onConfirm={confirmCommit}
+                preview={preview} busy={preparing} onConfirm={confirmCommit}
                 confirmBusy={busy} confirmError={error} data-component={`${ADMIN_WIZARD_COMPONENT}_commit-preview`} />
             <ServiceRecordDateSelectionDialog open={dateDialogOpen} onOpenChange={setDateDialogOpen}
                 currentServiceDate={String(draft._date || sourceDate)} calendar={calendar} sessionLabel={`${day}회차`}

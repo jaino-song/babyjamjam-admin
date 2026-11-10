@@ -665,15 +665,18 @@ export const adminServiceRecordEditApi = {
         changes: AdminServiceRecordEditChanges,
         dateMove?: AdminServiceRecordEditDateMove,
         schedule?: ServiceRecordEditSchedule,
+        dateMoves?: AdminServiceRecordEditDateMove[],
     ): Promise<AdminServiceRecordEditState> {
         // The server rejects the pair too; failing here keeps a wrong call from reaching it.
         if (dateMove && schedule) throw new Error("dateMove and schedule cannot be sent together");
+        if (dateMoves && (dateMove || schedule)) throw new Error("dateMoves and dateMove or schedule cannot be sent together");
         const body = await request<unknown>(draftIdPath(draftId), {
             method: "PATCH",
             body: JSON.stringify({
                 expectedDraftVersion,
                 changes: stripServiceDateSnapshots(changes),
                 ...(dateMove ? { dateMove } : {}),
+                ...(dateMoves ? { dateMoves } : {}),
                 ...(schedule ? { schedule } : {}),
             }),
         });

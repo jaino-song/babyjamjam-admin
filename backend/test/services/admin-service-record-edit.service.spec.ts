@@ -4726,3 +4726,110 @@ describe("AdminServiceRecordEditService resume replan", () => {
         });
     });
 });
+
+
+describe("AdminServiceRecordEditService batched date moves", () => {
+    const moves = [
+        { sessionIndex: 3, toDate: "2026-09-04", shiftFollowing: false },
+        { sessionIndex: 2, toDate: "2026-09-03", shiftFollowing: true },
+        { sessionIndex: 1, toDate: "2026-08-31", shiftFollowing: false },
+        { sessionIndex: 2, toDate: "2026-09-02", shiftFollowing: false },
+        { sessionIndex: 1, toDate: "2026-09-01", shiftFollowing: false },
+    ];
+    const content = { header: { momName: "새산모" }, sessions: [{ sessionIndex: 2, notes: "새 메모" }] };
+    type UpdateDto = Parameters<AdminServiceRecordEditService["updateDraft"]>[3];
+
+    function statefulHarness() {
+        const source = previewSourceSnapshot();
+        let persisted = draft({ changes: { sessions: [{ sessionIndex: 1, notes: "기존 메모" }] }, draftVersion: 4 });
+        const harness = createHarness({ source });
+        const loadDraftWithSource = jest.fn(async () => ({ draft: persisted, source }));
+        Object.assign(harness.repository, { loadDraftWithSource });
+        harness.repository.findDraftById.mockImplementation(async () => persisted);
+        harness.repository.updateDraft.mockImplementation(async (input: { changes: unknown; expectedDraftVersion: number }) => {
+            persisted = draft({ changes: input.changes, draftVersion: input.expectedDraftVersion + 1 });
+            return persisted;
+        });
+        return { ...harness, loadDraftWithSource };
+    }
+    function patch(harness: ReturnType<typeof statefulHarness>, dto: Partial<UpdateDto>) {
+        return harness.service.updateDraft(BRANCH_ID, DRAFT_ID, ACTOR_ID, { expectedDraftVersion: 4, changes: {}, ...dto });
+    }
+    function savedChanges(harness: ReturnType<typeof statefulHarness>) {
+        return (harness.repository.updateDraft.mock.calls.at(-1)?.[0] as { changes: unknown }).changes;
+    }
+    async function rejection(run: () => Promise<unknown>) {
+        try { await run(); } catch (error) {
+            if (error instanceof BadRequestException) return error;
+            throw error;
+        }
+        throw new Error("expected a BadRequestException");
+    }
+
+    it("folds three moves exactly like sequential PATCHes and writes with one CAS", async () => {
+        const sequential = statefulHarness();
+        for (const [index, dateMove] of moves.slice(0, 3).entries()) {
+            await patch(sequential, { expectedDraftVersion: 4 + index, changes: index === 0 ? content : {}, dateMove });
+        }
+        const batch = statefulHarness();
+        const result = await patch(batch, { changes: content, dateMoves: moves.slice(0, 3) });
+        expect(savedChanges(batch)).toEqual(savedChanges(sequential));
+        expect(batch.repository.updateDraft).toHaveBeenCalledTimes(1);
+        expect(batch.repository.updateDraft).toHaveBeenCalledWith(expect.objectContaining({ expectedDraftVersion: 4 }));
+        expect(result.draft?.draftVersion).toBe(5);
+    });
+
+    it("rejects an invalid second move exactly like its single PATCH without persisting any move", async () => {
+        const invalid = { sessionIndex: 2, toDate: "2026-10-01", shiftFollowing: false };
+        const sequential = statefulHarness();
+        await patch(sequential, { changes: content, dateMove: moves[0] });
+        const singleError = await rejection(() => patch(sequential, { expectedDraftVersion: 5, dateMove: invalid }));
+        const batch = statefulHarness();
+        const batchError = await rejection(() => patch(batch, { changes: content, dateMoves: [moves[0]!, invalid, moves[2]!] }));
+        expect(batchError.getResponse()).toEqual(singleError.getResponse());
+        expect(batchError.getResponse()).toMatchObject({ code: "VALIDATION_FAILED", scheduleCode: "SERVICE_DATE_OUT_OF_RANGE", sessionIndex: 2 });
+        expect(batch.repository.updateDraft).not.toHaveBeenCalled();
+    });
+
+    it.each([1, 5])("loads source and a fresh calendar once for %i moves", async (count) => {
+        const harness = statefulHarness();
+        await patch(harness, { dateMoves: moves.slice(0, count) });
+        expect(harness.loadDraftWithSource).toHaveBeenCalledTimes(1);
+        expect(harness.repository.loadSource).not.toHaveBeenCalled();
+        expect(harness.holidayCalendar.forBranch).toHaveBeenCalledTimes(1);
+        expect(harness.holidayCalendar.forBranch).toHaveBeenCalledWith(BRANCH_ID, { fresh: true });
+        expect(harness.repository.updateDraft).toHaveBeenCalledTimes(1);
+    });
+
+    it("keeps single dateMove normalization and its content edits unchanged", async () => {
+        const harness = statefulHarness();
+        await patch(harness, { changes: content, dateMove: moves[0] });
+        expect(savedChanges(harness)).toMatchObject({ header: content.header, sessions: expect.arrayContaining([
+            { sessionIndex: 1, notes: "기존 메모" },
+            { sessionIndex: 2, notes: "새 메모" },
+            { sessionIndex: 3, serviceDate: "2026-09-04" },
+        ]) });
+        expect(harness.loadDraftWithSource).toHaveBeenCalledTimes(1);
+        expect(harness.repository.loadSource).not.toHaveBeenCalled();
+        expect(harness.holidayCalendar.forBranch).toHaveBeenCalledTimes(1);
+    });
+
+    it.each([
+        ["schedule", { schedule: { serviceDays: { saturday: false, sunday: false, holiday: false }, dates: ["2026-09-01"] } }, "SCHEDULE_WITH_DATE_MOVE"],
+        ["resumeReplan", { resumeReplan: { fromSessionIndex: 1, resumeDate: "2026-09-01" } }, "RESUME_REPLAN_COMBINATION"],
+    ])("rejects %s with dateMoves in the service", async (_label, extra, scheduleCode) => {
+        const harness = statefulHarness();
+        const error = await rejection(() => patch(harness, { ...extra, dateMoves: moves.slice(0, 1) } as Partial<UpdateDto>));
+        expect(error.getResponse()).toMatchObject({ code: "VALIDATION_FAILED", scheduleCode });
+        expect(harness.repository.updateDraft).not.toHaveBeenCalled();
+    });
+
+    it("rejects dateMove together with dateMoves without introducing a scheduleCode", async () => {
+        const harness = statefulHarness();
+        const error = await rejection(() => patch(harness, { dateMove: moves[0], dateMoves: moves.slice(0, 1) }));
+        expect(error.getStatus()).toBe(400);
+        expect(error.getResponse()).toMatchObject({ code: "VALIDATION_FAILED", errors: [expect.objectContaining({ pointer: "/dateMoves", code: "INVALID_VALUE" })] });
+        expect(error.getResponse()).not.toHaveProperty("scheduleCode");
+        expect(harness.repository.updateDraft).not.toHaveBeenCalled();
+    });
+});
