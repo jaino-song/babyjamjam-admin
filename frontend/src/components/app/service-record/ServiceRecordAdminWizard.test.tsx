@@ -514,7 +514,9 @@ describe("ServiceRecordAdminViewer", () => {
         global.fetch = jest.fn(() => new Promise(() => undefined));
         const { container } = render(<ServiceRecordAdminViewer clientId="42" />);
         const loading = screen.getByRole("status", { name: "불러오는 중…" });
-        expect(loading).toHaveAttribute("data-component", "desktop_service-record-admin_state-loading");
+        expect(loading).toHaveAttribute("data-component", "desktop_service-record-admin_loading_state-loading");
+        expect(loading.parentElement).toHaveAttribute("data-component", "desktop_service-record-admin_loading");
+        expect(loading.parentElement).toHaveAttribute("data-slot", "loading-shell");
         expect(loading).toHaveTextContent("불러오는 중…");
         expect(loading.querySelectorAll('[data-slot="skeleton"]')).toHaveLength(6);
         expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("산모·신생아 건강관리 서비스 제공기록지");
@@ -742,7 +744,8 @@ describe("per-session administrator editing", () => {
         const { container } = render(<ServiceRecordAdminWizard clientId="42" overview={sessionOverview} initialDraftState={{ ...makeDraftState(), draft: null }} />);
         const actions = () => container.querySelector('[data-slot="overview-actions"]') as HTMLElement;
         expect(within(actions()).getAllByRole("button").map((button) => button.textContent)).toEqual(["기본정보 수정", "수정 이력 보기"]);
-        expect(screen.getByRole("button", { name: "기본정보 수정" })).toHaveAttribute("data-variant", "outline");
+        expect(screen.getByRole("button", { name: "기본정보 수정" })).toHaveAttribute("data-variant", "positive-outline");
+        expect(screen.getByRole("button", { name: "기본정보 수정" })).toHaveClass("border-[hsl(214,100%,34%)]!");
         expect(screen.getByRole("button", { name: "수정 이력 보기" })).toHaveAttribute("data-variant", "positive");
         expect(container.querySelector('[data-slot="overview-commit"]')).toBeNull();
         fireEvent.click(container.querySelectorAll('[data-slot="day"]')[0]);

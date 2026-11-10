@@ -77,7 +77,10 @@ describe("DayCard", () => {
     expect(screen.getByRole("button")).toHaveClass("bg-v3-primary-light", "border-v3-primary-medium!");
 
     rerender(card({ state: "readonly" }));
-    expect(screen.getByRole("button")).toHaveClass("border-v3-primary-medium!");
+    expect(screen.getByRole("button")).toHaveAttribute("data-state", "readonly");
+    expect(screen.getByRole("button")).toHaveClass("border-v3-primary!", "bg-white", "ring-[3px]", "ring-v3-primary-light");
+    expect(screen.getByText("입력 가능")).toHaveClass("text-v3-text-muted");
+    expect(screen.getByText("입력 가능")).not.toHaveClass("font-bold", "text-v3-primary");
 
     rerender(card({ state: "current" }));
     expect(screen.getByRole("button")).toHaveClass("border-v3-primary!", "ring-[3px]");

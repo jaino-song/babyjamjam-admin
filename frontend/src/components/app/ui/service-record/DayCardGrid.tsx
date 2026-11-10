@@ -55,7 +55,7 @@ export interface DayCardProps {
 const CARD_STATE_CLASS: Record<DayCardState, string> = {
   todo: "border-v3-border! bg-white",
   done: "border-v3-primary-medium! bg-v3-primary-light",
-  readonly: "border-v3-primary-medium! bg-white",
+  readonly: "border-v3-primary! bg-white ring-[3px] ring-v3-primary-light",
   changed: "border-v3-primary-medium! bg-v3-primary-light",
   current: "border-v3-primary! bg-white ring-[3px] ring-v3-primary-light",
   locked: "border-v3-border! bg-white opacity-50",
@@ -64,7 +64,7 @@ const CARD_STATE_CLASS: Record<DayCardState, string> = {
 const STATUS_EMPHASIS: Record<DayCardState, boolean> = {
   todo: false,
   done: true,
-  readonly: true,
+  readonly: false,
   changed: true,
   current: false,
   locked: false,

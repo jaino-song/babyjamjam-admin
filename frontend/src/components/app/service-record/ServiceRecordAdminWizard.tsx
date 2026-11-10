@@ -1185,8 +1185,8 @@ export function ServiceRecordAdminWizard({
                         ) : null,
                         adminConfirmAction: !hasPending ? (
                             <div data-component={`${ADMIN_WIZARD_COMPONENT}_body_overview_edit-actions`} data-slot="edit-actions" className="contents">
-                                <Button data-component={`${ADMIN_WIZARD_COMPONENT}_body_overview_header-edit`} data-slot="header-edit" type="button" variant="outline" disabled={busy}
-                                    className="min-w-0 flex-1"
+                                <Button data-component={`${ADMIN_WIZARD_COMPONENT}_body_overview_header-edit`} data-slot="header-edit" type="button" variant="positive-outline" disabled={busy}
+                                    className="min-w-0 flex-1 border-[hsl(214,100%,34%)]!"
                                     onClick={() => { setHeaderDraft(headerToInput(displayContext.header)); setScreen("service"); }}>
                                     기본정보 수정
                                 </Button>
@@ -1390,9 +1390,9 @@ export function ServiceRecordAdminViewer({ clientId }: ServiceRecordAdminViewerP
 
     if (visibleState.kind === "loading") {
         return (
-            <div data-slot="loading-shell" className="flex min-h-dvh min-w-0 flex-col bg-white">
+            <div data-component="desktop_service-record-admin_loading" data-slot="loading-shell" className="flex min-h-dvh min-w-0 flex-col bg-white">
                 <ServiceRecordStepHeader data-component="desktop_service-record-admin_loading_top-bar" title={SCREEN_TITLE} meta="관리자 편집" progress={0} indeterminate />
-                <ServiceRecordLoadingBody data-component="desktop_service-record-admin_state-loading" />
+                <ServiceRecordLoadingBody data-component="desktop_service-record-admin_loading_state-loading" />
             </div>
         );
     }

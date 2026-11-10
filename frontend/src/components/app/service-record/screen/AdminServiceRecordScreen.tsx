@@ -108,7 +108,7 @@ export function AdminServiceRecordScreen({
                 <div
                     data-component={child("top-bar_admin-toolbar")}
                     data-slot="admin-toolbar"
-                    className="px-[calc(16px*var(--glint-ui-scale,1))] pt-[calc(8px*var(--glint-ui-scale,1))] sm:px-[calc(24px*var(--glint-ui-scale,1))]"
+                    className="px-[calc(16px*var(--glint-ui-scale,1))] pt-[calc(8px*var(--glint-ui-scale,1))]"
                 >
                     {slots.adminToolbar}
                 </div>

@@ -87,6 +87,17 @@ describe("OverviewStep", () => {
         expect(within(days()[0]).queryByText("수정 완료")).not.toBeInTheDocument();
     });
 
+    it.each([false, true])("gives an admin-edited unsubmitted session the done look (readOnly=%s)", (readOnly) => {
+        const props = makeProps({ readOnly, adminEditedSessionIndexes: new Set([2]) });
+        expect(props.lockedDays.has(2)).toBe(false);
+        render(<OverviewStep {...props} />);
+
+        const second = days()[1];
+        expect(second).toHaveAttribute("data-state", "done");
+        expect(second).toHaveClass("bg-v3-primary-light");
+        expect(within(second).getByText("수정 완료")).toHaveClass("text-status-success-fg");
+    });
+
     it("opens a day with the session index and whether it was submitted", () => {
         const props = makeProps();
         render(<OverviewStep {...props} />);
