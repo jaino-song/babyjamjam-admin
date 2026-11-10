@@ -16,3 +16,5 @@ export { ReadOnlySignature } from "./ReadOnlySignature";
 export type { ReadOnlySignatureProps } from "./ReadOnlySignature";
 export { ServiceDateDisplay } from "./ServiceDateDisplay";
 export type { ServiceDateDisplayProps } from "./ServiceDateDisplay";
+export { AdminServiceDateSheet } from "./ServiceDateSheet";
+export type { AdminServiceDateSheetProps } from "./ServiceDateSheet";
