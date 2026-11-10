@@ -57,8 +57,8 @@ describe("service-period borders", () => {
         const cell = screen.getByRole("button", { name });
         expect(cell).toHaveAttribute("data-day-state", "available");
         expect(cell).toHaveAttribute("data-in-period", "true");
-        expect(cell).toHaveClass("border-v3-primary", "border-[1.5px]");
-        expect(cell).not.toHaveClass("border-v3-border");
+        expect(cell).toHaveClass("border-v3-primary!", "border-[1.5px]");
+        expect(cell).not.toHaveClass("border-v3-border!");
     });
 
     it("keeps the used-day border strong even when session order classifies it as before", () => {
@@ -66,8 +66,8 @@ describe("service-period borders", () => {
         const cell = screen.getByRole("button", { name: "2026.11.02(월) 8회차" });
         expect(cell).toHaveAttribute("data-day-state", "before");
         expect(cell).toHaveAttribute("data-in-period", "true");
-        expect(cell).toHaveClass(hatch, "border-v3-primary", "border-[1.5px]");
-        expect(cell).not.toHaveClass("border-v3-primary/40");
+        expect(cell).toHaveClass(hatch, "border-v3-primary!", "border-[1.5px]");
+        expect(cell).not.toHaveClass("border-v3-primary/40!");
         expect(cell).toHaveTextContent("8회차");
     });
 
@@ -75,8 +75,8 @@ describe("service-period borders", () => {
         render(<ServiceDateSheet {...props({ context, day: 12 })} />);
         const cell = screen.getByRole("button", { name });
         expect(cell).toHaveAttribute("data-in-period", "true");
-        expect(cell).toHaveClass(hatch, "border-v3-primary/40", "border-[1.5px]");
-        expect(cell).not.toHaveClass("border-v3-primary");
+        expect(cell).toHaveClass(hatch, "border-v3-primary/40!", "border-[1.5px]");
+        expect(cell).not.toHaveClass("border-v3-primary!");
     });
 
     it.each(["2026.11.12(목)", "2026.11.13(금)"])("leaves available margin day %s unchanged", (name) => {
@@ -85,8 +85,8 @@ describe("service-period borders", () => {
         expect(cell).toHaveAttribute("data-day-state", "available");
         expect(cell).not.toHaveAttribute("data-in-period");
         expect(cell).toHaveClass("border", "border-v3-border", "bg-white", "text-v3-dark");
-        expect(cell).not.toHaveClass("border-v3-primary");
-        expect(cell).not.toHaveClass("border-v3-primary/40");
+        expect(cell).not.toHaveClass("border-v3-primary!");
+        expect(cell).not.toHaveClass("border-v3-primary/40!");
         expect(cell).not.toHaveClass("border-[1.5px]");
     });
 
@@ -95,15 +95,15 @@ describe("service-period borders", () => {
         fireEvent.click(screen.getByRole("button", { name: "이전 달" }));
         const first = screen.getByRole("button", { name: "2026.10.22(목) 1회차" });
         expect(first).toHaveAttribute("data-in-period", "true");
-        expect(first).toHaveClass(hatch, "border-v3-primary", "border-[1.5px]");
-        expect(first).not.toHaveClass("border-v3-primary/40");
+        expect(first).toHaveClass(hatch, "border-v3-primary!", "border-[1.5px]");
+        expect(first).not.toHaveClass("border-v3-primary/40!");
         expect(first).toHaveTextContent("1회차");
         const margin = screen.getByRole("button", { name: "2026.10.21(수)" });
         expect(margin).toHaveAttribute("data-day-state", "before");
         expect(margin).not.toHaveAttribute("data-in-period");
         expect(margin).toHaveClass(hatch, "border", "border-v3-border");
-        expect(margin).not.toHaveClass("border-v3-primary");
-        expect(margin).not.toHaveClass("border-v3-primary/40");
+        expect(margin).not.toHaveClass("border-v3-primary!");
+        expect(margin).not.toHaveClass("border-v3-primary/40!");
     });
 
     it("preserves the selected fill on an in-period day", () => {
@@ -111,7 +111,7 @@ describe("service-period borders", () => {
         const cell = screen.getByRole("button", { name: "2026.11.06(금)" });
         fireEvent.click(cell);
         expect(cell).toHaveAttribute("aria-pressed", "true");
-        expect(cell).toHaveClass("border-v3-primary", "bg-v3-primary", "text-white");
+        expect(cell).toHaveClass("border-v3-primary!", "bg-v3-primary", "text-white");
         expect(cell).not.toHaveClass("bg-white");
         expect(screen.getByRole("button", { name: "선택" })).toBeEnabled();
     });
@@ -121,10 +121,10 @@ describe("service-period borders", () => {
         render(<ServiceDateSheet {...props({ context: editingContext, day: 12, editing: true, value: "2026-11-11" })} />);
         const current = screen.getByRole("button", { name: "2026.11.10(화) 지금" });
         expect(current).toHaveAttribute("data-in-period", "true");
-        expect(current).toHaveClass("border-dashed", "border-v3-primary", "text-v3-primary");
-        expect(current).not.toHaveClass("border-v3-primary/40");
+        expect(current).toHaveClass("border-dashed", "border-v3-primary!", "text-v3-primary");
+        expect(current).not.toHaveClass("border-v3-primary/40!");
         fireEvent.click(current);
-        expect(current).toHaveClass("border-dashed", "border-v3-primary", "bg-v3-primary", "text-white");
+        expect(current).toHaveClass("border-dashed", "border-v3-primary!", "bg-v3-primary", "text-white");
         expect(current).not.toHaveClass("text-v3-primary");
     });
 
@@ -132,7 +132,7 @@ describe("service-period borders", () => {
         render(<ServiceDateSheet {...props({ context, day: 12 })} />);
         const legend = screen.getByText("서비스 기간 (10.22~11.11)");
         expect(legend.parentElement?.firstElementChild).toBe(legend);
-        expect(legend.querySelector("i")).toHaveClass("mr-1", "inline-block", "h-3", "w-3", "rounded", "align-middle", "border-[1.5px]", "border-v3-primary");
+        expect(legend.querySelector("i")).toHaveClass("mr-1", "inline-block", "h-3", "w-3", "rounded", "align-middle", "border-[1.5px]", "border-v3-primary!");
         expect(screen.getByText("선택한 날")).toBeInTheDocument();
         expect(screen.getByText("선택 가능")).toBeInTheDocument();
         expect(screen.getByText("고를 수 없음 (주말·기간 밖·다른 회차·회차 순서)")).toBeInTheDocument();
