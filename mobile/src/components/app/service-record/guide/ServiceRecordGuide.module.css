@@ -1002,15 +1002,10 @@
   line-height: 24px;
 }
 
-.cal-sub,
-.cal-range {
+.cal-sub {
   margin: 4px 0 8px;
   color: hsl(var(--v3-text-muted));
   font-size: 12px;
-}
-
-.cal-range {
-  margin: 0 0 10px;
 }
 
 .cal-month {
@@ -1028,11 +1023,13 @@
 .cal-month > span {
   display: grid;
   place-items: center;
-  width: 42px;
+  padding: 0 10px;
   height: 36px;
   border: 1px solid hsl(var(--v3-border));
   border-radius: 10px;
-  font-size: 24px;
+  font-size: 13px;
+  font-weight: 800;
+  white-space: nowrap;
 }
 
 .cal-month > span:last-child {

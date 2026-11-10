@@ -22,6 +22,7 @@ import {
 } from "@/components/ui/sheet";
 import { Spinner } from "@/components/ui/spinner";
 import { Switch } from "@/components/ui/switch";
+import { useSheetExit } from "@/components/ui/use-sheet-exit";
 import {
   adminServiceRecordScheduleApi,
   type AdminServiceRecordScheduleApi,
@@ -110,6 +111,7 @@ export function ServiceRecordScheduleSheet({
   onSaved,
   api = adminServiceRecordScheduleApi,
 }: ServiceRecordScheduleSheetProps) {
+  const { open, close, exitWatcher } = useSheetExit();
   const locale = useLocale();
   const queryClient = useQueryClient();
   const text = useCallback(
@@ -264,7 +266,8 @@ export function ServiceRecordScheduleSheet({
       });
       if (result.kind === "saved") {
         void queryClient.invalidateQueries({ queryKey: serviceRecordQueryKeys.clientOverviews() });
-        onSaved({ sessionCount: model.requiredCount });
+        const saved = { sessionCount: model.requiredCount };
+        close(() => onSaved(saved));
         return;
       }
       if (result.kind === "source-changed") {
@@ -353,18 +356,20 @@ export function ServiceRecordScheduleSheet({
 
   return (
     <Sheet
-      open
-      onOpenChange={(open) => {
-        if (!open && !closeDisabled) onClose();
+      open={open}
+      onOpenChange={(next) => {
+        if (!next && !closeDisabled) close(onClose);
       }}
     >
       <SheetContent
         side="bottom"
+        inert={!open || undefined}
         overlayClassName="z-[200]"
         data-component={dataComponent}
         data-source-component={SOURCE_COMPONENT}
         className="z-[201] flex max-h-[94dvh] w-full min-w-0 flex-col gap-0 overflow-hidden rounded-t-[28px] bg-white p-0"
       >
+        {exitWatcher}
         <div aria-hidden="true" data-slot="schedule-sheet-handle" className="mx-auto mt-3 h-1 w-9 shrink-0 rounded-full bg-v3-border" />
         <SheetHeader data-component={part("header")} className="gap-0.5 px-[22px] pb-2 pt-3 pr-16">
           <SheetTitle className="text-[1.25rem] font-bold text-v3-dark">{text("title")}</SheetTitle>
@@ -579,7 +584,7 @@ export function ServiceRecordScheduleSheet({
             disabled={closeDisabled}
             data-component={part("footer_cancel")}
             className="h-11 min-w-0 flex-1"
-            onClick={onClose}
+            onClick={() => close(onClose)}
           >
             {text("cancel")}
           </Button>

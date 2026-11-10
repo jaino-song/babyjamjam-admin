@@ -8,6 +8,7 @@ import { isoDateInKorea, type KrBusinessDayCalendar } from "@/lib/date/business-
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
+import { useSheetExit } from "@/components/ui/use-sheet-exit";
 
 const WEEKDAYS = ["일", "월", "화", "수", "목", "금", "토"];
 // Keep the admin schedule sheet's cell sizing and blocked hatch unchanged.
@@ -71,6 +72,7 @@ export interface ServiceDateSheetProps extends DateRules {
 
 /** Mounted only while open, so cancelling discards the pending selection. */
 export function ServiceDateSheet({ "data-component": root, context, day, calendar, calendarReady, value, editing, onClose, onSelect, onOrderBlocked }: ServiceDateSheetProps) {
+    const { open, close, exitWatcher } = useSheetExit();
     const first = offsetServiceDate(context.startDate, -7);
     const last = offsetServiceDate(context.endDate, 7);
     const current = context.sessions.find((row) => row.sessionIndex === day)?.serviceDate.slice(0, 10) ?? "";
@@ -85,27 +87,29 @@ export function ServiceDateSheet({ "data-component": root, context, day, calenda
     const shiftMonth = (delta: number) => new Date(Date.UTC(year, monthNumber - 1 + delta, 1)).toISOString().slice(0, 7);
     const previous = shiftMonth(-1);
     const next = shiftMonth(1);
+    const prevMonthNumber = Number(previous.slice(5, 7));
+    const nextMonthNumber = Number(next.slice(5, 7));
     const rules = { context, day, calendar, calendarReady };
     const selectedState = classifyServiceDate(selected, rules);
     const canSelect = selected !== "" && selected !== value && (selectedState === "available" || (pending && selectedState === "current"));
     const child = (suffix: string) => `${root}_${suffix}`;
 
     return (
-        <Sheet open onOpenChange={(open) => { if (!open) onClose(); }}>
-            <SheetContent side="bottom" overlayClassName="z-[200]" data-component={root} data-source-component="ServiceDateSheet" className="z-[201] flex h-[80dvh] max-h-[94dvh] min-w-0 flex-col gap-0 overflow-hidden rounded-t-[28px] bg-white p-0">
+        <Sheet open={open} onOpenChange={(next) => { if (!next) close(onClose); }}>
+            <SheetContent side="bottom" inert={!open || undefined} overlayClassName="z-[200]" data-component={root} data-source-component="ServiceDateSheet" className="z-[201] flex h-[80dvh] max-h-[94dvh] min-w-0 flex-col gap-0 overflow-hidden rounded-t-[28px] bg-white p-0">
+                {exitWatcher}
                 <div aria-hidden="true" data-slot="date-sheet-handle" className="mx-auto mt-3 h-1 w-9 shrink-0 rounded-full bg-v3-border" />
                 <SheetHeader data-component={child("header")} className="gap-0.5 px-[22px] pb-2 pt-3 pr-16">
                     <SheetTitle className="text-2xl font-bold text-v3-dark">{day}회차 서비스 제공일</SheetTitle>
                     <SheetDescription className="text-sm font-semibold text-v3-text-muted">{editing && current ? `지금 ${formatServiceDate(current)}` : "날짜를 골라 주세요."}</SheetDescription>
-                    <Button data-component={child("header_close")} type="button" variant="ghost" size="icon" aria-label="닫기" className="text-base absolute right-2 top-3 h-11 w-11 text-v3-text-muted" onClick={onClose}><X size={20} /></Button>
+                    <Button data-component={child("header_close")} type="button" variant="ghost" size="icon" aria-label="닫기" className="text-base absolute right-2 top-3 h-11 w-11 text-v3-text-muted" onClick={() => close(onClose)}><X size={20} /></Button>
                 </SheetHeader>
                 <div data-component={child("calendar")} className="min-h-0 flex-1 overflow-y-auto px-4 pb-4">
-                    <p data-component={child("calendar_window")} className="mb-2 text-sm font-semibold text-v3-text-muted">고를 수 있는 기간: {first ? formatServiceDate(first, true) : "제한 없음"} ~ {last ? formatServiceDate(last, true) : "제한 없음"}</p>
                     <div data-component={child("calendar_navigation")} className="mb-2 flex items-center justify-between gap-2">
                         <b className="text-base text-v3-dark">{year}년 {monthNumber}월</b>
                         <div className="flex gap-1">
-                            <Button data-component={child("calendar_navigation_previous")} type="button" variant="v3-outline" size="icon" className="text-base h-11 w-11 rounded-xl" aria-label="이전 달" disabled={Boolean(first && previous < first.slice(0, 7))} onClick={() => setMonth(previous)}><ChevronLeft size={18} /></Button>
-                            <Button data-component={child("calendar_navigation_next")} type="button" variant="v3-outline" size="icon" className="text-base h-11 w-11 rounded-xl" aria-label="다음 달" disabled={Boolean(last && next > last.slice(0, 7))} onClick={() => setMonth(next)}><ChevronRight size={18} /></Button>
+                            <Button data-component={child("calendar_navigation_previous")} type="button" variant="v3-outline" className="text-base h-11 gap-1 rounded-xl px-3 font-bold" aria-label={`이전 달 ${prevMonthNumber}월`} disabled={Boolean(first && previous < first.slice(0, 7))} onClick={() => setMonth(previous)}><ChevronLeft size={16} aria-hidden="true" />{prevMonthNumber}월</Button>
+                            <Button data-component={child("calendar_navigation_next")} type="button" variant="v3-outline" className="text-base h-11 gap-1 rounded-xl px-3 font-bold" aria-label={`다음 달 ${nextMonthNumber}월`} disabled={Boolean(last && next > last.slice(0, 7))} onClick={() => setMonth(next)}>{nextMonthNumber}월<ChevronRight size={16} aria-hidden="true" /></Button>
                         </div>
                     </div>
                     <div data-component={child("calendar_weekdays")} aria-hidden="true" className="mb-2 grid grid-cols-7 gap-1 text-center text-sm font-bold text-v3-text-muted">{WEEKDAYS.map((label) => <span key={label}>{label}</span>)}</div>
@@ -137,8 +141,8 @@ export function ServiceDateSheet({ "data-component": root, context, day, calenda
                     </div>
                 </div>
                 <div data-component={child("actions")} className="flex shrink-0 gap-2 border-t border-v3-border px-4 pt-4 pb-[calc(1rem+env(safe-area-inset-bottom))] [&>*]:flex-1">
-                    <Button className="text-base" data-component={child("actions_cancel")} type="button" variant="v3-outline" size="md" onClick={onClose}>취소</Button>
-                    <Button className="text-base" data-component={child("actions_select")} type="button" variant="v3" size="md" disabled={!canSelect} onClick={() => { if (canSelect) onSelect(selected); }}>선택</Button>
+                    <Button className="text-base" data-component={child("actions_cancel")} type="button" variant="v3-outline" size="md" onClick={() => close(onClose)}>취소</Button>
+                    <Button className="text-base" data-component={child("actions_select")} type="button" variant="v3" size="md" disabled={!canSelect} onClick={() => { if (canSelect) close(() => onSelect(selected)); }}>선택</Button>
                 </div>
             </SheetContent>
         </Sheet>
