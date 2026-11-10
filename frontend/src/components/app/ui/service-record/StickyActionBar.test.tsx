@@ -16,12 +16,12 @@ describe("StickyActionBar", () => {
 
     const bar = container.firstElementChild;
     expect(bar).toHaveAttribute("data-source-component", "StickyActionBar");
-    expect(bar).toHaveClass("sticky", "bottom-0", "z-10", "border-t", "grid", "bg-white");
+    expect(bar).toHaveClass("sticky", "bottom-0", "z-10", "border-t", "flex", "bg-white");
     expect(bar).not.toHaveClass("fixed");
-    expect(bar?.className).not.toContain("safe-area");
+    expect(bar).toHaveClass("pb-[calc(12px*var(--glint-ui-scale,1)+env(safe-area-inset-bottom))]");
   });
 
-  it("gives every action an equal shrinkable slot below sm and natural right-aligned width from sm up", () => {
+  it("gives every action an equal shrinkable slot at every width", () => {
     const { container } = render(
       <StickyActionBar data-component={BASE}>
         <Button variant="outline">이전</Button>
@@ -30,15 +30,13 @@ describe("StickyActionBar", () => {
     );
 
     expect(container.firstElementChild).toHaveClass(
-      "grid",
-      "grid-flow-col",
-      "auto-cols-fr",
-      "[&>*]:min-w-0",
-      "sm:flex",
-      "sm:justify-end",
-      "sm:[&>*]:flex-none",
+      "flex",
+      "[&_button]:flex-1",
+      "[&_button]:min-w-0",
+      "[&_button]:h-[calc(46px*var(--glint-ui-scale,1))]",
+      "[&_button]:rounded-full",
+      "[&_button]:text-[calc(16px*var(--glint-ui-scale,1))]",
       "px-[calc(16px*var(--glint-ui-scale,1))]",
-      "sm:px-[calc(24px*var(--glint-ui-scale,1))]",
     );
     expect(screen.getByRole("button", { name: "이전" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "다음" })).toBeInTheDocument();
@@ -56,15 +54,7 @@ describe("StickyActionBar", () => {
     const leading = container.querySelector(`[data-component="${BASE}_leading"]`);
     expect(leading).not.toBeNull();
     expect(leading).toContainElement(buttons[0]);
-    expect(leading).toHaveClass(
-      "min-w-0",
-      "[&>*]:w-full",
-      "[&>*]:min-w-0",
-      "sm:mr-auto",
-      "sm:flex",
-      "sm:[&>*]:w-auto",
-      "sm:[&>*]:flex-none",
-    );
+    expect(leading).toHaveClass("contents");
     expect(container.firstElementChild?.firstElementChild).toBe(leading);
   });
 

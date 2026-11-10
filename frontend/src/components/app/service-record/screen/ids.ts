@@ -125,12 +125,10 @@ export const headerLabelId = (key: string): string => `${headerSlotId(key)}-labe
 export const OVERVIEW_TITLE = "제공기록표";
 /** SRW:816 */
 export const OVERVIEW_HELP_READONLY_COPY = "조회 전용 기록입니다. 회차를 선택해 내용을 확인하세요.";
-export const OVERVIEW_HELP_COPY = "제출된 기록은 눌러서 수정할 수 있습니다.";
-/**
- * SRW:846 in admin. User-approved change: a session with a pending edit reads "수정됨"
- * (SRW says "초안 변경"); every other label is unchanged.
- */
-export const DAY_STATUS_CHANGED = "수정됨";
+export const OVERVIEW_HELP_COPY = "회차를 눌러 기록을 확인하고 수정할 수 있습니다.";
+/** Admin status copy; pending edits take precedence over confirmed admin edits. */
+export const DAY_STATUS_CHANGED = "수정중";
+export const DAY_STATUS_ADMIN_EDITED = "수정 완료";
 export const DAY_STATUS_DONE = "제출완료";
 export const DAY_STATUS_EDITABLE = "편집 가능";
 export const DAY_STATUS_READONLY = "조회 가능";

@@ -18,6 +18,10 @@ import { ServiceInfoStep } from "./ServiceInfoStep";
 
 const SOURCE_COMPONENT = "AdminServiceRecordScreen";
 
+export type AdminServiceRecordScreenProps = ServiceRecordWizardProps & {
+    adminEditedSessionIndexes?: ReadonlySet<number>;
+};
+
 /** `ReviewStep` requires an action; the admin wizard always passes one, so the shared wizard's fallback button (SRW:1024) is not built. */
 const NO_SESSION_ACTION = <></>;
 
@@ -46,6 +50,7 @@ export function AdminServiceRecordScreen({
     editing,
     readOnly = false,
     changedSessionIndexes,
+    adminEditedSessionIndexes,
     clientSignature,
     busy,
     lockedDays,
@@ -63,7 +68,7 @@ export function AdminServiceRecordScreen({
     onNextPage,
     onEditSection,
     slots,
-}: ServiceRecordWizardProps) {
+}: AdminServiceRecordScreenProps) {
     const child = (suffix: string) => `${root}_${suffix}`;
     const currentDayPage = DAY_PAGES[pageIdx] ?? DAY_PAGES[0];
     const { plannedDateVectorProvided, plannedDateVectorValid } = resolvePlannedDates({
@@ -103,7 +108,7 @@ export function AdminServiceRecordScreen({
                 <div
                     data-component={child("top-bar_admin-toolbar")}
                     data-slot="admin-toolbar"
-                    className="px-[calc(16px*var(--glint-ui-scale,1))] pt-[calc(8px*var(--glint-ui-scale,1))] sm:px-[calc(24px*var(--glint-ui-scale,1))]"
+                    className="px-[calc(16px*var(--glint-ui-scale,1))] pt-[calc(8px*var(--glint-ui-scale,1))]"
                 >
                     {slots.adminToolbar}
                 </div>
@@ -144,6 +149,7 @@ export function AdminServiceRecordScreen({
                     draft={draft}
                     readOnly={readOnly}
                     changedSessionIndexes={changedSessionIndexes}
+                    adminEditedSessionIndexes={adminEditedSessionIndexes}
                     defaultDate={defaultDate}
                     lockedDays={lockedDays}
                     onOpenDay={onOpenDay}
@@ -157,6 +163,7 @@ export function AdminServiceRecordScreen({
             {/* One element type per page kind and no key on pageIdx: the input pages stay mounted while the page index moves between them. */}
             {screen === "day" && (currentDayPage.confirmation ? (
                 <ReviewStep
+                    adminEditedSessionIndexes={adminEditedSessionIndexes}
                     data-component={root}
                     context={context}
                     day={day}
@@ -179,6 +186,7 @@ export function AdminServiceRecordScreen({
                 />
             ) : (
                 <DayPageStep
+                    adminEditedSessionIndexes={adminEditedSessionIndexes}
                     data-component={root}
                     context={context}
                     day={day}

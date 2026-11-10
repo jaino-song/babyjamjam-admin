@@ -12,17 +12,14 @@ export interface DayCardGridProps {
   className?: string;
 }
 
-/**
- * Session cards: 3 equal columns, full width, below `sm`; 5 equal columns,
- * at most 560px wide and centred, from `sm` up. No auto-fill.
- */
+/** Session cards fill the available width with a scaled 88px minimum. */
 export function DayCardGrid({ "data-component": dataComponent, children, className }: DayCardGridProps) {
   return (
     <div
       data-component={dataComponent}
       data-source-component={GRID_SOURCE_COMPONENT}
       className={cn(
-        "grid w-full grid-cols-3 gap-[calc(8px*var(--glint-ui-scale,1))] sm:mx-auto sm:max-w-[560px] sm:grid-cols-5",
+        "grid grid-cols-[repeat(auto-fill,minmax(calc(88px*var(--glint-ui-scale,1)),1fr))] gap-[calc(8px*var(--glint-ui-scale,1))]",
         className,
       )}
     >
@@ -40,6 +37,7 @@ export interface DayCardProps {
   /** Large session title (the bare session number today). */
   title: ReactNode;
   statusLabel: ReactNode;
+  statusTone?: "warning" | "success";
   state: DayCardState;
   onClick: () => void;
   disabled?: boolean;
@@ -57,8 +55,8 @@ export interface DayCardProps {
 const CARD_STATE_CLASS: Record<DayCardState, string> = {
   todo: "border-v3-border! bg-white",
   done: "border-v3-primary-medium! bg-v3-primary-light",
-  readonly: "border-v3-primary-medium! bg-white",
-  changed: "border-v3-primary! bg-v3-primary-light ring-[3px] ring-v3-primary-light",
+  readonly: "border-v3-primary! bg-white ring-[3px] ring-v3-primary-light",
+  changed: "border-v3-primary-medium! bg-v3-primary-light",
   current: "border-v3-primary! bg-white ring-[3px] ring-v3-primary-light",
   locked: "border-v3-border! bg-white opacity-50",
 };
@@ -66,14 +64,14 @@ const CARD_STATE_CLASS: Record<DayCardState, string> = {
 const STATUS_EMPHASIS: Record<DayCardState, boolean> = {
   todo: false,
   done: true,
-  readonly: true,
+  readonly: false,
   changed: true,
   current: false,
   locked: false,
 };
 
 /**
- * One square session card. `locked` is only a look (dimmed); whether it can be
+ * One session card. `locked` is only a look (dimmed); whether it can be
  * pressed is the screen's call through `disabled`.
  */
 export function DayCard({
@@ -81,6 +79,7 @@ export function DayCard({
   dateLabel,
   title,
   statusLabel,
+  statusTone,
   state,
   onClick,
   disabled = false,
@@ -98,7 +97,7 @@ export function DayCard({
       disabled={disabled}
       onClick={onClick}
       className={cn(
-        "flex aspect-square min-w-0 flex-col items-center justify-center gap-[calc(4px*var(--glint-ui-scale,1))] rounded-[12px] border-[1.5px] p-[calc(4px*var(--glint-ui-scale,1))] text-center transition-colors",
+        "flex min-w-0 flex-col items-center rounded-[calc(12px*var(--glint-ui-scale,1))] border-[calc(1.5px*var(--glint-ui-scale,1))] px-[calc(4px*var(--glint-ui-scale,1))] py-[calc(10px*var(--glint-ui-scale,1))] text-center transition-colors",
         "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-v3-primary focus-visible:ring-offset-1",
         "disabled:cursor-not-allowed",
         CARD_STATE_CLASS[state],
@@ -106,21 +105,23 @@ export function DayCard({
     >
       <span
         data-component={`${dataComponent}_date`}
-        className="text-[calc(11px*var(--glint-ui-scale,1))] text-v3-text-muted"
+        className="min-h-[calc(20px*var(--glint-ui-scale,1))] text-[calc(14px*var(--glint-ui-scale,1))] leading-[calc(20px*var(--glint-ui-scale,1))] text-v3-text-muted"
       >
         {dateLabel}
       </span>
       <span
         data-component={`${dataComponent}_title`}
-        className="text-[calc(16px*var(--glint-ui-scale,1))] font-extrabold leading-tight text-v3-dark"
+        className="text-[calc(20px*var(--glint-ui-scale,1))] font-extrabold leading-tight text-v3-dark"
       >
         {title}
       </span>
       <span
         data-component={`${dataComponent}_status`}
         className={cn(
-          "text-[calc(11px*var(--glint-ui-scale,1))]",
-          STATUS_EMPHASIS[state] ? "font-bold text-v3-primary" : "text-v3-text-muted",
+          "mt-[calc(3px*var(--glint-ui-scale,1))] text-[calc(12px*var(--glint-ui-scale,1))] leading-[calc(16px*var(--glint-ui-scale,1))]",
+          statusTone === "warning" ? "font-bold text-status-warning-fg"
+            : statusTone === "success" ? "font-bold text-status-success-fg"
+              : STATUS_EMPHASIS[state] ? "font-bold text-v3-primary" : "text-v3-text-muted",
         )}
       >
         {statusLabel}

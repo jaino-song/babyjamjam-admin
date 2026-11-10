@@ -163,6 +163,7 @@ export type DayPageStepProps = Pick<
     | "onNextPage"
     | "onOpenServiceDateEditor"
 > & {
+    adminEditedSessionIndexes?: ReadonlySet<number>;
     serviceDateDisplay?: ServiceRecordWizardSlots["serviceDateDisplay"];
     serviceDateEditor?: ServiceRecordWizardSlots["serviceDateEditor"];
 };

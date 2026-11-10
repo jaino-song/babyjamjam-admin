@@ -53,7 +53,7 @@ export function ReviewSection({
           id={titleId}
           data-component={`${dataComponent}_header_title`}
           className={cn(
-            "inline-block rounded-[6px] px-[calc(7px*var(--glint-ui-scale,1))] py-[calc(2px*var(--glint-ui-scale,1))] text-[calc(10.5px*var(--glint-ui-scale,1))] font-extrabold",
+            "inline-block rounded-[6px] px-[calc(7px*var(--glint-ui-scale,1))] py-[calc(2px*var(--glint-ui-scale,1))] text-[calc(12px*var(--glint-ui-scale,1))] leading-[calc(16px*var(--glint-ui-scale,1))] font-extrabold",
             TAG_TONE_CLASS[tone],
           )}
         >
@@ -66,7 +66,7 @@ export function ReviewSection({
             data-slot="sec-edit"
             aria-label={`${title} 수정`}
             onClick={onEdit}
-            className="min-h-[calc(32px*var(--glint-ui-scale,1))] rounded-[6px] px-1 text-[calc(12px*var(--glint-ui-scale,1))] font-bold text-v3-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-v3-primary"
+            className="min-h-[calc(32px*var(--glint-ui-scale,1))] rounded-[6px] px-[calc(4px*var(--glint-ui-scale,1))] text-[calc(14px*var(--glint-ui-scale,1))] leading-[calc(20px*var(--glint-ui-scale,1))] font-bold text-v3-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-v3-primary"
           >
             {editLabel}
           </button>
@@ -142,7 +142,7 @@ export function ReviewRow({
       data-component={dataComponent}
       data-source-component={ROW_SOURCE_COMPONENT}
       className={cn(
-        "min-w-0 rounded-[10px] border border-v3-border! bg-v3-dim-white px-[calc(10px*var(--glint-ui-scale,1))] py-[calc(7px*var(--glint-ui-scale,1))] text-[calc(12px*var(--glint-ui-scale,1))]",
+        "min-w-0 rounded-[10px] border border-v3-border! bg-v3-dim-white px-[calc(10px*var(--glint-ui-scale,1))] py-[calc(8px*var(--glint-ui-scale,1))] text-[calc(16px*var(--glint-ui-scale,1))]",
         note ? "block" : "flex justify-between gap-[calc(12px*var(--glint-ui-scale,1))]",
         className,
       )}
