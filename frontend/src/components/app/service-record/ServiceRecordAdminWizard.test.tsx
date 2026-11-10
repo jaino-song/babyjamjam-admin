@@ -1562,6 +1562,7 @@ describe("per-session administrator editing", () => {
             openDayPicker(withServiceDays());
             expect(screen.getByRole("button", { name: /^2026\.12\.19\(/ })).toBeDisabled();
             expect(screen.getByRole("button", { name: /^2026\.12\.20\(/ })).toBeDisabled();
+            expect(screen.getByRole("button", { name: /^2026\.12\.21\(/ })).toBeEnabled();
             fireEvent.click(screen.getByRole("button", { name: /^2026\.12\.21\(/ }));
         });
 

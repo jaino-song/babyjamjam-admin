@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { ChevronLeft, ChevronRight, X } from "lucide-react";
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -95,6 +95,7 @@ function DateSheetContent({
     windowStart = null, windowEnd = null, startDate, endDate, otherSessions,
     selectedServiceDate, sessionLabel, onApply, error, disabled = false,
 }: AdminServiceDateSheetProps) {
+    const titleRef = useRef<HTMLHeadingElement>(null);
     const initial = parseIsoDate(currentServiceDate) ? currentServiceDate : isoDateInKorea();
     const [month, setMonth] = useState(initial.slice(0, 7));
     const visibleMonth = windowStart && month < windowStart.slice(0, 7) ? windowStart.slice(0, 7)
@@ -124,25 +125,26 @@ function DateSheetContent({
     return (
         <Sheet open onOpenChange={onOpenChange}>
             <SheetContent side="bottom" data-component={root} data-source-component="AdminServiceDateSheet"
+                onOpenAutoFocus={(event) => { event.preventDefault(); titleRef.current?.focus(); }}
                 className="flex h-[80dvh] max-h-[94dvh] min-w-0 flex-col gap-0 overflow-hidden rounded-t-[calc(28px*var(--glint-ui-scale,1))] bg-white p-0 sm:bottom-6 sm:left-1/2 sm:right-auto sm:w-[calc(480px*var(--glint-ui-scale,1))] sm:max-w-[calc(100vw-48px)] sm:-translate-x-1/2 sm:rounded-[calc(28px*var(--glint-ui-scale,1))]">
                 <div aria-hidden="true" data-component={child("handle")} data-slot="date-sheet-handle" className="mx-auto mt-[calc(12px*var(--glint-ui-scale,1))] h-[calc(4px*var(--glint-ui-scale,1))] w-[calc(36px*var(--glint-ui-scale,1))] shrink-0 rounded-full bg-v3-border" />
                 <SheetHeader data-component={child("header")} className="gap-[calc(2px*var(--glint-ui-scale,1))] px-[calc(22px*var(--glint-ui-scale,1))] pb-[calc(8px*var(--glint-ui-scale,1))] pt-[calc(12px*var(--glint-ui-scale,1))] pr-[calc(64px*var(--glint-ui-scale,1))]">
-                    <SheetTitle data-component={child("header_title")} className="text-[calc(24px*var(--glint-ui-scale,1))] leading-[calc(32px*var(--glint-ui-scale,1))] font-bold text-v3-dark">{sessionLabel} 서비스 제공일 수정</SheetTitle>
+                    <SheetTitle ref={titleRef} tabIndex={-1} data-component={child("header_title")} className="text-[calc(24px*var(--glint-ui-scale,1))] leading-[calc(32px*var(--glint-ui-scale,1))] font-bold text-v3-dark outline-none">{sessionLabel} 서비스 제공일 수정</SheetTitle>
                     <SheetDescription data-component={child("header_description")} className="text-[calc(14px*var(--glint-ui-scale,1))] leading-[calc(20px*var(--glint-ui-scale,1))] font-semibold text-v3-text-muted">새로운 날짜를 선택해 주세요.</SheetDescription>
-                    <Button data-component={child("header_close")} type="button" variant="ghost" size="icon" aria-label="닫기" className={cn(ICON_BUTTON, "absolute right-[calc(8px*var(--glint-ui-scale,1))] top-[calc(12px*var(--glint-ui-scale,1))] text-v3-text-muted")} onClick={close}><X aria-hidden="true" /></Button>
+                    <Button data-component={child("header_close")} type="button" variant="ghost" size="icon" aria-label="닫기" className={cn(ICON_BUTTON, "border-0 absolute right-[calc(8px*var(--glint-ui-scale,1))] top-[calc(12px*var(--glint-ui-scale,1))] text-v3-text-muted")} onClick={close}><X aria-hidden="true" /></Button>
                 </SheetHeader>
                 <div data-component={child("calendar")} data-slot="calendar" className="min-h-0 flex-1 overflow-y-auto px-[calc(16px*var(--glint-ui-scale,1))] pb-[calc(16px*var(--glint-ui-scale,1))]">
                     {startDate && endDate ? <p data-component={child("calendar_window")} className="mb-[calc(8px*var(--glint-ui-scale,1))] text-[calc(14px*var(--glint-ui-scale,1))] leading-[calc(20px*var(--glint-ui-scale,1))] font-semibold text-v3-text-muted">서비스 기간: {formatServiceDate(startDate, true)} ~ {formatServiceDate(endDate, true)}</p> : null}
                     <div data-component={child("calendar_navigation")} className="mb-[calc(8px*var(--glint-ui-scale,1))] flex items-center justify-between gap-[calc(8px*var(--glint-ui-scale,1))]">
                         <b data-component={child("calendar_navigation_month")} className="text-[calc(16px*var(--glint-ui-scale,1))] leading-[calc(24px*var(--glint-ui-scale,1))] text-v3-dark" aria-live="polite">{year}년 {monthNumber}월</b>
-                        <div className="flex gap-[calc(4px*var(--glint-ui-scale,1))]">
-                            <Button data-component={child("calendar_navigation_previous")} type="button" variant="outline" size="icon" className={ICON_BUTTON} aria-label="이전 달" disabled={Boolean(windowStart && previous < windowStart.slice(0, 7))} onClick={() => setMonth(previous)}><ChevronLeft aria-hidden="true" /></Button>
-                            <Button data-component={child("calendar_navigation_next")} type="button" variant="outline" size="icon" className={ICON_BUTTON} aria-label="다음 달" disabled={Boolean(windowEnd && next > windowEnd.slice(0, 7))} onClick={() => setMonth(next)}><ChevronRight aria-hidden="true" /></Button>
+                        <div data-component={child("calendar_navigation_controls")} className="flex gap-[calc(4px*var(--glint-ui-scale,1))]">
+                            <Button data-component={child("calendar_navigation_controls_previous")} type="button" variant="outline" size="icon" className={ICON_BUTTON} aria-label="이전 달" disabled={Boolean(windowStart && previous < windowStart.slice(0, 7))} onClick={() => setMonth(previous)}><ChevronLeft aria-hidden="true" /></Button>
+                            <Button data-component={child("calendar_navigation_controls_next")} type="button" variant="outline" size="icon" className={ICON_BUTTON} aria-label="다음 달" disabled={Boolean(windowEnd && next > windowEnd.slice(0, 7))} onClick={() => setMonth(next)}><ChevronRight aria-hidden="true" /></Button>
                         </div>
                     </div>
-                    <div data-component={child("calendar_weekdays")} aria-hidden="true" className="mb-[calc(8px*var(--glint-ui-scale,1))] grid grid-cols-7 gap-[calc(4px*var(--glint-ui-scale,1))] text-center text-[calc(14px*var(--glint-ui-scale,1))] leading-[calc(20px*var(--glint-ui-scale,1))] font-bold text-v3-text-muted">{WEEKDAYS.map((label) => <span key={label}>{label}</span>)}</div>
+                    <div data-component={child("calendar_weekdays")} aria-hidden="true" className="mb-[calc(8px*var(--glint-ui-scale,1))] grid grid-cols-7 gap-[calc(4px*var(--glint-ui-scale,1))] text-center text-[calc(14px*var(--glint-ui-scale,1))] leading-[calc(20px*var(--glint-ui-scale,1))] font-bold text-v3-text-muted">{WEEKDAYS.map((label, index) => <span key={label} data-component={child(`calendar_weekdays_day-${index}`)}>{label}</span>)}</div>
                     <div data-component={child("calendar_days")} data-slot="calendar-days" className="grid grid-cols-7 gap-[calc(4px*var(--glint-ui-scale,1))]">
-                        {Array.from({ length: startWeekday }, (_, index) => <span key={`empty-${index}`} />)}
+                        {Array.from({ length: startWeekday }, (_, index) => <span key={`empty-${index}`} data-component={child(`calendar_days_leading-blank-${index + 1}`)} />)}
                         {Array.from({ length: count }, (_, index) => {
                             const iso = `${visibleMonth}-${String(index + 1).padStart(2, "0")}`;
                             const usedBy = otherSessions.find((row) => row.serviceDate.slice(0, 10) === iso);
@@ -156,15 +158,15 @@ function DateSheetContent({
                                 className={cn(MONTH_CELL_BASE, "border-v3-border bg-white text-v3-dark", !blocked && "cursor-pointer", blocked && HATCHED,
                                     isInPeriod && "border-[1.5px] border-v3-primary!",
                                     isCurrent && "border-dashed border-v3-primary! text-v3-primary", isSelected && "border-v3-primary! bg-v3-primary text-white")}>
-                                <span>{index + 1}</span>
+                                <span data-component={child(`calendar_days_day-${index + 1}_number`)}>{index + 1}</span>
                                 {usedBy || isCurrent ? <small data-component={child(`calendar_days_day-${index + 1}_annotation`)} className="mt-[calc(2px*var(--glint-ui-scale,1))] text-[calc(12px*var(--glint-ui-scale,1))] font-extrabold leading-none">{usedBy ? `${usedBy.sessionIndex}회차` : "지금"}</small> : null}
                             </button>;
                         })}
                     </div>
                     <div data-component={child("calendar_legend")} data-slot="legend" className="mt-[calc(12px*var(--glint-ui-scale,1))] flex flex-wrap gap-x-[calc(12px*var(--glint-ui-scale,1))] gap-y-[calc(4px*var(--glint-ui-scale,1))] text-[calc(12px*var(--glint-ui-scale,1))] leading-[calc(16px*var(--glint-ui-scale,1))] font-semibold text-v3-text-muted">
-                        <span data-component={child("calendar_legend_selected")}><i aria-hidden="true" className="mr-[calc(4px*var(--glint-ui-scale,1))] inline-block h-[calc(12px*var(--glint-ui-scale,1))] w-[calc(12px*var(--glint-ui-scale,1))] rounded bg-v3-primary align-middle" />선택한 날</span>
-                        <span data-component={child("calendar_legend_available")}><i aria-hidden="true" className="mr-[calc(4px*var(--glint-ui-scale,1))] inline-block h-[calc(12px*var(--glint-ui-scale,1))] w-[calc(12px*var(--glint-ui-scale,1))] rounded border border-v3-border align-middle" />선택 가능</span>
-                        <span data-component={child("calendar_legend_blocked")}><i aria-hidden="true" className={cn("mr-[calc(4px*var(--glint-ui-scale,1))] inline-block h-[calc(12px*var(--glint-ui-scale,1))] w-[calc(12px*var(--glint-ui-scale,1))] rounded border align-middle", HATCHED)} />선택 불가</span>
+                        <span data-component={child("calendar_legend_selected")}><i data-component={child("calendar_legend_selected_swatch")} aria-hidden="true" className="mr-[calc(4px*var(--glint-ui-scale,1))] inline-block h-[calc(12px*var(--glint-ui-scale,1))] w-[calc(12px*var(--glint-ui-scale,1))] rounded bg-v3-primary align-middle" />선택한 날</span>
+                        <span data-component={child("calendar_legend_available")}><i data-component={child("calendar_legend_available_swatch")} aria-hidden="true" className="mr-[calc(4px*var(--glint-ui-scale,1))] inline-block h-[calc(12px*var(--glint-ui-scale,1))] w-[calc(12px*var(--glint-ui-scale,1))] rounded border border-v3-border align-middle" />선택 가능</span>
+                        <span data-component={child("calendar_legend_blocked")}><i data-component={child("calendar_legend_blocked_swatch")} aria-hidden="true" className={cn("mr-[calc(4px*var(--glint-ui-scale,1))] inline-block h-[calc(12px*var(--glint-ui-scale,1))] w-[calc(12px*var(--glint-ui-scale,1))] rounded border align-middle", HATCHED)} />선택 불가</span>
                     </div>
                     {applyError ? <Alert variant="destructive" data-component={child("calendar_validation-error")} className="mt-[calc(12px*var(--glint-ui-scale,1))]"><AlertDescription>{applyError}</AlertDescription></Alert> : null}
                     {error ? <Alert variant="destructive" data-component={child("calendar_request-error")} className="mt-[calc(12px*var(--glint-ui-scale,1))]">

@@ -102,6 +102,21 @@ it("uses the admin client's enabled service days, including Saturdays", () => {
     expect(screen.getByRole("button", { name: "2026.11.08(일)" })).toBeDisabled();
 });
 
+it.each([
+    { currentServiceDate: "2026-12-21", month: "2026년 11월", boundary: "다음 달", edgeDay: "2026.11.24(화)" },
+    { currentServiceDate: "2026-09-21", month: "2026년 10월", boundary: "이전 달", edgeDay: "2026.10.26(월)" },
+])("clamps an out-of-window current date $currentServiceDate to the edge month", ({ currentServiceDate, month, boundary, edgeDay }) => {
+    render(<AdminServiceDateSheet {...props({ currentServiceDate })} />);
+    expect(screen.getByText(month)).toBeVisible();
+    expect(screen.getByRole("button", { name: boundary })).toBeDisabled();
+    expect(screen.getByRole("button", { name: edgeDay })).toBeEnabled();
+});
+
+it("focuses the title on open, keeping initial focus inside the sheet", () => {
+    render(<AdminServiceDateSheet {...props()} />);
+    expect(screen.getByRole("heading", { name: "3회차 서비스 제공일 수정" })).toHaveFocus();
+});
+
 it("renders request errors as a destructive alert below the calendar", () => {
     render(<AdminServiceDateSheet {...props({ error: "회차 순서와 제공일을 확인해 주세요." })} />);
     expect(screen.getByRole("alert")).toHaveTextContent("제공일을 저장하지 못했습니다.");
