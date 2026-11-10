@@ -151,16 +151,24 @@ export function ServiceRecordEditPreviewDialog({
             ...(sessionChanges.find((change) => change.sessionIndex === sessionIndex)?.rows ?? []),
         ],
     })).filter((group) => group.rows.length > 0);
-    // Confirm creates a record-snapshot job for content edits too, independent of a linked contract.
-    const documentsAffected = contentChanges.headerChanged || contentChanges.changedSessionIndexes.length > 0
-        || groups.length > 0 || impactedAssignments.length > 0;
+    const periodChanged = preview !== null && (preview.before.startDate !== preview.after.startDate
+        || preview.before.endDate !== preview.after.endDate);
+    // Match confirm's contract/receipt operations; snapshot jobs alone need no operator section.
+    const contractAffected = periodChanged && (preview.documentScope.evidence !== "observed"
+        || preview.documentScope.contract.currentDocumentId !== null);
+    const receipt = preview?.documentScope.receipt;
+    const receiptAffected = periodChanged && (receipt?.evidence !== "observed" || receipt.tokenIds.length > 0);
+    const documentsAffected = contractAffected || receiptAffected;
     const affectedSignatureSessions = preview?.signatureMetadata.sessions.filter((session) => session.hasSignature
         && (sessionIndexes.has(session.sessionIndex) || contentChanges.changedSessionIndexes.includes(session.sessionIndex))) ?? [];
+    const signatureReviewRequired = preview?.signatureMetadata.treatment === "manual_review" && affectedSignatureSessions.length > 0;
+    const hasPreviewChanges = groups.length > 0 || contentChanges.headerChanged || impactedAssignments.length > 0
+        || signatureReviewRequired || documentsAffected;
 
     return (
         <Sheet open={open} onOpenChange={(nextOpen) => !closeDisabled && onOpenChange(nextOpen)}>
             <SheetContent side="bottom" data-component={dataComponent} data-source-component={SOURCE_COMPONENT}
-                className="h-[86dvh] max-h-[94dvh] min-w-0 gap-0 overflow-hidden rounded-t-[calc(28px*var(--glint-ui-scale,1))] bg-white p-0 sm:left-1/2 sm:right-auto sm:bottom-6 sm:w-[calc(480px*var(--glint-ui-scale,1))] sm:max-w-[calc(100vw-32px)] sm:-translate-x-1/2 sm:rounded-[calc(28px*var(--glint-ui-scale,1))]"
+                className="h-[86dvh] max-h-[94dvh] min-w-0 gap-0 overflow-hidden rounded-t-[calc(28px*var(--glint-ui-scale,1))] bg-white p-0 sm:h-auto sm:max-h-[86dvh] sm:left-1/2 sm:right-auto sm:bottom-6 sm:w-[calc(480px*var(--glint-ui-scale,1))] sm:max-w-[calc(100vw-32px)] sm:-translate-x-1/2 sm:rounded-[calc(28px*var(--glint-ui-scale,1))]"
                 onEscapeKeyDown={(event) => { if (closeDisabled) event.preventDefault(); }}
                 onInteractOutside={(event) => { if (closeDisabled) event.preventDefault(); }}>
                 <div data-component={`${dataComponent}_handle`} data-slot="sheet-handle" aria-hidden="true"
@@ -245,6 +253,9 @@ export function ServiceRecordEditPreviewDialog({
                                 </Alert>
                             ) : null}
 
+                            {!hasPreviewChanges && !hasBlockingReasons ? (
+                                <p data-component={`${dataComponent}_content_no-changes`} data-slot="no-changes" className="text-sm text-v3-text-muted">변경된 내용이 없어요.</p>
+                            ) : null}
                             {groups.map((group) => (
                                 <section key={group.sessionIndex} data-component={`${dataComponent}_content_dates_session-${group.sessionIndex}`} data-slot="session-change"
                                     className="border-[1.5px] border-v3-primary! rounded-[calc(14px*var(--glint-ui-scale,1))] bg-white px-[calc(12px*var(--glint-ui-scale,1))] pt-[calc(10px*var(--glint-ui-scale,1))] pb-[calc(12px*var(--glint-ui-scale,1))] first:mt-[calc(14px*var(--glint-ui-scale,1))]">
@@ -269,7 +280,7 @@ export function ServiceRecordEditPreviewDialog({
                                     </ul>
                                 </section>
                             ) : null}
-                            {preview.signatureMetadata.treatment === "manual_review" ? (
+                            {signatureReviewRequired ? (
                                 <section data-component={`${dataComponent}_content_signature-metadata`} data-slot="signature-metadata" className="flex flex-col gap-2">
                                     <h3 data-component={`${dataComponent}_content_signature-metadata_title`} data-slot="title" className="text-sm font-semibold text-v3-dark">서명</h3>
                                     <ul data-component={`${dataComponent}_content_signature-metadata_sessions`} data-slot="signature-sessions" className="list-disc space-y-1 pl-5 text-sm text-v3-text-muted">
@@ -284,10 +295,11 @@ export function ServiceRecordEditPreviewDialog({
                             {documentsAffected ? (
                                 <section data-component={`${dataComponent}_content_document-scope`} data-slot="document-scope" className="flex flex-col gap-2">
                                     <h3 data-component={`${dataComponent}_content_document-scope_title`} data-slot="title" className="text-sm font-semibold text-v3-dark">전자문서</h3>
-                                    <p data-component={`${dataComponent}_content_document-scope_record`} data-slot="record" className="text-sm text-v3-text-muted">수정한 제공기록지의 전자문서 처리가 필요합니다.</p>
-                                    {(preview.before.startDate !== preview.after.startDate || preview.before.endDate !== preview.after.endDate)
-                                        && preview.documentScope.contract.currentDocumentId != null ? (
+                                    {contractAffected ? (
                                         <p data-component={`${dataComponent}_content_document-scope_contract`} data-slot="contract" className="text-sm text-v3-text-muted">{formatContractStage(preview.documentScope.contract.stage)}</p>
+                                    ) : null}
+                                    {receiptAffected ? (
+                                        <p data-component={`${dataComponent}_content_document-scope_receipt`} data-slot="receipt" className="text-sm text-v3-text-muted">영수증 · 변경된 서비스 기간에 맞춰 처리가 필요합니다.</p>
                                     ) : null}
                                 </section>
                             ) : null}

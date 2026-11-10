@@ -152,14 +152,85 @@ describe("ServiceRecordEditPreviewDialog", () => {
         expect(section).not.toHaveTextContent("3회차");
     });
 
-    it.each(["header", "session", "date", "assignment"])("shows document work for %s changes even without a linked contract", (kind) => {
+    it("omits signature review when only unsigned sessions changed", () => {
         render(<ServiceRecordEditPreviewDialog open onOpenChange={jest.fn()} preview={{ ...preview,
-            after: kind === "date" ? preview.after : preview.before,
-            contentChanges: { headerChanged: kind === "header", changedSessionIndexes: kind === "session" ? [2] : [] },
-            impactedAssignments: kind === "assignment" ? ["assignment-1"] : [],
-            documentScope: { ...preview.documentScope, contract: { currentDocumentId: null, stage: null } },
+            after: preview.before,
+            contentChanges: { headerChanged: false, changedSessionIndexes: [2] },
+            signatureMetadata: { ...preview.signatureMetadata, treatment: "manual_review", sessions: [
+                ...preview.signatureMetadata.sessions,
+                { sessionIndex: 2, hasSignature: false, signedAt: null, submittedAt: null },
+            ] },
         }} />);
-        expect(document.querySelector('[data-slot="document-scope"]')).toBeInTheDocument();
+        expect(screen.queryByText("서명")).not.toBeInTheDocument();
+        expect(document.querySelector('[data-slot="signature-metadata"]')).not.toBeInTheDocument();
+    });
+
+    it.each(["header", "content"])("omits document work for %s-only edits", (kind) => {
+        render(<ServiceRecordEditPreviewDialog open onOpenChange={jest.fn()} preview={{ ...preview,
+            after: preview.before,
+            contentChanges: { headerChanged: kind === "header", changedSessionIndexes: kind === "content" ? [1] : [] },
+        }} />);
+        expect(screen.queryByText("전자문서")).not.toBeInTheDocument();
+    });
+
+    it("shows contract work for a period change with a linked contract", () => {
+        render(<ServiceRecordEditPreviewDialog open onOpenChange={jest.fn()} preview={{ ...preview,
+            documentScope: { ...preview.documentScope, receipt: {
+                evidence: "observed", eformsignDocId: null, tokenIds: [], sourceDocumentId: null,
+            } },
+        }} />);
+        const section = document.querySelector('[data-slot="document-scope"]')!;
+        expect(section).toHaveTextContent("전자문서");
+        expect(section).toHaveTextContent("완료 계약 · 새 계약과 새 이용자 서명이 필요합니다.");
+        expect(within(section as HTMLElement).queryByText(/영수증/)).not.toBeInTheDocument();
+    });
+
+    it("shows contract and receipt review for a period change with unverified scope", () => {
+        render(<ServiceRecordEditPreviewDialog open onOpenChange={jest.fn()} preview={{ ...preview,
+            documentScope: { ...preview.documentScope, evidence: "unverified",
+                contract: { currentDocumentId: null, stage: null },
+                receipt: { evidence: "unverified", eformsignDocId: null, tokenIds: [], sourceDocumentId: null },
+            },
+        }} />);
+        const section = document.querySelector('[data-slot="document-scope"]')!;
+        expect(section).toHaveTextContent("계약 상태 확인 필요");
+        expect(section).toHaveTextContent("영수증");
+    });
+
+    it("omits document work for a period change with observed empty contract and receipt scopes", () => {
+        render(<ServiceRecordEditPreviewDialog open onOpenChange={jest.fn()} preview={{ ...preview,
+            documentScope: { ...preview.documentScope,
+                contract: { currentDocumentId: null, stage: null },
+                receipt: { evidence: "observed", eformsignDocId: null, tokenIds: [], sourceDocumentId: null },
+            },
+        }} />);
+        expect(screen.queryByText("전자문서")).not.toBeInTheDocument();
+    });
+
+    it.each(["linked", "missing"])("shows only receipt work for a period change with %s receipt evidence", (kind) => {
+        render(<ServiceRecordEditPreviewDialog open onOpenChange={jest.fn()} preview={{ ...preview,
+            documentScope: { ...preview.documentScope,
+                contract: { currentDocumentId: null, stage: null },
+                receipt: kind === "missing" ? undefined : {
+                    evidence: "observed", eformsignDocId: null, tokenIds: ["receipt-token"], sourceDocumentId: null,
+                },
+            },
+        }} />);
+        const section = document.querySelector('[data-slot="document-scope"]')!;
+        expect(section).toHaveTextContent("영수증");
+        expect(within(section as HTMLElement).queryByText(/계약/)).not.toBeInTheDocument();
+    });
+
+    it("shows a muted empty message for a loaded preview with all edits reverted and keeps confirmation available", () => {
+        const onConfirm = jest.fn();
+        render(<ServiceRecordEditPreviewDialog open onOpenChange={jest.fn()} onConfirm={onConfirm} preview={{ ...preview,
+            after: preview.before, contentChanges: { headerChanged: false, changedSessionIndexes: [] },
+            impactedAssignments: [], blockingReasons: [],
+        }} />);
+        expect(document.querySelector('[data-slot="content"]')).toHaveTextContent(/^변경된 내용이 없어요\.$/);
+        expect(screen.getByText("변경된 내용이 없어요.")).toHaveClass("text-v3-text-muted");
+        fireEvent.click(screen.getByRole("button", { name: "수정 확정" }));
+        expect(onConfirm).toHaveBeenCalledTimes(1);
     });
 
     it("shows Korean blocking reasons once per code with the affected session", () => {
@@ -212,7 +283,6 @@ describe("ServiceRecordEditPreviewDialog", () => {
             />,
         );
         expect(screen.getByText("이름 없는 관리사")).toBeInTheDocument();
-        expect(screen.queryByText("변경되는 배정이 없습니다.")).not.toBeInTheDocument();
     });
 
     it("retains a visible error and does not expose preview controls while loading", () => {

@@ -7,8 +7,9 @@ describe("computePendingSessionChanges", () => {
         ["answer change", { answers: { breast: ["울혈"] } }, "② 유방상태", "이상없음", "울혈"],
         ["cleared answer", { answers: { breast: [] } }, "② 유방상태", "이상없음", "입력 없음"],
         ["multi-select", { answers: { breast: ["울혈", "통증"] } }, "② 유방상태", "이상없음", "울혈, 통증"],
-        ["note field", { notes: "새 메모" }, "특이사항 (필요 시 기재)", "기존 메모", "새 메모"],
-        ["cleared note", { notes: "" }, "특이사항 (필요 시 기재)", "기존 메모", "입력 없음"],
+        ["note field", { notes: "새 메모" }, "특이사항", "기존 메모", "새 메모"],
+        ["other service", { etcService: "추가 지원" }, "기타 서비스", "입력 없음", "추가 지원"],
+        ["cleared note", { notes: "" }, "특이사항", "기존 메모", "입력 없음"],
         ["count subfield keeps sibling", { answers: { meals_snack: 2 } }, "⑤ 식사/간식", "식사 3회 · 간식 1회", "식사 3회 · 간식 2회"],
     ])("formats %s", (_name, patch, label, before, after) => {
         expect(computePendingSessionChanges(base, [{ sessionIndex: 1, ...patch }])).toEqual([

@@ -31,7 +31,7 @@ export function computePendingSessionChanges(
         const rows = REVIEW_SECTIONS.flatMap((section) => section.fields.flatMap((field) => {
             const oldValue = formatReviewFieldValue(field, before).value;
             const newValue = formatReviewFieldValue(field, after).value;
-            return oldValue === newValue ? [] : [{ key: field.key, label: field.label,
+            return oldValue === newValue ? [] : [{ key: field.key, label: revisionChangeLabel(`session.answers.${field.key}`),
                 before: oldValue || REVIEW_EMPTY_LABEL, after: newValue || REVIEW_EMPTY_LABEL }];
         }));
         return rows.length ? [{ sessionIndex: patch.sessionIndex, rows }] : [];
