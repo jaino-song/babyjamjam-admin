@@ -96,6 +96,7 @@ describe("today and stored-date labels", () => {
         render(<ServiceDateSheet {...props({ context: usedContext, value: "2026-11-02" })} />);
         const used = screen.getByRole("button", { name: "2026.11.11(수) 2회차" });
         expect(used.querySelector("small")).toHaveTextContent("2회차");
+        expect(used.querySelector("small")).not.toHaveClass("text-v3-primary");
         expect(used).toHaveAttribute("aria-disabled", "true");
         expect(screen.queryByText("오늘")).not.toBeInTheDocument();
         expect(screen.queryByText(/현재|지금/)).not.toBeInTheDocument();
@@ -299,6 +300,7 @@ it("shows 현재 and other session labels, refuses order clicks with the exact f
     expect(select).toBeDisabled();
     fireEvent.click(screen.getByRole("button", { name: "2026.11.02(월) 1회차" }));
     expect(p.onOrderBlocked).toHaveBeenLastCalledWith(ORDER_BEFORE);
+    expect(screen.getByRole("button", { name: "2026.11.11(수) 3회차" }).querySelector("small")).not.toHaveClass("text-v3-primary");
     fireEvent.click(screen.getByRole("button", { name: "2026.11.11(수) 3회차" }));
     expect(p.onOrderBlocked).toHaveBeenLastCalledWith(ORDER_AFTER);
     fireEvent.click(screen.getByRole("button", { name: "2026.11.07(토)" }));
