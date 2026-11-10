@@ -4815,12 +4815,13 @@ describe("AdminServiceRecordEditService batched date moves", () => {
     });
 
     it.each([
-        ["schedule", { schedule: { serviceDays: { saturday: false, sunday: false, holiday: false }, dates: ["2026-09-01"] } }, "SCHEDULE_WITH_DATE_MOVE"],
-        ["resumeReplan", { resumeReplan: { fromSessionIndex: 1, resumeDate: "2026-09-01" } }, "RESUME_REPLAN_COMBINATION"],
-    ])("rejects %s with dateMoves in the service", async (_label, extra, scheduleCode) => {
+        ["schedule", { schedule: { serviceDays: { saturday: false, sunday: false, holiday: false }, dates: ["2026-09-01"] } }, "SCHEDULE_WITH_DATE_MOVE", "/schedule"],
+        ["resumeReplan", { resumeReplan: { fromSessionIndex: 1, resumeDate: "2026-09-01" } }, "RESUME_REPLAN_COMBINATION", "/resumeReplan"],
+    ])("rejects %s with dateMoves in the service", async (_label, extra, scheduleCode, pointer) => {
         const harness = statefulHarness();
         const error = await rejection(() => patch(harness, { ...extra, dateMoves: moves.slice(0, 1) } as Partial<UpdateDto>));
-        expect(error.getResponse()).toMatchObject({ code: "VALIDATION_FAILED", scheduleCode });
+        expect(error.getResponse()).toMatchObject({ code: "VALIDATION_FAILED", scheduleCode, errors: [{ pointer }] });
+        expect(harness.loadDraftWithSource).not.toHaveBeenCalled();
         expect(harness.repository.updateDraft).not.toHaveBeenCalled();
     });
 
@@ -4830,6 +4831,7 @@ describe("AdminServiceRecordEditService batched date moves", () => {
         expect(error.getStatus()).toBe(400);
         expect(error.getResponse()).toMatchObject({ code: "VALIDATION_FAILED", errors: [expect.objectContaining({ pointer: "/dateMoves", code: "INVALID_VALUE" })] });
         expect(error.getResponse()).not.toHaveProperty("scheduleCode");
+        expect(harness.loadDraftWithSource).not.toHaveBeenCalled();
         expect(harness.repository.updateDraft).not.toHaveBeenCalled();
     });
 });

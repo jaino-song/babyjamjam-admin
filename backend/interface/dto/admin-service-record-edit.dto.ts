@@ -176,7 +176,7 @@ export class UpdateServiceRecordEditDraftDto {
     @Type(() => ServiceRecordEditDateMoveDto)
     dateMoves?: ServiceRecordEditDateMoveDto[];
 
-    /** Replaces every session date at once; mutually exclusive with `dateMove`. */
+    /** Replaces every session date at once; mutually exclusive with `dateMove` and `dateMoves`. */
     @IsOptional()
     @ValidateNested()
     @Type(() => ServiceRecordEditScheduleDto)
