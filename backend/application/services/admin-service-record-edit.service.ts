@@ -633,19 +633,27 @@ export class AdminServiceRecordEditService {
         actorUserId: string,
         dto: UpdateServiceRecordEditDraftDto,
     ): Promise<AdminServiceRecordEditStateDto> {
-        if (dto.schedule !== undefined && dto.dateMove !== undefined) {
+        if (dto.schedule !== undefined && (dto.dateMove !== undefined || dto.dateMoves !== undefined)) {
             throw this.scheduleRejection(
                 "SCHEDULE_WITH_DATE_MOVE",
                 "/schedule",
                 "일정 전체 변경과 단일 날짜 이동은 함께 요청할 수 없어요.",
             );
         }
-        if (dto.resumeReplan !== undefined && (dto.schedule !== undefined || dto.dateMove !== undefined)) {
+        if (dto.resumeReplan !== undefined && (dto.schedule !== undefined || dto.dateMove !== undefined || dto.dateMoves !== undefined)) {
             throw this.scheduleRejection(
                 "RESUME_REPLAN_COMBINATION",
                 "/resumeReplan",
                 "재개 일정 재배치는 일정 전체 변경이나 단일 날짜 이동과 함께 요청할 수 없어요.",
             );
+        }
+        if (dto.dateMove !== undefined && dto.dateMoves !== undefined) {
+            throw new BadRequestException(problemBody("VALIDATION_FAILED", {
+                pointer: "/dateMoves",
+                code: "INVALID_VALUE",
+                detail: "단일 날짜 이동과 여러 날짜 이동은 함께 요청할 수 없어요.",
+                location: "body",
+            }));
         }
         const target = await this.resolveDraftTarget(branchId, draftId);
         const validatedChanges = this.validateChanges(dto.changes, target.loaded.source);
@@ -668,15 +676,19 @@ export class AdminServiceRecordEditService {
         }
         // The normalized dates are persisted into the draft, so they are SAVED computations.
         const calendar = await this.holidayCalendar.forBranch(branchId, { fresh: true });
-        const changes = this.normalizeChanges(
-            target.loaded.source,
-            target.draft.changes,
-            validatedChanges,
-            calendar,
-            dto.dateMove as ServiceRecordEditDateMove | undefined,
-            schedule,
-            resumeReplan,
-        );
+        let changes = target.draft.changes;
+        const moves = dto.dateMoves ?? [dto.dateMove];
+        for (const [index, move] of moves.entries()) {
+            changes = this.normalizeChanges(
+                target.loaded.source,
+                changes,
+                index === 0 ? validatedChanges : {},
+                calendar,
+                move as ServiceRecordEditDateMove | undefined,
+                schedule,
+                resumeReplan,
+            );
+        }
 
         let draft: ServiceRecordEditDraft;
         try {
@@ -693,8 +705,7 @@ export class AdminServiceRecordEditService {
             await this.throwConflictWithLatest(branchId, target.loaded.source.caseId, draftId, error);
             throw error;
         }
-        const latest = await this.loadSource(branchId, { caseId: target.loaded.source.caseId });
-        return this.state(draft, latest);
+        return this.state(draft, target.loaded);
     }
 
     async previewDraft(
