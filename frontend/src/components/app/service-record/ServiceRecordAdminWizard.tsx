@@ -49,7 +49,7 @@ import {
 } from "@/features/service-records/revision-sync";
 
 import { ServiceRecordEditPreviewDialog } from "./ServiceRecordEditPreviewDialog";
-import { ServiceRecordDateSelectionDialog } from "./ServiceRecordDateSelectionDialog";
+import { AdminServiceDateSheet } from "@/components/app/ui/service-record";
 import { RevisionHistoryView } from "./RevisionHistoryView";
 import { describeScheduleBlockingReasons, GENERIC_BLOCKING_REASON } from "./service-record-blocking-reasons";
 import { AdminServiceRecordScreen } from "./screen/AdminServiceRecordScreen";
@@ -656,6 +656,7 @@ export function ServiceRecordAdminWizard({
     const sourceDraft = draftForSession(currentSession);
     const sourceDate = dateOnly(currentSession?.serviceDate)
         || baseView.plannedSessions.find((item) => item.sessionIndex === day)?.serviceDate || "";
+    const otherDateSessions = (vector.length ? vector : displayContext.sessions).filter((item) => item.sessionIndex !== day);
     const patch: AdminServiceRecordEditSessionChanges = { sessionIndex: day };
     for (const [key, value] of Object.entries(draft)) {
         if (key === "_date" || JSON.stringify(value) === JSON.stringify(sourceDraft[key])) continue;
@@ -1231,10 +1232,11 @@ export function ServiceRecordAdminWizard({
             <ServiceRecordEditPreviewDialog open={previewOpen} onOpenChange={(open) => { if (!open) void closePreview(); }}
                 preview={preview} busy={preparing} onConfirm={confirmCommit}
                 confirmBusy={busy} confirmError={error} data-component={`${ADMIN_WIZARD_COMPONENT}_commit-preview`} />
-            <ServiceRecordDateSelectionDialog open={dateDialogOpen} onOpenChange={setDateDialogOpen}
+            <AdminServiceDateSheet open={dateDialogOpen} onOpenChange={setDateDialogOpen}
                 currentServiceDate={String(draft._date || sourceDate)} calendar={calendar} sessionLabel={`${day}회차`}
                 windowStart={offsetCaseDate(overview.record?.startDate, -CAREGIVER_DATE_WINDOW_DAYS)}
                 windowEnd={offsetCaseDate(overview.record?.endDate, CAREGIVER_DATE_WINDOW_DAYS)}
+                startDate={overview.record?.startDate} endDate={overview.record?.endDate} otherSessions={otherDateSessions}
                 onApply={selectDate} error={dateError} disabled={locked || !calendarReady}
                 data-component={`${ADMIN_WIZARD_COMPONENT}_date-selection-dialog`} />
             <Dialog open={Boolean(followPrompt)} onOpenChange={(open) => { if (!open) { setFollowPrompt(null); setDateDialogOpen(true); } }}>

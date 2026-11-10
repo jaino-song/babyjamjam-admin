@@ -67,7 +67,7 @@ const PINNED_COPY = {
     /** Admin service-date edit button (invisible accessible name). */
     dateEdit: "제공일 수정",
     dateDialog: (sessionIndex: number) => `${sessionIndex}회차 서비스 제공일 수정`,
-    dateApply: "수정",
+    dateApply: "선택",
     followDialog: "뒷 회차들도 변경할까요?",
     followApply: "변경하기",
 };
@@ -411,8 +411,7 @@ describe("service-record admin editor contract", () => {
             fireEvent.click(screen.getByRole("button", dayCard(1)));
 
             fireEvent.click(screen.getByRole("button", { name: PINNED_COPY.dateEdit }));
-            fireEvent.click(screen.getByRole("combobox", { name: "일" }));
-            fireEvent.click(screen.getByRole("option", { name: "10일" }));
+            fireEvent.click(screen.getByRole("button", { name: "2026.09.10(목)" }));
             fireEvent.click(within(screen.getByRole("dialog", { name: PINNED_COPY.dateDialog(1) })).getByRole("button", { name: PINNED_COPY.dateApply }));
             fireEvent.click(within(screen.getByRole("dialog", { name: PINNED_COPY.followDialog })).getByRole("button", { name: PINNED_COPY.followApply }));
             expect(adminServiceRecordEditApi.updateDraft).not.toHaveBeenCalled();
