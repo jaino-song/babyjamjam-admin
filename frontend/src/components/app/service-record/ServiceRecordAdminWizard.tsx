@@ -634,6 +634,7 @@ export function ServiceRecordAdminWizard({
     const [pageIdx, setPageIdx] = useState(DAY_PAGES.length - 1);
     const [draft, setDraft] = useState<Record<string, unknown>>({});
     const [supplementalKey, setSupplementalKey] = useState<string | null>(null);
+    const baseSessionDraft = supplementalKey ? undefined : draftForSession(baseView.context.sessions.find((session) => session.sessionIndex === day));
     const [dateMove, setDateMove] = useState<AdminServiceRecordEditDateMove | null>(null);
     const dateMoveEntriesRef = useRef<PlannedVector | null>(null);
     const [followPrompt, setFollowPrompt] = useState<{ date: string; delta: number; canKeep: boolean; canShift: boolean } | null>(null);
@@ -1141,6 +1142,7 @@ export function ServiceRecordAdminWizard({
                     context={supplemental ? { ...baseView.context, sessions: [...baseView.context.sessions.filter((item) => item.sessionIndex !== day), supplemental.session] } : displayContext}
                     changedSessionIndexes={changedSessionIndexes}
                     adminEditedSessionIndexes={adminEditedSessionIndexes}
+                    baseSessionDraft={baseSessionDraft}
                     header={screen === "service" ? headerDraft : headerToInput(displayContext.header)}
                     headerErrors={screen === "service" && !locked ? headerErrors : undefined}
                     day={day} pageIdx={pageIdx} draft={draft}
@@ -1213,7 +1215,8 @@ export function ServiceRecordAdminWizard({
                             </span>;
                         },
                         serviceDateEditor: ({ "data-component": component, disabled, onOpen }) => (
-                            <Button data-component={component} data-slot="sec-edit" type="button" variant="outline" size="sm"
+                            <Button data-component={component} data-slot="sec-edit" type="button" variant="ghost" size="sm"
+                                className="h-[calc(32px*var(--glint-ui-scale,1))] min-h-[calc(32px*var(--glint-ui-scale,1))] rounded-[6px] border-0 px-[calc(4px*var(--glint-ui-scale,1))] text-[calc(14px*var(--glint-ui-scale,1))] leading-[calc(20px*var(--glint-ui-scale,1))] font-bold text-v3-primary"
                                 disabled={disabled || !calendarReady || Boolean(baseView.scheduleProjectionBlockingReasons.length)} aria-label="제공일 수정" onClick={onOpen}>수정</Button>
                         ),
                         adminSessionAction: ({ hasInvalidNumericAnswers: slotHasInvalidNumericAnswers }) => (

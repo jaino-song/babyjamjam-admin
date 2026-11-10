@@ -44,7 +44,7 @@ jest.mock("@/features/service-records/api/admin-service-record-edit.api", () => 
 // The rebuilt UI must keep these strings (Phase 3 brief input).
 const PINNED_COPY = {
     /** Step title of a session's review page. */
-    reviewTitle: "기록 내용 확인",
+    reviewTitle: (n: number) => `${n}회차 기록`,
     back: "이전",
     /** Overview action that opens the basic-information editor. */
     headerEdit: "기본정보 수정",
@@ -241,7 +241,7 @@ describe("service-record admin editor contract", () => {
             expect(screen.getByRole("button", dayCard(2))).toBeEnabled();
             expect(screen.getByRole("button", dayCard(3))).toBeEnabled();
             expect(screen.getByRole("button", { name: PINNED_COPY.headerEdit })).toBeInTheDocument();
-            expect(screen.queryByText(PINNED_COPY.reviewTitle)).not.toBeInTheDocument();
+            expect(screen.queryByText(PINNED_COPY.reviewTitle(1))).not.toBeInTheDocument();
             expect(adminServiceRecordEditApi.startDraft).not.toHaveBeenCalled();
         });
 
@@ -250,7 +250,7 @@ describe("service-record admin editor contract", () => {
 
             fireEvent.click(screen.getByRole("button", dayCard(1)));
 
-            expect(screen.getByText(PINNED_COPY.reviewTitle)).toBeInTheDocument();
+            expect(screen.getByText(PINNED_COPY.reviewTitle(1))).toBeInTheDocument();
             expect(screen.getByRole("img", { name: PINNED_COPY.signatureImage })).toHaveAttribute("src", STORED_SIGNATURE);
         });
 
@@ -259,7 +259,7 @@ describe("service-record admin editor contract", () => {
 
             fireEvent.click(screen.getByRole("button", dayCard(2)));
 
-            expect(screen.getByText(PINNED_COPY.reviewTitle)).toBeInTheDocument();
+            expect(screen.getByText(PINNED_COPY.reviewTitle(2))).toBeInTheDocument();
             expect(screen.getByText(PINNED_COPY.signatureMissing)).toBeInTheDocument();
             expect(screen.queryByRole("img", { name: PINNED_COPY.signatureImage })).not.toBeInTheDocument();
         });
@@ -271,7 +271,7 @@ describe("service-record admin editor contract", () => {
             fireEvent.click(screen.getByRole("button", { name: PINNED_COPY.back }));
 
             expect(screen.getByRole("button", dayCard(3))).toBeInTheDocument();
-            expect(screen.queryByText(PINNED_COPY.reviewTitle)).not.toBeInTheDocument();
+            expect(screen.queryByText(PINNED_COPY.reviewTitle(1))).not.toBeInTheDocument();
             expect(adminServiceRecordEditApi.updateDraft).not.toHaveBeenCalled();
             expect(adminServiceRecordEditApi.confirmDraft).not.toHaveBeenCalled();
         });

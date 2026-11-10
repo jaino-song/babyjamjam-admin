@@ -39,6 +39,8 @@ describe("DayPageStep", () => {
         expect(screen.getByRole("button", { name: "이전" })).toBeInTheDocument();
         expect(byComponent("body_date-chip")).toHaveTextContent("1회차");
         expect(byComponent("body_day-title")).toHaveTextContent("산모 기록");
+        expect(byComponent("body")).toHaveClass("px-[calc(16px*var(--glint-ui-scale,1))]");
+        expect(byComponent("body")).not.toHaveClass("sm:px-[calc(24px*var(--glint-ui-scale,1))]");
         expect(screen.getByRole("group", { name: /회음절개부위/ })).toBeInTheDocument();
         expect(screen.getByRole("radiogroup", { name: /좌욕/ })).toBeInTheDocument();
         expect(screen.getByRole("spinbutton", { name: "식사" })).toBeInTheDocument();

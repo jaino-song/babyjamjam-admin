@@ -33,19 +33,19 @@ export function ReadOnlySignature({
   return (
     <div
       data-component={dataComponent}
-      data-source-component={SOURCE_COMPONENT}
       data-slot="signature"
-      className={className}
+      data-source-component={SOURCE_COMPONENT}
+      className={cn("mt-[calc(16px*var(--glint-ui-scale,1))] border-t border-dashed border-v3-border! pt-[calc(14px*var(--glint-ui-scale,1))]", className)}
     >
       <div
         data-component={`${dataComponent}_label-row`}
         data-slot="lab-row"
-        className="mb-[calc(6px*var(--glint-ui-scale,1))] flex min-w-0 items-center gap-[calc(8px*var(--glint-ui-scale,1))]"
+        className="mb-[calc(8px*var(--glint-ui-scale,1))] flex min-w-0 items-baseline gap-[calc(8px*var(--glint-ui-scale,1))]"
       >
         <span
           data-component={`${dataComponent}_label`}
           data-slot="lab"
-          className="shrink-0 text-[calc(12px*var(--glint-ui-scale,1))] font-semibold leading-snug text-v3-text"
+          className="shrink-0 text-[calc(16px*var(--glint-ui-scale,1))] font-semibold leading-snug text-v3-text"
         >
           {label}
         </span>
@@ -56,7 +56,7 @@ export function ReadOnlySignature({
           data-tone="hint"
           aria-live="polite"
           title={message}
-          className="ml-auto h-[1lh] min-w-0 truncate text-right text-[calc(12px*var(--glint-ui-scale,1))] font-semibold leading-[1.3] text-v3-text-muted"
+          className="ml-auto h-[1lh] min-w-0 truncate text-right text-[calc(14px*var(--glint-ui-scale,1))] leading-[1.3] text-v3-text-muted"
         >
           {message}
         </span>

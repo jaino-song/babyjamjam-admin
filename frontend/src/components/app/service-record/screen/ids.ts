@@ -72,7 +72,6 @@ export const NEXT_LABEL = "다음";
 /** SRW:960 */
 export const SERVICE_DATE_READONLY_LABEL = "서비스 제공일자";
 /** SRW:978 (admin branch; the public copy "최종 기록을 확인해 주세요." is never shown here) */
-export const ADMIN_HANDOVER_BANNER_COPY = "관리자 수정 내용을 확인해 주세요.";
 /** SRW:274, :277, :292 */
 export const STOOL_ABNORMAL_OPTION = "이상변";
 export const STOOL_COLOR_LABEL = "이상변의 색깔과 상태";

@@ -236,7 +236,7 @@ describe("AdminServiceRecordScreen", () => {
             expect(onOpenServiceDateEditor).toHaveBeenCalledWith(1);
         });
 
-        it("renders the confirmation page with the handover banner, the signature slot and the admin session action in the bar", () => {
+        it("renders the confirmation page without the handover banner, with the signature slot and the admin session action in the bar", () => {
             const props = makeProps({
                 screen: "day",
                 pageIdx: CONFIRMATION_PAGE,
@@ -248,7 +248,8 @@ describe("AdminServiceRecordScreen", () => {
             render(<AdminServiceRecordScreen {...props} />);
 
             expect(byComponent("body")).toHaveAttribute("data-source-component", "ReviewStep");
-            expect(byComponent("body_handover-banner")).toHaveTextContent("관리자 수정 내용을 확인해 주세요.");
+            expect(byComponent("body_handover-banner")).toBeNull();
+            expect(byComponent("body_day-title")).toHaveTextContent("1회차 기록");
             expect(byComponent("body_mom-sign")).toHaveTextContent("서명 없음");
             expect(within(byComponent("body_confirmation-action")!).getByRole("button", { name: "수정 확인" })).toBeEnabled();
             fireEvent.click(screen.getByRole("button", { name: "산모 수정" }));
