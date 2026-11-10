@@ -1,13 +1,57 @@
 /* Shared Radix motion utilities; modifiers compose without changing Tailwind's translate. */
+@property --tw-enter-opacity {
+  syntax: "*";
+  inherits: false;
+  initial-value: 1;
+}
+
+@property --tw-enter-scale {
+  syntax: "*";
+  inherits: false;
+  initial-value: 1;
+}
+
+@property --tw-enter-translate-x {
+  syntax: "*";
+  inherits: false;
+  initial-value: 0;
+}
+
+@property --tw-enter-translate-y {
+  syntax: "*";
+  inherits: false;
+  initial-value: 0;
+}
+
+@property --tw-exit-opacity {
+  syntax: "*";
+  inherits: false;
+  initial-value: 1;
+}
+
+@property --tw-exit-scale {
+  syntax: "*";
+  inherits: false;
+  initial-value: 1;
+}
+
+@property --tw-exit-translate-x {
+  syntax: "*";
+  inherits: false;
+  initial-value: 0;
+}
+
+@property --tw-exit-translate-y {
+  syntax: "*";
+  inherits: false;
+  initial-value: 0;
+}
+
 @utility animate-in {
   animation-name: enter;
   animation-duration: var(--tw-duration, 150ms);
   animation-timing-function: var(--tw-ease, ease);
   animation-fill-mode: both;
-  --tw-enter-opacity: initial;
-  --tw-enter-scale: initial;
-  --tw-enter-translate-x: initial;
-  --tw-enter-translate-y: initial;
 }
 
 @utility animate-out {
@@ -15,10 +59,6 @@
   animation-duration: var(--tw-duration, 150ms);
   animation-timing-function: var(--tw-ease, ease);
   animation-fill-mode: both;
-  --tw-exit-opacity: initial;
-  --tw-exit-scale: initial;
-  --tw-exit-translate-x: initial;
-  --tw-exit-translate-y: initial;
 }
 
 @utility fade-in-0 {
