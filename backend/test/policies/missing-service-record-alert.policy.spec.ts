@@ -5,6 +5,7 @@ import { KR_BUILTIN_CALENDAR } from "domain/utils/business-days";
 
 const branchId = "branch-1";
 const threshold = new Date("2026-09-08T18:00:00+09:00");
+const late = new Date("2026-09-30T18:00:00+09:00");
 function candidate(): ServiceRecordAlertCandidate {
     return {
         source: {
@@ -82,8 +83,21 @@ describe("missing service record eligibility", () => {
 
     it("partitions canonical rows outside the case period", () => {
         const row = candidate();
-        row.source.sessions = [{ scheduleId: 55, employeeId: 9, ambiguous: false, sessionIndex: 1, serviceDate: "2026-09-01" }];
+        row.source.sessions = [{ scheduleId: 55, employeeId: 9, ambiguous: false, sessionIndex: 1, serviceDate: "2026-08-30" }];
         expect(alerts([row])).toHaveLength(1);
+    });
+
+    it.each([
+        { sessionIndex: 1, serviceDate: "2026-08-30", now: threshold, expectedAlerts: 1 },
+        { sessionIndex: 1, serviceDate: "2026-08-31", now: threshold, expectedAlerts: 0 },
+        { sessionIndex: 1, serviceDate: "2026-09-04", now: threshold, expectedAlerts: 0 },
+        { sessionIndex: 1, serviceDate: "2026-09-16", now: late, expectedAlerts: 0 },
+        { sessionIndex: 1, serviceDate: "2026-09-17", now: late, expectedAlerts: 1 },
+        { sessionIndex: 2, serviceDate: "2026-09-12", now: late, expectedAlerts: 0 },
+    ])("counts session $sessionIndex at $serviceDate by the inclusive lifecycle window", ({ sessionIndex, serviceDate, now, expectedAlerts }) => {
+        const row = candidate();
+        row.source.sessions = [{ scheduleId: 55, employeeId: 9, ambiguous: false, sessionIndex, serviceDate }];
+        expect(alerts([row], now)).toHaveLength(expectedAlerts);
     });
 
     it.each([0, 1])("rejects fewer than two configured sessions (%s)", (count) => {
