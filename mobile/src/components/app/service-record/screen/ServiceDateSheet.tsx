@@ -123,14 +123,14 @@ export function ServiceDateSheet({ "data-component": root, context, day, calenda
                                 if (state === "before" || state === "after") onOrderBlocked(state === "before" ? ORDER_BEFORE : ORDER_AFTER);
                                 else if (state === "gap") onOrderBlocked(GAP_ROOM);
                                 else if (state === "available" || (pending && state === "current")) setSelected(iso);
-                            }} className={cn(MONTH_CELL_BASE, "border-v3-border bg-white text-v3-dark", blocked && HATCHED, isInPeriod && (!blocked || usedBy ? "border-[1.5px] border-v3-primary" : "border-[1.5px] border-v3-primary/40"), isCurrent && "border-dashed border-v3-primary text-v3-primary", isSelected && "border-v3-primary bg-v3-primary text-white")}>
+                            }} className={cn(MONTH_CELL_BASE, "border-v3-border bg-white text-v3-dark", blocked && HATCHED, isInPeriod && (!blocked || usedBy ? "border-[1.5px] border-v3-primary!" : "border-[1.5px] border-v3-primary/40!"), isCurrent && "border-dashed border-v3-primary! text-v3-primary", isSelected && "border-v3-primary! bg-v3-primary text-white")}>
                                 <span>{index + 1}</span>
                                 {usedBy || isCurrent ? <small className="mt-0.5 text-xs font-extrabold leading-none">{usedBy ? `${usedBy.sessionIndex}회차` : "지금"}</small> : null}
                             </button>;
                         })}
                     </div>
                     <div data-component={child("calendar_legend")} className="mt-3 flex flex-wrap gap-x-3 gap-y-1 text-xs font-semibold text-v3-text-muted">
-                        {context.startDate && context.endDate && <span data-component={child("calendar_legend_period")}><i aria-hidden="true" className="mr-1 inline-block h-3 w-3 rounded align-middle border-[1.5px] border-v3-primary" />서비스 기간 ({context.startDate.slice(5, 10).replace("-", ".")}~{context.endDate.slice(5, 10).replace("-", ".")})</span>}
+                        {context.startDate && context.endDate && <span data-component={child("calendar_legend_period")}><i aria-hidden="true" className="mr-1 inline-block h-3 w-3 rounded align-middle border-[1.5px] border-v3-primary!" />서비스 기간 ({context.startDate.slice(5, 10).replace("-", ".")}~{context.endDate.slice(5, 10).replace("-", ".")})</span>}
                         <span><i aria-hidden="true" className="mr-1 inline-block h-3 w-3 rounded bg-v3-primary align-middle" />선택한 날</span>
                         <span><i aria-hidden="true" className="mr-1 inline-block h-3 w-3 rounded border border-v3-border align-middle" />선택 가능</span>
                         <span><i aria-hidden="true" className={cn("mr-1 inline-block h-3 w-3 rounded border align-middle", HATCHED)} />고를 수 없음 (주말·기간 밖·다른 회차·회차 순서)</span>
