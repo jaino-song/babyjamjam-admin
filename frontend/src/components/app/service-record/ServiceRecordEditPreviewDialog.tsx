@@ -138,9 +138,17 @@ export function ServiceRecordEditPreviewDialog({
     const sessionIndexes = new Set(sessionChanges.map((change) => change.sessionIndex));
     const beforeDates = new Map(preview?.before.sessions.map((session) => [session.sessionIndex, session.serviceDate]) ?? []);
     const afterDates = new Map(preview?.after.sessions.map((session) => [session.sessionIndex, session.serviceDate]) ?? []);
+    const movedSessionIndexes = new Set<number>();
     for (const index of new Set([...beforeDates.keys(), ...afterDates.keys()])) {
-        if (beforeDates.get(index) !== afterDates.get(index)) sessionIndexes.add(index);
+        if (beforeDates.get(index) !== afterDates.get(index)) {
+            movedSessionIndexes.add(index);
+            sessionIndexes.add(index);
+        }
     }
+    const movedAssignmentIds = new Set(preview?.after.sessions
+        .filter((session) => movedSessionIndexes.has(session.sessionIndex))
+        .map((session) => session.assignmentId) ?? []);
+    const movedAssignments = impactedAssignments.filter((assignment) => movedAssignmentIds.has(assignment.assignmentId));
     const groups = [...sessionIndexes].sort((left, right) => left - right).map((sessionIndex) => ({
         sessionIndex,
         rows: [
@@ -162,7 +170,7 @@ export function ServiceRecordEditPreviewDialog({
     const affectedSignatureSessions = preview?.signatureMetadata.sessions.filter((session) => session.hasSignature
         && (sessionIndexes.has(session.sessionIndex) || contentChanges.changedSessionIndexes.includes(session.sessionIndex))) ?? [];
     const signatureReviewRequired = preview?.signatureMetadata.treatment === "manual_review" && affectedSignatureSessions.length > 0;
-    const hasPreviewChanges = groups.length > 0 || contentChanges.headerChanged || impactedAssignments.length > 0
+    const hasPreviewChanges = groups.length > 0 || contentChanges.headerChanged || movedAssignments.length > 0
         || signatureReviewRequired || documentsAffected;
 
     return (
@@ -270,11 +278,11 @@ export function ServiceRecordEditPreviewDialog({
                                     <ChangeRows dataComponent={`${dataComponent}_content_changes_rows`} rows={headerChanges} />
                                 </section>
                             ) : null}
-                            {impactedAssignments.length > 0 ? (
+                            {movedAssignments.length > 0 ? (
                                 <section data-component={`${dataComponent}_content_assignments`} data-slot="assignments" className="flex flex-col gap-2">
                                     <h3 data-component={`${dataComponent}_content_assignments_title`} data-slot="title" className="text-sm font-semibold text-v3-dark">배정 영향</h3>
                                     <ul data-component={`${dataComponent}_content_assignments_list`} data-slot="assignments-list" className="list-disc space-y-1 pl-5 text-sm text-v3-text-muted">
-                                        {impactedAssignments.map((assignment) => (
+                                        {movedAssignments.map((assignment) => (
                                             <li key={assignment.assignmentId} data-component={`${dataComponent}_content_assignments_item`} data-slot="assignment-item">{formatImpactedAssignment(assignment)}</li>
                                         ))}
                                     </ul>

@@ -135,6 +135,68 @@ describe("ServiceRecordEditPreviewDialog", () => {
         for (const slot of ["content-changes", "assignments", "signature-metadata", "document-scope", "session-change"]) {
             expect(document.querySelector(`[data-slot="${slot}"]`)).not.toBeInTheDocument();
         }
+        expect(screen.getByText("원본 기록이 변경되어 확인이 필요합니다.")).toBeInTheDocument();
+        expect(screen.queryByText("변경된 내용이 없어요.")).not.toBeInTheDocument();
+    });
+
+    it("omits assignment impact for a note-only edit despite non-empty impacted assignments", () => {
+        render(<ServiceRecordEditPreviewDialog open onOpenChange={jest.fn()} preview={{ ...preview,
+            after: preview.before, blockingReasons: [],
+            contentChanges: { headerChanged: false, changedSessionIndexes: [1] },
+        }} sessionChanges={[
+            { sessionIndex: 1, rows: [{ key: "notes", label: "특이사항", before: "입력 없음", after: "간식 시간 변경" }] },
+        ]} />);
+        expect(screen.getByText("간식 시간 변경")).toBeVisible();
+        expect(screen.queryByText("배정 영향")).not.toBeInTheDocument();
+        expect(document.querySelector('[data-slot="assignments"]')).not.toBeInTheDocument();
+    });
+
+    it("shows assignment impact for the owner of a date-moved session", () => {
+        render(<ServiceRecordEditPreviewDialog open onOpenChange={jest.fn()} preview={{ ...preview,
+            contentChanges: { headerChanged: false, changedSessionIndexes: [] }, blockingReasons: [],
+        }} />);
+        const section = document.querySelector('[data-slot="assignments"]')!;
+        expect(section).toHaveTextContent("배정 영향");
+        expect(within(section as HTMLElement).getAllByRole("listitem")).toHaveLength(1);
+        expect(section).toHaveTextContent("임선녀 · 2026.10.14 ~ 2026.10.23");
+    });
+
+    it("lists only the moved session's owner when another caregiver's session has a note edit", () => {
+        const unchangedSession = { ...preview.before.sessions[0], sessionIndex: 2,
+            assignmentId: "assignment-2", employeeId: 13, scheduleId: 8 };
+        render(<ServiceRecordEditPreviewDialog open onOpenChange={jest.fn()} preview={{ ...preview,
+            before: { ...preview.before, sessions: [...preview.before.sessions, unchangedSession] },
+            after: { ...preview.after, sessions: [unchangedSession, ...preview.after.sessions] },
+            contentChanges: { headerChanged: false, changedSessionIndexes: [2] }, blockingReasons: [],
+            impactedAssignments: ["assignment-1", "assignment-2"],
+            impactedAssignmentDetails: [...preview.impactedAssignmentDetails!, {
+                assignmentId: "assignment-2", employeeName: "내용 수정 관리사", startDate: null, endDate: null,
+            }],
+        }} sessionChanges={[
+            { sessionIndex: 2, rows: [{ key: "notes", label: "특이사항", before: "입력 없음", after: "간식 시간 변경" }] },
+        ]} />);
+        const section = document.querySelector('[data-slot="assignments"]')!;
+        expect(within(section as HTMLElement).getAllByRole("listitem")).toHaveLength(1);
+        expect(section).toHaveTextContent("임선녀 · 2026.10.14 ~ 2026.10.23");
+        expect(screen.queryByText("내용 수정 관리사")).not.toBeInTheDocument();
+        expect(screen.getByText("간식 시간 변경")).toBeVisible();
+    });
+
+    it("shows the empty message when unchanged dates leave no assignment impact", () => {
+        render(<ServiceRecordEditPreviewDialog open onOpenChange={jest.fn()} preview={{ ...preview,
+            after: preview.before, contentChanges: { headerChanged: false, changedSessionIndexes: [] },
+            blockingReasons: [],
+        }} />);
+        expect(screen.getByText("변경된 내용이 없어요.")).toBeVisible();
+        expect(document.querySelector('[data-slot="assignments"]')).not.toBeInTheDocument();
+    });
+
+    it("omits assignment impact when no impacted id belongs to the moved session", () => {
+        render(<ServiceRecordEditPreviewDialog open onOpenChange={jest.fn()} preview={{ ...preview,
+            impactedAssignments: ["assignment-other"],
+        }} />);
+        expect(screen.getByText("서비스 제공일")).toBeVisible();
+        expect(document.querySelector('[data-slot="assignments"]')).not.toBeInTheDocument();
     });
 
     it("shows only changed signed sessions when manual review is required", () => {
@@ -273,7 +335,7 @@ describe("ServiceRecordEditPreviewDialog", () => {
         expect(screen.getByText("이름 없는 관리사 · 2026.10.14 ~ 없음")).toBeInTheDocument();
     });
 
-    it("still lists every impacted id when details are empty", () => {
+    it("keeps the moved owner visible when details are empty", () => {
         render(
             <ServiceRecordEditPreviewDialog
                 open
