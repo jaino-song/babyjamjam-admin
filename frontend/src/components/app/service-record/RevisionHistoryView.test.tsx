@@ -477,13 +477,20 @@ describe("ServiceRecordAdminWizard 수정 이력 entry", () => {
     });
     afterEach(() => { jest.restoreAllMocks(); });
 
-    it("puts 수정 이력 보기 directly under 기본정보 수정", () => {
+    it("puts 기본정보 수정 and 수정 이력 보기 side by side with equal widths in one row", () => {
         const { container } = openWizard();
         const headerEdit = screen.getByRole("button", { name: "기본정보 수정" });
         const historyOpen = screen.getByRole("button", { name: "수정 이력 보기" });
         const actions = container.querySelector('[data-slot="edit-actions"]')!;
         expect(Array.from(actions.children)).toEqual([headerEdit, historyOpen]);
-        expect(actions).toHaveClass("flex-col");
+        expect(actions).toHaveClass("contents");
+        const actionBar = actions.closest('[data-source-component="StickyActionBar"]');
+        expect(actionBar).toHaveClass("flex");
+        expect(actionBar).not.toHaveClass("flex-col");
+        expect(actionBar).not.toHaveClass("flex-wrap");
+        expect(headerEdit).toHaveClass("min-w-0", "flex-1");
+        expect(historyOpen).toHaveClass("min-w-0", "flex-1", "bg-[hsl(214,100%,34%)]");
+        expect(historyOpen).toHaveAttribute("data-variant", "positive");
         expect(headerEdit).toBeEnabled();
         expect(historyOpen).toBeEnabled();
         // It is not a list at the bottom of the page: the overview shows no history until the button is pressed.
