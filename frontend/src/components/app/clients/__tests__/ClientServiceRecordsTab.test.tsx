@@ -160,9 +160,9 @@ describe("ClientServiceRecordsTab", () => {
     });
 
     it.each([
-        ["2026-07-05T00:00:00.000Z", "2026.07.06 00:00"],
-        ["2026-12-31", "2027.01.01 00:00"],
-    ])("shows next-day midnight KST for a tokenless schedule ending %s", (endDate, expected) => {
+        ["2026-07-05T00:00:00.000Z", "2026.07.13 00:00"],
+        ["2026-12-31", "2027.01.08 00:00"],
+    ])("shows midnight KST after the seven-day window for a tokenless schedule ending %s", (endDate, expected) => {
         const assignment = createAssignment(1, "none");
         assignment.endDate = endDate;
         assignment.link.token = null;
@@ -170,6 +170,22 @@ describe("ClientServiceRecordsTab", () => {
             layout="mobile" clientId={100} isLoading={false} isError={false}
             overview={{ assignments: [assignment] }} />);
         expect(screen.getByText(expected)).toBeInTheDocument();
+    });
+
+    it("shows midnight after the seven-day window as fallback expiry in mobile layout", () => {
+        const assignment = createAssignment(1, "none");
+        assignment.link.token = null;
+        render(
+            <ClientServiceRecordsTab data-component={TEST_COMPONENT}
+                layout="mobile"
+                overview={{ assignments: [assignment] }}
+                clientId={100}
+                isLoading={false}
+                isError={false}
+            />,
+        );
+
+        expect(screen.getByText("링크 만료").closest("div")).toHaveTextContent("2026.07.13 00:00");
     });
 
     it("uses the issued token expiry instead of the end-date fallback", () => {
@@ -1604,6 +1620,30 @@ describe("ClientServiceRecordsTab", () => {
             for (const item of sessions) {
                 expect(lines).toContain(`${item.sessionIndex}회차 서비스 제공일(${item.serviceDate.slice(0, 10).replaceAll("-", ".")})이 고객의 서비스 기간(2026.08.10 ~ 2026.08.20)보다 ${item.serviceDate.slice(0, 10) < "2026-08-10" ? "앞이에요." : "뒤예요."}`);
             }
+        });
+
+        it.each(["FINALIZING", "FINALIZATION_FAILED", "DOCUMENTS_CREATED", "COMPLETED"])(
+            "hides mismatch actions for %s while keeping the out-of-period mark",
+            (status) => {
+                const overview = overviewFor([session(1, "2026-08-07")]);
+                overview.record!.status = status;
+                render(tab(overview));
+
+                expect(screen.queryByText(title)).not.toBeInTheDocument();
+                expect(screen.queryByText(/1회차 서비스 제공일/)).not.toBeInTheDocument();
+                expect(screen.queryByText(/고객 정보의 서비스 시작일을/)).not.toBeInTheDocument();
+                expect(screen.queryByRole("button", { name: "유지" })).not.toBeInTheDocument();
+                expect(screen.queryByRole("button", { name: "변경" })).not.toBeInTheDocument();
+                expect(screen.getByText("기간 밖")).toBeInTheDocument();
+            },
+        );
+
+        it("shows mismatch actions for an IN_PROGRESS case", () => {
+            render(tab(overviewFor([session(1, "2026-08-07")])));
+
+            expect(screen.getByText(title)).toBeInTheDocument();
+            expect(screen.getByRole("button", { name: "유지" })).toBeInTheDocument();
+            expect(screen.getByRole("button", { name: "변경" })).toBeInTheDocument();
         });
 
         it("keeps the badge but hides the alert for kept sessions", () => {

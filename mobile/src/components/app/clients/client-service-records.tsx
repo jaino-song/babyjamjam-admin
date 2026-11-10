@@ -116,6 +116,15 @@ export function ClientServiceRecords({
     );
 }
 
+// Mirrors IMMUTABLE_FINALIZATION_STATUSES in backend/application/services/service-record-lifecycle.service.ts
+// used by service-record-period-mismatch.service.ts.
+const PERIOD_MISMATCH_ACTIONS_LOCKED_STATUSES = new Set<string>([
+    "FINALIZING",
+    "FINALIZATION_FAILED",
+    "DOCUMENTS_CREATED",
+    "COMPLETED",
+]);
+
 function ClientServiceRecordsContent({
     client,
     activeTab,
@@ -267,7 +276,7 @@ function ClientServiceRecordsContent({
                         assignment={assignment}
                         delay={assignmentIndex * 180 + 120}
                         mismatchDates={mismatchDates}
-                        periodMismatchAlert={assignmentIndex === 0 && periodStart && periodEnd && unkept.length > 0 ? (
+                        periodMismatchAlert={assignmentIndex === 0 && record && !PERIOD_MISMATCH_ACTIONS_LOCKED_STATUSES.has(record.status) && periodStart && periodEnd && unkept.length > 0 ? (
                             <Alert
                                 variant="warning"
                                 className="mt-1 mb-2.5"
@@ -912,12 +921,12 @@ function buildSessionSlots(assignment: ServiceRecordAssignment): SessionSlot[] {
     });
 }
 
-// Mirrors getServiceRecordTokenExpiresAt in backend/domain/constants/service-record-link-message.ts.
+// Mirrors getServiceRecordTokenExpiresAt (end + CAREGIVER_DATE_WINDOW_DAYS + 1)
 function endDateExpiry(endDate: string): string | null {
     const datePart = datePartOf(endDate);
     if (!datePart) return null;
     const nextDate = new Date(`${datePart}T00:00:00.000Z`);
-    nextDate.setUTCDate(nextDate.getUTCDate() + 1);
+    nextDate.setUTCDate(nextDate.getUTCDate() + 8);
     const nextDatePart = nextDate.toISOString().slice(0, 10);
     return `${nextDatePart}T00:00:00+09:00`;
 }
