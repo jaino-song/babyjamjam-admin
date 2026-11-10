@@ -83,6 +83,7 @@ export function ServiceDateSheet({ "data-component": root, context, day, calenda
     const [year, monthNumber] = month.split("-").map(Number);
     const startWeekday = new Date(Date.UTC(year, monthNumber - 1, 1)).getUTCDay();
     const count = new Date(Date.UTC(year, monthNumber, 0)).getUTCDate();
+    const rows = Math.ceil((startWeekday + count) / 7);
     const shiftMonth = (delta: number) => new Date(Date.UTC(year, monthNumber - 1 + delta, 1)).toISOString().slice(0, 7);
     const previous = shiftMonth(-1);
     const next = shiftMonth(1);
@@ -110,7 +111,7 @@ export function ServiceDateSheet({ "data-component": root, context, day, calenda
                         </div>
                     </div>
                     <div data-component={child("calendar_weekdays")} aria-hidden="true" className="mb-2 grid grid-cols-7 gap-1 text-center text-sm font-bold text-v3-text-muted">{WEEKDAYS.map((label) => <span key={label}>{label}</span>)}</div>
-                    <div data-component={child("calendar_days")} className="grid flex-1 auto-rows-[minmax(2.75rem,4.5rem)] grid-cols-7 gap-1">
+                    <div data-component={child("calendar_days")} className="grid flex-1 auto-rows-[minmax(2.75rem,1fr)] grid-cols-7 gap-1" style={{ maxHeight: `calc(${rows} * 4.5rem + ${rows - 1} * 0.25rem)` }}>
                         {Array.from({ length: startWeekday }, (_, index) => <span key={`empty-${index}`} />)}
                         {Array.from({ length: count }, (_, index) => {
                             const iso = `${month}-${String(index + 1).padStart(2, "0")}`;
@@ -128,7 +129,7 @@ export function ServiceDateSheet({ "data-component": root, context, day, calenda
                                 else if (state === "available" || (pending && state === "current")) setSelected(iso);
                             }} className={cn(MONTH_CELL_BASE, "border-v3-border bg-white text-v3-dark", blocked && HATCHED, isInPeriod && (!blocked || usedBy ? "border-[1.5px] border-v3-primary!" : "border-[1.5px] border-v3-primary/40!"), showCurrent && "border-dashed border-v3-primary! text-v3-primary", isSelected && "border-v3-primary! bg-v3-primary text-white")}>
                                 <span>{index + 1}</span>
-                                {usedBy || showCurrent || showToday ? <small className={cn("mt-0.5 text-xs font-extrabold leading-none", showToday && "text-v3-primary")}>{usedBy ? `${usedBy.sessionIndex}회차` : showCurrent ? "현재" : "오늘"}</small> : null}
+                                {usedBy || showCurrent || showToday ? <small className={cn("mt-0.5 text-xs font-extrabold leading-none", showToday && !isSelected && "text-v3-primary")}>{usedBy ? `${usedBy.sessionIndex}회차` : showCurrent ? "현재" : "오늘"}</small> : null}
                             </button>;
                         })}
                     </div>

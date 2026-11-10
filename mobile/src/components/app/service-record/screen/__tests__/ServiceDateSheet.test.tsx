@@ -80,6 +80,17 @@ describe("today and stored-date labels", () => {
         expect(p.onSelect).toHaveBeenCalledWith("2026-11-02");
     });
 
+    it("keeps today's label visible when selected in register mode", () => {
+        render(<ServiceDateSheet {...props({ context, value: "2026-11-02" })} />);
+        const today = screen.getByRole("button", { name: "2026.11.11(수) 오늘" });
+        expect(today.querySelector("small")).toHaveClass("text-v3-primary");
+        fireEvent.click(today);
+        expect(today).toHaveAttribute("aria-pressed", "true");
+        expect(today).toHaveClass("bg-v3-primary", "text-white");
+        expect(today.querySelector("small")).toHaveTextContent("오늘");
+        expect(today.querySelector("small")).not.toHaveClass("text-v3-primary");
+    });
+
     it("gives another session's label priority over today in register mode", () => {
         const usedContext = { ...context, sessions: [...context.sessions, { sessionIndex: 2, serviceDate: "2026-11-11", locked: true }] };
         render(<ServiceDateSheet {...props({ context: usedContext, value: "2026-11-02" })} />);
@@ -343,9 +354,26 @@ it("enlarges the date sheet title, calendar, annotations and actions one step", 
     expect(stored.querySelector("small")).toBeNull();
     expect(screen.getByRole("button", { name: "2026.11.11(수) 오늘" }).querySelector("small")).toHaveClass("text-xs", "leading-none", "text-v3-primary");
     expect(document.querySelector('[data-component$="_calendar"]')).toHaveClass("flex", "flex-col", "min-h-0", "flex-1", "overflow-y-auto");
-    expect(document.querySelector('[data-component$="_calendar_days"]')).toHaveClass("grid", "grid-cols-7", "flex-1", "auto-rows-[minmax(2.75rem,4.5rem)]");
+    expect(document.querySelector('[data-component$="_calendar_days"]')).toHaveClass("grid", "grid-cols-7", "flex-1", "auto-rows-[minmax(2.75rem,1fr)]");
     expect(screen.getByRole("button", { name: "취소" })).toHaveClass("text-base");
     expect(screen.getByRole("button", { name: "선택" })).toHaveClass("text-base");
+});
+
+it("updates the row height cap for five- and six-row months when navigating", () => {
+    const context = { ...props().context, startDate: "2026-08-01" };
+    render(<ServiceDateSheet {...props({ context })} />);
+    const grid = document.querySelector('[data-component$="_calendar_days"]');
+    expect(screen.getByText("2026년 11월")).toBeInTheDocument();
+    // November starts on Sunday with 30 days; August starts on Saturday with 31.
+    expect(grid).toHaveClass("flex-1", "auto-rows-[minmax(2.75rem,1fr)]");
+    expect(grid).not.toHaveClass("min-h-0");
+    expect(grid).toHaveStyle({ maxHeight: "calc(5 * 4.5rem + 4 * 0.25rem)" });
+    for (let index = 0; index < 3; index++) fireEvent.click(screen.getByRole("button", { name: "이전 달" }));
+    expect(screen.getByText("2026년 8월")).toBeInTheDocument();
+    expect(grid).toHaveStyle({ maxHeight: "calc(6 * 4.5rem + 5 * 0.25rem)" });
+    for (let index = 0; index < 3; index++) fireEvent.click(screen.getByRole("button", { name: "다음 달" }));
+    expect(screen.getByText("2026년 11월")).toBeInTheDocument();
+    expect(grid).toHaveStyle({ maxHeight: "calc(5 * 4.5rem + 4 * 0.25rem)" });
 });
 
 
