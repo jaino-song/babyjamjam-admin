@@ -361,6 +361,15 @@ it("enlarges the date sheet title, calendar, annotations and actions one step", 
     expect(screen.getByRole("button", { name: "선택" })).toHaveClass("text-base");
 });
 
+it("caps February 2026 at exactly four rows", () => {
+    const context = { ...props().context, startDate: "2026-02-10", endDate: "2026-02-20" };
+    render(<ServiceDateSheet {...props({ context, value: "2026-02-10" })} />);
+    expect(screen.getByText("2026년 2월")).toBeInTheDocument();
+    const grid = document.querySelector('[data-component$="_calendar_days"]');
+    // February 2026 starts on Sunday and has 28 days, filling exactly four rows.
+    expect(grid).toHaveStyle({ maxHeight: "calc(4 * 4.5rem + 3 * 0.25rem)" });
+});
+
 it("updates the row height cap for five- and six-row months when navigating", () => {
     const context = { ...props().context, startDate: "2026-08-01" };
     render(<ServiceDateSheet {...props({ context })} />);
