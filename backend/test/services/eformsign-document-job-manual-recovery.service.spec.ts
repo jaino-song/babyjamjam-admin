@@ -19,12 +19,51 @@ describe("manual recovery connected service with real authority adapter", () => 
         await expect(f.service.open(J, principal)).rejects.toBeInstanceOf(ContractRecoveryError); expect(f.draft.dispatchDraft).not.toHaveBeenCalled();
         expect(f.state.clients[0].eDocId).toBe("prior-doc");
     });
-    it("reopening an exposed frame, including after expiry by another user, is verify-only with no second SDK", async () => {
+    it("reopening an exposed draft, including after expiry by another user, is editable with no second SDK", async () => {
         const f = runtimeFixture(); f.manual(); await f.service.open(J, principal);
-        const second = await f.service.open(J, principal); expect(second.kind).toBe("verify_only"); expect(second).not.toHaveProperty("document");
+        const second = await f.service.open(J, principal); expect(second).toMatchObject({ kind: "editable", document: { documentId: "bound-doc" } });
         f.state.authorities[0].claimExpiresAt = new Date(Date.now() - 1);
-        const third = await f.service.open(J, { ...principal, userId: I }); expect(third.kind).toBe("verify_only");
+        const third = await f.service.open(J, { ...principal, userId: I }); expect(third).toMatchObject({ kind: "editable", document: { documentId: "bound-doc" } });
         expect(f.draft.dispatchDraft).toHaveBeenCalledTimes(1);
+    });
+    it.each(["participant", "reviewer", "complete"])("reopening sent %s evidence completes and returns verify-only", async step => {
+        const f = runtimeFixture(); f.manual(); await f.service.open(J, principal);
+        const id = f.state.authorities[0].humanIntentId;
+        if (step === "participant") f.forward();
+        if (step === "reviewer") Object.assign(f.remote.current_status, { status_type: "070", step_type: "06", step_index: "3", step_group: 2 });
+        if (step === "complete") Object.assign(f.remote.current_status, { status_type: "003", step_type: "01", step_index: "4", step_group: 3 });
+        const bind = jest.spyOn(f.repository, "bindDocument"), expose = jest.spyOn(f.repository, "expose"), reexpose = jest.spyOn(f.repository, "reexposeHuman");
+        await expect(f.service.open(J, principal)).resolves.toMatchObject({ kind: "verify_only" });
+        expect(f.state.jobs[0].status).toBe("completed"); expect(f.state.authorities[0]).toMatchObject({ phase: "verified", humanIntentId: id });
+        expect(bind).not.toHaveBeenCalled(); expect(expose).not.toHaveBeenCalled(); expect(reexpose).not.toHaveBeenCalled();
+        expect(f.draft.dispatchDraft).toHaveBeenCalledTimes(1); expect(f.state.intents).toHaveLength(3);
+        f.provider.getDocument.mockClear(); f.provider.getTemplateWorkflowConfig.mockClear(); f.credentials.withCredentials.mockClear();
+        await expect(f.service.open(J, principal)).resolves.toMatchObject({ kind: "verify_only" });
+        expect(f.provider.getDocument).not.toHaveBeenCalled(); expect(f.provider.getTemplateWorkflowConfig).not.toHaveBeenCalled(); expect(f.credentials.withCredentials).not.toHaveBeenCalled();
+    });
+    it.each(["unknown", "expired", "id", "template", "creator", "other-step", "missing-id", "read", "workflow-read"])("reopening refuses untrusted %s without bind/expose/complete", async defect => {
+        const f = runtimeFixture(); f.manual(); await f.service.open(J, principal);
+        const before = structuredClone(f.state.authorities[0]);
+        const bind = jest.spyOn(f.repository, "bindDocument"), expose = jest.spyOn(f.repository, "expose"), reexpose = jest.spyOn(f.repository, "reexposeHuman"), complete = jest.spyOn(f.repository, "completeManual");
+        if (defect === "unknown") f.remote.current_status.status_type = "002";
+        if (defect === "expired") f.remote.current_status._expired = true;
+        if (defect === "id") f.remote.id = "another";
+        if (defect === "template") f.remote.template.id = "another";
+        if (defect === "creator") f.remote.creator.id = "another";
+        if (defect === "other-step") f.remote.current_status.step_type = "05";
+        if (defect === "missing-id") f.state.authorities[0].providerDocumentId = null;
+        if (defect === "read") f.provider.getDocument.mockRejectedValue(new Error("provider offline"));
+        if (defect === "workflow-read") f.provider.getTemplateWorkflowConfig.mockRejectedValue(new Error("provider offline"));
+        await expect(f.service.open(J, principal)).rejects.toMatchObject({ code: ["read", "workflow-read"].includes(defect) ? "RECOVERY_UNAVAILABLE" : "PROVIDER_STATE_UNAVAILABLE", status: 503 });
+        expect(bind).not.toHaveBeenCalled(); expect(expose).not.toHaveBeenCalled(); expect(reexpose).not.toHaveBeenCalled(); expect(complete).not.toHaveBeenCalled();
+        expect(f.state.authorities[0].claimEpoch).toBe(before.claimEpoch + 1n); expect(f.state.authorities[0].phase).toBe("human_exposed");
+        expect(f.state.jobs[0].status).toBe("failed"); expect(f.draft.dispatchDraft).toHaveBeenCalledTimes(1); expect(f.state.intents).toHaveLength(3);
+    });
+    it("another user's live exposed claim conflicts before any provider read", async () => {
+        const f = runtimeFixture(); f.manual(); await f.service.open(J, principal);
+        f.provider.getDocument.mockClear(); f.provider.getTemplateWorkflowConfig.mockClear();
+        await expect(f.service.open(J, { ...principal, userId: I })).rejects.toMatchObject({ code: "MANUAL_RECOVERY_CLAIMED", status: 409 });
+        expect(f.provider.getDocument).not.toHaveBeenCalled(); expect(f.provider.getTemplateWorkflowConfig).not.toHaveBeenCalled(); expect(f.draft.dispatchDraft).toHaveBeenCalledTimes(1);
     });
     it("a live other claimant conflicts before credentials or SDK calls", async () => {
         const f = runtimeFixture(); f.manual(); Object.assign(f.state.authorities[0], { claimUserId: I, claimEpoch: 42n, claimExpiresAt: new Date(Date.now() + 60000) });

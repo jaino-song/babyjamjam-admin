@@ -33,6 +33,7 @@ export interface EformsignDocumentJobProps {
     payload: EformsignDocumentJobPayload | null;
     payloadFingerprint: string | null;
     progressStep: string | null;
+    progressDetail: string | null;
     attempts: number;
     nextAttemptAt: Date;
     heartbeatAt: Date | null;
@@ -69,6 +70,7 @@ export class EformsignDocumentJobEntity implements EformsignDocumentJobProps {
     declare readonly payload: EformsignDocumentJobPayload | null;
     declare readonly payloadFingerprint: string | null;
     declare readonly progressStep: string | null;
+    declare readonly progressDetail: string | null;
     declare readonly attempts: number;
     declare readonly nextAttemptAt: Date;
     declare readonly heartbeatAt: Date | null;

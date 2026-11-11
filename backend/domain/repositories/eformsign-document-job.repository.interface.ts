@@ -101,7 +101,7 @@ export interface IEformsignDocumentJobRepository {
         input: AuthorizeEformsignDocumentJobForDispatchInput,
     ): Promise<ServiceRecordDispatchAuthorizationResult>;
     claimDue(limit?: number): Promise<EformsignDocumentJobEntity[]>;
-    updateProgress(id: string, leaseToken: string, progressStep: string, heartbeatAt?: Date): Promise<EformsignDocumentJobEntity | null>;
+    updateProgress(id: string, leaseToken: string, progressStep: string, heartbeatAt?: Date, progressDetail?: string): Promise<EformsignDocumentJobEntity | null>;
     scheduleRetry(id: string, leaseToken: string, nextAttemptAt: Date, errorCode: string): Promise<EformsignDocumentJobEntity | null>;
     markReconciling(id: string, leaseToken: string, progressStep?: string): Promise<EformsignDocumentJobEntity | null>;
     markCompleted(id: string, leaseToken: string, documentId?: string): Promise<EformsignDocumentJobEntity | null>;

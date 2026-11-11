@@ -58,7 +58,7 @@ const job = (overrides: Partial<EformsignDocumentJobEntity> = {}): EformsignDocu
     activeKey: "active-1",
     payload: { accessToken: "provider-secret", customerName: "산모" },
     payloadFingerprint: "fingerprint-secret",
-    progressStep: "provider_submit",
+    progressDetail: null, progressStep: "provider_submit",
     attempts: 1,
     nextAttemptAt: new Date("2026-08-13T00:00:00.000Z"),
     heartbeatAt: new Date("2026-08-13T00:00:00.000Z"),

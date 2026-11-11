@@ -468,6 +468,7 @@ model eformsign_document_job {
   payload                       Json?     @db.JsonB
   payloadFingerprint            String?   @map("payload_fingerprint") @db.Char(64)
   progressStep                  String?   @map("progress_step") @db.VarChar(80)
+  progressDetail                String?   @map("progress_detail") @db.VarChar(24)
   attempts                      Int       @default(0)
   nextAttemptAt                 DateTime  @default(now()) @map("next_attempt_at") @db.Timestamptz(6)
   heartbeatAt                   DateTime? @map("heartbeat_at") @db.Timestamptz(6)

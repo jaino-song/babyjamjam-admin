@@ -22,7 +22,7 @@ export function runtimeFixture() {
     const now = new Date(), events: string[] = [], sql: Prisma.Sql[] = [];
     const state: any = {
         jobs: [{ id: J, branchId: B, clientId: 2, jobType: "create_document", source: "staff", requestKey: "request", activeKey: "active", payload: structuredClone(payload), payloadFingerprint: F,
-            contractGeneration: G, leaseToken: L, status: "processing", createdAt: now, updatedAt: now, completedAt: null, heartbeatAt: now, nextAttemptAt: now, attempts: 0, progressStep: "queued", documentId: null }],
+            contractGeneration: G, leaseToken: L, status: "processing", createdAt: now, updatedAt: now, completedAt: null, heartbeatAt: now, nextAttemptAt: now, attempts: 0, progressDetail: null, progressStep: "queued", documentId: null }],
         clients: [{ id: 2, branchId: B, eDocId: "prior-doc", serviceStatus: "active", deletedAt: null }],
         authorities: [{ branchId: B, clientId: 2, generation: G, creationJobId: J, fingerprint: F, priorDocumentId: "prior-doc", providerDocumentId: null,
             creationIntentId: null, draftIntentId: null, humanIntentId: null, phase: "reserved", claimEpoch: 0n, claimUserId: null, claimExpiresAt: null }],

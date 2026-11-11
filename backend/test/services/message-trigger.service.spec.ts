@@ -923,6 +923,19 @@ describe("MessageTriggerService", () => {
             expect(fx.ruleRepository.update).not.toHaveBeenCalled();
         });
 
+        it("createRule reads an omitted default send time through the caller's transaction", async () => {
+            const transaction = {} as never;
+            const policy = settings({ ...defaultMessageAutomationPolicy(), defaultRuleSendTime: "10:30" });
+            const fx = createService(policy);
+            fx.ruleRepository.create.mockImplementation(async (_branch, rule) => Object.assign(rule, { id: "new-rule" }));
+            await fx.service.createRule(branchId, {
+                name: "new", isActive: false, eventType: MessageTriggerEventType.SERVICE_START,
+                offsetType: MessageTriggerOffsetType.BEFORE_DAYS, offsetDays: 1,
+                recipientType: MessageTriggerRecipientType.CLIENT, templateKey: MessageTriggerTemplateKey.SERVICE_INFO,
+            }, transaction);
+            expect(policy.getMessageAutomationPolicyConfig).toHaveBeenCalledWith(branchId, transaction);
+        });
+
         it.each([undefined, "11:45"])("creates caregiver groups without reentering an exhausted pool (sendTime=%s)", async (sendTime) => {
             const transaction = { message_trigger_rule: {} };
             let transactionHeld = false;

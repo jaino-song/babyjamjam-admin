@@ -1819,7 +1819,7 @@ export class MessageTriggerService {
         }
         let persistedParams: UpsertRuleParams = {
             ...params,
-            sendTime: params.sendTime ?? await this.getDefaultRuleSendTime(branchId),
+            sendTime: params.sendTime ?? await this.getDefaultRuleSendTime(branchId, transaction),
         };
         const persistRule = async (writeTransaction: Prisma.TransactionClient) => {
             await this.assertNoSemanticDuplicate(branchId, persistedParams, writeTransaction);

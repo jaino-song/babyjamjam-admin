@@ -44,7 +44,7 @@ type RawJob = {
     contract_generation?: string | null;
     id: string; branch_id: string; client_id: number | null; document_id: string | null;
     job_type: string; source: string; status: string; request_key: string; active_key: string | null;
-    payload: Prisma.JsonValue | string | null; payload_fingerprint: string | null; progress_step: string | null;
+    payload: Prisma.JsonValue | string | null; payload_fingerprint: string | null; progress_step: string | null; progress_detail: string | null;
     attempts: number; next_attempt_at: Date | string; heartbeat_at: Date | string | null;
     lease_token: string | null; auto_finalize_outcome_recorded_at: Date | string | null;
     started_at: Date | string | null; completed_at: Date | string | null; last_error_code: string | null;
@@ -672,7 +672,7 @@ export class SbEformsignDocumentJobRepository implements IEformsignDocumentJobRe
                     LIMIT ${take}
                 )
                 UPDATE "eformsign_document_job" job
-                SET status = 'processing', attempts = attempts + 1,
+                SET status = 'processing', attempts = attempts + 1, progress_detail = NULL,
                     started_at = COALESCE(started_at, now()), heartbeat_at = now(),
                     lease_token = gen_random_uuid(), updated_at = now()
                 FROM picked WHERE job.id = picked.id
@@ -682,7 +682,7 @@ export class SbEformsignDocumentJobRepository implements IEformsignDocumentJobRe
         });
     }
 
-    async updateProgress(id: string, leaseToken: string, progressStep: string, heartbeatAt = new Date()) {
+    async updateProgress(id: string, leaseToken: string, progressStep: string, heartbeatAt = new Date(), progressDetail?: string) {
         // The persisted marker only moves forward: dispatch_authorized ->
         // creating -> sent. A late write (a delayed heartbeat) computed before
         // a later step committed must not regress it, so the ordering is
@@ -696,6 +696,14 @@ export class SbEformsignDocumentJobRepository implements IEformsignDocumentJobRe
                         AND ${progressStep}::text NOT IN ('creating', 'sent') THEN progress_step
                     ELSE ${progressStep}::text
                 END`;
+        // Display progress is independent of the duplicate-send fence and only advances.
+        const detailOrder = Prisma.sql`ARRAY['client-started', 'info-inserted', 'creating', 'sent']::text[]`;
+        const nextDetail = Prisma.sql`CASE
+                    WHEN array_position(${detailOrder}, ${progressDetail ?? null}::text)
+                        > COALESCE(array_position(${detailOrder}, progress_detail), 0)
+                    THEN ${progressDetail ?? null}::text
+                    ELSE progress_detail
+                END`;
         // Two statements, because the realtime hint is decided when a statement runs and the
         // step is rendered (the contracts job popover shows it). Statement 1 only matches when
         // the step really moves, so it keeps emitting. Statement 2 is reached when the step is
@@ -705,10 +713,11 @@ export class SbEformsignDocumentJobRepository implements IEformsignDocumentJobRe
         // be advanced by another path between the worker's read and this write.
         const stepMoved = await this.updateOne(Prisma.sql`
             UPDATE "eformsign_document_job" SET progress_step = ${nextStep},
-                heartbeat_at = ${heartbeatAt}, updated_at = now()
+                progress_detail = ${nextDetail}, heartbeat_at = ${heartbeatAt}, updated_at = now()
             WHERE id = ${id}::uuid AND lease_token = ${leaseToken}::uuid
               AND status IN ('processing', 'reconciling')
-              AND progress_step IS DISTINCT FROM (${nextStep}) RETURNING *
+              AND (progress_step IS DISTINCT FROM (${nextStep})
+                   OR progress_detail IS DISTINCT FROM (${nextDetail})) RETURNING *
         `);
         if (stepMoved) return stepMoved;
         return withoutEntityChangeHints(() => this.updateOne(Prisma.sql`
@@ -1085,7 +1094,7 @@ export class SbEformsignDocumentJobRepository implements IEformsignDocumentJobRe
         jobType: row.job_type as EformsignDocumentJobType, source: row.source as EformsignDocumentJobSource,
         status: row.status as EformsignDocumentJobStatus, requestKey: row.request_key, activeKey: row.active_key,
         payload: this.parsePayload(row.payload), payloadFingerprint: row.payload_fingerprint,
-        progressStep: row.progress_step, attempts: row.attempts, nextAttemptAt: new Date(row.next_attempt_at),
+        progressStep: row.progress_step, progressDetail: row.progress_detail ?? null, attempts: row.attempts, nextAttemptAt: new Date(row.next_attempt_at),
         heartbeatAt: row.heartbeat_at ? new Date(row.heartbeat_at) : null,
         leaseToken: row.lease_token,
         autoFinalizeOutcomeRecordedAt: row.auto_finalize_outcome_recorded_at
