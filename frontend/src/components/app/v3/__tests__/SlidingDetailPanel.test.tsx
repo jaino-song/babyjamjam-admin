@@ -56,7 +56,7 @@ test("page mode keeps header actions and summary inside the translating detail p
     const root = container.querySelector('[data-slot="sliding-detail-panel"]')!;
     const pane = root.querySelector('[data-slot="sliding-detail-content"]')!;
     const header = pane.querySelector('[data-slot="sliding-detail-header"]')!;
-    const row = header.querySelector('[data-slot="sliding-detail-header-row"]')!;
+    const row = header.querySelector('[data-slot="pane-header"]')!;
     const summary = header.querySelector('[data-slot="sliding-detail-header-summary"]')!;
     expect(root).toHaveAttribute("data-motion", "page");
     expect(root.querySelector('[data-slot="sliding-detail-list"]')).toContainElement(screen.getByText("Jobs list"));
@@ -67,9 +67,10 @@ test("page mode keeps header actions and summary inside the translating detail p
     expect(summary).toContainElement(screen.getByText("Job summary"));
     expect([...header.children]).toEqual([row, summary]);
     expect([...pane.children]).toEqual([header, pane.querySelector('[data-slot="sliding-detail-body"]')]);
-    for (const node of [row, row.querySelector('[data-slot="sliding-detail-header-actions"]')!, summary]) {
+    for (const node of [row, row.querySelector('[data-slot="pane-header-actions"]')!, summary]) {
         expect(node).toHaveAttribute("data-component", expect.stringMatching(/^test_slide_detail-pane_header_/));
-        expect(node).toHaveClass(node.getAttribute("data-slot")!);
+        if (node === summary) expect(node).toHaveClass("sliding-detail-header-summary");
+        else expect(node).toHaveClass("flex");
     }
 });
 
@@ -91,7 +92,7 @@ test.each([undefined, "parallax"] as const)("ignores untyped %s parallax slots w
     expect(back).toHaveFocus();
     expect(screen.queryByText("Async action")).not.toBeInTheDocument();
     expect(screen.queryByText("Async summary")).not.toBeInTheDocument();
-    expect(container.querySelector('[data-slot="sliding-detail-header-row"]')).toBeNull();
+    expect(container.querySelector('[data-slot="pane-header"]')).toBeNull();
     fireEvent.keyDown(document.activeElement!, { key: "Escape" });
     expect(container.querySelector('[data-slot="sliding-detail-panel"]')).toHaveAttribute("data-open", "false");
     expect(listButton).toHaveFocus();
@@ -250,7 +251,7 @@ const expectedCssInventory: CssTuple[] = [
     ["", ".sliding-detail-header-actions", "gap", "8px"],
     ["", ".sliding-detail-header-actions", "flex-shrink", "0"],
     ["", ".sliding-detail-header-summary", "min-width", "0"],
-    ["", `${page} > .sliding-detail-content > .sliding-detail-header`, "padding", "24px 24px 16px"],
+    ["", `${page} > .sliding-detail-content > .sliding-detail-header`, "padding", "0"],
     ["@media (prefers-reduced-motion: reduce)", `${page} > .sliding-detail-list, ${page} > .sliding-detail-content`, "transition", "none"],
 ];
 
@@ -284,7 +285,7 @@ test("page stylesheet moves both full-width panes across the fixed 16px gap with
     expect(compact(declaration(`${page}[data-open="true"] > .sliding-detail-list`, "transform")!)).toBe("translateX(calc(-100%-16px))");
     expect(compact(declaration(`${page} > .sliding-detail-content`, "transform")!)).toBe("translateX(calc(100%+16px))");
     expect(declaration(`${page}[data-open="true"] > .sliding-detail-content`, "transform")).toBe("translateX(0)");
-    expect(declaration(`${page} > .sliding-detail-content > .sliding-detail-header`, "padding")).toBe("24px 24px 16px");
+    expect(declaration(`${page} > .sliding-detail-content > .sliding-detail-header`, "padding")).toBe("0");
 });
 
 test("page reduced-motion removes transitions while default parallax keeps its existing reduction", () => {

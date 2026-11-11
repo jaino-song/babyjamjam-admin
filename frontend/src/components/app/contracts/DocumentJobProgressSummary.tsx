@@ -1,11 +1,21 @@
 import { AlertTriangle, Check, Clock3 } from "lucide-react";
+import { documentJobPipelineStep } from "@/features/document-jobs/progress-step";
 import type { ContractDocumentJob } from "./ContractDocumentJobsPopover";
 
 interface DocumentJobProgressSummaryProps {
   job: ContractDocumentJob;
+  action?: React.ReactNode;
   "data-component"?: string;
 }
-type ProgressView = { title: string; notice: string; state: "waiting" | "unknown" | "done" | "error"; value?: 0 | 100 };
+type ProgressView = { title: string; state: "waiting" | "unknown" | "done" | "error"; value?: number };
+
+const RUNNING_STEPS = {
+  dispatch_authorized: { title: "전송 준비 중", value: 25 },
+  "client-started": { title: "문서 작성 중", value: 50 },
+  "info-inserted": { title: "문서 작성 중", value: 50 },
+  creating: { title: "전송 중", value: 75 },
+  sent: { title: "전송 결과 확인 중", value: 90 },
+};
 
 /** Geometry only: these synthetic counts never infer a document-job checkpoint. */
 export function documentJobProgressPercent(done: number, total: number): number {
@@ -14,17 +24,18 @@ export function documentJobProgressPercent(done: number, total: number): number 
 }
 function progressView(job: ContractDocumentJob): ProgressView {
   const step = job.progressStep;
-  if (job.status === "completed" && step === "manual_resolved") return { state: "done", value: 100, title: "직접 처리됨", notice: "담당자가 직접 처리한 것으로 기록된 작업입니다." };
-  if (step === "manual_in_progress" || step?.startsWith("manual_in_progress:")) return { state: "unknown", title: "수동 처리 중", notice: "수동 처리 작업이 진행 중입니다. 담당자의 처리 결과를 기다려 주세요." };
-  if (job.status === "completed") return { state: "done", value: 100, title: "작업 완료", notice: "작업 처리가 종료되었습니다." };
-  if (job.status === "reconciling") return { state: "unknown", title: "현재 상태 확인 중", notice: "처리 결과를 확인하고 있습니다." };
-  if (job.status === "failed" || job.status === "requires_attention") return { state: "error", title: "처리 실패", notice: "아래 작업 정보를 확인해 주세요." };
-  if (job.documentKind === "service_contract" && job.status === "queued") return { state: "waiting", value: 0, title: "처리 대기", notice: "작업이 시작되기를 기다리고 있습니다." };
-  if (job.documentKind === "service_contract" && job.status === "processing" && step === "dispatch_authorized") return { state: "unknown", title: "전송 준비 중", notice: "문서 처리 준비 상태를 확인하고 있습니다." };
-  return { state: "unknown", title: "현재 상태 확인 중", notice: "확인된 진행 정보가 없어 현재 상태를 확인하고 있습니다." };
+  if (job.status === "completed" && step === "manual_resolved") return { state: "done", value: 100, title: "직접 처리됨" };
+  if (step === "manual_in_progress" || step?.startsWith("manual_in_progress:")) return { state: "unknown", title: "수동 처리중" };
+  if (job.status === "completed") return { state: "done", value: 100, title: "전송 완료" };
+  if (job.status === "reconciling") return { state: "unknown", title: "현재 상태 확인 중" };
+  if (job.status === "failed" || job.status === "requires_attention") return { state: "error", title: "처리 실패" };
+  if (job.documentKind === "service_contract" && job.status === "queued") return { state: "waiting", value: 0, title: "처리 대기" };
+  const checkpoint = documentJobPipelineStep(job);
+  if (job.status === "processing" && checkpoint) return { state: "waiting", ...RUNNING_STEPS[checkpoint] };
+  return { state: "unknown", title: "현재 상태 확인 중" };
 }
 
-export function DocumentJobProgressSummary({ job, "data-component": base }: DocumentJobProgressSummaryProps): React.ReactElement {
+export function DocumentJobProgressSummary({ job, action, "data-component": base }: DocumentJobProgressSummaryProps): React.ReactElement {
   const view = progressView(job);
   const sub = (suffix: string) => base ? `${base}_${suffix}` : undefined;
   const circumference = 2 * Math.PI * 40;
@@ -47,7 +58,7 @@ export function DocumentJobProgressSummary({ job, "data-component": base }: Docu
         </div>
       </div>
       <h3 data-component={sub("hero_title")} data-slot="progress-title" aria-live="polite" className={`text-[17px] font-bold leading-[1.375] ${view.state === "error" ? "text-status-danger-fg" : "text-v3-dark"}`}>{view.title}</h3>
-      <p data-component={sub("hero_notice")} data-slot="progress-notice" className="text-xs leading-5 text-v3-text-muted">{view.notice}</p>
     </div>
+    {action != null ? <div data-component={sub("action")} data-slot="progress-action" className="w-full">{action}</div> : null}
   </section>;
 }

@@ -21,7 +21,7 @@ type DocumentJobStatusView = {
 
 const STATUS_COPY = {
   queued: { label: "대기", variant: "neutral" },
-  processing: { label: "처리 중", variant: "info" },
+  processing: { label: "처리중", variant: "info" },
   reconciling: { label: "확인 중", variant: "warning" },
   completed: { label: "완료", variant: "success" },
   failed: { label: "처리 실패", variant: "danger" },

@@ -77,8 +77,9 @@ describe("StatsBar document jobs card", () => {
       </JobsTestWrapper>,
     );
 
-    const card = await screen.findByRole("button", CARD);
-    expect(card).toHaveTextContent("실패 1");
+    const card = await screen.findByRole("button", { name: "문서 처리 실패 작업 보기" });
+    expect(card).toHaveTextContent("1건문서 처리 실패");
+    expect(card.querySelector('[data-slot="stat-mini-marker"]')).toBeNull();
   });
 
   it("keeps the always card at zero", async () => {

@@ -21,21 +21,21 @@ beforeEach(() => jest.clearAllMocks());
 
 test("renders independent names/operations/statuses and selects all six native cards with their actual button", () => {
   const { container } = render(<ContractDocumentJobsList {...props} />);
-  for (const title of ["처리 중", "확인 필요", "최근 처리"]) {
+  for (const title of ["처리중", "확인 필요", "최근 처리"]) {
     const toggle = screen.getByRole("button", { name: `${title} 2건` });
     expect(toggle).toBeInTheDocument();
     expect(toggle.querySelector('[data-component$="_toggle_title"]')?.textContent?.trim()).toBe(title);
     expect(toggle.querySelector('[data-slot="contract-document-jobs-count"]')?.textContent?.trim()).toBe("2건");
   }
-  const expected = [["a", "고객 A", "서비스 계약서 생성", "대기"], ["b", "고객 B", "서비스 계약서 검토", "처리 중"], ["c", "고객 C", "서비스 계약서 생성", "처리 실패"], ["d", "고객 D", "제공기록지 생성", "처리 실패"], ["e", "고객 E", "서비스 계약서 검토", "완료"], ["f", "고객 F", "제공기록지 생성", "완료"]];
+  const expected = [["a", "고객 A", "서비스 계약서 생성", "대기"], ["b", "고객 B", "서비스 계약서 검토", "처리중"], ["c", "고객 C", "서비스 계약서 생성", "처리 실패"], ["d", "고객 D", "제공기록지 생성", "처리 실패"], ["e", "고객 E", "서비스 계약서 검토", "완료"], ["f", "고객 F", "제공기록지 생성", "완료"]];
   for (const [id, name, operation, status] of expected) {
     const card = screen.getByRole("button", { name: `${name} · ${operation} · ${status} 상세 보기` });
-    expect(card.tagName).toBe("BUTTON"); expect(card).toHaveAttribute("type", "button"); expect(card).not.toHaveAttribute("aria-controls");
-    expect([...card.children].map((node) => node.getAttribute("data-slot"))).toEqual(["contract-document-jobs-card-icon", "contract-document-jobs-card-copy", "contract-document-jobs-card-status"]);
-    expect(card.querySelector('[data-slot="contract-document-jobs-card-title"]')).toHaveTextContent(new RegExp(`^${name}$`));
-    expect(card.querySelector('[data-slot="contract-document-jobs-card-subtype"]')).toHaveTextContent(new RegExp(`^${operation}$`));
-    expect(card.querySelector('[data-slot="contract-document-jobs-card-status"] [data-source-component="StatusBadge"]')).toHaveTextContent(status);
-    fireEvent.click(card.querySelector('[data-slot="contract-document-jobs-card-title"]')!); expect(props.onSelect).toHaveBeenLastCalledWith(id, card);
+    expect(card).toHaveAttribute("role", "button"); expect(card).not.toHaveAttribute("aria-controls");
+    expect(card.closest('[data-source-component="AnimatedSlotList"]')).not.toBeNull();
+    expect(card.querySelector('[data-component$="_title"]')).toHaveTextContent(new RegExp(`^${name}$`));
+    expect(card.querySelector('[data-component$="_subtitle"]')).toHaveTextContent(new RegExp(`^${operation}$`));
+    expect(card.querySelector('[data-component$="_status"] [data-source-component="StatusBadge"]')).toHaveTextContent(status);
+    fireEvent.click(card.querySelector('[data-component$="_title"]')!); expect(props.onSelect).toHaveBeenLastCalledWith(id, card);
   }
   expect(props.onSelect).toHaveBeenCalledTimes(6); expect(screen.queryByRole("link")).not.toBeInTheDocument();
   expect(container.textContent).not.toMatch(/읽기 전용|자동 최종화|최근 완료/);
@@ -50,7 +50,7 @@ test("renders independent names/operations/statuses and selects all six native c
 
 test("collapse is controlled, immediately inert and linked to stable unique body IDs", () => {
   const { rerender } = render(<ContractDocumentJobsList {...props} />);
-  const toggle = screen.getByRole("button", { name: "처리 중 2건" });
+  const toggle = screen.getByRole("button", { name: "처리중 2건" });
   const id = toggle.getAttribute("aria-controls")!;
   expect(document.getElementById(id)).toHaveAttribute("aria-labelledby", toggle.id);
   fireEvent.click(toggle); expect(props.onToggle).toHaveBeenCalledWith("processing"); expect(toggle).toHaveAttribute("aria-expanded", "true");
@@ -69,17 +69,17 @@ test("renders loading, safe retryable errors, callback-free errors and per-secti
   const onRetry = jest.fn();
   rerender(<ContractDocumentJobsList {...props} error={new Error("RAW_PROVIDER_DETAIL")} onRetry={onRetry} />);
   expect(screen.getByRole("alert")).toHaveTextContent("전자문서 작업을 불러오지 못했습니다."); expect(screen.queryByText("RAW_PROVIDER_DETAIL")).not.toBeInTheDocument();
-  expect(screen.queryByRole("button", { name: "처리 중 2건" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "처리중 2건" })).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "다시 시도" })); expect(onRetry).toHaveBeenCalledTimes(1);
   rerender(<ContractDocumentJobsList {...props} error={new Error("private")} />); expect(screen.queryByRole("button", { name: "다시 시도" })).not.toBeInTheDocument();
   rerender(<ContractDocumentJobsList {...props} jobs={null} />);
-  for (const title of ["처리 중", "확인 필요", "최근 처리"]) {
+  for (const title of ["처리중", "확인 필요", "최근 처리"]) {
     const toggle = screen.getByRole("button", { name: `${title} 0건` });
     expect(toggle).toBeInTheDocument();
     expect(toggle.querySelector('[data-component$="_toggle_title"]')?.textContent?.trim()).toBe(title);
     expect(toggle.querySelector('[data-slot="contract-document-jobs-count"]')?.textContent?.trim()).toBe("0건");
   }
-  expect(screen.getByText("처리 중인 전자문서가 없습니다.")).toBeInTheDocument();
+  expect(screen.getByText("처리중인 전자문서가 없습니다.")).toBeInTheDocument();
   expect(screen.getByText("확인이 필요한 전자문서가 없습니다.")).toBeInTheDocument(); expect(screen.getByText("최근 처리한 전자문서가 없습니다.")).toBeInTheDocument();
 });
 
@@ -126,22 +126,9 @@ const expectedRules: Rule[] = [
   ["", `${c}content`, "display:grid;grid-template-rows:1fr;min-height:0;transition:grid-template-rows250msease;"],
   ["", `${c}content[data-expanded="false"]`, "grid-template-rows:0fr;"],
   ["", `${c}inner`, "min-height:0;overflow:hidden;"],
-  ["", `${c}cards`, "display:flex;flex-direction:column;gap:8px;margin:0-8px;padding:08px;"],
-  ["", `${c}card, ${c}card:hover, ${c}card:active`, "border:2pxsolidhsl(21420%92%);"],
-  ["", `${c}card`, "width:100%;height:auto;min-height:94px;display:flex;align-items:center;justify-content:flex-start;gap:12px;padding:16px;border-radius:18px;background:white;white-space:normal;text-align:left;transition:background-color150ms;"],
-  ["", `${c}card[data-active="true"]`, "background:hsl(21480%95%/.2);"],
-  ["", `${c}card:hover`, "background:hsl(21480%95%/.55);"],
-  ["", `${c}card-icon`, "display:flex;width:44px;height:44px;align-items:center;justify-content:center;flex-shrink:0;border-radius:14px;background:hsl(21480%95%);border:1pxsolidhsl(21470%85%);color:hsl(214100%34%);box-shadow:04px6px-1pxrgb(000/.1),02px4px-2pxrgb(000/.1);"],
-  ["", `${c}card-icon[data-warning="true"]`, "border-color:hsl(3892%35%/.18);background:hsl(47100%92%);color:hsl(3892%35%);"],
-  ["", `${c}card-icon svg`, "width:20px;height:20px;"],
-  ["", `${c}card-copy`, "flex:1;min-width:0;"],
-  ["", `${c}card-title`, "display:block;font-size:13.6px;line-height:20.4px;font-weight:700;color:hsl(21440%18%);margin-bottom:2px;overflow-wrap:anywhere;"],
-  ["", `${c}card-subtype`, "display:block;font-size:11.2px;line-height:16px;color:hsl(21410%55%);overflow-wrap:anywhere;"],
-  ["", `${c}card-status`, "align-self:center;flex-shrink:0;"],
   ["", `${c}empty`, "margin:0;min-height:116px;display:grid;place-items:center;padding:16px8px20px;text-align:center;font-size:11.2px;color:hsl(21410%55%);"],
   ["", `${c}state`, "display:flex;align-items:center;justify-content:center;flex-direction:column;gap:12px;padding:24px;text-align:center;"],
-  ["@media (prefers-reduced-motion: reduce)", `${c}content, ${c}chevron, ${c}card`, "transition:none;"],
-  ["", `${c}card:focus-visible`, "box-shadow:none;outline:2pxsolidhsl(var(--ring));outline-offset:-4px;"],
+  ["@media (prefers-reduced-motion: reduce)", `${c}content, ${c}chevron`, "transition:none;"],
 ];
 test("actual CSS preserves 250ms accordion/chevron, centered gray cards and reduced-motion none without later overrides", () => {
   expect(inventory(css)).toEqual(expectedRules);

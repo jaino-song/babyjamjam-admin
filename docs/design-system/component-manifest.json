@@ -1909,6 +1909,30 @@
           "ChatWorkspaceStats"
         ],
         "note": "Branch-aligned live chat statistics; reuses DocumentJobsStatMini and backend contractsNotSent/serviceEnd counts."
+      },
+      {
+        "name": "PaneHeader",
+        "layer": "molecule",
+        "import": "@/components/app/v3/PaneHeader",
+        "file": "frontend/src/components/app/v3/PaneHeader.tsx",
+        "exports": [
+          "PaneHeader"
+        ],
+        "replaces": [
+          "duplicated pane title and back header rows"
+        ]
+      },
+      {
+        "name": "ContractDocumentJobsPanes",
+        "layer": "organism",
+        "import": "@/components/app/contracts/ContractDocumentJobsPanes",
+        "file": "frontend/src/components/app/contracts/ContractDocumentJobsPanes.tsx",
+        "exports": [
+          "ContractDocumentJobsPanes"
+        ],
+        "replaces": [
+          "separate desktop and phone document job pane contents"
+        ]
       }
     ],
     "mobile": [

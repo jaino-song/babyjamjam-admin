@@ -29,13 +29,13 @@ describe("ContractDocumentJobSummary", () => {
     expect(root?.querySelector('[data-slot="job-detail-heading"]')).toHaveAttribute("data-component", "desktop_contracts_jobs-modal_detail_heading");
     expect(screen.getByRole("heading", { name: "예시 고객" })).toHaveAttribute("data-component", "desktop_contracts_jobs-modal_detail_heading_customer");
     expect(screen.getByText(label)).toHaveAttribute("data-component", "desktop_contracts_jobs-modal_detail_heading_type");
-    expect(screen.getByText("처리 중")).toHaveAttribute("data-component", "desktop_contracts_jobs-modal_detail_status");
+    expect(screen.getByText("처리중")).toHaveAttribute("data-component", "desktop_contracts_jobs-modal_detail_status");
     expect(root?.querySelector('[data-slot="job-detail-heading"]')?.parentElement).toBe(root);
     expect(root?.querySelector('[data-slot="status-badge"]')?.parentElement).toBe(root);
   });
 
   it.each([
-    ["queued", "대기"], ["processing", "처리 중"], ["reconciling", "확인 중"],
+    ["queued", "대기"], ["processing", "처리중"], ["reconciling", "확인 중"],
     ["completed", "완료"], ["failed", "처리 실패"], ["requires_attention", "처리 실패"],
     ["new_status", "상태 확인 필요"],
   ])("should show safe status copy for %s", (status, label) => {
@@ -68,9 +68,9 @@ describe("ContractDocumentJobSummary", () => {
 describe("ContractDocumentJobDetail document navigation", () => {
   it.each([false, true])("calls the optional callback once without preventing the existing link (meta=%s)", (metaKey) => {
     const onDocumentNavigate = jest.fn();
-    render(<ContractDocumentJobDetail job={{ ...JOB, documentId: "문서 /1" }} onDocumentNavigate={onDocumentNavigate} />);
-    const link = screen.getByRole("link", { name: "문서 보기" });
-    expect(link).toHaveAttribute("href", "/contracts?documentId=%EB%AC%B8%EC%84%9C%20%2F1");
+    render(<ContractDocumentJobDetail job={{ ...JOB, status: "failed", recoveryKind: "manual_send", jobId: "문서 /1" }} onDocumentNavigate={onDocumentNavigate} />);
+    const link = screen.getByRole("link", { name: "수동 전송" });
+    expect(link).toHaveAttribute("href", "/contracts?recoverJobId=%EB%AC%B8%EC%84%9C%20%2F1");
     const event = new MouseEvent("click", { bubbles: true, cancelable: true, metaKey });
     fireEvent(link, event);
     expect(onDocumentNavigate).toHaveBeenCalledTimes(1);
@@ -93,10 +93,8 @@ describe("ContractDocumentJobDetail", () => {
     for (const [label, expectedPath] of [
       ["작업 유형", "desktop_contracts_jobs-modal_detail_info_operation"],
       ["상태", "desktop_contracts_jobs-modal_detail_info_status"],
-      ["작업 요청", "desktop_contracts_jobs-modal_detail_info_created-at"],
-      ["시작", "desktop_contracts_jobs-modal_detail_info_started-at"],
-      ["완료", "desktop_contracts_jobs-modal_detail_info_completed-at"],
-      ["최근 업데이트", "desktop_contracts_jobs-modal_detail_info_updated-at"],
+      ["작업 시작", "desktop_contracts_jobs-modal_detail_info_started-at"],
+      ["작업 종료", "desktop_contracts_jobs-modal_detail_info_ended-at"],
       ["시도 횟수", "desktop_contracts_jobs-modal_detail_info_attempts"],
     ]) {
       expect(screen.getByText(label).closest('[data-slot="job-info-row"]')).toHaveAttribute("data-component", expectedPath);
@@ -110,28 +108,28 @@ describe("ContractDocumentJobDetail", () => {
       completedAt: "2026-11-03T18:17:00Z", updatedAt: "2026-11-03T18:18:00Z",
     }} data-component={BASE} />);
     expect(row("작업 유형").getByText("서비스 계약서 생성")).toBeInTheDocument();
-    expect(row("상태").getByText("처리 중")).toBeInTheDocument();
-    for (const [label, value] of [["작업 요청", "2026.11.04 03:15"], ["시작", "2026.11.04 03:16"],
-      ["완료", "2026.11.04 03:17"], ["최근 업데이트", "2026.11.04 03:18"], ["시도 횟수", "0회"]]) {
+    expect(row("상태").getByText("처리중")).toBeInTheDocument();
+    for (const [label, value] of [["작업 시작", "2026.11.04 03:15"], ["작업 종료", "2026.11.04 03:17"], ["시도 횟수", "0회"]]) {
       expect(row(label).getByText(value)).toBeInTheDocument();
     }
-    expect(screen.getByRole("link", { name: "문서 보기" })).toHaveAttribute("href", "/contracts?documentId=%EB%AC%B8%EC%84%9C%20%2F%3F%26%3D%23%25");
-    expect(screen.getByRole("link", { name: "문서 보기" })).toHaveAttribute("data-variant", "secondary");
-    expect(screen.getByRole("link", { name: "문서 보기" })).toHaveAttribute("data-component", "desktop_contracts_jobs-modal_detail_document");
     expect(screen.queryByRole("button")).not.toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "예시 고객" })).not.toBeInTheDocument();
   });
 
+  it("should show updatedAt as the end time for a failed job without completedAt", () => {
+    render(<ContractDocumentJobDetail job={{ ...JOB, status: "failed", completedAt: null, updatedAt: "2026-11-03T18:18:00Z" }} />);
+    expect(row("작업 종료").getByText("2026.11.04 03:18")).toBeInTheDocument();
+  });
+
   it.each([undefined, null, ""])("should omit the document link for %s", (documentId) => {
     render(<ContractDocumentJobDetail job={{ ...JOB, documentId }} data-component={BASE} />);
-    expect(screen.getByText("연결된 문서가 없습니다")).toBeInTheDocument();
-    expect(screen.getByText("연결된 문서가 없습니다")).toHaveAttribute("data-component", "desktop_contracts_jobs-modal_detail_no-document");
+    expect(screen.queryByText("연결된 문서가 없습니다")).not.toBeInTheDocument();
     expect(screen.queryByRole("link")).not.toBeInTheDocument();
   });
 
   it("should use placeholders for missing or invalid times and attempts", () => {
     render(<ContractDocumentJobDetail job={{ ...JOB, createdAt: "invalid", startedAt: "", completedAt: null }} />);
-    for (const label of ["작업 요청", "시작", "완료", "최근 업데이트", "시도 횟수"]) {
+    for (const label of ["작업 시작", "작업 종료", "시도 횟수"]) {
       expect(row(label).getByText("-")).toBeInTheDocument();
     }
   });

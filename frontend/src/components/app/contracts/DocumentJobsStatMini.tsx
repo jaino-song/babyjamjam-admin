@@ -1,6 +1,6 @@
 "use client";
 
-import { LoaderCircle } from "lucide-react";
+import { FileText, LoaderCircle, TriangleAlert } from "lucide-react";
 import { useEffect, useId } from "react";
 
 import { ContractDocumentJobsPopover } from "@/components/app/contracts/ContractDocumentJobsPopover";
@@ -8,6 +8,10 @@ import { StatMini, type StatMiniDensity } from "@/components/app/v3/StatMini";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { useDocumentJobs } from "@/features/document-jobs/DocumentJobsProvider";
+
+function SpinningLoader({ className }: { className?: string }) {
+  return <LoaderCircle aria-hidden="true" className={`animate-spin motion-reduce:animate-none ${className ?? ""}`} />;
+}
 
 export type DocumentJobsStatMode = "always" | "whenActive";
 
@@ -50,7 +54,6 @@ export function DocumentJobsStatMini({
     jobsError,
     isJobsLoading,
     refetchJobs,
-    total,
     unresolvedCount,
     isPopoverOpen,
     setPopoverOpen,
@@ -80,8 +83,6 @@ export function DocumentJobsStatMini({
       <ContractDocumentJobsPopover
         open={isOpen}
         onOpenChange={handleOpenChange}
-        // The popover header adds activeCount and requiresAttentionCount; feed it the
-        // card's unresolved figure so its count matches the number on the card.
         summary={summary ? { activeCount: summary.activeCount, requiresAttentionCount: summary.unresolvedCount } : null}
         documentJobs={jobs ?? null}
         isJobsLoading={isJobsLoading}
@@ -92,17 +93,16 @@ export function DocumentJobsStatMini({
         trigger={
           <StatMini
             data-component={`${base}-popover_trigger`}
-            icon={LoaderCircle}
-            value={hasSummary ? total : "—"}
-            label="전자문서 처리중"
+            icon={unresolvedCount > 0 ? TriangleAlert : (summary?.activeCount ?? 0) > 0 ? SpinningLoader : FileText}
+            value={hasSummary ? (unresolvedCount > 0 ? unresolvedCount : summary.activeCount) : "—"}
+            label={unresolvedCount > 0 ? "문서 처리 실패" : "전자문서 처리중"}
             counter="건"
-            marker={hasSummary && unresolvedCount > 0 ? `실패 ${unresolvedCount}` : undefined}
-            colorIndex={2}
+            colorIndex={unresolvedCount > 0 ? 3 : 2}
             animationDelay="0s"
             isLoading={isSummaryLoading}
             density={density}
             interactive
-            aria-label="전자문서 처리중 작업 보기"
+            aria-label={unresolvedCount > 0 ? "문서 처리 실패 작업 보기" : "전자문서 처리중 작업 보기"}
           />
         }
       />

@@ -1,5 +1,7 @@
 import type { EformsignDocumentJobResponse } from "@/services/api";
-import type { EformsignDocumentJobFailureReasonCode, EformsignDocumentJobRecoveryKind } from "@/services/eformsign";
+import type { EformsignDocumentJobRecoveryKind } from "@/services/eformsign";
+
+import { documentJobPipelineStep } from "./progress-step";
 
 export interface FailurePopupCopy {
   title: string;
@@ -69,7 +71,7 @@ export function recoverJobHref(jobId: string): string {
   return `/contracts?recoverJobId=${encodeURIComponent(jobId)}`;
 }
 
-type FailureDetailJob = Partial<Pick<EformsignDocumentJobResponse, "source" | "recoveryKind" | "progressStep">> & {
+type FailureDetailJob = Partial<Pick<EformsignDocumentJobResponse, "source" | "recoveryKind" | "progressStep" | "progressDetail" | "lastErrorCode">> & {
   status: string;
   failureReasonCode?: string | null;
 };
@@ -79,14 +81,58 @@ interface JobFailureDetailCopy {
   actionKind?: EformsignDocumentJobRecoveryKind;
   actionLabel?: string;
 }
-const DETAIL_REASON_COPY: Record<EformsignDocumentJobFailureReasonCode, string> = {
-  PROVIDER_STATE_UNAVAILABLE: "전자문서 제공처의 처리 결과를 확인하지 못했습니다.",
-  PRE_SEND_RETRY_EXHAUSTED: "전송 전 자동 처리를 여러 번 시도했지만 완료하지 못했습니다.",
-  SERVICE_RECORD_REVISION_CAPABILITY_UNVERIFIED: "제공기록지의 자동 처리 지원 여부를 확인하지 못했습니다.",
-  SERVICE_RECORD_REVISION_MANUAL_REVIEW_REQUIRED: "제공기록지 내용을 직접 확인해야 합니다.",
-  JOB_TARGET_NOT_OWNED_BY_BRANCH: "현재 지점에서 처리할 수 없는 작업입니다.",
-  RECOVERY_PAYLOAD_EXPIRED: "보관 기간이 지나 복구에 필요한 저장 내용이 없습니다.",
+type FailureStage = "처리 대기" | "전송 준비" | "문서 작성" | "전송" | "전송 결과 확인";
+const STAGE_COPY: Record<FailureStage, string> = {
+  "처리 대기": "작업을 시작하지 못했어요.",
+  "전송 준비": "전송을 준비하지 못했어요.",
+  "문서 작성": "이폼사인에서 문서를 작성하지 못했어요.",
+  "전송": "이폼사인에 전송하지 못했어요.",
+  "전송 결과 확인": "전송 결과를 확인하지 못했어요.",
 };
+const CODE_STAGE: Record<string, FailureStage> = {
+  JOB_TARGET_NOT_OWNED_BY_BRANCH: "처리 대기",
+  MISSING_JOB_PAYLOAD: "처리 대기",
+  INVALID_FINALIZE_JOB_PAYLOAD: "처리 대기",
+  dispatch_already_claimed: "처리 대기",
+  ownership_changed: "처리 대기",
+  job_not_active: "처리 대기",
+  invalid_job_claim: "처리 대기",
+  RECOVERY_PAYLOAD_EXPIRED: "처리 대기",
+  SERVICE_RECORD_REVISION_CAPABILITY_UNVERIFIED: "처리 대기",
+  SERVICE_RECORD_REVISION_MANUAL_REVIEW_REQUIRED: "처리 대기",
+  INVALID_CREATE_JOB_PAYLOAD: "전송 준비",
+  template_workflow_config_unavailable: "전송 준비",
+  template_workflow_config_invalid: "전송 준비",
+  template_workflow_config_unsupported: "전송 준비",
+  operation_lock_unavailable: "전송 준비",
+  HEADLESS_EXECUTION_FAILURE: "전송 준비",
+  HEADLESS_CREATE_PRE_SEND_FAILURE: "문서 작성",
+  HEADLESS_FINALIZE_PRE_SEND_FAILURE: "문서 작성",
+  PROVIDER_TERMINAL_FAILURE: "전송",
+  PROVIDER_STATE_UNAVAILABLE: "전송 결과 확인",
+  PROVIDER_DOCUMENT_NOT_FOUND: "전송 결과 확인",
+  AMBIGUOUS_PROVIDER_STATE: "전송 결과 확인",
+  PROVIDER_STATE_UNFINISHED: "전송 결과 확인",
+  MISSING_PROVIDER_DOCUMENT_ID: "전송 결과 확인",
+  MISSING_CREATION_RECONCILIATION_HINTS: "전송 결과 확인",
+  MISSING_CLIENT_FOR_ADOPTION: "전송 결과 확인",
+  ADOPTION_FAILED: "전송 결과 확인",
+  RECOVERY_PENDING: "전송 결과 확인",
+  COMPLETION_MIRROR_FAILED: "전송 결과 확인",
+};
+function stageFromStep(step?: string | null): FailureStage {
+  if (step === "dispatch_authorized") return "전송 준비";
+  if (step === "client-started" || step === "info-inserted") return "문서 작성";
+  if (step === "creating") return "전송";
+  if (step === "sent" || step === "reconciling") return "전송 결과 확인";
+  return "처리 대기";
+}
+function describeFailureReason(job: FailureDetailJob): string {
+  const code = job.lastErrorCode ?? job.failureReasonCode;
+  const stage = code && Object.prototype.hasOwnProperty.call(CODE_STAGE, code)
+    ? CODE_STAGE[code] : stageFromStep(documentJobPipelineStep(job) ?? job.progressStep);
+  return STAGE_COPY[stage];
+}
 
 export function describeJobFailureDetail(job: FailureDetailJob): JobFailureDetailCopy | null {
   if (job.progressStep === "manual_in_progress" || job.progressStep?.startsWith("manual_in_progress:")) {
@@ -97,9 +143,7 @@ export function describeJobFailureDetail(job: FailureDetailJob): JobFailureDetai
   }
   if (job.status !== "failed" && job.status !== "requires_attention") return null;
   const code = job.failureReasonCode;
-  const reason = code && Object.prototype.hasOwnProperty.call(DETAIL_REASON_COPY, code)
-    ? DETAIL_REASON_COPY[code as EformsignDocumentJobFailureReasonCode]
-    : "작업을 완료하지 못했습니다. 확인이 필요합니다.";
+  const reason = describeFailureReason(job);
   const actionKind = isRecoverableJob(job) ? job.recoveryKind ?? undefined : undefined;
   let nextAction = "문서의 처리 상태를 확인하고 관리자에게 문의해 주세요.";
   if (code === "JOB_TARGET_NOT_OWNED_BY_BRANCH") {
@@ -114,6 +158,6 @@ export function describeJobFailureDetail(job: FailureDetailJob): JobFailureDetai
     nextAction = "저장된 내용과 수신 정보를 확인한 후 수동 전송을 진행해 주세요.";
   }
   return { reason, nextAction, ...(actionKind ? {
-    actionKind, actionLabel: actionKind === "manual_send" ? "수동 전송 화면 열기" : "결과 확인",
+    actionKind, actionLabel: actionKind === "manual_send" ? "수동 전송" : "결과 확인",
   } : {}) };
 }

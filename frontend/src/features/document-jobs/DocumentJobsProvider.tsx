@@ -36,8 +36,8 @@ export interface DocumentJobsContextValue {
   jobs: EformsignDocumentJobList | undefined;
   jobsError: unknown;
   isJobsLoading: boolean;
-  refetchJobs: () => void;
-  /** activeCount + unresolvedCount, the number on every "전자문서 처리중" card. */
+  refetchJobs: () => Promise<{ data?: EformsignDocumentJobList; error?: unknown }> | void;
+  /** activeCount + unresolvedCount, used to decide whether a whenActive card is visible. */
   total: number;
   unresolvedCount: number;
   isPopoverOpen: boolean;
@@ -156,7 +156,7 @@ export function DocumentJobsProvider({ children }: { children: ReactNode }) {
   const { refetch: refetchSummaryQuery } = summaryQuery;
   const { refetch: refetchJobsQuery } = jobsQuery;
   const refetchSummary = useCallback(() => void refetchSummaryQuery(), [refetchSummaryQuery]);
-  const refetchJobs = useCallback(() => void refetchJobsQuery(), [refetchJobsQuery]);
+  const refetchJobs = useCallback(() => refetchJobsQuery(), [refetchJobsQuery]);
 
   // activeCount covers every job type while unresolvedCount is contract-only; summing them
   // is the intended operator formula, not an accident of mixing scopes.
