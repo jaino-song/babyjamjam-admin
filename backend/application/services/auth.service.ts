@@ -69,13 +69,9 @@ export class AuthService {
             role: user.role,
         };
 
-        const signOptions = user.role === "owner"
-            ? { expiresIn: "30d" }
-            : { expiresIn: "3d" };
+        const signOptions = { expiresIn: "30d" };
 
-        const refreshSignOptions = user.role === "owner"
-            ? { expiresIn: "7d" }
-            : { expiresIn: "1d" };
+        const refreshSignOptions = { expiresIn: "7d" };
 
         const refreshToken = await this.jwt.signAsync(
             { ...payload, type: 'refresh' },

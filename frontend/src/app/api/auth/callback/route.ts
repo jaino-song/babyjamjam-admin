@@ -1,14 +1,5 @@
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
-import { jwtDecode } from "jwt-decode";
-
-interface TokenPayload {
-    sub: string;
-    role: string | null;
-    type: 'access' | 'refresh';
-    iat: number;
-    exp: number;
-}
 
 export async function GET(request: Request) {
     const { searchParams } = new URL(request.url);
@@ -19,16 +10,6 @@ export async function GET(request: Request) {
         const cookieStore = await cookies();
 
         try {
-            const decoded = jwtDecode<TokenPayload>(token);
-            const role = decoded.role || "user";
-
-            // Calculate maxAge based on role
-            // owner: 30 days (30 * 24 * 60 * 60)
-            // others: 3 days (3 * 24 * 60 * 60)
-            const maxAge = role === "owner"
-                ? 30 * 24 * 60 * 60
-                : 3 * 24 * 60 * 60;
-
             cookieStore.set("auth_token", token, {
                 httpOnly: true,
                 secure: process.env.NODE_ENV === "production",
@@ -37,7 +18,7 @@ export async function GET(request: Request) {
                 // allowing the cookie to be sent securely.
                 sameSite: "lax",
                 path: "/",
-                maxAge: maxAge,
+                maxAge: 30 * 24 * 60 * 60,
             });
 
             if (refreshToken) {
@@ -51,7 +32,7 @@ export async function GET(request: Request) {
             }
         } catch (error) {
             console.error("Failed to decode token:", error);
-            // Fallback to default 3 days if decoding fails
+            // Fallback if setting the cookie fails
             cookieStore.set("auth_token", token, {
                 httpOnly: true,
                 secure: process.env.NODE_ENV === "production",
@@ -60,7 +41,7 @@ export async function GET(request: Request) {
                 // allowing the cookie to be sent securely.
                 sameSite: "lax",
                 path: "/",
-                maxAge: 3 * 24 * 60 * 60,
+                maxAge: 30 * 24 * 60 * 60,
             });
 
             if (refreshToken) {
