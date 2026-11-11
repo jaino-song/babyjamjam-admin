@@ -2,10 +2,10 @@
 
 import { useQuery } from "@tanstack/react-query";
 import { eformsignApi } from "@/services/api";
-import { EformsignDocumentsResponse, EformsignDocument } from "@/app/lib/eformsign/types";
+import { EformsignDocumentsResponse } from "@/app/lib/eformsign/types";
 import {
   DocumentFilterType,
-  getLegacyDocumentStatusCategory,
+  filterDocumentsByStatus,
   LEGACY_EXCLUDED_CUSTOMER_NAMES,
   needsLegacyDocumentDetail,
 } from "@/app/lib/eformsign/status-codes";
@@ -16,12 +16,6 @@ export type { DocumentFilterType } from "@/app/lib/eformsign/status-codes";
 // Debug logging (only in development)
 const isDev = process.env.NODE_ENV === "development";
 const debugLog = isDev ? console.log.bind(console) : () => {};
-
-// Filter documents by actual status code (not just inbox type)
-function filterByActualStatus(docs: EformsignDocument[], type: DocumentFilterType): EformsignDocument[] {
-  if (type === null) return docs;
-  return docs.filter(doc => getLegacyDocumentStatusCategory(doc.current_status) === type);
-}
 
 // Query keys
 export const eformsignQueryKeys = {
@@ -45,8 +39,8 @@ async function fetchAllDocuments(): Promise<EformsignDocumentsResponse> {
         try {
           const detail = await eformsignApi.getDocument(doc.id);
           return [doc.id, detail] as const;
-        } catch (error) {
-          debugLog(`[fetchAllDocuments] Failed to hydrate ${doc.id}`, error);
+        } catch {
+          debugLog(`[fetchAllDocuments] Failed to hydrate ${doc.id}`);
           return [doc.id, null] as const;
         }
       })
@@ -65,49 +59,19 @@ async function fetchAllDocuments(): Promise<EformsignDocumentsResponse> {
   return response;
 }
 
-// Hook to fetch documents by type (in-progress, completed, rejected, or all)
+// Every category selects from the same merged inbox cache.
 export function useEformsignDocumentsByType(isAuthenticated: boolean, type: DocumentFilterType) {
   return useQuery<EformsignDocumentsResponse>({
-    queryKey: type === null 
-      ? eformsignQueryKeys.allDocuments() 
-      : eformsignQueryKeys.documentsByType(type),
-    queryFn: async () => {
-      let response: EformsignDocumentsResponse;
-      
-      switch (type) {
-        case null:
-          response = await fetchAllDocuments();
-          break;
-        case "in-progress":
-          response = await eformsignApi.getInProgressDocuments();
-          break;
-        case "completed":
-          response = await fetchAllDocuments();
-          break;
-        case "rejected":
-          response = await eformsignApi.getRejectedDocuments();
-          break;
-        default:
-          throw new Error("Invalid type");
-      }
-      
-      // Filter by actual status code
-      const filteredDocs = filterByActualStatus(response.documents || [], type);
-      
-      // Sort by created_date descending (newest first)
-      filteredDocs.sort((a, b) => b.created_date - a.created_date);
-      
-      debugLog(`[useEformsignDocuments] Type: ${type}, Filtered: ${response.documents?.length || 0} -> ${filteredDocs.length}`);
-      
-      return {
-        ...response,
-        documents: filteredDocs,
-        total_rows: filteredDocs.length,
-      };
+    queryKey: eformsignQueryKeys.allDocuments(),
+    queryFn: fetchAllDocuments,
+    select: (response) => {
+      const documents = filterDocumentsByStatus(response.documents || [], type)
+        .sort((a, b) => b.created_date - a.created_date);
+      return { ...response, documents, total_rows: documents.length };
     },
     enabled: isAuthenticated,
-    staleTime: 1000 * 60 * 5, // 5 minutes
-    gcTime: 1000 * 60 * 60,   // 1 hour (garbage collection)
+    staleTime: 1000 * 60 * 5,
+    gcTime: 1000 * 60 * 60,
   });
 }
 

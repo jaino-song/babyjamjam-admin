@@ -1,29 +1,34 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { registerHooks } from "node:module";
 
-import {
+// The Next.js sources use extensionless relative imports. Resolve their TS
+// modules while loading this fixture, without changing production imports.
+const hooks = registerHooks({
+  resolve(specifier, context, nextResolve) {
+    if (context.parentURL?.endsWith(".ts") && specifier.startsWith(".") && !/\.[cm]?[jt]s$/.test(specifier)) {
+      return nextResolve(`${specifier}.ts`, context);
+    }
+    return nextResolve(specifier, context);
+  },
+});
+
+const {
   getLegacyDocumentCustomerName,
-  getLegacyDocumentStatusCategory,
+  getStatusCategory,
   mapLegacyDocumentStatusToLabel,
   needsLegacyDocumentDetail,
-} from "../src/app/lib/eformsign/status-codes.ts";
+} = await import("../src/app/lib/eformsign/status-codes.ts");
+hooks.deregister();
 
-test("legacy treats provider confirmation and reviewer requests as completed", () => {
+test("provider review stays in-progress and missing dates require review", () => {
   assert.equal(
-    getLegacyDocumentStatusCategory({
-      status_type: "060",
-      step_type: "05",
-      step_name: "제공기관 확인",
-    }),
-    "completed",
+    getStatusCategory("060"),
+    "in-progress",
   );
   assert.equal(
-    getLegacyDocumentStatusCategory({
-      status_type: "070",
-      step_type: "06",
-      step_name: "제공기관 검토",
-    }),
-    "completed",
+    getStatusCategory("070"),
+    "in-progress",
   );
   assert.equal(
     mapLegacyDocumentStatusToLabel({
@@ -31,17 +36,14 @@ test("legacy treats provider confirmation and reviewer requests as completed", (
       step_type: "05",
       step_name: "제공기관 확인",
     }),
-    "완료",
+    "검토 필요",
   );
 });
 
 test("legacy keeps the customer participant step in progress", () => {
+  assert.equal(mapLegacyDocumentStatusToLabel({ status_type: "070" }), "서명 대기");
   assert.equal(
-    getLegacyDocumentStatusCategory({
-      status_type: "060",
-      step_type: "05",
-      step_name: "이용자",
-    }),
+    getStatusCategory("060"),
     "in-progress",
   );
 });
