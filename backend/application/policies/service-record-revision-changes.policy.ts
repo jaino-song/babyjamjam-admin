@@ -128,7 +128,13 @@ export function buildServiceRecordRevisionChanges(revision: {
                 }
             }
             const oldSignature = left?.["clientSignatureFingerprint"] ?? null;
-            const newSignature = serviceRecordSignatureFingerprint(typeof right?.["clientSignature"] === "string" ? right["clientSignature"] : null);
+            const projectedFingerprint = right?.["clientSignatureFingerprint"];
+            const newSignature = right
+                && Object.prototype.hasOwnProperty.call(right, "clientSignatureFingerprint")
+                && !("clientSignature" in right)
+                && (typeof projectedFingerprint === "string" || projectedFingerprint === null)
+                ? projectedFingerprint
+                : serviceRecordSignatureFingerprint(typeof right?.["clientSignature"] === "string" ? right["clientSignature"] : null);
             if (oldSignature !== newSignature) {
                 changes.push({
                     path: "session.clientSignature",
