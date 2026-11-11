@@ -10,7 +10,7 @@ import { X } from "lucide-react";
  * and the primary content column. Mobile centres them above the tab bar
  * instead — see the mobile Toaster.
  */
-const TOASTER_POSITION = "fixed bottom-6 right-6 w-full max-w-[420px]";
+const TOASTER_POSITION = "fixed bottom-6 right-6 w-[calc(100vw-48px)] max-w-[420px]";
 
 /**
  * Above the dialog layer (z-50). At the same z-index a dialog portalled to the

@@ -161,7 +161,7 @@ describe("DocumentJobsProvider", () => {
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 
-  it("shows active + unresolved on the card and a failure marker only when something is unresolved", async () => {
+  it("prioritizes unresolved failures and otherwise displays the active count", async () => {
     jest
       .spyOn(eformsignApi, "getDocumentJobSummary")
       .mockResolvedValue(
@@ -175,10 +175,11 @@ describe("DocumentJobsProvider", () => {
       </JobsTestWrapper>,
     );
 
-    const card = await screen.findByRole("button", { name: "전자문서 처리중 작업 보기" });
-    await waitFor(() => expect(card).toHaveTextContent("5"));
+    const card = await screen.findByRole("button", { name: "문서 처리 실패 작업 보기" });
+    await waitFor(() => expect(card).toHaveTextContent("2"));
     expect(card).not.toHaveTextContent("99");
-    expect(card).toHaveTextContent("실패 2");
+    expect(card).toHaveTextContent("문서 처리 실패");
+    expect(card.querySelector('[data-slot="stat-mini-marker"]')).toBeNull();
     view.unmount();
 
     jest

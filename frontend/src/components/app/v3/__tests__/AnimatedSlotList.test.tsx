@@ -56,8 +56,8 @@ describe("AnimatedSlotList", () => {
 
     fireEvent.keyDown(second, { key: "Enter" });
     fireEvent.keyDown(second, { key: " " });
-    expect(onSlotClick).toHaveBeenNthCalledWith(1, items[1], 1);
-    expect(onSlotClick).toHaveBeenNthCalledWith(2, items[1], 1);
+    expect(onSlotClick).toHaveBeenNthCalledWith(1, items[1], 1, second);
+    expect(onSlotClick).toHaveBeenNthCalledWith(2, items[1], 1, second);
 
     rerender(list("second"));
     expect(first).toHaveAttribute("aria-pressed", "false");
@@ -257,7 +257,7 @@ describe("AnimatedSlotList nested interactions", () => {
     expect(fireEvent.keyDown(row, { key: " " })).toBe(false);
     expect(onSlotClick).toHaveBeenCalledTimes(4);
     for (let call = 1; call <= 4; call += 1) {
-      expect(onSlotClick).toHaveBeenNthCalledWith(call, items[1], 1);
+      expect(onSlotClick).toHaveBeenNthCalledWith(call, items[1], 1, row);
     }
   });
 
@@ -300,4 +300,19 @@ describe("AnimatedSlotList nested interactions", () => {
     fireEvent.keyDown(row, { key: " " });
     expect(onSlotClick).not.toHaveBeenCalled();
   });
+});
+
+test('compact slots retain accessible item names and forward their DOM element on mouse and keyboard selection', () => {
+  const selected = jest.fn(); const item = { id: 'job' };
+  const { container, rerender } = render(<AnimatedSlotList items={[item]} isLoading={false} size="compact" itemVariant="job"
+    getSlotState={() => ({ isEmphasized: true })} getSlotProps={() => ({ 'aria-label': '전자문서 상세 보기', 'data-slot': 'job-card' })}
+    onSlotClick={selected} render={() => '고객'} />);
+  const card = screen.getByRole('button', { name: '전자문서 상세 보기' });
+  expect(card).toHaveAttribute('data-slot', 'job-card');
+  expect(card).toHaveClass('h-auto', 'rounded-[calc(16px*var(--glint-ui-scale,1))]', 'px-[calc(14px*var(--glint-ui-scale,1))]', 'py-[calc(10px*var(--glint-ui-scale,1))]', 'bg-v3-primary-light/20', 'hover:bg-v3-primary-light/55');
+  fireEvent.click(card); fireEvent.keyDown(card, { key: 'Enter' }); fireEvent.keyDown(card, { key: ' ' });
+  expect(selected.mock.calls).toEqual([[item, 0, card], [item, 0, card], [item, 0, card]]);
+  expect(card.className).not.toContain('!');
+  rerender(<AnimatedSlotList items={[item]} isLoading={false} render={() => '고객'} />);
+  expect(container.querySelector('[data-slot="animated-slot-list-item"]')).toHaveClass('h-[calc(94px*var(--glint-ui-scale,1))]');
 });

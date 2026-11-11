@@ -78,6 +78,7 @@ export function FormDialogShell({
         APP_FORM_DIALOG_CONTENT_CLASS_NAME,
         size === "compact" && "h-auto w-[min(480px,calc(100vw-1.5rem))] max-w-[480px]",
         size === "recovery" && "z-[1010] flex h-[min(92vh,calc(100vh-32px))] w-[min(960px,calc(100vw-32px))] max-w-[960px] flex-col overflow-hidden",
+        size === "recovery" && "max-lg:top-0 max-lg:left-0 max-lg:h-dvh max-lg:max-h-none max-lg:w-screen max-lg:max-w-none max-lg:translate-x-0 max-lg:translate-y-0 max-lg:rounded-none max-lg:pb-[env(safe-area-inset-bottom)]",
         mobileSheet && "max-sm:bottom-0 max-sm:top-auto max-sm:left-0 max-sm:w-full max-sm:max-w-none max-sm:translate-x-0 max-sm:translate-y-0 max-sm:rounded-b-none max-sm:max-h-[94dvh] max-sm:bg-white",
       )}
     >

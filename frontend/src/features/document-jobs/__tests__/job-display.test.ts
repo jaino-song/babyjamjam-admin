@@ -43,7 +43,7 @@ describe("documentJobOperationLabel", () => {
 
 describe("documentJobStatus", () => {
   it.each([
-    ["queued", "대기", "neutral"], ["processing", "처리 중", "info"],
+    ["queued", "대기", "neutral"], ["processing", "처리중", "info"],
     ["reconciling", "확인 중", "warning"], ["completed", "완료", "success"],
     ["failed", "처리 실패", "danger"], ["requires_attention", "처리 실패", "danger"],
   ] as const)("maps %s to the fixed label and variant", (status, label, variant) => {
