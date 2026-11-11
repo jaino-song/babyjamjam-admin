@@ -584,7 +584,11 @@ export interface IServiceRecordEditRepository {
         & { beforeSnapshot: ServiceRecordEditJsonValue | null }
         | null
     >;
-    /** Read branch/client-scoped revisions with before-snapshots, projecting signatures to fingerprints; never drafts. */
+    /**
+     * Read only branch/client-scoped revisions with a before-snapshot; never drafts.
+     * The payload is reduced to startDate, endDate, header and sessions.
+     * Sessions carry clientSignatureFingerprint instead of clientSignature.
+     */
     listRevisionsForChanges(branchId: string, clientId: number): Promise<Array<
         Pick<ServiceRecordRevision, "id" | "revisionNumber" | "confirmedAt" | "formVersionAtConfirm" | "payload" | "plannedSessions">
         & { beforeSnapshot: ServiceRecordEditJsonValue | null }

@@ -1651,6 +1651,7 @@ describe("ServiceRecordEditRepository", () => {
         expect(sql.values).toEqual([branchId, branchId, 42]);
         expect(sql.text).toMatch(/- 'clientSignature'/);
         expect(sql.text).toMatch(/jsonb_typeof\(e\.s->'clientSignature'\) = 'string'/);
+        expect(sql.text).toContain("encode(sha256(convert_to(e.s->>'clientSignature', 'UTF8')), 'hex')");
         expect(sql.text.match(/\br\.payload\b(?!\s*->)/g)).toBeNull();
         expect(sql.text).toMatch(/before_snapshot IS NOT NULL/);
         expect(sql.text).toMatch(/ORDER BY r\.revision_number ASC/);

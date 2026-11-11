@@ -2443,7 +2443,11 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
         } : null;
     }
 
-    /** Read branch/client-scoped revisions with before-snapshots, projecting signatures to fingerprints. */
+    /**
+     * Read only branch/client-scoped revisions with a before-snapshot.
+     * The payload is reduced to startDate, endDate, header and sessions.
+     * Sessions carry clientSignatureFingerprint instead of clientSignature.
+     */
     async listRevisionsForChanges(branchId: string, clientId: number) {
         assertUuid(branchId, "branch");
         assertClientId(clientId);
