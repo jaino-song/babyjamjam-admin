@@ -44,7 +44,7 @@ async function run() {
   // Execute only the locally built, reviewed bundle in an isolated Node DOM.
   new vm.Script(fs.readFileSync(path.join(__dirname, 'dist/preview.js'), 'utf8')).runInContext(dom.getInternalVMContext());
   await tick();
-  assert.equal(byId('template-select').textContent, '서비스 비용 안내');
+  assert.equal(byId('template-select').textContent, '비용 안내');
   assert.equal(byId('recipient-name').value, '');
   assert.equal(byId('recipient-name').autocomplete, 'off');
   assert.equal(byId('recipient-name').type, 'text');
@@ -93,7 +93,7 @@ async function run() {
   assert.equal(document.getElementById('recipient-name'), null);
   assert.doesNotMatch(byId('body').value, /\{\{name\}\}|032-/);
   assert.match(byId('body').value, /000-000-0000/);
-  await select('template-select', '서비스 내용 안내');
+  await select('template-select', '서비스 내용');
   assert.match(byId('body').value, /묵은 빨래, 대청소, 베란다 청소/);
   await select('template-select', '리마인드');
   assert.match(byId('body').value, /프리미엄급 관리사님/);
@@ -108,7 +108,7 @@ async function run() {
   assert.match(byId('body').value, /7일 이내로 모니터링 설문을 완료/);
   await select('template-select', '직접 작성');
   assert.equal(byId('body').value, '');
-  await select('template-select', '서비스 비용 안내');
+  await select('template-select', '비용 안내');
   assert.equal(byId('price-info-year').textContent, '2026년');
   assert.equal(byId('price-info-bank-account').textContent, '지역');
   assert.equal(byId('recipient-name').value, '');

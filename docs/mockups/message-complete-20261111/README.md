@@ -23,9 +23,9 @@ git diff --check
 실제 import:
 
 - `ListCard`/내부 header·body, `MobileSectionNav`: 기존 primitives와 Lucide 아이콘/pill을 사용한다. `메세지 제작`을 첫 탭으로 넣고 기본 선택한다(`activeId="complete"`). 이후 shared `MESSAGE_SECTION_DEFINITIONS`의 기존 상대 순서인 `전송하기, 발송 기록, 템플릿, 자동 전송, 설정`을 유지한다.
-- `FieldLabelRow`, v3 `Input`, `MsgField`/기존 Textarea, Radix `Select` 패밀리, `Button`: 드롭다운은 실제 portal·선택·포커스·비활성 동작을 쓴다. native select 모조품은 없다.
+- `FieldLabelRow`, v3 `Input`, `MsgField`/기존 Textarea, Radix `Select` 패밀리, `Button`: 드롭다운은 실제 portal·선택·포커스·비활성 동작을 쓴다. 템플릿 목록은 실제 `SelectGroup`/`SelectLabel`/`SelectSeparator`/`SelectItem`으로 그룹과 항목을 구성한다. native select 모조품은 없다.
 - `V3MobileHeader`, `V3MainContent`, `MobileBottomNav`: 실제 표시 컴포넌트와 기존 root/app-shell/app-content 구조를 조합한다.
-- 기존 메시지 `page.module.css`, `FieldLabelRow.module.css`, `globals.css`, `redesign.css`, Pretendard 파일: 시각 값을 복제하지 않는다. `mobile-app-root`의 전체 viewport 보정도 유지한다. 새 CSS는 정적 폰트 연결뿐이다.
+- 기존 메시지 `page.module.css`, `FieldLabelRow.module.css`, `globals.css`, `redesign.css`, Pretendard 파일을 import한다. `mobile-app-root`의 전체 viewport 보정도 유지한다. `preview.css`는 정적 폰트 연결을 담당하고, 새 docs 전용 `template-select.module.css`는 기존 v3 토큰으로 템플릿 그룹 제목의 중립색 배경·굵기·간격과 구분선만 정의한다. 다른 dropdown의 스타일은 바꾸지 않는다.
 
 미리보기 전용 경계:
 
@@ -44,9 +44,11 @@ git diff --check
 
 ## 오프라인 샘플과 동작
 
-기본값은 첨부 DOM처럼 `서비스 비용 안내`, 빈 이름, `바우처 유형 / 서비스 기간 / 지역`, `2026년`이다. 이름은 plain text Input에 `autoComplete="off"`를 쓴다. 전화 입력·수신자 chip·고객 검색·자동완성·발송 버튼은 없다. 기간은 유형을 고르기 전 비활성이고, 지역은 가상 옵션으로 즉시 선택 가능하다. 연도는 2025/2026/2027로 고정한다.
+기본 템플릿 ID는 기존 `PRICE_INFO`를 유지하며 표시 label은 요청대로 `비용 안내`다. 나머지 초기값은 빈 이름, `바우처 유형 / 서비스 기간 / 지역`, `2026년`이다. 이름은 plain text Input에 `autoComplete="off"`를 쓴다. 전화 입력·수신자 chip·고객 검색·자동완성·발송 버튼은 없다. 기간은 유형을 고르기 전 비활성이고, 지역은 가상 옵션으로 즉시 선택 가능하다. 연도는 2025/2026/2027로 고정한다.
 
-템플릿 8종은 저장소의 deprecated fallback 함수를 **직접 import**한다: 첫 인사, 서비스 내용 안내, 서비스 비용 안내, 리마인드, 입금 확인 및 예약 완료 안내, 산모 정보 요청, 계약서 작성 요청, 모니터링 설문. 직접 작성도 제공한다. 서버 소유 production catalog를 조회하거나 받은 응답처럼 표시하지 않는다. fallback이 없는 서비스 종료/제공기록지 등은 추가하지 않았다.
+템플릿 8종은 저장소의 deprecated fallback 함수를 **직접 import**한다: 첫 인사, 서비스 내용, 비용 안내, 리마인드, 입금 확인 및 예약 완료 안내, 산모 정보 요청, 계약서 작성 요청, 모니터링 설문. `SERVICE_INFO`/`PRICE_INFO`의 selector label만 단축했으며 ID·본문·변수 의미는 유지한다. 직접 작성도 제공한다. 서버 소유 production catalog를 조회하거나 받은 응답처럼 표시하지 않는다. fallback이 없는 서비스 종료/제공기록지 등은 추가하지 않았다.
+
+기존 `SAMPLE_TEMPLATES`에서 8개 샘플과 `__custom__` 항목을 나눠 렌더링하며 상대 순서는 유지한다. 8개 모두 실제 registry의 `mother` 그룹에 해당하므로 `산모 대상`이라는 접근 가능한 그룹 제목 아래에 표시한다. 제목은 전체 폭의 연한 배경과 굵은 글씨로 구분한다. 하단 `직접 작성`은 구분선과 위아래 간격으로 분리하고 제목을 중복 표시하지 않는다. 제목·구분선은 선택 항목이 아니며 실제 Radix viewport·키보드 선택 동작을 유지한다. 제공인력 샘플이나 빈 `제공인력 대상` 그룹, 임의의 생애주기 그룹은 만들지 않았다. 실제 제품은 서버의 group/groupLabel을 사용하며 이 오프라인 그룹 표현은 디자인 승인 대상이다.
 
 본문 문장·줄바꿈·문장부호는 fallback 원문을 보존한다. 다음 미리보기 변환만 적용한다.
 
@@ -64,4 +66,4 @@ git diff --check
 
 범위 보안 점검: 데이터는 React text/value로만 렌더링하며 HTML 삽입·입력 코드 실행·fetch·XHR·WebSocket·storage·submit·송신 로직이 없다. HTML CSP는 connect/form 제출을 차단한다. 새 패키지·스키마·auth 변경은 없고 네트워크 dependency audit는 이 unit의 금지 범위라 실행하지 않았다. 되돌리기는 이 docs 변경을 revert하고 해당 docs 디렉터리를 다시 빌드하면 된다.
 
-Vault resolver는 `/home/covenant_labs_server/Development/covenant-labs-vault`를 검증했다. 로컬 CLI 검색은 결과가 없었고 stale index 경고가 있어 과거 결정 부재를 단정하지 않는다. Worker 종료 capture는 하네스 lifecycle에 맡기며 성공 영수증을 확인하지 않았다.
+Vault resolver는 `/home/covenant_labs_server/Development/covenant-labs-vault`를 검증했다. 로컬 CLI 검색에서 서버 소유 카탈로그·변수 보존 관련 기존 결정을 확인했으며 stale index 경고가 있어 검색의 최신성을 단정하지 않는다. Worker 종료 capture는 하네스 lifecycle에 맡기며 성공 영수증을 확인하지 않았다.

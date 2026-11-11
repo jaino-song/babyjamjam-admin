@@ -6,17 +6,22 @@ import { FieldLabelRow, fieldMessageId } from '@/components/app/ui/FieldLabelRow
 import { Input } from '@/components/app/v3/Input';
 import { MsgField } from '@/components/app/messages/templates/MsgField';
 import { Button } from '@/components/ui/button';
-import { Select, SelectContent, SelectGroup, SelectItem, SelectValue, SelectTrigger } from '@/components/ui/select';
+import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectSeparator, SelectValue, SelectTrigger } from '@/components/ui/select';
 import styles from '@/app/(shell)/messages/new/page.module.css';
 import { MESSAGE_SECTION_DEFINITIONS } from '../../../packages/shared/src/message/presentation';
 
 import { copyMessage } from './clipboard';
 import { findVoucherType, getSamplePrices, renderSampleBody, SAMPLE_AREAS, SAMPLE_TEMPLATES, VARIABLE_LABELS, VOUCHER_GROUPS, YEARS } from './catalog';
+import templateStyles from './template-select.module.css';
 
 const PAGE = 'mobile_messages_new_page';
 const FORM = `${PAGE}_screen_form`;
 const CARD = `${FORM}_scroll_list-card`;
 const CONTENT = `${CARD}_body_form-card_content`;
+const TEMPLATE_SELECT = `${CONTENT}_template_row_select`;
+const TEMPLATE_OPTIONS = `${TEMPLATE_SELECT}_content`;
+const MOTHER_TEMPLATES = SAMPLE_TEMPLATES.filter(item => item.id !== '__custom__');
+const CUSTOM_TEMPLATES = SAMPLE_TEMPLATES.filter(item => item.id === '__custom__');
 const ICONS: Record<string, LucideIcon> = { send: Send, history: History, templates: FileText, triggers: Workflow, settings: Settings2 };
 const NAV_ITEMS = [
   { id: 'complete', label: '메세지 제작', icon: CheckCheck },
@@ -40,7 +45,7 @@ function PreviewField({ base, id, label, required = true, children }: PreviewFie
   </div>;
 }
 
-// The organism is preview-only. All visible controls and product styles are imports.
+// The organism is preview-only. Controls and product styles are imports; grouping styles stay private.
 export function MessageCompletePreview(): React.JSX.Element {
   const [templateId, setTemplateId] = useState('PRICE_INFO');
   const [values, setValues] = useState<Record<string, string>>({});
@@ -88,12 +93,23 @@ export function MessageCompletePreview(): React.JSX.Element {
                 <div data-component={`${CONTENT}_template`} data-slot="form-card-section" className={styles.formCardSection}>
                   <PreviewField base={`${CONTENT}_template_row`} id="template-select" label="템플릿 선택">
                     <Select value={templateId} onValueChange={changeTemplate}>
-                      <SelectTrigger id="template-select" data-component={`${CONTENT}_template_row_select`}
+                      <SelectTrigger id="template-select" data-component={TEMPLATE_SELECT}
                         aria-describedby={fieldMessageId('template-select')} className={styles.templateSelectTrigger}>
                         <SelectValue placeholder="템플릿 선택" />
                       </SelectTrigger>
-                      <SelectContent className={styles.templateSelectContent} avoidCollisions>
-                        {SAMPLE_TEMPLATES.map(item => <SelectItem key={item.id} value={item.id}>{item.label}</SelectItem>)}
+                      <SelectContent data-component={TEMPLATE_OPTIONS} className={styles.templateSelectContent} avoidCollisions>
+                        <SelectGroup data-component={`${TEMPLATE_OPTIONS}_mother`}>
+                          <SelectLabel data-component={`${TEMPLATE_OPTIONS}_mother_label`} data-slot="template-group-label"
+                            className={templateStyles.templateGroupLabel}>산모 대상</SelectLabel>
+                          {MOTHER_TEMPLATES.map(item => <SelectItem key={item.id} value={item.id}
+                            data-component={`${TEMPLATE_OPTIONS}_mother_option-${item.id.toLowerCase().replaceAll('_', '-')}`}>{item.label}</SelectItem>)}
+                        </SelectGroup>
+                        <SelectSeparator data-component={`${TEMPLATE_OPTIONS}_separator`} data-slot="template-group-separator"
+                          className={templateStyles.templateGroupSeparator} />
+                        <SelectGroup data-component={`${TEMPLATE_OPTIONS}_custom`}>
+                          {CUSTOM_TEMPLATES.map(item => <SelectItem key={item.id} value={item.id}
+                            data-component={`${TEMPLATE_OPTIONS}_custom_option`}>{item.label}</SelectItem>)}
+                        </SelectGroup>
                       </SelectContent>
                     </Select>
                   </PreviewField>

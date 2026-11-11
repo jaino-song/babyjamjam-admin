@@ -15,11 +15,11 @@ export interface SampleTemplate {
 }
 
 // Offline fallback samples, never a simulated response from the server-owned catalog.
-// Labels match the supplied DOM. Greeting has no invented name variable.
+// Labels include the requested preview revisions. Greeting has no invented name variable.
 export const SAMPLE_TEMPLATES: readonly SampleTemplate[] = [
   { id: 'GREETING', label: '첫 인사', body: greetingMsgTemplate() },
-  { id: 'SERVICE_INFO', label: '서비스 내용 안내', body: serviceInfoMsgTemplate({ name: '{{name}}' }) },
-  { id: 'PRICE_INFO', label: '서비스 비용 안내', body: priceInfoMsgTemplate({
+  { id: 'SERVICE_INFO', label: '서비스 내용', body: serviceInfoMsgTemplate({ name: '{{name}}' }) },
+  { id: 'PRICE_INFO', label: '비용 안내', body: priceInfoMsgTemplate({
     name: '{{name}}', weeks: 0, duration: '{{duration}}', type: '{{type}}',
     fullPrice: '{{fullPrice}}', grant: '{{grant}}', actualPrice: '{{actualPrice}}',
     bankName: '{{bankName}}', accNum: '{{accNum}}',
