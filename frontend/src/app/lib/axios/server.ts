@@ -1,4 +1,5 @@
 import axios from "axios";
+import { cookies } from "next/headers";
 
 const isProduction = process.env.NODE_ENV === "production";
 const API_URL = isProduction
@@ -17,9 +18,20 @@ export const serverAPIClient = axios.create({
     validateStatus: (status) => status < 600, // Accept any status code for better error visibility
 });
 
-serverAPIClient.interceptors.request.use((config) => {
+serverAPIClient.interceptors.request.use(async (config) => {
     if (process.env.LEGACY_DEMO_MODE === "true") {
         return Promise.reject(new Error("Backend access is disabled in legacy demo mode."));
+    }
+
+    if (!/^https?:\/\//.test(config.url ?? "") && !config.headers.has("Authorization")) {
+        try {
+            const token = (await cookies()).get("auth_token")?.value;
+            if (token) {
+                config.headers.set("Authorization", `Bearer ${token}`);
+            }
+        } catch {
+            // cookies() is unavailable outside a request scope.
+        }
     }
 
     return config;

@@ -6,6 +6,8 @@ import { AuthService } from "application/services/auth.service";
 import { PrismaService } from "infrastructure/database/prisma.service";
 import { JwtGuard } from "infrastructure/auth/jwt.guard";
 import { AuthGuard } from "@nestjs/passport";
+import { ForbiddenException } from "@nestjs/common";
+import { LegacyLoginNotAllowedError } from "application/errors/legacy-login-not-allowed.error";
 
 describe("AuthController (Integration)", () => {
     // ============================================
@@ -121,6 +123,29 @@ describe("AuthController (Integration)", () => {
     // GET /auth/kakao/callback - Kakao OAuth Callback
     // ============================================
     describe("GET /auth/kakao/callback", () => {
+        it("redirects a disallowed legacy account to the login error without creating an auth code", async () => {
+            authService.validateKakaoUser.mockRejectedValue(new LegacyLoginNotAllowedError());
+            process.env['NODE_ENV'] = "development";
+            process.env['DEVELOPMENT_FRONTEND_URL'] = "http://localhost:3000";
+
+            const response = await request(app.getHttpServer())
+                .get("/auth/kakao/callback");
+
+            expect(response.status).toBe(302);
+            expect(response.headers['location']).toBe("http://localhost:3000/login?error=not_allowed");
+            expect(authService.createAuthCode).not.toHaveBeenCalled();
+        });
+
+        it("propagates other forbidden errors without creating an auth code", async () => {
+            authService.validateKakaoUser.mockRejectedValue(new ForbiddenException("other"));
+
+            const response = await request(app.getHttpServer())
+                .get("/auth/kakao/callback");
+
+            expect(response.status).toBe(403);
+            expect(authService.createAuthCode).not.toHaveBeenCalled();
+        });
+
         describe("given valid kakao user from guard", () => {
             it("should validate user and redirect with auth code", async () => {
                 // Arrange

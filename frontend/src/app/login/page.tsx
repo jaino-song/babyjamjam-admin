@@ -1,5 +1,6 @@
 "use client";
-import { Box, Button, Stack, Typography, Paper } from "@mui/material";
+import { Alert, Box, Button, Stack, Typography, Paper } from "@mui/material";
+import { useSyncExternalStore } from "react";
 import GoogleIcon from "@mui/icons-material/Google";
 import { RiKakaoTalkFill } from "react-icons/ri";
 import { t } from "../lib/i18n/translations";
@@ -7,8 +8,13 @@ import { useLocale } from "../(components)/LocaleProvider";
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL;
 
+const subscribeToNothing = () => () => {};
+const readNotAllowed = () => new URLSearchParams(window.location.search).get("error") === "not_allowed";
+const readNotAllowedOnServer = () => false;
+
 const LoginPage = () => {
   const locale = useLocale();
+  const notAllowed = useSyncExternalStore(subscribeToNothing, readNotAllowed, readNotAllowedOnServer);
 
   return (
     <Box sx={{ display: "flex", justifyContent: "center", alignItems: "center", height: "100vh" }}>
@@ -16,6 +22,11 @@ const LoginPage = () => {
         <Stack spacing={3}>
           <Typography variant="h1" align="center" sx={{ fontSize: "1.5rem", fontWeight: "bold" }}>{t(locale, "login.title")}</Typography>
           <Typography variant="h2" align="center" sx={{ fontSize: "1rem", fontWeight: "semi", lineHeight: "1.5rem" }}>{t(locale, "login.subtitle")}</Typography>
+          {notAllowed && (
+            <Alert severity="error" data-component="login-error-alert">
+              등록된 계정만 로그인할 수 있습니다. 관리자에게 문의해 주세요.
+            </Alert>
+          )}
           <Box sx={{ display: "flex", flexDirection: "column", justifyContent: "center", alignItems: "center", gap: 1.5 }}>
             <Button
               variant="outlined"
