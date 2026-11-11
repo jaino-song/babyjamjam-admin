@@ -46,6 +46,13 @@ describe("initial calendar month", () => {
 describe("today and stored-date labels", () => {
     const context = { ...props().context, sessions: [{ sessionIndex: 1, serviceDate: "2026-11-02", locked: false }] };
 
+    it("labels today using Korean time when UTC is still the previous day", () => {
+        jest.setSystemTime(new Date("2026-11-10T16:00:00Z"));
+        render(<ServiceDateSheet {...props({ context, value: "2026-11-02", editing: false })} />);
+        expect(screen.getByRole("button", { name: "2026.11.11(수) 오늘" })).toBeInTheDocument();
+        expect(screen.queryByRole("button", { name: "2026.11.10(화) 오늘" })).not.toBeInTheDocument();
+    });
+
     it.each([true, false])("marks today in register mode without changing its date state (calendar ready: %s)", (calendarReady) => {
         render(<ServiceDateSheet {...props({ context, value: "2026-11-02", calendarReady })} />);
         const today = screen.getByRole("button", { name: "2026.11.11(수) 오늘" });
