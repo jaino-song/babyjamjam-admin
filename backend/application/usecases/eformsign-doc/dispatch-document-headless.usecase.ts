@@ -37,6 +37,8 @@ import { ContractClientAssignmentGuardService } from "application/services/contr
 import { EformsignDispatchBoundaryService } from "application/services/eformsign-dispatch-boundary.service";
 import { eformsignExpiryDateFromRemainingDays } from "domain/utils/eformsign-expiry-date";
 import { sanitizeEformsignErrorMessage } from "application/utils/eformsign-error-message";
+import type { ContractWorkerContext } from "domain/repositories/eformsign-contract-recovery.repository.interface";
+import { codeOnlyProblemBody } from "application/utils/problem-bodies";
 import { assertRequiredPhone, InvalidPhoneError } from "application/utils/normalize-phone";
 import {
     EformsignOperationAlreadyRunningError,
@@ -218,6 +220,7 @@ export class DispatchDocumentHeadlessUsecase {
         branchId: string,
         params: DispatchHeadlessParams,
         principal: EformsignProviderPrincipal,
+        worker?: ContractWorkerContext,
     ): Promise<DispatchHeadlessResult> {
         const invalidPhoneField = invalidContractPhoneField(params.contractData);
         if (invalidPhoneField) {
@@ -233,13 +236,13 @@ export class DispatchDocumentHeadlessUsecase {
             };
         }
         if (!this.operationLock) {
-            return this.executeUnlocked(branchId, params, principal);
+            return this.executeUnlocked(branchId, params, principal, undefined, worker);
         }
         const start = Date.now();
         try {
             return await this.operationLock.runExclusive(
                 `create:${branchId}:${params.clientId}`,
-                (lease) => this.executeUnlocked(branchId, params, principal, lease),
+                (lease) => this.executeUnlocked(branchId, params, principal, lease, worker),
             );
         } catch (error) {
             if (error instanceof EformsignOperationAlreadyRunningError) {
@@ -270,11 +273,14 @@ export class DispatchDocumentHeadlessUsecase {
         params: DispatchHeadlessParams,
         principal: EformsignProviderPrincipal,
         lease?: EformsignOperationLease,
+        worker?: ContractWorkerContext,
     ): Promise<DispatchHeadlessResult> {
         const start = Date.now();
         let latestProgressStep: EformsignHeadlessProgressStep | undefined;
         let dispatchIntent: Awaited<ReturnType<EformsignDispatchBoundaryService["claim"]>>["intent"] | undefined;
+        let sdkStarted = false;
         try {
+            if (!this.dispatchBoundary || (worker && (principal.source !== "worker" || principal.branchId !== branchId))) throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
             const assignment = await this.assignmentGuard.assertLiveAssignedProvider(
                 branchId,
                 params.clientId,
@@ -337,7 +343,7 @@ export class DispatchDocumentHeadlessUsecase {
                     .digest("hex");
                 let claim: Awaited<ReturnType<EformsignDispatchBoundaryService["claim"]>>;
                 try {
-                    claim = await this.dispatchBoundary.claim({
+                    claim = await this.dispatchBoundary.claimContract({
                         branchId,
                         clientId: params.clientId,
                         localDocumentId: latestLocalDocument?.id ?? null,
@@ -346,7 +352,7 @@ export class DispatchDocumentHeadlessUsecase {
                         action: "create",
                         generation,
                         fingerprint,
-                    });
+                    }, worker, { contractData: params.contractData, force: params.force, workflow });
                 } catch (error) {
                     if (error instanceof ConflictException) {
                         this.progressService.emit(
@@ -419,6 +425,7 @@ export class DispatchDocumentHeadlessUsecase {
                 };
             }
 
+            sdkStarted = true;
             const result = await this.headlessService.dispatchCreation({
                 documentOption,
                 onProgress: async (step) => {
@@ -438,6 +445,12 @@ export class DispatchDocumentHeadlessUsecase {
             // is safe to retry in the iframe.
             const sendWasAttempted = latestProgressStep === "creating" || latestProgressStep === "sent";
             const resultReason = result.ok ? undefined : sanitizeEformsignErrorMessage(result.reason);
+
+            if (worker && (!result.ok || !result.documentId)) {
+                if (dispatchIntent) await this.dispatchBoundary?.markUncertain(dispatchIntent, "contract_creation_unverified", result.documentId).catch(() => undefined);
+                return { ok: false, reason: "remote_unconfirmed", remoteDocumentId: result.documentId, fallbackHint: "manual_check",
+                    dispatchIntentId: dispatchIntent?.id, durationMs: result.durationMs, ...dispatchProblemFields("remote_unconfirmed") };
+            }
 
             if (!result.ok && !sendWasAttempted) {
                 if (dispatchIntent) {
@@ -486,7 +499,7 @@ export class DispatchDocumentHeadlessUsecase {
             // the primary source of the new document id — mode:"01" payloads
             // don't carry one. If it is missing, reconcile against the vendor
             // list before deciding whether any retry is safe.
-            const reconciliation = result.documentId ? undefined : await this.reconcileCreatedDocument(
+            const reconciliation = result.documentId || worker ? undefined : await this.reconcileCreatedDocument(
                 accessToken,
                 params.contractData.customerName,
                 templateId,
@@ -527,7 +540,7 @@ export class DispatchDocumentHeadlessUsecase {
                 });
             }
 
-            if (params.clientId && documentId) {
+            if (params.clientId && documentId && !worker) {
                 const client = await this.clientRepository.findById(branchId, params.clientId).catch(() => null);
                 const createdDocumentStatus = await this.resolveCreatedDocumentStatus(
                     accessToken,
@@ -595,7 +608,7 @@ export class DispatchDocumentHeadlessUsecase {
             const reason = registeredProblemCode(error)
                 ?? sanitizeEformsignErrorMessage(error || "unknown headless dispatch error");
             if (dispatchIntent) {
-                if (latestProgressStep === "creating" || latestProgressStep === "sent") {
+                if ((worker && sdkStarted) || latestProgressStep === "creating" || latestProgressStep === "sent") {
                     await this.dispatchBoundary?.markUncertain(dispatchIntent, reason).catch((persistError) => {
                         this.logger.error(`Failed to persist uncertain eformsign dispatch outcome: ${sanitizeEformsignErrorMessage(persistError)}`);
                     });

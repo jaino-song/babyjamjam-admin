@@ -1,3 +1,7 @@
+jest.mock("infrastructure/database/utils/eformsign-contract-authority", () => ({
+    ...jest.requireActual("infrastructure/database/utils/eformsign-contract-authority"),
+    reserveAuthority: jest.fn().mockResolvedValue(undefined),
+}));
 import { PrismaService } from "infrastructure/database/prisma.service";
 import { isEntityChangeHintsSuppressed } from "infrastructure/database/entity-change-suppression";
 import { SbEformsignDocumentJobRepository } from "infrastructure/database/repositories/sb.eformsign-document-job.repository";
@@ -80,13 +84,16 @@ describe("SbEformsignDocumentJobRepository", () => {
             $transaction: jest.fn(async (operation: (tx: unknown) => Promise<unknown>) => operation({
                 $queryRaw: queryRaw,
                 $executeRaw: executeRaw,
+                client: { findUnique: jest.fn().mockResolvedValue({ eDocId: null }) },
+                eformsign_dispatch_intent: { findFirst: jest.fn().mockResolvedValue(null) },
             })),
         } as unknown as PrismaService;
         repository = new SbEformsignDocumentJobRepository(prisma);
     });
 
     it("returns the inserted job and never exposes the payload in a log path", async () => {
-        queryRaw.mockResolvedValueOnce([row()]);
+        queryRaw.mockResolvedValueOnce([{ id: 7, e_doc_id: null }]).mockResolvedValueOnce([]).mockResolvedValueOnce([])
+            .mockResolvedValueOnce([row({ contract_generation: "33333333-3333-4333-8333-333333333333" })]);
         const result = await repository.enqueue({
             branchId: row().branch_id,
             clientId: 7,
@@ -99,11 +106,11 @@ describe("SbEformsignDocumentJobRepository", () => {
         });
         expect(result.existing).toBe(false);
         expect(result.job.status).toBe("queued");
-        expect(sqlText(queryRaw.mock.calls[0][0])).toContain("ON CONFLICT DO NOTHING");
+        expect(sqlText(queryRaw.mock.calls[3][0])).toContain("ON CONFLICT DO NOTHING");
     });
 
     it("returns the existing request or active job after a matching unique conflict", async () => {
-        queryRaw.mockResolvedValueOnce([]).mockResolvedValueOnce([row()]);
+        queryRaw.mockResolvedValueOnce([{ id: 7, e_doc_id: null }]).mockResolvedValueOnce([]).mockResolvedValueOnce([row()]);
         const result = await repository.enqueue({
             branchId: row().branch_id,
             clientId: 7,
@@ -115,12 +122,12 @@ describe("SbEformsignDocumentJobRepository", () => {
             payloadFingerprint: "a".repeat(64),
         });
         expect(result.existing).toBe(true);
-        expect(sqlText(queryRaw.mock.calls[1][0])).toContain("request_key");
-        expect(sqlText(queryRaw.mock.calls[1][0])).toContain("active_key");
+        expect(sqlText(queryRaw.mock.calls[2][0])).toContain("request_key");
+        expect(sqlText(queryRaw.mock.calls[2][0])).toContain("active_key");
     });
 
     it("rejects a reused request key with a different payload fingerprint", async () => {
-        queryRaw.mockResolvedValueOnce([]).mockResolvedValueOnce([row()]);
+        queryRaw.mockResolvedValueOnce([{ id: 7, e_doc_id: null }]).mockResolvedValueOnce([]).mockResolvedValueOnce([row()]);
         await expect(repository.enqueue({
             branchId: row().branch_id,
             clientId: 7,

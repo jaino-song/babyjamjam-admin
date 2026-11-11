@@ -16,6 +16,7 @@ import {
     ParseUUIDPipe,
     Query,
     Req,
+    Res,
     Optional,
     ServiceUnavailableException,
     Sse,
@@ -23,6 +24,10 @@ import {
     UseGuards,
 } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
+import type { Response } from "express";
+import { EformsignDocumentJobManualRecoveryService } from "application/services/eformsign-document-job-manual-recovery.service";
+import { ContractRecoveryError } from "domain/repositories/eformsign-contract-recovery.repository.interface";
+import { assertEmptyManualRecoveryBody, parseManualRecoveryEpochBody } from "interface/dto/eformsign-document-job-manual-recovery.dto";
 import { Observable, filter, interval, map, merge } from "rxjs";
 import { EformsignDocService } from "application/services/eformsign-doc.service";
 import { EformsignDocsEventBus } from "application/services/eformsign-docs-event-bus.service";
@@ -101,6 +106,7 @@ export class EformsignDocController {
         private readonly listEformsignLinkConfirmationsUsecase: ListEformsignLinkConfirmationsUsecase,
         @Optional() private readonly dispatchBoundary?: EformsignDispatchBoundaryService,
         @Optional() private readonly contractSupersedeService?: ContractSupersedeService,
+        @Optional() private readonly manualRecovery?: EformsignDocumentJobManualRecoveryService,
     ) {}
 
     /**
@@ -653,6 +659,45 @@ export class EformsignDocController {
      * Take the 10-minute manual-recovery claim on a failed / requires_attention
      * contract job. Works even when new enqueues are paused.
      */
+    @Post("jobs/:jobId/recovery/open")
+    @HttpCode(HttpStatus.OK)
+    async openManualDocumentJobRecovery(
+        @CurrentTenant() tenant: EformsignProviderPrincipal, @Req() request: { user?: { userId?: string } },
+        @Param("jobId", new ParseUUIDPipe()) jobId: string, @Body() body: unknown, @Res() response: Response,
+    ) {
+        assertEmptyManualRecoveryBody(body);
+        return this.manualRecoveryResponse(tenant, request, response, principal => this.manualRecovery!.open(jobId, principal));
+    }
+
+    @Post("jobs/:jobId/recovery/verify")
+    @HttpCode(HttpStatus.OK)
+    async verifyManualDocumentJobRecovery(
+        @CurrentTenant() tenant: EformsignProviderPrincipal, @Req() request: { user?: { userId?: string } },
+        @Param("jobId", new ParseUUIDPipe()) jobId: string, @Body() body: unknown, @Res() response: Response,
+    ) {
+        const epoch = parseManualRecoveryEpochBody(body);
+        return this.manualRecoveryResponse(tenant, request, response, principal => this.manualRecovery!.verify(jobId, principal, epoch));
+    }
+
+    private async manualRecoveryResponse(tenant: EformsignProviderPrincipal, request: { user?: { userId?: string } }, response: Response,
+        run: (principal: EformsignProviderPrincipal) => Promise<unknown>) {
+        assertEformsignProviderCapability(tenant, "contract.dispatch");
+        const userId = tenant.userId ?? request.user?.userId;
+        if (!userId) throw new UnauthorizedException({ code: "AUTH_REQUIRED" });
+        if (tenant.userId && request.user?.userId && tenant.userId !== request.user.userId) throw new ForbiddenException({ code: "ACCESS_DENIED" });
+        try {
+            if (!this.manualRecovery) throw new ContractRecoveryError("RECOVERY_UNAVAILABLE", 503);
+            return response.status(200).json(await run({ ...tenant, userId }));
+        } catch (error) {
+            const safeCodes = ["AUTH_REQUIRED", "ACCESS_DENIED", "RESOURCE_NOT_FOUND", "VALIDATION_FAILED", "REQUEST_CONFLICT", "MANUAL_RECOVERY_CLAIMED", "RECOVERY_UNSUPPORTED", "RECOVERY_STALE", "RECOVERY_PENDING", "RECOVERY_PAYLOAD_EXPIRED", "RECOVERY_UNAVAILABLE"];
+            const reasons = ["legacy_unbound", "unsupported_job", "unverified_creation", "frame_already_exposed", "payload_expired", "claim_conflict", "document_mismatch", "draft_unavailable"];
+            if (error instanceof ContractRecoveryError && safeCodes.includes(error.code) && [401, 403, 404, 409, 410, 503].includes(error.status)) {
+                return response.status(error.status).json({ code: error.code, ...(error.reason && reasons.includes(error.reason) ? { reason: error.reason } : {}), ...(error.expiresAt && Number.isFinite(error.expiresAt.getTime()) ? { expiresAt: error.expiresAt.toISOString() } : {}) });
+            }
+            return response.status(503).json({ code: "RECOVERY_UNAVAILABLE" });
+        }
+    }
+
     @Post("jobs/:jobId/recovery")
     @HttpCode(HttpStatus.OK)
     async claimDocumentJobRecovery(

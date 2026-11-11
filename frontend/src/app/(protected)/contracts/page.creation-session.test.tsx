@@ -17,6 +17,7 @@ const CONTRACT_INFO_STEP = 3;
 jest.mock("next/navigation", () => ({
   useRouter: () => ({ push: jest.fn(), replace: jest.fn(), refresh: jest.fn() }),
   useSearchParams: () => new URLSearchParams(),
+  usePathname: () => "/contracts",
 }));
 
 jest.mock("@/hooks/useBusinessDayCalendar", () => ({

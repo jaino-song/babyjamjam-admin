@@ -3,6 +3,11 @@ import { fireEvent, render, screen, within } from "@testing-library/react";
 
 import WebsiteAdminPage from "./page";
 
+jest.mock("next/navigation", () => {
+  const router = { push: jest.fn(), replace: jest.fn(), refresh: jest.fn(), back: jest.fn(), forward: jest.fn(), prefetch: jest.fn() };
+  return { ...jest.requireActual("next/navigation"), usePathname: () => "/website-admin", useRouter: () => router };
+});
+
 let mockDocumentJobsActive = false;
 jest.mock("@/features/document-jobs/DocumentJobsProvider", () => {
   const actual = jest.requireActual("@/features/document-jobs/DocumentJobsProvider");

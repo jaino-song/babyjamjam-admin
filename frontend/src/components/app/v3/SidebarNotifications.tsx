@@ -1,13 +1,13 @@
 "use client";
 
 import * as React from "react";
-import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
 import { Bell, Headset, Users, X } from "lucide-react";
 
 import { useClientAlerts } from "@/hooks/useClientAlerts";
 import { useMarkAsRead, useNotifications, type Notification } from "@/hooks/usePushNotification";
 import type { ActionRequiredReason, ActionRequiredStatus } from "@/lib/client/action-required";
+import { AnchoredNotificationModalShell } from "./AnchoredNotificationModalShell";
 import { PanelTitleGroup } from "@/components/app/v3/PanelTitleGroup";
 import { useScrollActivity } from "@/components/app/v3/useScrollActivity";
 import { StatusPill } from "@/components/app/ui/status-badge";
@@ -30,8 +30,6 @@ interface SidebarNotificationItem {
     actionReason?: ActionRequiredReason;
     actionPriority?: ActionRequiredStatus["priority"];
 }
-
-const SIDEBAR_NOTIFICATIONS_MODAL_WIDTH = 400;
 
 const getNotificationIconContainerClassName = (notification: SidebarNotificationItem) => {
   if (notification.tone === "warning") {
@@ -99,7 +97,6 @@ const formatNotificationTime = (value: string | Date | null | undefined) => {
 export function SidebarNotifications() {
   const router = useRouter();
   const [open, setOpen] = React.useState(false);
-  const [modalPosition, setModalPosition] = React.useState<{ top: number; left: number } | null>(null);
   const triggerRef = React.useRef<HTMLButtonElement | null>(null);
   const { isScrollActive, handleScroll } = useScrollActivity();
   const { data: alerts = [], isLoading: isAlertsLoading } = useClientAlerts(3);
@@ -169,66 +166,14 @@ export function SidebarNotifications() {
     }
   };
 
-  React.useEffect(() => {
-    if (!open) {
-      return;
-    }
-
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        setOpen(false);
-      }
-    };
-
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [open]);
-
-  React.useLayoutEffect(() => {
-    if (!open) {
-      setModalPosition(null);
-      return;
-    }
-
-    const updatePosition = () => {
-      const trigger = triggerRef.current;
-      if (!trigger) {
-        return;
-      }
-
-      const rect = trigger.getBoundingClientRect();
-      const modalWidth = SIDEBAR_NOTIFICATIONS_MODAL_WIDTH;
-      const viewportWidth = window.innerWidth;
-      const maxLeft = Math.max(12, viewportWidth - modalWidth - 12);
-      setModalPosition({
-        top: rect.bottom + 12,
-        left: Math.min(maxLeft, Math.max(12, rect.left)),
-      });
-    };
-
-    updatePosition();
-
-    window.addEventListener("resize", updatePosition);
-    return () => window.removeEventListener("resize", updatePosition);
-  }, [open]);
-
-  const portalContent = open
-    ? createPortal(
-        <>
-          <button
-            type="button"
-            aria-label="알림 닫기"
-            data-component="desktop_chrome_sidebar_notifications-backdrop"
-            className="fixed inset-0 z-[999] bg-slate-950/34 backdrop-blur-[2px]"
-            onClick={() => setOpen(false)}
-          />
-
-          {modalPosition ? (
-            <div
-              data-component="desktop_chrome_sidebar_notifications-modal"
-              className="fixed z-[1000] w-[25rem] max-w-[calc(100vw-24px)] max-h-[calc(100vh-24px)] bg-white rounded-[28px] shadow-v3 flex flex-col overflow-hidden"
-              style={{ top: modalPosition.top, left: modalPosition.left }}
-            >
+  const portalContent = (
+    <AnchoredNotificationModalShell
+      open={open}
+      onClose={() => setOpen(false)}
+      anchorRef={triggerRef}
+      label="알림"
+      data-component="desktop_chrome_sidebar_notifications-modal"
+    >
               <div className="flex items-start justify-between p-6 pb-4 shrink-0">
                 <PanelTitleGroup
                   data-component="desktop_chrome_sidebar_notifications-modal_title-group"
@@ -326,12 +271,8 @@ export function SidebarNotifications() {
                 )}
                 <div className="sticky bottom-0 h-6 bg-white shrink-0" />
               </div>
-            </div>
-          ) : null}
-        </>,
-        document.body
-      )
-    : null;
+    </AnchoredNotificationModalShell>
+  );
 
   return (
     <div data-component="desktop_chrome_sidebar_notifications" className="relative ml-auto">

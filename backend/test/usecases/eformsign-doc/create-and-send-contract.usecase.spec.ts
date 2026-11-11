@@ -15,6 +15,13 @@ const createBoundary = () => ({
     ) => operation({ accessToken: "token", refreshToken: "refresh-token" })),
 });
 
+// Existing REST business cases explicitly model the no-authority boundary dependency.
+function legacyContractUsecase(...args: ConstructorParameters<typeof CreateAndSendContractUsecase>) {
+    const boundary: any = args[5] ?? { claim: jest.fn().mockResolvedValue({ disposition: "claimed", intent: { id: "fixture-intent", businessKey: "a".repeat(64), attemptCount: 1 } }), markAccepted: jest.fn().mockResolvedValue({ status: "accepted" }), markUncertain: jest.fn().mockResolvedValue(null), releaseBeforeSend: jest.fn().mockResolvedValue(null) };
+    args[5] = { ...boundary, claimContract: boundary.claim };
+    return new CreateAndSendContractUsecase(...args);
+}
+
 describe("CreateAndSendContractUsecase", () => {
     it.each([
         ...LIST_ONLY_HISTORICAL_MATERNITY_TEMPLATE_IDS,
@@ -26,7 +33,7 @@ describe("CreateAndSendContractUsecase", () => {
         const assignmentGuard = { assertLiveAssignedClient: jest.fn() };
         const persistDocument = jest.fn();
         const dispatchBoundary = { claim: jest.fn() };
-        const usecase = new CreateAndSendContractUsecase(
+        const usecase = legacyContractUsecase(
             { createDocument } as never,
             { findById } as never,
             withCredentials as never,
@@ -52,7 +59,7 @@ describe("CreateAndSendContractUsecase", () => {
         const createDocument = jest.fn();
         const withCredentials = createBoundary();
         const assignmentGuard = { assertLiveAssignedClient: jest.fn() };
-        const usecase = new CreateAndSendContractUsecase(
+        const usecase = legacyContractUsecase(
             { createDocument } as never,
             { findById: jest.fn().mockResolvedValue({
                 id: 55,
@@ -82,7 +89,7 @@ describe("CreateAndSendContractUsecase", () => {
 
     it("returns VALIDATION_FAILED problem fields when the client has no phone", async () => {
         const createDocument = jest.fn();
-        const usecase = new CreateAndSendContractUsecase(
+        const usecase = legacyContractUsecase(
             { createDocument } as never,
             { findById: jest.fn().mockResolvedValue({
                 id: 55,
@@ -109,7 +116,7 @@ describe("CreateAndSendContractUsecase", () => {
 
     it("returns RESOURCE_NOT_FOUND problem fields when the client is missing", async () => {
         const createDocument = jest.fn();
-        const usecase = new CreateAndSendContractUsecase(
+        const usecase = legacyContractUsecase(
             { createDocument } as never,
             { findById: jest.fn().mockResolvedValue(null) } as never,
             createBoundary() as never,
@@ -144,7 +151,7 @@ describe("CreateAndSendContractUsecase", () => {
                 new Error("고객의 제공인력 배정을 먼저 저장해 주세요."),
             ),
         };
-        const usecase = new CreateAndSendContractUsecase(
+        const usecase = legacyContractUsecase(
             eformsignClient as never,
             clientRepository as never,
             createBoundary() as never,
@@ -181,7 +188,7 @@ describe("CreateAndSendContractUsecase", () => {
                 new ConflictException(codeOnlyProblemBody("CLIENT_ASSIGNMENT_REQUIRED")),
             ),
         };
-        const usecase = new CreateAndSendContractUsecase(
+        const usecase = legacyContractUsecase(
             eformsignClient as never,
             clientRepository as never,
             createBoundary() as never,
@@ -203,7 +210,7 @@ describe("CreateAndSendContractUsecase", () => {
     });
 
     it("returns the remote document id when local persistence fails", async () => {
-        const usecase = new CreateAndSendContractUsecase(
+        const usecase = legacyContractUsecase(
             { createDocument: jest.fn().mockResolvedValue({ documentId: "remote-1" }) } as never,
             { findById: jest.fn().mockResolvedValue({
                 id: 7,
@@ -244,7 +251,7 @@ describe("CreateAndSendContractUsecase", () => {
             markUncertain: jest.fn(),
             releaseBeforeSend: jest.fn(),
         };
-        const usecase = new CreateAndSendContractUsecase(
+        const usecase = legacyContractUsecase(
             { createDocument } as never,
             { findById: jest.fn().mockResolvedValue({
                 id: 7,
@@ -281,7 +288,7 @@ describe("CreateAndSendContractUsecase", () => {
                 intent: { id: "intent-accepted", providerDocumentId: null },
             }),
         };
-        const usecase = new CreateAndSendContractUsecase(
+        const usecase = legacyContractUsecase(
             { createDocument } as never,
             { findById: jest.fn().mockResolvedValue({
                 id: 7,
@@ -326,7 +333,7 @@ describe("CreateAndSendContractUsecase", () => {
             markUncertain: jest.fn(),
             releaseBeforeSend: jest.fn().mockResolvedValue(undefined),
         };
-        const usecase = new CreateAndSendContractUsecase(
+        const usecase = legacyContractUsecase(
             { createDocument } as never,
             { findById: jest.fn().mockResolvedValue({
                 id: 7,
@@ -365,7 +372,7 @@ describe("CreateAndSendContractUsecase", () => {
             documentName: "김고객____남동구 계약서",
         });
         const persistDocument = jest.fn().mockResolvedValue({ documentId: "remote-1" });
-        const usecase = new CreateAndSendContractUsecase(
+        const usecase = legacyContractUsecase(
             { createDocument } as never,
             { findById: jest.fn().mockResolvedValue({
                 id: 7,
@@ -402,7 +409,7 @@ describe("CreateAndSendContractUsecase", () => {
     it("falls back to its own label when eformsign returns no document name", async () => {
         const createDocument = jest.fn().mockResolvedValue({ documentId: "remote-1" });
         const persistDocument = jest.fn().mockResolvedValue({ documentId: "remote-1" });
-        const usecase = new CreateAndSendContractUsecase(
+        const usecase = legacyContractUsecase(
             { createDocument } as never,
             { findById: jest.fn().mockResolvedValue({
                 id: 7,
@@ -430,7 +437,7 @@ describe("CreateAndSendContractUsecase", () => {
 
     it("sends the participant recipient by phone alone", async () => {
         const createDocument = jest.fn().mockResolvedValue({ documentId: "remote-1" });
-        const usecase = new CreateAndSendContractUsecase(
+        const usecase = legacyContractUsecase(
             { createDocument } as never,
             { findById: jest.fn().mockResolvedValue({
                 id: 7,
@@ -488,7 +495,7 @@ describe("CreateAndSendContractUsecase", () => {
             duration: 15,
             fallbackDate: "2026-08-04T01:02:03.000Z",
         };
-        const usecase = new CreateAndSendContractUsecase(
+        const usecase = legacyContractUsecase(
             { createDocument } as never,
             { findById } as never,
             createBoundary() as never,
@@ -534,7 +541,7 @@ describe("CreateAndSendContractUsecase", () => {
                 intent: { id: "intent-uncertain", providerDocumentId: null },
             }),
         };
-        const usecase = new CreateAndSendContractUsecase(
+        const usecase = legacyContractUsecase(
             { createDocument } as never,
             { findById: jest.fn().mockResolvedValue({
                 id: 7,
@@ -578,7 +585,7 @@ describe("CreateAndSendContractUsecase", () => {
                 },
             }),
         };
-        const usecase = new CreateAndSendContractUsecase(
+        const usecase = legacyContractUsecase(
             { createDocument } as never,
             { findById: jest.fn().mockResolvedValue({
                 id: 7,
@@ -639,7 +646,7 @@ describe("CreateAndSendContractUsecase", () => {
                 },
             }),
         };
-        const usecase = new CreateAndSendContractUsecase(
+        const usecase = legacyContractUsecase(
             { createDocument } as never,
             { findById: jest.fn().mockResolvedValue({
                 id: 7,
@@ -699,7 +706,7 @@ describe("CreateAndSendContractUsecase", () => {
             markUncertain: jest.fn(),
             releaseBeforeSend: jest.fn(),
         };
-        const usecase = new CreateAndSendContractUsecase(
+        const usecase = legacyContractUsecase(
             { createDocument } as never,
             { findById: jest.fn().mockResolvedValue({
                 id: 7,
@@ -769,7 +776,7 @@ describe("CreateAndSendContractUsecase", () => {
             }),
             releaseBeforeSend: jest.fn(),
         };
-        const usecase = new CreateAndSendContractUsecase(
+        const usecase = legacyContractUsecase(
             { createDocument } as never,
             { findById: jest.fn().mockResolvedValue({
                 id: 7,
@@ -831,7 +838,7 @@ describe("CreateAndSendContractUsecase", () => {
             markUncertain: jest.fn(),
             releaseBeforeSend: jest.fn(),
         };
-        const usecase = new CreateAndSendContractUsecase(
+        const usecase = legacyContractUsecase(
             { createDocument } as never,
             { findById: jest.fn().mockResolvedValue({
                 id: 7,
@@ -883,7 +890,7 @@ describe("CreateAndSendContractUsecase", () => {
             markUncertain: jest.fn().mockResolvedValue({ status: "uncertain" }),
             releaseBeforeSend: jest.fn(),
         };
-        const usecase = new CreateAndSendContractUsecase(
+        const usecase = legacyContractUsecase(
             { createDocument: jest.fn().mockRejectedValue(providerError) } as never,
             { findById: jest.fn().mockResolvedValue({
                 id: 7,
@@ -915,4 +922,21 @@ describe("CreateAndSendContractUsecase", () => {
         );
         expect(dispatchBoundary.releaseBeforeSend).not.toHaveBeenCalled();
     });
+});
+
+import { runtimeFixture, B, J, principal, data } from "../../utils/eformsign-contract-recovery.fixture";
+import { EformsignDispatchBoundaryService } from "application/services/eformsign-dispatch-boundary.service";
+import { SbEformsignDispatchIntentRepository } from "infrastructure/database/repositories/sb.eformsign-dispatch-intent.repository";
+import { ContractClientAssignmentGuardService } from "application/services/contract-client-assignment-guard.service";
+it.each(["human_exposed", "closed", "absent", "missing-binding"])("REST contract authority fence: %s", async phase => {
+    const f = runtimeFixture(); f.manual(); await f.service.open(J, principal);
+    if (phase === "closed") f.state.authorities[0].phase = "closed";
+    if (phase === "absent") f.state.authorities = [];
+    const createDocument = jest.fn().mockResolvedValue({ documentId: "second-document" });
+    const boundary = phase === "missing-binding" ? undefined : new EformsignDispatchBoundaryService(new SbEformsignDispatchIntentRepository(f.prisma), f.repository);
+    const usecase = new CreateAndSendContractUsecase({ createDocument } as never, { findById: jest.fn().mockResolvedValue({ ...f.state.clients[0], name: "Fixture", phone: data.customerContact }) } as never,
+        f.credentials, { execute: jest.fn().mockResolvedValue({}) } as never, new ContractClientAssignmentGuardService(f.prisma), boundary);
+    f.credentials.withCredentials.mockClear(); const result = await usecase.execute(B, { clientId: 2, templateId: "template_ABC" }, principal);
+    expect(createDocument).toHaveBeenCalledTimes(["closed", "absent"].includes(phase) ? 1 : 0);
+    if (["human_exposed", "missing-binding"].includes(phase)) { expect(f.credentials.withCredentials).not.toHaveBeenCalled(); expect(result.success).toBe(false); }
 });

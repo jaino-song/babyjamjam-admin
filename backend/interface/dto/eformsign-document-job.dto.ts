@@ -16,6 +16,7 @@ import { KOREAN_WON_INPUT_PATTERN } from "domain/value-objects/money.vo";
 import { IsCanonicalPhone } from "./canonical-phone.validator";
 import {
     classifyRecovery,
+    getDocumentJobDisplayProjection,
     isContractJob,
     parseManualClaim,
 } from "domain/entities/eformsign-document-job.entity";
@@ -25,6 +26,7 @@ import type {
     EformsignDocumentJobType,
     EformsignDocumentJobEntity,
     RecoveryClassification,
+    EformsignDocumentJobDisplayProjection,
 } from "domain/entities/eformsign-document-job.entity";
 
 const EFORMSIGN_DOCUMENT_JOB_REQUEST_KEY_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,254}$/;
@@ -157,7 +159,13 @@ export class FinalizeEformsignDocumentJobDto {
     prefillEndDate?: string;
 }
 
-export interface EformsignDocumentJobResponseDto {
+export interface EformsignDocumentJobResponseDto extends EformsignDocumentJobDisplayProjection {
+    /** Display enum: service_contract | service_record | unknown; never recovery authority. */
+    documentKind: EformsignDocumentJobDisplayProjection["documentKind"];
+    /** Display enum: generate | review | unknown; service_record review is reserved, with no producer. */
+    displayOperation: EformsignDocumentJobDisplayProjection["displayOperation"];
+    /** Six allowlisted stable codes or null; null outside failed/requires_attention. See docs/api/document-jobs-display-projection.openapi.json. */
+    failureReasonCode: EformsignDocumentJobDisplayProjection["failureReasonCode"];
     jobId: string;
     jobType: EformsignDocumentJobType;
     source: EformsignDocumentJobSource;
@@ -218,6 +226,7 @@ export interface EformsignDocumentJobListResponseDto {
 export const toEformsignDocumentJobResponse = (
     job: EformsignDocumentJobEntity,
 ): EformsignDocumentJobResponseDto => ({
+    ...getDocumentJobDisplayProjection(job),
     jobId: job.id,
     jobType: job.jobType,
     source: job.source,

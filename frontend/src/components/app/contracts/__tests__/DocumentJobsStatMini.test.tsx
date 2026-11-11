@@ -4,6 +4,8 @@ import { DocumentJobsStatMini } from "@/components/app/contracts/DocumentJobsSta
 import {
   createTestQueryClient,
   JobsTestWrapper,
+  makeJob,
+  makeJobList,
   makeSummary,
   setBranchCookie,
 } from "@/features/document-jobs/testing/jobs-test-utils";
@@ -24,6 +26,7 @@ describe("DocumentJobsStatMini stale summary", () => {
   afterEach(() => {
     setBranchCookie(null);
     jest.restoreAllMocks();
+    jest.useRealTimers();
   });
 
   it("keeps a whenActive card visible with a stale note and retry when a refresh fails after data", async () => {
@@ -70,5 +73,38 @@ describe("DocumentJobsStatMini stale summary", () => {
     await waitFor(() => expect(getSummary).toHaveBeenCalled());
     expect(screen.queryByRole("button", { name: "전자문서 처리중 작업 보기" })).not.toBeInTheDocument();
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("uses the actual StatMini anchor/namespace and stops list polling after document navigation", async () => {
+    jest.useFakeTimers();
+    const changed = jest.fn();
+    const summary = jest.spyOn(eformsignApi, "getDocumentJobSummary").mockResolvedValue(makeSummary({ activeCount: 1 }));
+    const jobs = jest.mocked(eformsignApi.getDocumentJobs).mockResolvedValue(makeJobList({ recent: [makeJob({ status: "completed", documentId: "doc /1", documentKind: "service_contract", displayOperation: "generate" })] }));
+    render(<JobsTestWrapper queryClient={createTestQueryClient()}><DocumentJobsStatMini mode="always" name="desktop_contracts" onOpenChange={changed} /></JobsTestWrapper>);
+    const trigger = await screen.findByRole("button", { name: "전자문서 처리중 작업 보기" });
+    await waitFor(() => expect(trigger).toHaveTextContent("1"));
+    expect(trigger).toHaveAttribute("data-component", "desktop_contracts_stats_document-jobs-popover_trigger");
+    expect(jobs).not.toHaveBeenCalled();
+    const anchor = jest.spyOn(trigger, "getBoundingClientRect").mockReturnValue({ left: 230, top: 20, bottom: 52 } as DOMRect);
+    fireEvent.click(trigger);
+    await screen.findByRole("button", { name: /김하늘.*상세 보기$/ });
+    expect(anchor).toHaveBeenCalled();
+    expect(screen.getByRole("dialog")).toHaveAttribute("data-component", "desktop_contracts_stats_document-jobs-popover");
+    expect(trigger).not.toHaveAttribute("aria-controls");
+    expect(trigger).toHaveAttribute("aria-expanded", "true");
+    await act(async () => { await jest.advanceTimersByTimeAsync(3000); });
+    expect(jobs.mock.calls.length).toBeGreaterThan(1);
+    fireEvent.click(screen.getByRole("button", { name: /김하늘.*상세 보기$/ }));
+    const link = screen.getByRole("link", { name: "문서 보기" });
+    expect(link).toHaveAttribute("href", "/contracts?documentId=doc%20%2F1");
+    fireEvent.click(link);
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(changed.mock.calls).toEqual([[true], [false]]);
+    expect(trigger).toHaveAttribute("aria-expanded", "false");
+    const calls = jobs.mock.calls.length, summaryCalls = summary.mock.calls.length;
+    await act(async () => { await jest.advanceTimersByTimeAsync(10_000); });
+    expect(jobs).toHaveBeenCalledTimes(calls);
+    expect(summary.mock.calls.length).toBeGreaterThan(summaryCalls);
+    expect(trigger).toHaveFocus();
   });
 });

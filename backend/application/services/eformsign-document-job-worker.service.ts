@@ -1,5 +1,7 @@
 import { Inject, Injectable, Logger, Optional } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
+import { EformsignDocumentJobManualRecoveryService } from "./eformsign-document-job-manual-recovery.service";
+import { EFORMSIGN_CONTRACT_RECOVERY_REPOSITORY, type IEformsignContractRecoveryRepository } from "domain/repositories/eformsign-contract-recovery.repository.interface";
 import { Interval } from "@nestjs/schedule";
 
 import type { ContractDataDto } from "application/dto/contract.dto";
@@ -391,6 +393,8 @@ export class EformsignDocumentJobWorkerService {
         @Optional()
         @Inject(SERVICE_RECORD_REVISION_OPERATION_COORDINATOR)
         private readonly revisionOperationCoordinator?: ServiceRecordRevisionOperationCoordinatorPort,
+        @Optional() private readonly manualRecovery?: EformsignDocumentJobManualRecoveryService,
+        @Optional() @Inject(EFORMSIGN_CONTRACT_RECOVERY_REPOSITORY) private readonly contractRecovery?: IEformsignContractRecoveryRepository,
     ) {}
 
     @Interval(WORKER_INTERVAL_MS)
@@ -731,15 +735,24 @@ export class EformsignDocumentJobWorkerService {
                 },
             },
             createEformsignWorkerPrincipal(job.branchId),
+            ...(job.contractGeneration ? [{ jobId: job.id, leaseToken, contractGeneration: job.contractGeneration }] : []),
         );
 
         if (result.ok) {
+            if (job.contractGeneration) {
+                try {
+                    if (!this.manualRecovery) throw new Error("RECOVERY_UNAVAILABLE");
+                    await this.manualRecovery.completeAutomatic({ jobId: job.id, leaseToken, contractGeneration: job.contractGeneration }, result.documentId, createEformsignWorkerPrincipal(job.branchId));
+                    await this.supersedeAfterReissue(job, result.documentId); return;
+                } catch { await this.markAndReconcile(job, "creating"); return; }
+            }
             const completed = await this.repository.markCompleted(job.id, leaseToken, result.documentId);
             // Only the holder of the lease may act on the completion; a lost lease
             // means another run owns this job's outcome.
             if (completed) await this.supersedeAfterReissue(job, result.documentId);
             return;
         }
+        if (job.contractGeneration) { await this.handlePreSendFailure(job, result.reason); return; }
         if (isTemplateWorkflowFailure(result.reason)) {
             // Workflow validation/read failures happen before the provider send
             // boundary. Keep them on the deterministic pre-send path;
@@ -986,6 +999,16 @@ export class EformsignDocumentJobWorkerService {
     private async handlePreSendFailure(job: EformsignDocumentJobEntity, errorCode: string): Promise<void> {
         const leaseToken = job.leaseToken;
         if (!leaseToken) return;
+        if (job.contractGeneration) {
+            const next = job.attempts <= MAX_PRE_SEND_RETRIES ? new Date(Date.now() + (PRE_SEND_RETRY_DELAYS_MS[job.attempts - 1] ?? PRE_SEND_RETRY_DELAYS_MS.at(-1)!)) : null;
+            try {
+                if (!this.contractRecovery) return;
+                const result = await this.contractRecovery.recoverBeforeCreation({ jobId: job.id, leaseToken, contractGeneration: job.contractGeneration }, next, errorCode);
+                if (!result) { await this.reconcile(job); return; }
+                if (result === "failed") this.notifyTransition(new EformsignDocumentJobEntity({ ...job, status: "failed", lastErrorCode: "PRE_SEND_RETRY_EXHAUSTED", completedAt: new Date(), leaseToken: null, activeKey: null }));
+            } catch { /* Stale durable scope cannot authorize a retry or transition. */ }
+            return;
+        }
         if (job.attempts <= MAX_PRE_SEND_RETRIES) {
             const delayMs = PRE_SEND_RETRY_DELAYS_MS[job.attempts - 1] ?? PRE_SEND_RETRY_DELAYS_MS.at(-1)!;
             await this.repository.scheduleRetry(
@@ -1028,6 +1051,21 @@ export class EformsignDocumentJobWorkerService {
     }
 
     private async reconcile(job: EformsignDocumentJobEntity): Promise<void> {
+        if (job.contractGeneration && job.leaseToken) {
+            const context = { jobId: job.id, leaseToken: job.leaseToken, contractGeneration: job.contractGeneration };
+            try {
+                if (!this.contractRecovery || !this.manualRecovery) throw new Error("RECOVERY_UNAVAILABLE");
+                const state = await this.contractRecovery.readWorker(context);
+                const id = state.providerDocumentId ?? state.creationIntent?.providerDocumentId;
+                if (id && state.creationIntent && ["accepted", "reconciled_delivered"].includes(state.creationIntent.status)) {
+                    await this.manualRecovery.completeAutomatic(context, id, createEformsignWorkerPrincipal(job.branchId));
+                    await this.supersedeAfterReissue(job, id); return;
+                }
+                await this.contractRecovery.markAutomaticUncertain(context);
+            } catch { /* The existing STARTED marker remains non-replayable even if persistence fails. */ }
+            this.notifyTransition(await this.repository.markRequiresAttention(job.id, job.leaseToken, "RECOVERY_PENDING"));
+            return;
+        }
         const revisionBlockReason = revisionRecoveryBlockReason(job);
         if (revisionBlockReason) {
             if (!job.leaseToken) {

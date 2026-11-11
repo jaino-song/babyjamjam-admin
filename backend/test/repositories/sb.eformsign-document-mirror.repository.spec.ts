@@ -1,3 +1,12 @@
+// These business regressions model the explicit legacy/no-authority dependency.
+// Real authority SQL and paired writer denials run in eformsign-contract-authority-writers.spec.ts.
+jest.mock("infrastructure/database/utils/eformsign-contract-authority", () => ({
+    ...jest.requireActual("infrastructure/database/utils/eformsign-contract-authority"),
+    discoverAuthorityClientIds: jest.fn().mockResolvedValue([]),
+    assertAuthorityPointerWrite: jest.fn().mockResolvedValue(undefined),
+    assertNoUnresolvedAuthorityForDocuments: jest.fn().mockResolvedValue(undefined),
+}));
+
 import { Prisma } from "@prisma/client";
 
 import { EFORMSIGN_COMPLETED_STATUS_STORAGE_VALUES } from "domain/constants/eformsign-doc-status.constants";

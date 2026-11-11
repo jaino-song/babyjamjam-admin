@@ -131,10 +131,11 @@ function mockAuthUser(data: Record<string, unknown> | null) {
 }
 
 let mockSearchParams = new URLSearchParams();
-jest.mock("next/navigation", () => ({
-  ...jest.requireActual("next/navigation"),
-  useSearchParams: () => mockSearchParams,
-}));
+jest.mock("next/navigation", () => {
+  const router = { push: jest.fn(), replace: jest.fn(), refresh: jest.fn(), back: jest.fn(), forward: jest.fn(), prefetch: jest.fn() };
+  return { ...jest.requireActual("next/navigation"), useSearchParams: () => mockSearchParams,
+    usePathname: () => "/messages", useRouter: () => router };
+});
 
 // Radix Popper (the hover card) measures with ResizeObserver, which jsdom lacks.
 if (!("ResizeObserver" in globalThis)) {

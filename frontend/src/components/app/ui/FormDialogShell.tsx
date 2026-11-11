@@ -35,7 +35,8 @@ interface FormDialogShellProps {
   eyebrow?: React.ReactNode;
   children: React.ReactNode;
   footer?: React.ReactNode;
-  size?: "form" | "compact";
+  size?: "form" | "compact" | "recovery";
+  onCloseAutoFocus?: React.ComponentProps<typeof DialogContent>["onCloseAutoFocus"];
   contentClassName?: string;
   footerClassName?: string;
   mobileSheet?: boolean;
@@ -56,6 +57,7 @@ export function FormDialogShell({
   footerClassName,
   mobileSheet = false,
   showCloseButton = true,
+  onCloseAutoFocus,
 }: FormDialogShellProps) {
   const canonicalDataComponentBase = canonicalDataComponent || undefined;
   const dataComponent = canonicalDataComponentBase ?? legacyDataComponent;
@@ -69,10 +71,13 @@ export function FormDialogShell({
       data-component={dataComponent}
       data-source-component={SOURCE_COMPONENT}
       showCloseButton={false}
+      onCloseAutoFocus={onCloseAutoFocus}
+      overlayClassName={size === "recovery" ? "z-[1009]" : undefined}
       className={cn(
         APP_DIALOG_FLUSH_CONTENT_CLASS_NAME,
         APP_FORM_DIALOG_CONTENT_CLASS_NAME,
         size === "compact" && "h-auto w-[min(480px,calc(100vw-1.5rem))] max-w-[480px]",
+        size === "recovery" && "z-[1010] flex h-[min(92vh,calc(100vh-32px))] w-[min(960px,calc(100vw-32px))] max-w-[960px] flex-col overflow-hidden",
         mobileSheet && "max-sm:bottom-0 max-sm:top-auto max-sm:left-0 max-sm:w-full max-sm:max-w-none max-sm:translate-x-0 max-sm:translate-y-0 max-sm:rounded-b-none max-sm:max-h-[94dvh] max-sm:bg-white",
       )}
     >
@@ -107,7 +112,7 @@ export function FormDialogShell({
 
       <div
         data-component={sub("content")}
-        className={cn(APP_DIALOG_BODY_CLASS_NAME, contentClassName)}
+        className={cn(APP_DIALOG_BODY_CLASS_NAME, size === "recovery" && "min-h-0 flex-1 overflow-hidden", contentClassName)}
       >
         {children}
       </div>

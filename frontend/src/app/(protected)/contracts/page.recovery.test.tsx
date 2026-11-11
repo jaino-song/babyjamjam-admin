@@ -1,8 +1,6 @@
 /**
- * /contracts?recoverJobId=<id> opens the failed-job recovery dialog once and clears the param,
- * and "새로 작성" from that dialog never silently discards a creation in progress.
- * ContractCreationForm is stubbed; the dialog itself is covered in
- * components/app/contracts/DocumentJobRecoveryDialog.test.tsx.
+ * /contracts?recoverJobId=<id> opens iframe recovery once and clears the parameter.
+ * Closing recovery preserves a creation session. Its bridge lifecycle has separate tests.
  */
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
@@ -12,6 +10,8 @@ import { eformsignApi } from "@/services/api";
 import { useFormStore } from "@/stores/form-store";
 
 import ContractsPage from "./page";
+import { eformsignApi as manualApi } from "@/services/eformsign";
+jest.mock("@/services/eformsign", () => ({ eformsignApi: { openDocumentJobRecovery: jest.fn(), verifyDocumentJobRecovery: jest.fn() } }));
 
 const PROCESSING_STEP = 4;
 
@@ -25,6 +25,7 @@ let mockDocuments: EformsignDocument[] = [];
 jest.mock("next/navigation", () => ({
   useRouter: () => ({ push: jest.fn(), replace: mockReplace, refresh: jest.fn() }),
   useSearchParams: () => mockParams,
+  usePathname: () => '/contracts',
 }));
 
 jest.mock("@/hooks/useBusinessDayCalendar", () => ({
@@ -113,7 +114,7 @@ jest.mock("@/components/app/contracts/ContractCreationForm", () => {
   };
 });
 
-const claim = eformsignApi.claimDocumentJobRecovery as jest.Mock;
+const openRecovery = manualApi.openDocumentJobRecovery as jest.Mock;
 
 const targetDocument: EformsignDocument = {
   id: "doc-1", document_name: "복구 대상 계약서", document_number: "1",
@@ -129,8 +130,7 @@ const targetDocument: EformsignDocument = {
   fields: [], next_status: [], previous_status: [], histories: [],
   recipients: [], detail_template_info: [],
 };
-const DETAIL_SELECTOR =
-  '[data-component^="desktop_contracts_sections_section-content_maternity-section_split-layout_detail-panel-document"]';
+
 
 function renderPage() {
   const queryClient = new QueryClient({
@@ -149,148 +149,34 @@ function renderPage() {
 const sendButton = () => screen.getByRole("button", { name: /전자문서 발송/ });
 const stubStep = () => screen.getByTestId("stub-step").textContent;
 
-function verifyResultClaim() {
-  return {
-    job: {
-      jobId: "j1",
-      jobType: "create_document",
-      source: "staff",
-      status: "requires_attention",
-      clientId: 1,
-      documentId: "doc-1",
-      progressStep: null,
-      attempts: 1,
-      nextAttemptAt: "2026-11-01T00:00:00.000Z",
-      startedAt: null,
-      completedAt: null,
-      createdAt: "2026-11-01T00:00:00.000Z",
-      updatedAt: "2026-11-01T00:00:00.000Z",
-      clientName: "김하늘",
-      recoveryKind: "verify_result",
-      lastErrorCode: null,
-    },
-    recoveryKind: "verify_result",
-    payload: null,
-    claimExpiresAt: null,
-  };
-}
 
-describe("ContractsPage failed-job recovery", () => {
+
+describe("ContractsPage iframe recovery entry", () => {
   beforeEach(() => {
-    jest.clearAllMocks();
-    mockParams = new URLSearchParams();
-    mockMountCount = 0;
-    mockDocuments = [targetDocument];
+    jest.clearAllMocks(); mockParams = new URLSearchParams(); mockMountCount = 0; mockDocuments = [targetDocument];
     useFormStore.getState().resetAll();
     (eformsignApi.getDocument as jest.Mock).mockResolvedValue(targetDocument);
-    claim.mockResolvedValue(verifyResultClaim());
+    openRecovery.mockResolvedValue({ kind: "verify_only", jobId: "11111111-1111-4111-8111-111111111111", claimEpoch: "42", claimExpiresAt: new Date(Date.now() + 60000).toISOString() });
   });
-
-  it("opens the recovery dialog once for ?recoverJobId= and removes the param", async () => {
-    mockParams = new URLSearchParams("recoverJobId=j1");
-    renderPage();
-
-    expect(await screen.findByText("전자문서 결과 확인 필요")).toBeInTheDocument();
+  it("opens the iframe presentation once, clears the URL, and never claims or resolves through legacy methods", async () => {
+    mockParams = new URLSearchParams("recoverJobId=11111111-1111-4111-8111-111111111111"); renderPage();
+    await screen.findByText("이미 열린 문서가 있어 결과 확인만 할 수 있어요.");
     expect(mockReplace).toHaveBeenCalledWith("/contracts", { scroll: false });
-    expect(claim).toHaveBeenCalledTimes(1);
-    expect(claim).toHaveBeenCalledWith("j1");
-
-    // Closing the dialog does not bring it back: the param is already gone.
-    fireEvent.click(screen.getByRole("button", { name: "Close" }));
-    await waitFor(() => expect(screen.queryByText("전자문서 결과 확인 필요")).not.toBeInTheDocument());
-    expect(claim).toHaveBeenCalledTimes(1);
+    expect(openRecovery).toHaveBeenCalledTimes(1);
+    expect(openRecovery).toHaveBeenCalledWith("11111111-1111-4111-8111-111111111111");
+    fireEvent.click(screen.getByRole("button", { name: "닫기" }));
+    await waitFor(() => expect(screen.queryByText("전자문서 수동 처리")).not.toBeInTheDocument());
+    expect(eformsignApi.claimDocumentJobRecovery).not.toHaveBeenCalled();
+    expect(eformsignApi.resolveDocumentJob).not.toHaveBeenCalled();
+    expect(openRecovery).toHaveBeenCalledTimes(1);
   });
-
-  it("shows no dialog without the param", () => {
-    renderPage();
-
-    expect(claim).not.toHaveBeenCalled();
-    expect(screen.queryByText("전자문서 결과 확인 필요")).not.toBeInTheDocument();
-  });
-
-  it("keeps a creation in progress, with its step, when the discard confirm is cancelled", async () => {
-    const page = renderPage();
-    fireEvent.click(sendButton());
-    fireEvent.click(screen.getByText("stub-begin-session"));
-    expect(stubStep()).toBe(String(PROCESSING_STEP));
-    const mountBefore = screen.getByTestId("stub-mount").textContent;
-
-    page.followLink("recoverJobId=j1");
-    await screen.findByText("전자문서 결과 확인 필요");
-
-    fireEvent.click(await screen.findByRole("button", { name: "새로 작성" }));
-    fireEvent.click(await screen.findByRole("button", { name: "확인했어요" }));
-    expect(await screen.findByText("작성 중인 계약서를 버리고 새로 작성할까요?")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "취소" }));
-
-    await waitFor(() =>
-      expect(screen.queryByText("작성 중인 계약서를 버리고 새로 작성할까요?")).not.toBeInTheDocument(),
-    );
-    expect(stubStep()).toBe(String(PROCESSING_STEP));
-    expect(screen.getByTestId("stub-mount").textContent).toBe(mountBefore);
-  });
-
-  it("starts a fresh form at the first step once the discard is confirmed", async () => {
-    const page = renderPage();
-    fireEvent.click(sendButton());
-    fireEvent.click(screen.getByText("stub-begin-session"));
-    const mountBefore = screen.getByTestId("stub-mount").textContent;
-
-    page.followLink("recoverJobId=j1");
-    await screen.findByText("전자문서 결과 확인 필요");
-
-    fireEvent.click(await screen.findByRole("button", { name: "새로 작성" }));
-    fireEvent.click(await screen.findByRole("button", { name: "확인했어요" }));
-    fireEvent.click(await screen.findByRole("button", { name: "버리고 새로 작성" }));
-
-    await waitFor(() => expect(screen.queryByText("전자문서 결과 확인 필요")).not.toBeInTheDocument());
-    expect(stubStep()).toBe("0");
-    expect(screen.getByTestId("stub-mount").textContent).not.toBe(mountBefore);
-  });
-
-  it("opens a fresh form without a prompt when nothing is in progress", async () => {
-    mockParams = new URLSearchParams("recoverJobId=j1");
-    renderPage();
-
-    fireEvent.click(await screen.findByRole("button", { name: "새로 작성" }));
-    fireEvent.click(await screen.findByRole("button", { name: "확인했어요" }));
-
-    await waitFor(() => expect(screen.getByTestId("stub-step")).toBeInTheDocument());
-    expect(stubStep()).toBe("0");
-    expect(screen.queryByText("작성 중인 계약서를 버리고 새로 작성할까요?")).not.toBeInTheDocument();
-  });
-
-  it("shows the document behind an open creation form and keeps the form's input", async () => {
-    const page = renderPage();
-    fireEvent.click(sendButton());
-    fireEvent.click(screen.getByText("stub-begin-session"));
-    useFormStore.getState().setName("김하늘");
-    const mountBefore = screen.getByTestId("stub-mount").textContent;
-    expect(document.querySelector(DETAIL_SELECTOR)).not.toBeInTheDocument();
-
-    page.followLink("recoverJobId=j1");
-    await screen.findByText("전자문서 결과 확인 필요");
-    fireEvent.click(await screen.findByRole("button", { name: "계약서 보기" }));
-
-    await waitFor(() => expect(document.querySelector(DETAIL_SELECTOR)).toBeInTheDocument());
-    expect(screen.getAllByText(targetDocument.document_name).length).toBeGreaterThan(0);
-    expect(screen.queryByText("전자문서 결과 확인 필요")).not.toBeInTheDocument();
-    // The form is hidden, not discarded: same mount, same step, same store values, no prompt.
-    expect(screen.getByTestId("stub-mount").textContent).toBe(mountBefore);
-    expect(screen.getByTestId("stub-mount").closest(".hidden")).not.toBeNull();
-    expect(stubStep()).toBe(String(PROCESSING_STEP));
+  it("does not open without a recovery parameter", () => { renderPage(); expect(openRecovery).not.toHaveBeenCalled(); });
+  it("preserves the mounted creation session, current step and values on recovery close", async () => {
+    const page = renderPage(); fireEvent.click(sendButton()); fireEvent.click(screen.getByText("stub-begin-session"));
+    useFormStore.getState().setName("김하늘"); const mountBefore = screen.getByTestId("stub-mount").textContent;
+    page.followLink("recoverJobId=11111111-1111-4111-8111-111111111111");
+    await screen.findByText("전자문서 수동 처리"); fireEvent.click(screen.getByRole("button", { name: "닫기" }));
+    expect(stubStep()).toBe(String(PROCESSING_STEP)); expect(screen.getByTestId("stub-mount").textContent).toBe(mountBefore);
     expect(useFormStore.getState().name).toBe("김하늘");
-    expect(screen.queryByText("작성 중인 계약서를 버리고 새로 작성할까요?")).not.toBeInTheDocument();
-  });
-
-  it("shows the document when no creation form is open", async () => {
-    mockParams = new URLSearchParams("recoverJobId=j1");
-    renderPage();
-
-    fireEvent.click(await screen.findByRole("button", { name: "계약서 보기" }));
-
-    await waitFor(() => expect(document.querySelector(DETAIL_SELECTOR)).toBeInTheDocument());
-    expect(screen.getAllByText(targetDocument.document_name).length).toBeGreaterThan(0);
-    expect(screen.queryByTestId("stub-step")).not.toBeInTheDocument();
   });
 });

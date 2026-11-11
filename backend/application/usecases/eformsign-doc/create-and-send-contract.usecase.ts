@@ -184,6 +184,7 @@ export class CreateAndSendContractUsecase {
         let providerAttempted = false;
         let dispatchIntent: Awaited<ReturnType<EformsignDispatchBoundaryService["claim"]>>["intent"] | undefined;
         try {
+            if (!this.dispatchBoundary) throw new Error("Contract dispatch boundary unavailable");
             const assignment = await this.assignmentGuard.assertLiveAssignedClient(branchid, clientId);
             if (this.dispatchBoundary) {
                 // Approval-bound agent calls supply an immutable target version; direct callers
@@ -232,7 +233,7 @@ export class CreateAndSendContractUsecase {
                         generation,
                     }))
                     .digest("hex");
-                const claim = await this.dispatchBoundary.claim({
+                const claim = await this.dispatchBoundary.claimContract({
                     branchId: branchid,
                     clientId,
                     assignmentId: assignment?.scheduleId ?? null,

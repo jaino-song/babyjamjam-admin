@@ -49,7 +49,8 @@ import {
     ScopedDeleteNotFoundError,
 } from "domain/errors/retention-delete-blocked.error";
 import { ordinaryAutomationJobWhere } from "application/utils/message-automation-record-sql";
-import type { Prisma } from "@prisma/client";
+import { Prisma } from "@prisma/client";
+import { assertAuthorityPointerWrite, AuthorityConflictError, discoverAuthorityClientIds } from "../utils/eformsign-contract-authority";
 import type { ServiceRecordEditJsonValue } from "domain/repositories/service-record-edit.repository.interface";
 
 const ALERT_CLIENT_PAGE_SIZE = 100;
@@ -596,17 +597,18 @@ export class SbClientRepository implements IClientRepository {
         };
     }
 
-    async create(branchid: string, client: ClientEntity, transaction?: Prisma.TransactionClient): Promise<ClientEntity> {
+    async create(branchid: string, client: ClientEntity, transaction?: Prisma.TransactionClient, prelockedAuthorityOwnerIds?: readonly number[]): Promise<ClientEntity> {
+        if (client.eDocId !== null && !transaction) return this.prismaService.$transaction(tx => this.create(branchid, client, tx, prelockedAuthorityOwnerIds));
         const queryClient = transaction ?? this.prismaService;
         const select = await this.getClientSelect(queryClient);
         const data = await this.getClientCreateData(client, queryClient);
-        const created = await queryClient.client.create({
+        const created = await this.createWithAuthorityFence(queryClient, branchid, client.eDocId, prelockedAuthorityOwnerIds, () => queryClient.client.create({
             data: {
                 ...data,
                 branchId: branchid,
             },
             select,
-        });
+        }));
         return ClientMapper.toDomain(created as any);
     }
 
@@ -615,11 +617,13 @@ export class SbClientRepository implements IClientRepository {
         client: ClientEntity,
         schedule: InitialClientSchedule,
         transaction?: Prisma.TransactionClient,
+        prelockedAuthorityOwnerIds?: readonly number[],
     ): Promise<ClientWithInitialSchedule> {
+        if (client.eDocId !== null && !transaction) return this.prismaService.$transaction(tx => this.createWithInitialSchedule(branchid, client, schedule, tx, prelockedAuthorityOwnerIds));
         const queryClient = transaction ?? this.prismaService;
         const select = await this.getClientSelect(queryClient);
         const data = await this.getClientCreateData(client, queryClient);
-        const created = await queryClient.client.create({
+        const created = await this.createWithAuthorityFence(queryClient, branchid, client.eDocId, prelockedAuthorityOwnerIds, () => queryClient.client.create({
             data: {
                 ...data,
                 branchId: branchid,
@@ -643,7 +647,7 @@ export class SbClientRepository implements IClientRepository {
                     take: 1,
                 },
             },
-        });
+        }));
         const scheduleId = created.employeeSchedules[0]?.id;
         if (scheduleId === undefined) {
             throw new Error("Initial employee schedule was not created");
@@ -655,12 +659,38 @@ export class SbClientRepository implements IClientRepository {
         };
     }
 
+    private async createWithAuthorityFence<T extends { id: number }>(
+        tx: Prisma.TransactionClient, branchId: string, documentId: string | null,
+        prelockedAuthorityOwnerIds: readonly number[] | undefined, create: () => Promise<T>,
+    ): Promise<T> {
+        if (documentId === null) return create();
+        // A supplied snapshot must never expand after the caller has locked employees.
+        const owners = prelockedAuthorityOwnerIds ?? await discoverAuthorityClientIds(tx, branchId, [documentId]);
+        if (owners.length) await assertAuthorityPointerWrite(tx, { branchId, clientIds: owners, documentIds: [documentId] });
+        await tx.$executeRaw`SAVEPOINT client_authority_create`;
+        try {
+            const created = await create();
+            // Only the new unpublished client is a new lock here: no other transaction can see it.
+            // Rediscovery in the guard rejects new owners before acquiring their client locks.
+            await assertAuthorityPointerWrite(tx, { branchId, clientIds: [created.id, ...owners], documentIds: [documentId] });
+            await tx.$executeRaw`RELEASE SAVEPOINT client_authority_create`;
+            return created;
+        } catch (error) {
+            // Keep caller-owned work intact even when it catches this refusal and commits.
+            await tx.$executeRaw`ROLLBACK TO SAVEPOINT client_authority_create`;
+            await tx.$executeRaw`RELEASE SAVEPOINT client_authority_create`;
+            throw error;
+        }
+    }
+
     async update(
         branchid: string,
         client: ClientEntity,
         transaction?: Prisma.TransactionClient,
     ): Promise<ClientEntity> {
+        if (!transaction) return this.prismaService.$transaction(tx => this.update(branchid, client, tx));
         const db = transaction ?? this.prismaService;
+        if (!await this.guardPointerChange(db, branchid, client.id, client.eDocId)) throw new Error("Client not found for branch");
         const select = await this.getClientSelect(db);
         const data = await this.getClientUpdateData(client, db);
         const result = await db.client.updateMany({
@@ -678,6 +708,20 @@ export class SbClientRepository implements IClientRepository {
             throw new Error("Client not found after update");
         }
         return ClientMapper.toDomain(updated as any);
+    }
+
+    private async guardPointerChange(tx: Prisma.TransactionClient, branchId: string, id: number, next: string | null): Promise<boolean> {
+        const peek = await tx.client.findFirst({ where: { id, branchId, deletedAt: null }, select: { eDocId: true } });
+        if (!peek) return false;
+        const documentIds = [...new Set([peek.eDocId, next].filter((value): value is string => value !== null))];
+        const owners = peek.eDocId !== next ? await discoverAuthorityClientIds(tx, branchId, documentIds) : [];
+        const clientIds = [...new Set([id, ...owners])].sort((a, b) => a - b);
+        await tx.$queryRaw(Prisma.sql`SELECT id FROM client WHERE branch_id = ${branchId}::uuid
+            AND id IN (${Prisma.join(clientIds)}) ORDER BY id FOR UPDATE`);
+        const current = await tx.client.findFirst({ where: { id, branchId, deletedAt: null }, select: { eDocId: true } });
+        if (!current || current.eDocId !== peek.eDocId) throw new AuthorityConflictError();
+        if (current.eDocId !== next) await assertAuthorityPointerWrite(tx, { branchId, clientIds, documentIds });
+        return true;
     }
 
     async updateServiceStatusIfCurrent(
@@ -711,6 +755,7 @@ export class SbClientRepository implements IClientRepository {
         transaction?: Prisma.TransactionClient,
     ): Promise<ClientEntity | null> {
         const apply = async (tx: Prisma.TransactionClient): Promise<ClientEntity | null> => {
+            if (updates.eDocId !== undefined && !await this.guardPointerChange(tx, branchid, id, updates.eDocId)) return null;
             const current = await this.findByIdForUpdate(branchid, id, tx);
             if (!current || clientAgentTargetVersion(current) !== expectedTargetVersion) {
                 return null;
