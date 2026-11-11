@@ -1,5 +1,5 @@
 import { ConfigService } from '@nestjs/config';
-import { EformsignService } from '../../application/services/eformsign.service';
+import { CONTRACT_END_DATE_ENRICHMENT_BUDGET_MS, EformsignService } from '../../application/services/eformsign.service';
 import { extractEformsignContractEndDate } from '../../application/utils/eformsign-contract-end-date';
 
 const TOKEN = 'fixture-access-token';
@@ -67,7 +67,7 @@ describe('EformsignService.getAllDocuments end-date enrichment', () => {
         const result = await service.getAllDocuments(TOKEN);
         expect(detail).toHaveBeenCalledTimes(3);
         for (const item of selected) {
-            expect(detail).toHaveBeenCalledWith(TOKEN, item.id);
+            expect(detail).toHaveBeenCalledWith(TOKEN, item.id, expect.any(AbortSignal));
             expect(result.documents.find((row) => row.id === item.id)?.contract_end_date).toBe('2026-08-20');
         }
         for (const item of unselected) {
@@ -120,5 +120,108 @@ describe('EformsignService.getAllDocuments end-date enrichment', () => {
         expect(warn).toHaveBeenCalledWith('1');
         expect(JSON.stringify(warn.mock.calls)).not.toContain(TOKEN);
         expect(JSON.stringify(warn.mock.calls)).not.toContain(FAILURE);
+    });
+});
+
+describe('EformsignService end-date enrichment deadline', () => {
+    const BUDGET_MS = 8000;
+    const originalFetch = global.fetch;
+
+    beforeEach(() => jest.useFakeTimers());
+    afterEach(() => {
+        global.fetch = originalFetch;
+        jest.restoreAllMocks();
+        jest.useRealTimers();
+    });
+
+    it('returns 100 slow documents within the budget, preserving finished dates and aborting pending calls', async () => {
+        expect(CONTRACT_END_DATE_ENRICHMENT_BUDGET_MS).toBe(BUDGET_MS);
+        const service = createService();
+        jest.mocked(service.getInProgressDocuments).mockResolvedValue({
+            documents: Array.from({ length: 100 }, (_, i) => doc(String(i))),
+        });
+        const started: Array<{ at: number; signal?: AbortSignal; finished: boolean }> = [];
+        let inFlight = 0;
+        let peak = 0;
+        global.fetch = jest.fn((_url, options) => new Promise<Response>((resolve, reject) => {
+            const signal = options?.signal ?? undefined;
+            const call = { at: Date.now(), signal, finished: false };
+            started.push(call);
+            inFlight++;
+            peak = Math.max(peak, inFlight);
+            const timer = setTimeout(() => {
+                inFlight--;
+                call.finished = true;
+                signal?.removeEventListener('abort', abort);
+                resolve({ ok: true, json: async () => endFields } as Response);
+            }, 1600);
+            const abort = () => {
+                clearTimeout(timer);
+                inFlight--;
+                reject(new Error(`abort-message-must-not-be-logged ${TOKEN}`));
+            };
+            signal?.addEventListener('abort', abort, { once: true });
+        }));
+        const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
+        const start = Date.now();
+        let resolvedAt: number | undefined;
+        const pending = service.getAllDocuments(TOKEN).then((result) => {
+            resolvedAt = Date.now();
+            return result;
+        });
+
+        await jest.advanceTimersByTimeAsync(BUDGET_MS);
+        // Assert before awaiting, so an unbounded queue fails without hanging the test.
+        expect(resolvedAt).toBeDefined();
+        expect((resolvedAt ?? Infinity) - start).toBeLessThan(9000);
+        const result = await pending;
+        expect(result.documents).toHaveLength(100);
+        expect(result.documents.filter((row) => row.contract_end_date === '2026-08-20')).toHaveLength(20);
+        expect(result.documents.filter((row) => row.contract_end_date === null)).toHaveLength(80);
+        expect(peak).toBeLessThanOrEqual(5);
+        expect(inFlight).toBe(0);
+        expect(started).toHaveLength(25);
+        expect(started.every((call) => call.at - start < BUDGET_MS)).toBe(true);
+        expect(started.every((call) => call.signal instanceof AbortSignal)).toBe(true);
+        expect(started.every((call) => call.finished || call.signal?.aborted)).toBe(true);
+        expect(warn).toHaveBeenCalledTimes(1);
+        expect(JSON.stringify(warn.mock.calls)).not.toContain(TOKEN);
+        expect(JSON.stringify(warn.mock.calls)).not.toContain('abort-message-must-not-be-logged');
+        expect(jest.getTimerCount()).toBe(0);
+        await jest.advanceTimersByTimeAsync(30000);
+        expect(started).toHaveLength(25);
+    });
+
+    it('returns at the deadline even if a detail implementation ignores abort, and ignores late results', async () => {
+        const service = createService();
+        jest.mocked(service.getInProgressDocuments).mockResolvedValue({ documents: [doc('1')] });
+        let release: (value: typeof endFields) => void = () => {};
+        const detail = jest.spyOn(service, 'getDocumentById').mockImplementation(() => new Promise((resolve) => {
+            release = resolve;
+        }));
+        jest.spyOn(console, 'warn').mockImplementation(() => {});
+        let result: Awaited<ReturnType<typeof service.getAllDocuments>> | undefined;
+        const pending = service.getAllDocuments(TOKEN).then((value) => { result = value; });
+        await jest.advanceTimersByTimeAsync(BUDGET_MS);
+        expect(result?.documents[0].contract_end_date).toBeNull();
+        await pending;
+        expect(detail.mock.calls[0]?.[2]?.aborted).toBe(true);
+        release(endFields);
+        await jest.advanceTimersByTimeAsync(1);
+        expect(result?.documents[0].contract_end_date).toBeNull();
+        expect(jest.getTimerCount()).toBe(0);
+    });
+
+    it('clears the deadline timer when all details finish early', async () => {
+        const service = createService();
+        jest.mocked(service.getInProgressDocuments).mockResolvedValue({ documents: [doc('1')] });
+        const detail = jest.spyOn(service, 'getDocumentById').mockResolvedValue(endFields);
+        const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
+        const result = await service.getAllDocuments(TOKEN);
+        expect(result.documents[0].contract_end_date).toBe('2026-08-20');
+        expect(jest.getTimerCount()).toBe(0);
+        await jest.advanceTimersByTimeAsync(BUDGET_MS);
+        expect(detail.mock.calls[0]?.[2]?.aborted).toBe(false);
+        expect(warn).not.toHaveBeenCalled();
     });
 });

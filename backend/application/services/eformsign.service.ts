@@ -6,6 +6,8 @@ import { extractEformsignContractEndDate } from "../utils/eformsign-contract-end
 import { getStatusCategory, isProviderReviewWorkflowStep } from "../utils/eformsign-status-codes";
 import { ContractDataDto } from "../dto/contract.dto";
 
+export const CONTRACT_END_DATE_ENRICHMENT_BUDGET_MS = 8000;
+
 export interface EformsignTokenResponse {
     oauth_token: {
         access_token: string;
@@ -276,11 +278,12 @@ export class EformsignService {
      * Get single document by ID
      * GET /v2.0/api/documents/{documentId}
      */
-    async getDocumentById(accessToken: string, documentId: string): Promise<any> {
+    async getDocumentById(accessToken: string, documentId: string, signal?: AbortSignal): Promise<any> {
         const response = await fetch(
             `${this.EFORMSIGN_DOC_API_URL}/v2.0/api/documents/${documentId}?include_fields=true`,
             {
                 method: "GET",
+                signal,
                 headers: {
                     "Content-Type": "application/json",
                     "Authorization": `Bearer ${accessToken}`,
@@ -336,24 +339,53 @@ export class EformsignService {
             && isProviderReviewWorkflowStep(doc.current_status),
         );
         const DETAIL_CONCURRENCY = 5;
-        let nextDocument = 0;
-        await Promise.all(Array.from(
-            { length: Math.min(DETAIL_CONCURRENCY, reviewDocuments.length) },
-            async () => {
-                while (nextDocument < reviewDocuments.length) {
-                    const doc = reviewDocuments[nextDocument++];
-                    doc.contract_end_date = null;
-                    try {
-                        const detail = await this.getDocumentById(accessToken, doc.id);
-                        const endDate = extractEformsignContractEndDate(detail);
-                        doc.contract_end_date = endDate?.toISOString().slice(0, 10) ?? null;
-                    } catch {
-                        // Provider errors include response bodies; log only the id.
-                        console.warn(doc.id);
+        if (reviewDocuments.length > 0) {
+            // Initialize queued documents too: the deadline may leave them unstarted.
+            for (const doc of reviewDocuments) doc.contract_end_date = null;
+            const controller = new AbortController();
+            const deadline = Date.now() + CONTRACT_END_DATE_ENRICHMENT_BUDGET_MS;
+            let nextDocument = 0;
+            let settledDocuments = 0;
+            let deadlineTimer: ReturnType<typeof setTimeout> | undefined;
+            const deadlineReached = new Promise<void>((resolve) => {
+                deadlineTimer = setTimeout(() => {
+                    controller.abort();
+                    console.warn('Contract end-date enrichment timed out', {
+                        unresolved: reviewDocuments.length - settledDocuments,
+                        inFlight: nextDocument - settledDocuments,
+                    });
+                    resolve();
+                }, CONTRACT_END_DATE_ENRICHMENT_BUDGET_MS);
+            });
+            const workers = Array.from(
+                { length: Math.min(DETAIL_CONCURRENCY, reviewDocuments.length) },
+                async () => {
+                    while (!controller.signal.aborted && Date.now() < deadline
+                        && nextDocument < reviewDocuments.length) {
+                        const doc = reviewDocuments[nextDocument++];
+                        try {
+                            const detail = await this.getDocumentById(accessToken, doc.id, controller.signal);
+                            // A late response must not mutate an already returned list.
+                            if (controller.signal.aborted || Date.now() >= deadline) return;
+                            const endDate = extractEformsignContractEndDate(detail);
+                            doc.contract_end_date = endDate?.toISOString().slice(0, 10) ?? null;
+                        } catch {
+                            // Provider errors include response bodies; log only the id.
+                            // Deadline aborts are covered by one summary above.
+                            if (!controller.signal.aborted && Date.now() < deadline) console.warn(doc.id);
+                        } finally {
+                            settledDocuments++;
+                        }
                     }
-                }
-            },
-        ));
+                },
+            );
+            try {
+                // Do not wait for a provider/adapter that ignores cancellation.
+                await Promise.race([Promise.all(workers), deadlineReached]);
+            } finally {
+                clearTimeout(deadlineTimer);
+            }
+        }
 
         // Sort by created_date descending (newest first)
         uniqueDocuments.sort((a, b) => b.created_date - a.created_date);
