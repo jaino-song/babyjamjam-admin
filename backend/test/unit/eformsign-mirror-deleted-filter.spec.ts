@@ -69,6 +69,13 @@ describe('EformsignService.getAllDocuments mirror deleted filter', () => {
         const failure = 'fixture-sensitive-query-error-body';
         findMany.mockRejectedValue(new Error(`${failure} ${TOKEN}`));
         const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => {});
+        const logSpies = [
+            warn,
+            ...(['log', 'warn', 'error', 'info', 'debug'] as const)
+                .map((method) => jest.spyOn(console, method).mockImplementation(() => {})),
+            ...(['log', 'error', 'debug', 'verbose'] as const)
+                .map((method) => jest.spyOn(Logger.prototype, method).mockImplementation(() => {})),
+        ];
 
         const result = await service.getAllDocuments(TOKEN);
 
@@ -78,8 +85,16 @@ describe('EformsignService.getAllDocuments mirror deleted filter', () => {
         expect(detail).toHaveBeenCalledWith(TOKEN, review.id, expect.any(AbortSignal));
         expect(warn).toHaveBeenCalledTimes(1);
         expect(warn).toHaveBeenCalledWith('mirror deleted-filter skipped');
-        expect(JSON.stringify(warn.mock.calls)).not.toContain(failure);
-        expect(JSON.stringify(warn.mock.calls)).not.toContain(TOKEN);
+        for (const spy of logSpies) {
+            for (const args of spy.mock.calls) {
+                for (const arg of args) {
+                    expect(String(arg)).not.toContain(failure);
+                    expect(String(arg)).not.toContain(TOKEN);
+                    expect(JSON.stringify(arg)).not.toContain(failure);
+                    expect(JSON.stringify(arg)).not.toContain(TOKEN);
+                }
+            }
+        }
     });
 
     it('returns an empty list and skips all details if every document is deleted', async () => {
