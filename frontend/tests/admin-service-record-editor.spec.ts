@@ -250,9 +250,6 @@ function mergeChanges(
         byIndex.set(session.sessionIndex, {
             ...(previous ?? { sessionIndex: session.sessionIndex }),
             ...content,
-            ...(!dateMove && session.answers
-                ? { answers: { ...(previous?.answers ?? {}), ...clone(session.answers) } }
-                : {}),
         });
     }
     if (dateMove) {
@@ -338,7 +335,13 @@ function previewFor(state: DraftState): Record<string, unknown> {
         const sourceSession = makeSession(change.sessionIndex, plannedDates[change.sessionIndex - 1]);
         for (const [key, value] of Object.entries(change)) {
             if (key === "sessionIndex" || key === "serviceDate") continue;
-            if (stableValue(sourceSession[key]) !== stableValue(value)) {
+            // Mirrors mergeSparseAnswers: undefined keeps the source; objects merge
+            // shallowly, including null values; non-object patches replace it.
+            if (key === "answers" && value === undefined) continue;
+            const effectiveValue = key === "answers" && value !== null && typeof value === "object" && !Array.isArray(value)
+                ? { ...(sourceSession.answers as Record<string, unknown>), ...value }
+                : value;
+            if (stableValue(sourceSession[key]) !== stableValue(effectiveValue)) {
                 changedSessionIndexes.add(change.sessionIndex);
                 break;
             }
@@ -771,6 +774,20 @@ test("mock draft fold uses effective dates and shifts following sessions by defa
         headerChanged: false,
         changedSessionIndexes: [],
     });
+    expect(previewFor(makeDraftState({ sessions: [{
+        sessionIndex: 2,
+        answers: { temperature_temp: answers.temperature_temp },
+    }] })).contentChanges, "equal sparse answers are merged onto the source before comparison").toEqual({
+        headerChanged: false,
+        changedSessionIndexes: [],
+    });
+    expect(previewFor(makeDraftState({ sessions: [{
+        sessionIndex: 2,
+        answers: { temperature_temp: "36.7" },
+    }] })).contentChanges, "a changed sparse answer counts the session").toEqual({
+        headerChanged: false,
+        changedSessionIndexes: [2],
+    });
     const mixedChanges = foldDraftUpdate(defaultShift, {
         changes: { sessions: [{ sessionIndex: 13, notes: "QA-last" }, { sessionIndex: 1, notes: "QA-first" }] },
     });
@@ -784,9 +801,9 @@ test("mock draft fold uses effective dates and shifts following sessions by defa
     }, {
         changes: { sessions: [{ sessionIndex: 2, answers: { temperature_temp: "36.7", details: { replacement: true } } }] },
     });
-    expect(mergedAnswers.sessions, "no-move answers merge per key and replace nested values").toEqual([{
+    expect(mergedAnswers.sessions, "the server replaces the whole answers value on the no-move path").toEqual([{
         sessionIndex: 2,
-        answers: { sitzBath: "미실시", temperature_temp: "36.7", details: { replacement: true } },
+        answers: { temperature_temp: "36.7", details: { replacement: true } },
     }]);
 });
 
