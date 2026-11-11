@@ -2,6 +2,7 @@ import type { SystemTemplate } from '@/features/system-templates/types';
 import type { MessageTemplate } from '@/lib/template/types';
 import { extractVariables, renderTemplate } from '@/lib/template-utils';
 import voucher from '@/components/app/messages/templates/json/voucher.json';
+import bankAccount from '@/components/app/messages/templates/json/bank-account.json';
 
 export interface MakerVariable {
   key: string;
@@ -56,6 +57,10 @@ export function voucherTypeLabel(value: string): string {
     for (const [key, option] of Object.entries(types)) if (key === value) return option.label;
   }
   return value;
+}
+
+export function makerAreaLabel(area: string): string {
+  return bankAccount[area as keyof typeof bankAccount]?.area ?? area;
 }
 
 export function formatMakerCurrency(value: string | null | undefined): string {

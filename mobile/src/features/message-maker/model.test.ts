@@ -1,4 +1,4 @@
-import { buildMakerOptions, mergeMakerVariables, renderMakerBody } from './model';
+import { buildMakerOptions, makerAreaLabel, mergeMakerVariables, renderMakerBody } from './model';
 import type { SystemTemplate } from '@/features/system-templates/types';
 
 const template = (key: string, content: string, group = 'provider') => ({
@@ -7,6 +7,9 @@ const template = (key: string, content: string, group = 'provider') => ({
 }) as unknown as SystemTemplate;
 
 describe('message maker catalog', () => {
+  it.each([['Namdonggu', '남동구'], ['QA-unknown-area', 'QA-unknown-area']])('labels area %s as %s', (area, label) => {
+    expect(makerAreaLabel(area)).toBe(label);
+  });
   it('preserves every authoritative entry, order, group and empty body with namespaced values', () => {
     const options = buildMakerOptions([template('CAREGIVER_SERVICE_START_NOTICE', ''), template('PRICE_INFO', '{{name}}')], [{ id: 'PRICE_INFO', name: '개인 양식', content: '개인', variables: [], createdAt: '', updatedAt: '' }]);
     expect(options.map(option => option.value)).toEqual(['system:CAREGIVER_SERVICE_START_NOTICE', 'system:PRICE_INFO', 'user:PRICE_INFO', 'custom']);

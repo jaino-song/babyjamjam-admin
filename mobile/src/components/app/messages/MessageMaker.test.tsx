@@ -92,6 +92,44 @@ describe('MessageMaker', () => {
     await chooseTemplate('직접 작성');
     expect(screen.getByLabelText('메시지 본문')).toHaveValue('');
   });
+  it('preserves the selected template, variables and manual body through same-branch auth refresh and retained-data error', async () => {
+    const view = renderMaker();
+    await screen.findByLabelText('메시지 본문');
+    await chooseTemplate('사용자 안내');
+    const user = userEvent.setup();
+    await user.type(screen.getByRole('textbox', { name: /사용자 성함/ }), 'QA-작성자');
+    await user.type(screen.getByRole('textbox', { name: /사용자 메모/ }), 'QA-메모');
+    const body = screen.getByLabelText('메시지 본문');
+    await user.clear(body);
+    await user.type(body, 'QA-수동 본문');
+    for (const flags of [
+      { isFetching: true, isError: false },
+      { isFetching: false, isError: true },
+      { isFetching: false, isError: false },
+    ]) {
+      mockAuth.mockReturnValue({ ...query({ branchId: branch, role: 'owner' }), ...flags } as unknown as ReturnType<typeof useGetAuthUser>);
+      view.rerender(<MessageMaker data-component="mobile_messages-compose_page" />);
+      expect(screen.getByLabelText('메시지 본문')).toBe(body);
+      expect(body).toHaveValue('QA-수동 본문');
+      expect(screen.getByRole('textbox', { name: /사용자 성함/ })).toHaveValue('QA-작성자');
+      expect(screen.getByRole('textbox', { name: /사용자 메모/ })).toHaveValue('QA-메모');
+      expect(screen.getByRole('combobox', { name: /템플릿 선택/ })).toHaveTextContent('사용자 안내');
+    }
+    expect(userState.refetch).toHaveBeenCalledTimes(1);
+  });
+  it.each([['Namdonggu', '남동구'], ['QA-unknown-area', 'QA-unknown-area']])('displays the area label for %s and renders it in the body', async (area, label) => {
+    systemState = query([systemFixture('PRICE_INFO', '비용 안내', '{{area}} {{bankName}} {{accNum}}')]);
+    jest.mocked(useBankAccountInfos).mockReturnValue(query([
+      { area, bankName: 'QA-fictional-bank', accNum: 'QA-fictional-account' },
+    ]) as unknown as ReturnType<typeof useBankAccountInfos>);
+    renderMaker();
+    await screen.findByLabelText('메시지 본문');
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('combobox', { name: 'area' }));
+    await user.click(await screen.findByRole('option', { name: label }));
+    expect(screen.getByRole('combobox', { name: 'area' })).toHaveTextContent(label);
+    expect(screen.getByLabelText('메시지 본문')).toHaveValue(`${label} QA-fictional-bank QA-fictional-account`);
+  });
   it('shows loading and stale catalog errors without an editable or copyable old body and retries', async () => {
     const view = renderMaker(); await screen.findByLabelText('메시지 본문');
     systemState = { ...systemState, isError: true };

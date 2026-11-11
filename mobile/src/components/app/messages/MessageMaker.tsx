@@ -9,7 +9,7 @@ import { Input } from '@/components/app/v3/Input';
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useSystemTemplates } from '@/features/system-templates/hooks/useSystemTemplates';
-import { buildMakerOptions, MAX_MAKER_BODY, PRICE_VARIABLE_KEYS, type MakerOption } from '@/features/message-maker/model';
+import { buildMakerOptions, makerAreaLabel, MAX_MAKER_BODY, PRICE_VARIABLE_KEYS, type MakerOption } from '@/features/message-maker/model';
 import { useMessageMaker } from '@/features/message-maker/useMessageMaker';
 import { useGetAuthUser } from '@/hooks/useGetAuthUser';
 import { useMessageTemplates } from '@/hooks/use-message-templates';
@@ -50,7 +50,7 @@ function MessageMakerEditor({ base, options }: { base: string; options: MakerOpt
     { key: 'year', label: '바우처 연도', value: String(maker.year), change: maker.changeYear, disabled: false,
       options: [maker.currentYear - 1, maker.currentYear, maker.currentYear + 1].map(year => ({ value: String(year), label: `${year}년` })) },
     { key: 'area', label: '지역', value: maker.account?.area ?? '', change: maker.changeArea, disabled: !maker.accountsReady || !maker.accountRows.length,
-      options: maker.accountRows.map(row => ({ value: row.area, label: row.area })) },
+      options: maker.accountRows.map(row => ({ value: row.area, label: makerAreaLabel(row.area) })) },
   ];
   return <div data-component={base} data-slot="unified-form-card-content" data-source-component="MessageMakerEditor" className={styles.unifiedFormCardContent}>
     <MakerField base={`${base}_template`} id="maker-template" label="템플릿 선택" required>
@@ -143,7 +143,7 @@ export function MessageMaker({ 'data-component': base }: { 'data-component': str
   const permission = useMessagesPermissionGuard();
   const formBase = `${base}_screen_content`;
   const cardBase = `${formBase}_scroll_list-card`;
-  const ready = !auth.isLoading && !auth.isFetching && !auth.isError && auth.data?.branchId && !permission.isLoading && !permission.needsSenderApproval;
+  const ready = auth.data?.branchId && !permission.isLoading && !permission.needsSenderApproval;
   return <section data-component={base} data-slot="messages-page" data-source-component="MessageMaker" className={styles.pageRoot}>
     <div data-component={`${base}_screen`} data-slot="phone-screen" className={styles.phoneScreen}>
       <div data-component={formBase} data-slot="messages-content" className={`shell-content gap-[calc(8px*var(--glint-ui-scale,1))] ${styles.navPage}`}>

@@ -22,6 +22,16 @@ describe('useMessageMaker', () => {
     mockAccounts.mockReturnValue(query(accountRows) as unknown as ReturnType<typeof useBankAccountInfos>);
     jest.mocked(copyMakerBody).mockResolvedValue(true);
   });
+  it.each([['Namdonggu', '남동구'], ['QA-unknown-area', 'QA-unknown-area']])('renders the label for %s while selecting API account data by raw id', (area, label) => {
+    const account = { area, bankName: 'QA-fictional-bank', accNum: 'QA-fictional-account' };
+    mockAccounts.mockReturnValue(query([account]) as unknown as ReturnType<typeof useBankAccountInfos>);
+    const { result } = setup();
+    act(() => result.current.changeArea(area));
+    expect(result.current.area).toBe(area);
+    expect(result.current.account).toEqual(account);
+    expect(result.current.resolvedValues.area).toBe(label);
+    expect(result.current.body).toContain(`${label} QA-fictional-bank QA-fictional-account`);
+  });
   it('prefers PRICE_INFO and uses real selected type/year/area data and duration divided by five', () => {
     const { result } = setup();
     expect(result.current.selected.value).toBe('system:PRICE_INFO');

@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 
 import { useBankAccountInfos, useVoucherPriceInfos } from '@/hooks/useVoucherData';
 import type { MakerOption } from './model';
-import { CUSTOM_OPTION, formatMakerCurrency, MAX_MAKER_BODY, renderMakerBody, voucherTypeLabel } from './model';
+import { CUSTOM_OPTION, formatMakerCurrency, makerAreaLabel, MAX_MAKER_BODY, renderMakerBody, voucherTypeLabel } from './model';
 import { copyMakerBody } from './clipboard';
 
 export function useMessageMaker(options: MakerOption[]) {
@@ -34,7 +34,7 @@ export function useMessageMaker(options: MakerOption[]) {
     fullPrice: formatMakerCurrency(price?.fullPrice),
     grant: formatMakerCurrency(price?.grant),
     actualPrice: formatMakerCurrency(price?.actualPrice),
-    area: account?.area ?? '', bankName: account?.bankName ?? '', accNum: account?.accNum ?? '',
+    area: makerAreaLabel(account?.area ?? ''), bankName: account?.bankName ?? '', accNum: account?.accNum ?? '',
   } : values;
   const generated = renderMakerBody(selected.content, resolvedValues);
   // Generation includes availability: an old manual body cannot mask failed derived data.
