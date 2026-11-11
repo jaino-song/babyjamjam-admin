@@ -18,10 +18,12 @@ const FORM = `${PAGE}_screen_form`;
 const CARD = `${FORM}_scroll_list-card`;
 const CONTENT = `${CARD}_body_form-card_content`;
 const ICONS: Record<string, LucideIcon> = { send: Send, history: History, templates: FileText, triggers: Workflow, settings: Settings2 };
-const NAV_ITEMS = MESSAGE_SECTION_DEFINITIONS.flatMap(section => {
-  const item = { id: section.id as string, label: section.label as string, icon: ICONS[section.id] };
-  return section.id === 'send' ? [item, { id: 'complete', label: '메시지 완성', icon: CheckCheck }] : [item];
-});
+const NAV_ITEMS = [
+  { id: 'complete', label: '메세지 제작', icon: CheckCheck },
+  ...MESSAGE_SECTION_DEFINITIONS.map(section => ({
+    id: section.id as string, label: section.label as string, icon: ICONS[section.id],
+  })),
+];
 const PRICE_KEYS = new Set(['weeks', 'duration', 'type', 'fullPrice', 'grant', 'actualPrice', 'bankName', 'accNum']);
 
 interface PreviewFieldProps {
@@ -80,7 +82,7 @@ export function MessageCompletePreview(): React.JSX.Element {
             activeId="complete" onSelect={() => {}} ariaLabel="메시지 기능 (미리보기)" />
         </div>
         <div data-component={`${FORM}_scroll`} data-slot="messages-scroll" className={styles.msgScroll}>
-          <ListCard data-component={CARD} title="메시지 완성" filters={[]} loadMore={false}>
+          <ListCard data-component={CARD} title="메세지 제작" filters={[]} loadMore={false}>
             <div data-component={`${CARD}_body_form-card`} data-slot="recipient-card" className={styles.recipientCard}>
               <div data-component={CONTENT} data-slot="unified-form-card-content" className={styles.unifiedFormCardContent}>
                 <div data-component={`${CONTENT}_template`} data-slot="form-card-section" className={styles.formCardSection}>

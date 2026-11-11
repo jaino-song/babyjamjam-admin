@@ -57,8 +57,8 @@ async function run() {
   assert.match(byId('body').value, /\{\{name\}\}.*산모님/s);
   assert.match(byId('body').value, /출퇴근 \{\{weeks\}\}주/);
   const nav = document.querySelector('[aria-label="메시지 기능 (미리보기)"]');
-  assert.deepEqual([...nav.querySelectorAll('button')].map(element => element.textContent), ['전송하기', '메시지 완성', '발송 기록', '템플릿', '자동 전송', '설정']);
-  assert.equal(nav.querySelector('[aria-pressed="true"]').textContent, '메시지 완성');
+  assert.deepEqual([...nav.querySelectorAll('button')].map(element => element.textContent), ['메세지 제작', '전송하기', '발송 기록', '템플릿', '자동 전송', '설정']);
+  assert.equal(nav.querySelector('[aria-pressed="true"]').textContent, '메세지 제작');
   assert.equal(document.querySelectorAll('input[type="tel"], [data-slot="autocomplete"], [type="submit"]').length, 0);
   assert.equal(document.querySelectorAll('[data-source-component="V3MobileHeader"], [data-source-component="V3MainContent"], [data-slot="mobile-bottom-nav"]').length, 3);
   changeInput('recipient-name', 'QA-예시산모'); await tick();

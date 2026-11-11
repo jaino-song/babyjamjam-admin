@@ -1,4 +1,4 @@
-# 메시지 완성 React 승인용 미리보기
+# 메세지 제작 React 승인용 미리보기
 
 기존 `index.html`에서 `dist/preview.js`를 열며, 저장소에 설치된 React 19와 실제 모바일 컴포넌트를 로컬 번들로 실행한다. 제품 라우트·공용 패키지·환경·의존성은 변경하지 않았다. 사용자 디자인 승인과 별도 구현을 기다리는 정적 산출물이다.
 
@@ -22,20 +22,24 @@ git diff --check
 
 실제 import:
 
-- `ListCard`/내부 header·body, `MobileSectionNav`: 기존 primitives와 Lucide 아이콘/pill을 사용한다. 현재 shared `MESSAGE_SECTION_DEFINITIONS` 순서에서 `전송하기` 다음에 `메시지 완성`을 넣는다.
+- `ListCard`/내부 header·body, `MobileSectionNav`: 기존 primitives와 Lucide 아이콘/pill을 사용한다. `메세지 제작`을 첫 탭으로 넣고 기본 선택한다(`activeId="complete"`). 이후 shared `MESSAGE_SECTION_DEFINITIONS`의 기존 상대 순서인 `전송하기, 발송 기록, 템플릿, 자동 전송, 설정`을 유지한다.
 - `FieldLabelRow`, v3 `Input`, `MsgField`/기존 Textarea, Radix `Select` 패밀리, `Button`: 드롭다운은 실제 portal·선택·포커스·비활성 동작을 쓴다. native select 모조품은 없다.
 - `V3MobileHeader`, `V3MainContent`, `MobileBottomNav`: 실제 표시 컴포넌트와 기존 root/app-shell/app-content 구조를 조합한다.
 - 기존 메시지 `page.module.css`, `FieldLabelRow.module.css`, `globals.css`, `redesign.css`, Pretendard 파일: 시각 값을 복제하지 않는다. `mobile-app-root`의 전체 viewport 보정도 유지한다. 새 CSS는 정적 폰트 연결뿐이다.
 
 미리보기 전용 경계:
 
-- `navigation.ts`: 표시 경로만 `/messages/new`로 고정한다.
+- `navigation.ts`: 표시 경로만 `/messages`로 고정한다. 루트는 처음부터 `메세지 제작` 화면을 렌더링한다. 라우트 엔진은 없다.
 - `link.tsx`: 기존 anchor DOM/스타일을 유지하고 클릭 이동을 막는다. Next Link의 default export 계약만 이 어댑터에서 따른다.
 - `identity.ts`: `사용자 님 / 개발QA점`이라는 허구 표시값만 제공한다. 인증·권한 구현이 아니다.
 - `notification.tsx`: 실제 헤더에 기존 Button·Bell 아이콘의 subscribed 모양을 표시하는 inert 어댑터다. 실제 NotificationBell의 데이터·구독·popover 트리는 마운트하지 않는다.
 - 비동기 `MobileShellProviders` 전체는 마운트하지 않는다. 네트워크·인증 provider·realtime·prefetch·알림 권한 요청을 제외한 위 presentational shell만 조립한다. 다른 섹션과 하단 탐색은 표시 전용이다.
 
 새 production 디자인 시스템 컴포넌트와 `page.tsx` 변경은 없다. 목업 organism 및 field 조립 helper만 이 docs 디렉터리에 있다. 새 semantic 클래스/기존 클래스 조립에는 대응하는 data-slot을 붙이고 기존 import 컴포넌트의 옛 annotation은 수정하지 않았다.
+
+## 승인 후 실제 메시지 진입 동선
+
+위 초기 화면은 이 목업의 상태이며 실제 애플리케이션 라우팅 변경이 아니다. 현재 `mobile/src/app/(shell)/messages/page.tsx`는 `/messages/new`로 redirect하고, `mobile/src/components/app/root/mobile-bottom-nav.tsx`의 하단 `메시지` 링크도 `/messages/new`를 가리킨다. 사용자 승인 후 별도 제품 구현에서 `/messages` 진입과 하단 `메시지` 진입 모두 `메세지 제작`을 기본으로 열도록 바꿔야 한다. 명시적인 템플릿 전송 링크는 계속 전송 화면을 열어야 한다. 이 unit에서는 해당 제품 파일을 수정하지 않았으며 새 production 경로명도 정하지 않았다.
 
 ## 오프라인 샘플과 동작
 
