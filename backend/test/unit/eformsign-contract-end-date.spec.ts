@@ -1,4 +1,5 @@
 import { ConfigService } from '@nestjs/config';
+import { PrismaService } from 'infrastructure/database/prisma.service';
 import { CONTRACT_END_DATE_ENRICHMENT_BUDGET_MS, EformsignService } from '../../application/services/eformsign.service';
 import { extractEformsignContractEndDate } from '../../application/utils/eformsign-contract-end-date';
 
@@ -9,7 +10,10 @@ const doc = (id: string, status_type = '070', step_type = '06', step_name = '제
     id, current_status: { status_type, step_type, step_name }, created_date: Number(id) || 0,
 });
 const createService = () => {
-    const service = new EformsignService({ getOrThrow: () => 'fixture-config' } as unknown as ConfigService);
+    const service = new EformsignService(
+        { getOrThrow: () => 'fixture-config' } as unknown as ConfigService,
+        { eformsign_doc: { findMany: jest.fn().mockResolvedValue([]) } } as unknown as PrismaService,
+    );
     jest.spyOn(service, 'getInProgressDocuments').mockResolvedValue({ documents: [] });
     jest.spyOn(service, 'getCompletedDocuments').mockResolvedValue({ documents: [] });
     jest.spyOn(service, 'getRejectedDocuments').mockResolvedValue({ documents: [] });
