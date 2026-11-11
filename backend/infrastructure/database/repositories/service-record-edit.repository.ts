@@ -72,6 +72,15 @@ import type {
 
 type DraftRow = Prisma.service_record_edit_draftGetPayload<Record<string, never>>;
 type RevisionRow = Prisma.service_record_revisionGetPayload<Record<string, never>>;
+type RevisionChangeRow = {
+    id: string;
+    revisionNumber: number;
+    confirmedAt: Date;
+    formVersionAtConfirm: number;
+    payload: Prisma.JsonValue;
+    plannedSessions: Prisma.JsonValue;
+    beforeSnapshot: Prisma.JsonValue | null;
+};
 type RevisionClient = Prisma.TransactionClient;
 type DraftClient = Pick<PrismaService, "service_record_edit_draft">;
 type DraftLockClient = DraftClient & Pick<PrismaService, "$queryRaw">;
@@ -2432,6 +2441,53 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
             plannedSessions: toDomainJson(revision.plannedSessions),
             beforeSnapshot: toDomainJson(revision.beforeSnapshot),
         } : null;
+    }
+
+    /**
+     * Read only branch/client-scoped revisions with a before-snapshot.
+     * The payload is reduced to startDate, endDate, header and sessions.
+     * Sessions carry clientSignatureFingerprint instead of clientSignature.
+     */
+    async listRevisionsForChanges(branchId: string, clientId: number) {
+        assertUuid(branchId, "branch");
+        assertClientId(clientId);
+        const revisions = await this.prisma.$queryRaw<RevisionChangeRow[]>(Prisma.sql`
+            SELECT r.id AS "id",
+                   r.revision_number AS "revisionNumber",
+                   r.confirmed_at AS "confirmedAt",
+                   r.form_version_at_confirm AS "formVersionAtConfirm",
+                   jsonb_build_object(
+                     'startDate', r.payload->'startDate',
+                     'endDate',   r.payload->'endDate',
+                     'header',    r.payload->'header',
+                     'sessions', CASE WHEN jsonb_typeof(r.payload->'sessions') = 'array' THEN COALESCE((
+                         SELECT jsonb_agg(
+                                  CASE WHEN jsonb_typeof(e.s) = 'object' THEN
+                                    (e.s - 'clientSignature') || jsonb_build_object('clientSignatureFingerprint',
+                                      CASE WHEN jsonb_typeof(e.s->'clientSignature') = 'string' AND e.s->>'clientSignature' <> ''
+                                           THEN encode(sha256(convert_to(e.s->>'clientSignature', 'UTF8')), 'hex') END)
+                                  ELSE NULL END
+                                  ORDER BY e.ord)
+                         FROM jsonb_array_elements(r.payload->'sessions') WITH ORDINALITY AS e(s, ord)
+                       ), '[]'::jsonb) ELSE '[]'::jsonb END
+                   ) AS "payload",
+                   r.planned_sessions AS "plannedSessions",
+                   r.before_snapshot AS "beforeSnapshot"
+            FROM "service_record_revision" AS r
+            INNER JOIN "service_record_case" AS c
+              ON c.branch_id = r.branch_id AND c.id = r.service_record_case_id
+            WHERE r.branch_id = ${branchId}::uuid
+              AND c.branch_id = ${branchId}::uuid
+              AND c.client_id = ${clientId}
+              AND r.before_snapshot IS NOT NULL
+            ORDER BY r.revision_number ASC
+        `);
+        return revisions.map((revision) => ({
+            ...revision,
+            payload: toDomainJson(revision.payload),
+            plannedSessions: toDomainJson(revision.plannedSessions),
+            beforeSnapshot: toDomainJson(revision.beforeSnapshot),
+        }));
     }
 
     async findCaregiverEditForChanges(branchId: string, clientId: number, editId: string) {

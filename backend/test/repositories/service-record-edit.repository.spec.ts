@@ -1620,6 +1620,65 @@ describe("ServiceRecordEditRepository", () => {
         expect(await repository.findRevisionForChanges(branchId, 42, id)).toBeNull();
     });
 
+    it("lists revision changes in one query scoped by revision branch and case branch/client", async () => {
+        const row = {
+            id: revisionRow().id, revisionNumber: 1, confirmedAt: revisionRow().confirmedAt,
+            formVersionAtConfirm: 1,
+            payload: { startDate: null, endDate: null, header: { nested: [true, 1, "value"] }, sessions: [{ sessionIndex: 1, clientSignatureFingerprint: "fingerprint" }] },
+            plannedSessions: [{ sessionIndex: 2, serviceDate: "2026-09-09" }],
+            beforeSnapshot: { sessions: [] },
+        };
+        const rows = [row, { ...row, revisionNumber: 2 }];
+        const $queryRaw = jest.fn().mockResolvedValue(rows);
+        const repository = new ServiceRecordEditRepository({ $queryRaw } as never);
+
+        const result = await repository.listRevisionsForChanges(branchId, 42);
+        expect(result).toEqual(rows);
+        expect(result[0]?.confirmedAt).toBe(row.confirmedAt);
+        // JSON fields are recursively mapped through toDomainJson.
+        expect(result[0]?.payload).not.toBe(row.payload);
+        expect(result[0]?.plannedSessions).not.toBe(row.plannedSessions);
+        expect(result[0]?.beforeSnapshot).not.toBe(row.beforeSnapshot);
+        expect($queryRaw).toHaveBeenCalledTimes(1);
+        const sql = $queryRaw.mock.calls[0]![0] as Prisma.Sql;
+        expect(sql.text).toMatch(/FROM "service_record_revision" AS r/);
+        expect(sql.text).toMatch(/INNER JOIN "service_record_case" AS c/);
+        expect(sql.text).toMatch(/c\.branch_id = r\.branch_id/);
+        expect(sql.text).toMatch(/c\.id = r\.service_record_case_id/);
+        expect(sql.text).toMatch(/r\.branch_id = \$\d+::uuid/);
+        expect(sql.text).toMatch(/c\.branch_id = \$\d+::uuid/);
+        expect(sql.text).toMatch(/c\.client_id = \$\d+/);
+        expect(sql.values).toEqual([branchId, branchId, 42]);
+        expect(sql.text).toMatch(/- 'clientSignature'/);
+        expect(sql.text).toMatch(/jsonb_typeof\(e\.s->'clientSignature'\) = 'string'/);
+        expect(sql.text).toContain("encode(sha256(convert_to(e.s->>'clientSignature', 'UTF8')), 'hex')");
+        expect(sql.text.match(/\br\.payload\b(?!\s*->)/g)).toBeNull();
+        expect(sql.text).toMatch(/before_snapshot IS NOT NULL/);
+        expect(sql.text).toMatch(/ORDER BY r\.revision_number ASC/);
+        for (const alias of ["id", "revisionNumber", "confirmedAt", "formVersionAtConfirm", "payload", "plannedSessions", "beforeSnapshot"]) {
+            expect(sql.text).toContain(`AS "${alias}"`);
+        }
+        expect(sql.text).toContain("jsonb_typeof(r.payload->'sessions') = 'array'");
+        expect(sql.text).toContain("jsonb_typeof(e.s) = 'object'");
+        expect(sql.text).toContain("WITH ORDINALITY AS e(s, ord)");
+        expect(sql.text).toContain("ORDER BY e.ord");
+        expect(sql.text).toContain("), '[]'::jsonb)");
+        $queryRaw.mockResolvedValue([]);
+        expect(await repository.listRevisionsForChanges(branchId, 42)).toEqual([]);
+    });
+
+    it("rejects malformed branches and invalid clients before querying revision changes", async () => {
+        const $queryRaw = jest.fn();
+        const repository = new ServiceRecordEditRepository({ $queryRaw } as never);
+        for (const invalidBranch of ["", "not-a-uuid", "x".repeat(256)]) {
+            await expect(repository.listRevisionsForChanges(invalidBranch, 42)).rejects.toBeInstanceOf(ServiceRecordEditConflictError);
+        }
+        for (const invalidClient of [0, -1, 1.5, NaN, Infinity]) {
+            await expect(repository.listRevisionsForChanges(branchId, invalidClient)).rejects.toBeInstanceOf(ServiceRecordEditConflictError);
+        }
+        expect($queryRaw).not.toHaveBeenCalled();
+    });
+
     it("reads a caregiver edit scoped by branch AND client (never by id alone) and rejects malformed IDs before querying", async () => {
         const editId = "66666666-6666-4666-8666-666666666666";
         const row = {
