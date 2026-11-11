@@ -21,9 +21,28 @@ describe("manual recovery connected service with real authority adapter", () => 
     });
     it("reopening an exposed draft, including after expiry by another user, is editable with no second SDK", async () => {
         const f = runtimeFixture(); f.manual(); await f.service.open(J, principal);
+        const id = f.state.authorities[0].humanIntentId;
+        const humanIntent = () => f.state.intents.find((row: { id: string }) => row.id === f.state.authorities[0].humanIntentId);
+        expect(humanIntent()).toMatchObject({ id, attemptCount: 1 });
         const second = await f.service.open(J, principal); expect(second).toMatchObject({ kind: "editable", document: { documentId: "bound-doc" } });
+        expect(humanIntent()).toMatchObject({ id, attemptCount: 2 });
         f.state.authorities[0].claimExpiresAt = new Date(Date.now() - 1);
         const third = await f.service.open(J, { ...principal, userId: I }); expect(third).toMatchObject({ kind: "editable", document: { documentId: "bound-doc" } });
+        expect(humanIntent()).toMatchObject({ id, attemptCount: 3 });
+        expect(f.state.intents.filter((row: { action: string }) => row.action === "manual_process")).toHaveLength(1);
+        expect(f.draft.dispatchDraft).toHaveBeenCalledTimes(1);
+    });
+    it("rejects a reopen when the claim epoch advances during the provider read", async () => {
+        const f = runtimeFixture(); f.manual(); await f.service.open(J, principal);
+        const before = structuredClone(f.state.intents);
+        const epoch = f.state.authorities[0].claimEpoch;
+        f.provider.getDocument.mockImplementationOnce(async () => {
+            await f.repository.open(J, principal.branchId, principal.userId);
+            return structuredClone(f.remote);
+        });
+        await expect(f.service.open(J, principal)).rejects.toMatchObject({ code: "RECOVERY_STALE" });
+        expect(f.state.authorities[0].claimEpoch).toBe(epoch + 2n);
+        expect(f.state.intents).toEqual(before);
         expect(f.draft.dispatchDraft).toHaveBeenCalledTimes(1);
     });
     it.each(["participant", "reviewer", "complete"])("reopening sent %s evidence completes and returns verify-only", async step => {

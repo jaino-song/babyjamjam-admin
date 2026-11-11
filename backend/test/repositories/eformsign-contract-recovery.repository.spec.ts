@@ -174,8 +174,9 @@ describe("reexposeHuman", () => {
         expect(intent.startedAt.getTime()).toBeGreaterThan(before.startedAt.getTime());
         expect(f.events).toEqual(["intents.updateMany"]); expect(f.tx.eformsign_dispatch_intent.create).not.toHaveBeenCalled(); expect(f.draft.dispatchDraft).toHaveBeenCalledTimes(1);
     });
-    it.each(["epoch", "user", "expiry", "phase", "missing-intent", "action", "status", "document", "generation", "template", "branch", "client", "cas"])("refuses %s without any intent mutation", async defect => {
+    it.each(["epoch", "user", "expiry", "phase", "missing-intent", "action", "status", "document", "generation", "template", "branch", "client", "cas", "confirmed-evidence", "non-draft-status", "non-write-step"])("refuses %s without any intent mutation", async defect => {
         const f = runtimeFixture(); f.manual(); const opened = await f.service.open(J, principal);
+        const evidence = draftEvidence();
         const claim = { jobId: J, branchId: B, userId: U, claimEpoch: BigInt(opened.claimEpoch) };
         const a = f.state.authorities[0], intent = f.state.intents.find((row: { id: string }) => row.id === a.humanIntentId);
         if (defect === "epoch") await f.repository.open(J, B, U);
@@ -191,8 +192,11 @@ describe("reexposeHuman", () => {
         if (defect === "branch") intent.branchId = I;
         if (defect === "client") intent.clientId = 9;
         if (defect === "cas") f.tx.eformsign_dispatch_intent.updateMany.mockResolvedValueOnce({ count: 0 });
+        if (defect === "confirmed-evidence") evidence.confirmed = true;
+        if (defect === "non-draft-status") evidence.statusType = "003";
+        if (defect === "non-write-step") evidence.stepType = "05";
         const before = structuredClone(f.state); f.events.length = 0;
-        await expect(f.repository.reexposeHuman(claim, draftEvidence())).rejects.toMatchObject({ code: "RECOVERY_STALE" });
+        await expect(f.repository.reexposeHuman(claim, evidence)).rejects.toMatchObject({ code: "RECOVERY_STALE" });
         expect(f.state).toEqual(before); expect(f.events).toEqual([]); expect(f.state.intents).toHaveLength(3);
     });
 });

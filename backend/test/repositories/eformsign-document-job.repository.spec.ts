@@ -622,11 +622,14 @@ describe("SbEformsignDocumentJobRepository", () => {
     });
 
     describe("updateProgress monotonic marker", () => {
-        it.each(["client-started", "info-inserted", "creating", "sent", "unknown", undefined])(
-            "orders incoming display detail %s against the stored value, independently of the fence", async detail => {
+        it.each([
+            ...["client-started", "info-inserted", "creating", "sent", "unknown", undefined].map(detail => ({ step: "dispatch_authorized", detail })),
+            { step: "creating", detail: "info-inserted" },
+        ])(
+            "orders incoming step $step and display detail $detail independently of the fence", async ({ step, detail }) => {
                 queryRaw.mockResolvedValueOnce([row({ status: "processing", progress_step: "dispatch_authorized", progress_detail: "info-inserted" })]);
                 const heartbeat = new Date();
-                const updated = await repository.updateProgress(dispatchJobId, dispatchLeaseToken, "dispatch_authorized", heartbeat, detail);
+                await repository.updateProgress(dispatchJobId, dispatchLeaseToken, step, heartbeat, detail);
                 const query = queryRaw.mock.calls[0][0] as { text: string; values: unknown[] };
                 const statement = query.text.replace(/\s+/g, " ");
                 expect(statement).toContain("progress_detail = CASE WHEN array_position(ARRAY['client-started', 'info-inserted', 'creating', 'sent']::text[],");
@@ -635,9 +638,17 @@ describe("SbEformsignDocumentJobRepository", () => {
                 expect(statement).toContain("AND (progress_step IS DISTINCT FROM");
                 expect(statement).toContain("OR progress_detail IS DISTINCT FROM (CASE");
                 expect(query.values).toContain(detail ?? null);
-                // The incoming detail never becomes the duplicate-send marker.
-                expect(query.values.filter(value => value === "dispatch_authorized").length).toBeGreaterThan(1);
-                expect(updated?.progressStep).toBe("dispatch_authorized"); expect(updated?.progressDetail).toBe("info-inserted");
+                queryRaw.mockResolvedValueOnce([row({ status: "processing", progress_step: "dispatch_authorized", progress_detail: "info-inserted" })]);
+                await repository.updateProgress(dispatchJobId, dispatchLeaseToken, step, heartbeat);
+                const baseline = queryRaw.mock.calls[1][0] as { text: string; values: unknown[] };
+                const stepAssignment = (sql: { text: string; values: unknown[] }) => {
+                    const fragment = sql.text.match(/SET progress_step = CASE[\s\S]*?(?=,\s*progress_detail =)/)?.[0];
+                    expect(fragment).toBeDefined();
+                    return { text: fragment, values: [...(fragment ?? "").matchAll(/\$(\d+)/g)].map(match => sql.values[Number(match[1]) - 1]) };
+                };
+                const assignment = stepAssignment(query);
+                expect(assignment).toEqual(stepAssignment(baseline));
+                if (detail !== undefined) expect(assignment.values).not.toContain(detail);
             },
         );
 
