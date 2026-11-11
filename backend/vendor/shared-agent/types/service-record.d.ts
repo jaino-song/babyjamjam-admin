@@ -434,6 +434,11 @@ export interface ServiceRecordAssignment {
 export interface ServiceRecordOverview {
     record?: ServiceRecordCase | null;
     assignments: ServiceRecordAssignment[];
+    /** Editor-only latest confirmation for each session reported by the revision changes policy. */
+    adminEditConfirmedAtBySession?: {
+        sessionIndex: number;
+        confirmedAt: string;
+    }[];
     scheduleProjection?: ServiceRecordScheduleProjection;
 }
 export interface SendServiceRecordLinkResponse {
