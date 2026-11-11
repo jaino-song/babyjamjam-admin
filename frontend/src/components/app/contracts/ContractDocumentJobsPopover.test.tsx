@@ -31,7 +31,7 @@ jest.mock("next/navigation", () => ({
 const PROCESSING_TILE = { name: "전자문서 처리중 작업 보기" };
 
 const RECOVERY_JOB = { jobId: '11111111-1111-4111-8111-111111111111', jobType: 'create_document', source: 'staff', status: 'failed', recoveryKind: 'manual_send', clientName: '복구 고객' } as const;
-test.each([390, 1280])('contracts recovery at %spx stays nested, pauses panes, and restores its CTA', async width => {
+test.each([390, 1280].flatMap(width => (['x', 'escape'] as const).map(how => [width, how] as const)))('contracts recovery at %spx closes with %s, stays nested, pauses panes, and restores its CTA', async (width, how) => {
   const originalWidth = window.innerWidth;
   Object.defineProperty(window, 'innerWidth', { configurable: true, value: width });
   mockPathname = '/contracts';
@@ -40,6 +40,7 @@ test.each([390, 1280])('contracts recovery at %spx stays nested, pauses panes, a
   renderOpenPopover({ documentJobs: { active: [], requiresAttention: [RECOVERY_JOB], recent: [] }, onOpenChange });
   fireEvent.click(screen.getByRole('button', { name: /복구 고객.*상세 보기/ }));
   const trigger = screen.getByRole('button', { name: '수동 전송' });
+  const focus = jest.spyOn(trigger, 'focus');
   const detail = document.querySelector('[data-slot="job-detail-body"]');
   const scroller = document.querySelector('[data-slot="document-jobs-list-scroller"]')!; scroller.scrollTop = 84;
   fireEvent.click(trigger);
@@ -51,16 +52,77 @@ test.each([390, 1280])('contracts recovery at %spx stays nested, pauses panes, a
   const check = screen.getByRole('button', { name: 'Close' });
   check.focus(); fireEvent.keyDown(check, { key: 'Tab' });
   expect(inner.contains(document.activeElement)).toBe(true);
-  fireEvent.keyDown(check, { key: 'Escape' });
+  if (how === 'x') fireEvent.click(check); else fireEvent.keyDown(check, { key: 'Escape' });
   await waitFor(() => expect(screen.queryByText('전자문서 수동 전송')).not.toBeInTheDocument());
   expect(document.querySelector('[data-slot="job-detail-body"]')).toBe(detail);
   expect(document.querySelector('[data-slot="sliding-detail-panel"]')).toHaveAttribute('data-open', 'true');
   expect(scroller.scrollTop).toBe(84);
   await waitFor(() => expect(trigger).toHaveFocus());
+  await act(async () => { await new Promise(resolve => setTimeout(resolve, 20)); });
+  expect(focus).toHaveBeenCalledTimes(1);
   expect(onOpenChange).not.toHaveBeenCalledWith(false);
   open.mockRestore();
   Object.defineProperty(window, 'innerWidth', { configurable: true, value: originalWidth });
 });
+
+describe.each([390, 1280])('recovery without an editor at %spx', width => {
+  let originalWidth: number;
+  beforeEach(() => {
+    originalWidth = window.innerWidth;
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: width });
+    mockPathname = '/contracts';
+  });
+  afterEach(() => {
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: originalWidth });
+    jest.restoreAllMocks();
+  });
+
+  test.each(['503', 'verify_only', 'expired'] as const)('%s restores the blurred CTA once after removing inert', async ending => {
+    await expectNoEditorFocus(ending, false);
+  });
+  test.each(['503', 'verify_only', 'expired'] as const)('%s focuses the jobs trigger once when the CTA is gone', async ending => {
+    await expectNoEditorFocus(ending, true);
+  });
+});
+
+async function expectNoEditorFocus(ending: '503' | 'verify_only' | 'expired', removeCta: boolean) {
+  let finish!: () => void;
+  jest.spyOn(eformsignApi, 'openDocumentJobRecovery').mockImplementation(() => new Promise((resolve, reject) => {
+    finish = () => {
+      if (ending === '503') reject({ isAxiosError: true, response: { status: 503 } });
+      else if (ending === 'verify_only') resolve({ kind: 'verify_only', jobId: RECOVERY_JOB.jobId, claimEpoch: '42', claimExpiresAt: new Date(Date.now() + 60000).toISOString() });
+      else resolve({ kind: 'editable', jobId: RECOVERY_JOB.jobId, claimEpoch: '42', claimExpiresAt: new Date(Date.now() - 1).toISOString(), document: { companyId: 'company-abc', templateId: 'template_ABC', documentId: 'document012' } });
+    };
+  }));
+  const view = renderOpenPopover({ documentJobs: { active: [], requiresAttention: [RECOVERY_JOB], recent: [] } });
+  fireEvent.click(screen.getByRole('button', { name: /복구 고객.*상세 보기/ }));
+  const cta = screen.getByRole('button', { name: '수동 전송' });
+  cta.focus(); fireEvent.click(cta);
+  expect(document.querySelector('[data-slot="document-jobs-interaction"]')).toHaveAttribute('inert');
+  // Model native inert: jsdom otherwise lets the outer focus trap refocus this CTA.
+  const nativeFocus = cta.focus.bind(cta);
+  const ctaFocus = jest.spyOn(cta, 'focus').mockImplementation(options => {
+    if (!cta.closest('[inert]')) nativeFocus(options);
+  });
+  cta.blur(); expect(document.body).toHaveFocus();
+  if (removeCta) {
+    view.rerender(<ContractDocumentJobsPopover open documentJobs={{ active: [], requiresAttention: [], recent: [{ ...RECOVERY_JOB, status: 'completed', recoveryKind: null }] }} trigger={<button type="button">전자문서 처리중</button>} />);
+    expect(cta.isConnected).toBe(false);
+  }
+  const target = removeCta ? screen.getByRole('button', { name: '전자문서 처리중', hidden: true }) : cta;
+  const focus = removeCta ? jest.spyOn(target, 'focus') : ctaFocus;
+  focus.mockClear();
+  const focusedWhileInert: boolean[] = [];
+  target.addEventListener('focus', () => focusedWhileInert.push(Boolean(target.closest('[inert]'))));
+  await act(async () => { finish(); });
+  await waitFor(() => expect(target).toHaveFocus());
+  // Let a second scheduled restoration run, if one was accidentally queued.
+  await act(async () => { await new Promise(resolve => setTimeout(resolve, 20)); });
+  expect(focus).toHaveBeenCalledTimes(1);
+  expect(focusedWhileInert).toEqual([false]);
+  expect(document.querySelector('[data-slot="document-jobs-interaction"]')).not.toHaveAttribute('inert');
+  expect(screen.queryByTitle('이폼사인 수동 전송')).not.toBeInTheDocument();
+}
 
 test('recovery on other desktop routes closes jobs and navigates without opening an iframe', () => {
   mockPathname = '/clients'; mockPush.mockClear();

@@ -113,7 +113,9 @@ export function useManualDocumentJobRecovery(jobId: string, onClose: () => void)
       try {
         const sent = await request;
         if (live.current && current.current === claim && sent) finish(true, COPY.checkFailed);
-      } catch { if (live.current && current.current === claim) finish(false, COPY.checkFailed); }
+      } catch {
+        // 편집기가 살아 있으면 다음 변경 이벤트에서 결과 확인을 다시 시도한다.
+      }
       finally { if (checking.current === request) checking.current = null; }
     };
     const receive = (event: MessageEvent) => {

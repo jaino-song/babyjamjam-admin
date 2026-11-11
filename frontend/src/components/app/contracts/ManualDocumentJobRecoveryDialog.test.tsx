@@ -124,6 +124,32 @@ test.each([true, false])('bridge ERROR closes and checks once, sent=%s', async s
   await act(async () => { finish({ ...pending, kind: sent ? 'verified' : 'pending' }); });
   expect(showToast).toHaveBeenCalledWith({ variant: sent ? 'success' : 'destructive', description: sent ? '전자문서를 전송했어요' : '이폼사인 연결에 실패했어요. 잠시 후 다시 시도해 주세요.' });
   expect(open).toHaveBeenCalledTimes(1);
+  expect(refreshJobs).toHaveBeenCalledTimes(sent ? 1 : 0);
+  expect(refreshSummary).toHaveBeenCalledTimes(sent ? 1 : 0);
+});
+
+test.each(['changed', 'close'])('a failed live check keeps the editor open without a toast until %s', async next => {
+  verify.mockRejectedValueOnce(new Error('private'));
+  render(tree()); const h = await frameSession();
+  await act(async () => { h.message('CHANGED'); });
+  expect(verify).toHaveBeenCalledTimes(1);
+  expect(screen.getByTitle('이폼사인 수동 전송')).toBe(h.frame);
+  expect(screen.getByRole('dialog')).toBeInTheDocument();
+  expect(close).not.toHaveBeenCalled(); expect(showToast).not.toHaveBeenCalled();
+  expect(refreshJobs).not.toHaveBeenCalled(); expect(refreshSummary).not.toHaveBeenCalled();
+  expect(h.post).not.toHaveBeenCalledWith(expect.objectContaining({ type: 'CLOSE' }), expect.anything());
+  if (next === 'changed') {
+    verify.mockResolvedValueOnce({ ...pending, kind: 'verified' });
+    await act(async () => { h.message('CHANGED'); });
+    expect(verify).toHaveBeenCalledTimes(2);
+    expect(showToast).toHaveBeenCalledWith({ variant: 'success', description: '전자문서를 전송했어요' });
+    expect(refreshJobs).toHaveBeenCalledTimes(1); expect(refreshSummary).toHaveBeenCalledTimes(1);
+  } else {
+    fireEvent.click(screen.getByRole('button', { name: 'Close' }));
+    expect(verify).toHaveBeenCalledTimes(1); expect(showToast).not.toHaveBeenCalled();
+  }
+  expect(close).toHaveBeenCalledTimes(1);
+  expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
 });
 
 test.each(['refetch', 'bridge'])('%s check failure closes with the result-check toast', async kind => {
@@ -181,12 +207,32 @@ function RouteEntry({ onCloseAutoFocus }: { onCloseAutoFocus?: (event: Event) =>
   return <><ContractDocumentJobsPopover /><button id="custom-focus">사용자 초점</button>
     {shown ? <ManualDocumentJobRecoveryDialog jobId={jobId} onClose={() => setShown(false)} onCloseAutoFocus={onCloseAutoFocus} /> : null}</>;
 }
+describe.each([390, 1280])('route recovery without an editor at %spx', width => {
+  test.each(['503', 'verify_only', 'expired'])('%s returns focus to the jobs trigger once', async ending => {
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: width });
+    if (ending === '503') open.mockRejectedValue({ isAxiosError: true, response: { status: 503 } });
+    else if (ending === 'verify_only') open.mockResolvedValue({ kind: 'verify_only', jobId, claimEpoch: '42', claimExpiresAt: editable().claimExpiresAt });
+    else open.mockResolvedValue({ ...editable(), claimExpiresAt: new Date(Date.now() - 1).toISOString() });
+    render(<RouteEntry />);
+    const trigger = document.querySelector<HTMLButtonElement>('[data-slot="document-jobs-trigger"]')!;
+    const focus = jest.spyOn(trigger, 'focus');
+    await waitFor(() => expect(trigger).toHaveFocus());
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 20)); });
+    expect(focus).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  });
+});
+
 test.each([390, 1280])('same embedded dialog at %spx closes to the jobs trigger without a toast', async width => {
   Object.defineProperty(window, 'innerWidth', { configurable: true, value: width });
   render(<RouteEntry />); await frameSession();
   expect(screen.getByRole('dialog', { name: '전자문서 수동 전송' })).toHaveClass('max-lg:h-dvh', 'max-lg:w-screen');
+  const trigger = document.querySelector<HTMLButtonElement>('[data-slot="document-jobs-trigger"]')!;
+  const focus = jest.spyOn(trigger, 'focus');
   fireEvent.click(screen.getByRole('button', { name: 'Close' }));
-  await waitFor(() => expect(document.querySelector('[data-slot="document-jobs-trigger"]')).toHaveFocus());
+  await waitFor(() => expect(trigger).toHaveFocus());
+  await act(async () => { await new Promise(resolve => setTimeout(resolve, 20)); });
+  expect(focus).toHaveBeenCalledTimes(1);
   expect(showToast).not.toHaveBeenCalled(); expect(open).toHaveBeenCalledTimes(1);
 });
 

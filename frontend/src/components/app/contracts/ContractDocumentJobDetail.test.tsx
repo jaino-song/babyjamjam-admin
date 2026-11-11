@@ -116,6 +116,11 @@ describe("ContractDocumentJobDetail", () => {
     expect(screen.queryByRole("heading", { name: "예시 고객" })).not.toBeInTheDocument();
   });
 
+  it("should show updatedAt as the end time for a failed job without completedAt", () => {
+    render(<ContractDocumentJobDetail job={{ ...JOB, status: "failed", completedAt: null, updatedAt: "2026-11-03T18:18:00Z" }} />);
+    expect(row("작업 종료").getByText("2026.11.04 03:18")).toBeInTheDocument();
+  });
+
   it.each([undefined, null, ""])("should omit the document link for %s", (documentId) => {
     render(<ContractDocumentJobDetail job={{ ...JOB, documentId }} data-component={BASE} />);
     expect(screen.queryByText("연결된 문서가 없습니다")).not.toBeInTheDocument();
