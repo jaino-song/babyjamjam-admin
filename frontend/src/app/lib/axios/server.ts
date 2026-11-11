@@ -36,3 +36,25 @@ serverAPIClient.interceptors.request.use(async (config) => {
 
     return config;
 });
+
+serverAPIClient.interceptors.response.use(
+    (response) => response,
+    (error: unknown) => {
+        if (axios.isAxiosError(error)) {
+            for (const config of [error.config, error.response?.config]) {
+                if (config?.headers) {
+                    for (const name of Object.keys(config.headers)) {
+                        if (name.toLowerCase() === "authorization") {
+                            config.headers[name] = "[REDACTED]";
+                        }
+                    }
+                }
+            }
+            delete error.request;
+            if (error.response) {
+                delete error.response.request;
+            }
+        }
+        return Promise.reject(error);
+    },
+);
