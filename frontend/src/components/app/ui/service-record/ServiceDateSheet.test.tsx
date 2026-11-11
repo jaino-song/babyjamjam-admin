@@ -64,6 +64,15 @@ it.each(["", "invalid", "2026-02-30"])("labels today without a valid stored date
     expect(screen.queryByRole("button", { name: / (현재|지금)$/ })).not.toBeInTheDocument();
 });
 
+it("labels 오늘 using the Korean date before UTC midnight", () => {
+    jest.setSystemTime(new Date("2026-11-10T16:00:00Z"));
+    render(<AdminServiceDateSheet {...props({ currentServiceDate: "", windowStart: null, windowEnd: null })} />);
+    expect(screen.getByText("2026년 11월")).toBeVisible();
+    expect(screen.getByRole("button", { name: "2026.11.11(수) 오늘" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "2026.11.10(화)" })).toBeVisible();
+    expect(screen.queryByRole("button", { name: "2026.11.10(화) 오늘" })).not.toBeInTheDocument();
+});
+
 it("lets the 오늘 annotation inherit white text when today is selected", () => {
     render(<AdminServiceDateSheet {...props({ currentServiceDate: "" })} />);
     const today = screen.getByRole("button", { name: "2026.11.11(수) 오늘" });
