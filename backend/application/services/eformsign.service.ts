@@ -1,9 +1,10 @@
-import { Injectable } from "@nestjs/common";
+import { Injectable, Logger } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
+import { PrismaService } from "infrastructure/database/prisma.service";
 import * as crypto from "crypto";
 import * as https from "https";
 import { extractEformsignContractEndDate } from "../utils/eformsign-contract-end-date";
-import { getStatusCategory, isProviderReviewWorkflowStep } from "../utils/eformsign-status-codes";
+import { getStatusCategory, isDeletedEformsignStatusCode, isProviderReviewWorkflowStep } from "../utils/eformsign-status-codes";
 import { ContractDataDto } from "../dto/contract.dto";
 
 export const CONTRACT_END_DATE_ENRICHMENT_BUDGET_MS = 8000;
@@ -17,6 +18,7 @@ export interface EformsignTokenResponse {
 
 @Injectable()
 export class EformsignService {
+    private readonly logger = new Logger(EformsignService.name);
     private readonly USER_EMAIL: string;
     private readonly EFORMSIGN_API_URL: string;
     private readonly EFORMSIGN_DOC_API_URL: string;
@@ -25,7 +27,10 @@ export class EformsignService {
     private readonly EFORMSIGN_COMPANY_ID: string;
     private readonly EFORMSIGN_TEMPLATE_ID: string;
 
-    constructor(private configService: ConfigService) {
+    constructor(
+        private configService: ConfigService,
+        private readonly prisma: PrismaService,
+    ) {
         this.USER_EMAIL = this.configService.getOrThrow<string>("EFORMSIGN_USER_EMAIL");
         this.EFORMSIGN_API_URL = this.configService.getOrThrow<string>("EFORMSIGN_API_URL");
         this.EFORMSIGN_DOC_API_URL = this.configService.getOrThrow<string>("EFORMSIGN_DOC_API_URL");
@@ -324,12 +329,26 @@ export class EformsignService {
 
         // Remove duplicates by document id
         const seenIds = new Set<string>();
-        const uniqueDocuments: any[] = [];
+        let uniqueDocuments: any[] = [];
         for (const doc of allDocuments) {
             if (!seenIds.has(doc.id)) {
                 seenIds.add(doc.id);
                 uniqueDocuments.push(doc);
             }
+        }
+
+        try {
+            // Select only visibility fields: mirror rows may have a null client_id.
+            const mirrorDocuments = await this.prisma.eformsign_doc.findMany({
+                where: { document_id: { in: [...seenIds] } },
+                select: { document_id: true, status_type: true },
+            });
+            const deletedIds = new Set(mirrorDocuments
+                .filter((doc) => isDeletedEformsignStatusCode(doc.status_type))
+                .map((doc) => doc.document_id));
+            uniqueDocuments = uniqueDocuments.filter((doc) => !deletedIds.has(doc.id));
+        } catch {
+            this.logger.warn("mirror deleted-filter skipped");
         }
 
         // Only provider review steps need the contract end date. Share a bounded
