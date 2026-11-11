@@ -725,6 +725,30 @@ describe("per-session administrator editing", () => {
         expect(container.querySelector('[data-component$="_body_submitted-badge"]')).toHaveTextContent("수정중");
     });
 
+    it("shows only the served date on the overview card and day-page date chip when the planned original date differs", () => {
+        const shifted = {
+            ...sessionOverview,
+            scheduleProjection: { ...sessionOverview.scheduleProjection!, entries: sessionOverview.scheduleProjection!.entries.map((entry) =>
+                entry.sessionIndex === 1 ? { ...entry, originalDate: "2026-09-03" } : entry) },
+        };
+        const { container } = render(<ServiceRecordAdminWizard clientId="42" overview={shifted} initialDraftState={{ ...makeDraftState(), draft: null }} />);
+        const card = container.querySelectorAll('[data-slot="day"]')[0];
+        expect(card).toHaveTextContent("2026.09.07");
+
+        fireEvent.click(card);
+        fireEvent.click(container.querySelectorAll('[data-slot="review"] [data-slot="sec-edit"]')[0]);
+        const chip = container.querySelector('[data-component$="_body_date-chip"]')!;
+        expect(chip).toHaveTextContent("2026.09.07");
+        expect({
+            card: card.querySelector('[data-slot="original-date"]'),
+            chip: chip.querySelector('[data-slot="original-date"]'),
+        }).toEqual({ card: null, chip: null });
+        expect({ card: card.textContent, chip: chip.textContent }).toEqual({
+            card: expect.not.stringContaining("원본"),
+            chip: expect.not.stringContaining("원본"),
+        });
+    });
+
     it("compares a pending date move with the saved date instead of the planned original date", () => {
         const shifted = {
             ...sessionOverview,
