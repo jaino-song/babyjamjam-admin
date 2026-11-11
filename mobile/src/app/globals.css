@@ -602,11 +602,11 @@
   animation: sheet-fade-out 300ms ease-out;
 }
 
-[data-slot="sheet-content"][data-state="open"] {
+[data-slot="sheet-content"][data-side="left"][data-state="open"] {
   animation: sheet-slide-in-from-left 300ms ease-out;
 }
 
-[data-slot="sheet-content"][data-state="closed"] {
+[data-slot="sheet-content"][data-side="left"][data-state="closed"] {
   animation: sheet-slide-out-to-left 300ms ease-out;
 }
 

@@ -105,6 +105,7 @@ export function ServiceDateSheet({ "data-component": root, context, day, calenda
                     <Button data-component={child("header_close")} type="button" variant="ghost" size="icon" aria-label="닫기" className="text-base absolute right-2 top-3 h-11 w-11 text-v3-text-muted" onClick={() => close(onClose)}><X size={20} /></Button>
                 </SheetHeader>
                 <div data-component={child("calendar")} className="min-h-0 flex-1 overflow-y-auto px-4 pb-4">
+                    {context.startDate && context.endDate ? <p data-component={child("calendar_window")} className="mb-2 text-sm font-semibold text-v3-text-muted">서비스 기간: {formatServiceDate(context.startDate, true)} ~ {formatServiceDate(context.endDate, true)}</p> : null}
                     <div data-component={child("calendar_navigation")} className="mb-2 flex items-center justify-between gap-2">
                         <b className="text-base text-v3-dark">{year}년 {monthNumber}월</b>
                         <div className="flex gap-1">
@@ -134,10 +135,9 @@ export function ServiceDateSheet({ "data-component": root, context, day, calenda
                         })}
                     </div>
                     <div data-component={child("calendar_legend")} className="mt-3 flex flex-wrap gap-x-3 gap-y-1 text-xs font-semibold text-v3-text-muted">
-                        {context.startDate && context.endDate && <span data-component={child("calendar_legend_period")}><i aria-hidden="true" className="mr-1 inline-block h-3 w-3 rounded align-middle border-[1.5px] border-v3-primary!" />서비스 기간 ({context.startDate.slice(5, 10).replace("-", ".")}~{context.endDate.slice(5, 10).replace("-", ".")})</span>}
                         <span><i aria-hidden="true" className="mr-1 inline-block h-3 w-3 rounded bg-v3-primary align-middle" />선택한 날</span>
                         <span><i aria-hidden="true" className="mr-1 inline-block h-3 w-3 rounded border border-v3-border align-middle" />선택 가능</span>
-                        <span><i aria-hidden="true" className={cn("mr-1 inline-block h-3 w-3 rounded border align-middle", HATCHED)} />고를 수 없음 (주말·기간 밖·다른 회차·회차 순서)</span>
+                        <span><i aria-hidden="true" className={cn("mr-1 inline-block h-3 w-3 rounded border align-middle", HATCHED)} />선택 불가</span>
                     </div>
                 </div>
                 <div data-component={child("actions")} className="flex shrink-0 gap-2 border-t border-v3-border px-4 pt-4 pb-[calc(1rem+env(safe-area-inset-bottom))] [&>*]:flex-1">

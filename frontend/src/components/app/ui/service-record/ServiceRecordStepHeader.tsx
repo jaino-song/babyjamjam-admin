@@ -14,6 +14,8 @@ export interface ServiceRecordStepHeaderProps {
   crumbs?: ReactNode;
   /** 0..1; values outside the range are clamped. */
   progress: number;
+  /** Unknown progress slides the fill and omits the percentage. */
+  indeterminate?: boolean;
   /** Accessible name of the progress bar. */
   progressLabel?: string;
   /** Layout-only (never visual). */
@@ -32,6 +34,7 @@ export function ServiceRecordStepHeader({
   meta,
   crumbs,
   progress,
+  indeterminate = false,
   progressLabel = "진행률",
   className,
 }: ServiceRecordStepHeaderProps) {
@@ -42,20 +45,20 @@ export function ServiceRecordStepHeader({
       data-component={dataComponent}
       data-source-component={SOURCE_COMPONENT}
       className={cn(
-        "bg-v3-primary px-[calc(16px*var(--glint-ui-scale,1))] pb-[calc(10px*var(--glint-ui-scale,1))] pt-[calc(12px*var(--glint-ui-scale,1))] text-white sm:px-[calc(24px*var(--glint-ui-scale,1))]",
+        "bg-v3-primary px-[calc(16px*var(--glint-ui-scale,1))] pb-[calc(12px*var(--glint-ui-scale,1))] pt-[calc(14px*var(--glint-ui-scale,1))] text-white",
         className,
       )}
     >
       <h1
         data-component={`${dataComponent}_title`}
-        className="m-0 text-[calc(14px*var(--glint-ui-scale,1))] font-bold tracking-tight"
+        className="m-0 text-[calc(18px*var(--glint-ui-scale,1))] leading-[calc(28px*var(--glint-ui-scale,1))] font-bold tracking-tight"
       >
         {title}
       </h1>
       {meta || crumbs ? (
         <div
           data-component={`${dataComponent}_meta-row`}
-          className="mt-0.5 flex items-center justify-between gap-[calc(12px*var(--glint-ui-scale,1))] text-[calc(11px*var(--glint-ui-scale,1))]"
+          className="mt-0.5 flex items-center justify-between gap-[calc(12px*var(--glint-ui-scale,1))] text-[calc(14px*var(--glint-ui-scale,1))] leading-[calc(20px*var(--glint-ui-scale,1))]"
         >
           <div data-component={`${dataComponent}_meta-row_meta`} className="min-w-0 opacity-90">
             {meta}
@@ -74,13 +77,20 @@ export function ServiceRecordStepHeader({
         aria-label={progressLabel}
         aria-valuemin={0}
         aria-valuemax={100}
-        aria-valuenow={percent}
-        className="mt-[calc(8px*var(--glint-ui-scale,1))] h-[calc(5px*var(--glint-ui-scale,1))] overflow-hidden rounded-full bg-white/30"
+        aria-valuenow={indeterminate ? undefined : percent}
+        aria-busy={indeterminate || undefined}
+        className="mt-[calc(10px*var(--glint-ui-scale,1))] h-[calc(5px*var(--glint-ui-scale,1))] overflow-hidden rounded-full bg-white/30"
       >
         <div
           data-component={`${dataComponent}_progress_fill`}
-          className="h-full rounded-full bg-white transition-[width] duration-300"
-          style={{ width: `${percent}%` }}
+          data-indeterminate={indeterminate || undefined}
+          className={cn(
+            "h-full rounded-full bg-white",
+            indeterminate
+              ? "w-2/5 animate-indeterminate-bar motion-reduce:w-full motion-reduce:animate-none motion-reduce:opacity-60"
+              : "transition-[width] duration-300",
+          )}
+          style={indeterminate ? undefined : { width: `${percent}%` }}
         />
       </div>
     </div>

@@ -24,6 +24,7 @@ describe("initial calendar month", () => {
         render(<ServiceDateSheet {...props({ context, day: 12 })} />);
         expect(screen.getByText("2026년 11월")).toBeInTheDocument();
         expect(screen.queryByText(/고를 수 있는 기간/)).toBeNull();
+        expect(screen.getByText("서비스 기간: 10.22(목) ~ 11.11(수)")).toBeInTheDocument();
     });
 
     it.each([
@@ -145,13 +146,16 @@ describe("service-period borders", () => {
     });
 
     it("forces the primary border and selected fill on an available margin day", () => {
-        render(<ServiceDateSheet {...props({ context, day: 12 })} />);
+        const p = props({ context, day: 12 });
+        render(<ServiceDateSheet {...p} />);
         const cell = screen.getByRole("button", { name: "2026.11.12(목)" });
         expect(cell).toHaveAttribute("data-day-state", "available");
         fireEvent.click(cell);
         expect(cell).toHaveAttribute("aria-pressed", "true");
         expect(cell).toHaveClass("border-v3-primary!", "bg-v3-primary");
         expect(cell).not.toHaveAttribute("data-in-period");
+        fireEvent.click(screen.getByRole("button", { name: "선택" }));
+        expect(p.onSelect).toHaveBeenCalledWith("2026-11-12");
     });
 
     it("forces the dashed primary border on the current margin day", () => {
@@ -176,14 +180,14 @@ describe("service-period borders", () => {
         expect(current).not.toHaveClass("text-v3-primary");
     });
 
-    it("adds the service period first in the legend and keeps the existing items", () => {
+    it("omits the service period from the legend and keeps the blocked swatch", () => {
         render(<ServiceDateSheet {...props({ context, day: 12 })} />);
-        const legend = screen.getByText("서비스 기간 (10.22~11.11)");
-        expect(legend.parentElement?.firstElementChild).toBe(legend);
-        expect(legend.querySelector("i")).toHaveClass("mr-1", "inline-block", "h-3", "w-3", "rounded", "align-middle", "border-[1.5px]", "border-v3-primary!");
-        expect(screen.getByText("선택한 날")).toBeInTheDocument();
+        expect(document.querySelector('[data-component$="_calendar_legend_period"]')).not.toBeInTheDocument();
+        expect(screen.queryByText(/서비스 기간 \(/)).not.toBeInTheDocument();
+        const selected = screen.getByText("선택한 날");
+        expect(selected.parentElement?.firstElementChild).toBe(selected);
         expect(screen.getByText("선택 가능")).toBeInTheDocument();
-        expect(screen.getByText("고를 수 없음 (주말·기간 밖·다른 회차·회차 순서)")).toBeInTheDocument();
+        expect(screen.getByText("선택 불가").querySelector("i")).toHaveClass("mr-1", "inline-block", "h-3", "w-3", "rounded", "border", "align-middle", "border-v3-border", "text-v3-text-muted/70", hatch);
     });
 
     it.each([
@@ -192,6 +196,7 @@ describe("service-period borders", () => {
     ])("omits period markers and legend without both bounds (case %#)", (incompleteContext) => {
         render(<ServiceDateSheet {...props({ context: incompleteContext, day: 12 })} />);
         expect(screen.queryByText(/^서비스 기간/)).not.toBeInTheDocument();
+        expect(document.querySelector('[data-component$="_calendar_window"]')).not.toBeInTheDocument();
         for (const cell of screen.getAllByRole("button")) expect(cell).not.toHaveAttribute("data-in-period");
     });
 });

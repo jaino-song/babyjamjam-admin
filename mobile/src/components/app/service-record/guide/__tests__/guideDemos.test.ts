@@ -92,6 +92,7 @@ describe("guideDemos", () => {
             expect(element(els.m, "sd")).toHaveTextContent("날짜를 선택하세요");
             await until(() => Boolean(element(els.m, "calok")));
             expect(els.m).toHaveTextContent("4회차 서비스 제공일");
+            expect(els.m).toHaveTextContent("서비스 기간: 11.02(월) ~ 11.17(화)");
             expect(els.m).not.toHaveTextContent("고를 수 있는 기간");
             expect(els.m).toHaveTextContent("‹ 10월");
             expect(els.m).toHaveTextContent("12월 ›");
