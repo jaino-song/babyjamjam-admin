@@ -53,6 +53,13 @@ const claimInput = {
     fingerprint: "fingerprint-1",
 };
 
+// Existing intent-state tests isolate the new authority dependency as an explicit no-authority case.
+const legacyBoundary = (repository: ConstructorParameters<typeof EformsignDispatchBoundaryService>[0]) => {
+    const service = new EformsignDispatchBoundaryService(repository, { claimProvider: (input: typeof claimInput) =>
+        service.claim({ ...input, providerDocumentId: null }) } as never);
+    return service;
+};
+
 describe("EformsignDispatchBoundaryService", () => {
     it("derives a stable branch-scoped key from immutable dispatch identity", () => {
         const first = buildEformsignDispatchBusinessKey(claimInput);
@@ -79,7 +86,7 @@ describe("EformsignDispatchBoundaryService", () => {
                 claimed: claimCount++ === 0,
             })),
         };
-        const service = new EformsignDispatchBoundaryService(repository as never);
+        const service = legacyBoundary(repository as never);
 
         const [first, second] = await Promise.all([
             service.claim(claimInput),
@@ -126,7 +133,7 @@ describe("EformsignDispatchBoundaryService", () => {
                 return current;
             }),
         };
-        const service = new EformsignDispatchBoundaryService(repository as never);
+        const service = legacyBoundary(repository as never);
 
         const first = await service.claim(claimInput);
         await service.markUncertain(first.intent, "crash-after-provider");
@@ -169,7 +176,7 @@ describe("EformsignDispatchBoundaryService", () => {
                 return current;
             }),
         };
-        const service = new EformsignDispatchBoundaryService(repository as never);
+        const service = legacyBoundary(repository as never);
 
         await service.claim(claimInput);
         await service.reconcile({
@@ -195,7 +202,7 @@ describe("EformsignDispatchBoundaryService", () => {
             markUncertain: jest.fn().mockResolvedValue(intent),
             releaseBeforeSend: jest.fn().mockResolvedValue(intent),
         };
-        const service = new EformsignDispatchBoundaryService(repository as never);
+        const service = legacyBoundary(repository as never);
 
         await service.markAccepted(intent, "provider-4", { source: "sdk" });
         await service.markUncertain(intent, "provider timeout", "provider-4");
@@ -227,7 +234,7 @@ describe("EformsignDispatchBoundaryService", () => {
         const repository = {
             prepare: jest.fn().mockResolvedValue(makeIntent()),
         };
-        const service = new EformsignDispatchBoundaryService(repository as never);
+        const service = legacyBoundary(repository as never);
 
         await expect(service.claim({ ...claimInput, fingerprint: "different" }))
             .rejects.toBeInstanceOf(ConflictException);
@@ -236,7 +243,7 @@ describe("EformsignDispatchBoundaryService", () => {
     });
 
     it("requires an authenticated actor and audit reason for reconciliation", async () => {
-        const service = new EformsignDispatchBoundaryService({
+        const service = legacyBoundary({
             prepare: jest.fn(),
             reconcile: jest.fn(),
         } as never);

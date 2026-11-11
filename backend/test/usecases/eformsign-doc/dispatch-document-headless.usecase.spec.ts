@@ -52,11 +52,20 @@ function createCredentialBoundary() {
     };
 }
 
+// Historical business cases model the explicit no-authority contract boundary.
+// Connected authority/lease behavior is exercised with the real adapter in the runtime specs.
+function legacyUsecase(...args: ConstructorParameters<typeof DispatchDocumentHeadlessUsecase>) {
+    const boundary: any = args[13] ?? { claim: jest.fn().mockResolvedValue({ disposition: "claimed", intent: { id: "fixture-intent", attemptCount: 1 } }),
+        markAccepted: jest.fn().mockResolvedValue(null), markUncertain: jest.fn().mockResolvedValue(null), releaseBeforeSend: jest.fn().mockResolvedValue(null) };
+    args[13] = { ...boundary, claimContract: boundary.claim };
+    return new DispatchDocumentHeadlessUsecase(...args);
+}
+
 describe("DispatchDocumentHeadlessUsecase", () => {
     it("rejects a malformed customer contact before assignment or headless provider work", async () => {
         const assignmentGuard = { assertLiveAssignedProvider: jest.fn() };
         const headless = { dispatchCreation: jest.fn() };
-        const usecase = new DispatchDocumentHeadlessUsecase(
+        const usecase = legacyUsecase(
             { generateDocumentOptions: jest.fn(), resolveEffectiveTemplateId } as never,
             headless as never,
             { findByArea: jest.fn() } as never,
@@ -92,7 +101,7 @@ describe("DispatchDocumentHeadlessUsecase", () => {
     it.each(["caretaker1Contact", "issuerPhone"])("rejects malformed %s before assignment or headless provider work", async (field) => {
         const assignmentGuard = { assertLiveAssignedProvider: jest.fn() };
         const headless = { dispatchCreation: jest.fn() };
-        const usecase = new DispatchDocumentHeadlessUsecase(
+        const usecase = legacyUsecase(
             { generateDocumentOptions: jest.fn(), resolveEffectiveTemplateId } as never,
             headless as never,
             { findByArea: jest.fn() } as never,
@@ -184,7 +193,7 @@ describe("DispatchDocumentHeadlessUsecase", () => {
             assertLiveAssignedProvider: jest.fn().mockResolvedValue({ scheduleId: 10 }),
         };
 
-        const usecase = new DispatchDocumentHeadlessUsecase(
+        const usecase = legacyUsecase(
             eformsignService as never,
             headlessService as never,
             areaTemplateService as never,
@@ -269,7 +278,7 @@ describe("DispatchDocumentHeadlessUsecase", () => {
             assertLiveAssignedProvider: jest.fn().mockResolvedValue({ scheduleId: 11 }),
         };
 
-        const usecase = new DispatchDocumentHeadlessUsecase(
+        const usecase = legacyUsecase(
             eformsignService as never,
             headlessService as never,
             areaTemplateService as never,
@@ -320,7 +329,7 @@ describe("DispatchDocumentHeadlessUsecase", () => {
                 new ConflictException(codeOnlyProblemBody("CLIENT_ASSIGNMENT_REQUIRED")),
             ),
         };
-        const usecase = new DispatchDocumentHeadlessUsecase(
+        const usecase = legacyUsecase(
             { generateDocumentOptions: jest.fn(), resolveEffectiveTemplateId } as never,
             headlessService as never,
             { findByArea: jest.fn() } as never,
@@ -367,7 +376,7 @@ describe("DispatchDocumentHeadlessUsecase", () => {
 
     it("keeps the sanitized message as the reason for errors without a registered problem code", async () => {
         const progressService = { emit: jest.fn() };
-        const usecase = new DispatchDocumentHeadlessUsecase(
+        const usecase = legacyUsecase(
             { generateDocumentOptions: jest.fn() } as never,
             { dispatchCreation: jest.fn() } as never,
             { findByArea: jest.fn() } as never,
@@ -405,7 +414,7 @@ describe("DispatchDocumentHeadlessUsecase", () => {
     });
 
     it("returns the remote document id when local persistence fails", async () => {
-        const usecase = new DispatchDocumentHeadlessUsecase(
+        const usecase = legacyUsecase(
             { generateDocumentOptions: jest.fn().mockReturnValue({}), resolveEffectiveTemplateId } as never,
             { dispatchCreation: jest.fn().mockResolvedValue({ ok: true, documentId: "remote-1", durationMs: 50 }) } as never,
             { findByArea: jest.fn().mockResolvedValue({ templateId: "template-1" }) } as never,
@@ -451,7 +460,7 @@ describe("DispatchDocumentHeadlessUsecase", () => {
             workflowClient?: Record<string, jest.Mock>;
             progressService?: Record<string, jest.Mock>;
             areaTemplate?: unknown;
-        }) => new DispatchDocumentHeadlessUsecase(
+        }) => legacyUsecase(
             (overrides.eformsignService ?? {
                 generateDocumentOptions: jest.fn().mockReturnValue({}),
                 resolveEffectiveTemplateId,
@@ -883,7 +892,7 @@ describe("DispatchDocumentHeadlessUsecase", () => {
             statusType: "060",
             createdDate: new Date(),
         }]) };
-        const usecase = new DispatchDocumentHeadlessUsecase(
+        const usecase = legacyUsecase(
             { generateDocumentOptions: jest.fn().mockReturnValue({}), resolveEffectiveTemplateId } as never,
             { dispatchCreation } as never,
             { findByArea: jest.fn().mockResolvedValue({ templateId: "template-1" }) } as never,
@@ -931,7 +940,7 @@ describe("DispatchDocumentHeadlessUsecase", () => {
             statusType,
             createdDate: new Date(),
         }]) };
-        const usecase = new DispatchDocumentHeadlessUsecase(
+        const usecase = legacyUsecase(
             { generateDocumentOptions: jest.fn().mockReturnValue({}), resolveEffectiveTemplateId } as never,
             { dispatchCreation } as never,
             { findByArea: jest.fn().mockResolvedValue({ templateId: "template-1" }) } as never,
@@ -968,7 +977,7 @@ describe("DispatchDocumentHeadlessUsecase", () => {
         const buildGuardUsecase = (rows: Array<Record<string, unknown>>) => {
             const dispatchCreation = jest.fn().mockResolvedValue({ ok: false, reason: "stop", durationMs: 1 });
             const repository = { findByClientId: jest.fn().mockResolvedValue(rows) };
-            const usecase = new DispatchDocumentHeadlessUsecase(
+            const usecase = legacyUsecase(
                 { generateDocumentOptions: jest.fn().mockReturnValue({}), resolveEffectiveTemplateId } as never,
                 { dispatchCreation } as never,
                 { findByArea: jest.fn().mockResolvedValue({ templateId: "template-1" }) } as never,
@@ -1040,7 +1049,7 @@ describe("DispatchDocumentHeadlessUsecase", () => {
         ["003", "완료"],
     ])("stores the same statusDetail as the webhook for a %s document after headless creation", async (statusType, statusDetail) => {
         const createEformsignDocUsecase = { execute: jest.fn().mockResolvedValue(undefined) };
-        const usecase = new DispatchDocumentHeadlessUsecase(
+        const usecase = legacyUsecase(
             {
                 resolveEffectiveTemplateId,
                 generateDocumentOptions: jest.fn().mockReturnValue({
@@ -1091,7 +1100,7 @@ describe("DispatchDocumentHeadlessUsecase", () => {
         const operationLock = {
             runExclusive: jest.fn().mockRejectedValue(new EformsignOperationAlreadyRunningError()),
         };
-        const usecase = new DispatchDocumentHeadlessUsecase(
+        const usecase = legacyUsecase(
             { generateDocumentOptions: jest.fn(), resolveEffectiveTemplateId } as never,
             headlessService as never,
             { findByArea: jest.fn() } as never,
@@ -1127,7 +1136,7 @@ describe("DispatchDocumentHeadlessUsecase", () => {
         const operationLock = {
             runExclusive: jest.fn().mockRejectedValue(new EformsignOperationLockUnavailableError("redis unavailable")),
         };
-        const usecase = new DispatchDocumentHeadlessUsecase(
+        const usecase = legacyUsecase(
             { generateDocumentOptions: jest.fn(), resolveEffectiveTemplateId } as never,
             headlessService as never,
             { findByArea: jest.fn() } as never,
@@ -1165,7 +1174,7 @@ describe("DispatchDocumentHeadlessUsecase", () => {
                 run: (lease: { isHeld: () => boolean }) => unknown,
             ) => run({ isHeld: () => false })),
         };
-        const usecase = new DispatchDocumentHeadlessUsecase(
+        const usecase = legacyUsecase(
             { generateDocumentOptions: jest.fn().mockReturnValue({}), resolveEffectiveTemplateId } as never,
             headlessService as never,
             { findByArea: jest.fn().mockResolvedValue(null) } as never,
@@ -1213,7 +1222,7 @@ describe("DispatchDocumentHeadlessUsecase", () => {
             markUncertain: jest.fn(),
             releaseBeforeSend: jest.fn(),
         };
-        const usecase = new DispatchDocumentHeadlessUsecase(
+        const usecase = legacyUsecase(
             { generateDocumentOptions: jest.fn(), resolveEffectiveTemplateId } as never,
             headlessService as never,
             { findByArea: jest.fn() } as never,

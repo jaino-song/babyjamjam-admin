@@ -225,6 +225,14 @@ describe("MessagesSettingsPage", () => {
   beforeEach(() => {
     mockedSettingsApi.getMessageAutomationConfig.mockReset();
     mockedSettingsApi.getMessageAutomationConfig.mockResolvedValue(CONFIG);
+    mockedSettingsApi.updateMessageAutomationConfig.mockReset();
+    mockedSettingsApi.updateMessageAutomationConfig.mockImplementation(
+      async ({ configuration }) => ({
+        ...CONFIG,
+        version: "v2",
+        configuration,
+      }),
+    );
     mockSearchParams = new URLSearchParams();
     mockPush.mockReset();
     mockReplace.mockReset();
@@ -276,6 +284,97 @@ describe("MessagesSettingsPage", () => {
         .toHaveBeenCalledWith("trigger-dispatch", false);
     });
     await waitFor(() => expect(triggerDispatchSwitch).toBeEnabled());
+  });
+
+  it.each([false, true])("opens quiet-hours detail with the list toggle draft (initially enabled: %s)", async (enabled) => {
+    mockedSettingsApi.getMessageAutomationConfig.mockResolvedValue({
+      ...CONFIG,
+      configuration: {
+        ...CONFIG.configuration,
+        quietHours: { ...CONFIG.configuration.quietHours, enabled },
+      },
+    });
+    const { container, rerenderPage } = renderPage();
+
+    fireEvent.click(
+      await screen.findByRole("switch", { name: "심야 시간 메세지 전송 금지 활성화" }),
+    );
+
+    expect(mockPush).toHaveBeenCalledWith("?item=quiet-hours", { scroll: false });
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(mockedSettingsApi.updateMessageAutomationConfig).not.toHaveBeenCalled();
+
+    mockSearchParams = new URLSearchParams({ item: "quiet-hours" });
+    rerenderPage();
+
+    expect(container.querySelector('[data-slot="detail-pane"]'))
+      .toHaveAttribute("aria-hidden", "false");
+    const saveButton = screen.getByRole("button", { name: "저장" });
+    expect(saveButton).toBeEnabled();
+    fireEvent.click(saveButton);
+
+    await waitFor(() => {
+      expect(mockedSettingsApi.updateMessageAutomationConfig).toHaveBeenCalledWith({
+        expectedVersion: CONFIG.version,
+        configuration: {
+          ...CONFIG.configuration,
+          quietHours: { ...CONFIG.configuration.quietHours, enabled: !enabled },
+        },
+      }, "branch-1");
+    });
+    await waitFor(() => expect(saveButton).toBeDisabled());
+  });
+
+  it("cancels the quiet-hours list toggle draft without saving", async () => {
+    const { rerenderPage } = renderPage();
+
+    fireEvent.click(
+      await screen.findByRole("switch", { name: "심야 시간 메세지 전송 금지 활성화" }),
+    );
+    mockSearchParams = new URLSearchParams({ item: "quiet-hours" });
+    rerenderPage();
+
+    expect(screen.getByRole("button", { name: "저장" })).toBeEnabled();
+    fireEvent.click(screen.getByRole("button", { name: "취소" }));
+
+    expect(screen.getByRole("button", { name: "저장" })).toBeDisabled();
+    expect(mockedSettingsApi.updateMessageAutomationConfig).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "설정 목록으로 돌아가기" }));
+    expect(mockBack).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+
+    mockSearchParams = new URLSearchParams();
+    rerenderPage();
+    expect(screen.getByRole("switch", { name: "심야 시간 메세지 전송 금지 활성화" }))
+      .not.toBeChecked();
+  });
+
+  it("guards leaving the quiet-hours list toggle draft until discard is confirmed", async () => {
+    const { rerenderPage } = renderPage();
+
+    fireEvent.click(
+      await screen.findByRole("switch", { name: "심야 시간 메세지 전송 금지 활성화" }),
+    );
+    mockSearchParams = new URLSearchParams({ item: "quiet-hours" });
+    rerenderPage();
+
+    fireEvent.click(screen.getByRole("button", { name: "설정 목록으로 돌아가기" }));
+    const dialog = await screen.findByRole("dialog", { name: "변경 내용을 취소할까요?" });
+    expect(mockBack).not.toHaveBeenCalled();
+    fireEvent.keyDown(dialog, { key: "Escape" });
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(screen.getByRole("button", { name: "저장" })).toBeEnabled();
+    expect(mockBack).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: "설정 목록으로 돌아가기" }));
+    fireEvent.click(await screen.findByRole("button", { name: "변경 취소" }));
+
+    expect(mockBack).toHaveBeenCalledTimes(1);
+    expect(mockedSettingsApi.updateMessageAutomationConfig).not.toHaveBeenCalled();
+    mockSearchParams = new URLSearchParams();
+    rerenderPage();
+    expect(screen.getByRole("switch", { name: "심야 시간 메세지 전송 금지 활성화" }))
+      .not.toBeChecked();
   });
 
   it("reuses the client registration setting when its list switch is toggled", async () => {

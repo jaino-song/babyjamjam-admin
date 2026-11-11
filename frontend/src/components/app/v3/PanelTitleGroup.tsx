@@ -6,7 +6,7 @@ import { cn } from "@/lib/utils";
 const SOURCE_COMPONENT = "PanelTitleGroup";
 
 interface PanelTitleGroupProps {
-  "data-component": string;
+  "data-component"?: string;
   title: React.ReactNode;
   subtitle?: React.ReactNode;
   /** Badges rendered before the title (leftmost position) */
@@ -33,19 +33,19 @@ export function PanelTitleGroup({
 }: PanelTitleGroupProps) {
   return (
     <div
-      data-component={dataComponent}
+      data-component={dataComponent || undefined}
       data-source-component={SOURCE_COMPONENT}
       className={cn("flex min-w-0 flex-col gap-[calc(2px*var(--glint-ui-scale,1))]", className)}
     >
-      <div data-component={`${dataComponent}_title-row`} className="flex flex-wrap items-center gap-[calc(6px*var(--glint-ui-scale,1))]">
+      <div data-component={dataComponent ? `${dataComponent}_title-row` : undefined} className="flex flex-wrap items-center gap-[calc(6px*var(--glint-ui-scale,1))]">
         {badgesLeft}
-        <h2 data-component={`${dataComponent}_title-row_title`} className={cn("truncate font-bold text-v3-dark", titleClassName)}>
+        <h2 data-component={dataComponent ? `${dataComponent}_title-row_title` : undefined} className={cn("truncate font-bold text-v3-dark", titleClassName)}>
           {title}
         </h2>
         {badges}
         {badgesRight ? (
           <div
-            data-component={`${dataComponent}_title-row_badges-right`}
+            data-component={dataComponent ? `${dataComponent}_title-row_badges-right` : undefined}
             className="ml-auto flex shrink-0 items-center gap-[calc(6px*var(--glint-ui-scale,1))]"
           >
             {badgesRight}
@@ -53,7 +53,7 @@ export function PanelTitleGroup({
         ) : null}
       </div>
       {subtitle ? (
-        <p data-component={`${dataComponent}_subtitle`} data-slot="panel-subtitle" className={cn("text-[calc(12.8px*var(--glint-ui-scale,1))] text-v3-text-muted", subtitleClassName)}>
+        <p data-component={dataComponent ? `${dataComponent}_subtitle` : undefined} data-slot="panel-subtitle" className={cn("text-[calc(12.8px*var(--glint-ui-scale,1))] text-v3-text-muted", subtitleClassName)}>
           {subtitle}
         </p>
       ) : null}

@@ -187,7 +187,7 @@ async function openFirstDay(user: User) {
     if (!(input as HTMLInputElement).value) {
         await user.click(input);
         const sheet = screen.getByRole("dialog");
-        await user.click(within(sheet).getByRole("button", { name: "2026.09.21(월)" }));
+        await user.click(within(sheet).getByRole("button", { name: "2026.09.21(월) 오늘" }));
         await user.click(within(sheet).getByRole("button", { name: "선택" }));
     }
 }

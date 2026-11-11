@@ -4,6 +4,15 @@ import { validate } from "class-validator";
 import { ClientController } from "interface/controllers/client.controller";
 import { CreateClientDto, UpdateClientDto } from "interface/dto/client.dto";
 import { ServiceRecordStartDateChangeService } from "application/services/service-record-start-date-change.service";
+// These business regressions model the explicit legacy/no-authority dependency.
+// Real authority SQL and paired writer denials run in eformsign-contract-authority-writers.spec.ts.
+jest.mock("infrastructure/database/utils/eformsign-contract-authority", () => ({
+    ...jest.requireActual("infrastructure/database/utils/eformsign-contract-authority"),
+    discoverAuthorityClientIds: jest.fn().mockResolvedValue([]),
+    assertAuthorityPointerWrite: jest.fn().mockResolvedValue(undefined),
+    assertNoUnresolvedAuthorityForDocuments: jest.fn().mockResolvedValue(undefined),
+}));
+
 import { BadRequestException, ConflictException, Logger, NotFoundException } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import type { Request, Response } from "express";
@@ -127,7 +136,7 @@ describe("ClientService", () => {
                 count: jest.fn().mockResolvedValue(0),
                 update: jest.fn(),
                 updateMany: jest.fn().mockResolvedValue({ count: 1 }),
-                findUnique: jest.fn().mockResolvedValue(null),
+                findUnique: jest.fn().mockImplementation(async ({ select }) => Object.keys(select ?? {}).join() === "eDocId" ? { eDocId: null } : null),
                 findMany: jest.fn().mockResolvedValue([]),
             },
             eformsign_doc: {
@@ -1164,6 +1173,7 @@ describe("ClientService", () => {
                     }),
                     expect.anything(),
                     KR_BUILTIN_CALENDAR,
+                    [],
                 );
                 expect(createClientUsecase.execute).not.toHaveBeenCalled();
                 expect(prismaService.employee_schedule.create).not.toHaveBeenCalled();
@@ -1581,7 +1591,7 @@ describe("ClientService", () => {
                 ]);
                 const clientLock = queries.find((query) => phoneLinkQueryKind(query) === "client-lock")!;
                 expect(clientLock.sql).toContain("ORDER BY id");
-                expect(clientLock.values).toEqual([mockClient.id, 55, 99]);
+                expect(clientLock.values).toEqual([mockClient.id, 55, 99, branchId]);
                 const documentLock = queries.find((query) => phoneLinkQueryKind(query) === "document-lock")!;
                 expect(documentLock.values).toEqual([10, 11, branchId]);
                 // Nothing is written before both lock groups are held.
@@ -1632,9 +1642,9 @@ describe("ClientService", () => {
                 expect(queries.filter((query) => phoneLinkQueryKind(query) === "document-lock")).toHaveLength(retry ? 2 : 1);
                 const clientLocks = queries.filter((query) => phoneLinkQueryKind(query) === "client-lock");
                 expect(clientLocks.map((query) => query.values)).toEqual(retry ? [
-                    [mockClient.id, 99],
-                    [mockClient.id, 77, 99],
-                ] : [[mockClient.id, 77, 99]]);
+                    [mockClient.id, 99, branchId],
+                    [mockClient.id, 77, 99, branchId],
+                ] : [[mockClient.id, 77, 99, branchId]]);
                 expect(prismaService.eformsign_doc.findMany).toHaveBeenNthCalledWith(
                     2,
                     expect.objectContaining({ select: expect.objectContaining({ clientId: true }) }),
@@ -2298,6 +2308,7 @@ describe("ClientService", () => {
                     }),
                     expect.anything(),
                     KR_BUILTIN_CALENDAR,
+                    [],
                 );
                 expect(serviceRecordLinkService.scheduleForServiceStart).toHaveBeenCalledWith(10);
             });
@@ -4057,7 +4068,7 @@ describe("ClientService", () => {
 
                             expect(prismaService.client.findUnique).toHaveBeenCalledWith({
                                 where: { id: client.id },
-                                select: { phone: true, name: true, birthday: true },
+                                select: change === null ? { eDocId: true } : { phone: true, name: true, birthday: true },
                             });
                             expect(prismaService.eformsign_doc.updateMany).not.toHaveBeenCalled();
                             expect(prismaService.client.updateMany).not.toHaveBeenCalled();
@@ -6572,7 +6583,7 @@ describe("ClientService", () => {
             expect(holidayCalendar.forBranch).toHaveBeenCalledTimes(1);
             loadedBeforeTransaction();
             expect(createClientUsecase.executeWithInitialSchedule).toHaveBeenCalledWith(
-                branchId, expect.anything(), expect.anything(), expect.anything(), calendar,
+                branchId, expect.anything(), expect.anything(), expect.anything(), calendar, [],
             );
             expect(serviceRecordLifecycleService.ensureForClient).toHaveBeenCalledWith(
                 mockClient.id, expect.anything(), calendar,

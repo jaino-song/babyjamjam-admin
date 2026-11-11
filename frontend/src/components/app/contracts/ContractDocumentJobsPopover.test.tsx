@@ -1,5 +1,6 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { Clock3 } from "lucide-react";
+import { createRef } from "react";
 
 import {
   createTestQueryClient,
@@ -18,12 +19,54 @@ import {
 } from "./ContractDocumentJobsPopover";
 import { ContractStatsBar } from "./ContractStatsBar";
 
+const mockPush = jest.fn();
+let mockPathname = '/contracts';
 jest.mock("next/navigation", () => ({
-  useRouter: () => ({ push: jest.fn() }),
-  usePathname: () => "/contracts",
+  useRouter: () => ({ push: mockPush }),
+  usePathname: () => mockPathname,
 }));
 
 const PROCESSING_TILE = { name: "전자문서 처리중 작업 보기" };
+
+const RECOVERY_JOB = { jobId: '11111111-1111-4111-8111-111111111111', jobType: 'create_document', source: 'staff', status: 'failed', recoveryKind: 'manual_send', clientName: '복구 고객' } as const;
+test('contracts recovery stays nested; Escape closes only the inner dialog and restores its CTA', async () => {
+  mockPathname = '/contracts';
+  const open = jest.spyOn(eformsignApi, 'openDocumentJobRecovery').mockResolvedValue({ kind: 'verify_only', jobId: RECOVERY_JOB.jobId, claimEpoch: '42', claimExpiresAt: new Date(Date.now() + 60000).toISOString() });
+  const onOpenChange = jest.fn();
+  renderOpenPopover({ documentJobs: { active: [], requiresAttention: [RECOVERY_JOB], recent: [] }, onOpenChange });
+  fireEvent.click(screen.getByRole('button', { name: /복구 고객.*상세 보기/ }));
+  const trigger = screen.getByRole('button', { name: '수동 전송 화면 열기' });
+  const detail = document.querySelector('[data-slot="job-detail-body"]');
+  const scroller = document.querySelector('[data-slot="document-jobs-list-scroller"]')!; scroller.scrollTop = 84;
+  fireEvent.click(trigger);
+  await screen.findByText('이미 열린 문서가 있어 결과 확인만 할 수 있어요.');
+  expect(open).toHaveBeenCalledTimes(1); expect(mockPush).not.toHaveBeenCalled();
+  expect(document.querySelector('[data-slot="document-jobs-interaction"]')).toHaveAttribute('inert');
+  const inner = screen.getByRole('dialog', { name: '전자문서 수동 처리' });
+  const check = screen.getByRole('button', { name: '결과 확인' });
+  check.focus(); fireEvent.keyDown(check, { key: 'Tab' });
+  expect(inner.contains(document.activeElement)).toBe(true);
+  fireEvent.keyDown(screen.getByRole('button', { name: '결과 확인' }), { key: 'Escape' });
+  await waitFor(() => expect(screen.queryByText('전자문서 수동 처리')).not.toBeInTheDocument());
+  expect(document.querySelector('[data-slot="job-detail-body"]')).toBe(detail);
+  expect(document.querySelector('[data-slot="sliding-detail-panel"]')).toHaveAttribute('data-open', 'true');
+  expect(scroller.scrollTop).toBe(84);
+  await waitFor(() => expect(trigger).toHaveFocus());
+  expect(onOpenChange).not.toHaveBeenCalledWith(false);
+  open.mockRestore();
+});
+
+test('recovery on other desktop routes closes jobs and navigates without opening an iframe', () => {
+  mockPathname = '/clients'; mockPush.mockClear();
+  const open = jest.spyOn(eformsignApi, 'openDocumentJobRecovery');
+  const onOpenChange = jest.fn();
+  renderOpenPopover({ documentJobs: { active: [], requiresAttention: [RECOVERY_JOB], recent: [] }, onOpenChange });
+  fireEvent.click(screen.getByRole('button', { name: /복구 고객.*상세 보기/ }));
+  fireEvent.click(screen.getByRole('button', { name: '수동 전송 화면 열기' }));
+  expect(onOpenChange).toHaveBeenCalledWith(false);
+  expect(mockPush).toHaveBeenCalledWith(`/contracts?recoverJobId=${RECOVERY_JOB.jobId}`);
+  expect(open).not.toHaveBeenCalled(); open.mockRestore(); mockPathname = '/contracts';
+});
 
 const JOBS: ContractDocumentJobsData = {
   active: [
@@ -88,6 +131,7 @@ function renderBar(props: Partial<React.ComponentProps<typeof ContractStatsBar>>
 
 describe("ContractDocumentJobsPopover", () => {
   beforeEach(() => {
+    mockPathname = '/contracts'; mockPush.mockClear();
     setBranchCookie("branch-a");
     window.sessionStorage.clear();
     jest.spyOn(eformsignApi, "getDocumentJobs").mockResolvedValue(makeJobList());
@@ -98,23 +142,22 @@ describe("ContractDocumentJobsPopover", () => {
     jest.restoreAllMocks();
   });
 
-  it("renders the three sections; active rows are not links, failed rows open recovery, completed rows open the document", () => {
+  it("opens every desktop status in place and exposes document links only in detail", () => {
     renderOpenPopover();
 
-    expect(screen.getByRole("heading", { name: "처리 중" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "처리 중 1건" })).toBeInTheDocument();
     expect(screen.getByText("확인 필요")).toBeInTheDocument();
     expect(screen.getByText("최근 처리")).toBeInTheDocument();
-    expect(screen.getByText("전자문서 생성 중")).toBeInTheDocument();
-
-    const links = screen.getAllByRole("link");
-    expect(links.map((link) => link.getAttribute("href"))).toEqual([
-      "/contracts?recoverJobId=job-attention",
-      "/contracts?documentId=document-3",
-    ]);
-    expect(screen.queryByRole("link", { name: /전자문서 생성 중/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link")).not.toBeInTheDocument();
+    for (const [status, id] of [["처리 중", "document-1"], ["처리 실패", "document-2"], ["완료", "document-3"]]) {
+      fireEvent.click(screen.getByRole("button", { name: new RegExp(`${status} 상세 보기$`) }));
+      expect(screen.getByRole("link", { name: "문서 보기" })).toHaveAttribute("href", `/contracts?documentId=${id}`);
+      expect(screen.getByRole("link", { name: "문서 보기" })).toHaveAttribute("data-variant", "secondary");
+      fireEvent.click(screen.getByRole("button", { name: "목록으로 돌아가기" }));
+    }
   });
 
-  it("links failed rows to recovery and titles rows with the client name", () => {
+  it("uses customer-only titles and opens failed jobs without row recovery links", () => {
     renderOpenPopover({
       documentJobs: {
         active: [],
@@ -126,15 +169,15 @@ describe("ContractDocumentJobsPopover", () => {
       },
     });
 
-    const first = screen.getByRole("link", { name: /김하늘 · 계약서 생성/ });
-    expect(first).toHaveAttribute("href", "/contracts?recoverJobId=job%20f%2F1");
-    expect(screen.getByRole("link", { name: /고객 · 검토완료/ })).toHaveAttribute(
-      "href",
-      "/contracts?recoverJobId=job-f2",
-    );
+    expect(screen.getByText("김하늘")).toBeInTheDocument();
+    expect(screen.getByText("고객 정보 확인 필요")).toBeInTheDocument();
+    expect(screen.queryByRole("link")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /김하늘.*상세 보기/ }));
+    expect(screen.getByRole("button", { name: "수동 전송 화면 열기" })).toBeEnabled();
+    expect(screen.getByText("연결된 문서가 없습니다")).toBeInTheDocument();
   });
 
-  it("links an auto-finalize requires_attention job with no recovery kind to its document, not recovery", () => {
+  it("opens auto-finalize attention in detail before its secondary document link", () => {
     renderOpenPopover({
       documentJobs: {
         active: [],
@@ -152,10 +195,12 @@ describe("ContractDocumentJobsPopover", () => {
       },
     });
 
-    expect(screen.getByRole("link")).toHaveAttribute("href", "/contracts?documentId=document%20auto%2F1");
+    expect(screen.queryByRole("link")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /상세 보기$/ }));
+    expect(screen.getByRole("link", { name: "문서 보기" })).toHaveAttribute("href", "/contracts?documentId=document%20auto%2F1");
   });
 
-  it("links staff failed (manual_send) and requires_attention (verify_result) rows to recovery", () => {
+  it("enables both staff recovery actions inside detail", () => {
     renderOpenPopover({
       documentJobs: {
         active: [],
@@ -167,13 +212,15 @@ describe("ContractDocumentJobsPopover", () => {
       },
     });
 
-    expect(screen.getAllByRole("link").map((link) => link.getAttribute("href"))).toEqual([
-      "/contracts?recoverJobId=job-m",
-      "/contracts?recoverJobId=job-v",
-    ]);
+    expect(screen.queryByRole("link")).not.toBeInTheDocument();
+    fireEvent.click(screen.getAllByRole("button", { name: /상세 보기$/ })[0]);
+    expect(screen.getByRole("button", { name: "수동 전송 화면 열기" })).toBeEnabled();
+    fireEvent.click(screen.getByRole("button", { name: "목록으로 돌아가기" }));
+    fireEvent.click(screen.getAllByRole("button", { name: /상세 보기$/ })[1]);
+    expect(screen.getByRole("button", { name: "결과 확인" })).toBeEnabled();
   });
 
-  it("renders a static row for a failed job with no recovery kind and no document id", () => {
+  it("opens a failed job without a recovery kind or document ID in place", () => {
     renderOpenPopover({
       documentJobs: {
         active: [],
@@ -184,6 +231,8 @@ describe("ContractDocumentJobsPopover", () => {
       },
     });
 
+    fireEvent.click(screen.getByRole("button", { name: /상세 보기$/ }));
+    expect(screen.getByText("연결된 문서가 없습니다")).toBeInTheDocument();
     expect(screen.queryByRole("link")).not.toBeInTheDocument();
   });
 
@@ -199,14 +248,15 @@ describe("ContractDocumentJobsPopover", () => {
     });
 
     expect(screen.queryByText("manual_in_progress")).not.toBeInTheDocument();
-    expect(screen.getByText("처리 중", { selector: "p, span, div" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /상세 보기$/ }));
+    expect(screen.getByRole("heading", { name: "수동 처리 중" })).toBeInTheDocument();
   });
 
   it("shows an authorized job as 전송 준비 중, not its raw step name", () => {
     renderOpenPopover({
       documentJobs: {
         active: [
-          { jobId: "job-authorized", jobType: "create_document", status: "processing", progressStep: "dispatch_authorized", clientName: "김하늘" },
+          { jobId: "job-authorized", jobType: "create_document", status: "processing", progressStep: "dispatch_authorized", clientName: "김하늘", documentKind: "service_contract", displayOperation: "generate" },
         ],
         requiresAttention: [],
         recent: [],
@@ -214,9 +264,14 @@ describe("ContractDocumentJobsPopover", () => {
     });
 
     expect(screen.queryByText("dispatch_authorized")).not.toBeInTheDocument();
-    expect(screen.getByText("전송 준비 중", { selector: "p, span, div" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /상세 보기$/ }));
+    expect(screen.getByRole("heading", { name: "전송 준비 중" })).toBeInTheDocument();
   });
 
+  describe("legacy mobile progress and subtitle copy", () => {
+  let width: number;
+  beforeEach(() => { width = window.innerWidth; Object.defineProperty(window, "innerWidth", { configurable: true, value: 390 }); });
+  afterEach(() => Object.defineProperty(window, "innerWidth", { configurable: true, value: width }));
   it.each([
     ["queued", "대기 중"],
     ["processing", "처리 중"],
@@ -277,6 +332,8 @@ describe("ContractDocumentJobsPopover", () => {
     expect(screen.getByText("문서 연결 정보 없음")).toBeInTheDocument();
   });
 
+  });
+
   it("does not label a needs-check job as 최근 완료 although it carries its failure time", () => {
     renderOpenPopover({
       documentJobs: {
@@ -291,19 +348,21 @@ describe("ContractDocumentJobsPopover", () => {
     expect(screen.queryByText("최근 완료")).not.toBeInTheDocument();
   });
 
-  it("labels a completed job as 최근 완료", () => {
+  it("uses 최근 처리 without the old recent-completion meta", () => {
     renderOpenPopover();
 
-    expect(screen.getByText("최근 완료")).toBeInTheDocument();
+    expect(screen.getByText("최근 처리")).toBeInTheDocument();
+    expect(screen.queryByText("최근 완료")).not.toBeInTheDocument();
   });
 
-  it("closes the desktop popover on Escape and renders no sheet or backdrop", () => {
+  it("closes the shared desktop dialog on Escape with one backdrop and no Popover content", () => {
     const onOpenChange = jest.fn();
     renderOpenPopover({ onOpenChange });
 
     const content = screen.getByRole("dialog");
-    expect(content).toHaveAttribute("data-slot", "document-jobs-popover");
-    expect(document.querySelector('[data-radix-popper-content-wrapper]')).toContainElement(content);
+    expect(content).toHaveAttribute("data-slot", "anchored-notification-panel");
+    expect(document.querySelector('[data-radix-popper-content-wrapper]')).toBeNull();
+    expect(document.querySelectorAll('[data-slot="anchored-notification-backdrop"]')).toHaveLength(1);
     expect(document.querySelector('[data-slot="sheet-overlay"]')).not.toBeInTheDocument();
     fireEvent.keyDown(content, { key: "Escape" });
     expect(onOpenChange).toHaveBeenCalledWith(false);
@@ -320,14 +379,52 @@ describe("ContractDocumentJobsPopover", () => {
       Object.defineProperty(window, "innerWidth", { configurable: true, writable: true, value: originalWidth });
     });
 
+    it("keeps auto-finalize attention without recovery permission on its encoded document link", () => {
+      renderOpenPopover({ documentJobs: { active: [], recent: [], requiresAttention: [{
+        jobId: "job auto/1", jobType: "finalize_document", source: "auto_finalize", status: "requires_attention",
+        documentId: "document auto/1", recoveryKind: null,
+      }] } });
+
+      expect(screen.getByRole("dialog", { name: "전자문서 작업" })).toHaveAttribute("data-side", "bottom");
+      expect(screen.getByRole("link")).toHaveAttribute("href", "/contracts?documentId=document%20auto%2F1");
+      expect(document.querySelector('a[href*="recoverJobId="]')).toBeNull();
+    });
+
+    it.each([
+      ["manual_send", "failed", "create_document"],
+      ["verify_result", "requires_attention", "finalize_document"],
+    ] as const)("routes mobile %s recovery through the encoded job ID", (recoveryKind, status, jobType) => {
+      renderOpenPopover({ documentJobs: { active: [], recent: [], requiresAttention: [{
+        jobId: "job f/1", jobType, source: "staff", status, recoveryKind, documentId: "document auto/1",
+      }] } });
+
+      expect(screen.getByRole("dialog", { name: "전자문서 작업" })).toHaveAttribute("data-side", "bottom");
+      expect(screen.getByRole("link")).toHaveAttribute("href", "/contracts?recoverJobId=job%20f%2F1");
+      expect(document.querySelector('a[href*="documentId="]')).toBeNull();
+    });
+
+    it("keeps the completed mobile row's no-document tooltip and prevents navigation", () => {
+      renderOpenPopover({ documentJobs: { active: [], requiresAttention: [], recent: [{
+        jobId: "job-done-no-document", jobType: "create_document", status: "completed", documentId: null, clientName: "완료 고객",
+      }] } });
+
+      expect(screen.getByRole("dialog", { name: "전자문서 작업" })).toHaveAttribute("data-side", "bottom");
+      const row = screen.getByTitle("연결된 계약서가 없어 이동할 수 없어요.");
+      expect(row).toHaveTextContent("완료 고객");
+      expect(row.tagName).toBe("DIV");
+      expect(row).not.toHaveAttribute("href");
+      expect(screen.queryByRole("link")).not.toBeInTheDocument();
+    });
+
     it("renders the list in a bottom sheet outside any popper wrapper, with its rows and header", () => {
-      renderOpenPopover({ "data-component": "jobs_popover" });
+      renderOpenPopover({ "data-component": "jobs_popover", className: "mobile-custom-content" });
 
       const sheet = screen.getByRole("dialog", { name: "전자문서 작업" });
       expect(sheet).toHaveAttribute("data-slot", "document-jobs-popover");
       expect(sheet).toHaveAttribute("data-side", "bottom");
       expect(sheet).toHaveAttribute("data-component", "jobs_popover");
       expect(sheet).toHaveAttribute("data-source-component", "ContractDocumentJobsPopover");
+      expect(sheet).toHaveClass("mobile-custom-content");
       // The popper wrapper is a transformed, content-sized box that collapses a fixed child.
       expect(document.querySelector("[data-radix-popper-content-wrapper]")).not.toBeInTheDocument();
       expect(sheet.closest("[data-radix-popper-content-wrapper]")).toBeNull();
@@ -393,7 +490,9 @@ describe("ContractDocumentJobsPopover", () => {
       },
     });
 
-    expect(screen.getByTitle("연결된 계약서가 없어 이동할 수 없어요.")).toBeInTheDocument();
+    expect(screen.queryByTitle("연결된 계약서가 없어 이동할 수 없어요.")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /상세 보기$/ }));
+    expect(screen.getByText("연결된 문서가 없습니다")).toBeInTheDocument();
     expect(screen.queryByRole("link")).not.toBeInTheDocument();
   });
 
@@ -476,13 +575,13 @@ describe("ContractDocumentJobsPopover", () => {
     expect(screen.queryByText("전자문서 처리 현황을 불러오지 못했어요")).not.toBeInTheDocument();
 
     fireEvent.click(processingTile);
-    await waitFor(() => expect(screen.getAllByText("전자문서 작업을 불러오지 못했습니다.")).toHaveLength(3));
+    await waitFor(() => expect(screen.getAllByText("전자문서 작업을 불러오지 못했습니다.")).toHaveLength(1));
     const callsBefore = getJobs.mock.calls.length;
     fireEvent.click(screen.getAllByRole("button", { name: "다시 시도" })[0]);
     await waitFor(() => expect(getJobs.mock.calls.length).toBeGreaterThan(callsBefore));
   });
 
-  it("lists active jobs from the list endpoint in the card's popover without linking them", async () => {
+  it("lists active jobs from the endpoint as desktop detail buttons", async () => {
     jest.spyOn(eformsignApi, "getDocumentJobSummary").mockResolvedValue(makeSummary({ activeCount: 1 }));
     jest.spyOn(eformsignApi, "getDocumentJobs").mockResolvedValue(
       makeJobList({ active: [makeJob({ jobId: "job-x", status: "processing", jobType: "finalize_document", documentId: "doc-9" })] }),
@@ -491,8 +590,8 @@ describe("ContractDocumentJobsPopover", () => {
 
     fireEvent.click(await screen.findByRole("button", PROCESSING_TILE));
 
-    expect(await screen.findByText("김하늘 · 검토완료")).toBeInTheDocument();
-    expect(screen.queryByRole("link", { name: /김하늘 · 검토완료/ })).not.toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: /김하늘.*상세 보기$/ })).toBeInTheDocument();
+    expect(screen.queryByRole("link")).not.toBeInTheDocument();
   });
 
   it("renders no jobs card and touches neither provider nor react-query with showDocumentJobs={false}", () => {
@@ -520,5 +619,78 @@ describe("ContractDocumentJobsPopover", () => {
     const processingTile = await screen.findByRole("button", PROCESSING_TILE);
     await waitFor(() => expect(processingTile).toHaveTextContent("2"));
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it.each(["Enter", " "])("keeps real trigger/ref and a single toggle for a %s native-key/click sequence", (key) => {
+    const ref = createRef<HTMLButtonElement>(), clicked = jest.fn(), changed = jest.fn();
+    const { container } = render(<ContractDocumentJobsPopover onOpenChange={changed} jobs={JOBS}
+      trigger={<button ref={ref} onClick={clicked}>실제 트리거</button>} />);
+    const trigger = screen.getByRole("button", { name: "실제 트리거" });
+    const anchor = jest.spyOn(trigger, "getBoundingClientRect").mockReturnValue({ left: 123, top: 20, bottom: 52 } as DOMRect);
+    expect(ref.current).toBe(trigger);
+    expect(trigger.parentElement).toBe(container);
+    expect(trigger).toHaveAttribute("aria-haspopup", "dialog");
+    expect(trigger).not.toHaveAttribute("aria-controls");
+    fireEvent.keyDown(trigger, { key }); fireEvent.click(trigger); fireEvent.keyUp(trigger, { key });
+    expect(clicked).toHaveBeenCalledTimes(1);
+    expect(changed.mock.calls).toEqual([[true]]);
+    expect(anchor).toHaveBeenCalled();
+    expect(screen.getAllByRole("dialog")).toHaveLength(1);
+    expect(screen.getByRole("dialog")).toHaveStyle({ left: "123px" });
+    expect(trigger).toHaveAttribute("aria-expanded", "true");
+    expect(trigger).not.toHaveAttribute("aria-controls");
+    expect(document.querySelector('[data-radix-popper-content-wrapper]')).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "전자문서 작업 닫기" }));
+    expect(changed.mock.calls).toEqual([[true], [false]]);
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  it("retains controlled open and defaultOpen without double callbacks", () => {
+    const changed = jest.fn();
+    const { rerender } = render(<ContractDocumentJobsPopover open={false} onOpenChange={changed} />);
+    fireEvent.click(screen.getByRole("button", { name: "전자문서 처리중" }));
+    expect(changed.mock.calls).toEqual([[true]]);
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    rerender(<ContractDocumentJobsPopover open onOpenChange={changed} />);
+    fireEvent.click(screen.getByRole("button", { name: "전자문서 작업 닫기" }));
+    expect(changed.mock.calls).toEqual([[true], [false]]);
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    rerender(<ContractDocumentJobsPopover open={false} onOpenChange={changed} />);
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  it.each([undefined, "", "desktop_contracts_stats_document-jobs-popover"])("forwards optional caller metadata %s verbatim", (base) => {
+    render(<ContractDocumentJobsPopover defaultOpen jobs={JOBS} data-component={base} />);
+    const dialog = screen.getByRole("dialog");
+    if (base) {
+      expect(dialog).toHaveAttribute("data-component", "desktop_contracts_stats_document-jobs-popover");
+      expect(document.querySelector('[data-slot="sliding-detail-panel"]')).toHaveAttribute("data-component", "desktop_contracts_stats_document-jobs-popover_slide");
+    } else expect(dialog.querySelectorAll("[data-component]")).toHaveLength(0);
+    expect(dialog.getAttribute("data-component")).toBe(base || null);
+  });
+
+  it.each(["isLoading", "isJobsLoading"] as const)("forwards %s and legacy loading aliases", (flag) => {
+    renderOpenPopover({ [flag]: true });
+    expect(screen.getByRole("status", { name: "전자문서 작업 불러오는 중" })).toBeInTheDocument();
+  });
+
+  it("retains job/error/retry alias precedence", () => {
+    const retry = jest.fn(), aliasRetry = jest.fn();
+    const { rerender } = renderOpenPopover({ error: new Error("primary"), jobsError: new Error("alias"), onRetry: retry, onRetryJobs: aliasRetry });
+    fireEvent.click(screen.getByRole("button", { name: "다시 시도" }));
+    expect(retry).toHaveBeenCalledTimes(1); expect(aliasRetry).not.toHaveBeenCalled();
+    rerender(<ContractDocumentJobsPopover open jobs={JOBS} error={false} jobsError={new Error("ignored")} />);
+    expect(screen.getAllByRole("button", { name: /상세 보기$/ })).toHaveLength(3);
+    rerender(<ContractDocumentJobsPopover open jobsError={new Error("alias")} onRetryJobs={aliasRetry} />);
+    fireEvent.click(screen.getByRole("button", { name: "다시 시도" }));
+    expect(aliasRetry).toHaveBeenCalledTimes(1);
+  });
+
+  it("prefers documentJobs and falls back to jobs when the preferred alias is null", () => {
+    const alias = { ...JOBS, active: [{ ...JOBS.active[0], clientName: "별칭 고객" }] };
+    const { rerender } = renderOpenPopover({ jobs: alias });
+    expect(screen.queryByText("별칭 고객")).not.toBeInTheDocument();
+    rerender(<ContractDocumentJobsPopover open jobs={alias} documentJobs={null} />);
+    expect(screen.getByRole("button", { name: /별칭 고객.*상세 보기$/ })).toBeInTheDocument();
   });
 });

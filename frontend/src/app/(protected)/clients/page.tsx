@@ -58,6 +58,7 @@ import { ClientDetailPanel } from "@/components/app/clients/ClientDetailPanel";
 import { getClientDisplayLabel } from "@/components/app/clients/client-display";
 import { TwoButtonModal } from "@/components/app/ui/TwoButtonModal";
 import { QueryErrorState } from "@/components/app/ui/QueryErrorState";
+import { StaleDataNotice } from "@/components/app/ui/StaleDataNotice";
 import { AutomationStatusNotice } from "@/components/app/ui/automation-status-notice";
 import { NotificationOneButtonModal } from "@/components/app/ui/NotificationOneButtonModal";
 import { ClientDetailModal } from "@/components/app/clients/ClientDetailModal";
@@ -690,23 +691,10 @@ export default function ClientsPage() {
         ? debouncedSearchQuery ? `검색 결과 ${matchedTotal}명` : `${matchedTotal}명`
         : undefined;
     const listSubHeader = isDirectoryRefreshError ? (
-        <Alert variant="warning" data-component="desktop_clients_sections_section-content_list-section_split-layout_list-panel_cached-data-error">
-            <AlertTitle>고객 목록을 새로 불러오지 못했어요</AlertTitle>
-            <AlertDescription>
-                최근에 확인된 목록을 표시하고 있어요.
-                <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    data-component="desktop_clients_sections_section-content_list-section_split-layout_list-panel_cached-data-error_retry"
-                    className="mt-3"
-                    aria-label="고객 목록 다시 시도"
-                    onClick={() => void directory.refetch()}
-                >
-                    다시 시도
-                </Button>
-            </AlertDescription>
-        </Alert>
+        <StaleDataNotice
+            dataComponent="desktop_clients_sections_section-content_list-section_split-layout_list-panel_cached-data-error"
+            message="새로 불러오지 못해 최근에 확인된 목록을 표시하고 있어요"
+        />
     ) : undefined;
 
     return (
@@ -721,24 +709,6 @@ export default function ClientsPage() {
                             variant="outline"
                             size="sm"
                             data-component="desktop_clients_summary_error_retry"
-                            className="mt-3"
-                            onClick={() => void listSummary.refetch()}
-                        >
-                            다시 시도
-                        </Button>
-                    </AlertDescription>
-                </Alert>
-            ) : null}
-            {listSummary.isRefreshError && summary ? (
-                <Alert variant="warning" data-component="desktop_clients_summary_stale">
-                    <AlertTitle>고객 요약을 새로 불러오지 못했어요</AlertTitle>
-                    <AlertDescription>
-                        최근에 확인된 현재 지점 수치를 표시하고 있어요.
-                        <Button
-                            type="button"
-                            variant="outline"
-                            size="sm"
-                            data-component="desktop_clients_summary_stale_retry"
                             className="mt-3"
                             onClick={() => void listSummary.refetch()}
                         >

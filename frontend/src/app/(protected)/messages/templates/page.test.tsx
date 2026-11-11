@@ -5,6 +5,11 @@ import TemplatesPage from "./page";
 const mockDeleteMutateAsync = jest.fn();
 const mockUpdateMutate = jest.fn();
 const mockToast = jest.fn();
+jest.mock("next/navigation", () => {
+  const router = { push: jest.fn(), replace: jest.fn(), refresh: jest.fn(), back: jest.fn(), forward: jest.fn(), prefetch: jest.fn() };
+  return { ...jest.requireActual("next/navigation"), usePathname: () => "/messages/templates", useRouter: () => router };
+});
+
 let mockDocumentJobsActive = false;
 
 jest.mock("@/features/document-jobs/DocumentJobsProvider", () => {

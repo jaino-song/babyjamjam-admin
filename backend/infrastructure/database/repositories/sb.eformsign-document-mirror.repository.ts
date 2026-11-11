@@ -1,5 +1,6 @@
 import { Injectable } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
+import { assertAuthorityPointerWrite, assertNoUnresolvedAuthorityForDocuments, discoverAuthorityClientIds } from "../utils/eformsign-contract-authority";
 
 import {
     EFORMSIGN_COMPLETED_STATUS_STORAGE_VALUES,
@@ -519,18 +520,17 @@ implements IEformsignDocumentMirrorRepository {
     private async findPurgeClientIds(
         tx: Prisma.TransactionClient,
         documentIds: string[],
-    ): Promise<number[]> {
-        const rows = await tx.$queryRaw<Array<{ id: number }>>(Prisma.sql`
-            SELECT client_id AS id
-            FROM eformsign_doc
-            WHERE document_id IN (${Prisma.join(documentIds)})
-              AND client_id IS NOT NULL
+    ): Promise<Array<{ id: number; branchId: string | null; documentId: string }>> {
+        const rows = await tx.$queryRaw<Array<{ id: number; branchId: string | null; documentId: string }>>(Prisma.sql`
+            SELECT owner.id, owner.branch_id AS "branchId", doc.document_id AS "documentId"
+            FROM eformsign_doc AS doc JOIN client AS owner ON owner.id = doc.client_id
+            WHERE doc.document_id IN (${Prisma.join(documentIds)})
             UNION
-            SELECT id
+            SELECT id, branch_id AS "branchId", e_doc_id AS "documentId"
             FROM client
             WHERE e_doc_id IN (${Prisma.join(documentIds)})
         `);
-        return [...new Set((rows ?? []).map((row) => row.id))].sort((left, right) => left - right);
+        return rows ?? [];
     }
 
     private async purgeContentOnce(
@@ -538,7 +538,16 @@ implements IEformsignDocumentMirrorRepository {
         deletedAt: Date,
     ): Promise<void | typeof PURGE_OWNERSHIP_CHANGED> {
         return this.prisma.$transaction(async (tx) => {
-            const peekedClientIds = await this.findPurgeClientIds(tx, documentIds);
+            await assertNoUnresolvedAuthorityForDocuments(tx, documentIds);
+            const peekedClients = await this.findPurgeClientIds(tx, documentIds);
+            const scopes = [] as Array<{ branchId: string; clientIds: number[]; documentIds: string[] }>;
+            for (const branchId of new Set(peekedClients.map(row => row.branchId).filter((id): id is string => typeof id === "string"))) {
+                const rows = peekedClients.filter(row => row.branchId === branchId);
+                const scopedDocuments = [...new Set(rows.map(row => row.documentId))];
+                const owners = await discoverAuthorityClientIds(tx, branchId, scopedDocuments);
+                scopes.push({ branchId, clientIds: [...new Set([...rows.map(row => row.id), ...owners])], documentIds: scopedDocuments });
+            }
+            const peekedClientIds = [...new Set([...peekedClients.map(row => row.id), ...scopes.flatMap(scope => scope.clientIds)])].sort((a, b) => a - b);
             if (peekedClientIds.length > 0) {
                 await tx.$queryRaw(Prisma.sql`
                     SELECT id
@@ -548,6 +557,7 @@ implements IEformsignDocumentMirrorRepository {
                     FOR UPDATE
                 `);
             }
+            for (const scope of scopes) await assertAuthorityPointerWrite(tx, scope);
             // Take the same parent-row lock as saveFile before deleting child
             // rows, so an in-flight download cannot recreate a purged file.
             const rows = await tx.$queryRaw<{
@@ -573,10 +583,13 @@ implements IEformsignDocumentMirrorRepository {
             // locked above (the owner moved between the unlocked read and the lock) would be
             // locked document-first below, which is the inverted order: start over instead.
             const lockedClientIds = new Set(peekedClientIds);
-            const currentClientIds = await this.findPurgeClientIds(tx, documentIds);
+            const currentClientIds = (await this.findPurgeClientIds(tx, documentIds)).map(row => row.id);
             if (currentClientIds.some((id) => !lockedClientIds.has(id))) {
                 return PURGE_OWNERSHIP_CHANGED;
             }
+            // The eformsign_doc parent rows above are the existing saveFile/purge lifecycle lock.
+            // Future provider-ID binding must take that same row lock and recheck the tombstone.
+            await assertNoUnresolvedAuthorityForDocuments(tx, documentIds);
             const rowIds = rows.map((row) => row.id);
             const purgedDocumentIds = rows.map((row) => row.documentId);
             const autoRegisteredClients = rows.filter((row) =>

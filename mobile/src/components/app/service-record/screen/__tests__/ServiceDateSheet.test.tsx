@@ -43,6 +43,99 @@ describe("initial calendar month", () => {
     });
 });
 
+describe("today and stored-date labels", () => {
+    const context = { ...props().context, sessions: [{ sessionIndex: 1, serviceDate: "2026-11-02", locked: false }] };
+
+    it("labels today using Korean time when UTC is still the previous day", () => {
+        jest.setSystemTime(new Date("2026-11-10T16:00:00Z"));
+        render(<ServiceDateSheet {...props({ context, value: "2026-11-02", editing: false })} />);
+        expect(screen.getByRole("button", { name: "2026.11.11(수) 오늘" })).toBeInTheDocument();
+        expect(screen.queryByRole("button", { name: "2026.11.10(화) 오늘" })).not.toBeInTheDocument();
+    });
+
+    it.each([true, false])("marks today in register mode without changing its date state (calendar ready: %s)", (calendarReady) => {
+        render(<ServiceDateSheet {...props({ context, value: "2026-11-02", calendarReady })} />);
+        const today = screen.getByRole("button", { name: "2026.11.11(수) 오늘" });
+        expect(today.querySelector("small")).toHaveTextContent("오늘");
+        expect(today.querySelector("small")).toHaveClass("mt-0.5", "text-xs", "font-extrabold", "leading-none", "text-v3-primary");
+        expect(today).toHaveAttribute("data-day-state", calendarReady ? "available" : "blocked");
+        expect(today).toHaveAttribute("aria-disabled", String(!calendarReady));
+        expect(today).toHaveAttribute("aria-pressed", "false");
+        if (!calendarReady) {
+            expect(today.className).toContain("bg-[repeating-linear-gradient");
+            expect(today).toHaveClass("text-v3-text-muted/70", "border-v3-primary/40!");
+            expect(today).not.toHaveClass("text-v3-primary", "border-dashed", "bg-v3-primary");
+        }
+        const stored = screen.getByRole("button", { name: "2026.11.02(월)" });
+        expect(stored.querySelector("small")).toBeNull();
+        expect(stored).not.toHaveClass("border-dashed", "text-v3-primary");
+        expect(stored).toHaveAttribute("aria-disabled", "true");
+        expect(stored).toHaveAttribute("aria-pressed", "false");
+        expect(screen.queryByText(/현재|지금/)).not.toBeInTheDocument();
+        expect(screen.getByRole("button", { name: "선택" })).toBeDisabled();
+    });
+
+    it("keeps the stored register date unmarked when returning from a pending pick", () => {
+        const p = props({ context, value: "2026-11-05" });
+        render(<ServiceDateSheet {...p} />);
+        const stored = screen.getByRole("button", { name: "2026.11.02(월)" });
+        expect(stored.querySelector("small")).toBeNull();
+        expect(stored).not.toHaveClass("border-dashed", "text-v3-primary");
+        expect(stored).toHaveAttribute("aria-disabled", "false");
+        expect(stored).toHaveAttribute("aria-pressed", "false");
+        fireEvent.click(stored);
+        fireEvent.click(screen.getByRole("button", { name: "선택" }));
+        expect(p.onSelect).toHaveBeenCalledWith("2026-11-02");
+    });
+
+    it("keeps today's label visible when selected in register mode", () => {
+        render(<ServiceDateSheet {...props({ context, value: "2026-11-02" })} />);
+        const today = screen.getByRole("button", { name: "2026.11.11(수) 오늘" });
+        expect(today.querySelector("small")).toHaveClass("text-v3-primary");
+        fireEvent.click(today);
+        expect(today).toHaveAttribute("aria-pressed", "true");
+        expect(today).toHaveClass("bg-v3-primary", "text-white");
+        expect(today.querySelector("small")).toHaveTextContent("오늘");
+        expect(today.querySelector("small")).not.toHaveClass("text-v3-primary");
+    });
+
+    it("gives another session's label priority over today in register mode", () => {
+        const usedContext = { ...context, sessions: [...context.sessions, { sessionIndex: 2, serviceDate: "2026-11-11", locked: true }] };
+        render(<ServiceDateSheet {...props({ context: usedContext, value: "2026-11-02" })} />);
+        const used = screen.getByRole("button", { name: "2026.11.11(수) 2회차" });
+        expect(used.querySelector("small")).toHaveTextContent("2회차");
+        expect(used.querySelector("small")).not.toHaveClass("text-v3-primary");
+        expect(used).toHaveAttribute("aria-disabled", "true");
+        expect(screen.queryByText("오늘")).not.toBeInTheDocument();
+        expect(screen.queryByText(/현재|지금/)).not.toBeInTheDocument();
+    });
+
+    it.each(["2026-11-02", "2026-11-11"])("marks only the stored date as 현재 in edit mode (%s)", (serviceDate) => {
+        const editContext = { ...context, sessions: [{ sessionIndex: 1, serviceDate, locked: false }] };
+        render(<ServiceDateSheet {...props({ context: editContext, value: serviceDate, editing: true })} />);
+        const date = serviceDate === "2026-11-02" ? "2026.11.02(월)" : "2026.11.11(수)";
+        const stored = screen.getByRole("button", { name: `${date} 현재` });
+        expect(stored.querySelector("small")).toHaveTextContent("현재");
+        expect(stored).toHaveClass("border-dashed", "border-v3-primary!", "text-v3-primary");
+        expect(stored).toHaveAttribute("aria-pressed", "false");
+        expect(screen.getByText(`현재 ${date}`)).toBeInTheDocument();
+        expect(screen.queryByText("오늘")).not.toBeInTheDocument();
+        expect(screen.queryByText(/지금/)).not.toBeInTheDocument();
+        if (serviceDate !== "2026-11-11") expect(screen.getByRole("button", { name: "2026.11.11(수)" }).querySelector("small")).toBeNull();
+    });
+
+    it("labels today when it is also the stored register date", () => {
+        const todayContext = { ...context, sessions: [{ sessionIndex: 1, serviceDate: "2026-11-11", locked: false }] };
+        render(<ServiceDateSheet {...props({ context: todayContext, value: "2026-11-11" })} />);
+        const today = screen.getByRole("button", { name: "2026.11.11(수) 오늘" });
+        expect(today.querySelector("small")).toHaveTextContent("오늘");
+        expect(today).not.toHaveClass("border-dashed", "text-v3-primary");
+        expect(today).toHaveAttribute("aria-disabled", "true");
+        expect(today).toHaveAttribute("aria-pressed", "false");
+        expect(screen.queryByText(/현재|지금/)).not.toBeInTheDocument();
+    });
+});
+
 describe("month navigation labels and sheet structure", () => {
     it("shows the adjacent month numbers in November", () => {
         render(<ServiceDateSheet {...props()} />);
@@ -81,7 +174,7 @@ describe("service-period borders", () => {
     };
     const hatch = "bg-[repeating-linear-gradient(135deg,#fff_0_5px,hsl(214_20%_96%)_5px_10px)]";
 
-    it.each(["2026.11.06(금)", "2026.11.11(수)"])("outlines available in-period day %s inclusively", (name) => {
+    it.each(["2026.11.06(금)", "2026.11.11(수) 오늘"])("outlines available in-period day %s inclusively", (name) => {
         render(<ServiceDateSheet {...props({ context, day: 12 })} />);
         const cell = screen.getByRole("button", { name });
         expect(cell).toHaveAttribute("data-day-state", "available");
@@ -161,7 +254,7 @@ describe("service-period borders", () => {
     it("forces the dashed primary border on the current margin day", () => {
         const editingContext = { ...context, sessions: [...context.sessions, { sessionIndex: 12, serviceDate: "2026-11-12", locked: true }] };
         render(<ServiceDateSheet {...props({ context: editingContext, day: 12, editing: true, value: "2026-11-12" })} />);
-        const cell = screen.getByRole("button", { name: "2026.11.12(목) 지금" });
+        const cell = screen.getByRole("button", { name: "2026.11.12(목) 현재" });
         expect(cell).toHaveAttribute("data-day-state", "current");
         expect(cell).toHaveAttribute("aria-pressed", "false");
         expect(cell).toHaveClass("border-dashed", "border-v3-primary!");
@@ -171,7 +264,7 @@ describe("service-period borders", () => {
     it("preserves the current dashed primary border and selected fill", () => {
         const editingContext = { ...context, sessions: [...context.sessions, { sessionIndex: 12, serviceDate: "2026-11-10", locked: true }] };
         render(<ServiceDateSheet {...props({ context: editingContext, day: 12, editing: true, value: "2026-11-11" })} />);
-        const current = screen.getByRole("button", { name: "2026.11.10(화) 지금" });
+        const current = screen.getByRole("button", { name: "2026.11.10(화) 현재" });
         expect(current).toHaveAttribute("data-in-period", "true");
         expect(current).toHaveClass("border-dashed", "border-v3-primary!", "text-v3-primary");
         expect(current).not.toHaveClass("border-v3-primary/40!");
@@ -229,20 +322,21 @@ it("uses nearest stored rows, including drafts, for both order bounds", () => {
     expect(classifyServiceDate("2026-11-12", rules)).toBe("after");
 });
 
-it("shows 지금 and other session labels, refuses order clicks with the exact feedback, and selects a different day", () => {
+it("shows 현재 and other session labels, refuses order clicks with the exact feedback, and selects a different day", () => {
     const p = props({ day: 2, editing: true, value: "2026-11-04", context: { ...props().context, sessions: [
         { sessionIndex: 1, serviceDate: "2026-11-02", locked: true },
         { sessionIndex: 2, serviceDate: "2026-11-04", locked: true },
         { sessionIndex: 3, serviceDate: "2026-11-11", locked: true },
     ] } });
     render(<ServiceDateSheet {...p} />);
-    expect(screen.getByText("지금 2026.11.04(수)")).toBeInTheDocument();
+    expect(screen.getByText("현재 2026.11.04(수)")).toBeInTheDocument();
     const select = screen.getByRole("button", { name: "선택" });
     expect(select).toBeDisabled();
-    fireEvent.click(screen.getByRole("button", { name: "2026.11.04(수) 지금" }));
+    fireEvent.click(screen.getByRole("button", { name: "2026.11.04(수) 현재" }));
     expect(select).toBeDisabled();
     fireEvent.click(screen.getByRole("button", { name: "2026.11.02(월) 1회차" }));
     expect(p.onOrderBlocked).toHaveBeenLastCalledWith(ORDER_BEFORE);
+    expect(screen.getByRole("button", { name: "2026.11.11(수) 3회차" }).querySelector("small")).not.toHaveClass("text-v3-primary");
     fireEvent.click(screen.getByRole("button", { name: "2026.11.11(수) 3회차" }));
     expect(p.onOrderBlocked).toHaveBeenLastCalledWith(ORDER_AFTER);
     fireEvent.click(screen.getByRole("button", { name: "2026.11.07(토)" }));
@@ -275,13 +369,13 @@ it("limits month navigation to window months and cancels without applying a sele
     expect(p.onSelect).not.toHaveBeenCalled();
 });
 
-it("opens with the pending pick selected and lets it return to the stored 지금 day", () => {
+it("opens with the pending pick selected and lets it return to the stored 현재 day", () => {
     const p = props({ editing: true, value: "2026-11-05", context: { ...props().context, sessions: [
         { sessionIndex: 1, serviceDate: "2026-11-04", locked: true },
     ] } });
     render(<ServiceDateSheet {...p} />);
     expect(screen.getByRole("button", { name: "2026.11.05(목)" })).toHaveAttribute("aria-pressed", "true");
-    const current = screen.getByRole("button", { name: "2026.11.04(수) 지금" });
+    const current = screen.getByRole("button", { name: "2026.11.04(수) 현재" });
     expect(current).toHaveClass("border-dashed");
     expect(current).toHaveAttribute("aria-disabled", "false");
     fireEvent.click(current);
@@ -303,10 +397,40 @@ it("enlarges the date sheet title, calendar, annotations and actions one step", 
     expect(screen.getByRole("heading", { name: "1회차 서비스 제공일" })).toHaveClass("text-2xl");
     expect(screen.getByText("날짜를 골라 주세요.")).toHaveClass("text-sm");
     expect(screen.getByText("2026년 11월")).toHaveClass("text-base");
-    expect(screen.getByRole("button", { name: "2026.11.02(월) 지금" })).toHaveClass("text-sm", "leading-none");
-    expect(screen.getByText("지금")).toHaveClass("text-xs", "leading-none");
+    const stored = screen.getByRole("button", { name: "2026.11.02(월)" });
+    expect(stored).toHaveClass("min-h-11", "text-base", "leading-none");
+    expect(stored.querySelector("small")).toBeNull();
+    expect(screen.getByRole("button", { name: "2026.11.11(수) 오늘" }).querySelector("small")).toHaveClass("text-xs", "leading-none", "text-v3-primary");
+    expect(document.querySelector('[data-component$="_calendar"]')).toHaveClass("flex", "flex-col", "min-h-0", "flex-1", "overflow-y-auto");
+    expect(document.querySelector('[data-component$="_calendar_days"]')).toHaveClass("grid", "grid-cols-7", "flex-1", "auto-rows-[minmax(2.75rem,1fr)]");
     expect(screen.getByRole("button", { name: "취소" })).toHaveClass("text-base");
     expect(screen.getByRole("button", { name: "선택" })).toHaveClass("text-base");
+});
+
+it("caps February 2026 at exactly four rows", () => {
+    const context = { ...props().context, startDate: "2026-02-10", endDate: "2026-02-20" };
+    render(<ServiceDateSheet {...props({ context, value: "2026-02-10" })} />);
+    expect(screen.getByText("2026년 2월")).toBeInTheDocument();
+    const grid = document.querySelector('[data-component$="_calendar_days"]');
+    // February 2026 starts on Sunday and has 28 days, filling exactly four rows.
+    expect(grid).toHaveStyle({ maxHeight: "calc(4 * 4.5rem + 3 * 0.25rem)" });
+});
+
+it("updates the row height cap for five- and six-row months when navigating", () => {
+    const context = { ...props().context, startDate: "2026-08-01" };
+    render(<ServiceDateSheet {...props({ context })} />);
+    const grid = document.querySelector('[data-component$="_calendar_days"]');
+    expect(screen.getByText("2026년 11월")).toBeInTheDocument();
+    // November starts on Sunday with 30 days; August starts on Saturday with 31.
+    expect(grid).toHaveClass("flex-1", "auto-rows-[minmax(2.75rem,1fr)]");
+    expect(grid).not.toHaveClass("min-h-0");
+    expect(grid).toHaveStyle({ maxHeight: "calc(5 * 4.5rem + 4 * 0.25rem)" });
+    for (let index = 0; index < 3; index++) fireEvent.click(screen.getByRole("button", { name: /^이전 달/ }));
+    expect(screen.getByText("2026년 8월")).toBeInTheDocument();
+    expect(grid).toHaveStyle({ maxHeight: "calc(6 * 4.5rem + 5 * 0.25rem)" });
+    for (let index = 0; index < 3; index++) fireEvent.click(screen.getByRole("button", { name: /^다음 달/ }));
+    expect(screen.getByText("2026년 11월")).toBeInTheDocument();
+    expect(grid).toHaveStyle({ maxHeight: "calc(5 * 4.5rem + 4 * 0.25rem)" });
 });
 
 

@@ -1,4 +1,5 @@
 import type { EformsignDocumentJobResponse } from "@/services/api";
+import type { EformsignDocumentJobFailureReasonCode, EformsignDocumentJobRecoveryKind } from "@/services/eformsign";
 
 export interface FailurePopupCopy {
   title: string;
@@ -66,4 +67,53 @@ export function isRecoverableJob(job: {
 
 export function recoverJobHref(jobId: string): string {
   return `/contracts?recoverJobId=${encodeURIComponent(jobId)}`;
+}
+
+type FailureDetailJob = Partial<Pick<EformsignDocumentJobResponse, "source" | "recoveryKind" | "progressStep">> & {
+  status: string;
+  failureReasonCode?: string | null;
+};
+interface JobFailureDetailCopy {
+  reason: string;
+  nextAction: string;
+  actionKind?: EformsignDocumentJobRecoveryKind;
+  actionLabel?: string;
+}
+const DETAIL_REASON_COPY: Record<EformsignDocumentJobFailureReasonCode, string> = {
+  PROVIDER_STATE_UNAVAILABLE: "전자문서 제공처의 처리 결과를 확인하지 못했습니다.",
+  PRE_SEND_RETRY_EXHAUSTED: "전송 전 자동 처리를 여러 번 시도했지만 완료하지 못했습니다.",
+  SERVICE_RECORD_REVISION_CAPABILITY_UNVERIFIED: "제공기록지의 자동 처리 지원 여부를 확인하지 못했습니다.",
+  SERVICE_RECORD_REVISION_MANUAL_REVIEW_REQUIRED: "제공기록지 내용을 직접 확인해야 합니다.",
+  JOB_TARGET_NOT_OWNED_BY_BRANCH: "현재 지점에서 처리할 수 없는 작업입니다.",
+  RECOVERY_PAYLOAD_EXPIRED: "보관 기간이 지나 복구에 필요한 저장 내용이 없습니다.",
+};
+
+export function describeJobFailureDetail(job: FailureDetailJob): JobFailureDetailCopy | null {
+  if (job.progressStep === "manual_in_progress" || job.progressStep?.startsWith("manual_in_progress:")) {
+    return {
+      reason: "담당자가 이 작업을 직접 처리하고 있습니다.",
+      nextAction: "처리가 끝날 때까지 기다린 뒤 상태를 다시 확인해 주세요.",
+    };
+  }
+  if (job.status !== "failed" && job.status !== "requires_attention") return null;
+  const code = job.failureReasonCode;
+  const reason = code && Object.prototype.hasOwnProperty.call(DETAIL_REASON_COPY, code)
+    ? DETAIL_REASON_COPY[code as EformsignDocumentJobFailureReasonCode]
+    : "작업을 완료하지 못했습니다. 확인이 필요합니다.";
+  const actionKind = isRecoverableJob(job) ? job.recoveryKind ?? undefined : undefined;
+  let nextAction = "문서의 처리 상태를 확인하고 관리자에게 문의해 주세요.";
+  if (code === "JOB_TARGET_NOT_OWNED_BY_BRANCH") {
+    nextAction = "작업을 만든 지점의 관리자에게 확인을 요청해 주세요.";
+  } else if (code === "RECOVERY_PAYLOAD_EXPIRED") {
+    nextAction = "원래 문서와 처리 결과를 확인하고 관리자에게 다시 진행할 방법을 문의해 주세요.";
+  } else if (code === "SERVICE_RECORD_REVISION_CAPABILITY_UNVERIFIED" || code === "SERVICE_RECORD_REVISION_MANUAL_REVIEW_REQUIRED") {
+    nextAction = "제공기록지의 내용과 처리 결과를 확인하고 관리자에게 문의해 주세요.";
+  } else if (actionKind === "verify_result") {
+    nextAction = "문서의 실제 처리 결과를 먼저 확인해 주세요. 확인 전에는 다시 전송하지 마세요.";
+  } else if (actionKind === "manual_send") {
+    nextAction = "저장된 내용과 수신 정보를 확인한 후 수동 전송을 진행해 주세요.";
+  }
+  return { reason, nextAction, ...(actionKind ? {
+    actionKind, actionLabel: actionKind === "manual_send" ? "수동 전송 화면 열기" : "결과 확인",
+  } : {}) };
 }

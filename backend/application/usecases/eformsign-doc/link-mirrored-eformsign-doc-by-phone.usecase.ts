@@ -1,5 +1,6 @@
 import { BadRequestException, ConflictException, Injectable, Logger, Optional } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
+import { assertAuthorityPointerWrite, AuthorityConflictError, discoverAuthorityClientIds } from "infrastructure/database/utils/eformsign-contract-authority";
 import { Prisma } from "@prisma/client";
 
 import { MessageTriggerService } from "application/services/message-trigger.service";
@@ -589,16 +590,6 @@ export class LinkMirroredEformsignDocByPhoneUsecase {
                         `;
 
                         const completeLockSurface = this.hasCompleteServiceRecordWriteLockSurface(transaction);
-                        if (
-                            !completeLockSurface
-                            && !await this.lockExpectedMirrorGeneration(
-                                transaction,
-                                params.documentId,
-                                params.expectedMirrorGeneration,
-                            )
-                        ) {
-                            return { status: "mirror_not_ready" };
-                        }
 
                         const document = await transaction.eformsign_doc.findUnique({
                             where: { documentId: params.documentId },
@@ -643,9 +634,8 @@ export class LinkMirroredEformsignDocByPhoneUsecase {
 
                         // For a complete Prisma transaction the document is
                         // only discovered above. Client/schedule/case ids are
-                        // collected and locked before the generation fence;
-                        // narrow test doubles retain the legacy fence-first
-                        // branch above.
+                        // collected and locked before the generation fence.
+                        // Every pointer path takes the authority fence first.
 
                         const detail = toEformsignDocumentDetail(document.detailPayload);
                         const candidate = detail
@@ -723,18 +713,19 @@ export class LinkMirroredEformsignDocByPhoneUsecase {
                             if (!isEformsignAutoLinkEligibleStatus(document.statusType)) {
                                 return { status: "not_completed" };
                             }
+                            const matched = matches[0]!;
+                            const lockedPointerClientIds = await this.lockPointerClients(transaction, {
+                                branchId: existingClientBranchId,
+                                documentId: document.documentId,
+                                clientId: matched.id,
+                            });
+                            if (!lockedPointerClientIds) return { status: "ambiguous" };
                             if (completeLockSurface) {
-                                const matched = matches[0]!;
                                 // `client.e_doc_id` is unique, so a different client that still points
                                 // at this unassigned document would make the pointer write fail with
                                 // P2002. Lock those clients together with the matched one, in id
                                 // order, before any other lock (project-wide order: client rows
                                 // first); they are re-validated once the document is locked.
-                                const lockedPointerClientIds = await this.lockPointerClients(transaction, {
-                                    branchId: existingClientBranchId,
-                                    documentId: document.documentId,
-                                    clientId: matched.id,
-                                });
                                 const locked = await this.lockClientOwnedServiceRecordWrites(transaction, {
                                     branchId: existingClientBranchId,
                                     clientId: matched.id,
@@ -805,10 +796,12 @@ export class LinkMirroredEformsignDocByPhoneUsecase {
                                 }
                                 return { status: linked };
                             }
+                            if (!await this.lockExpectedMirrorGeneration(transaction, params.documentId, params.expectedMirrorGeneration, existingClientBranchId, document.branchId)) throw new MirrorGenerationConflict();
                             const linked = await this.linkExistingClient(
                                 transaction,
                                 document,
                                 matches[0]!,
+                                [...lockedPointerClientIds],
                             );
                             if (
                                 params.initializeLifecycle
@@ -898,6 +891,9 @@ export class LinkMirroredEformsignDocByPhoneUsecase {
                                 document.templateName,
                             )
                             : null;
+                        const authorityOwners = await discoverAuthorityClientIds(transaction, creationBranchId, [document.documentId]);
+                        if (authorityOwners.length) await assertAuthorityPointerWrite(transaction, { branchId: creationBranchId, clientIds: authorityOwners, documentIds: [document.documentId] });
+                        if (!completeLockSurface && !await this.lockExpectedMirrorGeneration(transaction, params.documentId, params.expectedMirrorGeneration, creationBranchId, document.branchId)) throw new MirrorGenerationConflict();
                         const client = await transaction.client.create({
                             data: {
                                 name: candidate.name,
@@ -930,6 +926,7 @@ export class LinkMirroredEformsignDocByPhoneUsecase {
                             },
                             select: { id: true },
                         });
+                        await assertAuthorityPointerWrite(transaction, { branchId: creationBranchId, clientIds: [client.id, ...authorityOwners], documentIds: [document.documentId] });
                         const scheduleId = await this.assignInitialScheduleFromContract(
                             transaction,
                             {
@@ -1357,16 +1354,15 @@ export class LinkMirroredEformsignDocByPhoneUsecase {
         voidedAt: Date | null;
     }, expectedMirrorGeneration?: ExpectedEformsignMirrorGeneration, initializeLifecycle = true): Promise<LinkMirroredEformsignDocResult> {
         return this.prisma.$transaction(async (transaction) => {
+            const lockedPointerClientIds = await this.lockPointerClients(transaction, {
+                branchId: document.branchId, documentId: document.documentId, clientId: document.clientId,
+            });
+            if (!lockedPointerClientIds) return "ambiguous";
             if (this.hasCompleteServiceRecordWriteLockSurface(transaction)) {
                 // Another client pointing at this document would make writing the owner's
                 // pointer fail with P2002 (unique `eDocId`). Lock those clients together with
                 // the owner, ascending, before any other lock; re-validated after the
                 // document lock below.
-                const lockedPointerClientIds = await this.lockPointerClients(transaction, {
-                    branchId: document.branchId,
-                    documentId: document.documentId,
-                    clientId: document.clientId,
-                });
                 const locked = await this.lockClientOwnedServiceRecordWrites(transaction, {
                     branchId: document.branchId,
                     clientId: document.clientId,
@@ -1459,7 +1455,7 @@ export class LinkMirroredEformsignDocByPhoneUsecase {
             ) {
                 return "ambiguous";
             }
-            const linked = await this.linkExistingClient(transaction, document, client);
+            const linked = await this.linkExistingClient(transaction, document, client, [...lockedPointerClientIds]);
             if (
                 initializeLifecycle
                 && (linked === "linked" || linked === "already_linked")
@@ -1497,20 +1493,27 @@ export class LinkMirroredEformsignDocByPhoneUsecase {
     private async lockPointerClients(
         transaction: Prisma.TransactionClient,
         params: { branchId: string | null; documentId: string; clientId: number },
-    ): Promise<Set<number>> {
-        const pointerClientIds = await this.findOtherPointerClientIds(transaction, params);
-        if (pointerClientIds.length > 0) {
-            const clientIdsToLock = Array.from(new Set([params.clientId, ...pointerClientIds]))
-                .sort((left, right) => left - right);
-            await transaction.$queryRaw(Prisma.sql`
-                SELECT id
-                FROM client
-                WHERE id IN (${Prisma.join(clientIdsToLock)})
-                ORDER BY id
-                FOR UPDATE
-            `);
-        }
-        return new Set(pointerClientIds);
+    ): Promise<Set<number> | null> {
+        const peek = await transaction.client.findUnique({ where: { id: params.clientId }, select: { branchId: true, eDocId: true } });
+        const branchId = params.branchId ?? peek?.branchId;
+        if (!peek?.branchId || !branchId || peek.branchId !== branchId) return null;
+        const pointerClientIds = await this.findOtherPointerClientIds(transaction, { ...params, branchId });
+        const documentIds = [params.documentId, peek.eDocId].filter((id): id is string => typeof id === "string");
+        const owners = await discoverAuthorityClientIds(transaction, branchId, documentIds);
+        const clientIdsToLock = Array.from(new Set([params.clientId, ...pointerClientIds, ...owners]))
+            .sort((left, right) => left - right);
+        await transaction.$queryRaw(Prisma.sql`
+            SELECT id
+            FROM client
+            WHERE id IN (${Prisma.join(clientIdsToLock)})
+              AND branch_id = ${branchId}::uuid
+            ORDER BY id
+            FOR UPDATE
+        `);
+        const current = await transaction.client.findUnique({ where: { id: params.clientId }, select: { branchId: true, eDocId: true } });
+        if (!current || current.branchId !== peek.branchId || current.eDocId !== peek.eDocId) throw new AuthorityConflictError();
+        await assertAuthorityPointerWrite(transaction, { branchId, clientIds: clientIdsToLock, documentIds });
+        return new Set([...pointerClientIds, ...owners].filter(id => id !== params.clientId));
     }
 
     private async lockExpectedMirrorGeneration(
@@ -1685,7 +1688,7 @@ export class LinkMirroredEformsignDocByPhoneUsecase {
             shouldPointToMirroredDocument = false;
         }
         if (shouldPointToMirroredDocument) {
-            await transaction.client.updateMany({
+            const pointed = await transaction.client.updateMany({
                 where: {
                     id: client.id,
                     branchId: clientBranchId,
@@ -1693,6 +1696,7 @@ export class LinkMirroredEformsignDocByPhoneUsecase {
                 },
                 data: { eDocId: document.documentId },
             });
+            if (pointed.count !== 1) throw new AuthorityConflictError();
         }
         return wasAlreadyLinked ? "already_linked" : "linked";
     }

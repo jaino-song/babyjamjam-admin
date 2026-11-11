@@ -1736,6 +1736,24 @@ body {
   .schedule-content-enter { animation: none; }
 }
 
+/* Full pages travel together with their headers; parallax stays the default. */
+.sliding-detail-panel[data-motion="page"] > .sliding-detail-list,
+.sliding-detail-panel[data-motion="page"] > .sliding-detail-content {
+  width: 100%; transition: transform 300ms cubic-bezier(.22,1,.36,1);
+}
+.sliding-detail-panel[data-motion="page"][data-open="true"] > .sliding-detail-list { transform: translateX(calc(-100% - 16px)); }
+.sliding-detail-panel[data-motion="page"] > .sliding-detail-content { transform: translateX(calc(100% + 16px)); }
+.sliding-detail-panel[data-motion="page"][data-open="true"] > .sliding-detail-content { transform: translateX(0); }
+.sliding-detail-header[data-layout="stack"] { flex-direction: column; gap: 16px; }
+.sliding-detail-header-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.sliding-detail-header-actions { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+.sliding-detail-header-summary { min-width: 0; }
+.sliding-detail-panel[data-motion="page"] > .sliding-detail-content > .sliding-detail-header { padding: 24px 24px 16px; }
+@media (prefers-reduced-motion: reduce) {
+  .sliding-detail-panel[data-motion="page"] > .sliding-detail-list,
+  .sliding-detail-panel[data-motion="page"] > .sliding-detail-content { transition: none; }
+}
+
 /* Embedded client detail follows the mobile card rhythm independent of viewport. */
 [data-slot="client-detail-presentation"][data-layout="mobile"] [data-slot="detail-panel"] { border-radius: 0; box-shadow: none; }
 [data-slot="client-detail-presentation"][data-layout="mobile"] [data-slot="detail-panel-header"] { padding: 16px; }
@@ -1780,3 +1798,33 @@ body {
   font-size: 16px;
   line-height: 28px;
 }
+/* Controlled document jobs list presenter; geometry follows the approved notification mock. */
+.contract-document-jobs-list { display: flex; flex-direction: column; gap: 20px; }
+.contract-document-jobs-section { display: flex; flex-direction: column; gap: 8px; }
+.contract-document-jobs-toggle { width: 100%; height: auto; display: flex; align-items: center; justify-content: flex-start; gap: 8px; padding: 0; border: 0; border-radius: 0; background: transparent; color: hsl(214 10% 55%); font-size: 11.2px; line-height: 16.8px; font-weight: 700; text-align: left; }
+.contract-document-jobs-toggle:hover { background: transparent; color: hsl(214 10% 55%); }
+.contract-document-jobs-count { margin-left: auto; font-size: 10.4px; font-weight: 500; }
+.contract-document-jobs-chevron { width: 14px; height: 14px; transform: rotate(0deg); transition: transform 250ms ease; }
+.contract-document-jobs-toggle[aria-expanded="true"] .contract-document-jobs-chevron { transform: rotate(180deg); }
+.contract-document-jobs-content { display: grid; grid-template-rows: 1fr; min-height: 0; transition: grid-template-rows 250ms ease; }
+.contract-document-jobs-content[data-expanded="false"] { grid-template-rows: 0fr; }
+.contract-document-jobs-inner { min-height: 0; overflow: hidden; }
+.contract-document-jobs-cards { display: flex; flex-direction: column; gap: 8px; margin: 0 -8px; padding: 0 8px; }
+.contract-document-jobs-card, .contract-document-jobs-card:hover, .contract-document-jobs-card:active { border: 2px solid hsl(214 20% 92%); }
+.contract-document-jobs-card { width: 100%; height: auto; min-height: 94px; display: flex; align-items: center; justify-content: flex-start; gap: 12px; padding: 16px; border-radius: 18px; background: white; white-space: normal; text-align: left; transition: background-color 150ms; }
+.contract-document-jobs-card[data-active="true"] { background: hsl(214 80% 95% / .2); }
+.contract-document-jobs-card:hover { background: hsl(214 80% 95% / .55); }
+.contract-document-jobs-card-icon { display: flex; width: 44px; height: 44px; align-items: center; justify-content: center; flex-shrink: 0; border-radius: 14px; background: hsl(214 80% 95%); border: 1px solid hsl(214 70% 85%); color: hsl(214 100% 34%); box-shadow: 0 4px 6px -1px rgb(0 0 0 / .1), 0 2px 4px -2px rgb(0 0 0 / .1); }
+.contract-document-jobs-card-icon[data-warning="true"] { border-color: hsl(38 92% 35% / .18); background: hsl(47 100% 92%); color: hsl(38 92% 35%); }
+.contract-document-jobs-card-icon svg { width: 20px; height: 20px; }
+.contract-document-jobs-card-copy { flex: 1; min-width: 0; }
+.contract-document-jobs-card-title { display: block; font-size: 13.6px; line-height: 20.4px; font-weight: 700; color: hsl(214 40% 18%); margin-bottom: 2px; overflow-wrap: anywhere; }
+.contract-document-jobs-card-subtype { display: block; font-size: 11.2px; line-height: 16px; color: hsl(214 10% 55%); overflow-wrap: anywhere; }
+.contract-document-jobs-card-status { align-self: center; flex-shrink: 0; }
+.contract-document-jobs-empty { margin: 0; min-height: 116px; display: grid; place-items: center; padding: 16px 8px 20px; text-align: center; font-size: 11.2px; color: hsl(214 10% 55%); }
+.contract-document-jobs-state { display: flex; align-items: center; justify-content: center; flex-direction: column; gap: 12px; padding: 24px; text-align: center; }
+@media (prefers-reduced-motion: reduce) {
+  .contract-document-jobs-content, .contract-document-jobs-chevron, .contract-document-jobs-card { transition: none; }
+}
+
+.contract-document-jobs-card:focus-visible { box-shadow: none; outline: 2px solid hsl(var(--ring)); outline-offset: -4px; }

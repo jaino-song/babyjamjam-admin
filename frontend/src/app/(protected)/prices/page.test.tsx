@@ -2,6 +2,11 @@ import { render, screen } from "@testing-library/react";
 
 import PricesPage from "./page";
 
+jest.mock("next/navigation", () => {
+  const router = { push: jest.fn(), replace: jest.fn(), refresh: jest.fn(), back: jest.fn(), forward: jest.fn(), prefetch: jest.fn() };
+  return { ...jest.requireActual("next/navigation"), usePathname: () => "/prices", useRouter: () => router };
+});
+
 let mockDocumentJobsActive = false;
 jest.mock("@/components/app/settings/VoucherPriceTable", () => ({ VoucherPriceTable: () => null }));
 jest.mock("@/features/document-jobs/DocumentJobsProvider", () => {

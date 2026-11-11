@@ -277,6 +277,7 @@ model client {
   branch                 branch?                   @relation(fields: [branchId], references: [id], onDelete: NoAction, onUpdate: NoAction)
   area                   area?                     @relation(fields: [areaId], references: [id], onDelete: SetNull, onUpdate: NoAction)
   eformsignDocs          eformsign_doc[]           @relation("eformsign_doc_client_idToclient")
+  eformsignContractAuthorities eformsign_contract_authority[]
   eformsignDocumentJobs  eformsign_document_job[]
   employeeSchedules      employee_schedule[]
   callRecords            call_record[]
@@ -417,6 +418,40 @@ model eformsign_doc {
   @@index([permanentPurgeRequestedAt], map: "idx_eformsign_doc_permanent_purge_requested_at")
 }
 
+/// Current contract generation and its durable provider/human handoff evidence.
+model eformsign_contract_authority {
+  branchId           String   @map("branch_id") @db.Uuid
+  clientId           Int      @map("client_id")
+  generation         String   @unique @db.Uuid
+  creationJobId      String   @unique @map("creation_job_id") @db.Uuid
+  fingerprint        String   @db.Char(64)
+  priorDocumentId    String?  @map("prior_document_id")
+  providerDocumentId String?  @unique @map("provider_document_id")
+  creationIntentId   String?  @map("creation_intent_id") @db.Uuid
+  draftIntentId      String?  @map("draft_intent_id") @db.Uuid
+  humanIntentId      String?  @map("human_intent_id") @db.Uuid
+  phase              String   @db.VarChar(24)
+  claimEpoch         BigInt   @default(0) @map("claim_epoch")
+  claimUserId        String?  @map("claim_user_id") @db.Uuid
+  claimExpiresAt     DateTime? @map("claim_expires_at") @db.Timestamptz(6)
+  createdAt          DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt          DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+  branch             branch   @relation(fields: [branchId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  client             client   @relation(fields: [clientId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  claimUser          user?    @relation(fields: [claimUserId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  creationJob        eformsign_document_job @relation(fields: [creationJobId, branchId, clientId, generation], references: [id, branchId, clientId, contractGeneration], onDelete: NoAction, onUpdate: NoAction, map: "authority_creation_job_scope_fkey")
+  creationIntent     eformsign_dispatch_intent? @relation("AuthorityCreationIntent", fields: [creationIntentId, branchId, clientId], references: [id, branchId, clientId], onDelete: NoAction, onUpdate: NoAction, map: "authority_creation_intent_scope_fkey")
+  draftIntent        eformsign_dispatch_intent? @relation("AuthorityDraftIntent", fields: [draftIntentId, branchId, clientId], references: [id, branchId, clientId], onDelete: NoAction, onUpdate: NoAction, map: "authority_draft_intent_scope_fkey")
+  humanIntent        eformsign_dispatch_intent? @relation("AuthorityHumanIntent", fields: [humanIntentId, branchId, clientId], references: [id, branchId, clientId], onDelete: NoAction, onUpdate: NoAction, map: "authority_human_intent_scope_fkey")
+
+  @@id([branchId, clientId])
+  @@index([creationIntentId])
+  @@index([draftIntentId])
+  @@index([humanIntentId])
+  @@index([claimUserId])
+  @@index([claimExpiresAt])
+}
+
 /// Durable provider-operation state. PostgreSQL permits multiple NULL values in
 /// a unique index, so activeKey releases terminal jobs while still matching the
 /// Prisma unique definition. Value checks are authoritative in the SQL patch.
@@ -448,6 +483,11 @@ model eformsign_document_job {
   client                        client?   @relation(fields: [clientId], references: [id], onDelete: SetNull, onUpdate: NoAction)
   createdByUser                 user?     @relation(fields: [createdByUserId], references: [id], onDelete: SetNull, onUpdate: NoAction)
 
+  contractGeneration            String?   @map("contract_generation") @db.Uuid
+  contractAuthorities           eformsign_contract_authority[]
+
+  @@unique([id, branchId, clientId, contractGeneration], map: "eformsign_document_job_scope_generation_key")
+  @@index([branchId, clientId, contractGeneration], map: "idx_eformsign_document_job_scope_generation")
   @@unique([requestKey], map: "eformsign_document_job_request_key_key")
   @@unique([activeKey], map: "eformsign_document_job_active_key_key")
   @@index([status, nextAttemptAt, createdAt], map: "idx_eformsign_document_job_status_next_attempt_created")
@@ -486,6 +526,11 @@ model eformsign_dispatch_intent {
   updatedAt            DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
   branch               branch    @relation(fields: [branchId], references: [id], onDelete: NoAction, onUpdate: NoAction)
 
+  creationAuthorities  eformsign_contract_authority[] @relation("AuthorityCreationIntent")
+  draftAuthorities     eformsign_contract_authority[] @relation("AuthorityDraftIntent")
+  humanAuthorities     eformsign_contract_authority[] @relation("AuthorityHumanIntent")
+
+  @@unique([id, branchId, clientId], map: "eformsign_dispatch_intent_scope_key")
   @@unique([businessKey], map: "eformsign_dispatch_intent_business_key")
   @@index([branchId, status], map: "idx_eformsign_dispatch_intent_branch_status")
   @@index([branchId, localDocumentId], map: "idx_eformsign_dispatch_intent_branch_document")
@@ -647,6 +692,7 @@ model branch {
   messageTriggerRuleBranchOverrides message_trigger_rule_branch_override[]
   messageTriggerJobs            message_trigger_job[]
   notifications                 notification[]
+  eformsignContractAuthorities  eformsign_contract_authority[]
   eformsignDocumentJobs         eformsign_document_job[]
   eformsignDispatchIntents      eformsign_dispatch_intent[]
   consultationInquiries         consultation_inquiry[]
@@ -857,6 +903,7 @@ model user {
   authSessions                  auth_session[]
   authEmailOutbox               auth_email_outbox[]
   reviewedClientDrafts          client_draft[]
+  eformsignContractAuthorities  eformsign_contract_authority[]
   eformsignDocumentJobs         eformsign_document_job[]
 }
 

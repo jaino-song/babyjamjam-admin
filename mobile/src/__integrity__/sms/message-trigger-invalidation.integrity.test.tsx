@@ -1,4 +1,4 @@
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { act, render, renderHook, screen, fireEvent, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider, type UseMutationResult } from "@tanstack/react-query";
 import { useEffect } from "react";
 
@@ -7,17 +7,23 @@ import {
     useCancelMessageTriggerJob,
     useResendMessageTriggerJob,
     useRetryMessageHistory,
+    useUpdateMessageTriggerRule,
+    useDeleteMessageTriggerRule,
 } from "@/features/message-triggers/hooks/use-message-triggers";
 import { messageTriggerKeys } from "@/features/message-triggers/hooks/keys";
 import NewMessagePage from "@/app/(shell)/messages/new/page";
 import { api } from "@/lib/api/client";
 import type { ReactNode } from "react";
+import type { MessageTriggerRule } from "@/features/message-triggers/types";
+import { MessageTriggerList } from "@/components/app/mobile-redesign/MessageTriggerList";
+import { messageRuleGroupsApi } from "@/services/api";
 
 jest.mock("@/lib/api/client", () => ({
     api: {
         get: jest.fn(),
         post: jest.fn(),
         patch: jest.fn(),
+        put: jest.fn(),
         delete: jest.fn(),
     },
 }));
@@ -45,6 +51,7 @@ const apiMock = api as unknown as {
     get: jest.Mock;
     post: jest.Mock;
     patch: jest.Mock;
+    put: jest.Mock;
     delete: jest.Mock;
 };
 
@@ -64,6 +71,92 @@ function freshQueryClient(): QueryClient {
 function isInvalidated(queryClient: QueryClient, key: readonly unknown[]): boolean {
     return queryClient.getQueryState(key)?.isInvalidated === true;
 }
+
+describe("group-backed trigger list cache coherence", () => {
+    let serverRules: MessageTriggerRule[];
+
+    beforeEach(() => {
+        serverRules = [{
+            id: "system-rule", branchId: null, name: "시스템 안내", isActive: true,
+            eventType: "SERVICE_START", offsetType: "BEFORE_DAYS", offsetDays: 1,
+            sendTime: "09:00", recipientType: "CLIENT", templateKey: "SERVICE_INFO",
+            targetClientStatus: "all", retryOnFailure: true,
+            createdAt: "2026-11-01", updatedAt: "2026-11-01",
+        }];
+        jest.mocked(messageRuleGroupsApi.list).mockReset().mockImplementation(async () => ({
+            groups: [], standaloneRules: serverRules,
+        }));
+        apiMock.get.mockResolvedValue({ data: [] });
+        apiMock.put.mockReset().mockImplementation(async (_path, dto: { isActive: boolean }) => {
+            serverRules = serverRules.map((rule) => ({ ...rule, isActive: dto.isActive }));
+            return { data: serverRules[0] };
+        });
+        apiMock.patch.mockReset().mockImplementation(async (_path, dto: { name: string }) => {
+            serverRules = serverRules.map((rule) => ({ ...rule, ...dto }));
+            return { data: serverRules[0] };
+        });
+        apiMock.delete.mockReset().mockImplementation(async () => {
+            serverRules = [];
+            return { data: {} };
+        });
+    });
+
+    async function mountList() {
+        const queryClient = freshQueryClient();
+        const wrapper = ({ children }: { children: ReactNode }) => (
+            <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+        );
+        render(
+            <MessageTriggerList data-component="mobile_messages_triggers_integrity_list" canManage onEdit={() => undefined} />,
+            { wrapper },
+        );
+        expect(await screen.findByRole("switch", { name: "시스템 안내 비활성화" })).toBeChecked();
+        // Fresh cached data should not refetch until a mutation or realtime event.
+        expect(messageRuleGroupsApi.list).toHaveBeenCalledTimes(1);
+        return { queryClient, wrapper };
+    }
+
+    it("refreshes branchless activation so a second click sends the inverse value", async () => {
+        await mountList();
+        fireEvent.click(screen.getByRole("switch", { name: "시스템 안내 비활성화" }));
+        await waitFor(() => expect(screen.getByRole("switch", { name: "시스템 안내 활성화" })).not.toBeChecked());
+        expect(apiMock.put).toHaveBeenLastCalledWith("/message-trigger-rules/system-rule/branch-activation", { isActive: false });
+        expect(apiMock.patch).not.toHaveBeenCalled();
+
+        fireEvent.click(screen.getByRole("switch", { name: "시스템 안내 활성화" }));
+        await waitFor(() => expect(screen.getByRole("switch", { name: "시스템 안내 비활성화" })).toBeChecked());
+        expect(apiMock.put).toHaveBeenLastCalledWith("/message-trigger-rules/system-rule/branch-activation", { isActive: true });
+        expect(apiMock.put).toHaveBeenCalledTimes(2);
+    });
+
+    it("refreshes standalone rows after an existing rule update", async () => {
+        serverRules = serverRules.map((rule) => ({ ...rule, branchId: "branch-1" }));
+        const { wrapper } = await mountList();
+        const { result } = renderHook(() => useUpdateMessageTriggerRule(), { wrapper });
+        await act(async () => { await result.current.mutateAsync({ id: "system-rule", dto: { name: "수정된 안내" } }); });
+        expect(await screen.findByRole("switch", { name: "수정된 안내 비활성화" })).toBeChecked();
+        expect(screen.queryByText("시스템 안내")).not.toBeInTheDocument();
+    });
+
+    it("removes standalone rows after an existing rule deletion", async () => {
+        serverRules = serverRules.map((rule) => ({ ...rule, branchId: "branch-1" }));
+        const { wrapper } = await mountList();
+        const { result } = renderHook(() => useDeleteMessageTriggerRule(), { wrapper });
+        await act(async () => { await result.current.mutateAsync("system-rule"); });
+        expect(await screen.findByText("등록된 자동 전송 트리거가 없습니다.")).toBeInTheDocument();
+        expect(screen.queryByRole("switch")).not.toBeInTheDocument();
+    });
+
+    it("refreshes fresh group-backed rows through the existing realtime message roots", async () => {
+        const { queryClient } = await mountList();
+        serverRules = serverRules.map((rule) => ({ ...rule, name: "원격 수정 안내" }));
+        await act(async () => {
+            await Promise.all(queryRootsForKinds(["message"]).map((queryKey) => queryClient.invalidateQueries({ queryKey })));
+        });
+        expect(await screen.findByRole("switch", { name: "원격 수정 안내 비활성화" })).toBeChecked();
+        expect(screen.queryByText("시스템 안내")).not.toBeInTheDocument();
+    });
+});
 
 type MutationHook<TData, TArgs> = (clientId?: number) => UseMutationResult<TData, Error, TArgs, unknown>;
 
@@ -279,6 +372,7 @@ jest.mock("@/hooks", () => ({
 }));
 
 jest.mock("@/services/api", () => ({
+    messageRuleGroupsApi: { list: jest.fn(), update: jest.fn() },
     settingsApi: {
         getMessageSenderApproval: () => mockGetMessageSenderApproval(),
     },
