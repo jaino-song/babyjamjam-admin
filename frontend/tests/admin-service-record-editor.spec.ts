@@ -1,3 +1,5 @@
+import { Buffer } from "node:buffer";
+
 import { expect, test, type Page, type Route, type TestInfo } from "@playwright/test";
 import { moveServiceRecordSessionDate } from "@babyjamjam/shared/utils/service-record-schedule";
 
@@ -118,6 +120,14 @@ const EVENTS_PATHNAME = "/api/admin/service-records/events";
 
 function clone<T>(value: T): T {
     return JSON.parse(JSON.stringify(value)) as T;
+}
+
+function stableValue(value: unknown): string | undefined {
+    if (Array.isArray(value)) return `[${value.map(stableValue).join(",")}]`;
+    if (value !== null && typeof value === "object") {
+        return `{${Object.entries(value).sort(([left], [right]) => left.localeCompare(right)).map(([key, item]) => `${JSON.stringify(key)}:${stableValue(item)}`).join(",")}}`;
+    }
+    return JSON.stringify(value);
 }
 
 function makeSession(sessionIndex: number, serviceDate: string): Record<string, unknown> {
@@ -323,9 +333,20 @@ function previewFor(state: DraftState): Record<string, unknown> {
         ...session,
         serviceDate: dateOverrides.get(session.sessionIndex) ?? session.serviceDate,
     }));
-    const changedSessionIndexes = (state.draft?.changes.sessions ?? [])
-        .filter((session) => Object.keys(session).some((key) => key !== "sessionIndex" && key !== "serviceDate"))
-        .map((session) => session.sessionIndex);
+    const changedSessionIndexes = new Set<number>();
+    for (const change of state.draft?.changes.sessions ?? []) {
+        const sourceSession = makeSession(change.sessionIndex, plannedDates[change.sessionIndex - 1]);
+        for (const [key, value] of Object.entries(change)) {
+            if (key === "sessionIndex" || key === "serviceDate") continue;
+            if (stableValue(sourceSession[key]) !== stableValue(value)) {
+                changedSessionIndexes.add(change.sessionIndex);
+                break;
+            }
+        }
+    }
+    for (const entry of after) {
+        if (entry.serviceDate !== plannedDates[entry.sessionIndex - 1]) changedSessionIndexes.add(entry.sessionIndex);
+    }
     return {
         previewId: "preview-phase6-1",
         draftId: DRAFT_ID,
@@ -346,7 +367,7 @@ function previewFor(state: DraftState): Record<string, unknown> {
         }],
         contentChanges: {
             headerChanged: Boolean(state.draft?.changes.header),
-            changedSessionIndexes: [...new Set(changedSessionIndexes)],
+            changedSessionIndexes: [...changedSessionIndexes].sort((left, right) => left - right),
         },
         impactedAssignments: ["assignment-phase6"],
         impactedAssignmentDetails: [
@@ -461,7 +482,7 @@ async function installMocks(page: Page, options: MockOptions = {}): Promise<Mock
             return json(route, 200, { ok: true });
         }
         if (pathname === `/api/admin/service-records/client/${CLIENT_ID}/editor` && method === "GET") {
-            const overview = { ...makeOverview(), adminEditConfirmedAtBySession };
+            const overview: Record<string, unknown> = { ...makeOverview(), adminEditConfirmedAtBySession };
             const record = overview.record as { sessions: Record<string, unknown>[] };
             record.sessions = record.sessions.map((session) => {
                 const change = confirmedChanges.sessions?.find((entry) => entry.sessionIndex === session.sessionIndex);
@@ -696,6 +717,24 @@ test("mock draft fold uses effective dates and shifts following sessions by defa
         { sessionIndex: 12, serviceDate: "2026-07-20" },
         { sessionIndex: 13, serviceDate: "2026-07-23" },
     ]);
+    const kept = foldDraftUpdate(batch, {
+        dateMove: { sessionIndex: 1, toDate: "2026-07-01" },
+    });
+    expect(kept.sessions?.[0], "A: a keep-move still rewrites the unchanged first session").toEqual({
+        sessionIndex: 1,
+        serviceDate: "2026-07-01",
+    });
+    expect.soft(previewFor(makeDraftState(kept)).contentChanges, "A: unchanged session 1 is absent from the preview").toEqual({
+        headerChanged: false,
+        changedSessionIndexes: [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13],
+    });
+    const restored = foldDraftUpdate(kept, {
+        dateMove: { sessionIndex: 2, toDate: "2026-07-02" },
+    });
+    expect.soft(previewFor(makeDraftState(restored)).contentChanges, "A: dates restored to planned are absent too").toEqual({
+        headerChanged: false,
+        changedSessionIndexes: [13],
+    });
 
     const defaultShift = foldDraftUpdate({}, {
         dateMove: { sessionIndex: 2, toDate: "2026-07-03" },
@@ -714,10 +753,41 @@ test("mock draft fold uses effective dates and shifts following sessions by defa
         { sessionIndex: 12, serviceDate: "2026-07-20" },
         { sessionIndex: 13, serviceDate: "2026-07-21" },
     ]);
-    expect(previewFor(makeDraftState(defaultShift)).contentChanges).toEqual({
+    expect(previewFor(makeDraftState(defaultShift)).contentChanges, "B: date-only changes count every moved session").toEqual({
+        headerChanged: false,
+        changedSessionIndexes: [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13],
+    });
+
+    const unchangedContent = foldDraftUpdate({}, {
+        changes: { sessions: [{
+            sessionIndex: 2,
+            answers: Object.fromEntries(Object.entries(answers).reverse()),
+            etcService: "",
+            notes: "",
+            paymentConfirmed: true,
+        }] },
+    });
+    expect(previewFor(makeDraftState(unchangedContent)).contentChanges, "equal content ignores object key order").toEqual({
         headerChanged: false,
         changedSessionIndexes: [],
     });
+    const mixedChanges = foldDraftUpdate(defaultShift, {
+        changes: { sessions: [{ sessionIndex: 13, notes: "QA-last" }, { sessionIndex: 1, notes: "QA-first" }] },
+    });
+    expect(previewFor(makeDraftState(mixedChanges)).contentChanges, "content and date changes form one sorted union").toEqual({
+        headerChanged: false,
+        changedSessionIndexes: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13],
+    });
+
+    const mergedAnswers = foldDraftUpdate({
+        sessions: [{ sessionIndex: 2, answers: { sitzBath: "미실시", details: { old: true } } }],
+    }, {
+        changes: { sessions: [{ sessionIndex: 2, answers: { temperature_temp: "36.7", details: { replacement: true } } }] },
+    });
+    expect(mergedAnswers.sessions, "no-move answers merge per key and replace nested values").toEqual([{
+        sessionIndex: 2,
+        answers: { sitzBath: "미실시", temperature_temp: "36.7", details: { replacement: true } },
+    }]);
 });
 
 test("session review retains all fields and dates and writes only after confirmation", async ({ page }, testInfo: TestInfo) => {
