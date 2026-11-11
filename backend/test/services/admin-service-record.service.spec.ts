@@ -1,5 +1,6 @@
 import { ConflictException, ForbiddenException, NotFoundException } from "@nestjs/common";
 import { AdminServiceRecordService } from "application/services/admin-service-record.service";
+import { serviceRecordSignatureFingerprint } from "application/utils/service-record-signature-fingerprint";
 import { MESSAGE_AUTOMATION_PARENT_DISABLED_REASON } from "application/services/message-automation-activation.service";
 import { MessageTriggerService } from "application/services/message-trigger.service";
 import { ServiceRecordLinkService } from "application/services/service-record-link.service";
@@ -361,6 +362,20 @@ describe("AdminServiceRecordService", () => {
             expect(repository.listRevisionsForChanges).toHaveBeenCalledTimes(1);
             expect(repository.listRevisionsForChanges).toHaveBeenCalledWith("branch-1", 100);
             expect(service.getClientOverview).toHaveBeenCalledWith("branch-1", 100, { includeSignatures: true });
+        });
+
+        it("uses projected fingerprints to include only sessions whose signature changed", async () => {
+            const fingerprint = serviceRecordSignatureFingerprint("data:image/png;base64,original");
+            const before = [1, 2].map((sessionIndex) => ({ sessionIndex, clientSignatureFingerprint: fingerprint }));
+            const { service } = createEditor([{
+                id: "projected-revision", revisionNumber: 1, confirmedAt: new Date(t1), formVersionAtConfirm: 1,
+                beforeSnapshot: { sessions: before },
+                payload: { sessions: [before[0]!, { sessionIndex: 2, clientSignatureFingerprint: serviceRecordSignatureFingerprint("data:image/png;base64,replaced") }] },
+                plannedSessions: [],
+            }]);
+            expect((await service.getClientEditor("branch-1", 100)).adminEditConfirmedAtBySession).toEqual([
+                { sessionIndex: 2, confirmedAt: t1 },
+            ]);
         });
 
         it("returns an empty list when there are no revisions", async () => {

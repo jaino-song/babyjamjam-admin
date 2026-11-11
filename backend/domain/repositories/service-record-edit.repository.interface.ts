@@ -584,7 +584,7 @@ export interface IServiceRecordEditRepository {
         & { beforeSnapshot: ServiceRecordEditJsonValue | null }
         | null
     >;
-    /** Read all confirmed revisions' change inputs in one branch/client-scoped query; never drafts. */
+    /** Read branch/client-scoped revisions with before-snapshots, projecting signatures to fingerprints; never drafts. */
     listRevisionsForChanges(branchId: string, clientId: number): Promise<Array<
         Pick<ServiceRecordRevision, "id" | "revisionNumber" | "confirmedAt" | "formVersionAtConfirm" | "payload" | "plannedSessions">
         & { beforeSnapshot: ServiceRecordEditJsonValue | null }

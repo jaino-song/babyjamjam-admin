@@ -75,6 +75,50 @@ describe("service-record revision changes", () => {
         }
     });
 
+    it("omits equal projected fingerprints exactly like full signatures", () => {
+        const fingerprint = serviceRecordSignatureFingerprint(signature);
+        const before = { sessions: [{ ...row, clientSignatureFingerprint: fingerprint }] };
+        const projected = revision(before, { sessions: [{ ...row, clientSignatureFingerprint: fingerprint }] });
+        expect(projected.sessions).toEqual([]);
+        expect(projected).toEqual(revision(before, { sessions: [{ ...row, clientSignature: signature }] }));
+    });
+
+    it("reports replaced projected fingerprints exactly like full signatures", () => {
+        const before = { sessions: [{ ...row, clientSignatureFingerprint: serviceRecordSignatureFingerprint(signature) }] };
+        const replacement = `${signature}NEW`;
+        const projected = revision(before, { sessions: [{ ...row, clientSignatureFingerprint: serviceRecordSignatureFingerprint(replacement) }] });
+        expect(projected.sessions).toEqual([{
+            sessionIndex: 1, kind: "changed", serviceDateBefore: row.serviceDate, serviceDateAfter: row.serviceDate,
+            changes: [{ path: "session.clientSignature", before: "present", after: "replaced" }],
+        }]);
+        expect(projected).toEqual(revision(before, { sessions: [{ ...row, clientSignature: replacement }] }));
+    });
+
+    it("reports a null projected fingerprint as an absent signature", () => {
+        const before = { sessions: [{ ...row, clientSignatureFingerprint: serviceRecordSignatureFingerprint(signature) }] };
+        expect(revision(before, { sessions: [{ ...row, clientSignatureFingerprint: null }] }).sessions[0]?.changes).toEqual([
+            { path: "session.clientSignature", before: "present", after: "absent" },
+        ]);
+    });
+
+    it.each<Record<string, Json>>([
+        {}, { clientSignature: "" }, { clientSignature: null }, { clientSignature: 123 },
+        { clientSignature: false }, { clientSignature: { image: signature } },
+        { clientSignatureFingerprint: null }, { clientSignatureFingerprint: 123 },
+    ])("treats absent, empty or non-string signatures as null (%j)", (signatureFields) => {
+        const before = { sessions: [{ ...row, clientSignatureFingerprint: null }] };
+        expect(revision(before, { sessions: [{ ...row, ...signatureFields }] }).sessions).toEqual([]);
+    });
+
+    it("hashes the signature when both the signature and a mismatching fingerprint are present", () => {
+        const fingerprint = serviceRecordSignatureFingerprint(signature);
+        const before = { sessions: [{ ...row, clientSignatureFingerprint: fingerprint }] };
+        expect(revision(before, { sessions: [{ ...row, clientSignature: signature, clientSignatureFingerprint: "mismatch" }] }).sessions).toEqual([]);
+        expect(revision(before, { sessions: [{ ...row, clientSignature: null, clientSignatureFingerprint: fingerprint }] }).sessions[0]?.changes).toEqual([
+            { path: "session.clientSignature", before: "present", after: "absent" },
+        ]);
+    });
+
     it("compares employee IDs even when names match and ignores name-only changes", () => {
         expect(revision({ sessions: [row] }, { sessions: [{ ...row, employeeId: 8 }] }).sessions[0]?.changes).toEqual([{ path: "session.employee", before: "A", after: "A" }]);
         expect(revision({ sessions: [row] }, { sessions: [{ ...row, employeeNameSnapshot: "renamed" }] }).sessions).toEqual([]);
