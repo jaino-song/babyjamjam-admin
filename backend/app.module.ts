@@ -1,4 +1,6 @@
 import { Module } from "@nestjs/common";
+import { APP_GUARD } from "@nestjs/core";
+import { JwtGuard } from "./infrastructure/auth/jwt.guard";
 import { JwtModule } from "@nestjs/jwt";
 import { JwtStrategy } from "./infrastructure/auth/jwt.strategy";
 import { AuthController } from "interface/controllers/auth.controller";
@@ -40,7 +42,10 @@ import { PrismaService } from "infrastructure/database/prisma.service";
         AreaTemplateModule,
     ],
     controllers: [AuthController, EformsignController],
-    providers: [AuthService, EformsignService, KakaoStrategy, JwtStrategy, PrismaService],
+    providers: [
+        AuthService, EformsignService, KakaoStrategy, JwtStrategy, PrismaService,
+        { provide: APP_GUARD, useClass: JwtGuard },
+    ],
 })
 export class AppModule {}
 

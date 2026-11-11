@@ -1,13 +1,18 @@
-import { Controller, Post, Body, Get, Query, Patch, Delete } from "@nestjs/common";
+import { Controller, Post, Body, Get, Query, Patch, Delete, Req, ForbiddenException } from "@nestjs/common";
 import { UserService } from "application/services/user.service";
 import { CreateUserDto, UpdateUserDto } from "../dto/user.dto";
+
+type AuthenticatedRequest = { user?: { userId: string; role: string } };
 
 @Controller("users")
 export class UserController {
     constructor(private readonly userService: UserService) {}
 
     @Post()
-    create(@Body() createUserDto: CreateUserDto) {
+    create(@Body() createUserDto: CreateUserDto, @Req() req: AuthenticatedRequest) {
+        if (req.user?.role !== "owner") {
+            throw new ForbiddenException();
+        }
         return this.userService.create(createUserDto);
     }
 
@@ -22,7 +27,10 @@ export class UserController {
     }
     
     @Patch()
-    update(@Query("id") id: string, @Body() updateUserDto: UpdateUserDto) {
+    update(@Query("id") id: string, @Body() updateUserDto: UpdateUserDto, @Req() req: AuthenticatedRequest) {
+        if (req.user?.role !== "owner") {
+            throw new ForbiddenException();
+        }
         return this.userService.update(id, {
             name: updateUserDto.name ?? undefined,
             email: updateUserDto.email ?? undefined,
@@ -32,7 +40,10 @@ export class UserController {
     }
 
     @Delete()
-    delete(@Query("id") id: string) {
+    delete(@Query("id") id: string, @Req() req: AuthenticatedRequest) {
+        if (req.user?.role !== "owner") {
+            throw new ForbiddenException();
+        }
         return this.userService.delete(id);
     }
 }

@@ -3,6 +3,7 @@ import { Response } from "express";
 import { AuthGuard } from "@nestjs/passport";
 import { AuthService } from "../../application/services/auth.service";
 import { JwtGuard } from "../../infrastructure/auth/jwt.guard";
+import { Public } from "../../infrastructure/auth/public.decorator";
 import { PrismaService } from "../../infrastructure/database/prisma.service";
 import { TokenExchangeDto } from "interface/dto/token-exchange.dto";
 
@@ -14,12 +15,14 @@ export class AuthController {
     ) { }
 
     @Get("kakao")
+    @Public()
     @UseGuards(AuthGuard("kakao"))
     async kakaoLogin() {
         // Redirects user to Kakao login page
     }
 
     @Get("kakao/callback")
+    @Public()
     @UseGuards(AuthGuard("kakao"))
     async kakaoCallback(@Req() req: any, @Res() res: Response) {
         const tokens = await this.authService.validateKakaoUser(req.user);
@@ -52,6 +55,7 @@ export class AuthController {
     }
 
     @Post("token")
+    @Public()
     async exchangeToken(@Body() body: TokenExchangeDto) {
         const tokens = await this.authService.exchangeCodeForTokens(body.code);
         return tokens;

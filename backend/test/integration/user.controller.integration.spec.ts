@@ -1,5 +1,6 @@
 import { Test, TestingModule } from "@nestjs/testing";
-import { INestApplication, ValidationPipe } from "@nestjs/common";
+import { ExecutionContext, INestApplication, ValidationPipe } from "@nestjs/common";
+import { APP_GUARD } from "@nestjs/core";
 import request from "supertest";
 import { UserController } from "interface/controllers/user.controller";
 import { UserService } from "application/services/user.service";
@@ -47,6 +48,15 @@ describe("UserController (Integration)", () => {
         const moduleFixture: TestingModule = await Test.createTestingModule({
             controllers: [UserController],
             providers: [
+                {
+                    provide: APP_GUARD,
+                    useValue: {
+                        canActivate: (ctx: ExecutionContext) => {
+                            ctx.switchToHttp().getRequest().user = { userId: "owner-id", role: "owner" };
+                            return true;
+                        },
+                    },
+                },
                 {
                     provide: UserService,
                     useValue: mockUserService,
