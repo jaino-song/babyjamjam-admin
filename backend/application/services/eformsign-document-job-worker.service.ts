@@ -1131,7 +1131,7 @@ export class EformsignDocumentJobWorkerService {
             const persisted = fence
                 ? persistedFenceStep(fence, observed)
                 : observed ?? "processing";
-            void this.repository.updateProgress(jobId, jobLeaseToken, persisted, new Date()).catch(() => {
+            void this.repository.updateProgress(jobId, jobLeaseToken, persisted, new Date(), observed).catch(() => {
                 this.logger.warn(`Eformsign document job ${jobId} heartbeat failed`);
             });
         }, HEARTBEAT_INTERVAL_MS);
@@ -1150,7 +1150,7 @@ export class EformsignDocumentJobWorkerService {
         // to an ordinary progress step; a latched `creating`/`sent` stays put
         // through every later step.
         const persistedStep = dispatchFence ? persistedFenceStep(dispatchFence, step) : step;
-        const updated = await this.repository.updateProgress(jobId, leaseToken, persistedStep, new Date());
+        const updated = await this.repository.updateProgress(jobId, leaseToken, persistedStep, new Date(), step);
         if (!updated) {
             throw new Error("EFORMSIGN_DOCUMENT_JOB_LEASE_LOST");
         }

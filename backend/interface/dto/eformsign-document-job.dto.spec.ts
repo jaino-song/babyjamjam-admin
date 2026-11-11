@@ -11,7 +11,7 @@ const job = (overrides: Partial<EformsignDocumentJobProps> = {}): EformsignDocum
         jobType: "create_document", source: "staff", status: "processing",
         requestKey: "contract-create-1", activeKey: "create:branch-a:7",
         payload: { clientId: 7, contractData: { customerName: "고객" } },
-        payloadFingerprint: "private-fingerprint", progressStep: "preparing", attempts: 1,
+        payloadFingerprint: "private-fingerprint", progressDetail: null, progressStep: "preparing", attempts: 1,
         nextAttemptAt: new Date("2026-11-03T00:00:00.000Z"), heartbeatAt: null,
         leaseToken: "private-lease", autoFinalizeOutcomeRecordedAt: null,
         autoFinalizeOutcomeAttempts: null, startedAt: null, completedAt: null,
@@ -170,5 +170,15 @@ describe("toEformsignDocumentJobResponse display projection", () => {
             expect(response).not.toHaveProperty(key);
         }
         expect(JSON.stringify(response)).not.toMatch(/private-|staff-private|1793664600000/);
+    });
+});
+
+describe("document job progress detail", () => {
+    it.each(["client-started", "info-inserted", "creating", "sent"])("exposes display stage %s while masking a manual claim", progressDetail => {
+        expect(toEformsignDocumentJobResponse(job({ progressDetail, progressStep: "manual_in_progress:private-user:1790000000000" })))
+            .toMatchObject({ progressDetail, progressStep: "manual_in_progress" });
+    });
+    it.each([null, "unknown", "dispatch_authorized", "manual_in_progress:private-user:1790000000000", ""])("masks invalid display stage %s", progressDetail => {
+        expect(toEformsignDocumentJobResponse(job({ progressDetail })).progressDetail).toBeNull();
     });
 });

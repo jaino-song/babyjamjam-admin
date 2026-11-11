@@ -46,5 +46,6 @@ export interface IEformsignContractRecoveryRepository {
     recordDraftCandidate(claim: ContractRecoveryClaim, intentId: string, documentId: string): Promise<void>;
     bindDocument(claim: ContractRecoveryClaim, evidence: ContractDocumentEvidence, draftIntentId?: string): Promise<ContractRecoveryState>;
     expose(claim: ContractRecoveryClaim, evidence: ContractDocumentEvidence): Promise<boolean>;
+    reexposeHuman(claim: ContractRecoveryClaim, evidence: ContractDocumentEvidence): Promise<void>;
     completeManual(claim: ContractRecoveryClaim, evidence: ContractDocumentEvidence): Promise<void>;
 }
