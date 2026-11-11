@@ -77089,6 +77089,213 @@
       "review_task": "pr923-approved04-error-intake (independent review pending)",
       "spec_mapping_status": "mapped-em-v1",
       "spec_mapping_note": "Specific approved04 structured 409 compatibility exception, not a registered Problem Details contract. NOT_APPLIED describes pre-service semantics, not a serialized outcome field. Existing regression paths are evidence pointers; this inventory update does not claim those integration tests were executed or an independent review passed."
+    },
+    {
+      "id": "owner-e3c713463bfa",
+      "path": "backend/infrastructure/database/utils/eformsign-contract-authority.ts",
+      "root": "backend/infrastructure/",
+      "classification": "approved-exception",
+      "reason": "Document-jobs manual-recovery landing (jobs-modal wave 1, mac/jobs-manual-iframe-runtime squashed in 87b25eb9b). AuthorityConflictError extends ConflictException with the code-only body { code: \"REQUEST_CONFLICT\" } (catalog code, no message, IDs or input values). It is thrown only by the contract-authority row guards when a reservation, generation, phase, claim epoch or bound document does not match, so a stale or concurrent writer is refused before any write. The intake gate matches the exception-class import/throw even for this structured body. Registration approves only this guard class; it does not reclassify other errors, exempt a root or change any scanner, suppression or debt cap.",
+      "seams": [
+        {
+          "line": 2,
+          "kinds": [
+            "raw_http_exception"
+          ]
+        },
+        {
+          "line": 23,
+          "kinds": [
+            "raw_http_exception"
+          ]
+        },
+        {
+          "line": 44,
+          "kinds": [
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 48,
+          "kinds": [
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 54,
+          "kinds": [
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 62,
+          "kinds": [
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 67,
+          "kinds": [
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 72,
+          "kinds": [
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 80,
+          "kinds": [
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 99,
+          "kinds": [
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 104,
+          "kinds": [
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 110,
+          "kinds": [
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 116,
+          "kinds": [
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 135,
+          "kinds": [
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 137,
+          "kinds": [
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 149,
+          "kinds": [
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 151,
+          "kinds": [
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 160,
+          "kinds": [
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 163,
+          "kinds": [
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 166,
+          "kinds": [
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 177,
+          "kinds": [
+            "throw_or_reject"
+          ]
+        }
+      ],
+      "discovery_task_id": "jobs-modal-wave1-error-intake",
+      "spec_ids": [
+        "EM-CAT-03",
+        "EM-CHANGE-01",
+        "EM-ARCH-01"
+      ],
+      "public_codes": [
+        "REQUEST_CONFLICT"
+      ],
+      "outcome_evidence": "Refusal precedes the write: every throw site sits before the guarded UPDATE/INSERT in the same transaction, so a mismatch leaves the authority row unchanged (NOT_APPLIED).",
+      "consumer_paths": [
+        "contract creation / manual recovery authority writes (eformsign document jobs)"
+      ],
+      "test_evidence": [
+        "backend/infrastructure/database/utils/eformsign-contract-authority.spec.ts",
+        "backend/infrastructure/database/utils/eformsign-contract-authority-writers.spec.ts",
+        "backend/infrastructure/database/utils/eformsign-contract-authority.pg.spec.ts"
+      ],
+      "followup_task": null,
+      "review_task": "jobs-modal-wave1 integration (claude-reviewer PASS on 87b25eb9b; rows added by Main at integration)",
+      "spec_mapping_status": "mapped-em-v1",
+      "spec_mapping_note": "Code-only structured body with an existing catalog code; exception class kept for the NestJS status mapping."
+    },
+    {
+      "id": "owner-4595f907d065",
+      "path": "backend/interface/dto/eformsign-document-job-manual-recovery.dto.ts",
+      "root": "backend/interface/",
+      "classification": "approved-exception",
+      "reason": "Document-jobs manual-recovery landing (jobs-modal wave 1, 87b25eb9b). The open/verify body parsers throw BadRequestException with the code-only body { code: \"VALIDATION_FAILED\" } (catalog code, no message or echoed input) when the request body is not empty (open) or not exactly { claimEpoch: <positive int64 string> } (verify). The intake gate matches the exception-class import/throw even for this structured body. Registration approves only these two parsers; it does not exempt a root or change any scanner, suppression or debt cap.",
+      "seams": [
+        {
+          "line": 1,
+          "kinds": [
+            "raw_http_exception"
+          ]
+        },
+        {
+          "line": 11,
+          "kinds": [
+            "raw_http_exception",
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 19,
+          "kinds": [
+            "raw_http_exception",
+            "throw_or_reject"
+          ]
+        }
+      ],
+      "discovery_task_id": "jobs-modal-wave1-error-intake",
+      "spec_ids": [
+        "EM-CAT-03",
+        "EM-CHANGE-01",
+        "EM-ARCH-01"
+      ],
+      "public_codes": [
+        "VALIDATION_FAILED"
+      ],
+      "outcome_evidence": "Validation runs before the controller calls the manual-recovery service, so a malformed body reaches no service call (NOT_APPLIED).",
+      "consumer_paths": [
+        "/eformsign-docs/jobs/:jobId/recovery/open",
+        "/eformsign-docs/jobs/:jobId/recovery/verify"
+      ],
+      "test_evidence": [
+        "backend/test/integration/eformsign-document-job-manual-recovery.controller.spec.ts"
+      ],
+      "followup_task": null,
+      "review_task": "jobs-modal-wave1 integration (claude-reviewer PASS on 87b25eb9b; rows added by Main at integration)",
+      "spec_mapping_status": "mapped-em-v1",
+      "spec_mapping_note": "Code-only structured body with an existing catalog code; exception class kept for the NestJS status mapping."
     }
   ]
 }
