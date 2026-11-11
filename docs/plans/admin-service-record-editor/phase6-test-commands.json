@@ -79,7 +79,7 @@
       "src/components/app/clients/__tests__/ClientServiceRecordsTab.test.tsx",
       "src/components/app/contracts/__tests__/ContractDocumentPreviewModal.test.tsx",
       "src/components/app/service-record/ServiceRecordAdminWizard.test.tsx",
-      "src/components/app/service-record/ServiceRecordDateSelectionDialog.test.tsx",
+      "src/components/app/ui/service-record/ServiceDateSheet.test.tsx",
       "src/components/app/service-record/ServiceRecordEditPreviewDialog.test.tsx",
       "src/features/service-records/api/admin-service-record-edit.api.test.ts",
       "src/features/service-records/api/service-records.api.revision.test.ts",

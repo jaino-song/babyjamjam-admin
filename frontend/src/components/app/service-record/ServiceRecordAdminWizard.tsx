@@ -716,6 +716,7 @@ export function ServiceRecordAdminWizard({
         const state = await adminServiceRecordEditApi.getDraft(clientId);
         if (!sameSource(before, state)) throw new Error("기록이 조회 중 변경되었습니다. 다시 불러와 주세요.");
         setOverview(fresh);
+        setPageConfirmedSessionIndexes(new Set());
         setSourceIdentity(state);
         knownVersion.current = Math.max(knownVersion.current, state.sourceCaseVersion);
         setPreview(null);
@@ -999,10 +1000,7 @@ export function ServiceRecordAdminWizard({
         setBusy(true);
         setError(null);
         confirmInFlight.current = true;
-        const confirmedSessionIndexes = new Set([
-            ...changedSessionIndexes,
-            ...(preview?.contentChanges.changedSessionIndexes ?? []),
-        ]);
+        const confirmedSessionIndexes = new Set(preview?.contentChanges.changedSessionIndexes ?? []);
         let confirmedVersion: number | null = null;
         try {
             const result = await adminServiceRecordEditApi.confirmDraft(request.draftId, request.draftVersion, request.previewId, request.idempotencyKey);
@@ -1215,12 +1213,11 @@ export function ServiceRecordAdminWizard({
                                 {busy ? "확인 중…" : changed ? "수정 확인" : "확인"}
                             </Button>
                         ),
-                        // Inline in the date chip and in each day card, so it stays a plain span (the ServiceDateDisplay part is a block with its own chip).
-                        serviceDateDisplay: ({ "data-component": component, sessionIndex, serviceDate }) => {
-                            const original = baseView.plannedSessions.find((item) => item.sessionIndex === sessionIndex)?.originalDate;
-                            return <span data-component={component} data-slot="date-display" className="inline-flex flex-wrap items-baseline justify-center gap-x-1 gap-y-px align-baseline">
+                        // Operator decision 2026-11-11: as in the mockup, the day card and the date chip show only the served date (no original-date line).
+                        // A pending move shows old → new on the review page instead. Stays a plain inline span for both uses.
+                        serviceDateDisplay: ({ "data-component": component, serviceDate }) => {
+                            return <span data-component={component} data-slot="date-display">
                                 <span data-slot="revised-date" className="whitespace-nowrap">{formatShortDate(dateOnly(serviceDate))}</span>
-                                {original && original !== dateOnly(serviceDate) ? <span data-slot="original-date" className="whitespace-nowrap font-medium text-v3-text-muted">원본 {formatShortDate(original)}</span> : null}
                             </span>;
                         },
                         serviceDateEditor: ({ "data-component": component, disabled, onOpen }) => (

@@ -618,6 +618,54 @@
   animation: sheet-slide-out-to-right 300ms ease-out;
 }
 
+@keyframes sheet-slide-in-from-bottom {
+  from {
+    transform: translateY(calc(100% + 16px));
+  }
+
+  to {
+    transform: translateY(0);
+  }
+}
+
+@keyframes sheet-slide-out-to-bottom {
+  from {
+    transform: translateY(0);
+  }
+
+  to {
+    transform: translateY(calc(100% + 16px));
+  }
+}
+
+/* Bottom sheets match the mobile detail page (.nav-page.detail in redesign.css).
+   [data-slot="sheet"] is the guide's override of the content data-slot.
+   Shadow and scrim colour use :where() (zero specificity) so a component's own CSS module
+   (e.g. the guide's `.sheet { box-shadow: none }`) still wins; they still beat Tailwind's layered utilities. */
+:where(:is([data-slot="sheet-content"], [data-slot="sheet"])[data-side="bottom"]) {
+  box-shadow: 0 -10px 40px rgba(0, 0, 0, 0.22);
+}
+
+:is([data-slot="sheet-content"], [data-slot="sheet"])[data-side="bottom"][data-state="open"] {
+  animation: sheet-slide-in-from-bottom var(--duration-emphasis) var(--ease-spatial);
+}
+
+:is([data-slot="sheet-content"], [data-slot="sheet"])[data-side="bottom"][data-state="closed"] {
+  animation: sheet-slide-out-to-bottom var(--duration-emphasis) var(--ease-spatial);
+}
+
+:where([data-slot="sheet-overlay"]:has(+ :is([data-slot="sheet-content"], [data-slot="sheet"])[data-side="bottom"])) {
+  background-color: rgb(0 0 0 / 0.45);
+}
+
+[data-slot="sheet-overlay"][data-state="open"]:has(+ :is([data-slot="sheet-content"], [data-slot="sheet"])[data-side="bottom"]) {
+  animation: sheet-fade-in var(--duration-emphasis) ease;
+}
+
+[data-slot="sheet-overlay"][data-state="closed"]:has(+ :is([data-slot="sheet-content"], [data-slot="sheet"])[data-side="bottom"]) {
+  animation: sheet-fade-out var(--duration-emphasis) ease;
+}
+
 /* V3 Animations */
 @keyframes v3-pop-in {
   0% {

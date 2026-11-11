@@ -23,6 +23,7 @@ describe("initial calendar month", () => {
     it("opens an empty session on today's month within the selectable window", () => {
         render(<ServiceDateSheet {...props({ context, day: 12 })} />);
         expect(screen.getByText("2026년 11월")).toBeInTheDocument();
+        expect(screen.queryByText(/고를 수 있는 기간/)).toBeNull();
         expect(screen.getByText("서비스 기간: 10.22(목) ~ 11.11(수)")).toBeInTheDocument();
     });
 
@@ -128,6 +129,34 @@ describe("today and stored-date labels", () => {
     });
 });
 
+describe("month navigation labels and sheet structure", () => {
+    it("shows the adjacent month numbers in November", () => {
+        render(<ServiceDateSheet {...props()} />);
+        expect(screen.getByText("2026년 11월")).toBeInTheDocument();
+        expect(screen.getByRole("button", { name: "이전 달 10월" })).toHaveTextContent(/^10월$/);
+        expect(screen.getByRole("button", { name: "다음 달 12월" })).toHaveTextContent(/^12월$/);
+    });
+
+    it("labels January without a year when viewing December", () => {
+        const context = { ...props().context, endDate: "2027-01-15" };
+        render(<ServiceDateSheet {...props({ context, value: "2026-12-15" })} />);
+        expect(screen.getByText("2026년 12월")).toBeInTheDocument();
+        expect(screen.getByRole("button", { name: "이전 달 11월" })).toHaveTextContent(/^11월$/);
+        const next = screen.getByRole("button", { name: "다음 달 1월" });
+        expect(next).toHaveTextContent(/^1월$/);
+        expect(next).toBeEnabled();
+        fireEvent.click(next);
+        expect(screen.getByText("2027년 1월")).toBeInTheDocument();
+    });
+
+    it("renders the bottom sheet directly after its overlay", () => {
+        render(<ServiceDateSheet {...props()} />);
+        const dialog = screen.getByRole("dialog");
+        expect(dialog).toHaveAttribute("data-side", "bottom");
+        expect(dialog.previousElementSibling).toHaveAttribute("data-slot", "sheet-overlay");
+    });
+});
+
 describe("service-period borders", () => {
     const context = {
         totalSessions: 12, startDate: "2026-10-22", endDate: "2026-11-11", header: {},
@@ -178,7 +207,7 @@ describe("service-period borders", () => {
 
     it("includes the first period day while leaving the preceding hatched margin unchanged", () => {
         render(<ServiceDateSheet {...props({ context, day: 12 })} />);
-        fireEvent.click(screen.getByRole("button", { name: "이전 달" }));
+        fireEvent.click(screen.getByRole("button", { name: "이전 달 10월" }));
         const first = screen.getByRole("button", { name: "2026.10.22(목) 1회차" });
         expect(first).toHaveAttribute("data-in-period", "true");
         expect(first).toHaveClass(hatch, "border-v3-primary!", "border-[1.5px]");
@@ -309,15 +338,24 @@ it("shows 현재 and other session labels, refuses order clicks with the exact f
     fireEvent.click(screen.getByRole("button", { name: "2026.11.05(목)" }));
     expect(select).toBeEnabled();
     fireEvent.click(select);
+    expect(p.onSelect).toHaveBeenCalledTimes(1);
     expect(p.onSelect).toHaveBeenCalledWith("2026-11-05");
+});
+
+it("closes once from the header without applying a selection", () => {
+    const p = props();
+    render(<ServiceDateSheet {...p} />);
+    fireEvent.click(screen.getByRole("button", { name: "닫기" }));
+    expect(p.onClose).toHaveBeenCalledTimes(1);
+    expect(p.onSelect).not.toHaveBeenCalled();
 });
 
 it("limits month navigation to window months and cancels without applying a selection", () => {
     const p = props();
     render(<ServiceDateSheet {...p} />);
-    expect(screen.getByRole("button", { name: "다음 달" })).toBeDisabled();
-    fireEvent.click(screen.getByRole("button", { name: "이전 달" }));
-    expect(screen.getByRole("button", { name: "이전 달" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "다음 달 12월" })).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "이전 달 10월" }));
+    expect(screen.getByRole("button", { name: "이전 달 9월" })).toBeDisabled();
     fireEvent.click(screen.getByRole("button", { name: "2026.10.26(월)" }));
     fireEvent.click(screen.getByRole("button", { name: "취소" }));
     expect(p.onClose).toHaveBeenCalledTimes(1);
@@ -337,6 +375,7 @@ it("opens with the pending pick selected and lets it return to the stored 현재
     expect(current).toHaveAttribute("aria-pressed", "true");
     expect(screen.getByRole("button", { name: "선택" })).toBeEnabled();
     fireEvent.click(screen.getByRole("button", { name: "선택" }));
+    expect(p.onSelect).toHaveBeenCalledTimes(1);
     expect(p.onSelect).toHaveBeenCalledWith("2026-11-04");
 });
 
@@ -379,10 +418,10 @@ it("updates the row height cap for five- and six-row months when navigating", ()
     expect(grid).toHaveClass("flex-1", "auto-rows-[minmax(2.75rem,1fr)]");
     expect(grid).not.toHaveClass("min-h-0");
     expect(grid).toHaveStyle({ maxHeight: "calc(5 * 4.5rem + 4 * 0.25rem)" });
-    for (let index = 0; index < 3; index++) fireEvent.click(screen.getByRole("button", { name: "이전 달" }));
+    for (let index = 0; index < 3; index++) fireEvent.click(screen.getByRole("button", { name: /^이전 달/ }));
     expect(screen.getByText("2026년 8월")).toBeInTheDocument();
     expect(grid).toHaveStyle({ maxHeight: "calc(6 * 4.5rem + 5 * 0.25rem)" });
-    for (let index = 0; index < 3; index++) fireEvent.click(screen.getByRole("button", { name: "다음 달" }));
+    for (let index = 0; index < 3; index++) fireEvent.click(screen.getByRole("button", { name: /^다음 달/ }));
     expect(screen.getByText("2026년 11월")).toBeInTheDocument();
     expect(grid).toHaveStyle({ maxHeight: "calc(5 * 4.5rem + 4 * 0.25rem)" });
 });
