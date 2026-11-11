@@ -1215,8 +1215,8 @@ export function ServiceRecordAdminWizard({
                                 {busy ? "확인 중…" : changed ? "수정 확인" : "확인"}
                             </Button>
                         ),
-                        // 운영자 결정(2026-11-11): 목업처럼 카드·날짜 칩에는 원본 줄 없이 제공일만 표시한다.
-                        // 날짜 이동이 대기 중이면 검토 페이지에서 이전 → 이후를 표시한다. 두 사용처에서 인라인 span을 유지한다.
+                        // Operator decision 2026-11-11: as in the mockup, the day card and the date chip show only the served date (no original-date line).
+                        // A pending move shows old → new on the review page instead. Stays a plain inline span for both uses.
                         serviceDateDisplay: ({ "data-component": component, serviceDate }) => {
                             return <span data-component={component} data-slot="date-display">
                                 <span data-slot="revised-date" className="whitespace-nowrap">{formatShortDate(dateOnly(serviceDate))}</span>
