@@ -247,7 +247,7 @@ export const PriceInfoMessageForm = () => {
               >
                 {Object.values(bankAccountInfos).map((bankAccountInfo: BankAccountInfo) => (
                   <MenuItem key={bankAccountInfo.area} value={bankAccountInfo.area}>
-                    {bankAccountJSON[bankAccountInfo.area as keyof typeof bankAccountJSON].area}
+                    {bankAccountJSON[bankAccountInfo.area as keyof typeof bankAccountJSON]?.area ?? bankAccountInfo.area}
                   </MenuItem>
                 ))}
               </Select>
