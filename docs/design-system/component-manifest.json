@@ -609,6 +609,21 @@
         ]
       },
       {
+        "name": "StaleDataNotice",
+        "layer": "molecule",
+        "import": "@/components/app/ui/StaleDataNotice",
+        "file": "frontend/src/components/app/ui/StaleDataNotice.tsx",
+        "exports": [
+          "StaleDataNotice"
+        ],
+        "replaces": [
+          "hand-written warning Alert or inline text above cached data after a failed background refresh"
+        ],
+        "requiredFor": [
+          "quiet one-line notice (no retry) above data still on screen after a background refresh failed"
+        ]
+      },
+      {
         "name": "TwoButtonModal",
         "layer": "organism",
         "import": "@/components/app/ui/TwoButtonModal",
@@ -2063,6 +2078,21 @@
         ],
         "requiredFor": [
           "in-area failed-to-load state with a retry button (a query that failed after its automatic retries)"
+        ]
+      },
+      {
+        "name": "StaleDataNotice",
+        "layer": "molecule",
+        "import": "@/components/app/ui/StaleDataNotice",
+        "file": "mobile/src/components/app/ui/StaleDataNotice.tsx",
+        "exports": [
+          "StaleDataNotice"
+        ],
+        "replaces": [
+          "hand-written warning Alert or inline text above cached data after a failed background refresh"
+        ],
+        "requiredFor": [
+          "quiet one-line notice (no retry) above data still on screen after a background refresh failed"
         ]
       },
       {

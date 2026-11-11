@@ -58,6 +58,7 @@ import { ClientDetailPanel } from "@/components/app/clients/ClientDetailPanel";
 import { getClientDisplayLabel } from "@/components/app/clients/client-display";
 import { TwoButtonModal } from "@/components/app/ui/TwoButtonModal";
 import { QueryErrorState } from "@/components/app/ui/QueryErrorState";
+import { StaleDataNotice } from "@/components/app/ui/StaleDataNotice";
 import { AutomationStatusNotice } from "@/components/app/ui/automation-status-notice";
 import { NotificationOneButtonModal } from "@/components/app/ui/NotificationOneButtonModal";
 import { ClientDetailModal } from "@/components/app/clients/ClientDetailModal";
@@ -690,14 +691,10 @@ export default function ClientsPage() {
         ? debouncedSearchQuery ? `검색 결과 ${matchedTotal}명` : `${matchedTotal}명`
         : undefined;
     const listSubHeader = isDirectoryRefreshError ? (
-        <p
-            role="status"
-            data-component="desktop_clients_sections_section-content_list-section_split-layout_list-panel_cached-data-error"
-            className="flex items-center gap-1.5 text-[13px] text-status-warning-fg"
-        >
-            <AlertTriangle aria-hidden="true" className="h-3.5 w-3.5 shrink-0" />
-            새로 불러오지 못해 최근에 확인된 목록을 표시하고 있어요
-        </p>
+        <StaleDataNotice
+            dataComponent="desktop_clients_sections_section-content_list-section_split-layout_list-panel_cached-data-error"
+            message="새로 불러오지 못해 최근에 확인된 목록을 표시하고 있어요"
+        />
     ) : undefined;
 
     return (
