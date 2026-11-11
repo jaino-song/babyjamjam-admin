@@ -6,6 +6,14 @@ const BASE = "desktop_service-record-admin_wizard_signature";
 const DATA_URI = "data:image/png;base64,iVBORw0KGgo=";
 
 describe("ReadOnlySignature", () => {
+  it("separates the signature with a dashed top border and a 16px label beside the signing date", () => {
+    const { container } = render(<ReadOnlySignature data-component={BASE} value={DATA_URI} message="2026.11.09 서명" messageId="signed-at" />);
+    expect(container.firstElementChild).toHaveClass("border-t", "border-dashed", "pt-[calc(14px*var(--glint-ui-scale,1))]");
+    expect(screen.getByText("산모 서명")).toHaveClass("text-[calc(16px*var(--glint-ui-scale,1))]", "font-semibold");
+    expect(screen.getByText("2026.11.09 서명")).toHaveClass("text-[calc(14px*var(--glint-ui-scale,1))]", "text-v3-text-muted");
+    expect(screen.getByText("산모 서명").parentElement).toContainElement(screen.getByText("2026.11.09 서명"));
+  });
+
   it("shows the saved signature as an image described by the message", () => {
     render(
       <ReadOnlySignature

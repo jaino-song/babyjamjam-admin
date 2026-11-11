@@ -1,5 +1,9 @@
+import { Buffer } from "node:buffer";
+
 import { expect, test, type Page, type Route, type TestInfo } from "@playwright/test";
-import { isBusinessDayKr, KR_BUILTIN_HOLIDAYS } from "../src/lib/date/business-days";
+import { moveServiceRecordSessionDate } from "@babyjamjam/shared/utils/service-record-schedule";
+
+import { KR_BUILTIN_CALENDAR, KR_BUILTIN_HOLIDAYS } from "../src/lib/date/business-days";
 
 const LOCAL_ORIGIN = "http://127.0.0.1:3107";
 const CLIENT_ID = "42";
@@ -73,6 +77,15 @@ type DraftState = {
     sourceFingerprint: string;
 };
 
+type DateMove = { sessionIndex: number; toDate: string; shiftFollowing?: boolean };
+
+type DraftUpdate = {
+    expectedDraftVersion?: number;
+    changes?: Draft["changes"];
+    dateMove?: DateMove;
+    dateMoves?: DateMove[];
+};
+
 /**
  * How the next confirm request fails (it fails once, then confirms normally):
  * - "closed-by-other-tab": 409 without a blockingOperation; the server draft is
@@ -101,6 +114,7 @@ type MockEvidence = {
     assertSafe: () => void;
 };
 
+const CONFIRMED_AT = "2026-09-09T01:02:03.000Z";
 const CONFIRMED_FINGERPRINT = "phase6-confirmed-fingerprint";
 const EVENTS_PATHNAME = "/api/admin/service-records/events";
 
@@ -108,27 +122,12 @@ function clone<T>(value: T): T {
     return JSON.parse(JSON.stringify(value)) as T;
 }
 
-function shiftBusinessDays(isoDate: string, offset: number): string {
-    const current = new Date(`${isoDate}T00:00:00.000Z`);
-    const direction = offset < 0 ? -1 : 1;
-    let remaining = Math.abs(offset);
-    while (remaining > 0) {
-        current.setUTCDate(current.getUTCDate() + direction);
-        if (isBusinessDayKr(current.toISOString().slice(0, 10))) remaining -= 1;
+function stableValue(value: unknown): string | undefined {
+    if (Array.isArray(value)) return `[${value.map(stableValue).join(",")}]`;
+    if (value !== null && typeof value === "object") {
+        return `{${Object.entries(value).sort(([left], [right]) => left.localeCompare(right)).map(([key, item]) => `${JSON.stringify(key)}:${stableValue(item)}`).join(",")}}`;
     }
-    return current.toISOString().slice(0, 10);
-}
-
-function businessDayDistance(from: string, to: string): number {
-    const start = new Date(`${from}T00:00:00.000Z`);
-    const end = new Date(`${to}T00:00:00.000Z`);
-    const direction = start <= end ? 1 : -1;
-    let distance = 0;
-    while (start.toISOString().slice(0, 10) !== to) {
-        start.setUTCDate(start.getUTCDate() + direction);
-        if (isBusinessDayKr(start.toISOString().slice(0, 10))) distance += direction;
-    }
-    return distance;
+    return JSON.stringify(value);
 }
 
 function makeSession(sessionIndex: number, serviceDate: string): Record<string, unknown> {
@@ -241,30 +240,49 @@ function makeEmptyDraftState(): DraftState {
 function mergeChanges(
     current: Draft["changes"],
     incoming: Draft["changes"],
-    dateMove?: { sessionIndex: number; toDate: string; shiftFollowing?: boolean },
+    dateMove?: DateMove,
 ): Draft["changes"] {
     const byIndex = new Map<number, SessionChange>();
-    for (const session of current.sessions ?? []) byIndex.set(session.sessionIndex, clone(session));
-    for (const session of incoming.sessions ?? []) {
+    for (const session of [...(current.sessions ?? []), ...(incoming.sessions ?? [])]) {
+        const content = clone(session);
+        if (dateMove) delete content.serviceDate;
         const previous = byIndex.get(session.sessionIndex);
         byIndex.set(session.sessionIndex, {
             ...(previous ?? { sessionIndex: session.sessionIndex }),
-            ...clone(session),
-            ...(session.answers
-                ? { answers: { ...(previous?.answers ?? {}), ...clone(session.answers) } }
-                : {}),
+            ...content,
         });
     }
     if (dateMove) {
-        const sourceDate = plannedDates[dateMove.sessionIndex - 1];
-        if (sourceDate) {
-            const offset = businessDayDistance(sourceDate, dateMove.toDate);
-            for (let index = dateMove.sessionIndex; index <= plannedDates.length; index += 1) {
-                if (index !== dateMove.sessionIndex && !dateMove.shiftFollowing) break;
-                const previous = byIndex.get(index);
-                byIndex.set(index, {
-                    ...(previous ?? { sessionIndex: index }),
-                    serviceDate: shiftBusinessDays(plannedDates[index - 1], offset),
+        const previousDates = new Map(
+            (current.sessions ?? [])
+                .filter((session) => typeof session.serviceDate === "string")
+                .map((session) => [session.sessionIndex, session.serviceDate as string]),
+        );
+        const effective = plannedDates.map((serviceDate, index) => ({
+            sessionIndex: index + 1,
+            serviceDate: previousDates.get(index + 1) ?? serviceDate,
+            originalDate: serviceDate,
+            assignmentId: "assignment-phase6",
+            scheduleId: 601,
+            employeeId: 501,
+            provenanceVersion: "projection-phase6-1",
+        }));
+        const shifted = moveServiceRecordSessionDate(
+            effective,
+            dateMove.sessionIndex,
+            dateMove.toDate,
+            dateMove.shiftFollowing ?? true,
+            KR_BUILTIN_CALENDAR,
+        );
+        for (const entry of shifted.entries) {
+            if (
+                entry.sessionIndex >= dateMove.sessionIndex
+                || previousDates.has(entry.sessionIndex)
+                || entry.serviceDate !== plannedDates[entry.sessionIndex - 1]
+            ) {
+                byIndex.set(entry.sessionIndex, {
+                    ...(byIndex.get(entry.sessionIndex) ?? { sessionIndex: entry.sessionIndex }),
+                    serviceDate: entry.serviceDate,
                 });
             }
         }
@@ -276,6 +294,21 @@ function mergeChanges(
             : {}),
         ...(sessions.length > 0 ? { sessions } : {}),
     };
+}
+
+/**
+ * Mirrors AdminServiceRecordEditService.updateDraft (:678-690) and the date-move
+ * branch of normalizeServiceRecordEditChanges (policy.ts :1952-2014).
+ * Both content inputs omit serviceDate; only stored overrides feed each move.
+ * This mock does not model server validation/rejection responses (date window,
+ * business-day, ordering, DATE_MOVE_REQUIRED); the shared helper still validates.
+ */
+function foldDraftUpdate(changes: Draft["changes"], patch: DraftUpdate): Draft["changes"] {
+    let folded = changes;
+    for (const [index, move] of (patch.dateMoves ?? [patch.dateMove]).entries()) {
+        folded = mergeChanges(folded, index === 0 ? patch.changes ?? {} : {}, move);
+    }
+    return folded;
 }
 
 function previewFor(state: DraftState): Record<string, unknown> {
@@ -297,9 +330,26 @@ function previewFor(state: DraftState): Record<string, unknown> {
         ...session,
         serviceDate: dateOverrides.get(session.sessionIndex) ?? session.serviceDate,
     }));
-    const changedSessionIndexes = (state.draft?.changes.sessions ?? [])
-        .filter((session) => Object.keys(session).some((key) => key !== "sessionIndex"))
-        .map((session) => session.sessionIndex);
+    const changedSessionIndexes = new Set<number>();
+    for (const change of state.draft?.changes.sessions ?? []) {
+        const sourceSession = makeSession(change.sessionIndex, plannedDates[change.sessionIndex - 1]);
+        for (const [key, value] of Object.entries(change)) {
+            if (key === "sessionIndex" || key === "serviceDate") continue;
+            // Mirrors mergeSparseAnswers: undefined keeps the source; objects merge
+            // shallowly, including null values; non-object patches replace it.
+            if (key === "answers" && value === undefined) continue;
+            const effectiveValue = key === "answers" && value !== null && typeof value === "object" && !Array.isArray(value)
+                ? { ...(sourceSession.answers as Record<string, unknown>), ...value }
+                : value;
+            if (stableValue(sourceSession[key]) !== stableValue(effectiveValue)) {
+                changedSessionIndexes.add(change.sessionIndex);
+                break;
+            }
+        }
+    }
+    for (const entry of after) {
+        if (entry.serviceDate !== plannedDates[entry.sessionIndex - 1]) changedSessionIndexes.add(entry.sessionIndex);
+    }
     return {
         previewId: "preview-phase6-1",
         draftId: DRAFT_ID,
@@ -320,7 +370,7 @@ function previewFor(state: DraftState): Record<string, unknown> {
         }],
         contentChanges: {
             headerChanged: Boolean(state.draft?.changes.header),
-            changedSessionIndexes: [...new Set(changedSessionIndexes)],
+            changedSessionIndexes: [...changedSessionIndexes].sort((left, right) => left - right),
         },
         impactedAssignments: ["assignment-phase6"],
         impactedAssignmentDetails: [
@@ -358,7 +408,7 @@ function confirmResponse(state: DraftState, generationFailure: boolean): Record<
         revisionId: "revision-phase6-1",
         revisionNumber: 1,
         documentStatus: generationFailure ? "capability_unverified" : "waiting_for_completion",
-        confirmedAt: "2026-09-09T01:02:03.000Z",
+        confirmedAt: CONFIRMED_AT,
     };
 }
 
@@ -381,6 +431,7 @@ async function installMocks(page: Page, options: MockOptions = {}): Promise<Mock
     // The app keeps one EventSource open; its request stays pending until a test announces a case change.
     const heldEventStreams: Route[] = [];
     let confirmedChanges: Draft["changes"] = {};
+    let adminEditConfirmedAtBySession: Array<{ sessionIndex: number; confirmedAt: string }> = [];
 
     page.on("request", (request) => {
         const url = new URL(request.url());
@@ -434,7 +485,7 @@ async function installMocks(page: Page, options: MockOptions = {}): Promise<Mock
             return json(route, 200, { ok: true });
         }
         if (pathname === `/api/admin/service-records/client/${CLIENT_ID}/editor` && method === "GET") {
-            const overview = makeOverview();
+            const overview: Record<string, unknown> = { ...makeOverview(), adminEditConfirmedAtBySession };
             const record = overview.record as { sessions: Record<string, unknown>[] };
             record.sessions = record.sessions.map((session) => {
                 const change = confirmedChanges.sessions?.find((entry) => entry.sessionIndex === session.sessionIndex);
@@ -460,11 +511,7 @@ async function installMocks(page: Page, options: MockOptions = {}): Promise<Mock
         }
         if (pathname === `/api/admin/service-records/drafts/${DRAFT_ID}` && method === "PATCH") {
             if (!state.draft) return json(route, 404, { code: "DRAFT_NOT_FOUND" });
-            const patch = (body ?? {}) as {
-                expectedDraftVersion?: number;
-                changes?: Draft["changes"];
-                dateMove?: { sessionIndex: number; toDate: string; shiftFollowing?: boolean };
-            };
+            const patch = (body ?? {}) as DraftUpdate;
             if (patch.expectedDraftVersion !== state.draft.draftVersion) {
                 return json(route, 409, {
                     code: "SERVICE_RECORD_EDIT_DRAFT_CONFLICT",
@@ -472,7 +519,7 @@ async function installMocks(page: Page, options: MockOptions = {}): Promise<Mock
                     sourceChanged: state.sourceChanged,
                 });
             }
-            state.draft.changes = mergeChanges(state.draft.changes, patch.changes ?? {}, patch.dateMove);
+            state.draft.changes = foldDraftUpdate(state.draft.changes, patch);
             state.draft.draftVersion += 1;
             state.draft.updatedAt = "2026-09-09T01:03:00.000Z";
             return json(route, 200, state);
@@ -507,6 +554,7 @@ async function installMocks(page: Page, options: MockOptions = {}): Promise<Mock
             if (!state.draft) return json(route, 404, { code: "DRAFT_NOT_FOUND" });
             const result = confirmResponse(state, generationFailure);
             confirmedChanges = clone(state.draft.changes);
+            adminEditConfirmedAtBySession = [{ sessionIndex: 1, confirmedAt: CONFIRMED_AT }];
             state.draft = null;
             state.sourceCaseVersion = 8;
             state.sourceFingerprint = CONFIRMED_FINGERPRINT;
@@ -595,7 +643,7 @@ async function openEditor(page: Page): Promise<void> {
 
 async function openDay(page: Page, sessionIndex: number): Promise<void> {
     await page.locator('[data-slot="day"]').nth(sessionIndex - 1).click();
-    await expect(page.locator('[data-component="desktop_service-record-admin_wizard_body_day-title"]')).toBeVisible();
+    await expect(page.locator('[data-component="desktop_service-record-admin_wizard_body_day-title"]')).toHaveText(`${sessionIndex}회차 기록`);
 }
 
 
@@ -603,12 +651,11 @@ async function goToServicePage(page: Page): Promise<void> {
     await page.locator('[data-slot="review"] [data-slot="sec-edit"]').nth(2).click();
 }
 
-async function applyDateMove(page: Page, day: string): Promise<void> {
-    await page.locator('[data-component$="_body_date-edit"]').click();
+async function applyDateMove(page: Page, dayAccessibleName: string): Promise<void> {
+    await page.getByRole("button", { name: "제공일 수정", exact: true }).click();
     const dialog = page.getByRole("dialog", { name: "1회차 서비스 제공일 수정" });
-    await dialog.getByRole("combobox", { name: "일" }).click();
-    await page.getByRole("option", { name: `${Number(day)}일` }).click();
-    await dialog.getByRole("button", { name: "수정", exact: true }).click();
+    await dialog.getByRole("button", { name: dayAccessibleName, exact: true }).click();
+    await dialog.getByRole("button", { name: "선택", exact: true }).click();
     const followModal = page.locator('[data-component$="_date-follow-modal"]');
     await expect(followModal).toBeVisible();
     await followModal.getByRole("button", { name: "변경하기", exact: true }).click();
@@ -616,7 +663,7 @@ async function applyDateMove(page: Page, day: string): Promise<void> {
 }
 
 const REFRESH_MODAL_TITLE = "새로운 수정 사항이 있어서 새로고침이 필요해요";
-const PREVIEW_TITLE = "초안 변경 미리보기";
+const PREVIEW_TITLE = "수정 내용 확인";
 const CLOSED_DRAFT_MESSAGE = "다른 화면에서 수정 확정을 시작해서 이 확인이 취소되었어요. 수정 확정을 다시 눌러 주세요.";
 
 /** From an open day screen: change the service note and keep it with 수정 확인 (browser only). */
@@ -626,7 +673,7 @@ async function editNoteAndAccept(page: Page, note: string): Promise<void> {
     await page.getByRole("button", { name: "다음" }).click();
     await page.getByRole("button", { name: "수정 확인", exact: true }).click();
     await expect(page.locator('[data-slot="day"]')).toHaveCount(plannedDates.length);
-    await expect(page.locator('[data-slot="day"]').first()).toContainText("수정됨");
+    await expect(page.locator('[data-slot="day"]').first()).toContainText("수정중");
 }
 
 async function stageNote(page: Page, note: string): Promise<void> {
@@ -643,11 +690,121 @@ async function startCommit(page: Page) {
     await commitButton(page).click();
     const preview = page.getByRole("dialog", { name: PREVIEW_TITLE });
     await expect(preview).toBeVisible();
+    await expect(preview).toHaveAttribute("data-side", "bottom");
+    await expect(preview.getByRole("button", { name: "수정 확정", exact: true })).toBeEnabled();
     return preview;
 }
 
 test.beforeEach(async ({ page }) => {
     await enableLocalAdminAuth(page);
+});
+
+test("mock draft fold uses effective dates and shifts following sessions by default", () => {
+    const batch = foldDraftUpdate({}, {
+        dateMoves: [
+            { sessionIndex: 13, toDate: "2026-07-22", shiftFollowing: false },
+            { sessionIndex: 2, toDate: "2026-07-03", shiftFollowing: true },
+        ],
+    });
+    expect.soft(batch.sessions, "A: the second move shifts the earlier override").toEqual([
+        { sessionIndex: 2, serviceDate: "2026-07-03" },
+        { sessionIndex: 3, serviceDate: "2026-07-06" },
+        { sessionIndex: 4, serviceDate: "2026-07-07" },
+        { sessionIndex: 5, serviceDate: "2026-07-08" },
+        { sessionIndex: 6, serviceDate: "2026-07-09" },
+        { sessionIndex: 7, serviceDate: "2026-07-10" },
+        { sessionIndex: 8, serviceDate: "2026-07-13" },
+        { sessionIndex: 9, serviceDate: "2026-07-14" },
+        { sessionIndex: 10, serviceDate: "2026-07-15" },
+        { sessionIndex: 11, serviceDate: "2026-07-16" },
+        { sessionIndex: 12, serviceDate: "2026-07-20" },
+        { sessionIndex: 13, serviceDate: "2026-07-23" },
+    ]);
+    const kept = foldDraftUpdate(batch, {
+        dateMove: { sessionIndex: 1, toDate: "2026-07-01" },
+    });
+    expect(kept.sessions?.[0], "A: a keep-move still rewrites the unchanged first session").toEqual({
+        sessionIndex: 1,
+        serviceDate: "2026-07-01",
+    });
+    expect.soft(previewFor(makeDraftState(kept)).contentChanges, "A: unchanged session 1 is absent from the preview").toEqual({
+        headerChanged: false,
+        changedSessionIndexes: [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13],
+    });
+    const restored = foldDraftUpdate(kept, {
+        dateMove: { sessionIndex: 2, toDate: "2026-07-02" },
+    });
+    expect.soft(previewFor(makeDraftState(restored)).contentChanges, "A: dates restored to planned are absent too").toEqual({
+        headerChanged: false,
+        changedSessionIndexes: [13],
+    });
+
+    const defaultShift = foldDraftUpdate({}, {
+        dateMove: { sessionIndex: 2, toDate: "2026-07-03" },
+    });
+    expect.soft(defaultShift.sessions, "B: omitted shiftFollowing defaults to true").toEqual([
+        { sessionIndex: 2, serviceDate: "2026-07-03" },
+        { sessionIndex: 3, serviceDate: "2026-07-06" },
+        { sessionIndex: 4, serviceDate: "2026-07-07" },
+        { sessionIndex: 5, serviceDate: "2026-07-08" },
+        { sessionIndex: 6, serviceDate: "2026-07-09" },
+        { sessionIndex: 7, serviceDate: "2026-07-10" },
+        { sessionIndex: 8, serviceDate: "2026-07-13" },
+        { sessionIndex: 9, serviceDate: "2026-07-14" },
+        { sessionIndex: 10, serviceDate: "2026-07-15" },
+        { sessionIndex: 11, serviceDate: "2026-07-16" },
+        { sessionIndex: 12, serviceDate: "2026-07-20" },
+        { sessionIndex: 13, serviceDate: "2026-07-21" },
+    ]);
+    expect(previewFor(makeDraftState(defaultShift)).contentChanges, "B: date-only changes count every moved session").toEqual({
+        headerChanged: false,
+        changedSessionIndexes: [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13],
+    });
+
+    const unchangedContent = foldDraftUpdate({}, {
+        changes: { sessions: [{
+            sessionIndex: 2,
+            answers: Object.fromEntries(Object.entries(answers).reverse()),
+            etcService: "",
+            notes: "",
+            paymentConfirmed: true,
+        }] },
+    });
+    expect(previewFor(makeDraftState(unchangedContent)).contentChanges, "equal content ignores object key order").toEqual({
+        headerChanged: false,
+        changedSessionIndexes: [],
+    });
+    expect(previewFor(makeDraftState({ sessions: [{
+        sessionIndex: 2,
+        answers: { temperature_temp: answers.temperature_temp },
+    }] })).contentChanges, "equal sparse answers are merged onto the source before comparison").toEqual({
+        headerChanged: false,
+        changedSessionIndexes: [],
+    });
+    expect(previewFor(makeDraftState({ sessions: [{
+        sessionIndex: 2,
+        answers: { temperature_temp: "36.7" },
+    }] })).contentChanges, "a changed sparse answer counts the session").toEqual({
+        headerChanged: false,
+        changedSessionIndexes: [2],
+    });
+    const mixedChanges = foldDraftUpdate(defaultShift, {
+        changes: { sessions: [{ sessionIndex: 13, notes: "QA-last" }, { sessionIndex: 1, notes: "QA-first" }] },
+    });
+    expect(previewFor(makeDraftState(mixedChanges)).contentChanges, "content and date changes form one sorted union").toEqual({
+        headerChanged: false,
+        changedSessionIndexes: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13],
+    });
+
+    const mergedAnswers = foldDraftUpdate({
+        sessions: [{ sessionIndex: 2, answers: { sitzBath: "미실시", details: { old: true } } }],
+    }, {
+        changes: { sessions: [{ sessionIndex: 2, answers: { temperature_temp: "36.7", details: { replacement: true } } }] },
+    });
+    expect(mergedAnswers.sessions, "the server replaces the whole answers value on the no-move path").toEqual([{
+        sessionIndex: 2,
+        answers: { temperature_temp: "36.7", details: { replacement: true } },
+    }]);
 });
 
 test("session review retains all fields and dates and writes only after confirmation", async ({ page }, testInfo: TestInfo) => {
@@ -658,9 +815,11 @@ test("session review retains all fields and dates and writes only after confirma
     await expect(page.locator('[data-component$="_body_review_section"]')).toHaveCount(3);
     await expect(page.locator('[data-component$="_body_review_section_row"], [data-component$="_body_review_section_note"]')).toHaveCount(14);
     await expect(page.getByRole("img", { name: "산모 서명" })).toHaveAttribute("src", /phase6-signature/);
-    await applyDateMove(page, "20");
-    await expect(page.locator('[data-component$="_body_date-chip_date-display"]')).toContainText("2026.07.20");
-    await expect(page.locator('[data-component$="_body_date-chip_date-display"]')).toContainText("원본 2026.07.01");
+    await applyDateMove(page, "2026.07.20(월) 13회차");
+    const dateRow = page.locator('[data-component$="_body_service-date_row"]');
+    await expect(dateRow).toContainText("서비스 제공일");
+    await expect(dateRow.locator('[data-slot="old-value"]')).toHaveText("2026.07.01(수)");
+    await expect(dateRow.locator('[data-slot="new-value"]')).toHaveText("2026.07.20(월)");
     await page.locator('[data-slot="review"] [data-slot="sec-edit"]').nth(1).click();
     await page.getByLabel("체온").fill("36.7");
     await page.getByRole("button", { name: "다음" }).click();
@@ -673,14 +832,17 @@ test("session review retains all fields and dates and writes only after confirma
     const requestsBeforeAccept = evidence.requests.length;
     await page.getByRole("button", { name: "수정 확인", exact: true }).click();
     await expect(page.locator('[data-slot="day"]')).toHaveCount(plannedDates.length);
-    await expect(page.locator('[data-slot="day"]').first()).toContainText("수정됨");
+    await expect(page.locator('[data-slot="day"]').first()).toContainText("수정중");
     await expect(page.locator('[data-slot="day"]').first()).toContainText("2026.07.20");
+    await expect(page.getByRole("button", { name: "수정 이력 보기", exact: true })).toHaveCount(0);
     expect(evidence.requests).toHaveLength(requestsBeforeAccept);
     expect(evidence.writeSteps()).toEqual([]);
 
     // 수정 확정 writes the staged edits and previews them; nothing is confirmed yet.
     const preview = await startCommit(page);
-    await expect(preview).toContainText("변경 전");
+    const session1 = preview.locator('[data-component$="_content_dates_session-1"]');
+    await expect(session1).toContainText("1회차");
+    await expect(session1).toContainText("07.01(수) → 07.20(월)");
     expect(evidence.writeSteps()).toEqual(["start", "update", "preview"]);
 
     await preview.getByRole("button", { name: "수정 확정", exact: true }).click();
@@ -688,9 +850,18 @@ test("session review retains all fields and dates and writes only after confirma
     await expect(page.locator('[data-slot="day"]')).toHaveCount(plannedDates.length);
     await expect(commitButton(page)).toHaveCount(0);
     expect(evidence.writeSteps()).toEqual(["start", "update", "preview", "confirm"]);
+    const update = evidence.requests.find((request) => request.method === "PATCH");
+    expect(update?.body).toMatchObject({
+        expectedDraftVersion: 1,
+        dateMoves: [{ sessionIndex: 1, toDate: "2026-07-20", shiftFollowing: true }],
+    });
+    expect(update?.body).not.toHaveProperty("dateMove");
+    await expect(page.locator('[data-slot="day"]').first()).toContainText("수정 완료");
+    await expect(page.getByRole("button", { name: "수정 이력 보기", exact: true })).toBeVisible();
 
     await page.reload({ waitUntil: "domcontentloaded" });
     await expect(page.locator('[data-slot="day"]').first()).toContainText("2026.07.20");
+    await expect(page.locator('[data-slot="day"]').first()).toContainText("수정 완료");
     await openDay(page, 1);
     await expect(page.locator('[data-slot="review"]')).toContainText("회차 수정 테스트 메모");
     await expect(page.locator('[data-slot="review"]')).toContainText("36.7");
@@ -703,7 +874,8 @@ test("a durable previous draft is ignored at load and discarded before the new e
     await openEditor(page);
     await expect(page.getByRole("button", { name: "이전 수정사항 검토" })).toHaveCount(0);
     await expect(page.getByRole("dialog")).toHaveCount(0);
-    await expect(page.locator('[data-slot="day"]').filter({ hasText: "수정됨" })).toHaveCount(0);
+    await expect(page.locator('[data-slot="day"]').filter({ hasText: "수정중" })).toHaveCount(0);
+    await expect(page.locator('[data-slot="day"]').first()).toContainText("제출완료");
     await expect(commitButton(page)).toHaveCount(0);
     await openDay(page, 1);
     await expect(page.locator('[data-slot="review"]')).not.toContainText("재개된 초안 메모");
@@ -731,11 +903,11 @@ test("closing the preview discards the server draft and keeps the local edits", 
     await openEditor(page);
     await stageNote(page, "닫아도 남는 메모");
     const preview = await startCommit(page);
-    await preview.getByRole("button", { name: "닫기", exact: true }).click();
+    await preview.locator('[data-component$="_commit-preview_actions_close"]').click();
     await expect(preview).toBeHidden();
     await expect.poll(() => evidence.writeSteps()).toEqual(["start", "preview", "discard"]);
     expect(evidence.state.draft).toBeNull();
-    await expect(page.locator('[data-slot="day"]').first()).toContainText("수정됨");
+    await expect(page.locator('[data-slot="day"]').first()).toContainText("수정중");
     await expect(commitButton(page)).toBeEnabled();
     await openDay(page, 1);
     await expect(page.locator('[data-slot="review"]')).toContainText("닫아도 남는 메모");
@@ -751,7 +923,7 @@ test("a confirm conflict on an unchanged source keeps the edits and asks to conf
     await expect(preview).toBeHidden();
     await expect(page.locator('[data-slot="commit-error"]')).toContainText(CLOSED_DRAFT_MESSAGE);
     await expect(page.getByRole("dialog", { name: REFRESH_MODAL_TITLE })).toHaveCount(0);
-    await expect(page.locator('[data-slot="day"]').first()).toContainText("수정됨");
+    await expect(page.locator('[data-slot="day"]').first()).toContainText("수정중");
     await expect(commitButton(page)).toBeEnabled();
     await openDay(page, 1);
     await expect(page.locator('[data-slot="review"]')).toContainText("내 입력 보존");
@@ -784,7 +956,8 @@ test("a confirm conflict on a changed source requires a refresh that drops the l
     await refreshModal.getByRole("button", { name: "확인", exact: true }).click();
     await expect(refreshModal).toBeHidden();
     await expect(page.locator('[data-slot="day"]')).toHaveCount(plannedDates.length);
-    await expect(page.locator('[data-slot="day"]').filter({ hasText: "수정됨" })).toHaveCount(0);
+    await expect(page.locator('[data-slot="day"]').filter({ hasText: "수정중" })).toHaveCount(0);
+    await expect(page.locator('[data-slot="day"]').first()).toContainText("제출완료");
     await expect(commitButton(page)).toHaveCount(0);
     await openDay(page, 1);
     await expect(page.locator('[data-slot="review"]')).not.toContainText("곧 사라질 입력");
@@ -818,10 +991,10 @@ for (const [operation, message] of [
         await expect(page.getByRole("dialog", { name: REFRESH_MODAL_TITLE })).toHaveCount(0);
 
         // Closing the preview leaves the line on the overview and the edits in place.
-        await preview.getByRole("button", { name: "닫기", exact: true }).click();
+        await preview.locator('[data-component$="_commit-preview_actions_close"]').click();
         await expect(preview).toBeHidden();
         await expect(page.locator('[data-slot="commit-error"]')).toContainText(message);
-        await expect(page.locator('[data-slot="day"]').first()).toContainText("수정됨");
+        await expect(page.locator('[data-slot="day"]').first()).toContainText("수정중");
         await expect(commitButton(page)).toBeEnabled();
 
         // Once the earlier follow-up work is done, the same edits go through.
@@ -844,7 +1017,8 @@ test("a case change announced on the event stream blocks the editor until it is 
     await expect(refreshModal).toBeVisible();
     await refreshModal.getByRole("button", { name: "확인", exact: true }).click();
     await expect(refreshModal).toBeHidden();
-    await expect(page.locator('[data-slot="day"]').filter({ hasText: "수정됨" })).toHaveCount(0);
+    await expect(page.locator('[data-slot="day"]').filter({ hasText: "수정중" })).toHaveCount(0);
+    await expect(page.locator('[data-slot="day"]').first()).toContainText("제출완료");
     await expect(commitButton(page)).toHaveCount(0);
     expect(evidence.writeSteps()).toEqual([]);
     evidence.assertSafe();
@@ -855,19 +1029,30 @@ test("mobile date editing uses a bottom sheet and cancellation leaves data uncha
     await page.setViewportSize({ width: 375, height: 812 });
     await openEditor(page);
     await openDay(page, 1);
-    await page.locator('[data-component$="_body_date-edit"]').click();
+    await page.getByRole("button", { name: "제공일 수정", exact: true }).click();
     const dialog = page.getByRole("dialog", { name: "1회차 서비스 제공일 수정" });
     await expect(dialog).toBeVisible();
+    await dialog.evaluate((el) => Promise.all(el.getAnimations({ subtree: true }).map((animation) => animation.finished)));
     const bounds = await dialog.boundingBox();
     expect(bounds).not.toBeNull();
     expect(bounds!.x).toBeCloseTo(0, 0);
     expect(bounds!.width).toBeCloseTo(375, 0);
     expect(bounds!.y + bounds!.height).toBeCloseTo(812, 0);
-    await expect(dialog.getByRole("combobox", { name: "일" })).toHaveCSS("height", "54px");
+    await expect(dialog.getByRole("button", { name: "2026.07.01(수) 지금", exact: true })).toHaveAttribute("data-day-state", "current");
+    await expect(dialog.getByRole("button", { name: "선택", exact: true })).toBeDisabled();
+    const selectedDay = dialog.getByRole("button", { name: "2026.07.20(월) 13회차", exact: true });
+    await selectedDay.click();
+    await expect(selectedDay).toHaveAttribute("aria-pressed", "true");
     await page.screenshot({ path: testInfo.outputPath("admin-mobile-date-sheet.png"), fullPage: true });
     await dialog.getByRole("button", { name: "취소", exact: true }).click();
     await expect(dialog).toBeHidden();
     await expect(page.getByRole("button", { name: "확인", exact: true })).toBeVisible();
+    await page.getByRole("button", { name: "제공일 수정", exact: true }).click();
+    await expect(dialog).toBeVisible();
+    await expect(dialog.locator('[aria-pressed="true"]')).toHaveCount(0);
+    await expect(dialog.getByRole("button", { name: "선택", exact: true })).toBeDisabled();
+    await dialog.getByRole("button", { name: "취소", exact: true }).click();
+    await expect(dialog).toBeHidden();
     expect(evidence.requests.filter((request) => request.method !== "GET")).toHaveLength(0);
     evidence.assertSafe();
 });

@@ -44,7 +44,7 @@ jest.mock("@/features/service-records/api/admin-service-record-edit.api", () => 
 // The rebuilt UI must keep these strings (Phase 3 brief input).
 const PINNED_COPY = {
     /** Step title of a session's review page. */
-    reviewTitle: "기록 내용 확인",
+    reviewTitle: (n: number) => `${n}회차 기록`,
     back: "이전",
     /** Overview action that opens the basic-information editor. */
     headerEdit: "기본정보 수정",
@@ -52,13 +52,10 @@ const PINNED_COPY = {
     keepChange: "수정 확인",
     /** Overview action that sends every kept edit; the preview dialog's approval button has the same name. */
     commit: "수정 확정",
-    previewDialog: "초안 변경 미리보기",
-    /** The preview's content-change summary: one line for the basic information, one for the changed sessions. */
-    previewHeader: (changed: boolean) => `기본정보: ${changed ? "변경됨" : "변경 없음"}`,
-    previewSessions: (sessionIndexes: number[]) =>
-        `기록 회차: ${sessionIndexes.length > 0 ? sessionIndexes.map((index) => `${index}회차`).join(", ") : "변경 없음"}`,
-    /** The preview lists each session's date as YYYY.MM.DD. */
-    previewDate: (isoDate: string) => isoDate.replaceAll("-", "."),
+    previewDialog: "수정 내용 확인",
+    previewHeader: "기본정보",
+    previewSession: (sessionIndex: number) => `${sessionIndex}회차`,
+    previewDate: "09.10(목)",
     /** Moves to the review after a session input page. */
     next: "다음",
     /** The read-only signature image and its empty state. */
@@ -67,7 +64,7 @@ const PINNED_COPY = {
     /** Admin service-date edit button (invisible accessible name). */
     dateEdit: "제공일 수정",
     dateDialog: (sessionIndex: number) => `${sessionIndex}회차 서비스 제공일 수정`,
-    dateApply: "수정",
+    dateApply: "선택",
     followDialog: "뒷 회차들도 변경할까요?",
     followApply: "변경하기",
 };
@@ -241,7 +238,7 @@ describe("service-record admin editor contract", () => {
             expect(screen.getByRole("button", dayCard(2))).toBeEnabled();
             expect(screen.getByRole("button", dayCard(3))).toBeEnabled();
             expect(screen.getByRole("button", { name: PINNED_COPY.headerEdit })).toBeInTheDocument();
-            expect(screen.queryByText(PINNED_COPY.reviewTitle)).not.toBeInTheDocument();
+            expect(screen.queryByText(PINNED_COPY.reviewTitle(1))).not.toBeInTheDocument();
             expect(adminServiceRecordEditApi.startDraft).not.toHaveBeenCalled();
         });
 
@@ -250,7 +247,7 @@ describe("service-record admin editor contract", () => {
 
             fireEvent.click(screen.getByRole("button", dayCard(1)));
 
-            expect(screen.getByText(PINNED_COPY.reviewTitle)).toBeInTheDocument();
+            expect(screen.getByText(PINNED_COPY.reviewTitle(1))).toBeInTheDocument();
             expect(screen.getByRole("img", { name: PINNED_COPY.signatureImage })).toHaveAttribute("src", STORED_SIGNATURE);
         });
 
@@ -259,7 +256,7 @@ describe("service-record admin editor contract", () => {
 
             fireEvent.click(screen.getByRole("button", dayCard(2)));
 
-            expect(screen.getByText(PINNED_COPY.reviewTitle)).toBeInTheDocument();
+            expect(screen.getByText(PINNED_COPY.reviewTitle(2))).toBeInTheDocument();
             expect(screen.getByText(PINNED_COPY.signatureMissing)).toBeInTheDocument();
             expect(screen.queryByRole("img", { name: PINNED_COPY.signatureImage })).not.toBeInTheDocument();
         });
@@ -271,7 +268,7 @@ describe("service-record admin editor contract", () => {
             fireEvent.click(screen.getByRole("button", { name: PINNED_COPY.back }));
 
             expect(screen.getByRole("button", dayCard(3))).toBeInTheDocument();
-            expect(screen.queryByText(PINNED_COPY.reviewTitle)).not.toBeInTheDocument();
+            expect(screen.queryByText(PINNED_COPY.reviewTitle(1))).not.toBeInTheDocument();
             expect(adminServiceRecordEditApi.updateDraft).not.toHaveBeenCalled();
             expect(adminServiceRecordEditApi.confirmDraft).not.toHaveBeenCalled();
         });
@@ -300,8 +297,8 @@ describe("service-record admin editor contract", () => {
 
             const preview = await startCommit();
             // The preview names the changed session, and nothing else as changed.
-            expect(await within(preview).findByText(PINNED_COPY.previewSessions([1]))).toBeInTheDocument();
-            expect(within(preview).getByText(PINNED_COPY.previewHeader(false))).toBeInTheDocument();
+            expect(await within(preview).findByText(PINNED_COPY.previewSession(1))).toBeInTheDocument();
+            expect(within(preview).queryByText(PINNED_COPY.previewHeader)).not.toBeInTheDocument();
             expect(adminServiceRecordEditApi.confirmDraft).not.toHaveBeenCalled();
             expect(adminServiceRecordEditApi.discardDraft).toHaveBeenCalledWith("draft-1", 2);
             expect(jest.mocked(adminServiceRecordEditApi.discardDraft).mock.invocationCallOrder[0])
@@ -355,8 +352,8 @@ describe("service-record admin editor contract", () => {
             expect(await screen.findByRole("button", { name: PINNED_COPY.commit })).toBeEnabled();
             expect(adminServiceRecordEditApi.startDraft).not.toHaveBeenCalled();
             const preview = await startCommit();
-            expect(await within(preview).findByText(PINNED_COPY.previewHeader(true))).toBeInTheDocument();
-            expect(within(preview).getByText(PINNED_COPY.previewSessions([]))).toBeInTheDocument();
+            expect(await within(preview).findByText(PINNED_COPY.previewHeader)).toBeInTheDocument();
+            expect(preview.querySelector('[data-slot="session-change"]')).not.toBeInTheDocument();
             expect(jest.mocked(adminServiceRecordEditApi.startDraft).mock.calls[0]).toEqual([CLIENT_ID, { header: { momBirth: "1999-01-01" } }]);
             expect(adminServiceRecordEditApi.updateDraft).not.toHaveBeenCalled();
             fireEvent.click(within(preview).getByRole("button", { name: PINNED_COPY.commit }));
@@ -378,8 +375,8 @@ describe("service-record admin editor contract", () => {
             fireEvent.click(screen.getByRole("button", { name: PINNED_COPY.keepChange }));
             expect(await screen.findByRole("button", { name: PINNED_COPY.commit })).toBeEnabled();
             const preview = await startCommit();
-            expect(await within(preview).findByText(PINNED_COPY.previewHeader(true))).toBeInTheDocument();
-            expect(within(preview).getByText(PINNED_COPY.previewSessions([]))).toBeInTheDocument();
+            expect(await within(preview).findByText(PINNED_COPY.previewHeader)).toBeInTheDocument();
+            expect(preview.querySelector('[data-slot="session-change"]')).not.toBeInTheDocument();
             fireEvent.click(within(preview).getByRole("button", { name: PINNED_COPY.commit }));
 
             await waitFor(() => expect(adminServiceRecordEditApi.confirmDraft).toHaveBeenCalledTimes(1));
@@ -411,8 +408,7 @@ describe("service-record admin editor contract", () => {
             fireEvent.click(screen.getByRole("button", dayCard(1)));
 
             fireEvent.click(screen.getByRole("button", { name: PINNED_COPY.dateEdit }));
-            fireEvent.click(screen.getByRole("combobox", { name: "일" }));
-            fireEvent.click(screen.getByRole("option", { name: "10일" }));
+            fireEvent.click(screen.getByRole("button", { name: "2026.09.10(목)" }));
             fireEvent.click(within(screen.getByRole("dialog", { name: PINNED_COPY.dateDialog(1) })).getByRole("button", { name: PINNED_COPY.dateApply }));
             fireEvent.click(within(screen.getByRole("dialog", { name: PINNED_COPY.followDialog })).getByRole("button", { name: PINNED_COPY.followApply }));
             expect(adminServiceRecordEditApi.updateDraft).not.toHaveBeenCalled();
@@ -421,9 +417,12 @@ describe("service-record admin editor contract", () => {
             expect(await screen.findByRole("button", { name: PINNED_COPY.commit })).toBeEnabled();
             const preview = await startCommit();
             // The preview shows the moved 1회차 date; the server reports every session whose date moved as changed (service-record-edit-preview.policy.ts:755-764).
-            expect(await within(preview).findByText(PINNED_COPY.previewDate("2026-09-10"))).toBeInTheDocument();
-            expect(within(preview).getByText(PINNED_COPY.previewHeader(false))).toBeInTheDocument();
-            expect(within(preview).getByText(PINNED_COPY.previewSessions([1, 2, 3]))).toBeInTheDocument();
+            expect(await within(preview).findByText(PINNED_COPY.previewDate)).toBeInTheDocument();
+            expect(within(preview).queryByText(PINNED_COPY.previewHeader)).not.toBeInTheDocument();
+            for (const sessionIndex of [1, 2, 3]) {
+                const box = within(preview).getByText(PINNED_COPY.previewSession(sessionIndex)).closest("section")!;
+                expect(within(box).getByText("서비스 제공일")).toBeInTheDocument();
+            }
             // No content changed, so the draft starts empty and the move is applied on top.
             expect(jest.mocked(adminServiceRecordEditApi.startDraft).mock.calls[0]).toEqual([CLIENT_ID, undefined]);
             expect(adminServiceRecordEditApi.updateDraft).toHaveBeenCalledTimes(1);

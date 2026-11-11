@@ -52,7 +52,10 @@ export type DayPageHeadProps = Pick<
     serviceDateDisplay?: ServiceRecordWizardSlots["serviceDateDisplay"];
     /** The administrator date editor trigger, rendered beside the chip (SRW:902-908). */
     serviceDateEditor?: ServiceRecordWizardSlots["serviceDateEditor"];
-    /** Rendered under the title (the review page's banner). */
+    /** Review-only title badge and date-block layout; section pages keep their chip. */
+    titleBadge?: ReactNode;
+    hideDateChip?: boolean;
+    /** Rendered under the title. */
     children?: ReactNode;
 };
 
@@ -75,6 +78,8 @@ export function DayPageHead({
     serviceDateDisplay,
     serviceDateEditor,
     children,
+    titleBadge,
+    hideDateChip = false,
 }: DayPageHeadProps) {
     const child = (suffix: string) => `${root}_${suffix}`;
     return (
@@ -94,7 +99,7 @@ export function DayPageHead({
                 {BACK_LABEL}
             </Button>
             {/* SRW:890 - `date-row` is the hook the admin tests use to see the editor and the chip as siblings. */}
-            <div
+            {!hideDateChip && <div
                 data-slot="date-row"
                 className="date-row flex min-w-0 items-baseline justify-between gap-[calc(8px*var(--glint-ui-scale,1))]"
             >
@@ -119,7 +124,7 @@ export function DayPageHead({
                     disabled: readOnly || busy,
                     onOpen: () => onOpenServiceDateEditor?.(day),
                 }) : null}
-            </div>
+            </div>}
             {/* SRW:955-968 - in admin (editing or not) the date's caution lives in a compact read-only row; never in read-only mode. */}
             {!readOnly && hasServiceDateMismatch && (
                 <div data-component={child("body_service-date-readonly")}>
@@ -139,7 +144,10 @@ export function DayPageHead({
                     </div>
                 </div>
             )}
-            <div data-component={child("body_day-title")} className="text-[calc(17px*var(--glint-ui-scale,1))] font-extrabold text-v3-dark">{title}</div>
+            <div data-slot="day-title-row" className="flex flex-wrap items-center justify-between gap-[calc(8px*var(--glint-ui-scale,1))]">
+                <div data-component={child("body_day-title")} className={titleBadge ? "text-[calc(20px*var(--glint-ui-scale,1))] leading-[calc(28px*var(--glint-ui-scale,1))] font-bold text-v3-dark" : "text-[calc(17px*var(--glint-ui-scale,1))] font-extrabold text-v3-dark"}>{title}</div>
+                {titleBadge}
+            </div>
             {children}
         </div>
     );
@@ -163,6 +171,7 @@ export type DayPageStepProps = Pick<
     | "onNextPage"
     | "onOpenServiceDateEditor"
 > & {
+    adminEditedSessionIndexes?: ReadonlySet<number>;
     serviceDateDisplay?: ServiceRecordWizardSlots["serviceDateDisplay"];
     serviceDateEditor?: ServiceRecordWizardSlots["serviceDateEditor"];
 };
@@ -207,7 +216,7 @@ export function DayPageStep({
             <div
                 data-component={child("body")}
                 data-source-component={STEP_SOURCE_COMPONENT}
-                className="flex min-w-0 flex-1 flex-col gap-[calc(14px*var(--glint-ui-scale,1))] px-[calc(16px*var(--glint-ui-scale,1))] pb-[calc(24px*var(--glint-ui-scale,1))] pt-[calc(16px*var(--glint-ui-scale,1))] sm:px-[calc(24px*var(--glint-ui-scale,1))]"
+                className="flex min-w-0 flex-1 flex-col gap-[calc(14px*var(--glint-ui-scale,1))] px-[calc(16px*var(--glint-ui-scale,1))] pb-[calc(24px*var(--glint-ui-scale,1))] pt-[calc(16px*var(--glint-ui-scale,1))]"
             >
                 <DayPageHead
                     data-component={root}

@@ -14951,22 +14951,6 @@
       "discovery_task_id": "1.1.08"
     },
     {
-      "path": "frontend/src/components/app/service-record/ServiceRecordDateSelectionDialog.test.tsx",
-      "root": "frontend/src/",
-      "kind": "test",
-      "candidate_count": 0,
-      "review_status": "unverified",
-      "discovery_task_id": "1.1.08"
-    },
-    {
-      "path": "frontend/src/components/app/service-record/ServiceRecordDateSelectionDialog.tsx",
-      "root": "frontend/src/",
-      "kind": "runtime",
-      "candidate_count": 3,
-      "review_status": "reviewed",
-      "discovery_task_id": "1.1.08"
-    },
-    {
       "path": "frontend/src/components/app/service-record/ServiceRecordEditPreviewDialog.test.tsx",
       "root": "frontend/src/",
       "kind": "test",
@@ -59598,51 +59582,6 @@
       "review_task": "1.1-batch-c",
       "spec_mapping_status": "mapped-em-v1",
       "spec_mapping_note": "status-keyed raw Korean strings (470-500,1339-47); no registered codes or problem-details"
-    },
-    {
-      "id": "owner-f1b400311ef5",
-      "path": "frontend/src/components/app/service-record/ServiceRecordDateSelectionDialog.tsx",
-      "root": "frontend/src/",
-      "classification": "no-direct-error-boundary",
-      "reason": "Only local Korean-business-day validation (getBlockedMessage lines 197-206, applyError line 282) and a presentational render of the caller-supplied error string at line 466; the component performs no API error logic.",
-      "seams": [
-        {
-          "line": 107,
-          "kinds": [
-            "catch_boundary"
-          ]
-        },
-        {
-          "line": 162,
-          "kinds": [
-            "catch_boundary"
-          ]
-        },
-        {
-          "line": 178,
-          "kinds": [
-            "catch_boundary"
-          ]
-        }
-      ],
-      "discovery_task_id": "1.1.08",
-      "spec_ids": [
-        "EM-VAL-01",
-        "EM-VAL-02",
-        "EM-UI-02"
-      ],
-      "public_codes": [],
-      "outcome_evidence": "Owns no API error behavior; validation is local and request errors are shown as a passed-in string.",
-      "consumer_paths": [
-        "frontend/src/components/app/service-record/ServiceRecordAdminWizard.tsx"
-      ],
-      "test_evidence": [
-        "frontend/src/components/app/service-record/ServiceRecordDateSelectionDialog.test.tsx"
-      ],
-      "followup_task": null,
-      "review_task": "1.1-batch-c",
-      "spec_mapping_status": "mapped-em-v1",
-      "spec_mapping_note": "local business-day validation and presentational caller error; performs no API error logic"
     },
     {
       "id": "owner-b6dcf43ac31b",

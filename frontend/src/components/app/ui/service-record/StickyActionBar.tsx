@@ -6,12 +6,9 @@ const SOURCE_COMPONENT = "StickyActionBar";
 
 export interface StickyActionBarProps {
   "data-component": string;
-  /** Buttons; equal-width slots below `sm`, natural width and right-aligned from `sm` up. */
+  /** Buttons share the row equally at every width. */
   children: ReactNode;
-  /**
-   * Optional left-end slot: at the left end from `sm` up, the first equal-width
-   * child below `sm`.
-   */
+  /** Optional actions before the children, sharing the same row. */
   leading?: ReactNode;
   /** Renders `role="group"` with this name when given. */
   "aria-label"?: string;
@@ -37,17 +34,15 @@ export function StickyActionBar({
       role={ariaLabel ? "group" : undefined}
       aria-label={ariaLabel}
       className={cn(
-        "sticky bottom-0 z-10 grid auto-cols-fr grid-flow-col gap-[calc(8px*var(--glint-ui-scale,1))] border-t border-v3-border! bg-white px-[calc(16px*var(--glint-ui-scale,1))] py-[calc(10px*var(--glint-ui-scale,1))] sm:flex sm:justify-end sm:px-[calc(24px*var(--glint-ui-scale,1))]",
-        // Below `sm`: every direct child is one equal border-box slot that may shrink.
-        // From `sm`: natural width, right-aligned.
-        "[&>*]:min-w-0 [&>*]:truncate sm:[&>*]:flex-none",
+        "sticky bottom-0 z-10 flex gap-[calc(8px*var(--glint-ui-scale,1))] border-t border-v3-border! bg-white px-[calc(16px*var(--glint-ui-scale,1))] pt-[calc(12px*var(--glint-ui-scale,1))] pb-[calc(12px*var(--glint-ui-scale,1)+env(safe-area-inset-bottom))]",
+        "[&_button]:min-w-0 [&_button]:flex-1 [&_button]:h-[calc(46px*var(--glint-ui-scale,1))] [&_button]:rounded-full [&_button]:text-[calc(16px*var(--glint-ui-scale,1))]",
         className,
       )}
     >
       {leading ? (
         <div
           data-component={`${dataComponent}_leading`}
-          className="min-w-0 sm:mr-auto sm:flex sm:gap-[calc(8px*var(--glint-ui-scale,1))] [&>*]:w-full [&>*]:min-w-0 sm:[&>*]:w-auto sm:[&>*]:flex-none"
+          className="contents"
         >
           {leading}
         </div>

@@ -19,23 +19,12 @@ function card(overrides: Partial<DayCardProps> = {}) {
 }
 
 describe("DayCardGrid", () => {
-  it("is 3 full-width columns below sm and 5 centred columns (max 560px) from sm up", () => {
+  it("fills the available width with scaled 88px minimum columns", () => {
     const { container } = render(
       <DayCardGrid data-component="desktop_service-record-admin_wizard_day-grid">{card()}</DayCardGrid>,
     );
-
-    const grid = container.firstElementChild;
-    expect(grid).toHaveAttribute("data-source-component", "DayCardGrid");
-    expect(grid).toHaveClass(
-      "grid",
-      "w-full",
-      "grid-cols-3",
-      "gap-[calc(8px*var(--glint-ui-scale,1))]",
-      "sm:grid-cols-5",
-      "sm:max-w-[560px]",
-      "sm:mx-auto",
-    );
-    expect(grid?.className).not.toContain("auto-fill");
+    expect(container.firstElementChild).toHaveAttribute("data-source-component", "DayCardGrid");
+    expect(container.firstElementChild).toHaveClass("grid", "grid-cols-[repeat(auto-fill,minmax(calc(88px*var(--glint-ui-scale,1)),1fr))]", "gap-[calc(8px*var(--glint-ui-scale,1))]");
   });
 });
 
@@ -77,8 +66,9 @@ describe("DayCard", () => {
 
   it("maps each state to its look", () => {
     const { rerender } = render(card({ state: "changed" }));
-    expect(screen.getByRole("button")).toHaveClass("border-v3-primary!", "bg-v3-primary-light", "ring-[3px]");
+    expect(screen.getByRole("button")).toHaveClass("border-v3-primary-medium!", "bg-v3-primary-light");
     expect(screen.getByRole("button")).toHaveAttribute("data-state", "changed");
+    expect(screen.getByRole("button")).not.toHaveClass("ring-[3px]");
 
     rerender(card({ state: "locked" }));
     expect(screen.getByRole("button")).toHaveClass("opacity-50");
@@ -87,7 +77,10 @@ describe("DayCard", () => {
     expect(screen.getByRole("button")).toHaveClass("bg-v3-primary-light", "border-v3-primary-medium!");
 
     rerender(card({ state: "readonly" }));
-    expect(screen.getByRole("button")).toHaveClass("border-v3-primary-medium!");
+    expect(screen.getByRole("button")).toHaveAttribute("data-state", "readonly");
+    expect(screen.getByRole("button")).toHaveClass("border-v3-primary!", "bg-white", "ring-[3px]", "ring-v3-primary-light");
+    expect(screen.getByText("입력 가능")).toHaveClass("text-v3-text-muted");
+    expect(screen.getByText("입력 가능")).not.toHaveClass("font-bold", "text-v3-primary");
 
     rerender(card({ state: "current" }));
     expect(screen.getByRole("button")).toHaveClass("border-v3-primary!", "ring-[3px]");
@@ -96,15 +89,15 @@ describe("DayCard", () => {
     expect(screen.getByRole("button")).toHaveClass("border-v3-border!");
   });
 
-  it("is a square, centred card", () => {
+  it("is a vertically padded caregiver card", () => {
     render(card());
     expect(screen.getByRole("button")).toHaveClass(
-      "aspect-square",
       "flex",
       "flex-col",
       "items-center",
-      "justify-center",
-      "rounded-[12px]",
+      "px-[calc(4px*var(--glint-ui-scale,1))]",
+      "py-[calc(10px*var(--glint-ui-scale,1))]",
+      "rounded-[calc(12px*var(--glint-ui-scale,1))]",
     );
   });
 

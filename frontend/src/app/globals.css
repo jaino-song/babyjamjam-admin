@@ -354,6 +354,7 @@
   --animate-bounce-subtle: bounce-subtle 1s ease-in-out infinite;
   --animate-pulse-subtle: pulse-subtle 2s ease-in-out infinite;
   --animate-shimmer: shimmer 2s linear infinite;
+  --animate-indeterminate-bar: indeterminate-bar 1.2s cubic-bezier(0.4, 0, 0.2, 1) infinite;
   --animate-icon-bounce: icon-bounce 0.3s ease-out;
   --animate-glow: glow 2s ease-in-out infinite;
   --animate-spin-slow: spin 2s linear infinite;
@@ -481,6 +482,17 @@
   }
 }
 
+/* A 40%-wide fill slides across the track while the amount of work is unknown. */
+@keyframes indeterminate-bar {
+  0% {
+    transform: translateX(-100%);
+  }
+
+  100% {
+    transform: translateX(250%);
+  }
+}
+
 @keyframes icon-bounce {
 
   0%,
@@ -593,11 +605,11 @@
   animation: sheet-fade-out 300ms ease-out;
 }
 
-[data-slot="sheet-content"][data-state="open"] {
+[data-slot="sheet-content"][data-side="left"][data-state="open"] {
   animation: sheet-slide-in-from-left 300ms ease-out;
 }
 
-[data-slot="sheet-content"][data-state="closed"] {
+[data-slot="sheet-content"][data-side="left"][data-state="closed"] {
   animation: sheet-slide-out-to-left 300ms ease-out;
 }
 

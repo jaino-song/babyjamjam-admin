@@ -19,6 +19,8 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { TwoButtonModal } from "@/components/app/ui/TwoButtonModal";
 import { ReadOnlySignature as ReadOnlySignaturePart } from "@/components/app/ui/service-record";
 import { Button } from "@/components/ui/button";
+import { ServiceRecordLoadingBody, ServiceRecordStepHeader } from "@/components/app/ui/service-record";
+import { SCREEN_TITLE } from "./screen/ids";
 import { Dialog } from "@/components/ui/dialog";
 import { Spinner } from "@/components/ui/spinner";
 import { FormDialogShell } from "@/components/app/ui/FormDialogShell";
@@ -49,9 +51,10 @@ import {
 } from "@/features/service-records/revision-sync";
 
 import { ServiceRecordEditPreviewDialog } from "./ServiceRecordEditPreviewDialog";
-import { ServiceRecordDateSelectionDialog } from "./ServiceRecordDateSelectionDialog";
+import { AdminServiceDateSheet } from "@/components/app/ui/service-record";
 import { RevisionHistoryView } from "./RevisionHistoryView";
 import { describeScheduleBlockingReasons, GENERIC_BLOCKING_REASON } from "./service-record-blocking-reasons";
+import { computePendingHeaderChanges, computePendingSessionChanges } from "./pending-session-changes";
 import { AdminServiceRecordScreen } from "./screen/AdminServiceRecordScreen";
 import { moveServiceRecordSessionDate } from "@babyjamjam/shared/utils/service-record-schedule";
 
@@ -617,6 +620,11 @@ export function ServiceRecordAdminWizard({
     const pendingChanges = hasPending ? pendingToOverlay(pending, baseVector) : null;
     const displayContext = overlayChanges(baseView, pendingChanges);
     const changedSessionIndexes = new Set((pendingChanges?.sessions ?? []).map((session) => session.sessionIndex));
+    const [pageConfirmedSessionIndexes, setPageConfirmedSessionIndexes] = useState<ReadonlySet<number>>(() => new Set());
+    const adminEditedSessionIndexes = new Set([
+        ...(overview.adminEditConfirmedAtBySession ?? []).map((session) => session.sessionIndex),
+        ...pageConfirmedSessionIndexes,
+    ]);
     const [headerDraft, setHeaderDraft] = useState<Record<string, string>>(headerToInput(displayContext.header));
     const [preview, setPreview] = useState<ServiceRecordEditPreviewResponse | null>(null);
     const [previewOpen, setPreviewOpen] = useState(false);
@@ -627,6 +635,10 @@ export function ServiceRecordAdminWizard({
     const [pageIdx, setPageIdx] = useState(DAY_PAGES.length - 1);
     const [draft, setDraft] = useState<Record<string, unknown>>({});
     const [supplementalKey, setSupplementalKey] = useState<string | null>(null);
+    const baseSession = baseView.context.sessions.find((session) => session.sessionIndex === day);
+    const baseSessionDraft = supplementalKey ? undefined : baseSession
+        ? draftForSession(baseSession)
+        : { _date: baseVector.find((entry) => entry.sessionIndex === day)?.serviceDate ?? "" };
     const [dateMove, setDateMove] = useState<AdminServiceRecordEditDateMove | null>(null);
     const dateMoveEntriesRef = useRef<PlannedVector | null>(null);
     const [followPrompt, setFollowPrompt] = useState<{ date: string; delta: number; canKeep: boolean; canShift: boolean } | null>(null);
@@ -656,6 +668,7 @@ export function ServiceRecordAdminWizard({
     const sourceDraft = draftForSession(currentSession);
     const sourceDate = dateOnly(currentSession?.serviceDate)
         || baseView.plannedSessions.find((item) => item.sessionIndex === day)?.serviceDate || "";
+    const otherDateSessions = (vector.length ? vector : displayContext.sessions).filter((item) => item.sessionIndex !== day);
     const patch: AdminServiceRecordEditSessionChanges = { sessionIndex: day };
     for (const [key, value] of Object.entries(draft)) {
         if (key === "_date" || JSON.stringify(value) === JSON.stringify(sourceDraft[key])) continue;
@@ -703,6 +716,7 @@ export function ServiceRecordAdminWizard({
         const state = await adminServiceRecordEditApi.getDraft(clientId);
         if (!sameSource(before, state)) throw new Error("기록이 조회 중 변경되었습니다. 다시 불러와 주세요.");
         setOverview(fresh);
+        setPageConfirmedSessionIndexes(new Set());
         setSourceIdentity(state);
         knownVersion.current = Math.max(knownVersion.current, state.sourceCaseVersion);
         setPreview(null);
@@ -986,9 +1000,13 @@ export function ServiceRecordAdminWizard({
         setBusy(true);
         setError(null);
         confirmInFlight.current = true;
+        const confirmedSessionIndexes = new Set(preview?.contentChanges.changedSessionIndexes ?? []);
         let confirmedVersion: number | null = null;
         try {
             const result = await adminServiceRecordEditApi.confirmDraft(request.draftId, request.draftVersion, request.previewId, request.idempotencyKey);
+            if (result.status === "confirmed") {
+                setPageConfirmedSessionIndexes((current) => new Set([...current, ...confirmedSessionIndexes]));
+            }
             confirmedVersion = result.caseVersion;
             knownVersion.current = Math.max(knownVersion.current, result.caseVersion);
             commitRequest.current = null;
@@ -1078,6 +1096,11 @@ export function ServiceRecordAdminWizard({
         if (changed) setLeaveModalOpen(true);
         else resetLocal();
     };
+    const previewSessionChanges = computePendingSessionChanges(
+        baseView.context.sessions.map((session) => ({ sessionIndex: session.sessionIndex, draft: draftForSession(session) })),
+        pending.sessions,
+    );
+    const previewHeaderChanges = computePendingHeaderChanges(headerToInput(baseView.context.header), pending.header);
     const errorLine = error || needsReload ? (
         <div data-component={`${ADMIN_WIZARD_COMPONENT}_body_overview-commit_error`} data-slot="commit-error" className="flex flex-col items-start gap-2">
             <p role="alert" className="text-sm text-v3-burgundy">
@@ -1125,6 +1148,8 @@ export function ServiceRecordAdminWizard({
                     screen={screen} phone="" phoneError={null}
                     context={supplemental ? { ...baseView.context, sessions: [...baseView.context.sessions.filter((item) => item.sessionIndex !== day), supplemental.session] } : displayContext}
                     changedSessionIndexes={changedSessionIndexes}
+                    adminEditedSessionIndexes={adminEditedSessionIndexes}
+                    baseSessionDraft={baseSessionDraft}
                     header={screen === "service" ? headerDraft : headerToInput(displayContext.header)}
                     headerErrors={screen === "service" && !locked ? headerErrors : undefined}
                     day={day} pageIdx={pageIdx} draft={draft}
@@ -1159,46 +1184,45 @@ export function ServiceRecordAdminWizard({
                         adminCommitActions: hasPending ? (
                             <>
                                 <Button data-component={`${ADMIN_WIZARD_COMPONENT}_body_overview-commit_cancel`} type="button" variant="negative-outline"
-                                    className="min-w-0 w-full border-v3-burgundy! sm:w-auto"
+                                    className="min-w-0 flex-1 border-v3-burgundy!"
                                     disabled={busy} onClick={() => setDiscardModalOpen(true)}>수정 취소</Button>
                                 <Button data-component={`${ADMIN_WIZARD_COMPONENT}_body_overview-commit_confirm`} type="button" variant="positive"
-                                    className="min-w-0 w-full sm:w-auto"
+                                    className="min-w-0 flex-1"
                                     disabled={busy || needsReload} aria-busy={preparing} onClick={() => void startCommit()}>
                                     {preparing ? <><Spinner data-component={`${ADMIN_WIZARD_COMPONENT}_body_overview-commit_confirm_spinner`} size="sm" />확인 중…</> : "수정 확정"}
                                 </Button>
                             </>
                         ) : null,
-                        adminConfirmAction: (
-                            // Stacked: [수정 이력 보기] sits directly under [기본정보 수정]. The history view is read-only, so a pending edit does not disable it.
-                            <div data-component={`${ADMIN_WIZARD_COMPONENT}_body_overview_edit-actions`} data-slot="edit-actions" className="flex flex-col items-stretch gap-2">
-                                <Button data-component={`${ADMIN_WIZARD_COMPONENT}_body_overview_header-edit`} data-slot="header-edit" type="button" variant="outline" disabled={busy}
-                                    className="min-w-0 w-full sm:w-auto"
+                        adminConfirmAction: !hasPending ? (
+                            <div data-component={`${ADMIN_WIZARD_COMPONENT}_body_overview_edit-actions`} data-slot="edit-actions" className="contents">
+                                <Button data-component={`${ADMIN_WIZARD_COMPONENT}_body_overview_header-edit`} data-slot="header-edit" type="button" variant="positive-outline" disabled={busy}
+                                    className="min-w-0 flex-1 border-[hsl(214,100%,34%)]!"
                                     onClick={() => { setHeaderDraft(headerToInput(displayContext.header)); setScreen("service"); }}>
                                     기본정보 수정
                                 </Button>
-                                <Button data-component={`${ADMIN_WIZARD_COMPONENT}_body_overview_history-open`} data-slot="history-open" type="button" variant="outline" disabled={busy}
-                                    className="min-w-0 w-full sm:w-auto"
+                                <Button data-component={`${ADMIN_WIZARD_COMPONENT}_body_overview_history-open`} data-slot="history-open" type="button" variant="positive" disabled={busy}
+                                    className="min-w-0 flex-1"
                                     onClick={() => setHistoryOpen(true)}>
                                     수정 이력 보기
                                 </Button>
                             </div>
-                        ),
+                        ) : null,
                         adminHeaderAction: ({ isHeaderComplete, headerErrors: slotHeaderErrors }) => (
                             <Button data-component={`${ADMIN_WIZARD_COMPONENT}_body_header-confirm`} type="button" variant="positive"
                                 disabled={busy || (changed && (needsReload || !isHeaderComplete || Object.keys(slotHeaderErrors).length > 0))} onClick={() => !changed ? resetLocal() : void accept()}>
                                 {busy ? "확인 중…" : changed ? "수정 확인" : "확인"}
                             </Button>
                         ),
-                        // Inline in the date chip and in each day card, so it stays a plain span (the ServiceDateDisplay part is a block with its own chip).
-                        serviceDateDisplay: ({ "data-component": component, sessionIndex, serviceDate }) => {
-                            const original = baseView.plannedSessions.find((item) => item.sessionIndex === sessionIndex)?.originalDate;
-                            return <span data-component={component} data-slot="date-display" className="inline-flex flex-wrap items-baseline justify-center gap-x-1 gap-y-px align-baseline">
+                        // Operator decision 2026-11-11: as in the mockup, the day card and the date chip show only the served date (no original-date line).
+                        // A pending move shows old → new on the review page instead. Stays a plain inline span for both uses.
+                        serviceDateDisplay: ({ "data-component": component, serviceDate }) => {
+                            return <span data-component={component} data-slot="date-display">
                                 <span data-slot="revised-date" className="whitespace-nowrap">{formatShortDate(dateOnly(serviceDate))}</span>
-                                {original && original !== dateOnly(serviceDate) ? <span data-slot="original-date" className="whitespace-nowrap font-medium text-v3-text-muted">원본 {formatShortDate(original)}</span> : null}
                             </span>;
                         },
                         serviceDateEditor: ({ "data-component": component, disabled, onOpen }) => (
-                            <Button data-component={component} data-slot="sec-edit" type="button" variant="outline" size="sm"
+                            <Button data-component={component} data-slot="sec-edit" type="button" variant="ghost" size="sm"
+                                className="h-[calc(32px*var(--glint-ui-scale,1))] min-h-[calc(32px*var(--glint-ui-scale,1))] rounded-[6px] border-0 px-[calc(4px*var(--glint-ui-scale,1))] text-[calc(14px*var(--glint-ui-scale,1))] leading-[calc(20px*var(--glint-ui-scale,1))] font-bold text-v3-primary"
                                 disabled={disabled || !calendarReady || Boolean(baseView.scheduleProjectionBlockingReasons.length)} aria-label="제공일 수정" onClick={onOpen}>수정</Button>
                         ),
                         adminSessionAction: ({ hasInvalidNumericAnswers: slotHasInvalidNumericAnswers }) => (
@@ -1230,11 +1254,13 @@ export function ServiceRecordAdminWizard({
             )}
             <ServiceRecordEditPreviewDialog open={previewOpen} onOpenChange={(open) => { if (!open) void closePreview(); }}
                 preview={preview} busy={preparing} onConfirm={confirmCommit}
+                sessionChanges={previewSessionChanges} headerChanges={previewHeaderChanges}
                 confirmBusy={busy} confirmError={error} data-component={`${ADMIN_WIZARD_COMPONENT}_commit-preview`} />
-            <ServiceRecordDateSelectionDialog open={dateDialogOpen} onOpenChange={setDateDialogOpen}
+            <AdminServiceDateSheet open={dateDialogOpen} onOpenChange={setDateDialogOpen}
                 currentServiceDate={String(draft._date || sourceDate)} calendar={calendar} sessionLabel={`${day}회차`}
                 windowStart={offsetCaseDate(overview.record?.startDate, -CAREGIVER_DATE_WINDOW_DAYS)}
                 windowEnd={offsetCaseDate(overview.record?.endDate, CAREGIVER_DATE_WINDOW_DAYS)}
+                startDate={overview.record?.startDate} endDate={overview.record?.endDate} otherSessions={otherDateSessions}
                 onApply={selectDate} error={dateError} disabled={locked || !calendarReady}
                 data-component={`${ADMIN_WIZARD_COMPONENT}_date-selection-dialog`} />
             <Dialog open={Boolean(followPrompt)} onOpenChange={(open) => { if (!open) { setFollowPrompt(null); setDateDialogOpen(true); } }}>
@@ -1375,7 +1401,12 @@ export function ServiceRecordAdminViewer({ clientId }: ServiceRecordAdminViewerP
         : { kind: "loading", clientId };
 
     if (visibleState.kind === "loading") {
-        return <p data-component="desktop_service-record-admin_state-loading" data-slot="state">불러오는 중…</p>;
+        return (
+            <div data-component="desktop_service-record-admin_loading" data-slot="loading-shell" className="flex min-h-dvh min-w-0 flex-col bg-white">
+                <ServiceRecordStepHeader data-component="desktop_service-record-admin_loading_top-bar" title={SCREEN_TITLE} meta="관리자 편집" progress={0} indeterminate />
+                <ServiceRecordLoadingBody data-component="desktop_service-record-admin_loading_state-loading" />
+            </div>
+        );
     }
     if (visibleState.kind === "error") {
         const message = visibleState.status === 401

@@ -71,8 +71,6 @@ export const BACK_LABEL = "이전";
 export const NEXT_LABEL = "다음";
 /** SRW:960 */
 export const SERVICE_DATE_READONLY_LABEL = "서비스 제공일자";
-/** SRW:978 (admin branch; the public copy "최종 기록을 확인해 주세요." is never shown here) */
-export const ADMIN_HANDOVER_BANNER_COPY = "관리자 수정 내용을 확인해 주세요.";
 /** SRW:274, :277, :292 */
 export const STOOL_ABNORMAL_OPTION = "이상변";
 export const STOOL_COLOR_LABEL = "이상변의 색깔과 상태";
@@ -125,12 +123,10 @@ export const headerLabelId = (key: string): string => `${headerSlotId(key)}-labe
 export const OVERVIEW_TITLE = "제공기록표";
 /** SRW:816 */
 export const OVERVIEW_HELP_READONLY_COPY = "조회 전용 기록입니다. 회차를 선택해 내용을 확인하세요.";
-export const OVERVIEW_HELP_COPY = "제출된 기록은 눌러서 수정할 수 있습니다.";
-/**
- * SRW:846 in admin. User-approved change: a session with a pending edit reads "수정됨"
- * (SRW says "초안 변경"); every other label is unchanged.
- */
-export const DAY_STATUS_CHANGED = "수정됨";
+export const OVERVIEW_HELP_COPY = "회차를 눌러 기록을 확인하고 수정할 수 있습니다.";
+/** Admin status copy; pending edits take precedence over confirmed admin edits. */
+export const DAY_STATUS_CHANGED = "수정중";
+export const DAY_STATUS_ADMIN_EDITED = "수정 완료";
 export const DAY_STATUS_DONE = "제출완료";
 export const DAY_STATUS_EDITABLE = "편집 가능";
 export const DAY_STATUS_READONLY = "조회 가능";

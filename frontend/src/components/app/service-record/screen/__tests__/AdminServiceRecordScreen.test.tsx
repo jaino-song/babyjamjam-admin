@@ -172,13 +172,13 @@ describe("AdminServiceRecordScreen", () => {
     });
 
     describe("overview", () => {
-        it("renders the day cards, labelling a pending edit 수정됨", () => {
+        it("renders the day cards, labelling a pending edit 수정중", () => {
             render(<AdminServiceRecordScreen {...makeProps({ changedSessionIndexes: new Set([2]) })} />);
 
             const days = document.querySelectorAll('[data-slot="day"]');
             expect(days).toHaveLength(3);
             expect(days[0]).toHaveTextContent("제출완료");
-            expect(days[1]).toHaveTextContent("수정됨");
+            expect(days[1]).toHaveTextContent("수정중");
             expect(days[2]).toHaveTextContent("편집 가능");
         });
 
@@ -236,7 +236,7 @@ describe("AdminServiceRecordScreen", () => {
             expect(onOpenServiceDateEditor).toHaveBeenCalledWith(1);
         });
 
-        it("renders the confirmation page with the handover banner, the signature slot and the admin session action in the bar", () => {
+        it("renders the confirmation page without the handover banner, with the signature slot and the admin session action in the bar", () => {
             const props = makeProps({
                 screen: "day",
                 pageIdx: CONFIRMATION_PAGE,
@@ -248,7 +248,8 @@ describe("AdminServiceRecordScreen", () => {
             render(<AdminServiceRecordScreen {...props} />);
 
             expect(byComponent("body")).toHaveAttribute("data-source-component", "ReviewStep");
-            expect(byComponent("body_handover-banner")).toHaveTextContent("관리자 수정 내용을 확인해 주세요.");
+            expect(byComponent("body_handover-banner")).toBeNull();
+            expect(byComponent("body_day-title")).toHaveTextContent("1회차 기록");
             expect(byComponent("body_mom-sign")).toHaveTextContent("서명 없음");
             expect(within(byComponent("body_confirmation-action")!).getByRole("button", { name: "수정 확인" })).toBeEnabled();
             fireEvent.click(screen.getByRole("button", { name: "산모 수정" }));

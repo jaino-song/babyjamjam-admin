@@ -1597,19 +1597,6 @@
         ]
       },
       {
-        "name": "ServiceRecordDateSelectionDialog",
-        "layer": "organism",
-        "import": "@/components/app/service-record/ServiceRecordDateSelectionDialog",
-        "file": "frontend/src/components/app/service-record/ServiceRecordDateSelectionDialog.tsx",
-        "exports": [
-          "ServiceRecordDateSelectionDialog",
-          "ServiceRecordDateSelectionDialogProps"
-        ],
-        "requiredFor": [
-          "service-record admin provisional business-date selection"
-        ]
-      },
-      {
         "name": "ServiceRecordEditPreviewDialog",
         "layer": "organism",
         "import": "@/components/app/service-record/ServiceRecordEditPreviewDialog",
@@ -1678,6 +1665,18 @@
         ],
         "requiredFor": [
           "admin service-record editor"
+        ]
+      },
+      {
+        "name": "ServiceRecordLoadingBody",
+        "layer": "molecule",
+        "import": "@/components/app/ui/service-record",
+        "file": "frontend/src/components/app/ui/service-record/ServiceRecordLoadingBody.tsx",
+        "exports": [
+          "ServiceRecordLoadingBody"
+        ],
+        "requiredFor": [
+          "admin service-record loading skeleton"
         ]
       },
       {
@@ -1802,6 +1801,22 @@
         ],
         "requiredFor": [
           "admin service-record editor"
+        ]
+      },
+      {
+        "name": "AdminServiceDateSheet",
+        "layer": "organism",
+        "import": "@/components/app/ui/service-record",
+        "file": "frontend/src/components/app/ui/service-record/ServiceDateSheet.tsx",
+        "exports": [
+          "AdminServiceDateSheet",
+          "AdminServiceDateSheetProps"
+        ],
+        "replaces": [
+          "ServiceRecordDateSelectionDialog three-select date controls"
+        ],
+        "requiredFor": [
+          "admin service-record date editing"
         ]
       },
       {
