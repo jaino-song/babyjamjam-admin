@@ -7,9 +7,9 @@ jest.mock("next/navigation", () => ({
 }));
 
 describe("MessagesPage", () => {
-  it("opens the message send section", () => {
+  it("opens the message maker section", () => {
     MessagesPage();
 
-    expect(redirect).toHaveBeenCalledWith("/messages/new");
+    expect(redirect).toHaveBeenCalledWith("/messages/compose");
   });
 });

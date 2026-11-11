@@ -48,6 +48,11 @@ describe("MessageSectionNav", () => {
     });
   });
 
+  it("prepends the mobile-only maker destination without changing send", () => {
+    expect(MESSAGE_NAVIGATION_ITEMS[0]).toMatchObject({ id: "complete", title: "메세지 제작", href: "/messages/compose" });
+    expect(MESSAGE_NAVIGATION_ITEMS[1]).toMatchObject({ id: "send", href: "/messages/new" });
+  });
+
   it.each([
     ["global user with manager branch role", { role: "user", branchRole: "manager" }],
     ["global owner", { role: "owner", branchRole: null }],
@@ -105,7 +110,7 @@ describe("MessageSectionNav", () => {
 
     renderNav();
 
-    for (const label of ["템플릿", BRANCH_MANAGEMENT_LABEL, APPROVAL_GATED_LABEL]) {
+    for (const label of ["메세지 제작", "템플릿", BRANCH_MANAGEMENT_LABEL, APPROVAL_GATED_LABEL]) {
       expect(screen.getByRole("button", { name: label })).toBeDisabled();
     }
     for (const label of RELEASED_LABELS) {

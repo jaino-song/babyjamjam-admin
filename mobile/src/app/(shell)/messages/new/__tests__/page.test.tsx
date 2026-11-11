@@ -1138,7 +1138,7 @@ describe("NewMessagePage", () => {
       container.querySelectorAll(
         '[data-component="mobile_messages_new_page_screen_form_section-nav_nav_item-skeleton"]',
       ),
-    ).toHaveLength(5);
+    ).toHaveLength(6);
     expect(screen.queryByRole("button", { name: "전송하기" })).not.toBeInTheDocument();
 
     // Select a recipient first: the disabled flag has to come from the

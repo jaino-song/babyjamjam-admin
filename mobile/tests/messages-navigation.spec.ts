@@ -123,6 +123,7 @@ test.describe("mobile messages navigation", () => {
     // 발송 예정 no longer has its own destination — upcoming sends are a zone
     // inside the merged 발송 기록 screen.
     const expectedDestinations = [
+      ["메세지 제작", "/messages/compose"],
       ["전송하기", "/messages/new"],
       ["발송 기록", "/messages/history"],
       ["템플릿", "/messages/templates"],
