@@ -127,6 +127,24 @@ describe("ServiceRecordEditPreviewDialog", () => {
         expect(onOpenChange).toHaveBeenCalledWith(false);
     });
 
+    it("shows a server-reported content change without a local display diff", () => {
+        render(<ServiceRecordEditPreviewDialog open onOpenChange={jest.fn()} preview={{ ...preview,
+            after: preview.before, blockingReasons: [], impactedAssignments: [],
+            contentChanges: { headerChanged: false, changedSessionIndexes: [1] },
+        }} sessionChanges={[]} data-component={DATA_COMPONENT} />);
+        const groups = document.querySelectorAll('[data-slot="session-change"]');
+        expect(groups).toHaveLength(1);
+        expect(groups[0]).toHaveTextContent("1회차");
+        expect(groups[0]).toHaveTextContent("기록 내용");
+        expect(groups[0]).toHaveTextContent("변경됨");
+        const row = within(groups[0] as HTMLElement).getByRole("group");
+        expect(row).toHaveAttribute("data-component", `${DATA_COMPONENT}_content_dates_session-1_rows_record-content`);
+        expect(row.querySelector('[data-slot="before"]')).toBeNull();
+        expect(row.querySelector('[data-slot="after"]')).toHaveTextContent(/^변경됨$/);
+        expect(row).not.toHaveTextContent(/입력 없음|→/);
+        expect(screen.queryByText("변경된 내용이 없어요.")).not.toBeInTheDocument();
+    });
+
     it("omits all unaffected sections even with stored signatures and documents", () => {
         render(<ServiceRecordEditPreviewDialog open onOpenChange={jest.fn()} preview={{ ...preview,
             after: preview.before, contentChanges: { headerChanged: false, changedSessionIndexes: [] },

@@ -65,11 +65,28 @@ describe("ReviewStep", () => {
         expect(row.querySelector('[data-slot="old-value"]')).toHaveClass("line-through", "text-v3-text-muted", "mr-[calc(6px*var(--glint-ui-scale,1))]");
         expect(row.querySelector('[data-slot="new-value"]')).toHaveTextContent(/^울혈$/);
         expect(row.querySelector('[data-slot="new-value"]')).toHaveClass("text-v3-burgundy");
-        expect(row).toHaveTextContent(/이상없음울혈$/);
+        expect(row).toHaveTextContent(/이상없음 변경 후 울혈$/);
         const unchanged = screen.getByRole("group", { name: /회음절개부위/ });
         expect(within(unchanged).getAllByText("이상없음")).toHaveLength(1);
         expect(unchanged.querySelector('[data-slot="old-value"]')).toBeNull();
         expect(byComponent("body_submitted-badge")).toHaveTextContent("수정중");
+    });
+
+    it.each([
+        ["유방상태", "이상없음", "울혈"],
+        ["서비스 제공일", "2026.09.21(월)", "2026.09.22(화)"],
+    ])("announces before and after labels for the changed %s row", (label, old, next) => {
+        render(<ReviewStep {...makeProps({
+            baseSessionDraft: { _date: "2026-09-21", breast: ["이상없음"] },
+            draft: { _date: "2026-09-22", breast: ["울혈"] },
+        })} />);
+        const row = screen.getByRole("group", { name: new RegExp(label) });
+        expect(row).toHaveTextContent("변경 전");
+        expect(row).toHaveTextContent("변경 후");
+        expect(row.querySelector('[data-slot="old-value-label"]')).toHaveClass("sr-only");
+        expect(row.querySelector('[data-slot="new-value-label"]')).toHaveClass("sr-only");
+        expect(row.querySelector('[data-slot="old-value"]')?.textContent).toBe(old);
+        expect(row.querySelector('[data-slot="new-value"]')?.textContent).toBe(next);
     });
 
     it.each([
