@@ -2,6 +2,7 @@ import type { StartDateChangeMode } from "@babyjamjam/shared/types/start-date-ch
 import { BadRequestException, ConflictException, Injectable, Inject, InternalServerErrorException, Logger, NotFoundException, Optional } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { Prisma } from "@prisma/client";
+import { assertAuthorityPointerWrite, AuthorityConflictError, discoverAuthorityClientIds } from "infrastructure/database/utils/eformsign-contract-authority";
 import { randomUUID } from "node:crypto";
 import {
     eformsignCustomerPhone,
@@ -359,17 +360,34 @@ export class ClientService {
         branchId: string,
         targetClientId: number,
         documentIds: number[],
+        providerDocumentIds: string[],
     ): Promise<Set<number>> {
         const peekedClientIds = await this.findPhoneLinkClientIds(transaction, branchId, documentIds);
-        const clientIdsToLock = Array.from(new Set([targetClientId, ...peekedClientIds]))
+        return this.lockPointerWriteClients(transaction, branchId, targetClientId, peekedClientIds, providerDocumentIds);
+    }
+
+    private async lockPointerWriteClients(
+        transaction: Prisma.TransactionClient, branchId: string, targetClientId: number,
+        otherClientIds: number[], providerDocumentIds: string[], nextPointer?: string | null,
+    ): Promise<Set<number>> {
+        const peek = await transaction.client.findUnique({ where: { id: targetClientId }, select: { eDocId: true } });
+        if (!peek) throw new AuthorityConflictError();
+        const documentIds = [...new Set([...providerDocumentIds, peek.eDocId, nextPointer].filter((id): id is string => typeof id === "string"))];
+        const changing = nextPointer === undefined || nextPointer !== peek.eDocId;
+        const owners = changing ? await discoverAuthorityClientIds(transaction, branchId, documentIds) : [];
+        const clientIdsToLock = Array.from(new Set([targetClientId, ...otherClientIds, ...owners]))
             .sort((left, right) => left - right);
         await transaction.$queryRaw(Prisma.sql`
             SELECT id
             FROM client
             WHERE id IN (${Prisma.join(clientIdsToLock)})
+              AND branch_id = ${branchId}::uuid
             ORDER BY id
             FOR UPDATE
         `);
+        const current = await transaction.client.findUnique({ where: { id: targetClientId }, select: { eDocId: true } });
+        if (!current || current.eDocId !== peek.eDocId) throw new AuthorityConflictError();
+        if (changing) await assertAuthorityPointerWrite(transaction, { branchId, clientIds: clientIdsToLock, documentIds });
         return new Set(clientIdsToLock);
     }
 
@@ -516,6 +534,7 @@ export class ClientService {
                     branchid,
                     client.id,
                     documentIdsToLock,
+                    matchingDocs.filter(doc => documentIdsToLock.includes(doc.id)).map(doc => doc.documentId),
                 );
                 const lockedDocuments = await transaction.$queryRaw<Array<{ id: number }>>(Prisma.sql`
                     SELECT doc.id
@@ -1472,6 +1491,11 @@ export class ClientService {
         const automationIntentAt = new Date();
         if (primaryEmployeeId !== null) {
             const result = await this.prismaService.$transaction(async (transaction) => {
+                const prelockedAuthorityOwnerIds = createParams.eDocId === null ? []
+                    : await discoverAuthorityClientIds(transaction, branchid, [createParams.eDocId]);
+                if (prelockedAuthorityOwnerIds.length) await assertAuthorityPointerWrite(transaction, {
+                    branchId: branchid, clientIds: prelockedAuthorityOwnerIds, documentIds: [createParams.eDocId!],
+                });
                 const employeeIds = [primaryEmployeeId, secondaryEmployeeId]
                     .filter((employeeId): employeeId is number => employeeId !== null);
                 await lockEmployeesForScheduleWrite(transaction, branchid, employeeIds);
@@ -1553,7 +1577,7 @@ export class ClientService {
                     workAddress: params.address ?? "",
                     startDate: initialScheduleStartDate,
                     endDate: initialScheduleEndDate,
-                }, transaction, calendar);
+                }, transaction, calendar, prelockedAuthorityOwnerIds);
                 if (applyMessageAutomation) {
                     await this.messageAutomationIntentService.persistClientIntent(transaction, {
                         branchId: branchid,
@@ -2158,6 +2182,7 @@ export class ClientService {
         const ordinaryMutationId = randomUUID();
 
         const writeTransaction = async (transaction: Prisma.TransactionClient): Promise<void> => {
+            if (params.eDocId !== undefined) await this.lockPointerWriteClients(transaction, branchid, id, [], [], params.eDocId);
             // Internal callers can claim their source decision atomically with this write.
             await beforeWrite?.(transaction);
             // Always serialize client-owned service-record state before any

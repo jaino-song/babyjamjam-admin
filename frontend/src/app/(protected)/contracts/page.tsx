@@ -137,7 +137,6 @@ import {
   ContractCreationForm,
   CONTRACT_CREATION_STEPPER_STEPS,
 } from "@/components/app/contracts/ContractCreationForm";
-import { useFormStore } from "@/stores/form-store";
 import { DocumentJobRecoveryDialog } from "@/components/app/contracts/DocumentJobRecoveryDialog";
 import {
   HeadlessProgressStepper,
@@ -458,7 +457,7 @@ export default function ContractsPage() {
   const [serviceRecordSearchQuery, setServiceRecordSearchQuery] = useState("");
   const [selectedServiceRecordDocId, setSelectedServiceRecordDocId] = useState<string | null>(null);
   const [recoverJobId, setRecoverJobId] = useState<string | null>(null);
-  const [contractCreationFormKey, setContractCreationFormKey] = useState(0);
+  const [contractCreationFormKey] = useState(0);
   const { isAuthenticated, isLoading: isLoadingAuth, error: authError } = useEformsignAuth({
     requireAccessToken: false,
     syncOnWindowFocus: false,
@@ -647,19 +646,6 @@ export default function ContractsPage() {
     setRecoverJobId(recoverJobIdParam);
     router.replace("/contracts", { scroll: false });
   }, [router, searchParams]);
-
-  // A fresh send for a job that cannot be resent: drop whatever is in the form store and
-  // remount the form so no step, field or request key of an earlier send carries over.
-  const handleStartFreshContractCreation = useCallback(() => {
-    useFormStore.getState().resetAll();
-    setActiveSection("maternity");
-    setSelectedDocId(null);
-    setHasContractCreationSession(false);
-    setContractCreationActiveStep(0);
-    setContractCreationFormKey((key) => key + 1);
-    setHasOpenCreationDraft(true);
-    setIsCreating(true);
-  }, []);
 
   const handleCloseContractCreation = useCallback(() => {
     setIsCreating(false);
@@ -1180,16 +1166,8 @@ export default function ContractsPage() {
         <DocumentJobRecoveryDialog
           key={recoverJobId}
           jobId={recoverJobId}
-          hasCreationInProgress={isCreating || hasOpenCreationDraft || hasContractCreationSession}
-          onStartFresh={handleStartFreshContractCreation}
-          onViewDocument={(documentId) => {
-            setActiveSection("maternity");
-            // Leaving creation mode only hides the form — it stays mounted (an open draft or a
-            // processing session), so the in-progress input is kept, not discarded.
-            setIsCreating(false);
-            setRegisterClientDocumentId(null);
-            setSelectedDocId(documentId);
-          }}
+          presentation="iframe"
+          data-component="desktop_contracts_document-job-recovery"
           onClose={() => setRecoverJobId(null)}
         />
       )}

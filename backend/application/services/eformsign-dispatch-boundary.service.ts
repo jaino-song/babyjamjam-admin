@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 
-import { ConflictException, ForbiddenException, Inject, Injectable } from "@nestjs/common";
+import { ConflictException, ForbiddenException, Inject, Injectable, Optional } from "@nestjs/common";
+import { EFORMSIGN_CONTRACT_RECOVERY_REPOSITORY, ContractRecoveryError, type IEformsignContractRecoveryRepository, type ContractWorkerContext } from "domain/repositories/eformsign-contract-recovery.repository.interface";
 
 import { codeOnlyProblemBody } from "application/utils/problem-bodies";
 
@@ -41,9 +42,14 @@ export class EformsignDispatchBoundaryService {
     constructor(
         @Inject(EFORMSIGN_DISPATCH_INTENT_REPOSITORY)
         private readonly repository: IEformsignDispatchIntentRepository,
+        @Optional() @Inject(EFORMSIGN_CONTRACT_RECOVERY_REPOSITORY) private readonly contracts?: IEformsignContractRecoveryRepository,
     ) {}
 
     async claim(input: DispatchIntentClaimInput): Promise<DispatchIntentClaim> {
+        if (input.providerDocumentId) {
+            if (!this.contracts) throw new ContractRecoveryError("RECOVERY_UNAVAILABLE", 503);
+            return this.contracts.claimProvider({ ...input, businessKey: input.businessKey ?? buildEformsignDispatchBusinessKey(input) });
+        }
         const prepared = await this.repository.prepare({
             ...input,
             businessKey: input.businessKey ?? buildEformsignDispatchBusinessKey(input),
@@ -81,6 +87,16 @@ export class EformsignDispatchBoundaryService {
             return { intent: claimed, disposition: "claimed" };
         }
         return { intent: claimed, disposition: "uncertain" };
+    }
+
+    async claimContract(input: DispatchIntentClaimInput, worker?: ContractWorkerContext, effect?: { contractData: unknown; force?: boolean; workflow?: unknown }): Promise<DispatchIntentClaim> {
+        if (!this.contracts) throw new ContractRecoveryError("RECOVERY_UNAVAILABLE", 503);
+        const prepared = { ...input, businessKey: input.businessKey ?? buildEformsignDispatchBusinessKey(input) };
+        if (worker) {
+            if (!effect) throw new ContractRecoveryError("RECOVERY_STALE");
+            return this.contracts.claimCreation(prepared, worker, effect);
+        }
+        return this.contracts.claimLegacyCreation(prepared);
     }
 
     async markAccepted(

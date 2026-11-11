@@ -1,5 +1,5 @@
 import { ConflictException, Injectable } from "@nestjs/common";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { Prisma } from "@prisma/client";
 import {
     DISPATCH_AUTHORIZED_PROGRESS_STEP,
@@ -11,6 +11,7 @@ import {
     MANUAL_RESOLVED_PROGRESS_STEP,
     buildManualClaimStep,
     parseManualClaim,
+    isContractJob,
 } from "domain/entities/eformsign-document-job.entity";
 import {
     DEFAULT_CONTRACT_AUTO_FINALIZE_CONFIG,
@@ -28,6 +29,7 @@ import {
 } from "domain/repositories/eformsign-document-job.repository.interface";
 import { PrismaService } from "infrastructure/database/prisma.service";
 import { withoutEntityChangeHints } from "infrastructure/database/entity-change-suppression";
+import { lockAuthorityScope, reserveAuthority } from "../utils/eformsign-contract-authority";
 import {
     authorizeServiceRecordDispatch,
     deriveServiceRecordDocumentSyncStatus,
@@ -39,6 +41,7 @@ import type {
 } from "@babyjamjam/shared/types/service-record";
 
 type RawJob = {
+    contract_generation?: string | null;
     id: string; branch_id: string; client_id: number | null; document_id: string | null;
     job_type: string; source: string; status: string; request_key: string; active_key: string | null;
     payload: Prisma.JsonValue | string | null; payload_fingerprint: string | null; progress_step: string | null;
@@ -244,20 +247,44 @@ export class SbEformsignDocumentJobRepository implements IEformsignDocumentJobRe
         tx: Prisma.TransactionClient,
         input: EnqueueEformsignDocumentJobInput,
     ) {
+        const contract = input.jobType === "create_document" && input.clientId && isContractJob(input);
+        let generation: string | null = null, priorDocumentId: string | null = null;
+        if (contract) {
+            if (!/^[a-f0-9]{64}$/.test(input.payloadFingerprint)) throw new ConflictException({ code: "REQUEST_CONFLICT" });
+            const authorities = await lockAuthorityScope(tx, input.branchId, [input.clientId!]);
+            const replay = await tx.$queryRaw<RawJob[]>(Prisma.sql`SELECT * FROM eformsign_document_job
+                WHERE request_key = ${input.requestKey} OR active_key = ${input.activeKey}
+                ORDER BY CASE WHEN request_key = ${input.requestKey} THEN 0 ELSE 1 END LIMIT 1`);
+            if (replay[0]) {
+                if (replay[0].branch_id !== input.branchId) throw new Error("EFORMSIGN_DOCUMENT_JOB_KEY_CONFLICT");
+                if (replay[0].request_key === input.requestKey && replay[0].payload_fingerprint !== input.payloadFingerprint) throw new Error("EFORMSIGN_DOCUMENT_JOB_IDEMPOTENCY_MISMATCH");
+                return { job: this.toDomain(replay[0]), existing: true };
+            }
+            if (authorities.some(authority => authority.phase !== "closed")) throw new ConflictException({ code: "REQUEST_CONFLICT" });
+            const unresolved = await tx.eformsign_dispatch_intent.findFirst({ where: { branchId: input.branchId, clientId: input.clientId!, action: "create", status: { in: ["started", "uncertain"] } }, select: { id: true } });
+            if (unresolved) throw new ConflictException({ code: "REQUEST_CONFLICT" });
+            const client = await tx.client.findUnique({ where: { id: input.clientId! }, select: { eDocId: true } });
+            if (!client) throw new ConflictException({ code: "REQUEST_CONFLICT" });
+            priorDocumentId = client.eDocId; generation = randomUUID();
+        }
         const inserted = await tx.$queryRaw<RawJob[]>(Prisma.sql`
                 INSERT INTO "eformsign_document_job" (
                     branch_id, client_id, document_id, job_type, source, request_key,
-                    active_key, payload, payload_fingerprint, progress_step, created_by_user_id
+                    active_key, payload, payload_fingerprint, progress_step, created_by_user_id, contract_generation
                 ) VALUES (
                     ${input.branchId}::uuid, ${input.clientId ?? null}, ${input.documentId ?? null},
                     ${input.jobType}, ${input.source}, ${input.requestKey}, ${input.activeKey},
                     ${JSON.stringify(input.payload)}::jsonb, ${input.payloadFingerprint}, 'queued',
-                    ${input.createdByUserId ?? null}::uuid
+                    ${input.createdByUserId ?? null}::uuid, ${generation}::uuid
                 )
                 ON CONFLICT DO NOTHING
                 RETURNING *
             `);
-        if (inserted[0]) return { job: this.toDomain(inserted[0]), existing: false };
+        if (inserted[0]) {
+            if (generation) await reserveAuthority(tx, { branchId: input.branchId, clientId: input.clientId!, jobId: inserted[0].id,
+                generation, fingerprint: input.payloadFingerprint, priorDocumentId });
+            return { job: this.toDomain(inserted[0]), existing: false };
+        }
 
         const existing = await tx.$queryRaw<RawJob[]>(Prisma.sql`
                 SELECT * FROM "eformsign_document_job"
@@ -704,6 +731,7 @@ export class SbEformsignDocumentJobRepository implements IEformsignDocumentJobRe
         return this.updateOne(Prisma.sql`
             UPDATE "eformsign_document_job" SET status = 'reconciling', progress_step = ${progressStep},
                 payload = CASE
+                    WHEN contract_generation IS NOT NULL THEN payload
                     WHEN jsonb_typeof(payload) = 'object'
                         AND payload->>'kind' = 'service_record_revision' THEN payload
                     ELSE NULL
@@ -719,6 +747,7 @@ export class SbEformsignDocumentJobRepository implements IEformsignDocumentJobRe
             UPDATE "eformsign_document_job" SET status = 'completed',
                 document_id = COALESCE(${documentId ?? null}, document_id), completed_at = now(),
                 payload = CASE
+                    WHEN contract_generation IS NOT NULL THEN payload
                     WHEN jsonb_typeof(payload) = 'object'
                         AND payload->>'kind' = 'service_record_revision' THEN payload
                     ELSE NULL
@@ -726,7 +755,7 @@ export class SbEformsignDocumentJobRepository implements IEformsignDocumentJobRe
                 active_key = NULL, heartbeat_at = NULL, lease_token = NULL,
                 last_error_code = NULL, updated_at = now()
             WHERE id = ${id}::uuid AND lease_token = ${leaseToken}::uuid
-              AND status IN ('processing', 'reconciling') RETURNING *
+              AND status IN ('processing', 'reconciling') AND contract_generation IS NULL RETURNING *
         `);
     }
 
@@ -751,6 +780,7 @@ export class SbEformsignDocumentJobRepository implements IEformsignDocumentJobRe
                 END,
                 payload = CASE
                     WHEN progress_step IS NULL OR progress_step IN ('queued', 'validating', 'preparing') THEN payload
+                    WHEN contract_generation IS NOT NULL THEN payload
                     WHEN jsonb_typeof(payload) = 'object'
                         AND payload->>'kind' = 'service_record_revision' THEN payload
                     ELSE NULL
@@ -845,6 +875,10 @@ export class SbEformsignDocumentJobRepository implements IEformsignDocumentJobRe
             DELETE FROM "eformsign_document_job"
             WHERE status IN ${TERMINAL_STATUSES}
               AND completed_at < ${cutoff}
+              AND NOT EXISTS (
+                  SELECT 1 FROM "eformsign_contract_authority" AS authority
+                  WHERE authority.creation_job_id = "eformsign_document_job".id
+              )
               AND NOT (
                   COALESCE(jsonb_typeof(payload) = 'object', false)
                   AND COALESCE(payload->>'kind' = 'service_record_revision', false)
@@ -861,7 +895,7 @@ export class SbEformsignDocumentJobRepository implements IEformsignDocumentJobRe
                 UPDATE "eformsign_document_job" AS j
                 SET progress_step = ${buildManualClaimStep(input.userId, nowMs)}, updated_at = now()
                 WHERE j.id = ${input.jobId}::uuid AND j.branch_id = ${input.branchId}::uuid
-                  AND ${contractJobSql("j")}
+                  AND j.contract_generation IS NULL AND ${contractJobSql("j")}
                   AND j.status IN ${RECOVERABLE_STATUSES}
                   AND ${manualClaimAvailableSql(input.userId, nowMs)}
                 RETURNING j.*
@@ -887,7 +921,7 @@ export class SbEformsignDocumentJobRepository implements IEformsignDocumentJobRe
                     completed_at = ${input.now}, active_key = NULL, payload = NULL,
                     heartbeat_at = NULL, lease_token = NULL, updated_at = now()
                 WHERE j.id = ${input.jobId}::uuid AND j.branch_id = ${input.branchId}::uuid
-                  AND ${contractJobSql("j")}
+                  AND j.contract_generation IS NULL AND ${contractJobSql("j")}
                   AND j.status IN ${RECOVERABLE_STATUSES}
                   AND ${manualClaimAvailableSql(input.userId, nowMs)}
                 RETURNING j.*
@@ -907,7 +941,7 @@ export class SbEformsignDocumentJobRepository implements IEformsignDocumentJobRe
             UPDATE "eformsign_document_job"
             SET payload = NULL, updated_at = now()
             WHERE ${contractJobSql()}
-              AND status = 'requires_attention'
+              AND (status = 'requires_attention' OR (status = 'failed' AND contract_generation IS NOT NULL))
               AND payload IS NOT NULL
               AND completed_at < ${new Date(now.getTime() - RECOVERY_RETENTION_MS)}
         `);
@@ -1046,6 +1080,7 @@ export class SbEformsignDocumentJobRepository implements IEformsignDocumentJobRe
     }
 
     private toDomain = (row: RawJob): EformsignDocumentJobEntity => new EformsignDocumentJobEntity({
+        contractGeneration: row.contract_generation ?? null,
         id: row.id, branchId: row.branch_id, clientId: row.client_id, documentId: row.document_id,
         jobType: row.job_type as EformsignDocumentJobType, source: row.source as EformsignDocumentJobSource,
         status: row.status as EformsignDocumentJobStatus, requestKey: row.request_key, activeKey: row.active_key,

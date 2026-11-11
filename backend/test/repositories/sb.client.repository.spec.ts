@@ -1,3 +1,12 @@
+// These business regressions model the explicit legacy/no-authority dependency.
+// Real authority SQL and paired writer denials run in eformsign-contract-authority-writers.spec.ts.
+jest.mock("infrastructure/database/utils/eformsign-contract-authority", () => ({
+    ...jest.requireActual("infrastructure/database/utils/eformsign-contract-authority"),
+    discoverAuthorityClientIds: jest.fn().mockResolvedValue([]),
+    assertAuthorityPointerWrite: jest.fn().mockResolvedValue(undefined),
+    assertNoUnresolvedAuthorityForDocuments: jest.fn().mockResolvedValue(undefined),
+}));
+
 import { Logger } from "@nestjs/common";
 import { isContractSendRequired } from "application/utils/current-contract-document";
 import { findManyFrom } from "../utils/prisma-where-evaluator";
@@ -98,7 +107,7 @@ describe("SbClientRepository", () => {
             eformsign_doc: eformsignDocModel,
             $queryRawUnsafe: jest.fn().mockResolvedValue([{ exists: true }]),
             $transaction: jest.fn(async (callback: (transaction: unknown) => Promise<unknown>) =>
-                callback({ client: clientModel, $queryRaw: transactionQueryRaw })),
+                callback({ client: clientModel, $queryRaw: transactionQueryRaw, $queryRawUnsafe: prisma.$queryRawUnsafe })),
         } as unknown as PrismaService;
         repository = new SbClientRepository(prisma);
     });

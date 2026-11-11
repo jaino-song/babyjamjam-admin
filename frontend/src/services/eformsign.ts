@@ -15,6 +15,11 @@ import {
     VoidContractDocumentResponse,
 } from '@babyjamjam/shared/types/eformsign';
 import type { EformsignStatusCountsResponse } from "@/lib/eformsign/types";
+import {
+    manualRecoveryJobIdSchema, matchesManualRecoveryClaim, openManualRecoveryResponseSchema,
+    verifyManualRecoveryRequestSchema, verifyManualRecoveryResponseSchema,
+    type OpenManualRecoveryResponse, type VerifyManualRecoveryResponse,
+} from "@/lib/eformsign/manual-recovery-contract";
 
 /**
  * Headless dispatch/finalize run a real browser against eformsign, so they blow
@@ -24,6 +29,8 @@ import type { EformsignStatusCountsResponse } from "@/lib/eformsign/types";
  * `fallbackHint`) instead of aborting first on an outcome it can't classify.
  */
 const HEADLESS_DISPATCH_CLIENT_TIMEOUT_MS = 180_000;
+// Existing interceptor guard: these authority mutations must never replay after a 401.
+const MANUAL_RECOVERY_REQUEST_CONFIG = { timeout: HEADLESS_DISPATCH_CLIENT_TIMEOUT_MS, _retry: true } as const;
 const MAX_PROVIDER_FINALIZE_STEPS = 3;
 
 const DEFAULT_EFORMSIGN_LIMIT = 100;
@@ -40,6 +47,15 @@ export type EformsignDocumentJobStatus =
     | "requires_attention";
 
 export type EformsignDocumentJobRecoveryKind = "manual_send" | "verify_result";
+export type EformsignDocumentJobDocumentKind = "service_contract" | "service_record" | "unknown";
+export type EformsignDocumentJobDisplayOperation = "generate" | "review" | "unknown";
+export type EformsignDocumentJobFailureReasonCode =
+    | "PROVIDER_STATE_UNAVAILABLE"
+    | "PRE_SEND_RETRY_EXHAUSTED"
+    | "SERVICE_RECORD_REVISION_CAPABILITY_UNVERIFIED"
+    | "SERVICE_RECORD_REVISION_MANUAL_REVIEW_REQUIRED"
+    | "JOB_TARGET_NOT_OWNED_BY_BRANCH"
+    | "RECOVERY_PAYLOAD_EXPIRED";
 
 export interface EformsignDocumentJobSummary {
     activeCount: number;
@@ -54,6 +70,10 @@ export interface EformsignDocumentJobSummary {
 
 /** Fields intentionally exposed by the backend's safe job response DTO. */
 export interface EformsignDocumentJobResponse {
+    /** Optional while older servers do not supply the additive display projection. */
+    documentKind?: EformsignDocumentJobDocumentKind;
+    displayOperation?: EformsignDocumentJobDisplayOperation;
+    failureReasonCode?: EformsignDocumentJobFailureReasonCode | null;
     jobId: string;
     jobType: EformsignDocumentJobType;
     source: EformsignDocumentJobSource;
@@ -308,6 +328,21 @@ export const eformsignApi = {
             `/eformsign-docs/jobs/${encodeURIComponent(jobId)}/recovery`,
         );
         return data;
+    },
+    openDocumentJobRecovery: async (jobId: string): Promise<OpenManualRecoveryResponse> => {
+        manualRecoveryJobIdSchema.parse(jobId);
+        const { data } = await api.post<unknown>(`/eformsign-docs/jobs/${encodeURIComponent(jobId)}/recovery/open`, undefined, MANUAL_RECOVERY_REQUEST_CONFIG);
+        const result = openManualRecoveryResponseSchema.safeParse(data);
+        if (!result.success || !matchesManualRecoveryClaim(result.data, jobId)) throw new Error('RECOVERY_UNAVAILABLE');
+        return result.data;
+    },
+    verifyDocumentJobRecovery: async (jobId: string, claimEpoch: string): Promise<VerifyManualRecoveryResponse> => {
+        manualRecoveryJobIdSchema.parse(jobId);
+        const body = verifyManualRecoveryRequestSchema.parse({ claimEpoch });
+        const { data } = await api.post<unknown>(`/eformsign-docs/jobs/${encodeURIComponent(jobId)}/recovery/verify`, body, MANUAL_RECOVERY_REQUEST_CONFIG);
+        const result = verifyManualRecoveryResponseSchema.safeParse(data);
+        if (!result.success || !matchesManualRecoveryClaim(result.data, jobId, body.claimEpoch)) throw new Error('RECOVERY_UNAVAILABLE');
+        return result.data;
     },
     resolveDocumentJob: async (jobId: string): Promise<ResolveEformsignDocumentJobResponse> => {
         const { data } = await api.post<ResolveEformsignDocumentJobResponse>(

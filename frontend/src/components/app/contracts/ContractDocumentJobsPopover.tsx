@@ -1,7 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import Link from "next/link";
+import { usePathname, useRouter } from 'next/navigation';
 import {
   AlertCircle,
   CheckCircle2,
@@ -19,7 +20,6 @@ import { EmptyState } from "@/components/app/v3/EmptyState";
 import { Button } from "@/components/ui/button";
 import {
   Popover,
-  PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
 import {
@@ -33,6 +33,10 @@ import { Spinner } from "@/components/ui/spinner";
 import { isRecoverableJob, recoverJobHref } from "@/features/document-jobs/failure-popup-copy";
 import { useIsMobile } from "@/hooks/useIsMobile";
 import { cn } from "@/lib/utils";
+import type { EformsignDocumentJobResponse } from "@/services/eformsign";
+
+import { ContractDocumentJobsModal } from "./ContractDocumentJobsModal";
+import { DocumentJobRecoveryDialog } from './DocumentJobRecoveryDialog';
 
 const SOURCE_COMPONENT = "ContractDocumentJobsPopover";
 
@@ -45,7 +49,10 @@ export type ContractDocumentJobStatus =
   | "requires_attention"
   | (string & {});
 
-export interface ContractDocumentJob {
+export interface ContractDocumentJob extends Pick<
+  EformsignDocumentJobResponse,
+  "documentKind" | "displayOperation" | "failureReasonCode"
+> {
   jobId: string;
   jobType: string;
   source?: "staff" | "auto_finalize";
@@ -323,6 +330,10 @@ export function ContractDocumentJobsPopover({
   className,
 }: ContractDocumentJobsPopoverProps) {
   const [internalOpen, setInternalOpen] = useState(defaultOpen);
+  const anchorRef = useRef<HTMLButtonElement>(null);
+  const recoveryTrigger = useRef<HTMLButtonElement | null>(null);
+  const [recoveryJobId, setRecoveryJobId] = useState<string | null>(null);
+  const pathname = usePathname(), router = useRouter();
   const isOpen = open ?? internalOpen;
   const resolvedJobs = documentJobs ?? jobs ?? null;
   const resolvedLoading = loading || isJobsLoading;
@@ -333,8 +344,12 @@ export function ContractDocumentJobsPopover({
   // to its content, so a `fixed inset-x-0` child inside it collapses to a sliver; the sheet is a
   // Dialog portal with no such wrapper.
   const isMobile = useIsMobile();
+  const scope = `${pathname}:${isMobile}`;
+  const [recoveryScope, setRecoveryScope] = useState(scope);
+  if (recoveryScope !== scope) { setRecoveryScope(scope); setRecoveryJobId(null); }
 
   const handleOpenChange = (nextOpen: boolean) => {
+    if (recoveryJobId !== null && !nextOpen) return;
     setInternalOpen(nextOpen);
     onOpenChange?.(nextOpen);
   };
@@ -404,7 +419,7 @@ export function ContractDocumentJobsPopover({
   if (isMobile) {
     return (
       <Sheet open={isOpen} onOpenChange={handleOpenChange}>
-        <SheetTrigger asChild>{resolvedTrigger}</SheetTrigger>
+        <SheetTrigger ref={anchorRef} asChild data-slot="document-jobs-trigger">{resolvedTrigger}</SheetTrigger>
         <SheetContent
           side="bottom"
           data-component={dataComponent}
@@ -424,23 +439,29 @@ export function ContractDocumentJobsPopover({
 
   return (
     <Popover open={isOpen} onOpenChange={handleOpenChange}>
-      <PopoverTrigger asChild>{resolvedTrigger}</PopoverTrigger>
-      <PopoverContent
+      <PopoverTrigger ref={anchorRef} asChild aria-controls={undefined} data-slot="document-jobs-trigger">{resolvedTrigger}</PopoverTrigger>
+      <ContractDocumentJobsModal
+        open={isOpen}
+        onClose={() => handleOpenChange(false)}
+        anchorRef={anchorRef}
+        summary={_summary}
+        jobs={resolvedJobs}
+        isLoading={resolvedLoading}
+        error={resolvedError}
+        onRetry={resolvedRetry}
+        interactionPaused={recoveryJobId !== null}
+        onRecover={(jobId, triggerButton) => {
+          if (pathname === '/contracts') { recoveryTrigger.current = triggerButton; setRecoveryJobId(jobId); }
+          else { handleOpenChange(false); router.push(recoverJobHref(jobId)); }
+        }}
+        recoveryDialog={recoveryJobId !== null ? <DocumentJobRecoveryDialog presentation="iframe" jobId={recoveryJobId} data-component={sub('recovery')}
+          onClose={() => setRecoveryJobId(null)} onCloseAutoFocus={event => {
+            event.preventDefault();
+            const trigger = recoveryTrigger.current;
+            (trigger?.isConnected ? trigger : anchorRef.current)?.focus({ preventScroll: true });
+          }} /> : null}
         data-component={dataComponent}
-        data-slot="document-jobs-popover"
-        data-source-component={SOURCE_COMPONENT}
-        side="bottom"
-        align="end"
-        sideOffset={12}
-        avoidCollisions
-        className={cn(
-          "!z-[60] !w-[min(420px,calc(100vw-32px))] max-h-[min(640px,calc(100vh-64px))] overflow-hidden p-0",
-          className,
-        )}
-      >
-        {panelHeader(false)}
-        {panelBody}
-      </PopoverContent>
+      />
     </Popover>
   );
 }

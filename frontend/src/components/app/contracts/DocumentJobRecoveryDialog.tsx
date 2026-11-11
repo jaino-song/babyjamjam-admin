@@ -11,6 +11,7 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Dialog } from "@/components/ui/dialog";
 import { Spinner } from "@/components/ui/spinner";
+import { ManualDocumentJobRecoveryDialog, type ManualDocumentJobRecoveryDialogProps } from './ManualDocumentJobRecoveryDialog';
 import { useDocumentJobs } from "@/features/document-jobs/DocumentJobsProvider";
 import { useToast } from "@/hooks/use-toast";
 import {
@@ -97,7 +98,8 @@ function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-export interface DocumentJobRecoveryDialogProps {
+interface LegacyDocumentJobRecoveryDialogProps {
+  presentation?: 'legacy';
   jobId: string;
   /** A contract form is open or its send is still on screen: starting fresh would discard it. */
   hasCreationInProgress: boolean;
@@ -109,6 +111,13 @@ export interface DocumentJobRecoveryDialogProps {
   resolveRetryDelayMs?: number;
   "data-component"?: string;
 }
+export type DocumentJobRecoveryDialogProps = LegacyDocumentJobRecoveryDialogProps | (ManualDocumentJobRecoveryDialogProps & { presentation: 'iframe' });
+
+export function DocumentJobRecoveryDialog(props: DocumentJobRecoveryDialogProps) {
+  return props.presentation === 'iframe'
+    ? <ManualDocumentJobRecoveryDialog key={props.jobId} {...props} />
+    : <LegacyDocumentJobRecoveryDialog {...props} />;
+}
 
 /**
  * Recovery for one failed document job, opened from /contracts?recoverJobId=.
@@ -118,7 +127,7 @@ export interface DocumentJobRecoveryDialogProps {
  * fresh form or mark the job handled; for one whose outcome is unknown (verify_result) they must
  * first confirm in eformsign that nothing was sent.
  */
-export function DocumentJobRecoveryDialog({
+function LegacyDocumentJobRecoveryDialog({
   jobId,
   hasCreationInProgress,
   onStartFresh,
@@ -126,7 +135,7 @@ export function DocumentJobRecoveryDialog({
   onClose,
   resolveRetryDelayMs = DEFAULT_RESOLVE_RETRY_DELAY_MS,
   "data-component": dataComponent = DEFAULT_DATA_COMPONENT,
-}: DocumentJobRecoveryDialogProps) {
+}: LegacyDocumentJobRecoveryDialogProps) {
   const { toast } = useToast();
   const { refetchSummary, refetchJobs, jobs: jobList } = useDocumentJobs();
   const sub = (suffix: string) => `${dataComponent}_${suffix}`;

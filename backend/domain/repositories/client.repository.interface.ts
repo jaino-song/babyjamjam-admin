@@ -301,12 +301,14 @@ export interface IClientRepository {
         tab?: ClientListTab,
     ): Promise<PaginatedResult<ClientEntity>>;
     getListSummary?(branchid: string, search?: string): Promise<ClientListSummary>;
-    create(branchid: string, client: ClientEntity, transaction?: Prisma.TransactionClient): Promise<ClientEntity>;
+    /** A prelocked owner snapshot restricts creation; it never permits an authority write. */
+    create(branchid: string, client: ClientEntity, transaction?: Prisma.TransactionClient, prelockedAuthorityOwnerIds?: readonly number[]): Promise<ClientEntity>;
     createWithInitialSchedule(
         branchid: string,
         client: ClientEntity,
         schedule: InitialClientSchedule,
         transaction?: Prisma.TransactionClient,
+        prelockedAuthorityOwnerIds?: readonly number[],
     ): Promise<ClientWithInitialSchedule>;
     update(
         branchid: string,
