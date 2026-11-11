@@ -884,6 +884,35 @@ describe("ServiceRecordEditAgentCapabilitiesProvider", () => {
             expect(parsed).toBeDefined();
         });
 
+        it.each(["2026-10-2", "", "2026-09-31", "2026-02-29", "2026-13-01", "2026-10-02T00:00:00Z"])("asks for a corrected pause start date for %j before applying a resume", async (pauseStartDate) => {
+            const harness = createHarness(goldenSource());
+            await expect(propose(harness, {
+                clientId: CLIENT_ID,
+                operations: [{ kind: "resumeReplan", pauseStartDate, resumeDate: "2026-10-21" }],
+            })).rejects.toMatchObject({ name: "AgentActionQuestionError", code: "INVALID_DATE" });
+            expect(harness.repository.updateDraft).not.toHaveBeenCalled();
+            expect(activeDrafts(harness)).toEqual([]);
+        });
+
+        it("keeps the canonical October 2 pause at session 2 with a November 9 end date", async () => {
+            const harness = createHarness(goldenSource());
+            const { inspection } = await propose(harness, {
+                clientId: CLIENT_ID,
+                operations: [{ kind: "resumeReplan", pauseStartDate: "2026-10-02", resumeDate: "2026-10-21" }],
+            });
+            expect(inspection.targetSnapshot).toMatchObject({
+                operations: [{ kind: "resumeReplan", fromSessionIndex: 2, resumeDate: "2026-10-21" }],
+            });
+            expect(inspection.preview?.sections).toEqual(expect.arrayContaining([
+                expect.objectContaining({
+                    title: "서비스 기간·마감",
+                    rows: expect.arrayContaining([row("서비스 종료일", "2026-10-23", "2026-11-09")]),
+                }),
+            ]));
+            expectValidCard(inspection);
+            expect(activeDrafts(harness)).toEqual([]);
+        });
+
         it("splits a long section at 60 rows and keeps every row", async () => {
             const dates: string[] = [KR_BUILTIN_CALENDAR.nextBusinessDay("2026-11-02")];
             while (dates.length < 70) dates.push(KR_BUILTIN_CALENDAR.addBusinessDays(dates.at(-1)!, 1));

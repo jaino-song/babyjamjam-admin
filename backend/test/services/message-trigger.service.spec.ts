@@ -923,6 +923,59 @@ describe("MessageTriggerService", () => {
             expect(fx.ruleRepository.update).not.toHaveBeenCalled();
         });
 
+        it.each([undefined, "11:45"])("creates caregiver groups without reentering an exhausted pool (sendTime=%s)", async (sendTime) => {
+            const transaction = { message_trigger_rule: {} };
+            let transactionHeld = false;
+            const policy = settings({ ...defaultMessageAutomationPolicy(), defaultRuleSendTime: "10:30" });
+            policy.getMessageAutomationPolicyConfig.mockImplementation(async (_branchId: string, tx?: unknown) => {
+                // Other group writers hold the remaining connections while waiting on locks.
+                if (transactionHeld && tx !== transaction) throw new Error("Synthetic connection pool exhausted");
+                return { configuration: { ...defaultMessageAutomationPolicy(), defaultRuleSendTime: "10:30" } };
+            });
+            const fx = createService(policy);
+            fx.prisma.$transaction.mockImplementation(async (work) => {
+                transactionHeld = true;
+                try { return await work(transaction); }
+                finally { transactionHeld = false; }
+            });
+            const children: MessageTriggerRuleEntity[] = [];
+            fx.ruleRepository.create.mockImplementation(async (_branchId, rule) => {
+                Object.assign(rule, { id: `child-${children.length}` });
+                children.push(rule);
+                return rule;
+            });
+            Object.assign(fx.ruleRepository, {
+                findGroupRules: jest.fn(async () => children),
+                findGroups: jest.fn(async () => fx.durableGroups),
+            });
+            jest.spyOn(fx.service, "listRulesReadOnly").mockResolvedValue(children);
+
+            const group = await fx.service.createRuleGroup(branchId, {
+                name: "Caregiver group", isActive: false, eventType: MessageTriggerEventType.SERVICE_START,
+                offsetType: MessageTriggerOffsetType.BEFORE_DAYS, offsetDays: 1, recipientMode: "BOTH_EMPLOYEES",
+                recipientTemplates: {
+                    [MessageTriggerRecipientType.PRIMARY_EMPLOYEE]: MessageTriggerTemplateKey.CAREGIVER_SERVICE_START_NOTICE,
+                    [MessageTriggerRecipientType.SECONDARY_EMPLOYEE]: MessageTriggerTemplateKey.CAREGIVER_SERVICE_START_NOTICE,
+                },
+                ...(sendTime === undefined ? {} : { sendTime }),
+            });
+
+            expect(group.sendTime).toBe(sendTime ?? "10:30");
+            expect(group.rules).toHaveLength(2);
+            expect(group.rules.map((rule) => rule.sendTime)).toEqual([sendTime ?? "10:30", sendTime ?? "10:30"]);
+            expect(fx.prisma.$transaction).toHaveBeenCalledTimes(1);
+            expect(fx.templateAutomationLock.runExclusive).toHaveBeenCalledWith(expect.any(String), expect.any(Function), transaction);
+            expect(fx.ruleRepository.createGroup).toHaveBeenCalledWith(branchId, "Caregiver group", "BOTH_EMPLOYEES", transaction);
+            expect(fx.ruleRepository.create).toHaveBeenCalledTimes(2);
+            for (const child of children) expect(fx.ruleRepository.create).toHaveBeenCalledWith(branchId, child, transaction);
+            if (sendTime === undefined) {
+                expect(policy.getMessageAutomationPolicyConfig).toHaveBeenCalledTimes(2);
+                expect(policy.getMessageAutomationPolicyConfig).toHaveBeenCalledWith(branchId, transaction);
+            } else {
+                expect(policy.getMessageAutomationPolicyConfig).not.toHaveBeenCalled();
+            }
+        });
+
         it("keeps legacy 09:00 for a missing stored policy and applies no cadence to immediate sends", async () => {
             const fx = createService(settings());
             fx.ruleRepository.create.mockImplementation(async (_branch, rule) => Object.assign(rule, { id: "new-rule" }));
@@ -4181,6 +4234,100 @@ describe("MessageTriggerService", () => {
                 expect(fx.jobRepository.hasNewerClientRuleSibling).not.toHaveBeenCalled();
                 expect(fx.jobRepository.findForClientAutomationReview).not.toHaveBeenCalled();
                 expect(fx.deliveryService.sendJob).toHaveBeenCalledTimes(1);
+            });
+
+            const caregiverResendFixture = async (catchUp = false) => {
+                const fx = resendFixture({ employeeScheduleId: 91 });
+                const primaryRule = Object.assign(createRule({ eventType: MessageTriggerEventType.SERVICE_START,
+                    offsetType: MessageTriggerOffsetType.SAME_DAY, recipientType: MessageTriggerRecipientType.PRIMARY_EMPLOYEE,
+                    templateKey: MessageTriggerTemplateKey.CAREGIVER_SERVICE_START_NOTICE }), { groupId: "caregiver-group" });
+                const secondaryRule = Object.assign(createRule({ id: "secondary-rule", eventType: primaryRule.eventType,
+                    offsetType: primaryRule.offsetType, recipientType: MessageTriggerRecipientType.SECONDARY_EMPLOYEE,
+                    templateKey: primaryRule.templateKey }), { groupId: primaryRule.groupId });
+                const rules = [primaryRule, secondaryRule];
+                const client = { ...fx.client, branchId, deletedAt: null, serviceStatus: "in_progress",
+                    bookingConfirmedAt: new Date("2026-09-01"), endDate: new Date("2027-01-20") };
+                const schedule = { id: 91, incarnationId: "97000000-0000-4000-8000-000000000091", branchId, clientId: client.id,
+                    workAddress: "합성 주소", replaced: false, terminatedAt: null, startDate: new Date("2026-10-01"), endDate: client.endDate,
+                    primaryEmployeeId: 11, secondaryEmployeeId: 12,
+                    primaryEmployee: { id: 11, branchId, name: "주 직원", phone: "01000000011", deletedAt: null, smsAutomationEnabled: true },
+                    secondaryEmployee: { id: 12, branchId, name: "보조 직원", phone: "01000000011", deletedAt: null, smsAutomationEnabled: true } };
+                const sources = { readCaregiverSource: jest.fn(async () => ({ branch: { id: branchId, name: "합성 지점" }, client, schedules: [schedule] })) };
+                const templates = { resolve: jest.fn(async () => ({ content: "{{employeeName}} {{clientName}} 안내", requiredVariableKeys: ["employeeName", "clientName"] })) };
+                const groupRules = Object.assign(fx.ruleRepository, {
+                    findGroup: jest.fn(async () => ({ id: primaryRule.groupId, version: 1 })),
+                    findGroupRules: jest.fn(async () => rules),
+                });
+                const resolver = new MessageTriggerRecipientResolverService(sources as never, templates as never, groupRules as never);
+                Object.assign(fx.service, { caregiverRecipients: resolver });
+                fx.ruleRepository.findByIdIncludingGlobal.mockResolvedValue(primaryRule);
+                const initial = await resolver.resolve(branchId, client.id, rules);
+                expect(initial.recipients.map((row) => row.reason)).toEqual(["recipient_phone_conflict", "recipient_phone_conflict"]);
+                const recipe = initial.recipients[0]!.recipe!;
+                Object.assign(fx.job, { ...recipe, payload: structuredClone(recipe.payload), cancelReason: "recipient_phone_conflict" });
+                if (catchUp) {
+                    fx.job.payload.catchUp = { batchId: `client:${client.id}:2026-11-05T12:00:00.000Z`, sequence: 1, intervalMinutes: 3,
+                        originalScheduledFor: recipe.scheduledFor.toISOString(), predecessorDedupeKey: null };
+                    fx.job.scheduledFor = new Date("2026-11-05T12:00:00Z");
+                }
+                jest.mocked(fx.service.readClientAutomationSchedules).mockResolvedValue([{ ...schedule, client: { id: client.id, name: client.name } }]);
+                fx.prisma.employee_schedule.findFirst.mockResolvedValue(schedule);
+                fx.claimedJobRead.mockImplementation(async () => ({ ...fx.job, status: "processing" }));
+                return { ...fx, schedule, resolver, rules, sources };
+            };
+
+            it.each([false, true])("resends a caregiver after the other employee's phone conflict is fixed (catch-up=%s)", async (catchUp) => {
+                const fx = await caregiverResendFixture(catchUp);
+                fx.schedule.secondaryEmployee.phone = "01000000012";
+                fx.schedule.primaryEmployee.name = "현재 주 직원";
+                const selectedTime = fx.job.scheduledFor;
+                const selectedKey = fx.job.dedupeKey;
+                const selectedCatchUp = structuredClone(fx.job.payload.catchUp);
+                const expected = (await fx.resolver.resolve(branchId, fx.job.clientId!, fx.rules)).recipients[0]!.recipe!;
+                fx.deliveryService.prepareJob.mockImplementation(async (job: MessageTriggerJobEntity) => {
+                    expect(job.payload).toEqual({ ...expected.payload, ...(selectedCatchUp ? { catchUp: selectedCatchUp } : {}) });
+                    job.payload.templateVariables[SMS_DELIVERY_SNAPSHOT_VARIABLE] = "synthetic-trigger-prepared";
+                    return { serializedSnapshot: "synthetic-trigger-prepared", snapshot: { snapshotHash: "synthetic" } };
+                });
+
+                const result = await fx.service.resendNeedsSetupJob(branchId, fx.job.id);
+
+                expect(result.status).toBe("sent");
+                expect(fx.deliveryService.sendJob).toHaveBeenCalledTimes(1);
+                expect(fx.job.payload.caregiverSourceSnapshot).toEqual(expected.payload.caregiverSourceSnapshot);
+                expect(fx.job.payload.catchUp).toEqual(selectedCatchUp);
+                expect(fx.job.scheduledFor).toBe(selectedTime);
+                expect(fx.job.dedupeKey).toBe(selectedKey);
+                expect(fx.jobRepository.hasNewerClientRuleSibling).not.toHaveBeenCalled();
+            });
+
+            it("keeps a caregiver in needs_setup while the phone conflict remains", async () => {
+                const fx = await caregiverResendFixture();
+                const result = await fx.service.resendNeedsSetupJob(branchId, fx.job.id);
+                expect(result).toEqual({ id: fx.job.id, status: "needs_setup", reason: "recipient_phone_conflict" });
+                expect(fx.deliveryService.prepareJob).not.toHaveBeenCalled();
+                expect(fx.deliveryService.sendJob).not.toHaveBeenCalled();
+            });
+
+            it.each(["date", "employee", "incarnation", "key"])("cancels a caregiver catch-up when its selected %s changes", async (changed) => {
+                const fx = await caregiverResendFixture(true);
+                fx.schedule.secondaryEmployee.phone = "01000000012";
+                if (changed === "date") fx.schedule.startDate = new Date("2026-10-02");
+                if (changed === "employee") { fx.schedule.primaryEmployeeId = 13; fx.schedule.primaryEmployee.id = 13; }
+                if (changed === "incarnation") fx.schedule.incarnationId = "97000000-0000-4000-8000-000000000092";
+                if (changed === "key") fx.job.dedupeKey = "previous-caregiver-key";
+                await fx.service.resendNeedsSetupJob(branchId, fx.job.id);
+                expect(fx.job.status).toBe("canceled");
+                expect(fx.job.cancelReason).toBe(identityReason);
+                expect(fx.deliveryService.sendJob).not.toHaveBeenCalled();
+            });
+
+            it("returns an unavailable caregiver source to needs_setup without delivery", async () => {
+                const fx = await caregiverResendFixture();
+                fx.sources.readCaregiverSource.mockRejectedValue(new Error("synthetic source unavailable"));
+                await fx.service.resendNeedsSetupJob(branchId, fx.job.id);
+                expect(fx.job.status).toBe("needs_setup");
+                expect(fx.deliveryService.sendJob).not.toHaveBeenCalled();
             });
 
             it("returns to needs_setup with the existing reason if the rebuild persist throws", async () => {

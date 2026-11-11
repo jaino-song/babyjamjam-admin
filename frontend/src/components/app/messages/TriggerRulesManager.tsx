@@ -36,7 +36,7 @@ import {
 import { useActiveBranchId, isBranchContextAligned } from "@/features/system-templates/branch-context";
 import { FormSection } from "@/components/app/ui/form-section";
 import { messagePolicyApi } from "@/services/settings";
-import type { CreateMessageTriggerRuleGroupDto, MessageTriggerRecipientMode, MessageTriggerRuleGroupPreviewResponse } from "@babyjamjam/shared/types/message";
+import type { CreateMessageTriggerRuleGroupDto, MessageTriggerRecipientMode, MessageTriggerRuleGroupPreviewResponse, MessageTriggerRuleGroupView } from "@babyjamjam/shared/types/message";
 import { Switch } from "@/components/ui/switch";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
@@ -299,6 +299,16 @@ function toFormState(rule: MessageTriggerRule | null, isActiveOverride?: boolean
   };
 }
 
+function toGroupRule(group: MessageTriggerRuleGroupView): MessageTriggerRule {
+  const recipientType = expandRecipientMode(group.recipientMode)[0];
+  return {
+    ...group.rules[0], ...group,
+    id: group.id, groupId: group.id,
+    recipientType,
+    templateKey: group.recipientTemplates[recipientType]!,
+  };
+}
+
 function normalizeDto(dto: RuleFormState): CreateMessageTriggerRuleDto {
   return {
     ...dto,
@@ -465,8 +475,10 @@ export function TriggerRulesManager({
   const newRuleDefaultIsActiveRef = useRef(true);
   const newRuleDefaultSendTimeRef = useRef("09:00");
   const previousSelectedRuleRef = useRef<RuleSelection>(null);
-  const initializedRecipientGroupRef = useRef<string | null>(null);
-  const initializedFormGroupRef = useRef<string | null>(null);
+  const [groupDraftSource, setGroupDraftSource] = useState<{
+    selectionKey: string;
+    group: MessageTriggerRuleGroupView;
+  } | null>(null);
   const component = (suffix: string) => `${dataComponent}_${suffix}`;
   const isCompactSplitLayout = splitLayoutMode === "compact";
   const copy = CHANNEL_COPY[channel];
@@ -491,12 +503,7 @@ export function TriggerRulesManager({
 
   const rules = useMemo(
     () => rulesQueryData ? [
-      ...rulesQueryData.groups.map((group): MessageTriggerRule => ({
-        ...group.rules[0], ...group,
-        id: group.id, groupId: group.id,
-        recipientType: expandRecipientMode(group.recipientMode)[0],
-        templateKey: group.recipientTemplates[expandRecipientMode(group.recipientMode)[0]]!,
-      })),
+      ...rulesQueryData.groups.map(toGroupRule),
       ...rulesQueryData.standaloneRules,
     ] : [],
     [rulesQueryData],
@@ -596,7 +603,15 @@ export function TriggerRulesManager({
       : null;
   const selectedGroup = rulesQueryData?.groups.find((group) => group.id === effectiveSelectedRuleId);
   const isGroupEditor = effectiveSelectedRuleId === "new" || !!selectedGroup;
-  const groupSelectionKey = selectedGroup ? `${branchId}:${selectedGroup.id}:${selectedGroup.version}` : null;
+  const groupSelectionKey = selectedGroup ? `${branchId}:${selectedGroup.id}` : null;
+  const groupDraftBaseline = groupDraftSource?.selectionKey === groupSelectionKey ? groupDraftSource.group : null;
+  const isGroupDraftDirty = !!groupDraftBaseline && (
+    recipientMode !== groupDraftBaseline.recipientMode
+    || expandRecipientMode(recipientMode).some((role) => recipientTemplates[role] !== groupDraftBaseline.recipientTemplates[role])
+    || JSON.stringify(normalizeDto(formState)) !== JSON.stringify(normalizeDto(
+      toFormState(toGroupRule(groupDraftBaseline), isTriggerDispatchOff ? false : undefined),
+    ))
+  );
   const isGroupEditorLocked = isGroupEditor && isGroupSavePending;
   const isSelectedDedicatedRule = Boolean(
     selectedRule
@@ -619,18 +634,28 @@ export function TriggerRulesManager({
     setRecipientMode("CLIENT"); setRecipientTemplates({ CLIENT: "SERVICE_INFO" });
   }, [branchId]);
   useEffect(() => {
-    if (groupSelectionKey && initializedRecipientGroupRef.current === groupSelectionKey) return;
-    initializedRecipientGroupRef.current = groupSelectionKey;
+    if (selectedGroup) return;
     setGroupPreview(null); setGroupError(null);
-    if (selectedGroup) {
-      setRecipientMode(selectedGroup.recipientMode);
-      setRecipientTemplates({ ...selectedGroup.recipientTemplates });
-    } else if (effectiveSelectedRuleId === "new") {
+    if (effectiveSelectedRuleId === "new") {
       setRecipientMode("CLIENT"); setRecipientTemplates({ CLIENT: "SERVICE_INFO" });
     }
-  }, [effectiveSelectedRuleId, selectedGroup, groupSelectionKey]);
-  const selectedSystemTemplateKey = SMS_TRIGGER_TO_SYSTEM_TEMPLATE[formState.templateKey] ?? "";
+  }, [effectiveSelectedRuleId, selectedGroup]);
+  const expandedRecipients = expandRecipientMode(recipientMode);
+  const selectedTemplateKey = isGroupEditor
+    ? recipientTemplates[expandedRecipients[0]]
+    : formState.templateKey;
+  const selectedSystemTemplateKey = selectedTemplateKey
+    ? SMS_TRIGGER_TO_SYSTEM_TEMPLATE[selectedTemplateKey] ?? ""
+    : "";
   const { data: selectedSystemTemplate } = useSystemTemplate(selectedSystemTemplateKey);
+  // A group has at most two roles. Load the second mapping separately so mixed
+  // employee templates are both validated, without changing hook order.
+  const secondaryTemplateKey = isGroupEditor && recipientMode === "BOTH_EMPLOYEES"
+    ? recipientTemplates.SECONDARY_EMPLOYEE
+    : undefined;
+  const { data: secondarySystemTemplate } = useSystemTemplate(
+    secondaryTemplateKey ? SMS_TRIGGER_TO_SYSTEM_TEMPLATE[secondaryTemplateKey] ?? "" : "",
+  );
 
   const automaticChannelTemplates = useMemo(
     () => getChannelTemplates(templateQuery.data ?? [], channel),
@@ -730,7 +755,6 @@ export function TriggerRulesManager({
     () => deriveAvailableTemplates(automaticChannelTemplates, formState.eventType, formState.recipientType),
     [automaticChannelTemplates, formState.eventType, formState.recipientType],
   );
-  const expandedRecipients = expandRecipientMode(recipientMode);
   // Common selection reflects the required mappings. A reconciled legacy template
   // must not look selected before it has been applied to the new recipient mode.
   const commonTemplateKey = expandedRecipients.every((role) => recipientTemplates[role] === recipientTemplates[expandedRecipients[0]])
@@ -767,33 +791,38 @@ export function TriggerRulesManager({
     }
   };
   const selectedTemplate = useMemo(() => {
-    return visibleTemplates.find((template) => template.key === formState.templateKey) ?? null;
-  }, [formState.templateKey, visibleTemplates]);
-  const isClientGreetingRule = formState.templateKey === "CLIENT_GREETING";
-  const requiredTemplateVariables = useMemo(() => {
-    const variables = [...(selectedTemplate?.requiredVariables ?? [])];
-    const knownKeys = new Set(variables.map((variable) => variable.key));
-
-    for (const customVariable of selectedSystemTemplate?.customVariables ?? []) {
-      if (customVariable.required && !knownKeys.has(customVariable.key)) {
-        variables.push({ key: customVariable.key, label: customVariable.label });
-        knownKeys.add(customVariable.key);
+    return visibleTemplates.find((template) => template.key === selectedTemplateKey) ?? null;
+  }, [selectedTemplateKey, visibleTemplates]);
+  const selectedTemplateKeys = isGroupEditor
+    ? expandedRecipients.map((role) => recipientTemplates[role])
+    : [formState.templateKey];
+  const isClientGreetingRule = selectedTemplateKeys.includes("CLIENT_GREETING");
+  const requiredTemplateVariables: Array<{ key: string; label: string }> = [];
+  const unsupportedRequiredCustomVariables: Array<{ key: string; label: string }> = [];
+  const knownRequiredKeys = new Set<string>();
+  const unsupportedKeys = new Set<string>();
+  for (const key of selectedTemplateKeys) {
+    if (!key) continue;
+    const template = visibleTemplates.find((item) => item.key === key);
+    const systemTemplate = key === selectedTemplateKey ? selectedSystemTemplate : secondarySystemTemplate;
+    const customVariables = (systemTemplate?.customVariables ?? []).filter((variable) => variable.required);
+    for (const variable of [...(template?.requiredVariables ?? []), ...customVariables]) {
+      if (!knownRequiredKeys.has(variable.key)) {
+        requiredTemplateVariables.push({ key: variable.key, label: variable.label });
+        knownRequiredKeys.add(variable.key);
       }
     }
-
-    return variables;
-  }, [selectedSystemTemplate?.customVariables, selectedTemplate?.requiredVariables]);
-  const unsupportedRequiredCustomVariables = useMemo(() => {
-    const automaticallyAvailableKeys = new Set(
-      MESSAGE_TRIGGER_AUTOMATIC_VARIABLE_KEYS[formState.templateKey] ?? [],
-    );
-    return (selectedSystemTemplate?.customVariables ?? []).filter(
-      (variable) => variable.required && !automaticallyAvailableKeys.has(variable.key),
-    );
-  }, [formState.templateKey, selectedSystemTemplate?.customVariables]);
+    const automaticallyAvailableKeys = new Set(MESSAGE_TRIGGER_AUTOMATIC_VARIABLE_KEYS[key] ?? []);
+    for (const variable of customVariables) {
+      if (!automaticallyAvailableKeys.has(variable.key) && !unsupportedKeys.has(variable.key)) {
+        unsupportedRequiredCustomVariables.push({ key: variable.key, label: variable.label });
+        unsupportedKeys.add(variable.key);
+      }
+    }
+  }
   const selectedTemplateMessage = selectedSystemTemplate?.content?.trim()
     ? selectedSystemTemplate.content
-    : TRIGGER_TEMPLATE_MESSAGE_FALLBACKS[formState.templateKey];
+    : selectedTemplateKey ? TRIGGER_TEMPLATE_MESSAGE_FALLBACKS[selectedTemplateKey] : "";
   const filteredRules = useMemo(() => {
     return rules.filter((rule) =>
       (isTriggerDispatchOff ? false : rule.isActive) === (statusFilter === "active") &&
@@ -822,12 +851,14 @@ export function TriggerRulesManager({
     }
 
     const existsInFilteredRules = filteredRules.some((rule) => rule.id === selectedRuleId);
-    if (!existsInFilteredRules) {
+    // A refreshed status must not dismiss an editor with unsaved group changes.
+    if (!existsInFilteredRules && !isGroupDraftDirty) {
       setSelectedRuleId(splitLayoutMode === "desktop" && !isRuleDetailDismissed ? (filteredRules[0]?.id ?? null) : null);
     }
   }, [
     filteredRules,
     isCompactSplitLayout,
+    isGroupDraftDirty,
     isRuleDetailDismissed,
     isTriggerRulesLocked,
     rules,
@@ -836,8 +867,18 @@ export function TriggerRulesManager({
   ]);
 
   useEffect(() => {
-    if (groupSelectionKey && initializedFormGroupRef.current === groupSelectionKey) return;
-    initializedFormGroupRef.current = groupSelectionKey;
+    if (selectedGroup && groupSelectionKey) {
+      // Keep the draft's original revision until it is discarded or successfully saved.
+      if (groupDraftBaseline && (isGroupDraftDirty || selectedGroup.version <= groupDraftBaseline.version)) return;
+      setGroupDraftSource({ selectionKey: groupSelectionKey, group: selectedGroup });
+      setRecipientMode(selectedGroup.recipientMode);
+      setRecipientTemplates({ ...selectedGroup.recipientTemplates });
+      setGroupPreview(null); setGroupError(null);
+      previousSelectedRuleRef.current = effectiveSelectedRuleId;
+      setFormState(toFormState(selectedRule, isTriggerDispatchOff ? false : undefined));
+      return;
+    }
+    setGroupDraftSource(null);
     if (effectiveSelectedRuleId === "new") {
       setFormState((current) => {
         const isEnteringNewDraft = previousSelectedRuleRef.current !== "new";
@@ -857,9 +898,12 @@ export function TriggerRulesManager({
     channel,
     effectiveSelectedRuleId,
     groupSelectionKey,
+    groupDraftBaseline,
+    isGroupDraftDirty,
     isTriggerDispatchAvailable,
     isTriggerDispatchOff,
     selectedRule,
+    selectedGroup,
     triggerDispatchActive,
   ]);
 
@@ -931,11 +975,11 @@ export function TriggerRulesManager({
       return !!formState.name.trim();
     }
     if (!selectedRule) return false;
-    if (selectedGroup && (recipientMode !== selectedGroup.recipientMode || JSON.stringify(Object.fromEntries(expandedRecipients.map((role) => [role, recipientTemplates[role]]))) !== JSON.stringify(selectedGroup.recipientTemplates))) return true;
+    if (selectedGroup) return isGroupDraftDirty;
     return JSON.stringify(normalizeDto(formState)) !== JSON.stringify(
       normalizeDto(toFormState(selectedRule, isTriggerDispatchOff ? false : undefined)),
     );
-  }, [effectiveSelectedRuleId, formState, isTriggerDispatchOff, selectedRule, selectedGroup, recipientMode, recipientTemplates, expandedRecipients]);
+  }, [effectiveSelectedRuleId, formState, isTriggerDispatchOff, selectedRule, selectedGroup, isGroupDraftDirty]);
 
   const isSaving = createMutation.isPending || updateMutation.isPending || groupMutations.create.isPending || groupMutations.update.isPending;
   const isDetailPendingSelection =
@@ -1155,10 +1199,15 @@ export function TriggerRulesManager({
     try {
       if (isGroupEditor) {
         const saved = selectedGroup
-          ? await groupMutations.update.mutateAsync({ id: selectedGroup.id, draft: { ...groupDraft(), expectedVersion: selectedGroup.version } })
+          ? await groupMutations.update.mutateAsync({ id: selectedGroup.id, draft: { ...groupDraft(), expectedVersion: groupDraftBaseline?.version ?? selectedGroup.version } })
           : await groupMutations.create.mutateAsync(groupDraft());
         if (currentBranchRef.current !== capturedBranch) return;
         if (!saved.isActive) setStatusFilter("inactive");
+        setGroupDraftSource({ selectionKey: `${capturedBranch}:${saved.id}`, group: saved });
+        setFormState(toFormState(toGroupRule(saved), isTriggerDispatchOff ? false : undefined));
+        setRecipientMode(saved.recipientMode);
+        setRecipientTemplates({ ...saved.recipientTemplates });
+        setGroupPreview(null);
         setSelectedRuleId(saved.id); setGroupError(null);
         toast({ variant: "success", description: "발송 규칙을 저장했어요" });
       } else if (selectedRuleId === "new" || !selectedRule) {
@@ -1719,7 +1768,7 @@ export function TriggerRulesManager({
                                 {requiredTemplateVariables.length > 0
                                   ? "고객 정보에서 자동으로 입력되며, 필수값이 비어 있으면 잘못된 메시지 대신 발송이 안전하게 중단돼요."
                                   : "추가 입력 없이 저장된 메시지 내용 그대로 발송됩니다."}
-                                {formState.templateKey === "PRICE_INFO"
+                                {selectedTemplateKeys.includes("PRICE_INFO")
                                   ? " 비용 안내는 고객의 관할 지역과 계좌 정보가 모두 필요합니다."
                                   : ""}
                               </p>

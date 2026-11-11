@@ -1,5 +1,6 @@
 import { act, fireEvent, render as renderBase, screen, waitFor } from "@testing-library/react";
 
+import { messageTriggerKeys } from "@/features/message-triggers/hooks/keys";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactElement } from "react";
 import type { MessageTriggerRule, MessageTriggerRuleGroupList, MessageTriggerRuleGroupView } from "@babyjamjam/shared/types/message";
@@ -39,13 +40,13 @@ function render(ui: ReactElement, { seedGroups = true } = {}) {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity, retryOnMount: false, refetchOnMount: false }, mutations: { retry: false } } });
   const syncFixture = () => {
     if (!seedGroups) return;
-    const query = queryClient.getQueryCache().build<MessageTriggerRuleGroupList, Error>(queryClient, { queryKey: ["message-trigger-rule-groups", "branch-1"] });
+    const query = queryClient.getQueryCache().build<MessageTriggerRuleGroupList, Error>(queryClient, { queryKey: [...messageTriggerKeys.all, "rule-groups", "branch-1"] });
     query.setState({ data: { groups: mockGroups, standaloneRules: mockRulesQuery.data ?? mockRules }, dataUpdatedAt: Date.now(), status: mockRulesQuery.isError ? "error" : "success", error: mockRulesQuery.isError ? new Error("group fetch failed") : null, fetchStatus: mockRulesQuery.isFetching ? "fetching" : "idle" });
   };
   syncFixture();
   const tree = (element: ReactElement) => <QueryClientProvider client={queryClient}>{element}</QueryClientProvider>;
   const view = renderBase(tree(ui));
-  return { ...view, rerender: (element: ReactElement) => { act(() => { syncFixture(); view.rerender(tree(element)); }); } };
+  return { ...view, queryClient, rerender: (element: ReactElement) => { act(() => { syncFixture(); view.rerender(tree(element)); }); } };
 }
 
 jest.mock("@/components/app/mobile-redesign/ClientRegistrationPolicySettings", () => ({
@@ -151,6 +152,21 @@ describe("MessagesTriggersPage", () => {
     expect(detailPane).toHaveAttribute("aria-hidden", "false");
     expect(detailPane).not.toHaveAttribute("inert");
   };
+
+  it("closes a deleted rule detail when the shared trigger family is invalidated", async () => {
+    mockSearchParams = new URLSearchParams({ item: "rule-1" });
+    jest.mocked(messageRuleGroupsApi.list).mockResolvedValue({ groups: [], standaloneRules: [createRule()] });
+    const view = render(<MessagesTriggersPage />, { seedGroups: false });
+    await screen.findByText("규칙 편집 화면");
+    expectDetailVisible(view.container);
+    expect(mockReplace).not.toHaveBeenCalled();
+
+    jest.mocked(messageRuleGroupsApi.list).mockResolvedValue({ groups: [], standaloneRules: [] });
+    await act(async () => { await view.queryClient.invalidateQueries({ queryKey: messageTriggerKeys.all }); });
+    await waitFor(() => expect(mockReplace).toHaveBeenCalledWith("/messages/automation", { scroll: false }));
+    expectListVisible(view.container);
+    expect(messageRuleGroupsApi.list).toHaveBeenCalledTimes(2);
+  });
 
   it("uses the shared sliding card and list pane for mobile automation", () => {
     const { container } = render(<MessagesTriggersPage />);

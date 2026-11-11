@@ -1022,7 +1022,7 @@ function installGroupProblemFilter(app: INestApplication) {
 
 describe("MessageTriggerRuleGroupController tenant/DTO transport", () => {
     let app: INestApplication;
-    const service = { list: jest.fn(), get: jest.fn(), create: jest.fn(), update: jest.fn(), delete: jest.fn() };
+    const service = { list: jest.fn(), get: jest.fn(), preview: jest.fn(), create: jest.fn(), update: jest.fn(), delete: jest.fn() };
     beforeAll(async () => {
         const module = await Test.createTestingModule({ controllers: [MessageTriggerRuleGroupController], providers: [BranchManagerGuard, { provide: MessageTriggerRuleGroupService, useValue: service }] })
             .overrideGuard(JwtGuard).useValue(groupTenantGuard).overrideGuard(TenantGuard).useValue(groupTenantGuard).compile();
@@ -1030,6 +1030,28 @@ describe("MessageTriggerRuleGroupController tenant/DTO transport", () => {
     });
     afterAll(async () => { if (app) await app.close(); });
     beforeEach(() => { jest.clearAllMocks(); service.list.mockResolvedValue({ groups: [], standaloneRules: [] }); service.get.mockResolvedValue({ id: "legacy-rule:opaque" }); });
+    it.each([
+        ["get", "/message-trigger-rule-groups", "list", 200],
+        ["get", "/message-trigger-rule-groups/group", "get", 200],
+        ["post", "/message-trigger-rule-groups/preview", "preview", 201],
+        ["post", "/message-trigger-rule-groups", "create", 201],
+        ["put", "/message-trigger-rule-groups/group", "update", 200],
+        ["delete", "/message-trigger-rule-groups/group", "delete", 200],
+    ] as const)("fences captured branch A before %s %s on authenticated branch B", async (method, path, serviceMethod, status) => {
+        const draft = clientGroupBody();
+        const body = serviceMethod === "preview" ? { draft } : { ...draft, expectedVersion: 1 };
+        const stale = await request(app.getHttpServer())[method](path)
+            .query({ expectedBranchId: "branch-A" }).set("x-test-branch", "branch-B").send(body);
+        expect(stale.status).toBe(409);
+        expect(stale.body.code).toBe("BRANCH_CONTEXT_CHANGED");
+        for (const mock of Object.values(service)) expect(mock).not.toHaveBeenCalled();
+
+        const matched = await request(app.getHttpServer())[method](path)
+            .query({ expectedBranchId: "branch-B" }).set("x-test-branch", "branch-B").send(body);
+        expect(matched.status).toBe(status);
+        expect(service[serviceMethod]).toHaveBeenCalledTimes(1);
+        expect(service[serviceMethod].mock.calls[0]?.[0]).toBe("branch-B");
+    });
     it("permits tenant reads for ordinary members and accepts opaque migrated group ids", async () => {
         expect((await request(app.getHttpServer()).get("/message-trigger-rule-groups").set("x-test-role", "member")).status).toBe(200);
         expect((await request(app.getHttpServer()).get("/message-trigger-rule-groups/legacy-rule:opaque")).status).toBe(200);

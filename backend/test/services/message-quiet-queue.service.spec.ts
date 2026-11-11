@@ -708,6 +708,102 @@ describe("private manual queue through actual controls", () => {
 });
 
 
+describe("unheld manual reservation expiry", () => {
+    const reservation = { triggerType: "scheduled", scheduledDate: "2026-11-04", scheduledTime: "09:00" };
+    const beforeExpiry = new Date("2026-11-04T00:59:59.999Z");
+    const late = new Date("2026-11-04T02:00:00.000Z");
+    beforeEach(() => jest.spyOn(Date, "now").mockReturnValue(original.getTime()));
+    afterEach(() => jest.restoreAllMocks());
+    async function reserve() {
+        const f = memoryQueue();
+        f.configuration.quietHours.enabled = false;
+        f.configuration.pastExpiryHours = 1;
+        f.configure(f.configuration);
+        expect(await f.send(reservation)).toMatchObject({ outcome: "queued" });
+        return f;
+    }
+    it.each([false, true])("terminalizes only an expired reservation and truthfully replays it (expired=%s)", async expired => {
+        const f = await reserve();
+        const source = structuredClone(f.tables["message_trigger_job"]![0]!);
+        const id = source["id"] as string;
+        const unrelated = { ...structuredClone(f.tables["message_log"]![0]!), id: 99, triggerJobId: "unrelated-job",
+            providerAcceptanceKey: "unrelated-key" };
+        f.tables["message_log"]!.push(unrelated);
+        jest.mocked(Date.now).mockReturnValue((expired ? late : beforeExpiry).getTime());
+        await f.core.dispatchPendingJobNow(id, { expectedBranchId: f.branchId });
+        if (expired) {
+            const reason = "기존 발송 예정 1시간 경과";
+            expect(f.tables["message_trigger_job"]![0]).toMatchObject({ status: "canceled", cancelReason: reason, canceledAt: late,
+                nextAttemptAt: null, claimToken: null, processingDeadlineAt: null, attempts: 0,
+                scheduledFor: source["scheduledFor"], dedupeKey: source["dedupeKey"], payload: source["payload"] });
+            expect(f.tables["message_log"]![0]).toMatchObject({ status: "failed", errorMessage: reason, nextRetryAt: null, attempts: 0,
+                providerAcceptanceState: "prepared", providerCallStartedAt: null, providerAcceptedAt: null,
+                variables: { manualQueueStatus: "canceled", manualQueueReason: reason } });
+            expect(await f.send(reservation)).toMatchObject({ outcome: "canceled", items: [{ status: "canceled", reason }] });
+            expect(f.aligo.sendSms).not.toHaveBeenCalled();
+        } else {
+            expect(f.tables["message_trigger_job"]![0]).toMatchObject({ status: "sent" });
+            expect(f.tables["message_log"]![0]).toMatchObject({ status: "sent", providerAcceptanceState: "accepted", attempts: 1 });
+            expect(f.aligo.sendSms).toHaveBeenCalledTimes(1);
+        }
+        await f.core.dispatchPendingJobNow(id, { expectedBranchId: f.branchId });
+        expect(f.tables["message_log"]).toHaveLength(2);
+        expect(f.tables["message_log"]![1]).toEqual(unrelated);
+        expect(f.aligo.sendSms).toHaveBeenCalledTimes(expired ? 0 : 1);
+    });
+    it.each(["holder", "FK", "key", "fingerprint", "source", "branch", "claim", "deadline", "job source",
+        "log attempted", "job attempted", "provider started", "provider accepted"])("preserves unproven expired acceptance: %s", async mode => {
+        const f = await reserve();
+        jest.mocked(Date.now).mockReturnValue(late.getTime());
+        const claim = f.jobs.claimPendingWithRuleFence.bind(f.jobs);
+        let before: typeof f.tables;
+        jest.spyOn(f.jobs, "claimPendingWithRuleFence").mockImplementation(async (...args) => {
+            const token = await claim(...args);
+            const log = f.tables["message_log"]![0]!;
+            const current = f.tables["message_trigger_job"]![0]!;
+            if (mode === "holder") f.tables["message_trigger_rule"] = [];
+            if (mode === "FK") log["triggerJobId"] = "unrelated-job";
+            if (mode === "key") log["providerAcceptanceKey"] = "unrelated-key";
+            if (mode === "fingerprint") log["providerAcceptanceFingerprint"] = "unrelated-fingerprint";
+            if (mode === "source") log["messageBody"] = "unrelated-body";
+            if (mode === "branch") log["branchId"] = "unrelated-branch";
+            if (mode === "claim") current["claimToken"] = "another-worker";
+            if (mode === "deadline") current["processingDeadlineAt"] = late;
+            if (mode === "job source") current["dedupeKey"] = "unrelated-source";
+            if (mode === "log attempted") log["attempts"] = 1;
+            if (mode === "job attempted") current["attempts"] = 1;
+            if (mode === "provider started") Object.assign(log, { providerAcceptanceState: "started", providerCallStartedAt: late });
+            if (mode === "provider accepted") Object.assign(log, { providerAcceptanceState: "accepted", providerAcceptedAt: late, aligoMid: "91" });
+            before = structuredClone(f.tables);
+            return token;
+        });
+        await expect(f.core.dispatchPendingJobNow(f.tables["message_trigger_job"]![0]!["id"] as string,
+            { expectedBranchId: f.branchId })).rejects.toThrow();
+        expect(f.tables).toEqual(before!);
+        expect(f.aligo.sendSms).not.toHaveBeenCalled();
+    });
+    it.each(["job CAS", "log CAS", "commit"])("rolls expired cancellation back on %s failure", async mode => {
+        const f = await reserve();
+        jest.mocked(Date.now).mockReturnValue(late.getTime());
+        const run = f.lock.runExclusive.bind(f.lock);
+        let calls = 0;
+        let before: typeof f.tables;
+        jest.spyOn(f.lock, "runExclusive").mockImplementation(async (branchId, work) => {
+            if (++calls === 2) {
+                before = structuredClone(f.tables);
+                if (mode === "job CAS") f.db.message_trigger_job.updateMany.mockResolvedValueOnce({ count: 0 });
+                if (mode === "log CAS") f.logCasFailure();
+                if (mode === "commit") f.commitFailure();
+            }
+            return run(branchId, work);
+        });
+        await expect(f.core.dispatchPendingJobNow(f.tables["message_trigger_job"]![0]!["id"] as string,
+            { expectedBranchId: f.branchId })).rejects.toThrow();
+        expect(f.tables).toEqual(before!);
+        expect(f.aligo.sendSms).not.toHaveBeenCalled();
+    });
+});
+
 describe("quiet queue release guards", () => {
     beforeEach(() => jest.spyOn(Date, "now").mockReturnValue(original.getTime()));
     afterEach(() => jest.restoreAllMocks());

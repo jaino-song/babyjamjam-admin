@@ -303,7 +303,12 @@ export function MessagesSettingsPage(): ReactElement {
 
   const handleToggle = (id: string, enabled: boolean) => {
     if (id === "quiet-hours") {
-      if (configuration) changeConfig({ ...configuration, quietHours: { ...configuration.quietHours, enabled } });
+      if (!configuration || !canWriteConfig) return;
+      changeConfig({ ...configuration, quietHours: { ...configuration.quietHours, enabled } });
+      if (id !== selectedItemId) {
+        router.push(`?item=${encodeURIComponent(id)}`, { scroll: false });
+        didPushDetailRef.current = true;
+      }
       return;
     }
     if (id === CLIENT_REGISTRATION_POLICY_ITEM_ID) {
