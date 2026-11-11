@@ -40,10 +40,10 @@ import Link from "next/link";
 type FilterOption = { label: string; value: DocumentFilterType };
 
 const STATUS_OPTIONS: FilterOption[] = [
-  { label: "전체", value: null },
+  { label: "전체", value: "all" },
   { label: "대기", value: "in-progress" },
   { label: "완료", value: "completed" },
-  { label: "거부", value: "rejected" },
+  { label: "기간 만료", value: "expired" },
 ];
 
 // Transform API document to view model
@@ -59,7 +59,7 @@ const transformDocument = (doc: EformsignDocument): EformsignDocumentView | null
     doc_id: doc.id,
     customer_name: customerName,
     created_date: doc.created_date,
-    status: mapLegacyDocumentStatusToLabel(doc.current_status),
+    status: mapLegacyDocumentStatusToLabel(doc.current_status, doc.contract_end_date),
   };
 };
 
@@ -76,7 +76,7 @@ export function DocumentsList() {
   const locale = useLocale();
   const [page, setPage] = useState(0);
   const [filterAnchorEl, setFilterAnchorEl] = useState<null | HTMLElement>(null);
-  const [selectedFilter, setSelectedFilter] = useState<DocumentFilterType>(null);
+  const [selectedFilter, setSelectedFilter] = useState<DocumentFilterType>("all");
 
   // Auth hook - checks existing token before making API call
   const { isAuthenticated, isLoading: isLoadingAuth, error: authError } = useEformsignAuth();
@@ -88,7 +88,7 @@ export function DocumentsList() {
   );
 
   // Dynamic rows per page: 10 for all, 5 for filtered
-  const rowsPerPage = selectedFilter === null ? 10 : 5;
+  const rowsPerPage = selectedFilter === "all" ? 10 : 5;
 
   const handleChangePage = (_event: unknown, newPage: number) => {
     setPage(newPage);
@@ -144,10 +144,11 @@ export function DocumentsList() {
 
   return (
     <ComponentContainer textJSON="documents-list">
-      <Box data-component="documents-list-container">
+      <Box data-component="desktop_contracts_documents-list" data-slot="documents-list">
         {/* Toolbar */}
         <Box
-          data-component="documents-list-toolbar"
+          data-component="desktop_contracts_documents-list_toolbar"
+          data-slot="toolbar"
           sx={{
             display: "flex",
             alignItems: "center",
@@ -155,7 +156,8 @@ export function DocumentsList() {
           }}
         >
           <Box 
-            data-component="documents-list-toolbar-buttons" 
+            data-component="desktop_contracts_documents-list_toolbar_buttons"
+            data-slot="toolbar-buttons"
             sx={{ 
               display: "flex", 
               justifyContent: "space-around", 
@@ -179,6 +181,8 @@ export function DocumentsList() {
                 <Filter size={24} strokeWidth={2} />
               </IconButton>
               <Chip
+                data-component="desktop_contracts_documents-list_toolbar_filter"
+                data-slot="filter"
                 label={currentFilterLabel}
                 color={getStatusColor(currentFilterLabel)}
                 size="small"
@@ -196,7 +200,7 @@ export function DocumentsList() {
             >
               {STATUS_OPTIONS.map((option) => (
                 <MenuItem 
-                  key={option.value ?? "all"} 
+                  key={option.value}
                   onClick={() => handleFilterSelect(option.value)}
                 >
                   <ListItemIcon>
@@ -204,6 +208,8 @@ export function DocumentsList() {
                   </ListItemIcon>
                   <ListItemText>
                     <Chip
+                      data-component={`desktop_contracts_documents-list_toolbar_filter_option-${option.value}`}
+                      data-slot="filter-option"
                       label={option.label}
                       color={getStatusColor(option.label)}
                       size="small"
@@ -308,6 +314,8 @@ export function DocumentsList() {
                       </TableCell>
                       <TableCell align="center">
                         <Chip
+                          data-component="desktop_contracts_documents-list_status"
+                          data-slot="status"
                           label={doc.status}
                           color={getStatusColor(doc.status)}
                           size="small"

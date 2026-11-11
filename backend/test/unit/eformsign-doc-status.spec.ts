@@ -1,0 +1,331 @@
+import {
+    CONTRACT_DOC_DISPLAY_STATUS_LABELS,
+    isContractDocDisplayStatus,
+    isContractReviewWindowOpen,
+    resolveContractDocDisplayStatus,
+    resolveContractDocStatusLabel,
+} from "../../application/utils/eformsign-doc-status";
+import {
+    COMPLETED_STATUS_CODES,
+    DELETED_STATUS_CODES,
+    EXPIRED_STATUS_CODES,
+    getEformsignStatusCategory,
+    IN_PROGRESS_STATUS_CODES,
+} from "../../application/utils/eformsign-status-codes";
+import {
+    createKrBusinessDayCalendar,
+    KR_BUILTIN_HOLIDAYS,
+    UnsupportedKoreanHolidayYearError,
+} from "../../application/utils/business-days";
+
+/** A provider-review current_status (customer already signed). */
+const PROVIDER_REVIEW_STATUS = { status_type: "070", step_type: "06", step_name: "제공기관 확인" };
+const CUSTOMER_STEP_STATUS = { status_type: "060", step_type: "05", step_name: "이용자 서명" };
+
+/** now helper: a KST calendar day at noon KST (03:00 UTC). */
+const kstNoon = (ymd: string) => new Date(`${ymd}T03:00:00.000Z`);
+
+describe("isContractReviewWindowOpen", () => {
+    it("opens exactly 1 business day before the end date (Friday end → Thursday)", () => {
+        // 2026-08-07 is a Friday.
+        expect(isContractReviewWindowOpen("2026-08-07", kstNoon("2026-08-05"))).toBe(false); // Wed
+        expect(isContractReviewWindowOpen("2026-08-07", kstNoon("2026-08-06"))).toBe(true); // Thu
+        expect(isContractReviewWindowOpen("2026-08-07", kstNoon("2026-08-07"))).toBe(true); // Fri
+    });
+
+    it("skips the weekend (Monday end → Friday)", () => {
+        // 2026-08-10 is a Monday.
+        expect(isContractReviewWindowOpen("2026-08-10", kstNoon("2026-08-06"))).toBe(false); // Thu
+        expect(isContractReviewWindowOpen("2026-08-10", kstNoon("2026-08-07"))).toBe(true); // Fri
+        expect(isContractReviewWindowOpen("2026-08-10", kstNoon("2026-08-08"))).toBe(true); // Sat
+        expect(isContractReviewWindowOpen("2026-08-10", kstNoon("2026-08-09"))).toBe(true); // Sun
+    });
+
+    it("stays open after the end date has passed", () => {
+        expect(isContractReviewWindowOpen("2026-08-07", kstNoon("2026-08-20"))).toBe(true);
+    });
+
+    it("handles weekend end dates (Saturday/Sunday end → Friday)", () => {
+        // 2026-08-08 Sat, 2026-08-09 Sun.
+        expect(isContractReviewWindowOpen("2026-08-08", kstNoon("2026-08-06"))).toBe(false); // Thu
+        expect(isContractReviewWindowOpen("2026-08-08", kstNoon("2026-08-07"))).toBe(true); // Fri
+        expect(isContractReviewWindowOpen("2026-08-09", kstNoon("2026-08-07"))).toBe(true); // Fri
+    });
+
+    it("skips Korean holidays like weekends (Tuesday end after 광복절 대체휴일 → preceding Friday)", () => {
+        // 2026-08-18 is a Tuesday; 8/17(Mon) is the 광복절 substitute holiday and
+        // 8/15(Sat) the holiday itself, so 1 business day before Tue is Fri 8/14.
+        expect(isContractReviewWindowOpen("2026-08-18", kstNoon("2026-08-13"))).toBe(false); // Thu
+        expect(isContractReviewWindowOpen("2026-08-18", kstNoon("2026-08-14"))).toBe(true); // Fri
+        expect(isContractReviewWindowOpen("2026-08-18", kstNoon("2026-08-17"))).toBe(true); // holiday Mon
+    });
+
+    it("uses the KST calendar day, not the UTC one", () => {
+        // 2026-08-05T16:00:00Z is already 2026-08-06 01:00 KST (Thursday).
+        expect(isContractReviewWindowOpen("2026-08-07", new Date("2026-08-05T16:00:00.000Z"))).toBe(true);
+        // 2026-08-05T14:00:00Z is still 2026-08-05 23:00 KST (Wednesday).
+        expect(isContractReviewWindowOpen("2026-08-07", new Date("2026-08-05T14:00:00.000Z"))).toBe(false);
+    });
+
+    it("treats a missing or malformed end date as an open window (legacy behavior)", () => {
+        expect(isContractReviewWindowOpen(null, kstNoon("2026-08-01"))).toBe(true);
+        expect(isContractReviewWindowOpen(undefined, kstNoon("2026-08-01"))).toBe(true);
+        expect(isContractReviewWindowOpen("", kstNoon("2026-08-01"))).toBe(true);
+        expect(isContractReviewWindowOpen("nonsense", kstNoon("2026-08-01"))).toBe(true);
+        expect(isContractReviewWindowOpen("2026-02-31", kstNoon("2026-02-01"))).toBe(true);
+        expect(isContractReviewWindowOpen("2026-13-01", kstNoon("2026-02-01"))).toBe(true);
+    });
+
+    it("fails closed when a valid end date uses an unsupported holiday year", () => {
+        expect(() => isContractReviewWindowOpen("2028-01-03", kstNoon("2028-01-01")))
+            .toThrow(UnsupportedKoreanHolidayYearError);
+        expect(() => isContractReviewWindowOpen("2028-01-01", kstNoon("2027-12-31")))
+            .toThrow(UnsupportedKoreanHolidayYearError);
+    });
+});
+
+describe("isContractReviewWindowOpen with an explicit calendar", () => {
+    const builtinCalendar = createKrBusinessDayCalendar(KR_BUILTIN_HOLIDAYS, {
+        supportedYears: [2024, 2025, 2026, 2027],
+    });
+
+    it("gives the same results as the default for the built-in calendar, incl. right after a holiday", () => {
+        // 2026-08-18 (Tue) follows the 8/15 + 8/17 holidays; 2026-03-03 (Tue) follows 삼일절 대체휴일.
+        const cases: Array<[string, string]> = [
+            ["2026-08-18", "2026-08-13"],
+            ["2026-08-18", "2026-08-14"],
+            ["2026-03-03", "2026-02-27"],
+            ["2026-03-03", "2026-03-02"],
+            ["2026-08-07", "2026-08-05"],
+            ["2026-08-07", "2026-08-06"],
+            ["2026-08-08", "2026-08-07"],
+        ];
+        for (const [end, today] of cases) {
+            expect(isContractReviewWindowOpen(end, kstNoon(today), builtinCalendar))
+                .toBe(isContractReviewWindowOpen(end, kstNoon(today)));
+        }
+    });
+
+    it("moves the window when the calendar has an extra holiday", () => {
+        const custom = createKrBusinessDayCalendar([...KR_BUILTIN_HOLIDAYS, "2026-08-06"], {
+            supportedYears: [2026],
+        });
+        // 2026-08-07 (Fri) end: default opens Thu 8/6; with 8/6 a holiday it opens Wed 8/5.
+        expect(isContractReviewWindowOpen("2026-08-07", kstNoon("2026-08-05"))).toBe(false);
+        expect(isContractReviewWindowOpen("2026-08-07", kstNoon("2026-08-05"), custom)).toBe(true);
+        expect(isContractReviewWindowOpen("2026-08-07", kstNoon("2026-08-04"), custom)).toBe(false);
+    });
+
+    it("fails closed when the calendar does not support the end-date year", () => {
+        const only2026 = createKrBusinessDayCalendar(KR_BUILTIN_HOLIDAYS, { supportedYears: [2026] });
+        expect(() => isContractReviewWindowOpen("2027-03-02", kstNoon("2027-03-01"), only2026))
+            .toThrow(UnsupportedKoreanHolidayYearError);
+    });
+
+    it("passes the calendar through resolveContractDocDisplayStatus", () => {
+        const custom = createKrBusinessDayCalendar([...KR_BUILTIN_HOLIDAYS, "2026-08-06"], {
+            supportedYears: [2026],
+        });
+        const params = {
+            category: "in-progress" as const,
+            currentStatus: PROVIDER_REVIEW_STATUS,
+            contractEndDate: "2026-08-07",
+            now: kstNoon("2026-08-05"),
+        };
+        expect(resolveContractDocDisplayStatus(params)).toBe("signed");
+        expect(resolveContractDocDisplayStatus({ ...params, calendar: custom })).toBe("review");
+    });
+});
+
+/**
+ * 040 (doc_request_revoke): cancellation requested, not done. The category stays "expired" for
+ * tabs/filters/stats, but the display status is its own value. Mirrored in
+ * backend/test/utils/eformsign-doc-display-status.spec.ts.
+ */
+describe("revoke_requested (eformsign 040)", () => {
+    it("labels 040 철회 요청됨, checked before the expired category", () => {
+        expect(CONTRACT_DOC_DISPLAY_STATUS_LABELS.revoke_requested).toBe("철회 요청됨");
+        expect(resolveContractDocDisplayStatus({
+            category: "expired", currentStatus: null, contractEndDate: null, statusType: "040", now: kstNoon("2026-08-01"),
+        })).toBe("revoke_requested");
+        expect(resolveContractDocStatusLabel({
+            category: "expired", currentStatus: null, contractEndDate: null, statusType: "040", now: kstNoon("2026-08-01"),
+        })).toBe("철회 요청됨");
+        expect(resolveContractDocStatusLabel({
+            category: "expired", currentStatus: null, contractEndDate: null, statusType: 40, now: kstNoon("2026-08-01"),
+        })).toBe("철회 요청됨");
+    });
+
+    it("ignores step and end date for 040", () => {
+        for (const contractEndDate of ["2026-08-07", "2026-08-01", null]) {
+            expect(resolveContractDocDisplayStatus({
+                category: "expired",
+                currentStatus: PROVIDER_REVIEW_STATUS,
+                contractEndDate,
+                statusType: "040",
+                now: kstNoon("2026-08-06"),
+            })).toBe("revoke_requested");
+        }
+        expect(resolveContractDocDisplayStatus({
+            category: "in-progress",
+            currentStatus: CUSTOMER_STEP_STATUS,
+            contractEndDate: "2026-08-07",
+            statusType: "040",
+            now: kstNoon("2026-08-06"),
+        })).toBe("revoke_requested");
+    });
+
+    it("labels 045 (doc_request_reject) exactly like 040", () => {
+        for (const statusType of ["045", "doc_request_reject"]) {
+            expect(resolveContractDocDisplayStatus({
+                category: "expired", currentStatus: PROVIDER_REVIEW_STATUS, contractEndDate: "2026-08-07", statusType, now: kstNoon("2026-08-06"),
+            })).toBe("revoke_requested");
+            expect(resolveContractDocStatusLabel({
+                category: "expired", currentStatus: null, contractEndDate: null, statusType, now: kstNoon("2026-08-01"),
+            })).toBe("철회 요청됨");
+        }
+    });
+
+    it("resolves 041 (a refused revoke) exactly like 060, by step and review window", () => {
+        for (const [currentStatus, contractEndDate] of [
+            [CUSTOMER_STEP_STATUS, "2026-08-07"],
+            [PROVIDER_REVIEW_STATUS, "2026-08-07"],
+            [PROVIDER_REVIEW_STATUS, "2026-08-20"],
+        ] as const) {
+            const params = { category: "in-progress" as const, currentStatus, contractEndDate, now: kstNoon("2026-08-06") };
+            expect(resolveContractDocDisplayStatus({ ...params, statusType: "041" }))
+                .toBe(resolveContractDocDisplayStatus({ ...params, statusType: "060" }));
+        }
+        expect(resolveContractDocDisplayStatus({
+            category: "in-progress", currentStatus: CUSTOMER_STEP_STATUS, contractEndDate: null, statusType: "041",
+        })).toBe("pending");
+    });
+
+    it("leaves other expired-bucket codes alone (080 expired)", () => {
+        for (const statusType of ["080", "011", undefined, null]) {
+            expect(resolveContractDocStatusLabel({
+                category: "expired", currentStatus: null, contractEndDate: null, statusType, now: kstNoon("2026-08-01"),
+            })).toBe("기간 만료");
+        }
+    });
+
+});
+
+/**
+ * 042 (doc_revoke) and 090 (synthesized withdrawal): the document was revoked — terminal. The
+ * category stays "expired" for tabs/filters/stats; only the label and tone differ.
+ */
+describe("revoked (eformsign 042 / 090)", () => {
+    it("labels 042 and 090 철회됨, checked before the expired category", () => {
+        expect(CONTRACT_DOC_DISPLAY_STATUS_LABELS.revoked).toBe("철회됨");
+        for (const statusType of ["042", "090", 42, 90, "doc_revoke", "doc_withdraw"]) {
+            const params = {
+                category: "expired" as const, currentStatus: null, contractEndDate: null, statusType, now: kstNoon("2026-08-01"),
+            };
+            expect(resolveContractDocDisplayStatus(params)).toBe("revoked");
+            expect(resolveContractDocStatusLabel(params)).toBe("철회됨");
+        }
+    });
+
+    it("ignores step and end date", () => {
+        expect(resolveContractDocDisplayStatus({
+            category: "expired",
+            currentStatus: PROVIDER_REVIEW_STATUS,
+            contractEndDate: "2026-08-07",
+            statusType: "042",
+            now: kstNoon("2026-08-06"),
+        })).toBe("revoked");
+    });
+
+    it("keeps 080 기간 만료 and 040/045 철회 요청됨 distinct from 철회됨", () => {
+        const base = { category: "expired" as const, currentStatus: null, contractEndDate: null, now: kstNoon("2026-08-01") };
+        expect(resolveContractDocStatusLabel({ ...base, statusType: "080" })).toBe("기간 만료");
+        expect(resolveContractDocStatusLabel({ ...base, statusType: "040" })).toBe("철회 요청됨");
+        expect(resolveContractDocStatusLabel({ ...base, statusType: "045" })).toBe("철회 요청됨");
+    });
+
+});
+
+/**
+ * 071 (doc_reject_reviewer, 계약-04): the provider's reviewer rejected the document. Shown "반려됨",
+ * NOT terminal: category in-progress, the customer's signature stays valid. Mirrored in
+ * backend/test/utils/eformsign-doc-display-status.spec.ts.
+ */
+describe("rejected_by_reviewer (eformsign 071)", () => {
+    it("labels 071 반려됨, checked before the category, whatever the step or end date", () => {
+        expect(CONTRACT_DOC_DISPLAY_STATUS_LABELS.rejected_by_reviewer).toBe("반려됨");
+        for (const statusType of ["071", 71, "doc_reject_reviewer"]) {
+            for (const [currentStatus, contractEndDate] of [
+                [PROVIDER_REVIEW_STATUS, "2026-08-07"],
+                [PROVIDER_REVIEW_STATUS, "2026-08-20"],
+                [CUSTOMER_STEP_STATUS, null],
+                [null, null],
+            ] as const) {
+                const params = {
+                    category: "in-progress" as const, currentStatus, contractEndDate, statusType, now: kstNoon("2026-08-06"),
+                };
+                expect(resolveContractDocDisplayStatus(params)).toBe("rejected_by_reviewer");
+                expect(resolveContractDocStatusLabel(params)).toBe("반려됨");
+            }
+        }
+    });
+
+    it("is in the in-progress category, never expired or unknown", () => {
+        expect(getEformsignStatusCategory("071")).toBe("in-progress");
+    });
+
+    it("does not change 080 (기간 만료), 061 (거절) or 070 (서명 완료)", () => {
+        const base = { currentStatus: PROVIDER_REVIEW_STATUS, contractEndDate: "2026-08-20", now: kstNoon("2026-08-06") };
+        expect(resolveContractDocStatusLabel({ ...base, category: "expired", statusType: "080" })).toBe("기간 만료");
+        expect(resolveContractDocStatusLabel({ ...base, category: "expired", statusType: "061" })).toBe("기간 만료");
+        expect(resolveContractDocStatusLabel({ ...base, category: "in-progress", statusType: "070" })).toBe("서명 완료");
+    });
+
+});
+
+describe("resolveContractDocStatusLabel", () => {
+    it("labels completed documents 계약 완료 and expired ones 기간 만료 regardless of dates", () => {
+        expect(resolveContractDocStatusLabel({
+            category: "completed", currentStatus: null, contractEndDate: "2026-12-31", now: kstNoon("2026-08-01"),
+        })).toBe("계약 완료");
+        expect(resolveContractDocStatusLabel({
+            category: "expired", currentStatus: null, contractEndDate: "2026-12-31", now: kstNoon("2026-08-01"),
+        })).toBe("기간 만료");
+    });
+
+    it("labels a signed document 서명 완료 while the end date is more than 1 business day away", () => {
+        expect(resolveContractDocStatusLabel({
+            category: "in-progress",
+            currentStatus: PROVIDER_REVIEW_STATUS,
+            contractEndDate: "2026-08-07",
+            now: kstNoon("2026-08-01"),
+        })).toBe("서명 완료");
+    });
+
+    it("labels a signed document 검토 필요 once the review window opens", () => {
+        expect(resolveContractDocStatusLabel({
+            category: "in-progress",
+            currentStatus: PROVIDER_REVIEW_STATUS,
+            contractEndDate: "2026-08-07",
+            now: kstNoon("2026-08-06"),
+        })).toBe("검토 필요");
+    });
+
+    it("falls back to 검토 필요 when the end date is unknown", () => {
+        expect(resolveContractDocStatusLabel({
+            category: "in-progress",
+            currentStatus: PROVIDER_REVIEW_STATUS,
+            contractEndDate: null,
+            now: kstNoon("2026-08-01"),
+        })).toBe("검토 필요");
+    });
+
+    it("labels documents before the customer signature 서명 대기", () => {
+        expect(resolveContractDocStatusLabel({
+            category: "in-progress",
+            currentStatus: CUSTOMER_STEP_STATUS,
+            contractEndDate: "2026-08-07",
+            now: kstNoon("2026-08-06"),
+        })).toBe("서명 대기");
+    });
+});

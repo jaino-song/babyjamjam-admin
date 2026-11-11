@@ -1,3 +1,5 @@
+import type { DocumentStatusLabel } from "./status-codes";
+
 // TypeScript declarations for eformsign embedded SDK v2
 // Based on: https://eformsignkr.github.io/developers/help/eformsign_embedding_v2.html
 
@@ -145,6 +147,7 @@ export interface EformsignCreator {
 }
 
 export interface EformsignDocument {
+  contract_end_date?: string | null;
   id: string;
   document_number: string;
   template: EformsignTemplate;
@@ -174,5 +177,5 @@ export interface EformsignDocumentView {
   doc_id: string;
   customer_name: string;
   created_date: number;
-  status: "대기" | "완료" | "거부";
+  status: DocumentStatusLabel;
 }

@@ -2,6 +2,8 @@ import { Injectable } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import * as crypto from "crypto";
 import * as https from "https";
+import { extractEformsignContractEndDate } from "../utils/eformsign-contract-end-date";
+import { getStatusCategory, isProviderReviewWorkflowStep } from "../utils/eformsign-status-codes";
 import { ContractDataDto } from "../dto/contract.dto";
 
 export interface EformsignTokenResponse {
@@ -326,6 +328,32 @@ export class EformsignService {
                 uniqueDocuments.push(doc);
             }
         }
+
+        // Only provider review steps need the contract end date. Share a bounded
+        // queue across five workers so large inboxes do not fan out detail calls.
+        const reviewDocuments = uniqueDocuments.filter((doc) =>
+            getStatusCategory(doc.current_status?.status_type) === "in-progress"
+            && isProviderReviewWorkflowStep(doc.current_status),
+        );
+        const DETAIL_CONCURRENCY = 5;
+        let nextDocument = 0;
+        await Promise.all(Array.from(
+            { length: Math.min(DETAIL_CONCURRENCY, reviewDocuments.length) },
+            async () => {
+                while (nextDocument < reviewDocuments.length) {
+                    const doc = reviewDocuments[nextDocument++];
+                    doc.contract_end_date = null;
+                    try {
+                        const detail = await this.getDocumentById(accessToken, doc.id);
+                        const endDate = extractEformsignContractEndDate(detail);
+                        doc.contract_end_date = endDate?.toISOString().slice(0, 10) ?? null;
+                    } catch {
+                        // Provider errors include response bodies; log only the id.
+                        console.warn(doc.id);
+                    }
+                }
+            },
+        ));
 
         // Sort by created_date descending (newest first)
         uniqueDocuments.sort((a, b) => b.created_date - a.created_date);
