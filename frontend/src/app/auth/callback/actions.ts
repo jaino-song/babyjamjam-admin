@@ -3,13 +3,6 @@
 import { cookies } from "next/headers";
 import { serverAPIClient } from "@/app/lib/axios/server";
 import { AxiosError } from "axios";
-import { jwtDecode } from "jwt-decode";
-
-interface TokenPayload {
-    sub: string;
-    role: string | null;
-    type: "access" | "refresh";
-}
 
 interface APIErrorResponse {
     statusCode: number;
@@ -29,20 +22,12 @@ export async function exchangeToken(code: string): Promise<{ success: boolean; e
 
         const cookieStore = await cookies();
 
-        let role = "user";
-        try {
-            const decoded = jwtDecode<TokenPayload>(data.accessToken);
-            role = decoded.role || "user";
-        } catch {
-            console.error("[Server Action] Failed to decode token");
-        }
-
         cookieStore.set("auth_token", data.accessToken, {
             httpOnly: true,
             secure: true,
             sameSite: "lax", // Changed to lax for same-origin navigation
             path: "/",
-            maxAge: role === "owner" ? 30 * 24 * 60 * 60 : 3 * 24 * 60 * 60,
+            maxAge: 30 * 24 * 60 * 60,
         });
 
         cookieStore.set("refresh_token", data.refreshToken, {

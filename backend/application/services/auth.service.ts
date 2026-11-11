@@ -2,6 +2,7 @@ import { Injectable, UnauthorizedException } from "@nestjs/common";
 import { PrismaService } from "../../infrastructure/database/prisma.service";
 import { JwtService } from "@nestjs/jwt";
 import * as crypto from "crypto";
+import { LegacyLoginNotAllowedError } from "../errors/legacy-login-not-allowed.error";
 
 export interface KakaoData {
     kakaoId: string;
@@ -46,22 +47,14 @@ export class AuthService {
     }
 
     async validateKakaoUser(kakaoData: KakaoData): Promise<UserValidationResult> {
-        let user = await this.prisma.user.findFirst({
+        const user = await this.prisma.user.findFirst({
             where: {
                 kakao_id: kakaoData.kakaoId
             },
         });
 
-        if (!user) {
-            user = await this.prisma.user.create({
-                data: {
-                    kakao_id: kakaoData.kakaoId,
-                    email: kakaoData.email,
-                    name: kakaoData.name,
-                    profile_image: kakaoData.profileImage,
-                    role: "user",
-                },
-            });
+        if (!user || !["owner", "admin", "manager"].includes(user.role ?? "")) {
+            throw new LegacyLoginNotAllowedError();
         }
 
         const payload = {
@@ -69,13 +62,9 @@ export class AuthService {
             role: user.role,
         };
 
-        const signOptions = user.role === "owner"
-            ? { expiresIn: "30d" }
-            : { expiresIn: "3d" };
+        const signOptions = { expiresIn: "30d" };
 
-        const refreshSignOptions = user.role === "owner"
-            ? { expiresIn: "7d" }
-            : { expiresIn: "1d" };
+        const refreshSignOptions = { expiresIn: "7d" };
 
         const refreshToken = await this.jwt.signAsync(
             { ...payload, type: 'refresh' },
