@@ -162,6 +162,24 @@ it.each(["finalize", "service-record"])("legacy-intent generation guard preserve
 const draftEvidence = () => ({ documentId: "bound-doc", templateId: "template_ABC", companyId: "company-abc", creatorId: "service@example.test", statusType: "001", stepType: "00", stepIndex: "1", stepName: "write", confirmed: false, createdAt: new Date(), updatedAt: new Date(), expiresAt: new Date() });
 describe("reexposeHuman", () => {
     const principal = { branchId: B, userId: U, branchRole: "manager" };
+    it.each(["started", "uncertain"])("refuses a pending %s finalize without any writes", async status => {
+        const f = runtimeFixture(); f.manual(); await f.service.open(J, principal);
+        const a = f.state.authorities[0];
+        const intent = f.state.intents.find((row: { id: string }) => row.id === a.humanIntentId);
+        f.state.intents.push({ ...intent, id: J, businessKey: "pending-finalize", action: "finalize", status });
+        const before = structuredClone(f.state), attemptCount = intent.attemptCount; f.events.length = 0;
+        await expect(f.repository.reexposeHuman({ jobId: J, branchId: B, userId: U, claimEpoch: a.claimEpoch }, draftEvidence())).rejects.toMatchObject({ code: "REQUEST_CONFLICT" });
+        expect(f.state.intents.find((row: { id: string }) => row.id === a.humanIntentId).attemptCount).toBe(attemptCount);
+        expect(f.state).toEqual(before); expect(f.events).toEqual([]);
+    });
+    it("refuses a tombstoned mirrored document without any writes", async () => {
+        const f = runtimeFixture(); f.manual(); await f.service.open(J, principal);
+        const a = f.state.authorities[0];
+        f.state.docs.find((row: { documentId: string }) => row.documentId === "bound-doc").permanentPurgeRequestedAt = new Date();
+        const before = structuredClone(f.state); f.events.length = 0;
+        await expect(f.repository.reexposeHuman({ jobId: J, branchId: B, userId: U, claimEpoch: a.claimEpoch }, draftEvidence())).rejects.toMatchObject({ code: "REQUEST_CONFLICT", reason: "document_mismatch" });
+        expect(f.state).toEqual(before); expect(f.events).toEqual([]);
+    });
     it("reuses the same started intent, bumping only attemptCount and startedAt", async () => {
         const f = runtimeFixture(); f.manual(); await f.service.open(J, principal);
         const authority = structuredClone(f.state.authorities[0]);

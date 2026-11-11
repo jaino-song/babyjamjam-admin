@@ -327,6 +327,9 @@ export class SbEformsignContractRecoveryRepository implements IEformsignContract
             const a = state.authority;
             if (a.phase !== "human_exposed" || !a.humanIntentId || a.providerDocumentId !== evidence.documentId
                 || evidence.confirmed || evidence.statusType !== "001" || evidence.stepType !== "00") fail();
+            await this.document(tx, state, evidence);
+            const pending = await tx.eformsign_dispatch_intent.findFirst({ where: { providerDocumentId: evidence.documentId, action: "finalize", status: { in: ["started", "uncertain"] } } });
+            if (pending) fail("REQUEST_CONFLICT");
             const intent = await tx.eformsign_dispatch_intent.findUnique({ where: { id: a.humanIntentId } });
             if (!intent || intent.branchId !== a.branchId || intent.clientId !== a.clientId || intent.action !== "manual_process"
                 || intent.status !== "started" || intent.providerDocumentId !== a.providerDocumentId
