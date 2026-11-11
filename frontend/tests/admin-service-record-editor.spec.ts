@@ -1,5 +1,7 @@
 import { expect, test, type Page, type Route, type TestInfo } from "@playwright/test";
-import { isBusinessDayKr, KR_BUILTIN_HOLIDAYS } from "../src/lib/date/business-days";
+import { moveServiceRecordSessionDate } from "@babyjamjam/shared/utils/service-record-schedule";
+
+import { KR_BUILTIN_CALENDAR, KR_BUILTIN_HOLIDAYS } from "../src/lib/date/business-days";
 
 const LOCAL_ORIGIN = "http://127.0.0.1:3107";
 const CLIENT_ID = "42";
@@ -73,6 +75,15 @@ type DraftState = {
     sourceFingerprint: string;
 };
 
+type DateMove = { sessionIndex: number; toDate: string; shiftFollowing?: boolean };
+
+type DraftUpdate = {
+    expectedDraftVersion?: number;
+    changes?: Draft["changes"];
+    dateMove?: DateMove;
+    dateMoves?: DateMove[];
+};
+
 /**
  * How the next confirm request fails (it fails once, then confirms normally):
  * - "closed-by-other-tab": 409 without a blockingOperation; the server draft is
@@ -107,29 +118,6 @@ const EVENTS_PATHNAME = "/api/admin/service-records/events";
 
 function clone<T>(value: T): T {
     return JSON.parse(JSON.stringify(value)) as T;
-}
-
-function shiftBusinessDays(isoDate: string, offset: number): string {
-    const current = new Date(`${isoDate}T00:00:00.000Z`);
-    const direction = offset < 0 ? -1 : 1;
-    let remaining = Math.abs(offset);
-    while (remaining > 0) {
-        current.setUTCDate(current.getUTCDate() + direction);
-        if (isBusinessDayKr(current.toISOString().slice(0, 10))) remaining -= 1;
-    }
-    return current.toISOString().slice(0, 10);
-}
-
-function businessDayDistance(from: string, to: string): number {
-    const start = new Date(`${from}T00:00:00.000Z`);
-    const end = new Date(`${to}T00:00:00.000Z`);
-    const direction = start <= end ? 1 : -1;
-    let distance = 0;
-    while (start.toISOString().slice(0, 10) !== to) {
-        start.setUTCDate(start.getUTCDate() + direction);
-        if (isBusinessDayKr(start.toISOString().slice(0, 10))) distance += direction;
-    }
-    return distance;
 }
 
 function makeSession(sessionIndex: number, serviceDate: string): Record<string, unknown> {
@@ -242,30 +230,52 @@ function makeEmptyDraftState(): DraftState {
 function mergeChanges(
     current: Draft["changes"],
     incoming: Draft["changes"],
-    dateMove?: { sessionIndex: number; toDate: string; shiftFollowing?: boolean },
+    dateMove?: DateMove,
 ): Draft["changes"] {
     const byIndex = new Map<number, SessionChange>();
-    for (const session of current.sessions ?? []) byIndex.set(session.sessionIndex, clone(session));
-    for (const session of incoming.sessions ?? []) {
+    for (const session of [...(current.sessions ?? []), ...(incoming.sessions ?? [])]) {
+        const content = clone(session);
+        if (dateMove) delete content.serviceDate;
         const previous = byIndex.get(session.sessionIndex);
         byIndex.set(session.sessionIndex, {
             ...(previous ?? { sessionIndex: session.sessionIndex }),
-            ...clone(session),
-            ...(session.answers
+            ...content,
+            ...(!dateMove && session.answers
                 ? { answers: { ...(previous?.answers ?? {}), ...clone(session.answers) } }
                 : {}),
         });
     }
     if (dateMove) {
-        const sourceDate = plannedDates[dateMove.sessionIndex - 1];
-        if (sourceDate) {
-            const offset = businessDayDistance(sourceDate, dateMove.toDate);
-            for (let index = dateMove.sessionIndex; index <= plannedDates.length; index += 1) {
-                if (index !== dateMove.sessionIndex && !dateMove.shiftFollowing) break;
-                const previous = byIndex.get(index);
-                byIndex.set(index, {
-                    ...(previous ?? { sessionIndex: index }),
-                    serviceDate: shiftBusinessDays(plannedDates[index - 1], offset),
+        const previousDates = new Map(
+            (current.sessions ?? [])
+                .filter((session) => typeof session.serviceDate === "string")
+                .map((session) => [session.sessionIndex, session.serviceDate as string]),
+        );
+        const effective = plannedDates.map((serviceDate, index) => ({
+            sessionIndex: index + 1,
+            serviceDate: previousDates.get(index + 1) ?? serviceDate,
+            originalDate: serviceDate,
+            assignmentId: "assignment-phase6",
+            scheduleId: 601,
+            employeeId: 501,
+            provenanceVersion: "projection-phase6-1",
+        }));
+        const shifted = moveServiceRecordSessionDate(
+            effective,
+            dateMove.sessionIndex,
+            dateMove.toDate,
+            dateMove.shiftFollowing ?? true,
+            KR_BUILTIN_CALENDAR,
+        );
+        for (const entry of shifted.entries) {
+            if (
+                entry.sessionIndex >= dateMove.sessionIndex
+                || previousDates.has(entry.sessionIndex)
+                || entry.serviceDate !== plannedDates[entry.sessionIndex - 1]
+            ) {
+                byIndex.set(entry.sessionIndex, {
+                    ...(byIndex.get(entry.sessionIndex) ?? { sessionIndex: entry.sessionIndex }),
+                    serviceDate: entry.serviceDate,
                 });
             }
         }
@@ -277,6 +287,21 @@ function mergeChanges(
             : {}),
         ...(sessions.length > 0 ? { sessions } : {}),
     };
+}
+
+/**
+ * Mirrors AdminServiceRecordEditService.updateDraft (:678-690) and the date-move
+ * branch of normalizeServiceRecordEditChanges (policy.ts :1952-2014).
+ * Both content inputs omit serviceDate; only stored overrides feed each move.
+ * This mock does not model server validation/rejection responses (date window,
+ * business-day, ordering, DATE_MOVE_REQUIRED); the shared helper still validates.
+ */
+function foldDraftUpdate(changes: Draft["changes"], patch: DraftUpdate): Draft["changes"] {
+    let folded = changes;
+    for (const [index, move] of (patch.dateMoves ?? [patch.dateMove]).entries()) {
+        folded = mergeChanges(folded, index === 0 ? patch.changes ?? {} : {}, move);
+    }
+    return folded;
 }
 
 function previewFor(state: DraftState): Record<string, unknown> {
@@ -299,7 +324,7 @@ function previewFor(state: DraftState): Record<string, unknown> {
         serviceDate: dateOverrides.get(session.sessionIndex) ?? session.serviceDate,
     }));
     const changedSessionIndexes = (state.draft?.changes.sessions ?? [])
-        .filter((session) => Object.keys(session).some((key) => key !== "sessionIndex"))
+        .filter((session) => Object.keys(session).some((key) => key !== "sessionIndex" && key !== "serviceDate"))
         .map((session) => session.sessionIndex);
     return {
         previewId: "preview-phase6-1",
@@ -462,12 +487,7 @@ async function installMocks(page: Page, options: MockOptions = {}): Promise<Mock
         }
         if (pathname === `/api/admin/service-records/drafts/${DRAFT_ID}` && method === "PATCH") {
             if (!state.draft) return json(route, 404, { code: "DRAFT_NOT_FOUND" });
-            const patch = (body ?? {}) as {
-                expectedDraftVersion?: number;
-                changes?: Draft["changes"];
-                dateMove?: { sessionIndex: number; toDate: string; shiftFollowing?: boolean };
-                dateMoves?: Array<{ sessionIndex: number; toDate: string; shiftFollowing?: boolean }>;
-            };
+            const patch = (body ?? {}) as DraftUpdate;
             if (patch.expectedDraftVersion !== state.draft.draftVersion) {
                 return json(route, 409, {
                     code: "SERVICE_RECORD_EDIT_DRAFT_CONFLICT",
@@ -475,10 +495,7 @@ async function installMocks(page: Page, options: MockOptions = {}): Promise<Mock
                     sourceChanged: state.sourceChanged,
                 });
             }
-            state.draft.changes = mergeChanges(state.draft.changes, patch.changes ?? {}, patch.dateMove);
-            for (const move of patch.dateMoves ?? []) {
-                state.draft.changes = mergeChanges(state.draft.changes, {}, move);
-            }
+            state.draft.changes = foldDraftUpdate(state.draft.changes, patch);
             state.draft.draftVersion += 1;
             state.draft.updatedAt = "2026-09-09T01:03:00.000Z";
             return json(route, 200, state);
@@ -656,6 +673,51 @@ async function startCommit(page: Page) {
 
 test.beforeEach(async ({ page }) => {
     await enableLocalAdminAuth(page);
+});
+
+test("mock draft fold uses effective dates and shifts following sessions by default", () => {
+    const batch = foldDraftUpdate({}, {
+        dateMoves: [
+            { sessionIndex: 13, toDate: "2026-07-22", shiftFollowing: false },
+            { sessionIndex: 2, toDate: "2026-07-03", shiftFollowing: true },
+        ],
+    });
+    expect.soft(batch.sessions, "A: the second move shifts the earlier override").toEqual([
+        { sessionIndex: 2, serviceDate: "2026-07-03" },
+        { sessionIndex: 3, serviceDate: "2026-07-06" },
+        { sessionIndex: 4, serviceDate: "2026-07-07" },
+        { sessionIndex: 5, serviceDate: "2026-07-08" },
+        { sessionIndex: 6, serviceDate: "2026-07-09" },
+        { sessionIndex: 7, serviceDate: "2026-07-10" },
+        { sessionIndex: 8, serviceDate: "2026-07-13" },
+        { sessionIndex: 9, serviceDate: "2026-07-14" },
+        { sessionIndex: 10, serviceDate: "2026-07-15" },
+        { sessionIndex: 11, serviceDate: "2026-07-16" },
+        { sessionIndex: 12, serviceDate: "2026-07-20" },
+        { sessionIndex: 13, serviceDate: "2026-07-23" },
+    ]);
+
+    const defaultShift = foldDraftUpdate({}, {
+        dateMove: { sessionIndex: 2, toDate: "2026-07-03" },
+    });
+    expect.soft(defaultShift.sessions, "B: omitted shiftFollowing defaults to true").toEqual([
+        { sessionIndex: 2, serviceDate: "2026-07-03" },
+        { sessionIndex: 3, serviceDate: "2026-07-06" },
+        { sessionIndex: 4, serviceDate: "2026-07-07" },
+        { sessionIndex: 5, serviceDate: "2026-07-08" },
+        { sessionIndex: 6, serviceDate: "2026-07-09" },
+        { sessionIndex: 7, serviceDate: "2026-07-10" },
+        { sessionIndex: 8, serviceDate: "2026-07-13" },
+        { sessionIndex: 9, serviceDate: "2026-07-14" },
+        { sessionIndex: 10, serviceDate: "2026-07-15" },
+        { sessionIndex: 11, serviceDate: "2026-07-16" },
+        { sessionIndex: 12, serviceDate: "2026-07-20" },
+        { sessionIndex: 13, serviceDate: "2026-07-21" },
+    ]);
+    expect(previewFor(makeDraftState(defaultShift)).contentChanges).toEqual({
+        headerChanged: false,
+        changedSessionIndexes: [],
+    });
 });
 
 test("session review retains all fields and dates and writes only after confirmation", async ({ page }, testInfo: TestInfo) => {
