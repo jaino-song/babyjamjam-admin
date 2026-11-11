@@ -13,7 +13,6 @@ import { buildMakerOptions, makerAreaLabel, MAX_MAKER_BODY, PRICE_VARIABLE_KEYS,
 import { useMessageMaker } from '@/features/message-maker/useMessageMaker';
 import { useGetAuthUser } from '@/hooks/useGetAuthUser';
 import { useMessageTemplates } from '@/hooks/use-message-templates';
-import { useMessagesPermissionGuard } from '@/app/(shell)/messages/MessagesPermissionGuard';
 import styles from '@/app/(shell)/messages/new/page.module.css';
 import '@/components/app/mobile-redesign/redesign.css';
 import { MsgField } from './templates/MsgField';
@@ -140,10 +139,9 @@ function MessageMakerCatalog({ base }: { base: string }): React.JSX.Element {
 
 export function MessageMaker({ 'data-component': base }: { 'data-component': string }): React.JSX.Element {
   const auth = useGetAuthUser();
-  const permission = useMessagesPermissionGuard();
   const formBase = `${base}_screen_content`;
   const cardBase = `${formBase}_scroll_list-card`;
-  const ready = auth.data?.branchId && !permission.isLoading && !permission.needsSenderApproval;
+  const ready = auth.data?.branchId;
   return <section data-component={base} data-slot="messages-page" data-source-component="MessageMaker" className={styles.pageRoot}>
     <div data-component={`${base}_screen`} data-slot="phone-screen" className={styles.phoneScreen}>
       <div data-component={formBase} data-slot="messages-content" className={`shell-content gap-[calc(8px*var(--glint-ui-scale,1))] ${styles.navPage}`}>
@@ -151,7 +149,7 @@ export function MessageMaker({ 'data-component': base }: { 'data-component': str
         <div data-component={`${formBase}_scroll`} data-slot="messages-scroll" className={styles.msgScroll}>
           <ListCard data-component={cardBase} title="메세지 제작" filters={[]} loadMore={false}>
             {ready ? <MessageMakerCatalog key={auth.data?.branchId} base={`${cardBase}_body_content`} /> : <div role="status" data-component={`${cardBase}_body_session-status`}>
-              {auth.isError || !auth.data?.branchId && !auth.isLoading ? '지점 정보를 확인해 주세요.' : permission.needsSenderApproval ? '발신번호 승인 후 사용할 수 있습니다.' : '지점 정보를 확인하는 중입니다.'}
+              {auth.isError || !auth.data?.branchId && !auth.isLoading ? '지점 정보를 확인해 주세요.' : '지점 정보를 확인하는 중입니다.'}
               {auth.isError && <Button type="button" variant="ghost" data-component={`${cardBase}_body_session-status_retry`} onClick={() => void auth.refetch()}>지점 정보 다시 시도</Button>}
             </div>}
           </ListCard>

@@ -1,11 +1,13 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 
 import { MESSAGE_NAVIGATION_ITEMS, MessageSectionNav } from "../MessageSectionNav";
 import { useMessagesPermissionGuard } from "@/app/(shell)/messages/MessagesPermissionGuard";
 import { useGetAuthUser } from "@/hooks/useGetAuthUser";
 
+const mockPush = jest.fn();
+
 jest.mock("next/navigation", () => ({
-  useRouter: () => ({ push: jest.fn() }),
+  useRouter: () => ({ push: mockPush }),
 }));
 
 jest.mock("@/hooks/useGetAuthUser", () => ({
@@ -20,11 +22,8 @@ const mockUseGetAuthUser = useGetAuthUser as jest.Mock;
 const mockUseMessagesPermissionGuard = useMessagesPermissionGuard as jest.Mock;
 
 const BRANCH_MANAGEMENT_LABEL = "자동 전송";
-const RELEASED_LABELS = ["전송하기", "설정"];
-// 발송 기록 (the merged screen) is gated only by sender approval, not by
-// owner status, so it behaves differently from both groups above: unlike
-// UNRELEASED_LABELS it is never owner-gated, but unlike RELEASED_LABELS it
-// is not exempt from the sender-approval check either.
+const RELEASED_LABELS = ["메세지 제작", "설정"];
+// 발송 기록 requires sender approval, but has no owner-role restriction.
 const APPROVAL_GATED_LABEL = "발송 기록";
 
 function renderNav() {
@@ -33,6 +32,7 @@ function renderNav() {
 
 describe("MessageSectionNav", () => {
   beforeEach(() => {
+    mockPush.mockClear();
     mockUseGetAuthUser.mockReset();
     mockUseMessagesPermissionGuard.mockReset();
     mockUseGetAuthUser.mockReturnValue({
@@ -95,56 +95,34 @@ describe("MessageSectionNav", () => {
     expect(screen.getByRole("button", { name: "템플릿" })).toBeDisabled();
   });
 
-  it("disables every section except send and settings while sender approval is pending", () => {
+  it.each([
+    ["denied", { isLoading: false, needsSenderApproval: true }],
+    ["loading", { isLoading: true, needsSenderApproval: false }],
+  ])("keeps maker/settings usable and disables send navigation when approval is %s", (_label, permission) => {
     mockUseGetAuthUser.mockReturnValue({
-      data: { role: "owner" },
-      isPending: false,
-      isLoading: false,
-      isFetching: false,
-      isError: false,
+      data: { role: "owner" }, isPending: false, isLoading: false, isFetching: false, isError: false,
     });
-    mockUseMessagesPermissionGuard.mockReturnValue({
-      isLoading: false,
-      needsSenderApproval: true,
-    });
+    mockUseMessagesPermissionGuard.mockReturnValue(permission);
+    const { container } = renderNav();
 
-    renderNav();
-
-    for (const label of ["메세지 제작", "템플릿", BRANCH_MANAGEMENT_LABEL, APPROVAL_GATED_LABEL]) {
+    for (const label of ["전송하기", "템플릿", BRANCH_MANAGEMENT_LABEL, APPROVAL_GATED_LABEL]) {
       expect(screen.getByRole("button", { name: label })).toBeDisabled();
     }
     for (const label of RELEASED_LABELS) {
       expect(screen.getByRole("button", { name: label })).toBeEnabled();
     }
+    expect(container.querySelector('[data-loading="true"]')).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "전송하기" }));
+    expect(mockPush).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "메세지 제작" }));
+    expect(mockPush).toHaveBeenCalledWith("/messages/compose");
   });
 
-  it("shows non-interactive section skeletons while the permission check is loading", () => {
-    mockUseGetAuthUser.mockReturnValue({
-      data: { role: "owner" },
-      isPending: false,
-      isLoading: false,
-      isFetching: false,
-      isError: false,
-    });
-    mockUseMessagesPermissionGuard.mockReturnValue({
-      isLoading: true,
-      needsSenderApproval: false,
-    });
-
-    const { container } = renderNav();
-
-    const nav = screen.getByRole("navigation", { name: "메시지 기능" });
-    expect(nav).toHaveAttribute("aria-busy", "true");
-    expect(screen.queryByRole("button", { name: "전송하기" })).not.toBeInTheDocument();
-
-    const skeletons = container.querySelectorAll('[data-loading="true"]');
-    expect(skeletons).toHaveLength(MESSAGE_NAVIGATION_ITEMS.length);
-    skeletons.forEach((skeleton) => {
-      expect(skeleton).toBeDisabled();
-      expect(skeleton).toHaveAttribute("data-component", "mobile_tests_message-section-nav_item-skeleton");
-      expect(skeleton).toHaveClass("skeleton-base");
-      expect(skeleton).toHaveAttribute("aria-hidden", "true");
-    });
+  it("enables ordinary send navigation when approved", () => {
+    renderNav();
+    fireEvent.click(screen.getByRole("button", { name: "전송하기" }));
+    expect(screen.getByRole("button", { name: "전송하기" })).toBeEnabled();
+    expect(mockPush).toHaveBeenCalledWith("/messages/new");
   });
 
   it("fails closed while the live authority query transitions branches", () => {

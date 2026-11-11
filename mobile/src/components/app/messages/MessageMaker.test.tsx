@@ -1,5 +1,9 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+
+import { MessagesPermissionGuard } from '@/app/(shell)/messages/MessagesPermissionGuard';
+import { settingsApi } from '@/services/api';
 
 import { useGetAuthUser } from '@/hooks/useGetAuthUser';
 import { useSystemTemplates } from '@/features/system-templates/hooks/useSystemTemplates';
@@ -10,7 +14,8 @@ import { MessageMaker } from './MessageMaker';
 import type { SystemTemplate } from '@/features/system-templates/types';
 import type { MessageTemplate } from '@/lib/template/types';
 
-jest.mock('next/navigation', () => ({ useRouter: () => ({ push: jest.fn() }) }));
+jest.mock('next/navigation', () => ({ usePathname: () => '/messages/compose', useRouter: () => ({ push: jest.fn(), replace: jest.fn() }) }));
+jest.mock('@/services/api', () => ({ settingsApi: { getMessageSenderApproval: jest.fn() } }));
 jest.mock('@/hooks/useGetAuthUser', () => ({ useGetAuthUser: jest.fn() }));
 jest.mock('@/features/system-templates/hooks/useSystemTemplates', () => ({ useSystemTemplates: jest.fn() }));
 jest.mock('@/hooks/use-message-templates', () => ({ useMessageTemplates: jest.fn() }));
@@ -57,6 +62,65 @@ describe('MessageMaker', () => {
     mockUser.mockImplementation(() => userState as unknown as ReturnType<typeof useMessageTemplates>);
     jest.mocked(useVoucherPriceInfos).mockReturnValue(query([]) as unknown as ReturnType<typeof useVoucherPriceInfos>);
     jest.mocked(useBankAccountInfos).mockReturnValue(query([]) as unknown as ReturnType<typeof useBankAccountInfos>);
+  });
+  it.each(['denied', 'loading'] as const)('allows template, variable, body and copy through the real guard while sender approval is %s', async (status) => {
+    const user = userEvent.setup();
+    const writeText = jest.fn().mockResolvedValue(undefined);
+    const approval = { isApproved: false, approvalStatus: 'not_requested' as const, canRequest: true, requestedAt: null, approvedAt: null };
+    let resolveApproval!: (value: typeof approval) => void;
+    jest.mocked(settingsApi.getMessageSenderApproval).mockImplementation(() => new Promise<typeof approval>(resolve => {
+      resolveApproval = resolve;
+    }));
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(<QueryClientProvider client={queryClient}><MessagesPermissionGuard>
+      <MessageMaker data-component="mobile_messages-compose_page" />
+    </MessagesPermissionGuard></QueryClientProvider>);
+    await waitFor(() => expect(settingsApi.getMessageSenderApproval).toHaveBeenCalledTimes(1));
+    if (status === 'denied') await act(async () => { resolveApproval(approval); });
+    await screen.findByLabelText('메시지 본문');
+    await chooseTemplate('사용자 안내');
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } });
+    await user.type(screen.getByRole('textbox', { name: /사용자 성함/ }), 'QA-제작');
+    await user.type(screen.getByRole('textbox', { name: /사용자 메모/ }), 'QA-메모');
+    const body = screen.getByLabelText('메시지 본문');
+    expect(body).toHaveValue('QA-제작 QA-메모');
+    await user.clear(body);
+    await user.type(body, 'QA-수동 제작');
+    await user.click(screen.getByRole('button', { name: '복사' }));
+    expect(writeText).toHaveBeenCalledWith('QA-수동 제작');
+    expect(screen.getByRole('button', { name: '메세지 제작' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: '설정' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: '전송하기' })).toBeDisabled();
+    expect(screen.queryByText('메시지 전송 권한이 필요합니다.')).not.toBeInTheDocument();
+    if (status === 'loading') {
+      await act(async () => { resolveApproval(approval); });
+      await waitFor(() => expect(queryClient.isFetching()).toBe(0));
+      expect(screen.getByLabelText('메시지 본문')).toBe(body);
+      expect(body).toHaveValue('QA-수동 제작');
+      expect(screen.getByRole('textbox', { name: /사용자 성함/ })).toHaveValue('QA-제작');
+    }
+    expect(screen.queryByLabelText(/휴대 전화번호|수신자/)).not.toBeInTheDocument();
+    expect(api.get).not.toHaveBeenCalled();
+    expect(api.post).not.toHaveBeenCalled();
+    expect(api.patch).not.toHaveBeenCalled();
+    queryClient.clear();
+  });
+  it.each([
+    ['loading', { isLoading: true, isError: false }, '지점 정보를 확인하는 중입니다.'],
+    ['missing', { isLoading: false, isError: false }, '지점 정보를 확인해 주세요.'],
+    ['error', { isLoading: false, isError: true }, '지점 정보를 확인해 주세요.'],
+  ] as const)('keeps branch guidance and does not load the catalog when branch is %s', (_label, flags, guidance) => {
+    const refetch = jest.fn();
+    mockAuth.mockReturnValue({ ...query(undefined), ...flags, refetch } as unknown as ReturnType<typeof useGetAuthUser>);
+    renderMaker();
+    expect(screen.getByRole('status')).toHaveTextContent(guidance);
+    expect(screen.queryByLabelText('메시지 본문')).not.toBeInTheDocument();
+    expect(mockSystem).not.toHaveBeenCalled();
+    expect(mockUser).not.toHaveBeenCalled();
+    if (flags.isError) {
+      fireEvent.click(screen.getByRole('button', { name: '지점 정보 다시 시도' }));
+      expect(refetch).toHaveBeenCalledTimes(1);
+    }
   });
   it('defaults to maker and PRICE_INFO with plain name and no recipient or send effects', async () => {
     const { container } = renderMaker();

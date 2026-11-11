@@ -1112,42 +1112,35 @@ describe("NewMessagePage", () => {
     expect(mockApiPost).not.toHaveBeenCalled();
   });
 
-  it("keeps the send page accessible but disables immediate send without approval", () => {
-    mockUseMessagesPermissionGuard.mockReturnValue({
-      isLoading: false,
-      needsSenderApproval: true,
-    });
-
-    renderPage();
+  it.each([
+    ["denied", { isLoading: false, needsSenderApproval: true }],
+    ["loading", { isLoading: true, needsSenderApproval: false }],
+  ])("keeps maker available but blocks send navigation, action and submission when approval is %s", async (_label, permission) => {
+    mockUseMessagesPermissionGuard.mockReturnValue(permission);
+    const { container } = renderPage();
 
     expect(screen.getByText("새 메시지")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "즉시 발송" })).toBeDisabled();
-  });
+    expect(screen.getByRole("button", { name: "전송하기" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "메세지 제작" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "설정" })).toBeEnabled();
+    expect(container.querySelector('[data-loading="true"]')).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "전송하기" }));
+    expect(mockPush).not.toHaveBeenCalled();
 
-  it("shows the section-nav skeleton and disables the send action while approval is loading", async () => {
-    mockUseMessagesPermissionGuard.mockReturnValue({
-      isLoading: true,
-      needsSenderApproval: false,
-    });
-
-    const { container } = renderPage();
-
-    // The section nav renders placeholder pills (real labels kept for width,
-    // hidden from the a11y tree) instead of interactive sections.
-    expect(
-      container.querySelectorAll(
-        '[data-component="mobile_messages_new_page_screen_form_section-nav_nav_item-skeleton"]',
-      ),
-    ).toHaveLength(6);
-    expect(screen.queryByRole("button", { name: "전송하기" })).not.toBeInTheDocument();
-
-    // Select a recipient first: the disabled flag has to come from the
-    // pending approval, not from the missing-recipient validation.
-    await addManualRecipient("010-1234-5678");
-
-    // The send action stays the real button (disabled). A skeleton here made
-    // the header taller and shifted the whole form once approval resolved.
+    // Reuse existing fixture data to rule out missing-recipient validation.
+    const receiver = screen.getByLabelText(/휴대 전화번호/);
+    fireEvent.focus(receiver);
+    fireEvent.change(receiver, { target: { value: mockClients[0]!.name } });
+    fireEvent.click(await screen.findByText(mockClients[0]!.name));
+    expect(await screen.findByRole("button", { name: `${mockClients[0]!.name} 수신자 제거` })).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("메시지 본문"), { target: { value: "QA-발송 차단 확인" } });
     expect(screen.getByRole("button", { name: "즉시 발송" })).toBeDisabled();
+    fireEvent.submit(screen.getByLabelText("메시지 본문").closest("form") as HTMLFormElement);
+    await act(async () => {});
+    expect(api.post).not.toHaveBeenCalled();
+    expect(mockApiPost).not.toHaveBeenCalled();
+    expect(mockDuplicateCheck).not.toHaveBeenCalled();
   });
 
   it("does not show the draft save action", () => {

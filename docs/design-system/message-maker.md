@@ -1,6 +1,6 @@
 # Mobile MessageMaker
 
-`/messages/compose`는 `MessageMaker` organism을 조립한다. `/messages`와 일반 메시지 진입은 이 제작 화면으로 연결하며 `/messages/new` 및 명시적인 template/clientId 링크는 발송 화면으로 유지한다. 기존 sender-approval guard와 섹션 권한은 그대로 적용한다.
+`/messages/compose`는 `MessageMaker` organism을 조립한다. `/messages`와 일반 메시지 진입은 이 제작 화면으로 연결하며 `/messages/new` 및 명시적인 template/clientId 링크는 발송 화면으로 유지한다. 로그인과 지점 확인은 유지하며, 제작 화면의 템플릿 선택·변수 입력·본문 편집·복사는 발신번호 승인과 무관하게 사용할 수 있다. 정확한 `/messages/compose` 경로는 승인 로딩·거절·조회 오류에도 모달 없이 즉시 렌더링한다. 승인 조회와 context는 유지하며 전송하기·발송 기록·템플릿·자동 전송 탭은 승인 확인 중이거나 미승인일 때 비활성화한다. 제작·설정 탭은 사용할 수 있고 기존 역할 조건은 유지한다. 실제 발송은 `/messages/new`의 승인 guard를 따른다.
 
 - 구성: `ListCard`, `MessageSectionNav`, `FieldLabelRow`, `Input`, `MessageTemplateSelect`(Select primitives), `MsgField`, `Button`. page-local component와 page 시각 Tailwind는 없다.
 - `data-component`는 caller가 완성된 owner 경로를 전달한다. organism과 field는 source-component를 고정하며 authored slot은 data-slot을 함께 선언한다. 선택기 그룹 CSS는 두 메시지 화면에만 적용한다.

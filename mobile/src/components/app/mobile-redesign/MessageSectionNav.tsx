@@ -59,7 +59,7 @@ export const MESSAGE_NAVIGATION_ITEMS: MessageNavigationItem[] = [
 // belongs in this set anymore.
 const OWNER_ONLY_SECTION_IDS = new Set<MobileMessageSectionId>(["templates"]);
 const BRANCH_MANAGEMENT_SECTION_IDS = new Set<MobileMessageSectionId>(["triggers"]);
-const SENDER_APPROVAL_EXEMPT_SECTION_IDS = new Set<MobileMessageSectionId>(["send", "settings"]);
+const SENDER_APPROVAL_EXEMPT_SECTION_IDS = new Set<MobileMessageSectionId>(["complete", "settings"]);
 
 export function MessageSectionNav({
   "data-component": dataComponent,
@@ -82,11 +82,11 @@ export function MessageSectionNav({
         label: item.title,
         icon: item.icon,
         disabled:
-          (needsSenderApproval && !SENDER_APPROVAL_EXEMPT_SECTION_IDS.has(item.id)) ||
+          ((isLoading || needsSenderApproval) && !SENDER_APPROVAL_EXEMPT_SECTION_IDS.has(item.id)) ||
           (OWNER_ONLY_SECTION_IDS.has(item.id) && !isOwner) ||
           (BRANCH_MANAGEMENT_SECTION_IDS.has(item.id) && !canManageBranchMessages),
       })),
-    [canManageBranchMessages, isOwner, needsSenderApproval],
+    [canManageBranchMessages, isOwner, isLoading, needsSenderApproval],
   );
 
   const handleSectionSelect = (sectionId: MobileMessageSectionId) => {
@@ -102,7 +102,6 @@ export function MessageSectionNav({
       items={sectionNavItems}
       activeId={activeId}
       onSelect={handleSectionSelect}
-      isLoading={isLoading}
     />
   );
 }
