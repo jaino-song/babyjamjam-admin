@@ -106,6 +106,7 @@ import {
     type MessageHistorySource,
 } from "domain/repositories/message-log.repository.interface";
 import { MessageTriggerDeliveryService } from "./message-trigger-delivery.service";
+import { buildSmsProviderAcceptanceFingerprint, buildSmsProviderAcceptanceKey } from "./sms-provider-acceptance.service";
 import {
     SMS_DELIVERY_SNAPSHOT_VARIABLE,
     type SmsTriggerDeliveryPreparation,
@@ -1533,7 +1534,7 @@ export class MessageTriggerService {
         } as UpsertRuleParams));
         const parentEnabled = await this.messageAutomationActivationService!.getTriggerDispatchEnabled(branchId, transaction);
         for (const state of states) {
-            state.sendTime ??= await this.getDefaultRuleSendTime(branchId);
+            state.sendTime ??= await this.getDefaultRuleSendTime(branchId, transaction);
             if (!parentEnabled && draft.isActive !== true) state.isActive = false;
             this.validateRule(state);
             if (state.isActive !== false) await this.messageAutomationActivationService!.assertTriggerDispatchEnabled(branchId, transaction);
@@ -1797,8 +1798,8 @@ export class MessageTriggerService {
     }
 
     /** Read the validated branch default before binding a rule creation proposal. */
-    async getDefaultRuleSendTime(branchId: string): Promise<string> {
-        return (await this.getDispatchTimingPolicy(branchId)).defaultRuleSendTime;
+    async getDefaultRuleSendTime(branchId: string, transaction?: Prisma.TransactionClient): Promise<string> {
+        return (await this.getDispatchTimingPolicy(branchId, transaction)).defaultRuleSendTime;
     }
 
     async createRule(
@@ -3899,6 +3900,12 @@ export class MessageTriggerService {
             }
             linkClient = schedule.client;
         } else if (!resend && isSelectedMessageJobExpired(job, pastExpiryHours, new Date(Date.now()), job.quietHold?.releaseAt)) {
+            const reason = job.quietHold ? "expired_after_quiet" : pastExpiryHours === 24
+                ? EXPIRED_PENDING_JOB_CANCEL_REASON : `기존 발송 예정 ${pastExpiryHours}시간 경과`;
+            if (!job.quietHold && job.templateKey === MANUAL_SMS_TEMPLATE_KEY) {
+                await this.cancelExpiredManualJob(job, reason);
+                return true;
+            }
             if (job.quietHold) {
                 if (!this.messageAutomationBranchLockService || !job.branchId) throw new ServiceUnavailableException("Quiet expiry lock is unavailable");
                 await this.messageAutomationBranchLockService.runExclusive(job.branchId, async transaction => {
@@ -3914,7 +3921,7 @@ export class MessageTriggerService {
                 });
                 job.claimToken = null; job.processingDeadlineAt = null;
             }
-            job.cancel(job.quietHold ? "expired_after_quiet" : pastExpiryHours === 24 ? EXPIRED_PENDING_JOB_CANCEL_REASON : `기존 발송 예정 ${pastExpiryHours}시간 경과`);
+            job.cancel(reason);
             await this.persistTriggerJobStatus(job, "persist expired trigger job");
             return true;
         }
@@ -4059,9 +4066,26 @@ export class MessageTriggerService {
             ? await this.ruleRepository.findByIdIncludingGlobal(job.branchId, job.ruleId)
             : null;
         const now = new Date(job.payload.catchUp?.originalScheduledFor ?? job.scheduledFor);
+        const caregiver = isCaregiverTriggerTemplate(job.templateKey);
         let recipe: ReturnType<typeof buildClientMessageRecipe> = null;
         if (rule && job.branchId && job.clientId !== null) {
-            if (job.employeeScheduleId === null) {
+            if (caregiver) {
+                if (this.caregiverRecipients && rule.groupId && rule.templateKey === job.templateKey
+                    && rule.recipientType === job.recipientType && job.employeeScheduleId !== null) {
+                    const rules = (await this.ruleRepository.findGroupRules(job.branchId, rule.groupId))
+                        .filter((entry) => entry.isActive && entry.branchId === job.branchId && isCaregiverTriggerTemplate(entry.templateKey));
+                    const set = await this.caregiverRecipients.resolve(job.branchId, job.clientId, rules, undefined,
+                        { employeeScheduleId: job.employeeScheduleId, now });
+                    const row = set.recipients.find((entry) => entry.ruleId === job.ruleId
+                        && entry.employeeScheduleId === job.employeeScheduleId && entry.recipientType === job.recipientType);
+                    if (!set.complete || row?.outcome === "needs_setup") {
+                        job.markNeedsSetup(row?.reason ?? job.cancelReason!);
+                        await this.persistTriggerJobStatus(job, "persist unresolved caregiver resend");
+                        return false;
+                    }
+                    if (row?.outcome === "ready") recipe = row.recipe ?? null;
+                }
+            } else if (job.employeeScheduleId === null) {
                 const client = await this.readClientAutomationSource(job.branchId, job.clientId);
                 if (client) recipe = buildClientMessageRecipe(rule, client, now);
             } else {
@@ -4070,10 +4094,14 @@ export class MessageTriggerService {
                 if (schedule) recipe = buildEmployeeAssignmentMessageRecipe(rule, schedule, now);
             }
         }
-        const identityMatches = recipe && (job.payload.catchUp
-            ? recipe.scheduledFor.toISOString() === job.payload.catchUp.originalScheduledFor
-            : recipe.dedupeKey === job.dedupeKey && (job.employeeScheduleId !== null
-                || recipe.scheduledFor.getTime() === job.scheduledFor.getTime()));
+        const identityMatches = recipe && (caregiver
+            ? recipe.dedupeKey === job.dedupeKey && recipe.scheduledFor.getTime() === now.getTime()
+                && job.payload.caregiverSourceSnapshot?.version === 1
+                && recipe.payload.caregiverSourceSnapshot?.schedule.incarnationId === job.payload.caregiverSourceSnapshot.schedule.incarnationId
+            : (job.payload.catchUp
+                ? recipe.scheduledFor.toISOString() === job.payload.catchUp.originalScheduledFor
+                : recipe.dedupeKey === job.dedupeKey && (job.employeeScheduleId !== null
+                    || recipe.scheduledFor.getTime() === job.scheduledFor.getTime())));
         if (!recipe || !identityMatches) {
             job.cancel(RESEND_TARGET_CHANGED_REASON);
             await this.persistTriggerJobStatus(job, "persist changed resend target");
@@ -5335,6 +5363,79 @@ export class MessageTriggerService {
                 job.processingDeadlineAt = null;
             }
         }
+    }
+
+    private async cancelExpiredManualJob(job: MessageTriggerJobEntity, reason: string): Promise<void> {
+        const branchId = job.branchId;
+        if (!branchId || !this.messageAutomationBranchLockService) throw new ServiceUnavailableException("Manual expiry lock is unavailable");
+        if (!Number.isSafeInteger(job.payload.existingMessageLogId)) throw new AgentAutomationDispatchUncertainError();
+        const canceledAt = await this.messageAutomationBranchLockService.runExclusive(branchId, async transaction => {
+            const current = await transaction.message_trigger_job.findFirst({ where: { id: job.id, branchId } });
+            const holder = await transaction.message_trigger_rule.findFirst({ where: { id: job.ruleId, branchId,
+                templateKey: MANUAL_SMS_TEMPLATE_KEY, isActive: false, groupId: null, deletedAt: null, retryOnFailure: false, jobsStale: false } });
+            const log = await transaction.message_log.findFirst({ where: { id: job.payload.existingMessageLogId, branchId,
+                triggerJobId: job.id, provider: "aligo_sms", providerAcceptanceState: "prepared", providerCallStartedAt: null } });
+            const now = new Date(Date.now());
+            if (!holder || !current || current.status !== "processing" || !job.claimToken || !job.processingDeadlineAt
+                || current.claimToken !== job.claimToken || current.processingDeadlineAt?.getTime() !== job.processingDeadlineAt.getTime()
+                || job.processingDeadlineAt <= now || current.attempts !== 0
+                || agentAutomationConcreteJobDigest(current) !== agentAutomationConcreteJobDigest(job)
+                || !log || log.status !== "pending" || log.attempts !== 0 || log.providerAcceptedAt !== null || log.aligoMid !== null) {
+                throw new AgentAutomationDispatchUncertainError();
+            }
+            const variables = this.toStringRecord(log.variables);
+            let fingerprint: Record<string, unknown>;
+            try {
+                const parsed: unknown = JSON.parse(variables["manualQueueFingerprintInput"] ?? "");
+                if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("Invalid manual fingerprint");
+                fingerprint = parsed as Record<string, unknown>;
+            } catch { throw new AgentAutomationDispatchUncertainError(); }
+            const requestKey = variables["manualQueueRequestKey"];
+            const ordinal = Number(variables["manualQueueOrdinal"]);
+            const count = Number(variables["manualQueueCount"]);
+            const rootKey = requestKey ? buildSmsProviderAcceptanceKey("manual", `${branchId}:${requestKey}`) : null;
+            const expectedKey = rootKey && Number.isSafeInteger(ordinal) && ordinal >= 0
+                ? ordinal === 0 ? rootKey : buildSmsProviderAcceptanceKey("manual", `${rootKey}:ordinal:${ordinal}`) : null;
+            if (!expectedKey || log.providerAcceptanceKey !== expectedKey || !log.providerAcceptanceFingerprint
+                || job.dedupeKey !== `manual-sms:${branchId}:${expectedKey}` || String(ordinal) !== variables["manualQueueOrdinal"]
+                || !Number.isSafeInteger(count) || ordinal >= count || variables["origin"] !== "ADMIN_DIRECT"
+                || variables["manualQueueMode"] !== "internal" || variables["manualQueueStatus"] !== "queued"
+                || fingerprint["branchId"] !== branchId || fingerprint["message"] !== job.payload.messageBody
+                || typeof fingerprint["receiver"] !== "string" || !fingerprint["receiver"].split(",").includes(job.recipientPhone!)
+                || fingerprint["title"] !== (job.payload.templateVariables["title"]?.trim() || null)
+                || fingerprint["msgType"] !== (job.payload.templateVariables["msgType"] ?? "AUTO")
+                || fingerprint["testMode"] !== (job.payload.templateVariables["testMode"] === "true")
+                || buildSmsProviderAcceptanceFingerprint(fingerprint) !== log.providerAcceptanceFingerprint
+                || log.recipientPhone !== job.recipientPhone || log.receiver !== job.recipientPhone
+                || log.messageBody !== job.payload.messageBody || log.clientId !== job.clientId) throw new AgentAutomationDispatchUncertainError();
+            const canceledJob = await transaction.message_trigger_job.updateMany({
+                where: { id: job.id, branchId, status: "processing", claimToken: job.claimToken,
+                    processingDeadlineAt: job.processingDeadlineAt, updatedAt: current.updatedAt, attempts: 0,
+                    ruleId: current.ruleId, templateKey: current.templateKey, dedupeKey: current.dedupeKey,
+                    clientId: current.clientId, employeeScheduleId: current.employeeScheduleId,
+                    recipientType: current.recipientType, recipientPhone: current.recipientPhone,
+                    scheduledFor: current.scheduledFor, payload: { equals: current.payload as Prisma.InputJsonValue } },
+                data: { status: "canceled", cancelReason: reason, canceledAt: now,
+                    nextAttemptAt: null, claimToken: null, processingDeadlineAt: null },
+            });
+            if (canceledJob.count !== 1) throw new AgentAutomationDispatchUncertainError();
+            const canceledLog = await transaction.message_log.updateMany({
+                where: { id: log.id, branchId, triggerJobId: job.id, provider: "aligo_sms", status: "pending", attempts: 0,
+                    providerAcceptanceKey: expectedKey, providerAcceptanceFingerprint: log.providerAcceptanceFingerprint,
+                    providerAcceptanceState: "prepared", providerCallStartedAt: null, providerAcceptedAt: null, aligoMid: null,
+                    updatedAt: log.updatedAt, variables: { equals: log.variables as Prisma.InputJsonValue } },
+                data: { status: "failed", nextRetryAt: null, errorMessage: reason,
+                    variables: { ...log.variables as Prisma.JsonObject, manualQueueStatus: "canceled", manualQueueReason: reason } },
+            });
+            if (canceledLog.count !== 1) throw new AgentAutomationDispatchUncertainError();
+            return now;
+        });
+        // 커밋이 끝난 뒤에만 메모리 상태를 terminal 결과에 맞춘다.
+        job.cancel(reason);
+        job.canceledAt = canceledAt;
+        job.nextAttemptAt = null;
+        job.claimToken = null;
+        job.processingDeadlineAt = null;
     }
 
     private async persistTriggerJobStatus(

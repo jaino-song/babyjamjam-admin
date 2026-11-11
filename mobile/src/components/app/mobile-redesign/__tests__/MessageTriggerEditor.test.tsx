@@ -1,7 +1,8 @@
-import { fireEvent, render as renderBase, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render as renderBase, screen, waitFor } from "@testing-library/react";
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import type { MessageTriggerRuleGroupView } from "@babyjamjam/shared/types/message";
+import { messageTriggerKeys } from "@/features/message-triggers/hooks/keys";
+import type { MessageAutomationPolicyConfigResponse, MessageTriggerRuleGroupView } from "@babyjamjam/shared/types/message";
 import type { ReactElement } from "react";
 import { messageRuleGroupsApi } from "@/services/api";
 import { MessageTriggerList } from "../MessageTriggerList";
@@ -9,14 +10,21 @@ import { MessageTriggerEditor } from "../MessageTriggerEditor";
 
 const mockGroupList = jest.fn();
 const mockPreview = jest.fn();
-jest.mock("@/services/api", () => ({ messageRuleGroupsApi: { create: (...args: unknown[]) => createRule(...args), update: jest.fn(), remove: jest.fn(), preview: (...args: unknown[]) => mockPreview(...args), list: (...args: unknown[]) => mockGroupList(...args) } }));
+const mockGetConfig = jest.fn();
+const configKey = ["settings", "message-automation-config", "branch-1"] as const;
+const CONFIG: MessageAutomationPolicyConfigResponse = {
+  version: "v1", permissions: { canRead: true, canWrite: true }, warnings: [],
+  configuration: { schemaVersion: 1, dispatchCheckIntervalMinutes: 5, defaultRuleSendTime: "11:00", triggerRetryIntervalMinutes: 5, processingReclaimMinutes: 10, smsRetryIntervalMinutes: 5, pastExpiryHours: 72, pastSendIntervalMinutes: 5, pastRuleOrder: [], duplicateWindowHours: 72, quietHours: { enabled: false, start: "21:00", end: "08:00", recipientGroups: ["CLIENT"], action: "DEFER", timezone: "Asia/Seoul" } },
+};
+jest.mock("@/services/api", () => ({ settingsApi: { getMessageAutomationConfig: (...args: unknown[]) => mockGetConfig(...args) }, messageRuleGroupsApi: { create: (...args: unknown[]) => createRule(...args), update: jest.fn(), remove: jest.fn(), preview: (...args: unknown[]) => mockPreview(...args), list: (...args: unknown[]) => mockGroupList(...args) } }));
 jest.mock("@/hooks/useGetAuthUser", () => ({ useGetAuthUser: () => ({ data: { branchId: "branch-1", role: "owner" } }) }));
 jest.mock("@/lib/messages/logs", () => ({ fetchAllMessageLogs: async () => [] }));
-function render(ui: ReactElement) {
+function render(ui: ReactElement, cachedConfig = true) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+  if (cachedConfig) client.setQueryData(configKey, CONFIG);
   const tree = (element: ReactElement) => <QueryClientProvider client={client}>{element}</QueryClientProvider>;
   const view = renderBase(tree(ui));
-  return { ...view, rerender: (element: ReactElement) => view.rerender(tree(element)) };
+  return { ...view, client, rerender: (element: ReactElement) => view.rerender(tree(element)) };
 }
 
 const createRule = jest.fn();
@@ -49,11 +57,65 @@ jest.mock("@/features/message-triggers/hooks/use-message-triggers", () => ({
 describe("MessageTriggerEditor", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    mockGetConfig.mockReset().mockResolvedValue(CONFIG);
     createRule.mockResolvedValue({ id: "new-rule" });
     updateRule.mockResolvedValue({});
     deleteRule.mockResolvedValue({});
     mockGroupList.mockResolvedValue({ groups: [], standaloneRules: [] });
     mockPreview.mockResolvedValue({ complete: false, count: 0, recipients: [] });
+  });
+
+  it("submits the configured branch default without a time edit and keeps it after refetch", async () => {
+    const onDirtyChange = jest.fn();
+    const { client } = render(<MessageTriggerEditor data-component="mobile_messages_automation_test_editor" rule={null} onDirtyChange={onDirtyChange} onClose={jest.fn()} />, false);
+    await waitFor(() => expect(screen.getByLabelText("발송 시각 (한국 시간)")).toHaveValue("11:00"));
+    expect(mockGetConfig).toHaveBeenCalledWith("branch-1");
+    expect(onDirtyChange).toHaveBeenLastCalledWith(false);
+    mockGetConfig.mockResolvedValue({ ...CONFIG, configuration: { ...CONFIG.configuration, defaultRuleSendTime: "12:00" } });
+    await act(async () => { await client.refetchQueries({ queryKey: configKey }); });
+    expect(screen.getByLabelText("발송 시각 (한국 시간)")).toHaveValue("11:00");
+    fireEvent.change(screen.getByLabelText("규칙 이름"), { target: { value: "기본 시각 안내" } });
+    fireEvent.click(screen.getByRole("button", { name: "수신자별 미리보기" }));
+    await waitFor(() => expect(mockPreview).toHaveBeenCalledWith({ draft: expect.objectContaining({ sendTime: "11:00" }) }, "branch-1"));
+    await waitFor(() => expect(screen.getByRole("button", { name: "규칙 저장" })).toBeEnabled());
+    fireEvent.click(screen.getByRole("button", { name: "규칙 저장" }));
+    await waitFor(() => expect(createRule).toHaveBeenCalledWith(expect.objectContaining({ sendTime: "11:00" }), "branch-1"));
+  });
+
+  it.each([false, true])("preserves draft edits while configuration loads (time edited: %s)", async (editTime) => {
+    let resolveConfig!: (config: MessageAutomationPolicyConfigResponse) => void;
+    mockGetConfig.mockReturnValue(new Promise<MessageAutomationPolicyConfigResponse>((resolve) => { resolveConfig = resolve; }));
+    const onDirtyChange = jest.fn();
+    const { client } = render(<MessageTriggerEditor data-component="mobile_messages_automation_test_editor" rule={null} onDirtyChange={onDirtyChange} onClose={jest.fn()} />, false);
+    expect(screen.getByLabelText("발송 시각 (한국 시간)")).toHaveValue("");
+    fireEvent.change(screen.getByLabelText("규칙 이름"), { target: { value: "보존할 이름" } });
+    expect(screen.getByRole("button", { name: "규칙 저장" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "수신자별 미리보기" })).toBeDisabled();
+    if (editTime) fireEvent.change(screen.getByLabelText("발송 시각 (한국 시간)"), { target: { value: "16:45" } });
+    await act(async () => { resolveConfig(CONFIG); });
+    await waitFor(() => expect(client.getQueryState(configKey)?.status).toBe("success"));
+    await waitFor(() => expect(screen.getByLabelText("발송 시각 (한국 시간)")).toHaveValue(editTime ? "16:45" : "11:00"));
+    expect(screen.getByLabelText("규칙 이름")).toHaveValue("보존할 이름");
+    expect(onDirtyChange).toHaveBeenLastCalledWith(true);
+    fireEvent.change(screen.getByLabelText("발송 시각 (한국 시간)"), { target: { value: "17:30" } });
+    mockGetConfig.mockResolvedValue({ ...CONFIG, configuration: { ...CONFIG.configuration, defaultRuleSendTime: "12:00" } });
+    await act(async () => { await client.refetchQueries({ queryKey: configKey }); });
+    fireEvent.click(screen.getByRole("button", { name: "규칙 저장" }));
+    await waitFor(() => expect(createRule).toHaveBeenCalledWith(expect.objectContaining({ name: "보존할 이름", sendTime: "17:30" }), "branch-1"));
+  });
+
+  it("leaves the time empty and prevents scheduled requests when configuration is unavailable", async () => {
+    mockGetConfig.mockRejectedValue(new Error("503"));
+    const { client } = render(<MessageTriggerEditor data-component="mobile_messages_automation_test_editor" rule={null} onClose={jest.fn()} />, false);
+    await waitFor(() => expect(client.getQueryState(configKey)?.status).toBe("error"));
+    fireEvent.change(screen.getByLabelText("규칙 이름"), { target: { value: "설정 없는 안내" } });
+    expect(screen.getByLabelText("발송 시각 (한국 시간)")).toHaveValue("");
+    fireEvent.click(screen.getByRole("button", { name: "규칙 저장" }));
+    fireEvent.click(screen.getByRole("button", { name: "수신자별 미리보기" }));
+    expect(createRule).not.toHaveBeenCalled();
+    expect(mockPreview).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: "규칙 저장" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "수신자별 미리보기" })).toBeDisabled();
   });
 
   it("creates a mobile automation rule with the same rule fields as desktop", async () => {
@@ -67,7 +129,7 @@ describe("MessageTriggerEditor", () => {
     );
 
     fireEvent.change(screen.getByLabelText("규칙 이름"), { target: { value: "서비스 시작 안내" } });
-    expect(screen.getByLabelText("발송 시각 (한국 시간)")).toHaveValue("09:00");
+    expect(screen.getByLabelText("발송 시각 (한국 시간)")).toHaveValue("11:00");
     fireEvent.change(screen.getByLabelText("발송 시각 (한국 시간)"), { target: { value: "23:59" } });
     fireEvent.click(screen.getByRole("button", { name: "규칙 저장" }));
 
@@ -109,6 +171,7 @@ describe("MessageTriggerEditor", () => {
         eventType: "SERVICE_START",
         offsetType: "BEFORE_DAYS",
         offsetDays: 3,
+        sendTime: "14:30",
         recipientType: "CLIENT",
         templateKey: "SERVICE_INFO",
         targetClientStatus: "waiting",
@@ -128,6 +191,7 @@ describe("MessageTriggerEditor", () => {
         name: "수정 규칙",
         isActive: false,
         offsetDays: 3,
+        sendTime: "14:30",
         targetClientStatus: "waiting",
         retryOnFailure: false,
       }),
@@ -148,6 +212,7 @@ describe("MessageTriggerEditor", () => {
       eventType: "SERVICE_START" as const,
       offsetType: "BEFORE_DAYS" as const,
       offsetDays: 3,
+      sendTime: "14:30",
       recipientType: "CLIENT" as const,
       templateKey: "SERVICE_INFO" as const,
       targetClientStatus: "waiting" as const,
@@ -260,17 +325,81 @@ describe("MessageTriggerEditor", () => {
     expect(screen.queryByText("등록된 자동 전송 트리거가 없습니다.")).not.toBeInTheDocument();
   });
 
+  it.each([false, true])("refreshes standalone details only while pristine (dirty: %s)", async (editDraft) => {
+    const rule = { id: "r", branchId: "branch-1", name: "기존 규칙", isActive: false, eventType: "SERVICE_START" as const, offsetType: "BEFORE_DAYS" as const, offsetDays: 3, sendTime: "10:30", recipientType: "CLIENT" as const, templateKey: "SERVICE_INFO" as const, targetClientStatus: "all" as const, retryOnFailure: true, createdAt: "2026-11-01", updatedAt: "2026-11-01" };
+    const view = render(<MessageTriggerEditor data-component="mobile_messages_automation_test_editor" rule={rule} onClose={jest.fn()} />);
+    if (editDraft) fireEvent.change(screen.getByLabelText("규칙 이름"), { target: { value: "보존할 변경" } });
+    view.rerender(<MessageTriggerEditor data-component="mobile_messages_automation_test_editor" rule={{ ...rule, name: "다른 탭의 이름", sendTime: "12:45", updatedAt: "2026-11-02" }} onClose={jest.fn()} />);
+    expect(screen.getByLabelText("규칙 이름")).toHaveValue(editDraft ? "보존할 변경" : "다른 탭의 이름");
+    expect(screen.getByLabelText("발송 시각 (한국 시간)")).toHaveValue(editDraft ? "10:30" : "12:45");
+    fireEvent.click(screen.getByRole("button", { name: "규칙 저장" }));
+    await waitFor(() => expect(updateRule).toHaveBeenCalledWith({ id: "r", dto: expect.objectContaining({ name: editDraft ? "보존할 변경" : "다른 탭의 이름", sendTime: editDraft ? "10:30" : "12:45" }) }));
+  });
+
+  it("adopts refreshed group fields and version while the detail is pristine", async () => {
+    const group: MessageTriggerRuleGroupView = { id: "g", branchId: "branch-1", name: "저장된 규칙", recipientMode: "CLIENT", version: 1, createdAt: "2026-11-01", updatedAt: "2026-11-01", deletedAt: null, rules: [], eventType: "SERVICE_START", offsetType: "BEFORE_DAYS", offsetDays: 3, sendTime: "10:30", targetClientStatus: "all", retryOnFailure: true, isActive: false, recipientTemplates: { CLIENT: "SERVICE_INFO" } };
+    const onDirtyChange = jest.fn();
+    const onClose = jest.fn();
+    const view = render(<MessageTriggerEditor data-component="mobile_messages_automation_test_editor" rule={null} group={group} onDirtyChange={onDirtyChange} onClose={onClose} />);
+    const refreshed = { ...group, name: "다른 탭에서 변경", version: 2, sendTime: "12:45", updatedAt: "2026-11-02" };
+    view.rerender(<MessageTriggerEditor data-component="mobile_messages_automation_test_editor" rule={null} group={refreshed} onDirtyChange={onDirtyChange} onClose={onClose} />);
+    expect(screen.getByLabelText("규칙 이름")).toHaveValue("다른 탭에서 변경");
+    expect(screen.getByLabelText("발송 시각 (한국 시간)")).toHaveValue("12:45");
+    expect(onDirtyChange).toHaveBeenLastCalledWith(false);
+    fireEvent.change(screen.getByLabelText("규칙 이름"), { target: { value: "최신 버전 편집" } });
+    fireEvent.click(screen.getByRole("button", { name: "규칙 저장" }));
+    await waitFor(() => expect(messageRuleGroupsApi.update).toHaveBeenCalledWith("g", expect.objectContaining({ expectedVersion: 2, name: "최신 버전 편집", sendTime: "12:45" }), "branch-1"));
+  });
+
+  it("adopts a version-only refresh before the next edit", async () => {
+    const group: MessageTriggerRuleGroupView = { id: "g", branchId: "branch-1", name: "저장된 규칙", recipientMode: "CLIENT", version: 1, createdAt: "2026-11-01", updatedAt: "2026-11-01", deletedAt: null, rules: [], eventType: "SERVICE_START", offsetType: "BEFORE_DAYS", offsetDays: 3, sendTime: "10:30", targetClientStatus: "all", retryOnFailure: true, isActive: false, recipientTemplates: { CLIENT: "SERVICE_INFO" } };
+    const view = render(<MessageTriggerEditor data-component="mobile_messages_automation_test_editor" rule={null} group={group} onClose={jest.fn()} />);
+    view.rerender(<MessageTriggerEditor data-component="mobile_messages_automation_test_editor" rule={null} group={{ ...group, version: 2 }} onClose={jest.fn()} />);
+    fireEvent.change(screen.getByLabelText("규칙 이름"), { target: { value: "다음 편집" } });
+    fireEvent.click(screen.getByRole("button", { name: "규칙 저장" }));
+    await waitFor(() => expect(messageRuleGroupsApi.update).toHaveBeenCalledWith("g", expect.objectContaining({ expectedVersion: 2 }), "branch-1"));
+  });
+
   it("retains the loaded group version through a refetch and preserves a409 draft", async () => {
     const group: MessageTriggerRuleGroupView = { id: "g", branchId: "branch-1", name: "저장된 규칙", recipientMode: "CLIENT", version: 2, createdAt: "2026-11-01", updatedAt: "2026-11-01", deletedAt: null, rules: [], eventType: "SERVICE_START", offsetType: "BEFORE_DAYS", offsetDays: 3, sendTime: "09:00", targetClientStatus: "all", retryOnFailure: true, isActive: true, recipientTemplates: { CLIENT: "SERVICE_INFO" } };
     jest.mocked(messageRuleGroupsApi.update).mockRejectedValueOnce(new Error("409"));
     const onClose = jest.fn();
     const view = render(<MessageTriggerEditor data-component="mobile_messages_automation_test_editor" rule={null} group={group} onClose={onClose} />);
     fireEvent.change(screen.getByLabelText("규칙 이름"), { target: { value: "보존할 변경" } });
-    view.rerender(<MessageTriggerEditor data-component="mobile_messages_automation_test_editor" rule={null} group={{ ...group, version: 3 }} onClose={onClose} />);
+    view.rerender(<MessageTriggerEditor data-component="mobile_messages_automation_test_editor" rule={null} group={{ ...group, version: 3, name: "다른 탭의 이름", sendTime: "12:45" }} onClose={onClose} />);
     fireEvent.click(screen.getByRole("button", { name: "규칙 저장" }));
-    await waitFor(() => expect(messageRuleGroupsApi.update).toHaveBeenCalledWith("g", expect.objectContaining({ expectedVersion: 2, name: "보존할 변경" }), "branch-1"));
+    await waitFor(() => expect(messageRuleGroupsApi.update).toHaveBeenCalledWith("g", expect.objectContaining({ expectedVersion: 2, name: "보존할 변경", sendTime: "09:00" }), "branch-1"));
     expect(await screen.findByRole("alert")).toHaveTextContent("저장하지 못했습니다");
     expect(screen.getByLabelText("규칙 이름")).toHaveValue("보존할 변경"); expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it.each(["create", "update", "delete"])("invalidates only the captured branch group cache after group %s", async (operation) => {
+    const group: MessageTriggerRuleGroupView = { id: "g", branchId: "branch-1", name: "저장된 규칙", recipientMode: "CLIENT", version: 2, createdAt: "2026-11-01", updatedAt: "2026-11-01", deletedAt: null, rules: [], eventType: "SERVICE_START", offsetType: "BEFORE_DAYS", offsetDays: 3, sendTime: "09:00", targetClientStatus: "all", retryOnFailure: true, isActive: true, recipientTemplates: { CLIENT: "SERVICE_INFO" } };
+    jest.mocked(messageRuleGroupsApi.update).mockResolvedValue(group);
+    jest.mocked(messageRuleGroupsApi.remove).mockResolvedValue(undefined);
+    const onClose = jest.fn();
+    const { client } = render(<MessageTriggerEditor data-component="mobile_messages_automation_test_editor" rule={null} group={operation === "create" ? null : group} onClose={onClose} />);
+    const ownBranchKey = [...messageTriggerKeys.all, "rule-groups", "branch-1"];
+    const otherBranchKey = [...messageTriggerKeys.all, "rule-groups", "branch-2"];
+    const cachedList = { groups: [group], standaloneRules: [] };
+    client.setQueryData(ownBranchKey, cachedList);
+    client.setQueryData(otherBranchKey, cachedList);
+    client.setQueryData(messageTriggerKeys.list(), []);
+
+    if (operation === "delete") {
+      fireEvent.click(screen.getByRole("button", { name: "규칙 삭제" }));
+      fireEvent.click(screen.getByRole("button", { name: "삭제 확인" }));
+    } else {
+      fireEvent.change(screen.getByLabelText("규칙 이름"), { target: { value: "새 안내" } });
+      await waitFor(() => expect(screen.getByRole("button", { name: "규칙 저장" })).toBeEnabled());
+      fireEvent.click(screen.getByRole("button", { name: "규칙 저장" }));
+    }
+
+    await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));
+    expect(client.getQueryState(ownBranchKey)?.isInvalidated).toBe(true);
+    expect(client.getQueryState(otherBranchKey)?.isInvalidated).toBe(false);
+    expect(client.getQueryState(messageTriggerKeys.list())?.isInvalidated).toBe(false);
+    expect(client.getQueryData(ownBranchKey)).toEqual(cachedList);
   });
 
 });

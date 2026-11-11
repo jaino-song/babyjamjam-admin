@@ -49792,77 +49792,114 @@
       "id": "owner-acef1a31c99d",
       "path": "backend/interface/controllers/system-setting.controller.ts",
       "root": "backend/interface/",
-      "classification": "no-direct-error-boundary",
-      "reason": "No error construction in this file; SystemSettingService/MessageSenderApprovalService produce the raw 4xx (batch B).",
+      "classification": "approved-exception",
+      "reason": "Reviewed user-approved PR #923 approved04 branch-context guard (56e2da219520d9aa188b6bc45672ea73b1baf141): requireExpectedBranch rejects an explicitly supplied expectedBranchId that differs from the authenticated tenant branch before calling the service. The intentional structured ConflictException response is HTTP 409 with local-only code BRANCH_CONTEXT_CHANGED and fixed Korean message “지점이 변경됐어요. 화면을 새로고침한 뒤 다시 시도해 주세요.”; it includes no supplied/actual branch IDs, input values or internal diagnostic text. This specific guard retains the existing local-code compatibility convention documented in docs/error-management.md (호환성 경계 and Task 9.1 carried BRANCH_CONTEXT_CHANGED gap). The intake gate matches the exception-class import/throw even for this structured body. Registration approves only this reviewed guard; it does not reclassify downstream legacy errors, exempt a root or change any scanner, suppression or debt cap. SystemSettingService/MessageSenderApprovalService continue to own their separate error construction; this controller now directly owns the branch guard.",
       "seams": [
         {
-          "line": 51,
+          "line": 1,
+          "kinds": [
+            "raw_http_exception"
+          ]
+        },
+        {
+          "line": 55,
           "kinds": [
             "http_endpoint"
           ]
         },
         {
-          "line": 61,
+          "line": 65,
           "kinds": [
             "http_endpoint"
           ]
         },
         {
-          "line": 81,
+          "line": 85,
           "kinds": [
             "http_endpoint"
           ]
         },
         {
-          "line": 95,
+          "line": 99,
           "kinds": [
             "http_endpoint"
           ]
         },
         {
-          "line": 106,
+          "line": 125,
+          "kinds": [
+            "raw_http_exception",
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 133,
           "kinds": [
             "http_endpoint"
           ]
         },
         {
-          "line": 126,
+          "line": 143,
           "kinds": [
             "http_endpoint"
           ]
         },
         {
-          "line": 135,
+          "line": 156,
           "kinds": [
             "http_endpoint"
           ]
         },
         {
-          "line": 152,
+          "line": 167,
           "kinds": [
             "http_endpoint"
           ]
         },
         {
-          "line": 175,
+          "line": 192,
           "kinds": [
             "http_endpoint"
           ]
         },
         {
-          "line": 217,
+          "line": 218,
           "kinds": [
             "http_endpoint"
           ]
         },
         {
-          "line": 240,
+          "line": 227,
           "kinds": [
             "http_endpoint"
           ]
         },
         {
-          "line": 262,
+          "line": 244,
+          "kinds": [
+            "http_endpoint"
+          ]
+        },
+        {
+          "line": 267,
+          "kinds": [
+            "http_endpoint"
+          ]
+        },
+        {
+          "line": 309,
+          "kinds": [
+            "http_endpoint"
+          ]
+        },
+        {
+          "line": 332,
+          "kinds": [
+            "http_endpoint"
+          ]
+        },
+        {
+          "line": 354,
           "kinds": [
             "http_endpoint"
           ]
@@ -49870,20 +49907,25 @@
       ],
       "discovery_task_id": "1.1.04",
       "spec_ids": [
-        "EM-API-01"
+        "EM-API-01",
+        "EM-CAT-03",
+        "EM-CHANGE-01",
+        "EM-ARCH-01"
       ],
-      "public_codes": [],
-      "outcome_evidence": "No user-facing error emitted in this file.",
+      "public_codes": [
+        "BRANCH_CONTEXT_CHANGED"
+      ],
+      "outcome_evidence": "The existing parameterized HTTP regression covers policy summary/config reads, config update/preview, policy activation update and past-trigger update: captured branch A against authenticated branch B returns 409 with BRANCH_CONTEXT_CHANGED and all mocked SystemSettingService calls remain 0. A matching branch B reaches the selected service once with branch B. Refusal therefore precedes policy reads/writes (NOT_APPLIED semantics); the body is code/message only, without a serialized operationOutcome.",
       "consumer_paths": [
         "/settings/* (notification preferences, sender approval, automation policies, ribbon)"
       ],
       "test_evidence": [
-        "backend/test/integration/system-setting.controller.integration.spec.ts"
+        "backend/test/integration/system-setting.controller.integration.spec.ts (it.each: fences captured branch A before %s %s on authenticated branch B; six policy routes)"
       ],
-      "followup_task": null,
-      "review_task": "1.1-batch-a",
+      "followup_task": "BRANCH_CONTEXT_CHANGED remains outside the shared catalog; the existing Task 9.1 gap-report/catalog decision remains carried. This registration does not approve a new catalog code.",
+      "review_task": "1.1-batch-a; pr923-approved04-error-intake (independent review pending)",
       "spec_mapping_status": "mapped-em-v1",
-      "spec_mapping_note": "no error construction; settings/approval services produce raw 4xx"
+      "spec_mapping_note": "Specific approved04 structured 409 compatibility exception, not a registered Problem Details contract. NOT_APPLIED describes pre-service semantics, not a serialized outcome field. Existing regression paths are evidence pointers; this inventory update does not claim those integration tests were executed or an independent review passed."
     },
     {
       "id": "owner-83d5e4e8b988",
@@ -76967,6 +77009,86 @@
       "review_task": "backup-v2-api-review",
       "spec_mapping_status": "mapped-em-v1",
       "spec_mapping_note": "Machine caller authentication and file-read eligibility use existing codeOnlyProblemBody helpers."
+    },
+    {
+      "id": "owner-a847a0269edc",
+      "path": "backend/interface/controllers/message-trigger-rule-group.controller.ts",
+      "root": "backend/interface/",
+      "classification": "approved-exception",
+      "reason": "Reviewed user-approved PR #923 approved04 branch-context guard (56e2da219520d9aa188b6bc45672ea73b1baf141): requireExpectedBranch rejects an explicitly supplied expectedBranchId that differs from the authenticated tenant branch before calling the service. The intentional structured ConflictException response is HTTP 409 with local-only code BRANCH_CONTEXT_CHANGED and fixed Korean message “지점이 변경됐어요. 화면을 새로고침한 뒤 다시 시도해 주세요.”; it includes no supplied/actual branch IDs, input values or internal diagnostic text. This specific guard retains the existing local-code compatibility convention documented in docs/error-management.md (호환성 경계 and Task 9.1 carried BRANCH_CONTEXT_CHANGED gap). The intake gate matches the exception-class import/throw even for this structured body. Registration approves only this reviewed guard; it does not reclassify downstream legacy errors, exempt a root or change any scanner, suppression or debt cap.",
+      "seams": [
+        {
+          "line": 1,
+          "kinds": [
+            "raw_http_exception"
+          ]
+        },
+        {
+          "line": 13,
+          "kinds": [
+            "http_endpoint"
+          ]
+        },
+        {
+          "line": 21,
+          "kinds": [
+            "http_endpoint"
+          ]
+        },
+        {
+          "line": 30,
+          "kinds": [
+            "http_endpoint"
+          ]
+        },
+        {
+          "line": 39,
+          "kinds": [
+            "http_endpoint"
+          ]
+        },
+        {
+          "line": 49,
+          "kinds": [
+            "http_endpoint"
+          ]
+        },
+        {
+          "line": 60,
+          "kinds": [
+            "http_endpoint"
+          ]
+        },
+        {
+          "line": 73,
+          "kinds": [
+            "raw_http_exception",
+            "throw_or_reject"
+          ]
+        }
+      ],
+      "discovery_task_id": "pr923-approved04-error-intake",
+      "spec_ids": [
+        "EM-CAT-03",
+        "EM-CHANGE-01",
+        "EM-ARCH-01"
+      ],
+      "public_codes": [
+        "BRANCH_CONTEXT_CHANGED"
+      ],
+      "outcome_evidence": "The existing parameterized HTTP regression covers group list/get/preview/create/update/delete: captured branch A against authenticated branch B returns 409 with BRANCH_CONTEXT_CHANGED and all mocked group-service calls remain 0. A matching branch B reaches the selected service once with branch B. Refusal therefore precedes reads, preview and mutation (NOT_APPLIED semantics); the body is code/message only, without a serialized operationOutcome.",
+      "consumer_paths": [
+        "/message-trigger-rule-groups (list/create)",
+        "/message-trigger-rule-groups/:id (get/update/delete)",
+        "/message-trigger-rule-groups/preview"
+      ],
+      "test_evidence": [
+        "backend/test/integration/message-trigger.controller.integration.spec.ts (it.each: fences captured branch A before %s %s on authenticated branch B; six group routes)"
+      ],
+      "followup_task": "BRANCH_CONTEXT_CHANGED remains outside the shared catalog; the existing Task 9.1 gap-report/catalog decision remains carried. This registration does not approve a new catalog code.",
+      "review_task": "pr923-approved04-error-intake (independent review pending)",
+      "spec_mapping_status": "mapped-em-v1",
+      "spec_mapping_note": "Specific approved04 structured 409 compatibility exception, not a registered Problem Details contract. NOT_APPLIED describes pre-service semantics, not a serialized outcome field. Existing regression paths are evidence pointers; this inventory update does not claim those integration tests were executed or an independent review passed."
     }
   ]
 }

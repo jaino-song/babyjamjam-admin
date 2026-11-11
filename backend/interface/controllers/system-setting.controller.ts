@@ -1,4 +1,4 @@
-import { Body, Controller, Get, HttpCode, Optional, Param, Post, Put, Request, UseGuards } from "@nestjs/common";
+import { Body, ConflictException, Controller, Get, HttpCode, Optional, Param, Post, Put, Query, Request, UseGuards } from "@nestjs/common";
 import { BranchManagerGuard } from "infrastructure/auth/branch-manager.guard";
 import { JwtGuard } from "infrastructure/auth/jwt.guard";
 import { OwnerGuard } from "infrastructure/auth/owner.guard";
@@ -100,8 +100,9 @@ export class SystemSettingController {
     @UseGuards(TenantGuard)
     async getMessageAutomationPolicies(
         @CurrentTenant() tenant?: { branchId?: string; globalRole?: string; branchRole?: string },
+        @Query("expectedBranchId") expectedBranchId?: string,
     ): Promise<MessageAutomationPoliciesResponseDto> {
-        const branchId = tenant?.branchId ?? "";
+        const branchId = this.requireExpectedBranch(tenant, expectedBranchId);
         const [policy, policyActivations] = await Promise.all([
             this.systemSettingService.getMessageAutomationPolicyConfig(branchId),
             this.systemSettingService.getMessageSettingsPolicyActivations(branchId),
@@ -118,26 +119,49 @@ export class SystemSettingController {
         return { canRead: true, canWrite: tenant.globalRole === "owner" || tenant.branchRole === "admin" || tenant.branchRole === "manager" };
     }
 
+    private requireExpectedBranch(tenant: SettingsTenant | undefined, expectedBranchId: string | undefined): string {
+        const branchId = tenant?.branchId ?? "";
+        if (expectedBranchId !== undefined && expectedBranchId !== branchId) {
+            throw new ConflictException({
+                code: "BRANCH_CONTEXT_CHANGED",
+                message: "지점이 변경됐어요. 화면을 새로고침한 뒤 다시 시도해 주세요.",
+            });
+        }
+        return branchId;
+    }
+
     @Get("message-automation-policies/config")
     @UseGuards(TenantGuard)
-    async getMessageAutomationPolicyConfig(@CurrentTenant() tenant: SettingsTenant) {
-        return { ...await this.systemSettingService.getMessageAutomationPolicyConfig(tenant.branchId ?? ""),
+    async getMessageAutomationPolicyConfig(
+        @CurrentTenant() tenant: SettingsTenant,
+        @Query("expectedBranchId") expectedBranchId?: string,
+    ) {
+        return { ...await this.systemSettingService.getMessageAutomationPolicyConfig(this.requireExpectedBranch(tenant, expectedBranchId)),
             permissions: this.messagePolicyPermissions(tenant) };
     }
 
     @Put("message-automation-policies/config")
     @UseGuards(TenantGuard, BranchManagerGuard)
-    async updateMessageAutomationPolicyConfig(@CurrentTenant() tenant: SettingsTenant, @Body() dto: UpdateMessageAutomationPolicyConfigDto) {
+    async updateMessageAutomationPolicyConfig(
+        @CurrentTenant() tenant: SettingsTenant,
+        @Body() dto: UpdateMessageAutomationPolicyConfigDto,
+        @Query("expectedBranchId") expectedBranchId?: string,
+    ) {
+        const branchId = this.requireExpectedBranch(tenant, expectedBranchId);
         const result = await runWithAdminAuditActor({ userId: tenant.userId, globalRole: tenant.globalRole, branchRole: tenant.branchRole },
-            () => this.systemSettingService.setMessageAutomationPolicyConfig(tenant.branchId ?? "", dto.expectedVersion, dto.configuration));
+            () => this.systemSettingService.setMessageAutomationPolicyConfig(branchId, dto.expectedVersion, dto.configuration));
         return { ...result, permissions: this.messagePolicyPermissions(tenant) };
     }
 
     @Post("message-automation-policies/config/preview")
     @HttpCode(200)
     @UseGuards(TenantGuard)
-    async previewMessageAutomationPolicyConfig(@CurrentTenant() tenant: SettingsTenant, @Body() dto: UpdateMessageAutomationPolicyConfigDto) {
-        return this.systemSettingService.previewMessageAutomationPolicyConfig(tenant.branchId ?? "", dto.expectedVersion, dto.configuration);
+    async previewMessageAutomationPolicyConfig(
+        @CurrentTenant() tenant: SettingsTenant,
+        @Body() dto: UpdateMessageAutomationPolicyConfigDto,
+        @Query("expectedBranchId") expectedBranchId?: string,
+    ) {
+        return this.systemSettingService.previewMessageAutomationPolicyConfig(this.requireExpectedBranch(tenant, expectedBranchId), dto.expectedVersion, dto.configuration);
     }
 
     @Put("message-policy-activations/:policyId")
@@ -146,13 +170,15 @@ export class SystemSettingController {
         @CurrentTenant() tenant: SettingsTenant,
         @Param() params: MessageSettingsPolicyParamsDto,
         @Body() dto: UpdateMessageSettingsPolicyActivationDto,
+        @Query("expectedBranchId") expectedBranchId?: string,
     ): Promise<MessageSettingsPolicyActivationResponseDto> {
+        const branchId = this.requireExpectedBranch(tenant, expectedBranchId);
         const entity = await runWithAdminAuditActor({
             userId: tenant.userId,
             globalRole: tenant.globalRole,
             branchRole: tenant.branchRole,
         }, () => this.systemSettingService.setMessageSettingsPolicyEnabled(
-            tenant.branchId ?? "",
+            branchId,
             params.policyId,
             dto.enabled,
         ));
@@ -168,13 +194,15 @@ export class SystemSettingController {
     async updateMessageAutomationPastTriggerConfig(
         @CurrentTenant() tenant: SettingsTenant,
         @Body() dto: UpdateMessageAutomationPastTriggerConfigDto,
+        @Query("expectedBranchId") expectedBranchId?: string,
     ): Promise<MessageAutomationPastTriggerConfigDto> {
+        const branchId = this.requireExpectedBranch(tenant, expectedBranchId);
         const entity = await runWithAdminAuditActor({
             userId: tenant.userId,
             globalRole: tenant.globalRole,
             branchRole: tenant.branchRole,
         }, () => this.systemSettingService.setMessageAutomationPastTriggerConfig(
-            tenant.branchId ?? "",
+            branchId,
             {
                 sendIntervalMinutes: dto.sendIntervalMinutes,
                 ruleOrder: dto.ruleOrder,

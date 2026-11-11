@@ -50,6 +50,8 @@ describe("SystemSettingController (Integration)", () => {
         const mockSystemSettingService = {
             getMessageAutomationPastTriggerConfig: jest.fn(),
             getMessageAutomationPolicyConfig: jest.fn(),
+            setMessageAutomationPolicyConfig: jest.fn(),
+            previewMessageAutomationPolicyConfig: jest.fn(),
             setMessageAutomationPastTriggerConfig: jest.fn(),
             getMessageSettingsPolicyActivations: jest.fn(),
             setMessageSettingsPolicyEnabled: jest.fn(),
@@ -102,7 +104,11 @@ describe("SystemSettingController (Integration)", () => {
                 },
             })
             .overrideGuard(TenantGuard)
-            .useValue({ canActivate: () => true })
+            .useValue({ canActivate: (context: ExecutionContext) => {
+                const req = context.switchToHttp().getRequest();
+                req.tenant = { branchId: req.headers["x-test-branch"] ?? "branch-B", globalRole: "owner" };
+                return true;
+            } })
             .overrideGuard(BranchManagerGuard)
             .useValue({ canActivate: () => true })
             .overrideGuard(OwnerGuard)
@@ -130,6 +136,32 @@ describe("SystemSettingController (Integration)", () => {
 
     afterEach(async () => {
         await app?.close();
+    });
+
+    it.each([
+        ["get", "/settings/message-automation-policies", "getMessageAutomationPolicyConfig"],
+        ["get", "/settings/message-automation-policies/config", "getMessageAutomationPolicyConfig"],
+        ["put", "/settings/message-automation-policies/config", "setMessageAutomationPolicyConfig"],
+        ["post", "/settings/message-automation-policies/config/preview", "previewMessageAutomationPolicyConfig"],
+        ["put", "/settings/message-policy-activations/trigger-dispatch", "setMessageSettingsPolicyEnabled"],
+        ["put", "/settings/message-automation-policies/past-trigger", "setMessageAutomationPastTriggerConfig"],
+    ] as const)("fences captured branch A before %s %s on authenticated branch B", async (method, path, serviceMethod) => {
+        const configuration = defaultMessageAutomationPolicy();
+        systemSettingService.setMessageAutomationPolicyConfig.mockResolvedValue({ version: "saved-version", configuration, warnings: [] });
+        systemSettingService.previewMessageAutomationPolicyConfig.mockResolvedValue({} as Awaited<ReturnType<SystemSettingService["previewMessageAutomationPolicyConfig"]>>);
+        systemSettingService.setMessageSettingsPolicyEnabled.mockResolvedValue(SystemSettingEntity.create("activation", "false"));
+        systemSettingService.setMessageAutomationPastTriggerConfig.mockResolvedValue(SystemSettingEntity.create("policy", JSON.stringify(configuration)));
+        const body = { expectedVersion: null, configuration, enabled: false, sendIntervalMinutes: 1, ruleOrder: [] };
+
+        const stale = await request(app.getHttpServer())[method](path)
+            .query({ expectedBranchId: "branch-A" }).set("x-test-branch", "branch-B").send(body).expect(409);
+        expect(stale.body.code).toBe("BRANCH_CONTEXT_CHANGED");
+        for (const mock of Object.values(systemSettingService)) expect(mock).not.toHaveBeenCalled();
+
+        await request(app.getHttpServer())[method](path)
+            .query({ expectedBranchId: "branch-B" }).set("x-test-branch", "branch-B").send(body).expect(200);
+        expect(systemSettingService[serviceMethod]).toHaveBeenCalledTimes(1);
+        expect(systemSettingService[serviceMethod].mock.calls[0]?.[0]).toBe("branch-B");
     });
 
     describe("GET /settings/client-registration-policy", () => {

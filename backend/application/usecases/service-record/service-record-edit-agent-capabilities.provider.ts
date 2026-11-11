@@ -1026,9 +1026,15 @@ export class ServiceRecordEditAgentCapabilitiesProvider implements AgentCapabili
     private async resolvePauseStart(principal: VerifiedTenantPrincipal, draft: ServiceRecordEditDraft, operation: Operation): Promise<Operation> {
         if (operation.kind !== "resumeReplan" || operation.pauseStartDate === undefined) return operation;
         withPlaceholderSession(operation); // rejects a fromSessionIndex given next to a pauseStartDate
+        const pauseStartDate = operation.pauseStartDate;
+        const parsedDate = new Date(pauseStartDate);
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(pauseStartDate) || Number.isNaN(parsedDate.getTime())
+            || parsedDate.toISOString().slice(0, 10) !== pauseStartDate) {
+            throw question("INVALID_DATE", "pauseStartDate는 실제 존재하는 YYYY-MM-DD 날짜여야 해요.");
+        }
         const preview = await this.editor.previewDraft(principal.branchId, draft.id, principal.userId, { expectedDraftVersion: draft.draftVersion }) as Preview;
         if (preview.blockingReasons.length > 0) throw blockingQuestion(preview.blockingReasons, draft.sourceSnapshot as unknown as ServiceRecordEditSource);
-        const first = preview.before.sessions.find((entry) => entry.serviceDate >= operation.pauseStartDate!);
+        const first = preview.before.sessions.find((entry) => entry.serviceDate >= pauseStartDate);
         if (!first) {
             throw new AgentActionQuestionError("INVALID_DATE", `[INVALID_DATE] ${operation.pauseStartDate} 이후에 남은 회차가 없어요. 사용자에게 중단 시작일이나 회차를 다시 확인하세요.`);
         }
