@@ -75,7 +75,9 @@ function ReviewFieldRow({
             labelId={`${dataComponent}_section_${field.key}-label`}
             label={field.label}
             value={changed ? <>
+                <span className="sr-only" data-slot="old-value-label">변경 전 </span>
                 <span data-slot="old-value" className="mr-[calc(6px*var(--glint-ui-scale,1))] text-v3-text-muted line-through">{base.value || REVIEW_EMPTY_LABEL}</span>
+                <span className="sr-only" data-slot="new-value-label"> 변경 후 </span>
                 <span data-slot="new-value" className="text-v3-burgundy">{display.value || REVIEW_EMPTY_LABEL}</span>
             </> : display.value || REVIEW_EMPTY_LABEL}
             tone={display.value ? (display.ok ? "ok" : "default") : "empty"}
@@ -180,7 +182,9 @@ export function ReviewStep({
                         labelId={child("body_service-date_row_label")}
                         label="서비스 제공일"
                         value={dateChanged ? <>
+                            <span className="sr-only" data-slot="old-value-label">변경 전 </span>
                             <span data-slot="old-value" className="mr-[calc(6px*var(--glint-ui-scale,1))] text-v3-text-muted line-through">{displayDate(baseDate)}</span>
+                            <span className="sr-only" data-slot="new-value-label"> 변경 후 </span>
                             <span data-slot="new-value" className="text-v3-burgundy">{displayDate(currentServiceDate)}</span>
                         </> : displayDate(currentServiceDate)}
                     />

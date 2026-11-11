@@ -83,7 +83,9 @@ function formatSessionDate(value: string | undefined): string {
     return `${iso.slice(5).replace("-", ".")}(${"일월화수목금토"[weekday]})`;
 }
 
-function ChangeRows({ rows, dataComponent }: { rows: ReadonlyArray<PendingChangeRow>; dataComponent: string }) {
+type PreviewChangeRow = PendingChangeRow & { afterOnly?: boolean };
+
+function ChangeRows({ rows, dataComponent }: { rows: ReadonlyArray<PreviewChangeRow>; dataComponent: string }) {
     return (
         <div data-component={dataComponent} data-slot="change-rows" data-source-component="ChangeRows" className="flex flex-col gap-[calc(6px*var(--glint-ui-scale,1))]">
             {rows.map((row) => {
@@ -93,8 +95,10 @@ function ChangeRows({ rows, dataComponent }: { rows: ReadonlyArray<PendingChange
                         className="flex min-w-0 justify-between gap-[calc(12px*var(--glint-ui-scale,1))] rounded-[calc(10px*var(--glint-ui-scale,1))] border border-v3-border! bg-v3-dim-white px-[calc(10px*var(--glint-ui-scale,1))] py-[calc(8px*var(--glint-ui-scale,1))] text-[length:calc(16px*var(--glint-ui-scale,1))] leading-[calc(24px*var(--glint-ui-scale,1))]">
                         <span data-component={`${dataComponent}_${rowId}_label`} data-slot="change-label" className="shrink-0 text-v3-text-muted">{row.label}</span>
                         <span data-component={`${dataComponent}_${rowId}_value`} data-slot="change-value" className="min-w-0 text-right font-bold break-keep [overflow-wrap:anywhere]">
-                            <span data-component={`${dataComponent}_${rowId}_value_before`} data-slot="before" className="text-v3-text-muted font-medium">{row.before || REVIEW_EMPTY_LABEL}</span>
-                            {" → "}
+                            {!row.afterOnly ? <>
+                                <span data-component={`${dataComponent}_${rowId}_value_before`} data-slot="before" className="text-v3-text-muted font-medium">{row.before || REVIEW_EMPTY_LABEL}</span>
+                                {" → "}
+                            </> : null}
                             <span data-component={`${dataComponent}_${rowId}_value_after`} data-slot="after" className="text-v3-burgundy">{row.after || REVIEW_EMPTY_LABEL}</span>
                         </span>
                     </div>
@@ -136,6 +140,7 @@ export function ServiceRecordEditPreviewDialog({
     const loading = busy && preview === null;
     const closeDisabled = busy || confirmBusy;
     const sessionIndexes = new Set(sessionChanges.map((change) => change.sessionIndex));
+    for (const index of contentChanges.changedSessionIndexes) sessionIndexes.add(index);
     const beforeDates = new Map(preview?.before.sessions.map((session) => [session.sessionIndex, session.serviceDate]) ?? []);
     const afterDates = new Map(preview?.after.sessions.map((session) => [session.sessionIndex, session.serviceDate]) ?? []);
     const movedSessionIndexes = new Set<number>();
@@ -149,16 +154,19 @@ export function ServiceRecordEditPreviewDialog({
         .filter((session) => movedSessionIndexes.has(session.sessionIndex))
         .map((session) => session.assignmentId) ?? []);
     const movedAssignments = impactedAssignments.filter((assignment) => movedAssignmentIds.has(assignment.assignmentId));
-    const groups = [...sessionIndexes].sort((left, right) => left - right).map((sessionIndex) => ({
-        sessionIndex,
-        rows: [
+    const groups = [...sessionIndexes].sort((left, right) => left - right).map((sessionIndex) => {
+        const rows: PreviewChangeRow[] = [
             ...(beforeDates.get(sessionIndex) !== afterDates.get(sessionIndex) ? [{
                 key: "service-date", label: "서비스 제공일",
                 before: formatSessionDate(beforeDates.get(sessionIndex)), after: formatSessionDate(afterDates.get(sessionIndex)),
             }] : []),
             ...(sessionChanges.find((change) => change.sessionIndex === sessionIndex)?.rows ?? []),
-        ],
-    })).filter((group) => group.rows.length > 0);
+        ];
+        if (rows.length === 0 && contentChanges.changedSessionIndexes.includes(sessionIndex)) {
+            rows.push({ key: "record-content", label: "기록 내용", before: "", after: "변경됨", afterOnly: true });
+        }
+        return { sessionIndex, rows };
+    }).filter((group) => group.rows.length > 0);
     const periodChanged = preview !== null && (preview.before.startDate !== preview.after.startDate
         || preview.before.endDate !== preview.after.endDate);
     // Match confirm's contract/receipt operations; snapshot jobs alone need no operator section.

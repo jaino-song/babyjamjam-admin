@@ -716,6 +716,7 @@ export function ServiceRecordAdminWizard({
         const state = await adminServiceRecordEditApi.getDraft(clientId);
         if (!sameSource(before, state)) throw new Error("기록이 조회 중 변경되었습니다. 다시 불러와 주세요.");
         setOverview(fresh);
+        setPageConfirmedSessionIndexes(new Set());
         setSourceIdentity(state);
         knownVersion.current = Math.max(knownVersion.current, state.sourceCaseVersion);
         setPreview(null);
@@ -999,10 +1000,7 @@ export function ServiceRecordAdminWizard({
         setBusy(true);
         setError(null);
         confirmInFlight.current = true;
-        const confirmedSessionIndexes = new Set([
-            ...changedSessionIndexes,
-            ...(preview?.contentChanges.changedSessionIndexes ?? []),
-        ]);
+        const confirmedSessionIndexes = new Set(preview?.contentChanges.changedSessionIndexes ?? []);
         let confirmedVersion: number | null = null;
         try {
             const result = await adminServiceRecordEditApi.confirmDraft(request.draftId, request.draftVersion, request.previewId, request.idempotencyKey);

@@ -1063,7 +1063,9 @@ describe("per-session administrator editing", () => {
             global.fetch = jest.fn().mockImplementation(async () => {
                 await editorLoaded;
                 if (refreshOutcome === "reject") throw new Error("network");
-                return { ok: true, json: async () => sessionOverview };
+                return { ok: true, json: async () => ({ ...sessionOverview,
+                    adminEditConfirmedAtBySession: [{ sessionIndex: 1, confirmedAt: "2026-11-11T00:00:00Z" }],
+                }) };
             });
             const result = open();
             editNote(result.container);
@@ -1136,12 +1138,89 @@ describe("per-session administrator editing", () => {
         await screen.findByText("수정은 저장되었습니다. 최신 기록을 다시 불러와 주세요.");
         expect(global.fetch).toHaveBeenCalledTimes(1);
         const cards = container.querySelectorAll('[data-slot="day"]');
-        for (const index of [0, 1]) {
-            expect(cards[index]).toHaveTextContent(status === "confirmed" ? "수정 완료" : "제출완료");
-            expect(cards[index]).not.toHaveTextContent("수정중");
-        }
+        expect(cards[0]).toHaveTextContent("제출완료");
+        expect(cards[0]).not.toHaveTextContent("수정중");
+        expect(cards[1]).toHaveTextContent(status === "confirmed" ? "수정 완료" : "제출완료");
+        expect(cards[1]).not.toHaveTextContent("수정중");
         expect(cards[2]).toHaveTextContent("제출완료");
         expect(screen.queryByRole("button", { name: "수정 확정" })).not.toBeInTheDocument();
+    });
+
+    it("keeps a reverted session submitted when the post-confirm refresh fails", async () => {
+        global.fetch = jest.fn().mockRejectedValue(new Error("refresh failed"));
+        jest.mocked(adminServiceRecordEditApi.previewDraft).mockResolvedValue({
+            ...confirmPreviewResponse,
+            contentChanges: { headerChanged: false, changedSessionIndexes: [1] },
+        } as Awaited<ReturnType<typeof adminServiceRecordEditApi.previewDraft>>);
+        const { container } = open();
+        editNote(container);
+        acceptEdit();
+        await screen.findByRole("button", { name: "수정 확정" });
+        fireEvent.click(container.querySelectorAll('[data-slot="day"]')[1]);
+        editNoteOn(container, "임시 수정");
+        acceptEdit();
+        await screen.findByRole("button", { name: "수정 확정" });
+        fireEvent.click(container.querySelectorAll('[data-slot="day"]')[1]);
+        editNoteOn(container, "");
+        acceptEdit();
+        await screen.findByRole("button", { name: "수정 확정" });
+        expect(container.querySelectorAll('[data-slot="day"]')[1]).toHaveTextContent("수정중");
+        await startCommit();
+        expect(adminServiceRecordEditApi.startDraft).toHaveBeenCalledWith("42", {
+            sessions: [{ sessionIndex: 1, etcService: "수정된 서비스" }, { sessionIndex: 2, etcService: "" }],
+        });
+        confirmInPreview();
+        await screen.findByText("수정은 저장되었습니다. 최신 기록을 다시 불러와 주세요.");
+        const cards = container.querySelectorAll('[data-slot="day"]');
+        expect(cards[0]).toHaveTextContent("수정 완료");
+        expect(cards[1]).toHaveTextContent("제출완료");
+        expect(cards[1]).not.toHaveTextContent("수정중");
+    });
+
+    it("uses the refreshed server confirmation list instead of the preview list", async () => {
+        global.fetch = jest.fn().mockResolvedValue({ ok: true, json: async () => ({ ...sessionOverview,
+            adminEditConfirmedAtBySession: [{ sessionIndex: 1, confirmedAt: "2026-11-11T00:00:00Z" }],
+        }) });
+        jest.mocked(adminServiceRecordEditApi.previewDraft).mockResolvedValue({
+            ...confirmPreviewResponse,
+            contentChanges: { headerChanged: false, changedSessionIndexes: [1, 2] },
+        } as Awaited<ReturnType<typeof adminServiceRecordEditApi.previewDraft>>);
+        const { container } = open();
+        editNote(container);
+        acceptEdit();
+        await screen.findByRole("button", { name: "수정 확정" });
+        await startCommit();
+        confirmInPreview();
+        await waitFor(() => expect(screen.getByRole("button", { name: "기본정보 수정" })).toBeEnabled());
+        expect(global.fetch).toHaveBeenCalledTimes(1);
+        const cards = container.querySelectorAll('[data-slot="day"]');
+        expect(cards[0]).toHaveTextContent("수정 완료");
+        expect(cards[1]).toHaveTextContent("제출완료");
+        expect(cards[1]).not.toHaveTextContent("수정 완료");
+    });
+
+    it("replaces interim confirmations after a failed refresh and successful manual reload", async () => {
+        global.fetch = jest.fn().mockRejectedValueOnce(new Error("refresh failed"))
+            .mockResolvedValue({ ok: true, json: async () => ({ ...sessionOverview,
+                adminEditConfirmedAtBySession: [{ sessionIndex: 1, confirmedAt: "2026-11-11T00:00:00Z" }],
+            }) });
+        jest.mocked(adminServiceRecordEditApi.previewDraft).mockResolvedValue({
+            ...confirmPreviewResponse,
+            contentChanges: { headerChanged: false, changedSessionIndexes: [1, 2] },
+        } as Awaited<ReturnType<typeof adminServiceRecordEditApi.previewDraft>>);
+        const { container } = open();
+        editNote(container);
+        acceptEdit();
+        await screen.findByRole("button", { name: "수정 확정" });
+        await startCommit();
+        confirmInPreview();
+        await screen.findByText("수정은 저장되었습니다. 최신 기록을 다시 불러와 주세요.");
+        expect(container.querySelectorAll('[data-slot="day"]')[1]).toHaveTextContent("수정 완료");
+        fireEvent.click(screen.getByRole("button", { name: "최신 기록 불러오기" }));
+        await waitFor(() => expect(screen.queryByRole("button", { name: "최신 기록 불러오기" })).not.toBeInTheDocument());
+        const cards = container.querySelectorAll('[data-slot="day"]');
+        expect(cards[0]).toHaveTextContent("수정 완료");
+        expect(cards[1]).toHaveTextContent("제출완료");
     });
 
     it("asks before 수정 취소 and clears only the local edits without a server call", async () => {
