@@ -33,13 +33,14 @@ git diff --check
 - `link.tsx`: 기존 anchor DOM/스타일을 유지하고 클릭 이동을 막는다. Next Link의 default export 계약만 이 어댑터에서 따른다.
 - `identity.ts`: `사용자 님 / 개발QA점`이라는 허구 표시값만 제공한다. 인증·권한 구현이 아니다.
 - `notification.tsx`: 실제 헤더에 기존 Button·Bell 아이콘의 subscribed 모양을 표시하는 inert 어댑터다. 실제 NotificationBell의 데이터·구독·popover 트리는 마운트하지 않는다.
+- `source-loader.cjs`: 정확한 `mobile/src/components/app/root/mobile-bottom-nav.tsx` 경로에서 `/messages/new`·`mobile-bottom-nav-messages` 항목의 `메시지` label만 컴파일 시 `메세지`로 바꾼다. 예상 원본 항목이 없거나 둘 이상이면 빌드가 실패한다. 실제 컴포넌트 import를 유지하며 DOM text 변경이나 다른 문구의 일괄 치환은 하지 않는다. 기존 연락처·예금주 익명화도 유지한다.
 - 비동기 `MobileShellProviders` 전체는 마운트하지 않는다. 네트워크·인증 provider·realtime·prefetch·알림 권한 요청을 제외한 위 presentational shell만 조립한다. 다른 섹션과 하단 탐색은 표시 전용이다.
 
 새 production 디자인 시스템 컴포넌트와 `page.tsx` 변경은 없다. 목업 organism 및 field 조립 helper만 이 docs 디렉터리에 있다. 새 semantic 클래스/기존 클래스 조립에는 대응하는 data-slot을 붙이고 기존 import 컴포넌트의 옛 annotation은 수정하지 않았다.
 
 ## 승인 후 실제 메시지 진입 동선
 
-위 초기 화면은 이 목업의 상태이며 실제 애플리케이션 라우팅 변경이 아니다. 현재 `mobile/src/app/(shell)/messages/page.tsx`는 `/messages/new`로 redirect하고, `mobile/src/components/app/root/mobile-bottom-nav.tsx`의 하단 `메시지` 링크도 `/messages/new`를 가리킨다. 사용자 승인 후 별도 제품 구현에서 `/messages` 진입과 하단 `메시지` 진입 모두 `메세지 제작`을 기본으로 열도록 바꿔야 한다. 명시적인 템플릿 전송 링크는 계속 전송 화면을 열어야 한다. 이 unit에서는 해당 제품 파일을 수정하지 않았으며 새 production 경로명도 정하지 않았다.
+위 초기 화면은 이 목업의 상태이며 실제 애플리케이션 라우팅 변경이 아니다. 현재 `mobile/src/app/(shell)/messages/page.tsx`는 `/messages/new`로 redirect하고, `mobile/src/components/app/root/mobile-bottom-nav.tsx`의 하단 `메시지` 링크도 `/messages/new`를 가리킨다. 목업에서만 이 label을 `메세지`로 표시한다. 사용자 승인 후 별도 제품 구현에서 하단 nav label을 `메세지`로 변경하고, `/messages` 진입과 하단 `메세지` 진입 모두 `메세지 제작`을 기본으로 열도록 바꿔야 한다. 명시적인 템플릿 전송 링크는 계속 전송 화면을 열어야 한다. 이 unit에서는 해당 제품 파일을 수정하지 않았으며 새 production 경로명도 정하지 않았다.
 
 ## 오프라인 샘플과 동작
 
@@ -57,7 +58,7 @@ git diff --check
 
 ## 검증 경계와 보안
 
-빌드, strict TypeScript, scoped runtime lint, Node DOM smoke, CJS 문법 검사와 diff 공백 검사를 실행한다. `smoke.cjs`는 설치된 jsdom에서 로컬 번들만 실행하며 서버·브라우저·네트워크를 사용하지 않는다. 실제 마운트/초기 상태/실제 Radix 키보드 열기·선택·닫기/의존값/템플릿 전환/편집/HTTP 복사 성공·실패를 검사한다. jsdom은 최신 CSS layer를 지원하지 않아 CSS parsing 진단은 시각 판정으로 사용하지 않는다. CSS 문법 컴파일은 lightningcss 빌드가 담당한다.
+빌드, strict TypeScript, scoped runtime lint, Node DOM smoke, CJS 문법 검사와 diff 공백 검사를 실행한다. `smoke.cjs`는 설치된 jsdom에서 로컬 번들만 실행하며 서버·브라우저·네트워크를 사용하지 않는다. 실제 마운트/초기 상태/실제 Radix 키보드 열기·선택·닫기/의존값/템플릿 전환/편집/HTTP 복사 성공·실패와 실제 하단 nav의 `메세지` label을 검사한다. jsdom은 최신 CSS layer를 지원하지 않아 CSS parsing 진단은 시각 판정으로 사용하지 않는다. CSS 문법 컴파일은 lightningcss 빌드가 담당한다.
 
 실제 Chrome의 375px/1280px 스크린샷·DOM·computed style 확인 및 실제 OS clipboard 동작은 **미검증**이다. Node DOM smoke는 시각 승인이나 real-Chrome acceptance를 대신하지 않는다. Main이 기존 Tailscale 전용 8765 서버에서 확인하고 독립 exact-candidate CODE 리뷰를 진행해야 한다.
 

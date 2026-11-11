@@ -61,6 +61,7 @@ async function run() {
   assert.equal(nav.querySelector('[aria-pressed="true"]').textContent, '메세지 제작');
   assert.equal(document.querySelectorAll('input[type="tel"], [data-slot="autocomplete"], [type="submit"]').length, 0);
   assert.equal(document.querySelectorAll('[data-source-component="V3MobileHeader"], [data-source-component="V3MainContent"], [data-slot="mobile-bottom-nav"]').length, 3);
+  assert.equal(document.querySelector('[data-slot="mobile-bottom-nav-messages"]').textContent, '메세지');
   changeInput('recipient-name', 'QA-예시산모'); await tick();
   assert.match(byId('body').value, /QA-예시산모 산모님/);
   await select('price-info-type', 'A가-1형');
