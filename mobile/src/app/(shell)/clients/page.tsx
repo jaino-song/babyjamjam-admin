@@ -1,10 +1,11 @@
 "use client";
 import { useEffect, useMemo, useState } from "react";
-import { AlertTriangle, User, Users, Workflow } from "lucide-react";
+import { User, Users, Workflow } from "lucide-react";
 import { useRouter, useSearchParams } from "next/navigation";
 
 import { useClientDetailController } from "@/components/app/clients/client-detail-controller";
 import { QueryErrorState } from "@/components/app/ui/QueryErrorState";
+import { StaleDataNotice } from "@/components/app/ui/StaleDataNotice";
 import { useInfiniteClients } from "@/hooks/useInfiniteClients";
 import { useListInfiniteScroll } from "@/hooks/useListInfiniteScroll";
 import { Client } from "@/lib/client/types";
@@ -326,14 +327,10 @@ export default function ClientsPage() {
               }
             >
               {isError && allClients.length > 0 && (
-                <p
-                  role="status"
-                  data-component="mobile_clients_detail-sheet_stack_list-page_content_list-card_body_cached-error"
-                  className="flex items-center gap-1.5 py-1 text-[0.78rem] text-status-warning-fg"
-                >
-                  <AlertTriangle aria-hidden="true" className="h-3.5 w-3.5 shrink-0" />
-                  새로 불러오지 못해 최근에 확인된 목록을 표시하고 있어요
-                </p>
+                <StaleDataNotice
+                  dataComponent="mobile_clients_detail-sheet_stack_list-page_content_list-card_body_cached-error"
+                  message="새로 불러오지 못해 최근에 확인된 목록을 표시하고 있어요"
+                />
               )}
               {isClientsFetching ? (
                 <ListRowsSkeleton
