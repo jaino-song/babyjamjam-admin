@@ -1504,7 +1504,7 @@ describe("per-session administrator editing", () => {
         fireEvent.click(container.querySelectorAll('[data-slot="day"]')[0]);
         fireEvent.click(container.querySelector('[data-component$="_body_date-edit"]')!);
         expect(screen.getByRole("button", { name: "2026.09.08(화) 2회차" })).toBeEnabled();
-        expect(screen.getByRole("button", { name: "2026.09.07(월) 지금" })).toBeInTheDocument();
+        expect(screen.getByRole("button", { name: "2026.09.07(월) 현재" })).toBeInTheDocument();
         expect(screen.getByText("서비스 기간: 09.07(월) ~ 09.09(수)")).toBeVisible();
     });
 

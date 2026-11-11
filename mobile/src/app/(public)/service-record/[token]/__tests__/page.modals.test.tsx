@@ -75,7 +75,7 @@ it("resubmits the newly picked date rather than the stored date", async () => {
     expect(JSON.parse(init.body).serviceDate).toBe("2026-11-05");
 });
 
-it("reopens with the unsaved date selected and clears the review change by returning to 지금", async () => {
+it("reopens with the unsaved date selected and clears the review change by returning to 현재", async () => {
     await openEdit();
     fireEvent.click(screen.getByRole("button", { name: "서비스 제공일 수정" }));
     fireEvent.click(screen.getByRole("button", { name: "2026.11.05(목)" }));
@@ -87,7 +87,7 @@ it("reopens with the unsaved date selected and clears the review change by retur
 
     fireEvent.click(screen.getByRole("button", { name: "서비스 제공일 수정" }));
     expect(screen.getByRole("button", { name: "2026.11.05(목)" })).toHaveAttribute("aria-pressed", "true");
-    fireEvent.click(screen.getByRole("button", { name: "2026.11.02(월) 지금" }));
+    fireEvent.click(screen.getByRole("button", { name: "2026.11.02(월) 현재" }));
     fireEvent.click(screen.getByRole("button", { name: "선택" }));
     expect(screen.queryByRole("dialog")).toBeNull();
     expect(reviewDate.querySelector("del")).toBeNull();
@@ -95,7 +95,7 @@ it("reopens with the unsaved date selected and clears the review change by retur
     expect(mockFetch.mock.calls.some(([url]) => url.endsWith("/submit"))).toBe(false);
 
     fireEvent.click(screen.getByRole("button", { name: "서비스 제공일 수정" }));
-    const current = screen.getByRole("button", { name: "2026.11.02(월) 지금" });
+    const current = screen.getByRole("button", { name: "2026.11.02(월) 현재" });
     expect(current).toHaveAttribute("aria-disabled", "true");
     expect(current).toHaveAttribute("aria-pressed", "false");
     expect(screen.getByRole("button", { name: "선택" })).toBeDisabled();
