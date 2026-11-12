@@ -730,18 +730,28 @@ async function bounded<T>(promise: Promise<T>, ms: number): Promise<T> {
     }
     const plan5Paths = ["released", "zero", "legacy-zero"] as const;
     async function plan5AcceptedHistory(path: "released" | "zero") {
-        const previous = await runtime(), claimed = await previous.recovery.claimCreation(previous.input, previous.worker, previous.effect);
-        const documentId = `prior-accepted-${randomUUID()}`; documents.push(documentId);
-        await db.eformsign_dispatch_intent.update({ where: { id: claimed.intent.id }, data: { status: "accepted", providerDocumentId: documentId, providerAcceptedAt: new Date() } });
-        await previous.recovery.completeAutomatic(previous.worker, evidence(documentId, true));
-        const prior = await db.eformsign_doc.findUniqueOrThrow({ where: { documentId } });
-        expect((await read())[0]).toMatchObject({ phase: "closed", providerDocumentId: documentId });
-        expect(await currentPointer()).toEqual({ eDocId: documentId });
-        expect(await db.eformsign_dispatch_intent.findUniqueOrThrow({ where: { id: claimed.intent.id } })).toMatchObject({ status: "accepted", providerDocumentId: documentId });
-        return { ...await plan5Hold(path, prior), previousIntentId: claimed.intent.id, prior };
+        let prior: { id: number; documentId: string } | undefined, previousIntentId = "";
+        for (let index = 0; index < 2; index++) {
+            const previous = await runtime(0, prior), claimed = await previous.recovery.claimCreation(previous.input, previous.worker, previous.effect);
+            const documentId = `prior-accepted-${randomUUID()}`; documents.push(documentId);
+            await new SbEformsignDispatchIntentRepository(db as unknown as PrismaService).markAccepted(claimed.intent.id, branches[0]!, claimed.intent.attemptCount, documentId);
+            await previous.recovery.completeAutomatic(previous.worker, { ...evidence(documentId, true), createdAt: new Date(Date.now() + index * 1000) });
+            prior = await db.eformsign_doc.findUniqueOrThrow({ where: { documentId } }); previousIntentId = claimed.intent.id;
+            expect((await read())[0]).toMatchObject({ phase: "closed", providerDocumentId: documentId });
+            expect(await currentPointer()).toEqual({ eDocId: documentId });
+            expect(await db.eformsign_dispatch_intent.findUniqueOrThrow({ where: { id: claimed.intent.id } })).toMatchObject({ status: "accepted", providerDocumentId: documentId });
+            expect(await db.eformsign_document_job.findUniqueOrThrow({ where: { id: previous.worker.jobId } })).toMatchObject({ status: "completed", documentId });
+        }
+        if (!prior) throw new Error("Missing completed history");
+        return { ...await plan5Hold(path, prior), previousIntentId, prior };
     }
-    it.each(["released", "zero"] as const)("PLAN5 real %s retires beside genuine historical accepted prior document", async path => {
-        const { s, prior } = await plan5AcceptedHistory(path), before = await branchSnapshot();
+    it.each(["released", "zero"].flatMap(path => ["retained", "purged"].map(payload => ({ path: path as "released" | "zero", payload }))))("PLAN5 real $path retires beside multiple completed accepted histories with $payload payloads", async ({ path, payload }) => {
+        const { s, prior } = await plan5AcceptedHistory(path);
+        // Completion already purges prior payloads; explicitly exercise both current payload states.
+        if (payload === "purged") await db.eformsign_document_job.update({ where: { id: s.worker.jobId }, data: { payload: Prisma.DbNull } });
+        const before = await branchSnapshot();
+        const receipts = before.intents.filter(row => row.status === "accepted").map(row => row.providerDocumentId);
+        expect(receipts).toHaveLength(2); expect(new Set(receipts).size).toBe(2); expect(receipts).toContain(prior.documentId);
         const old = await db.eformsign_document_job.findUniqueOrThrow({ where: { id: s.worker.jobId } });
         expect((await read())[0]!.priorDocumentId).toBe(prior.documentId);
         await expect(s.jobRepository.enqueue(s.enqueue)).resolves.toMatchObject({ existing: true, job: { id: old.id } });
@@ -756,23 +766,24 @@ async function bounded<T>(promise: Promise<T>, ms: number): Promise<T> {
         expect((await read())[0]).toMatchObject({ phase: "reserved", generation: result.job.contractGeneration, creationJobId: result.job.id, priorDocumentId: prior.documentId });
         await expect(s.jobRepository.enqueue(input)).resolves.toMatchObject({ existing: true, job: { id: result.job.id } }); expect(await branchSnapshot()).toEqual(after);
     });
-    const historyDefects = ["no-prior", "wrong-provider", "null-provider", "started-prior", "uncertain-prior", "current-linked", "current-unlinked", "later-started", "later-uncertain", "later-accepted", "later-null-accepted"] as const;
+    const historyDefects = ["no-prior", "null-provider", "empty-provider", "blank-provider", "started-prior", "uncertain-prior", "current-linked", "current-unlinked", "later-create-started", "later-create-uncertain", "later-draft-started", "later-draft-uncertain", "later-null-accepted", "later-empty-accepted", "later-blank-accepted"] as const;
     it.each(["released", "zero"].flatMap(path => historyDefects.map(defect => ({ path: path as "released" | "zero", defect }))))("PLAN5 real $path accepted history refuses $defect", async ({ path, defect }) => {
         const { s, prior, previousIntentId, intentId } = await plan5AcceptedHistory(path), where = { branchId_clientId: { branchId: branches[0]!, clientId: clients[0]! } };
         if (defect === "no-prior") {
             await db.eformsign_contract_authority.update({ where, data: { priorDocumentId: null } });
-            await db.client.update({ where: { id: clients[0]! }, data: { eDocId: null } });
+            // Keep the latest pointer: a missing prior must still fail the pointer guard.
         }
-        // PostgreSQL forbids accepted+NULL at storage. Unit tests additionally
-        // exercise the runtime veto on a corrupt/legacy NULL accepted row.
-        if (defect === "null-provider" || defect === "later-null-accepted") {
+        // Storage rejects NULL/empty receipts. Its btrim checks spaces only, so
+        // whitespace containing tabs/newlines below also exercises the runtime guard.
+        // Unit tests cover corrupt/legacy NULL and empty rows without bypassing checks.
+        if (["null-provider", "empty-provider", "later-null-accepted", "later-empty-accepted"].includes(defect)) {
             const before = await branchSnapshot();
-            const write = defect === "null-provider"
-                ? db.eformsign_dispatch_intent.update({ where: { id: previousIntentId }, data: { providerDocumentId: null } })
-                : db.eformsign_dispatch_intent.create({ data: { branchId: branches[0]!, clientId: clients[0]!, action: "create_draft", generation: "later-unrelated", fingerprint: "b".repeat(64), businessKey: digest(randomUUID()), status: "accepted", attemptCount: 1, providerDocumentId: null } });
+            const receipt = defect.includes("empty") ? "" : null;
+            const write = !defect.startsWith("later-")
+                ? db.eformsign_dispatch_intent.update({ where: { id: previousIntentId }, data: { providerDocumentId: receipt } })
+                : db.eformsign_dispatch_intent.create({ data: { branchId: branches[0]!, clientId: clients[0]!, action: "create_draft", generation: "later-unrelated", fingerprint: "b".repeat(64), businessKey: digest(randomUUID()), status: "accepted", attemptCount: 1, providerDocumentId: receipt } });
             await expect(write).rejects.toThrow(); expect(await branchSnapshot()).toEqual(before); return;
         }
-        if (defect === "wrong-provider") await db.eformsign_dispatch_intent.update({ where: { id: previousIntentId }, data: { providerDocumentId: documents[0]! } });
         if (defect === "started-prior" || defect === "uncertain-prior") await db.eformsign_dispatch_intent.update({ where: { id: previousIntentId }, data: { status: defect === "started-prior" ? "started" : "uncertain" } });
         if (defect === "current-linked") {
             if (path === "zero") await db.eformsign_contract_authority.update({ where, data: { creationIntentId: previousIntentId } });
@@ -783,9 +794,10 @@ async function bounded<T>(promise: Promise<T>, ms: number): Promise<T> {
             else await db.eformsign_dispatch_intent.create({ data: { branchId: branches[0]!, clientId: clients[0]!, action: "create_draft", generation: s.worker.contractGeneration,
                 fingerprint: s.enqueue.payloadFingerprint, templateId: workflowPlan.templateId, businessKey: digest(`contract-draft:${s.worker.contractGeneration}`), status: "accepted", providerDocumentId: prior.documentId, attemptCount: 1 } });
         }
-        if (defect.startsWith("later-")) await db.eformsign_dispatch_intent.create({ data: { branchId: branches[0]!, clientId: clients[0]!, action: "create_draft", generation: "later-unrelated",
-            fingerprint: "b".repeat(64), businessKey: digest(randomUUID()), status: defect.includes("accepted") ? "accepted" : defect.slice(6), attemptCount: 1,
-            providerDocumentId: defect === "later-accepted" ? documents[0]! : prior.documentId } });
+        if (defect === "empty-provider" || defect === "blank-provider") await db.eformsign_dispatch_intent.update({ where: { id: previousIntentId }, data: { providerDocumentId: defect === "empty-provider" ? "" : " \t\n " } });
+        if (defect.startsWith("later-")) await db.eformsign_dispatch_intent.create({ data: { branchId: branches[0]!, clientId: clients[0]!, action: defect.includes("create-") ? "create" : "create_draft", generation: "later-unrelated",
+            fingerprint: "b".repeat(64), businessKey: digest(randomUUID()), status: defect.includes("accepted") ? "accepted" : defect.endsWith("started") ? "started" : "uncertain", attemptCount: 1,
+            providerDocumentId: defect === "later-empty-accepted" ? "" : defect === "later-blank-accepted" ? " \t\n " : prior.documentId } });
         const before = await branchSnapshot();
         await expect(s.jobRepository.enqueue(nextInput(s))).rejects.toThrow(); expect(await branchSnapshot()).toEqual(before);
     });
@@ -888,14 +900,26 @@ async function bounded<T>(promise: Promise<T>, ms: number): Promise<T> {
         await expect(s.jobRepository.enqueue(nextInput(s))).rejects.toThrow(); expect(await branchSnapshot()).toEqual(before);
         expect(await db.eformsign_dispatch_intent.findUniqueOrThrow({ where: { id: intentId! } })).toEqual(draft);
     });
-    it.each(plan5Paths.flatMap(path => ["create", "create_draft"].flatMap(action => ["started", "uncertain", "accepted"].map(status => ({ path, action, status })))))("PLAN5 real $path vetoes unrelated $action $status before retirement", async ({ path, action, status }) => {
+    it.each(plan5Paths.flatMap(path => ["create", "create_draft"].flatMap(action => ["started", "uncertain", "accepted"].map(status => ({ path, action, status })))))("PLAN5 real $path classifies unrelated $action $status before retirement", async ({ path, action, status }) => {
         const { s } = await plan5Hold(path);
         await db.eformsign_dispatch_intent.create({ data: { branchId: branches[0]!, clientId: clients[0]!, action, status, attemptCount: 1,
             generation: "unrelated", businessKey: digest(randomUUID()), fingerprint: "b".repeat(64), providerDocumentId: status === "accepted" ? documents[0]! : null } });
         const before = await branchSnapshot();
-        expect(await transaction(db, async tx => { const [authority] = await lockAuthorityScope(tx, branches[0]!, [clients[0]!]); return retireProvenNoEffect(tx, authority!, null); })).toBe(false);
-        expect(await branchSnapshot()).toEqual(before);
-        await expect(s.jobRepository.enqueue(nextInput(s))).rejects.toThrow(); expect(await branchSnapshot()).toEqual(before);
+        const retired = await transaction(db, async tx => { const [authority] = await lockAuthorityScope(tx, branches[0]!, [clients[0]!]); return retireProvenNoEffect(tx, authority!, null); });
+        if (status === "accepted") {
+            // Fixture-only unrelated definitive receipt, separate from the genuine multi-generation workflow above.
+            expect(retired).toBe(true);
+            const after = await branchSnapshot();
+            expect(after.intents).toEqual(before.intents); expect(after.clients).toEqual(before.clients); expect(after.mirrors).toEqual(before.mirrors);
+            expect(await db.eformsign_document_job.findUniqueOrThrow({ where: { id: s.worker.jobId } })).toMatchObject({ progressStep: "superseded", activeKey: null, payload: null });
+            const input = nextInput(s), result = await s.jobRepository.enqueue(input), rotated = await branchSnapshot();
+            expect(result.existing).toBe(false); expect(result.job.contractGeneration).not.toBe(s.worker.contractGeneration);
+            expect(rotated.intents).toEqual(before.intents); expect(rotated.clients).toEqual(before.clients); expect(rotated.mirrors).toEqual(before.mirrors);
+            await expect(s.jobRepository.enqueue(input)).resolves.toMatchObject({ existing: true, job: { id: result.job.id } }); expect(await branchSnapshot()).toEqual(rotated);
+        } else {
+            expect(retired).toBe(false); expect(await branchSnapshot()).toEqual(before);
+            await expect(s.jobRepository.enqueue(nextInput(s))).rejects.toThrow(); expect(await branchSnapshot()).toEqual(before);
+        }
     });
     it("PLAN5 real zero-ref retires after unrelated create is legitimately reconciled no-effect", async () => {
         const { s } = await plan5Hold("legacy-zero");

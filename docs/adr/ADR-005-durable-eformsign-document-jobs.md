@@ -243,12 +243,16 @@ attempt/status/document are checked before CAS writes.
   job/authority identity and pointer, every discovered intent, and no live
   manual claim by any user. Related started/uncertain create or create_draft in
   the same branch/client scope vetoes retirement **before** any mutation, for
-  linked and zero-ref cases alike. Accepted history is accounted for only when
-  its provider document exactly equals the non-null known prior pointer. An
-  accepted row with a NULL/other document or no known prior pointer still vetoes;
-  current linked accepted refs and the current generation's unlinked accepted
-  draft fail the strict no-effect proof before this history check. The query
-  examines all unknown effects even beside an earlier safe accepted history row.
+  linked and zero-ref cases alike. Unrelated accepted rows with definitive,
+  trimmed nonempty provider receipts are resolved history, including multiple
+  completed generations with documents older than the latest client pointer.
+  This matches initial admission's started/uncertain distinction; no old job,
+  payload or document traversal is needed. Malformed accepted rows with NULL,
+  empty or whitespace-only receipts still veto. Current linked accepted refs
+  and the current generation's unlinked accepted draft fail the strict no-effect
+  proof before this history classification, even with the same prior receipt.
+  The client-scope checks examine every relevant status/receipt so earlier resolved
+  history cannot hide a later unknown create/create_draft or malformed accepted row.
   Error codes and residual active keys are audit fields, not no-effect evidence;
   exact terminal jobs/keys retire under the same transaction. A NULL payload is
   never rebuilt;

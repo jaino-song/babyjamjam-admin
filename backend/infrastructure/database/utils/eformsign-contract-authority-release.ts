@@ -86,15 +86,16 @@ export async function retireProvenNoEffect(tx: Prisma.TransactionClient, a: Auth
         && !refs.some(row => row.id === a.creationIntentId && row.status === "reconciled_not_delivered")) return false;
     // Atomic claimCreation links STARTED before any send. A terminal lease-free zero-ref
     // job is no-effect only when no other unresolved client creation can be hidden by rotation.
-    // Accepted history for the known prior pointer is already accounted for.
-    // Current linked refs and the generation draft must pass strict no-effect
-    // proof above; null/other accepted documents and all unknown outcomes veto.
+    // ACCEPTED with a definitive receipt is resolved old history, including multiple
+    // documents older than the latest pointer. Current refs/draft passed strict
+    // no-effect proof above; this classification cannot exempt a current effect.
     const unresolved = await tx.eformsign_dispatch_intent.findFirst({ where: { branchId: a.branchId, clientId: a.clientId,
-        action: { in: ["create", "create_draft"] }, OR: [
-            { status: { in: ["started", "uncertain"] } },
-            { status: "accepted", ...(a.priorDocumentId ? { OR: [{ providerDocumentId: null }, { providerDocumentId: { not: a.priorDocumentId } }] } : {}) },
-        ] }, select: { id: true } });
+        action: { in: ["create", "create_draft"] }, status: { in: ["started", "uncertain"] } }, select: { id: true } });
     if (unresolved) return false;
+    // Examine every accepted receipt, so an earlier resolved row cannot hide a malformed one.
+    const accepted = await tx.eformsign_dispatch_intent.findMany({ where: { branchId: a.branchId, clientId: a.clientId,
+        action: { in: ["create", "create_draft"] }, status: "accepted" }, select: { providerDocumentId: true } });
+    if (accepted.some(row => !row.providerDocumentId?.trim())) return false;
     const retired = await tx.eformsign_document_job.updateMany({ where: { id: job.id, branchId: a.branchId, clientId: a.clientId,
         contractGeneration: a.generation, payloadFingerprint: a.fingerprint, status: job.status, leaseToken: null, activeKey: job.activeKey,
         documentId: null, progressStep: job.progressStep }, data: { status: "failed", progressStep: SUPERSEDED_PROGRESS_STEP,
