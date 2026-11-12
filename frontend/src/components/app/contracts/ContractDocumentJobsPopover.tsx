@@ -6,6 +6,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverTrigger } from "@/components/ui/popover";
 import { Sheet, SheetContent, SheetDescription, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
+import { documentJobRecoveryPresentation } from "@/features/document-jobs/recovery-presentation";
 import { recoverJobHref } from "@/features/document-jobs/failure-popup-copy";
 import { useIsMobile } from "@/hooks/useIsMobile";
 import { cn } from "@/lib/utils";
@@ -28,7 +29,7 @@ export type ContractDocumentJobStatus =
 
 export interface ContractDocumentJob extends Pick<
   EformsignDocumentJobResponse,
-  "documentKind" | "displayOperation" | "failureReasonCode"
+  "documentKind" | "displayOperation" | "failureReasonCode" | "recoveryPresentation"
 > {
   jobId: string;
   jobType: string;
@@ -128,7 +129,8 @@ export function ContractDocumentJobsPopover({
   );
 
   const onRecover = (jobId: string, triggerButton: HTMLButtonElement) => {
-    if (pathname === "/contracts") { recoveryTrigger.current = triggerButton; setRecoveryJobId(jobId); }
+    const job = [...(resolvedJobs?.active ?? []), ...(resolvedJobs?.requiresAttention ?? []), ...(resolvedJobs?.recent ?? [])].find(job => job.jobId === jobId);
+    if (pathname === "/contracts" && documentJobRecoveryPresentation(job) === "iframe") { recoveryTrigger.current = triggerButton; setRecoveryJobId(jobId); }
     else { handleOpenChange(false); router.push(recoverJobHref(jobId)); }
   };
   const recoveryDialog = recoveryJobId !== null ? <DocumentJobRecoveryDialog presentation="iframe" jobId={recoveryJobId} data-component={sub("recovery")}

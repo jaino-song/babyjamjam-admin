@@ -137,6 +137,7 @@ import {
   ContractCreationForm,
   CONTRACT_CREATION_STEPPER_STEPS,
 } from "@/components/app/contracts/ContractCreationForm";
+import { useFormStore } from "@/stores/form-store";
 import { DocumentJobRecoveryDialog } from "@/components/app/contracts/DocumentJobRecoveryDialog";
 import {
   HeadlessProgressStepper,
@@ -457,7 +458,7 @@ export default function ContractsPage() {
   const [serviceRecordSearchQuery, setServiceRecordSearchQuery] = useState("");
   const [selectedServiceRecordDocId, setSelectedServiceRecordDocId] = useState<string | null>(null);
   const [recoverJobId, setRecoverJobId] = useState<string | null>(null);
-  const [contractCreationFormKey] = useState(0);
+  const [contractCreationFormKey, setContractCreationFormKey] = useState(0);
   const { isAuthenticated, isLoading: isLoadingAuth, error: authError } = useEformsignAuth({
     requireAccessToken: false,
     syncOnWindowFocus: false,
@@ -1166,7 +1167,24 @@ export default function ContractsPage() {
         <DocumentJobRecoveryDialog
           key={recoverJobId}
           jobId={recoverJobId}
-          presentation="iframe"
+          presentation="auto"
+          hasCreationInProgress={isCreating || hasOpenCreationDraft || hasContractCreationSession}
+          onStartFresh={() => {
+            useFormStore.getState().resetAll();
+            setContractCreationFormKey(key => key + 1);
+            setContractCreationActiveStep(0);
+            setHasContractCreationSession(false);
+            setActiveSection("maternity");
+            setSelectedDocId(null);
+            setHasOpenCreationDraft(true);
+            setIsCreating(true);
+          }}
+          onViewDocument={documentId => {
+            setActiveSection("maternity");
+            setRegisterClientDocumentId(null);
+            setSelectedDocId(documentId);
+            setIsCreating(false);
+          }}
           data-component="desktop_contracts_document-job-recovery"
           onClose={() => setRecoverJobId(null)}
         />

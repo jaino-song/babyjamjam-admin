@@ -104,7 +104,7 @@ export class EformsignDocumentJobManualRecoveryService {
         return this.bounded(async fresh => {
             let state = await this.repository.open(jobId, principal.branchId!, principal.userId!); fresh();
             const claim = this.claim(state, principal.userId!), response = this.response(state);
-            if (state.phase === "verified") return { kind: "verify_only" as const, ...response };
+            if (["verified", "closed"].includes(state.phase)) return { kind: "verify_only" as const, ...response };
             return this.withCredentials(principal, async credentials => {
                 if (state.phase === "human_exposed") {
                     let evidence: ContractDocumentEvidence;
