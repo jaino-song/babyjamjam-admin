@@ -148,7 +148,12 @@ function RoutedDocumentJobRecoveryDialog(props: RoutedDocumentJobRecoveryDialogP
     return () => { cancelled = true; };
   }, [listedJob, props.jobId]);
   const job = listedJob ?? loaded?.job;
-  const presentation = documentJobRecoveryPresentation(job);
+  const candidate = documentJobRecoveryPresentation(job);
+  const [selectedPresentation, setSelectedPresentation] = useState<"iframe" | "legacy" | null>(null);
+  // Polling may complete the job while verification is pending. Keep its recovery mounted;
+  // the keyed router resets this selection for a different job or a newly opened dialog.
+  if (selectedPresentation === null && candidate !== null) setSelectedPresentation(candidate);
+  const presentation = selectedPresentation ?? candidate;
   if (presentation === "iframe") return <ManualDocumentJobRecoveryDialog jobId={props.jobId} onClose={props.onClose} data-component={props["data-component"]} />;
   if (presentation === "legacy") return <LegacyDocumentJobRecoveryDialog {...props} presentation="legacy" />;
   const pending = !listedJob && loaded === null;
