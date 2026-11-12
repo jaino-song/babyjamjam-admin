@@ -150,7 +150,7 @@ export type RecoveryClassification = "manual_send" | "verify_result";
 export function classifyRecovery(
     job: ContractJobShape & Pick<EformsignDocumentJobProps, "status" | "progressStep">,
 ): RecoveryClassification | null {
-    if (job.progressStep === MANUAL_RESOLVED_PROGRESS_STEP) return null;
+    if (job.progressStep === MANUAL_RESOLVED_PROGRESS_STEP || job.progressStep === "superseded") return null;
     if (!isContractJob(job)) return null;
     if (job.status === "failed") return "manual_send";
     if (job.status === "requires_attention") return "verify_result";
