@@ -558,8 +558,11 @@ async function bounded<T>(promise: Promise<T>, ms: number): Promise<T> {
             await new SbEformsignDispatchIntentRepository(db as unknown as PrismaService).reconcile({ intentId, branchId: branches[0]!, outcome: "not_delivered", actorUserId: users[0]!, reason: "Provider console no effect", attemptCount: 1 });
             const opened = await s.recovery.open(s.worker.jobId, branches[0]!, users[0]!);
             intentId = (await s.recovery.beginDraft({ jobId: opened.jobId, branchId: opened.branchId, userId: users[0]!, claimEpoch: opened.claimEpoch }, workflowPlan.templateId, identity)).id;
+            // Expire open()'s real claim while retaining its actor provenance.
+            await db.eformsign_contract_authority.update({ where: { branchId_clientId: { branchId: branches[0]!, clientId: clients[0]! } }, data: { claimExpiresAt: new Date(0) } });
         }
-        await db.eformsign_contract_authority.update({ where: { branchId_clientId: { branchId: branches[0]!, clientId: clients[0]! } }, data: { claimExpiresAt: new Date(0) } });
+        // Automatic creation has no human claim; both columns remain NULL.
+        expect((await read())[0]).toMatchObject({ claimUserId: kind === "draft" ? users[0] : null, claimExpiresAt: kind === "draft" ? new Date(0) : null });
         await db.eformsign_document_job.update({ where: { id: s.worker.jobId }, data: { completedAt: new Date(Date.now() - 8 * 86400000), ...(purged ? { payload: Prisma.DbNull } : {}) } });
         return { s, intentId };
     }
@@ -762,13 +765,17 @@ async function bounded<T>(promise: Promise<T>, ms: number): Promise<T> {
         if (kind === "draft") intentId = (await s.recovery.beginDraft(f.claim, workflowPlan.templateId, identity)).id;
         await db.eformsign_dispatch_intent.update({ where: { id: intentId }, data: { status: "reconciled_delivered", reconciledOutcome: "delivered", reconciledByUserId: users[0]!, reconciledAt: new Date(), providerDocumentId: document } });
         await s.recovery.bindDocument(f.claim, evidence(document), kind === "draft" ? intentId : undefined);
-        await db.eformsign_doc.update({ where: { documentId: document }, data: { customerName: "Stored", customerPhone: "stored-phone", stepRecipientName: "Stored", stepRecipientSms: "stored-sms" } });
+        // customerPhone is VARCHAR(11); deliberately invalid contacts cannot route externally.
+        const storedContacts = { customerName: "QA-Stored", customerPhone: "not-a-phone", stepRecipientName: "QA-Recipient", stepRecipientSms: "invalid-sms" };
+        const contactFields = { customerName: true, customerPhone: true, stepRecipientName: true, stepRecipientSms: true } as const;
+        const beforeContacts = await db.eformsign_doc.update({ where: { documentId: document }, data: storedContacts, select: contactFields });
+        expect(beforeContacts).toEqual(storedContacts);
         await db.eformsign_document_job.update({ where: { id: s.worker.jobId }, data: { payload: Prisma.DbNull, completedAt: new Date(Date.now() - 8 * 86400000) } });
         const opened = await s.recovery.open(s.worker.jobId, branches[0]!, users[0]!);
         expect(opened.payload).toEqual({}); expect(opened.verificationOnly).toMatchObject({ documentId: document, templateId: workflowPlan.templateId });
         await s.recovery.completeManual({ ...f.claim, claimEpoch: opened.claimEpoch }, evidence(document, true));
         expect(await db.eformsign_document_job.findUniqueOrThrow({ where: { id: s.worker.jobId } })).toMatchObject({ status: "completed", payload: null });
-        expect(await db.eformsign_doc.findUniqueOrThrow({ where: { documentId: document } })).toMatchObject({ customerName: "Stored", customerPhone: "stored-phone", stepRecipientName: "Stored", stepRecipientSms: "stored-sms" });
+        expect(await db.eformsign_doc.findUniqueOrThrow({ where: { documentId: document }, select: contactFields })).toEqual(beforeContacts);
     });
 
     it.each(["second-ref", "authority"])("R4 real repair %s CAS loss rolls back BOTH refs and phase", async target => {
