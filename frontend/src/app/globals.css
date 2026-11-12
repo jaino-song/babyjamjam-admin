@@ -1085,9 +1085,11 @@
    Base Styles
    ======================================== */
 
-/* Apply border color to all elements - matches reference design */
-* {
-  border-color: hsl(var(--border));
+/* Keep the default border below component and utility border colors. */
+@layer base {
+  * {
+    border-color: hsl(var(--border));
+  }
 }
 
 html {

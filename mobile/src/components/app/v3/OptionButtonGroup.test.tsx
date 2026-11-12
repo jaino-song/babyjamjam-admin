@@ -120,7 +120,7 @@ describe("OptionButtonGroup", () => {
     expect(screen.getByRole("button", { name: "부종" })).toHaveClass("border-v3-burgundy!");
   });
 
-  it("uses important border colours per state so the global border reset cannot override them", () => {
+  it("keeps explicit important border colours per state", () => {
     setup({ selected: ["none"], invalid: true });
 
     // a selected option stays primary even while the group is invalid

@@ -27,7 +27,7 @@ const buttonVariants = cva(
         "positive-outline":
           "border-[hsl(214,100%,34%)] bg-white text-[hsl(214,100%,34%)] shadow-none hover:bg-[hsl(214,80%,95%)]",
         "negative-outline":
-          "border-v3-primary/30 bg-white text-v3-burgundy shadow-none hover:bg-v3-burgundy-light hover:text-v3-burgundy",
+          "border-v3-burgundy/30 bg-white text-v3-burgundy shadow-none hover:bg-v3-burgundy-light hover:text-v3-burgundy",
         ghost: "bg-transparent shadow-none hover:bg-accent hover:text-accent-foreground",
         link: "bg-transparent shadow-none text-primary underline-offset-4 hover:underline",
         kakao:

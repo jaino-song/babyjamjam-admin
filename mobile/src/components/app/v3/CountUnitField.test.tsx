@@ -87,7 +87,7 @@ describe("CountUnitField", () => {
     expect(screen.getByLabelText("모유수유 횟수")).not.toHaveAttribute("aria-invalid");
   });
 
-  it("uses important border colours so the global border reset cannot override them", () => {
+  it("keeps explicit important border colours per state", () => {
     const { container, rerender } = render(<Harness />);
     expect(container.firstElementChild).toHaveClass("border-v3-border!", "focus-within:border-v3-primary!");
     expect(container.firstElementChild).not.toHaveClass("border-v3-burgundy!");

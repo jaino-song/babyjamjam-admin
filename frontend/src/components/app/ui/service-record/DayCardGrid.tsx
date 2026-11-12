@@ -50,8 +50,8 @@ export interface DayCardProps {
   "data-slot"?: string;
 }
 
-// Border colours carry `!` because globals.css has an unlayered
-// `* { border-color }` reset that would otherwise beat layered utilities.
+// The global border reset is in @layer base, so Tailwind utilities win.
+// Border colours keep `!` only as a harmless explicit override.
 const CARD_STATE_CLASS: Record<DayCardState, string> = {
   todo: "border-v3-border! bg-white",
   done: "border-v3-primary-medium! bg-v3-primary-light",
