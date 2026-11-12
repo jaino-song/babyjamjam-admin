@@ -1,7 +1,13 @@
-import { SERVICE_RECORD_FORM_LAYOUT } from "../../shared/src/constants/service-record-form-layout";
+import { SERVICE_RECORD_FORM_LAYOUT, SERVICE_RECORD_STOOL_COLOR_MAX_LENGTH } from "../../shared/src/constants/service-record-form-layout";
 import { HEADER_FIELDS, getServiceRecordHeaderErrors } from "../../shared/src/utils/service-record-input";
 export { HEADER_FIELDS, SERVICE_RECORD_HEADER_KEYS, getServiceRecordHeaderErrors, getServiceRecordHeaderFieldError } from "../../shared/src/utils/service-record-input";
 export type { ServiceRecordHeaderValidationKey, ServiceRecordHeaderErrors } from "../../shared/src/utils/service-record-input";
+
+export { SERVICE_RECORD_STOOL_COLOR_MAX_LENGTH };
+
+export function hasInvalidServiceRecordStoolColor(draft: Record<string, unknown>): boolean {
+    return typeof draft.stool_color === "string" && draft.stool_color.length > SERVICE_RECORD_STOOL_COLOR_MAX_LENGTH;
+}
 
 export type ItemType = "multi" | "radio" | "counts" | "stool" | "textarea" | "confirm";
 
@@ -244,7 +250,8 @@ export function isDailyItemComplete(item: DailyItem, draft: Record<string, unkno
         return item.counts?.every((count) => hasDisplayValue(draft[`${item.key}_${count.k}`])) ?? false;
     }
     if (item.type === "stool") {
-        return hasDisplayValue(value) && (value !== "이상변" || hasDisplayValue(draft[`${item.key}_color`]));
+        return !hasInvalidServiceRecordStoolColor(draft)
+            && hasDisplayValue(value) && (value !== "이상변" || hasDisplayValue(draft[`${item.key}_color`]));
     }
     if (item.type === "confirm") return value === true;
     return false;
