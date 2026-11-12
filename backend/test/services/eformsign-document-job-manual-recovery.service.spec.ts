@@ -53,11 +53,12 @@ describe("manual recovery connected service with real authority adapter", () => 
         if (step === "complete") Object.assign(f.remote.current_status, { status_type: "003", step_type: "01", step_index: "4", step_group: 3 });
         const bind = jest.spyOn(f.repository, "bindDocument"), expose = jest.spyOn(f.repository, "expose"), reexpose = jest.spyOn(f.repository, "reexposeHuman");
         await expect(f.service.open(J, principal)).resolves.toMatchObject({ kind: "verify_only" });
-        expect(f.state.jobs[0].status).toBe("completed"); expect(f.state.authorities[0]).toMatchObject({ phase: "verified", humanIntentId: id });
+        expect(f.state.jobs[0].status).toBe("completed"); expect(f.state.authorities[0]).toMatchObject({ phase: "closed", humanIntentId: id });
         expect(bind).not.toHaveBeenCalled(); expect(expose).not.toHaveBeenCalled(); expect(reexpose).not.toHaveBeenCalled();
         expect(f.draft.dispatchDraft).toHaveBeenCalledTimes(1); expect(f.state.intents).toHaveLength(3);
         f.provider.getDocument.mockClear(); f.provider.getTemplateWorkflowConfig.mockClear(); f.credentials.withCredentials.mockClear();
-        await expect(f.service.open(J, principal)).resolves.toMatchObject({ kind: "verify_only" });
+        await expect(f.service.verify(J, principal, f.state.authorities[0].claimEpoch)).resolves.toMatchObject({ kind: "verified" });
+        await expect(f.service.open(J, principal)).rejects.toBeInstanceOf(ContractRecoveryError);
         expect(f.provider.getDocument).not.toHaveBeenCalled(); expect(f.provider.getTemplateWorkflowConfig).not.toHaveBeenCalled(); expect(f.credentials.withCredentials).not.toHaveBeenCalled();
     });
     it.each(["unknown", "expired", "id", "template", "creator", "other-step", "missing-id", "read", "workflow-read"])("reopening refuses untrusted %s without bind/expose/complete", async defect => {
@@ -119,9 +120,10 @@ describe("manual recovery connected service with real authority adapter", () => 
         expect(f.state.clients[0].eDocId).toBe("prior-doc"); expect(f.state.jobs[0].status).toBe("failed");
         f.forward(); await expect(f.service.verify(J, principal, BigInt(opened.claimEpoch))).resolves.toMatchObject({ kind: "verified" });
         expect(f.state.clients[0].eDocId).toBe("bound-doc"); expect(f.state.jobs[0].status).toBe("completed"); expect(f.state.jobs[0].payload).toBeNull();
-        expect(f.state.authorities[0].phase).toBe("verified"); expect(f.state.docs.find((row: any) => row.documentId === "bound-doc").clientId).toBe(2);
-        await expect(f.service.open(J, principal)).resolves.toMatchObject({ kind: "verify_only" });
-        await expect(new SbEformsignDocumentJobRepository(f.prisma).enqueue({ branchId: B, clientId: 2, jobType: "create_document", source: "staff", requestKey: "next", activeKey: "next", payload: { clientId: 2, contractData: data }, payloadFingerprint: F })).rejects.toThrow();
+        expect(f.state.authorities[0].phase).toBe("closed"); expect(f.state.docs.find((row: any) => row.documentId === "bound-doc").clientId).toBe(2);
+        await expect(f.service.verify(J, principal, BigInt(opened.claimEpoch))).resolves.toMatchObject({ kind: "verified" });
+        await expect(f.service.open(J, principal)).rejects.toBeInstanceOf(ContractRecoveryError);
+        await expect(new SbEformsignDocumentJobRepository(f.prisma).enqueue({ branchId: B, clientId: 2, jobType: "create_document", source: "staff", requestKey: "next", activeKey: "next", payload: { clientId: 2, contractData: data }, payloadFingerprint: F })).resolves.toMatchObject({ existing: false });
     });
     it.each(["generation", "epoch", "user", "branch", "expiry", "pointer"])("wrong %s causes zero verify writes", async field => {
         const f = runtimeFixture(); f.manual(); await f.service.open(J, principal); f.forward(); f.events.length = 0;
@@ -156,7 +158,7 @@ describe("manual recovery connected service with real authority adapter", () => 
         expect(f.draft.dispatchDraft).not.toHaveBeenCalled(); expect(f.state.authorities[0].phase).toBe("creation_uncertain");
         expect(await f.service.verify(J, principal, BigInt(opened.claimEpoch))).toMatchObject({ kind: "pending" });
         f.forward(); expect(await f.service.verify(J, principal, BigInt(opened.claimEpoch))).toMatchObject({ kind: "verified" });
-        expect(f.state.authorities[0].phase).toBe("verified");
+        expect(f.state.authorities[0].phase).toBe("closed");
     });
     it("a draft callback that is already forwarded cannot be adopted as an initial draft", async () => {
         const f = runtimeFixture(); f.manual(); f.forward();

@@ -35,7 +35,7 @@ export function runtimeFixture() {
     const emptyJob = structuredClone(state.jobs[0]);
     const normalize = (value: any) => value === Prisma.DbNull || value === Prisma.JsonNull ? null : value;
     const change = (row: any, values: any) => { for (const [key, value] of Object.entries(values)) row[key] = value && typeof value === "object" && "increment" in value ? row[key] + value.increment : normalize(value); };
-    const rows = (table: string, where: any = {}) => state[table].filter((row: any) => where.businessKey ? row.businessKey === where.businessKey : where.branchId_clientId ? row.branchId === where.branchId_clientId.branchId && row.clientId === where.branchId_clientId.clientId : matchesWhere(row, where));
+    const rows = (table: string, where: any = {}) => state[table].filter((row: any) => where.branchId_clientId ? row.branchId === where.branchId_clientId.branchId && row.clientId === where.branchId_clientId.clientId : matchesWhere(row, where));
     const model = (table: string) => ({
         findUnique: jest.fn(async ({ where }) => structuredClone(rows(table, where)[0] ?? null)),
         findFirst: jest.fn(async ({ where = {} }) => structuredClone(rows(table, where).sort((a: any, b: any) => (b.id ?? 0) - (a.id ?? 0))[0] ?? null)),
@@ -115,7 +115,9 @@ export function runtimeFixture() {
     const repository = new SbEformsignContractRecoveryRepository(prisma, options);
     const snapshots = { bumpVersion: jest.fn().mockResolvedValue(1) };
     const service = new EformsignDocumentJobManualRecoveryService(repository, draft, credentials, options, { findByArea: jest.fn().mockResolvedValue(null) } as never, provider, snapshots as never);
-    function manual() { state.jobs[0].status = "failed"; state.jobs[0].leaseToken = null; state.jobs[0].completedAt = now; state.authorities[0].creationIntentId = I; Object.assign(state.intents[0], { status: "reconciled_not_delivered", reconciledOutcome: "not_delivered", reconciledAt: now, reconciledByUserId: U }); }
+    function manual() { state.jobs[0].status = "failed"; state.jobs[0].leaseToken = null; state.jobs[0].completedAt = now; state.authorities[0].creationIntentId = I; Object.assign(state.intents[0], { status: "reconciled_not_delivered", reconciledOutcome: "not_delivered", reconciledAt: now, reconciledByUserId: U });
+        state.jobs[0].payload.contractDispatch = { ...intentInput, effectiveTemplateId: "template_ABC", companyId: "company-abc", creatorId: "service@example.test", workflow: workflowPlan };
+    }
     function forward() { Object.assign(remote.current_status, { status_type: "060", step_type: "05", step_index: "2", step_group: 1 }); }
     return { state, tx, prisma, options, repository, service, draft, provider, credentials, remote, events, sql, flags, manual, forward, snapshots };
 }

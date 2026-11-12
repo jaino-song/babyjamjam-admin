@@ -251,7 +251,7 @@ export class SbEformsignDocumentJobRepository implements IEformsignDocumentJobRe
         let generation: string | null = null, priorDocumentId: string | null = null;
         if (contract) {
             if (!/^[a-f0-9]{64}$/.test(input.payloadFingerprint)) throw new ConflictException({ code: "REQUEST_CONFLICT" });
-            const authorities = await lockAuthorityScope(tx, input.branchId, [input.clientId!]);
+            await lockAuthorityScope(tx, input.branchId, [input.clientId!]);
             const replay = await tx.$queryRaw<RawJob[]>(Prisma.sql`SELECT * FROM eformsign_document_job
                 WHERE request_key = ${input.requestKey} OR active_key = ${input.activeKey}
                 ORDER BY CASE WHEN request_key = ${input.requestKey} THEN 0 ELSE 1 END LIMIT 1`);
@@ -260,7 +260,8 @@ export class SbEformsignDocumentJobRepository implements IEformsignDocumentJobRe
                 if (replay[0].request_key === input.requestKey && replay[0].payload_fingerprint !== input.payloadFingerprint) throw new Error("EFORMSIGN_DOCUMENT_JOB_IDEMPOTENCY_MISMATCH");
                 return { job: this.toDomain(replay[0]), existing: true };
             }
-            if (authorities.some(authority => authority.phase !== "closed")) throw new ConflictException({ code: "REQUEST_CONFLICT" });
+            // reserveAuthority validates replacement under the same client/authority locks.
+            // A refusal rolls back the new job together with any supersession.
             const unresolved = await tx.eformsign_dispatch_intent.findFirst({ where: { branchId: input.branchId, clientId: input.clientId!, action: "create", status: { in: ["started", "uncertain"] } }, select: { id: true } });
             if (unresolved) throw new ConflictException({ code: "REQUEST_CONFLICT" });
             const client = await tx.client.findUnique({ where: { id: input.clientId! }, select: { eDocId: true } });
@@ -809,7 +810,7 @@ export class SbEformsignDocumentJobRepository implements IEformsignDocumentJobRe
 
     async getSummary(branchId: string): Promise<EformsignDocumentJobSummary> {
         const unresolved = Prisma.sql`(
-            (status = 'failed' AND completed_at >= now() - interval '7 days')
+            (status = 'failed' AND progress_step IS DISTINCT FROM 'superseded' AND completed_at >= now() - interval '7 days')
             OR status = 'requires_attention'
         )`;
         const [rows, unresolvedRows] = await Promise.all([
@@ -862,7 +863,7 @@ export class SbEformsignDocumentJobRepository implements IEformsignDocumentJobRe
                 WHERE j.branch_id = ${branchId}::uuid
                   AND (
                       j.status = 'requires_attention'
-                      OR (j.status = 'failed' AND ${contract} AND j.completed_at >= now() - interval '7 days')
+                      OR (j.status = 'failed' AND ${contract} AND j.progress_step IS DISTINCT FROM 'superseded' AND j.completed_at >= now() - interval '7 days')
                   )
                 ORDER BY j.completed_at DESC NULLS LAST, j.created_at DESC
                 LIMIT 50
@@ -872,7 +873,7 @@ export class SbEformsignDocumentJobRepository implements IEformsignDocumentJobRe
                 LEFT JOIN "client" c ON c.id = j.client_id
                 WHERE j.branch_id = ${branchId}::uuid AND j.status IN ${TERMINAL_STATUSES}
                   AND j.completed_at >= ${terminalSince}
-                  AND NOT (j.status = 'failed' AND ${contract})
+                  AND (NOT (j.status = 'failed' AND ${contract}) OR j.progress_step = 'superseded')
                 ORDER BY j.completed_at DESC LIMIT ${limit}
             `),
         ]);
