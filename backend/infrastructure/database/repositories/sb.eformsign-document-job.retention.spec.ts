@@ -213,18 +213,44 @@ describe("terminal retention query contract (no database)", () => {
         }
     }
     async function fixtures(run: () => Promise<void>) {
+        assertClusterOwnership();
         const baseline = await snapshot();
+        // Text casts preserve bigint and timestamptz(6) exactly across Prisma/JS.
+        const calendarBaseline = await prisma.$queryRaw<Array<{ id: number; revision: string; updated_at: string }>>`
+            SELECT id, revision::text, updated_at::text FROM public.holiday_calendar_revision ORDER BY id`;
+        expect(calendarBaseline).toHaveLength(1);
+        const calendar = calendarBaseline[0];
+        if (!calendar || calendar.id !== 1) throw new Error("Missing singleton calendar baseline");
         try {
             await prisma.$executeRaw`INSERT INTO branch(id,name,slug) VALUES (${branch}::uuid,'QA-SQL report','qa-sql-report')`;
             await prisma.$executeRaw`INSERT INTO client(id,name,voucher_client,branch_id)
                 VALUES (${client},'QA-SQL report',false,${branch}::uuid)`;
             await run();
         } finally {
-            await prisma.$executeRaw`DELETE FROM eformsign_contract_authority WHERE branch_id=${branch}::uuid`;
-            await prisma.$executeRaw`DELETE FROM eformsign_dispatch_intent WHERE branch_id=${branch}::uuid`;
-            await prisma.$executeRaw`DELETE FROM eformsign_document_job WHERE branch_id=${branch}::uuid`;
-            await prisma.$executeRaw`DELETE FROM client WHERE id=${client}`;
-            await prisma.$executeRaw`DELETE FROM branch WHERE id=${branch}::uuid`;
+            assertClusterOwnership();
+            await prisma.$transaction(async tx => {
+                await tx.$executeRaw`DELETE FROM eformsign_contract_authority WHERE branch_id=${branch}::uuid`;
+                await tx.$executeRaw`DELETE FROM eformsign_dispatch_intent WHERE branch_id=${branch}::uuid`;
+                await tx.$executeRaw`DELETE FROM eformsign_document_job WHERE branch_id=${branch}::uuid`;
+                await tx.$executeRaw`DELETE FROM client WHERE id=${client}`;
+                // Refuse to conceal calendar changes made by a report or fixture body.
+                expect(await tx.$queryRaw`SELECT id, revision::text, updated_at::text
+                    FROM public.holiday_calendar_revision ORDER BY id FOR UPDATE`).toEqual(calendarBaseline);
+                expect(await tx.$executeRaw`DELETE FROM branch WHERE id=${branch}::uuid`).toBe(1);
+                // The branch FK cascades a DELETE even with no overrides. Its statement
+                // trigger must bump exactly once and stamp this transaction's now().
+                const [cascade] = await tx.$queryRaw<Array<{ expected: boolean }>>`
+                    SELECT count(*) = 1 AND bool_and(id = 1
+                        AND revision = ${calendar.revision}::bigint + 1
+                        AND updated_at = transaction_timestamp()) AS expected
+                    FROM public.holiday_calendar_revision`;
+                expect(cascade?.expected).toBe(true);
+                // Restore only this proven owned-fixture side effect, never other rows.
+                expect(await tx.$executeRaw`UPDATE public.holiday_calendar_revision
+                    SET revision = ${calendar.revision}::bigint, updated_at = ${calendar.updated_at}::timestamptz
+                    WHERE id = 1 AND revision = ${calendar.revision}::bigint + 1
+                        AND updated_at = transaction_timestamp()`).toBe(1);
+            });
             expect(await snapshot()).toEqual(baseline);
         }
     }
