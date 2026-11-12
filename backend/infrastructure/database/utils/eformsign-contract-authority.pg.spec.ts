@@ -4,6 +4,8 @@ import { Prisma, PrismaClient } from "@prisma/client";
 import { classifyRecovery } from "domain/entities/eformsign-document-job.entity";
 import { ClientEntity } from "domain/entities/client.entity";
 import type { PrismaService } from "infrastructure/database/prisma.service";
+import { SbEformsignDispatchIntentRepository } from "../repositories/sb.eformsign-dispatch-intent.repository";
+import { normalizeVerifiedAuthority } from "./eformsign-contract-authority-release";
 import { SbClientRepository } from "../repositories/sb.client.repository";
 import { SbEformsignContractRecoveryRepository } from "../repositories/sb.eformsign-contract-recovery.repository";
 import { SbEformsignDocumentJobRepository } from "../repositories/sb.eformsign-document-job.repository";
@@ -525,7 +527,7 @@ async function bounded<T>(promise: Promise<T>, ms: number): Promise<T> {
         expect((await s.jobRepository.enqueue(nextInput(s))).job.contractGeneration).not.toBe(s.worker.contractGeneration);
         await expect(s.recovery.readClaim(f.claim)).rejects.toThrow();
     });
-    it.each(["job", "intent", "pointer"])("P16 a real %s CAS failure rolls back generation release", async target => {
+    it.each(["job", "intent", "pointer", "mirror"])("P16 a real %s CAS failure rolls back generation release", async target => {
         const s = await runtime(), f = await failed(s, false), document = `rollback-${randomUUID()}`; documents.push(document);
         await db.eformsign_dispatch_intent.update({ where: { id: f.intent.id }, data: { providerDocumentId: document } });
         await s.recovery.bindDocument(f.claim, evidence(document));
@@ -536,6 +538,7 @@ async function bounded<T>(promise: Promise<T>, ms: number): Promise<T> {
             eformsign_document_job: { async updateMany({ args, query }) { return target === "job" ? { count: 0 } : query(args); } },
             eformsign_dispatch_intent: { async updateMany({ args, query }) { return target === "intent" ? { count: 0 } : query(args); } },
             client: { async updateMany({ args, query }) { return target === "pointer" ? { count: 0 } : query(args); } },
+            eformsign_doc: { async updateMany({ args, query }) { return target === "mirror" ? { count: 0 } : query(args); } },
         } });
         const recovery = new SbEformsignContractRecoveryRepository(connection as unknown as PrismaService, s.options);
         await expect(recovery.completeManual(f.claim, evidence(document, true))).rejects.toThrow();
@@ -544,4 +547,194 @@ async function bounded<T>(promise: Promise<T>, ms: number): Promise<T> {
         expect(await db.eformsign_dispatch_intent.findUniqueOrThrow({ where: { id: f.intent.id } })).toEqual(beforeIntent);
         expect(await db.eformsign_doc.findUniqueOrThrow({ where: { documentId: document } })).toEqual(beforeMirror);
     });
+    async function terminalStart(kind: "create" | "draft", purged: boolean) {
+        const s = await runtime();
+        const create = await s.recovery.claimCreation(s.input, s.worker, s.effect);
+        await db.eformsign_document_job.update({ where: { id: s.worker.jobId }, data: { status: "requires_attention", leaseToken: null, completedAt: new Date() } });
+        let intentId = create.intent.id;
+        if (kind === "draft") {
+            await new SbEformsignDispatchIntentRepository(db as unknown as PrismaService).markUncertain(intentId, branches[0]!, 1, "provider investigated");
+            await new SbEformsignDispatchIntentRepository(db as unknown as PrismaService).reconcile({ intentId, branchId: branches[0]!, outcome: "not_delivered", actorUserId: users[0]!, reason: "Provider console no effect", attemptCount: 1 });
+            const opened = await s.recovery.open(s.worker.jobId, branches[0]!, users[0]!);
+            intentId = (await s.recovery.beginDraft({ jobId: opened.jobId, branchId: opened.branchId, userId: users[0]!, claimEpoch: opened.claimEpoch }, workflowPlan.templateId, identity)).id;
+        }
+        await db.eformsign_contract_authority.update({ where: { branchId_clientId: { branchId: branches[0]!, clientId: clients[0]! } }, data: { claimExpiresAt: new Date(0) } });
+        await db.eformsign_document_job.update({ where: { id: s.worker.jobId }, data: { completedAt: new Date(Date.now() - 8 * 86400000), ...(purged ? { payload: Prisma.DbNull } : {}) } });
+        return { s, intentId };
+    }
+    it.each([ ["create", true], ["create", false], ["draft", true], ["draft", false] ] as const)("R4 real two-transaction day8 %s purged=%s commits repair despite410, then operator proof rotates", async (kind, purged) => {
+        const { s, intentId } = await terminalStart(kind, purged), before = (await read())[0]!;
+        const oldJob = await db.eformsign_document_job.findUniqueOrThrow({ where: { id: s.worker.jobId } });
+        const oldIntent = await db.eformsign_dispatch_intent.findUniqueOrThrow({ where: { id: intentId } });
+        await expect(s.recovery.open(s.worker.jobId, branches[0]!, users[0]!)).rejects.toMatchObject({ code: "RECOVERY_PAYLOAD_EXPIRED", status: 410 });
+        const repaired = await db.eformsign_dispatch_intent.findUniqueOrThrow({ where: { id: intentId } });
+        expect(repaired).toMatchObject({ status: "uncertain", attemptCount: oldIntent.attemptCount, providerDocumentId: null, uncertainReason: "stale_start_after_terminal_job" });
+        expect((await read())[0]).toEqual({ ...before, phase: "creation_uncertain" });
+        expect(await db.eformsign_document_job.findUniqueOrThrow({ where: { id: s.worker.jobId } })).toEqual(oldJob);
+        const jobsBefore = await db.eformsign_document_job.count();
+        await expect(s.jobRepository.enqueue({ ...nextInput(s), activeKey: s.enqueue.activeKey })).resolves.toMatchObject({ existing: true });
+        expect(await db.eformsign_document_job.count()).toBe(jobsBefore); expect((await read())[0]!.generation).toBe(before.generation);
+        await expect(s.jobRepository.enqueue(nextInput(s))).rejects.toThrow();
+        await new SbEformsignDispatchIntentRepository(db as unknown as PrismaService).reconcile({ intentId, branchId: branches[0]!, outcome: "not_delivered", actorUserId: users[0]!, reason: "Provider console confirms no effect", attemptCount: repaired.attemptCount });
+        await expect(s.jobRepository.enqueue({ ...nextInput(s), activeKey: s.enqueue.activeKey })).resolves.toMatchObject({ existing: false });
+        expect((await read())[0]!.generation).not.toBe(before.generation);
+        expect(await db.eformsign_document_job.findUniqueOrThrow({ where: { id: s.worker.jobId } })).toMatchObject({ activeKey: null, payload: null, progressStep: "superseded", status: "failed" });
+    });
+    it("R4 real inter-transaction new claim is rechecked after independently committed repair", async () => {
+        const { s } = await terminalStart("create", false);
+        await db.eformsign_document_job.update({ where: { id: s.worker.jobId }, data: { completedAt: new Date() } });
+        let calls = 0;
+        const proxy = new Proxy(db, { get(target, key) {
+            if (key === "$transaction") return async (run: (tx: Prisma.TransactionClient) => Promise<unknown>) => {
+                const value = await target.$transaction(run);
+                if (++calls === 1) await s.recovery.open(s.worker.jobId, branches[0]!, users[1]!);
+                return value;
+            };
+            const value = Reflect.get(target, key); return typeof value === "function" ? value.bind(target) : value;
+        } });
+        await expect(new SbEformsignContractRecoveryRepository(proxy as unknown as PrismaService, s.options).open(s.worker.jobId, branches[0]!, users[0]!)).rejects.toMatchObject({ code: "MANUAL_RECOVERY_CLAIMED" });
+        expect((await read())[0]).toMatchObject({ phase: "creation_uncertain", claimUserId: users[1] });
+    });
+    it.each(["same", "other"])("R4 real live %s user claim keeps STARTED unchanged", async who => {
+        const { s, intentId } = await terminalStart("draft", false);
+        const user = users[who === "same" ? 0 : 1]!;
+        await db.eformsign_document_job.update({ where: { id: s.worker.jobId }, data: { completedAt: new Date() } });
+        await db.eformsign_contract_authority.update({ where: { branchId_clientId: { branchId: branches[0]!, clientId: clients[0]! } }, data: { claimUserId: user, claimExpiresAt: new Date(Date.now() + 60000) } });
+        const before = await db.eformsign_dispatch_intent.findUniqueOrThrow({ where: { id: intentId } });
+        const opened = s.recovery.open(s.worker.jobId, branches[0]!, users[0]!);
+        if (who === "same") await opened; else await expect(opened).rejects.toMatchObject({ code: "MANUAL_RECOVERY_CLAIMED" });
+        expect(await db.eformsign_dispatch_intent.findUniqueOrThrow({ where: { id: intentId } })).toEqual(before);
+    });
+    it("R4 current failed hold survives day8 list/count cutoff and disappears after proven close", async () => {
+        const { s, intentId } = await terminalStart("create", true);
+        await db.eformsign_document_job.update({ where: { id: s.worker.jobId }, data: { status: "failed" } });
+        const history = await db.eformsign_document_job.create({ data: { branchId: branches[0]!, clientId: clients[0]!, jobType: "create_document", source: "staff", requestKey: randomUUID(), status: "failed", completedAt: new Date(Date.now() - 8 * 86400000) } });
+        const summary = await s.jobRepository.getSummary(branches[0]!);
+        expect(summary.failedCount).toBe(0); expect(summary.unresolvedCount).toBe(1); expect(summary.unresolvedJobIds).toEqual([s.worker.jobId]);
+        expect((await s.jobRepository.listForBranch(branches[0]!, new Date(0))).requiresAttention.map(job => job.id)).toEqual([s.worker.jobId]);
+        expect(summary.unresolvedJobIds).not.toContain(history.id);
+        expect((await s.jobRepository.getSummary(branches[1]!)).unresolvedJobIds).toEqual([]);
+        await expect(s.recovery.open(s.worker.jobId, branches[0]!, users[0]!)).rejects.toMatchObject({ status: 410 });
+        await new SbEformsignDispatchIntentRepository(db as unknown as PrismaService).reconcile({ intentId, branchId: branches[0]!, outcome: "not_delivered", actorUserId: users[0]!, reason: "Provider investigated", attemptCount: 1 });
+        await s.jobRepository.enqueue(nextInput(s));
+        expect((await s.jobRepository.getSummary(branches[0]!)).unresolvedJobIds).toEqual([]);
+        expect((await s.jobRepository.listForBranch(branches[0]!, new Date(0))).requiresAttention).toEqual([]);
+    });
+    it("R4 real scoped conflicting request insert rolls back old key, job, refs and authority retirement", async () => {
+        const { s, intentId } = await terminalStart("create", true);
+        await expect(s.recovery.open(s.worker.jobId, branches[0]!, users[0]!)).rejects.toMatchObject({ status: 410 });
+        await new SbEformsignDispatchIntentRepository(db as unknown as PrismaService).reconcile({ intentId, branchId: branches[0]!, outcome: "not_delivered", actorUserId: users[0]!, reason: "Provider investigated", attemptCount: 1 });
+        const before = (await read())[0]!, old = await db.eformsign_document_job.findUniqueOrThrow({ where: { id: s.worker.jobId } });
+        // Simulate a conflict discovered only at INSERT, bypassing the first replay read, never DB uniqueness.
+        const conflict = await db.eformsign_document_job.create({ data: { branchId: branches[1]!, jobType: "create_document", source: "staff", requestKey: "global-collision", payloadFingerprint: s.enqueue.payloadFingerprint } });
+        const proxy = new Proxy(db, { get(target, key) {
+            if (key === "$transaction") return (run: (tx: Prisma.TransactionClient) => Promise<unknown>) => target.$transaction(tx => run(new Proxy(tx, { get(t, k) {
+                if (k === "$queryRaw") return (query: Prisma.Sql) => /WHERE request_key =/.test(query.text) && !query.text.includes("OR active_key") ? Promise.resolve([]) : t.$queryRaw(query);
+                const value = Reflect.get(t, k); return typeof value === "function" ? value.bind(t) : value;
+            } })));
+            const value = Reflect.get(target, key); return typeof value === "function" ? value.bind(target) : value;
+        } });
+        await expect(new SbEformsignDocumentJobRepository(proxy as unknown as PrismaService).enqueue({ ...nextInput(s), requestKey: conflict.requestKey, activeKey: s.enqueue.activeKey })).rejects.toThrow();
+        expect((await read())[0]).toEqual(before); expect(await db.eformsign_document_job.findUniqueOrThrow({ where: { id: old.id } })).toEqual(old);
+    });
+    async function historicalRuntime() {
+        const s = await runtime(), f = await failed(s, false), document = `historical-${randomUUID()}`; documents.push(document);
+        await db.eformsign_dispatch_intent.update({ where: { id: f.intent.id }, data: { providerDocumentId: document } });
+        await s.recovery.bindDocument(f.claim, evidence(document)); await s.recovery.completeManual(f.claim, evidence(document, true));
+        await db.eformsign_contract_authority.update({ where: { branchId_clientId: { branchId: branches[0]!, clientId: clients[0]! } }, data: { phase: "verified" } });
+        await db.eformsign_dispatch_intent.update({ where: { id: f.intent.id }, data: { status: "uncertain", reconciledAt: null, reconciledByUserId: null, reconciledOutcome: null } });
+        await db.eformsign_doc.update({ where: { documentId: document }, data: { statusType: "064" } });
+        return { s, f, document };
+    }
+    it.each(["complete", "enqueue"])("R4 real completeManual versus enqueue lock race, first=%s", async first => {
+        const s = await runtime(), f = await failed(s, false), document = `race-${randomUUID()}`; documents.push(document);
+        await db.eformsign_dispatch_intent.update({ where: { id: f.intent.id }, data: { providerDocumentId: document } });
+        await s.recovery.bindDocument(f.claim, evidence(document));
+        const next = nextInput(s);
+        const complete = (tx: Prisma.TransactionClient) => recoveryIn(tx, s).completeManual(f.claim, evidence(document, true));
+        const enqueue = (tx: Prisma.TransactionClient) => s.jobRepository.enqueueInTransaction(tx, next);
+        // A failed first contender must roll back its INSERT; place the barrier before either action.
+        const result = await contendBeforeAction(first === "complete" ? complete : enqueue, first === "complete" ? enqueue : complete);
+        expect(result[first === "complete" ? 0 : 1]!.status).toBe("fulfilled");
+        expect((await read())[0]!.phase).toBe(first === "complete" ? "reserved" : "closed");
+        expect(await db.eformsign_document_job.count({ where: { requestKey: next.requestKey } })).toBe(first === "complete" ? 1 : 0);
+        expect(await db.eformsign_dispatch_intent.count({ where: { branchId: branches[0]!, action: "create", status: { in: ["started", "uncertain"] } } })).toBe(0);
+    });
+    it.each(["normalize", "enqueue"])("R4 real historical normalize versus enqueue first=%s", async first => {
+        const { s, f } = await historicalRuntime(), next = nextInput(s);
+        const normalize = async (tx: Prisma.TransactionClient) => {
+            const [a] = await lockAuthorityScope(tx, branches[0]!, [clients[0]!]);
+            if (a!.generation !== s.worker.contractGeneration) throw new Error("stale historical generation");
+            return normalizeVerifiedAuthority(tx, a!);
+        };
+        const enqueue = (tx: Prisma.TransactionClient) => s.jobRepository.enqueueInTransaction(tx, next);
+        const result = await contendBeforeAction(first === "normalize" ? normalize : enqueue, first === "normalize" ? enqueue : normalize);
+        expect(result[0]!.status).toBe("fulfilled"); expect(result[1]!.status).toBe(first === "normalize" ? "fulfilled" : "rejected");
+        expect((await read())[0]!.creationJobId).not.toBe(s.worker.jobId);
+        expect(await db.eformsign_document_job.count({ where: { requestKey: next.requestKey } })).toBe(1);
+        expect(await db.eformsign_dispatch_intent.findUniqueOrThrow({ where: { id: f.intent.id } })).toMatchObject({ status: "reconciled_delivered", reconciledByUserId: users[0] });
+        await expect(s.recovery.readClaim(f.claim)).rejects.toThrow();
+    });
+
+    it.each(["claim", "enqueue"])("R4 real row2 open versus rotating enqueue first=%s", async first => {
+        const { s, intentId } = await terminalStart("create", false);
+        await expect(s.recovery.open(s.worker.jobId, branches[0]!, users[0]!)).rejects.toMatchObject({ status: 410 });
+        await new SbEformsignDispatchIntentRepository(db as unknown as PrismaService).reconcile({ intentId, branchId: branches[0]!, outcome: "not_delivered", actorUserId: users[0]!, reason: "Provider investigated", attemptCount: 1 });
+        await db.eformsign_document_job.update({ where: { id: s.worker.jobId }, data: { completedAt: new Date() } });
+        const next = { ...nextInput(s), activeKey: s.enqueue.activeKey };
+        const claim = (tx: Prisma.TransactionClient) => recoveryIn(tx, s).open(s.worker.jobId, branches[0]!, users[0]!);
+        const enqueue = (tx: Prisma.TransactionClient) => s.jobRepository.enqueueInTransaction(tx, next);
+        const result = await contendBeforeAction(first === "claim" ? claim : enqueue, first === "claim" ? enqueue : claim);
+        expect(result[0]!.status).toBe("fulfilled");
+        expect((await read())[0]!.creationJobId === s.worker.jobId).toBe(first === "claim");
+        expect(await db.eformsign_document_job.count({ where: { requestKey: next.requestKey } })).toBe(first === "claim" ? 0 : 1);
+        expect(await db.eformsign_dispatch_intent.findUniqueOrThrow({ where: { id: intentId } })).toMatchObject({ status: "reconciled_not_delivered" });
+    });
+    it.each(["create", "draft"] as const)("R4 real postTTL %s exact document completion preserves contacts and NULL payload", async kind => {
+        const s = await runtime(), f = await failed(s, kind === "draft"), document = `postttl-${randomUUID()}`; documents.push(document);
+        let intentId = f.intent.id;
+        if (kind === "draft") intentId = (await s.recovery.beginDraft(f.claim, workflowPlan.templateId, identity)).id;
+        await db.eformsign_dispatch_intent.update({ where: { id: intentId }, data: { status: "reconciled_delivered", reconciledOutcome: "delivered", reconciledByUserId: users[0]!, reconciledAt: new Date(), providerDocumentId: document } });
+        await s.recovery.bindDocument(f.claim, evidence(document), kind === "draft" ? intentId : undefined);
+        await db.eformsign_doc.update({ where: { documentId: document }, data: { customerName: "Stored", customerPhone: "stored-phone", stepRecipientName: "Stored", stepRecipientSms: "stored-sms" } });
+        await db.eformsign_document_job.update({ where: { id: s.worker.jobId }, data: { payload: Prisma.DbNull, completedAt: new Date(Date.now() - 8 * 86400000) } });
+        const opened = await s.recovery.open(s.worker.jobId, branches[0]!, users[0]!);
+        expect(opened.payload).toEqual({}); expect(opened.verificationOnly).toMatchObject({ documentId: document, templateId: workflowPlan.templateId });
+        await s.recovery.completeManual({ ...f.claim, claimEpoch: opened.claimEpoch }, evidence(document, true));
+        expect(await db.eformsign_document_job.findUniqueOrThrow({ where: { id: s.worker.jobId } })).toMatchObject({ status: "completed", payload: null });
+        expect(await db.eformsign_doc.findUniqueOrThrow({ where: { documentId: document } })).toMatchObject({ customerName: "Stored", customerPhone: "stored-phone", stepRecipientName: "Stored", stepRecipientSms: "stored-sms" });
+    });
+
+    it.each(["second-ref", "authority"])("R4 real repair %s CAS loss rolls back BOTH refs and phase", async target => {
+        const { s } = await terminalStart("draft", true), original = (await read())[0]!;
+        await db.eformsign_dispatch_intent.update({ where: { id: original.creationIntentId! }, data: { status: "started" } });
+        const before = await db.eformsign_dispatch_intent.findMany({ where: { branchId: branches[0]! }, orderBy: { id: "asc" } });
+        let writes = 0;
+        const proxy = new Proxy(db, { get(t, k) {
+            if (k === "$transaction") return (run: (tx: Prisma.TransactionClient) => Promise<unknown>) => t.$transaction(tx => run(new Proxy(tx, { get(inner, key) {
+                if (key === "$executeRaw") return (query: Prisma.Sql) => target === "authority" && query.text.includes("UPDATE eformsign_contract_authority") ? Promise.resolve(0) : inner.$executeRaw(query);
+                if (key === "eformsign_dispatch_intent") return new Proxy(inner.eformsign_dispatch_intent, { get(model, method) {
+                    if (method === "updateMany") return (args: Prisma.eformsign_dispatch_intentUpdateManyArgs) => target === "second-ref" && ++writes === 2 ? Promise.resolve({ count: 0 }) : model.updateMany(args);
+                    const value = Reflect.get(model, method); return typeof value === "function" ? value.bind(model) : value;
+                } });
+                const value = Reflect.get(inner, key); return typeof value === "function" ? value.bind(inner) : value;
+            } })));
+            const value = Reflect.get(t, k); return typeof value === "function" ? value.bind(t) : value;
+        } });
+        await expect(new SbEformsignContractRecoveryRepository(proxy as unknown as PrismaService, s.options).open(s.worker.jobId, branches[0]!, users[0]!)).rejects.toMatchObject({ code: "RECOVERY_STALE" });
+        expect((await read())[0]).toEqual(original);
+        expect(await db.eformsign_dispatch_intent.findMany({ where: { branchId: branches[0]! }, orderBy: { id: "asc" } })).toEqual(before);
+    });
+    async function contendBeforeAction(first: (tx: Prisma.TransactionClient) => Promise<unknown>, second: (tx: Prisma.TransactionClient) => Promise<unknown>) {
+        const ready = deferred<void>(), release = deferred<void>(), started = deferred<number>();
+        const pa = transaction(a, async tx => { await lockAuthorityScope(tx, branches[0]!, [clients[0]!]); ready.resolve(); await bounded(release.promise, 9000); return first(tx); });
+        void pa.catch(() => undefined); let pb: Promise<unknown> | undefined;
+        try {
+            await bounded(ready.promise, 5000);
+            pb = transaction(b, async tx => { const [pid] = await tx.$queryRaw<Array<{ pid: number }>>`SELECT pg_backend_pid() AS pid`; started.resolve(pid!.pid); return second(tx); });
+            void pb.catch(() => undefined); await lockObserved(await bounded(started.promise, 5000));
+        } finally { release.resolve(); await Promise.allSettled([pa, ...(pb ? [pb] : [])]); }
+        return Promise.allSettled([pa, pb!]);
+    }
+
 });

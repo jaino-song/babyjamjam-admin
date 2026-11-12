@@ -104,7 +104,7 @@ describe("SbEformsignDocumentJobRepository", () => {
     });
 
     it("returns the inserted job and never exposes the payload in a log path", async () => {
-        queryRaw.mockResolvedValueOnce([{ id: 7, e_doc_id: null }]).mockResolvedValueOnce([]).mockResolvedValueOnce([])
+        queryRaw.mockResolvedValueOnce([{ id: 7, e_doc_id: null }]).mockResolvedValueOnce([]).mockResolvedValueOnce([]).mockResolvedValueOnce([])
             .mockResolvedValueOnce([row({ contract_generation: "33333333-3333-4333-8333-333333333333" })]);
         const result = await repository.enqueue({
             branchId: row().branch_id,
@@ -118,7 +118,7 @@ describe("SbEformsignDocumentJobRepository", () => {
         });
         expect(result.existing).toBe(false);
         expect(result.job.status).toBe("queued");
-        expect(sqlText(queryRaw.mock.calls[3][0])).toContain("ON CONFLICT DO NOTHING");
+        expect(sqlText(queryRaw.mock.calls[4][0])).toContain("ON CONFLICT DO NOTHING");
     });
 
     it("returns the existing request or active job after a matching unique conflict", async () => {
@@ -135,7 +135,7 @@ describe("SbEformsignDocumentJobRepository", () => {
         });
         expect(result.existing).toBe(true);
         expect(sqlText(queryRaw.mock.calls[2][0])).toContain("request_key");
-        expect(sqlText(queryRaw.mock.calls[2][0])).toContain("active_key");
+        expect(sqlText(queryRaw.mock.calls[2][0])).not.toContain("active_key");
     });
 
     it("rejects a reused request key with a different payload fingerprint", async () => {
@@ -1040,7 +1040,10 @@ describe("SbEformsignDocumentJobRepository", () => {
             const counts = countsQuery.text;
             expect(counts).toContain("count(*) FILTER (WHERE status = 'requires_attention')::int AS attention_count");
             expect(counts).toMatch(/FILTER \(\s*WHERE \(source = 'staff'[\s\S]*?\) AND status = 'failed'\s+AND completed_at >= now\(\) - interval '7 days'\s*\)::int AS failed_count/);
-            expect(counts).toMatch(/FILTER \(WHERE \(source = 'staff'[\s\S]*?\) AND \(\s*\(status = 'failed' AND progress_step IS DISTINCT FROM \$1 AND completed_at >= now\(\) - interval '7 days'\)\s*OR status = 'requires_attention'\s*\)\)::int AS unresolved_count/);
+            expect(counts).toContain("a.creation_job_id = eformsign_document_job.id");
+            expect(counts).toContain("a.branch_id = eformsign_document_job.branch_id");
+            expect(counts).toContain("a.client_id = eformsign_document_job.client_id AND a.phase <> 'closed'");
+            expect(counts).toMatch(/OR status = 'requires_attention'[\s\S]*AS unresolved_count/);
             expect(countsQuery.values).toEqual(["superseded", branchId]);
             const ids = sqlText(queryRaw.mock.calls[1][0]);
             expect(ids).toContain(CONTRACT_FRAGMENT);

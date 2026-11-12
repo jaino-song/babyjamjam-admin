@@ -30,6 +30,7 @@ import {
 } from "domain/repositories/eformsign-document-job.repository.interface";
 import { PrismaService } from "infrastructure/database/prisma.service";
 import { withoutEntityChangeHints } from "infrastructure/database/entity-change-suppression";
+import { normalizeVerifiedAuthority, retireProvenNoEffect } from "../utils/eformsign-contract-authority-release";
 import { lockAuthorityScope, reserveAuthority } from "../utils/eformsign-contract-authority";
 import {
     authorizeServiceRecordDispatch,
@@ -250,23 +251,33 @@ export class SbEformsignDocumentJobRepository implements IEformsignDocumentJobRe
     ) {
         const contract = input.jobType === "create_document" && input.clientId && isContractJob(input);
         let generation: string | null = null, priorDocumentId: string | null = null;
+        let mutatedAuthority = false;
         if (contract) {
             if (!/^[a-f0-9]{64}$/.test(input.payloadFingerprint)) throw new ConflictException({ code: "REQUEST_CONFLICT" });
-            await lockAuthorityScope(tx, input.branchId, [input.clientId!]);
+            const [authority] = await lockAuthorityScope(tx, input.branchId, [input.clientId!]);
             const replay = await tx.$queryRaw<RawJob[]>(Prisma.sql`SELECT * FROM eformsign_document_job
-                WHERE request_key = ${input.requestKey} OR active_key = ${input.activeKey}
-                ORDER BY CASE WHEN request_key = ${input.requestKey} THEN 0 ELSE 1 END LIMIT 1`);
+                WHERE request_key = ${input.requestKey} LIMIT 1`);
             if (replay[0]) {
                 if (replay[0].branch_id !== input.branchId) throw new Error("EFORMSIGN_DOCUMENT_JOB_KEY_CONFLICT");
-                if (replay[0].request_key === input.requestKey && replay[0].payload_fingerprint !== input.payloadFingerprint) throw new Error("EFORMSIGN_DOCUMENT_JOB_IDEMPOTENCY_MISMATCH");
+                if (replay[0].payload_fingerprint !== input.payloadFingerprint) throw new Error("EFORMSIGN_DOCUMENT_JOB_IDEMPOTENCY_MISMATCH");
                 return { job: this.toDomain(replay[0]), existing: true };
+            }
+            if (authority) mutatedAuthority = await normalizeVerifiedAuthority(tx, authority);
+            const client = await tx.client.findUnique({ where: { id: input.clientId! }, select: { eDocId: true } });
+            if (!client) throw new ConflictException({ code: "REQUEST_CONFLICT" });
+            const active = await tx.$queryRaw<RawJob[]>(Prisma.sql`SELECT * FROM eformsign_document_job WHERE active_key = ${input.activeKey} LIMIT 1`);
+            const retired = authority && (!active[0] || active[0].id === authority.creationJobId)
+                ? await retireProvenNoEffect(tx, authority, client.eDocId) : false;
+            mutatedAuthority = retired || mutatedAuthority;
+            if (active[0] && !retired) {
+                if (mutatedAuthority) throw new ConflictException({ code: "REQUEST_CONFLICT" });
+                if (active[0].branch_id !== input.branchId) throw new Error("EFORMSIGN_DOCUMENT_JOB_KEY_CONFLICT");
+                return { job: this.toDomain(active[0]), existing: true };
             }
             // reserveAuthority validates replacement under the same client/authority locks.
             // A refusal rolls back the new job together with any supersession.
             const unresolved = await tx.eformsign_dispatch_intent.findFirst({ where: { branchId: input.branchId, clientId: input.clientId!, action: "create", status: { in: ["started", "uncertain"] } }, select: { id: true } });
             if (unresolved) throw new ConflictException({ code: "REQUEST_CONFLICT" });
-            const client = await tx.client.findUnique({ where: { id: input.clientId! }, select: { eDocId: true } });
-            if (!client) throw new ConflictException({ code: "REQUEST_CONFLICT" });
             priorDocumentId = client.eDocId; generation = randomUUID();
         }
         const inserted = await tx.$queryRaw<RawJob[]>(Prisma.sql`
@@ -288,6 +299,7 @@ export class SbEformsignDocumentJobRepository implements IEformsignDocumentJobRe
             return { job: this.toDomain(inserted[0]), existing: false };
         }
 
+        if (mutatedAuthority) throw new ConflictException({ code: "REQUEST_CONFLICT" });
         const existing = await tx.$queryRaw<RawJob[]>(Prisma.sql`
                 SELECT * FROM "eformsign_document_job"
                 WHERE request_key = ${input.requestKey} OR active_key = ${input.activeKey}
@@ -811,7 +823,9 @@ export class SbEformsignDocumentJobRepository implements IEformsignDocumentJobRe
 
     async getSummary(branchId: string): Promise<EformsignDocumentJobSummary> {
         const unresolved = Prisma.sql`(
-            (status = 'failed' AND progress_step IS DISTINCT FROM ${SUPERSEDED_PROGRESS_STEP} AND completed_at >= now() - interval '7 days')
+            (status = 'failed' AND progress_step IS DISTINCT FROM ${SUPERSEDED_PROGRESS_STEP} AND (completed_at >= now() - interval '7 days'
+                OR EXISTS (SELECT 1 FROM eformsign_contract_authority a WHERE a.creation_job_id = eformsign_document_job.id
+                    AND a.branch_id = eformsign_document_job.branch_id AND a.client_id = eformsign_document_job.client_id AND a.phase <> 'closed')))
             OR status = 'requires_attention'
         )`;
         const [rows, unresolvedRows] = await Promise.all([
@@ -856,15 +870,17 @@ export class SbEformsignDocumentJobRepository implements IEformsignDocumentJobRe
                 WHERE j.branch_id = ${branchId}::uuid AND j.status IN ${ACTIVE_STATUSES}
                 ORDER BY j.created_at ASC
             `),
-            // Contract jobs that failed in the last 7 days sit beside requires_attention:
-            // staff can recover both, so they share one list instead of showing in two.
+            // Current unresolved authority holds remain reachable after the failed-history cutoff.
+            // Their contact payload still expires after seven days.
             this.prisma.$queryRaw<RawJob[]>(Prisma.sql`
                 SELECT j.*, c.name AS client_name FROM "eformsign_document_job" j
                 LEFT JOIN "client" c ON c.id = j.client_id
                 WHERE j.branch_id = ${branchId}::uuid
                   AND (
                       j.status = 'requires_attention'
-                      OR (j.status = 'failed' AND ${contract} AND j.progress_step IS DISTINCT FROM ${SUPERSEDED_PROGRESS_STEP} AND j.completed_at >= now() - interval '7 days')
+                      OR (j.status = 'failed' AND ${contract} AND j.progress_step IS DISTINCT FROM ${SUPERSEDED_PROGRESS_STEP} AND (j.completed_at >= now() - interval '7 days'
+                          OR EXISTS (SELECT 1 FROM eformsign_contract_authority a WHERE a.creation_job_id = j.id AND a.branch_id = j.branch_id
+                              AND a.client_id = j.client_id AND a.phase <> 'closed')))
                   )
                 ORDER BY j.completed_at DESC NULLS LAST, j.created_at DESC
                 LIMIT 50
