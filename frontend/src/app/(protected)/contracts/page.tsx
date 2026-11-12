@@ -1181,6 +1181,7 @@ export default function ContractsPage() {
           }}
           onViewDocument={documentId => {
             setActiveSection("maternity");
+            setRegisterClientDocumentId(null);
             setSelectedDocId(documentId);
             setIsCreating(false);
           }}
