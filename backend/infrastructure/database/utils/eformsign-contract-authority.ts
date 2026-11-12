@@ -1,5 +1,6 @@
 import { Prisma } from "@prisma/client";
 import { ConflictException } from "@nestjs/common";
+import { SUPERSEDED_PROGRESS_STEP } from "domain/entities/eformsign-document-job.entity";
 
 export type AuthorityPhase = "reserved" | "creation_pending" | "creation_uncertain" | "document_ready" | "human_exposed" | "verified" | "blocked" | "closed";
 export interface AuthorityState {
@@ -178,14 +179,14 @@ export async function reserveAuthority(tx: Prisma.TransactionClient, input: Auth
             || previous.jobType !== "create_document" || previous.source !== "staff" || previous.requestKey.startsWith("service-record-")
             || (previous.payload && typeof previous.payload === "object" && Object.prototype.hasOwnProperty.call(previous.payload, "kind"))
             || previous.documentId || previous.status !== "failed" || previous.lastErrorCode !== "PRE_SEND_RETRY_EXHAUSTED"
-            || previous.progressStep === "superseded") throw new AuthorityConflictError();
+            || previous.progressStep === SUPERSEDED_PROGRESS_STEP) throw new AuthorityConflictError();
         const unresolved = await tx.eformsign_dispatch_intent.findFirst({ where: { branchId: current.branchId,
             clientId: current.clientId, action: "create", status: { in: ["started", "uncertain"] } }, select: { id: true } });
         if (unresolved) throw new AuthorityConflictError();
         const superseded = await tx.eformsign_document_job.updateMany({ where: { id: previous.id, branchId: current.branchId,
             clientId: current.clientId, contractGeneration: current.generation, payloadFingerprint: current.fingerprint,
             status: "failed", lastErrorCode: "PRE_SEND_RETRY_EXHAUSTED", progressStep: previous.progressStep, documentId: null },
-            data: { progressStep: "superseded" } });
+            data: { progressStep: SUPERSEDED_PROGRESS_STEP } });
         if (superseded.count !== 1 || !await compareAndSetAuthority(tx, { branchId: current.branchId, clientId: current.clientId,
             generation: current.generation, creationJobId: current.creationJobId, phase: current.phase,
             claimEpoch: current.claimEpoch, claimUserId: current.claimUserId }, { phase: "closed" })) throw new AuthorityConflictError();
