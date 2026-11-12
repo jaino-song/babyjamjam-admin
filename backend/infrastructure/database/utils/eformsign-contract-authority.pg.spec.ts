@@ -358,9 +358,38 @@ async function bounded<T>(promise: Promise<T>, ms: number): Promise<T> {
         expect(await db.eformsign_dispatch_intent.findUniqueOrThrow({ where: { id: closed.humanIntentId! } })).toMatchObject({
             status: "reconciled_delivered", reconciledOutcome: "delivered", reconciledByUserId: users[0], reconciledAt: expect.any(Date),
         });
+        const completedJob = await db.eformsign_document_job.findUniqueOrThrow({ where: { id: s.worker.jobId } });
+        const intents = await db.eformsign_dispatch_intent.count(), mirrors = await db.eformsign_doc.count();
+        for (const status of ["failed", "requires_attention"]) {
+            await db.eformsign_document_job.update({ where: { id: s.worker.jobId }, data: { status } });
+            await expect(s.recovery.open(f.claim.jobId, branches[0]!, users[0]!)).rejects.toThrow();
+            expect((await read())[0]).toEqual(closed);
+        }
+        await db.eformsign_document_job.update({ where: { id: s.worker.jobId }, data: { status: "completed", documentId: null } });
         await expect(s.recovery.open(f.claim.jobId, branches[0]!, users[0]!)).rejects.toThrow();
+        await db.eformsign_document_job.update({ where: { id: s.worker.jobId }, data: { documentId: document } });
+        await db.client.update({ where: { id: clients[0]! }, data: { eDocId: null } });
+        await expect(s.recovery.open(f.claim.jobId, branches[0]!, users[0]!)).rejects.toThrow();
+        expect((await read())[0]).toEqual(closed);
+        await db.client.update({ where: { id: clients[0]! }, data: { eDocId: document } });
+        const reopened = await s.recovery.open(f.claim.jobId, branches[0]!, users[0]!);
+        expect(reopened).toMatchObject({ phase: "closed", providerDocumentId: document, payload: {}, claimUserId: users[0], claimEpoch: f.claim.claimEpoch + 1n });
+        await expect(s.recovery.readClaim(f.claim)).rejects.toThrow();
+        await expect(s.recovery.readClaim({ ...f.claim, claimEpoch: reopened.claimEpoch })).resolves.toMatchObject({ phase: "closed" });
+        await expect(s.recovery.open(f.claim.jobId, branches[0]!, users[1]!)).rejects.toMatchObject({ code: "MANUAL_RECOVERY_CLAIMED" });
+        expect((await read())[0]!.claimEpoch).toBe(reopened.claimEpoch);
+        expect(await cas((await read())[0]!, { claimExpiresAt: new Date(Date.now() - 1000) })).toBe(true);
+        await expect(s.recovery.readClaim({ ...f.claim, claimEpoch: reopened.claimEpoch })).rejects.toThrow();
+        const taken = await s.recovery.open(f.claim.jobId, branches[0]!, users[1]!);
+        expect(taken).toMatchObject({ phase: "closed", claimUserId: users[1], claimEpoch: reopened.claimEpoch + 1n });
+        // Reopening changes only the fenced claim; completion and all document/intent counts are retained.
+        expect(await db.eformsign_document_job.findUniqueOrThrow({ where: { id: s.worker.jobId } })).toMatchObject({ ...completedJob, updatedAt: expect.any(Date) });
+        expect(await db.eformsign_dispatch_intent.count()).toBe(intents); expect(await db.eformsign_doc.count()).toBe(mirrors);
+        expect(await currentPointer()).toEqual({ eDocId: document });
         const next = await s.jobRepository.enqueue({ ...s.enqueue, requestKey: `next-${randomUUID()}`, activeKey: `next-${randomUUID()}` });
         expect(next.job.contractGeneration).not.toBe(s.worker.contractGeneration);
+        await expect(s.recovery.open(f.claim.jobId, branches[0]!, users[1]!)).rejects.toThrow();
+        await expect(s.recovery.readClaim({ ...f.claim, userId: users[1]!, claimEpoch: taken.claimEpoch })).rejects.toThrow();
         expect(await db.eformsign_dispatch_intent.count({ where: { action: "manual_process", generation: s.worker.contractGeneration } })).toBe(1);
     });
     it("P11 actual stale/unknown creation, changed prior pointer and tombstone refusals leave no partial effects", async () => {

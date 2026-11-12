@@ -204,8 +204,10 @@ export class SbEformsignContractRecoveryRepository implements IEformsignContract
     async open(jobId: string, branchId: string, userId: string) {
         return this.prisma.$transaction(async tx => {
             const state = await this.load(tx, jobId, branchId), a = state.authority;
-            if (!["failed", "requires_attention"].includes(state.job.status) && a.phase !== "verified") fail("RECOVERY_UNSUPPORTED", "unsupported_job");
-            if (["closed", "blocked"].includes(a.phase)) fail("RECOVERY_UNSUPPORTED", "unverified_creation");
+            const completedClosed = state.job.status === "completed" && a.phase === "closed" && a.providerDocumentId !== null
+                && state.job.documentId === a.providerDocumentId && state.pointer === a.providerDocumentId;
+            if (!["failed", "requires_attention"].includes(state.job.status) && a.phase !== "verified" && !completedClosed) fail("RECOVERY_UNSUPPORTED", "unsupported_job");
+            if (a.phase === "blocked" || (a.phase === "closed" && !completedClosed)) fail("RECOVERY_UNSUPPORTED", "unverified_creation");
             await this.snapshot(tx, state);
             if (a.claimUserId && a.claimUserId !== userId && a.claimExpiresAt && a.claimExpiresAt.getTime() > Date.now()) throw new ContractRecoveryError("MANUAL_RECOVERY_CLAIMED", 409, "claim_conflict", a.claimExpiresAt);
             if (a.claimEpoch >= 9223372036854775807n) fail();

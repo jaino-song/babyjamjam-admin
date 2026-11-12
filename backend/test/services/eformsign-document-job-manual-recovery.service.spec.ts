@@ -58,7 +58,8 @@ describe("manual recovery connected service with real authority adapter", () => 
         expect(f.draft.dispatchDraft).toHaveBeenCalledTimes(1); expect(f.state.intents).toHaveLength(3);
         f.provider.getDocument.mockClear(); f.provider.getTemplateWorkflowConfig.mockClear(); f.credentials.withCredentials.mockClear();
         await expect(f.service.verify(J, principal, f.state.authorities[0].claimEpoch)).resolves.toMatchObject({ kind: "verified" });
-        await expect(f.service.open(J, principal)).rejects.toBeInstanceOf(ContractRecoveryError);
+        await expect(f.service.open(J, principal)).resolves.toMatchObject({ kind: "verify_only" });
+        expect(f.draft.dispatchDraft).toHaveBeenCalledTimes(1);
         expect(f.provider.getDocument).not.toHaveBeenCalled(); expect(f.provider.getTemplateWorkflowConfig).not.toHaveBeenCalled(); expect(f.credentials.withCredentials).not.toHaveBeenCalled();
     });
     it.each(["unknown", "expired", "id", "template", "creator", "other-step", "missing-id", "read", "workflow-read"])("reopening refuses untrusted %s without bind/expose/complete", async defect => {
@@ -122,8 +123,58 @@ describe("manual recovery connected service with real authority adapter", () => 
         expect(f.state.clients[0].eDocId).toBe("bound-doc"); expect(f.state.jobs[0].status).toBe("completed"); expect(f.state.jobs[0].payload).toBeNull();
         expect(f.state.authorities[0].phase).toBe("closed"); expect(f.state.docs.find((row: any) => row.documentId === "bound-doc").clientId).toBe(2);
         await expect(f.service.verify(J, principal, BigInt(opened.claimEpoch))).resolves.toMatchObject({ kind: "verified" });
-        await expect(f.service.open(J, principal)).rejects.toBeInstanceOf(ContractRecoveryError);
+        await expect(f.service.open(J, principal)).resolves.toMatchObject({ kind: "verify_only" });
         await expect(new SbEformsignDocumentJobRepository(f.prisma).enqueue({ branchId: B, clientId: 2, jobType: "create_document", source: "staff", requestKey: "next", activeKey: "next", payload: { clientId: 2, contractData: data }, payloadFingerprint: F })).resolves.toMatchObject({ existing: false });
+    });
+    it("completed closed reopen renews a fenced claim without credentials, provider context or another draft", async () => {
+        const f = runtimeFixture(); f.manual(); const opened = await f.service.open(J, principal); f.forward();
+        await f.service.verify(J, principal, BigInt(opened.claimEpoch));
+        const before = structuredClone({ jobs: f.state.jobs, docs: f.state.docs, intents: f.state.intents, clients: f.state.clients });
+        f.credentials.withCredentials.mockClear(); f.credentials.withCredentials.mockRejectedValue(new Error("credentials unavailable"));
+        f.provider.getDocument.mockClear(); f.provider.getTemplateWorkflowConfig.mockClear(); f.options.generateDocumentOptions.mockClear(); f.draft.dispatchDraft.mockClear();
+        const reopened = await f.service.open(J, principal);
+        expect(reopened).toEqual({ kind: "verify_only", jobId: J, claimEpoch: "2", claimExpiresAt: expect.any(String) });
+        await expect(f.service.verify(J, principal, BigInt(opened.claimEpoch))).rejects.toMatchObject({ code: "RECOVERY_STALE" });
+        await expect(f.service.verify(J, principal, BigInt(reopened.claimEpoch))).resolves.toMatchObject({ kind: "verified" });
+        await expect(f.service.open(J, { ...principal, userId: I })).rejects.toMatchObject({ code: "MANUAL_RECOVERY_CLAIMED" });
+        f.state.authorities[0].claimExpiresAt = new Date(Date.now() - 1);
+        await expect(f.service.verify(J, principal, BigInt(reopened.claimEpoch))).rejects.toMatchObject({ code: "RECOVERY_STALE" });
+        await expect(f.service.open(J, { ...principal, userId: I })).resolves.toMatchObject({ kind: "verify_only", claimEpoch: "3" });
+        expect(f.state.authorities[0]).toMatchObject({ phase: "closed", claimUserId: I, claimEpoch: 3n });
+        expect({ jobs: f.state.jobs, docs: f.state.docs, intents: f.state.intents, clients: f.state.clients }).toEqual(before);
+        expect(f.credentials.withCredentials).not.toHaveBeenCalled(); expect(f.provider.getDocument).not.toHaveBeenCalled();
+        expect(f.provider.getTemplateWorkflowConfig).not.toHaveBeenCalled(); expect(f.options.generateDocumentOptions).not.toHaveBeenCalled(); expect(f.draft.dispatchDraft).not.toHaveBeenCalled();
+    });
+    it.each(["failed", "requires_attention", "processing", "blocked", "missing-document", "job-document", "pointer", "generation", "fingerprint", "job", "branch", "cas"])("completed reopen refuses %s without provider effects or claim writes", async defect => {
+        const f = runtimeFixture(); f.manual(); const opened = await f.service.open(J, principal); f.forward();
+        await f.service.verify(J, principal, BigInt(opened.claimEpoch));
+        if (["failed", "requires_attention", "processing"].includes(defect)) f.state.jobs[0].status = defect;
+        if (defect === "blocked") f.state.authorities[0].phase = "blocked";
+        if (defect === "missing-document") f.state.authorities[0].providerDocumentId = null;
+        if (defect === "job-document") f.state.jobs[0].documentId = "another";
+        if (defect === "pointer") f.state.clients[0].eDocId = "prior-doc";
+        if (defect === "generation") f.state.jobs[0].contractGeneration = I;
+        if (defect === "fingerprint") f.state.jobs[0].payloadFingerprint = "wrong";
+        if (defect === "job") f.state.authorities[0].creationJobId = I;
+        if (defect === "branch") f.state.clients[0].branchId = I;
+        if (defect === "cas") f.flags.casZero = true;
+        const before = structuredClone(f.state);
+        f.credentials.withCredentials.mockClear(); f.provider.getDocument.mockClear(); f.provider.getTemplateWorkflowConfig.mockClear(); f.draft.dispatchDraft.mockClear();
+        await expect(f.service.open(J, principal)).rejects.toBeInstanceOf(ContractRecoveryError);
+        expect(f.state).toEqual(before); expect(f.credentials.withCredentials).not.toHaveBeenCalled(); expect(f.provider.getDocument).not.toHaveBeenCalled();
+        expect(f.provider.getTemplateWorkflowConfig).not.toHaveBeenCalled(); expect(f.draft.dispatchDraft).not.toHaveBeenCalled();
+    });
+    it("new enqueue fences completed generation reopen and verify before provider access", async () => {
+        const f = runtimeFixture(); f.manual(); const opened = await f.service.open(J, principal); f.forward();
+        await f.service.verify(J, principal, BigInt(opened.claimEpoch));
+        const next = await new SbEformsignDocumentJobRepository(f.prisma).enqueue({ branchId: B, clientId: 2, jobType: "create_document", source: "staff", requestKey: "next", activeKey: "next", payload: { clientId: 2, contractData: data }, payloadFingerprint: F });
+        expect(next.job.contractGeneration).not.toBe(G);
+        const before = structuredClone(f.state);
+        f.credentials.withCredentials.mockClear(); f.provider.getDocument.mockClear(); f.provider.getTemplateWorkflowConfig.mockClear(); f.draft.dispatchDraft.mockClear();
+        await expect(f.service.open(J, principal)).rejects.toMatchObject({ code: "RECOVERY_STALE" });
+        await expect(f.service.verify(J, principal, BigInt(opened.claimEpoch))).rejects.toMatchObject({ code: "RECOVERY_STALE" });
+        expect(f.state).toEqual(before); expect(f.credentials.withCredentials).not.toHaveBeenCalled(); expect(f.provider.getDocument).not.toHaveBeenCalled();
+        expect(f.provider.getTemplateWorkflowConfig).not.toHaveBeenCalled(); expect(f.draft.dispatchDraft).not.toHaveBeenCalled();
     });
     it.each(["generation", "epoch", "user", "branch", "expiry", "pointer"])("wrong %s causes zero verify writes", async field => {
         const f = runtimeFixture(); f.manual(); await f.service.open(J, principal); f.forward(); f.events.length = 0;
