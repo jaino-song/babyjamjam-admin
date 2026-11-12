@@ -321,6 +321,27 @@ export class SbEformsignContractRecoveryRepository implements IEformsignContract
             await this.change(tx, state, { humanIntentId: intent.intent.id, phase: "human_exposed" }); return true;
         });
     }
+    async reexposeHuman(claim: ContractRecoveryClaim, evidence: ContractDocumentEvidence) {
+        await this.prisma.$transaction(async tx => {
+            const state = await this.load(tx, claim.jobId, claim.branchId, evidence.documentId); this.claimed(state, claim);
+            const a = state.authority;
+            if (a.phase !== "human_exposed" || !a.humanIntentId || a.providerDocumentId !== evidence.documentId
+                || evidence.confirmed || evidence.statusType !== "001" || evidence.stepType !== "00") fail();
+            await this.document(tx, state, evidence);
+            const pending = await tx.eformsign_dispatch_intent.findFirst({ where: { providerDocumentId: evidence.documentId, action: "finalize", status: { in: ["started", "uncertain"] } } });
+            if (pending) fail("REQUEST_CONFLICT");
+            const intent = await tx.eformsign_dispatch_intent.findUnique({ where: { id: a.humanIntentId } });
+            if (!intent || intent.branchId !== a.branchId || intent.clientId !== a.clientId || intent.action !== "manual_process"
+                || intent.status !== "started" || intent.providerDocumentId !== a.providerDocumentId
+                || intent.generation !== a.generation || intent.templateId !== evidence.templateId) fail();
+            const bumped = await tx.eformsign_dispatch_intent.updateMany({
+                where: { id: intent.id, branchId: a.branchId, clientId: a.clientId, action: "manual_process", status: "started",
+                    providerDocumentId: a.providerDocumentId, generation: a.generation, templateId: evidence.templateId, attemptCount: intent.attemptCount },
+                data: { attemptCount: { increment: 1 }, startedAt: new Date() },
+            });
+            if (bumped.count !== 1) fail();
+        });
+    }
     private async complete(tx: Prisma.TransactionClient, state: Locked, evidence: ContractDocumentEvidence, automatic: boolean) {
         const a = state.authority;
         if (!evidence.confirmed || (a.providerDocumentId && a.providerDocumentId !== evidence.documentId)) fail();

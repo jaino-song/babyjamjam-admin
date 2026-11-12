@@ -27,7 +27,7 @@ function job(overrides: Partial<EformsignDocumentJobEntity> = {}): EformsignDocu
         activeKey: "create:branch:7",
         payload: { clientId: 7, contractData: { customerName: "고객" } },
         payloadFingerprint: "a".repeat(64),
-        progressStep: "creating",
+        progressDetail: null, progressStep: "creating",
         attempts: 1,
         nextAttemptAt: new Date(),
         heartbeatAt: new Date(),

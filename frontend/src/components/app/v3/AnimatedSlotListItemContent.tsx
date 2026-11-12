@@ -55,11 +55,11 @@ export function AnimatedSlotListItemContent({
 }: AnimatedSlotListItemContentProps) {
   // TODO(data-component): Remove the legacy fallback after all callers migrate.
   const dataComponent =
-    canonicalDataComponent ?? legacyDataComponent ?? "desktop_v3_animated-slot-list_item-content";
+    canonicalDataComponent ?? legacyDataComponent;
   const sub = (suffix: string) =>
     canonicalDataComponent
       ? `${dataComponent}_${suffix}`
-      : `${dataComponent}-${suffix}`;
+      : dataComponent ? `${dataComponent}-${suffix}` : undefined;
   const hasSupportingContent = Boolean(subtitle || meta);
   const iconClassNames = cn(
     "h-[calc(20px*var(--glint-ui-scale,1))] w-[calc(20px*var(--glint-ui-scale,1))]",
@@ -114,14 +114,14 @@ export function AnimatedSlotListItemContent({
         className={cn("min-w-0 flex-1", contentClassName)}
       >
         <div
-          data-component={sub("title-row")}
+          data-component={sub(canonicalDataComponent ? "content_title-row" : "title-row")}
           className={cn(
             "flex items-center gap-[calc(8px*var(--glint-ui-scale,1))]",
             hasSupportingContent && "mb-[calc(2px*var(--glint-ui-scale,1))]"
           )}
         >
           <span
-            data-component={sub("title")}
+            data-component={sub(canonicalDataComponent ? "content_title-row_title" : "title")}
             className={cn(
               "truncate text-[calc(13.6px*var(--glint-ui-scale,1))] font-bold text-v3-dark",
               titleClassName
@@ -133,7 +133,7 @@ export function AnimatedSlotListItemContent({
 
         {subtitle ? (
           <div
-            data-component={sub("subtitle")}
+            data-component={sub(canonicalDataComponent ? "content_subtitle" : "subtitle")}
             className={cn(
               "min-w-0 text-[calc(11.2px*var(--glint-ui-scale,1))] text-v3-text-muted",
               subtitleClassName
@@ -152,7 +152,7 @@ export function AnimatedSlotListItemContent({
 
         {meta ? (
           <div
-            data-component={sub("meta")}
+            data-component={sub(canonicalDataComponent ? "content_meta" : "meta")}
             className={cn(
               "mt-[calc(6px*var(--glint-ui-scale,1))] flex items-center gap-[calc(12px*var(--glint-ui-scale,1))] overflow-hidden whitespace-nowrap text-[calc(10.4px*var(--glint-ui-scale,1))] leading-none text-v3-text-muted",
               metaClassName

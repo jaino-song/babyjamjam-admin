@@ -158,3 +158,88 @@ it.each(["finalize", "service-record"])("legacy-intent generation guard preserve
     await expect(new SbEformsignDocumentJobRepository(f.prisma).enqueue(input)).resolves.toMatchObject({ existing: false });
     expect(f.state.jobs[0].contractGeneration === null).toBe(kind === "service-record");
 });
+
+const draftEvidence = () => ({ documentId: "bound-doc", templateId: "template_ABC", companyId: "company-abc", creatorId: "service@example.test", statusType: "001", stepType: "00", stepIndex: "1", stepName: "write", confirmed: false, createdAt: new Date(), updatedAt: new Date(), expiresAt: new Date() });
+describe("reexposeHuman", () => {
+    const principal = { branchId: B, userId: U, branchRole: "manager" };
+    it.each(["started", "uncertain"])("refuses a pending %s finalize without any writes", async status => {
+        const f = runtimeFixture(); f.manual(); await f.service.open(J, principal);
+        const a = f.state.authorities[0];
+        const intent = f.state.intents.find((row: { id: string }) => row.id === a.humanIntentId);
+        f.state.intents.push({ ...intent, id: J, businessKey: "pending-finalize", action: "finalize", status });
+        const before = structuredClone(f.state), attemptCount = intent.attemptCount; f.events.length = 0;
+        await expect(f.repository.reexposeHuman({ jobId: J, branchId: B, userId: U, claimEpoch: a.claimEpoch }, draftEvidence())).rejects.toMatchObject({ code: "REQUEST_CONFLICT" });
+        expect(f.state.intents.find((row: { id: string }) => row.id === a.humanIntentId).attemptCount).toBe(attemptCount);
+        expect(f.state).toEqual(before); expect(f.events).toEqual([]);
+    });
+    it("refuses a tombstoned mirrored document without any writes", async () => {
+        const f = runtimeFixture(); f.manual(); await f.service.open(J, principal);
+        const a = f.state.authorities[0];
+        f.state.docs.find((row: { documentId: string }) => row.documentId === "bound-doc").permanentPurgeRequestedAt = new Date();
+        const before = structuredClone(f.state); f.events.length = 0;
+        await expect(f.repository.reexposeHuman({ jobId: J, branchId: B, userId: U, claimEpoch: a.claimEpoch }, draftEvidence())).rejects.toMatchObject({ code: "REQUEST_CONFLICT", reason: "document_mismatch" });
+        expect(f.state).toEqual(before); expect(f.events).toEqual([]);
+    });
+    it("reuses the same started intent, bumping only attemptCount and startedAt", async () => {
+        const f = runtimeFixture(); f.manual(); await f.service.open(J, principal);
+        const authority = structuredClone(f.state.authorities[0]);
+        const intent = f.state.intents.find((row: { id: string }) => row.id === authority.humanIntentId);
+        intent.startedAt = new Date(0); const before = structuredClone(intent);
+        f.tx.eformsign_dispatch_intent.create.mockClear(); f.events.length = 0;
+        await f.repository.reexposeHuman({ jobId: J, branchId: B, userId: U, claimEpoch: authority.claimEpoch }, draftEvidence());
+        expect(f.state.authorities[0]).toEqual(authority);
+        expect(intent).toEqual({ ...before, attemptCount: before.attemptCount + 1, startedAt: expect.any(Date) });
+        expect(intent.startedAt.getTime()).toBeGreaterThan(before.startedAt.getTime());
+        expect(f.events).toEqual(["intents.updateMany"]); expect(f.tx.eformsign_dispatch_intent.create).not.toHaveBeenCalled(); expect(f.draft.dispatchDraft).toHaveBeenCalledTimes(1);
+    });
+    it.each(["epoch", "user", "expiry", "phase", "missing-intent", "action", "status", "document", "generation", "template", "branch", "client", "cas", "confirmed-evidence", "non-draft-status", "non-write-step"])("refuses %s without any intent mutation", async defect => {
+        const f = runtimeFixture(); f.manual(); const opened = await f.service.open(J, principal);
+        const evidence = draftEvidence();
+        const claim = { jobId: J, branchId: B, userId: U, claimEpoch: BigInt(opened.claimEpoch) };
+        const a = f.state.authorities[0], intent = f.state.intents.find((row: { id: string }) => row.id === a.humanIntentId);
+        if (defect === "epoch") await f.repository.open(J, B, U);
+        if (defect === "user") claim.userId = I;
+        if (defect === "expiry") a.claimExpiresAt = new Date(0);
+        if (defect === "phase") a.phase = "document_ready";
+        if (defect === "missing-intent") a.humanIntentId = null;
+        if (defect === "action") intent.action = "create_draft";
+        if (defect === "status") intent.status = "uncertain";
+        if (defect === "document") intent.providerDocumentId = "other";
+        if (defect === "generation") intent.generation = I;
+        if (defect === "template") intent.templateId = "other";
+        if (defect === "branch") intent.branchId = I;
+        if (defect === "client") intent.clientId = 9;
+        if (defect === "cas") f.tx.eformsign_dispatch_intent.updateMany.mockResolvedValueOnce({ count: 0 });
+        if (defect === "confirmed-evidence") evidence.confirmed = true;
+        if (defect === "non-draft-status") evidence.statusType = "003";
+        if (defect === "non-write-step") evidence.stepType = "05";
+        const before = structuredClone(f.state); f.events.length = 0;
+        await expect(f.repository.reexposeHuman(claim, evidence)).rejects.toMatchObject({ code: "RECOVERY_STALE" });
+        expect(f.state).toEqual(before); expect(f.events).toEqual([]); expect(f.state.intents).toHaveLength(3);
+    });
+});
+
+describe("contract recovery preserves the last attempt's display detail", () => {
+    const assertWrites = (f: ReturnType<typeof runtimeFixture>) => {
+        expect(f.tx.eformsign_document_job.updateMany).toHaveBeenCalled();
+        for (const [{ data }] of [...f.tx.eformsign_document_job.updateMany.mock.calls, ...f.tx.eformsign_document_job.update.mock.calls]) expect(data).not.toHaveProperty("progressDetail");
+        for (const sql of f.sql) expect(sql.text).not.toContain("progress_detail");
+        expect(f.state.jobs[0].progressDetail).toBe("info-inserted");
+    };
+    it.each([true, false])("recoverBeforeCreation preserves detail (retry=%s)", async retry => {
+        const f = runtimeFixture(); f.state.jobs[0].progressDetail = "info-inserted"; f.state.jobs[0].attempts = retry ? 1 : 4;
+        await f.repository.recoverBeforeCreation(worker, retry ? new Date() : null, "PRE_SEND_RETRY_EXHAUSTED"); assertWrites(f);
+    });
+    it.each([true, false])("completion preserves detail (automatic=%s)", async automatic => {
+        const f = runtimeFixture(); f.state.jobs[0].progressDetail = "info-inserted";
+        if (automatic) {
+            await f.repository.claimCreation(intentInput, worker, { contractData: data, workflow: workflowPlan });
+            Object.assign(f.state.intents[0], { status: "accepted", providerDocumentId: "bound-doc" }); f.forward();
+            await f.service.completeAutomatic(worker, "bound-doc", { branchId: B, source: "worker" });
+        } else {
+            f.manual(); const opened = await f.service.open(J, { branchId: B, userId: U, branchRole: "manager" }); f.forward();
+            await f.service.verify(J, { branchId: B, userId: U, branchRole: "manager" }, BigInt(opened.claimEpoch));
+        }
+        assertWrites(f);
+    });
+});

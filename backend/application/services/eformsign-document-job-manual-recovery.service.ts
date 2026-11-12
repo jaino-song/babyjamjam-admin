@@ -104,8 +104,27 @@ export class EformsignDocumentJobManualRecoveryService {
         return this.bounded(async fresh => {
             let state = await this.repository.open(jobId, principal.branchId!, principal.userId!); fresh();
             const claim = this.claim(state, principal.userId!), response = this.response(state);
-            if (["human_exposed", "verified"].includes(state.phase)) return { kind: "verify_only" as const, ...response };
+            if (state.phase === "verified") return { kind: "verify_only" as const, ...response };
             return this.withCredentials(principal, async credentials => {
+                if (state.phase === "human_exposed") {
+                    let evidence: ContractDocumentEvidence;
+                    try {
+                        if (!state.providerDocumentId) unsupported();
+                        const context = await this.context(state, credentials, fresh);
+                        evidence = await this.evidence(credentials, context, state.providerDocumentId, fresh);
+                    } catch (error) {
+                        if (error instanceof ContractRecoveryError && error.code === "RECOVERY_UNSUPPORTED") {
+                            throw new ContractRecoveryError("PROVIDER_STATE_UNAVAILABLE", 503);
+                        }
+                        throw error;
+                    }
+                    if (evidence.confirmed) {
+                        await this.repository.completeManual(claim, evidence); this.invalidate(state.branchId);
+                        return { kind: "verify_only" as const, ...response };
+                    }
+                    await this.repository.reexposeHuman(claim, evidence); fresh();
+                    return { kind: "editable" as const, ...response, document: { companyId: evidence.companyId, templateId: evidence.templateId, documentId: evidence.documentId } };
+                }
                 const context = await this.context(state, credentials, fresh);
                 let id = state.providerDocumentId ?? state.draftIntent?.providerDocumentId ?? state.creationIntent?.providerDocumentId;
                 let draftIntentId: string | undefined;

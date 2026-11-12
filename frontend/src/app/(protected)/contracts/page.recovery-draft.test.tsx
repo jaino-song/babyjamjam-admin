@@ -170,7 +170,7 @@ describe("ContractsPage recovery dialog with an ordinary (non-processing) creati
     mockDocuments = [targetDocument];
     useFormStore.getState().resetAll();
     (eformsignApi.getDocument as jest.Mock).mockResolvedValue(targetDocument);
-    openRecovery.mockResolvedValue({ kind: "verify_only", jobId: "11111111-1111-4111-8111-111111111111", claimEpoch: "42", claimExpiresAt: new Date(Date.now() + 60000).toISOString() });
+    openRecovery.mockResolvedValue({ kind: "editable", document: { companyId: "company-abc", templateId: "template_ABC", documentId: "document012" }, jobId: "11111111-1111-4111-8111-111111111111", claimEpoch: "42", claimExpiresAt: new Date(Date.now() + 60000).toISOString() });
   });
 
   it("keeps the draft form mounted with the same step and typed value after recovery closes", async () => {
@@ -181,10 +181,10 @@ describe("ContractsPage recovery dialog with an ordinary (non-processing) creati
     expect(document.querySelector(DETAIL_SELECTOR)).not.toBeInTheDocument();
 
     page.followLink("recoverJobId=11111111-1111-4111-8111-111111111111");
-    await screen.findByText("전자문서 수동 처리");
-    fireEvent.click(await screen.findByRole("button", { name: "닫기" }));
+    await screen.findByText("전자문서 수동 전송");
+    fireEvent.click(await screen.findByRole("button", { name: "Close" }));
 
-    await waitFor(() => expect(screen.queryByText("전자문서 수동 처리")).not.toBeInTheDocument());
+    await waitFor(() => expect(screen.queryByText("전자문서 수동 전송")).not.toBeInTheDocument());
     // The same form stays visible after the nested recovery closes.
     expect(document.querySelector(FORM_SELECTOR)).toBe(formBefore);
     expect(document.querySelector(SESSION_WRAPPER_SELECTOR)).not.toHaveClass("hidden");
@@ -204,9 +204,9 @@ describe("ContractsPage recovery dialog with an ordinary (non-processing) creati
     mockParams = new URLSearchParams("recoverJobId=11111111-1111-4111-8111-111111111111");
     renderPage();
 
-    fireEvent.click(await screen.findByRole("button", { name: "닫기" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Close" }));
 
-    await waitFor(() => expect(screen.queryByText("전자문서 수동 처리")).not.toBeInTheDocument());
+    await waitFor(() => expect(screen.queryByText("전자문서 수동 전송")).not.toBeInTheDocument());
     expect(document.querySelector(FORM_SELECTOR)).not.toBeInTheDocument();
     expect(document.querySelector(SESSION_WRAPPER_SELECTOR)).not.toBeInTheDocument();
   });

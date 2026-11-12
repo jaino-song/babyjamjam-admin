@@ -28,7 +28,7 @@ function job(overrides: Partial<EformsignDocumentJobEntity> = {}): EformsignDocu
             contractData: contractData(),
         },
         payloadFingerprint: "a".repeat(64),
-        progressStep: null,
+        progressDetail: null, progressStep: null,
         attempts: 1,
         nextAttemptAt: new Date(),
         heartbeatAt: new Date(),
@@ -1780,6 +1780,7 @@ describe("EformsignDocumentJobWorkerService", () => {
             claimed.leaseToken,
             "creating",
             expect.any(Date),
+            "info-inserted",
         );
     });
 
@@ -2323,6 +2324,7 @@ describe("EformsignDocumentJobWorkerService", () => {
                 status: "queued" as FakeStatus,
                 attempts: 0,
                 progressStep: null as string | null,
+                progressDetail: null as string | null,
                 leaseToken: null as string | null,
                 nextAttemptAt: new Date(0),
                 lastErrorCode: null as string | null,
@@ -2333,6 +2335,7 @@ describe("EformsignDocumentJobWorkerService", () => {
                 status: row.status,
                 attempts: row.attempts,
                 progressStep: row.progressStep,
+                progressDetail: row.progressDetail,
                 leaseToken: row.leaseToken,
                 lastErrorCode: row.lastErrorCode,
             });
@@ -2342,6 +2345,7 @@ describe("EformsignDocumentJobWorkerService", () => {
                 claimDue: jest.fn(async () => {
                     if (row.status !== "queued" || row.nextAttemptAt.getTime() > Date.now()) return [];
                     row.status = "processing";
+                    row.progressDetail = null;
                     row.attempts += 1;
                     row.leaseToken = `00000000-0000-4000-8000-0000000001${String(row.attempts).padStart(2, "0")}`;
                     return [toEntity()];
@@ -2356,9 +2360,11 @@ describe("EformsignDocumentJobWorkerService", () => {
                     row.progressStep = "dispatch_authorized";
                     return { kind: "allow" };
                 }),
-                updateProgress: jest.fn(async (_id: string, leaseToken: string, step: string) => {
+                updateProgress: jest.fn(async (_id: string, leaseToken: string, step: string, _heartbeatAt?: Date, detail?: string) => {
                     if (!holdsLease(leaseToken) || (row.status !== "processing" && row.status !== "reconciling")) return null;
                     progressWrites.push(step);
+                    const stages = ["client-started", "info-inserted", "creating", "sent"];
+                    if (stages.indexOf(detail ?? "") > stages.indexOf(row.progressDetail ?? "")) row.progressDetail = detail!;
                     row.progressStep = step;
                     return toEntity();
                 }),
@@ -2503,6 +2509,7 @@ describe("EformsignDocumentJobWorkerService", () => {
             await Promise.resolve();
             expect(notificationService.sendToBranchUsers).toHaveBeenCalledTimes(1);
             expect(fake.progressWrites.every((step) => step === "dispatch_authorized")).toBe(true);
+            expect(fake.row.progressDetail).toBe("info-inserted");
         });
 
         it("keeps the fence up for the whole attempt: every progress write and heartbeat persists dispatch_authorized", async () => {
@@ -2530,10 +2537,15 @@ describe("EformsignDocumentJobWorkerService", () => {
 
             expect(fake.progressWrites).toEqual(["dispatch_authorized", "dispatch_authorized", "dispatch_authorized"]);
             expect(fake.row.progressStep).toBe("dispatch_authorized");
+            expect(fake.repository.updateProgress.mock.calls.map(call => [call[2], call[4]])).toEqual([
+                ["dispatch_authorized", "client-started"], ["dispatch_authorized", "info-inserted"], ["dispatch_authorized", "info-inserted"],
+            ]);
+            expect(fake.row.progressDetail).toBe("info-inserted");
 
             finish({ ok: false, reason: "editor timeout", fallbackHint: "iframe", durationMs: 1 });
             await processing;
             expect(fake.row.status).toBe("queued");
+            expect(fake.row.progressDetail).toBe("info-inserted");
         });
 
         it("reconciles and never retries when persisting the creating step fails, before the click can run", async () => {

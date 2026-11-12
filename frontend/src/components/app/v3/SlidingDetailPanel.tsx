@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, type ReactNode } from "react";
 import { ChevronLeft } from "lucide-react";
+import { PaneHeader } from "./PaneHeader";
 import { Button } from "@/components/ui/button";
 
 interface SlidingDetailPanelBaseProps {
@@ -15,14 +16,14 @@ interface SlidingDetailPanelBaseProps {
 }
 
 type SlidingDetailPanelProps = SlidingDetailPanelBaseProps & (
-    | { motion?: "parallax"; headerActions?: never; headerSummary?: never }
-    | { motion: "page"; headerActions?: ReactNode; headerSummary?: ReactNode }
+    | { motion?: "parallax"; headerActions?: never; headerSummary?: never; headerInset?: never }
+    | { motion: "page"; headerActions?: ReactNode; headerSummary?: ReactNode; headerInset?: "default" | "compact" }
 );
 
 /** Desktop drill-down with default mobile SlidingCard parallax or full-page motion. */
 export function SlidingDetailPanel({
     "data-component": dataComponent, open, onBack, backLabel, list, detail,
-    motion = "parallax", headerActions, headerSummary, interactionPaused = false,
+    motion = "parallax", headerActions, headerSummary, headerInset, interactionPaused = false,
 }: SlidingDetailPanelProps) {
     const backRef = useRef<HTMLButtonElement>(null);
     const returnFocusRef = useRef<HTMLElement | null>(null);
@@ -65,12 +66,8 @@ export function SlidingDetailPanel({
                 className="sliding-detail-content" aria-hidden={!open} inert={!open || undefined}>
                 <div data-component={dataComponent ? `${dataComponent}_detail-pane_header` : undefined} data-slot="sliding-detail-header" data-layout={hasHeaderSlots ? "stack" : undefined} className="sliding-detail-header">
                     {hasHeaderSlots ? <>
-                        <div data-component={dataComponent ? `${dataComponent}_detail-pane_header_row` : undefined}
-                            data-slot="sliding-detail-header-row" className="sliding-detail-header-row">
-                            {backButton}
-                            {headerActions != null ? <div data-component={dataComponent ? `${dataComponent}_detail-pane_header_row_actions` : undefined}
-                                data-slot="sliding-detail-header-actions" className="sliding-detail-header-actions">{headerActions}</div> : null}
-                        </div>
+                        <PaneHeader variant="back" backRef={backRef} backLabel={backLabel} onBack={onBack} actions={headerActions} inset={headerInset}
+                            data-component={dataComponent ? `${dataComponent}_detail-pane_header_row` : undefined} />
                         {headerSummary != null ? <div data-component={dataComponent ? `${dataComponent}_detail-pane_header_summary` : undefined}
                             data-slot="sliding-detail-header-summary" className="sliding-detail-header-summary">{headerSummary}</div> : null}
                     </> : backButton}

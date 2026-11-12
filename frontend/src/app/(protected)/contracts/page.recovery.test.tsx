@@ -156,16 +156,16 @@ describe("ContractsPage iframe recovery entry", () => {
     jest.clearAllMocks(); mockParams = new URLSearchParams(); mockMountCount = 0; mockDocuments = [targetDocument];
     useFormStore.getState().resetAll();
     (eformsignApi.getDocument as jest.Mock).mockResolvedValue(targetDocument);
-    openRecovery.mockResolvedValue({ kind: "verify_only", jobId: "11111111-1111-4111-8111-111111111111", claimEpoch: "42", claimExpiresAt: new Date(Date.now() + 60000).toISOString() });
+    openRecovery.mockResolvedValue({ kind: "editable", document: { companyId: "company-abc", templateId: "template_ABC", documentId: "document012" }, jobId: "11111111-1111-4111-8111-111111111111", claimEpoch: "42", claimExpiresAt: new Date(Date.now() + 60000).toISOString() });
   });
   it("opens the iframe presentation once, clears the URL, and never claims or resolves through legacy methods", async () => {
     mockParams = new URLSearchParams("recoverJobId=11111111-1111-4111-8111-111111111111"); renderPage();
-    await screen.findByText("이미 열린 문서가 있어 결과 확인만 할 수 있어요.");
+    await screen.findByText("전자문서 수동 전송");
     expect(mockReplace).toHaveBeenCalledWith("/contracts", { scroll: false });
     expect(openRecovery).toHaveBeenCalledTimes(1);
     expect(openRecovery).toHaveBeenCalledWith("11111111-1111-4111-8111-111111111111");
-    fireEvent.click(screen.getByRole("button", { name: "닫기" }));
-    await waitFor(() => expect(screen.queryByText("전자문서 수동 처리")).not.toBeInTheDocument());
+    fireEvent.click(screen.getByRole("button", { name: "Close" }));
+    await waitFor(() => expect(screen.queryByText("전자문서 수동 전송")).not.toBeInTheDocument());
     expect(eformsignApi.claimDocumentJobRecovery).not.toHaveBeenCalled();
     expect(eformsignApi.resolveDocumentJob).not.toHaveBeenCalled();
     expect(openRecovery).toHaveBeenCalledTimes(1);
@@ -175,7 +175,7 @@ describe("ContractsPage iframe recovery entry", () => {
     const page = renderPage(); fireEvent.click(sendButton()); fireEvent.click(screen.getByText("stub-begin-session"));
     useFormStore.getState().setName("김하늘"); const mountBefore = screen.getByTestId("stub-mount").textContent;
     page.followLink("recoverJobId=11111111-1111-4111-8111-111111111111");
-    await screen.findByText("전자문서 수동 처리"); fireEvent.click(screen.getByRole("button", { name: "닫기" }));
+    await screen.findByText("전자문서 수동 전송"); fireEvent.click(screen.getByRole("button", { name: "Close" }));
     expect(stubStep()).toBe(String(PROCESSING_STEP)); expect(screen.getByTestId("stub-mount").textContent).toBe(mountBefore);
     expect(useFormStore.getState().name).toBe("김하늘");
   });

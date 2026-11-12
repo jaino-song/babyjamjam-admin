@@ -8,6 +8,8 @@ import { verifyManualRecoveryRequestSchema, type VerifyManualRecoveryResponse } 
 import { ManualDocumentJobRecoveryDialog } from './ManualDocumentJobRecoveryDialog';
 import { ContractDocumentJobsPopover } from './ContractDocumentJobsPopover';
 
+const showToast = jest.fn();
+jest.mock('@/hooks/use-toast', () => ({ toast: (...args: unknown[]) => showToast(...args) }));
 jest.mock('@/lib/api/client', () => ({ api: { post: jest.fn() } }));
 jest.mock('next/navigation', () => ({ usePathname: () => '/contracts', useRouter: () => ({ push: jest.fn() }) }));
 const refreshSummary = jest.fn(), refreshJobs = jest.fn();
@@ -31,6 +33,7 @@ async function frameSession() {
 beforeEach(() => {
   Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1280 });
   jest.clearAllMocks(); open.mockResolvedValue(editable()); verify.mockResolvedValue(pending);
+  refreshJobs.mockResolvedValue({ data: { active: [], requiresAttention: [], recent: [] } });
   jest.spyOn(eformsignApi, 'resolveDocumentJob');
   jest.mocked(api.post).mockImplementation(async (url, body) => {
     if (url === `/eformsign-docs/jobs/${jobId}/recovery/open`) return { data: await open(jobId) };
@@ -54,83 +57,131 @@ test.each([1024, 1280])('desktop StrictMode viewport %s opens once and initializ
   expect(screen.getByRole('dialog')).toHaveClass('z-[1010]');
 });
 
-test('verify_only never mounts a frame; pending is not complete and verified refreshes once', async () => {
-  open.mockResolvedValue({ kind: 'verify_only', jobId, claimEpoch: '42', claimExpiresAt: editable().claimExpiresAt });
-  render(tree());
-  const button = await screen.findByRole('button', { name: '결과 확인' });
-  expect(screen.queryByTitle('이폼사인 수동 전송')).not.toBeInTheDocument();
-  fireEvent.click(button);
-  await screen.findByText('아직 전송 결과가 확인되지 않았어요. 확인 후 다시 눌러 주세요.');
-  expect(refreshJobs).not.toHaveBeenCalled();
-  verify.mockResolvedValue({ ...pending, kind: 'verified' }); fireEvent.click(button);
-  await screen.findByText('서버에서 전송 결과를 확인했어요.');
+
+test('verified closes the editor with a success toast and refreshes the job detail', async () => {
+  verify.mockResolvedValue({ ...pending, kind: 'verified' });
+  render(tree()); const h = await frameSession(); h.message('CHANGED');
+  await waitFor(() => expect(close).toHaveBeenCalledTimes(1));
+  expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  expect(showToast).toHaveBeenCalledWith({ variant: 'success', description: '전자문서를 전송했어요' });
   expect(refreshJobs).toHaveBeenCalledTimes(1); expect(refreshSummary).toHaveBeenCalledTimes(1);
-  expect(verify.mock.calls).toEqual([[jobId, '42'], [jobId, '42']]);
-  expect(eformsignApi.resolveDocumentJob).not.toHaveBeenCalled();
 });
 
-test('wrong identity/envelope is ignored; concurrent CHANGED and manual clicks serialize', async () => {
+test.each([true, false])('verify_only closes without a dialog or verify and refetches completed=%s', async completed => {
+  open.mockResolvedValue({ kind: 'verify_only', jobId, claimEpoch: '42', claimExpiresAt: editable().claimExpiresAt });
+  refreshJobs.mockImplementation(async () => {
+    expect(close).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    return { data: { active: [], requiresAttention: [], recent: completed ? [{ jobId, status: 'completed' }] : [] } };
+  });
+  render(tree());
+  await waitFor(() => expect(showToast).toHaveBeenCalledWith({ variant: completed ? 'success' : 'destructive', description: completed ? '전자문서를 전송했어요' : '이폼사인 상태를 확인하지 못했어요. 잠시 후 다시 눌러 주세요.' }));
+  expect(verify).not.toHaveBeenCalled(); expect(document.querySelector('iframe')).toBeNull();
+});
+
+test('wrong identity/envelope is ignored and concurrent CHANGED events serialize', async () => {
   let finish!: (value: VerifyManualRecoveryResponse) => void;
   verify.mockImplementation(() => new Promise(resolve => { finish = resolve; }));
   render(tree()); const h = await frameSession();
   h.message('CHANGED', {}, h.frame.contentWindow, 'https://evil.example');
-  h.message('CHANGED', {}, window); h.message('CHANGED', { nonce: 'b'.repeat(64) });
-  h.message('CHANGED', { claimEpoch: '41' });
+  h.message('CHANGED', {}, window); h.message('CHANGED', { nonce: 'b'.repeat(64) }); h.message('CHANGED', { claimEpoch: '41' });
   expect(verify).not.toHaveBeenCalled();
-  h.message('CHANGED'); h.message('CHANGED'); fireEvent.click(screen.getByRole('button', { name: '확인 중…' }));
-  expect(verify).toHaveBeenCalledTimes(1);
+  h.message('CHANGED'); h.message('CHANGED'); expect(verify).toHaveBeenCalledTimes(1);
   await act(async () => { finish(pending); });
-  expect(refreshJobs).not.toHaveBeenCalled();
+  expect(close).not.toHaveBeenCalled(); expect(refreshJobs).not.toHaveBeenCalled(); expect(showToast).not.toHaveBeenCalled();
+  expect(screen.queryByRole('alert')).not.toBeInTheDocument(); expect(screen.queryByRole('button', { name: '결과 확인' })).not.toBeInTheDocument();
 });
 
-test('close and unmount send CLOSE, remove listeners and prevent late callbacks or resolve', async () => {
+test.each(['x', 'unmount'])('%s sends CLOSE, removes listeners and ignores late messages without a toast', async how => {
   const view = render(tree()); const h = await frameSession();
   const remove = jest.spyOn(window, 'removeEventListener');
-  fireEvent.click(screen.getByRole('button', { name: '닫기' }));
-  expect(close).toHaveBeenCalledTimes(1);
+  if (how === 'x') fireEvent.click(screen.getByRole('button', { name: 'Close' })); else view.unmount();
+  expect(close).toHaveBeenCalledTimes(how === 'x' ? 1 : 0);
   expect(h.post).toHaveBeenCalledWith(expect.objectContaining({ type: 'CLOSE', nonce: h.nonce }), window.location.origin);
   expect(remove.mock.calls.some(([type, listener]) => type === 'message' && typeof listener === 'function' && listener.name === 'receive')).toBe(true);
-  h.message('CHANGED'); view.unmount(); h.message('CHANGED');
-  expect(verify).not.toHaveBeenCalled(); expect(eformsignApi.resolveDocumentJob).not.toHaveBeenCalled();
+  h.message('CHANGED'); h.message('ERROR'); view.unmount();
+  expect(verify).not.toHaveBeenCalled(); expect(showToast).not.toHaveBeenCalled(); expect(eformsignApi.resolveDocumentJob).not.toHaveBeenCalled();
 });
 
-test('expiry tears down the frame without reopening; stale verification cannot refresh', async () => {
+test.each([true, false])('expiry closes before refetch, never verifies an expired reservation, completed=%s', async completed => {
   jest.useFakeTimers(); open.mockResolvedValue({ ...editable(), claimExpiresAt: new Date(Date.now() + 1000).toISOString() });
+  refreshJobs.mockResolvedValue({ data: { active: [], requiresAttention: [], recent: completed ? [{ jobId, status: 'completed' }] : [] } });
   render(tree()); const h = await frameSession();
-  act(() => { jest.advanceTimersByTime(1001); });
-  expect(screen.queryByTitle('이폼사인 수동 전송')).not.toBeInTheDocument();
-  h.message('CHANGED'); expect(verify).not.toHaveBeenCalled(); expect(open).toHaveBeenCalledTimes(1);
-  verify.mockResolvedValue({ ...pending, kind: 'verified', claimEpoch: '41' });
-  fireEvent.click(screen.getByRole('button', { name: '결과 확인' }));
-  await waitFor(() => expect(screen.getByText('결과를 확인하지 못했어요. 잠시 후 결과 확인을 다시 눌러 주세요.')).toBeInTheDocument());
-  expect(refreshJobs).not.toHaveBeenCalled();
+  await act(async () => { jest.advanceTimersByTime(1001); });
+  expect(close).toHaveBeenCalledTimes(1); expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  expect(refreshJobs).toHaveBeenCalledTimes(1); expect(verify).not.toHaveBeenCalled();
+  expect(showToast).toHaveBeenCalledWith({ variant: completed ? 'success' : 'destructive', description: completed ? '전자문서를 전송했어요' : '10분이 지나 화면이 닫혔어요. 수동 전송 버튼을 다시 누르면 이어서 진행할 수 있어요.' });
+  h.message('CHANGED'); expect(open).toHaveBeenCalledTimes(1); expect(verify).not.toHaveBeenCalled();
 });
 
-test.each([401, 403, 409])('refused %s never shows iframe or raw error text', async status => {
-  open.mockRejectedValue({ isAxiosError: true, response: { status, data: { code: 'RECOVERY_UNSUPPORTED', reason: 'legacy_unbound', message: 'private-provider' } } });
-  render(tree());
-  await waitFor(() => expect(screen.queryByRole('status')).not.toBeInTheDocument());
-  expect(screen.queryByTitle('이폼사인 수동 전송')).not.toBeInTheDocument();
-  expect(document.body.textContent).not.toContain('private-provider'); expect(verify).not.toHaveBeenCalled();
-});
-
-test('onLoad can initialize first, and bridge ERROR never proves completion or retries open', async () => {
-  render(tree()); const h = await frameSession();
-  fireEvent.load(h.frame); h.message('READY');
+test.each([true, false])('bridge ERROR closes and checks once, sent=%s', async sent => {
+  let finish!: (value: VerifyManualRecoveryResponse) => void;
+  verify.mockImplementation(() => new Promise(resolve => { finish = resolve; }));
+  render(tree()); const h = await frameSession(); fireEvent.load(h.frame); h.message('READY');
   expect(h.post).toHaveBeenCalledTimes(1);
-  h.message('ERROR');
-  expect(screen.getByText('전자문서 화면을 확인하지 못했어요. 결과 확인을 눌러 서버 상태를 확인해 주세요.')).toBeInTheDocument();
-  expect(verify).not.toHaveBeenCalled(); expect(refreshJobs).not.toHaveBeenCalled(); expect(open).toHaveBeenCalledTimes(1);
+  h.message('ERROR'); h.message('ERROR');
+  expect(close).toHaveBeenCalledTimes(1); expect(screen.queryByRole('dialog')).not.toBeInTheDocument(); expect(verify).toHaveBeenCalledTimes(1);
+  await act(async () => { finish({ ...pending, kind: sent ? 'verified' : 'pending' }); });
+  expect(showToast).toHaveBeenCalledWith({ variant: sent ? 'success' : 'destructive', description: sent ? '전자문서를 전송했어요' : '이폼사인 연결에 실패했어요. 잠시 후 다시 시도해 주세요.' });
+  expect(open).toHaveBeenCalledTimes(1);
+  expect(refreshJobs).toHaveBeenCalledTimes(sent ? 1 : 0);
+  expect(refreshSummary).toHaveBeenCalledTimes(sent ? 1 : 0);
 });
 
-test('a verify response arriving after unmount cannot refresh the jobs provider', async () => {
+test.each(['changed', 'close'])('a failed live check keeps the editor open without a toast until %s', async next => {
+  verify.mockRejectedValueOnce(new Error('private'));
+  render(tree()); const h = await frameSession();
+  await act(async () => { h.message('CHANGED'); });
+  expect(verify).toHaveBeenCalledTimes(1);
+  expect(screen.getByTitle('이폼사인 수동 전송')).toBe(h.frame);
+  expect(screen.getByRole('dialog')).toBeInTheDocument();
+  expect(close).not.toHaveBeenCalled(); expect(showToast).not.toHaveBeenCalled();
+  expect(refreshJobs).not.toHaveBeenCalled(); expect(refreshSummary).not.toHaveBeenCalled();
+  expect(h.post).not.toHaveBeenCalledWith(expect.objectContaining({ type: 'CLOSE' }), expect.anything());
+  if (next === 'changed') {
+    verify.mockResolvedValueOnce({ ...pending, kind: 'verified' });
+    await act(async () => { h.message('CHANGED'); });
+    expect(verify).toHaveBeenCalledTimes(2);
+    expect(showToast).toHaveBeenCalledWith({ variant: 'success', description: '전자문서를 전송했어요' });
+    expect(refreshJobs).toHaveBeenCalledTimes(1); expect(refreshSummary).toHaveBeenCalledTimes(1);
+  } else {
+    fireEvent.click(screen.getByRole('button', { name: 'Close' }));
+    expect(verify).toHaveBeenCalledTimes(1); expect(showToast).not.toHaveBeenCalled();
+  }
+  expect(close).toHaveBeenCalledTimes(1);
+  expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+});
+
+test.each(['refetch', 'bridge'])('%s check failure closes with the result-check toast', async kind => {
+  if (kind === 'refetch') {
+    open.mockResolvedValue({ kind: 'verify_only', jobId, claimEpoch: '42', claimExpiresAt: editable().claimExpiresAt });
+    refreshJobs.mockResolvedValue({ error: new Error('private') }); render(tree());
+  } else {
+    verify.mockRejectedValue(new Error('private')); render(tree()); const h = await frameSession(); h.message('ERROR');
+  }
+  await waitFor(() => expect(showToast).toHaveBeenCalledWith({ variant: 'destructive', description: '전송 결과를 확인하지 못했어요. 잠시 후 수동 전송을 다시 눌러 주세요.' }));
+  expect(close).toHaveBeenCalledTimes(1); expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+});
+
+test.each([
+  [401, 'RECOVERY_UNAVAILABLE', '로그인이 필요해요. 다시 로그인한 뒤 작업을 열어 주세요.'],
+  [403, 'RECOVERY_UNAVAILABLE', '이 작업은 관리자 권한이 필요해요. 지점 관리자에게 요청해 주세요.'],
+  [409, 'RECOVERY_UNAVAILABLE', '다른 곳에서 처리 중이거나 작업 상태가 바뀌었어요. 목록에서 다시 확인해 주세요.'],
+  [503, 'RECOVERY_UNAVAILABLE', '이폼사인 상태를 확인하지 못했어요. 잠시 후 다시 눌러 주세요.'],
+])('open failure %s uses safe toast copy and closes without an empty dialog', async (status, code, description) => {
+  open.mockRejectedValue({ isAxiosError: true, response: { status, data: { code, message: 'private-provider' } } });
+  render(tree());
+  await waitFor(() => expect(showToast).toHaveBeenCalledWith({ variant: 'destructive', description }));
+  expect(close).toHaveBeenCalledTimes(1); expect(screen.queryByRole('dialog')).not.toBeInTheDocument(); expect(verify).not.toHaveBeenCalled();
+});
+
+test.each(['x', 'unmount'])('a verification arriving after %s cannot refresh or show a toast', async how => {
   let finish!: (value: VerifyManualRecoveryResponse) => void;
   verify.mockImplementation(() => new Promise(resolve => { finish = resolve; }));
   const view = render(tree()); const h = await frameSession(); h.message('CHANGED');
-  expect(verify).toHaveBeenCalledTimes(1); view.unmount();
-  expect(h.post).toHaveBeenCalledWith(expect.objectContaining({ type: 'CLOSE' }), window.location.origin);
+  if (how === 'x') fireEvent.click(screen.getByRole('button', { name: 'Close' })); else view.unmount();
   await act(async () => { finish({ ...pending, kind: 'verified' }); });
-  expect(refreshJobs).not.toHaveBeenCalled(); expect(refreshSummary).not.toHaveBeenCalled();
+  expect(refreshJobs).not.toHaveBeenCalled(); expect(refreshSummary).not.toHaveBeenCalled(); expect(showToast).not.toHaveBeenCalled();
 });
 
 test('late open responses after unmount cannot create a frame or initialize it', async () => {
@@ -138,26 +189,17 @@ test('late open responses after unmount cannot create a frame or initialize it',
   open.mockImplementation(() => new Promise(resolve => { finish = resolve; }));
   const view = render(<StrictMode>{tree()}</StrictMode>); view.unmount();
   await act(async () => { finish(editable()); });
-  expect(open).toHaveBeenCalledTimes(1); expect(screen.queryByTitle('이폼사인 수동 전송')).not.toBeInTheDocument();
+  expect(open).toHaveBeenCalledTimes(1); expect(screen.queryByTitle('이폼사인 수동 전송')).not.toBeInTheDocument(); expect(showToast).not.toHaveBeenCalled();
 });
 
-test('an expired initial session and throttled expiry timer never allow an iframe callback to verify', async () => {
+test('initial expiry and throttled timers refetch without allowing callback verification', async () => {
   jest.useFakeTimers(); open.mockResolvedValue({ ...editable(), claimExpiresAt: new Date(Date.now() - 1).toISOString() });
-  const first = render(tree()); await screen.findByText('화면 이용 시간이 지났어요. 결과 확인으로 서버 상태를 확인해 주세요.');
-  expect(screen.queryByTitle('이폼사인 수동 전송')).not.toBeInTheDocument(); first.unmount();
+  const first = render(tree()); await waitFor(() => expect(close).toHaveBeenCalledTimes(1));
+  expect(screen.queryByRole('dialog')).not.toBeInTheDocument(); first.unmount();
   open.mockResolvedValue({ ...editable(), claimExpiresAt: new Date(Date.now() + 1000).toISOString() });
   render(tree()); const h = await frameSession();
-  jest.setSystemTime(Date.now() + 2000); h.message('CHANGED');
-  expect(verify).not.toHaveBeenCalled(); expect(screen.queryByTitle('이폼사인 수동 전송')).not.toBeInTheDocument();
-});
-
-test.each([401, 403])('verify denial %s displays actionable safe copy', async status => {
-  render(tree()); await frameSession();
-  verify.mockRejectedValue({ isAxiosError: true, response: { status, data: { message: 'private' } } });
-  fireEvent.click(screen.getByRole('button', { name: '결과 확인' }));
-  await screen.findByText(status === 401 ? '로그인이 필요해요. 다시 로그인한 뒤 작업을 열어 주세요.' : '이 작업은 관리자 권한이 필요해요. 지점 관리자에게 요청해 주세요.');
-  expect(screen.queryByTitle('이폼사인 수동 전송')).not.toBeInTheDocument();
-  expect(document.body.textContent).not.toContain('private');
+  await act(async () => { jest.setSystemTime(Date.now() + 2000); h.message('CHANGED'); });
+  expect(verify).not.toHaveBeenCalled(); expect(refreshJobs).toHaveBeenCalledTimes(2); expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
 });
 
 function RouteEntry({ onCloseAutoFocus }: { onCloseAutoFocus?: (event: Event) => void }) {
@@ -165,53 +207,56 @@ function RouteEntry({ onCloseAutoFocus }: { onCloseAutoFocus?: (event: Event) =>
   return <><ContractDocumentJobsPopover /><button id="custom-focus">사용자 초점</button>
     {shown ? <ManualDocumentJobRecoveryDialog jobId={jobId} onClose={() => setShown(false)} onCloseAutoFocus={onCloseAutoFocus} /> : null}</>;
 }
+describe.each([390, 1280])('route recovery without an editor at %spx', width => {
+  test.each(['503', 'verify_only', 'expired'])('%s returns focus to the jobs trigger once', async ending => {
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: width });
+    if (ending === '503') open.mockRejectedValue({ isAxiosError: true, response: { status: 503 } });
+    else if (ending === 'verify_only') open.mockResolvedValue({ kind: 'verify_only', jobId, claimEpoch: '42', claimExpiresAt: editable().claimExpiresAt });
+    else open.mockResolvedValue({ ...editable(), claimExpiresAt: new Date(Date.now() - 1).toISOString() });
+    render(<RouteEntry />);
+    const trigger = document.querySelector<HTMLButtonElement>('[data-slot="document-jobs-trigger"]')!;
+    const focus = jest.spyOn(trigger, 'focus');
+    await waitFor(() => expect(trigger).toHaveFocus());
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 20)); });
+    expect(focus).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  });
+});
 
-test.each([390, 1280])('route entry close restores the jobs trigger at viewport %s', async width => {
+test.each([390, 1280])('same embedded dialog at %spx closes to the jobs trigger without a toast', async width => {
   Object.defineProperty(window, 'innerWidth', { configurable: true, value: width });
-  open.mockRejectedValue({ isAxiosError: true, response: { status: 409, data: { code: 'RECOVERY_UNSUPPORTED' } } });
-  render(<RouteEntry />);
-  await screen.findByText(width < 1024 ? '수동 전송은 PC에서 확인해 주세요.' : '이전 방식으로 생성됐거나 수동 화면을 지원하지 않는 작업이에요. 관리자에게 확인해 주세요.');
-  const trigger = document.querySelector('[data-slot="document-jobs-trigger"]');
-  fireEvent.click(screen.getByRole('button', { name: '닫기' }));
+  render(<RouteEntry />); await frameSession();
+  expect(screen.getByRole('dialog', { name: '전자문서 수동 전송' })).toHaveClass('max-lg:h-dvh', 'max-lg:w-screen');
+  const trigger = document.querySelector<HTMLButtonElement>('[data-slot="document-jobs-trigger"]')!;
+  const focus = jest.spyOn(trigger, 'focus');
+  fireEvent.click(screen.getByRole('button', { name: 'Close' }));
   await waitFor(() => expect(trigger).toHaveFocus());
-  expect(screen.queryByTitle('이폼사인 수동 전송')).not.toBeInTheDocument();
+  await act(async () => { await new Promise(resolve => setTimeout(resolve, 20)); });
+  expect(focus).toHaveBeenCalledTimes(1);
+  expect(showToast).not.toHaveBeenCalled(); expect(open).toHaveBeenCalledTimes(1);
 });
 
-test.each([390, 1023])('initial mobile StrictMode viewport %s never opens or verifies despite the existing hook initial false', async width => {
-  Object.defineProperty(window, 'innerWidth', { configurable: true, value: width });
-  render(<StrictMode>{tree()}</StrictMode>);
-  await screen.findByText('수동 전송은 PC에서 확인해 주세요.');
-  expect(open).not.toHaveBeenCalled(); expect(verify).not.toHaveBeenCalled(); expect(api.post).not.toHaveBeenCalled();
-  expect(eformsignApi.resolveDocumentJob).not.toHaveBeenCalled();
-  expect(document.querySelector('iframe')).toBeNull();
-});
-
-test('mobile server hydration never mounts the recovery session child', async () => {
+test('SSR renders nothing and hydration opens exactly once on a phone', async () => {
   Object.defineProperty(window, 'innerWidth', { configurable: true, value: 390 });
   const container = document.createElement('div'); document.body.appendChild(container);
   container.innerHTML = renderToString(<StrictMode>{tree()}</StrictMode>);
-  expect(open).not.toHaveBeenCalled();
+  expect(container.innerHTML).toBe(''); expect(open).not.toHaveBeenCalled();
   let root!: Root;
   try {
     await act(async () => { root = hydrateRoot(container, <StrictMode>{tree()}</StrictMode>); });
-    expect(screen.getByText('수동 전송은 PC에서 확인해 주세요.')).toBeInTheDocument();
-    expect(api.post).not.toHaveBeenCalled(); expect(document.querySelector('iframe')).toBeNull();
+    await frameSession(); expect(open).toHaveBeenCalledTimes(1);
   } finally { act(() => root?.unmount()); container.remove(); }
 });
 
-test('viewport shrink unmounts the desktop session and blocks stale callbacks without reopening', async () => {
+test('viewport shrink preserves the same editor without reopening', async () => {
   render(tree()); const h = await frameSession();
   act(() => { Object.defineProperty(window, 'innerWidth', { configurable: true, value: 390 }); window.dispatchEvent(new Event('resize')); });
-  await screen.findByText('수동 전송은 PC에서 확인해 주세요.'); h.message('CHANGED');
-  expect(h.post).toHaveBeenCalledWith(expect.objectContaining({ type: 'CLOSE' }), window.location.origin);
-  expect(screen.queryByTitle('이폼사인 수동 전송')).not.toBeInTheDocument();
-  expect(open).toHaveBeenCalledTimes(1); expect(verify).not.toHaveBeenCalled(); expect(eformsignApi.resolveDocumentJob).not.toHaveBeenCalled();
+  expect(screen.getByTitle('이폼사인 수동 전송')).toBe(h.frame); expect(open).toHaveBeenCalledTimes(1);
 });
 
-test('an explicit nested close-focus callback keeps ownership instead of using the default fallback', async () => {
+test('explicit close-focus callback retains ownership', async () => {
   const custom = jest.fn((event: Event) => { event.preventDefault(); document.getElementById('custom-focus')!.focus(); });
   render(<RouteEntry onCloseAutoFocus={custom} />); await frameSession();
-  fireEvent.click(screen.getByRole('button', { name: '닫기' }));
-  await waitFor(() => expect(document.getElementById('custom-focus')).toHaveFocus());
-  expect(custom).toHaveBeenCalledTimes(1);
+  fireEvent.click(screen.getByRole('button', { name: 'Close' }));
+  await waitFor(() => expect(document.getElementById('custom-focus')).toHaveFocus()); expect(custom).toHaveBeenCalledTimes(1);
 });

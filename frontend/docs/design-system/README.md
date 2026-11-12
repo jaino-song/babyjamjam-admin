@@ -84,7 +84,8 @@ default는 가장 자주 쓰는 시각 구조를 가져야 한다.
 `@/components/ui/selectable-item`의 `SelectableItemFrame`은 목록 카드, `FormChip`,
 checkbox/radio 카드의 공통 선택 프레임 atom이다. 크기·배치·모서리는 소비 컴포넌트가 소유한다.
 보이는 선택 프레임은 이 컴포넌트로 구성한다. `selectableItemVariants`는 호환용 class recipe로만 남긴다.
-atom은 recipe와 상태별 inline `borderColor`를 함께 소유하여 기존 전역 border reset보다 우선한다.
+전역 border reset은 `@layer base`에 있어 Tailwind utilities가 우선한다.
+atom은 recipe와 상태별 inline `borderColor`를 함께 소유하며, inline 값은 무해한 명시적 override로만 유지한다.
 이 우선순위는 선택 프레임에만 적용하며 일반 input·tab·button의 테두리를 바꾸지 않는다.
 기본 root는 `div`이며 `asChild`로 native button/label 등의 단일 DOM 요소를 유지한다.
 소비자의 DOM 속성·ref·event·ARIA·data-slot과 borderColor 이외의 style은 보존하며,

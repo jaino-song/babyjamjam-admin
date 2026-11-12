@@ -82,6 +82,7 @@ export interface EformsignDocumentJobResponse {
     documentId: string | null;
     /** "manual_in_progress" while a staff member holds the manual-recovery claim. */
     progressStep: string | null;
+    progressDetail?: string | null;
     attempts: number;
     nextAttemptAt: string;
     startedAt: string | null;

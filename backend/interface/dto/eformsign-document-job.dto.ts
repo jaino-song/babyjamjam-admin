@@ -173,6 +173,8 @@ export interface EformsignDocumentJobResponseDto extends EformsignDocumentJobDis
     clientId: number | null;
     documentId: string | null;
     progressStep: string | null;
+    /** Furthest observed stage of the current attempt; display only. */
+    progressDetail: string | null;
     attempts: number;
     nextAttemptAt: string;
     startedAt: string | null;
@@ -235,6 +237,8 @@ export const toEformsignDocumentJobResponse = (
     documentId: job.documentId,
     // A claim step embeds the claimer's user id and expiry; neither may leave the server.
     progressStep: parseManualClaim(job.progressStep) ? "manual_in_progress" : job.progressStep,
+    progressDetail: ["client-started", "info-inserted", "creating", "sent"].includes(job.progressDetail ?? "")
+        ? job.progressDetail : null,
     attempts: job.attempts,
     nextAttemptAt: job.nextAttemptAt.toISOString(),
     startedAt: job.startedAt?.toISOString() ?? null,

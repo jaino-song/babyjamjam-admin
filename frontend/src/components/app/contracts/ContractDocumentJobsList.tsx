@@ -5,6 +5,8 @@ import { AlertCircle, CheckCircle2, ChevronDown, Clock3, FileText } from "lucide
 import { Alert, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
+import { AnimatedSlotList } from "@/components/app/v3/AnimatedSlotList";
+import { AnimatedSlotListItemContent } from "@/components/app/v3/AnimatedSlotListItemContent";
 import { StatusBadge } from "@/components/app/ui/status-badge";
 import { documentJobOperationLabel, documentJobStatus } from "@/features/document-jobs/job-display";
 import type { ContractDocumentJobsData } from "./ContractDocumentJobsPopover";
@@ -17,16 +19,17 @@ export interface ContractDocumentJobsListProps {
   onRetry?: () => void;
   collapsed: Readonly<Record<ContractDocumentJobsSection, boolean>>;
   onToggle: (section: ContractDocumentJobsSection) => void;
-  onSelect: (jobId: string, clickedButton: HTMLButtonElement) => void;
+  onSelect: (jobId: string, clickedElement: HTMLElement) => void;
+  cardVariant?: "full" | "compact";
   "data-component"?: string;
 }
 const sections = [
-  { key: "processing", field: "active", title: "처리 중", icon: Clock3, empty: "처리 중인 전자문서가 없습니다." },
+  { key: "processing", field: "active", title: "처리중", icon: Clock3, empty: "처리중인 전자문서가 없습니다." },
   { key: "attention", field: "requiresAttention", title: "확인 필요", icon: AlertCircle, empty: "확인이 필요한 전자문서가 없습니다." },
   { key: "recent", field: "recent", title: "최근 처리", icon: CheckCircle2, empty: "최근 처리한 전자문서가 없습니다." },
 ] as const;
 
-export function ContractDocumentJobsList({ jobs, isLoading, error, onRetry, collapsed, onToggle, onSelect, "data-component": base }: ContractDocumentJobsListProps) {
+export function ContractDocumentJobsList({ jobs, isLoading, error, onRetry, collapsed, onToggle, onSelect, cardVariant = "full", "data-component": base }: ContractDocumentJobsListProps) {
   const id = useId();
   const sub = (part: string) => base ? `${base}_${part}` : undefined;
   return <div data-component={base} data-slot="contract-document-jobs-list" data-source-component="ContractDocumentJobsList" className="contract-document-jobs-list">
@@ -49,22 +52,25 @@ export function ContractDocumentJobsList({ jobs, isLoading, error, onRetry, coll
         <div id={contentId} role="region" aria-labelledby={toggleId} aria-hidden={!expanded} inert={!expanded || undefined} data-expanded={expanded}
           data-component={sub(`${key}_content`)} data-slot="contract-document-jobs-content" className="contract-document-jobs-content">
           <div data-slot="contract-document-jobs-inner" className="contract-document-jobs-inner">
-            {items.length ? <div data-slot="contract-document-jobs-cards" className="contract-document-jobs-cards">{items.map((job, index) => {
-              const scope = `${key}_content_item-${index}`;
-              const name = job.clientName?.trim() || "고객 정보 확인 필요";
-              const operation = documentJobOperationLabel(job), status = documentJobStatus(job.status);
-              const Icon = status.variant === "danger" ? AlertCircle : status.variant === "success" ? CheckCircle2 : FileText;
-              return <Button key={job.jobId} type="button" variant="ghost" aria-label={`${name} · ${operation} · ${status.label} 상세 보기`}
-                data-component={sub(scope)} data-slot="contract-document-jobs-card" data-active={key !== "recent"} className="contract-document-jobs-card"
-                onClick={(event) => onSelect(job.jobId, event.currentTarget)}>
-                <span data-component={sub(`${scope}_icon`)} data-slot="contract-document-jobs-card-icon" data-warning={status.variant === "danger"} className="contract-document-jobs-card-icon"><Icon aria-hidden="true" /></span>
-                <span data-component={sub(`${scope}_copy`)} data-slot="contract-document-jobs-card-copy" className="contract-document-jobs-card-copy">
-                  <span data-component={sub(`${scope}_copy_title`)} data-slot="contract-document-jobs-card-title" className="contract-document-jobs-card-title">{name}</span>
-                  <span data-component={sub(`${scope}_copy_subtype`)} data-slot="contract-document-jobs-card-subtype" className="contract-document-jobs-card-subtype">{operation}</span>
-                </span>
-                <span data-component={sub(`${scope}_status`)} data-slot="contract-document-jobs-card-status" className="contract-document-jobs-card-status"><StatusBadge data-component={sub(`${scope}_status_badge`)} variant={status.variant}>{status.label}</StatusBadge></span>
-              </Button>;
-            })}</div> : <p data-component={sub(`${key}_content_empty`)} data-slot="contract-document-jobs-empty" className="contract-document-jobs-empty">{empty}</p>}
+            {items.length ? <AnimatedSlotList data-component={sub(`${key}_content_list`)} items={items} isLoading={false}
+              itemVariant="job" size={cardVariant} getItemKey={job => job.jobId}
+              getSlotState={() => ({ isEmphasized: key !== "recent" })}
+              getSlotProps={({ item: job, index }) => ({
+                "data-component": sub(`${key}_content_list_item-${index}`),
+                "data-slot": "contract-document-jobs-card",
+                "aria-label": job ? `${job.clientName?.trim() || "고객 정보 확인 필요"} · ${documentJobOperationLabel(job)} · ${documentJobStatus(job.status).label} 상세 보기` : undefined,
+              })}
+              onSlotClick={(job, _index, element) => onSelect(job.jobId, element)}
+              render={({ item: job, index }) => {
+                if (!job) return null;
+                const scope = `${key}_content_list_item-${index}`;
+                const status = documentJobStatus(job.status);
+                const Icon = status.variant === "danger" ? AlertCircle : status.variant === "success" ? CheckCircle2 : FileText;
+                return <AnimatedSlotListItemContent data-component={sub(scope)} icon={Icon}
+                  title={job.clientName?.trim() || "고객 정보 확인 필요"} subtitle={documentJobOperationLabel(job)}
+                  iconContainerClassName={status.variant === "danger" ? "border border-amber-700/20 bg-amber-100 text-amber-700" : "border border-v3-primary/20 bg-v3-primary-light text-v3-primary"}
+                  status={<StatusBadge data-component={sub(`${scope}_status_badge`)} variant={status.variant}>{status.label}</StatusBadge>} />;
+              }} /> : <p data-component={sub(`${key}_content_empty`)} data-slot="contract-document-jobs-empty" className="contract-document-jobs-empty">{empty}</p>}
           </div>
         </div>
       </section>;

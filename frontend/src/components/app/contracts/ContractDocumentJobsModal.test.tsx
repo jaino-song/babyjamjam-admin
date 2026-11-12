@@ -22,7 +22,7 @@ function slot(name: string): HTMLElement {
   expect(element).not.toBeNull();
   return element!;
 }
-const card = () => screen.getByRole("button", { name: "예시 A · 서비스 계약서 생성 · 처리 중 상세 보기" });
+const card = () => screen.getByRole("button", { name: "예시 A · 서비스 계약서 생성 · 처리중 상세 보기" });
 const back = () => screen.getByRole("button", { name: "목록으로 돌아가기" });
 const closeButton = () => screen.getByRole("button", { name: "전자문서 작업 닫기" });
 
@@ -31,7 +31,7 @@ beforeEach(() => {
   Object.defineProperty(window, "innerWidth", { configurable: true, value: 1024 });
   Object.defineProperty(window, "innerHeight", { configurable: true, value: 768 });
   jest.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
-    return { left: 20, top: 40, bottom: 72, height: this.dataset.slot === "document-jobs-list-header" ? measuredHeader() : 32 } as DOMRect;
+    return { left: 20, top: 40, bottom: 72, height: this.dataset.slot === "pane-header" ? measuredHeader() : 32 } as DOMRect;
   });
   jest.spyOn(HTMLElement.prototype, "scrollHeight", "get").mockImplementation(function (this: HTMLElement) {
     return this.dataset.slot === "document-jobs-natural-content" ? measuredContent() : 0;
@@ -72,16 +72,16 @@ it("composes the real shell and page slider with whole moving headers and full m
   expect(dialog).toHaveAttribute("data-component", BASE);
   expect(slot("sliding-detail-panel")).toHaveAttribute("data-motion", "page");
   expect(slot("sliding-detail-panel")).toHaveAttribute("data-source-component", "SlidingDetailPanel");
-  expect(slot("sliding-detail-panel")).toHaveAttribute("data-component", "desktop_contracts_jobs-modal_slide");
-  expect(slot("document-jobs-list-header")).toHaveAttribute("data-component", "desktop_contracts_jobs-modal_slide_list-pane_header");
-  expect(slot("document-jobs-list-header").querySelector('[data-source-component="PanelTitleGroup"]')).toHaveAttribute("data-component", "desktop_contracts_jobs-modal_slide_list-pane_header_title-group");
-  expect(slot("document-jobs-list-header").closest('[data-slot="sliding-detail-list"]')).toBe(slot("sliding-detail-list"));
-  expect(within(slot("document-jobs-list-header")).getByRole("heading", { name: "전자문서 작업" })).toBeInTheDocument();
+  expect(slot("sliding-detail-panel")).toHaveAttribute("data-component", "desktop_contracts_jobs-modal_panes_slide");
+  expect(slot("pane-header")).toHaveAttribute("data-component", "desktop_contracts_jobs-modal_panes_slide_list-pane_header");
+  expect(slot("pane-header").querySelector('[data-source-component="PanelTitleGroup"]')).toHaveAttribute("data-component", "desktop_contracts_jobs-modal_panes_slide_list-pane_header_title-group");
+  expect(slot("pane-header").closest('[data-slot="sliding-detail-list"]')).toBe(slot("sliding-detail-list"));
+  expect(within(slot("pane-header")).getByRole("heading", { name: "전자문서 작업" })).toBeInTheDocument();
   expect(closeButton()).toHaveAttribute("data-variant", "ghost");
-  expect(closeButton()).toHaveAttribute("data-component", "desktop_contracts_jobs-modal_slide_list-pane_header_close");
-  expect(slot("document-jobs-list-scroller")).toHaveAttribute("data-component", "desktop_contracts_jobs-modal_slide_list-pane_body");
-  expect(slot("document-jobs-natural-content")).toHaveAttribute("data-component", "desktop_contracts_jobs-modal_slide_list-pane_body_content");
-  expect(slot("contract-document-jobs-list")).toHaveAttribute("data-component", "desktop_contracts_jobs-modal_slide_list-pane_body_content_list");
+  expect(closeButton()).toHaveAttribute("data-component", "desktop_contracts_jobs-modal_panes_slide_list-pane_header_actions_close");
+  expect(slot("document-jobs-list-scroller")).toHaveAttribute("data-component", "desktop_contracts_jobs-modal_panes_slide_list-pane_body");
+  expect(slot("document-jobs-natural-content")).toHaveAttribute("data-component", "desktop_contracts_jobs-modal_panes_slide_list-pane_body_content");
+  expect(slot("contract-document-jobs-list")).toHaveAttribute("data-component", "desktop_contracts_jobs-modal_panes_slide_list-pane_body_content_list");
   expect(document.querySelector('[data-slot="panel-subtitle"]')).toBeNull();
   expect(slot("sliding-detail-content")).toHaveAttribute("inert");
   expect(slot("sliding-detail-content")).toHaveAttribute("aria-hidden", "true");
@@ -90,20 +90,21 @@ it("composes the real shell and page slider with whole moving headers and full m
   expect(slot("sliding-detail-list")).toHaveAttribute("inert");
   expect(slot("sliding-detail-list")).toHaveAttribute("aria-hidden", "true");
   expect(slot("sliding-detail-content")).not.toHaveAttribute("inert");
-  expect(slot("job-detail-summary")).toHaveAttribute("data-component", "desktop_contracts_jobs-modal_slide_detail-pane_header_summary_job");
-  expect(closeButton()).toHaveAttribute("data-component", "desktop_contracts_jobs-modal_slide_detail-pane_header_row_actions_close");
-  expect(closeButton().closest('[data-slot="sliding-detail-header-actions"]')).not.toBeNull();
-  expect(slot("job-detail-body")).toHaveAttribute("data-component", "desktop_contracts_jobs-modal_slide_detail-pane_body_scroll_job");
-  expect(slot("document-jobs-detail-scroller")).toHaveAttribute("data-component", "desktop_contracts_jobs-modal_slide_detail-pane_body_scroll");
+  expect(slot("job-detail-summary")).toHaveAttribute("data-component", "desktop_contracts_jobs-modal_panes_slide_detail-pane_body_scroll_summary_job");
+  expect(closeButton()).toHaveAttribute("data-component", "desktop_contracts_jobs-modal_panes_slide_detail-pane_header_row_actions_close");
+  expect(closeButton().closest('[data-slot="pane-header-actions"]')).not.toBeNull();
+  expect(slot("job-detail-body")).toHaveAttribute("data-component", "desktop_contracts_jobs-modal_panes_slide_detail-pane_body_scroll_job");
+  expect(slot("document-jobs-detail-scroller")).toHaveAttribute("data-component", "desktop_contracts_jobs-modal_panes_slide_detail-pane_body_scroll");
   expect(slot("document-jobs-detail-scroller")).toHaveClass("min-h-0", "flex-1", "overflow-y-auto");
-  expect(screen.getByText("연결된 문서가 없습니다")).toBeInTheDocument();
+  expect(screen.queryByText("연결된 문서가 없습니다")).not.toBeInTheDocument();
   expect(screen.queryByRole("link", { name: "문서 보기" })).not.toBeInTheDocument();
 });
 
 it.each([
-  ["active", "processing", "처리 중"], ["requiresAttention", "requires_attention", "처리 실패"], ["recent", "completed", "완료"],
+  ["active", "processing", "처리중"], ["requiresAttention", "requires_attention", "처리 실패"], ["recent", "completed", "완료"],
 ] as const)("selects jobs from %s without requiring a document ID", (field, status, label) => {
   render(<Harness jobs={{ active: [], requiresAttention: [], recent: [], [field]: [{ ...A, status }] }} />);
+  if (field === "recent") fireEvent.click(screen.getByRole("button", { name: "최근 처리 1건" }));
   fireEvent.click(screen.getByRole("button", { name: `예시 A · 서비스 계약서 생성 · ${label} 상세 보기` }));
   expect(slot("sliding-detail-panel")).toHaveAttribute("data-open", "true");
   expect(within(slot("job-detail-summary")).getByText(label)).toBeInTheDocument();
@@ -223,21 +224,21 @@ it("forwards loading, safe error and retry without caching a failure", () => {
 
 it("caches a successful empty list once even with StrictMode and delayed Portal refs", () => {
   render(<React.StrictMode><Harness jobs={{ active: [], requiresAttention: [], recent: [] }} /></React.StrictMode>);
-  expect(screen.getByText("처리 중인 전자문서가 없습니다.")).toBeInTheDocument();
+  expect(screen.getByText("처리중인 전자문서가 없습니다.")).toBeInTheDocument();
   expect(screen.getByRole("dialog")).toHaveStyle({ height: "672px" });
   expect(measuredContent).toHaveBeenCalledTimes(1);
   expect(measuredHeader).toHaveBeenCalledTimes(1);
 });
 
-it.each(["pointer", "Enter"])("closes once on %s document navigation, restores the anchor and reopens at the list", async (activation) => {
+it.each(["pointer", "Enter"])("closes once on %s close-button activation, restores the anchor and reopens at the list", async (activation) => {
   render(<Harness jobs={{ ...JOBS, active: [{ ...A, documentId: "doc /1" }] }} />);
   fireEvent.click(card());
   expect(close).not.toHaveBeenCalled();
   fireEvent.click(back());
   expect(close).not.toHaveBeenCalled();
   fireEvent.click(card());
-  const link = screen.getByRole("link", { name: "문서 보기" });
-  expect(link).toHaveAttribute("href", "/contracts?documentId=doc%20%2F1");
+  expect(screen.queryByRole("link", { name: "문서 보기" })).not.toBeInTheDocument();
+  const link = closeButton();
   if (activation === "Enter") fireEvent.keyDown(link, { key: "Enter" });
   fireEvent.click(link);
   if (activation === "Enter") fireEvent.keyUp(link, { key: "Enter" });
