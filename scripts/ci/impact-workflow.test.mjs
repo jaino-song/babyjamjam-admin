@@ -26,6 +26,9 @@ function withStateIntegrityRealDatabaseStep(steps) {
 }
 const needs = job => typeof job.needs === 'string' ? [job.needs] : job.needs ?? [];
 const jobText = (text,id) => text.match(new RegExp(`^  ${id}:\\n[\\s\\S]*?(?=^  [a-zA-Z0-9_-]+:|$(?![\\s\\S]))`,'m'))?.[0];
+function assertBackendChecksRunner(job) {
+  assert.equal(job['runs-on'],'ubuntu-24.04','backend checks require the installed PG16 runner image');
+}
 const apps=['backend','frontend','mobile'];
 // e3929e6b3 made backend `start` run `node dist/main` (no compile), so every job that
 // starts the backend must build it first. Same command as backend-ci.yml and Dockerfile.lightsail.
@@ -183,6 +186,7 @@ function enabled(job,selected,event='pull_request',operation='ci') {
 }
 for(const app of apps) test(`${app}: parsed executable graph and stable gate`,()=>{
   const file=`${app}-ci.yml`,text=read(file),w=parse(text),j=w.jobs;
+  if(app==='backend') assertBackendChecksRunner(j.checks);
   assert.equal(j.verify.name,expectedNames[app]);assert.equal(j.impact.uses,'./.github/workflows/ci-impact.yml');assert.equal(j.impact.with.component,app);
   assert.deepEqual(needs(j.checks),['impact']);assert.deepEqual(needs(j.verify),['impact','checks']);assert.match(j.verify.if,/always\(\)/);
   assert.equal(w.permissions.contents,'read');assert.equal(w.on.pull_request.paths,undefined);assert.equal(w.on.merge_group?.paths,undefined);
@@ -209,6 +213,17 @@ for(const app of apps) test(`${app}: parsed executable graph and stable gate`,()
     if(app==='mobile') assert.equal(enabled(j.e2e,r.selected),r.selected.mobile);
   }
   if(app==='backend') {assert.equal(enabled(j.impact,{backend:true},'workflow_dispatch','lightnode-status'),false);assert.equal(enabled(j.verify,{backend:true},'workflow_dispatch','lightnode-status'),false);}
+});
+test('backend checks runner pin rejects latest, 26.04, missing and array values',()=>{
+  const text=read('backend-ci.yml'),block=jobText(text,'checks');
+  const runner='    runs-on: ubuntu-24.04\n';
+  assert.equal(block.split(runner).length-1,1,'exactly one backend checks runner mutation target');
+  assertBackendChecksRunner(parse(text).jobs.checks);
+  for(const replacement of ['    runs-on: ubuntu-latest\n','    runs-on: ubuntu-26.04\n','',
+    '    runs-on: [ubuntu-24.04]\n']) {
+    const mutant=parse(text.replace(block,block.replace(runner,replacement)));
+    assert.throws(()=>assertBackendChecksRunner(mutant.jobs.checks),/backend checks require the installed PG16 runner image/);
+  }
 });
 test('backend auth matrix/steps and every operational/deploy block remain byte-identical',()=>{
   const before=old('backend-ci.yml'),current=read('backend-ci.yml'),after=withPreviewConcurrencyAtBase(withApprovedDeployAdditionsAtBase(current,'backend-ci.yml'),'backend-ci.yml');const a=parse(before).jobs,b=parse(after).jobs;
@@ -271,6 +286,7 @@ const correctionBase = 'a05682829ef59dd072d07401b6cdcf058c309085';
 const correctionOld = name => execFileSync('git', ['show', `${correctionBase}:.github/workflows/${name}`], {cwd:root,encoding:'utf8'});
 test('backend installs declared compiler before executing CI impact contracts; operational blocks are unchanged', () => {
   const text = withPreviewConcurrencyAtBase(withApprovedDeployAdditionsAtBase(read('backend-ci.yml'),'backend-ci.yml'),'backend-ci.yml'), workflow = parse(text);
+  assertBackendChecksRunner(workflow.jobs.checks);
   const steps = workflow.jobs.checks.steps;
   const contracts = steps.findIndex(step => step.name === 'CI impact routing contracts');
   const install = steps.findIndex(step => step.name === 'Install dependencies');

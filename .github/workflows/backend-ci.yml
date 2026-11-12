@@ -44,7 +44,8 @@ jobs:
     needs: impact
     if: needs.impact.outputs.backend == 'true'
     timeout-minutes: 30
-    runs-on: ubuntu-latest
+    # PG16 server binaries are preinstalled on this runner image.
+    runs-on: ubuntu-24.04
 
     # Throwaway Postgres, two uses, two databases: the default `postgres` database is
     # prisma's shadow database for the migrations drift guard below (never seeded), and
