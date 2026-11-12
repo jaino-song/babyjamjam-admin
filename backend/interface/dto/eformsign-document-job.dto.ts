@@ -184,6 +184,8 @@ export interface EformsignDocumentJobResponseDto extends EformsignDocumentJobDis
     clientName: string | null;
     /** What staff may do with a stuck contract job; `null` for every other job. */
     recoveryKind: RecoveryClassification | null;
+    /** Safe routing hint only; never exposes generation or recovery authority. */
+    recoveryPresentation: "iframe" | "legacy" | null;
     /** Contract jobs only; revision jobs can carry free-text coordinator reasons. */
     lastErrorCode: string | null;
 }
@@ -227,25 +229,30 @@ export interface EformsignDocumentJobListResponseDto {
  */
 export const toEformsignDocumentJobResponse = (
     job: EformsignDocumentJobEntity,
-): EformsignDocumentJobResponseDto => ({
-    ...getDocumentJobDisplayProjection(job),
-    jobId: job.id,
-    jobType: job.jobType,
-    source: job.source,
-    status: job.status,
-    clientId: job.clientId,
-    documentId: job.documentId,
-    // A claim step embeds the claimer's user id and expiry; neither may leave the server.
-    progressStep: parseManualClaim(job.progressStep) ? "manual_in_progress" : job.progressStep,
-    progressDetail: ["client-started", "info-inserted", "creating", "sent"].includes(job.progressDetail ?? "")
-        ? job.progressDetail : null,
-    attempts: job.attempts,
-    nextAttemptAt: job.nextAttemptAt.toISOString(),
-    startedAt: job.startedAt?.toISOString() ?? null,
-    completedAt: job.completedAt?.toISOString() ?? null,
-    createdAt: job.createdAt.toISOString(),
-    updatedAt: job.updatedAt.toISOString(),
-    clientName: job.clientName ?? null,
-    recoveryKind: classifyRecovery(job),
-    lastErrorCode: isContractJob(job) ? job.lastErrorCode : null,
-});
+): EformsignDocumentJobResponseDto => {
+    const recoveryKind = classifyRecovery(job);
+    return {
+        ...getDocumentJobDisplayProjection(job),
+        jobId: job.id,
+        jobType: job.jobType,
+        source: job.source,
+        status: job.status,
+        clientId: job.clientId,
+        documentId: job.documentId,
+        // A claim step embeds the claimer's user id and expiry; neither may leave the server.
+        progressStep: parseManualClaim(job.progressStep) ? "manual_in_progress" : job.progressStep,
+        progressDetail: ["client-started", "info-inserted", "creating", "sent"].includes(job.progressDetail ?? "")
+            ? job.progressDetail : null,
+        attempts: job.attempts,
+        nextAttemptAt: job.nextAttemptAt.toISOString(),
+        startedAt: job.startedAt?.toISOString() ?? null,
+        completedAt: job.completedAt?.toISOString() ?? null,
+        createdAt: job.createdAt.toISOString(),
+        updatedAt: job.updatedAt.toISOString(),
+        clientName: job.clientName ?? null,
+        recoveryKind,
+        recoveryPresentation: recoveryKind === null ? null
+            : job.contractGeneration ? (job.jobType === "create_document" ? "iframe" : null) : "legacy",
+        lastErrorCode: isContractJob(job) ? job.lastErrorCode : null,
+    };
+};

@@ -19,7 +19,7 @@ let mockJobList: EformsignDocumentJobList | undefined;
 jest.mock("@/features/document-jobs/DocumentJobsProvider", () => ({
   useDocumentJobs: () => ({ refetchSummary: mockRefetchSummary, refetchJobs: mockRefetchJobs, jobs: mockJobList }),
 }));
-jest.mock("@/hooks/use-toast", () => ({ useToast: () => ({ toast: mockToast }) }));
+jest.mock("@/hooks/use-toast", () => ({ useToast: () => ({ toast: mockToast }), toast: (...args: unknown[]) => mockToast(...args) }));
 
 const CONTRACT_DATA = {
   customerName: "김하늘",
@@ -149,6 +149,210 @@ describe("DocumentJobRecoveryDialog", () => {
 
   afterEach(() => {
     jest.restoreAllMocks();
+  });
+
+  describe("routed metadata retry", () => {
+    const unavailableCopy = "작업을 불러오지 못했어요. 잠시 후 다시 시도해 주세요.";
+    const goneCopy = "이미 처리됐거나 찾을 수 없는 작업이에요.";
+    const base = "desktop_contracts_panel_document-job-recovery";
+    const jobId = "11111111-1111-4111-8111-111111111111";
+    function metadataJob(overrides: Parameters<typeof makeJob>[0] = {}) {
+      return makeJob({ jobId, ...overrides });
+    }
+    let lookupSpy: jest.SpyInstance;
+    let openSpy: jest.SpyInstance;
+
+    function deferredLookup() {
+      let finish!: (list: EformsignDocumentJobList) => void;
+      const promise = new Promise<EformsignDocumentJobList>(resolve => { finish = resolve; });
+      return { promise, finish };
+    }
+
+    function renderRouted() {
+      const onClose = jest.fn(), onStartFresh = jest.fn(), onViewDocument = jest.fn();
+      const tree = (id = jobId) => <DocumentJobRecoveryDialog
+        presentation="auto" jobId={id} hasCreationInProgress={false}
+        onClose={onClose} onStartFresh={onStartFresh} onViewDocument={onViewDocument}
+        data-component={base}
+      />;
+      const view = render(tree());
+      return { ...view, onClose, onStartFresh, onViewDocument, poll: () => view.rerender(tree()), changeJob: (id: string) => view.rerender(tree(id)) };
+    }
+
+    function expectNoRecovery() {
+      expect(claimSpy).not.toHaveBeenCalled();
+      expect(openSpy).not.toHaveBeenCalled();
+      expect(resolveSpy).not.toHaveBeenCalled();
+      expect(createSpy).not.toHaveBeenCalled();
+      expect(finalizeSpy).not.toHaveBeenCalled();
+    }
+
+    beforeEach(() => {
+      lookupSpy = jest.spyOn(eformsignApi, "getDocumentJobs").mockRejectedValue(networkError());
+      openSpy = jest.spyOn(eformsignApi, "openDocumentJobRecovery").mockImplementation(async jobId => ({
+        kind: "editable", jobId, claimEpoch: "42", claimExpiresAt: new Date(Date.now() + 60000).toISOString(),
+        document: { companyId: "company-abc", templateId: "template_ABC", documentId: "document012" },
+      }));
+    });
+
+    it("shares one in-flight metadata lookup under StrictMode and accepts its safe result", async () => {
+      const pending = deferredLookup();
+      lookupSpy.mockReturnValue(pending.promise);
+      renderDialog({ presentation: "auto" }, node => <StrictMode>{node}</StrictMode>);
+      expect(lookupSpy).toHaveBeenCalledTimes(1);
+      expectNoRecovery();
+      await act(async () => { pending.finish(makeJobList({ requiresAttention: [makeJob({ recoveryPresentation: "legacy" })] })); });
+      expect(await button("새로 작성")).toBeInTheDocument();
+      expect(claimSpy).toHaveBeenCalledTimes(1);
+      expect(openSpy).not.toHaveBeenCalled();
+    });
+
+    it.each(["iframe", "legacy"] as const)("retries a failed lookup and routes fresh %s metadata over a stale unknown list row", async presentation => {
+      const view = renderRouted();
+      await screen.findByText(unavailableCopy);
+      expectNoRecovery();
+      mockJobList = makeJobList({ requiresAttention: [metadataJob()] });
+      view.poll();
+      lookupSpy.mockResolvedValueOnce(makeJobList({ requiresAttention: [metadataJob({ recoveryPresentation: presentation })] }));
+
+      await clickButton(await button("다시 시도"));
+
+      if (presentation === "iframe") {
+        const frame = await screen.findByTitle<HTMLIFrameElement>("이폼사인 수동 전송");
+        jest.spyOn(frame.contentWindow!, "postMessage").mockImplementation(() => {});
+        expect(frame).toBeInTheDocument();
+        expect(openSpy).toHaveBeenCalledTimes(1);
+        expect(claimSpy).not.toHaveBeenCalled();
+      } else {
+        expect(await button("새로 작성")).toBeInTheDocument();
+        expect(claimSpy).toHaveBeenCalledTimes(1);
+        expect(openSpy).not.toHaveBeenCalled();
+      }
+      expect(lookupSpy).toHaveBeenCalledTimes(2);
+      expect(resolveSpy).not.toHaveBeenCalled();
+      expect(createSpy).not.toHaveBeenCalled();
+      expect(finalizeSpy).not.toHaveBeenCalled();
+      expect(view.onStartFresh).not.toHaveBeenCalled();
+      expect(view.onViewDocument).not.toHaveBeenCalled();
+      view.unmount();
+    });
+
+    it("keeps retry available through lookup failures and unknown metadata without entering recovery", async () => {
+      mockJobList = makeJobList({ requiresAttention: [metadataJob()] });
+      const view = renderRouted();
+      expect(lookupSpy).not.toHaveBeenCalled();
+      await clickButton(await button("다시 시도"));
+      expect(await screen.findByText(unavailableCopy)).toHaveClass("text-[calc(14px*var(--glint-ui-scale,1))]", "text-v3-text");
+      expect(screen.getByRole("button", { name: "다시 시도" })).toHaveAttribute("data-component", `${base}_retry-metadata`);
+      lookupSpy.mockResolvedValueOnce(makeJobList({ requiresAttention: [metadataJob()] }));
+      await clickButton(await button("다시 시도"));
+      expect(await screen.findByText(unavailableCopy)).toBeInTheDocument();
+      lookupSpy.mockRejectedValueOnce(networkError());
+      await clickButton(await button("다시 시도"));
+      expect(lookupSpy).toHaveBeenCalledTimes(3);
+      expectNoRecovery();
+      expect(view.onStartFresh).not.toHaveBeenCalled();
+      expect(view.onViewDocument).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      metadataJob({ recoveryPresentation: null }),
+      metadataJob({ status: "completed", recoveryKind: null }),
+      metadataJob({ source: "auto_finalize" }),
+    ])("offers no retry for known nonrecoverable metadata: %j", async job => {
+      mockJobList = makeJobList({ recent: [job] });
+      renderRouted();
+      expect(await screen.findByText(goneCopy)).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "다시 시도" })).not.toBeInTheDocument();
+      expect(lookupSpy).not.toHaveBeenCalled();
+      expectNoRecovery();
+    });
+
+    it("stops offering retry when fresh metadata confirms the job is no longer recoverable", async () => {
+      mockJobList = makeJobList({ requiresAttention: [metadataJob()] });
+      renderRouted();
+      await screen.findByText(unavailableCopy);
+      lookupSpy.mockResolvedValueOnce(makeJobList({ recent: [metadataJob({ status: "completed", recoveryKind: null, recoveryPresentation: null })] }));
+      await clickButton(await button("다시 시도"));
+      expect(await screen.findByText(goneCopy)).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "다시 시도" })).not.toBeInTheDocument();
+      expectNoRecovery();
+    });
+
+    it("shows centered pending feedback and disables retry while one read-only request is running", async () => {
+      const pending = deferredLookup();
+      lookupSpy.mockReturnValueOnce(pending.promise);
+      renderRouted();
+      expect(screen.getByRole("status", { name: "작업 불러오는 중" })).toHaveClass("flex", "min-h-24", "items-center", "justify-center");
+      await act(async () => { pending.finish(makeJobList({ requiresAttention: [metadataJob()] })); });
+      const retry = await button("다시 시도");
+      const retried = deferredLookup();
+      lookupSpy.mockReturnValueOnce(retried.promise);
+      act(() => { fireEvent.click(retry); fireEvent.click(retry); });
+      expect(screen.getByRole("button", { name: "다시 시도" })).toBeDisabled();
+      expect(screen.getByRole("button", { name: "다시 시도" })).toHaveAttribute("aria-busy", "true");
+      expect(screen.getByRole("status", { name: "작업 불러오는 중" })).toBeInTheDocument();
+      expect(lookupSpy).toHaveBeenCalledTimes(2);
+      expectNoRecovery();
+      await act(async () => { retried.finish(makeJobList({ requiresAttention: [metadataJob()] })); });
+      expect(await button("다시 시도")).toBeEnabled();
+    });
+
+    it("allows safe polling metadata after an unknown retry and keeps that first safe selection", async () => {
+      mockJobList = makeJobList({ requiresAttention: [metadataJob()] });
+      const view = renderRouted();
+      lookupSpy.mockResolvedValueOnce(makeJobList({ requiresAttention: [metadataJob()] }));
+      await clickButton(await button("다시 시도"));
+      expectNoRecovery();
+      mockJobList = makeJobList({ requiresAttention: [metadataJob({ recoveryPresentation: "iframe" })] });
+      view.poll();
+      const frame = await screen.findByTitle<HTMLIFrameElement>("이폼사인 수동 전송");
+      jest.spyOn(frame.contentWindow!, "postMessage").mockImplementation(() => {});
+      mockJobList = makeJobList({ requiresAttention: [metadataJob({ recoveryPresentation: "legacy" })] });
+      view.poll();
+      expect(screen.getByTitle("이폼사인 수동 전송")).toBe(frame);
+      expect(openSpy).toHaveBeenCalledTimes(1);
+      expect(claimSpy).not.toHaveBeenCalled();
+      view.unmount();
+    });
+
+    it("uses a known nonrecoverable poll update after an unknown lookup", async () => {
+      mockJobList = makeJobList({ requiresAttention: [metadataJob()] });
+      const view = renderRouted();
+      lookupSpy.mockResolvedValueOnce(makeJobList({ requiresAttention: [metadataJob()] }));
+      await clickButton(await button("다시 시도"));
+      mockJobList = makeJobList({ recent: [metadataJob({ status: "completed", recoveryKind: null, recoveryPresentation: null })] });
+      view.poll();
+      expect(await screen.findByText(goneCopy)).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "다시 시도" })).not.toBeInTheDocument();
+      expectNoRecovery();
+    });
+
+    it.each(["close", "escape", "unmount", "job-change"] as const)("ignores retry responses after %s and resets a newly opened job", async ending => {
+      mockJobList = makeJobList({ requiresAttention: [metadataJob()] });
+      const view = renderRouted();
+      const pending = deferredLookup();
+      lookupSpy.mockReturnValueOnce(pending.promise);
+      fireEvent.click(await button("다시 시도"));
+      if (ending === "close") fireEvent.click(screen.getByRole("button", { name: "닫기" }));
+      else if (ending === "escape") fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
+      else if (ending === "unmount") view.unmount();
+      else {
+        mockJobList = makeJobList({ requiresAttention: [metadataJob({ jobId: "job-2" })] });
+        view.changeJob("job-2");
+      }
+      await act(async () => { pending.finish(makeJobList({ requiresAttention: [metadataJob({ recoveryPresentation: "iframe" })] })); });
+      expectNoRecovery();
+      expect(view.onClose).toHaveBeenCalledTimes(ending === "close" || ending === "escape" ? 1 : 0);
+      if (ending !== "job-change") {
+        expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+        view.unmount();
+        mockJobList = makeJobList({ requiresAttention: [metadataJob()] });
+        renderRouted();
+      }
+      expect(screen.getByText(unavailableCopy)).toBeInTheDocument();
+      expect(await button("다시 시도")).toBeEnabled();
+    });
   });
 
   describe("claim", () => {

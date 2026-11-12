@@ -2055,6 +2055,18 @@ describe("EformsignDocumentJobWorkerService", () => {
             expect(lostAttention.notificationService.sendToBranchUsers).not.toHaveBeenCalled();
         });
 
+        it("does not re-notify a superseded contract failure retained in history", async () => {
+            const failed = job({ status: "failed", progressStep: "superseded", lastErrorCode: "PRE_SEND_RETRY_EXHAUSTED" });
+            const { worker, repository, notificationService, clientRepository } = buildWorker({
+                repository: { listRecentStaffFailures: jest.fn().mockResolvedValue([failed]) },
+            });
+            await worker.processDueJobs(); await flush();
+            expect(repository.listRecentStaffFailures).toHaveBeenCalled();
+            expect(classifyRecovery(failed)).toBeNull();
+            expect(notificationService.sendToBranchUsers).not.toHaveBeenCalled();
+            expect(clientRepository.findById).not.toHaveBeenCalled();
+        });
+
         it("never notifies for auto_finalize or service-record revision jobs", async () => {
             const autoFinalize = job({
                 source: "auto_finalize",

@@ -182,30 +182,30 @@
     },
     "frontend/src/app/(protected)/contracts/page.tsx": {
       "ui-architecture/no-page-local-components": [
-        "1181:17-1181:31|pageLocalComponent",
-        "370:10-370:22|pageLocalComponent"
+        "1199:17-1199:31|pageLocalComponent",
+        "371:10-371:22|pageLocalComponent"
       ],
       "ui-architecture/no-raw-ui-in-pages": [
-        "1886:7-1893:8|rawUiElement"
+        "1904:7-1911:8|rawUiElement"
       ],
       "ui-architecture/no-visual-tailwind-in-pages": [
-        "1035:36-1035:208|visualTailwindInPage",
-        "1047:36-1047:208|visualTailwindInPage",
-        "1068:36-1068:208|visualTailwindInPage",
-        "1080:36-1080:208|visualTailwindInPage",
-        "1101:36-1101:208|visualTailwindInPage",
-        "1113:36-1113:208|visualTailwindInPage",
-        "1745:31-1745:63|visualTailwindInPage",
-        "1755:33-1755:81|visualTailwindInPage",
-        "1767:31-1767:63|visualTailwindInPage",
-        "1798:29-1798:136|visualTailwindInPage",
-        "1889:19-1889:233|visualTailwindInPage",
-        "1907:25-1907:232|visualTailwindInPage",
-        "1957:25-1957:157|visualTailwindInPage",
-        "395:27-406:19|visualTailwindInPage",
-        "710:72-710:177|visualTailwindInPage",
-        "783:27-787:18|visualTailwindInPage",
-        "874:37-874:209|visualTailwindInPage"
+        "1036:36-1036:208|visualTailwindInPage",
+        "1048:36-1048:208|visualTailwindInPage",
+        "1069:36-1069:208|visualTailwindInPage",
+        "1081:36-1081:208|visualTailwindInPage",
+        "1102:36-1102:208|visualTailwindInPage",
+        "1114:36-1114:208|visualTailwindInPage",
+        "1763:31-1763:63|visualTailwindInPage",
+        "1773:33-1773:81|visualTailwindInPage",
+        "1785:31-1785:63|visualTailwindInPage",
+        "1816:29-1816:136|visualTailwindInPage",
+        "1907:19-1907:233|visualTailwindInPage",
+        "1925:25-1925:232|visualTailwindInPage",
+        "1975:25-1975:157|visualTailwindInPage",
+        "396:27-407:19|visualTailwindInPage",
+        "711:72-711:177|visualTailwindInPage",
+        "784:27-788:18|visualTailwindInPage",
+        "875:37-875:209|visualTailwindInPage"
       ]
     },
     "frontend/src/app/(protected)/dashboard/page.tsx": {
