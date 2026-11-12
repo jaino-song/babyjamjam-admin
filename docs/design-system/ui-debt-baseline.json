@@ -297,16 +297,16 @@
     },
     "frontend/src/app/(protected)/select-branch/page.tsx": {
       "ui-architecture/no-visual-tailwind-in-pages": [
-        "189:34-189:115|visualTailwindInPage",
-        "218:92-218:181|visualTailwindInPage",
-        "222:38-222:66|visualTailwindInPage",
-        "295:59-295:175|visualTailwindInPage",
-        "296:71-296:126|visualTailwindInPage",
-        "301:61-301:118|visualTailwindInPage",
-        "305:65-305:103|visualTailwindInPage",
-        "312:118-312:190|visualTailwindInPage",
-        "313:74-313:91|visualTailwindInPage",
-        "318:55-318:97|visualTailwindInPage"
+        "193:34-193:115|visualTailwindInPage",
+        "222:92-222:181|visualTailwindInPage",
+        "226:38-226:66|visualTailwindInPage",
+        "306:59-306:175|visualTailwindInPage",
+        "307:71-307:126|visualTailwindInPage",
+        "312:61-312:118|visualTailwindInPage",
+        "316:65-316:103|visualTailwindInPage",
+        "323:118-323:190|visualTailwindInPage",
+        "324:74-324:91|visualTailwindInPage",
+        "329:55-329:97|visualTailwindInPage"
       ]
     },
     "frontend/src/app/(protected)/settings/page.tsx": {

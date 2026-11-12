@@ -15,6 +15,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { FooterNavigation } from "@/components/ui/footer-navigation";
+import { Alert, AlertDescription } from "@/components/ui/alert";
 import { getRoleLabel } from "@/lib/constants/roles";
 import { resetAuthorityState } from "@/lib/auth/authority-state";
 import { getCurrentPushEndpoint } from "@/lib/notifications/push-endpoint";
@@ -37,6 +38,7 @@ export default function SelectBranchPage() {
     const [branches, setBranches] = useState<Branch[]>([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
+    const [selectionError, setSelectionError] = useState<string | null>(null);
     const [selecting, setSelecting] = useState<string | null>(null);
     const [loggingOut, setLoggingOut] = useState(false);
     const [currentPage, setCurrentPage] = useState(1);
@@ -67,6 +69,7 @@ export default function SelectBranchPage() {
     }, [loggingOut, selecting, queryClient, router]);
 
     const handleSelectBranch = useCallback(async (branchId: string): Promise<boolean> => {
+        setSelectionError(null);
         setSelecting(branchId);
 
         try {
@@ -78,7 +81,7 @@ export default function SelectBranchPage() {
 
             if (!result.success) {
                 // Server action already normalizes failures through the problem contract.
-                setError(result.error || "지점 선택에 실패했어요.");
+                setSelectionError(result.error || "지점 선택에 실패했어요.");
                 setSelecting(null);
                 return false;
             }
@@ -89,7 +92,7 @@ export default function SelectBranchPage() {
             console.error("[Select Branch] Error selecting branch:", err);
             // Registered problem message (verified) or locally authored copy.
             const normalized = normalizeApiError(err, { locale: "ko-KR", operation: "mutation" });
-            setError(normalized.verified ? normalized.message : "지점 선택에 실패했어요.");
+            setSelectionError(normalized.verified ? normalized.message : "지점 선택에 실패했어요.");
             setSelecting(null);
             return false;
         }
@@ -107,6 +110,9 @@ export default function SelectBranchPage() {
                     return;
                 }
 
+                setBranches(result.branches || []);
+                setCurrentPage(1);
+
                 // If user has only one branch AND is not an owner, auto-select it
                 // Owners should always see the selection screen to explicitly choose
                 const isOwner = result.branches?.some(org => org.role === 'owner');
@@ -116,8 +122,6 @@ export default function SelectBranchPage() {
                     return;
                 }
 
-                setBranches(result.branches || []);
-                setCurrentPage(1);
             } catch (err) {
                 console.error("[Select Branch] Error fetching branches:", err);
                 // Registered problem message (verified) or locally authored copy.
@@ -276,6 +280,13 @@ export default function SelectBranchPage() {
             title="지점 선택"
             subtitle="지점을 선택해 주세요."
         >
+            {selectionError && (
+                <Alert data-component="desktop_select-branch_content_selection-error" variant="destructive">
+                    <AlertDescription data-component="desktop_select-branch_content_selection-error_description">
+                        {selectionError}
+                    </AlertDescription>
+                </Alert>
+            )}
             <div data-component="desktop_select-branch_list" className="flex w-full flex-1 flex-col gap-3">
                 {paginatedBranches.map((org) => (
                     <SelectableItemFrame key={org.id} asChild isSelected={false} isInteractive>
