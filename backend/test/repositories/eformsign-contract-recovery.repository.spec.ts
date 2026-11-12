@@ -524,3 +524,11 @@ it.each(["lease", "active-key"])("pre-send exhausted row with residual %s remain
     const before = structuredClone(f.state);
     await expect(new SbEformsignDocumentJobRepository(f.prisma).enqueue(enqueue)).rejects.toThrow(); expect(f.state).toEqual(before);
 });
+
+it("PLAN5 zero-ref markAutomaticUncertain under a valid lease leaves every authority field unchanged and emits no CAS", async () => {
+    const f = runtimeFixture(); f.state.jobs[0].status = "reconciling"; f.state.jobs[0].progressStep = "processing";
+    const before = structuredClone(f.state); f.events.length = 0;
+    await f.repository.markAutomaticUncertain(worker);
+    expect(f.state.authorities[0]).toEqual(before.authorities[0]); expect(f.state.authorities[0].phase).toBe("reserved");
+    expect(f.state).toEqual(before); expect(f.events).not.toContain("authority.cas");
+});

@@ -36,10 +36,11 @@ export async function lockedAuthorityJob(tx: Prisma.TransactionClient, a: Author
         || job.jobType !== "create_document" || job.source !== "staff" || job.requestKey.startsWith("service-record-") || Object.prototype.hasOwnProperty.call(object(job.payload) ?? {}, "kind")) conflict();
     return job;
 }
-export async function linkedIntents(tx: Prisma.TransactionClient, a: AuthorityState, job: Job): Promise<Intent[]> {
+export async function linkedIntents(tx: Prisma.TransactionClient, a: AuthorityState, job: Job, extraIds: string[] = []): Promise<Intent[]> {
     const refs = [a.creationIntentId, a.draftIntentId, a.humanIntentId].filter((id): id is string => id !== null).sort();
     if (new Set(refs).size !== refs.length) conflict();
-    if (refs.length) await tx.$queryRaw(Prisma.sql`SELECT id FROM eformsign_dispatch_intent WHERE id IN (${Prisma.join(refs.map(id => Prisma.sql`${id}::uuid`))}) ORDER BY id FOR UPDATE`);
+    const locks = [...new Set([...refs, ...extraIds])].sort();
+    if (locks.length) await tx.$queryRaw(Prisma.sql`SELECT id FROM eformsign_dispatch_intent WHERE id IN (${Prisma.join(locks.map(id => Prisma.sql`${id}::uuid`))}) ORDER BY id FOR UPDATE`);
     const rows: Intent[] = [];
     for (const [id, action] of [[a.creationIntentId, "create"], [a.draftIntentId, "create_draft"], [a.humanIntentId, "manual_process"]] as const) {
         if (!id) continue;
@@ -61,12 +62,29 @@ async function close(tx: Prisma.TransactionClient, a: AuthorityState) {
 }
 /** Caller holds client -> authority. No nested transaction, provider call, or payload restoration. */
 export async function retireProvenNoEffect(tx: Prisma.TransactionClient, a: AuthorityState, pointer: string | null): Promise<boolean> {
-    if (!["creation_pending", "creation_uncertain"].includes(a.phase) || a.humanIntentId || a.providerDocumentId || a.priorDocumentId !== pointer
+    if (!["reserved", "creation_pending", "creation_uncertain"].includes(a.phase) || a.humanIntentId || a.providerDocumentId || a.priorDocumentId !== pointer
         || (a.claimExpiresAt && a.claimExpiresAt.getTime() > Date.now())) return false;
     const job = await lockedAuthorityJob(tx, a);
     if (!["failed", "requires_attention"].includes(job.status) || job.leaseToken || job.documentId || job.progressStep === SUPERSEDED_PROGRESS_STEP) return false;
-    const refs = await linkedIntents(tx, a, job);
-    if (!refs.length || !refs.every(provenNoEffect)) return false;
+    const draftKey = digest(`contract-draft:${a.generation}`), humanKey = digest(`contract-human:${a.generation}`);
+    // Discovery is serialized with every draft writer by the caller's client/authority locks.
+    // Operator reconciliation only changes state; re-read after locking the sorted union.
+    const discovered = await tx.eformsign_dispatch_intent.findUnique({ where: { businessKey: draftKey }, select: { id: true } });
+    const refs = await linkedIntents(tx, a, job, discovered ? [discovered.id] : []);
+    const draft = await tx.eformsign_dispatch_intent.findUnique({ where: { businessKey: draftKey } });
+    if ((draft?.id ?? null) !== (discovered?.id ?? null)) conflict();
+    if (draft) {
+        assertLinkedIntent(a, job, draft, "create_draft");
+        if (draft.id !== a.draftIntentId && !(draft.status === "prepared" && draft.startedAt === null
+            && draft.providerDocumentId === null && draft.reconciliationReason === "draft_released_before_open")) return false;
+    }
+    if (await tx.eformsign_dispatch_intent.findUnique({ where: { businessKey: humanKey }, select: { id: true } })) return false;
+    if ((!refs.length && !["reserved", "creation_uncertain"].includes(a.phase)) || !refs.every(provenNoEffect)) return false;
+    // Atomic claimCreation links STARTED before any send. A terminal lease-free zero-ref
+    // job is no-effect only when no other unresolved client creation can be hidden by rotation.
+    const unresolved = await tx.eformsign_dispatch_intent.findFirst({ where: { branchId: a.branchId, clientId: a.clientId,
+        action: { in: ["create", "create_draft"] }, status: { in: ["started", "uncertain", "accepted"] } }, select: { id: true } });
+    if (unresolved) return false;
     const retired = await tx.eformsign_document_job.updateMany({ where: { id: job.id, branchId: a.branchId, clientId: a.clientId,
         contractGeneration: a.generation, payloadFingerprint: a.fingerprint, status: job.status, leaseToken: null, activeKey: job.activeKey,
         documentId: null, progressStep: job.progressStep }, data: { status: "failed", progressStep: SUPERSEDED_PROGRESS_STEP,

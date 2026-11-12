@@ -215,7 +215,7 @@ use the authority generation and fingerprint. Their immutable identity and exact
 attempt/status/document are checked before CAS writes.
 
 - Exact request-key replay precedes every mutation. A terminal, lease-free
-  creation_pending/creation_uncertain job can be replaced when **every** linked
+  reserved/creation_pending/creation_uncertain job can be replaced when **every** linked
   create/draft has durable no-effect proof, no human/candidate exists, and no live
   manual claim remains. Prepared attempt zero is safe; a later prepared attempt
   needs the explicit before-open release record. Reconciled not-delivered needs
@@ -224,6 +224,27 @@ attempt/status/document are checked before CAS writes.
   key before INSERT, preserves intent history and the error audit, marks the job
   superseded, and rotates in the same transaction. An INSERT conflict after any
   retirement/normalization throws and rolls the entire operation back.
+- The before-open draft release returns the authority to reserved and unlinks
+  its draft. Retirement discovers that draft by the exact durable
+  `sha256(contract-draft:<generation>)` key, then locks the sorted unique union
+  of discovered and linked intent IDs. It re-reads the row under lock and checks
+  its branch/client/action/generation/fingerprint, null local-document and
+  assignment bindings, and exact template (including frozen identity when
+  available). An unlinked draft needs **prepared + startedAt NULL + provider
+  document NULL + draft_released_before_open**; generic prepared/attempt-zero
+  alone is insufficient. Its release/reconciliation audit is preserved. A row
+  under the generation's human business key vetoes retirement even if unlinked.
+- A terminal, lease-free reserved/creation_uncertain generation with zero refs
+  has durable no-create proof: claimCreation atomically commits STARTED and its
+  authority link before external send, lease fencing rejects stale workers,
+  and terminal jobs are never re-leased. Retirement still checks the immutable
+  job/authority identity and pointer, every discovered intent, and no live
+  manual claim by any user. Any related started/uncertain/accepted create or
+  create_draft in the same branch/client scope vetoes retirement **before** any
+  mutation, for linked and zero-ref cases alike. A NULL payload is never rebuilt;
+  TTL alone is not no-effect evidence. Retirement closes the old authority,
+  supersedes the exact job, clears its key and payload, then reserves/inserts one
+  new generation atomically. A source rollback is a revert, never a data reset.
 - A terminal failed/requires_attention job can leave an exact linked create or
   draft STARTED after a crash. `open` deliberately uses **two sequential,
   non-nested transactions**: the first commits STARTED → UNCERTAIN and, only if
@@ -235,7 +256,10 @@ attempt/status/document are checked before CAS writes.
   the second transaction cannot undo the first commit. A crashed draft must wait
   for the existing ten-minute live claim to expire. Worker-owned
   `markAutomaticUncertain` also repairs the exact create under its valid lease,
-  including when the phase is already uncertain. The worker send path is unchanged.
+  including when the phase is already uncertain. With no creationIntentId it
+  leaves every authority field unchanged and issues no phase CAS. Historical
+  zero-ref creation_uncertain holds use the bounded retirement above. The
+  worker send path is unchanged.
 - Only after provider-console investigation can an authorized operator record
   `not_delivered` or `delivered` using the existing branch-scoped GET
   `/eformsign-docs/dispatch-intents/:intentId` and POST `:intentId/reconcile`.
@@ -303,3 +327,10 @@ pre-existing assumption that an automatic provider HTTP attempt is bounded below
 the stale-lease interval is unproven here and the worker transport is unchanged.
 Historical rows missing their verified actor remain held. Irretrievably missing
 provider/configuration evidence has no forced unlock or fabricated successful exit.
+
+The PLAN5 exception covers only released-before-open and terminal zero-ref
+stale-before-create holds. A linked create released with a `pre_send:*` reason
+is not included; whether that path creates another permanent hold remains
+unproven. Operator-reconciled unlinked drafts remain a safe refusal. A template
+change after release may temporarily refuse the frozen template binding until
+the payload purge; no TTL exception is introduced.

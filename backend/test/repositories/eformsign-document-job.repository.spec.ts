@@ -110,7 +110,7 @@ describe("enqueue authority refusal HTTP boundary", () => {
     });
     it("does not translate a ContractRecoveryError from outside the two helper calls", async () => {
         const f = await ready("retire"), error = new ContractRecoveryError("RECOVERY_UNAVAILABLE"), before = structuredClone(f.state);
-        f.tx.eformsign_dispatch_intent.findFirst.mockRejectedValueOnce(error);
+        f.tx.eformsign_dispatch_intent.findFirst.mockResolvedValueOnce(null).mockRejectedValueOnce(error);
         await expect(new SbEformsignDocumentJobRepository(f.prisma).enqueue(input)).rejects.toBe(error);
         expect(f.state).toEqual(before);
     });
@@ -1160,5 +1160,29 @@ describe("SbEformsignDocumentJobRepository", () => {
             const [job] = await repository.recoverStale(new Date());
             expect(job?.clientName).toBeNull();
         });
+    });
+});
+
+describe("PLAN5 enqueue integrity refusals use the existing 409 boundary", () => {
+    const next = { branchId: B, clientId: 2, jobType: "create_document" as const, source: "staff" as const,
+        requestKey: "plan5-next", activeKey: "plan5-next", payload: { clientId: 2, contractData: data }, payloadFingerprint: F };
+    it.each(["released-draft", "zero-ref"])("maps %s integrity refusal and keeps exact request replay first", async path => {
+        const f = runtimeFixture();
+        if (path === "released-draft") {
+            await f.repository.claimCreation(intentInput, worker, { contractData: data, workflow: workflowPlan }); f.manual();
+            const opened = await f.repository.open(J, B, U), claim = { jobId: J, branchId: B, userId: U, claimEpoch: opened.claimEpoch };
+            const draft = await f.repository.beginDraft(claim, "template_ABC", { companyId: "company-abc", creatorId: "service@example.test", workflow: workflowPlan });
+            await f.repository.releaseDraftBeforeOpen(claim, draft.id); f.state.authorities[0].claimExpiresAt = new Date(0);
+            f.state.intents[1].fingerprint = "b".repeat(64);
+        } else {
+            await f.repository.markAutomaticUncertain(worker);
+            Object.assign(f.state.jobs[0], { status: "requires_attention", leaseToken: null, payloadFingerprint: "b".repeat(64) });
+        }
+        const before = structuredClone(f.state), repo = new SbEformsignDocumentJobRepository(f.prisma);
+        const replay = await repo.enqueue({ ...next, requestKey: "request", payloadFingerprint: f.state.jobs[0].payloadFingerprint });
+        expect(replay).toMatchObject({ existing: true, job: { id: J } }); expect(f.state).toEqual(before);
+        const error = await repo.enqueue(next).catch((caught: unknown) => caught);
+        expect(error).toBeInstanceOf(ConflictException); expect((error as ConflictException).getStatus()).toBe(409);
+        expect((error as ConflictException).getResponse()).toEqual({ code: "REQUEST_CONFLICT" }); expect(f.state).toEqual(before);
     });
 });

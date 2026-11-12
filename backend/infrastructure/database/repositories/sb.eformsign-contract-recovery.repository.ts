@@ -231,7 +231,7 @@ export class SbEformsignContractRecoveryRepository implements IEformsignContract
     }
     async markAutomaticUncertain(worker: ContractWorkerContext) { await this.prisma.$transaction(async tx => {
         const state = await this.load(tx, worker.jobId); this.worker(state, worker);
-        if (!["reserved", "creation_pending", "creation_uncertain"].includes(state.authority.phase)) return;
+        if (!state.authority.creationIntentId || !["reserved", "creation_pending", "creation_uncertain"].includes(state.authority.phase)) return;
         await this.settleStaleStart(tx, state, state.authority.creationIntentId, "create", "contract_creation_unverified");
         if (state.authority.phase !== "creation_uncertain") await this.change(tx, state, { phase: "creation_uncertain" });
     }); }
