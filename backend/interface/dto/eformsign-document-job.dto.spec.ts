@@ -1,4 +1,6 @@
 import "reflect-metadata";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import {
     EformsignDocumentJobEntity,
     type EformsignDocumentJobProps,
@@ -155,6 +157,7 @@ describe("toEformsignDocumentJobResponse display projection", () => {
 
     it("preserves existing fields and masks the manual claim without leaking internal inputs", () => {
         const response = toEformsignDocumentJobResponse(job({
+            contractGeneration: "private-generation",
             payload: { contractData: { customerContact: "private-contact", accessToken: "private-token", templateId: "private-template" } },
             progressStep: "manual_in_progress:staff-private:1793664600000",
             status: "requires_attention", lastErrorCode: "PROVIDER_STATE_UNAVAILABLE",
@@ -180,5 +183,43 @@ describe("document job progress detail", () => {
     });
     it.each([null, "unknown", "dispatch_authorized", "manual_in_progress:private-user:1790000000000", ""])("masks invalid display stage %s", progressDetail => {
         expect(toEformsignDocumentJobResponse(job({ progressDetail })).progressDetail).toBeNull();
+    });
+});
+
+
+describe("document job recovery presentation", () => {
+    it.each(["failed", "requires_attention"] as const)("routes supported %s jobs without exposing generation authority", status => {
+        expect(toEformsignDocumentJobResponse(job({ status, contractGeneration: "7" })))
+            .toMatchObject({ recoveryPresentation: "iframe" });
+        expect(toEformsignDocumentJobResponse(job({ status, contractGeneration: null })))
+            .toMatchObject({ recoveryPresentation: "legacy" });
+        expect(toEformsignDocumentJobResponse(job({ status, jobType: "finalize_document", contractGeneration: null })))
+            .toMatchObject({ recoveryPresentation: "legacy" });
+    });
+    it.each([
+        { status: "completed" },
+        { status: "failed", progressStep: "manual_resolved" },
+        { status: "failed", source: "auto_finalize" },
+        { status: "requires_attention", requestKey: "service-record-revision:1", payload: { kind: "service_record_revision" } },
+    ] as const)("projects no presentation when recovery classification is null: %j", overrides => {
+        const response = toEformsignDocumentJobResponse(job({ contractGeneration: "7", ...overrides }));
+        expect(response).toMatchObject({ recoveryKind: null, recoveryPresentation: null });
+        expect(response).not.toHaveProperty("contractGeneration");
+    });
+});
+
+
+describe("document job recovery API contract", () => {
+    it("documents exactly the safe presentation enum and projects no internal authority", () => {
+        const spec = JSON.parse(readFileSync(resolve(__dirname, "../../../docs/api/document-jobs-display-projection.openapi.json"), "utf8"));
+        const routing = spec.components.schemas.EformsignDocumentJobRecoveryRouting;
+        expect(routing.required).toEqual(["recoveryPresentation"]);
+        expect(routing.properties.recoveryPresentation.enum).toEqual(["iframe", "legacy", null]);
+        for (const contractGeneration of [null, "private-generation"]) {
+            const response = toEformsignDocumentJobResponse(job({ status: "requires_attention", contractGeneration }));
+            expect(routing.properties.recoveryPresentation.enum).toContain(response.recoveryPresentation);
+            expect(response).not.toHaveProperty("contractGeneration");
+            expect(JSON.stringify(response)).not.toContain("private-generation");
+        }
     });
 });
