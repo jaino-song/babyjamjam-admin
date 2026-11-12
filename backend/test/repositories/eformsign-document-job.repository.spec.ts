@@ -2,6 +2,7 @@ jest.mock("infrastructure/database/utils/eformsign-contract-authority", () => ({
     ...jest.requireActual("infrastructure/database/utils/eformsign-contract-authority"),
     reserveAuthority: jest.fn().mockResolvedValue(undefined),
 }));
+import type { Prisma } from "@prisma/client";
 import { PrismaService } from "infrastructure/database/prisma.service";
 import { isEntityChangeHintsSuppressed } from "infrastructure/database/entity-change-suppression";
 import { SbEformsignDocumentJobRepository } from "infrastructure/database/repositories/sb.eformsign-document-job.repository";
@@ -1035,10 +1036,12 @@ describe("SbEformsignDocumentJobRepository", () => {
                 unresolvedJobIds: ["job-newest", "job-middle", "job-oldest"],
             });
 
-            const counts = sqlText(queryRaw.mock.calls[0][0]);
+            const countsQuery = queryRaw.mock.calls[0][0] as Prisma.Sql;
+            const counts = countsQuery.text;
             expect(counts).toContain("count(*) FILTER (WHERE status = 'requires_attention')::int AS attention_count");
             expect(counts).toMatch(/FILTER \(\s*WHERE \(source = 'staff'[\s\S]*?\) AND status = 'failed'\s+AND completed_at >= now\(\) - interval '7 days'\s*\)::int AS failed_count/);
-            expect(counts).toMatch(/FILTER \(WHERE \(source = 'staff'[\s\S]*?\) AND \(\s*\(status = 'failed' AND progress_step IS DISTINCT FROM 'superseded' AND completed_at >= now\(\) - interval '7 days'\)\s*OR status = 'requires_attention'\s*\)\)::int AS unresolved_count/);
+            expect(counts).toMatch(/FILTER \(WHERE \(source = 'staff'[\s\S]*?\) AND \(\s*\(status = 'failed' AND progress_step IS DISTINCT FROM \$1 AND completed_at >= now\(\) - interval '7 days'\)\s*OR status = 'requires_attention'\s*\)\)::int AS unresolved_count/);
+            expect(countsQuery.values).toEqual(["superseded", branchId]);
             const ids = sqlText(queryRaw.mock.calls[1][0]);
             expect(ids).toContain(CONTRACT_FRAGMENT);
             expect(ids).toContain("ORDER BY completed_at DESC");
@@ -1082,15 +1085,26 @@ describe("SbEformsignDocumentJobRepository", () => {
             queryRaw.mockResolvedValueOnce([{ unresolved_count: 0 }]).mockResolvedValueOnce([]);
             const summary = await repository.getSummary(branchId);
             expect(summary.unresolvedCount).toBe(0); expect(summary.unresolvedJobIds).toEqual([]);
-            for (const [query] of queryRaw.mock.calls) expect(sqlText(query)).toContain("status = 'failed' AND progress_step IS DISTINCT FROM 'superseded'");
+            for (const [query] of queryRaw.mock.calls) {
+                const statement = query as Prisma.Sql;
+                const marker = statement.text.match(/status = 'failed' AND progress_step IS DISTINCT FROM \$(\d+)/);
+                expect(marker).not.toBeNull();
+                expect(statement.values[Number(marker?.[1]) - 1]).toBe("superseded");
+            }
             queryRaw.mockReset();
             queryRaw.mockResolvedValueOnce([]).mockResolvedValueOnce([]).mockResolvedValueOnce([
                 row({ id: "superseded", status: "failed", progress_step: "superseded", last_error_code: "PRE_SEND_RETRY_EXHAUSTED" }),
             ]);
             const list = await repository.listForBranch(branchId, new Date(0));
             expect(list.requiresAttention).toEqual([]); expect(list.recent[0]?.status).toBe("failed");
-            expect(sqlText(queryRaw.mock.calls[1][0])).toContain("j.progress_step IS DISTINCT FROM 'superseded'");
-            expect(sqlText(queryRaw.mock.calls[2][0])).toContain("OR j.progress_step = 'superseded'");
+            expect(queryRaw.mock.calls[1][0]).toMatchObject({
+                text: expect.stringContaining("j.progress_step IS DISTINCT FROM $2"),
+                values: [branchId, "superseded"],
+            });
+            expect(queryRaw.mock.calls[2][0]).toMatchObject({
+                text: expect.stringContaining("OR j.progress_step = $3"),
+                values: [branchId, new Date(0), "superseded", 50],
+            });
         });
 
         it("maps rows that carry no client_name column", async () => {

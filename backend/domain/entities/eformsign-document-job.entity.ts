@@ -98,6 +98,9 @@ export const DISPATCH_AUTHORIZED_PROGRESS_STEP = "dispatch_authorized";
 /** `progress_step` value of a job that staff resolved by hand in the eformsign iframe. */
 export const MANUAL_RESOLVED_PROGRESS_STEP = "manual_resolved";
 
+/** `progress_step` value of a failed job replaced by a new contract generation. */
+export const SUPERSEDED_PROGRESS_STEP = "superseded";
+
 const MANUAL_CLAIM_PREFIX = "manual_in_progress";
 export const MANUAL_CLAIM_TTL_MS = 10 * 60_000;
 // Mirrors the regex the repository applies in SQL before it casts the expiry.
@@ -150,7 +153,7 @@ export type RecoveryClassification = "manual_send" | "verify_result";
 export function classifyRecovery(
     job: ContractJobShape & Pick<EformsignDocumentJobProps, "status" | "progressStep">,
 ): RecoveryClassification | null {
-    if (job.progressStep === MANUAL_RESOLVED_PROGRESS_STEP || job.progressStep === "superseded") return null;
+    if (job.progressStep === MANUAL_RESOLVED_PROGRESS_STEP || job.progressStep === SUPERSEDED_PROGRESS_STEP) return null;
     if (!isContractJob(job)) return null;
     if (job.status === "failed") return "manual_send";
     if (job.status === "requires_attention") return "verify_result";
