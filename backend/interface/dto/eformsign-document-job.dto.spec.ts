@@ -188,6 +188,15 @@ describe("document job progress detail", () => {
 
 
 describe("document job recovery presentation", () => {
+    it.each([
+        ["failed", "manual_send"],
+        ["requires_attention", "verify_result"],
+    ] as const)("offers no presentation for generation-bound %s finalize jobs", (status, recoveryKind) => {
+        expect(toEformsignDocumentJobResponse(job({
+            status, jobType: "finalize_document", contractGeneration: "7",
+            requestKey: "contract-finalize-1", payload: { documentId: "doc-1" },
+        }))).toMatchObject({ recoveryKind, recoveryPresentation: null });
+    });
     it.each(["failed", "requires_attention"] as const)("routes supported %s jobs without exposing generation authority", status => {
         expect(toEformsignDocumentJobResponse(job({ status, contractGeneration: "7" })))
             .toMatchObject({ recoveryPresentation: "iframe" });
