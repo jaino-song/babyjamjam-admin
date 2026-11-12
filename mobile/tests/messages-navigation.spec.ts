@@ -118,6 +118,15 @@ test.describe("mobile messages navigation", () => {
   });
 
   test("exposes the currently available message sections as mobile destinations", async ({ page }) => {
+    // 422 is not retried by the query client and does not invalidate authority.
+    // Keep this exact catalog failure visible alongside the real navigation.
+    await page.route((url) => url.pathname === "/api/branch-system-templates", async (route) => {
+      await route.fulfill({
+        status: 422,
+        contentType: "application/json",
+        body: JSON.stringify({ message: "catalog fixture failure" }),
+      });
+    });
     await enableOwnerE2EUser(page);
 
     // 발송 예정 no longer has its own destination — upcoming sends are a zone
@@ -136,7 +145,22 @@ test.describe("mobile messages navigation", () => {
 
     for (const [label, href] of expectedDestinations) {
       await page.goto("/messages");
-      const destinationButton = page.getByRole("button", { name: label });
+      await expect(sectionNavigation.getByRole("button")).toHaveCount(6);
+      await expect(sectionNavigation.getByRole("button")).toHaveText(
+        expectedDestinations.map(([expectedLabel]) => expectedLabel),
+      );
+      const catalogRetry = page.getByRole("button", { name: "템플릿 다시 시도", exact: true });
+      await expect(catalogRetry).toBeVisible();
+      if (label === "템플릿") {
+        const retryResponse = page.waitForResponse(
+          (response) => new URL(response.url()).pathname === "/api/branch-system-templates"
+            && response.request().method() === "GET",
+        );
+        await catalogRetry.click();
+        expect((await retryResponse).status()).toBe(422);
+        await expect(catalogRetry).toBeVisible();
+      }
+      const destinationButton = sectionNavigation.getByRole("button", { name: label, exact: true });
       await expect(destinationButton).toBeEnabled({ timeout: 15000 });
       await destinationButton.click();
       await expect(page).toHaveURL(new RegExp(`${href}$`));

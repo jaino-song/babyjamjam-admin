@@ -2,7 +2,7 @@
 
 import { isAxiosError } from "axios";
 import dayjs from "dayjs";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { DocumentJobRecoverySummary, parseDocumentJobResendInput } from "@/components/app/contracts/DocumentJobRecoverySummary";
 import { FormDialogShell } from "@/components/app/ui/FormDialogShell";
@@ -11,7 +11,7 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Dialog } from "@/components/ui/dialog";
 import { Spinner } from "@/components/ui/spinner";
-import { ManualDocumentJobRecoveryDialog, type ManualDocumentJobRecoveryDialogProps } from './ManualDocumentJobRecoveryDialog';
+import { documentJobRecoveryPresentation, type DocumentJobRecoveryMetadata } from "@/features/document-jobs/recovery-presentation";
 import { useDocumentJobs } from "@/features/document-jobs/DocumentJobsProvider";
 import { useToast } from "@/hooks/use-toast";
 import {
@@ -19,6 +19,8 @@ import {
   type ClaimEformsignDocumentJobRecoveryResponse,
   type EformsignDocumentJobRecoveryErrorBody,
 } from "@/services/api";
+
+import { ManualDocumentJobRecoveryDialog, type ManualDocumentJobRecoveryDialogProps } from "./ManualDocumentJobRecoveryDialog";
 
 const DEFAULT_DATA_COMPONENT = "desktop_contracts_document-job-recovery";
 const RESOLVE_AUTOMATIC_RETRIES = 3;
@@ -111,12 +113,116 @@ interface LegacyDocumentJobRecoveryDialogProps {
   resolveRetryDelayMs?: number;
   "data-component"?: string;
 }
-export type DocumentJobRecoveryDialogProps = LegacyDocumentJobRecoveryDialogProps | (ManualDocumentJobRecoveryDialogProps & { presentation: 'iframe' });
+interface RoutedDocumentJobRecoveryDialogProps extends Omit<LegacyDocumentJobRecoveryDialogProps, "presentation"> {
+  presentation: "auto";
+}
+export type DocumentJobRecoveryDialogProps = LegacyDocumentJobRecoveryDialogProps
+  | (ManualDocumentJobRecoveryDialogProps & { presentation: 'iframe' })
+  | RoutedDocumentJobRecoveryDialogProps;
 
 export function DocumentJobRecoveryDialog(props: DocumentJobRecoveryDialogProps) {
+  if (props.presentation === "auto") return <RoutedDocumentJobRecoveryDialog key={props.jobId} {...props} />;
   return props.presentation === 'iframe'
     ? <ManualDocumentJobRecoveryDialog key={props.jobId} {...props} />
     : <LegacyDocumentJobRecoveryDialog {...props} />;
+}
+
+function isRecoveryMetadataUnavailable(job: DocumentJobRecoveryMetadata | undefined): boolean {
+  if (!job) return true;
+  return job.recoveryPresentation === undefined && (job.source === undefined || job.source === "staff")
+    && (job.jobType === "create_document" || job.jobType === "finalize_document")
+    && (job.status === "failed" || job.status === "requires_attention")
+    && (job.recoveryKind === undefined || job.recoveryKind === "manual_send" || job.recoveryKind === "verify_result");
+}
+
+/** Resolve a deep link from safe list metadata before either recovery endpoint is called. */
+function RoutedDocumentJobRecoveryDialog(props: RoutedDocumentJobRecoveryDialogProps) {
+  const { jobs } = useDocumentJobs();
+  const listedJob = [...(jobs?.active ?? []), ...(jobs?.requiresAttention ?? []), ...(jobs?.recent ?? [])]
+    .find(job => job.jobId === props.jobId);
+  const [loaded, setLoaded] = useState<{ job?: DocumentJobRecoveryMetadata } | null>(null);
+  const [pending, setPending] = useState(!listedJob);
+  const [closed, setClosed] = useState(false);
+  const closedRef = useRef(false);
+  const requestRef = useRef<object | null>(null);
+  const [selectedPresentation, setSelectedPresentation] = useState<"iframe" | "legacy" | null>(null);
+
+  useEffect(() => {
+    closedRef.current = false;
+    return () => {
+      closedRef.current = true;
+      // StrictMode can resume this instance and reuse its in-flight read. A keyed remount owns new refs.
+    };
+  }, []);
+
+  const loadMetadata = useCallback(async () => {
+    if (closedRef.current || requestRef.current) return;
+    const request = {};
+    requestRef.current = request;
+    setPending(true);
+    try {
+      const result = await eformsignApi.getDocumentJobs();
+      if (!closedRef.current && requestRef.current === request) {
+        setLoaded({ job: [...result.active, ...result.requiresAttention, ...result.recent].find(job => job.jobId === props.jobId) });
+      }
+    } catch {
+      if (!closedRef.current && requestRef.current === request) setLoaded({});
+    } finally {
+      if (requestRef.current === request) {
+        requestRef.current = null;
+        if (!closedRef.current) setPending(false);
+      }
+    }
+  }, [props.jobId]);
+
+  const hasListedJob = Boolean(listedJob);
+  useEffect(() => {
+    if (!hasListedJob && loaded === null && selectedPresentation === null) void loadMetadata();
+  }, [hasListedJob, loaded, selectedPresentation, loadMetadata]);
+
+  const handleClose = () => {
+    closedRef.current = true;
+    requestRef.current = null;
+    setClosed(true);
+    props.onClose();
+  };
+
+  // A fresh lookup supersedes unknown list metadata; a safe poll may still select a route.
+  const job = documentJobRecoveryPresentation(listedJob) !== null || (listedJob && !isRecoveryMetadataUnavailable(listedJob))
+    ? listedJob
+    : loaded?.job ?? listedJob;
+  const candidate = documentJobRecoveryPresentation(job);
+  // Polling may complete the job while verification is pending. Keep its recovery mounted;
+  // the keyed router resets this selection for a different job or a newly opened dialog.
+  if (closed) return null;
+  if (selectedPresentation === null && candidate !== null) setSelectedPresentation(candidate);
+  const presentation = selectedPresentation ?? candidate;
+  if (presentation === "iframe") return <ManualDocumentJobRecoveryDialog jobId={props.jobId} onClose={handleClose} data-component={props["data-component"]} />;
+  if (presentation === "legacy") return <LegacyDocumentJobRecoveryDialog {...props} presentation="legacy" onClose={handleClose} />;
+  const base = props["data-component"] ?? DEFAULT_DATA_COMPONENT;
+  const unavailable = isRecoveryMetadataUnavailable(job);
+  return (
+    <Dialog open onOpenChange={open => { if (!open) handleClose(); }}>
+      <FormDialogShell
+        title="전자문서 작업 복구"
+        description="실패한 전자문서 작업을 복구합니다."
+        data-component={base}
+        size="compact"
+        footer={<>
+          <Button type="button" variant="neutral" size="sm" data-component={`${base}_close`} onClick={handleClose}>닫기</Button>
+          {unavailable && (hasListedJob || loaded !== null) ? (
+            <Button type="button" size="sm" data-component={`${base}_retry-metadata`} disabled={pending} aria-busy={pending} onClick={() => void loadMetadata()}>
+              다시 시도
+            </Button>
+          ) : null}
+        </>}
+      >
+        {pending
+          ? <div data-component={`${base}_loading`} role="status" aria-label="작업 불러오는 중" className="flex min-h-24 items-center justify-center"><Spinner size="sm" /></div>
+          : <p data-component={`${base}_failure`} className="text-[calc(14px*var(--glint-ui-scale,1))] text-v3-text">{unavailable ? COPY.unavailable : COPY.gone}</p>}
+      </FormDialogShell>
+    </Dialog>
+  );
 }
 
 /**

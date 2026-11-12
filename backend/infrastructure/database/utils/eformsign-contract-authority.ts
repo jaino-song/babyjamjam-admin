@@ -1,5 +1,6 @@
 import { Prisma } from "@prisma/client";
 import { ConflictException } from "@nestjs/common";
+import { SUPERSEDED_PROGRESS_STEP } from "domain/entities/eformsign-document-job.entity";
 
 export type AuthorityPhase = "reserved" | "creation_pending" | "creation_uncertain" | "document_ready" | "human_exposed" | "verified" | "blocked" | "closed";
 export interface AuthorityState {
@@ -8,7 +9,7 @@ export interface AuthorityState {
     creationIntentId: string | null; draftIntentId: string | null; humanIntentId: string | null;
     phase: AuthorityPhase; claimEpoch: bigint; claimUserId: string | null; claimExpiresAt: Date | null;
 }
-export type AuthorityExpected = Pick<AuthorityState, "branchId" | "clientId" | "generation" | "creationJobId" | "phase" | "claimEpoch"> & { claimUserId?: string | null };
+export type AuthorityExpected = Pick<AuthorityState, "branchId" | "clientId" | "generation" | "creationJobId" | "phase" | "claimEpoch"> & { claimUserId?: string | null; fingerprint?: string };
 export type AuthorityPatch = Partial<Pick<AuthorityState, "phase" | "providerDocumentId" | "creationIntentId" | "draftIntentId" | "humanIntentId" | "claimEpoch" | "claimUserId" | "claimExpiresAt">>;
 export interface AuthorityPointerWrite {
     branchId: string; clientIds: readonly number[];
@@ -128,7 +129,7 @@ const patchColumns = {
     claimUserId: (value: unknown) => Prisma.sql`claim_user_id = ${value}::uuid`,
     claimExpiresAt: (value: unknown) => Prisma.sql`claim_expires_at = ${value}::timestamptz`,
 };
-const expectedKeys = ["branchId", "clientId", "generation", "creationJobId", "phase", "claimEpoch", "claimUserId"];
+const expectedKeys = ["branchId", "clientId", "generation", "creationJobId", "phase", "claimEpoch", "claimUserId", "fingerprint"];
 /** Immutable identity is always part of the CAS; a stale row returns false. */
 export async function compareAndSetAuthority(tx: Prisma.TransactionClient, expected: AuthorityExpected, patch: AuthorityPatch): Promise<boolean> {
     scopeIds(expected.branchId, [expected.clientId]); uuid(expected.generation); uuid(expected.creationJobId);
@@ -137,11 +138,12 @@ export async function compareAndSetAuthority(tx: Prisma.TransactionClient, expec
     if (!keys.length || keys.some(key => !Object.prototype.hasOwnProperty.call(patchColumns, key) || patch[key] === undefined)) throw new AuthorityConflictError();
     const assignments = keys.map(key => patchColumns[key](patch[key]));
     const claimant = expected.claimUserId === undefined ? Prisma.empty : Prisma.sql`AND claim_user_id IS NOT DISTINCT FROM ${expected.claimUserId}::uuid`;
+    const fingerprint = expected.fingerprint === undefined ? Prisma.empty : Prisma.sql`AND fingerprint = ${expected.fingerprint}`;
     const affected = await tx.$executeRaw(Prisma.sql`
         UPDATE eformsign_contract_authority SET ${Prisma.join(assignments)}, updated_at = CURRENT_TIMESTAMP
         WHERE branch_id = ${expected.branchId}::uuid AND client_id = ${expected.clientId}
         AND generation = ${expected.generation}::uuid AND creation_job_id = ${expected.creationJobId}::uuid
-        AND phase = ${expected.phase} AND claim_epoch = ${expected.claimEpoch}::bigint ${claimant}`);
+        AND phase = ${expected.phase} AND claim_epoch = ${expected.claimEpoch}::bigint ${claimant} ${fingerprint}`);
     return affected === 1;
 }
 export async function reserveAuthority(tx: Prisma.TransactionClient, input: AuthorityReservation): Promise<AuthorityState> {
@@ -163,7 +165,33 @@ export async function reserveAuthority(tx: Prisma.TransactionClient, input: Auth
         if (current.priorDocumentId !== input.priorDocumentId) throw new AuthorityConflictError();
         return current;
     }
-    if (current && current.phase !== "closed") throw new AuthorityConflictError();
+    if (current && current.phase !== "closed") {
+        // A fresh enqueue may replace only a proven pre-provider terminal failure.
+        // Client/authority locks serialize this with recovery claims and intent admission.
+        // Payload retention is deliberately irrelevant to this durable proof.
+        if (current.phase !== "reserved" || current.priorDocumentId !== input.priorDocumentId
+            || current.providerDocumentId || current.creationIntentId || current.draftIntentId || current.humanIntentId
+            || (current.claimExpiresAt && current.claimExpiresAt.getTime() > Date.now())) throw new AuthorityConflictError();
+        await tx.$queryRaw(Prisma.sql`SELECT id FROM eformsign_document_job
+            WHERE id = ${current.creationJobId}::uuid AND branch_id = ${current.branchId}::uuid FOR UPDATE`);
+        const previous = await tx.eformsign_document_job.findUnique({ where: { id: current.creationJobId } });
+        if (!previous || previous.branchId !== current.branchId || previous.clientId !== current.clientId
+            || previous.contractGeneration !== current.generation || previous.payloadFingerprint !== current.fingerprint
+            || previous.jobType !== "create_document" || previous.source !== "staff" || previous.requestKey.startsWith("service-record-")
+            || (previous.payload && typeof previous.payload === "object" && Object.prototype.hasOwnProperty.call(previous.payload, "kind"))
+            || previous.documentId || previous.leaseToken || previous.activeKey || previous.status !== "failed" || previous.lastErrorCode !== "PRE_SEND_RETRY_EXHAUSTED"
+            || previous.progressStep === SUPERSEDED_PROGRESS_STEP) throw new AuthorityConflictError();
+        const unresolved = await tx.eformsign_dispatch_intent.findFirst({ where: { branchId: current.branchId,
+            clientId: current.clientId, action: "create", status: { in: ["started", "uncertain"] } }, select: { id: true } });
+        if (unresolved) throw new AuthorityConflictError();
+        const superseded = await tx.eformsign_document_job.updateMany({ where: { id: previous.id, branchId: current.branchId,
+            clientId: current.clientId, contractGeneration: current.generation, payloadFingerprint: current.fingerprint,
+            status: "failed", lastErrorCode: "PRE_SEND_RETRY_EXHAUSTED", progressStep: previous.progressStep, documentId: null, leaseToken: null, activeKey: null },
+            data: { progressStep: SUPERSEDED_PROGRESS_STEP } });
+        if (superseded.count !== 1 || !await compareAndSetAuthority(tx, { branchId: current.branchId, clientId: current.clientId,
+            generation: current.generation, creationJobId: current.creationJobId, phase: current.phase,
+            claimEpoch: current.claimEpoch, claimUserId: current.claimUserId }, { phase: "closed" })) throw new AuthorityConflictError();
+    }
     const rows = await tx.$queryRaw<RawAuthority[]>(current ? Prisma.sql`
         UPDATE eformsign_contract_authority SET generation = ${input.generation}::uuid,
         creation_job_id = ${input.jobId}::uuid, fingerprint = ${input.fingerprint}, prior_document_id = ${input.priorDocumentId},

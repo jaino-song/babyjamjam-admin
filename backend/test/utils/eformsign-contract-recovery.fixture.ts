@@ -30,12 +30,12 @@ export function runtimeFixture() {
             uncertainAt: null, uncertainReason: null, providerReceipt: null, reconciledAt: null, reconciledOutcome: null, reconciledByUserId: null, reconciliationReason: null, createdAt: now, updatedAt: now }],
         docs: [{ id: 11, documentId: "prior-doc", branchId: B, clientId: 2, statusType: "003", createdDate: new Date(now.getTime() - 1000), updatedDate: now, permanentPurgeRequestedAt: null, voidedAt: null }],
     };
-    const flags = { casZero: false, jobZero: false };
+    const flags = { casZero: false, jobZero: false, insertZero: false };
     const emptyIntent = { ...structuredClone(state.intents[0]), localDocumentId: null, assignmentId: null, templateId: null, providerDocumentId: null };
     const emptyJob = structuredClone(state.jobs[0]);
     const normalize = (value: any) => value === Prisma.DbNull || value === Prisma.JsonNull ? null : value;
     const change = (row: any, values: any) => { for (const [key, value] of Object.entries(values)) row[key] = value && typeof value === "object" && "increment" in value ? row[key] + value.increment : normalize(value); };
-    const rows = (table: string, where: any = {}) => state[table].filter((row: any) => where.businessKey ? row.businessKey === where.businessKey : where.branchId_clientId ? row.branchId === where.branchId_clientId.branchId && row.clientId === where.branchId_clientId.clientId : matchesWhere(row, where));
+    const rows = (table: string, where: any = {}) => state[table].filter((row: any) => where.branchId_clientId ? row.branchId === where.branchId_clientId.branchId && row.clientId === where.branchId_clientId.clientId : matchesWhere(row, where));
     const model = (table: string) => ({
         findUnique: jest.fn(async ({ where }) => structuredClone(rows(table, where)[0] ?? null)),
         findFirst: jest.fn(async ({ where = {} }) => structuredClone(rows(table, where).sort((a: any, b: any) => (b.id ?? 0) - (a.id ?? 0))[0] ?? null)),
@@ -58,6 +58,7 @@ export function runtimeFixture() {
             events.push("jobs.terminal"); return [snake(row)];
         }
         if (/INSERT INTO eformsign_document_job/.test(text)) {
+            if (flags.insertZero) return [];
             const columns = text.match(/eformsign_document_job\s*\(([^)]+)\)/)![1]!.split(",").map(value => value.trim());
             const entries = text.match(/VALUES\s*\(([\s\S]*?)\)\s*ON CONFLICT/)![1]!.split(",").map(value => value.trim());
             const row: any = { ...emptyJob, id: "88888888-8888-4888-8888-888888888888", status: "queued", attempts: 0, leaseToken: null, completedAt: null };
@@ -85,7 +86,7 @@ export function runtimeFixture() {
         if (text.includes("SELECT EXISTS") && text.includes("e_doc_id")) return [{ conflict: state.clients.some((row: any) => row.eDocId === query.values[0] && (row.id !== query.values[1] || row.branchId !== query.values[2])) || state.authorities.some((row: any) => row.providerDocumentId === query.values[0] && row.branchId !== query.values[2]) }];
         if (/FROM client\b/.test(text)) return state.clients.filter((row: any) => !ids.length || ids.includes(row.id)).sort((a: any, b: any) => a.id - b.id).map((row: any) => ({ id: row.id, e_doc_id: row.eDocId }));
         if (/FROM eformsign_contract_authority/.test(text)) return state.authorities.filter((row: any) => !ids.length || ids.includes(row.clientId)).map(snake);
-        if (/FROM eformsign_document_job/.test(text) && /request_key/.test(text)) return state.jobs.filter((row: any) => query.values.includes(row.requestKey) || query.values.includes(row.activeKey)).map(snake);
+        if (/FROM eformsign_document_job/.test(text) && /request_key|active_key/.test(text)) return state.jobs.filter((row: any) => query.values.includes(row.requestKey) || query.values.includes(row.activeKey)).map(snake);
         if (/FROM eformsign_document_job/.test(text)) return state.jobs.filter((row: any) => query.values.includes(row.id)).map(snake);
         if (/FROM eformsign_dispatch_intent/.test(text)) return state.intents.filter((row: any) => query.values.includes(row.id)).map((row: any) => ({ id: row.id }));
         if (/FROM eformsign_doc\b/.test(text)) return state.docs.filter((row: any) => query.values.includes(row.documentId)).map((row: any) => ({ id: row.id }));
@@ -97,6 +98,8 @@ export function runtimeFixture() {
         const value = (column: string) => { const match = query.text.match(new RegExp(`(?:WHERE|AND) ${column} = \\$(\\d+)`)); if (!match) throw new Error(`missing CAS equality ${column}`); return query.values[Number(match[1]) - 1]; };
         const current = state.authorities.find((row: any) => ["branch_id", "client_id", "generation", "creation_job_id", "phase", "claim_epoch"].every(column => row[names[column] ?? column] === value(column)));
         if (!current) return 0;
+        const fingerprint = query.text.match(/AND fingerprint = \$(\d+)/);
+        if (fingerprint && current.fingerprint !== query.values[Number(fingerprint[1]) - 1]) return 0;
         const claimant = query.text.match(/claim_user_id IS NOT DISTINCT FROM \$(\d+)/); if (claimant && current.claimUserId !== query.values[Number(claimant[1]) - 1]) return 0;
         events.push("authority.cas");
         const assignments = query.text.split("WHERE")[0]!;
@@ -104,7 +107,7 @@ export function runtimeFixture() {
         return 1;
     });
     const prisma: any = { ...tx, $transaction: jest.fn(async (run: any) => { const before = structuredClone(state); try { return await run(tx); } catch (error) { Object.assign(state, before); throw error; } }) };
-    const options: any = { resolveEffectiveTemplateId: jest.fn((template?: string) => template ?? "template_ABC"), generateDocumentOptions: jest.fn((_data, access, refresh, template = "template_ABC") => ({
+    const options: any = { getConfiguredContractIdentity: jest.fn(() => ({ companyId: "company-abc", creatorId: "service@example.test" })), resolveEffectiveTemplateId: jest.fn((template?: string) => template ?? "template_ABC"), generateDocumentOptions: jest.fn((_data, access, refresh, template = "template_ABC") => ({
         company: { id: "company-abc" }, user: { id: "service@example.test", type: "01", access_token: access, refresh_token: refresh }, mode: { type: "01", template_id: template } })) };
     const workflow = { form_id: "template_ABC", config: { step_settings: [{ seq: 1, type: "write", step_group: 0 }, { seq: 2, type: "participant", step_group: 1 }, { seq: 3, type: "reviewer", step_group: 2 }, { seq: 4, type: "complete", step_group: 3 }] } };
     const remote: any = { id: "bound-doc", template: { id: "template_ABC" }, creator: { id: "service@example.test", recipient_type: "01" }, created_date: Date.now(), updated_date: Date.now(),
@@ -115,7 +118,9 @@ export function runtimeFixture() {
     const repository = new SbEformsignContractRecoveryRepository(prisma, options);
     const snapshots = { bumpVersion: jest.fn().mockResolvedValue(1) };
     const service = new EformsignDocumentJobManualRecoveryService(repository, draft, credentials, options, { findByArea: jest.fn().mockResolvedValue(null) } as never, provider, snapshots as never);
-    function manual() { state.jobs[0].status = "failed"; state.jobs[0].leaseToken = null; state.jobs[0].completedAt = now; state.authorities[0].creationIntentId = I; Object.assign(state.intents[0], { status: "reconciled_not_delivered", reconciledOutcome: "not_delivered", reconciledAt: now, reconciledByUserId: U }); }
+    function manual() { state.jobs[0].status = "failed"; state.jobs[0].leaseToken = null; state.jobs[0].completedAt = now; state.authorities[0].creationIntentId = I; Object.assign(state.intents[0], { status: "reconciled_not_delivered", reconciledOutcome: "not_delivered", reconciledAt: now, reconciledByUserId: U });
+        state.jobs[0].payload.contractDispatch = { ...intentInput, effectiveTemplateId: "template_ABC", companyId: "company-abc", creatorId: "service@example.test", workflow: workflowPlan };
+    }
     function forward() { Object.assign(remote.current_status, { status_type: "060", step_type: "05", step_index: "2", step_group: 1 }); }
     return { state, tx, prisma, options, repository, service, draft, provider, credentials, remote, events, sql, flags, manual, forward, snapshots };
 }

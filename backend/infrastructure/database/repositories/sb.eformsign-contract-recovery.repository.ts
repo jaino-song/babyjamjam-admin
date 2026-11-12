@@ -15,6 +15,8 @@ import { ContractRecoveryError, type ContractWorkerContext, type ContractRecover
 import type { PrepareEformsignDispatchIntentInput } from "domain/repositories/eformsign-dispatch-intent.repository.interface";
 import { lockAuthorityScope, compareAndSetAuthority, type AuthorityState, type AuthorityPatch } from "../utils/eformsign-contract-authority";
 
+import { assertLinkedIntent, intentIdentityWhere, linkedIntents, normalizeVerifiedAuthority } from "../utils/eformsign-contract-authority-release";
+
 type Job = Prisma.eformsign_document_jobGetPayload<Record<string, never>>;
 type Intent = Prisma.eformsign_dispatch_intentGetPayload<Record<string, never>>;
 type Locked = { job: Job; authority: AuthorityState; pointer: string | null };
@@ -27,7 +29,7 @@ function resumePayload(value: unknown): Record<string, unknown> {
     const resume = { ...payload }; delete resume["contractDispatch"]; delete resume["contractDraft"]; return resume;
 }
 
-/** Every state-changing method owns its complete transaction; JS refusals cannot be swallowed inside a caller's transaction. */
+/** Methods own their transactions. open deliberately commits stale-start repair before its separate, TTL-bound claim transaction. */
 @Injectable()
 export class SbEformsignContractRecoveryRepository implements IEformsignContractRecoveryRepository {
     constructor(private readonly prisma: PrismaService, private readonly options: EformsignService) {}
@@ -66,7 +68,7 @@ export class SbEformsignContractRecoveryRepository implements IEformsignContract
     private async change(tx: Prisma.TransactionClient, state: Locked, patch: AuthorityPatch) {
         const a = state.authority;
         if (!await compareAndSetAuthority(tx, { branchId: a.branchId, clientId: a.clientId, generation: a.generation,
-            creationJobId: a.creationJobId, phase: a.phase, claimEpoch: a.claimEpoch, claimUserId: a.claimUserId }, patch)) fail();
+            creationJobId: a.creationJobId, phase: a.phase, claimEpoch: a.claimEpoch, claimUserId: a.claimUserId, fingerprint: a.fingerprint }, patch)) fail();
         Object.assign(a, patch);
     }
     private worker(state: Locked, input: ContractWorkerContext) {
@@ -107,11 +109,37 @@ export class SbEformsignContractRecoveryRepository implements IEformsignContract
             || state.pointer !== (["verified", "closed"].includes(a.phase) ? a.providerDocumentId : a.priorDocumentId)) fail();
     }
     private async snapshot(tx: Prisma.TransactionClient, state: Locked): Promise<ContractRecoveryState> {
-        const a = state.authority, settled = ["verified", "closed"].includes(a.phase), payload = record(state.job.payload) ?? (settled ? {} : null);
-        if (!payload || (!settled && Date.now() - (state.job.completedAt ?? state.job.createdAt).getTime() > 7 * 24 * 60 * 60_000)) throw new ContractRecoveryError("RECOVERY_PAYLOAD_EXPIRED", 410, "payload_expired");
+        const a = state.authority, settled = ["verified", "closed"].includes(a.phase);
+        const expired = !state.job.payload || Date.now() - (state.job.completedAt ?? state.job.createdAt).getTime() > 7 * 24 * 60 * 60_000;
+        let verificationOnly: ContractRecoveryState["verificationOnly"];
+        if (!settled && expired) {
+            const refs = await linkedIntents(tx, a, state.job);
+            const candidates = [...new Set([a.providerDocumentId, ...refs.map(row => row.providerDocumentId)].filter((id): id is string => !!id))];
+            if (candidates.length === 0) throw new ContractRecoveryError("RECOVERY_PAYLOAD_EXPIRED", 410, "payload_expired");
+            if (candidates.length !== 1 || !["creation_pending", "creation_uncertain", "document_ready", "human_exposed"].includes(a.phase)) fail("REQUEST_CONFLICT");
+            const id = candidates[0]!;
+            await tx.$queryRaw(Prisma.sql`SELECT id FROM eformsign_doc WHERE document_id = ${id} FOR UPDATE`);
+            const [owner] = await tx.$queryRaw<Array<{ conflict: boolean }>>(Prisma.sql`SELECT EXISTS (SELECT 1 FROM client WHERE e_doc_id = ${id}
+                AND (id <> ${a.clientId} OR branch_id IS DISTINCT FROM ${a.branchId}::uuid))
+                OR EXISTS (SELECT 1 FROM eformsign_contract_authority WHERE provider_document_id = ${id} AND branch_id <> ${a.branchId}::uuid) AS conflict`);
+            if (!owner || owner.conflict) fail("REQUEST_CONFLICT", "document_mismatch");
+            const doc = await tx.eformsign_doc.findUnique({ where: { documentId: id } });
+            if (!doc || doc.branchId !== a.branchId || (doc.clientId !== a.clientId && !(doc.clientId === null && a.providerDocumentId === id)) || doc.documentKind !== "contract" || !doc.templateId
+                || doc.permanentPurgeRequestedAt || doc.voidedAt || doc.serviceRecordCaseId || doc.revisionId || ["047", "049", "099"].includes(doc.statusType)) fail("REQUEST_CONFLICT", "document_mismatch");
+            const effects = refs.filter(row => row.providerDocumentId === id);
+            if (!effects.length || effects.some(row => !["started", "uncertain", "accepted", "reconciled_delivered"].includes(row.status)
+                || (row.templateId && row.templateId !== doc.templateId))) fail("REQUEST_CONFLICT");
+            const frozen = record(record(state.job.payload)?.[a.draftIntentId ? "contractDraft" : "contractDispatch"]);
+            if (frozen && (frozen["effectiveTemplateId"] ?? frozen["templateId"]) !== doc.templateId) fail("REQUEST_CONFLICT");
+            verificationOnly = { documentId: id, templateId: doc.templateId,
+                ...(typeof frozen?.["companyId"] === "string" ? { companyId: frozen["companyId"] } : {}),
+                ...(typeof frozen?.["creatorId"] === "string" ? { creatorId: frozen["creatorId"] } : {}),
+                ...(frozen?.["workflow"] ? { workflow: frozen["workflow"] } : {}) };
+        }
+        const payload = settled || expired ? {} : record(state.job.payload)!;
         const read = async (id: string | null) => { const row = id ? await tx.eformsign_dispatch_intent.findUnique({ where: { id } }) : null; return row ? intentEntity(row) : null; };
         return { jobId: state.job.id, branchId: a.branchId, clientId: a.clientId, generation: a.generation, fingerprint: a.fingerprint,
-            payload, phase: a.phase, priorDocumentId: a.priorDocumentId, providerDocumentId: a.providerDocumentId,
+            payload, ...(verificationOnly ? { verificationOnly } : {}), phase: a.phase, priorDocumentId: a.priorDocumentId, providerDocumentId: a.providerDocumentId,
             claimEpoch: a.claimEpoch, claimUserId: a.claimUserId, claimExpiresAt: a.claimExpiresAt,
             creationIntent: await read(a.creationIntentId), draftIntent: await read(a.draftIntentId) };
     }
@@ -165,6 +193,7 @@ export class SbEformsignContractRecoveryRepository implements IEformsignContract
         return this.prisma.$transaction(async tx => {
             if (!input.clientId) fail("REQUEST_CONFLICT");
             const authorities = await lockAuthorityScope(tx, input.branchId, [input.clientId]);
+            for (const a of authorities) await normalizeVerifiedAuthority(tx, a);
             if (authorities.some(a => a.phase !== "closed")) fail("REQUEST_CONFLICT");
             return this.startIntent(tx, input);
         });
@@ -178,7 +207,10 @@ export class SbEformsignContractRecoveryRepository implements IEformsignContract
             ]);
             if ((doc?.branchId && doc.branchId !== input.branchId) || (authority && authority.branchId !== input.branchId)) fail("REQUEST_CONFLICT");
             const ids = [...new Set([input.clientId, doc?.clientId, authority?.clientId].filter((id): id is number => typeof id === "number"))].sort((a, b) => a - b);
-            if (ids.length) await lockAuthorityScope(tx, input.branchId, ids);
+            if (ids.length) {
+                const authorities = await lockAuthorityScope(tx, input.branchId, ids);
+                for (const a of authorities) await normalizeVerifiedAuthority(tx, a);
+            }
             await tx.$queryRaw(Prisma.sql`SELECT id FROM eformsign_doc WHERE document_id = ${documentId} FOR UPDATE`);
             const current = await tx.eformsign_contract_authority.findUnique({ where: { providerDocumentId: documentId }, select: { humanIntentId: true, phase: true } });
             if (current?.humanIntentId && current.phase !== "closed") fail("REQUEST_CONFLICT");
@@ -186,8 +218,23 @@ export class SbEformsignContractRecoveryRepository implements IEformsignContract
         });
     }
     async readWorker(worker: ContractWorkerContext) { return this.prisma.$transaction(async tx => { const state = await this.load(tx, worker.jobId); this.worker(state, worker); return this.snapshot(tx, state); }); }
-    async markAutomaticUncertain(worker: ContractWorkerContext) { await this.prisma.$transaction(async tx => { const state = await this.load(tx, worker.jobId); this.worker(state, worker);
-        if (["reserved", "creation_pending"].includes(state.authority.phase)) await this.change(tx, state, { phase: "creation_uncertain" }); }); }
+    private async settleStaleStart(tx: Prisma.TransactionClient, state: Locked, ref: string | null, action: "create" | "create_draft", reason: string): Promise<boolean> {
+        if (!ref) return false;
+        const row = await tx.eformsign_dispatch_intent.findUnique({ where: { id: ref } });
+        if (!row) fail("REQUEST_CONFLICT");
+        assertLinkedIntent(state.authority, state.job, row, action);
+        if (row.status !== "started" || row.providerDocumentId !== null) return false;
+        const result = await tx.eformsign_dispatch_intent.updateMany({ where: intentIdentityWhere(row),
+            data: { status: "uncertain", uncertainAt: new Date(), uncertainReason: reason } });
+        if (result.count !== 1) fail();
+        return true;
+    }
+    async markAutomaticUncertain(worker: ContractWorkerContext) { await this.prisma.$transaction(async tx => {
+        const state = await this.load(tx, worker.jobId); this.worker(state, worker);
+        if (!state.authority.creationIntentId || !["reserved", "creation_pending", "creation_uncertain"].includes(state.authority.phase)) return;
+        await this.settleStaleStart(tx, state, state.authority.creationIntentId, "create", "contract_creation_unverified");
+        if (state.authority.phase !== "creation_uncertain") await this.change(tx, state, { phase: "creation_uncertain" });
+    }); }
     async recoverBeforeCreation(worker: ContractWorkerContext, nextAttemptAt: Date | null, errorCode: string) {
         return this.prisma.$transaction(async tx => {
             const state = await this.load(tx, worker.jobId); this.worker(state, worker);
@@ -202,10 +249,24 @@ export class SbEformsignContractRecoveryRepository implements IEformsignContract
         });
     }
     async open(jobId: string, branchId: string, userId: string) {
+        // This commit must survive snapshot's later 410. A live claim by ANY user still owns its attempt.
+        await this.prisma.$transaction(async tx => {
+            const state = await this.load(tx, jobId, branchId), a = state.authority;
+            if (!["failed", "requires_attention"].includes(state.job.status) || state.job.leaseToken || a.providerDocumentId || a.humanIntentId
+                || !["reserved", "creation_pending", "creation_uncertain"].includes(a.phase)
+                || (a.claimExpiresAt && a.claimExpiresAt.getTime() > Date.now())) return;
+            const refs = await linkedIntents(tx, a, state.job);
+            if (refs.some(row => row.providerDocumentId)) return;
+            const createChanged = await this.settleStaleStart(tx, state, a.creationIntentId, "create", "stale_start_after_terminal_job");
+            const draftChanged = await this.settleStaleStart(tx, state, a.draftIntentId, "create_draft", "stale_start_after_terminal_job");
+            if ((createChanged || draftChanged) && a.phase !== "creation_uncertain") await this.change(tx, state, { phase: "creation_uncertain" });
+        });
         return this.prisma.$transaction(async tx => {
             const state = await this.load(tx, jobId, branchId), a = state.authority;
-            if (!["failed", "requires_attention"].includes(state.job.status) && a.phase !== "verified") fail("RECOVERY_UNSUPPORTED", "unsupported_job");
-            if (["closed", "blocked"].includes(a.phase)) fail("RECOVERY_UNSUPPORTED", "unverified_creation");
+            const completedClosed = state.job.status === "completed" && a.phase === "closed" && a.providerDocumentId !== null
+                && state.job.documentId === a.providerDocumentId && state.pointer === a.providerDocumentId;
+            if (!["failed", "requires_attention"].includes(state.job.status) && a.phase !== "verified" && !completedClosed) fail("RECOVERY_UNSUPPORTED", "unsupported_job");
+            if (a.phase === "blocked" || (a.phase === "closed" && !completedClosed)) fail("RECOVERY_UNSUPPORTED", "unverified_creation");
             await this.snapshot(tx, state);
             if (a.claimUserId && a.claimUserId !== userId && a.claimExpiresAt && a.claimExpiresAt.getTime() > Date.now()) throw new ContractRecoveryError("MANUAL_RECOVERY_CLAIMED", 409, "claim_conflict", a.claimExpiresAt);
             if (a.claimEpoch >= 9223372036854775807n) fail();
@@ -248,7 +309,7 @@ export class SbEformsignContractRecoveryRepository implements IEformsignContract
         await this.prisma.$transaction(async tx => {
             const state = await this.load(tx, claim.jobId, claim.branchId);
             if (state.authority.draftIntentId !== intentId || state.authority.phase !== "creation_pending") fail();
-            const released = await tx.eformsign_dispatch_intent.updateMany({ where: { id: intentId, action: "create_draft", generation: state.authority.generation, status: "started", providerDocumentId: null }, data: { status: "prepared", startedAt: null } });
+            const released = await tx.eformsign_dispatch_intent.updateMany({ where: { id: intentId, action: "create_draft", generation: state.authority.generation, status: "started", providerDocumentId: null }, data: { status: "prepared", startedAt: null, reconciliationReason: "draft_released_before_open" } });
             if (released.count !== 1) fail();
             await this.change(tx, state, { draftIntentId: null, phase: "reserved" });
             const payload = { ...record(state.job.payload) }; delete payload["contractDraft"];
@@ -345,27 +406,77 @@ export class SbEformsignContractRecoveryRepository implements IEformsignContract
     private async complete(tx: Prisma.TransactionClient, state: Locked, evidence: ContractDocumentEvidence, automatic: boolean) {
         const a = state.authority;
         if (!evidence.confirmed || (a.providerDocumentId && a.providerDocumentId !== evidence.documentId)) fail();
+        if (!automatic && a.phase === "closed" && state.job.status === "completed" && state.job.documentId === evidence.documentId
+            && state.pointer === evidence.documentId && a.providerDocumentId === evidence.documentId) return;
         if (automatic ? !["creation_pending", "document_ready"].includes(a.phase) || a.humanIntentId !== null : !["human_exposed", "document_ready", "creation_uncertain", "verified"].includes(a.phase)) fail();
-        const ref = automatic ? a.creationIntentId : a.humanIntentId ?? a.creationIntentId;
+        const ref = automatic ? a.creationIntentId : a.humanIntentId ?? a.draftIntentId ?? a.creationIntentId;
         const intent = ref ? await tx.eformsign_dispatch_intent.findUnique({ where: { id: ref } }) : null;
         if (!intent || intent.branchId !== a.branchId || intent.clientId !== a.clientId || intent.providerDocumentId !== evidence.documentId
-            || intent.action !== (a.humanIntentId && !automatic ? "manual_process" : "create")
-            || (a.humanIntentId && !automatic && (intent.generation !== a.generation || intent.templateId !== evidence.templateId))
+            || intent.action !== (!automatic && a.humanIntentId ? "manual_process" : !automatic && a.draftIntentId ? "create_draft" : "create")
+            || (!automatic && intent.action !== "create" && (intent.generation !== a.generation || intent.fingerprint !== a.fingerprint || intent.templateId !== evidence.templateId))
+            || !["started", "uncertain", "accepted", "reconciled_delivered"].includes(intent.status)
             || (automatic && !["accepted", "reconciled_delivered"].includes(intent.status))) fail();
+        const verifyCreationIdentity = (creation: Intent) => {
+            const frozen = record(record(state.job.payload)?.["contractDispatch"]);
+            if (!frozen) {
+                if (!state.job.payload || Date.now() - (state.job.completedAt ?? state.job.createdAt).getTime() > 7 * 86400000) {
+                    assertLinkedIntent(a, state.job, creation, "create");
+                    if (creation.providerDocumentId !== evidence.documentId || (creation.templateId && creation.templateId !== evidence.templateId)) fail();
+                    return;
+                }
+                fail();
+            }
+            if (creation.branchId !== a.branchId || creation.clientId !== a.clientId || creation.action !== "create"
+                || creation.providerDocumentId !== evidence.documentId || frozen["effectiveTemplateId"] !== evidence.templateId
+                || frozen["companyId"] !== evidence.companyId || frozen["creatorId"] !== evidence.creatorId
+                || (["branchId", "clientId", "localDocumentId", "assignmentId", "templateId", "action", "generation", "fingerprint"] as const)
+                    .some(key => (creation[key] ?? null) !== (frozen[key] ?? null))) fail();
+        };
+        const settleDelivered = async (row: Intent) => {
+            if (!["started", "uncertain"].includes(row.status)) return;
+            if (automatic || !a.claimUserId) fail();
+            const settled = await tx.eformsign_dispatch_intent.updateMany({ where: {
+                id: row.id, branchId: row.branchId, clientId: row.clientId, action: row.action,
+                businessKey: row.businessKey, generation: row.generation, fingerprint: row.fingerprint,
+                localDocumentId: row.localDocumentId, assignmentId: row.assignmentId, templateId: row.templateId,
+                providerDocumentId: evidence.documentId, status: row.status, attemptCount: row.attemptCount,
+            }, data: { status: "reconciled_delivered", reconciledOutcome: "delivered", reconciledAt: new Date(),
+                reconciledByUserId: a.claimUserId, reconciliationReason: "Contract recovery confirmed same-document provider delivery" } });
+            if (settled.count !== 1) fail();
+        };
+        const refs = await linkedIntents(tx, a, state.job);
+        const retentionExpired = !state.job.payload || Date.now() - (state.job.completedAt ?? state.job.createdAt).getTime() > 7 * 86400000;
+        if (retentionExpired) {
+            const context = (await this.snapshot(tx, state)).verificationOnly;
+            if (!context || context.documentId !== evidence.documentId || context.templateId !== evidence.templateId) fail();
+        }
+        if (intent.action === "create") verifyCreationIdentity(intent);
+        await settleDelivered(intent);
+        for (const row of refs) {
+            if (row.id === intent.id || !["started", "uncertain"].includes(row.status)) continue;
+            if (row.action === "create") verifyCreationIdentity(row);
+            else if (row.providerDocumentId !== evidence.documentId || row.templateId !== evidence.templateId) fail();
+            await settleDelivered(row);
+        }
         const doc = await this.document(tx, state, evidence);
-        const data = record(record(state.job.payload)?.["contractData"]); if (!data) fail();
-        const settledAutomatic = automatic || (!a.humanIntentId && !a.draftIntentId && a.phase !== "creation_uncertain" && intent.status === "accepted");
-        await this.change(tx, state, { providerDocumentId: evidence.documentId, phase: settledAutomatic ? "closed" : "verified" });
+        const data = retentionExpired ? null : record(record(state.job.payload)?.["contractData"]);
+        if (!retentionExpired && !data) fail();
+        await this.change(tx, state, { providerDocumentId: evidence.documentId, phase: "closed" });
         const moved = await tx.client.updateMany({ where: { id: a.clientId, branchId: a.branchId, eDocId: a.priorDocumentId }, data: { eDocId: evidence.documentId } });
         if (moved.count !== 1) fail();
-        await tx.eformsign_doc.update({ where: { id: doc.id }, data: { branchId: a.branchId, clientId: a.clientId, documentKind: "contract", templateId: evidence.templateId,
-            documentName: evidence.documentName || `${evidence.templateName || "계약서"} - ${String(data["customerName"] ?? "")}`, documentNumber: evidence.documentNumber ?? null,
-            templateName: evidence.templateName ?? null, customerName: String(data["customerName"] ?? ""), customerPhone: normalizePhone(String(data["customerContact"] ?? "")),
+        const mirrored = await tx.eformsign_doc.updateMany({ where: { id: doc.id, documentId: evidence.documentId, branchId: doc.branchId,
+            clientId: doc.clientId, templateId: doc.templateId, permanentPurgeRequestedAt: null, voidedAt: null }, data: { branchId: a.branchId, clientId: a.clientId, documentKind: "contract", templateId: evidence.templateId,
+            documentName: evidence.documentName || (data ? `${evidence.templateName || "계약서"} - ${String(data["customerName"] ?? "")}` : doc.documentName), documentNumber: evidence.documentNumber ?? null,
+            templateName: evidence.templateName ?? null,
+            ...(data ? { customerName: String(data["customerName"] ?? ""), customerPhone: normalizePhone(String(data["customerContact"] ?? "")),
+                stepRecipientName: String(data["customerName"] ?? ""), stepRecipientSms: String(data["customerContact"] ?? "") } : {}),
             creatorName: evidence.creatorName ?? null, lastEditorName: evidence.lastEditorName ?? null, stepRecipientTypes: encodeEformsignStepRecipientTypes(evidence.stepRecipientTypes ?? null),
             statusType: evidence.statusType, statusDetail: evidence.statusType, stepType: evidence.stepType, stepIndex: evidence.stepIndex, stepName: evidence.stepName,
-            stepRecipientType: "01", stepRecipientName: String(data["customerName"] ?? ""), stepRecipientSms: String(data["customerContact"] ?? ""),
-            createdDate: evidence.createdAt, updatedDate: evidence.updatedAt, expiredDate: evidence.expiresAt, expired: false } });
-        const completed = await tx.eformsign_document_job.updateMany({ where: { id: state.job.id, branchId: a.branchId, contractGeneration: a.generation,
+            stepRecipientType: "01",
+            createdDate: evidence.createdAt, updatedDate: evidence.updatedAt, expiredDate: evidence.expiresAt, expired: evidence.expired ?? false } });
+        if (mirrored.count !== 1) fail();
+        const completed = await tx.eformsign_document_job.updateMany({ where: { id: state.job.id, branchId: a.branchId, clientId: a.clientId,
+            contractGeneration: a.generation, payloadFingerprint: a.fingerprint, documentId: state.job.documentId, activeKey: state.job.activeKey,
             status: { in: automatic ? ["processing", "reconciling"] : ["failed", "requires_attention", "completed"] }, leaseToken: state.job.leaseToken },
             data: { status: "completed", documentId: evidence.documentId, completedAt: new Date(), activeKey: null, leaseToken: null, heartbeatAt: null, progressStep: "verified", lastErrorCode: null, payload: Prisma.DbNull } });
         if (completed.count !== 1) fail();

@@ -1,8 +1,12 @@
 import { createHash, randomUUID } from "node:crypto";
 import { lstatSync, readFileSync, realpathSync } from "node:fs";
 import { Prisma, PrismaClient } from "@prisma/client";
+import { ConflictException } from "@nestjs/common";
+import { classifyRecovery } from "domain/entities/eformsign-document-job.entity";
 import { ClientEntity } from "domain/entities/client.entity";
 import type { PrismaService } from "infrastructure/database/prisma.service";
+import { SbEformsignDispatchIntentRepository } from "../repositories/sb.eformsign-dispatch-intent.repository";
+import { normalizeVerifiedAuthority, retireProvenNoEffect } from "./eformsign-contract-authority-release";
 import { SbClientRepository } from "../repositories/sb.client.repository";
 import { SbEformsignContractRecoveryRepository } from "../repositories/sb.eformsign-contract-recovery.repository";
 import { SbEformsignDocumentJobRepository } from "../repositories/sb.eformsign-document-job.repository";
@@ -103,14 +107,16 @@ async function bounded<T>(promise: Promise<T>, ms: number): Promise<T> {
     const evidence = (documentId: string, confirmed = false): ContractDocumentEvidence => ({ documentId, templateId: workflowPlan.templateId,
         ...identity, statusType: confirmed ? "060" : "001", stepType: confirmed ? "05" : "00", stepIndex: confirmed ? "2" : "1",
         stepName: "synthetic", confirmed, createdAt: new Date(), updatedAt: new Date(), expiresAt: new Date("2030-01-01") });
-    async function runtime(index = 0) {
+    async function runtime(index = 0, prior?: { id: number; documentId: string }) {
         // Only provider/config JSON is controlled; both repositories and every SQL operation are real.
         const options = { resolveEffectiveTemplateId: (id?: string) => id ?? workflowPlan.templateId,
             generateDocumentOptions: () => ({ company: { id: identity.companyId }, user: { id: identity.creatorId } }) } as unknown as EformsignService;
         const recovery = new SbEformsignContractRecoveryRepository(db as unknown as PrismaService, options);
         const jobRepository = new SbEformsignDocumentJobRepository(db as unknown as PrismaService);
-        const employee = await db.employee.create({ data: { name: "Synthetic PG provider", workArea: [], phone: data.caretaker1Contact, grade: "synthetic", branchId: branches[0]! } });
-        employees.push(employee.id);
+        // A second generation reuses its provider; branch/normalized-phone is unique.
+        const employee = prior ? await db.employee.findFirstOrThrow({ where: { branchId: branches[0]!, phone: data.caretaker1Contact } })
+            : await db.employee.create({ data: { name: "Synthetic PG provider", workArea: [], phone: data.caretaker1Contact, grade: "synthetic", branchId: branches[0]! } });
+        if (!prior) employees.push(employee.id);
         const schedule = await db.employee_schedule.create({ data: { primaryEmployeeId: employee.id, clientId: clients[index]!, branchId: branches[0]!,
             workAddress: "synthetic", startDate: new Date("2026-11-01"), endDate: new Date("2026-11-10"), replaced: false } });
         const payload = { clientId: clients[index]!, contractData: data }, key = randomUUID();
@@ -120,11 +126,12 @@ async function bounded<T>(promise: Promise<T>, ms: number): Promise<T> {
         await db.eformsign_document_job.update({ where: { id: queued.job.id }, data: { status: "processing", leaseToken } });
         const contractData = ((await db.eformsign_document_job.findUniqueOrThrow({ where: { id: queued.job.id } })).payload as { contractData: typeof data }).contractData;
         const worker = { jobId: queued.job.id, leaseToken, contractGeneration: queued.job.contractGeneration! };
-        const input = { branchId: branches[0]!, clientId: clients[index]!, action: "create" as const, generation: "initial", localDocumentId: null,
-            assignmentId: schedule.id, templateId: null, businessKey: digest([branches[0], clients[index], "-", schedule.id, "-", "create", "initial"].join("|")),
-            fingerprint: digest(JSON.stringify({ contractData, generation: "initial" })) };
+        const generation = prior?.documentId ?? "initial", localDocumentId = prior?.id ?? null;
+        const input = { branchId: branches[0]!, clientId: clients[index]!, action: "create" as const, generation, localDocumentId,
+            assignmentId: schedule.id, templateId: null, businessKey: digest([branches[0], clients[index], localDocumentId ?? "-", schedule.id, "-", "create", generation].join("|")),
+            fingerprint: digest(JSON.stringify({ contractData, generation })) };
         const effect = { contractData, workflow: workflowPlan };
-        return { recovery, jobRepository, queued, enqueue, worker, input, effect };
+        return { recovery, jobRepository, queued, enqueue, worker, input, effect, options };
     }
     async function failed(s: Awaited<ReturnType<typeof runtime>>, reconciled: boolean) {
         const result = await s.recovery.claimCreation(s.input, s.worker, s.effect);
@@ -331,7 +338,7 @@ async function bounded<T>(promise: Promise<T>, ms: number): Promise<T> {
         expect(next.job.contractGeneration).not.toBe(generation);
         expect((await db.eformsign_document_job.findUniqueOrThrow({ where: { id: s.worker.jobId } })).contractGeneration).toBe(generation);
     });
-    it("P10 actual manual draft/human completion binds once and leaves verified authority held", async () => {
+    it("P10 actual manual draft/human completion binds once and closes authority for reissue", async () => {
         const s = await runtime(), f = await failed(s, true);
         expect(f.opened).toMatchObject({ claimUserId: users[0], claimEpoch: 1n });
         expect(f.opened.claimExpiresAt!.getTime()).toBeGreaterThan(Date.now());
@@ -352,11 +359,43 @@ async function bounded<T>(promise: Promise<T>, ms: number): Promise<T> {
         expect(await currentPointer()).toEqual({ eDocId: document });
         expect((await db.eformsign_doc.findUniqueOrThrow({ where: { documentId: document } })).clientId).toBe(clients[0]);
         expect(await db.eformsign_document_job.findUniqueOrThrow({ where: { id: s.worker.jobId } })).toMatchObject({ status: "completed", documentId: document, payload: null });
-        expect((await read())[0]).toMatchObject({ phase: "verified" });
+        const closed = (await read())[0]!;
+        expect(closed).toMatchObject({ phase: "closed" });
+        expect(await db.eformsign_dispatch_intent.findUniqueOrThrow({ where: { id: closed.humanIntentId! } })).toMatchObject({
+            status: "reconciled_delivered", reconciledOutcome: "delivered", reconciledByUserId: users[0], reconciledAt: expect.any(Date),
+        });
+        const completedJob = await db.eformsign_document_job.findUniqueOrThrow({ where: { id: s.worker.jobId } });
+        const intents = await db.eformsign_dispatch_intent.count(), mirrors = await db.eformsign_doc.count();
+        for (const status of ["failed", "requires_attention"]) {
+            await db.eformsign_document_job.update({ where: { id: s.worker.jobId }, data: { status } });
+            await expect(s.recovery.open(f.claim.jobId, branches[0]!, users[0]!)).rejects.toThrow();
+            expect((await read())[0]).toEqual(closed);
+        }
+        await db.eformsign_document_job.update({ where: { id: s.worker.jobId }, data: { status: "completed", documentId: null } });
+        await expect(s.recovery.open(f.claim.jobId, branches[0]!, users[0]!)).rejects.toThrow();
+        await db.eformsign_document_job.update({ where: { id: s.worker.jobId }, data: { documentId: document } });
+        await db.client.update({ where: { id: clients[0]! }, data: { eDocId: null } });
+        await expect(s.recovery.open(f.claim.jobId, branches[0]!, users[0]!)).rejects.toThrow();
+        expect((await read())[0]).toEqual(closed);
+        await db.client.update({ where: { id: clients[0]! }, data: { eDocId: document } });
         const reopened = await s.recovery.open(f.claim.jobId, branches[0]!, users[0]!);
-        expect(reopened.phase).toBe("verified");
-        expect(await s.recovery.expose({ ...f.claim, claimEpoch: reopened.claimEpoch }, evidence(document))).toBe(false);
-        await expect(s.jobRepository.enqueue({ ...s.enqueue, requestKey: `held-${randomUUID()}`, activeKey: `held-${randomUUID()}` })).rejects.toThrow();
+        expect(reopened).toMatchObject({ phase: "closed", providerDocumentId: document, payload: {}, claimUserId: users[0], claimEpoch: f.claim.claimEpoch + 1n });
+        await expect(s.recovery.readClaim(f.claim)).rejects.toThrow();
+        await expect(s.recovery.readClaim({ ...f.claim, claimEpoch: reopened.claimEpoch })).resolves.toMatchObject({ phase: "closed" });
+        await expect(s.recovery.open(f.claim.jobId, branches[0]!, users[1]!)).rejects.toMatchObject({ code: "MANUAL_RECOVERY_CLAIMED" });
+        expect((await read())[0]!.claimEpoch).toBe(reopened.claimEpoch);
+        expect(await cas((await read())[0]!, { claimExpiresAt: new Date(Date.now() - 1000) })).toBe(true);
+        await expect(s.recovery.readClaim({ ...f.claim, claimEpoch: reopened.claimEpoch })).rejects.toThrow();
+        const taken = await s.recovery.open(f.claim.jobId, branches[0]!, users[1]!);
+        expect(taken).toMatchObject({ phase: "closed", claimUserId: users[1], claimEpoch: reopened.claimEpoch + 1n });
+        // Reopening changes only the fenced claim; completion and all document/intent counts are retained.
+        expect(await db.eformsign_document_job.findUniqueOrThrow({ where: { id: s.worker.jobId } })).toMatchObject({ ...completedJob, updatedAt: expect.any(Date) });
+        expect(await db.eformsign_dispatch_intent.count()).toBe(intents); expect(await db.eformsign_doc.count()).toBe(mirrors);
+        expect(await currentPointer()).toEqual({ eDocId: document });
+        const next = await s.jobRepository.enqueue({ ...s.enqueue, requestKey: `next-${randomUUID()}`, activeKey: `next-${randomUUID()}` });
+        expect(next.job.contractGeneration).not.toBe(s.worker.contractGeneration);
+        await expect(s.recovery.open(f.claim.jobId, branches[0]!, users[1]!)).rejects.toThrow();
+        await expect(s.recovery.readClaim({ ...f.claim, userId: users[1]!, claimEpoch: taken.claimEpoch })).rejects.toThrow();
         expect(await db.eformsign_dispatch_intent.count({ where: { action: "manual_process", generation: s.worker.contractGeneration } })).toBe(1);
     });
     it("P11 actual stale/unknown creation, changed prior pointer and tombstone refusals leave no partial effects", async () => {
@@ -442,4 +481,635 @@ async function bounded<T>(promise: Promise<T>, ms: number): Promise<T> {
             expect(pointers).toEqual([{ id: clients[1] }]);
         }
     });
+    async function exhaustedRuntime() {
+        const s = await runtime();
+        await db.eformsign_document_job.update({ where: { id: s.worker.jobId }, data: { attempts: 4 } });
+        expect(await s.recovery.recoverBeforeCreation(s.worker, null, "PRE_SEND_RETRY_EXHAUSTED")).toBe("failed");
+        return s;
+    }
+    const nextInput = (s: Awaited<ReturnType<typeof runtime>>) => ({ ...s.enqueue, requestKey: `next-${randomUUID()}`, activeKey: `next-${randomUUID()}` });
+    const recoveryIn = (tx: Prisma.TransactionClient, s: Awaited<ReturnType<typeof runtime>>) =>
+        new SbEformsignContractRecoveryRepository({ $transaction: (run: (tx: Prisma.TransactionClient) => unknown) => run(tx) } as unknown as PrismaService, s.options);
+    it.each([false, true])("P13 replaces pre-send exhaustion with purged payload=%s and removes stale popup entries", async purged => {
+        const s = await exhaustedRuntime();
+        if (purged) await db.eformsign_document_job.update({ where: { id: s.worker.jobId }, data: { payload: Prisma.DbNull } });
+        const replay = await s.jobRepository.enqueue(s.enqueue);
+        expect(replay.existing).toBe(true); expect(replay.job.contractGeneration).toBe(s.worker.contractGeneration);
+        const next = await s.jobRepository.enqueue(nextInput(s));
+        expect(next.job.contractGeneration).not.toBe(s.worker.contractGeneration);
+        const old = await db.eformsign_document_job.findUniqueOrThrow({ where: { id: s.worker.jobId } });
+        expect(old).toMatchObject({ status: "failed", lastErrorCode: "PRE_SEND_RETRY_EXHAUSTED", progressStep: "superseded" });
+        expect(classifyRecovery({ ...old, payload: old.payload as Record<string, unknown> | null, source: "staff", jobType: "create_document", status: "failed" })).toBeNull();
+        const summary = await s.jobRepository.getSummary(branches[0]!);
+        expect(summary.unresolvedCount).toBe(0); expect(summary.unresolvedJobIds).not.toContain(s.worker.jobId);
+        const list = await s.jobRepository.listForBranch(branches[0]!, new Date(0));
+        expect(list.requiresAttention.map(job => job.id)).not.toContain(s.worker.jobId);
+        const historical = list.recent.find(job => job.id === s.worker.jobId)!;
+        expect(historical.status).toBe("failed"); expect(classifyRecovery(historical)).toBeNull();
+        await expect(s.recovery.open(s.worker.jobId, branches[0]!, users[0]!)).rejects.toThrow();
+    });
+    it.each(["claim", "rotation"])("P14 real concurrent %s winner fences the losing operation", async winner => {
+        const s = await exhaustedRuntime(), next = nextInput(s);
+        const claim = (tx: Prisma.TransactionClient) => recoveryIn(tx, s).open(s.worker.jobId, branches[0]!, users[0]!);
+        const rotate = (tx: Prisma.TransactionClient) => s.jobRepository.enqueueInTransaction(tx, next);
+        const results = winner === "claim" ? await contend(claim, rotate) : await contend(rotate, claim);
+        expect(results.map(result => result.status)).toEqual(["fulfilled", "rejected"]);
+        const authority = (await read())[0]!;
+        expect(authority.generation === s.worker.contractGeneration).toBe(winner === "claim");
+        expect((await db.eformsign_document_job.findUniqueOrThrow({ where: { id: s.worker.jobId } })).progressStep === "superseded").toBe(winner === "rotation");
+        expect(await db.eformsign_document_job.count({ where: { requestKey: next.requestKey } })).toBe(winner === "rotation" ? 1 : 0);
+    });
+    it.each(["started", "uncertain"])("P15 confirms and atomically settles exact %s creation before reissue", async status => {
+        const s = await runtime(), f = await failed(s, false), document = `settled-${randomUUID()}`; documents.push(document);
+        await db.eformsign_dispatch_intent.update({ where: { id: f.intent.id }, data: { status, providerDocumentId: document } });
+        await s.recovery.bindDocument(f.claim, evidence(document));
+        await s.recovery.completeManual(f.claim, evidence(document, true));
+        expect((await read())[0]!.phase).toBe("closed");
+        expect(await db.eformsign_dispatch_intent.findUniqueOrThrow({ where: { id: f.intent.id } })).toMatchObject({
+            status: "reconciled_delivered", reconciledOutcome: "delivered", reconciledByUserId: users[0], attemptCount: f.intent.attemptCount,
+        });
+        expect((await s.jobRepository.enqueue(nextInput(s))).job.contractGeneration).not.toBe(s.worker.contractGeneration);
+        await expect(s.recovery.readClaim(f.claim)).rejects.toThrow();
+    });
+    it.each(["job", "intent", "pointer", "mirror"])("P16 a real %s CAS failure rolls back generation release", async target => {
+        const s = await runtime(), f = await failed(s, false), document = `rollback-${randomUUID()}`; documents.push(document);
+        await db.eformsign_dispatch_intent.update({ where: { id: f.intent.id }, data: { providerDocumentId: document } });
+        await s.recovery.bindDocument(f.claim, evidence(document));
+        const beforeAuthority = (await read())[0]!, beforeJob = await db.eformsign_document_job.findUniqueOrThrow({ where: { id: s.worker.jobId } });
+        const beforeIntent = await db.eformsign_dispatch_intent.findUniqueOrThrow({ where: { id: f.intent.id } });
+        const beforeMirror = await db.eformsign_doc.findUniqueOrThrow({ where: { documentId: document } });
+        const connection = db.$extends({ query: {
+            eformsign_document_job: { async updateMany({ args, query }) { return target === "job" ? { count: 0 } : query(args); } },
+            eformsign_dispatch_intent: { async updateMany({ args, query }) { return target === "intent" ? { count: 0 } : query(args); } },
+            client: { async updateMany({ args, query }) { return target === "pointer" ? { count: 0 } : query(args); } },
+            eformsign_doc: { async updateMany({ args, query }) { return target === "mirror" ? { count: 0 } : query(args); } },
+        } });
+        const recovery = new SbEformsignContractRecoveryRepository(connection as unknown as PrismaService, s.options);
+        await expect(recovery.completeManual(f.claim, evidence(document, true))).rejects.toThrow();
+        expect((await read())[0]).toEqual(beforeAuthority); expect(await currentPointer()).toEqual({ eDocId: null });
+        expect(await db.eformsign_document_job.findUniqueOrThrow({ where: { id: s.worker.jobId } })).toEqual(beforeJob);
+        expect(await db.eformsign_dispatch_intent.findUniqueOrThrow({ where: { id: f.intent.id } })).toEqual(beforeIntent);
+        expect(await db.eformsign_doc.findUniqueOrThrow({ where: { documentId: document } })).toEqual(beforeMirror);
+    });
+    async function terminalStart(kind: "create" | "draft", purged: boolean) {
+        const s = await runtime();
+        const create = await s.recovery.claimCreation(s.input, s.worker, s.effect);
+        await db.eformsign_document_job.update({ where: { id: s.worker.jobId }, data: { status: "requires_attention", leaseToken: null, completedAt: new Date() } });
+        let intentId = create.intent.id;
+        if (kind === "draft") {
+            await new SbEformsignDispatchIntentRepository(db as unknown as PrismaService).markUncertain(intentId, branches[0]!, 1, "provider investigated");
+            await new SbEformsignDispatchIntentRepository(db as unknown as PrismaService).reconcile({ intentId, branchId: branches[0]!, outcome: "not_delivered", actorUserId: users[0]!, reason: "Provider console no effect", attemptCount: 1 });
+            const opened = await s.recovery.open(s.worker.jobId, branches[0]!, users[0]!);
+            intentId = (await s.recovery.beginDraft({ jobId: opened.jobId, branchId: opened.branchId, userId: users[0]!, claimEpoch: opened.claimEpoch }, workflowPlan.templateId, identity)).id;
+            // Expire open()'s real claim while retaining its actor provenance.
+            await db.eformsign_contract_authority.update({ where: { branchId_clientId: { branchId: branches[0]!, clientId: clients[0]! } }, data: { claimExpiresAt: new Date(0) } });
+        }
+        // Automatic creation has no human claim; both columns remain NULL.
+        expect((await read())[0]).toMatchObject({ claimUserId: kind === "draft" ? users[0] : null, claimExpiresAt: kind === "draft" ? new Date(0) : null });
+        await db.eformsign_document_job.update({ where: { id: s.worker.jobId }, data: { completedAt: new Date(Date.now() - 8 * 86400000), ...(purged ? { payload: Prisma.DbNull } : {}) } });
+        return { s, intentId };
+    }
+    it.each([ ["create", true], ["create", false], ["draft", true], ["draft", false] ] as const)("R4 real two-transaction day8 %s purged=%s commits repair despite410, then operator proof rotates", async (kind, purged) => {
+        const { s, intentId } = await terminalStart(kind, purged), before = (await read())[0]!;
+        const oldJob = await db.eformsign_document_job.findUniqueOrThrow({ where: { id: s.worker.jobId } });
+        const oldIntent = await db.eformsign_dispatch_intent.findUniqueOrThrow({ where: { id: intentId } });
+        await expect(s.recovery.open(s.worker.jobId, branches[0]!, users[0]!)).rejects.toMatchObject({ code: "RECOVERY_PAYLOAD_EXPIRED", status: 410 });
+        const repaired = await db.eformsign_dispatch_intent.findUniqueOrThrow({ where: { id: intentId } });
+        expect(repaired).toMatchObject({ status: "uncertain", attemptCount: oldIntent.attemptCount, providerDocumentId: null, uncertainReason: "stale_start_after_terminal_job" });
+        expect((await read())[0]).toEqual({ ...before, phase: "creation_uncertain" });
+        expect(await db.eformsign_document_job.findUniqueOrThrow({ where: { id: s.worker.jobId } })).toEqual(oldJob);
+        const jobsBefore = await db.eformsign_document_job.count();
+        await expect(s.jobRepository.enqueue({ ...nextInput(s), activeKey: s.enqueue.activeKey })).resolves.toMatchObject({ existing: true });
+        expect(await db.eformsign_document_job.count()).toBe(jobsBefore); expect((await read())[0]!.generation).toBe(before.generation);
+        await expect(s.jobRepository.enqueue(nextInput(s))).rejects.toThrow();
+        await new SbEformsignDispatchIntentRepository(db as unknown as PrismaService).reconcile({ intentId, branchId: branches[0]!, outcome: "not_delivered", actorUserId: users[0]!, reason: "Provider console confirms no effect", attemptCount: repaired.attemptCount });
+        await expect(s.jobRepository.enqueue({ ...nextInput(s), activeKey: s.enqueue.activeKey })).resolves.toMatchObject({ existing: false });
+        expect((await read())[0]!.generation).not.toBe(before.generation);
+        expect(await db.eformsign_document_job.findUniqueOrThrow({ where: { id: s.worker.jobId } })).toMatchObject({ activeKey: null, payload: null, progressStep: "superseded", status: "failed" });
+    });
+    it("R4 real inter-transaction new claim is rechecked after independently committed repair", async () => {
+        const { s } = await terminalStart("create", false);
+        await db.eformsign_document_job.update({ where: { id: s.worker.jobId }, data: { completedAt: new Date() } });
+        let calls = 0;
+        const proxy = new Proxy(db, { get(target, key) {
+            if (key === "$transaction") return async (run: (tx: Prisma.TransactionClient) => Promise<unknown>) => {
+                const value = await target.$transaction(run);
+                if (++calls === 1) await s.recovery.open(s.worker.jobId, branches[0]!, users[1]!);
+                return value;
+            };
+            const value = Reflect.get(target, key); return typeof value === "function" ? value.bind(target) : value;
+        } });
+        await expect(new SbEformsignContractRecoveryRepository(proxy as unknown as PrismaService, s.options).open(s.worker.jobId, branches[0]!, users[0]!)).rejects.toMatchObject({ code: "MANUAL_RECOVERY_CLAIMED" });
+        expect((await read())[0]).toMatchObject({ phase: "creation_uncertain", claimUserId: users[1] });
+    });
+    it.each(["same", "other"])("R4 real live %s user claim keeps STARTED unchanged", async who => {
+        const { s, intentId } = await terminalStart("draft", false);
+        const user = users[who === "same" ? 0 : 1]!;
+        await db.eformsign_document_job.update({ where: { id: s.worker.jobId }, data: { completedAt: new Date() } });
+        await db.eformsign_contract_authority.update({ where: { branchId_clientId: { branchId: branches[0]!, clientId: clients[0]! } }, data: { claimUserId: user, claimExpiresAt: new Date(Date.now() + 60000) } });
+        const before = await db.eformsign_dispatch_intent.findUniqueOrThrow({ where: { id: intentId } });
+        const opened = s.recovery.open(s.worker.jobId, branches[0]!, users[0]!);
+        if (who === "same") await opened; else await expect(opened).rejects.toMatchObject({ code: "MANUAL_RECOVERY_CLAIMED" });
+        expect(await db.eformsign_dispatch_intent.findUniqueOrThrow({ where: { id: intentId } })).toEqual(before);
+    });
+    it("R4 current failed hold survives day8 list/count cutoff and disappears after proven close", async () => {
+        const { s, intentId } = await terminalStart("create", true);
+        await db.eformsign_document_job.update({ where: { id: s.worker.jobId }, data: { status: "failed" } });
+        const history = await db.eformsign_document_job.create({ data: { branchId: branches[0]!, clientId: clients[0]!, jobType: "create_document", source: "staff", requestKey: randomUUID(), status: "failed", completedAt: new Date(Date.now() - 8 * 86400000) } });
+        const summary = await s.jobRepository.getSummary(branches[0]!);
+        expect(summary.failedCount).toBe(0); expect(summary.unresolvedCount).toBe(1); expect(summary.unresolvedJobIds).toEqual([s.worker.jobId]);
+        expect((await s.jobRepository.listForBranch(branches[0]!, new Date(0))).requiresAttention.map(job => job.id)).toEqual([s.worker.jobId]);
+        expect(summary.unresolvedJobIds).not.toContain(history.id);
+        expect((await s.jobRepository.getSummary(branches[1]!)).unresolvedJobIds).toEqual([]);
+        await expect(s.recovery.open(s.worker.jobId, branches[0]!, users[0]!)).rejects.toMatchObject({ status: 410 });
+        await new SbEformsignDispatchIntentRepository(db as unknown as PrismaService).reconcile({ intentId, branchId: branches[0]!, outcome: "not_delivered", actorUserId: users[0]!, reason: "Provider investigated", attemptCount: 1 });
+        await s.jobRepository.enqueue(nextInput(s));
+        expect((await s.jobRepository.getSummary(branches[0]!)).unresolvedJobIds).toEqual([]);
+        expect((await s.jobRepository.listForBranch(branches[0]!, new Date(0))).requiresAttention).toEqual([]);
+    });
+    it("R4 real scoped conflicting request insert rolls back old key, job, refs and authority retirement", async () => {
+        const { s, intentId } = await terminalStart("create", true);
+        await expect(s.recovery.open(s.worker.jobId, branches[0]!, users[0]!)).rejects.toMatchObject({ status: 410 });
+        await new SbEformsignDispatchIntentRepository(db as unknown as PrismaService).reconcile({ intentId, branchId: branches[0]!, outcome: "not_delivered", actorUserId: users[0]!, reason: "Provider investigated", attemptCount: 1 });
+        const before = (await read())[0]!, old = await db.eformsign_document_job.findUniqueOrThrow({ where: { id: s.worker.jobId } });
+        // Simulate a conflict discovered only at INSERT, bypassing the first replay read, never DB uniqueness.
+        const conflict = await db.eformsign_document_job.create({ data: { branchId: branches[1]!, jobType: "create_document", source: "staff", requestKey: "global-collision", payloadFingerprint: s.enqueue.payloadFingerprint } });
+        const proxy = new Proxy(db, { get(target, key) {
+            if (key === "$transaction") return (run: (tx: Prisma.TransactionClient) => Promise<unknown>) => target.$transaction(tx => run(new Proxy(tx, { get(t, k) {
+                if (k === "$queryRaw") return (query: Prisma.Sql) => /WHERE request_key =/.test(query.text) && !query.text.includes("OR active_key") ? Promise.resolve([]) : t.$queryRaw(query);
+                const value = Reflect.get(t, k); return typeof value === "function" ? value.bind(t) : value;
+            } })));
+            const value = Reflect.get(target, key); return typeof value === "function" ? value.bind(target) : value;
+        } });
+        await expect(new SbEformsignDocumentJobRepository(proxy as unknown as PrismaService).enqueue({ ...nextInput(s), requestKey: conflict.requestKey, activeKey: s.enqueue.activeKey })).rejects.toThrow();
+        expect((await read())[0]).toEqual(before); expect(await db.eformsign_document_job.findUniqueOrThrow({ where: { id: old.id } })).toEqual(old);
+    });
+    // Transactional DDL and a reentrant BEFORE INSERT trigger introduce a real
+    // unique collision after every admission read, using only the owned branch.
+    // Both the collision row and DDL roll back with the surrounding transaction.
+    async function insertSameBranchCollision(tx: Prisma.TransactionClient, requestKey: string) {
+        const name = `authority_collision_${randomUUID().replace(/-/g, "")}`;
+        if (!/^[a-zA-Z0-9-]+$/.test(requestKey)) throw new Error("Unsafe synthetic trigger argument");
+        await tx.$executeRaw(Prisma.raw(`CREATE FUNCTION pg_temp.${name}() RETURNS trigger LANGUAGE plpgsql AS $$
+            BEGIN
+                IF pg_trigger_depth() = 1 AND NEW.request_key = TG_ARGV[0] THEN
+                    INSERT INTO eformsign_document_job (branch_id, client_id, job_type, source, request_key, payload_fingerprint)
+                    VALUES (NEW.branch_id, NEW.client_id, NEW.job_type, NEW.source, NEW.request_key, NEW.payload_fingerprint);
+                END IF;
+                RETURN NEW;
+            END $$`));
+        await tx.$executeRaw(Prisma.raw(`CREATE TRIGGER ${name} BEFORE INSERT ON eformsign_document_job
+            FOR EACH ROW EXECUTE FUNCTION pg_temp.${name}('${requestKey}')`));
+    }
+    const branchSnapshot = async () => ({
+        authorities: await db.eformsign_contract_authority.findMany({ where: { branchId: branches[0]! }, orderBy: { clientId: "asc" } }),
+        jobs: await db.eformsign_document_job.findMany({ where: { branchId: branches[0]! }, orderBy: { id: "asc" } }),
+        intents: await db.eformsign_dispatch_intent.findMany({ where: { branchId: branches[0]! }, orderBy: { id: "asc" } }),
+        clients: await db.client.findMany({ where: { branchId: branches[0]! }, orderBy: { id: "asc" } }),
+        mirrors: await db.eformsign_doc.findMany({ where: { branchId: branches[0]! }, orderBy: { id: "asc" } }),
+    });
+    it.each(["normalization", "retirement"] as const)("P2 real same-branch same-fingerprint INSERT collision rolls back %s", async site => {
+        let s: Awaited<ReturnType<typeof runtime>>;
+        if (site === "normalization") ({ s } = await historicalRuntime());
+        else {
+            const terminal = await terminalStart("create", true); s = terminal.s;
+            await expect(s.recovery.open(s.worker.jobId, branches[0]!, users[0]!)).rejects.toMatchObject({ status: 410 });
+            await new SbEformsignDispatchIntentRepository(db as unknown as PrismaService).reconcile({ intentId: terminal.intentId, branchId: branches[0]!,
+                outcome: "not_delivered", actorUserId: users[0]!, reason: "Provider investigated", attemptCount: 1 });
+        }
+        const input = { ...nextInput(s), requestKey: randomUUID(), activeKey: s.enqueue.activeKey }, before = await branchSnapshot();
+        expect(await db.eformsign_document_job.count({ where: { requestKey: input.requestKey } })).toBe(0);
+        const error = await transaction(db, async tx => {
+            await insertSameBranchCollision(tx, input.requestKey);
+            return s.jobRepository.enqueueInTransaction(tx, input);
+        }).catch((caught: unknown) => caught);
+        expect(error).toBeInstanceOf(ConflictException);
+        expect((error as ConflictException).getStatus()).toBe(409);
+        expect((error as ConflictException).getResponse()).toEqual({ code: "REQUEST_CONFLICT" });
+        expect(await branchSnapshot()).toEqual(before);
+        expect(await db.eformsign_document_job.count({ where: { requestKey: input.requestKey } })).toBe(0);
+
+        // With no authority mutation, the identical collision really qualifies
+        // for fallback (same branch, request key and fingerprint). Roll back the
+        // control deliberately so neither fixtures nor trigger DDL persist.
+        const rollback = new Error("positive control rollback");
+        await expect(transaction(db, async tx => {
+            const [authority] = await lockAuthorityScope(tx, input.branchId, [input.clientId!]);
+            const client = await tx.client.findUniqueOrThrow({ where: { id: input.clientId! } });
+            const closed = site === "normalization" ? await normalizeVerifiedAuthority(tx, authority!)
+                : await retireProvenNoEffect(tx, authority!, client.eDocId);
+            expect(closed).toBe(true);
+            await insertSameBranchCollision(tx, input.requestKey);
+            const result = await s.jobRepository.enqueueInTransaction(tx, input);
+            expect(result).toMatchObject({ existing: true, job: { branchId: input.branchId, clientId: input.clientId,
+                requestKey: input.requestKey, payloadFingerprint: input.payloadFingerprint } });
+            const collision = await tx.eformsign_document_job.findUniqueOrThrow({ where: { requestKey: input.requestKey } });
+            expect(collision.activeKey).toBeNull(); expect(collision.branchId).toBe(branches[0]);
+            throw rollback;
+        })).rejects.toBe(rollback);
+        expect(await branchSnapshot()).toEqual(before);
+    });
+    async function plan5Hold(path: "released" | "zero" | "legacy-zero", prior?: { id: number; documentId: string }) {
+        const s = await runtime(0, prior);
+        if (path === "released") {
+            const { claim } = await failed(s, true);
+            const draft = await s.recovery.beginDraft(claim, workflowPlan.templateId, identity), intentId = draft.id;
+            await s.recovery.releaseDraftBeforeOpen(claim, intentId);
+            await db.eformsign_contract_authority.update({ where: { branchId_clientId: { branchId: branches[0]!, clientId: clients[0]! } }, data: { claimExpiresAt: new Date(0) } });
+            await db.eformsign_document_job.update({ where: { id: s.worker.jobId }, data: { completedAt: new Date() } });
+            expect((await read())[0]).toMatchObject({ phase: "reserved", draftIntentId: null });
+            expect(await db.eformsign_dispatch_intent.findUniqueOrThrow({ where: { id: intentId } })).toMatchObject({
+                status: "prepared", startedAt: null, providerDocumentId: null, reconciliationReason: "draft_released_before_open" });
+            return { s, intentId, claim };
+        }
+        await db.eformsign_document_job.update({ where: { id: s.worker.jobId }, data: { status: "reconciling", progressStep: "processing", heartbeatAt: new Date() } });
+        await s.recovery.markAutomaticUncertain(s.worker);
+        if (path === "legacy-zero") await db.eformsign_contract_authority.update({ where: { branchId_clientId: { branchId: branches[0]!, clientId: clients[0]! } }, data: { phase: "creation_uncertain" } });
+        await db.eformsign_document_job.update({ where: { id: s.worker.jobId }, data: { status: "requires_attention", leaseToken: null, completedAt: new Date(), lastErrorCode: "RECOVERY_PENDING" } });
+        return { s, intentId: null, claim: null };
+    }
+    const plan5Paths = ["released", "zero", "legacy-zero"] as const;
+    async function plan5AcceptedHistory(path: "released" | "zero") {
+        let prior: { id: number; documentId: string } | undefined, previousIntentId = "";
+        for (let index = 0; index < 2; index++) {
+            const previous = await runtime(0, prior), claimed = await previous.recovery.claimCreation(previous.input, previous.worker, previous.effect);
+            const documentId = `prior-accepted-${randomUUID()}`; documents.push(documentId);
+            await new SbEformsignDispatchIntentRepository(db as unknown as PrismaService).markAccepted(claimed.intent.id, branches[0]!, claimed.intent.attemptCount, documentId);
+            await previous.recovery.completeAutomatic(previous.worker, { ...evidence(documentId, true), createdAt: new Date(Date.now() + index * 1000) });
+            prior = await db.eformsign_doc.findUniqueOrThrow({ where: { documentId } }); previousIntentId = claimed.intent.id;
+            expect((await read())[0]).toMatchObject({ phase: "closed", providerDocumentId: documentId });
+            expect(await currentPointer()).toEqual({ eDocId: documentId });
+            expect(await db.eformsign_dispatch_intent.findUniqueOrThrow({ where: { id: claimed.intent.id } })).toMatchObject({ status: "accepted", providerDocumentId: documentId });
+            expect(await db.eformsign_document_job.findUniqueOrThrow({ where: { id: previous.worker.jobId } })).toMatchObject({ status: "completed", documentId });
+        }
+        if (!prior) throw new Error("Missing completed history");
+        return { ...await plan5Hold(path, prior), previousIntentId, prior };
+    }
+    it.each(["released", "zero"].flatMap(path => ["retained", "purged"].map(payload => ({ path: path as "released" | "zero", payload }))))("PLAN5 real $path retires beside multiple completed accepted histories with $payload payloads", async ({ path, payload }) => {
+        const { s, prior } = await plan5AcceptedHistory(path);
+        // Completion already purges prior payloads; explicitly exercise both current payload states.
+        if (payload === "purged") await db.eformsign_document_job.update({ where: { id: s.worker.jobId }, data: { payload: Prisma.DbNull } });
+        const before = await branchSnapshot();
+        const receipts = before.intents.filter(row => row.status === "accepted").map(row => row.providerDocumentId);
+        expect(receipts).toHaveLength(2); expect(new Set(receipts).size).toBe(2); expect(receipts).toContain(prior.documentId);
+        const old = await db.eformsign_document_job.findUniqueOrThrow({ where: { id: s.worker.jobId } });
+        expect((await read())[0]!.priorDocumentId).toBe(prior.documentId);
+        await expect(s.jobRepository.enqueue(s.enqueue)).resolves.toMatchObject({ existing: true, job: { id: old.id } });
+        expect(await branchSnapshot()).toEqual(before);
+        const input = nextInput(s), result = await s.jobRepository.enqueue(input), after = await branchSnapshot();
+        expect(result.existing).toBe(false); expect(result.job.contractGeneration).not.toBe(old.contractGeneration);
+        expect(after.intents).toEqual(before.intents); expect(after.clients).toEqual(before.clients); expect(after.mirrors).toEqual(before.mirrors);
+        expect(after.jobs).toHaveLength(before.jobs.length + 1);
+        expect(await db.eformsign_document_job.count({ where: { requestKey: input.requestKey } })).toBe(1);
+        expect(await db.eformsign_document_job.findUniqueOrThrow({ where: { id: old.id } })).toEqual({ ...old, status: "failed", progressStep: "superseded", activeKey: null, payload: null, leaseToken: null, heartbeatAt: null, updatedAt: expect.any(Date) });
+        expect(after.jobs.filter(row => row.id !== old.id && row.id !== result.job.id)).toEqual(before.jobs.filter(row => row.id !== old.id));
+        expect((await read())[0]).toMatchObject({ phase: "reserved", generation: result.job.contractGeneration, creationJobId: result.job.id, priorDocumentId: prior.documentId });
+        await expect(s.jobRepository.enqueue(input)).resolves.toMatchObject({ existing: true, job: { id: result.job.id } }); expect(await branchSnapshot()).toEqual(after);
+    });
+    const historyDefects = ["no-prior", "null-provider", "empty-provider", "blank-provider", "started-prior", "uncertain-prior", "current-linked", "current-unlinked", "later-create-started", "later-create-uncertain", "later-draft-started", "later-draft-uncertain", "later-null-accepted", "later-empty-accepted", "later-blank-accepted"] as const;
+    it.each(["released", "zero"].flatMap(path => historyDefects.map(defect => ({ path: path as "released" | "zero", defect }))))("PLAN5 real $path accepted history refuses $defect", async ({ path, defect }) => {
+        const { s, prior, previousIntentId, intentId } = await plan5AcceptedHistory(path), where = { branchId_clientId: { branchId: branches[0]!, clientId: clients[0]! } };
+        if (defect === "no-prior") {
+            await db.eformsign_contract_authority.update({ where, data: { priorDocumentId: null } });
+            // Keep the latest pointer: a missing prior must still fail the pointer guard.
+        }
+        // Storage rejects NULL/empty receipts. Its btrim checks spaces only, so
+        // whitespace containing tabs/newlines below also exercises the runtime guard.
+        // Unit tests cover corrupt/legacy NULL and empty rows without bypassing checks.
+        if (["null-provider", "empty-provider", "later-null-accepted", "later-empty-accepted"].includes(defect)) {
+            const before = await branchSnapshot();
+            const receipt = defect.includes("empty") ? "" : null;
+            const write = !defect.startsWith("later-")
+                ? db.eformsign_dispatch_intent.update({ where: { id: previousIntentId }, data: { providerDocumentId: receipt } })
+                : db.eformsign_dispatch_intent.create({ data: { branchId: branches[0]!, clientId: clients[0]!, action: "create_draft", generation: "later-unrelated", fingerprint: "b".repeat(64), businessKey: digest(randomUUID()), status: "accepted", attemptCount: 1, providerDocumentId: receipt } });
+            await expect(write).rejects.toThrow(); expect(await branchSnapshot()).toEqual(before); return;
+        }
+        if (defect === "started-prior" || defect === "uncertain-prior") await db.eformsign_dispatch_intent.update({ where: { id: previousIntentId }, data: { status: defect === "started-prior" ? "started" : "uncertain" } });
+        if (defect === "current-linked") {
+            if (path === "zero") await db.eformsign_contract_authority.update({ where, data: { creationIntentId: previousIntentId } });
+            else await db.eformsign_dispatch_intent.update({ where: { id: (await read())[0]!.creationIntentId! }, data: { status: "accepted", providerDocumentId: prior.documentId } });
+        }
+        if (defect === "current-unlinked") {
+            if (intentId) await db.eformsign_dispatch_intent.update({ where: { id: intentId }, data: { status: "accepted", providerDocumentId: prior.documentId } });
+            else await db.eformsign_dispatch_intent.create({ data: { branchId: branches[0]!, clientId: clients[0]!, action: "create_draft", generation: s.worker.contractGeneration,
+                fingerprint: s.enqueue.payloadFingerprint, templateId: workflowPlan.templateId, businessKey: digest(`contract-draft:${s.worker.contractGeneration}`), status: "accepted", providerDocumentId: prior.documentId, attemptCount: 1 } });
+        }
+        if (defect === "empty-provider" || defect === "blank-provider") await db.eformsign_dispatch_intent.update({ where: { id: previousIntentId }, data: { providerDocumentId: defect === "empty-provider" ? "" : " \t\n " } });
+        if (defect.startsWith("later-")) await db.eformsign_dispatch_intent.create({ data: { branchId: branches[0]!, clientId: clients[0]!, action: defect.includes("create-") ? "create" : "create_draft", generation: "later-unrelated",
+            fingerprint: "b".repeat(64), businessKey: digest(randomUUID()), status: defect.includes("accepted") ? "accepted" : defect.endsWith("started") ? "started" : "uncertain", attemptCount: 1,
+            providerDocumentId: defect === "later-empty-accepted" ? "" : defect === "later-blank-accepted" ? " \t\n " : prior.documentId } });
+        const before = await branchSnapshot();
+        await expect(s.jobRepository.enqueue(nextInput(s))).rejects.toThrow(); expect(await branchSnapshot()).toEqual(before);
+    });
+    it.each(["reserved", "creation_pending", "creation_uncertain"])("PLAN5 real linked prepared-zero create preserves %s boundary", async phase => {
+        const s = await runtime(), claimed = await s.recovery.claimCreation(s.input, s.worker, s.effect);
+        await db.eformsign_dispatch_intent.update({ where: { id: claimed.intent.id }, data: { status: "prepared", attemptCount: 0, startedAt: null } });
+        await db.eformsign_contract_authority.update({ where: { branchId_clientId: { branchId: branches[0]!, clientId: clients[0]! } }, data: { phase } });
+        await db.eformsign_document_job.update({ where: { id: s.worker.jobId }, data: { status: "failed", leaseToken: null, completedAt: new Date() } });
+        const before = await branchSnapshot();
+        if (phase === "reserved") { await expect(s.jobRepository.enqueue(nextInput(s))).rejects.toThrow(); expect(await branchSnapshot()).toEqual(before); }
+        else { await expect(s.jobRepository.enqueue(nextInput(s))).resolves.toMatchObject({ existing: false }); expect((await branchSnapshot()).intents).toEqual(before.intents); }
+    });
+    it.each(["other-error", "residual-key"].flatMap(audit => [null, "create", "create_draft"].map(action => ({ audit, action }))))("PLAN5 real zero-ref $audit unresolved=$action follows structural proof", async ({ audit, action }) => {
+        const { s } = await plan5Hold("zero");
+        await db.eformsign_document_job.update({ where: { id: s.worker.jobId }, data: audit === "other-error" ? { lastErrorCode: "OTHER" } : { activeKey: "residual-key" } });
+        if (action) await db.eformsign_dispatch_intent.create({ data: { branchId: branches[0]!, clientId: clients[0]!, action, status: "uncertain", attemptCount: 1, generation: "unresolved", fingerprint: "b".repeat(64), businessKey: digest(randomUUID()) } });
+        const before = await branchSnapshot(), old = await db.eformsign_document_job.findUniqueOrThrow({ where: { id: s.worker.jobId } });
+        await expect(s.jobRepository.enqueue(s.enqueue)).resolves.toMatchObject({ existing: true, job: { id: old.id } }); expect(await branchSnapshot()).toEqual(before);
+        const input = nextInput(s);
+        if (action) { await expect(s.jobRepository.enqueue(input)).rejects.toThrow(); expect(await branchSnapshot()).toEqual(before); }
+        else {
+            const result = await s.jobRepository.enqueue(input), after = await branchSnapshot();
+            expect(result.existing).toBe(false); expect(result.job.contractGeneration).not.toBe(old.contractGeneration);
+            expect(after.jobs).toHaveLength(before.jobs.length + 1); expect(after.intents).toEqual(before.intents); expect(after.clients).toEqual(before.clients); expect(after.mirrors).toEqual(before.mirrors);
+            expect(await db.eformsign_document_job.findUniqueOrThrow({ where: { id: old.id } })).toEqual({ ...old, status: "failed", progressStep: "superseded", activeKey: null, payload: null, leaseToken: null, heartbeatAt: null, updatedAt: expect.any(Date) });
+            expect((await read())[0]).toMatchObject({ phase: "reserved", creationJobId: result.job.id, generation: result.job.contractGeneration, priorDocumentId: null });
+        }
+    });
+    it("PLAN5 real zero-ref markAutomaticUncertain preserves every authority field and issues no authority CAS", async () => {
+        const s = await runtime();
+        await db.eformsign_document_job.update({ where: { id: s.worker.jobId }, data: { status: "reconciling", progressStep: "processing" } });
+        const before = await branchSnapshot(); let casCalls = 0;
+        const proxy = new Proxy(db, { get(target, key) {
+            if (key === "$transaction") return (run: (tx: Prisma.TransactionClient) => Promise<unknown>) => target.$transaction(tx => run(new Proxy(tx, { get(inner, method) {
+                if (method === "$executeRaw") return (sql: Prisma.Sql) => { if (/UPDATE eformsign_contract_authority/.test(sql.text)) casCalls++; return inner.$executeRaw(sql); };
+                const value = Reflect.get(inner, method); return typeof value === "function" ? value.bind(inner) : value;
+            } })));
+            const value = Reflect.get(target, key); return typeof value === "function" ? value.bind(target) : value;
+        } });
+        await new SbEformsignContractRecoveryRepository(proxy as unknown as PrismaService, s.options).markAutomaticUncertain(s.worker);
+        expect((await read())[0]!.phase).toBe("reserved"); expect(await branchSnapshot()).toEqual(before); expect(casCalls).toBe(0);
+    });
+    it.each(["reserved", "creation_pending", "creation_uncertain"] as const)("PLAN5 real linked STARTED repair remains effective in %s", async phase => {
+        const s = await runtime(), result = await s.recovery.claimCreation(s.input, s.worker, s.effect);
+        await db.eformsign_contract_authority.update({ where: { branchId_clientId: { branchId: branches[0]!, clientId: clients[0]! } }, data: { phase } });
+        await s.recovery.markAutomaticUncertain(s.worker);
+        expect((await read())[0]!.phase).toBe("creation_uncertain");
+        expect(await db.eformsign_dispatch_intent.findUniqueOrThrow({ where: { id: result.intent.id } })).toMatchObject({ status: "uncertain", attemptCount: 1, uncertainReason: "contract_creation_unverified" });
+    });
+    it.each(plan5Paths.flatMap(path => ["fresh", "day8-retained", "day8-purged"].map(age => ({ path, age }))))("PLAN5 real $path $age replays then retires exactly once with immutable audit/pointer", async ({ path, age }) => {
+        const { s } = await plan5Hold(path);
+        if (age !== "fresh") await db.eformsign_document_job.update({ where: { id: s.worker.jobId }, data: { completedAt: new Date(Date.now() - 8 * 86400000), ...(age === "day8-purged" ? { payload: Prisma.DbNull } : {}) } });
+        const before = await branchSnapshot(), old = await db.eformsign_document_job.findUniqueOrThrow({ where: { id: s.worker.jobId } });
+        await expect(s.jobRepository.enqueue(s.enqueue)).resolves.toMatchObject({ existing: true, job: { id: old.id } });
+        expect(await branchSnapshot()).toEqual(before);
+        const input = { ...nextInput(s), activeKey: s.enqueue.activeKey }, result = await s.jobRepository.enqueue(input);
+        expect(result.existing).toBe(false); expect(result.job.contractGeneration).not.toBe(s.worker.contractGeneration);
+        expect(await db.eformsign_document_job.count({ where: { requestKey: input.requestKey } })).toBe(1);
+        expect(await db.eformsign_document_job.findUniqueOrThrow({ where: { id: old.id } })).toMatchObject({ status: "failed", progressStep: "superseded", activeKey: null, payload: null, lastErrorCode: old.lastErrorCode, contractGeneration: old.contractGeneration });
+        const after = await branchSnapshot();
+        expect(after.intents).toEqual(before.intents); expect(after.clients).toEqual(before.clients); expect(after.mirrors).toEqual(before.mirrors);
+        expect(after.jobs).toHaveLength(before.jobs.length + 1);
+        expect((await read())[0]).toMatchObject({ creationJobId: result.job.id, generation: result.job.contractGeneration, phase: "reserved", priorDocumentId: null });
+        await expect(s.jobRepository.enqueue(input)).resolves.toMatchObject({ existing: true, job: { id: result.job.id } });
+        expect(await branchSnapshot()).toEqual(after);
+        await expect(s.recovery.readWorker(s.worker)).rejects.toMatchObject({ code: "RECOVERY_STALE" });
+    });
+    it.each(plan5Paths.flatMap(path => ["same-claim", "other-claim", "lease", "active", "provider", "hidden-human", "human-ref", "pointer", "job-fingerprint"].map(defect => ({ path, defect }))))("PLAN5 real $path refuses $defect without any mutation", async ({ path, defect }) => {
+        const { s } = await plan5Hold(path), where = { branchId_clientId: { branchId: branches[0]!, clientId: clients[0]! } };
+        if (defect.endsWith("claim")) await db.eformsign_contract_authority.update({ where, data: { claimUserId: users[defect === "same-claim" ? 0 : 1]!, claimExpiresAt: new Date(Date.now() + 60000) } });
+        if (defect === "lease" || defect === "active") await db.eformsign_document_job.update({ where: { id: s.worker.jobId }, data: defect === "lease" ? { leaseToken: s.worker.leaseToken } : { status: "processing", leaseToken: s.worker.leaseToken } });
+        if (defect === "provider") await db.eformsign_contract_authority.update({ where, data: { providerDocumentId: documents[0]! } });
+        if (defect === "pointer") await db.client.update({ where: { id: clients[0]! }, data: { eDocId: documents[0]! } });
+        if (defect === "job-fingerprint") await db.eformsign_document_job.update({ where: { id: s.worker.jobId }, data: { payloadFingerprint: "b".repeat(64) } });
+        if (defect === "hidden-human" || defect === "human-ref") {
+            const human = await db.eformsign_dispatch_intent.create({ data: { branchId: branches[0]!, clientId: clients[0]!, action: "manual_process", generation: s.worker.contractGeneration, fingerprint: s.enqueue.payloadFingerprint, businessKey: digest(`contract-human:${s.worker.contractGeneration}`), templateId: workflowPlan.templateId } });
+            if (defect === "human-ref") await db.eformsign_contract_authority.update({ where, data: { humanIntentId: human.id } });
+        }
+        const before = await branchSnapshot();
+        await expect(s.jobRepository.enqueue(nextInput(s))).rejects.toThrow(); expect(await branchSnapshot()).toEqual(before);
+    });
+    it.each(["reason", "startedAt", "started", "uncertain", "accepted", "provider", "branch", "client", "generation", "fingerprint", "local", "assignment", "template", "action"])("PLAN5 real unlinked released draft refuses %s", async defect => {
+        const { s, intentId } = await plan5Hold("released");
+        const patch: Prisma.eformsign_dispatch_intentUpdateInput = {};
+        if (defect === "reason") Object.assign(patch, { reconciliationReason: null, attemptCount: 0 });
+        if (defect === "startedAt") patch.startedAt = new Date();
+        if (["started", "uncertain", "accepted"].includes(defect)) patch.status = defect;
+        if (defect === "accepted" || defect === "provider") patch.providerDocumentId = documents[0]!;
+        if (defect === "branch") patch.branch = { connect: { id: branches[1]! } };
+        if (defect === "client") patch.clientId = clients[1]!;
+        if (defect === "generation") patch.generation = randomUUID();
+        if (defect === "fingerprint") patch.fingerprint = "b".repeat(64);
+        if (defect === "local") patch.localDocumentId = 42;
+        if (defect === "assignment") patch.assignmentId = 42;
+        if (defect === "template") patch.templateId = "wrong-template";
+        if (defect === "action") patch.action = "manual_process";
+        await db.eformsign_dispatch_intent.update({ where: { id: intentId! }, data: patch });
+        // Include the foreign draft explicitly; branchSnapshot alone would omit it.
+        const before = await branchSnapshot(), draft = await db.eformsign_dispatch_intent.findUniqueOrThrow({ where: { id: intentId! } });
+        await expect(s.jobRepository.enqueue(nextInput(s))).rejects.toThrow(); expect(await branchSnapshot()).toEqual(before);
+        expect(await db.eformsign_dispatch_intent.findUniqueOrThrow({ where: { id: intentId! } })).toEqual(draft);
+    });
+    it.each(plan5Paths.flatMap(path => ["create", "create_draft"].flatMap(action => ["started", "uncertain", "accepted"].map(status => ({ path, action, status })))))("PLAN5 real $path classifies unrelated $action $status before retirement", async ({ path, action, status }) => {
+        const { s } = await plan5Hold(path);
+        await db.eformsign_dispatch_intent.create({ data: { branchId: branches[0]!, clientId: clients[0]!, action, status, attemptCount: 1,
+            generation: "unrelated", businessKey: digest(randomUUID()), fingerprint: "b".repeat(64), providerDocumentId: status === "accepted" ? documents[0]! : null } });
+        const before = await branchSnapshot();
+        const retired = await transaction(db, async tx => { const [authority] = await lockAuthorityScope(tx, branches[0]!, [clients[0]!]); return retireProvenNoEffect(tx, authority!, null); });
+        if (status === "accepted") {
+            // Fixture-only unrelated definitive receipt, separate from the genuine multi-generation workflow above.
+            expect(retired).toBe(true);
+            const after = await branchSnapshot();
+            expect(after.intents).toEqual(before.intents); expect(after.clients).toEqual(before.clients); expect(after.mirrors).toEqual(before.mirrors);
+            expect(await db.eformsign_document_job.findUniqueOrThrow({ where: { id: s.worker.jobId } })).toMatchObject({ progressStep: "superseded", activeKey: null, payload: null });
+            const input = nextInput(s), result = await s.jobRepository.enqueue(input), rotated = await branchSnapshot();
+            expect(result.existing).toBe(false); expect(result.job.contractGeneration).not.toBe(s.worker.contractGeneration);
+            expect(rotated.intents).toEqual(before.intents); expect(rotated.clients).toEqual(before.clients); expect(rotated.mirrors).toEqual(before.mirrors);
+            await expect(s.jobRepository.enqueue(input)).resolves.toMatchObject({ existing: true, job: { id: result.job.id } }); expect(await branchSnapshot()).toEqual(rotated);
+        } else {
+            expect(retired).toBe(false); expect(await branchSnapshot()).toEqual(before);
+            await expect(s.jobRepository.enqueue(nextInput(s))).rejects.toThrow(); expect(await branchSnapshot()).toEqual(before);
+        }
+    });
+    it("PLAN5 real zero-ref retires after unrelated create is legitimately reconciled no-effect", async () => {
+        const { s } = await plan5Hold("legacy-zero");
+        const unknown = await db.eformsign_dispatch_intent.create({ data: { branchId: branches[0]!, clientId: clients[0]!, action: "create", status: "uncertain", attemptCount: 1, generation: "unrelated", businessKey: digest(randomUUID()), fingerprint: "b".repeat(64) } });
+        const before = await branchSnapshot();
+        await expect(s.jobRepository.enqueue(nextInput(s))).rejects.toThrow(); expect(await branchSnapshot()).toEqual(before);
+        await new SbEformsignDispatchIntentRepository(db as unknown as PrismaService).reconcile({ intentId: unknown.id, branchId: branches[0]!, outcome: "not_delivered", actorUserId: users[0]!, reason: "Provider console confirms absence", attemptCount: 1 });
+        const settled = await db.eformsign_dispatch_intent.findUniqueOrThrow({ where: { id: unknown.id } });
+        await expect(s.jobRepository.enqueue(nextInput(s))).resolves.toMatchObject({ existing: false });
+        expect(await db.eformsign_dispatch_intent.findUniqueOrThrow({ where: { id: unknown.id } })).toEqual(settled);
+    });
+    it.each(plan5Paths.flatMap(path => ["cas", "insert"].map(loss => ({ path, loss }))))("PLAN5 real $path $loss conflict rolls back authority/job/keys/refs/pointer", async ({ path, loss }) => {
+        const { s } = await plan5Hold(path), before = await branchSnapshot(), input = { ...nextInput(s), requestKey: randomUUID(), activeKey: s.enqueue.activeKey };
+        let intercepted = 0;
+        await expect(transaction(db, async tx => {
+            if (loss === "insert") await insertSameBranchCollision(tx, input.requestKey);
+            const connection = new Proxy(tx, { get(target, key) {
+                if (key === "$executeRaw") return (sql: Prisma.Sql) => {
+                    if (loss === "cas" && /UPDATE eformsign_contract_authority/.test(sql.text)) { intercepted++; return Promise.resolve(0); }
+                    return target.$executeRaw(sql);
+                };
+                const value = Reflect.get(target, key); return typeof value === "function" ? value.bind(target) : value;
+            } });
+            return s.jobRepository.enqueueInTransaction(connection, input);
+        })).rejects.toBeInstanceOf(ConflictException);
+        if (loss === "cas") expect(intercepted).toBe(1);
+        expect(await branchSnapshot()).toEqual(before);
+        // The exact same-branch collision would commit existing:true without a prior mutation.
+        if (loss === "insert") {
+            const rollback = new Error("PLAN5 collision control rollback");
+            await expect(transaction(db, async tx => {
+                const [authority] = await lockAuthorityScope(tx, branches[0]!, [clients[0]!]);
+                expect(await retireProvenNoEffect(tx, authority!, null)).toBe(true);
+                await insertSameBranchCollision(tx, input.requestKey);
+                expect(await s.jobRepository.enqueueInTransaction(tx, input)).toMatchObject({ existing: true, job: { requestKey: input.requestKey } });
+                throw rollback;
+            })).rejects.toBe(rollback);
+            expect(await branchSnapshot()).toEqual(before);
+        }
+    });
+    it.each(["claim", "enqueue"] as const)("PLAN5 real released draft versus enqueue first=%s fences the stale writer", async first => {
+        const { s, claim, intentId } = await plan5Hold("released"), input = nextInput(s);
+        const writer = (tx: Prisma.TransactionClient) => recoveryIn(tx, s).open(s.worker.jobId, branches[0]!, users[0]!);
+        const enqueue = (tx: Prisma.TransactionClient) => s.jobRepository.enqueueInTransaction(tx, input);
+        const outcomes = await contendBeforeAction(first === "claim" ? writer : enqueue, first === "claim" ? enqueue : writer);
+        expect(outcomes[0]!.status).toBe("fulfilled"); expect(outcomes[1]!.status).toBe("rejected");
+        expect(await db.eformsign_document_job.count({ where: { requestKey: input.requestKey } })).toBe(first === "enqueue" ? 1 : 0);
+        if (first === "enqueue") {
+            const before = await branchSnapshot();
+            await expect(s.recovery.recordDraftCandidate(claim!, intentId!, documents[0]!)).rejects.toMatchObject({ code: "RECOVERY_STALE" });
+            await expect(s.recovery.beginDraft(claim!, workflowPlan.templateId, identity)).rejects.toMatchObject({ code: "RECOVERY_STALE" });
+            expect(await branchSnapshot()).toEqual(before);
+        }
+    });
+    it.each(["claim", "enqueue"] as const)("PLAN5 real zero-ref old worker claim versus enqueue first=%s cannot acquire STARTED", async first => {
+        const { s } = await plan5Hold("zero"), input = nextInput(s);
+        const oldClaim = (tx: Prisma.TransactionClient) => recoveryIn(tx, s).claimCreation(s.input, s.worker, s.effect);
+        const enqueue = (tx: Prisma.TransactionClient) => s.jobRepository.enqueueInTransaction(tx, input);
+        const outcomes = await contendBeforeAction(first === "claim" ? oldClaim : enqueue, first === "claim" ? enqueue : oldClaim);
+        expect(outcomes[first === "claim" ? 0 : 1]!.status).toBe("rejected"); expect(outcomes[first === "enqueue" ? 0 : 1]!.status).toBe("fulfilled");
+        expect(await db.eformsign_document_job.count({ where: { requestKey: input.requestKey } })).toBe(1);
+        expect(await db.eformsign_dispatch_intent.count({ where: { branchId: branches[0]! } })).toBe(0);
+    });
+    it("PLAN5 real union locks linked create plus unlinked draft in sorted unique id order", async () => {
+        const { s, intentId } = await plan5Hold("released"), authority = (await read())[0]!, observed: unknown[][] = [];
+        const expectedIds = [authority.creationIntentId!, intentId!].sort();
+        await transaction(db, async tx => {
+            const proxy = new Proxy(tx, { get(target, key) {
+                if (key === "$queryRaw") return (sql: Prisma.Sql) => { if (/FROM eformsign_dispatch_intent.*ORDER BY id FOR UPDATE/.test(sql.text)) observed.push(sql.values); return target.$queryRaw(sql); };
+                const value = Reflect.get(target, key); return typeof value === "function" ? value.bind(target) : value;
+            } });
+            await s.jobRepository.enqueueInTransaction(proxy, nextInput(s));
+        });
+        expect(observed).toEqual([expectedIds]);
+    });
+    it("PLAN5 real unlinked draft operator reconcile wins its row lock and retirement re-reads before refusing", async () => {
+        const { s, intentId } = await plan5Hold("released"), before = await branchSnapshot();
+        const outcomes = await contend(async tx => {
+            await tx.$queryRaw`SELECT id FROM eformsign_dispatch_intent WHERE id = ${intentId}::uuid FOR UPDATE`;
+            await tx.eformsign_dispatch_intent.update({ where: { id: intentId! }, data: { status: "reconciled_delivered", reconciledOutcome: "delivered", reconciledAt: new Date(), reconciledByUserId: users[0]!, providerDocumentId: documents[0]! } });
+        }, tx => s.jobRepository.enqueueInTransaction(tx, nextInput(s)));
+        expect(outcomes[0]!.status).toBe("fulfilled"); expect(outcomes[1]!.status).toBe("rejected");
+        const after = await branchSnapshot();
+        expect(after.authorities).toEqual(before.authorities); expect(after.jobs).toEqual(before.jobs);
+        expect(after.clients).toEqual(before.clients); expect(after.mirrors).toEqual(before.mirrors);
+        expect(after.intents.find(row => row.id === intentId)).toMatchObject({ status: "reconciled_delivered", providerDocumentId: documents[0] });
+        expect(after.intents.filter(row => row.id !== intentId)).toEqual(before.intents.filter(row => row.id !== intentId));
+    });
+    async function historicalRuntime() {
+        const s = await runtime(), f = await failed(s, false), document = `historical-${randomUUID()}`; documents.push(document);
+        await db.eformsign_dispatch_intent.update({ where: { id: f.intent.id }, data: { providerDocumentId: document } });
+        await s.recovery.bindDocument(f.claim, evidence(document)); await s.recovery.completeManual(f.claim, evidence(document, true));
+        await db.eformsign_contract_authority.update({ where: { branchId_clientId: { branchId: branches[0]!, clientId: clients[0]! } }, data: { phase: "verified" } });
+        await db.eformsign_dispatch_intent.update({ where: { id: f.intent.id }, data: { status: "uncertain", reconciledAt: null, reconciledByUserId: null, reconciledOutcome: null } });
+        await db.eformsign_doc.update({ where: { documentId: document }, data: { statusType: "064" } });
+        return { s, f, document };
+    }
+    it.each(["complete", "enqueue"])("R4 real completeManual versus enqueue lock race, first=%s", async first => {
+        const s = await runtime(), f = await failed(s, false), document = `race-${randomUUID()}`; documents.push(document);
+        await db.eformsign_dispatch_intent.update({ where: { id: f.intent.id }, data: { providerDocumentId: document } });
+        await s.recovery.bindDocument(f.claim, evidence(document));
+        const next = nextInput(s);
+        const complete = (tx: Prisma.TransactionClient) => recoveryIn(tx, s).completeManual(f.claim, evidence(document, true));
+        const enqueue = (tx: Prisma.TransactionClient) => s.jobRepository.enqueueInTransaction(tx, next);
+        // A failed first contender must roll back its INSERT; place the barrier before either action.
+        const result = await contendBeforeAction(first === "complete" ? complete : enqueue, first === "complete" ? enqueue : complete);
+        expect(result[first === "complete" ? 0 : 1]!.status).toBe("fulfilled");
+        expect((await read())[0]!.phase).toBe(first === "complete" ? "reserved" : "closed");
+        expect(await db.eformsign_document_job.count({ where: { requestKey: next.requestKey } })).toBe(first === "complete" ? 1 : 0);
+        expect(await db.eformsign_dispatch_intent.count({ where: { branchId: branches[0]!, action: "create", status: { in: ["started", "uncertain"] } } })).toBe(0);
+    });
+    it.each(["normalize", "enqueue"])("R4 real historical normalize versus enqueue first=%s", async first => {
+        const { s, f } = await historicalRuntime(), next = nextInput(s);
+        const normalize = async (tx: Prisma.TransactionClient) => {
+            const [a] = await lockAuthorityScope(tx, branches[0]!, [clients[0]!]);
+            if (a!.generation !== s.worker.contractGeneration) throw new Error("stale historical generation");
+            return normalizeVerifiedAuthority(tx, a!);
+        };
+        const enqueue = (tx: Prisma.TransactionClient) => s.jobRepository.enqueueInTransaction(tx, next);
+        const result = await contendBeforeAction(first === "normalize" ? normalize : enqueue, first === "normalize" ? enqueue : normalize);
+        expect(result[0]!.status).toBe("fulfilled"); expect(result[1]!.status).toBe(first === "normalize" ? "fulfilled" : "rejected");
+        expect((await read())[0]!.creationJobId).not.toBe(s.worker.jobId);
+        expect(await db.eformsign_document_job.count({ where: { requestKey: next.requestKey } })).toBe(1);
+        expect(await db.eformsign_dispatch_intent.findUniqueOrThrow({ where: { id: f.intent.id } })).toMatchObject({ status: "reconciled_delivered", reconciledByUserId: users[0] });
+        await expect(s.recovery.readClaim(f.claim)).rejects.toThrow();
+    });
+
+    it.each(["claim", "enqueue"])("R4 real row2 open versus rotating enqueue first=%s", async first => {
+        const { s, intentId } = await terminalStart("create", false);
+        await expect(s.recovery.open(s.worker.jobId, branches[0]!, users[0]!)).rejects.toMatchObject({ status: 410 });
+        await new SbEformsignDispatchIntentRepository(db as unknown as PrismaService).reconcile({ intentId, branchId: branches[0]!, outcome: "not_delivered", actorUserId: users[0]!, reason: "Provider investigated", attemptCount: 1 });
+        await db.eformsign_document_job.update({ where: { id: s.worker.jobId }, data: { completedAt: new Date() } });
+        const next = { ...nextInput(s), activeKey: s.enqueue.activeKey };
+        const claim = (tx: Prisma.TransactionClient) => recoveryIn(tx, s).open(s.worker.jobId, branches[0]!, users[0]!);
+        const enqueue = (tx: Prisma.TransactionClient) => s.jobRepository.enqueueInTransaction(tx, next);
+        const result = await contendBeforeAction(first === "claim" ? claim : enqueue, first === "claim" ? enqueue : claim);
+        expect(result[0]!.status).toBe("fulfilled");
+        expect((await read())[0]!.creationJobId === s.worker.jobId).toBe(first === "claim");
+        expect(await db.eformsign_document_job.count({ where: { requestKey: next.requestKey } })).toBe(first === "claim" ? 0 : 1);
+        expect(await db.eformsign_dispatch_intent.findUniqueOrThrow({ where: { id: intentId } })).toMatchObject({ status: "reconciled_not_delivered" });
+    });
+    it.each(["create", "draft"] as const)("R4 real postTTL %s exact document completion preserves contacts and NULL payload", async kind => {
+        const s = await runtime(), f = await failed(s, kind === "draft"), document = `postttl-${randomUUID()}`; documents.push(document);
+        let intentId = f.intent.id;
+        if (kind === "draft") intentId = (await s.recovery.beginDraft(f.claim, workflowPlan.templateId, identity)).id;
+        await db.eformsign_dispatch_intent.update({ where: { id: intentId }, data: { status: "reconciled_delivered", reconciledOutcome: "delivered", reconciledByUserId: users[0]!, reconciledAt: new Date(), providerDocumentId: document } });
+        await s.recovery.bindDocument(f.claim, evidence(document), kind === "draft" ? intentId : undefined);
+        // customerPhone is VARCHAR(11); deliberately invalid contacts cannot route externally.
+        const storedContacts = { customerName: "QA-Stored", customerPhone: "not-a-phone", stepRecipientName: "QA-Recipient", stepRecipientSms: "invalid-sms" };
+        const contactFields = { customerName: true, customerPhone: true, stepRecipientName: true, stepRecipientSms: true } as const;
+        const beforeContacts = await db.eformsign_doc.update({ where: { documentId: document }, data: storedContacts, select: contactFields });
+        expect(beforeContacts).toEqual(storedContacts);
+        await db.eformsign_document_job.update({ where: { id: s.worker.jobId }, data: { payload: Prisma.DbNull, completedAt: new Date(Date.now() - 8 * 86400000) } });
+        const opened = await s.recovery.open(s.worker.jobId, branches[0]!, users[0]!);
+        expect(opened.payload).toEqual({}); expect(opened.verificationOnly).toMatchObject({ documentId: document, templateId: workflowPlan.templateId });
+        await s.recovery.completeManual({ ...f.claim, claimEpoch: opened.claimEpoch }, evidence(document, true));
+        expect(await db.eformsign_document_job.findUniqueOrThrow({ where: { id: s.worker.jobId } })).toMatchObject({ status: "completed", payload: null });
+        expect(await db.eformsign_doc.findUniqueOrThrow({ where: { documentId: document }, select: contactFields })).toEqual(beforeContacts);
+    });
+
+    it.each(["second-ref", "authority"])("R4 real repair %s CAS loss rolls back BOTH refs and phase", async target => {
+        const { s } = await terminalStart("draft", true), original = (await read())[0]!;
+        await db.eformsign_dispatch_intent.update({ where: { id: original.creationIntentId! }, data: { status: "started" } });
+        const before = await db.eformsign_dispatch_intent.findMany({ where: { branchId: branches[0]! }, orderBy: { id: "asc" } });
+        let writes = 0;
+        const proxy = new Proxy(db, { get(t, k) {
+            if (k === "$transaction") return (run: (tx: Prisma.TransactionClient) => Promise<unknown>) => t.$transaction(tx => run(new Proxy(tx, { get(inner, key) {
+                if (key === "$executeRaw") return (query: Prisma.Sql) => target === "authority" && query.text.includes("UPDATE eformsign_contract_authority") ? Promise.resolve(0) : inner.$executeRaw(query);
+                if (key === "eformsign_dispatch_intent") return new Proxy(inner.eformsign_dispatch_intent, { get(model, method) {
+                    if (method === "updateMany") return (args: Prisma.eformsign_dispatch_intentUpdateManyArgs) => target === "second-ref" && ++writes === 2 ? Promise.resolve({ count: 0 }) : model.updateMany(args);
+                    const value = Reflect.get(model, method); return typeof value === "function" ? value.bind(model) : value;
+                } });
+                const value = Reflect.get(inner, key); return typeof value === "function" ? value.bind(inner) : value;
+            } })));
+            const value = Reflect.get(t, k); return typeof value === "function" ? value.bind(t) : value;
+        } });
+        await expect(new SbEformsignContractRecoveryRepository(proxy as unknown as PrismaService, s.options).open(s.worker.jobId, branches[0]!, users[0]!)).rejects.toMatchObject({ code: "RECOVERY_STALE" });
+        expect((await read())[0]).toEqual(original);
+        expect(await db.eformsign_dispatch_intent.findMany({ where: { branchId: branches[0]! }, orderBy: { id: "asc" } })).toEqual(before);
+    });
+    async function contendBeforeAction(first: (tx: Prisma.TransactionClient) => Promise<unknown>, second: (tx: Prisma.TransactionClient) => Promise<unknown>) {
+        const ready = deferred<void>(), release = deferred<void>(), started = deferred<number>();
+        const pa = transaction(a, async tx => { await lockAuthorityScope(tx, branches[0]!, [clients[0]!]); ready.resolve(); await bounded(release.promise, 9000); return first(tx); });
+        void pa.catch(() => undefined); let pb: Promise<unknown> | undefined;
+        try {
+            await bounded(ready.promise, 5000);
+            pb = transaction(b, async tx => { const [pid] = await tx.$queryRaw<Array<{ pid: number }>>`SELECT pg_backend_pid() AS pid`; started.resolve(pid!.pid); return second(tx); });
+            void pb.catch(() => undefined); await lockObserved(await bounded(started.promise, 5000));
+        } finally { release.resolve(); await Promise.allSettled([pa, ...(pb ? [pb] : [])]); }
+        return Promise.allSettled([pa, pb!]);
+    }
+
 });

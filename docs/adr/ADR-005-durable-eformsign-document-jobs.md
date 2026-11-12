@@ -82,9 +82,31 @@ durable table is therefore required.
 - Apply the additive migration before deploying code that creates or claims jobs.
 - Verification fails closed when any required column, foreign key, CHECK
   constraint, or index is absent.
-- No destructive down migration is provided. Rolling back application code leaves
-  the additive table in place and is safe; removing it would require an explicit,
-  separately approved retention and data-disposition decision.
+- No destructive down migration is provided. Leave the additive tables and
+  authority fences in place during application rollback. Removing them requires
+  a separately approved retention and data-disposition decision.
+- After `20261111120000_add_eformsign_contract_authority`, an unmodified
+  pre-authority application build is **not a supported rollback target**. Its
+  terminal-job retention DELETE ignores authority references and fails with
+  PostgreSQL `23503` as soon as a referenced job passes the seven-day cutoff,
+  including jobs whose authority is already `closed`. The statement aborts for
+  all terminal jobs; the application continues running but retention stops.
+- Prepare and verify an authority-aware rollback build before promotion. It must
+  retain the `NOT EXISTS` authority exclusion in `deleteExpiredTerminal` and
+  purge payloads for expired, generation-bound `failed` jobs as well as
+  `requires_attention` jobs. Otherwise failed contract payloads can outlive the
+  seven-day bound. Also preserve generation fencing and the compatible recovery
+  endpoints while generation-bound jobs remain. Keep the authority table and its
+  foreign keys; deleting or cascading authority rows to bypass the error can
+  remove duplicate-send protection.
+- Rollback verification must use a disposable database with the migration
+  applied and both `closed` and unresolved authority rows referencing expired
+  terminal jobs. Run the rollback build's retention sweep: it must preserve
+  referenced jobs and authorities, delete eligible unreferenced terminal jobs,
+  and clear expired recoverable payloads. Record the verified rollback commit
+  and immutable deployment identity with the release. No such rollback target
+  has been verified by this ADR; until it is, use a forward correction rather
+  than an unmodified pre-authority build.
 
 ## Production activation
 
@@ -182,3 +204,147 @@ guard/bootstrap/API contract (or a reviewed plan amendment with backend paths).
 Existing browser credential and document-generation endpoints remain fail-closed
 with HTTP 410; the active recovery/resolve endpoints retain their existing
 authorization and claim behavior.
+
+### Authority closure amendment (A, R4)
+
+The hold is released by evidence of no creation, or by confirmed handoff of the
+same document. An unknown provider outcome never authorizes another create. All
+admissions serialize on client → authority → current job → sorted intent refs →
+mirror. The automatic intent retains its business generation; draft/human intents
+use the authority generation and fingerprint. Their immutable identity and exact
+attempt/status/document are checked before CAS writes.
+
+- Exact request-key replay precedes every mutation. A terminal, lease-free
+  reserved/creation_pending/creation_uncertain job can be replaced when **every** linked
+  create/draft has durable no-effect proof, no human/candidate exists, and no live
+  manual claim remains. A reserved authority with a linked create requires that
+  exact create to be reconciled not-delivered; prepared attempt zero remains
+  eligible only in creation_pending/creation_uncertain. A later prepared attempt
+  needs the explicit before-open release record. Reconciled not-delivered needs
+  its time, actor, outcome and null provider document. A matching active key alone
+  remains an unchanged existing-job response. Eligible retirement clears the old
+  key before INSERT, preserves intent history and the error audit, marks the job
+  superseded, and rotates in the same transaction. An INSERT conflict after any
+  retirement/normalization throws and rolls the entire operation back.
+- The before-open draft release returns the authority to reserved and unlinks
+  its draft. Retirement discovers that draft by the exact durable
+  `sha256(contract-draft:<generation>)` key, then locks the sorted unique union
+  of discovered and linked intent IDs. It re-reads the row under lock and checks
+  its branch/client/action/generation/fingerprint, null local-document and
+  assignment bindings, and exact template (including frozen identity when
+  available). An unlinked draft needs **prepared + startedAt NULL + provider
+  document NULL + draft_released_before_open**; generic prepared/attempt-zero
+  alone is insufficient. Its release/reconciliation audit is preserved. A row
+  under the generation's human business key vetoes retirement even if unlinked.
+- A terminal, lease-free reserved/creation_uncertain generation with zero refs
+  has durable no-create proof: claimCreation atomically commits STARTED and its
+  authority link before external send, lease fencing rejects stale workers,
+  and terminal jobs are never re-leased. Retirement still checks the immutable
+  job/authority identity and pointer, every discovered intent, and no live
+  manual claim by any user. Related started/uncertain create or create_draft in
+  the same branch/client scope vetoes retirement **before** any mutation, for
+  linked and zero-ref cases alike. Unrelated accepted rows with definitive,
+  trimmed nonempty provider receipts are resolved history, including multiple
+  completed generations with documents older than the latest client pointer.
+  This matches initial admission's started/uncertain distinction; no old job,
+  payload or document traversal is needed. Malformed accepted rows with NULL,
+  empty or whitespace-only receipts still veto. Current linked accepted refs
+  and the current generation's unlinked accepted draft fail the strict no-effect
+  proof before this history classification, even with the same prior receipt.
+  The client-scope checks examine every relevant status/receipt so earlier resolved
+  history cannot hide a later unknown create/create_draft or malformed accepted row.
+  Error codes and residual active keys are audit fields, not no-effect evidence;
+  exact terminal jobs/keys retire under the same transaction. A NULL payload is
+  never rebuilt;
+  TTL alone is not no-effect evidence. Retirement closes the old authority,
+  supersedes the exact job, clears its key and payload, then reserves/inserts one
+  new generation atomically. A source rollback is a revert, never a data reset.
+- A terminal failed/requires_attention job can leave an exact linked create or
+  draft STARTED after a crash. `open` deliberately uses **two sequential,
+  non-nested transactions**: the first commits STARTED → UNCERTAIN and, only if
+  needed, phase → creation_uncertain; the second reloads and takes the claim.
+  The first requires no lease, no candidate/human/effect, an eligible phase and
+  no live claim by **any** user, including the same user. Both refs are evaluated;
+  any failed intent/phase CAS rolls that first transaction back. It changes no
+  job, key, payload, attempt, ref or claim field. A later 410 payload_expired in
+  the second transaction cannot undo the first commit. A crashed draft must wait
+  for the existing ten-minute live claim to expire. Worker-owned
+  `markAutomaticUncertain` also repairs the exact create under its valid lease,
+  including when the phase is already uncertain. With no creationIntentId it
+  leaves every authority field unchanged and issues no phase CAS. Historical
+  zero-ref creation_uncertain holds use the bounded retirement above. The
+  worker send path is unchanged.
+- Only after provider-console investigation can an authorized operator record
+  `not_delivered` or `delivered` using the existing branch-scoped GET
+  `/eformsign-docs/dispatch-intents/:intentId` and POST `:intentId/reconcile`.
+  Start from the job UUID displayed by the UI and its branch; read only the
+  authority selected by `creation_job_id` plus `branch_id`, then obtain its
+  `creation_intent_id`/`draft_intent_id`. Read that intent through GET before
+  reconciling its exact attempt with actor and reason. Do not dump contact
+  payloads or expose default aggregate intent-ID reports. Uncertain alone keeps
+  the fence; confirmed absence enables the no-effect replacement above. A
+  positively identified delivered draft uses that same document, never a new one.
+- Seven-day contact retention is unchanged. Current, non-closed authority-bound
+  **failed** contract jobs remain in requiresAttention and unresolvedCount even
+  after seven days. Closed/superseded/noncurrent failed history retains its
+  existing cutoff. `failedCount` still measures only seven-day failed history,
+  so it can be lower than unresolvedCount. Existing LIMIT 50 competition remains.
+- A retained exact candidate can be read after payload expiry/purge using only
+  authority → immutable intent → nonpurged contract mirror ownership and the
+  configured server company/creator. A mirror not yet attached to the client
+  must be bound to that exact authority document; completion remains the point
+  that attaches the mirror and moves the client pointer. There is no contact
+  restoration, contractData option generation, draft creation or editor exposure
+  in this verification-only path. Frozen identity/workflow, when still retained,
+  must match. A configuration change fails closed until the operator restores
+  compatible configuration and validates the same document. A remaining draft
+  is finished **in the vendor console on that same document**, then verified.
+  Unknown, deleted/voided, missing, foreign or otherwise unprovable evidence
+  remains a deliberate integrity refusal pending investigation.
+- Provider handoff is proved by an exactly matched workflow seq/group/type:
+  participant 05 with 060–064, reviewer 06 with 070–074, or complete 01 with 003.
+  These states prove creation was handed off, not that all signatures completed.
+  Creator draft 001/00, creator-only 002 and unknown combinations are not proof.
+  An expiry flag cannot promote a draft to sent; a known handed-off state remains
+  handoff proof even after expiry, preserving the mirror's expiry flag and
+  downstream void/purge/finalize boundaries.
+- Historical verified + completed records normalize at enqueue **before** the
+  unresolved-create check, and at provider/legacy admission. Proof requires the
+  exact job/generation/fingerprint/completion time, no lease/key, matching
+  authority/job/current pointer, fully client-bound contract mirror and all
+  linked immutable intents. Current mirror status is only a safety veto:
+  draft/creator-write, void/purge, corruption and service-record binding refuse;
+  later 064, 061 or 080 do not erase the original atomic handoff proof. Exact
+  linked STARTED/UNCERTAIN effects settle with the persisted verified claim actor
+  and a historical-completion reason, inside the caller transaction. No actor or
+  no integrity proof means no release. Unrelated uncertainty still blocks and
+  rolls back enqueue normalization. There is no bulk rewrite or separate journal.
+- Fresh and post-TTL completion settle only matching effects, close authority,
+  bind mirror, move pointer and finish the job atomically. A recovered delivered
+  draft is sufficient without a human intent. No-effect predecessors remain
+  immutable history. Post-TTL completion preserves stored mirror customer fields
+  and leaves payload NULL. Closed/completed same-generation reopen and repeated
+  verification are idempotent; rotation makes old claims/workers stale.
+
+Verification boundaries: unit fixtures test the full predicates and transaction
+rollback, including Prisma IS NULL matching. The owned PostgreSQL suite defines
+real two-transaction persistence after 410, an inter-transaction claim takeover,
+insert-conflict rollback, list/count membership, and lock-observed races in both
+orders. These PG cases require the existing owned CI harness and are intentionally
+skipped in a unit-only worker session; passing fixtures do not certify PG behavior.
+Independent CODE review and package-wide release gates belong to Main.
+
+Carried limitations: operator reconciliation can still record delivered over an
+older not-delivered result without authority locks; superseded terminal history
+keeps its existing retention policy; LIMIT 50 can crowd recovery entries. The
+pre-existing assumption that an automatic provider HTTP attempt is bounded below
+the stale-lease interval is unproven here and the worker transport is unchanged.
+Historical rows missing their verified actor remain held. Irretrievably missing
+provider/configuration evidence has no forced unlock or fabricated successful exit.
+
+The PLAN5 exception covers only released-before-open and terminal zero-ref
+stale-before-create holds. A linked create released with a `pre_send:*` reason
+is not included; whether that path creates another permanent hold remains
+unproven. Operator-reconciled unlinked drafts remain a safe refusal. A template
+change after release may temporarily refuse the frozen template binding until
+the payload purge; no TTL exception is introduced.
