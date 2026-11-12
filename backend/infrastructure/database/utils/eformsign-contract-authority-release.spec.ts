@@ -1,5 +1,8 @@
 import { createHash } from "node:crypto";
+import { ConflictException } from "@nestjs/common";
+import type { Prisma } from "@prisma/client";
 import { SbEformsignDocumentJobRepository } from "../repositories/sb.eformsign-document-job.repository";
+import { normalizeVerifiedAuthority, retireProvenNoEffect } from "./eformsign-contract-authority-release";
 import { runtimeFixture, B, J, G, I, U, F, data, worker, intentInput, workflowPlan } from "../../../test/utils/eformsign-contract-recovery.fixture";
 const next = { branchId: B, clientId: 2, jobType: "create_document" as const, source: "staff" as const,
     requestKey: "next", activeKey: "next-active", payload: { clientId: 2, contractData: data }, payloadFingerprint: F };
@@ -12,6 +15,54 @@ async function historical(status = "064") {
     f.state.docs.find((row: { documentId: string }) => row.documentId === "bound-doc").statusType = status;
     return f;
 }
+// The first replay/active reads see no collision. A same-branch, same-fingerprint
+// row appears only at INSERT, so the ordinary fallback would return existing:true.
+function collideAtInsert(f: ReturnType<typeof runtimeFixture>) {
+    const query = f.tx.$queryRaw.getMockImplementation()!;
+    f.tx.$queryRaw.mockImplementation(async (sql: Prisma.Sql) => {
+        if (/INSERT INTO "eformsign_document_job"/.test(sql.text)) {
+            expect(f.state.jobs.some((row: { requestKey: string }) => row.requestKey === next.requestKey)).toBe(false);
+            f.state.jobs.push({ ...structuredClone(f.state.jobs[0]), id: I, branchId: next.branchId, clientId: next.clientId,
+                requestKey: next.requestKey, activeKey: next.activeKey, payloadFingerprint: next.payloadFingerprint, contractGeneration: null });
+            f.flags.insertZero = true;
+        }
+        return query(sql);
+    });
+}
+async function collisionFixture(site: "normalization" | "retirement") {
+    const f = site === "normalization" ? await historical() : runtimeFixture();
+    if (site === "retirement") {
+        await f.repository.claimCreation(intentInput, worker, { contractData: data, workflow: workflowPlan }); f.manual();
+    }
+    return f;
+}
+describe("post-mutation INSERT same-branch collision rollback", () => {
+    it.each(["normalization", "retirement"] as const)("rolls back %s even when same-branch same-fingerprint fallback would succeed", async site => {
+        const f = await collisionFixture(site), before = structuredClone(f.state);
+        collideAtInsert(f); f.events.length = 0;
+        const error = await new SbEformsignDocumentJobRepository(f.prisma).enqueue(next).catch((caught: unknown) => caught);
+        expect(error).toBeInstanceOf(ConflictException);
+        expect((error as ConflictException).getResponse()).toEqual({ code: "REQUEST_CONFLICT" });
+        expect(f.events).toContain("authority.cas");
+        expect(f.events).toContain(site === "normalization" ? "intents.updateMany" : "jobs.updateMany");
+        expect(f.tx.$queryRaw.mock.calls.some(([sql]: [Prisma.Sql]) => /INSERT INTO "eformsign_document_job"/.test(sql.text))).toBe(true);
+        expect(f.state).toEqual(before); // Includes all authority/job/key/intent/pointer/mirror/payload fields.
+        expect(f.state.jobs.every((row: { branchId: string }) => row.branchId === B)).toBe(true);
+    });
+    it.each(["normalization", "retirement"] as const)("positive control: the %s collision qualifies for ordinary fallback without mutation", async site => {
+        const f = await collisionFixture(site);
+        const closed = site === "normalization"
+            ? await normalizeVerifiedAuthority(f.tx, f.state.authorities[0])
+            : await retireProvenNoEffect(f.tx, f.state.authorities[0], f.state.clients[0].eDocId);
+        expect(closed).toBe(true);
+        const authority = structuredClone(f.state.authorities), intents = structuredClone(f.state.intents);
+        collideAtInsert(f);
+        await expect(new SbEformsignDocumentJobRepository(f.prisma).enqueue(next)).resolves.toMatchObject({ existing: true,
+            job: { id: I, branchId: B, requestKey: next.requestKey, payloadFingerprint: F } });
+        expect(f.state.authorities).toEqual(authority); expect(f.state.intents).toEqual(intents);
+        expect(f.state.jobs).toHaveLength(2);
+    });
+});
 describe("historical atomic completion normalization at hold enforcement", () => {
     it.each(["064", "061", "080"])("enqueue settles exact old create before unresolved check despite mutable mirror %s", async status => {
         const f = await historical(status), repo = new SbEformsignDocumentJobRepository(f.prisma), before = structuredClone(f.state);

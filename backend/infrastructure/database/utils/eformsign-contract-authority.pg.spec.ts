@@ -1,11 +1,12 @@
 import { createHash, randomUUID } from "node:crypto";
 import { lstatSync, readFileSync, realpathSync } from "node:fs";
 import { Prisma, PrismaClient } from "@prisma/client";
+import { ConflictException } from "@nestjs/common";
 import { classifyRecovery } from "domain/entities/eformsign-document-job.entity";
 import { ClientEntity } from "domain/entities/client.entity";
 import type { PrismaService } from "infrastructure/database/prisma.service";
 import { SbEformsignDispatchIntentRepository } from "../repositories/sb.eformsign-dispatch-intent.repository";
-import { normalizeVerifiedAuthority } from "./eformsign-contract-authority-release";
+import { normalizeVerifiedAuthority, retireProvenNoEffect } from "./eformsign-contract-authority-release";
 import { SbClientRepository } from "../repositories/sb.client.repository";
 import { SbEformsignContractRecoveryRepository } from "../repositories/sb.eformsign-contract-recovery.repository";
 import { SbEformsignDocumentJobRepository } from "../repositories/sb.eformsign-document-job.repository";
@@ -636,6 +637,71 @@ async function bounded<T>(promise: Promise<T>, ms: number): Promise<T> {
         } });
         await expect(new SbEformsignDocumentJobRepository(proxy as unknown as PrismaService).enqueue({ ...nextInput(s), requestKey: conflict.requestKey, activeKey: s.enqueue.activeKey })).rejects.toThrow();
         expect((await read())[0]).toEqual(before); expect(await db.eformsign_document_job.findUniqueOrThrow({ where: { id: old.id } })).toEqual(old);
+    });
+    // Transactional DDL and a reentrant BEFORE INSERT trigger introduce a real
+    // unique collision after every admission read, using only the owned branch.
+    // Both the collision row and DDL roll back with the surrounding transaction.
+    async function insertSameBranchCollision(tx: Prisma.TransactionClient, requestKey: string) {
+        const name = `authority_collision_${randomUUID().replace(/-/g, "")}`;
+        if (!/^[a-zA-Z0-9-]+$/.test(requestKey)) throw new Error("Unsafe synthetic trigger argument");
+        await tx.$executeRaw(Prisma.raw(`CREATE FUNCTION pg_temp.${name}() RETURNS trigger LANGUAGE plpgsql AS $$
+            BEGIN
+                IF pg_trigger_depth() = 1 AND NEW.request_key = TG_ARGV[0] THEN
+                    INSERT INTO eformsign_document_job (branch_id, client_id, job_type, source, request_key, payload_fingerprint)
+                    VALUES (NEW.branch_id, NEW.client_id, NEW.job_type, NEW.source, NEW.request_key, NEW.payload_fingerprint);
+                END IF;
+                RETURN NEW;
+            END $$`));
+        await tx.$executeRaw(Prisma.raw(`CREATE TRIGGER ${name} BEFORE INSERT ON eformsign_document_job
+            FOR EACH ROW EXECUTE FUNCTION pg_temp.${name}('${requestKey}')`));
+    }
+    const branchSnapshot = async () => ({
+        authorities: await db.eformsign_contract_authority.findMany({ where: { branchId: branches[0]! }, orderBy: { clientId: "asc" } }),
+        jobs: await db.eformsign_document_job.findMany({ where: { branchId: branches[0]! }, orderBy: { id: "asc" } }),
+        intents: await db.eformsign_dispatch_intent.findMany({ where: { branchId: branches[0]! }, orderBy: { id: "asc" } }),
+        clients: await db.client.findMany({ where: { branchId: branches[0]! }, orderBy: { id: "asc" } }),
+        mirrors: await db.eformsign_doc.findMany({ where: { branchId: branches[0]! }, orderBy: { id: "asc" } }),
+    });
+    it.each(["normalization", "retirement"] as const)("P2 real same-branch same-fingerprint INSERT collision rolls back %s", async site => {
+        let s: Awaited<ReturnType<typeof runtime>>;
+        if (site === "normalization") ({ s } = await historicalRuntime());
+        else {
+            const terminal = await terminalStart("create", true); s = terminal.s;
+            await expect(s.recovery.open(s.worker.jobId, branches[0]!, users[0]!)).rejects.toMatchObject({ status: 410 });
+            await new SbEformsignDispatchIntentRepository(db as unknown as PrismaService).reconcile({ intentId: terminal.intentId, branchId: branches[0]!,
+                outcome: "not_delivered", actorUserId: users[0]!, reason: "Provider investigated", attemptCount: 1 });
+        }
+        const input = { ...nextInput(s), requestKey: randomUUID(), activeKey: s.enqueue.activeKey }, before = await branchSnapshot();
+        expect(await db.eformsign_document_job.count({ where: { requestKey: input.requestKey } })).toBe(0);
+        const error = await transaction(db, async tx => {
+            await insertSameBranchCollision(tx, input.requestKey);
+            return s.jobRepository.enqueueInTransaction(tx, input);
+        }).catch((caught: unknown) => caught);
+        expect(error).toBeInstanceOf(ConflictException);
+        expect((error as ConflictException).getStatus()).toBe(409);
+        expect((error as ConflictException).getResponse()).toEqual({ code: "REQUEST_CONFLICT" });
+        expect(await branchSnapshot()).toEqual(before);
+        expect(await db.eformsign_document_job.count({ where: { requestKey: input.requestKey } })).toBe(0);
+
+        // With no authority mutation, the identical collision really qualifies
+        // for fallback (same branch, request key and fingerprint). Roll back the
+        // control deliberately so neither fixtures nor trigger DDL persist.
+        const rollback = new Error("positive control rollback");
+        await expect(transaction(db, async tx => {
+            const [authority] = await lockAuthorityScope(tx, input.branchId, [input.clientId!]);
+            const client = await tx.client.findUniqueOrThrow({ where: { id: input.clientId! } });
+            const closed = site === "normalization" ? await normalizeVerifiedAuthority(tx, authority!)
+                : await retireProvenNoEffect(tx, authority!, client.eDocId);
+            expect(closed).toBe(true);
+            await insertSameBranchCollision(tx, input.requestKey);
+            const result = await s.jobRepository.enqueueInTransaction(tx, input);
+            expect(result).toMatchObject({ existing: true, job: { branchId: input.branchId, clientId: input.clientId,
+                requestKey: input.requestKey, payloadFingerprint: input.payloadFingerprint } });
+            const collision = await tx.eformsign_document_job.findUniqueOrThrow({ where: { requestKey: input.requestKey } });
+            expect(collision.activeKey).toBeNull(); expect(collision.branchId).toBe(branches[0]);
+            throw rollback;
+        })).rejects.toBe(rollback);
+        expect(await branchSnapshot()).toEqual(before);
     });
     async function historicalRuntime() {
         const s = await runtime(), f = await failed(s, false), document = `historical-${randomUUID()}`; documents.push(document);

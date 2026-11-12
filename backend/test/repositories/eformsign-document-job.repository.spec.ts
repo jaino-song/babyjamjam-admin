@@ -3,6 +3,9 @@ jest.mock("infrastructure/database/utils/eformsign-contract-authority", () => ({
     reserveAuthority: jest.fn().mockResolvedValue(undefined),
 }));
 import type { Prisma } from "@prisma/client";
+import { ConflictException, HttpException } from "@nestjs/common";
+import { ContractRecoveryError } from "domain/repositories/eformsign-contract-recovery.repository.interface";
+import { runtimeFixture, B, J, U, F, data, worker, intentInput, workflowPlan } from "../utils/eformsign-contract-recovery.fixture";
 import { PrismaService } from "infrastructure/database/prisma.service";
 import { isEntityChangeHintsSuppressed } from "infrastructure/database/entity-change-suppression";
 import { SbEformsignDocumentJobRepository } from "infrastructure/database/repositories/sb.eformsign-document-job.repository";
@@ -70,6 +73,48 @@ const dispatchContext = {
     lifecycleStatus: "IN_PROGRESS",
     formVersion: 3,
 };
+
+describe("enqueue authority refusal HTTP boundary", () => {
+    const input = { branchId: B, clientId: 2, jobType: "create_document" as const, source: "staff" as const,
+        requestKey: "next", activeKey: "next-active", payload: { clientId: 2, contractData: data }, payloadFingerprint: F };
+    async function ready(site: "normalize" | "retire") {
+        const f = runtimeFixture();
+        await f.repository.claimCreation(intentInput, worker, { contractData: data, workflow: workflowPlan });
+        if (site === "normalize") {
+            Object.assign(f.state.intents[0], { status: "accepted", providerDocumentId: "bound-doc" });
+            f.forward(); await f.service.completeAutomatic(worker, "bound-doc", { branchId: B, source: "worker" });
+            Object.assign(f.state.authorities[0], { phase: "verified", claimUserId: U });
+            Object.assign(f.state.intents[0], { status: "uncertain", reconciledAt: null, reconciledByUserId: null, reconciledOutcome: null });
+        } else {
+            f.manual();
+        }
+        return f;
+    }
+    it.each(["normalize", "retire"] as const)("maps only the %s helper refusal to exact 409 REQUEST_CONFLICT and rolls back", async site => {
+        const f = await ready(site);
+        if (site === "normalize") f.state.authorities[0].claimUserId = null;
+        else f.state.intents[0].branchId = J;
+        const before = structuredClone(f.state);
+        const error = await new SbEformsignDocumentJobRepository(f.prisma).enqueue(input).catch((caught: unknown) => caught);
+        expect(error).toBeInstanceOf(ConflictException);
+        expect(error).toBeInstanceOf(HttpException);
+        expect((error as HttpException).getStatus()).toBe(409);
+        expect((error as HttpException).getResponse()).toEqual({ code: "REQUEST_CONFLICT" });
+        expect(f.state).toEqual(before);
+    });
+    it.each(["normalize", "retire"] as const)("does not mask unexpected database/internal errors inside %s", async site => {
+        const f = await ready(site), error = new Error("unexpected database failure"), before = structuredClone(f.state);
+        f.tx.eformsign_document_job.findUnique.mockRejectedValueOnce(error);
+        await expect(new SbEformsignDocumentJobRepository(f.prisma).enqueue(input)).rejects.toBe(error);
+        expect(f.state).toEqual(before);
+    });
+    it("does not translate a ContractRecoveryError from outside the two helper calls", async () => {
+        const f = await ready("retire"), error = new ContractRecoveryError("RECOVERY_UNAVAILABLE"), before = structuredClone(f.state);
+        f.tx.eformsign_dispatch_intent.findFirst.mockRejectedValueOnce(error);
+        await expect(new SbEformsignDocumentJobRepository(f.prisma).enqueue(input)).rejects.toBe(error);
+        expect(f.state).toEqual(before);
+    });
+});
 
 describe("SbEformsignDocumentJobRepository", () => {
     let queryRaw: jest.Mock;

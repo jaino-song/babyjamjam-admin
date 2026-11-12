@@ -161,6 +161,40 @@ it.each(["finalize", "service-record"])("legacy-intent generation guard preserve
 });
 
 const draftEvidence = () => ({ documentId: "bound-doc", templateId: "template_ABC", companyId: "company-abc", creatorId: "service@example.test", statusType: "001", stepType: "00", stepIndex: "1", stepName: "write", confirmed: false, createdAt: new Date(), updatedAt: new Date(), expiresAt: new Date() });
+describe("post-TTL completeManual exact mirror template", () => {
+    async function purgedCreate() {
+        const f = runtimeFixture();
+        await f.repository.claimCreation(intentInput, worker, { contractData: data, workflow: workflowPlan });
+        Object.assign(f.state.jobs[0], { status: "requires_attention", leaseToken: null, activeKey: null, completedAt: new Date() });
+        Object.assign(f.state.authorities[0], { phase: "creation_uncertain" });
+        Object.assign(f.state.intents[0], { status: "uncertain", providerDocumentId: "bound-doc" });
+        const opened = await f.repository.open(J, B, U), claim = { jobId: J, branchId: B, userId: U, claimEpoch: opened.claimEpoch };
+        await f.repository.bindDocument(claim, draftEvidence());
+        Object.assign(f.state.jobs[0], { payload: null, completedAt: new Date(Date.now() - 8 * 86400000) });
+        const snapshot = await f.repository.readClaim(claim);
+        expect(snapshot.verificationOnly).toMatchObject({ documentId: "bound-doc", templateId: "template_ABC" });
+        expect(snapshot.payload).toEqual({});
+        expect(f.state.intents[0].templateId).toBeNull();
+        expect(f.state.authorities[0]).toMatchObject({ creationIntentId: I, draftIntentId: null, humanIntentId: null });
+        f.events.length = 0;
+        return { f, claim };
+    }
+    it("rejects post-TTL completeManual template mismatch with NULL create template and preserves every durable field", async () => {
+        const { f, claim } = await purgedCreate(), before = structuredClone(f.state);
+        await expect(f.repository.completeManual(claim, { ...draftEvidence(), templateId: "different-template", confirmed: true,
+            statusType: "060", stepType: "05" })).rejects.toBeInstanceOf(ContractRecoveryError);
+        expect(f.state).toEqual(before);
+        expect(f.events).toEqual([]);
+    });
+    it("positive control: the exact post-TTL mirror template completes without restoring the purged payload", async () => {
+        const { f, claim } = await purgedCreate();
+        await f.repository.completeManual(claim, { ...draftEvidence(), confirmed: true, statusType: "060", stepType: "05" });
+        expect(f.state.authorities[0].phase).toBe("closed");
+        expect(f.state.jobs[0]).toMatchObject({ status: "completed", payload: null, documentId: "bound-doc" });
+        expect(f.state.clients[0].eDocId).toBe("bound-doc");
+        expect(f.state.intents[0].status).toBe("reconciled_delivered");
+    });
+});
 describe("terminal generation release regressions", () => {
     async function exhausted() {
         const f = runtimeFixture(); f.state.jobs[0].attempts = 4;

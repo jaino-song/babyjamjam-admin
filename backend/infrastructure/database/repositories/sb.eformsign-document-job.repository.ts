@@ -29,6 +29,7 @@ import {
     ResolveManuallyResult,
 } from "domain/repositories/eformsign-document-job.repository.interface";
 import { PrismaService } from "infrastructure/database/prisma.service";
+import { ContractRecoveryError } from "domain/repositories/eformsign-contract-recovery.repository.interface";
 import { withoutEntityChangeHints } from "infrastructure/database/entity-change-suppression";
 import { normalizeVerifiedAuthority, retireProvenNoEffect } from "../utils/eformsign-contract-authority-release";
 import { lockAuthorityScope, reserveAuthority } from "../utils/eformsign-contract-authority";
@@ -262,12 +263,26 @@ export class SbEformsignDocumentJobRepository implements IEformsignDocumentJobRe
                 if (replay[0].payload_fingerprint !== input.payloadFingerprint) throw new Error("EFORMSIGN_DOCUMENT_JOB_IDEMPOTENCY_MISMATCH");
                 return { job: this.toDomain(replay[0]), existing: true };
             }
-            if (authority) mutatedAuthority = await normalizeVerifiedAuthority(tx, authority);
+            if (authority) {
+                try {
+                    mutatedAuthority = await normalizeVerifiedAuthority(tx, authority);
+                } catch (error) {
+                    if (error instanceof ContractRecoveryError) throw new ConflictException({ code: "REQUEST_CONFLICT" });
+                    throw error;
+                }
+            }
             const client = await tx.client.findUnique({ where: { id: input.clientId! }, select: { eDocId: true } });
             if (!client) throw new ConflictException({ code: "REQUEST_CONFLICT" });
             const active = await tx.$queryRaw<RawJob[]>(Prisma.sql`SELECT * FROM eformsign_document_job WHERE active_key = ${input.activeKey} LIMIT 1`);
-            const retired = authority && (!active[0] || active[0].id === authority.creationJobId)
-                ? await retireProvenNoEffect(tx, authority, client.eDocId) : false;
+            let retired = false;
+            if (authority && (!active[0] || active[0].id === authority.creationJobId)) {
+                try {
+                    retired = await retireProvenNoEffect(tx, authority, client.eDocId);
+                } catch (error) {
+                    if (error instanceof ContractRecoveryError) throw new ConflictException({ code: "REQUEST_CONFLICT" });
+                    throw error;
+                }
+            }
             mutatedAuthority = retired || mutatedAuthority;
             if (active[0] && !retired) {
                 if (mutatedAuthority) throw new ConflictException({ code: "REQUEST_CONFLICT" });
