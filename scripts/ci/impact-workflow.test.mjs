@@ -39,6 +39,25 @@ function stepsWithoutBackendBuild(job,label) {
   assert.equal(job.steps.filter(s=>s.name===backendBuildStep.name).length,1,`${label}: exactly one backend build step`);
   return job.steps.filter((_,index)=>index!==start-1);
 }
+// Admit only these two required gates, then keep both pinned whole-step comparisons.
+const authorityPgSteps = [
+  {name:'Eformsign authority PostgreSQL harness self-tests',run:'node --test backend/scripts/run-eformsign-contract-authority-pg.test.mjs'},
+  {name:'Eformsign authority and retention PostgreSQL gate',run:'node backend/scripts/run-eformsign-contract-authority-pg.mjs'},
+];
+function stepsWithoutAuthorityPgGates(steps,label) {
+  const install=steps.findIndex(step=>step.name==='Install dependencies');
+  assert.ok(install>=0,`${label}: dependency install must exist`);
+  const approvedIndexes=authorityPgSteps.map(expected=>{
+    const matches=steps.map((step,index)=>({step,index})).filter(({step})=>step.name===expected.name || step.run===expected.run);
+    assert.equal(matches.length,1,`${label}: exactly one ${expected.name}`);
+    const {step,index}=matches[0];
+    assert.deepEqual(step,expected,`${label}: required authority step must run exactly, without skip or continue-on-error`);
+    assert.ok(index>install,`${label}: authority gates must follow dependency install`);
+    return index;
+  });
+  assert.ok(approvedIndexes[0]<approvedIndexes[1],`${label}: harness self-tests precede real PostgreSQL`);
+  return steps.filter((_,index)=>!approvedIndexes.includes(index));
+}
 // The backend tsc peaks near Node's default ~2 GB heap (OOM in run 41173922396), so the
 // backend 'Type check' step raises it. Asserts that exact env and returns the steps without
 // it, so the caller can still compare every step exactly against the pinned base.
@@ -178,7 +197,7 @@ for(const app of apps) test(`${app}: parsed executable graph and stable gate`,()
     return step;
   });
   const previousSteps = parse(old(file)).jobs.verify.steps;
-  assert.deepEqual(app==='backend'?stepsWithoutTypeCheckHeap(stepsWithoutStandbyContractTests(appSteps,file),file):appSteps,app==='backend'?withStateIntegrityRealDatabaseStep(previousSteps):previousSteps,'preserve all existing application checks');
+  assert.deepEqual(app==='backend'?stepsWithoutTypeCheckHeap(stepsWithoutStandbyContractTests(stepsWithoutAuthorityPgGates(appSteps,file),file),file):appSteps,app==='backend'?withStateIntegrityRealDatabaseStep(previousSteps):previousSteps,'preserve all existing application checks');
   if(app==='backend') {assertOnlyStandbyJobAdded(parse(old(file)).jobs,j,file,['impact','checks']);assert.ok(j.checks.steps.some(step=>step.run==='node --test scripts/ci/impact*.test.mjs'));assert.equal(j.checks.steps[0].with['fetch-depth'],0);}
   const visited=new Set(),active=new Set();
   function visit(id) {assert.ok(j[id],`missing dependency ${id}`);assert.equal(active.has(id),false,`cycle at ${id}`);if(visited.has(id))return;active.add(id);for(const parent of needs(j[id]))visit(parent);active.delete(id);visited.add(id);}
@@ -259,7 +278,7 @@ test('backend installs declared compiler before executing CI impact contracts; o
   const before = correctionOld('backend-ci.yml');
   const previous = parse(before);
   assertOnlyStandbyJobAdded(previous.jobs, workflow.jobs, 'backend-ci.yml');
-  assert.deepEqual(stepsWithoutStandbyContractTests(stepsWithoutTypeCheckHeap(steps,'backend-ci.yml'),'backend-ci.yml').filter(s => s.name !== 'CI impact routing contracts'), withStateIntegrityRealDatabaseStep(previous.jobs.checks.steps.filter(s => s.name !== 'CI impact routing contracts')));
+  assert.deepEqual(stepsWithoutStandbyContractTests(stepsWithoutTypeCheckHeap(stepsWithoutAuthorityPgGates(steps,'backend-ci.yml'),'backend-ci.yml'),'backend-ci.yml').filter(s => s.name !== 'CI impact routing contracts'), withStateIntegrityRealDatabaseStep(previous.jobs.checks.steps.filter(s => s.name !== 'CI impact routing contracts')));
   for (const id of Object.keys(previous.jobs).filter(id => id !== 'checks')) {
     assert.equal(jobText(text,id), jobText(before,id), `${id} must be byte-identical to phase base`);
   }
@@ -358,4 +377,26 @@ test('actual reusable output validator refuses missing, malformed and inconsiste
     assert.notEqual(run({}, exports, contents).status, 0, 'invalid/missing artifact must fail');
     assert.equal(existsSync(output), false);
   }
+});
+
+test('authority PostgreSQL gate adapter rejects missing, duplicated, changed or bypassed required steps',()=>{
+  const steps=parse(read('backend-ci.yml')).jobs.checks.steps;
+  stepsWithoutAuthorityPgGates(steps,'backend-ci.yml');
+  for(const expected of authorityPgSteps) {
+    for(const [label,mutate] of [
+      ['missing',copy=>copy.splice(copy.findIndex(step=>step.name===expected.name),1)],
+      ['duplicated',copy=>copy.push(structuredClone(expected))],
+      ['changed command',copy=>{copy.find(step=>step.name===expected.name).run+=' || true';}],
+      ['skipped',copy=>{copy.find(step=>step.name===expected.name).if=false;}],
+      ['continue-on-error',copy=>{copy.find(step=>step.name===expected.name)['continue-on-error']=true;}],
+      ['renamed',copy=>{copy.find(step=>step.name===expected.name).name='bypassed';}],
+      ['foreign env',copy=>{copy.find(step=>step.name===expected.name).env={DATABASE_URL:'foreign'};}],
+    ]) {
+      const copy=structuredClone(steps);mutate(copy);
+      assert.throws(()=>stepsWithoutAuthorityPgGates(copy,'negative control'),`${expected.name}: ${label}`);
+    }
+  }
+  const early=structuredClone(steps),index=early.findIndex(step=>step.name===authorityPgSteps[1].name);
+  early.unshift(early.splice(index,1)[0]);
+  assert.throws(()=>stepsWithoutAuthorityPgGates(early,'negative control'),'real PostgreSQL must follow install');
 });
