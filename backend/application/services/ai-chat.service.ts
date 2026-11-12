@@ -378,6 +378,13 @@ type DashboardStatsData = {
     noContractCount: number;
 };
 
+type RegistrationFact = {
+    entity: "client" | "employee";
+    id: number;
+    name?: string;
+    date: string;
+};
+
 export interface ChatStreamEvent {
     type: 'chunk' | 'tool_call' | 'confirmation' | 'done' | 'error';
     content?: string;
@@ -463,6 +470,8 @@ export class AIChatService {
 
         const messages = this.buildGeminiMessages(session.messages);
         let toolCallCount = 0;
+        const registrationFacts: RegistrationFact[] = [];
+        let hasWriteAttempt = false;
         const offeredTools = canManageBranch(actor) ? allTools : allTools.filter(tool => !isCUDTool(tool.name));
         const offeredToolNames = new Set(offeredTools.map(tool => tool.name));
 
@@ -498,6 +507,7 @@ export class AIChatService {
 
                                 yield { type: 'tool_call', toolName: name, toolStatus: 'executing' };
 
+                                hasWriteAttempt ||= isCUDTool(name);
                                 const result = await this.toolExecutor.execute({
                                     userId,
                                     branchId: branchid,
@@ -505,6 +515,9 @@ export class AIChatService {
                                     globalRole: actor?.globalRole,
                                     branchRole: actor?.branchRole,
                                 }, name, args, principal);
+                                if (!isCUDTool(name) && result.success) {
+                                    this.collectRegistrationFacts(name, result.data, registrationFacts);
+                                }
 
                                 if (result.requiresConfirmation) {
                                     yield {
@@ -550,7 +563,11 @@ export class AIChatService {
 
                         if (!continueLoop) {
                             accumulatedText += streamRedactor.flush();
-                            const responseText = this.normalizeModelAnswer(accumulatedText, userMessage);
+                            const responseText = this.normalizeModelAnswer(
+                                accumulatedText,
+                                userMessage,
+                                hasWriteAttempt ? [] : registrationFacts,
+                            );
                             if (responseText.trim()) {
                                 const lastMessage = session.messages[session.messages.length - 1];
                                 if (lastMessage?.role !== 'assistant' || lastMessage.content !== responseText) {
@@ -670,15 +687,78 @@ export class AIChatService {
 
     /** Only model-generated turn text is checked; confirmed write results are
      * persisted separately and must retain their actual completion message. */
-    private normalizeModelAnswer(text: string, userMessage: string): string {
-        const claimsWriteCompletion = /(?:수정|변경|정정|등록|삭제|저장|반영)(?:이|가)?\s*(?:되었|됐|완료)/.test(text);
-        if (!claimsWriteCompletion) return text;
+    private normalizeModelAnswer(text: string, userMessage: string, registrationFacts: readonly RegistrationFact[]): string {
+        const claimsWriteCompletion = /(?:수정|변경|정정|등록|삭제|저장|반영)(?:이|가)?\s*(?:되었|됐|완료)/;
+        if (!claimsWriteCompletion.test(text)) return text;
+
+        // Exempt only an entity's own registration fact from a successful detail
+        // read. Dates from other tools or nested entities cannot prove this claim.
+        const requestsWrite = /(?:수정|변경|정정|등록|삭제|저장|반영)(?:을|를)?\s*(?:좀\s*)?(?:해|하|시켜|시키|부탁|요청|[.!?]?\s*$)|바꿔|고쳐|지워|추가해|만들어/.test(userMessage);
+        const claimsCurrentAction = /방금|지금|이번\s*(?:요청|작업|대화)|요청하신|요청한/.test(text);
+        if (registrationFacts.length > 0 && !requestsWrite && !claimsCurrentAction) {
+            const unsupportedText = text.replace(
+                /(^|[.!?\n])([^.!?\n]*?)(\d{4}-\d{2}-\d{2}|\d{4}년\s*\d{1,2}월\s*\d{1,2}일)에\s*(?:이미\s*)?등록(?:이|가)?\s*(?:되었|됐|완료)/g,
+                (claim, boundary: string, subject: string, date: string) => {
+                    const normalizedDate = date.replace(
+                        /^(\d{4})년\s*(\d{1,2})월\s*(\d{1,2})일$/,
+                        (_calendar, year: string, month: string, day: string) => `${year}-${month.padStart(2, "0")}-${day.padStart(2, "0")}`,
+                    );
+                    return registrationFacts.some(fact => fact.date === normalizedDate && this.matchesRegistrationSubject(subject, fact))
+                        ? boundary : claim;
+                },
+            );
+            if (!claimsWriteCompletion.test(unsupportedText)) return text;
+        }
 
         const unchanged = "아직 변경된 내용이 없어요. 변경은 승인 버튼을 누른 뒤에만 적용돼요.";
         if (/제공\s*기록지/.test(`${userMessage} ${text}`)) {
             return `${unchanged} 제공기록지 정정은 에이전트 채팅이나 제공기록지 편집 화면에서 진행해 주세요.`;
         }
         return unchanged;
+    }
+
+    private matchesRegistrationSubject(subject: string, fact: RegistrationFact): boolean {
+        const labels = fact.entity === "client" ? ["산모", "고객", "이용자"] : ["관리사", "제공인력", "직원"];
+        const names = fact.name ? [fact.name, ...labels.map(label => `${label}${fact.name}`)] : [];
+        const subjects = [...names, ...labels.map(label => `${label}${fact.id}번`)].flatMap(base =>
+            ["", "님"].map(honorific => `${base.replace(/\s+/g, "")}${honorific}`),
+        );
+        const normalizedName = fact.name?.replace(/\s+/g, "");
+        if (normalizedName) {
+            subjects.push(...labels.flatMap(label => ["", "님"].map(honorific =>
+                `${label}${fact.id}번(${normalizedName}${honorific})`,
+            )));
+        }
+        const normalizedSubject = subject.replace(/\s+/g, "");
+        // Match the whole subject, so a known name cannot also vouch for another
+        // person mentioned in the same clause (or an ID with a matching suffix).
+        // Enumerate the single neutral prefix rather than stripping arbitrary text.
+        return subjects.some(base => ["", "조회결과,"].some(prefix =>
+            ["", "은", "는", "이", "가"].some(particle =>
+                normalizedSubject === `${prefix}${base}${particle}`,
+            ),
+        ));
+    }
+
+    private collectRegistrationFacts(toolName: string, value: unknown, facts: RegistrationFact[]): void {
+        if (toolName !== "getClient" && toolName !== "getEmployee") return;
+        if (!value || typeof value !== "object" || Array.isArray(value)) return;
+
+        const record = value as Record<string, unknown>;
+        const id = record['id'];
+        if (typeof id !== "number" || !Number.isSafeInteger(id) || id <= 0) return;
+        const timestamp = record['createdAt'];
+        const createdAt = timestamp instanceof Date && !Number.isNaN(timestamp.getTime())
+            ? timestamp.toISOString()
+            : timestamp;
+        if (typeof createdAt === "string" && /^\d{4}-\d{2}-\d{2}(?:T|$)/.test(createdAt)) {
+            facts.push({
+                entity: toolName === "getClient" ? "client" : "employee",
+                id,
+                name: typeof record['name'] === "string" ? record['name'] : undefined,
+                date: createdAt.slice(0, 10),
+            });
+        }
     }
 
     private buildGeminiMessages(sessionMessages: SessionMessage[]): ChatMessage[] {

@@ -742,7 +742,7 @@ function AssignmentHistoryCard({
                 {ordered.map((assignment) => (
                     <div
                         key={assignment.scheduleId}
-                        className="flex items-center gap-[calc(12px*var(--glint-ui-scale,1))] border-b border-v3-dim-white py-[calc(8px*var(--glint-ui-scale,1))] last:border-b-0"
+                        className="flex items-center gap-[calc(12px*var(--glint-ui-scale,1))] border-b border-v3-border py-[calc(8px*var(--glint-ui-scale,1))] last:border-b-0"
                     >
                         <div className="min-w-0 flex-1">
                             <div className="truncate text-[calc(12.5px*var(--glint-ui-scale,1))] font-semibold text-v3-dark">
@@ -1454,7 +1454,7 @@ function SessionRow({
             <Collapsible
                 defaultOpen={defaultOpen}
                 data-component={dataComponent}
-                className="border-b border-v3-dim-white last:border-b-0"
+                className="border-b border-v3-border last:border-b-0"
             >
                 <CollapsibleTrigger asChild>
                     <button
@@ -1494,7 +1494,7 @@ function SessionRow({
         <Collapsible
             defaultOpen={defaultOpen}
             data-component={dataComponent}
-            className="border-b border-v3-dim-white last:border-b-0"
+            className="border-b border-v3-border last:border-b-0"
         >
             <CollapsibleTrigger asChild>
                 <button
@@ -1624,7 +1624,7 @@ function SessionRecordDetail({
                     </div>
                     <div className="grid grid-cols-2 gap-x-[calc(28px*var(--glint-ui-scale,1))] max-sm:grid-cols-1">
                         {unknownEntries.map(([key, value]) => (
-                            <div key={key} className="flex items-center justify-between gap-[calc(12px*var(--glint-ui-scale,1))] border-b border-dashed border-v3-dim-white py-[calc(7px*var(--glint-ui-scale,1))]">
+                            <div key={key} className="flex items-center justify-between gap-[calc(12px*var(--glint-ui-scale,1))] border-b border-dashed border-v3-border py-[calc(7px*var(--glint-ui-scale,1))]">
                                 <span className="shrink-0 text-[calc(12px*var(--glint-ui-scale,1))] text-v3-text-muted">{key}</span>
                                 <span className="text-right text-[calc(12.3px*var(--glint-ui-scale,1))] font-medium text-v3-dark">{formatUnknownValue(value)}</span>
                             </div>
@@ -1661,7 +1661,7 @@ function EmptySessionRecordDetail() {
                             <div
                                 key={field.key}
                                 className={cn(
-                                    "flex items-center justify-between gap-[calc(12px*var(--glint-ui-scale,1))] border-b border-dashed border-v3-dim-white py-[calc(7px*var(--glint-ui-scale,1))]",
+                                    "flex items-center justify-between gap-[calc(12px*var(--glint-ui-scale,1))] border-b border-dashed border-v3-border py-[calc(7px*var(--glint-ui-scale,1))]",
                                     field.kind === "text" && "col-span-full items-start",
                                 )}
                             >
@@ -1696,7 +1696,7 @@ function RecordFieldRow({
     return (
         <div
             className={cn(
-                "flex items-center justify-between gap-[calc(12px*var(--glint-ui-scale,1))] border-b border-dashed border-v3-dim-white py-[calc(7px*var(--glint-ui-scale,1))]",
+                "flex items-center justify-between gap-[calc(12px*var(--glint-ui-scale,1))] border-b border-dashed border-v3-border py-[calc(7px*var(--glint-ui-scale,1))]",
                 isWide && "col-span-full items-start",
             )}
         >

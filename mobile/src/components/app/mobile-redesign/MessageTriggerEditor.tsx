@@ -11,8 +11,9 @@ import {
 } from "@babyjamjam/shared";
 import type { CreateMessageTriggerRuleGroupDto, MessageTriggerRuleGroupView, MessageTriggerRecipientMode, MessageTriggerRecipientType, MessageTriggerTemplateKey, MessageTriggerRuleGroupPreviewResponse } from "@babyjamjam/shared/types/message";
 import { isAxiosError } from "axios";
-import { useQueryClient } from "@tanstack/react-query";
-import { messageRuleGroupsApi } from "@/services/api";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { messageTriggerKeys } from "@/features/message-triggers/hooks/keys";
+import { messageRuleGroupsApi, settingsApi } from "@/services/api";
 import { useGetAuthUser } from "@/hooks/useGetAuthUser";
 import { OptionButtonGroup } from "@/components/app/v3/OptionButtonGroup";
 import { Button } from "@/components/ui/button";
@@ -97,7 +98,7 @@ function initialForm(rule: MessageTriggerRule | null): RuleForm {
     eventType: "SERVICE_START",
     offsetType: "BEFORE_DAYS",
     offsetDays: 7,
-    sendTime: "09:00",
+    sendTime: "",
     recipientType: "CLIENT",
     templateKey: "SERVICE_INFO",
     targetClientStatus: DEFAULT_MESSAGE_TRIGGER_TARGET_CLIENT_STATUS,
@@ -126,8 +127,14 @@ export function MessageTriggerEditor({
   const branchRef = useRef(branchId);
   useEffect(() => { branchRef.current = branchId; }, [branchId]);
   const queryClient = useQueryClient();
+  const configQuery = useQuery({
+    queryKey: ["settings", "message-automation-config", branchId],
+    queryFn: () => settingsApi.getMessageAutomationConfig(branchId!),
+    enabled: Boolean(branchId) && !rule && !group,
+  });
+  const sendTimeInitialized = useRef(Boolean(rule || group));
   const groupMode = !rule;
-  const [expectedGroupVersion] = useState(group?.version ?? null);
+  const [expectedGroupVersion, setExpectedGroupVersion] = useState(group?.version ?? null);
   const [form, setForm] = useState<RuleForm>(() => group ? { ...initialForm(null), name: group.name, isActive: group.isActive, eventType: group.eventType, offsetType: group.offsetType, offsetDays: group.offsetDays, sendTime: group.sendTime, targetClientStatus: group.targetClientStatus, retryOnFailure: group.retryOnFailure } : initialForm(rule));
   const [recipientMode, setRecipientMode] = useState<MessageTriggerRecipientMode>(group?.recipientMode ?? rule?.recipientType ?? "CLIENT");
   const [recipientTemplates, setRecipientTemplates] = useState<Partial<Record<MessageTriggerRecipientType, MessageTriggerTemplateKey>>>(() => group?.recipientTemplates ?? { [rule?.recipientType ?? "CLIENT"]: rule?.templateKey ?? "SERVICE_INFO" });
@@ -136,8 +143,16 @@ export function MessageTriggerEditor({
   const pendingRef = useRef(false);
   const [preview, setPreview] = useState<{ fingerprint: string; data: MessageTriggerRuleGroupPreviewResponse } | null>(null);
   const draftFingerprint = JSON.stringify({ form, recipientMode, recipientTemplates });
-  const [initialFingerprint] = useState(draftFingerprint);
-  const dirty = initialFingerprint !== draftFingerprint;
+  const [initialDraft, setInitialDraft] = useState({ form, recipientMode, recipientTemplates });
+  const dirty = JSON.stringify(initialDraft) !== draftFingerprint;
+  const defaultSendTime = configQuery.data?.configuration.defaultRuleSendTime;
+  useEffect(() => {
+    if (rule || group || sendTimeInitialized.current || configQuery.isError || !configQuery.data?.permissions.canRead || !defaultSendTime) return;
+    sendTimeInitialized.current = true;
+    setForm((current) => ({ ...current, sendTime: defaultSendTime }));
+    // Seeding a default is not a user edit; preserve other edits and their baseline.
+    setInitialDraft((current) => ({ ...current, form: { ...current.form, sendTime: defaultSendTime } }));
+  }, [rule, group, defaultSendTime, configQuery.isError, configQuery.data?.permissions.canRead]);
   useEffect(() => { onDirtyChange?.(dirty); return () => onDirtyChange?.(false); }, [dirty, onDirtyChange]);
   useEffect(() => {
     if (!dirty) return;
@@ -157,6 +172,26 @@ export function MessageTriggerEditor({
     [form.eventType, templatesQuery.data],
   );
   const isPending = groupPending || updateMutation.isPending || deleteMutation.isPending;
+  useEffect(() => {
+    // Adopt live data only while pristine. Dirty drafts must keep the version
+    // they were based on so a concurrent save still receives a conflict.
+    if ((!group && !rule) || dirty || isPending) return;
+    const nextForm = group
+      ? { ...initialForm(null), name: group.name, isActive: group.isActive, eventType: group.eventType, offsetType: group.offsetType, offsetDays: group.offsetDays, sendTime: group.sendTime, targetClientStatus: group.targetClientStatus, retryOnFailure: group.retryOnFailure }
+      : initialForm(rule);
+    const nextRecipientMode = group?.recipientMode ?? rule?.recipientType ?? "CLIENT";
+    const nextRecipientTemplates = group?.recipientTemplates ?? { [rule?.recipientType ?? "CLIENT"]: rule?.templateKey ?? "SERVICE_INFO" };
+    const nextDraft = { form: nextForm, recipientMode: nextRecipientMode, recipientTemplates: nextRecipientTemplates };
+    if (JSON.stringify(nextDraft) !== draftFingerprint) {
+      setForm(nextForm);
+      setRecipientMode(nextRecipientMode);
+      setRecipientTemplates(nextRecipientTemplates);
+      setInitialDraft(nextDraft);
+      setPreview(null);
+      setError(null);
+    }
+    setExpectedGroupVersion(group?.version ?? null);
+  }, [group, rule, dirty, isPending, draftFingerprint]);
   const needsDays = form.offsetType === "BEFORE_DAYS" || form.offsetType === "AFTER_DAYS";
   const roleTemplates = (recipient: MessageTriggerRecipientType) => templates.filter((template) => template.allowedRecipientTypes.includes(recipient));
   const selectedTemplateKey = form.templateKey;
@@ -178,6 +213,7 @@ export function MessageTriggerEditor({
   };
 
   const setField = <K extends keyof RuleForm>(key: K, value: RuleForm[K]) => {
+    if (key === "sendTime") sendTimeInitialized.current = true;
     setForm((current) => ({ ...current, [key]: value }));
   };
 
@@ -225,7 +261,7 @@ export function MessageTriggerEditor({
         pendingRef.current = true; setGroupPending(true);
         if (group) await messageRuleGroupsApi.update(group.id, { ...groupDraft(), expectedVersion: expectedGroupVersion! }, capturedBranch);
         else await messageRuleGroupsApi.create(groupDraft(), capturedBranch);
-        await queryClient.invalidateQueries({ queryKey: ["message-trigger-rule-groups", capturedBranch] });
+        await queryClient.invalidateQueries({ queryKey: [...messageTriggerKeys.all, "rule-groups", capturedBranch] });
         if (branchRef.current !== capturedBranch) return;
       } else if (rule) {
         await updateMutation.mutateAsync({ id: rule.id, dto });
@@ -247,7 +283,7 @@ export function MessageTriggerEditor({
         const capturedBranch = branchId;
         pendingRef.current = true; setGroupPending(true);
         await messageRuleGroupsApi.remove(group.id, group.version, capturedBranch);
-        await queryClient.invalidateQueries({ queryKey: ["message-trigger-rule-groups", capturedBranch] });
+        await queryClient.invalidateQueries({ queryKey: [...messageTriggerKeys.all, "rule-groups", capturedBranch] });
         if (branchRef.current !== capturedBranch) return;
       } else if (rule) await deleteMutation.mutateAsync(rule.id);
       setDeleteOpen(false);

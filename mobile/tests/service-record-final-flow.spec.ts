@@ -226,7 +226,7 @@ test("마지막 회차 제출 후 별도 버튼 없이 최종 제출을 완료�
   await expect(page.locator('[data-component="mobile_service-record_wizard_body_day-title"]')).not.toHaveText("신생아 기록");
   await page.getByLabel("서비스 제공일").click();
   const dateSheet = page.getByRole("dialog");
-  await dateSheet.getByRole("button", { name: "2026.07.15(수)", exact: true }).click();
+  await dateSheet.getByRole("button", { name: "2026.07.15(수) 오늘", exact: true }).click();
   await dateSheet.getByRole("button", { name: "선택", exact: true }).click();
   await expect(dateSheet).toBeHidden();
   await page.getByLabel("식사").fill("3");

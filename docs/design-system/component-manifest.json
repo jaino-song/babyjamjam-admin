@@ -590,7 +590,8 @@
         ],
         "requiredFor": [
           "create/edit dialogs"
-        ]
+        ],
+        "note": "size: form | compact | recovery. recovery uses a 960px maximum width and 92vh capped height, scoped overlay/content above jobs, flex body, and optional onCloseAutoFocus forwarding."
       },
       {
         "name": "QueryErrorState",
@@ -606,6 +607,21 @@
         ],
         "requiredFor": [
           "in-area failed-to-load state with a retry button (a query that failed after its automatic retries)"
+        ]
+      },
+      {
+        "name": "StaleDataNotice",
+        "layer": "molecule",
+        "import": "@/components/app/ui/StaleDataNotice",
+        "file": "frontend/src/components/app/ui/StaleDataNotice.tsx",
+        "exports": [
+          "StaleDataNotice"
+        ],
+        "replaces": [
+          "hand-written warning Alert or inline text above cached data after a failed background refresh"
+        ],
+        "requiredFor": [
+          "quiet one-line notice (no retry) above data still on screen after a background refresh failed"
         ]
       },
       {
@@ -916,6 +932,15 @@
         ]
       },
       {
+        "name": "AnchoredNotificationModalShell",
+        "layer": "template",
+        "import": "@/components/app/v3/AnchoredNotificationModalShell",
+        "file": "frontend/src/components/app/v3/AnchoredNotificationModalShell.tsx",
+        "exports": ["AnchoredNotificationModalShell"],
+        "replaces": ["notification portal, backdrop and anchored modal geometry"],
+        "description": "Accessible anchored presentation shell; callers provide the complete page header and body. Optional data-component omits owned metadata when absent or empty."
+      },
+      {
         "name": "AnimatedSlotList",
         "layer": "organism",
         "import": "@/components/app/v3",
@@ -1186,7 +1211,8 @@
         "file": "frontend/src/components/app/v3/PanelTitleGroup.tsx",
         "exports": [
           "PanelTitleGroup"
-        ]
+        ],
+        "note": "Optional data-component omits owned metadata when absent or empty; title, subtitle and all badge slots are preserved."
       },
       {
         "name": "QuickActionButton",
@@ -1359,6 +1385,38 @@
         "requiredFor": [
           "first-slot document jobs card of every stats bar"
         ]
+      },
+      {
+        "name": "ContractDocumentJobDetail",
+        "layer": "organism",
+        "import": "@/components/app/contracts/ContractDocumentJobDetail",
+        "file": "frontend/src/components/app/contracts/ContractDocumentJobDetail.tsx",
+        "exports": ["ContractDocumentJobDetail"],
+        "note": "Pure job detail presenter. Props: job: ContractDocumentJob; data-component?: string; onDocumentNavigate?: () => void for existing document Link activation. No fetching or recovery authority."
+      },
+      {
+        "name": "ContractDocumentJobsModal",
+        "layer": "organism",
+        "import": "@/components/app/contracts/ContractDocumentJobsModal",
+        "file": "frontend/src/components/app/contracts/ContractDocumentJobsModal.tsx",
+        "exports": ["ContractDocumentJobsModal"],
+        "note": "Desktop modal owner. Props: open, onClose, anchorRef, summary?, jobs?, isLoading, error?, onRetry?, data-component?. Absent or empty metadata is omitted. Owns selection, collapse, list focus/scroll restoration and preferred height; closes once on document navigation. No fetching or recovery authority."
+      },
+      {
+        "name": "ContractDocumentJobsList",
+        "layer": "organism",
+        "import": "@/components/app/contracts/ContractDocumentJobsList",
+        "file": "frontend/src/components/app/contracts/ContractDocumentJobsList.tsx",
+        "exports": ["ContractDocumentJobsList", "ContractDocumentJobsListProps", "ContractDocumentJobsSection"],
+        "note": "Controlled list presenter. Props: jobs?, isLoading, error?, onRetry?, collapsed, onToggle, onSelect(jobId, clickedButton), data-component?. Owner controls selection and collapse."
+      },
+      {
+        "name": "ContractDocumentJobSummary",
+        "layer": "molecule",
+        "import": "@/components/app/contracts/ContractDocumentJobSummary",
+        "file": "frontend/src/components/app/contracts/ContractDocumentJobSummary.tsx",
+        "exports": ["ContractDocumentJobSummary"],
+        "note": "Pure identity summary. Props: job: ContractDocumentJob; data-component?: string. Uses shared safe display vocabulary."
       },
       {
         "name": "ContractDocumentJobsPopover",
@@ -1552,6 +1610,14 @@
         ]
       },
       {
+        "name": "DocumentJobProgressSummary",
+        "layer": "molecule",
+        "import": "@/components/app/contracts/DocumentJobProgressSummary",
+        "file": "frontend/src/components/app/contracts/DocumentJobProgressSummary.tsx",
+        "exports": ["DocumentJobProgressSummary"],
+        "note": "Display-only progress. Props: job: ContractDocumentJob; data-component?: string. Only confirmed queue/work-ended values are numeric; no recovery authority or document-delivery claim."
+      },
+      {
         "name": "DocumentJobFailurePopup",
         "layer": "molecule",
         "import": "@/components/app/ui/DocumentJobFailurePopup",
@@ -1632,7 +1698,8 @@
         "replaces": [
           "custom desktop sliding list-to-detail navigation"
         ],
-        "description": "Mobile SlidingCard parallax motion for desktop drill-down views, with focus restoration and inactive-pane isolation."
+        "description": "Mobile SlidingCard parallax motion for desktop drill-down views, with focus restoration and inactive-pane isolation.",
+        "note": "Optional data-component omits owned metadata when absent or empty. Optional motion: 'parallax' (default) | 'page'. Page-only slots require motion='page': headerActions?: ReactNode shares the back-button row; headerSummary?: ReactNode sits beneath that row inside the sliding header. Parallax ignores untyped slot props and keeps its original header DOM. Page mode moves full panes over a 16px gap in 300ms and omits the dim layer."
       },
       {
         "name": "StatsPeriodSelector",
@@ -1842,6 +1909,30 @@
           "ChatWorkspaceStats"
         ],
         "note": "Branch-aligned live chat statistics; reuses DocumentJobsStatMini and backend contractsNotSent/serviceEnd counts."
+      },
+      {
+        "name": "PaneHeader",
+        "layer": "molecule",
+        "import": "@/components/app/v3/PaneHeader",
+        "file": "frontend/src/components/app/v3/PaneHeader.tsx",
+        "exports": [
+          "PaneHeader"
+        ],
+        "replaces": [
+          "duplicated pane title and back header rows"
+        ]
+      },
+      {
+        "name": "ContractDocumentJobsPanes",
+        "layer": "organism",
+        "import": "@/components/app/contracts/ContractDocumentJobsPanes",
+        "file": "frontend/src/components/app/contracts/ContractDocumentJobsPanes.tsx",
+        "exports": [
+          "ContractDocumentJobsPanes"
+        ],
+        "replaces": [
+          "separate desktop and phone document job pane contents"
+        ]
       }
     ],
     "mobile": [
@@ -2063,6 +2154,21 @@
         ],
         "requiredFor": [
           "in-area failed-to-load state with a retry button (a query that failed after its automatic retries)"
+        ]
+      },
+      {
+        "name": "StaleDataNotice",
+        "layer": "molecule",
+        "import": "@/components/app/ui/StaleDataNotice",
+        "file": "mobile/src/components/app/ui/StaleDataNotice.tsx",
+        "exports": [
+          "StaleDataNotice"
+        ],
+        "replaces": [
+          "hand-written warning Alert or inline text above cached data after a failed background refresh"
+        ],
+        "requiredFor": [
+          "quiet one-line notice (no retry) above data still on screen after a background refresh failed"
         ]
       },
       {

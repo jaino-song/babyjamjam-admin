@@ -1,0 +1,58 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Document jobs display projection addendum",
+    "version": "1.0.0",
+    "description": "The additive display response fields and safe recovery routing discriminator are documented here; this is not the complete document jobs API. Older servers may omit this projection. Recovery authority remains server-owned; recoveryKind classifies actions and recoveryPresentation selects a compatible dialog."
+  },
+  "paths": {},
+  "components": {
+    "schemas": {
+      "EformsignDocumentJobDisplayProjection": {
+        "type": "object",
+        "required": ["documentKind", "displayOperation", "failureReasonCode"],
+        "properties": {
+          "documentKind": {
+            "type": "string",
+            "enum": ["service_contract", "service_record", "unknown"],
+            "description": "Safe server-side producer classification. Unknown evidence is never inferred from source or jobType alone.",
+            "readOnly": true
+          },
+          "displayOperation": {
+            "type": "string",
+            "enum": ["generate", "review", "unknown"],
+            "description": "Display operation only. Service-record review is reserved vocabulary with no current producer; INITIAL_FINALIZATION is generate even when manualReviewRequired is true.",
+            "readOnly": true
+          },
+          "failureReasonCode": {
+            "type": ["string", "null"],
+            "enum": ["PROVIDER_STATE_UNAVAILABLE", "PRE_SEND_RETRY_EXHAUSTED", "SERVICE_RECORD_REVISION_CAPABILITY_UNVERIFIED", "SERVICE_RECORD_REVISION_MANUAL_REVIEW_REQUIRED", "JOB_TARGET_NOT_OWNED_BY_BRANCH", "RECOVERY_PAYLOAD_EXPIRED", null],
+            "description": "Exact stable allowlist; unknown or raw errors are null. Always null outside failed/requires_attention. This code never grants recovery authority.",
+            "readOnly": true
+          }
+        }
+      },
+      "EformsignDocumentJobRecoveryRouting": {
+        "type": "object",
+        "required": [
+          "recoveryPresentation"
+        ],
+        "properties": {
+          "recoveryPresentation": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": [
+              "iframe",
+              "legacy",
+              null
+            ],
+            "description": "Safe routing hint for staff contract recovery: iframe only for generation-bound create_document; legacy for supported unbound create_document/finalize_document; null whenever recoveryKind is null (including superseded jobs). Does not expose generation, payload or authority. Older servers may omit this field: finalize can use legacy; unknown-generation create must fail closed. Backend authority checks still apply.",
+            "readOnly": true
+          }
+        }
+      }
+    }
+  }
+}

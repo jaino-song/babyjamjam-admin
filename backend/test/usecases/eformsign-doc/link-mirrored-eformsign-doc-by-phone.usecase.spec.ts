@@ -1,3 +1,12 @@
+// These business regressions model the explicit legacy/no-authority dependency.
+// Real authority SQL and paired writer denials run in eformsign-contract-authority-writers.spec.ts.
+jest.mock("infrastructure/database/utils/eformsign-contract-authority", () => ({
+    ...jest.requireActual("infrastructure/database/utils/eformsign-contract-authority"),
+    discoverAuthorityClientIds: jest.fn().mockResolvedValue([]),
+    assertAuthorityPointerWrite: jest.fn().mockResolvedValue(undefined),
+    assertNoUnresolvedAuthorityForDocuments: jest.fn().mockResolvedValue(undefined),
+}));
+
 import { BadRequestException, Logger } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 
@@ -92,7 +101,7 @@ describe("LinkMirroredEformsignDocByPhoneUsecase", () => {
     function setup(document = mirroredDocument(), holidayCalendar = createHolidayCalendarStub()) {
         const transaction = {
             $executeRaw: jest.fn().mockResolvedValue(1),
-            $queryRaw: jest.fn().mockResolvedValue([{ id: 11 }]),
+            $queryRaw: jest.fn().mockImplementation(async (query) => query.strings.join(" ").includes("pointer_client") ? [] : [{ id: 11 }]),
             eformsign_doc: {
                 // D3 blocker query: no newer voided contract unless a test says so.
                 findFirst: jest.fn().mockResolvedValue(null),
@@ -578,6 +587,7 @@ describe("LinkMirroredEformsignDocByPhoneUsecase", () => {
 
     it("links the matching client in the owning branch of a branchless document template", async () => {
         const { transaction, settings, usecase } = setup(mirroredDocument({ detailPayload: contractDetail() }));
+        transaction.client.findUnique.mockResolvedValue({ id: 22, branchId: "branch-2", eDocId: null });
         settings.getEformsignTemplateBranch.mockResolvedValue({
             branchId: "branch-2",
             effectiveFrom: new Date("2026-07-01T00:00:00.000Z"),
@@ -794,7 +804,7 @@ describe("LinkMirroredEformsignDocByPhoneUsecase", () => {
                     const sql = query.strings.join(" ").toLowerCase();
                     return sql.includes("for update") && /from\s+client\b/.test(sql);
                 });
-            expect(clientLocks[0]!.values).toEqual([21, 55]);
+            expect(clientLocks[0]!.values).toEqual([21, 55, "branch-1"]);
             expect(transaction.client.updateMany.mock.calls).toEqual([
                 [{
                     where: { id: { in: [55] }, branchId: "branch-1", eDocId: "doc-1" },
@@ -830,7 +840,7 @@ describe("LinkMirroredEformsignDocByPhoneUsecase", () => {
                     return sql.includes("for update") && /from\s+client\b/.test(sql);
                 });
             // The first client lock is the ascending-id pair, ahead of the service-record write set.
-            expect(clientLocks[0]!.values).toEqual([21, 55]);
+            expect(clientLocks[0]!.values).toEqual([21, 55, "branch-1"]);
             expect(clientLocks[0]!.strings.join(" ")).toContain("ORDER BY id");
             expect(transaction.client.updateMany.mock.calls).toEqual([
                 [{
@@ -927,7 +937,8 @@ describe("LinkMirroredEformsignDocByPhoneUsecase", () => {
             .map(([query]) => (query as { strings?: string[] }).strings?.join(" ").toLowerCase() ?? "")
             .filter((query) => query.includes("for update"))
             .map((query) => query.match(/from\s+"?([a-z_]+)"?/)?.[1] ?? "unknown");
-        expect(lockTables.slice(0, 8)).toEqual([
+        expect(lockTables.slice(0, 9)).toEqual([
+            "client",
             "client",
             "employee",
             "service_record_case",
@@ -1174,7 +1185,7 @@ describe("LinkMirroredEformsignDocByPhoneUsecase", () => {
             },
         )).resolves.toBe("mirror_not_ready");
 
-        expect(transaction.client.findUnique).not.toHaveBeenCalled();
+        expect(transaction.client.findUnique).toHaveBeenCalledTimes(2);
         expect(transaction.eformsign_doc.updateMany).not.toHaveBeenCalled();
         expect(transaction.client.updateMany).not.toHaveBeenCalled();
         expect(serviceRecordLifecycle.ensureForClient).not.toHaveBeenCalled();
@@ -1797,9 +1808,12 @@ describe("LinkMirroredEformsignDocByPhoneUsecase", () => {
             serviceRecordLifecycle,
             usecase,
         } = setup(document);
-        transaction.$queryRaw
-            .mockResolvedValueOnce([{ id: 11 }])
-            .mockResolvedValueOnce([]);
+        let documentFences = 0;
+        transaction.$queryRaw.mockImplementation(async query => {
+            const sql = query.strings.join(" ");
+            if (sql.includes("FROM eformsign_doc") && sql.includes("FOR UPDATE")) return ++documentFences === 1 ? [{ id: 11 }] : [];
+            return [];
+        });
 
         await expect(usecase.execute(
             "doc-1",
@@ -1809,7 +1823,7 @@ describe("LinkMirroredEformsignDocByPhoneUsecase", () => {
 
         expect(transaction.eformsign_doc.updateMany).toHaveBeenCalledTimes(1);
         expect(transaction.client.updateMany).toHaveBeenCalledTimes(1);
-        expect(transaction.$queryRaw).toHaveBeenCalledTimes(2);
+        expect(transaction.$queryRaw).toHaveBeenCalledTimes(4);
         expect(serviceRecordLifecycle.ensureForClient).toHaveBeenCalledWith(
             21,
             transaction,

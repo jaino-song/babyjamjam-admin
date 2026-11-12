@@ -82,9 +82,31 @@ durable table is therefore required.
 - Apply the additive migration before deploying code that creates or claims jobs.
 - Verification fails closed when any required column, foreign key, CHECK
   constraint, or index is absent.
-- No destructive down migration is provided. Rolling back application code leaves
-  the additive table in place and is safe; removing it would require an explicit,
-  separately approved retention and data-disposition decision.
+- No destructive down migration is provided. Leave the additive tables and
+  authority fences in place during application rollback. Removing them requires
+  a separately approved retention and data-disposition decision.
+- After `20261111120000_add_eformsign_contract_authority`, an unmodified
+  pre-authority application build is **not a supported rollback target**. Its
+  terminal-job retention DELETE ignores authority references and fails with
+  PostgreSQL `23503` as soon as a referenced job passes the seven-day cutoff,
+  including jobs whose authority is already `closed`. The statement aborts for
+  all terminal jobs; the application continues running but retention stops.
+- Prepare and verify an authority-aware rollback build before promotion. It must
+  retain the `NOT EXISTS` authority exclusion in `deleteExpiredTerminal` and
+  purge payloads for expired, generation-bound `failed` jobs as well as
+  `requires_attention` jobs. Otherwise failed contract payloads can outlive the
+  seven-day bound. Also preserve generation fencing and the compatible recovery
+  endpoints while generation-bound jobs remain. Keep the authority table and its
+  foreign keys; deleting or cascading authority rows to bypass the error can
+  remove duplicate-send protection.
+- Rollback verification must use a disposable database with the migration
+  applied and both `closed` and unresolved authority rows referencing expired
+  terminal jobs. Run the rollback build's retention sweep: it must preserve
+  referenced jobs and authorities, delete eligible unreferenced terminal jobs,
+  and clear expired recoverable payloads. Record the verified rollback commit
+  and immutable deployment identity with the release. No such rollback target
+  has been verified by this ADR; until it is, use a forward correction rather
+  than an unmodified pre-authority build.
 
 ## Production activation
 
@@ -150,3 +172,35 @@ contract jobs and keep their existing rules unchanged.
   after `completed_at` by a separate purge. The purge keeps `active_key`: a
   `requires_attention` job may already have sent the document, and releasing the
   key could let a duplicate through.
+
+## Proposed addendum: document job display layer (2026-11-04)
+
+Status: Proposed. The accepted durable queue and recovery decisions above remain
+in force. Add `documentKind`, `displayOperation`, and nullable `failureReasonCode`
+as a safe read projection; the partial [OpenAPI schema addendum](../api/document-jobs-display-projection.openapi.json)
+documents only these three fields. Frontend fields are optional for older servers.
+
+Classify existing staff contract create/finalize payloads and the scheduler's
+finalize payload as contract generate/review. The sole current record producer,
+`service_record_revision` with `INITIAL_FINALIZATION`, is record generate even
+when `manualReviewRequired` is true; record review has no current producer.
+After payload clearing, preserve staff contract labels using the unchanged
+`isContractJob` predicate, and scheduler review labels only for an exact
+`auto_finalize:<authoritative documentId>:<valid KST calendar date>` key. This
+also preserves labels after legacy cancellation. Unknown kinds, generations,
+producers and null service-record keys remain unknown.
+
+The new `failureReasonCode` uses six exact public stable codes only in failed/attention
+states; unknown strings and stale normal-state errors project to null. The
+record manual-review code is `SERVICE_RECORD_REVISION_MANUAL_REVIEW_REQUIRED`,
+matching the [worker guard's existing source literal](../../backend/application/services/eformsign-document-job-worker.service.ts), without an alias. Keep existing
+fields, manual-claim masking, and `recoveryKind`/`classifyRecovery` as the sole
+recovery authority; auto-finalize labels grant no recovery. Do not expose raw
+payloads, request keys, templates, tokens or contacts in the list projection.
+
+The planned desktop modal shares the notification shell. Its actual manual
+recovery iframe is absent at this phase. Phase 6 remains gated on binding the
+guard/bootstrap/API contract (or a reviewed plan amendment with backend paths).
+Existing browser credential and document-generation endpoints remain fail-closed
+with HTTP 410; the active recovery/resolve endpoints retain their existing
+authorization and claim behavior.

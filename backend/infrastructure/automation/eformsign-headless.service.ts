@@ -22,6 +22,14 @@ import {
 } from "./eformsign-gate-utils";
 import type { EformsignSdkDiagnosticSummary } from "./eformsign-gate-utils";
 import { areE2EVendorStubsEnabled } from "infrastructure/vendor-stubs/e2e-vendor-stubs";
+import { buildEformsignDraftHtml, runEformsignDraft, type EformsignDraftResult } from "./eformsign-draft-runner";
+
+export interface DispatchDraftParams {
+    documentOption: Record<string, unknown>;
+    beforeOpen: () => boolean | Promise<boolean>;
+}
+
+export type DraftDispatchResult = EformsignDraftResult & { durationMs: number };
 
 /**
  * Result envelope returned by the headless service. The frontend uses
@@ -100,6 +108,44 @@ export class EformsignHeadlessService implements OnModuleDestroy {
     private readonly waitQueue: Array<() => void> = [];
 
     constructor(private readonly configService: ConfigService) {}
+
+    /** Dormant draft-only seam: candidate identity requires later server verification. */
+    async dispatchDraft(params: DispatchDraftParams): Promise<DraftDispatchResult> {
+        const start = Date.now();
+        if (areE2EVendorStubsEnabled(this.configService)) {
+            return { ok: false, reason: "unsupported-stub", uncertain: false, durationMs: 0 };
+        }
+        let html: string;
+        try {
+            html = buildEformsignDraftHtml(params.documentOption);
+        } catch {
+            return { ok: false, reason: "invalid-options", uncertain: false, durationMs: Date.now() - start };
+        }
+        return this.runWithSlot(async () => {
+            let started = false;
+            try {
+                if (typeof params.beforeOpen !== "function" || await params.beforeOpen() !== true) {
+                    return { ok: false, reason: "open-denied", uncertain: false, durationMs: Date.now() - start };
+                }
+                started = true;
+                const context = await this.newContext();
+                try {
+                    const page = await context.newPage();
+                    try {
+                        const result = await runEformsignDraft(page, html, (target, body, purpose) =>
+                            this.gotoEmbeddedSdkPage(target, body, purpose));
+                        return { ...result, durationMs: Date.now() - start };
+                    } finally {
+                        await page.close().catch(() => undefined);
+                    }
+                } finally {
+                    await context.close().catch(() => undefined);
+                }
+            } catch {
+                return { ok: false, reason: started ? "runtime-error" : "open-denied", uncertain: started, durationMs: Date.now() - start };
+            }
+        });
+    }
 
     async onModuleDestroy(): Promise<void> {
         if (this.browser) {

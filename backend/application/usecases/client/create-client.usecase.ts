@@ -58,13 +58,14 @@ export class CreateClientUsecase {
         params: CreateClientParams,
         transaction?: Prisma.TransactionClient,
         calendar?: KrBusinessDayCalendar,
+        prelockedAuthorityOwnerIds?: readonly number[],
     ): Promise<ClientEntity> {
         const branchCalendar = calendar ?? await this.holidayCalendar.forBranch(branchid, { fresh: true });
         const client = ClientEntity.create({
             ...params,
             eDocId: params.eDocId ?? null,
         }, branchCalendar);
-        return this.clientRepository.create(branchid, client, transaction);
+        return this.clientRepository.create(branchid, client, transaction, prelockedAuthorityOwnerIds);
     }
 
     async executeWithInitialSchedule(
@@ -73,12 +74,13 @@ export class CreateClientUsecase {
         schedule: InitialClientSchedule,
         transaction?: Prisma.TransactionClient,
         calendar?: KrBusinessDayCalendar,
+        prelockedAuthorityOwnerIds?: readonly number[],
     ): Promise<ClientWithInitialSchedule> {
         const branchCalendar = calendar ?? await this.holidayCalendar.forBranch(branchid, { fresh: true });
         const client = ClientEntity.create({
             ...params,
             eDocId: params.eDocId ?? null,
         }, branchCalendar);
-        return this.clientRepository.createWithInitialSchedule(branchid, client, schedule, transaction);
+        return this.clientRepository.createWithInitialSchedule(branchid, client, schedule, transaction, prelockedAuthorityOwnerIds);
     }
 }

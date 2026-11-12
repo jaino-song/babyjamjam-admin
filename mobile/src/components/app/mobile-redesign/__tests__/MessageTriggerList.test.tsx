@@ -1,3 +1,4 @@
+import { messageTriggerKeys } from "@/features/message-triggers/hooks/keys";
 import { QueryClient, QueryClientProvider, onlineManager } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 
@@ -25,7 +26,7 @@ jest.mock("@/lib/messages/logs", () => ({
 }));
 
 const mockGroupQuery = jest.fn();
-const GROUPS_KEY = ["message-trigger-rule-groups", "branch-1"] as const;
+const GROUPS_KEY = [...messageTriggerKeys.all, "rule-groups", "branch-1"] as const;
 const mockUseUpdateMessageTriggerRule = useUpdateMessageTriggerRule as jest.Mock;
 const mockUseUpdateMessageTriggerRuleBranchActivation = useUpdateMessageTriggerRuleBranchActivation as jest.Mock;
 const mockFetchAllMessageLogs = fetchAllMessageLogs as jest.Mock;

@@ -1028,11 +1028,13 @@
 .cal-month > span {
   display: grid;
   place-items: center;
-  width: 42px;
+  padding: 0 10px;
   height: 36px;
   border: 1px solid hsl(var(--v3-border));
   border-radius: 10px;
-  font-size: 24px;
+  font-size: 13px;
+  font-weight: 800;
+  white-space: nowrap;
 }
 
 .cal-month > span:last-child {

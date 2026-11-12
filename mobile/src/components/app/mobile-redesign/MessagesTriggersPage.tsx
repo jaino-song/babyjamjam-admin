@@ -9,6 +9,7 @@ import { MessageTriggerEditor } from "@/components/app/mobile-redesign/MessageTr
 import { MessageTriggerList } from "@/components/app/mobile-redesign/MessageTriggerList";
 import { SlidingCard } from "@/components/app/mobile-redesign/sliding-card";
 import { useQuery } from "@tanstack/react-query";
+import { messageTriggerKeys } from "@/features/message-triggers/hooks/keys";
 import { messageRuleGroupsApi } from "@/services/api";
 import { ApprovalTwoButtonModal } from "@/components/app/ui/ApprovalTwoButtonModal";
 import { canManageBranch, canManageBranchFromAuthQuery } from "@/lib/auth/branch-role-policy";
@@ -30,7 +31,7 @@ export function MessagesTriggersPage(): ReactElement {
   const didPushDetailRef = useRef(false);
   const lastClearedItemRef = useRef<string | null>(null);
   const branchId = authUserQuery.data?.branchId ?? null;
-  const rulesQuery = useQuery({ queryKey: ["message-trigger-rule-groups", branchId], queryFn: () => messageRuleGroupsApi.list(branchId!), enabled: Boolean(branchId) });
+  const rulesQuery = useQuery({ queryKey: [...messageTriggerKeys.all, "rule-groups", branchId], queryFn: () => messageRuleGroupsApi.list(branchId!), enabled: Boolean(branchId) });
   const [editorDirty, setEditorDirty] = useState(false);
   const [leaveOpen, setLeaveOpen] = useState(false);
   const leaveAction = useRef<(() => void) | null>(null);

@@ -26,11 +26,14 @@ export interface EnqueueEformsignDocumentJobInput {
 
 export interface EformsignDocumentJobSummary {
     activeCount: number;
-    /** Every `requires_attention` row, whatever its kind. */
+    /** 종류와 기간에 관계없이 모든 `requires_attention` 작업 수. */
     requiresAttentionCount: number;
-    /** Contract-job `failed` rows from the last 7 days. */
+    /** `completed_at`이 최근 7일 이내인 계약 `failed` 작업 수. `superseded`도 포함한다. */
     failedCount: number;
-    /** `failedCount` plus contract-job `requires_attention` rows: what staff can act on. */
+    /**
+     * `completed_at`이 최근 7일 이내인 계약 `failed` 작업(`superseded` 제외)과
+     * 기간 제한 없는 모든 계약 `requires_attention` 작업 수.
+     */
     unresolvedCount: number;
     /** Ids behind `unresolvedCount`, newest `completed_at` first, at most 50. */
     unresolvedJobIds: string[];
@@ -101,7 +104,7 @@ export interface IEformsignDocumentJobRepository {
         input: AuthorizeEformsignDocumentJobForDispatchInput,
     ): Promise<ServiceRecordDispatchAuthorizationResult>;
     claimDue(limit?: number): Promise<EformsignDocumentJobEntity[]>;
-    updateProgress(id: string, leaseToken: string, progressStep: string, heartbeatAt?: Date): Promise<EformsignDocumentJobEntity | null>;
+    updateProgress(id: string, leaseToken: string, progressStep: string, heartbeatAt?: Date, progressDetail?: string): Promise<EformsignDocumentJobEntity | null>;
     scheduleRetry(id: string, leaseToken: string, nextAttemptAt: Date, errorCode: string): Promise<EformsignDocumentJobEntity | null>;
     markReconciling(id: string, leaseToken: string, progressStep?: string): Promise<EformsignDocumentJobEntity | null>;
     markCompleted(id: string, leaseToken: string, documentId?: string): Promise<EformsignDocumentJobEntity | null>;
