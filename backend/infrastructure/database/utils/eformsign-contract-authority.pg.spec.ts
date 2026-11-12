@@ -107,14 +107,16 @@ async function bounded<T>(promise: Promise<T>, ms: number): Promise<T> {
     const evidence = (documentId: string, confirmed = false): ContractDocumentEvidence => ({ documentId, templateId: workflowPlan.templateId,
         ...identity, statusType: confirmed ? "060" : "001", stepType: confirmed ? "05" : "00", stepIndex: confirmed ? "2" : "1",
         stepName: "synthetic", confirmed, createdAt: new Date(), updatedAt: new Date(), expiresAt: new Date("2030-01-01") });
-    async function runtime(index = 0) {
+    async function runtime(index = 0, prior?: { id: number; documentId: string }) {
         // Only provider/config JSON is controlled; both repositories and every SQL operation are real.
         const options = { resolveEffectiveTemplateId: (id?: string) => id ?? workflowPlan.templateId,
             generateDocumentOptions: () => ({ company: { id: identity.companyId }, user: { id: identity.creatorId } }) } as unknown as EformsignService;
         const recovery = new SbEformsignContractRecoveryRepository(db as unknown as PrismaService, options);
         const jobRepository = new SbEformsignDocumentJobRepository(db as unknown as PrismaService);
-        const employee = await db.employee.create({ data: { name: "Synthetic PG provider", workArea: [], phone: data.caretaker1Contact, grade: "synthetic", branchId: branches[0]! } });
-        employees.push(employee.id);
+        // A second generation reuses its provider; branch/normalized-phone is unique.
+        const employee = prior ? await db.employee.findFirstOrThrow({ where: { branchId: branches[0]!, phone: data.caretaker1Contact } })
+            : await db.employee.create({ data: { name: "Synthetic PG provider", workArea: [], phone: data.caretaker1Contact, grade: "synthetic", branchId: branches[0]! } });
+        if (!prior) employees.push(employee.id);
         const schedule = await db.employee_schedule.create({ data: { primaryEmployeeId: employee.id, clientId: clients[index]!, branchId: branches[0]!,
             workAddress: "synthetic", startDate: new Date("2026-11-01"), endDate: new Date("2026-11-10"), replaced: false } });
         const payload = { clientId: clients[index]!, contractData: data }, key = randomUUID();
@@ -124,9 +126,10 @@ async function bounded<T>(promise: Promise<T>, ms: number): Promise<T> {
         await db.eformsign_document_job.update({ where: { id: queued.job.id }, data: { status: "processing", leaseToken } });
         const contractData = ((await db.eformsign_document_job.findUniqueOrThrow({ where: { id: queued.job.id } })).payload as { contractData: typeof data }).contractData;
         const worker = { jobId: queued.job.id, leaseToken, contractGeneration: queued.job.contractGeneration! };
-        const input = { branchId: branches[0]!, clientId: clients[index]!, action: "create" as const, generation: "initial", localDocumentId: null,
-            assignmentId: schedule.id, templateId: null, businessKey: digest([branches[0], clients[index], "-", schedule.id, "-", "create", "initial"].join("|")),
-            fingerprint: digest(JSON.stringify({ contractData, generation: "initial" })) };
+        const generation = prior?.documentId ?? "initial", localDocumentId = prior?.id ?? null;
+        const input = { branchId: branches[0]!, clientId: clients[index]!, action: "create" as const, generation, localDocumentId,
+            assignmentId: schedule.id, templateId: null, businessKey: digest([branches[0], clients[index], localDocumentId ?? "-", schedule.id, "-", "create", generation].join("|")),
+            fingerprint: digest(JSON.stringify({ contractData, generation })) };
         const effect = { contractData, workflow: workflowPlan };
         return { recovery, jobRepository, queued, enqueue, worker, input, effect, options };
     }
@@ -706,18 +709,19 @@ async function bounded<T>(promise: Promise<T>, ms: number): Promise<T> {
         })).rejects.toBe(rollback);
         expect(await branchSnapshot()).toEqual(before);
     });
-    async function plan5Hold(path: "released" | "zero" | "legacy-zero") {
+    async function plan5Hold(path: "released" | "zero" | "legacy-zero", prior?: { id: number; documentId: string }) {
+        const s = await runtime(0, prior);
         if (path === "released") {
-            const { s, intentId } = await terminalStart("draft", false), authority = (await read())[0]!;
-            const claim = { jobId: s.worker.jobId, branchId: branches[0]!, userId: users[0]!, claimEpoch: authority.claimEpoch };
+            const { claim } = await failed(s, true);
+            const draft = await s.recovery.beginDraft(claim, workflowPlan.templateId, identity), intentId = draft.id;
             await s.recovery.releaseDraftBeforeOpen(claim, intentId);
+            await db.eformsign_contract_authority.update({ where: { branchId_clientId: { branchId: branches[0]!, clientId: clients[0]! } }, data: { claimExpiresAt: new Date(0) } });
             await db.eformsign_document_job.update({ where: { id: s.worker.jobId }, data: { completedAt: new Date() } });
             expect((await read())[0]).toMatchObject({ phase: "reserved", draftIntentId: null });
             expect(await db.eformsign_dispatch_intent.findUniqueOrThrow({ where: { id: intentId } })).toMatchObject({
                 status: "prepared", startedAt: null, providerDocumentId: null, reconciliationReason: "draft_released_before_open" });
             return { s, intentId, claim };
         }
-        const s = await runtime();
         await db.eformsign_document_job.update({ where: { id: s.worker.jobId }, data: { status: "reconciling", progressStep: "processing", heartbeatAt: new Date() } });
         await s.recovery.markAutomaticUncertain(s.worker);
         if (path === "legacy-zero") await db.eformsign_contract_authority.update({ where: { branchId_clientId: { branchId: branches[0]!, clientId: clients[0]! } }, data: { phase: "creation_uncertain" } });
@@ -725,6 +729,91 @@ async function bounded<T>(promise: Promise<T>, ms: number): Promise<T> {
         return { s, intentId: null, claim: null };
     }
     const plan5Paths = ["released", "zero", "legacy-zero"] as const;
+    async function plan5AcceptedHistory(path: "released" | "zero") {
+        const previous = await runtime(), claimed = await previous.recovery.claimCreation(previous.input, previous.worker, previous.effect);
+        const documentId = `prior-accepted-${randomUUID()}`; documents.push(documentId);
+        await db.eformsign_dispatch_intent.update({ where: { id: claimed.intent.id }, data: { status: "accepted", providerDocumentId: documentId, providerAcceptedAt: new Date() } });
+        await previous.recovery.completeAutomatic(previous.worker, evidence(documentId, true));
+        const prior = await db.eformsign_doc.findUniqueOrThrow({ where: { documentId } });
+        expect((await read())[0]).toMatchObject({ phase: "closed", providerDocumentId: documentId });
+        expect(await currentPointer()).toEqual({ eDocId: documentId });
+        expect(await db.eformsign_dispatch_intent.findUniqueOrThrow({ where: { id: claimed.intent.id } })).toMatchObject({ status: "accepted", providerDocumentId: documentId });
+        return { ...await plan5Hold(path, prior), previousIntentId: claimed.intent.id, prior };
+    }
+    it.each(["released", "zero"] as const)("PLAN5 real %s retires beside genuine historical accepted prior document", async path => {
+        const { s, prior } = await plan5AcceptedHistory(path), before = await branchSnapshot();
+        const old = await db.eformsign_document_job.findUniqueOrThrow({ where: { id: s.worker.jobId } });
+        expect((await read())[0]!.priorDocumentId).toBe(prior.documentId);
+        await expect(s.jobRepository.enqueue(s.enqueue)).resolves.toMatchObject({ existing: true, job: { id: old.id } });
+        expect(await branchSnapshot()).toEqual(before);
+        const input = nextInput(s), result = await s.jobRepository.enqueue(input), after = await branchSnapshot();
+        expect(result.existing).toBe(false); expect(result.job.contractGeneration).not.toBe(old.contractGeneration);
+        expect(after.intents).toEqual(before.intents); expect(after.clients).toEqual(before.clients); expect(after.mirrors).toEqual(before.mirrors);
+        expect(after.jobs).toHaveLength(before.jobs.length + 1);
+        expect(await db.eformsign_document_job.count({ where: { requestKey: input.requestKey } })).toBe(1);
+        expect(await db.eformsign_document_job.findUniqueOrThrow({ where: { id: old.id } })).toEqual({ ...old, status: "failed", progressStep: "superseded", activeKey: null, payload: null, leaseToken: null, heartbeatAt: null, updatedAt: expect.any(Date) });
+        expect(after.jobs.filter(row => row.id !== old.id && row.id !== result.job.id)).toEqual(before.jobs.filter(row => row.id !== old.id));
+        expect((await read())[0]).toMatchObject({ phase: "reserved", generation: result.job.contractGeneration, creationJobId: result.job.id, priorDocumentId: prior.documentId });
+        await expect(s.jobRepository.enqueue(input)).resolves.toMatchObject({ existing: true, job: { id: result.job.id } }); expect(await branchSnapshot()).toEqual(after);
+    });
+    const historyDefects = ["no-prior", "wrong-provider", "null-provider", "started-prior", "uncertain-prior", "current-linked", "current-unlinked", "later-started", "later-uncertain", "later-accepted", "later-null-accepted"] as const;
+    it.each(["released", "zero"].flatMap(path => historyDefects.map(defect => ({ path: path as "released" | "zero", defect }))))("PLAN5 real $path accepted history refuses $defect", async ({ path, defect }) => {
+        const { s, prior, previousIntentId, intentId } = await plan5AcceptedHistory(path), where = { branchId_clientId: { branchId: branches[0]!, clientId: clients[0]! } };
+        if (defect === "no-prior") {
+            await db.eformsign_contract_authority.update({ where, data: { priorDocumentId: null } });
+            await db.client.update({ where: { id: clients[0]! }, data: { eDocId: null } });
+        }
+        // PostgreSQL forbids accepted+NULL at storage. Unit tests additionally
+        // exercise the runtime veto on a corrupt/legacy NULL accepted row.
+        if (defect === "null-provider" || defect === "later-null-accepted") {
+            const before = await branchSnapshot();
+            const write = defect === "null-provider"
+                ? db.eformsign_dispatch_intent.update({ where: { id: previousIntentId }, data: { providerDocumentId: null } })
+                : db.eformsign_dispatch_intent.create({ data: { branchId: branches[0]!, clientId: clients[0]!, action: "create_draft", generation: "later-unrelated", fingerprint: "b".repeat(64), businessKey: digest(randomUUID()), status: "accepted", attemptCount: 1, providerDocumentId: null } });
+            await expect(write).rejects.toThrow(); expect(await branchSnapshot()).toEqual(before); return;
+        }
+        if (defect === "wrong-provider") await db.eformsign_dispatch_intent.update({ where: { id: previousIntentId }, data: { providerDocumentId: documents[0]! } });
+        if (defect === "started-prior" || defect === "uncertain-prior") await db.eformsign_dispatch_intent.update({ where: { id: previousIntentId }, data: { status: defect === "started-prior" ? "started" : "uncertain" } });
+        if (defect === "current-linked") {
+            if (path === "zero") await db.eformsign_contract_authority.update({ where, data: { creationIntentId: previousIntentId } });
+            else await db.eformsign_dispatch_intent.update({ where: { id: (await read())[0]!.creationIntentId! }, data: { status: "accepted", providerDocumentId: prior.documentId } });
+        }
+        if (defect === "current-unlinked") {
+            if (intentId) await db.eformsign_dispatch_intent.update({ where: { id: intentId }, data: { status: "accepted", providerDocumentId: prior.documentId } });
+            else await db.eformsign_dispatch_intent.create({ data: { branchId: branches[0]!, clientId: clients[0]!, action: "create_draft", generation: s.worker.contractGeneration,
+                fingerprint: s.enqueue.payloadFingerprint, templateId: workflowPlan.templateId, businessKey: digest(`contract-draft:${s.worker.contractGeneration}`), status: "accepted", providerDocumentId: prior.documentId, attemptCount: 1 } });
+        }
+        if (defect.startsWith("later-")) await db.eformsign_dispatch_intent.create({ data: { branchId: branches[0]!, clientId: clients[0]!, action: "create_draft", generation: "later-unrelated",
+            fingerprint: "b".repeat(64), businessKey: digest(randomUUID()), status: defect.includes("accepted") ? "accepted" : defect.slice(6), attemptCount: 1,
+            providerDocumentId: defect === "later-accepted" ? documents[0]! : prior.documentId } });
+        const before = await branchSnapshot();
+        await expect(s.jobRepository.enqueue(nextInput(s))).rejects.toThrow(); expect(await branchSnapshot()).toEqual(before);
+    });
+    it.each(["reserved", "creation_pending", "creation_uncertain"])("PLAN5 real linked prepared-zero create preserves %s boundary", async phase => {
+        const s = await runtime(), claimed = await s.recovery.claimCreation(s.input, s.worker, s.effect);
+        await db.eformsign_dispatch_intent.update({ where: { id: claimed.intent.id }, data: { status: "prepared", attemptCount: 0, startedAt: null } });
+        await db.eformsign_contract_authority.update({ where: { branchId_clientId: { branchId: branches[0]!, clientId: clients[0]! } }, data: { phase } });
+        await db.eformsign_document_job.update({ where: { id: s.worker.jobId }, data: { status: "failed", leaseToken: null, completedAt: new Date() } });
+        const before = await branchSnapshot();
+        if (phase === "reserved") { await expect(s.jobRepository.enqueue(nextInput(s))).rejects.toThrow(); expect(await branchSnapshot()).toEqual(before); }
+        else { await expect(s.jobRepository.enqueue(nextInput(s))).resolves.toMatchObject({ existing: false }); expect((await branchSnapshot()).intents).toEqual(before.intents); }
+    });
+    it.each(["other-error", "residual-key"].flatMap(audit => [null, "create", "create_draft"].map(action => ({ audit, action }))))("PLAN5 real zero-ref $audit unresolved=$action follows structural proof", async ({ audit, action }) => {
+        const { s } = await plan5Hold("zero");
+        await db.eformsign_document_job.update({ where: { id: s.worker.jobId }, data: audit === "other-error" ? { lastErrorCode: "OTHER" } : { activeKey: "residual-key" } });
+        if (action) await db.eformsign_dispatch_intent.create({ data: { branchId: branches[0]!, clientId: clients[0]!, action, status: "uncertain", attemptCount: 1, generation: "unresolved", fingerprint: "b".repeat(64), businessKey: digest(randomUUID()) } });
+        const before = await branchSnapshot(), old = await db.eformsign_document_job.findUniqueOrThrow({ where: { id: s.worker.jobId } });
+        await expect(s.jobRepository.enqueue(s.enqueue)).resolves.toMatchObject({ existing: true, job: { id: old.id } }); expect(await branchSnapshot()).toEqual(before);
+        const input = nextInput(s);
+        if (action) { await expect(s.jobRepository.enqueue(input)).rejects.toThrow(); expect(await branchSnapshot()).toEqual(before); }
+        else {
+            const result = await s.jobRepository.enqueue(input), after = await branchSnapshot();
+            expect(result.existing).toBe(false); expect(result.job.contractGeneration).not.toBe(old.contractGeneration);
+            expect(after.jobs).toHaveLength(before.jobs.length + 1); expect(after.intents).toEqual(before.intents); expect(after.clients).toEqual(before.clients); expect(after.mirrors).toEqual(before.mirrors);
+            expect(await db.eformsign_document_job.findUniqueOrThrow({ where: { id: old.id } })).toEqual({ ...old, status: "failed", progressStep: "superseded", activeKey: null, payload: null, leaseToken: null, heartbeatAt: null, updatedAt: expect.any(Date) });
+            expect((await read())[0]).toMatchObject({ phase: "reserved", creationJobId: result.job.id, generation: result.job.contractGeneration, priorDocumentId: null });
+        }
+    });
     it("PLAN5 real zero-ref markAutomaticUncertain preserves every authority field and issues no authority CAS", async () => {
         const s = await runtime();
         await db.eformsign_document_job.update({ where: { id: s.worker.jobId }, data: { status: "reconciling", progressStep: "processing" } });

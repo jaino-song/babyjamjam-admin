@@ -217,7 +217,9 @@ attempt/status/document are checked before CAS writes.
 - Exact request-key replay precedes every mutation. A terminal, lease-free
   reserved/creation_pending/creation_uncertain job can be replaced when **every** linked
   create/draft has durable no-effect proof, no human/candidate exists, and no live
-  manual claim remains. Prepared attempt zero is safe; a later prepared attempt
+  manual claim remains. A reserved authority with a linked create requires that
+  exact create to be reconciled not-delivered; prepared attempt zero remains
+  eligible only in creation_pending/creation_uncertain. A later prepared attempt
   needs the explicit before-open release record. Reconciled not-delivered needs
   its time, actor, outcome and null provider document. A matching active key alone
   remains an unchanged existing-job response. Eligible retirement clears the old
@@ -239,9 +241,17 @@ attempt/status/document are checked before CAS writes.
   authority link before external send, lease fencing rejects stale workers,
   and terminal jobs are never re-leased. Retirement still checks the immutable
   job/authority identity and pointer, every discovered intent, and no live
-  manual claim by any user. Any related started/uncertain/accepted create or
-  create_draft in the same branch/client scope vetoes retirement **before** any
-  mutation, for linked and zero-ref cases alike. A NULL payload is never rebuilt;
+  manual claim by any user. Related started/uncertain create or create_draft in
+  the same branch/client scope vetoes retirement **before** any mutation, for
+  linked and zero-ref cases alike. Accepted history is accounted for only when
+  its provider document exactly equals the non-null known prior pointer. An
+  accepted row with a NULL/other document or no known prior pointer still vetoes;
+  current linked accepted refs and the current generation's unlinked accepted
+  draft fail the strict no-effect proof before this history check. The query
+  examines all unknown effects even beside an earlier safe accepted history row.
+  Error codes and residual active keys are audit fields, not no-effect evidence;
+  exact terminal jobs/keys retire under the same transaction. A NULL payload is
+  never rebuilt;
   TTL alone is not no-effect evidence. Retirement closes the old authority,
   supersedes the exact job, clears its key and payload, then reserves/inserts one
   new generation atomically. A source rollback is a revert, never a data reset.

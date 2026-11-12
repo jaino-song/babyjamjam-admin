@@ -3,6 +3,7 @@ import { ConflictException } from "@nestjs/common";
 import type { Prisma } from "@prisma/client";
 import { SbEformsignDocumentJobRepository } from "../repositories/sb.eformsign-document-job.repository";
 import { normalizeVerifiedAuthority, retireProvenNoEffect } from "./eformsign-contract-authority-release";
+import { SbEformsignDispatchIntentRepository } from "../repositories/sb.eformsign-dispatch-intent.repository";
 import { runtimeFixture, B, J, G, I, U, F, data, worker, intentInput, workflowPlan } from "../../../test/utils/eformsign-contract-recovery.fixture";
 const next = { branchId: B, clientId: 2, jobType: "create_document" as const, source: "staff" as const,
     requestKey: "next", activeKey: "next-active", payload: { clientId: 2, contractData: data }, payloadFingerprint: F };
@@ -142,6 +143,87 @@ describe("PLAN5 bounded no-effect exits", () => {
     }
     const ages = ["fresh", "day8-retained", "day8-purged"] as const;
     const paths = ["released", "zero", "legacy-zero"] as const;
+    async function afterAcceptedHistory(path: "released" | "zero") {
+        const f = runtimeFixture(), repo = new SbEformsignDocumentJobRepository(f.prisma);
+        await f.repository.claimCreation(intentInput, worker, { contractData: data, workflow: workflowPlan });
+        Object.assign(f.state.intents[0], { status: "accepted", providerDocumentId: "bound-doc", providerAcceptedAt: new Date() });
+        f.forward(); await f.service.completeAutomatic(worker, "bound-doc", { branchId: B, source: "worker" });
+        expect(f.state.intents[0].status).toBe("accepted"); expect(f.state.clients[0].eDocId).toBe("bound-doc");
+        const current = await repo.enqueue({ ...next, requestKey: "middle", activeKey: "middle" });
+        const job = f.state.jobs[1], a = f.state.authorities[0];
+        // The in-memory INSERT fixture uses one fixed id; give this intermediate job
+        // a distinct id so the next real enqueue can use that fixture id again.
+        job.id = U; a.creationJobId = U;
+        Object.assign(job, { status: "reconciling", leaseToken: worker.leaseToken, progressStep: "processing" });
+        const currentWorker = { ...worker, jobId: job.id, contractGeneration: current.job.contractGeneration! };
+        if (path === "released") {
+            const input = { ...intentInput, generation: "bound-doc", localDocumentId: f.state.docs.find((row: { documentId: string }) => row.documentId === "bound-doc").id,
+                fingerprint: createHash("sha256").update(JSON.stringify({ contractData: data, generation: "bound-doc" })).digest("hex") };
+            input.businessKey = createHash("sha256").update([B, 2, input.localDocumentId, 9, "-", "create", "bound-doc"].join("|")).digest("hex");
+            const claimed = await f.repository.claimCreation(input, currentWorker, { contractData: data, workflow: workflowPlan });
+            await f.repository.markAutomaticUncertain(currentWorker);
+            Object.assign(job, { status: "failed", leaseToken: null, completedAt: new Date() });
+            await new SbEformsignDispatchIntentRepository(f.prisma).reconcile({ intentId: claimed.intent.id, branchId: B, outcome: "not_delivered", actorUserId: U, reason: "Provider console confirms no delivery", attemptCount: 1 });
+            const opened = await f.repository.open(job.id, B, U), claim = { jobId: job.id, branchId: B, userId: U, claimEpoch: opened.claimEpoch };
+            const draft = await f.repository.beginDraft(claim, "template_ABC", { companyId: "company-abc", creatorId: "service@example.test", workflow: workflowPlan });
+            await f.repository.releaseDraftBeforeOpen(claim, draft.id); a.claimExpiresAt = new Date(0);
+        } else {
+            await f.repository.markAutomaticUncertain(currentWorker);
+            Object.assign(job, { status: "requires_attention", leaseToken: null, completedAt: new Date(), lastErrorCode: "RECOVERY_PENDING" });
+        }
+        return { f, job, repo };
+    }
+    it.each(["released", "zero"] as const)("%s retires beside genuine accepted prior-document history and preserves it", async path => {
+        const { f, job, repo } = await afterAcceptedHistory(path), before = structuredClone(f.state);
+        await expect(repo.enqueue({ ...next, requestKey: job.requestKey })).resolves.toMatchObject({ existing: true, job: { id: job.id } });
+        expect(f.state).toEqual(before);
+        const result = await repo.enqueue(next);
+        expect(result.existing).toBe(false); expect(result.job.contractGeneration).not.toBe(before.authorities[0].generation);
+        expect(f.state.jobs).toHaveLength(3);
+        expect(job).toEqual({ ...before.jobs[1], status: "failed", progressStep: "superseded", activeKey: null, payload: null, leaseToken: null, heartbeatAt: null });
+        expect(f.state.jobs[0]).toEqual(before.jobs[0]); expect(f.state.intents).toEqual(before.intents);
+        expect(f.state.clients).toEqual(before.clients); expect(f.state.docs).toEqual(before.docs);
+        expect(f.state.authorities[0]).toMatchObject({ generation: result.job.contractGeneration, creationJobId: result.job.id, priorDocumentId: "bound-doc", phase: "reserved" });
+        const after = structuredClone(f.state);
+        await expect(repo.enqueue(next)).resolves.toMatchObject({ existing: true, job: { id: result.job.id } }); expect(f.state).toEqual(after);
+    });
+    const historyDefects = ["no-prior", "wrong-provider", "null-provider", "started-prior", "uncertain-prior", "current-linked", "current-unlinked", "later-started", "later-uncertain", "later-accepted", "later-null-accepted"] as const;
+    it.each(["released", "zero"].flatMap(path => historyDefects.map(defect => ({ path: path as "released" | "zero", defect }))))("$path historical acceptance never exempts $defect", async ({ path, defect }) => {
+        const { f, job, repo } = await afterAcceptedHistory(path), a = f.state.authorities[0];
+        if (defect === "no-prior") { a.priorDocumentId = null; f.state.clients[0].eDocId = null; }
+        if (defect === "wrong-provider") f.state.intents[0].providerDocumentId = "other-doc";
+        if (defect === "null-provider") f.state.intents[0].providerDocumentId = null;
+        if (defect === "started-prior" || defect === "uncertain-prior") f.state.intents[0].status = defect === "started-prior" ? "started" : "uncertain";
+        if (defect === "current-linked") {
+            if (path === "zero") a.creationIntentId = I;
+            else Object.assign(f.state.intents[1], { status: "accepted", providerDocumentId: "bound-doc" });
+        }
+        if (defect === "current-unlinked") {
+            const draft = { ...f.state.intents.at(-1), id: J, action: "create_draft", generation: a.generation, fingerprint: a.fingerprint,
+                localDocumentId: null, assignmentId: null, templateId: "template_ABC", status: "accepted", providerDocumentId: "bound-doc",
+                businessKey: createHash("sha256").update(`contract-draft:${a.generation}`).digest("hex") };
+            if (path === "released") Object.assign(f.state.intents[2], draft); else f.state.intents.push(draft);
+        }
+        if (defect.startsWith("later-")) f.state.intents.push({ ...f.state.intents[0], id: J, businessKey: "later-unknown", status: defect.includes("accepted") ? "accepted" : defect.slice(6), providerDocumentId: defect === "later-accepted" ? "other-doc" : defect === "later-null-accepted" ? null : "bound-doc" });
+        // Use a different active key so refusal cannot be an unchanged active-job replay.
+        const before = structuredClone(f.state); f.events.length = 0;
+        await expect(repo.enqueue({ ...next, activeKey: `${job.activeKey}-next` })).rejects.toThrow();
+        expect(f.state).toEqual(before); expect(f.events).not.toContain("authority.cas"); expect(f.events).not.toContain("jobs.updateMany");
+    });
+    it.each(["reserved", "creation_pending", "creation_uncertain"])("linked prepared-zero create in %s preserves the approved phase boundary", async phase => {
+        const f = runtimeFixture(); f.manual(); f.state.authorities[0].phase = phase;
+        Object.assign(f.state.intents[0], { status: "prepared", attemptCount: 0 });
+        const before = structuredClone(f.state), repo = new SbEformsignDocumentJobRepository(f.prisma);
+        if (phase === "reserved") { await expect(repo.enqueue(next)).rejects.toThrow(); expect(f.state).toEqual(before); }
+        else { await expect(repo.enqueue(next)).resolves.toMatchObject({ existing: false }); expect(f.state.intents).toEqual(before.intents); }
+    });
+    it.each(["other-error", "residual-key"].flatMap(audit => ["create", "create_draft"].map(action => ({ audit, action }))))("zero-ref $audit still refuses unresolved $action", async ({ audit, action }) => {
+        const f = await held("zero");
+        if (audit === "other-error") f.state.jobs[0].lastErrorCode = "OTHER"; else f.state.jobs[0].activeKey = "residual";
+        f.state.intents.push({ ...f.state.intents[0], id: J, businessKey: "unresolved", action, status: "uncertain", attemptCount: 1 });
+        const before = structuredClone(f.state);
+        await expect(new SbEformsignDocumentJobRepository(f.prisma).enqueue(next)).rejects.toThrow(); expect(f.state).toEqual(before);
+    });
     it.each(paths.flatMap(path => ages.map(age => ({ path, age }))))("$path $age replay is immutable; new key retires once without changing audit or pointer", async ({ path, age }) => {
         const f = await held(path);
         if (age !== "fresh") f.state.jobs[0].completedAt = new Date(Date.now() - 8 * 86400000);

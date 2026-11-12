@@ -80,10 +80,20 @@ export async function retireProvenNoEffect(tx: Prisma.TransactionClient, a: Auth
     }
     if (await tx.eformsign_dispatch_intent.findUnique({ where: { businessKey: humanKey }, select: { id: true } })) return false;
     if ((!refs.length && !["reserved", "creation_uncertain"].includes(a.phase)) || !refs.every(provenNoEffect)) return false;
+    // The reserved linked-create exit is only the operator-confirmed Path A.
+    // Prepared-zero creates keep their existing pending/uncertain phase boundary.
+    if (a.phase === "reserved" && a.creationIntentId
+        && !refs.some(row => row.id === a.creationIntentId && row.status === "reconciled_not_delivered")) return false;
     // Atomic claimCreation links STARTED before any send. A terminal lease-free zero-ref
     // job is no-effect only when no other unresolved client creation can be hidden by rotation.
+    // Accepted history for the known prior pointer is already accounted for.
+    // Current linked refs and the generation draft must pass strict no-effect
+    // proof above; null/other accepted documents and all unknown outcomes veto.
     const unresolved = await tx.eformsign_dispatch_intent.findFirst({ where: { branchId: a.branchId, clientId: a.clientId,
-        action: { in: ["create", "create_draft"] }, status: { in: ["started", "uncertain", "accepted"] } }, select: { id: true } });
+        action: { in: ["create", "create_draft"] }, OR: [
+            { status: { in: ["started", "uncertain"] } },
+            { status: "accepted", ...(a.priorDocumentId ? { OR: [{ providerDocumentId: null }, { providerDocumentId: { not: a.priorDocumentId } }] } : {}) },
+        ] }, select: { id: true } });
     if (unresolved) return false;
     const retired = await tx.eformsign_document_job.updateMany({ where: { id: job.id, branchId: a.branchId, clientId: a.clientId,
         contractGeneration: a.generation, payloadFingerprint: a.fingerprint, status: job.status, leaseToken: null, activeKey: job.activeKey,

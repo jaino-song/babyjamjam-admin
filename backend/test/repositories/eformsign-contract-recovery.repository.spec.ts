@@ -226,7 +226,7 @@ describe("terminal generation release regressions", () => {
     it("keeps exhaustion manually recoverable before new enqueue", async () => {
         const f = await exhausted(); await expect(f.service.open(J, principal)).resolves.toMatchObject({ kind: "editable" });
     });
-    it.each(["claim", "creationIntentId", "draftIntentId", "humanIntentId", "providerDocumentId", "started", "uncertain", "wrong-generation", "wrong-fingerprint", "wrong-error", "job-cas", "authority-cas"])("refuses replacement with %s", async defect => {
+    it.each(["claim", "creationIntentId", "draftIntentId", "humanIntentId", "providerDocumentId", "started", "uncertain", "wrong-generation", "wrong-fingerprint", "wrong-error", "job-cas", "authority-cas"])("replacement with %s follows exact structural proof", async defect => {
         const f = await exhausted(), a = f.state.authorities[0];
         if (defect === "claim") Object.assign(a, { claimUserId: U, claimExpiresAt: new Date(Date.now() + 60000) });
         if (["creationIntentId", "draftIntentId", "humanIntentId"].includes(defect)) a[defect] = I;
@@ -238,7 +238,19 @@ describe("terminal generation release regressions", () => {
         if (defect === "job-cas") f.flags.jobZero = true;
         if (defect === "authority-cas") f.flags.casZero = true;
         const before = structuredClone(f.state);
-        await expect(new SbEformsignDocumentJobRepository(f.prisma).enqueue(enqueue)).rejects.toThrow(); expect(f.state).toEqual(before);
+        if (defect === "wrong-error") {
+            const repo = new SbEformsignDocumentJobRepository(f.prisma);
+            await expect(repo.enqueue({ ...enqueue, requestKey: "request" })).resolves.toMatchObject({ existing: true, job: { id: J } });
+            expect(f.state).toEqual(before);
+            const result = await repo.enqueue(enqueue);
+            expect(result.existing).toBe(false); expect(result.job.contractGeneration).not.toBe(G);
+            expect(f.state.jobs).toHaveLength(2);
+            expect(f.state.jobs[0]).toEqual({ ...before.jobs[0], status: "failed", progressStep: "superseded", activeKey: null, payload: null, leaseToken: null, heartbeatAt: null });
+            expect(f.state.authorities[0]).toMatchObject({ generation: result.job.contractGeneration, creationJobId: result.job.id, phase: "reserved", priorDocumentId: "prior-doc" });
+            expect(f.state.intents).toEqual(before.intents); expect(f.state.clients).toEqual(before.clients); expect(f.state.docs).toEqual(before.docs);
+        } else {
+            await expect(new SbEformsignDocumentJobRepository(f.prisma).enqueue(enqueue)).rejects.toThrow(); expect(f.state).toEqual(before);
+        }
     });
     it("an expired claim permits proven no-effect replacement", async () => {
         const f = await exhausted(); Object.assign(f.state.authorities[0], { claimUserId: U, claimExpiresAt: new Date(0), claimEpoch: 1n });
@@ -518,11 +530,22 @@ it("owned worker phase-CAS loss rolls back the exact intent repair", async () =>
     f.flags.casZero = true; const before = structuredClone(f.state);
     await expect(f.repository.markAutomaticUncertain(worker)).rejects.toMatchObject({ code: "RECOVERY_STALE" }); expect(f.state).toEqual(before);
 });
-it.each(["lease", "active-key"])("pre-send exhausted row with residual %s remains fenced", async defect => {
+it.each(["lease", "active-key"])("pre-send exhausted row with residual %s follows structural no-effect proof", async defect => {
     const f = runtimeFixture(); f.state.jobs[0].attempts = 4; await f.repository.recoverBeforeCreation(worker, null, "PRE_SEND_RETRY_EXHAUSTED");
     if (defect === "lease") f.state.jobs[0].leaseToken = worker.leaseToken; else f.state.jobs[0].activeKey = "other-active";
     const before = structuredClone(f.state);
-    await expect(new SbEformsignDocumentJobRepository(f.prisma).enqueue(enqueue)).rejects.toThrow(); expect(f.state).toEqual(before);
+    const repo = new SbEformsignDocumentJobRepository(f.prisma);
+    await expect(repo.enqueue({ ...enqueue, requestKey: "request" })).resolves.toMatchObject({ existing: true, job: { id: J } });
+    expect(f.state).toEqual(before);
+    if (defect === "lease") {
+        await expect(repo.enqueue(enqueue)).rejects.toThrow(); expect(f.state).toEqual(before);
+    } else {
+        const result = await repo.enqueue(enqueue);
+        expect(result.existing).toBe(false); expect(result.job.contractGeneration).not.toBe(G); expect(f.state.jobs).toHaveLength(2);
+        expect(f.state.jobs[0]).toEqual({ ...before.jobs[0], status: "failed", progressStep: "superseded", activeKey: null, payload: null, leaseToken: null, heartbeatAt: null });
+        expect(f.state.authorities[0]).toMatchObject({ generation: result.job.contractGeneration, creationJobId: result.job.id, phase: "reserved", priorDocumentId: "prior-doc" });
+        expect(f.state.intents).toEqual(before.intents); expect(f.state.clients).toEqual(before.clients); expect(f.state.docs).toEqual(before.docs);
+    }
 });
 
 it("PLAN5 zero-ref markAutomaticUncertain under a valid lease leaves every authority field unchanged and emits no CAS", async () => {
