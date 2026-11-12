@@ -138,16 +138,46 @@ test("closing and reopening the same job selects fresh metadata", async () => {
   expect(legacyApi.claimDocumentJobRecovery).not.toHaveBeenCalled();
 });
 
-test.each(["loading", "unavailable"] as const)("does not latch %s before safe metadata arrives", async initial => {
-  mockJobs = initial === "loading" ? undefined : makeJobList({ requiresAttention: [{ ...boundJob, recoveryPresentation: undefined }] });
-  jest.mocked(legacyApi.getDocumentJobs).mockReturnValue(new Promise(() => {}));
+test.each(["loading", "unavailable", "api-loaded"] as const)("does not latch %s before safe metadata arrives and finishes verification through polling", async initial => {
+  mockJobs = initial === "loading" ? undefined : initial === "api-loaded" ? makeJobList()
+    : makeJobList({ requiresAttention: [{ ...boundJob, recoveryPresentation: undefined }] });
+  let load!: (value: EformsignDocumentJobList) => void;
+  jest.mocked(legacyApi.getDocumentJobs).mockReturnValue(new Promise(resolve => { load = resolve; }));
+  let finish!: (value: VerifyManualRecoveryResponse) => void;
+  jest.mocked(eformsignApi.verifyDocumentJobRecovery).mockImplementation(() => new Promise(resolve => { finish = resolve; }));
   const view = renderRecovery();
-  if (initial === "loading") expect(screen.getByRole("status", { name: "작업 불러오는 중" })).toBeInTheDocument();
-  else expect(screen.getByText("작업을 불러오지 못했어요. 잠시 후 다시 시도해 주세요.")).toBeInTheDocument();
+  if (initial === "unavailable") expect(screen.getByText("작업을 불러오지 못했어요. 잠시 후 다시 시도해 주세요.")).toBeInTheDocument();
+  else expect(screen.getByRole("status", { name: "작업 불러오는 중" })).toBeInTheDocument();
   expect(eformsignApi.openDocumentJobRecovery).not.toHaveBeenCalled();
   expect(legacyApi.claimDocumentJobRecovery).not.toHaveBeenCalled();
-  mockJobs = makeJobList({ requiresAttention: [boundJob] });
+  if (initial === "api-loaded") {
+    expect(legacyApi.getDocumentJobs).toHaveBeenCalledTimes(1);
+    await act(async () => { load(makeJobList({ requiresAttention: [boundJob] })); });
+  } else {
+    mockJobs = makeJobList({ requiresAttention: [boundJob] });
+    view.poll();
+  }
+  const editor = await editorSession();
+  editor.changed();
+  expect(eformsignApi.verifyDocumentJobRecovery).toHaveBeenCalledTimes(1);
+  expect(eformsignApi.verifyDocumentJobRecovery).toHaveBeenCalledWith(jobId, "42");
+
+  mockJobs = makeJobList({ recent: [{ ...boundJob, status: "completed", recoveryKind: null, recoveryPresentation: null }] });
   view.poll();
-  await editorSession();
+  expect(screen.getByTitle("이폼사인 수동 전송")).toBe(editor.frame);
+  expect(editor.post).not.toHaveBeenCalledWith(expect.objectContaining({ type: "CLOSE" }), expect.anything());
+  expect(mockToast).not.toHaveBeenCalled();
+  expect(mockRefetchSummary).not.toHaveBeenCalled();
+  expect(mockRefetchJobs).not.toHaveBeenCalled();
+  expect(view.onClose).not.toHaveBeenCalled();
+  await act(async () => { finish(verified); });
+
+  expect(mockToast).toHaveBeenCalledTimes(1);
+  expect(mockToast).toHaveBeenCalledWith({ variant: "success", description: "전자문서를 전송했어요" });
+  expect(mockRefetchSummary).toHaveBeenCalledTimes(1);
+  expect(mockRefetchJobs).toHaveBeenCalledTimes(1);
+  expect(view.onClose).toHaveBeenCalledTimes(1);
   expect(eformsignApi.openDocumentJobRecovery).toHaveBeenCalledTimes(1);
+  expect(legacyApi.claimDocumentJobRecovery).not.toHaveBeenCalled();
+  expect(legacyApi.resolveDocumentJob).not.toHaveBeenCalled();
 });
