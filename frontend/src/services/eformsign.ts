@@ -59,10 +59,14 @@ export type EformsignDocumentJobFailureReasonCode =
 
 export interface EformsignDocumentJobSummary {
     activeCount: number;
+    /** 종류와 기간에 관계없이 모든 `requires_attention` 작업 수. */
     requiresAttentionCount: number;
-    /** Contract jobs that failed in the last 7 days and are not yet resolved. */
+    /** `completed_at`이 최근 7일 이내인 계약 `failed` 작업 수. `superseded`도 포함한다. */
     failedCount: number;
-    /** Contract jobs staff can act on: failedCount + contract requires_attention. */
+    /**
+     * `completed_at`이 최근 7일 이내인 계약 `failed` 작업(`superseded` 제외)과
+     * 기간 제한 없는 모든 계약 `requires_attention` 작업 수.
+     */
     unresolvedCount: number;
     /** Ids of those unresolved jobs, newest first, at most 50. */
     unresolvedJobIds: string[];
