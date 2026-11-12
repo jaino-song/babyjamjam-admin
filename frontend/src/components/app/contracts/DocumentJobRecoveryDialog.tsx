@@ -11,7 +11,7 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Dialog } from "@/components/ui/dialog";
 import { Spinner } from "@/components/ui/spinner";
-import { ManualDocumentJobRecoveryDialog, type ManualDocumentJobRecoveryDialogProps } from './ManualDocumentJobRecoveryDialog';
+import { documentJobRecoveryPresentation, type DocumentJobRecoveryMetadata } from "@/features/document-jobs/recovery-presentation";
 import { useDocumentJobs } from "@/features/document-jobs/DocumentJobsProvider";
 import { useToast } from "@/hooks/use-toast";
 import {
@@ -19,6 +19,8 @@ import {
   type ClaimEformsignDocumentJobRecoveryResponse,
   type EformsignDocumentJobRecoveryErrorBody,
 } from "@/services/api";
+
+import { ManualDocumentJobRecoveryDialog, type ManualDocumentJobRecoveryDialogProps } from "./ManualDocumentJobRecoveryDialog";
 
 const DEFAULT_DATA_COMPONENT = "desktop_contracts_document-job-recovery";
 const RESOLVE_AUTOMATIC_RETRIES = 3;
@@ -111,12 +113,62 @@ interface LegacyDocumentJobRecoveryDialogProps {
   resolveRetryDelayMs?: number;
   "data-component"?: string;
 }
-export type DocumentJobRecoveryDialogProps = LegacyDocumentJobRecoveryDialogProps | (ManualDocumentJobRecoveryDialogProps & { presentation: 'iframe' });
+interface RoutedDocumentJobRecoveryDialogProps extends Omit<LegacyDocumentJobRecoveryDialogProps, "presentation"> {
+  presentation: "auto";
+}
+export type DocumentJobRecoveryDialogProps = LegacyDocumentJobRecoveryDialogProps
+  | (ManualDocumentJobRecoveryDialogProps & { presentation: 'iframe' })
+  | RoutedDocumentJobRecoveryDialogProps;
 
 export function DocumentJobRecoveryDialog(props: DocumentJobRecoveryDialogProps) {
+  if (props.presentation === "auto") return <RoutedDocumentJobRecoveryDialog key={props.jobId} {...props} />;
   return props.presentation === 'iframe'
     ? <ManualDocumentJobRecoveryDialog key={props.jobId} {...props} />
     : <LegacyDocumentJobRecoveryDialog {...props} />;
+}
+
+/** Resolve a deep link from safe list metadata before either recovery endpoint is called. */
+function RoutedDocumentJobRecoveryDialog(props: RoutedDocumentJobRecoveryDialogProps) {
+  const { jobs } = useDocumentJobs();
+  const listedJob = [...(jobs?.active ?? []), ...(jobs?.requiresAttention ?? []), ...(jobs?.recent ?? [])]
+    .find(job => job.jobId === props.jobId);
+  const [loaded, setLoaded] = useState<{ job?: DocumentJobRecoveryMetadata } | null>(null);
+  useEffect(() => {
+    if (listedJob) return;
+    let cancelled = false;
+    const load = async () => {
+      try {
+        const result = await eformsignApi.getDocumentJobs();
+        if (!cancelled) setLoaded({ job: [...result.active, ...result.requiresAttention, ...result.recent].find(job => job.jobId === props.jobId) });
+      } catch {
+        if (!cancelled) setLoaded({});
+      }
+    };
+    void load();
+    return () => { cancelled = true; };
+  }, [listedJob, props.jobId]);
+  const job = listedJob ?? loaded?.job;
+  const presentation = documentJobRecoveryPresentation(job);
+  if (presentation === "iframe") return <ManualDocumentJobRecoveryDialog jobId={props.jobId} onClose={props.onClose} data-component={props["data-component"]} />;
+  if (presentation === "legacy") return <LegacyDocumentJobRecoveryDialog {...props} presentation="legacy" />;
+  const pending = !listedJob && loaded === null;
+  const base = props["data-component"] ?? DEFAULT_DATA_COMPONENT;
+  const unavailable = !job || job.recoveryPresentation === undefined;
+  return (
+    <Dialog open onOpenChange={open => { if (!open) props.onClose(); }}>
+      <FormDialogShell
+        title="전자문서 작업 복구"
+        description="실패한 전자문서 작업을 복구합니다."
+        data-component={base}
+        size="compact"
+        footer={<Button type="button" variant="neutral" size="sm" data-component={`${base}_close`} onClick={props.onClose}>닫기</Button>}
+      >
+        {pending
+          ? <div data-component={`${base}_loading`} role="status" aria-label="작업 불러오는 중"><Spinner size="sm" /></div>
+          : <p data-component={`${base}_failure`}>{unavailable ? COPY.unavailable : COPY.gone}</p>}
+      </FormDialogShell>
+    </Dialog>
+  );
 }
 
 /**

@@ -30,7 +30,7 @@ jest.mock("next/navigation", () => ({
 
 const PROCESSING_TILE = { name: "전자문서 처리중 작업 보기" };
 
-const RECOVERY_JOB = { jobId: '11111111-1111-4111-8111-111111111111', jobType: 'create_document', source: 'staff', status: 'failed', recoveryKind: 'manual_send', clientName: '복구 고객' } as const;
+const RECOVERY_JOB = { jobId: '11111111-1111-4111-8111-111111111111', jobType: 'create_document', source: 'staff', status: 'failed', recoveryKind: 'manual_send', recoveryPresentation: 'iframe', clientName: '복구 고객' } as const;
 test.each([390, 1280].flatMap(width => (['x', 'escape'] as const).map(how => [width, how] as const)))('contracts recovery at %spx closes with %s, stays nested, pauses panes, and restores its CTA', async (width, how) => {
   const originalWidth = window.innerWidth;
   Object.defineProperty(window, 'innerWidth', { configurable: true, value: width });
@@ -134,6 +134,31 @@ test('recovery on other desktop routes closes jobs and navigates without opening
   expect(onOpenChange).toHaveBeenCalledWith(false);
   expect(mockPush).toHaveBeenCalledWith(`/contracts?recoverJobId=${RECOVERY_JOB.jobId}`);
   expect(open).not.toHaveBeenCalled(); open.mockRestore(); mockPathname = '/contracts';
+});
+
+test.each([
+  ['finalize_document', 'legacy'],
+  ['create_document', 'legacy'],
+  ['finalize_document', undefined],
+  ['create_document', undefined],
+] as const)('legacy %s recovery navigates to contracts without opening the iframe (presentation %s)', (jobType, recoveryPresentation) => {
+  mockPathname = '/contracts'; mockPush.mockClear();
+  const open = jest.spyOn(eformsignApi, 'openDocumentJobRecovery').mockRejectedValue({ isAxiosError: true, response: { status: 503 } });
+  const onOpenChange = jest.fn();
+  renderOpenPopover({ documentJobs: { active: [], requiresAttention: [{ ...RECOVERY_JOB, jobType, status: 'requires_attention', recoveryKind: 'verify_result', recoveryPresentation }], recent: [] }, onOpenChange });
+  fireEvent.click(screen.getByRole('button', { name: /복구 고객.*상세 보기/ }));
+  fireEvent.click(screen.getByRole('button', { name: '결과 확인' }));
+  expect(mockPush).toHaveBeenCalledWith(`/contracts?recoverJobId=${RECOVERY_JOB.jobId}`);
+  expect(onOpenChange).toHaveBeenCalledWith(false);
+  expect(open).not.toHaveBeenCalled(); open.mockRestore();
+});
+
+test('a superseded failed create with null recovery classification offers no recovery action', () => {
+  renderOpenPopover({ documentJobs: { active: [], requiresAttention: [], recent: [{ ...RECOVERY_JOB, recoveryKind: null, recoveryPresentation: null }] } });
+  fireEvent.click(screen.getByRole('button', { name: '최근 처리 1건' }));
+  fireEvent.click(screen.getByRole('button', { name: /복구 고객.*상세 보기/ }));
+  expect(screen.queryByRole('button', { name: '수동 전송' })).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: '결과 확인' })).not.toBeInTheDocument();
 });
 
 const JOBS: ContractDocumentJobsData = {

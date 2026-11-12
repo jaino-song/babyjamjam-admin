@@ -2,8 +2,9 @@
  * /contracts?recoverJobId=<id> opens iframe recovery once and clears the parameter.
  * Closing recovery preserves a creation session. Its bridge lifecycle has separate tests.
  */
+import { makeJob, makeJobList } from "@/features/document-jobs/testing/jobs-test-utils";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 
 import type { EformsignDocument } from "@/lib/eformsign/types";
 import { eformsignApi } from "@/services/api";
@@ -70,6 +71,7 @@ jest.mock("@/services/api", () => ({
     getLinkConfirmations: jest.fn().mockResolvedValue([]),
     getDocumentClientNames: jest.fn().mockResolvedValue([]),
     getDocumentStatusCounts: jest.fn().mockResolvedValue({ documents: [] }),
+    getDocumentJobs: jest.fn(),
     claimDocumentJobRecovery: jest.fn(),
     resolveDocumentJob: jest.fn(),
     getDocument: jest.fn(),
@@ -156,6 +158,7 @@ describe("ContractsPage iframe recovery entry", () => {
     jest.clearAllMocks(); mockParams = new URLSearchParams(); mockMountCount = 0; mockDocuments = [targetDocument];
     useFormStore.getState().resetAll();
     (eformsignApi.getDocument as jest.Mock).mockResolvedValue(targetDocument);
+    (eformsignApi.getDocumentJobs as jest.Mock).mockResolvedValue(makeJobList({ requiresAttention: [makeJob({ jobId: "11111111-1111-4111-8111-111111111111", recoveryPresentation: "iframe" })] }));
     openRecovery.mockResolvedValue({ kind: "editable", document: { companyId: "company-abc", templateId: "template_ABC", documentId: "document012" }, jobId: "11111111-1111-4111-8111-111111111111", claimEpoch: "42", claimExpiresAt: new Date(Date.now() + 60000).toISOString() });
   });
   it("opens the iframe presentation once, clears the URL, and never claims or resolves through legacy methods", async () => {
@@ -179,4 +182,81 @@ describe("ContractsPage iframe recovery entry", () => {
     expect(stubStep()).toBe(String(PROCESSING_STEP)); expect(screen.getByTestId("stub-mount").textContent).toBe(mountBefore);
     expect(useFormStore.getState().name).toBe("김하늘");
   });
+  it.each(["finalize_document", "create_document"] as const)("routes requires_attention %s through legacy resolve without automatic resend", async jobType => {
+    const job = makeJob({ jobId: "legacy-job", jobType, status: "requires_attention", recoveryKind: "verify_result", recoveryPresentation: "legacy", documentId: "doc-1" });
+    (eformsignApi.getDocumentJobs as jest.Mock).mockResolvedValue(makeJobList({ requiresAttention: [job] }));
+    (eformsignApi.claimDocumentJobRecovery as jest.Mock).mockResolvedValue({ job, recoveryKind: "verify_result", payload: null, claimExpiresAt: null });
+    (eformsignApi.resolveDocumentJob as jest.Mock).mockResolvedValue({ job: { ...job, recoveryKind: null, recoveryPresentation: null }, alreadyResolved: false });
+    mockParams = new URLSearchParams("recoverJobId=legacy-job"); renderPage();
+    await screen.findByText("전자문서 결과 확인 필요");
+    expect(openRecovery).not.toHaveBeenCalled();
+    expect(eformsignApi.resolveDocumentJob).not.toHaveBeenCalled();
+    if (jobType === "finalize_document") {
+      expect(screen.queryByRole("button", { name: "새로 작성" })).not.toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "계약서 보기" })).toBeEnabled();
+    }
+    fireEvent.click(screen.getByRole("button", { name: "처리됨으로 표시" }));
+    fireEvent.click(await screen.findByRole("button", { name: "처리됨으로 표시", hidden: false }));
+    await waitFor(() => expect(eformsignApi.resolveDocumentJob).toHaveBeenCalledWith("legacy-job"));
+    await waitFor(() => expect(screen.queryByText("전자문서 결과 확인 필요")).not.toBeInTheDocument());
+    expect(screen.queryByTestId("stub-step")).not.toBeInTheDocument();
+  });
+
+  it("resolves a failed finalize before opening its contract, with no draft or iframe", async () => {
+    const job = makeJob({ jobId: "finalize-job", jobType: "finalize_document", recoveryPresentation: "legacy", documentId: "doc-1" });
+    (eformsignApi.getDocumentJobs as jest.Mock).mockResolvedValue(makeJobList({ requiresAttention: [job] }));
+    (eformsignApi.claimDocumentJobRecovery as jest.Mock).mockResolvedValue({ job, recoveryKind: "manual_send", payload: { documentId: "doc-1" }, claimExpiresAt: null });
+    let finish!: () => void;
+    (eformsignApi.resolveDocumentJob as jest.Mock).mockImplementation(() => new Promise(resolve => { finish = () => resolve({ job, alreadyResolved: false }); }));
+    mockParams = new URLSearchParams("recoverJobId=finalize-job"); renderPage();
+    fireEvent.click(await screen.findByRole("button", { name: "처리됨으로 표시하고 계약서 열기" }));
+    expect(screen.queryByTestId("stub-step")).not.toBeInTheDocument();
+    await act(async () => finish());
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "전자문서 작업 복구" })).not.toBeInTheDocument());
+    expect(document.querySelector('[data-component^="desktop_contracts_sections_section-content_maternity-section_split-layout_detail-panel-document"]')).toBeInTheDocument();
+    expect(openRecovery).not.toHaveBeenCalled();
+    expect(screen.queryByTestId("stub-step")).not.toBeInTheDocument();
+  });
+
+  it("waits for deep-link metadata before selecting the iframe", async () => {
+    let finish!: (value: ReturnType<typeof makeJobList>) => void;
+    (eformsignApi.getDocumentJobs as jest.Mock).mockReturnValue(new Promise(resolve => { finish = resolve; }));
+    mockParams = new URLSearchParams("recoverJobId=11111111-1111-4111-8111-111111111111"); renderPage();
+    expect(screen.getByRole("status", { name: "작업 불러오는 중" })).toBeInTheDocument();
+    expect(openRecovery).not.toHaveBeenCalled(); expect(eformsignApi.claimDocumentJobRecovery).not.toHaveBeenCalled();
+    await act(async () => finish(makeJobList({ requiresAttention: [makeJob({ jobId: "11111111-1111-4111-8111-111111111111", status: "requires_attention", recoveryKind: "verify_result", recoveryPresentation: "iframe" })] })));
+    const frame = await screen.findByTitle<HTMLIFrameElement>("이폼사인 수동 전송");
+    jest.spyOn(frame.contentWindow!, "postMessage").mockImplementation(() => {});
+    fireEvent.click(screen.getByRole("button", { name: "Close" }));
+    expect(openRecovery).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([undefined, null] as const)("does not infer a create generation from missing/null presentation %s", async recoveryPresentation => {
+    const job = makeJob({ jobId: "unknown-create", recoveryPresentation });
+    (eformsignApi.getDocumentJobs as jest.Mock).mockResolvedValue(makeJobList({ requiresAttention: [job] }));
+    mockParams = new URLSearchParams("recoverJobId=unknown-create"); renderPage();
+    await screen.findByText(recoveryPresentation === undefined ? "작업을 불러오지 못했어요. 잠시 후 다시 시도해 주세요." : "이미 처리됐거나 찾을 수 없는 작업이에요.");
+    expect(openRecovery).not.toHaveBeenCalled(); expect(eformsignApi.claimDocumentJobRecovery).not.toHaveBeenCalled();
+    expect(screen.queryByRole("button", { name: "새로 작성" })).not.toBeInTheDocument();
+  });
+
+  it("keeps an unknown deep link safe when the list does not contain it", async () => {
+    (eformsignApi.getDocumentJobs as jest.Mock).mockResolvedValue(makeJobList());
+    mockParams = new URLSearchParams("recoverJobId=missing-job"); renderPage();
+    await screen.findByText("작업을 불러오지 못했어요. 잠시 후 다시 시도해 주세요.");
+    expect(openRecovery).not.toHaveBeenCalled(); expect(eformsignApi.claimDocumentJobRecovery).not.toHaveBeenCalled();
+  });
+
+  it("opens a legacy finalize document from an older server without a presentation field", async () => {
+    const job = makeJob({ jobId: "old-finalize", jobType: "finalize_document", recoveryPresentation: undefined, status: "requires_attention", recoveryKind: "verify_result", documentId: "doc-1" });
+    (eformsignApi.getDocumentJobs as jest.Mock).mockResolvedValue(makeJobList({ requiresAttention: [job] }));
+    (eformsignApi.claimDocumentJobRecovery as jest.Mock).mockResolvedValue({ job, recoveryKind: "verify_result", payload: null, claimExpiresAt: null });
+    mockParams = new URLSearchParams("recoverJobId=old-finalize"); renderPage();
+    fireEvent.click(await screen.findByRole("button", { name: "계약서 보기" }));
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "전자문서 결과 확인 필요" })).not.toBeInTheDocument());
+    expect(document.querySelector('[data-component^="desktop_contracts_sections_section-content_maternity-section_split-layout_detail-panel-document"]')).toBeInTheDocument();
+    expect(openRecovery).not.toHaveBeenCalled(); expect(eformsignApi.resolveDocumentJob).not.toHaveBeenCalled();
+    expect(screen.queryByTestId("stub-step")).not.toBeInTheDocument();
+  });
+
 });

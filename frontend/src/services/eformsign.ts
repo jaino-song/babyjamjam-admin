@@ -91,6 +91,8 @@ export interface EformsignDocumentJobResponse {
     updatedAt: string;
     clientName: string | null;
     recoveryKind: EformsignDocumentJobRecoveryKind | null;
+    /** Optional only for older servers; absence never proves an unbound create. */
+    recoveryPresentation?: "iframe" | "legacy" | null;
     lastErrorCode: string | null;
 }
 
