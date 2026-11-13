@@ -220,3 +220,12 @@ it.each(["missing-parent", "owner-after-parent", "no-authority"])("shared parent
     expect(trace.findIndex(text => text.includes("FROM client"))).toBeLessThan(trace.findIndex(text => text.includes("FROM eformsign_doc")));
     expect(trace.filter(text => /FROM client[\s\S]*FOR UPDATE/.test(text))).toHaveLength(1);
 });
+
+
+it("recovery authority CAS binds the immutable fingerprint as well as claim and generation", async () => {
+    const h = harness(1);
+    await expect(compareAndSetAuthority(h.tx, { ...expected, fingerprint: F, claimUserId: U }, { phase: "closed" })).resolves.toBe(true);
+    expect(h.trace[0]!.text).toMatch(/AND fingerprint = \$[0-9]+/);
+    expect(h.trace[0]!.values).toContain(F);
+    expect(h.trace[0]!.text).toContain("claim_user_id IS NOT DISTINCT FROM");
+});

@@ -792,3 +792,14 @@ describe("EformsignService", () => {
         expect(options.mode.template_id).toBe("tpl-test");
     });
 });
+
+describe("internal configured contract identity", () => {
+    it("returns only configured operational identifiers", () => {
+        const service = new EformsignService(createConfigService());
+        expect(service.getConfiguredContractIdentity()).toEqual({ companyId: "company-1", creatorId: "staff@example.com" });
+    });
+    it("asserts configuration rather than returning guessed identifiers", () => {
+        const service = new EformsignService(createConfigService({ EFORMSIGN_COMPANY_ID: undefined }));
+        expect(() => service.getConfiguredContractIdentity()).toThrow();
+    });
+});

@@ -3012,6 +3012,31 @@
         "requiredFor": [
           "mobile service-record screen"
         ]
+      },
+      {
+        "name": "MessageMaker",
+        "layer": "organism",
+        "import": "@/components/app/messages/MessageMaker",
+        "file": "mobile/src/components/app/messages/MessageMaker.tsx",
+        "exports": [
+          "MessageMaker"
+        ],
+        "replaces": [
+          "copy-only message composition page, template variables, editable body and clipboard workflow"
+        ],
+        "contract": "docs/design-system/message-maker.md"
+      },
+      {
+        "name": "MessageTemplateSelect",
+        "layer": "molecule",
+        "import": "@/components/app/messages/MessageTemplateSelect",
+        "file": "mobile/src/components/app/messages/MessageTemplateSelect.tsx",
+        "exports": [
+          "MessageTemplateSelect"
+        ],
+        "replaces": [
+          "message-template dropdown with authoritative server groups and separated user/custom sections"
+        ]
       }
     ]
   }

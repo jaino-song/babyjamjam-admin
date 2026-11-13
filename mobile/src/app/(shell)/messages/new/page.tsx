@@ -84,8 +84,8 @@ import {
   type SystemTemplateDeliveryMode,
   type SystemTemplateKey,
 } from "@babyjamjam/shared/types/system-template";
-
 import styles from "./page.module.css";
+import templateSelectStyles from "@/components/app/messages/MessageTemplateSelect.module.css";
 
 type SendResponse = SendMessageDeliverySmsResponse;
 
@@ -2177,8 +2177,8 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId, initi
                         avoidCollisions
                       >
                         {templateSelectorSections.map((section, index) => (
-                          <SelectGroup key={`${section.id}-${index}`}>
-                            {section.label ? <SelectLabel>{section.label}</SelectLabel> : null}
+                          <SelectGroup key={`${section.id}-${index}`} data-slot="template-group" className={templateSelectStyles.templateGroup}>
+                            {section.label ? <SelectLabel data-component={`mobile_messages_new_page_screen_form_scroll_list-card_body_form-card_content_template_row_select_content_group-${index}_label`} data-slot="template-group-label" className={templateSelectStyles.templateGroupLabel}>{section.label}</SelectLabel> : null}
                             {section.options.map((option) => (
                               <SelectItem key={option.id} value={option.id} disabled={option.disabled}>
                                 {option.name}
