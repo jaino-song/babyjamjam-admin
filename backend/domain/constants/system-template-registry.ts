@@ -48,7 +48,7 @@ export interface TemplateContract {
 export const SYSTEM_TEMPLATE_REGISTRY: Record<SystemTemplateKey, TemplateContract> = {
   [SystemTemplateKey.PRICE_INFO]: {
     key: SystemTemplateKey.PRICE_INFO,
-    name: '서비스 비용 안내',
+    name: '비용 안내',
     group: 'mother',
     groupLabel: '산모 대상',
     description: '정부지원 바우처 서비스 비용 및 입금 계좌 안내',
@@ -273,7 +273,7 @@ blog.naver.com/imirae-incheon`,
 
   [SystemTemplateKey.SERVICE_INFO]: {
     key: SystemTemplateKey.SERVICE_INFO,
-    name: '서비스 내용 안내',
+    name: '서비스 내용',
     group: 'mother',
     groupLabel: '산모 대상',
     description: '산후관리서비스 진행 전 주요 안내사항 전달',

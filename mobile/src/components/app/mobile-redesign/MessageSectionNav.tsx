@@ -3,6 +3,7 @@
 import { useMemo } from "react";
 import { useRouter } from "next/navigation";
 import {
+  CheckCheck,
   Clock3,
   FileText,
   History,
@@ -23,8 +24,10 @@ import { useGetAuthUser } from "@/hooks/useGetAuthUser";
 
 const SOURCE_COMPONENT = "MessageSectionNav";
 
+type MobileMessageSectionId = MessageSectionId | "complete";
+
 interface MessageNavigationItem {
-  id: MessageSectionId;
+  id: MobileMessageSectionId;
   title: string;
   href: string;
   icon: LucideIcon;
@@ -39,29 +42,31 @@ const MESSAGE_NAVIGATION_PRESENTATION: Record<MessageSectionId, LucideIcon> = {
   settings: Settings2,
 };
 
-export const MESSAGE_NAVIGATION_ITEMS: MessageNavigationItem[] =
-  MESSAGE_SECTION_DEFINITIONS.map((section) => ({
+export const MESSAGE_NAVIGATION_ITEMS: MessageNavigationItem[] = [
+  { id: "complete", title: "메세지 제작", href: "/messages/compose", icon: CheckCheck },
+  ...MESSAGE_SECTION_DEFINITIONS.map((section) => ({
     id: section.id,
     title: section.label,
     href: section.mobilePath,
     icon: MESSAGE_NAVIGATION_PRESENTATION[section.id],
-  }));
+  })),
+];
 
 // Templates remain owner-only. Trigger rules are branch-management controls and
 // are available to an owner or an admin/manager of the active branch.
 // "scheduled" no longer has a nav entry (folded into the merged 발송 기록
 // screen) and "history" is gated only by sending approval below, so neither
 // belongs in this set anymore.
-const OWNER_ONLY_SECTION_IDS = new Set<MessageSectionId>(["templates"]);
-const BRANCH_MANAGEMENT_SECTION_IDS = new Set<MessageSectionId>(["triggers"]);
-const SENDER_APPROVAL_EXEMPT_SECTION_IDS = new Set<MessageSectionId>(["send", "settings"]);
+const OWNER_ONLY_SECTION_IDS = new Set<MobileMessageSectionId>(["templates"]);
+const BRANCH_MANAGEMENT_SECTION_IDS = new Set<MobileMessageSectionId>(["triggers"]);
+const SENDER_APPROVAL_EXEMPT_SECTION_IDS = new Set<MobileMessageSectionId>(["complete", "settings"]);
 
 export function MessageSectionNav({
   "data-component": dataComponent,
   activeId,
 }: {
   "data-component": string;
-  activeId: MessageSectionId;
+  activeId: MobileMessageSectionId;
 }) {
   const router = useRouter();
   const authUserQuery = useGetAuthUser();
@@ -77,14 +82,14 @@ export function MessageSectionNav({
         label: item.title,
         icon: item.icon,
         disabled:
-          (needsSenderApproval && !SENDER_APPROVAL_EXEMPT_SECTION_IDS.has(item.id)) ||
+          ((isLoading || needsSenderApproval) && !SENDER_APPROVAL_EXEMPT_SECTION_IDS.has(item.id)) ||
           (OWNER_ONLY_SECTION_IDS.has(item.id) && !isOwner) ||
           (BRANCH_MANAGEMENT_SECTION_IDS.has(item.id) && !canManageBranchMessages),
       })),
-    [canManageBranchMessages, isOwner, needsSenderApproval],
+    [canManageBranchMessages, isOwner, isLoading, needsSenderApproval],
   );
 
-  const handleSectionSelect = (sectionId: MessageSectionId) => {
+  const handleSectionSelect = (sectionId: MobileMessageSectionId) => {
     const selectedItem = MESSAGE_NAVIGATION_ITEMS.find((item) => item.id === sectionId);
     if (selectedItem) router.push(selectedItem.href);
   };
@@ -97,7 +102,6 @@ export function MessageSectionNav({
       items={sectionNavItems}
       activeId={activeId}
       onSelect={handleSectionSelect}
-      isLoading={isLoading}
     />
   );
 }

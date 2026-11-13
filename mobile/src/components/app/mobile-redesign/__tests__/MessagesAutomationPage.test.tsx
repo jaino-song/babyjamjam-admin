@@ -41,12 +41,15 @@ describe("MessagesAutomationPage", () => {
     expect(container.querySelector('[data-component="mobile_messages_automation_page_content_list-card"]'))
       .toContainElement(container.querySelector('[data-component="mobile_messages_automation_page_content_list-card_body"]'));
     expect(MESSAGE_NAVIGATION_ITEMS.map((item) => item.title)).toEqual([
+      "메세지 제작",
       "전송하기",
       "발송 기록",
       "템플릿",
       "자동 전송",
       "설정",
     ]);
+
+    expect(screen.getByRole("link", { name: "+ 새 메시지" })).toHaveAttribute("href", "/messages");
 
     for (const item of MESSAGE_NAVIGATION_ITEMS) {
       expect(screen.getByRole("button", { name: item.title })).toBeInTheDocument();
