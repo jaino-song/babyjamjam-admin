@@ -146,7 +146,7 @@ export default function AllMenuPage() {
           { label: "가격표", href: "/prices", icon: Calculator, tone: "orange" },
           {
             label: "메시지",
-            href: "/messages/new",
+            href: "/messages",
             icon: MessageSquareText,
             tone: "primary",
             value: isMessageTemplatesValueUnavailable ? undefined : `${messageTemplates.length}건`,

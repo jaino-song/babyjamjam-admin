@@ -10,8 +10,8 @@ describe("SYSTEM_TEMPLATE_REGISTRY", () => {
             return [key, entry.name, entry.group, entry.groupLabel];
         })).toEqual([
             ["GREETING", "첫 인사", "mother", "산모 대상"],
-            ["SERVICE_INFO", "서비스 내용 안내", "mother", "산모 대상"],
-            ["PRICE_INFO", "서비스 비용 안내", "mother", "산모 대상"],
+            ["SERVICE_INFO", "서비스 내용", "mother", "산모 대상"],
+            ["PRICE_INFO", "비용 안내", "mother", "산모 대상"],
             ["REMINDER", "리마인드", "mother", "산모 대상"],
             ["THANKS", "입금 확인 및 예약 완료 안내", "mother", "산모 대상"],
             ["INFO", "산모 정보 요청", "mother", "산모 대상"],

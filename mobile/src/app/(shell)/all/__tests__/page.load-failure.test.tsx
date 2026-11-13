@@ -83,6 +83,10 @@ function templatesRow(): HTMLElement {
 }
 
 describe("AllMenuPage employee count load failures", () => {
+  it("routes the generic messages entry to the message maker destination", () => {
+    render(<AllMenuPage />);
+    expect(templatesRow()).toHaveAttribute("href", "/messages");
+  });
   beforeEach(() => {
     jest.clearAllMocks();
     mockEmployees = { data: [], isLoading: false, isError: false, isFetching: false, error: null };

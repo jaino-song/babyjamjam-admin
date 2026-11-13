@@ -79,14 +79,20 @@ describe("MobileBottomNav", () => {
     });
   });
 
-  it("renders 메시지 as an active nav link navigating to /messages/new", () => {
+  it.each(["/messages", "/messages/compose", "/messages/new", "/messages/history"])("keeps the message tab active on %s", pathname => {
+    mockUsePathname.mockReturnValue(pathname);
+    render(<MobileBottomNav />);
+    expect(screen.getByRole("link", { name: "메세지" })).toHaveAttribute("aria-current", "page");
+  });
+
+  it("renders 메세지 as an active nav link navigating to /messages", () => {
     mockUsePathname.mockReturnValue("/messages/new");
 
     render(<MobileBottomNav />);
 
-    const messagesLink = screen.getByRole("link", { name: "메시지" });
+    const messagesLink = screen.getByRole("link", { name: "메세지" });
     expect(messagesLink).toBeInTheDocument();
-    expect(messagesLink).toHaveAttribute("href", "/messages/new");
+    expect(messagesLink).toHaveAttribute("href", "/messages");
     expect(messagesLink).toHaveAttribute("aria-current", "page");
   });
 

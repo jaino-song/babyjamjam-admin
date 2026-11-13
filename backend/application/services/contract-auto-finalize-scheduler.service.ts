@@ -173,7 +173,7 @@ export class ContractAutoFinalizeSchedulerService {
 
         const requestKey = `auto_finalize:${documentId}:${todayKst}`;
         try {
-            await this.documentJobService.enqueueFinalizeDocument({
+            const result = await this.documentJobService.enqueueFinalizeDocument({
                 branchId,
                 requestKey,
                 documentId,
@@ -181,6 +181,12 @@ export class ContractAutoFinalizeSchedulerService {
                 source: "auto_finalize",
                 createdByUserId: null,
             });
+            if (result.existing) {
+                this.logger.log(
+                    `[Contract Auto Finalize] Reused existing job ${result.job.id} for ${documentId} (status ${result.job.status})`,
+                );
+                return;
+            }
             this.logger.log(
                 `[Contract Auto Finalize] Enqueued ${documentId} (end date ${contract.contractEndDate}, request ${requestKey})`,
             );

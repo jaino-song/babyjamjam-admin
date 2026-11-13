@@ -161,6 +161,40 @@ it.each(["finalize", "service-record"])("legacy-intent generation guard preserve
 });
 
 const draftEvidence = () => ({ documentId: "bound-doc", templateId: "template_ABC", companyId: "company-abc", creatorId: "service@example.test", statusType: "001", stepType: "00", stepIndex: "1", stepName: "write", confirmed: false, createdAt: new Date(), updatedAt: new Date(), expiresAt: new Date() });
+describe("post-TTL completeManual exact mirror template", () => {
+    async function purgedCreate() {
+        const f = runtimeFixture();
+        await f.repository.claimCreation(intentInput, worker, { contractData: data, workflow: workflowPlan });
+        Object.assign(f.state.jobs[0], { status: "requires_attention", leaseToken: null, activeKey: null, completedAt: new Date() });
+        Object.assign(f.state.authorities[0], { phase: "creation_uncertain" });
+        Object.assign(f.state.intents[0], { status: "uncertain", providerDocumentId: "bound-doc" });
+        const opened = await f.repository.open(J, B, U), claim = { jobId: J, branchId: B, userId: U, claimEpoch: opened.claimEpoch };
+        await f.repository.bindDocument(claim, draftEvidence());
+        Object.assign(f.state.jobs[0], { payload: null, completedAt: new Date(Date.now() - 8 * 86400000) });
+        const snapshot = await f.repository.readClaim(claim);
+        expect(snapshot.verificationOnly).toMatchObject({ documentId: "bound-doc", templateId: "template_ABC" });
+        expect(snapshot.payload).toEqual({});
+        expect(f.state.intents[0].templateId).toBeNull();
+        expect(f.state.authorities[0]).toMatchObject({ creationIntentId: I, draftIntentId: null, humanIntentId: null });
+        f.events.length = 0;
+        return { f, claim };
+    }
+    it("rejects post-TTL completeManual template mismatch with NULL create template and preserves every durable field", async () => {
+        const { f, claim } = await purgedCreate(), before = structuredClone(f.state);
+        await expect(f.repository.completeManual(claim, { ...draftEvidence(), templateId: "different-template", confirmed: true,
+            statusType: "060", stepType: "05" })).rejects.toBeInstanceOf(ContractRecoveryError);
+        expect(f.state).toEqual(before);
+        expect(f.events).toEqual([]);
+    });
+    it("positive control: the exact post-TTL mirror template completes without restoring the purged payload", async () => {
+        const { f, claim } = await purgedCreate();
+        await f.repository.completeManual(claim, { ...draftEvidence(), confirmed: true, statusType: "060", stepType: "05" });
+        expect(f.state.authorities[0].phase).toBe("closed");
+        expect(f.state.jobs[0]).toMatchObject({ status: "completed", payload: null, documentId: "bound-doc" });
+        expect(f.state.clients[0].eDocId).toBe("bound-doc");
+        expect(f.state.intents[0].status).toBe("reconciled_delivered");
+    });
+});
 describe("terminal generation release regressions", () => {
     async function exhausted() {
         const f = runtimeFixture(); f.state.jobs[0].attempts = 4;
@@ -192,7 +226,7 @@ describe("terminal generation release regressions", () => {
     it("keeps exhaustion manually recoverable before new enqueue", async () => {
         const f = await exhausted(); await expect(f.service.open(J, principal)).resolves.toMatchObject({ kind: "editable" });
     });
-    it.each(["claim", "creationIntentId", "draftIntentId", "humanIntentId", "providerDocumentId", "started", "uncertain", "wrong-generation", "wrong-fingerprint", "wrong-error", "job-cas", "authority-cas"])("refuses replacement with %s", async defect => {
+    it.each(["claim", "creationIntentId", "draftIntentId", "humanIntentId", "providerDocumentId", "started", "uncertain", "wrong-generation", "wrong-fingerprint", "wrong-error", "job-cas", "authority-cas"])("replacement with %s follows exact structural proof", async defect => {
         const f = await exhausted(), a = f.state.authorities[0];
         if (defect === "claim") Object.assign(a, { claimUserId: U, claimExpiresAt: new Date(Date.now() + 60000) });
         if (["creationIntentId", "draftIntentId", "humanIntentId"].includes(defect)) a[defect] = I;
@@ -204,7 +238,19 @@ describe("terminal generation release regressions", () => {
         if (defect === "job-cas") f.flags.jobZero = true;
         if (defect === "authority-cas") f.flags.casZero = true;
         const before = structuredClone(f.state);
-        await expect(new SbEformsignDocumentJobRepository(f.prisma).enqueue(enqueue)).rejects.toThrow(); expect(f.state).toEqual(before);
+        if (defect === "wrong-error") {
+            const repo = new SbEformsignDocumentJobRepository(f.prisma);
+            await expect(repo.enqueue({ ...enqueue, requestKey: "request" })).resolves.toMatchObject({ existing: true, job: { id: J } });
+            expect(f.state).toEqual(before);
+            const result = await repo.enqueue(enqueue);
+            expect(result.existing).toBe(false); expect(result.job.contractGeneration).not.toBe(G);
+            expect(f.state.jobs).toHaveLength(2);
+            expect(f.state.jobs[0]).toEqual({ ...before.jobs[0], status: "failed", progressStep: "superseded", activeKey: null, payload: null, leaseToken: null, heartbeatAt: null });
+            expect(f.state.authorities[0]).toMatchObject({ generation: result.job.contractGeneration, creationJobId: result.job.id, phase: "reserved", priorDocumentId: "prior-doc" });
+            expect(f.state.intents).toEqual(before.intents); expect(f.state.clients).toEqual(before.clients); expect(f.state.docs).toEqual(before.docs);
+        } else {
+            await expect(new SbEformsignDocumentJobRepository(f.prisma).enqueue(enqueue)).rejects.toThrow(); expect(f.state).toEqual(before);
+        }
     });
     it("an expired claim permits proven no-effect replacement", async () => {
         const f = await exhausted(); Object.assign(f.state.authorities[0], { claimUserId: U, claimExpiresAt: new Date(0), claimEpoch: 1n });
@@ -240,7 +286,7 @@ describe("terminal generation release regressions", () => {
         expect(f.state.intents[1]).toEqual(unrelated);
         await expect(new SbEformsignDocumentJobRepository(f.prisma).enqueue(enqueue)).rejects.toThrow();
     });
-    it.each(["intent-cas", "pointer-cas", "job-cas", "authority-cas", "document", "generation", "fingerprint", "branch", "client", "action", "attempt-race", "unconfirmed"])("completion rolls back on %s", async defect => {
+    it.each(["intent-cas", "pointer-cas", "mirror-cas", "job-cas", "authority-cas", "document", "generation", "fingerprint", "branch", "client", "action", "attempt-race", "unconfirmed"])("completion rolls back on %s", async defect => {
         const f = runtimeFixture(); await f.repository.claimCreation(intentInput, worker, { contractData: data, workflow: workflowPlan });
         Object.assign(f.state.jobs[0], { status: "requires_attention", leaseToken: null, activeKey: null });
         Object.assign(f.state.authorities[0], { phase: "creation_uncertain", providerDocumentId: "bound-doc" });
@@ -248,6 +294,7 @@ describe("terminal generation release regressions", () => {
         const opened = await f.repository.open(J, B, U);
         if (defect === "intent-cas") f.tx.eformsign_dispatch_intent.updateMany.mockResolvedValueOnce({ count: 0 });
         if (defect === "pointer-cas") f.tx.client.updateMany.mockResolvedValueOnce({ count: 0 });
+        if (defect === "mirror-cas") f.tx.eformsign_doc.updateMany.mockResolvedValueOnce({ count: 0 });
         if (defect === "job-cas") f.flags.jobZero = true;
         if (defect === "authority-cas") f.flags.casZero = true;
         if (defect === "document") f.state.intents[0].providerDocumentId = "other";
@@ -347,4 +394,164 @@ describe("contract recovery preserves the last attempt's display detail", () => 
         }
         assertWrites(f);
     });
+});
+
+
+describe("R4 independently committed stale-start repair", () => {
+    it.each(["creation_pending", "creation_uncertain"])("commits day8 purged create repair in %s despite open410", async phase => {
+        const f = runtimeFixture(); await f.repository.claimCreation(intentInput, worker, { contractData: data, workflow: workflowPlan });
+        Object.assign(f.state.jobs[0], { status: "requires_attention", leaseToken: null, completedAt: new Date(Date.now() - 8 * 86400000), payload: null });
+        f.state.authorities[0].phase = phase; const before = structuredClone(f.state);
+        await expect(f.repository.open(J, B, U)).rejects.toMatchObject({ code: "RECOVERY_PAYLOAD_EXPIRED", status: 410 });
+        expect(f.state.intents[0]).toEqual({ ...before.intents[0], status: "uncertain", uncertainAt: f.state.intents[0].uncertainAt, uncertainReason: "stale_start_after_terminal_job" });
+        expect(f.state.authorities).toEqual([{ ...before.authorities[0], phase: "creation_uncertain" }]);
+        expect(Number.isFinite(f.state.intents[0].uncertainAt.getTime())).toBe(true);
+        expect(f.state.jobs).toEqual(before.jobs);
+    });
+    it.each(["reserved", "creation_pending", "creation_uncertain"])("worker repairs exact create even when phase %s", async phase => {
+        const f = runtimeFixture(); await f.repository.claimCreation(intentInput, worker, { contractData: data, workflow: workflowPlan });
+        f.state.authorities[0].phase = phase; f.events.length = 0;
+        await f.repository.markAutomaticUncertain(worker);
+        expect(f.state.intents[0]).toMatchObject({ status: "uncertain", attemptCount: 1, providerDocumentId: null });
+        expect(f.state.authorities[0].phase).toBe("creation_uncertain");
+        if (phase === "creation_uncertain") expect(f.events).not.toContain("authority.cas");
+    });
+});
+
+describe("R4 held-state exits and atomic refusal", () => {
+    const jobs = (f: ReturnType<typeof runtimeFixture>) => new SbEformsignDocumentJobRepository(f.prisma);
+    async function stale(kind: "create" | "draft", purged = true) {
+        const f = runtimeFixture();
+        if (kind === "create") await f.repository.claimCreation(intentInput, worker, { contractData: data, workflow: workflowPlan });
+        else {
+            f.manual(); const opened = await f.repository.open(J, B, U);
+            await f.repository.beginDraft({ jobId: J, branchId: B, userId: U, claimEpoch: opened.claimEpoch }, "template_ABC", { companyId: "company-abc", creatorId: "service@example.test", workflow: workflowPlan });
+        }
+        Object.assign(f.state.jobs[0], { status: "requires_attention", leaseToken: null, completedAt: new Date(Date.now() - 8 * 86400000) });
+        if (purged) f.state.jobs[0].payload = null;
+        f.state.authorities[0].claimExpiresAt = new Date(0);
+        return f;
+    }
+    it.each(["create", "draft"] as const)("day8 %s commits repair, keeps fence, then exact operator proof permits row2 rotation", async kind => {
+        const f = await stale(kind), ref = kind === "create" ? I : f.state.authorities[0].draftIntentId;
+        const before = structuredClone(f.state);
+        await expect(f.repository.open(J, B, U)).rejects.toMatchObject({ code: "RECOVERY_PAYLOAD_EXPIRED" });
+        const row = f.state.intents.find((r: { id: string }) => r.id === ref);
+        expect(row).toMatchObject({ status: "uncertain", attemptCount: 1, providerDocumentId: null });
+        expect(f.state.jobs).toEqual(before.jobs);
+        expect(f.state.authorities[0]).toEqual({ ...before.authorities[0], phase: "creation_uncertain" });
+        const repaired = structuredClone(f.state);
+        await expect(jobs(f).enqueue({ ...enqueue, activeKey: "active" })).resolves.toMatchObject({ existing: true, job: { id: J } });
+        expect(f.state).toEqual(repaired);
+        await expect(jobs(f).enqueue(enqueue)).rejects.toThrow(); expect(f.state).toEqual(repaired);
+        await new SbEformsignDispatchIntentRepository(f.prisma).reconcile({ intentId: ref, branchId: B, outcome: "not_delivered", actorUserId: U, reason: "Provider console confirms no effect", attemptCount: 1 });
+        const reconciled = structuredClone(f.state);
+        await expect(jobs(f).enqueue({ ...enqueue, requestKey: "request", activeKey: "active" })).resolves.toMatchObject({ existing: true });
+        expect(f.state).toEqual(reconciled);
+        await expect(jobs(f).enqueue({ ...enqueue, activeKey: "active" })).resolves.toMatchObject({ existing: false });
+        expect(f.state.jobs[0]).toMatchObject({ status: "failed", activeKey: null, payload: null, progressStep: "superseded" });
+        expect(f.state.authorities[0].generation).not.toBe(G); expect(f.state.jobs).toHaveLength(2);
+        expect(f.state.intents).toEqual(reconciled.intents);
+    });
+    it.each([false, true])("expired retained payload=%s also commits independently", async retained => {
+        const f = await stale("draft", !retained), before = structuredClone(f.state.jobs);
+        await expect(f.repository.open(J, B, U)).rejects.toMatchObject({ code: "RECOVERY_PAYLOAD_EXPIRED" });
+        expect(f.state.intents[1].status).toBe("uncertain"); expect(f.state.jobs).toEqual(before);
+    });
+    it.each(["create", "draft"] as const)("withinTTL %s repair still claims but never dispatches unknown effect", async kind => {
+        const f = await stale(kind, false); f.state.jobs[0].completedAt = new Date();
+        await expect(f.service.open(J, { branchId: B, userId: U, branchRole: "manager" })).rejects.toMatchObject({ reason: "unverified_creation" });
+        expect(f.state.intents[kind === "create" ? 0 : 1].status).toBe("uncertain"); expect(f.draft.dispatchDraft).not.toHaveBeenCalled();
+        expect(f.state.authorities[0].claimEpoch).toBeGreaterThan(0n);
+    });
+    it.each(["lease", "same-user", "other-user", "active-job", "human", "candidate", "bound", "accepted", "uncertain", "phase"])("repair skips %s", async defect => {
+        const f = await stale("create", false), a = f.state.authorities[0]; f.state.jobs[0].completedAt = new Date();
+        if (defect === "lease") f.state.jobs[0].leaseToken = worker.leaseToken;
+        if (["same-user", "other-user"].includes(defect)) Object.assign(a, { claimUserId: defect === "same-user" ? U : I, claimExpiresAt: new Date(Date.now() + 60000) });
+        if (defect === "active-job") f.state.jobs[0].status = "processing";
+        if (defect === "human") a.humanIntentId = J;
+        if (defect === "candidate") f.state.intents[0].providerDocumentId = "candidate";
+        if (defect === "bound") a.providerDocumentId = "candidate";
+        if (["accepted", "uncertain"].includes(defect)) f.state.intents[0].status = defect;
+        if (defect === "phase") a.phase = "document_ready";
+        const before = structuredClone(f.state.intents); f.events.length = 0;
+        await f.repository.open(J, B, U).catch(() => undefined);
+        expect(f.state.intents).toEqual(before); expect(f.events).not.toContain("intents.updateMany");
+    });
+    it.each(["foreign", "generation", "intent-cas", "attempt", "authority-cas", "second-ref"])("repair rolls back all changes for %s", async defect => {
+        const f = await stale("draft"), a = f.state.authorities[0];
+        if (defect === "foreign") f.state.intents[1].clientId = 3;
+        if (defect === "generation") f.state.intents[1].generation = J;
+        if (defect === "intent-cas") f.tx.eformsign_dispatch_intent.updateMany.mockResolvedValueOnce({ count: 0 });
+        if (defect === "attempt") {
+            const update = f.tx.eformsign_dispatch_intent.updateMany.getMockImplementation()!;
+            f.tx.eformsign_dispatch_intent.updateMany.mockImplementationOnce(async (args: unknown) => { f.state.intents[1].attemptCount++; return update(args); });
+        }
+        if (defect === "authority-cas") f.flags.casZero = true;
+        if (defect === "second-ref") {
+            Object.assign(f.state.intents[0], { status: "started", attemptCount: 1 });
+            const update = f.tx.eformsign_dispatch_intent.updateMany.getMockImplementation()!;
+            f.tx.eformsign_dispatch_intent.updateMany.mockImplementationOnce(update).mockResolvedValueOnce({ count: 0 });
+        }
+        const before = structuredClone(f.state);
+        await expect(f.repository.open(J, B, U)).rejects.toMatchObject({ code: ["foreign", "generation"].includes(defect) ? "REQUEST_CONFLICT" : "RECOVERY_STALE" });
+        expect(f.state).toEqual(before); expect(f.state.authorities[0].claimEpoch).toBe(a.claimEpoch);
+    });
+    it("evaluates both linked starts and changes no other durable field on day8", async () => {
+        const f = await stale("draft"); Object.assign(f.state.intents[0], { status: "started", attemptCount: 1 });
+        await expect(f.repository.open(J, B, U)).rejects.toMatchObject({ status: 410 });
+        expect(f.state.intents.map((row: { status: string }) => row.status)).toEqual(["uncertain", "uncertain"]);
+    });
+    it.each(["reserved", "creation_pending", "creation_uncertain"])("worker CAS loss in %s rolls back", async phase => {
+        const f = runtimeFixture(); await f.repository.claimCreation(intentInput, worker, { contractData: data, workflow: workflowPlan });
+        f.state.authorities[0].phase = phase; f.tx.eformsign_dispatch_intent.updateMany.mockResolvedValueOnce({ count: 0 }); const before = structuredClone(f.state);
+        await expect(f.repository.markAutomaticUncertain(worker)).rejects.toMatchObject({ code: "RECOVERY_STALE" }); expect(f.state).toEqual(before);
+    });
+    it.each(["uncertain", "accepted"])("worker skips settled %s ref", async status => {
+        const f = runtimeFixture(); await f.repository.claimCreation(intentInput, worker, { contractData: data, workflow: workflowPlan });
+        f.state.intents[0].status = status; f.events.length = 0; await f.repository.markAutomaticUncertain(worker);
+        expect(f.events).not.toContain("intents.updateMany"); expect(f.state.intents[0].status).toBe(status);
+    });
+    it.each(["insert", "job-cas", "authority-cas", "unrelated", "live-claim", "prepared-attempt"])("row2 rotation rolls back/refuses %s", async defect => {
+        const f = await stale("create"); Object.assign(f.state.intents[0], { status: "reconciled_not_delivered", reconciledOutcome: "not_delivered", reconciledAt: new Date(), reconciledByUserId: U });
+        if (defect === "insert") f.flags.insertZero = true;
+        if (defect === "job-cas") f.flags.jobZero = true;
+        if (defect === "authority-cas") f.flags.casZero = true;
+        if (defect === "unrelated") f.state.intents.push({ ...f.state.intents[0], id: J, businessKey: "unrelated", status: "uncertain" });
+        if (defect === "live-claim") f.state.authorities[0].claimExpiresAt = new Date(Date.now() + 60000);
+        if (defect === "prepared-attempt") Object.assign(f.state.intents[0], { status: "prepared", attemptCount: 1, startedAt: new Date() });
+        const before = structuredClone(f.state); await expect(jobs(f).enqueue(enqueue)).rejects.toThrow(); expect(f.state).toEqual(before);
+    });
+});
+
+
+it("owned worker phase-CAS loss rolls back the exact intent repair", async () => {
+    const f = runtimeFixture(); await f.repository.claimCreation(intentInput, worker, { contractData: data, workflow: workflowPlan });
+    f.flags.casZero = true; const before = structuredClone(f.state);
+    await expect(f.repository.markAutomaticUncertain(worker)).rejects.toMatchObject({ code: "RECOVERY_STALE" }); expect(f.state).toEqual(before);
+});
+it.each(["lease", "active-key"])("pre-send exhausted row with residual %s follows structural no-effect proof", async defect => {
+    const f = runtimeFixture(); f.state.jobs[0].attempts = 4; await f.repository.recoverBeforeCreation(worker, null, "PRE_SEND_RETRY_EXHAUSTED");
+    if (defect === "lease") f.state.jobs[0].leaseToken = worker.leaseToken; else f.state.jobs[0].activeKey = "other-active";
+    const before = structuredClone(f.state);
+    const repo = new SbEformsignDocumentJobRepository(f.prisma);
+    await expect(repo.enqueue({ ...enqueue, requestKey: "request" })).resolves.toMatchObject({ existing: true, job: { id: J } });
+    expect(f.state).toEqual(before);
+    if (defect === "lease") {
+        await expect(repo.enqueue(enqueue)).rejects.toThrow(); expect(f.state).toEqual(before);
+    } else {
+        const result = await repo.enqueue(enqueue);
+        expect(result.existing).toBe(false); expect(result.job.contractGeneration).not.toBe(G); expect(f.state.jobs).toHaveLength(2);
+        expect(f.state.jobs[0]).toEqual({ ...before.jobs[0], status: "failed", progressStep: "superseded", activeKey: null, payload: null, leaseToken: null, heartbeatAt: null });
+        expect(f.state.authorities[0]).toMatchObject({ generation: result.job.contractGeneration, creationJobId: result.job.id, phase: "reserved", priorDocumentId: "prior-doc" });
+        expect(f.state.intents).toEqual(before.intents); expect(f.state.clients).toEqual(before.clients); expect(f.state.docs).toEqual(before.docs);
+    }
+});
+
+it("PLAN5 zero-ref markAutomaticUncertain under a valid lease leaves every authority field unchanged and emits no CAS", async () => {
+    const f = runtimeFixture(); f.state.jobs[0].status = "reconciling"; f.state.jobs[0].progressStep = "processing";
+    const before = structuredClone(f.state); f.events.length = 0;
+    await f.repository.markAutomaticUncertain(worker);
+    expect(f.state.authorities[0]).toEqual(before.authorities[0]); expect(f.state.authorities[0].phase).toBe("reserved");
+    expect(f.state).toEqual(before); expect(f.events).not.toContain("authority.cas");
 });

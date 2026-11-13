@@ -1,7 +1,7 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { QueryClient, QueryClientProvider, useQuery } from "@tanstack/react-query";
 
-import { MessagesPermissionGuard } from "../MessagesPermissionGuard";
+import { MessagesPermissionGuard, useMessagesPermissionGuard } from "../MessagesPermissionGuard";
 import { settingsApi } from "@/services/api";
 
 const mockPush = jest.fn();
@@ -21,7 +21,21 @@ jest.mock("@/services/api", () => ({
 
 const mockGetMessageSenderApproval = settingsApi.getMessageSenderApproval as jest.Mock;
 
-function renderGuard() {
+function PermissionProbe({ onState }: { onState?: (state: ReturnType<typeof useMessagesPermissionGuard>) => void }) {
+  const state = useMessagesPermissionGuard();
+  onState?.(state);
+  return <output data-testid="permission-state">{JSON.stringify(state)}</output>;
+}
+
+function EnabledApprovalObserver() {
+  useQuery({ queryKey: ["settings", "message-sender-approval"], queryFn: settingsApi.getMessageSenderApproval });
+  return null;
+}
+
+function renderGuard({ settingsObserver = false, onState }: {
+  settingsObserver?: boolean;
+  onState?: (state: ReturnType<typeof useMessagesPermissionGuard>) => void;
+} = {}) {
   const queryClient = new QueryClient({
     defaultOptions: {
       queries: { retry: false },
@@ -30,7 +44,9 @@ function renderGuard() {
 
   return render(
     <QueryClientProvider client={queryClient}>
+      {settingsObserver && <EnabledApprovalObserver />}
       <MessagesPermissionGuard>
+        <PermissionProbe onState={onState} />
         <div data-component="messages-route-child" data-testid="messages-route-child">
           child
         </div>
@@ -126,7 +142,7 @@ describe("MessagesPermissionGuard", () => {
 
     renderGuard();
 
-    // The form shell (and its per-area skeletons) must be visible right away;
+    // The form shell must be visible right away;
     // the old full-screen logo loader is reserved for the other routes.
     expect(screen.getByTestId("messages-route-child")).toBeInTheDocument();
     expect(
@@ -139,6 +155,71 @@ describe("MessagesPermissionGuard", () => {
       expect(screen.queryByText("메시지 전송 권한이 필요합니다.")).not.toBeInTheDocument();
     });
     expect(screen.getByTestId("messages-route-child")).toBeInTheDocument();
+  });
+
+  it.each(["/messages/compose", "/messages/new"])("renders %s immediately, queries approval and stays modal-free on denial", async (pathname) => {
+    mockPathname = pathname;
+    let resolveApproval!: (value: { isApproved: boolean }) => void;
+    mockGetMessageSenderApproval.mockReturnValue(new Promise(resolve => { resolveApproval = resolve; }));
+    renderGuard();
+    expect(screen.getByTestId("messages-route-child")).toBeInTheDocument();
+    expect(screen.getByTestId("permission-state")).toHaveTextContent('"isLoading":true');
+    expect(screen.queryByRole("status", { name: "아가잼잼을 불러오는 중" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(mockGetMessageSenderApproval).toHaveBeenCalledTimes(1);
+    await act(async () => { resolveApproval({ isApproved: false }); });
+    await waitFor(() => expect(screen.getByTestId("permission-state")).toHaveTextContent('"needsSenderApproval":true'));
+    expect(screen.getByTestId("permission-state")).toHaveTextContent('"isLoading":false');
+    expect(screen.getByTestId("messages-route-child")).toBeInTheDocument();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  it("allows approved compose", async () => {
+    mockPathname = "/messages/compose";
+    mockGetMessageSenderApproval.mockResolvedValue({ isApproved: true });
+    renderGuard();
+    await waitFor(() => expect(screen.getByTestId("permission-state")).toHaveTextContent('"isLoading":false'));
+    expect(screen.getByTestId("permission-state")).toHaveTextContent('"needsSenderApproval":false');
+    expect(screen.getByTestId("messages-route-child")).toBeInTheDocument();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  it.each(["/messages/compose", "/messages/new"])("denies send after no-data approval failure on %s without a modal", async (pathname) => {
+    mockPathname = pathname;
+    mockGetMessageSenderApproval.mockRejectedValue(new Error("QA-approval unavailable"));
+    renderGuard();
+    await waitFor(() => expect(screen.getByTestId("permission-state")).toHaveTextContent('"isLoading":false'));
+    expect(screen.getByTestId("permission-state")).toHaveTextContent('"needsSenderApproval":true');
+    expect(screen.getByTestId("messages-route-child")).toBeInTheDocument();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  it.each(["/messages/compose-extra", "/messages/compose/child"])("keeps %s protected", async (pathname) => {
+    mockPathname = pathname;
+    let resolveApproval!: (value: { isApproved: boolean; canRequest: boolean }) => void;
+    mockGetMessageSenderApproval.mockReturnValue(new Promise(resolve => { resolveApproval = resolve; }));
+    renderGuard();
+    expect(screen.queryByTestId("messages-route-child")).not.toBeInTheDocument();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    await act(async () => { resolveApproval({ isApproved: false, canRequest: true }); });
+    expect(await screen.findByText("메시지 전송 권한이 필요합니다.")).toBeInTheDocument();
+  });
+
+  it.each([true, false])("settings shares an enabled observer without permitting unknown approval; approved=%s", async (isApproved) => {
+    mockPathname = "/messages/settings";
+    let resolveApproval!: (value: { isApproved: boolean }) => void;
+    mockGetMessageSenderApproval.mockReturnValue(new Promise(resolve => { resolveApproval = resolve; }));
+    const onState = jest.fn();
+    renderGuard({ settingsObserver: true, onState });
+    expect(screen.getByTestId("messages-route-child")).toBeInTheDocument();
+    expect(screen.getByTestId("permission-state")).toHaveTextContent('"isLoading":true');
+    expect(onState.mock.calls.every(([state]) => state.isLoading || state.needsSenderApproval)).toBe(true);
+    expect(mockGetMessageSenderApproval).toHaveBeenCalledTimes(1);
+    await act(async () => { resolveApproval({ isApproved }); });
+    await waitFor(() => expect(screen.getByTestId("permission-state")).toHaveTextContent('"isLoading":false'));
+    expect(screen.getByTestId("permission-state")).toHaveTextContent(`"needsSenderApproval":${!isApproved}`);
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(mockGetMessageSenderApproval).toHaveBeenCalledTimes(1);
   });
 
   it("routes to /all when the approval modal cancel button is clicked", async () => {
@@ -214,6 +295,7 @@ describe("MessagesPermissionGuard", () => {
       renderGuard();
 
       expect(screen.getByTestId("messages-route-child")).toBeInTheDocument();
+      expect(screen.getByTestId("permission-state")).toHaveTextContent('"needsSenderApproval":true');
 
       await waitFor(() => {
         expect(mockGetMessageSenderApproval).not.toHaveBeenCalled();
