@@ -1,6 +1,7 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.SERVICE_RECORD_LAYOUT_ANSWER_KEYS = exports.SERVICE_RECORD_FORM_LAYOUT = void 0;
+exports.SERVICE_RECORD_LAYOUT_ANSWER_KEYS = exports.SERVICE_RECORD_FORM_LAYOUT = exports.SERVICE_RECORD_STOOL_COLOR_MAX_LENGTH = void 0;
+exports.SERVICE_RECORD_STOOL_COLOR_MAX_LENGTH = 80;
 exports.SERVICE_RECORD_FORM_LAYOUT = [
     {
         id: "mom",
