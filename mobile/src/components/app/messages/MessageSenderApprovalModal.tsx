@@ -3,6 +3,7 @@
 import { Dialog as DialogPrimitive } from "radix-ui";
 
 import { Button } from "@/components/ui/button";
+import { DialogHeader } from "@/components/ui/dialog";
 
 interface MessageSenderApprovalModalProps {
   open: boolean;
@@ -36,8 +37,8 @@ export function MessageSenderApprovalModal({
           onEscapeKeyDown={(event) => event.preventDefault()}
           onPointerDownOutside={(event) => event.preventDefault()}
         >
-          <div
-            className="flex flex-col gap-1.5 text-left"
+          <DialogHeader
+            className="gap-1.5"
             data-component="mobile_messages_sender-approval-modal_panel_header"
           >
             <DialogPrimitive.Title
@@ -67,7 +68,7 @@ export function MessageSenderApprovalModal({
                 문자 발신번호 승인 신청을 완료해야 메시지를 발송할 수 있습니다.
               </DialogPrimitive.Description>
             )}
-          </div>
+          </DialogHeader>
           <div className="mt-2 flex gap-2" data-component="mobile_messages_sender-approval-modal_panel_actions">
             {isConfirmOnly ? (
               <Button type="button" variant="v3" className="flex-1" onClick={onCancel}>

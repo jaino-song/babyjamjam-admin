@@ -78,6 +78,12 @@ describe("MessagesPermissionGuard", () => {
     expect(await screen.findByText("메시지 전송 권한이 필요합니다.")).toBeInTheDocument();
     expect(screen.getByText("문자 발신번호 승인 신청을 완료해야 메시지를 발송할 수 있습니다.")).toBeInTheDocument();
 
+    const modalHeader = document.querySelector(
+      '[data-component="mobile_messages_sender-approval-modal_panel_header"]',
+    );
+    expect(modalHeader).toHaveClass("text-center");
+    expect(modalHeader).not.toHaveClass("text-left");
+
     fireEvent.click(screen.getByRole("button", { name: "신청하기" }));
 
     expect(mockPush).toHaveBeenCalledWith("/messages/settings");
