@@ -51,7 +51,7 @@
   "dependencies": {
     "@ai-sdk/google": "^3.0.23",
     "@babyjamjam/shared": "file:vendor/shared-agent",
-    "@napi-rs/canvas": "0.1.100",
+    "@napi-rs/canvas": "1.1.0",
     "@nestjs/common": "^11.1.28",
     "@nestjs/config": "^4.0.4",
     "@nestjs/core": "^11.1.28",
