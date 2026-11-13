@@ -20,6 +20,7 @@ export const TENANT_MODELS: ReadonlySet<string> = new Set([
     "consultation_inquiry",
     "document",
     "document_category",
+    "eformsign_contract_authority",
     "eformsign_dispatch_intent",
     "eformsign_doc",
     "eformsign_document_job",

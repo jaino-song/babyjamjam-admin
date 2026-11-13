@@ -648,19 +648,6 @@ export default function ContractsPage() {
     router.replace("/contracts", { scroll: false });
   }, [router, searchParams]);
 
-  // A fresh send for a job that cannot be resent: drop whatever is in the form store and
-  // remount the form so no step, field or request key of an earlier send carries over.
-  const handleStartFreshContractCreation = useCallback(() => {
-    useFormStore.getState().resetAll();
-    setActiveSection("maternity");
-    setSelectedDocId(null);
-    setHasContractCreationSession(false);
-    setContractCreationActiveStep(0);
-    setContractCreationFormKey((key) => key + 1);
-    setHasOpenCreationDraft(true);
-    setIsCreating(true);
-  }, []);
-
   const handleCloseContractCreation = useCallback(() => {
     setIsCreating(false);
     setHasOpenCreationDraft(false);
@@ -1180,16 +1167,25 @@ export default function ContractsPage() {
         <DocumentJobRecoveryDialog
           key={recoverJobId}
           jobId={recoverJobId}
+          presentation="auto"
           hasCreationInProgress={isCreating || hasOpenCreationDraft || hasContractCreationSession}
-          onStartFresh={handleStartFreshContractCreation}
-          onViewDocument={(documentId) => {
+          onStartFresh={() => {
+            useFormStore.getState().resetAll();
+            setContractCreationFormKey(key => key + 1);
+            setContractCreationActiveStep(0);
+            setHasContractCreationSession(false);
             setActiveSection("maternity");
-            // Leaving creation mode only hides the form — it stays mounted (an open draft or a
-            // processing session), so the in-progress input is kept, not discarded.
-            setIsCreating(false);
+            setSelectedDocId(null);
+            setHasOpenCreationDraft(true);
+            setIsCreating(true);
+          }}
+          onViewDocument={documentId => {
+            setActiveSection("maternity");
             setRegisterClientDocumentId(null);
             setSelectedDocId(documentId);
+            setIsCreating(false);
           }}
+          data-component="desktop_contracts_document-job-recovery"
           onClose={() => setRecoverJobId(null)}
         />
       )}

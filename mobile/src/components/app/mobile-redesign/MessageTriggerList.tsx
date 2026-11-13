@@ -26,6 +26,7 @@ import type {
   TriggerEventType,
 } from "@/features/message-triggers/types";
 import type { MessageTriggerRuleGroupView, MessageTriggerRuleGroupList } from "@babyjamjam/shared/types/message";
+import { messageTriggerKeys } from "@/features/message-triggers/hooks/keys";
 import { messageRuleGroupsApi } from "@/services/api";
 import { useGetAuthUser } from "@/hooks/useGetAuthUser";
 import { fetchAllMessageLogs } from "@/lib/messages/logs";
@@ -162,7 +163,7 @@ export function MessageTriggerList({
   const queryClient = useQueryClient();
   const groupMutation = useMutation({
     mutationFn: (captured: { group: MessageTriggerRuleGroupView; branchId: string }) => { const { group } = captured; return messageRuleGroupsApi.update(group.id, { name: group.name, recipientMode: group.recipientMode, eventType: group.eventType, offsetType: group.offsetType, offsetDays: group.offsetDays, sendTime: group.sendTime, targetClientStatus: group.targetClientStatus, retryOnFailure: group.retryOnFailure, isActive: !group.isActive, recipientTemplates: group.recipientTemplates, expectedVersion: group.version }, captured.branchId); },
-    onSuccess: (_data, captured) => { void queryClient.invalidateQueries({ queryKey: ["message-trigger-rule-groups", captured.branchId] }); },
+    onSuccess: (_data, captured) => { void queryClient.invalidateQueries({ queryKey: [...messageTriggerKeys.all, "rule-groups", captured.branchId] }); },
   });
   const {
     data: rulesResponse,
@@ -171,7 +172,7 @@ export function MessageTriggerList({
     isPaused: isRulesPaused,
     refetch: refetchRules,
     isFetching: isRulesFetching,
-  } = useQuery<MessageTriggerRuleGroupList>({ queryKey: ["message-trigger-rule-groups", branchId], queryFn: () => messageRuleGroupsApi.list(branchId!), enabled: Boolean(branchId) });
+  } = useQuery<MessageTriggerRuleGroupList>({ queryKey: [...messageTriggerKeys.all, "rule-groups", branchId], queryFn: () => messageRuleGroupsApi.list(branchId!), enabled: Boolean(branchId) });
   const isRulesLoadPending = isRulesLoading || (isRulesPaused && rulesResponse === undefined);
   const updateRuleMutation = useUpdateMessageTriggerRule();
   const branchActivationMutation = useUpdateMessageTriggerRuleBranchActivation();

@@ -11,7 +11,7 @@ import { cn } from "@/lib/utils";
 
 const WEEKDAYS = ["일", "월", "화", "수", "목", "금", "토"];
 const ISO_DATE_PATTERN = /^(\d{4})-(\d{2})-(\d{2})$/;
-const MONTH_CELL_BASE = "relative flex min-h-[calc(44px*var(--glint-ui-scale,1))] min-w-0 flex-col items-center justify-center rounded-[calc(10px*var(--glint-ui-scale,1))] border text-[calc(14px*var(--glint-ui-scale,1))] font-bold leading-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-v3-primary";
+const MONTH_CELL_BASE = "relative flex min-h-[calc(44px*var(--glint-ui-scale,1))] min-w-0 flex-col items-center justify-center rounded-[calc(10px*var(--glint-ui-scale,1))] border text-[calc(16px*var(--glint-ui-scale,1))] font-bold leading-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-v3-primary";
 const HATCHED = "border-v3-border text-v3-text-muted/70 bg-[repeating-linear-gradient(135deg,#fff_0_5px,hsl(214_20%_96%)_5px_10px)]";
 const ICON_BUTTON = "h-[calc(44px*var(--glint-ui-scale,1))] w-[calc(44px*var(--glint-ui-scale,1))] rounded-[calc(12px*var(--glint-ui-scale,1))]";
 const ACTION_BUTTON = "h-[calc(44px*var(--glint-ui-scale,1))] flex-1 text-[calc(16px*var(--glint-ui-scale,1))] leading-[calc(24px*var(--glint-ui-scale,1))]";
@@ -96,7 +96,9 @@ function DateSheetContent({
     selectedServiceDate, sessionLabel, onApply, error, disabled = false,
 }: AdminServiceDateSheetProps) {
     const titleRef = useRef<HTMLHeadingElement>(null);
-    const initial = parseIsoDate(currentServiceDate) ? currentServiceDate : isoDateInKorea();
+    const hasCurrentDate = Boolean(parseIsoDate(currentServiceDate));
+    const today = isoDateInKorea();
+    const initial = hasCurrentDate ? currentServiceDate : today;
     const [month, setMonth] = useState(initial.slice(0, 7));
     const visibleMonth = windowStart && month < windowStart.slice(0, 7) ? windowStart.slice(0, 7)
         : windowEnd && month > windowEnd.slice(0, 7) ? windowEnd.slice(0, 7) : month;
@@ -105,6 +107,7 @@ function DateSheetContent({
     const [year, monthNumber] = visibleMonth.split("-").map(Number);
     const startWeekday = new Date(Date.UTC(year, monthNumber - 1, 1)).getUTCDay();
     const count = new Date(Date.UTC(year, monthNumber, 0)).getUTCDate();
+    const rows = Math.ceil((startWeekday + count) / 7);
     const shiftMonth = (delta: number) => new Date(Date.UTC(year, monthNumber - 1 + delta, 1)).toISOString().slice(0, 7);
     const previous = shiftMonth(-1);
     const next = shiftMonth(1);
@@ -133,7 +136,7 @@ function DateSheetContent({
                     <SheetDescription data-component={child("header_description")} className="text-[calc(14px*var(--glint-ui-scale,1))] leading-[calc(20px*var(--glint-ui-scale,1))] font-semibold text-v3-text-muted">새로운 날짜를 선택해 주세요.</SheetDescription>
                     <Button data-component={child("header_close")} type="button" variant="ghost" size="icon" aria-label="닫기" className={cn(ICON_BUTTON, "border-0 absolute right-[calc(8px*var(--glint-ui-scale,1))] top-[calc(12px*var(--glint-ui-scale,1))] text-v3-text-muted")} onClick={close}><X aria-hidden="true" /></Button>
                 </SheetHeader>
-                <div data-component={child("calendar")} data-slot="calendar" className="min-h-0 flex-1 overflow-y-auto px-[calc(16px*var(--glint-ui-scale,1))] pb-[calc(16px*var(--glint-ui-scale,1))]">
+                <div data-component={child("calendar")} data-slot="calendar" className="flex min-h-0 flex-1 flex-col overflow-y-auto px-[calc(16px*var(--glint-ui-scale,1))] pb-[calc(16px*var(--glint-ui-scale,1))]">
                     {startDate && endDate ? <p data-component={child("calendar_window")} className="mb-[calc(8px*var(--glint-ui-scale,1))] text-[calc(14px*var(--glint-ui-scale,1))] leading-[calc(20px*var(--glint-ui-scale,1))] font-semibold text-v3-text-muted">서비스 기간: {formatServiceDate(startDate, true)} ~ {formatServiceDate(endDate, true)}</p> : null}
                     <div data-component={child("calendar_navigation")} className="mb-[calc(8px*var(--glint-ui-scale,1))] flex items-center justify-between gap-[calc(8px*var(--glint-ui-scale,1))]">
                         <b data-component={child("calendar_navigation_month")} className="text-[calc(16px*var(--glint-ui-scale,1))] leading-[calc(24px*var(--glint-ui-scale,1))] text-v3-dark" aria-live="polite">{year}년 {monthNumber}월</b>
@@ -143,23 +146,26 @@ function DateSheetContent({
                         </div>
                     </div>
                     <div data-component={child("calendar_weekdays")} aria-hidden="true" className="mb-[calc(8px*var(--glint-ui-scale,1))] grid grid-cols-7 gap-[calc(4px*var(--glint-ui-scale,1))] text-center text-[calc(14px*var(--glint-ui-scale,1))] leading-[calc(20px*var(--glint-ui-scale,1))] font-bold text-v3-text-muted">{WEEKDAYS.map((label, index) => <span key={label} data-component={child(`calendar_weekdays_day-${index}`)}>{label}</span>)}</div>
-                    <div data-component={child("calendar_days")} data-slot="calendar-days" className="grid grid-cols-7 gap-[calc(4px*var(--glint-ui-scale,1))]">
+                    <div data-component={child("calendar_days")} data-slot="calendar-days" className="grid flex-1 grid-cols-7 auto-rows-[minmax(calc(44px*var(--glint-ui-scale,1)),1fr)] gap-[calc(4px*var(--glint-ui-scale,1))]"
+                        style={{ maxHeight: `calc((${rows} * 72px + ${rows - 1} * 4px) * var(--glint-ui-scale,1))` }}>
                         {Array.from({ length: startWeekday }, (_, index) => <span key={`empty-${index}`} data-component={child(`calendar_days_leading-blank-${index + 1}`)} />)}
                         {Array.from({ length: count }, (_, index) => {
                             const iso = `${visibleMonth}-${String(index + 1).padStart(2, "0")}`;
                             const usedBy = otherSessions.find((row) => row.serviceDate.slice(0, 10) === iso);
                             const isCurrent = iso === currentServiceDate;
                             const isSelected = iso === selected;
+                            const isToday = !hasCurrentDate && iso === today;
+                            const annotation = usedBy ? `${usedBy.sessionIndex}회차` : isCurrent ? "현재" : isToday ? "오늘" : null;
                             const blocked = !isSelectableServiceRecordDate(iso, calendar, windowStart, windowEnd);
                             const isInPeriod = Boolean(startDate && endDate && startDate.slice(0, 10) <= iso && iso <= endDate.slice(0, 10));
                             return <button key={iso} type="button" data-component={child(`calendar_days_day-${index + 1}`)} data-slot="calendar-day" data-day-state={blocked ? "blocked" : isCurrent ? "current" : "available"} data-in-period={isInPeriod ? "true" : undefined}
-                                aria-label={`${formatServiceDate(iso)}${usedBy ? ` ${usedBy.sessionIndex}회차` : isCurrent ? " 지금" : ""}`} aria-pressed={isSelected} disabled={blocked || disabled}
+                                aria-label={`${formatServiceDate(iso)}${annotation ? ` ${annotation}` : ""}`} aria-pressed={isSelected} disabled={blocked || disabled}
                                 onClick={() => { setSelected(iso); setApplyError(null); }}
                                 className={cn(MONTH_CELL_BASE, "border-v3-border bg-white text-v3-dark", !blocked && "cursor-pointer", blocked && HATCHED,
                                     isInPeriod && "border-[1.5px] border-v3-primary!",
                                     isCurrent && "border-dashed border-v3-primary! text-v3-primary", isSelected && "border-v3-primary! bg-v3-primary text-white")}>
                                 <span data-component={child(`calendar_days_day-${index + 1}_number`)}>{index + 1}</span>
-                                {usedBy || isCurrent ? <small data-component={child(`calendar_days_day-${index + 1}_annotation`)} className="mt-[calc(2px*var(--glint-ui-scale,1))] text-[calc(12px*var(--glint-ui-scale,1))] font-extrabold leading-none">{usedBy ? `${usedBy.sessionIndex}회차` : "지금"}</small> : null}
+                                {annotation ? <small data-component={child(`calendar_days_day-${index + 1}_annotation`)} className={cn("mt-[calc(2px*var(--glint-ui-scale,1))] text-[calc(12px*var(--glint-ui-scale,1))] font-extrabold leading-none", annotation === "오늘" && !isSelected && "text-v3-primary")}>{annotation}</small> : null}
                             </button>;
                         })}
                     </div>

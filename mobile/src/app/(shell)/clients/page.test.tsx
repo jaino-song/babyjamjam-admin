@@ -396,27 +396,26 @@ describe("ClientsPage list load states", () => {
     expect(screen.getByRole("button", { name: "진행 중 0" })).toBeInTheDocument();
   });
 
-  it("keeps cached rows with an inline retry notice above them", () => {
+  it("keeps cached rows with a quiet stale notice above them", () => {
     setList([makeClient(9)], true);
     renderPage(new QueryClient());
-    const alert = screen.getByRole("alert");
+    const notice = screen.getByRole("status");
     const row = screen.getByRole("button", { name: "고객 9" });
-    expect(alert).toHaveAttribute("data-size", "inline");
-    expect(alert).toHaveTextContent("최신 정보를 불러오지 못했습니다");
-    expect(alert.compareDocumentPosition(row) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(notice).toHaveAttribute("data-component", "mobile_clients_detail-sheet_stack_list-page_content_list-card_body_cached-error");
+    expect(notice).toHaveTextContent("새로 불러오지 못해 최근에 확인된 목록을 표시하고 있어요");
+    expect(notice.compareDocumentPosition(row) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(screen.getByTestId("list-card-header-count")).toHaveTextContent("1명");
     expect(screen.getByRole("button", { name: "전체 1" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "계약서 필요 1" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "진행 중 1" })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "다시 시도" }));
-    expect(refetch).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole("button", { name: "다시 시도" })).toBeNull();
   });
 
-  it("disables cached-data retry while fetching without hiding rows", () => {
+  it("keeps cached rows and no retry button while fetching", () => {
     setList([makeClient(9)], true, true);
     renderPage(new QueryClient());
     expect(screen.getByRole("button", { name: "고객 9" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "다시 시도" })).toBeDisabled();
+    expect(screen.queryByRole("button", { name: "다시 시도" })).toBeNull();
   });
 
   it("keeps the existing loading state before the first result", () => {

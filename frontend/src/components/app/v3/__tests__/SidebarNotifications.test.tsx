@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 
 import { useClientAlerts } from "@/hooks/useClientAlerts";
 import { useMarkAsRead, useNotifications } from "@/hooks/usePushNotification";
@@ -31,7 +31,7 @@ const mockedUseClientAlerts = jest.mocked(useClientAlerts);
 const mockedUseMarkAsRead = jest.mocked(useMarkAsRead);
 const mockedUseNotifications = jest.mocked(useNotifications);
 
-describe("SidebarNotifications loading state", () => {
+describe("SidebarNotifications", () => {
   beforeEach(() => {
     jest.clearAllMocks();
     mockedUseMarkAsRead.mockReturnValue({ mutate: jest.fn() } as unknown as ReturnType<typeof useMarkAsRead>);
@@ -114,6 +114,60 @@ describe("SidebarNotifications loading state", () => {
     fireEvent.keyDown(unread, { key: " " });
     expect(markAsRead).toHaveBeenCalledTimes(1);
     expect(mockPush).toHaveBeenCalledWith("/messages");
+  });
+
+  it("preserves unread-only read mutations, no-link behavior, counts and action navigation through the real shell", () => {
+    const mutate = jest.fn();
+    mockedUseMarkAsRead.mockReturnValue({ mutate } as unknown as ReturnType<typeof useMarkAsRead>);
+    mockedUseClientAlerts.mockReturnValue({ data: [{ id: 9, name: "서명 고객", reason: "서명 필요", priority: 2, createdAt: "2026-08-19" }], isLoading: false } as unknown as ReturnType<typeof useClientAlerts>);
+    mockedUseNotifications.mockReturnValue({ data: [
+      { id: 4, title: "읽은 알림", body: "내용", data: {}, sentAt: "2026-08-21", isRead: true },
+      { id: 5, title: "안 읽은 알림", body: "내용", data: {}, sentAt: "2026-08-20", isRead: false },
+    ], isLoading: false } as unknown as ReturnType<typeof useNotifications>);
+    render(<SidebarNotifications />);
+    expect(document.querySelector('[data-component="desktop_chrome_sidebar_notifications_trigger_badge"]')).toHaveTextContent("2");
+    fireEvent.click(screen.getByRole("button", { name: "알림 열기" }));
+    expect(screen.getByRole("dialog", { name: "알림" })).toHaveAttribute("data-source-component", "AnchoredNotificationModalShell");
+    fireEvent.click(screen.getByText("읽은 알림"));
+    expect(mutate).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByText("안 읽은 알림"));
+    expect(mutate).toHaveBeenCalledWith(5);
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    expect(mockPush).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByText("서명 고객"));
+    expect(mockPush).toHaveBeenCalledWith("/dashboard?clientId=9");
+    expect(mutate).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  it("keeps an empty error result read-only without inventing a notification", () => {
+    mockedUseClientAlerts.mockReturnValue({ data: [], isLoading: false, isError: true } as unknown as ReturnType<typeof useClientAlerts>);
+    mockedUseNotifications.mockReturnValue({ data: [], isLoading: false, isError: true } as unknown as ReturnType<typeof useNotifications>);
+    render(<SidebarNotifications />);
+    fireEvent.click(screen.getByRole("button", { name: "알림 열기" }));
+    expect(screen.getByText("새 알림이 없습니다")).toBeInTheDocument();
+    expect(mockPush).not.toHaveBeenCalled();
+  });
+
+  it.each(["Escape", "backdrop"] as const)("closes through the real shell on %s and returns focus to its trigger", async (dismissal) => {
+    mockedUseClientAlerts.mockReturnValue({ data: [], isLoading: false } as unknown as ReturnType<typeof useClientAlerts>);
+    mockedUseNotifications.mockReturnValue({ data: [], isLoading: false } as unknown as ReturnType<typeof useNotifications>);
+    render(<SidebarNotifications />);
+    const trigger = screen.getByRole("button", { name: "알림 열기" });
+
+    fireEvent.click(trigger);
+    await waitFor(() => expect(screen.getByRole("button", { name: "알림 닫기" })).toHaveFocus());
+    if (dismissal === "Escape") {
+      fireEvent.keyDown(screen.getByRole("dialog", { name: "알림" }), { key: "Escape" });
+    } else {
+      const backdrop = document.querySelector('[data-slot="anchored-notification-backdrop"]');
+      if (!backdrop) throw new Error("Notification backdrop is missing");
+      fireEvent.pointerDown(backdrop, { button: 0 });
+    }
+    await waitFor(() => {
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+      expect(trigger).toHaveFocus();
+    });
   });
 
   it("wraps a specific notification body without overlapping its time label", () => {

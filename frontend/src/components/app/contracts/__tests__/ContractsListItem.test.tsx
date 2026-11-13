@@ -35,11 +35,11 @@ function documentFixture(): EformsignDocument {
 }
 
 function title(container: HTMLElement): Element | null {
-  return container.querySelector('[data-component="desktop_contracts_tests_list-item_title"]');
+  return container.querySelector('[data-component="desktop_contracts_tests_list-item_content_title-row_title"]');
 }
 
 function subtitle(container: HTMLElement): Element | null {
-  return container.querySelector('[data-component="desktop_contracts_tests_list-item_subtitle"]');
+  return container.querySelector('[data-component="desktop_contracts_tests_list-item_content_subtitle"]');
 }
 
 describe("ContractsListItem", () => {

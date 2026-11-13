@@ -30,8 +30,8 @@ export interface OptionButtonGroupProps {
   className?: string;
 }
 
-// Border colours carry `!` because globals.css has an unlayered
-// `* { border-color }` reset that would otherwise beat layered utilities.
+// The global border reset is in @layer base, so Tailwind utilities win.
+// Border colours keep `!` only as a harmless explicit override.
 const OPTION_BASE =
   "inline-flex min-h-[calc(36px*var(--glint-ui-scale,1))] items-center gap-[calc(7px*var(--glint-ui-scale,1))] rounded-[12px] border-[1.5px] px-[calc(11px*var(--glint-ui-scale,1))] text-left text-[calc(12.5px*var(--glint-ui-scale,1))] transition-colors " +
   "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-v3-primary focus-visible:ring-offset-1 " +

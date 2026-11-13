@@ -11,6 +11,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Skeleton } from "@/components/ui/skeleton";
+import { useSheetExit } from "@/components/ui/use-sheet-exit";
 import { useToast } from "@/hooks/use-toast";
 import {
   holidayReviewApi,
@@ -47,6 +48,7 @@ export function HolidayReviewListDialog({
   onClose,
   dataComponent,
 }: HolidayReviewListDialogProps) {
+  const { open, close, exitWatcher } = useSheetExit();
   const { toast } = useToast();
   const [tab, setTab] = useState<FilterTab>("all");
   const [search, setSearch] = useState("");
@@ -123,17 +125,19 @@ export function HolidayReviewListDialog({
 
   return (
     <Sheet
-      open
-      onOpenChange={(open) => {
-        if (!open && !busy) onClose();
+      open={open}
+      onOpenChange={(next) => {
+        if (!next && !busy) close(onClose);
       }}
     >
       <SheetContent
         side="bottom"
+        inert={!open || undefined}
         data-component={dataComponent}
         data-source-component={SOURCE_COMPONENT}
         className="h-[calc(100dvh-24px)] gap-0 rounded-t-3xl p-0"
       >
+        {exitWatcher}
         <SheetHeader data-component={`${dataComponent}_header`} className="pr-12">
           <SheetTitle className="text-base leading-snug">{`${describeReviewEvent(event)} · 남은 고객 ${totalOpen}명`}</SheetTitle>
           <SheetDescription className="text-xs leading-relaxed">
@@ -304,7 +308,7 @@ export function HolidayReviewListDialog({
             variant="ghost"
             data-component={`${dataComponent}_footer_close-trigger`}
             disabled={busy}
-            onClick={onClose}
+            onClick={() => close(onClose)}
           >
             닫기
           </Button>

@@ -16,8 +16,8 @@ export interface ReadOnlySignatureProps {
   className?: string;
 }
 
-// Border colours carry `!` because globals.css has an unlayered
-// `* { border-color }` reset that would otherwise beat layered utilities.
+// The global border reset is in @layer base, so Tailwind utilities win.
+// Border colours keep `!` only as a harmless explicit override.
 const BOX_CLASS =
   "h-[calc(150px*var(--glint-ui-scale,1))] overflow-hidden rounded-[12px] border-[1.5px] border-v3-border!";
 

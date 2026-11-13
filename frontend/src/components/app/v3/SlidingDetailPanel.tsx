@@ -2,24 +2,33 @@
 
 import { useEffect, useRef, type ReactNode } from "react";
 import { ChevronLeft } from "lucide-react";
+import { PaneHeader } from "./PaneHeader";
 import { Button } from "@/components/ui/button";
 
-interface SlidingDetailPanelProps {
-    "data-component": string;
+interface SlidingDetailPanelBaseProps {
+    "data-component"?: string;
     open: boolean;
     onBack: () => void;
     backLabel: string;
     list: ReactNode;
     detail: ReactNode;
+    interactionPaused?: boolean;
 }
 
-/** Desktop counterpart of mobile SlidingCard: identical parallax, duration and easing. */
+type SlidingDetailPanelProps = SlidingDetailPanelBaseProps & (
+    | { motion?: "parallax"; headerActions?: never; headerSummary?: never; headerInset?: never }
+    | { motion: "page"; headerActions?: ReactNode; headerSummary?: ReactNode; headerInset?: "default" | "compact" }
+);
+
+/** Desktop drill-down with default mobile SlidingCard parallax or full-page motion. */
 export function SlidingDetailPanel({
     "data-component": dataComponent, open, onBack, backLabel, list, detail,
+    motion = "parallax", headerActions, headerSummary, headerInset, interactionPaused = false,
 }: SlidingDetailPanelProps) {
     const backRef = useRef<HTMLButtonElement>(null);
     const returnFocusRef = useRef<HTMLElement | null>(null);
     const wasOpenRef = useRef(false);
+    const hasHeaderSlots = motion === "page";
 
     useEffect(() => {
         if (open && !wasOpenRef.current) {
@@ -30,31 +39,40 @@ export function SlidingDetailPanel({
         wasOpenRef.current = open;
     }, [open]);
 
+    const backButton = (
+        <Button ref={backRef} variant="ghost" size="sm" onClick={onBack}
+            className="h-7 border-0 bg-transparent px-0 text-v3-primary shadow-none hover:bg-transparent hover:text-v3-primary"
+            data-component={dataComponent ? `${dataComponent}_detail-pane_header${hasHeaderSlots ? "_row" : ""}_back` : undefined}>
+            <ChevronLeft aria-hidden="true" />{backLabel}
+        </Button>
+    );
+
     return (
-        <div data-component={dataComponent} data-slot="sliding-detail-panel" data-source-component="SlidingDetailPanel"
-            data-open={open} className="sliding-detail-panel"
+        <div data-component={dataComponent || undefined} data-slot="sliding-detail-panel" data-source-component="SlidingDetailPanel"
+            data-open={open} data-motion={motion === "page" ? "page" : undefined} className="sliding-detail-panel"
             onKeyDown={(event) => {
-                if (event.key === "Escape" && open && !event.defaultPrevented) {
+                if (event.key === "Escape" && open && !event.defaultPrevented && !interactionPaused) {
                     event.preventDefault();
                     onBack();
                 }
             }}>
-            <div data-component={`${dataComponent}_list-pane`} data-slot="sliding-detail-list"
+            <div data-component={dataComponent ? `${dataComponent}_list-pane` : undefined} data-slot="sliding-detail-list"
                 className="sliding-detail-list" aria-hidden={open} inert={open || undefined}
                 onFocusCapture={(event) => { returnFocusRef.current = event.target as HTMLElement; }}>
                 {list}
-                <div data-slot="sliding-detail-dim" className="sliding-detail-dim" aria-hidden="true" />
+                {motion !== "page" ? <div data-slot="sliding-detail-dim" className="sliding-detail-dim" aria-hidden="true" /> : null}
             </div>
-            <div data-component={`${dataComponent}_detail-pane`} data-slot="sliding-detail-content"
+            <div data-component={dataComponent ? `${dataComponent}_detail-pane` : undefined} data-slot="sliding-detail-content"
                 className="sliding-detail-content" aria-hidden={!open} inert={!open || undefined}>
-                <div data-component={`${dataComponent}_detail-pane_header`} data-slot="sliding-detail-header" className="sliding-detail-header">
-                    <Button ref={backRef} variant="ghost" size="sm" onClick={onBack}
-                        className="h-7 border-0 bg-transparent px-0 text-v3-primary shadow-none hover:bg-transparent hover:text-v3-primary"
-                        data-component={`${dataComponent}_detail-pane_header_back`}>
-                        <ChevronLeft aria-hidden="true" />{backLabel}
-                    </Button>
+                <div data-component={dataComponent ? `${dataComponent}_detail-pane_header` : undefined} data-slot="sliding-detail-header" data-layout={hasHeaderSlots ? "stack" : undefined} className="sliding-detail-header">
+                    {hasHeaderSlots ? <>
+                        <PaneHeader variant="back" backRef={backRef} backLabel={backLabel} onBack={onBack} actions={headerActions} inset={headerInset}
+                            data-component={dataComponent ? `${dataComponent}_detail-pane_header_row` : undefined} />
+                        {headerSummary != null ? <div data-component={dataComponent ? `${dataComponent}_detail-pane_header_summary` : undefined}
+                            data-slot="sliding-detail-header-summary" className="sliding-detail-header-summary">{headerSummary}</div> : null}
+                    </> : backButton}
                 </div>
-                <div data-component={`${dataComponent}_detail-pane_body`} data-slot="sliding-detail-body" className="sliding-detail-body">
+                <div data-component={dataComponent ? `${dataComponent}_detail-pane_body` : undefined} data-slot="sliding-detail-body" className="sliding-detail-body">
                     {detail}
                 </div>
             </div>

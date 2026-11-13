@@ -16,6 +16,7 @@ import { KOREAN_WON_INPUT_PATTERN } from "domain/value-objects/money.vo";
 import { IsCanonicalPhone } from "./canonical-phone.validator";
 import {
     classifyRecovery,
+    getDocumentJobDisplayProjection,
     isContractJob,
     parseManualClaim,
 } from "domain/entities/eformsign-document-job.entity";
@@ -25,6 +26,7 @@ import type {
     EformsignDocumentJobType,
     EformsignDocumentJobEntity,
     RecoveryClassification,
+    EformsignDocumentJobDisplayProjection,
 } from "domain/entities/eformsign-document-job.entity";
 
 const EFORMSIGN_DOCUMENT_JOB_REQUEST_KEY_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,254}$/;
@@ -157,7 +159,13 @@ export class FinalizeEformsignDocumentJobDto {
     prefillEndDate?: string;
 }
 
-export interface EformsignDocumentJobResponseDto {
+export interface EformsignDocumentJobResponseDto extends EformsignDocumentJobDisplayProjection {
+    /** Display enum: service_contract | service_record | unknown; never recovery authority. */
+    documentKind: EformsignDocumentJobDisplayProjection["documentKind"];
+    /** Display enum: generate | review | unknown; service_record review is reserved, with no producer. */
+    displayOperation: EformsignDocumentJobDisplayProjection["displayOperation"];
+    /** Six allowlisted stable codes or null; null outside failed/requires_attention. See docs/api/document-jobs-display-projection.openapi.json. */
+    failureReasonCode: EformsignDocumentJobDisplayProjection["failureReasonCode"];
     jobId: string;
     jobType: EformsignDocumentJobType;
     source: EformsignDocumentJobSource;
@@ -165,6 +173,8 @@ export interface EformsignDocumentJobResponseDto {
     clientId: number | null;
     documentId: string | null;
     progressStep: string | null;
+    /** Furthest observed stage of the current attempt; display only. */
+    progressDetail: string | null;
     attempts: number;
     nextAttemptAt: string;
     startedAt: string | null;
@@ -174,6 +184,8 @@ export interface EformsignDocumentJobResponseDto {
     clientName: string | null;
     /** What staff may do with a stuck contract job; `null` for every other job. */
     recoveryKind: RecoveryClassification | null;
+    /** Safe routing hint only; never exposes generation or recovery authority. */
+    recoveryPresentation: "iframe" | "legacy" | null;
     /** Contract jobs only; revision jobs can carry free-text coordinator reasons. */
     lastErrorCode: string | null;
 }
@@ -217,22 +229,30 @@ export interface EformsignDocumentJobListResponseDto {
  */
 export const toEformsignDocumentJobResponse = (
     job: EformsignDocumentJobEntity,
-): EformsignDocumentJobResponseDto => ({
-    jobId: job.id,
-    jobType: job.jobType,
-    source: job.source,
-    status: job.status,
-    clientId: job.clientId,
-    documentId: job.documentId,
-    // A claim step embeds the claimer's user id and expiry; neither may leave the server.
-    progressStep: parseManualClaim(job.progressStep) ? "manual_in_progress" : job.progressStep,
-    attempts: job.attempts,
-    nextAttemptAt: job.nextAttemptAt.toISOString(),
-    startedAt: job.startedAt?.toISOString() ?? null,
-    completedAt: job.completedAt?.toISOString() ?? null,
-    createdAt: job.createdAt.toISOString(),
-    updatedAt: job.updatedAt.toISOString(),
-    clientName: job.clientName ?? null,
-    recoveryKind: classifyRecovery(job),
-    lastErrorCode: isContractJob(job) ? job.lastErrorCode : null,
-});
+): EformsignDocumentJobResponseDto => {
+    const recoveryKind = classifyRecovery(job);
+    return {
+        ...getDocumentJobDisplayProjection(job),
+        jobId: job.id,
+        jobType: job.jobType,
+        source: job.source,
+        status: job.status,
+        clientId: job.clientId,
+        documentId: job.documentId,
+        // A claim step embeds the claimer's user id and expiry; neither may leave the server.
+        progressStep: parseManualClaim(job.progressStep) ? "manual_in_progress" : job.progressStep,
+        progressDetail: ["client-started", "info-inserted", "creating", "sent"].includes(job.progressDetail ?? "")
+            ? job.progressDetail : null,
+        attempts: job.attempts,
+        nextAttemptAt: job.nextAttemptAt.toISOString(),
+        startedAt: job.startedAt?.toISOString() ?? null,
+        completedAt: job.completedAt?.toISOString() ?? null,
+        createdAt: job.createdAt.toISOString(),
+        updatedAt: job.updatedAt.toISOString(),
+        clientName: job.clientName ?? null,
+        recoveryKind,
+        recoveryPresentation: recoveryKind === null ? null
+            : job.contractGeneration ? (job.jobType === "create_document" ? "iframe" : null) : "legacy",
+        lastErrorCode: isContractJob(job) ? job.lastErrorCode : null,
+    };
+};

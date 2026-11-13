@@ -1,5 +1,6 @@
 import { Injectable } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
+import { assertAuthorityPointerWrite, AuthorityConflictError, discoverAuthorityClientIds } from "../utils/eformsign-contract-authority";
 import {
     EFORMSIGN_COMPLETED_STATUS_STORAGE_VALUES,
     UNASSIGNED_FORWARD_STATUS_CODES_AFTER_REVIEW_STAGE,
@@ -904,8 +905,10 @@ export class SbEformsignDocRepository implements IEformsignDocRepository {
     ): Promise<boolean | typeof LINK_OWNERSHIP_CHANGED> {
         // Unlocked read: only used to choose which client rows to lock first. The
         // document is re-read under its own lock below and the owner is compared.
-        const peeked = await tx.$queryRaw<Array<{ clientId: number | null }>>(Prisma.sql`
-            SELECT client_id AS "clientId"
+        const peeked = await tx.$queryRaw<Array<{ clientId: number | null; targetDocumentId: string | null; pointerClientIds: number[] }>>(Prisma.sql`
+            SELECT client_id AS "clientId",
+                (SELECT e_doc_id FROM client WHERE id = ${clientId} AND branch_id = ${branchid}::uuid) AS "targetDocumentId",
+                ARRAY(SELECT id FROM client WHERE e_doc_id = ${documentId} AND branch_id = ${branchid}::uuid) AS "pointerClientIds"
             FROM eformsign_doc
             WHERE document_id = ${documentId}
               AND branch_id = ${branchid}::uuid
@@ -916,10 +919,12 @@ export class SbEformsignDocRepository implements IEformsignDocRepository {
         if (!peek) {
             return false;
         }
+        const documentIds = [documentId, peek.targetDocumentId].filter((id): id is string => typeof id === "string");
+        const authorityOwners = await discoverAuthorityClientIds(tx, branchid, documentIds);
 
         // Lock both client rows (in id order, so competing relinks cannot invert) BEFORE
         // any document row: a missing target client must be a clean no-op.
-        const clientIdsToLock = [peek.clientId, clientId]
+        const clientIdsToLock = [peek.clientId, clientId, ...(peek.pointerClientIds ?? []), ...authorityOwners]
             .filter((id): id is number => id !== null && id !== undefined)
             .filter((id, index, ids) => ids.indexOf(id) === index)
             .sort((left, right) => left - right);
@@ -941,6 +946,8 @@ export class SbEformsignDocRepository implements IEformsignDocRepository {
         if (!targetClient) {
             return false;
         }
+        if ((targetClient.eDocId ?? null) !== (peek.targetDocumentId ?? null)) throw new AuthorityConflictError();
+        await assertAuthorityPointerWrite(tx, { branchId: branchid, clientIds: clientIdsToLock, documentIds });
 
         // Permanent purge takes this same row lock before clearing eDocId and
         // writing the tombstone. Whichever transaction follows it must observe

@@ -1,3 +1,8 @@
+jest.mock("infrastructure/database/utils/eformsign-contract-authority", () => ({
+    ...jest.requireActual("infrastructure/database/utils/eformsign-contract-authority"),
+    reserveAuthority: jest.fn().mockResolvedValue(undefined),
+}));
+import type { Prisma } from "@prisma/client";
 import { PrismaService } from "infrastructure/database/prisma.service";
 import { isEntityChangeHintsSuppressed } from "infrastructure/database/entity-change-suppression";
 import { SbEformsignDocumentJobRepository } from "infrastructure/database/repositories/sb.eformsign-document-job.repository";
@@ -80,13 +85,27 @@ describe("SbEformsignDocumentJobRepository", () => {
             $transaction: jest.fn(async (operation: (tx: unknown) => Promise<unknown>) => operation({
                 $queryRaw: queryRaw,
                 $executeRaw: executeRaw,
+                client: { findUnique: jest.fn().mockResolvedValue({ eDocId: null }) },
+                eformsign_dispatch_intent: { findFirst: jest.fn().mockResolvedValue(null) },
             })),
         } as unknown as PrismaService;
         repository = new SbEformsignDocumentJobRepository(prisma);
     });
 
+    afterEach(() => {
+        // All authorization/recovery/terminal paths preserve display detail; only a
+        // fresh attempt and updateProgress own writes to this column.
+        for (const [query] of [...queryRaw.mock.calls, ...executeRaw.mock.calls]) {
+            const statement = sqlText(query);
+            if (!/UPDATE "eformsign_document_job"/.test(statement)) continue;
+            if (statement.includes("WITH picked AS") || statement.includes("SET progress_step = CASE")) continue;
+            expect(statement).not.toContain("progress_detail");
+        }
+    });
+
     it("returns the inserted job and never exposes the payload in a log path", async () => {
-        queryRaw.mockResolvedValueOnce([row()]);
+        queryRaw.mockResolvedValueOnce([{ id: 7, e_doc_id: null }]).mockResolvedValueOnce([]).mockResolvedValueOnce([])
+            .mockResolvedValueOnce([row({ contract_generation: "33333333-3333-4333-8333-333333333333" })]);
         const result = await repository.enqueue({
             branchId: row().branch_id,
             clientId: 7,
@@ -99,11 +118,11 @@ describe("SbEformsignDocumentJobRepository", () => {
         });
         expect(result.existing).toBe(false);
         expect(result.job.status).toBe("queued");
-        expect(sqlText(queryRaw.mock.calls[0][0])).toContain("ON CONFLICT DO NOTHING");
+        expect(sqlText(queryRaw.mock.calls[3][0])).toContain("ON CONFLICT DO NOTHING");
     });
 
     it("returns the existing request or active job after a matching unique conflict", async () => {
-        queryRaw.mockResolvedValueOnce([]).mockResolvedValueOnce([row()]);
+        queryRaw.mockResolvedValueOnce([{ id: 7, e_doc_id: null }]).mockResolvedValueOnce([]).mockResolvedValueOnce([row()]);
         const result = await repository.enqueue({
             branchId: row().branch_id,
             clientId: 7,
@@ -115,12 +134,12 @@ describe("SbEformsignDocumentJobRepository", () => {
             payloadFingerprint: "a".repeat(64),
         });
         expect(result.existing).toBe(true);
-        expect(sqlText(queryRaw.mock.calls[1][0])).toContain("request_key");
-        expect(sqlText(queryRaw.mock.calls[1][0])).toContain("active_key");
+        expect(sqlText(queryRaw.mock.calls[2][0])).toContain("request_key");
+        expect(sqlText(queryRaw.mock.calls[2][0])).toContain("active_key");
     });
 
     it("rejects a reused request key with a different payload fingerprint", async () => {
-        queryRaw.mockResolvedValueOnce([]).mockResolvedValueOnce([row()]);
+        queryRaw.mockResolvedValueOnce([{ id: 7, e_doc_id: null }]).mockResolvedValueOnce([]).mockResolvedValueOnce([row()]);
         await expect(repository.enqueue({
             branchId: row().branch_id,
             clientId: 7,
@@ -375,6 +394,8 @@ describe("SbEformsignDocumentJobRepository", () => {
         const claimSql = sqlText(queryRaw.mock.calls[1][0]);
         expect(claimSql).toContain("FOR UPDATE SKIP LOCKED");
         expect(claimSql).toContain("attempts = attempts + 1");
+        expect(claimSql).toContain("progress_detail = NULL");
+        expect(claimed[0]?.progressDetail).toBeNull();
         expect(claimSql).toContain("lease_token = gen_random_uuid()");
     });
 
@@ -602,6 +623,47 @@ describe("SbEformsignDocumentJobRepository", () => {
     });
 
     describe("updateProgress monotonic marker", () => {
+        it.each([
+            ...["client-started", "info-inserted", "creating", "sent", "unknown", undefined].map(detail => ({ step: "dispatch_authorized", detail })),
+            { step: "creating", detail: "info-inserted" },
+        ])(
+            "orders incoming step $step and display detail $detail independently of the fence", async ({ step, detail }) => {
+                queryRaw.mockResolvedValueOnce([row({ status: "processing", progress_step: "dispatch_authorized", progress_detail: "info-inserted" })]);
+                const heartbeat = new Date();
+                await repository.updateProgress(dispatchJobId, dispatchLeaseToken, step, heartbeat, detail);
+                const query = queryRaw.mock.calls[0][0] as { text: string; values: unknown[] };
+                const statement = query.text.replace(/\s+/g, " ");
+                expect(statement).toContain("progress_detail = CASE WHEN array_position(ARRAY['client-started', 'info-inserted', 'creating', 'sent']::text[],");
+                expect(statement).toContain("> COALESCE(array_position(ARRAY['client-started', 'info-inserted', 'creating', 'sent']::text[], progress_detail), 0) THEN");
+                expect(statement).toContain("::text ELSE progress_detail END");
+                expect(statement).toContain("AND (progress_step IS DISTINCT FROM");
+                expect(statement).toContain("OR progress_detail IS DISTINCT FROM (CASE");
+                expect(query.values).toContain(detail ?? null);
+                queryRaw.mockResolvedValueOnce([row({ status: "processing", progress_step: "dispatch_authorized", progress_detail: "info-inserted" })]);
+                await repository.updateProgress(dispatchJobId, dispatchLeaseToken, step, heartbeat);
+                const baseline = queryRaw.mock.calls[1][0] as { text: string; values: unknown[] };
+                const stepAssignment = (sql: { text: string; values: unknown[] }) => {
+                    const fragment = sql.text.match(/SET progress_step = CASE[\s\S]*?(?=,\s*progress_detail =)/)?.[0];
+                    expect(fragment).toBeDefined();
+                    return { text: fragment, values: [...(fragment ?? "").matchAll(/\$(\d+)/g)].map(match => sql.values[Number(match[1]) - 1]) };
+                };
+                const assignment = stepAssignment(query);
+                expect(assignment).toEqual(stepAssignment(baseline));
+                if (detail !== undefined) expect(assignment.values).not.toContain(detail);
+            },
+        );
+
+        it("emits an unsuppressed hint when only display detail moves", async () => {
+            const suppressed: boolean[] = [];
+            queryRaw.mockImplementationOnce(async () => {
+                suppressed.push(isEntityChangeHintsSuppressed());
+                return [row({ status: "processing", progress_step: "dispatch_authorized", progress_detail: "info-inserted" })];
+            });
+            const updated = await repository.updateProgress(dispatchJobId, dispatchLeaseToken, "dispatch_authorized", new Date(), "info-inserted");
+            expect(updated?.progressDetail).toBe("info-inserted"); expect(suppressed).toEqual([false]); expect(queryRaw).toHaveBeenCalledTimes(1);
+            expect(sqlText(queryRaw.mock.calls[0][0])).toContain("OR progress_detail IS DISTINCT FROM");
+        });
+
         it("decides the step ordering in SQL while still advancing the heartbeat under the lease", async () => {
             queryRaw.mockResolvedValueOnce([row({ status: "processing", progress_step: "sent" })]);
             const heartbeatAt = new Date("2026-10-28T00:00:00Z");
@@ -723,6 +785,13 @@ describe("SbEformsignDocumentJobRepository", () => {
             expect(statement).toContain("AND source <> 'auto_finalize' THEN NULL");
             expect(statement).toContain("ELSE active_key");
         });
+    });
+
+    it("scheduleRetry preserves the failed attempt's display detail", async () => {
+        queryRaw.mockResolvedValueOnce([row({ status: "queued", progress_detail: "info-inserted" })]);
+        const retried = await repository.scheduleRetry(dispatchJobId, dispatchLeaseToken, new Date(), "PRE_SEND_FAILURE");
+        expect(retried?.progressDetail).toBe("info-inserted");
+        expect(sqlText(queryRaw.mock.calls[0][0])).not.toContain("progress_detail");
     });
 
     describe("claimRecovery", () => {
@@ -967,10 +1036,12 @@ describe("SbEformsignDocumentJobRepository", () => {
                 unresolvedJobIds: ["job-newest", "job-middle", "job-oldest"],
             });
 
-            const counts = sqlText(queryRaw.mock.calls[0][0]);
+            const countsQuery = queryRaw.mock.calls[0][0] as Prisma.Sql;
+            const counts = countsQuery.text;
             expect(counts).toContain("count(*) FILTER (WHERE status = 'requires_attention')::int AS attention_count");
             expect(counts).toMatch(/FILTER \(\s*WHERE \(source = 'staff'[\s\S]*?\) AND status = 'failed'\s+AND completed_at >= now\(\) - interval '7 days'\s*\)::int AS failed_count/);
-            expect(counts).toMatch(/FILTER \(WHERE \(source = 'staff'[\s\S]*?\) AND \(\s*\(status = 'failed' AND completed_at >= now\(\) - interval '7 days'\)\s*OR status = 'requires_attention'\s*\)\)::int AS unresolved_count/);
+            expect(counts).toMatch(/FILTER \(WHERE \(source = 'staff'[\s\S]*?\) AND \(\s*\(status = 'failed' AND progress_step IS DISTINCT FROM \$1 AND completed_at >= now\(\) - interval '7 days'\)\s*OR status = 'requires_attention'\s*\)\)::int AS unresolved_count/);
+            expect(countsQuery.values).toEqual(["superseded", branchId]);
             const ids = sqlText(queryRaw.mock.calls[1][0]);
             expect(ids).toContain(CONTRACT_FRAGMENT);
             expect(ids).toContain("ORDER BY completed_at DESC");
@@ -1008,6 +1079,32 @@ describe("SbEformsignDocumentJobRepository", () => {
             expect(recent).toContain("j.completed_at >= ");
             expect((queryRaw.mock.calls[2][0] as { values: unknown[] }).values).toContain(terminalSince);
             expect(queryRaw.mock.calls.every((call) => sqlText(call[0]).includes("LEFT JOIN \"client\" c ON c.id = j.client_id"))).toBe(true);
+        });
+
+        it("excludes superseded failures from popup counts and ids, retaining their recent history", async () => {
+            queryRaw.mockResolvedValueOnce([{ unresolved_count: 0 }]).mockResolvedValueOnce([]);
+            const summary = await repository.getSummary(branchId);
+            expect(summary.unresolvedCount).toBe(0); expect(summary.unresolvedJobIds).toEqual([]);
+            for (const [query] of queryRaw.mock.calls) {
+                const statement = query as Prisma.Sql;
+                const marker = statement.text.match(/status = 'failed' AND progress_step IS DISTINCT FROM \$(\d+)/);
+                expect(marker).not.toBeNull();
+                expect(statement.values[Number(marker?.[1]) - 1]).toBe("superseded");
+            }
+            queryRaw.mockReset();
+            queryRaw.mockResolvedValueOnce([]).mockResolvedValueOnce([]).mockResolvedValueOnce([
+                row({ id: "superseded", status: "failed", progress_step: "superseded", last_error_code: "PRE_SEND_RETRY_EXHAUSTED" }),
+            ]);
+            const list = await repository.listForBranch(branchId, new Date(0));
+            expect(list.requiresAttention).toEqual([]); expect(list.recent[0]?.status).toBe("failed");
+            expect(queryRaw.mock.calls[1][0]).toMatchObject({
+                text: expect.stringContaining("j.progress_step IS DISTINCT FROM $2"),
+                values: [branchId, "superseded"],
+            });
+            expect(queryRaw.mock.calls[2][0]).toMatchObject({
+                text: expect.stringContaining("OR j.progress_step = $3"),
+                values: [branchId, new Date(0), "superseded", 50],
+            });
         });
 
         it("maps rows that carry no client_name column", async () => {

@@ -10,9 +10,9 @@ export const EFORMSIGN_DISPATCH_INTENT_STATUS = {
 export type EformsignDispatchIntentStatus =
     (typeof EFORMSIGN_DISPATCH_INTENT_STATUS)[keyof typeof EFORMSIGN_DISPATCH_INTENT_STATUS];
 
-export type EformsignDispatchAction = "create" | "finalize";
+export type EformsignDispatchAction = "create" | "finalize" | "create_draft" | "manual_process";
 
-const EFORMSIGN_DISPATCH_ACTIONS: ReadonlySet<string> = new Set(["create", "finalize"]);
+const EFORMSIGN_DISPATCH_ACTIONS: ReadonlySet<string> = new Set(["create", "finalize", "create_draft", "manual_process"]);
 const EFORMSIGN_DISPATCH_INTENT_STATUSES: ReadonlySet<string> = new Set(
     Object.values(EFORMSIGN_DISPATCH_INTENT_STATUS),
 );

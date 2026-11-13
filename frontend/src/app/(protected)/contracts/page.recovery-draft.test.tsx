@@ -1,9 +1,10 @@
 /**
- * "계약서 보기" in the failed-job recovery dialog must not discard an ordinary editing draft.
+ * Closing iframe recovery must not discard an ordinary editing draft.
  * Real page + real ContractCreationForm (no stub): the form reports a creation *session* only
  * while it is processing, so an earlier-step draft has to stay mounted — hidden — on its own,
  * with its component-local state, and be reachable again from the page.
  */
+import { makeJob, makeJobList } from "@/features/document-jobs/testing/jobs-test-utils";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 
@@ -12,6 +13,8 @@ import { eformsignApi } from "@/services/api";
 import { useFormStore } from "@/stores/form-store";
 
 import ContractsPage from "./page";
+import { eformsignApi as manualApi } from "@/services/eformsign";
+jest.mock("@/services/eformsign", () => ({ eformsignApi: { openDocumentJobRecovery: jest.fn(), verifyDocumentJobRecovery: jest.fn() } }));
 
 let mockParams = new URLSearchParams();
 const mockReplace = jest.fn(() => {
@@ -22,6 +25,7 @@ let mockDocuments: EformsignDocument[] = [];
 jest.mock("next/navigation", () => ({
   useRouter: () => ({ push: jest.fn(), replace: mockReplace, refresh: jest.fn() }),
   useSearchParams: () => mockParams,
+  usePathname: () => '/contracts',
 }));
 
 jest.mock("@/hooks/useBusinessDayCalendar", () => ({
@@ -66,6 +70,7 @@ jest.mock("@/services/api", () => ({
     getLinkConfirmations: jest.fn().mockResolvedValue([]),
     getDocumentClientNames: jest.fn().mockResolvedValue([]),
     getDocumentStatusCounts: jest.fn().mockResolvedValue({ documents: [] }),
+    getDocumentJobs: jest.fn(),
     claimDocumentJobRecovery: jest.fn(),
     resolveDocumentJob: jest.fn(),
     getDocument: jest.fn(),
@@ -101,7 +106,7 @@ jest.mock("@/lib/sse/reconnecting-event-source", () => ({
   createReconnectingEventSource: () => ({ close: jest.fn() }),
 }));
 
-const claim = eformsignApi.claimDocumentJobRecovery as jest.Mock;
+const openRecovery = manualApi.openDocumentJobRecovery as jest.Mock;
 
 const targetDocument: EformsignDocument = {
   id: "doc-1", document_name: "복구 대상 계약서", document_number: "1",
@@ -136,31 +141,7 @@ function renderPage() {
 
 const sendButton = () => screen.getByRole("button", { name: /전자문서 발송/ });
 
-function verifyResultClaim() {
-  return {
-    job: {
-      jobId: "j1",
-      jobType: "create_document",
-      source: "staff",
-      status: "requires_attention",
-      clientId: 1,
-      documentId: "doc-1",
-      progressStep: null,
-      attempts: 1,
-      nextAttemptAt: "2026-11-01T00:00:00.000Z",
-      startedAt: null,
-      completedAt: null,
-      createdAt: "2026-11-01T00:00:00.000Z",
-      updatedAt: "2026-11-01T00:00:00.000Z",
-      clientName: "김하늘",
-      recoveryKind: "verify_result",
-      lastErrorCode: null,
-    },
-    recoveryKind: "verify_result",
-    payload: null,
-    claimExpiresAt: null,
-  };
-}
+
 
 
 const FORM_SELECTOR = '[data-component="desktop_contracts_creation_form"]';
@@ -191,28 +172,28 @@ describe("ContractsPage recovery dialog with an ordinary (non-processing) creati
     mockDocuments = [targetDocument];
     useFormStore.getState().resetAll();
     (eformsignApi.getDocument as jest.Mock).mockResolvedValue(targetDocument);
-    claim.mockResolvedValue(verifyResultClaim());
+    (eformsignApi.getDocumentJobs as jest.Mock).mockResolvedValue(makeJobList({ requiresAttention: [makeJob({ jobId: "11111111-1111-4111-8111-111111111111", recoveryPresentation: "iframe" })] }));
+    openRecovery.mockResolvedValue({ kind: "editable", document: { companyId: "company-abc", templateId: "template_ABC", documentId: "document012" }, jobId: "11111111-1111-4111-8111-111111111111", claimEpoch: "42", claimExpiresAt: new Date(Date.now() + 60000).toISOString() });
   });
 
-  it("keeps the draft form mounted, hidden, and returns to the same step and typed value", async () => {
+  it("keeps the draft form mounted with the same step and typed value after recovery closes", async () => {
     const page = renderPage();
     await startDraftOnEmployeeStep();
     const formBefore = document.querySelector(FORM_SELECTOR);
     expect(formBefore).not.toBeNull();
     expect(document.querySelector(DETAIL_SELECTOR)).not.toBeInTheDocument();
 
-    page.followLink("recoverJobId=j1");
-    await screen.findByText("전자문서 결과 확인 필요");
-    fireEvent.click(await screen.findByRole("button", { name: "계약서 보기" }));
+    page.followLink("recoverJobId=11111111-1111-4111-8111-111111111111");
+    await screen.findByText("전자문서 수동 전송");
+    fireEvent.click(await screen.findByRole("button", { name: "Close" }));
 
-    await waitFor(() => expect(document.querySelector(DETAIL_SELECTOR)).toBeInTheDocument());
-    // The very same form element is still in the DOM, inside the hidden wrapper.
+    await waitFor(() => expect(screen.queryByText("전자문서 수동 전송")).not.toBeInTheDocument());
+    // The same form stays visible after the nested recovery closes.
     expect(document.querySelector(FORM_SELECTOR)).toBe(formBefore);
-    expect(document.querySelector(SESSION_WRAPPER_SELECTOR)).toHaveClass("hidden");
+    expect(document.querySelector(SESSION_WRAPPER_SELECTOR)).not.toHaveClass("hidden");
 
     // Back to the form through the page's own entry point: same step, nothing lost.
-    fireEvent.click(sendButton());
-    await waitFor(() => expect(document.querySelector(DETAIL_SELECTOR)).not.toBeInTheDocument());
+    expect(document.querySelector(DETAIL_SELECTOR)).not.toBeInTheDocument();
     expect(document.querySelector(FORM_SELECTOR)).toBe(formBefore);
     expect(document.querySelector(SESSION_WRAPPER_SELECTOR)).not.toHaveClass("hidden");
     expect(dueDateInput()).not.toBeInTheDocument(); // still on the employee step, not reset to step 1
@@ -222,14 +203,43 @@ describe("ContractsPage recovery dialog with an ordinary (non-processing) creati
     expect(useFormStore.getState().name).toBe("김하늘");
   });
 
-  it("shows the document and mounts no form when no creation form is open", async () => {
-    mockParams = new URLSearchParams("recoverJobId=j1");
+  it("closes recovery without opening a document or mounting a form", async () => {
+    mockParams = new URLSearchParams("recoverJobId=11111111-1111-4111-8111-111111111111");
     renderPage();
 
-    fireEvent.click(await screen.findByRole("button", { name: "계약서 보기" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Close" }));
 
-    await waitFor(() => expect(document.querySelector(DETAIL_SELECTOR)).toBeInTheDocument());
+    await waitFor(() => expect(screen.queryByText("전자문서 수동 전송")).not.toBeInTheDocument());
     expect(document.querySelector(FORM_SELECTOR)).not.toBeInTheDocument();
     expect(document.querySelector(SESSION_WRAPPER_SELECTOR)).not.toBeInTheDocument();
   });
+  it("confirms discarding a legacy create draft, resolves first and then resets the form", async () => {
+    const job = makeJob({ jobId: "legacy-create", recoveryPresentation: "legacy" });
+    (eformsignApi.getDocumentJobs as jest.Mock).mockResolvedValue(makeJobList({ requiresAttention: [job] }));
+    (eformsignApi.claimDocumentJobRecovery as jest.Mock).mockResolvedValue({
+      job, recoveryKind: "manual_send", claimExpiresAt: null,
+      payload: { clientId: 7, contractData: { customerName: "QA-복구 고객", customerContact: "010-1234-5678", caretaker1Name: "QA-관리사", type: "A-가1", days: "10", area: "인천", contractDuration: "2026-11-01 ~ 2026-11-14", startDate: "2026-11-01", endDate: "2026-11-14", fullPrice: "1500000", grant: "1000000", actualPrice: "500000" } },
+    });
+    let finish!: () => void;
+    (eformsignApi.resolveDocumentJob as jest.Mock).mockImplementation(() => new Promise(resolve => { finish = () => resolve({ job, alreadyResolved: false }); }));
+    const page = renderPage(); await startDraftOnEmployeeStep();
+    const formBefore = document.querySelector(FORM_SELECTOR);
+    page.followLink("recoverJobId=legacy-create");
+    fireEvent.click(await screen.findByRole("button", { name: "새로 작성" }));
+    expect(await screen.findByText("작성 중인 내용이 있어요")).toBeInTheDocument();
+    expect(eformsignApi.resolveDocumentJob).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "취소" }));
+    expect(document.querySelector(FORM_SELECTOR)).toBe(formBefore);
+    expect(useFormStore.getState().name).toBe("김하늘");
+    fireEvent.click(screen.getByRole("button", { name: "새로 작성" }));
+    fireEvent.click(await screen.findByRole("button", { name: "버리고 새로 작성" }));
+    await waitFor(() => expect(eformsignApi.resolveDocumentJob).toHaveBeenCalledWith("legacy-create"));
+    expect(document.querySelector(FORM_SELECTOR)).toBe(formBefore);
+    await act(async () => finish());
+    await waitFor(() => expect(document.querySelector(FORM_SELECTOR)).not.toBe(formBefore));
+    expect(dueDateInput()).toBeInTheDocument(); expect(dueDateInput().value).toBe("");
+    expect(useFormStore.getState().name).toBe("");
+    expect(openRecovery).not.toHaveBeenCalled();
+  });
+
 });

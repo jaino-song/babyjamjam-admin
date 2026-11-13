@@ -7,9 +7,10 @@ import { SelectableItemFrame } from "@/components/ui/selectable-item";
 import { cn } from "@/lib/utils";
 
 type SlotClassNameArgs<T> = { index: number; item: T | null; isLoading: boolean };
-type SlotVariant = "unstyled" | "card";
+type SlotVariant = "unstyled" | "card" | "job";
 type SlotState = {
   isActive?: boolean;
+  isEmphasized?: boolean;
   isInteractive?: boolean;
 };
 
@@ -26,12 +27,14 @@ export interface AnimatedSlotListProps<T> {
   className?: string;
   itemDataComponent?: string;
   itemVariant?: SlotVariant;
+  size?: "full" | "compact";
+  getSlotProps?: (args: SlotClassNameArgs<T>) => { "aria-label"?: string; "data-slot"?: string; "data-component"?: string };
   /** Delay step in seconds (e.g. 0.04) */
   delayStepSeconds?: number;
   hideEmptySlots?: boolean;
   getSlotState?: (args: SlotClassNameArgs<T>) => SlotState;
   slotClassName?: string | ((args: SlotClassNameArgs<T>) => string);
-  onSlotClick?: (item: T, index: number) => void;
+  onSlotClick?: (item: T, index: number, element: HTMLElement) => void;
   getItemKey?: (item: T, index: number) => string;
   /** Optional server-owned section header; absent metadata keeps a flat list. */
   getItemGroup?: (item: T) => { id: string; label: string } | undefined;
@@ -55,6 +58,8 @@ export function AnimatedSlotList<T>({
   className,
   itemDataComponent,
   itemVariant = "card",
+  size = "full",
+  getSlotProps,
   delayStepSeconds = 0.04,
   hideEmptySlots = true,
   getSlotState,
@@ -133,9 +138,14 @@ export function AnimatedSlotList<T>({
         const isInteractive =
           slotState.isInteractive ?? Boolean(!isSlotLoading && item && onSlotClick);
         const variantClassName =
-          itemVariant === "card"
+          itemVariant !== "unstyled"
             ? cn(
-                "flex h-[calc(94px*var(--glint-ui-scale,1))] items-center gap-[calc(12px*var(--glint-ui-scale,1))] overflow-hidden rounded-[18px] p-[calc(16px*var(--glint-ui-scale,1))] text-left duration-200 [&>*:only-child]:w-full",
+                "flex items-center gap-[calc(12px*var(--glint-ui-scale,1))] overflow-hidden text-left duration-200 [&>*:only-child]:w-full",
+                size === "compact"
+                  ? "h-auto rounded-[calc(16px*var(--glint-ui-scale,1))] px-[calc(14px*var(--glint-ui-scale,1))] py-[calc(10px*var(--glint-ui-scale,1))]"
+                  : "h-[calc(94px*var(--glint-ui-scale,1))] rounded-[18px] p-[calc(16px*var(--glint-ui-scale,1))]",
+                itemVariant === "job" && "hover:bg-v3-primary-light/55",
+                itemVariant === "job" && slotState.isEmphasized && "bg-v3-primary-light/20",
                 isInteractive && "cursor-pointer"
               )
             : "";
@@ -151,7 +161,7 @@ export function AnimatedSlotList<T>({
             ? getItemKey(item, index)
             : `slot-${index}`;
 
-        if (isSlotLoading && itemVariant === "card") {
+        if (isSlotLoading && itemVariant !== "unstyled") {
           return (
             <SelectableItemFrame
               key={slotKey}
@@ -163,10 +173,13 @@ export function AnimatedSlotList<T>({
                 shouldAnimateSlot && "animate-v3-pop-up",
                 // Mirror the real card chrome so a mid-load mix of skeleton and
                 // rendered rows reads as one list, not broken cards.
-                "flex h-[calc(94px*var(--glint-ui-scale,1))] items-center gap-[calc(12px*var(--glint-ui-scale,1))] overflow-hidden rounded-[18px] p-[calc(16px*var(--glint-ui-scale,1))] text-left",
+                variantClassName,
                 computedSlotClassName
               )}
-              style={shouldAnimateSlot ? { animationDelay } : undefined}
+              style={{
+                ...(shouldAnimateSlot ? { animationDelay } : {}),
+                ...(itemVariant === "job" ? { "--v3-selectable-border": "214 20% 92%" } : {}),
+              } as React.CSSProperties}
             >
               <div
                 data-component={
@@ -183,7 +196,7 @@ export function AnimatedSlotList<T>({
 
         const handleClick =
           isInteractive && !isSlotLoading && item && onSlotClick
-            ? (event?: React.MouseEvent<HTMLDivElement>) => {
+            ? (element: HTMLDivElement, event?: React.MouseEvent<HTMLDivElement>) => {
                 if (event?.defaultPrevented) return;
                 if (event && event.target instanceof Element) {
                   const interactiveAncestor = event.target.closest(
@@ -195,7 +208,7 @@ export function AnimatedSlotList<T>({
                     event.currentTarget.contains(interactiveAncestor)
                   ) return;
                 }
-                onSlotClick(item, index);
+                onSlotClick(item, index, element);
               }
             : undefined;
 
@@ -210,8 +223,12 @@ export function AnimatedSlotList<T>({
               computedSlotClassName,
               shouldHide && "hidden"
             )}
-            style={shouldAnimateSlot ? { animationDelay } : undefined}
-            onClick={handleClick}
+            style={{
+              ...(shouldAnimateSlot ? { animationDelay } : {}),
+              ...(itemVariant === "job" ? { "--v3-selectable-border": "214 20% 92%" } : {}),
+            } as React.CSSProperties}
+            {...getSlotProps?.(slotArgs)}
+            onClick={handleClick ? event => handleClick(event.currentTarget, event) : undefined}
             {...(isInteractive && handleClick
               ? {
                   role: "button" as const,
@@ -222,7 +239,7 @@ export function AnimatedSlotList<T>({
                     if (event.defaultPrevented || event.target !== event.currentTarget) return;
                     if (event.key === "Enter" || event.key === " ") {
                       if (event.key === " ") event.preventDefault();
-                      handleClick();
+                      handleClick(event.currentTarget);
                     }
                   },
                 }
@@ -247,7 +264,7 @@ export function AnimatedSlotList<T>({
                 {group.label}
               </h3>
             ) : null}
-            {itemVariant === "card" ? (
+            {itemVariant !== "unstyled" ? (
               <SelectableItemFrame
                 asChild
                 isSelected={Boolean(slotState.isActive)}

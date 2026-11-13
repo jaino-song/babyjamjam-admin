@@ -191,3 +191,23 @@ describe("EformsignDocModule Phase5 revision bindings", () => {
         await module.close();
     });
 });
+
+import { EFORMSIGN_CONTRACT_RECOVERY_REPOSITORY, EFORMSIGN_CONTRACT_DRAFT_DISPATCH } from "domain/repositories/eformsign-contract-recovery.repository.interface";
+import { EFORMSIGN_DISPATCH_INTENT_REPOSITORY } from "domain/repositories/eformsign-dispatch-intent.repository.interface";
+import { SbEformsignContractRecoveryRepository } from "infrastructure/database/repositories/sb.eformsign-contract-recovery.repository";
+import { PrismaService } from "infrastructure/database/prisma.service";
+import { EformsignService } from "application/services/eformsign.service";
+import { EformsignHeadlessService } from "infrastructure/automation/eformsign-headless.service";
+import { EformsignDispatchBoundaryService } from "application/services/eformsign-dispatch-boundary.service";
+import { runtimeFixture, intentInput } from "../utils/eformsign-contract-recovery.fixture";
+it("resolves the production authority adapter and existing draft runner binding with no optional fence bypass", async () => {
+    const f = runtimeFixture(); f.state.authorities = [];
+    expect(bindingFor(EFORMSIGN_CONTRACT_DRAFT_DISPATCH)).toMatchObject({ useExisting: EformsignHeadlessService });
+    const module = await Test.createTestingModule({ providers: [bindingFor(EFORMSIGN_CONTRACT_RECOVERY_REPOSITORY)! as never,
+        EformsignDispatchBoundaryService, { provide: PrismaService, useValue: f.prisma }, { provide: EformsignService, useValue: f.options },
+        { provide: EFORMSIGN_DISPATCH_INTENT_REPOSITORY, useValue: {} }] }).compile();
+    try {
+        expect(module.get(EFORMSIGN_CONTRACT_RECOVERY_REPOSITORY)).toBeInstanceOf(SbEformsignContractRecoveryRepository);
+        await expect(module.get(EformsignDispatchBoundaryService).claim({ ...intentInput, action: "finalize", businessKey: "module-finalize", providerDocumentId: "bound-doc" })).resolves.toMatchObject({ disposition: "claimed" });
+    } finally { await module.close(); }
+});

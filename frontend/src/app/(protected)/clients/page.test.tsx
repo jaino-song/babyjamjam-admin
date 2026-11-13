@@ -453,7 +453,8 @@ describe("ClientsPage directory and summary contracts", () => {
     expect(source).toContain("isDirectoryInitialError");
     expect(source).toContain("directory.hasStaleData");
     expect(source).toContain("listSummary.isInitialError");
-    expect(source).toContain("listSummary.isRefreshError");
+    expect(source).not.toContain("desktop_clients_summary_stale");
+    expect(source).not.toContain("list-panel_cached-data-error_retry");
     expect(source).toContain("directory.isSuccessfulEmpty");
     expect(source).toContain('aria-label="고객 목록 다시 시도"');
     expect(source).toContain('aria-label="고객 목록 더 불러오기 다시 시도"');
@@ -603,6 +604,13 @@ describe("ClientsPage directory subtitle behavior", () => {
   });
 
   it("keeps the cached match count visible when a same-scope refresh fails", () => {
+    mockListSummary.mockReturnValue({
+      data: { dueDate: { thisMonth: 3, nextMonth: 5 }, byTab: { active: 7, waiting: 2 }, serviceEnd: { count: 1 }, total: 89 },
+      isBranchContextReady: true,
+      isInitialError: false,
+      isInitialLoading: false,
+      isRefreshError: true,
+    });
     renderClientsPage({
       clients: [{ id: 1, name: "기존 고객" }],
       data: { pages: [{ data: [{ id: 1, name: "기존 고객" }], total: 4 }] },
@@ -613,7 +621,12 @@ describe("ClientsPage directory subtitle behavior", () => {
     });
 
     expect(screen.getByTestId("clients-list-subtitle")).toHaveTextContent(/^4명$/);
-    expect(screen.getByRole("alert")).toHaveTextContent("최근에 확인된 목록을 표시하고 있어요");
+    const notice = document.querySelector('[data-component="desktop_clients_sections_section-content_list-section_split-layout_list-panel_cached-data-error"]');
+    expect(notice).toBeInTheDocument();
+    expect(notice).toHaveAttribute("role", "status");
+    expect(notice).toHaveTextContent("새로 불러오지 못해 최근에 확인된 목록을 표시하고 있어요");
+    expect(screen.queryByRole("button", { name: "고객 목록 다시 시도" })).toBeNull();
+    expect(screen.queryByText("고객 요약을 새로 불러오지 못했어요")).toBeNull();
   });
 
   it("does not render a URL-selected detail from branch A after a cross-tab branch switch to B", () => {

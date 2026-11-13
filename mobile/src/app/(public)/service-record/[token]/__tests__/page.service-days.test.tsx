@@ -31,8 +31,21 @@ const BASE_CONTEXT = { totalSessions: 7, startDate: "2026-12-14", endDate: "2026
 
 describe("token service-record page and per-client service days", () => {
     beforeEach(() => {
+        // Keep today's label deterministic while preserving real async timers.
+        jest.useFakeTimers({
+            now: new Date("2026-11-11T03:00:00Z"),
+            doNotFake: [
+                "hrtime", "nextTick", "performance", "queueMicrotask",
+                "requestAnimationFrame", "cancelAnimationFrame", "requestIdleCallback", "cancelIdleCallback",
+                "setImmediate", "clearImmediate", "setInterval", "clearInterval", "setTimeout", "clearTimeout",
+            ],
+        });
         window.sessionStorage.clear();
         window.history.replaceState(null, "", "/service-record/test-token");
+    });
+
+    afterEach(() => {
+        jest.useRealTimers();
     });
 
     async function openDaySix(context: Record<string, unknown>) {

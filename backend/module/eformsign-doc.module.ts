@@ -1,4 +1,7 @@
 import { Module } from "@nestjs/common";
+import { EformsignDocumentJobManualRecoveryService } from "application/services/eformsign-document-job-manual-recovery.service";
+import { SbEformsignContractRecoveryRepository } from "infrastructure/database/repositories/sb.eformsign-contract-recovery.repository";
+import { EFORMSIGN_CONTRACT_RECOVERY_REPOSITORY, EFORMSIGN_CONTRACT_DRAFT_DISPATCH } from "domain/repositories/eformsign-contract-recovery.repository.interface";
 import { VoidContractDocumentUsecase } from "application/usecases/eformsign-doc/void-contract-document.usecase";
 import { ConfigService } from "@nestjs/config";
 import { ListEformsignLinkConfirmationsUsecase } from "application/usecases/eformsign-doc/list-eformsign-link-confirmations.usecase";
@@ -129,6 +132,9 @@ import { HolidayModule } from "./holiday.module";
     ],
     controllers: [EformsignDocController],
     providers: [
+        EformsignDocumentJobManualRecoveryService,
+        { provide: EFORMSIGN_CONTRACT_RECOVERY_REPOSITORY, useClass: SbEformsignContractRecoveryRepository },
+        { provide: EFORMSIGN_CONTRACT_DRAFT_DISPATCH, useExisting: EformsignHeadlessService },
         VoidContractDocumentUsecase,
         BranchManagerGuard,
         CreateEmployeeUsecase,

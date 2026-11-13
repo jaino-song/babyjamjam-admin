@@ -1,3 +1,12 @@
+// These business regressions model the explicit legacy/no-authority dependency.
+// Real authority SQL and paired writer denials run in eformsign-contract-authority-writers.spec.ts.
+jest.mock("infrastructure/database/utils/eformsign-contract-authority", () => ({
+    ...jest.requireActual("infrastructure/database/utils/eformsign-contract-authority"),
+    discoverAuthorityClientIds: jest.fn().mockResolvedValue([]),
+    assertAuthorityPointerWrite: jest.fn().mockResolvedValue(undefined),
+    assertNoUnresolvedAuthorityForDocuments: jest.fn().mockResolvedValue(undefined),
+}));
+
 import { SbEformsignDocRepository } from "infrastructure/database/repositories/sb.eformsign-doc.repository";
 import { PrismaService } from "infrastructure/database/prisma.service";
 import {
@@ -1234,7 +1243,7 @@ describe("SbEformsignDocRepository", () => {
         const branchId = "44444444-4444-4444-4444-444444444444";
         const transaction = {
             $queryRaw: jest.fn()
-                .mockResolvedValueOnce([{ clientId: 55 }])
+                .mockResolvedValueOnce([{ clientId: 55, targetDocumentId: "doc-new", pointerClientIds: [] }])
                 .mockResolvedValueOnce([{
                     id: 55,
                     eDocId: "doc-new",
@@ -1354,7 +1363,7 @@ describe("SbEformsignDocRepository", () => {
             const $queryRaw = jest.fn().mockImplementation(async (query: { strings: string[] }) => {
                 const sql = query.strings.join(" ");
                 queries.push(sql);
-                if (sql.includes("FROM eformsign_doc") && !sql.includes("FOR UPDATE")) return [{ clientId: 55 }];
+                if (sql.includes("FROM eformsign_doc") && !sql.includes("FOR UPDATE")) return [{ clientId: 55, targetDocumentId: options.pointer, pointerClientIds: [] }];
                 if (sql.includes("FROM client")) {
                     return [{ id: 55, eDocId: options.pointer, branchId }];
                 }

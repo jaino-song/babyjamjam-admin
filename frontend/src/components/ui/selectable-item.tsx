@@ -40,8 +40,8 @@ export interface SelectableItemFrameProps extends React.HTMLAttributes<HTMLEleme
 /** Owns selection visuals without assigning interaction or ARIA semantics. */
 export const SelectableItemFrame = React.forwardRef<HTMLElement, SelectableItemFrameProps>(
   ({ isSelected, isInteractive = false, asChild = false, className, style, children, ...props }, ref) => {
-    // Keep this local to selection frames: the unlayered global border reset
-    // otherwise wins over the recipe's Tailwind utilities.
+    // The global border reset is in @layer base, so Tailwind utilities win.
+    // Inline borderColor stays as a harmless explicit override for selection frames.
     const borderColor = isSelected
       ? "hsl(var(--v3-primary))"
       : "hsl(var(--v3-selectable-border))";

@@ -20,6 +20,7 @@ export type EformsignDocumentJobPayload = Record<string, unknown>;
 export type { ServiceRecordRevisionGenerationInput } from "@babyjamjam/shared/types/service-record";
 
 export interface EformsignDocumentJobProps {
+    contractGeneration?: string | null;
     id: string;
     branchId: string;
     clientId: number | null;
@@ -32,6 +33,7 @@ export interface EformsignDocumentJobProps {
     payload: EformsignDocumentJobPayload | null;
     payloadFingerprint: string | null;
     progressStep: string | null;
+    progressDetail: string | null;
     attempts: number;
     nextAttemptAt: Date;
     heartbeatAt: Date | null;
@@ -51,7 +53,10 @@ export interface EformsignDocumentJobProps {
 export class EformsignDocumentJobEntity implements EformsignDocumentJobProps {
     constructor(props: EformsignDocumentJobProps) {
         Object.assign(this, props);
+        this.contractGeneration = props.contractGeneration ?? null;
     }
+
+    readonly contractGeneration?: string | null;
 
     declare readonly id: string;
     declare readonly branchId: string;
@@ -65,6 +70,7 @@ export class EformsignDocumentJobEntity implements EformsignDocumentJobProps {
     declare readonly payload: EformsignDocumentJobPayload | null;
     declare readonly payloadFingerprint: string | null;
     declare readonly progressStep: string | null;
+    declare readonly progressDetail: string | null;
     declare readonly attempts: number;
     declare readonly nextAttemptAt: Date;
     declare readonly heartbeatAt: Date | null;
@@ -91,6 +97,9 @@ export const DISPATCH_AUTHORIZED_PROGRESS_STEP = "dispatch_authorized";
 
 /** `progress_step` value of a job that staff resolved by hand in the eformsign iframe. */
 export const MANUAL_RESOLVED_PROGRESS_STEP = "manual_resolved";
+
+/** `progress_step` value of a failed job replaced by a new contract generation. */
+export const SUPERSEDED_PROGRESS_STEP = "superseded";
 
 const MANUAL_CLAIM_PREFIX = "manual_in_progress";
 export const MANUAL_CLAIM_TTL_MS = 10 * 60_000;
@@ -144,9 +153,78 @@ export type RecoveryClassification = "manual_send" | "verify_result";
 export function classifyRecovery(
     job: ContractJobShape & Pick<EformsignDocumentJobProps, "status" | "progressStep">,
 ): RecoveryClassification | null {
-    if (job.progressStep === MANUAL_RESOLVED_PROGRESS_STEP) return null;
+    if (job.progressStep === MANUAL_RESOLVED_PROGRESS_STEP || job.progressStep === SUPERSEDED_PROGRESS_STEP) return null;
     if (!isContractJob(job)) return null;
     if (job.status === "failed") return "manual_send";
     if (job.status === "requires_attention") return "verify_result";
     return null;
+}
+
+export type EformsignDocumentJobDocumentKind = "service_contract" | "service_record" | "unknown";
+export type EformsignDocumentJobDisplayOperation = "generate" | "review" | "unknown";
+export const EFORMSIGN_DOCUMENT_JOB_FAILURE_REASON_CODES = [
+    "PROVIDER_STATE_UNAVAILABLE",
+    "PRE_SEND_RETRY_EXHAUSTED",
+    "SERVICE_RECORD_REVISION_CAPABILITY_UNVERIFIED",
+    "SERVICE_RECORD_REVISION_MANUAL_REVIEW_REQUIRED",
+    "JOB_TARGET_NOT_OWNED_BY_BRANCH",
+    "RECOVERY_PAYLOAD_EXPIRED",
+] as const;
+export type EformsignDocumentJobFailureReasonCode = (typeof EFORMSIGN_DOCUMENT_JOB_FAILURE_REASON_CODES)[number];
+
+export interface EformsignDocumentJobDisplayProjection {
+    documentKind: EformsignDocumentJobDocumentKind;
+    displayOperation: EformsignDocumentJobDisplayOperation;
+    failureReasonCode: EformsignDocumentJobFailureReasonCode | null;
+}
+
+type DisplayJobShape = ContractJobShape & Pick<EformsignDocumentJobProps, "documentId" | "status" | "lastErrorCode">;
+
+function hasSchedulerFinalizeEvidence(job: DisplayJobShape): boolean {
+    if (!job.documentId || /\s/.test(job.documentId)) return false;
+    const prefix = `auto_finalize:${job.documentId}:`;
+    if (!job.requestKey.startsWith(prefix)) return false;
+    const kstDay = job.requestKey.slice(prefix.length);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(kstDay)) return false;
+    // The scheduler stores a KST calendar day, without a time or offset.
+    const calendarDay = new Date(`${kstDay}T00:00:00.000Z`);
+    return Number.isFinite(calendarDay.getTime()) && calendarDay.toISOString().slice(0, 10) === kstDay;
+}
+
+function classifyDisplayDocument(job: DisplayJobShape): Pick<EformsignDocumentJobDisplayProjection, "documentKind" | "displayOperation"> {
+    const unknown = { documentKind: "unknown", displayOperation: "unknown" } as const;
+    const { payload } = job;
+    if (payload === null) {
+        if (isContractJob(job)) {
+            return { documentKind: "service_contract", displayOperation: job.jobType === "create_document" ? "generate" : "review" };
+        }
+        if (job.source === "auto_finalize" && job.jobType === "finalize_document" && hasSchedulerFinalizeEvidence(job)) {
+            return { documentKind: "service_contract", displayOperation: "review" };
+        }
+        return unknown;
+    }
+    if (payload["kind"] === "service_record_revision" && payload["generationKind"] === "INITIAL_FINALIZATION"
+        && job.source === "auto_finalize" && job.jobType === "create_document") {
+        return { documentKind: "service_record", displayOperation: "generate" };
+    }
+    if (Object.prototype.hasOwnProperty.call(payload, "kind") || Object.prototype.hasOwnProperty.call(payload, "generationKind")) {
+        return unknown;
+    }
+    if (isContractJob(job) && job.jobType === "create_document" && payload["contractData"] !== null
+        && typeof payload["contractData"] === "object" && !Array.isArray(payload["contractData"])) {
+        return { documentKind: "service_contract", displayOperation: "generate" };
+    }
+    if ((isContractJob(job) || job.source === "auto_finalize") && job.jobType === "finalize_document"
+        && typeof payload["documentId"] === "string" && /^\S+$/.test(payload["documentId"])) {
+        return { documentKind: "service_contract", displayOperation: "review" };
+    }
+    return unknown;
+}
+
+/** Display evidence only: never use these labels or reasons to authorize recovery. */
+export function getDocumentJobDisplayProjection(job: DisplayJobShape): EformsignDocumentJobDisplayProjection {
+    const failureReasonCode = job.status === "failed" || job.status === "requires_attention"
+        ? EFORMSIGN_DOCUMENT_JOB_FAILURE_REASON_CODES.find((code) => code === job.lastErrorCode) ?? null
+        : null;
+    return { ...classifyDisplayDocument(job), failureReasonCode };
 }

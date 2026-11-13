@@ -161,7 +161,7 @@ describe("DocumentJobsProvider", () => {
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 
-  it("shows active + unresolved on the card and a failure marker only when something is unresolved", async () => {
+  it("prioritizes unresolved failures and otherwise displays the active count", async () => {
     jest
       .spyOn(eformsignApi, "getDocumentJobSummary")
       .mockResolvedValue(
@@ -175,10 +175,11 @@ describe("DocumentJobsProvider", () => {
       </JobsTestWrapper>,
     );
 
-    const card = await screen.findByRole("button", { name: "전자문서 처리중 작업 보기" });
-    await waitFor(() => expect(card).toHaveTextContent("5"));
+    const card = await screen.findByRole("button", { name: "문서 처리 실패 작업 보기" });
+    await waitFor(() => expect(card).toHaveTextContent("2"));
     expect(card).not.toHaveTextContent("99");
-    expect(card).toHaveTextContent("실패 2");
+    expect(card).toHaveTextContent("문서 처리 실패");
+    expect(card.querySelector('[data-slot="stat-mini-marker"]')).toBeNull();
     view.unmount();
 
     jest
@@ -247,7 +248,7 @@ describe("DocumentJobsProvider", () => {
     expect(screen.queryByText("전자문서 처리 현황을 불러오지 못했어요")).not.toBeInTheDocument();
 
     fireEvent.click(card);
-    await waitFor(() => expect(screen.getAllByText("전자문서 작업을 불러오지 못했습니다.")).toHaveLength(3));
+    await waitFor(() => expect(screen.getAllByText("전자문서 작업을 불러오지 못했습니다.")).toHaveLength(1));
 
     const callsBefore = getJobs.mock.calls.length;
     fireEvent.click(screen.getAllByRole("button", { name: "다시 시도" })[0]);
@@ -271,8 +272,8 @@ describe("DocumentJobsProvider", () => {
     fireEvent.click(await screen.findByRole("button", { name: "전자문서 처리중 작업 보기" }));
 
     // An active job is read-only: its row is shown, but it links nowhere.
-    expect(await screen.findByText("김하늘 · 검토완료")).toBeInTheDocument();
-    expect(screen.queryByRole("link", { name: /검토완료/ })).not.toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: /김하늘.*상세 보기$/ })).toBeInTheDocument();
+    expect(screen.queryByRole("link")).not.toBeInTheDocument();
   });
 
   describe("failure popup action routing", () => {

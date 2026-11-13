@@ -1038,7 +1038,7 @@ test("mobile date editing uses a bottom sheet and cancellation leaves data uncha
     expect(bounds!.x).toBeCloseTo(0, 0);
     expect(bounds!.width).toBeCloseTo(375, 0);
     expect(bounds!.y + bounds!.height).toBeCloseTo(812, 0);
-    await expect(dialog.getByRole("button", { name: "2026.07.01(수) 지금", exact: true })).toHaveAttribute("data-day-state", "current");
+    await expect(dialog.getByRole("button", { name: "2026.07.01(수) 현재", exact: true })).toHaveAttribute("data-day-state", "current");
     await expect(dialog.getByRole("button", { name: "선택", exact: true })).toBeDisabled();
     const selectedDay = dialog.getByRole("button", { name: "2026.07.20(월) 13회차", exact: true });
     await selectedDay.click();
