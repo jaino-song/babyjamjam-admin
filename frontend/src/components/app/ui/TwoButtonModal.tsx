@@ -152,10 +152,12 @@ export function TwoButtonModal({
             className="w-1/2"
             data-component={approvalButtonDataComponent ?? sub("approve")}
             disabled={isPending || approvalDisabled}
+            loading={isPending}
+            loadingLabel={pendingLabel ?? "처리 중"}
             aria-busy={isPending || undefined}
             onClick={onApprove}
           >
-            {isPending ? (pendingLabel ?? approvalLabel) : approvalLabel}
+            {approvalLabel}
           </Button>
         </DialogFooter>
       </DialogContent>
