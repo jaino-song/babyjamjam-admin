@@ -1,12 +1,12 @@
 import { render, screen } from "@testing-library/react";
 import { V3MainContent } from "./V3MainContent";
-let mockPathname = "/chat";
+let mockPathname = "/agent";
 jest.mock("next/navigation", () => ({ usePathname: () => mockPathname }));
 jest.mock("./FloatingQuickActions", () => ({ FloatingQuickActions: () => <div data-testid="quick-actions" /> }));
 jest.mock("./useGlintUiScale", () => ({ useGlintUiScaleStyle: () => ({}) }));
-describe("V3MainContent chat height", () => {
-    it("bounds chat within the sole main and reserves mobile bottom navigation space", () => {
-        mockPathname = "/chat";
+describe("V3MainContent agent height", () => {
+    it("bounds agent within the sole main and reserves mobile bottom navigation space", () => {
+        mockPathname = "/agent";
         render(<V3MainContent data-component="desktop_chrome_main"><section>채팅</section></V3MainContent>);
         expect(screen.getAllByRole("main")).toHaveLength(1);
         expect(screen.getByRole("main")).toHaveClass("h-dvh", "max-md:!pb-[calc(96px+env(safe-area-inset-bottom))]");

@@ -4,7 +4,7 @@ import { motion } from "framer-motion";
 import { ReactNode } from "react";
 import { usePathname } from "next/navigation";
 
-const SKIP_ANIMATION_ROUTES = ["/chat"];
+const SKIP_ANIMATION_ROUTES = ["/agent"];
 
 interface AnimatedContainerProps {
     children: ReactNode;

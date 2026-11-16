@@ -76,7 +76,7 @@ test.describe('chat auto-retry', () => {
     });
 
     // Navigate directly to chat page
-    await page.goto('/chat');
+    await page.goto('/agent');
     await page.waitForLoadState('networkidle');
 
     const chatInput = page.getByPlaceholder('무엇을 도와드릴까요?');
@@ -98,7 +98,7 @@ test.describe('chat auto-retry', () => {
     });
 
     // Navigate directly to chat page
-    await page.goto('/chat');
+    await page.goto('/agent');
     await page.waitForLoadState('networkidle');
 
     const chatInput = page.getByPlaceholder('무엇을 도와드릴까요?');
