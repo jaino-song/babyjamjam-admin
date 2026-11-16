@@ -13,7 +13,8 @@ it("places a two-action footer in a row with the secondary action taking one thi
 it("preserves the layout and width of a single-action footer", () => {
   const { container } = render(<DialogFooter><Button>닫기</Button></DialogFooter>);
   expect(container.firstChild).toHaveClass("flex-col-reverse", "sm:flex-row", "sm:justify-end");
-  expect(container.firstChild).not.toHaveClass("[&>*:first-child]:flex-1", "[&>*:last-child]:flex-[2]");
+  expect(container.firstChild).not.toHaveClass("[&>*:first-child]:flex-1");
+  expect(container.firstChild).not.toHaveClass("[&>*:last-child]:flex-[2]");
 });
 
 it("puts the optional close action before the proceeding action in a two-action footer", () => {
