@@ -36,7 +36,7 @@ export function ContractDocumentJobsList({ jobs, isLoading, error, onRetry, coll
     {error ? <Alert data-component={sub("error")} data-slot="contract-document-jobs-state" className="contract-document-jobs-state">
       <AlertTitle data-component={sub("error_title")}>전자문서 작업을 불러오지 못했습니다.</AlertTitle>
       {onRetry ? <Button type="button" variant="outline" size="sm" data-component={sub("error_retry")} onClick={onRetry}>다시 시도</Button> : null}
-    </Alert> : isLoading ? <LoadingState label="전자문서 작업 불러오는 중" data-component={sub("loading")!} /> : sections.map(({ key, field, title, icon: SectionIcon, empty }) => {
+    </Alert> : isLoading ? <LoadingState label="전자문서 작업 불러오는 중" data-component={sub("loading") ?? "desktop_contract-document-jobs-list_loading"} /> : sections.map(({ key, field, title, icon: SectionIcon, empty }) => {
       const items = jobs?.[field] ?? [];
       const expanded = !collapsed[key];
       const toggleId = `${id}-${key}-toggle`, contentId = `${id}-${key}-content`;

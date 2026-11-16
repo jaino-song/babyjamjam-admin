@@ -676,7 +676,6 @@ export function ClientRegistrationWizard({
                             <WizardFieldRow
                                 field="employeeLookup"
                                 message={employeeLookupMessage}
-                                loadingLabel={isEmployeeRetrying ? "제공인력 다시 확인 중" : undefined}
                                 action={
                                     <Button
                                         type="button"
@@ -699,7 +698,7 @@ export function ClientRegistrationWizard({
                                     readOnly
                                     error={!isEmployeeRetrying}
                                     aria-invalid={!isEmployeeRetrying}
-                                    aria-describedby={`${EMPLOYEE_LOOKUP_ROW.id}-message`}
+                                    aria-describedby={employeeLookupMessage ? `${EMPLOYEE_LOOKUP_ROW.id}-message` : undefined}
                                 />
                             </WizardFieldRow>
                         )}
