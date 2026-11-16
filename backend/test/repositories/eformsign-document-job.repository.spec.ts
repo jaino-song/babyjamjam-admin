@@ -1186,3 +1186,110 @@ describe("PLAN5 enqueue integrity refusals use the existing 409 boundary", () =>
         expect((error as ConflictException).getResponse()).toEqual({ code: "REQUEST_CONFLICT" }); expect(f.state).toEqual(before);
     });
 });
+
+describe("stored INITIAL finalization authorization and requeue", () => {
+    const revisionId = "00000000-0000-4000-8000-000000000021";
+    const stateId = "00000000-0000-4000-8000-000000000022";
+    const requestKey = `service-record-initial-finalization:${revisionId}`;
+    const immutablePayload = { frozen: true };
+    const fingerprint = jest.requireActual<typeof import("application/services/eformsign-document-job.service")>(
+        "application/services/eformsign-document-job.service").sha256CanonicalJson(immutablePayload);
+    const context = { ...dispatchContext, revisionId, revisionNumber: 1, businessFingerprint: fingerprint,
+        documentSyncStatus: "capability_unverified" as const, lifecycleStatus: "READY_TO_FINALIZE" };
+    function setup(options: { job?: Record<string, unknown>; state?: Record<string, unknown>; owner?: Record<string, unknown>; stateCas?: number; jobCas?: boolean } = {}) {
+        const stored = row({ id: dispatchJobId, branch_id: dispatchBranchId, status: "processing", progress_step: "preparing",
+            lease_token: dispatchLeaseToken, source: "auto_finalize", request_key: requestKey, payload_fingerprint: fingerprint,
+            payload: { kind: "service_record_revision", generationKind: "INITIAL_FINALIZATION", revisionId,
+                context, documentStateId: stateId, generation: "generation-1", documentVersion: 3,
+                snapshotReference: requestKey, immutablePayload, payloadFingerprint: fingerprint }, ...options.job });
+        const state = { id: stateId, branchId: dispatchBranchId, clientId: 7, serviceRecordCaseId: dispatchCaseId,
+            revisionId, operation: "record_snapshot", generation: "generation-1", documentVersion: 3,
+            inputFingerprint: fingerprint, workflowScope: { generationKind: "INITIAL_FINALIZATION", requestKey },
+            status: "capability_unverified", version: 0, ...options.state };
+        const owner = { currentRevisionId: revisionId, currentUsableRevisionId: null, currentUsableDocumentVersion: null,
+            status: "READY_TO_FINALIZE", revisionNumber: 1, formVersion: 3, formVersionAtConfirm: 3, ...options.owner };
+        const statements: string[] = [];
+        const queryRaw = jest.fn(async (query: unknown) => {
+            const sql = sqlText(query); statements.push(sql);
+            if (sql.includes('UPDATE "eformsign_document_job"')) {
+                return options.jobCas === false ? [] : [row({ ...stored, status: "queued", attempts: 0 })];
+            }
+            if (sql.includes('FROM "eformsign_document_job"')) return [stored];
+            if (sql.includes('FROM "service_record_revision_document_state"')) return [state];
+            if (sql.includes('FROM "service_record_case" AS record')) return [owner];
+            if (sql.includes('FROM "client"')) return [{ id: 7 }];
+            if (sql.includes('FROM "service_record_case"')) return [{ id: dispatchCaseId }];
+            return [];
+        });
+        const executeRaw = jest.fn(async (query: unknown) => { statements.push(sqlText(query)); return options.stateCas ?? 1; });
+        const tx = { $queryRaw: queryRaw, $executeRaw: executeRaw };
+        const prisma = { $transaction: jest.fn(async (cb: (client: typeof tx) => Promise<unknown>) => cb(tx)) };
+        return { repository: new SbEformsignDocumentJobRepository(prisma as never), stored, state, statements, queryRaw, executeRaw, tx };
+    }
+    const authorize = (f: ReturnType<typeof setup>) => f.repository.authorizeForDispatch({ jobId: dispatchJobId, leaseToken: dispatchLeaseToken, expectedContext: context });
+    const requeue = (f: ReturnType<typeof setup>) => f.repository.requeueInitialFinalizationJob({ jobId: dispatchJobId, branchId: dispatchBranchId });
+    it("allows INITIAL with client -> job -> state -> marker -> processing order and selects durable identity", async () => {
+        const f = setup();
+        await expect(authorize(f)).resolves.toEqual({ kind: "allow" });
+        const clientLock = f.statements.findIndex((sql) => sql.includes('FROM "client"') && sql.includes("FOR UPDATE"));
+        const jobLock = f.statements.findIndex((sql) => sql.includes('FROM "eformsign_document_job"') && sql.includes("FOR UPDATE"));
+        const stateLock = f.statements.findIndex((sql) => sql.includes('FROM "service_record_revision_document_state"') && sql.includes("FOR UPDATE"));
+        const marker = f.statements.findIndex((sql) => sql.includes('UPDATE "eformsign_document_job"'));
+        const processing = f.statements.findIndex((sql) => sql.includes("status = 'processing', step = 'dispatch_authorized'"));
+        expect(clientLock).toBeGreaterThanOrEqual(0);
+        expect(jobLock).toBeGreaterThan(clientLock); expect(stateLock).toBeGreaterThan(jobLock);
+        expect(marker).toBeGreaterThan(stateLock); expect(processing).toBeGreaterThan(marker);
+        expect(f.statements[jobLock]).toContain('"source", "request_key"');
+        expect(f.statements.find((sql) => sql.includes('FROM "service_record_case" AS record'))).toContain("client.deleted_at IS NULL");
+    });
+    it.each([
+        { job: { request_key: "service-record-revision:revision-1" }, reason: "SERVICE_RECORD_REVISION_CAPABILITY_UNVERIFIED" },
+        { state: { workflowScope: { requestKey } }, reason: "SERVICE_RECORD_INITIAL_FINALIZATION_SCOPE_CHANGED" },
+        { state: { status: "processing" }, reason: "SERVICE_RECORD_INITIAL_FINALIZATION_STATE_NOT_READY" },
+        { owner: { currentRevisionId: "other" }, reason: "SERVICE_RECORD_INITIAL_FINALIZATION_SCOPE_CHANGED" },
+        { owner: { currentUsableRevisionId: "other", currentUsableDocumentVersion: 2 }, reason: "SERVICE_RECORD_INITIAL_FINALIZATION_SCOPE_CHANGED" },
+        { job: { payload_fingerprint: "c".repeat(64) }, reason: "SERVICE_RECORD_INITIAL_FINALIZATION_SCOPE_CHANGED" },
+    ])("rejects stale INITIAL without writes %#", async ({ reason, ...options }) => {
+        const f = setup(options);
+        await expect(authorize(f)).resolves.toEqual({ kind: "stale", reason });
+        expect(f.statements.some((sql) => sql.includes("UPDATE" ) && !sql.includes("FOR UPDATE"))).toBe(false);
+    });
+    it("retains the public caller-transaction revision refusal", async () => {
+        const f = setup();
+        await expect(f.repository.authorizeForDispatchInTransaction(f.tx as never, { jobId: dispatchJobId,
+            leaseToken: dispatchLeaseToken, expectedContext: context })).resolves.toEqual({ kind: "stale", reason: "SERVICE_RECORD_REVISION_CAPABILITY_UNVERIFIED" });
+        expect(f.queryRaw).not.toHaveBeenCalled();
+    });
+    it("rolls back a lost state authorization CAS as lost rather than pre-send failure", async () => {
+        const f = setup({ stateCas: 0 });
+        await expect(authorize(f)).resolves.toEqual({ kind: "lost", reason: "SERVICE_RECORD_WRITE_TARGET_CHANGED" });
+    });
+    it("requeues a safe stopped INITIAL with pending state and zero job attempts", async () => {
+        const f = setup({ job: { status: "requires_attention" } });
+        await expect(requeue(f)).resolves.toMatchObject({ kind: "requeued", job: { status: "queued", attempts: 0 } });
+        const stateUpdate = f.statements.find((sql) => sql.includes('UPDATE "service_record_revision_document_state"'));
+        expect(stateUpdate).toContain("status = 'pending'"); expect(stateUpdate).toContain("attempts = attempts + 1");
+        const jobUpdate = f.statements.find((sql) => sql.includes('UPDATE "eformsign_document_job"'));
+        expect(jobUpdate).toContain("attempts = 0"); expect(jobUpdate).not.toContain("active_key =");
+    });
+    it.each([
+        { progress_step: "creating" }, { progress_step: "dispatch_authorized" }, { status: "processing" },
+        { status: "queued" }, { status: "completed" }, { source: "staff" },
+    ])("does not requeue unsafe or non-INITIAL jobs %#", async (change) => {
+        const f = setup({ job: { status: "requires_attention", ...change } });
+        await expect(requeue(f)).resolves.toMatchObject({ kind: "not_requeueable" });
+        expect(f.executeRaw).not.toHaveBeenCalled();
+        expect(f.statements.some((sql) => sql.includes('UPDATE "eformsign_document_job"'))).toBe(false);
+    });
+    it("hides cross-branch jobs before locking", async () => {
+        const f = setup({ job: { branch_id: "other" } });
+        await expect(requeue(f)).resolves.toEqual({ kind: "not_found" });
+        expect(f.statements).toHaveLength(1); expect(f.executeRaw).not.toHaveBeenCalled();
+    });
+    it("throws when either requeue CAS loses", async () => {
+        for (const change of [{ stateCas: 0 }, { jobCas: false }]) {
+            const f = setup({ job: { status: "failed" }, ...change });
+            await expect(requeue(f)).rejects.toBeInstanceOf(ConflictException);
+        }
+    });
+});

@@ -35,6 +35,9 @@ Verified fixes and limits
 Activation limitations
 
 - Production revision jobs are currently not reachable even if trusted facts/capability are supplied: both authorization entrypoints unconditionally reject every revision-bound context ([sb.eformsign-document-job.repository.ts:243](/Users/jaino/Development/babyjamjam-admin/admin-service-record-editor/backend/infrastructure/database/repositories/sb.eformsign-document-job.repository.ts:243), [sb.eformsign-document-job.repository.ts:515](/Users/jaino/Development/babyjamjam-admin/admin-service-record-editor/backend/infrastructure/database/repositories/sb.eformsign-document-job.repository.ts:515)), and the module binds explicit unverified adapters ([eformsign-doc.module.ts:180](/Users/jaino/Development/babyjamjam-admin/admin-service-record-editor/backend/module/eformsign-doc.module.ts:180)). Under the approved contract this is an explicit Phase0 activation limitation, not itself a Phase5 defect; mocked positive-route evidence is not production reachability proof.
+
+> 2026-11-16 사용자 결정: INITIAL_FINALIZATION은 live 검증 없이 코드의 저장 행 기반 승인 후 생성을 허용한다. REVISION_SNAPSHOT과 revision operations는 기존 capability gate를 유지한다.
+
 - Missing `templateVersion`, `mirrorGeneration`, or permission metadata remains fail-closed; I found no timestamp/hash/default fabrication for those fields.
 - Phase0 authoritative vendor/PDF activation remains unverified. Phase6 real HTTP guard and browser tests remain pending.
 - No tests were run, per the audit restriction. No hypotheses are being reported as defects.

@@ -78,7 +78,13 @@ export interface AuthorizeEformsignDocumentJobForDispatchInput {
     expectedContext?: ServiceRecordRevisionDispatchContext | null;
 }
 
+export type RequeueInitialFinalizationJobResult =
+    | { kind: "requeued"; job: EformsignDocumentJobEntity }
+    | { kind: "not_found" }
+    | { kind: "not_requeueable"; reason: string };
+
 export interface IEformsignDocumentJobRepository {
+    requeueInitialFinalizationJob(input: { jobId: string; branchId: string }): Promise<RequeueInitialFinalizationJobResult>;
     enqueue(input: EnqueueEformsignDocumentJobInput): Promise<{ job: EformsignDocumentJobEntity; existing: boolean }>;
     /** Read one immutable request-key row inside an already-owned transaction. */
     findByRequestKeyInTransaction(
