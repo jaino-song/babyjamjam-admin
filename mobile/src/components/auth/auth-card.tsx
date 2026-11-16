@@ -29,18 +29,16 @@ export function AuthCard({
   const isV3 = variant === "v3";
 
   return (
-    <div data-component={dataComponent} data-slot={dataSlot} className="flex min-h-screen items-center justify-center">
+    <div data-component={dataComponent} data-slot={dataSlot} data-source-component="AuthCard" className="auth-screen w-full">
       <Card
         className={cn(
-          isV3
-            ? "w-full max-w-[440px] rounded-2xl border-[1.5px] border-v3-border bg-white shadow-v3"
-            : "w-full max-w-[400px] shadow-lg",
+          "w-full border-0 bg-transparent shadow-none",
           !disableAnimation && "animate-scale-in",
           className
         )}
       >
         {(title || description) && (
-          <CardHeader className={cn("flex flex-col gap-1 text-center", isV3 && "pt-8 px-8 pb-2")}>
+          <CardHeader className={cn("flex flex-col gap-1 px-0 text-center", isV3 && "pt-8 px-0 pb-2")}>
             {title && (
               <CardTitle className={cn("text-2xl font-bold", isV3 && "text-xl font-extrabold text-v3-dark")}>{title}</CardTitle>
             )}
@@ -50,9 +48,10 @@ export function AuthCard({
           </CardHeader>
         )}
         <CardContent
+          data-slot="auth-card-content"
           className={cn(
-            !(title || description) && "pt-6",
-            isV3 && "px-8 pb-8 pt-4",
+            "p-0",
+            isV3 && "pb-8 pt-4",
             contentClassName
           )}
         >

@@ -3161,6 +3161,51 @@ body:has([data-slot="messages-page"]) [data-slot="mobile-bottom-nav"] span {
   font-family: "NanumSquare Neo", "Noto Sans KR", "Apple SD Gothic Neo", "Malgun Gothic", -apple-system, sans-serif;
   line-height: normal;
 }
+
+/* ===== Logged-out auth and legal pages ===== */
+.auth-layout:has(.auth-screen) {
+  min-height: 100dvh;
+  background: linear-gradient(180deg, #fff 0%, hsl(var(--v3-dim-white)) 60%);
+  padding: 4px 14px 24px;
+  justify-content: center;
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+  font-family: "NanumSquare Neo", "Noto Sans KR", "Apple SD Gothic Neo", "Malgun Gothic", -apple-system, sans-serif;
+  line-height: normal;
+}
+/* A shared frame for the five auth screens and public legal pages. The
+   descendant guard leaves callback/onboarding layouts untouched. */
+.auth-layout:has(.auth-screen) > [data-slot="auth-page-content"] {
+  width: 100%;
+  padding: 0 20px;
+  box-sizing: border-box;
+}
+
+body:has(.auth-layout .auth-screen) main[data-slot="main-content"] {
+  display: block;
+  height: 100%;
+  min-height: 0;
+  padding: 0 !important;
+  overflow-y: auto;
+  background: linear-gradient(180deg, #fff 0%, hsl(var(--v3-dim-white)) 60%);
+}
+
+:is([data-slot="auth-privacy-page"], [data-slot="auth-terms-page"]) [data-slot="auth-card-content"] {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  font-size: 0.85rem;
+  line-height: 1.625;
+  color: hsl(var(--v3-dark));
+}
+
+.auth-btn:has([data-slot="spinner"]) {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
 .auth-brand {
   display: flex;
   flex-direction: column;
@@ -3403,16 +3448,6 @@ body:has([data-slot="auth-login-page"]) main[data-slot="main-content"] {
   background: hsl(var(--v3-dim-white));
 }
 
-/* No max-width here: login was the only auth page clamping itself to a 430px
-   centred column, so it rendered narrower than register, forgot-password,
-   reset-password, verify-email and callback beside it. On a handset the clamp
-   never applied anyway — it only ever showed up as an inconsistency on wider
-   screens. */
-[data-slot="auth-login-page"].auth-page {
-  min-height: 100%;
-  padding: 24px;
-}
-
 /* ===== Forgot password page (/forgot-password) ===== */
 body:has([data-slot="auth-forgot-password-page"]) {
   background: hsl(220, 15%, 88%);
@@ -3462,14 +3497,6 @@ body:has([data-slot="auth-forgot-password-page"]) main[data-slot="main-content"]
   overflow-y: auto;
   padding: 0 !important;
   background: hsl(var(--v3-dim-white));
-}
-
-[data-slot="auth-forgot-password-page"].auth-page {
-  min-height: 100%;
-  padding: 24px;
-  background: linear-gradient(180deg, #fff 0%, hsl(var(--v3-dim-white)) 60%);
-  display: flex;
-  flex-direction: column;
 }
 
 [data-slot="auth-forgot-password-page"] .auth-brand {
@@ -3924,14 +3951,6 @@ body:has([data-slot="auth-register-page"]) main[data-slot="main-content"] {
   background: hsl(var(--v3-dim-white));
 }
 
-[data-slot="auth-register-page"].auth-page {
-  min-height: 100%;
-  padding: 24px;
-  background: linear-gradient(180deg, #fff 0%, hsl(var(--v3-dim-white)) 60%);
-  display: flex;
-  flex-direction: column;
-}
-
 [data-slot="auth-register-page"] .auth-brand {
   padding: 24px 0;
 }
@@ -4337,12 +4356,18 @@ body.mobile-contracts-route [data-slot="mobile-detail-stack-track"].show-detail 
 /* Lock the app shell to the viewport on the clients route (parity with the
    dashboard, redesign.css:155-212) so the page itself never scrolls — only the
    inner [data-slot="clients-content"] list scrolls. */
+body:has([data-slot="files-content"]),
+body:has([data-slot="holiday-settings-content"]),
+body:has([data-slot="admin-feedback-content"]),
 body:has([data-slot="clients-content"]),
 body:has([data-slot="calls-content"]),
 body:has([data-slot="consultations-content"]) {
   overflow: hidden;
 }
 
+body:has([data-slot="files-content"]) [data-slot="app-root"],
+body:has([data-slot="holiday-settings-content"]) [data-slot="app-root"],
+body:has([data-slot="admin-feedback-content"]) [data-slot="app-root"],
 body:has([data-slot="clients-content"]) [data-slot="app-root"],
 body:has([data-slot="calls-content"]) [data-slot="app-root"],
 body:has([data-slot="consultations-content"]) [data-slot="app-root"] {
@@ -4352,6 +4377,9 @@ body:has([data-slot="consultations-content"]) [data-slot="app-root"] {
 }
 
 @media (min-width: 768px) {
+  body:has([data-slot="files-content"]) [data-slot="app-root"],
+  body:has([data-slot="holiday-settings-content"]) [data-slot="app-root"],
+  body:has([data-slot="admin-feedback-content"]) [data-slot="app-root"],
   body:has([data-slot="clients-content"]) [data-slot="app-root"],
   body:has([data-slot="calls-content"]) [data-slot="app-root"],
   body:has([data-slot="consultations-content"]) [data-slot="app-root"] {
@@ -4360,6 +4388,9 @@ body:has([data-slot="consultations-content"]) [data-slot="app-root"] {
   }
 }
 
+body:has([data-slot="files-content"]) [data-slot="app-root"] [data-slot="app-content"],
+body:has([data-slot="holiday-settings-content"]) [data-slot="app-root"] [data-slot="app-content"],
+body:has([data-slot="admin-feedback-content"]) [data-slot="app-root"] [data-slot="app-content"],
 body:has([data-slot="clients-content"]) [data-slot="app-root"] [data-slot="app-content"],
 body:has([data-slot="calls-content"]) [data-slot="app-root"] [data-slot="app-content"],
 body:has([data-slot="consultations-content"]) [data-slot="app-root"] [data-slot="app-content"] {
@@ -4374,6 +4405,9 @@ body:has([data-slot="consultations-content"]) [data-slot="app-root"] [data-slot=
    falls back to V3MainContent's default (pt-20, no clamp), which pushes the
    header spacing 16px out, lets the sheet grow past the viewport, and leaves
    the list with no scroll container. */
+body:has([data-slot="files-content"]) [data-slot="main-content"],
+body:has([data-slot="holiday-settings-content"]) [data-slot="main-content"],
+body:has([data-slot="admin-feedback-content"]) [data-slot="main-content"],
 body:has([data-slot="clients-content"]) [data-slot="main-content"],
 body:has([data-slot="calls-content"]) [data-slot="main-content"],
 body:has([data-slot="consultations-content"]) [data-slot="main-content"] {
@@ -4390,6 +4424,7 @@ body:has([data-slot="consultations-content"]) [data-slot="main-content"] {
   color: hsl(var(--v3-text));
 }
 
+body:has([data-slot="files-content"]) .mobile-detail-sheet,
 body:has([data-slot="clients-content"]) .mobile-detail-sheet,
 body:has([data-slot="calls-content"]) .mobile-detail-sheet,
 body:has([data-slot="consultations-content"]) .mobile-detail-sheet {
@@ -4409,6 +4444,7 @@ body:has([data-slot="clients-content"]) [data-slot="clients-content"] {
   overflow-y: auto;
 }
 
+body:has([data-slot="files-content"]) [data-slot="mobile-detail-stack-track"],
 body:has([data-slot="clients-content"]) [data-slot="mobile-detail-stack-track"],
 body:has([data-slot="calls-content"]) [data-slot="mobile-detail-stack-track"],
 body:has([data-slot="consultations-content"]) [data-slot="mobile-detail-stack-track"] {
@@ -4418,7 +4454,9 @@ body:has([data-slot="consultations-content"]) [data-slot="mobile-detail-stack-tr
   height: 100%;
 }
 
+body:has([data-slot="files-content"]) [data-slot="mobile-detail-stack-list-page"],
 body:has([data-slot="clients-content"]) [data-slot="mobile-detail-stack-list-page"],
+body:has([data-slot="files-content"]) [data-slot="mobile-detail-stack-detail-page"],
 body:has([data-slot="clients-content"]) [data-slot="mobile-detail-stack-detail-page"],
 body:has([data-slot="calls-content"]) [data-slot="mobile-detail-stack-list-page"],
 body:has([data-slot="calls-content"]) [data-slot="mobile-detail-stack-detail-page"],
@@ -4428,16 +4466,34 @@ body:has([data-slot="consultations-content"]) [data-slot="mobile-detail-stack-de
   inset: 0;
 }
 
+body:has([data-slot="files-content"]) [data-slot="mobile-detail-stack-detail-page"],
 body:has([data-slot="clients-content"]) [data-slot="mobile-detail-stack-detail-page"],
 body:has([data-slot="calls-content"]) [data-slot="mobile-detail-stack-detail-page"],
 body:has([data-slot="consultations-content"]) [data-slot="mobile-detail-stack-detail-page"] {
   top: 50px;
 }
 
+body:has([data-slot="files-content"]) [data-slot="mobile-detail-stack-track"].show-detail .nav-page.list,
 body:has([data-slot="clients-content"]) [data-slot="mobile-detail-stack-track"].show-detail .nav-page.list,
 body:has([data-slot="calls-content"]) [data-slot="mobile-detail-stack-track"].show-detail .nav-page.list,
 body:has([data-slot="consultations-content"]) [data-slot="mobile-detail-stack-track"].show-detail .nav-page.list {
   transform: translateX(0) !important;
+}
+
+/* Default nav: 40px item + 2*5px padding, 16px bottom offset, 12px card gap.
+   Mirror its safe-area / capped-shell offset rather than the clients nav skin. */
+body:has([data-slot="files-content"]) [data-slot="files-content"],
+body:has([data-slot="holiday-settings-content"]) [data-slot="holiday-settings-content"],
+body:has([data-slot="admin-feedback-content"]) [data-slot="admin-feedback-content"] {
+  display: flex;
+  flex-direction: column;
+  --list-nav-height: 50px;
+  --list-nav-bottom: max(calc(1rem + env(safe-area-inset-bottom)), calc(100dvh - var(--mobile-shell-max-height, 932px) + 1rem));
+  flex: 1;
+  min-height: 0;
+  padding: 12px 14px calc(var(--list-nav-height) + var(--list-nav-bottom) + 12px);
+  overflow-x: hidden;
+  overflow-y: auto;
 }
 
 body.mobile-contracts-route [data-slot="list-content"] {

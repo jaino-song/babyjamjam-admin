@@ -28,6 +28,7 @@ import {
   type RegisterFormData,
 } from "@/lib/validations/auth";
 import "@/components/app/mobile-redesign/redesign.css";
+import { Spinner } from "@/components/ui/spinner";
 
 interface RegisterErrorData {
   code?: unknown;
@@ -489,7 +490,7 @@ export default function RegisterPage() {
 
   if (isSuccess) {
     return (
-      <div className="auth-page" data-component={REGISTER_BASE} data-slot="auth-register-page">
+      <div className="auth-screen" data-component={REGISTER_BASE} data-slot="auth-register-page">
         <div className="auth-brand" data-component={`${REGISTER_BASE}_brand`}>
           <div className="auth-logo" data-component={`${REGISTER_BASE}_brand_logo`}>
             <Image src="/assets/logo.svg" alt="아가잼잼 로고" width={80} height={80} priority />
@@ -539,7 +540,7 @@ export default function RegisterPage() {
   }
 
   return (
-    <div className="auth-page" data-component={REGISTER_BASE} data-slot="auth-register-page">
+    <div className="auth-screen" data-component={REGISTER_BASE} data-slot="auth-register-page">
       <div className="auth-brand" data-component={`${REGISTER_BASE}_brand`}>
         <div className="auth-logo" data-component={`${REGISTER_BASE}_brand_logo`}>
           <Image src="/assets/logo.svg" alt="아가잼잼 로고" width={80} height={80} priority />
@@ -782,7 +783,7 @@ export default function RegisterPage() {
               aria-label={isLoading ? "회원가입 처리 중" : "회원가입"}
               data-component={`${REGISTER_SUBMIT_FORM}_actions_submit-button`}
             >
-              {isLoading ? "처리 중…" : "회원가입"}
+              {isLoading ? <><Spinner size="sm" aria-hidden="true" /><span className="sr-only">처리 중…</span></> : "회원가입"}
             </button>
           </div>
         </form>
