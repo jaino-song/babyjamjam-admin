@@ -173,9 +173,11 @@ export default function VerifyEmailPage() {
                             variant="default"
                             size="lg"
                             className="w-full"
+                            loading={resendLoading}
+                            loadingLabel="인증 이메일 재발송 중"
                             disabled={resendLoading || !resendEmail.trim()}
                         >
-                            {resendLoading ? <><Spinner size="sm" aria-hidden="true" /><span className="sr-only">인증 이메일 재발송 중</span></> : "인증 이메일 재발송"}
+                            인증 이메일 재발송
                         </Button>
                     </form>
 
@@ -223,9 +225,11 @@ export default function VerifyEmailPage() {
                         variant="default"
                         size="lg"
                         className="w-full"
+                        loading={resendLoading}
+                        loadingLabel="인증 이메일 재발송 중"
                         disabled={resendLoading || !resendEmail.trim()}
                     >
-                        {resendLoading ? <><Spinner size="sm" aria-hidden="true" /><span className="sr-only">인증 이메일 재발송 중</span></> : "인증 이메일 재발송"}
+                        인증 이메일 재발송
                     </Button>
                 </form>
 

@@ -6,6 +6,8 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { BellRing, Mail, Send, type LucideIcon } from "lucide-react";
 import { normalizeApiError } from "@babyjamjam/shared";
 
+import { LoadingState } from "@/components/app/ui/LoadingState";
+import { ButtonLoadingContent } from "@/components/ui/button";
 import { QueryErrorState } from "@/components/app/ui/QueryErrorState";
 import { Switch } from "@/components/ui/switch";
 import { useGetAuthUser } from "@/hooks/useGetAuthUser";
@@ -146,9 +148,9 @@ export default function NotificationPage() {
   const emailNotificationBaseDescription = !NOTIFICATION_EMAIL_ENABLED
     ? "이메일 알림은 현재 비활성화되어 있습니다."
     : !accountEmail
-      ? "현재 계정 이메일을 불러오는 중입니다."
+      ? <LoadingState inline size="sm" label="현재 계정 이메일을 불러오는 중입니다" data-component={`${NOTIFICATION_SETTINGS_CHANNEL_SECTION}_email-row_info_meta_loading`} />
       : notificationPreferencesQuery.isFetching
-        ? "이메일 알림 설정을 불러오는 중입니다."
+        ? <LoadingState inline size="sm" label="이메일 알림 설정을 불러오는 중입니다" data-component={`${NOTIFICATION_SETTINGS_CHANNEL_SECTION}_email-row_info_meta_loading`} />
         : updateNotificationPreferencesMutation.isError
           ? "이메일 알림 설정을 저장하지 못했어요. 이전 설정을 유지해요."
           : `${accountEmail}로 주요 알림을 받습니다.`;
@@ -328,11 +330,13 @@ export default function NotificationPage() {
                     <button
                       type="button"
                       data-component={`${NOTIFICATION_SETTINGS_ADMIN_SECTION}_test-row_control_send-button`}
-                      className="notification-action-pill"
+                      className={`notification-action-pill${testNotificationMutation.isPending ? " relative" : ""}`}
+                      aria-busy={testNotificationMutation.isPending || undefined}
+                      data-loading={testNotificationMutation.isPending ? "" : undefined}
                       onClick={() => testNotificationMutation.mutate()}
                       disabled={testNotificationMutation.isPending}
                     >
-                      {testNotificationMutation.isPending ? "전송 중" : "발송"}
+                      <ButtonLoadingContent loading={testNotificationMutation.isPending} loadingLabel="전송 중">발송</ButtonLoadingContent>
                     </button>
                   )}
                 />

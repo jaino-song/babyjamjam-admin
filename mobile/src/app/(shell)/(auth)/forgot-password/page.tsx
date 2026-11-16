@@ -4,6 +4,7 @@
 import { useState } from "react";
 import Image from "next/image";
 import Link from "next/link";
+import { ButtonLoadingContent } from "@/components/ui/button";
 import { AuthInlineLink } from "@/components/auth/auth-inline-link";
 import { Check } from "lucide-react";
 import { normalizeApiError } from "@babyjamjam/shared";
@@ -11,7 +12,6 @@ import { normalizeApiError } from "@babyjamjam/shared";
 import { authApi } from "@/services/api";
 import { forgotPasswordSchema } from "@/lib/validations/auth";
 import "@/components/app/mobile-redesign/redesign.css";
-import { Spinner } from "@/components/ui/spinner";
 
 /** Canonical data-component base for the /forgot-password route. */
 const FORGOT_PASSWORD_BASE = "mobile_auth_forgot-password";
@@ -164,11 +164,13 @@ export default function ForgotPasswordPage() {
 
         <button
           type="submit"
-          className="auth-btn"
+          className={`auth-btn${isLoading ? " relative" : ""}`}
+          aria-busy={isLoading || undefined}
+          data-loading={isLoading ? "" : undefined}
           disabled={isLoading}
           data-component={`${FORGOT_PASSWORD_BASE}_form_submit-button`}
         >
-          {isLoading ? <><Spinner size="sm" aria-hidden="true" /><span className="sr-only">처리 중…</span></> : "비밀번호 재설정 링크 전송"}
+          <ButtonLoadingContent loading={isLoading} loadingLabel="처리 중…">비밀번호 재설정 링크 전송</ButtonLoadingContent>
         </button>
       </form>
 

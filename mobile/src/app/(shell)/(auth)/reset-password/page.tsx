@@ -13,7 +13,6 @@ import { FormField } from "@/components/auth/form-field";
 import { PasswordRequirements } from "@/components/auth/password-requirements";
 import { Button } from "@/components/ui/button";
 import { Alert } from "@/components/ui/alert";
-import { Spinner } from "@/components/ui/spinner";
 
 /**
  * Canonical data-component base for the /reset-password route. CardContainer
@@ -220,8 +219,10 @@ export default function ResetPasswordPage() {
                     size="lg"
                     className="w-full rounded-2xl"
                     disabled={isLoading}
+                    loading={isLoading}
+                    loadingLabel="비밀번호 변경 중"
                 >
-                    {isLoading ? <><Spinner size="sm" aria-hidden="true" /><span className="sr-only">비밀번호 변경 중</span></> : "비밀번호 변경"}
+                    비밀번호 변경
                 </Button>
             </form>
 

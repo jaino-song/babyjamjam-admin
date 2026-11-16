@@ -91,9 +91,14 @@ describe("logged-out page presentation", () => {
     expectCardlessScreen(container);
   });
 
-  it.each([["privacy", PrivacyPage], ["terms", TermsPage]] as const)("renders %s with content-height legal copy and an inline login link", (_route, Page) => {
+  it.each([["privacy", PrivacyPage], ["terms", TermsPage]] as const)("renders %s with content-height legal copy and an inline login link", (route, Page) => {
     const { container } = render(<Page />);
     expectCardlessScreen(container);
+    const header = container.querySelector(`[data-component="mobile_${route}_page_header"]`);
+    expect(header).toHaveAttribute("data-source-component", "ListCardHeader");
+    expect(header).toHaveClass("list-title");
+    expect(header?.querySelector(".list-title-text")).toHaveTextContent(route === "privacy" ? "개인정보처리방침" : "이용약관");
+    expect(header?.querySelector(".list-count")).toHaveTextContent("아가잼잼 어드민");
     expect(screen.queryByText(/데스크톱/)).not.toBeInTheDocument();
     const link = screen.getByRole("link", { name: "로그인으로 돌아가기" });
     expect(link).toHaveAttribute("href", "/login");

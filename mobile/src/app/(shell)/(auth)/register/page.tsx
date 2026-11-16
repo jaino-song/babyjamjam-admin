@@ -9,6 +9,8 @@ import { CheckCircle, ChevronDown, ChevronLeft, ChevronRight, Link2 } from "luci
 import { normalizeApiError, type NormalizedApiError, REGISTERABLE_ROLE_OPTIONS } from "@babyjamjam/shared";
 import { formatIsoDateInput } from "@babyjamjam/shared/utils/date-input";
 
+import { LoadingState } from "@/components/app/ui/LoadingState";
+import { ButtonLoadingContent } from "@/components/ui/button";
 import { FieldLabelRow, fieldMessageId } from "@/components/app/ui/FieldLabelRow";
 import { useFieldMessages } from "@/hooks/use-field-messages";
 import { formatKoreanPhoneNumber } from "@/lib/phone";
@@ -28,7 +30,6 @@ import {
   type RegisterFormData,
 } from "@/lib/validations/auth";
 import "@/components/app/mobile-redesign/redesign.css";
-import { Spinner } from "@/components/ui/spinner";
 
 interface RegisterErrorData {
   code?: unknown;
@@ -578,12 +579,23 @@ export default function RegisterPage() {
       {currentStep === 1 && (
         <form className="auth-form auth-step-view active" onSubmit={handleAccountStepNext} data-component={`${REGISTER_ACCOUNT_FORM}`} noValidate>
           <div className="auth-input-group" data-component={`${REGISTER_ACCOUNT_FORM}_email-field`}>
-            <FieldLabelRow
-              data-component={`${REGISTER_ACCOUNT_FORM}_email-field`}
-              htmlFor="register-email"
-              label="이메일"
-              message={slots.email}
-            />
+            <div className="relative" data-component={`${REGISTER_ACCOUNT_FORM}_email-field_label-row`} data-slot="email-label-row">
+              <FieldLabelRow
+                data-component={`${REGISTER_ACCOUNT_FORM}_email-field`}
+                htmlFor="register-email"
+                label="이메일"
+                message={slots.email?.tone === "pending" ? null : slots.email}
+              />
+              {slots.email?.tone === "pending" ? (
+                <LoadingState
+                  inline
+                  size="sm"
+                  label="이메일 확인 중"
+                  className="absolute right-0 top-0"
+                  data-component={`${REGISTER_ACCOUNT_FORM}_email-field_loading`}
+                />
+              ) : null}
+            </div>
             <div className="auth-input-wrap" data-component={`${REGISTER_ACCOUNT_FORM}_email-field_input-wrap`}>
               <input
                 id="register-email"
@@ -778,12 +790,14 @@ export default function RegisterPage() {
             </button>
             <button
               type="submit"
-              className="auth-btn"
+              className={`auth-btn${isLoading ? " relative" : ""}`}
+              aria-busy={isLoading || undefined}
+              data-loading={isLoading ? "" : undefined}
               disabled={isLoading || isCheckingEmailDuplicate}
               aria-label={isLoading ? "회원가입 처리 중" : "회원가입"}
               data-component={`${REGISTER_SUBMIT_FORM}_actions_submit-button`}
             >
-              {isLoading ? <><Spinner size="sm" aria-hidden="true" /><span className="sr-only">처리 중…</span></> : "회원가입"}
+              <ButtonLoadingContent loading={isLoading} loadingLabel="처리 중…">회원가입</ButtonLoadingContent>
             </button>
           </div>
         </form>

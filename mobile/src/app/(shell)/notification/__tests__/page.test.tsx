@@ -138,7 +138,8 @@ describe("NotificationPage", () => {
 
     const emailSwitch = screen.getByRole("switch", { name: "이메일 알림 설정" });
     expect(emailSwitch).toBeDisabled();
-    expect(screen.getByText("이메일 알림 설정을 불러오는 중입니다.")).toBeInTheDocument();
+    expect(screen.getByRole("status", { name: "이메일 알림 설정을 불러오는 중입니다" })).toBeInTheDocument();
+    expect(screen.getByText("이메일 알림 설정을 불러오는 중입니다")).toHaveClass("sr-only");
 
     resolvePreferences({ emailNotificationsEnabled: true });
     await waitFor(() => expect(emailSwitch).toHaveAttribute("aria-checked", "true"));

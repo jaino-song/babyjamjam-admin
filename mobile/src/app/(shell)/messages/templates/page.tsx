@@ -5,6 +5,7 @@ import type { KeyboardEvent } from "react";
 import { useRouter } from "next/navigation";
 import { formatMessageDateTimeCompact, normalizeApiError } from "@babyjamjam/shared";
 
+import { LoadingState } from "@/components/app/ui/LoadingState";
 import "@/components/app/mobile-redesign/redesign.css";
 import { useSystemTemplates } from "@/features/system-templates/hooks";
 import { useMessageTemplates } from "@/hooks/use-message-templates";
@@ -287,9 +288,7 @@ export default function TemplatesPage() {
               </Alert>
             ) : null}
             {isLoading ? (
-              <div className="detail-empty-state" data-component="mobile_messages_templates_page_content_list-card_body_loading">
-                템플릿을 불러오고 있습니다.
-              </div>
+              <LoadingState label="템플릿을 불러오고 있습니다" data-component="mobile_messages_templates_page_content_list-card_body_loading" />
             ) : null}
             {!isLoading && initialReadError && visibleRows.length === 0 ? (
               <ErrorFallback
