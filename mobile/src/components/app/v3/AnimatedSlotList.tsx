@@ -3,7 +3,7 @@
 import React, { useRef, useEffect } from "react";
 import Link from "next/link";
 import { cn } from "@/lib/utils";
-import { Loader2 } from "lucide-react";
+import { Spinner } from "@/components/ui/spinner";
 import { TeaserOverlay } from "./TeaserOverlay";
 
 type SlotClassNameArgs<T> = { index: number; item: T | null; isLoading: boolean };
@@ -220,8 +220,9 @@ export function AnimatedSlotList<T>({
 
       {/* Loading spinner when fetching more */}
       {isFetchingMore && (
-        <div className="flex justify-center py-4">
-          <Loader2 className="w-5 h-5 animate-spin text-v3-primary" />
+        <div data-component={dataComponent ? `${dataComponent}_loading-more` : undefined} role="status" aria-label="목록을 더 불러오는 중" className="flex justify-center py-4">
+          <Spinner size="sm" aria-hidden="true" />
+          <span className="sr-only">목록을 더 불러오는 중</span>
         </div>
       )}
 

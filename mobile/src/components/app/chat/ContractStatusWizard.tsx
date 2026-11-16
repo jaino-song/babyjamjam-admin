@@ -4,7 +4,6 @@ import { useState, useCallback } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Search } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Spinner } from "@/components/ui/spinner";
 import { QueryErrorState } from "@/components/app/ui/QueryErrorState";
 import { ClientAutocomplete } from "../clients/ClientAutocomplete";
 import { eformsignApi } from "@/services/api";
@@ -99,13 +98,10 @@ export default function ContractStatusWizard({ onCheck }: ContractStatusWizardPr
                     className="w-full"
                     size="lg"
                     disabled={!selectedClient || documentUnresolved}
-                    aria-busy={documentLoading}
+                    loading={documentLoading}
+                    loadingLabel="계약서 상태 조회 중"
                 >
-                    {documentLoading ? (
-                        <Spinner data-component="mobile_chat_contract-status-wizard_body_submit_spinner" size="sm" aria-hidden="true" />
-                    ) : (
-                        <Search className="w-4 h-4 mr-2" />
-                    )}
+                    <Search className="w-4 h-4 mr-2" />
                     조회하기
                 </Button>
             </div>

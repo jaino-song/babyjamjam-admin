@@ -1038,7 +1038,7 @@ describe("ContractPdfViewer", () => {
       />
     );
 
-    const placeholder = screen.getByRole("status");
+    const placeholder = screen.getByRole("status", { name: "계약서 PDF 미리보기" });
     expect(placeholder).toHaveClass(
       "contract-pdf-viewer",
       "contract-preview-frame"

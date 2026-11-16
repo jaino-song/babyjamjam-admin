@@ -1,6 +1,7 @@
 'use client';
 
 import { ReactNode } from 'react';
+import { LoadingState } from '@/components/app/ui/LoadingState';
 import { useGetAuthUser } from '@/hooks/useGetAuthUser';
 import { canManageBranch } from '@/lib/auth/branch-role-policy';
 import { AccessDenied } from './AccessDenied';
@@ -18,7 +19,7 @@ export function AdminGuard({ children, fallback }: AdminGuardProps) {
   // Skeleton only until the first answer: a background refetch (e.g. on window
   // focus) keeps the last decision so the guarded page keeps its state.
   if (isLoading || (isFetching && !user)) {
-    return <div data-component="mobile_auth_admin-guard" className="flex items-center justify-center min-h-screen">Loading...</div>;
+    return <LoadingState data-component="mobile_auth_admin-guard" label="권한 확인 중" className="min-h-screen" />;
   }
   
   const isAdmin = user?.role === 'admin' || user?.role === 'owner';

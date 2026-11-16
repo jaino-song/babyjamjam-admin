@@ -47,7 +47,7 @@ async function submitFor(client: Record<string, unknown>, { expectFetch = true }
     await act(async () => {
         await new Promise((resolve) => setTimeout(resolve, 0));
     });
-    fireEvent.click(screen.getByRole("button", { name: /조회하기/ }));
+    fireEvent.click(screen.getByRole("button", { name: /조회하기|계약서 상태 조회 중/ }));
     return onCheck;
 }
 
@@ -104,7 +104,7 @@ describe("ContractStatusWizard (mobile)", () => {
     it("blocks submission with a busy spinner while the document is still loading", async () => {
         mockGetDocument.mockReturnValue(new Promise(() => {}));
         const onCheck = await submitFor(SUMMARY);
-        const submit = screen.getByRole("button", { name: /조회하기/ });
+        const submit = screen.getByRole("button", { name: "계약서 상태 조회 중" });
         expect(submit).toBeDisabled();
         expect(submit).toHaveAttribute("aria-busy", "true");
         expect(submit.querySelector('[data-slot="spinner"]')).not.toBeNull();
@@ -123,8 +123,8 @@ describe("ContractStatusWizard (mobile)", () => {
         mockGetDocument.mockImplementationOnce(() => new Promise((resolve) => { resolveDocument = resolve; }));
         fireEvent.click(screen.getByRole("button", { name: "다시 시도" }));
         await waitFor(() => expect(mockGetDocument).toHaveBeenCalledTimes(2));
-        expect(screen.getByRole("button", { name: /조회하기/ })).toBeDisabled();
-        fireEvent.click(screen.getByRole("button", { name: /조회하기/ }));
+        expect(screen.getByRole("button", { name: "계약서 상태 조회 중" })).toBeDisabled();
+        fireEvent.click(screen.getByRole("button", { name: "계약서 상태 조회 중" }));
         expect(onCheck).not.toHaveBeenCalled();
         await act(async () => resolveDocument({ current_status: { status_type: "071" } }));
         await waitFor(() => expect(screen.getByRole("button", { name: /조회하기/ })).toBeEnabled());
@@ -172,8 +172,8 @@ describe("ContractStatusWizard (mobile)", () => {
         fireEvent.click(screen.getByRole("button", { name: "산모 고르기" }));
         await waitFor(() => expect(mockGetDocument).toHaveBeenCalledWith("doc-2"));
         expect(screen.queryByRole("alert")).not.toBeInTheDocument();
-        expect(screen.getByRole("button", { name: /조회하기/ })).toBeDisabled();
-        fireEvent.click(screen.getByRole("button", { name: /조회하기/ }));
+        expect(screen.getByRole("button", { name: "계약서 상태 조회 중" })).toBeDisabled();
+        fireEvent.click(screen.getByRole("button", { name: "계약서 상태 조회 중" }));
         expect(onCheck).not.toHaveBeenCalled();
         await act(async () => resolveDocument({ current_status: { status_type: "071" } }));
         await waitFor(() => expect(screen.getByRole("button", { name: /조회하기/ })).toBeEnabled());

@@ -156,8 +156,10 @@ export const TemplateEditor = ({ initialData }: TemplateEditorProps) => {
                 <Button
                     onClick={handleSave}
                     disabled={!name || !content || isPending}
+                    loading={isPending}
+                    loadingLabel={t(locale, "common.saving").replace(/[.…]+$/, "")}
                 >
-                    {isPending ? t(locale, "common.saving") : t(locale, "common.save")}
+                    {t(locale, "common.save")}
                 </Button>
             </div>
         </div>

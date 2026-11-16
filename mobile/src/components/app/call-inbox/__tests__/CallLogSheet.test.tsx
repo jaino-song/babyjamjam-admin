@@ -53,7 +53,7 @@ describe("CallLogSheet — transcript speaker rendering", () => {
     mockUseCallRecord.mockReturnValue({ data: undefined, isLoading: false, isError: true, refetch });
     render(<CallLogSheet recordId="rec-1" />);
     expect(screen.getByRole("alert")).toHaveAttribute("data-size", "inline");
-    expect(screen.queryByText("불러오는 중...")).not.toBeInTheDocument();
+    expect(screen.queryByRole("status", { name: "불러오는 중" })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "다시 시도" }));
     expect(refetch).toHaveBeenCalledTimes(1);
   });
@@ -61,7 +61,7 @@ describe("CallLogSheet — transcript speaker rendering", () => {
   it("shows loading without a failure while the request is pending", () => {
     mockUseCallRecord.mockReturnValue({ data: undefined, isLoading: true, isError: false, isFetching: true });
     render(<CallLogSheet recordId="rec-1" />);
-    expect(screen.getByText("불러오는 중...")).toBeInTheDocument();
+    expect(screen.getByRole("status", { name: "불러오는 중" })).toBeInTheDocument();
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 
@@ -82,7 +82,7 @@ describe("CallLogSheet — transcript speaker rendering", () => {
     mockUseCallRecord.mockReturnValue({ data: baseRecord, isError: false });
     rerender(<CallLogSheet recordId="rec-1" />);
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
-    expect(screen.queryByText("불러오는 중...")).not.toBeInTheDocument();
+    expect(screen.queryByRole("status", { name: "불러오는 중" })).not.toBeInTheDocument();
   });
 
   it("renders known staff and customer roles on their expected sides (regression)", () => {

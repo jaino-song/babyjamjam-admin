@@ -74,7 +74,8 @@ export function DetailPanel({
           <button
             data-component={sub("mobile-nav_back")}
             onClick={nav?.goToList}
-            className="flex items-center gap-1 text-[0.8rem] text-v3-text-muted hover:text-v3-primary transition-colors"
+            aria-label="목록으로 돌아가기"
+            className="relative flex h-8 w-8 items-center justify-center text-[0.8rem] text-v3-text-muted hover:text-v3-primary transition-colors after:absolute after:-inset-1.5 after:content-['']"
           >
             <ChevronLeft className="w-5 h-5" />
           </button>

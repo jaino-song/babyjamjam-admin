@@ -50,7 +50,7 @@ export function ExpandableSearch({
       <button
         onClick={handleToggle}
         aria-label={expanded ? closeLabel : openLabel}
-        className="flex h-[44px] w-[44px] items-center justify-center rounded-2xl hover:bg-v3-dim-white"
+        className="relative flex h-8 w-8 items-center justify-center rounded-2xl hover:bg-v3-dim-white after:absolute after:-inset-1.5 after:content-['']"
       >
         <Search className={expanded ? "hidden" : "w-[18px] h-[18px] text-v3-text-muted"} />
       </button>
