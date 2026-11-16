@@ -2669,3 +2669,83 @@ describe("EformsignDocumentJobWorkerService", () => {
         });
     });
 });
+
+function initialFinalizationJob(overrides: Partial<EformsignDocumentJobEntity> = {}) {
+    const revisionId = "00000000-0000-4000-8000-000000000021";
+    const requestKey = `service-record-initial-finalization:${revisionId}`;
+    return job({ source: "auto_finalize", requestKey, payload: {
+        kind: "service_record_revision", generationKind: "INITIAL_FINALIZATION", revisionId, revisionNumber: 1,
+        generation: "generation-1", documentStateId: "state-1", documentVersion: 3, snapshotReference: requestKey,
+        context: { branchId, clientId: 7, serviceRecordCaseId: "00000000-0000-4000-8000-000000000020",
+            revisionId, revisionNumber: 1, businessFingerprint: "b".repeat(64), plannedSessionCount: 1,
+            plannedSessionDates: [{ sessionIndex: 1, serviceDate: "2026-08-13" }],
+            documentSyncStatus: "capability_unverified", lifecycleStatus: "READY_TO_FINALIZE", formVersion: 1 },
+        immutablePayload: { generation: "generation-1" }, payloadFingerprint: "b".repeat(64),
+        completeness: "complete", manualReviewRequired: true,
+    }, ...overrides });
+}
+
+describe("INITIAL finalization worker authorization", () => {
+    it("passes the stored context to the repository and renders pending INITIAL only after allow", async () => {
+        const claimed = initialFinalizationJob();
+        const { worker, repository, revisionGenerator } = buildWorker({ repository: {
+            claimDue: jest.fn().mockResolvedValue([claimed]),
+        } });
+        await worker.processDueJobs();
+        expect(repository.authorizeForDispatch).toHaveBeenCalledWith({ jobId: claimed.id, leaseToken: claimed.leaseToken,
+            expectedContext: claimed.payload!["context"] });
+        expect(revisionGenerator.executeRevision).toHaveBeenCalledWith(expect.objectContaining({
+            generationKind: "INITIAL_FINALIZATION", documentSyncStatus: "pending", snapshotReference: claimed.requestKey,
+        }), workerPrincipal);
+        expect(repository.markCompleted).toHaveBeenCalledWith(claimed.id, claimed.leaseToken, "revision-document-1");
+    });
+    it("keeps a repository stale reason and makes no renderer call", async () => {
+        const claimed = initialFinalizationJob();
+        const { worker, repository, revisionGenerator } = buildWorker({ repository: {
+            claimDue: jest.fn().mockResolvedValue([claimed]),
+            authorizeForDispatch: jest.fn().mockResolvedValue({ kind: "stale", reason: "SERVICE_RECORD_INITIAL_FINALIZATION_SCOPE_CHANGED" }),
+        } });
+        await worker.processDueJobs();
+        expect(repository.markRequiresAttention).toHaveBeenCalledWith(claimed.id, claimed.leaseToken, "SERVICE_RECORD_INITIAL_FINALIZATION_SCOPE_CHANGED");
+        expect(revisionGenerator.executeRevision).not.toHaveBeenCalled();
+    });
+    it.each([{ requestKey: "wrong" }, { source: "staff" as const }, { documentId: "doc-1" }])(
+        "refuses a mismatched INITIAL identity %# before the repository", async (change) => {
+            const claimed = initialFinalizationJob(change);
+            const { worker, repository, revisionGenerator } = buildWorker({ repository: { claimDue: jest.fn().mockResolvedValue([claimed]) } });
+            await worker.processDueJobs();
+            expect(repository.authorizeForDispatch).not.toHaveBeenCalled();
+            expect(revisionGenerator.executeRevision).not.toHaveBeenCalled();
+            expect(repository.markRequiresAttention).toHaveBeenCalledWith(claimed.id, claimed.leaseToken, "SERVICE_RECORD_REVISION_CAPABILITY_UNVERIFIED");
+        },
+    );
+    it("does not treat an INITIAL prefix as permission for REVISION_SNAPSHOT", async () => {
+        const initial = initialFinalizationJob();
+        const claimed = initialFinalizationJob({ payload: { ...initial.payload, generationKind: "REVISION_SNAPSHOT" } });
+        const { worker, repository, revisionGenerator } = buildWorker({ repository: { claimDue: jest.fn().mockResolvedValue([claimed]) } });
+        await worker.processDueJobs();
+        expect(repository.authorizeForDispatch).not.toHaveBeenCalled();
+        expect(revisionGenerator.executeRevision).not.toHaveBeenCalled();
+        expect(repository.markRequiresAttention).toHaveBeenCalledWith(claimed.id, claimed.leaseToken, "SERVICE_RECORD_REVISION_MANUAL_REVIEW_REQUIRED");
+    });
+    it("reconciles a renderer failure as manual review without automatic retry", async () => {
+        const claimed = initialFinalizationJob();
+        const { worker, repository, reconciliation } = buildWorker({ repository: {
+            claimDue: jest.fn().mockResolvedValue([claimed]),
+            markReconciling: jest.fn().mockResolvedValue(initialFinalizationJob({ status: "reconciling", progressStep: "creating" })),
+        }, revisionGenerator: { executeRevision: jest.fn().mockRejectedValue(new Error("generation failed")) } });
+        await worker.processDueJobs();
+        expect(repository.markReconciling).toHaveBeenCalledWith(claimed.id, claimed.leaseToken, "creating");
+        expect(repository.markRequiresAttention).toHaveBeenCalledWith(claimed.id, claimed.leaseToken, "SERVICE_RECORD_REVISION_MANUAL_REVIEW_REQUIRED");
+        expect(repository.scheduleRetry).not.toHaveBeenCalled();
+        expect(reconciliation.reconcile).not.toHaveBeenCalled();
+    });
+    it("keeps a recovered genuine INITIAL reconciliation in manual review", async () => {
+        const recovered = initialFinalizationJob({ status: "reconciling", progressStep: "creating" });
+        const { worker, repository, clientRepository, reconciliation } = buildWorker({ repository: { recoverStale: jest.fn().mockResolvedValue([recovered]) } });
+        await worker.processDueJobs();
+        expect(repository.markRequiresAttention).toHaveBeenCalledWith(recovered.id, recovered.leaseToken, "SERVICE_RECORD_REVISION_MANUAL_REVIEW_REQUIRED");
+        expect(clientRepository.findById).not.toHaveBeenCalled();
+        expect(reconciliation.reconcile).not.toHaveBeenCalled();
+    });
+});

@@ -1,5 +1,10 @@
 import { Inject, Injectable, Logger, Optional } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
+
+import {
+    INITIAL_FINALIZATION_REQUEST_PREFIX,
+    isInitialFinalizationJobIdentity,
+} from "application/policies/service-record-initial-finalization.policy";
 import { EformsignDocumentJobManualRecoveryService } from "./eformsign-document-job-manual-recovery.service";
 import { EFORMSIGN_CONTRACT_RECOVERY_REPOSITORY, type IEformsignContractRecoveryRepository } from "domain/repositories/eformsign-contract-recovery.repository.interface";
 import { Interval } from "@nestjs/schedule";
@@ -167,7 +172,6 @@ type CreateDispatchAuthorizationResult = {
 
 const REVISION_JOB_KIND = "service_record_revision";
 const REVISION_OPERATIONS_JOB_KIND = "service_record_revision_operations";
-const INITIAL_FINALIZATION_REQUEST_PREFIX = "service-record-initial-finalization:";
 const REVISION_REQUEST_PREFIX = "service-record-revision:";
 const REVISION_OPERATIONS_REQUEST_PREFIX = "service-record-revision-operations:";
 
@@ -292,6 +296,7 @@ function parseRevisionOperationReceiptDescriptor(
 
 function toRevisionGenerationInput(
     payload: RevisionDocumentJobPayload,
+    authorizedInitial: boolean,
 ): ServiceRecordRevisionGenerationInput | null {
     const context = payload.context;
     const documentStateId = payload.documentStateId;
@@ -318,6 +323,7 @@ function toRevisionGenerationInput(
     }
     return {
         ...context,
+        documentSyncStatus: authorizedInitial ? "pending" : context.documentSyncStatus,
         generationKind: payload.generationKind ?? "REVISION_SNAPSHOT",
         documentStateId,
         documentVersion,
@@ -355,6 +361,7 @@ function revisionRecoveryBlockReason(job: EformsignDocumentJobEntity): string | 
         || job.requestKey.startsWith(REVISION_REQUEST_PREFIX)
         || job.requestKey.startsWith(REVISION_OPERATIONS_REQUEST_PREFIX);
     if (!revisionMarker) return null;
+    if (isInitialFinalizationJobIdentity(job)) return "SERVICE_RECORD_REVISION_MANUAL_REVIEW_REQUIRED";
     return revisionPayload(job.payload)
         ? "SERVICE_RECORD_REVISION_CAPABILITY_UNVERIFIED"
         : "INVALID_SERVICE_RECORD_REVISION_JOB_PAYLOAD";
@@ -520,7 +527,7 @@ export class EformsignDocumentJobWorkerService {
                 } else {
                     const revision = revisionPayload(job.payload);
                     if (revision) {
-                        await this.processRevision(job, revision);
+                        await this.processRevision(job, revision, revision.generationKind === "INITIAL_FINALIZATION");
                     } else {
                         await this.processCreation(job, sendEvidence, (step) => {
                             latestProgressStep = step;
@@ -635,10 +642,11 @@ export class EformsignDocumentJobWorkerService {
     private async processRevision(
         job: EformsignDocumentJobEntity,
         payload: RevisionDocumentJobPayload,
+        authorizedInitial: boolean,
     ): Promise<void> {
         const leaseToken = job.leaseToken;
         if (!leaseToken) return;
-        const input = toRevisionGenerationInput(payload);
+        const input = toRevisionGenerationInput(payload, authorizedInitial);
         if (!input || !this.revisionGenerator) {
             const attention = await this.repository.markRequiresAttention(
                 job.id,
@@ -675,6 +683,7 @@ export class EformsignDocumentJobWorkerService {
                 leaseToken,
                 result.documentIds[0],
             );
+            this.logger.log({ jobId: job.id, documentCount: result.documentIds.length });
         } catch {
             // A renderer failure after the durable marker cannot be retried as
             // a new generation. Keep the existing job reconciliation path and
@@ -860,14 +869,13 @@ export class EformsignDocumentJobWorkerService {
             }
             const payload = revisionPayload(rawPayload);
             if (payload?.generationKind === "INITIAL_FINALIZATION") {
-                // Initial revised finalization is a persisted manual-review
-                // generation intent. Phase0 has not proved the provider path,
-                // so this discriminator must never reach a live credential or
-                // document-generation call even if a forged context says it
-                // is pending or complete.
-                return { kind: "stale", reason: "SERVICE_RECORD_REVISION_CAPABILITY_UNVERIFIED" };
+                if (!isInitialFinalizationJobIdentity(job)) {
+                    return { kind: "stale", reason: "SERVICE_RECORD_REVISION_CAPABILITY_UNVERIFIED" };
+                }
+                return this.authorizeThroughRepository(job, payload.context);
             }
-            if (payload && !isRevisionDocumentDispatchAllowed(payload.context)) {
+            if (payload && (job.requestKey.startsWith(INITIAL_FINALIZATION_REQUEST_PREFIX)
+                || !isRevisionDocumentDispatchAllowed(payload.context))) {
                 return { kind: "stale", reason: "SERVICE_RECORD_REVISION_MANUAL_REVIEW_REQUIRED" };
             }
             if (!payload && rawPayload["kind"] !== undefined) {
@@ -1161,6 +1169,9 @@ export class EformsignDocumentJobWorkerService {
         transitioned: EformsignDocumentJobEntity | null,
         reason: string,
     ): Promise<void> {
+        if (transitioned && isInitialFinalizationJobIdentity(job)) {
+            this.logger.warn({ jobId: job.id, reason });
+        }
         if (!transitioned || job.source !== "auto_finalize" || !job.documentId) return;
         await this.autoFinalizeScheduler.recordTerminalFailure(
             job.documentId,
