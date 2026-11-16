@@ -710,6 +710,7 @@ export default function ServiceRecordPage() {
             slots={{
                 submitModal: (
                     <ApprovalTwoButtonModal
+                        buttonRatio="equal"
                         open={submitModalOpen}
                         onOpenChange={setSubmitModalOpen}
                         data-component="mobile_service-record_submit-modal"
@@ -741,6 +742,7 @@ export default function ServiceRecordPage() {
                 ) : null,
                 deleteModal: (
                     <ApprovalTwoButtonModal
+                        buttonRatio="equal"
                         data-component="mobile_service-record_wizard_delete-modal"
                         open={deleteModalOpen}
                         onOpenChange={(open) => { if (!busy) setDeleteModalOpen(open); }}

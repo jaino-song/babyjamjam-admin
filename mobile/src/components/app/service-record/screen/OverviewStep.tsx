@@ -94,7 +94,7 @@ export function OverviewStep({
                             variant="link"
                             size="sm"
                             data-component={child("body_overview-guide")}
-                            className="h-auto px-1 py-1 text-base font-semibold text-v3-primary no-underline"
+                            className="h-auto rounded-2xl px-1 py-1 text-base font-semibold text-v3-primary no-underline"
                             onClick={() => {
                                 setGuideHintVisible(false);
                                 onOpenGuide();

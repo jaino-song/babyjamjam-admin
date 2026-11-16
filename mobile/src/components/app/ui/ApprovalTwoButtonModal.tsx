@@ -23,6 +23,7 @@ interface ApprovalTwoButtonModalProps {
   approvalVariant?: "positive" | "destructive";
   isDescriptionVisuallyHidden?: boolean;
   size?: "compact" | "detail";
+  buttonRatio?: "one-two" | "equal";
 }
 
 export function ApprovalTwoButtonModal({
@@ -41,6 +42,7 @@ export function ApprovalTwoButtonModal({
   approvalVariant = "positive",
   isDescriptionVisuallyHidden = true,
   size = "compact",
+  buttonRatio = "one-two",
 }: ApprovalTwoButtonModalProps) {
   const sub = (suffix: string) => `${dataComponent}_${suffix}`;
   const handleOpenChange = (nextOpen: boolean) => {
@@ -102,7 +104,10 @@ export function ApprovalTwoButtonModal({
               type="button"
               variant="v3-outline"
               size="sm"
-              className="h-11 w-1/2 text-base leading-6"
+              className={cn(
+                "h-11 text-base leading-6",
+                buttonRatio === "equal" ? "w-1/2" : "min-w-0 flex-1",
+              )}
               data-component={sub("cancel")}
               disabled={isPending}
               onClick={() => handleOpenChange(false)}
@@ -113,7 +118,10 @@ export function ApprovalTwoButtonModal({
               type="button"
               variant={approvalVariant === "destructive" ? "destructive" : "v3"}
               size="sm"
-              className="h-11 w-1/2 rounded-full text-base leading-6"
+              className={cn(
+                "h-11 rounded-full text-base leading-6",
+                buttonRatio === "equal" ? "w-1/2" : "min-w-0 flex-[2_1_0]",
+              )}
               data-component={sub("approve")}
               disabled={isPending || approvalDisabled}
               aria-busy={isPending || undefined}

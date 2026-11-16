@@ -55,6 +55,14 @@ describe("ServiceRecordGuide", () => {
         expect(screen.queryByRole("dialog")).toBeNull();
     });
 
+    it("keeps the skip button rounded-2xl instead of the shared pill radius", () => {
+        renderGuide();
+
+        const skip = within(dialog()).getByRole("button", { name: "건너뛰기" });
+        expect(skip).toHaveClass("rounded-2xl");
+        expect(skip).not.toHaveClass("rounded-full");
+    });
+
     it("opens as a modal dialog on slide 1 / 6 with 다음 focused and 이전 disabled", () => {
         renderGuide();
         expect(dialog()).toHaveAttribute("aria-modal", "true");

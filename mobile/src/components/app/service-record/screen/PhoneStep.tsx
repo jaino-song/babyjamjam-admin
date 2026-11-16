@@ -129,7 +129,7 @@ export function PhoneStep({
             </div>
             <StickyActionBar data-component={child("body_phone-actions")}>
                 <Button
-                    className="text-base"
+                    className="h-[46px] text-base"
                     type="button"
                     variant="v3"
                     size="md"

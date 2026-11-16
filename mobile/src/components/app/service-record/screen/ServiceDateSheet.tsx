@@ -104,7 +104,7 @@ export function ServiceDateSheet({ "data-component": root, context, day, calenda
                 <SheetHeader data-component={child("header")} className="gap-0.5 px-[22px] pb-2 pt-3 pr-16">
                     <SheetTitle className="text-2xl font-bold text-v3-dark">{day}회차 서비스 제공일</SheetTitle>
                     <SheetDescription className="text-sm font-semibold text-v3-text-muted">{editing && current ? `현재 ${formatServiceDate(current)}` : "날짜를 골라 주세요."}</SheetDescription>
-                    <Button data-component={child("header_close")} type="button" variant="ghost" size="icon" aria-label="닫기" className="text-base absolute right-2 top-3 h-11 w-11 text-v3-text-muted" onClick={() => close(onClose)}><X size={20} /></Button>
+                    <Button data-component={child("header_close")} type="button" variant="ghost" size="icon" aria-label="닫기" className="text-base absolute right-2 top-3 h-11 w-11 rounded-2xl text-v3-text-muted after:content-none" onClick={() => close(onClose)}><X size={20} /></Button>
                 </SheetHeader>
                 <div data-component={child("calendar")} className="flex min-h-0 flex-1 flex-col overflow-y-auto px-4 pb-4">
                     {context.startDate && context.endDate ? <p data-component={child("calendar_window")} className="mb-2 text-sm font-semibold text-v3-text-muted">서비스 기간: {formatServiceDate(context.startDate, true)} ~ {formatServiceDate(context.endDate, true)}</p> : null}
@@ -145,8 +145,8 @@ export function ServiceDateSheet({ "data-component": root, context, day, calenda
                     </div>
                 </div>
                 <div data-component={child("actions")} className="flex shrink-0 gap-2 border-t border-v3-border px-4 pt-4 pb-[calc(1rem+env(safe-area-inset-bottom))] [&>*]:flex-1">
-                    <Button className="text-base" data-component={child("actions_cancel")} type="button" variant="v3-outline" size="md" onClick={() => close(onClose)}>취소</Button>
-                    <Button className="text-base" data-component={child("actions_select")} type="button" variant="v3" size="md" disabled={!canSelect} onClick={() => { if (canSelect) close(() => onSelect(selected)); }}>선택</Button>
+                    <Button className="h-[46px] text-base" data-component={child("actions_cancel")} type="button" variant="v3-outline" size="md" onClick={() => close(onClose)}>취소</Button>
+                    <Button className="h-[46px] text-base" data-component={child("actions_select")} type="button" variant="v3" size="md" disabled={!canSelect} onClick={() => { if (canSelect) close(() => onSelect(selected)); }}>선택</Button>
                 </div>
             </SheetContent>
         </Sheet>

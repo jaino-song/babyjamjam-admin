@@ -618,8 +618,9 @@ main[data-slot="main-content"]:has([data-slot="dashboard-page"]) > [data-slot="d
 /* ===== List card ===== */
 .list-card {
   background: white;
-  border-radius: 22px;
-  box-shadow: 0 4px 24px hsla(214, 50%, 20%, 0.06);
+  border-radius: 16px;
+  border: 0;
+  box-shadow: 0 4px 24px rgba(25, 48, 77, 0.06);
   padding: 20px;
   margin-bottom: 12px;
 }
@@ -828,8 +829,11 @@ main[data-slot="main-content"]:has([data-slot="dashboard-page"]) > [data-slot="d
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 8px 0;
-  border-radius: 12px;
+  padding: 12px 0;
+  border: 0;
+  min-height: 0;
+  height: auto;
+  border-radius: 0;
   cursor: pointer;
   transition: background 0.15s ease;
 }
@@ -989,8 +993,8 @@ main[data-slot="main-content"]:has([data-slot="dashboard-page"]) > [data-slot="d
   background: hsl(var(--v3-dim-white));
   border-radius: 12px;
   min-height: 44px;
-  padding: 0;
-  margin: 0 12px 8px;
+  padding: 0 12px;
+  margin: 0 0 8px;
   color: hsl(var(--v3-text-muted));
   font-size: 0.8rem;
 }
@@ -1124,20 +1128,19 @@ main[data-slot="main-content"]:has([data-slot="dashboard-page"]) > [data-slot="d
   align-items: center;
   gap: 14px;
   width: 100%;
-  padding: 12px 16px;
+  padding: 12px 0;
+  min-height: 0;
+  height: auto;
   cursor: pointer;
   transition: background 0.15s ease;
-  border-width: 1px 0 0;
-  border-top-style: solid;
-  border-top-color: hsl(var(--v3-border));
-  border-radius: 8px;
+  border: 0;
+  border-radius: 0;
   background: transparent;
   color: inherit;
   font: inherit;
   text-decoration: none;
   text-align: left;
 }
-.menu-row:first-of-type { border-top-width: 0; }
 .menu-row:hover { background: rgba(255, 255, 255, 0.6); }
 .menu-row-static {
   cursor: default;
@@ -1254,7 +1257,10 @@ main[data-slot="main-content"]:has([data-slot="dashboard-page"]) > [data-slot="d
   border: 1px solid hsl(var(--v3-border));
   color: hsl(var(--v3-primary));
   padding: 14px;
-  border-radius: 18px;
+  border-radius: 9999px;
+  height: 40px;
+  min-height: 0;
+  box-sizing: border-box;
   font-size: 0.85rem;
   font-weight: 700;
   cursor: pointer;
@@ -1268,11 +1274,14 @@ main[data-slot="main-content"]:has([data-slot="dashboard-page"]) > [data-slot="d
 }
 .logout-btn {
   width: 100%;
-  background: white;
-  border: 1px solid hsl(var(--v3-border));
-  color: hsl(var(--v3-burgundy));
+  background: #fff;
+  border: 2px solid #004bad;
+  color: #004bad;
   padding: 14px;
-  border-radius: 18px;
+  border-radius: 9999px;
+  height: 40px;
+  min-height: 0;
+  box-sizing: border-box;
   font-size: 0.85rem;
   font-weight: 700;
   cursor: pointer;
@@ -1282,7 +1291,7 @@ main[data-slot="main-content"]:has([data-slot="dashboard-page"]) > [data-slot="d
   justify-content: center;
   gap: 8px;
   line-height: 1;
-  box-shadow: 0 4px 24px hsla(214, 50%, 20%, 0.06);
+  box-shadow: none;
 }
 .app-version {
   text-align: center;
@@ -1632,7 +1641,11 @@ body:has([data-slot="notification-settings-page"]) [data-slot^="mobile-bottom-na
 }
 
 body.mobile-all-route .menu-row {
-  min-height: 61px;
+  padding: 12px 0;
+  border: 0;
+  border-radius: 0;
+  min-height: 0;
+  height: auto;
 }
 
 /* Profile card should not translate on refresh; moving a flow item changes the
@@ -1767,7 +1780,7 @@ body.mobile-all-route .menu-row {
   min-width: 0;
   overflow: hidden;
   color: hsl(var(--v3-dark));
-  font-size: 0.95rem;
+  font-size: 16px;
   font-weight: 800;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1777,8 +1790,9 @@ body.mobile-all-route .menu-row {
   border: 0;
   color: hsl(var(--v3-text-muted));
   cursor: pointer;
-  width: 44px;
-  height: 44px;
+  position: relative;
+  width: 32px;
+  height: 32px;
   padding: 4px;
   border-radius: 12px;
   font-family: inherit;
@@ -1786,6 +1800,11 @@ body.mobile-all-route .menu-row {
   display: flex;
   align-items: center;
   justify-content: center;
+}
+.sheet-close::after {
+  content: "";
+  position: absolute;
+  inset: -6px;
 }
 .nav-page.detail .detail-body {
   padding-bottom: 96px;
@@ -1946,8 +1965,10 @@ body.mobile-all-route .menu-row {
 
 /* ===== Info cards (gray cards inside detail body) ===== */
 .info-card {
-  background: hsl(var(--v3-dim-white));
-  border-radius: 18px;
+  background: transparent;
+  border: 1px solid #818b98;
+  box-shadow: none;
+  border-radius: 16px;
   padding: 14px 16px;
 }
 .info-card-padded { padding: 16px 18px; }
@@ -1982,10 +2003,12 @@ body.mobile-all-route .menu-row {
 }
 .info-row:last-child { border-bottom: 0; }
 .info-row-label {
+  font-size: 12px;
   color: hsl(var(--v3-text-muted));
   flex-shrink: 0;
 }
 .info-row-value {
+  font-size: 12px;
   margin-left: auto;
   text-align: right;
   font-weight: 600;
@@ -2034,10 +2057,22 @@ body.mobile-all-route .menu-row {
   display: flex;
   gap: 8px;
 }
+/* Only horizontal rows with exactly two actions use the shared ratio. */
+.detail-actions:not(.flex-col) > .btn:first-child:nth-last-child(2) {
+  flex: 1 1 0;
+  min-width: 0;
+}
+.detail-actions:not(.flex-col) > .btn:last-child:nth-child(2) {
+  flex: 2 1 0;
+  min-width: 0;
+}
 .btn {
   flex: 1;
   padding: 12px;
-  border-radius: 14px;
+  border-radius: 9999px;
+  height: 40px;
+  min-height: 0;
+  box-sizing: border-box;
   font-size: 0.85rem;
   font-weight: 700;
   border: 0;
@@ -2700,7 +2735,8 @@ body:has([data-slot="employees-content"]) .list-title {
 }
 
 body:has([data-slot="employees-content"]) [data-slot="employees-content"] .search-bar {
-  margin: 4px 12px 8px;
+  margin: 4px 0 8px;
+  padding: 0 12px;
 }
 
 body:has([data-slot="employees-content"]) .search-bar input {
@@ -3212,7 +3248,10 @@ body:has([data-slot="messages-page"]) [data-slot="mobile-bottom-nav"] span {
   width: 100%;
   padding: 14px;
   border: 0;
-  border-radius: 14px;
+  border-radius: 9999px;
+  height: 40px;
+  min-height: 0;
+  box-sizing: border-box;
   background: hsl(var(--v3-primary));
   color: white;
   font-family: inherit;
@@ -4418,7 +4457,8 @@ body.mobile-contracts-route .list-item {
 }
 
 body.mobile-contracts-route .search-bar {
-  margin: 4px 12px 8px;
+  margin: 4px 0 8px;
+  padding: 0 12px;
   line-height: normal;
 }
 
@@ -5372,11 +5412,12 @@ body.mobile-prices-route [data-slot="mobile-bottom-nav"] span {
 }
 
 .price-breakdown {
-  background: white;
-  border-radius: 18px;
+  background: transparent;
+  border: 1px solid #818b98;
+  border-radius: 16px;
   padding: 16px 18px;
   margin: 0;
-  box-shadow: 0 4px 24px hsla(214, 50%, 20%, 0.06);
+  box-shadow: none;
 }
 .price-breakdown-row {
   display: flex;

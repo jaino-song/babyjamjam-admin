@@ -15,7 +15,7 @@ interface MobileTwoButtonModalProps {
   cancelLabel: string;
   confirmLabel: string;
   confirmVariant?: ButtonProps["variant"];
-  actionOrder?: "confirm-cancel" | "cancel-confirm";
+  actionOrder?: "cancel-confirm";
   loading?: boolean;
   confirmDisabled?: boolean;
   children?: ReactNode;
@@ -34,7 +34,6 @@ export function MobileTwoButtonModal({
   cancelLabel,
   confirmLabel,
   confirmVariant = "destructive",
-  actionOrder = "confirm-cancel",
   loading = false,
   confirmDisabled = false,
   children,
@@ -49,7 +48,7 @@ export function MobileTwoButtonModal({
       variant={confirmVariant}
       onClick={() => void onConfirm()}
       disabled={loading || confirmDisabled}
-      className="flex-1"
+      className="min-w-0 flex-[2_1_0]"
     >
       {confirmLabel}
     </Button>
@@ -60,7 +59,7 @@ export function MobileTwoButtonModal({
       variant="outline"
       onClick={onCancel}
       disabled={loading}
-      className="flex-1"
+      className="min-w-0 flex-1"
     >
       {cancelLabel}
     </Button>
@@ -99,17 +98,8 @@ export function MobileTwoButtonModal({
           </div>
           {children}
           <div className="mt-2 flex gap-2" data-component={sub("actions")}>
-            {actionOrder === "cancel-confirm" ? (
-              <>
-                {cancelButton}
-                {confirmButton}
-              </>
-            ) : (
-              <>
-                {confirmButton}
-                {cancelButton}
-              </>
-            )}
+            {cancelButton}
+            {confirmButton}
           </div>
         </DialogPrimitive.Content>
       </DialogPrimitive.Portal>
