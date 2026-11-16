@@ -36,11 +36,11 @@ const buttonVariants = cva(
           "bg-google text-google-foreground border border-border shadow-sm hover:bg-muted",
       },
       size: {
-        default: "h-10 px-4",
-        md: "h-11 px-6",
+        default: "h-[calc(40px*var(--glint-ui-scale,1))] px-4",
+        md: "h-[calc(40px*var(--glint-ui-scale,1))] px-6",
         sm: "h-9 px-3 text-xs",
-        lg: "h-12 px-8 text-base",
-        icon: "h-10 w-10 p-0",
+        lg: "h-[calc(40px*var(--glint-ui-scale,1))] px-8 text-base",
+        icon: "h-[calc(32px*var(--glint-ui-scale,1))] w-[calc(32px*var(--glint-ui-scale,1))] p-0 relative after:absolute after:left-1/2 after:top-1/2 after:h-[calc(44px*var(--glint-ui-scale,1))] after:w-[calc(44px*var(--glint-ui-scale,1))] after:-translate-x-1/2 after:-translate-y-1/2 after:content-['']",
       },
       width: {
         sm: "w-1/4",

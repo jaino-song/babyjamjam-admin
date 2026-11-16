@@ -125,7 +125,7 @@ describe("ClientAutocomplete", () => {
     const trigger = screen.getByRole("combobox");
     await waitFor(() => expect(trigger).toHaveTextContent("정다라"));
     expect(trigger).toHaveClass("h-[calc(38px*var(--glint-ui-scale,1))]");
-    expect(trigger).toHaveClass("rounded-[13px]");
+    expect(trigger).toHaveClass("rounded-[12px]");
     expect(trigger).toHaveClass("border-[1.35px]");
     expect(trigger).toHaveClass("text-v3-dark");
   });

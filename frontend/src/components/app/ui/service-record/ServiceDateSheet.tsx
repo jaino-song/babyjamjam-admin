@@ -13,7 +13,7 @@ const WEEKDAYS = ["일", "월", "화", "수", "목", "금", "토"];
 const ISO_DATE_PATTERN = /^(\d{4})-(\d{2})-(\d{2})$/;
 const MONTH_CELL_BASE = "relative flex min-h-[calc(44px*var(--glint-ui-scale,1))] min-w-0 flex-col items-center justify-center rounded-[calc(10px*var(--glint-ui-scale,1))] border text-[calc(16px*var(--glint-ui-scale,1))] font-bold leading-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-v3-primary";
 const HATCHED = "border-v3-border text-v3-text-muted/70 bg-[repeating-linear-gradient(135deg,#fff_0_5px,hsl(214_20%_96%)_5px_10px)]";
-const ICON_BUTTON = "h-[calc(44px*var(--glint-ui-scale,1))] w-[calc(44px*var(--glint-ui-scale,1))] rounded-[calc(12px*var(--glint-ui-scale,1))]";
+const ICON_BUTTON = "after:hidden h-[calc(44px*var(--glint-ui-scale,1))] w-[calc(44px*var(--glint-ui-scale,1))] rounded-[calc(12px*var(--glint-ui-scale,1))]";
 const ACTION_BUTTON = "h-[calc(44px*var(--glint-ui-scale,1))] flex-1 text-[calc(16px*var(--glint-ui-scale,1))] leading-[calc(24px*var(--glint-ui-scale,1))]";
 
 interface DateParts { year: number; month: number; day: number }

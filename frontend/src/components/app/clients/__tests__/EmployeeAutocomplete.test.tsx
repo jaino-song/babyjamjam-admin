@@ -154,7 +154,7 @@ describe("EmployeeAutocomplete", () => {
     const trigger = screen.getByRole("combobox", { name: "제공인력 1 성함" });
     expect(trigger).toHaveTextContent("홍길동");
     expect(trigger).toHaveClass("h-[calc(38px*var(--glint-ui-scale,1))]");
-    expect(trigger).toHaveClass("rounded-[13px]");
+    expect(trigger).toHaveClass("rounded-[12px]");
     expect(trigger).toHaveClass("border-[1.35px]");
   });
 
