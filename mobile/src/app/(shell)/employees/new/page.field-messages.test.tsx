@@ -47,6 +47,17 @@ describe("mobile employee wizard field messages", () => {
     expect(screen.getByRole("button", { name: "다음 →" })).toBeEnabled();
   });
 
+  it("renders the not-proceeding action first with the existing button classes", () => {
+    render(<NewEmployeePage />);
+
+    const previous = screen.getByRole("button", { name: "이전" });
+    const next = screen.getByRole("button", { name: "다음 →" });
+    expect(previous).toHaveClass("actionButton", "secondary");
+    expect(next).toHaveClass("actionButton", "primary");
+    expect(previous.parentElement?.children[0]).toBe(previous);
+    expect(previous.nextElementSibling).toBe(next);
+  });
+
   it("reports a cleared required name", () => {
     render(<NewEmployeePage />);
 
