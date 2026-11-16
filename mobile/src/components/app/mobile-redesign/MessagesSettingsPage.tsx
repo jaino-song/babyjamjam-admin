@@ -35,6 +35,7 @@ import {
   CLIENT_REGISTRATION_POLICY_ITEM_ID,
   type SettingsListItem,
 } from "@/components/app/mobile-redesign/settings/settings-items";
+import { Spinner } from "@/components/ui/spinner";
 import { StatusPill } from "@/components/app/ui/status-badge";
 import {
   useMessageTriggerRules,
@@ -388,7 +389,7 @@ export function MessagesSettingsPage(): ReactElement {
     }
 
     if (["trigger-dispatch", "trigger-job-retry", "sms-retry", PAST_TRIGGER_POLICY_ID, "duplicate-send-confirmation", "quiet-hours"].includes(selectedItem.id)) {
-      if (configQuery.isLoading) return <p role="status">메시지 설정을 불러오는 중</p>;
+      if (configQuery.isLoading) return <Spinner data-component={`${detailBase}_loading`} role="status" aria-label="메시지 설정을 불러오는 중" />;
       if (!configuration || !persisted?.permissions.canRead || configQuery.isError || !branchId) return <p role="alert">메시지 설정을 불러올 수 없습니다. 다시 불러온 뒤 편집해 주세요.</p>;
       return <div data-component={`${detailBase}_configuration`} className="flex flex-col gap-3">
         <DetailContent data-component={`${detailBase}_detail-content`} item={selectedItem} />
@@ -434,6 +435,7 @@ export function MessagesSettingsPage(): ReactElement {
 
           <SlidingCard
             data-component={SLIDING_CARD_BASE}
+            listBottomPadding="none"
             open={
               selectedItemId !== null &&
               selectedItem !== undefined

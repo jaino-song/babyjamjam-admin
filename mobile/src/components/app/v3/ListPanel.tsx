@@ -79,7 +79,7 @@ export function ListPanel({
   const activeTabLabel = tabs?.find(t => t.value === activeTab)?.label ?? tabs?.[0]?.label ?? "";
 
   return (
-    <div data-component={dataComponent} className="bg-white rounded-2xl shadow-v3 flex flex-col overflow-hidden h-full min-h-0">
+    <div data-component={dataComponent} className="bg-white rounded-[16px] shadow-v3 flex flex-col overflow-hidden h-full min-h-0">
       <div data-component={sub("header")} className={headerClassName}>
         <PanelTitleGroup
           component="list-panel"

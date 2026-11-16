@@ -5,11 +5,12 @@ import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { getFeedbackList, getFeedbackStats, FeedbackItem } from '@/lib/api/admin';
 import { cn } from '@/lib/utils';
-import { MessageSquare, ThumbsUp, ThumbsDown, Sparkles, Send, Users, MessageCircle } from 'lucide-react';
+import { ThumbsUp, ThumbsDown } from 'lucide-react';
 import { Skeleton } from '@/components/ui/skeleton';
 import { StatsBar, ListPanel, AnimatedSlotList, ListEmptyState } from '@/components/app/v3';
-import { ShortcutGrid } from '@/components/app/v3/ShortcutGrid';
 import { QueryErrorState } from '@/components/app/ui/QueryErrorState';
+
+import styles from './page.module.css';
 
 type FilterType = 'all' | 'positive' | 'negative';
 
@@ -27,16 +28,6 @@ export default function AdminFeedbackPage() {
 
   const [filterType, setFilterType] = useState<FilterType>('all');
   const [searchQuery, setSearchQuery] = useState('');
-
-  const shortcuts = useMemo(
-    () => [
-      { href: '/chat', label: 'AI 어시스턴트', icon: Sparkles },
-      { href: '/contracts/new', label: '계약 발송', icon: Send },
-      { href: '/clients', label: '고객', icon: Users },
-      { href: '/messages', label: '메시지', icon: MessageCircle },
-    ],
-    []
-  );
 
   const { data: stats, isLoading: statsLoading, isPaused: statsPaused, isError: statsError, isFetching: statsFetching, refetch: statsRefetch } = useQuery({
     queryKey: ['feedbackStats'],
@@ -85,7 +76,7 @@ export default function AdminFeedbackPage() {
   const isFeedbackRetrying = feedbackFetching || (statsError && statsFetching);
 
   return (
-    <section data-component={FEEDBACK_BASE} className="space-y-6">
+    <section data-component={FEEDBACK_BASE} data-slot="admin-feedback-content" className={cn(styles.adminFeedbackContent, "flex flex-col gap-3")}>
       {!hasFeedbackAlert && statsError && stats === undefined && (
         <QueryErrorState
           dataComponent={`${FEEDBACK_BASE}_stats-error`}
@@ -108,16 +99,9 @@ export default function AdminFeedbackPage() {
         data-component={`${FEEDBACK_BASE}_stats`}
         isLoading={statsLoading || (statsPaused && stats === undefined)}
         items={[
-          { icon: MessageSquare, value: stats === undefined ? '—' : stats.total, label: '전체', counter: stats === undefined ? undefined : '건' },
           { icon: ThumbsUp, value: stats === undefined ? '—' : stats.positive, label: '긍정적', counter: stats === undefined ? undefined : '건', colorIndex: 1 },
           { icon: ThumbsDown, value: stats === undefined ? '—' : stats.negative, label: '부정적', counter: stats === undefined ? undefined : '건', colorIndex: 2 },
         ]}
-      />
-
-      <ShortcutGrid
-        data-component={`${FEEDBACK_BASE}_shortcuts`}
-        shortcuts={shortcuts}
-        className="bg-white rounded-2xl shadow-v3 p-4"
       />
 
       <ListPanel data-component={FEEDBACK_LIST_PANEL}

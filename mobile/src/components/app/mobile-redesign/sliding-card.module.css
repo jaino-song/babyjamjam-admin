@@ -31,6 +31,10 @@
   will-change: transform;
 }
 
+.listPaneNoBottomPadding {
+  padding-bottom: 0;
+}
+
 .listPaneOpen {
   transform: translateX(-30%);
 }
