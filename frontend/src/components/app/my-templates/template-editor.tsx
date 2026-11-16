@@ -233,7 +233,7 @@ export const TemplateEditor = ({ initialData }: TemplateEditorProps) => {
                 </Alert>
             )}
 
-            <TemplatePreview content={content} variables={variables} />
+            <TemplatePreview isTemplatePreview content={content} variables={variables} />
 
             <div className="flex justify-end gap-3 pb-6">
                 <Button variant="outline" onClick={() => router.back()}>

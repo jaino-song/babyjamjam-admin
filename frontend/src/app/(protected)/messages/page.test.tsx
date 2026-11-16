@@ -33,6 +33,7 @@ function replaceContent(value: string) {
 }
 
 const source = fs.readFileSync(require.resolve("./page"), "utf8");
+const navigationSource = fs.readFileSync(require.resolve("@/components/app/messages/useMessageSections"), "utf8");
 
 function render(ui: ReactElement) {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -52,7 +53,7 @@ describe("MessagesPage template type labels", () => {
 
 describe("MessagesPage trigger section gating", () => {
   it("uses the active branch-management role for trigger rules", () => {
-    const unreleasedIds = source
+    const unreleasedIds = navigationSource
       .split("const UNRELEASED_SECTION_IDS = new Set<MessageSectionId>([")[1]
       ?.split("]);")[0];
 
@@ -64,21 +65,21 @@ describe("MessagesPage trigger section gating", () => {
     expect(unreleasedIds).not.toContain('"scheduled"');
     expect(unreleasedIds).not.toContain('"history"');
     expect(unreleasedIds).toContain('"triggers"');
-    expect(source).toContain("const canManageBranchMessages = canManageBranchFromAuthQuery(authUserQuery)");
-    expect(source).toContain("UNRELEASED_SECTION_IDS.has(section.id) && !canManageBranchMessages");
-    expect(source).not.toContain("ROLES.owner");
+    expect(navigationSource).toContain("const canManageBranchMessages = canManageBranchFromAuthQuery(authUserQuery)");
+    expect(navigationSource).toContain("UNRELEASED_SECTION_IDS.has(section.id) && !canManageBranchMessages");
+    expect(navigationSource).not.toContain("ROLES.owner");
   });
 });
 
 describe("MessagesPage sender approval gating", () => {
   it("keeps send, settings, and template editing available while sender approval is pending", () => {
-    expect(source).toContain(
+    expect(navigationSource).toContain(
       'const SENDER_APPROVAL_EXEMPT_SECTION_IDS = new Set<MessageSectionId>(["send", "settings", "templates"]);',
     );
-    expect(source).toContain(
+    expect(navigationSource).toContain(
       "const isSenderApprovalRequired = senderApproval?.isApproved === false",
     );
-    expect(source).toContain(
+    expect(navigationSource).toContain(
       "!SENDER_APPROVAL_EXEMPT_SECTION_IDS.has(section.id)",
     );
   });
@@ -130,9 +131,10 @@ function mockAuthUser(data: Record<string, unknown> | null) {
   });
 }
 
+const mockRouterPush = jest.fn();
 let mockSearchParams = new URLSearchParams();
 jest.mock("next/navigation", () => {
-  const router = { push: jest.fn(), replace: jest.fn(), refresh: jest.fn(), back: jest.fn(), forward: jest.fn(), prefetch: jest.fn() };
+  const router = { push: (...args: unknown[]) => mockRouterPush(...args), replace: jest.fn(), refresh: jest.fn(), back: jest.fn(), forward: jest.fn(), prefetch: jest.fn() };
   return { ...jest.requireActual("next/navigation"), useSearchParams: () => mockSearchParams,
     usePathname: () => "/messages", useRouter: () => router };
 });
@@ -453,6 +455,18 @@ function goToHistorySection() {
   const navButtons = screen.getAllByRole("button", { name: "발송 기록" });
   fireEvent.click(navButtons[0]);
 }
+
+it("offers template creation above settings without selecting it on the messages page", () => {
+  mockData();
+  const { container } = render(<MessagesPage />);
+  const nav = container.querySelector('[data-slot="section-nav-desktop"]') as HTMLElement;
+  const buttons = within(nav).getAllByRole("button");
+  const create = within(nav).getByRole("button", { name: "템플릿 만들기" });
+  expect(create).toHaveAttribute("aria-pressed", "false");
+  expect(buttons[buttons.indexOf(create) + 1]).toHaveTextContent("설정");
+  fireEvent.click(create);
+  expect(mockRouterPush).toHaveBeenCalledWith("/messages/templates/new");
+});
 
 function getZoneContainer(zone: "upcoming" | "past") {
   const suffix = zone === "upcoming" ? "zone-upcoming" : "zone-past";

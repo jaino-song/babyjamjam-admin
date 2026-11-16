@@ -1,33 +1,39 @@
 "use client";
 
-import { ArrowLeft } from "lucide-react";
-import Link from "next/link";
-import { Button } from "@/components/ui/button";
 import { ContentPaper } from "@/components/app/root/content-paper";
 import { TemplateEditor } from "@/components/app/my-templates/template-editor";
+import { MessagesSectionChrome } from "@/components/app/messages/MessagesSectionChrome";
+import { useMessageHistoryListState } from "@/components/app/messages/useMessageHistoryListState";
+import { useMessageSections } from "@/components/app/messages/useMessageSections";
+import { useMessageTemplates } from "@/features/message-templates/hooks/use-message-templates";
 import { useScrollActivity } from "@/components/app/v3/useScrollActivity";
 import { useLocale } from "@/providers/LocaleProvider";
 import { t } from "@/lib/i18n/translations";
 
 export default function NewTemplatePage() {
     const locale = useLocale();
+    const historyState = useMessageHistoryListState();
+    const sections = useMessageSections();
+    const templates = useMessageTemplates(1, 100);
     const { isScrollActive, handleScroll } = useScrollActivity();
 
     return (
-        <div
+        <MessagesSectionChrome
             data-component="desktop_messages_sections_templates-new"
-            className="scrollbar-on-scroll h-full min-h-0 overflow-y-auto bg-background"
-            data-scroll-active={isScrollActive ? "true" : "false"}
-            onScroll={handleScroll}
+            historyState={historyState}
+            sections={sections}
+            activeId="template-create"
+            branchTemplates={{
+                count: templates.data?.length ?? (templates.isError ? "—" : 0),
+                isLoading: templates.isLoading || (templates.isPaused && templates.data === undefined),
+            }}
         >
-            <section data-component="desktop_messages_sections_templates-new_templates-new-content" className="px-4 sm:px-6 md:px-12 py-6 sm:py-8 mx-auto">
-                <div data-component="desktop_messages_sections_templates-new_templates-new-content_templates-new-nav" className="mb-4">
-                    <Button variant="ghost" size="icon" asChild>
-                        <Link href="/messages/templates">
-                            <ArrowLeft className="h-6 w-6" />
-                        </Link>
-                    </Button>
-                </div>
+            <div
+                data-component="desktop_messages_sections_templates-new_templates-new-content"
+                className="scrollbar-on-scroll flex-1 min-h-0 min-w-0 overflow-y-auto"
+                data-scroll-active={isScrollActive ? "true" : "false"}
+                onScroll={handleScroll}
+            >
                 <ContentPaper
                     title={t(locale, "template-editor.create-title")}
                     subtitle={t(locale, "template-editor.create-subtitle")}
@@ -35,7 +41,7 @@ export default function NewTemplatePage() {
                 >
                     <TemplateEditor />
                 </ContentPaper>
-            </section>
-        </div>
+            </div>
+        </MessagesSectionChrome>
     );
 }

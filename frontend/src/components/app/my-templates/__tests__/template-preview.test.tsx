@@ -18,5 +18,16 @@ describe("TemplatePreview", () => {
         expect(screen.getByRole("textbox")).toHaveValue("Hello [Name]\nTotal [Price]");
         expect(screen.getByText("{{name}}")).toBeInTheDocument();
         expect(screen.getByText("[Price]")).toBeInTheDocument();
+        expect(container.querySelector('[data-component="desktop_messages_sections_generated-msg-detail-content"]')).not.toHaveAttribute("style");
+    });
+
+    it("uses the outlined white surface only when the editor opts in", () => {
+        const { container } = render(<TemplatePreview content="본문" variables={[]} isTemplatePreview />);
+        expect(container.querySelector('[data-component="desktop_messages_sections_generated-msg-detail-content"]')).toHaveStyle({
+            background: "#fff",
+            border: "1px solid #818b98",
+            boxShadow: "none",
+            borderRadius: "16px",
+        });
     });
 });
