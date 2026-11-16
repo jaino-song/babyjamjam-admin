@@ -682,7 +682,7 @@ export function TemplateSendForm({
           data-component="desktop_messages_sections_template-send-form-recipient"
           variant="primary"
           size="sm"
-          className="w-fit max-w-none justify-start"
+          className="w-fit max-w-none justify-start overflow-visible"
         >
           <span className="min-w-0 truncate">
             {shouldShowRecipientNameInPill && item.name
