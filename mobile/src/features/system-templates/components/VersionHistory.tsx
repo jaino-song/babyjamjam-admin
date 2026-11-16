@@ -1,9 +1,10 @@
 'use client';
 
 import { useState } from 'react';
-import { History, Eye, RotateCcw, RefreshCcw, Loader2 } from 'lucide-react';
+import { History, Eye, RotateCcw, RefreshCcw } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
 
+import { LoadingState } from '@/components/app/ui/LoadingState';
 import { Button } from '@/components/ui/button';
 import { Separator } from '@/components/ui/separator';
 import { Card } from '@/components/ui/card';
@@ -97,9 +98,7 @@ export function VersionHistory({ templateKey, onRollback }: Props) {
 
           <div className="mt-4">
             {isLoading ? (
-              <div className="flex justify-center py-4">
-                <Loader2 className="h-6 w-6 animate-spin text-primary" />
-              </div>
+              <LoadingState label="버전 기록을 불러오는 중" data-component="mobile_system-templates_version-history_loading" className="py-4" />
             ) : (
               <ul className="space-y-0">
                 {versions?.map((version) => (
@@ -165,9 +164,7 @@ export function VersionHistory({ templateKey, onRollback }: Props) {
             </DialogTitle>
           </DialogHeader>
           {isPreviewLoading ? (
-            <div className="flex justify-center py-6">
-              <Loader2 className="h-6 w-6 animate-spin text-primary" />
-            </div>
+            <LoadingState label="버전 내용을 불러오는 중" data-component="mobile_system-templates_version-preview_loading" className="py-6" />
           ) : (
             <>
               {previewVersion && (
@@ -226,6 +223,8 @@ export function VersionHistory({ templateKey, onRollback }: Props) {
                   ? handleRollback(confirmDialog.version!)
                   : handleReset()
               }
+              loading={isApplying}
+              loadingLabel={confirmDialog?.type === 'rollback' ? '복원 중' : '초기화 중'}
               disabled={isApplying}
             >
               {confirmDialog?.type === 'rollback' ? '복원' : '초기화'}

@@ -112,9 +112,10 @@ export function DashboardRedesign({
             <Button
               data-component={`${DASHBOARD_ANALYTICS_BASE}_error_retry`}
               variant="outline" size="sm" type="button"
+              loading={isRetryingAnalytics} loadingLabel="다시 시도 중"
               disabled={isRetryingAnalytics} onClick={onRetryAnalytics}
             >
-              {isRetryingAnalytics ? "다시 시도 중…" : "다시 시도"}
+              다시 시도
             </Button>
           </Alert>
         </div>
@@ -156,9 +157,10 @@ export function DashboardRedesign({
               <Button
                 data-component={`${DASHBOARD_LIST_BODY_BASE}_error_retry`}
                 variant="outline" size="sm" type="button"
+                loading={isRetrying} loadingLabel="다시 시도 중"
                 disabled={isRetrying} onClick={onRetry}
               >
-                {isRetrying ? "다시 시도 중…" : "다시 시도"}
+                다시 시도
               </Button>
             </Alert>
           ) : loading ? (

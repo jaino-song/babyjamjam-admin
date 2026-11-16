@@ -8,6 +8,7 @@ import { formatIsoDateInput } from "@babyjamjam/shared/utils/date-input";
 import { z } from "zod";
 
 import { completeKakaoOnboarding } from "@/app/(shell)/(auth)/kakao/onboarding/actions";
+import { ButtonLoadingContent } from "@/components/ui/button";
 import { FieldLabelRow, fieldMessageId } from "@/components/app/ui/FieldLabelRow";
 import { useFieldMessages } from "@/hooks/use-field-messages";
 import { formatKoreanPhoneNumber } from "@/lib/phone";
@@ -222,7 +223,17 @@ export function OnboardingForm(props: OnboardingFormProps) {
             <ChevronDown className="auth-select-chev" size={16} aria-hidden="true" />
           </div>
         </div>
-        <button className="auth-btn" type="submit" disabled={isLoading}>{isLoading ? "저장 중…" : "가입 완료"}</button>
+        <button
+          data-component={`${KAKAO_ONBOARDING_BASE}_submit`}
+          data-slot="auth-btn"
+          className={isLoading ? "auth-btn relative" : "auth-btn"}
+          type="submit"
+          disabled={isLoading}
+          aria-busy={isLoading ? true : undefined}
+          data-loading={isLoading ? "" : undefined}
+        >
+          <ButtonLoadingContent loading={isLoading} loadingLabel="저장 중">가입 완료</ButtonLoadingContent>
+        </button>
       </form>
     </div>
   );

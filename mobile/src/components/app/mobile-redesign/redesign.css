@@ -368,35 +368,7 @@ body:has([data-slot="messages-page"]) [data-slot="messages-content"] {
 .existing-navbar .navbar-icons svg {
   color: white;
 }
-.navbar-icon-btn {
-  width: 38px;
-  height: 38px;
-  background: transparent;
-  border-radius: 12px;
-  border: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: hsl(var(--v3-text));
-  cursor: pointer;
-  position: relative;
-  font-family: inherit;
-  padding: 0;
-}
-.navbar-icon-btn .dot {
-  position: absolute;
-  top: 8px;
-  right: 8px;
-  width: 8px;
-  height: 8px;
-  background: hsl(var(--v3-burgundy));
-  border-radius: 50%;
-  border: 2px solid white;
-}
-.navbar-icon-btn.notif-active {
-  background: transparent;
-  color: hsl(var(--v3-primary));
-}
+
 
 /* ===== Stats strip (2x2) ===== */
 .stats-grid {
@@ -1102,7 +1074,9 @@ main[data-slot="main-content"]:has([data-slot="dashboard-page"]) > [data-slot="d
   background: rgba(255, 255, 255, 0.18);
   border: 1px solid rgba(255, 255, 255, 0.25);
   color: white;
-  padding: 5px 7px;
+  width: 32px;
+  height: 32px;
+  padding: 0;
   border-radius: 8px;
   cursor: pointer;
   font-family: inherit;
@@ -1111,6 +1085,12 @@ main[data-slot="main-content"]:has([data-slot="dashboard-page"]) > [data-slot="d
   display: flex;
   align-items: center;
   justify-content: center;
+}
+
+.profile-edit::after {
+  content: "";
+  position: absolute;
+  inset: -6px;
 }
 
 .menu-group { /* transparent group container */ }
@@ -2492,9 +2472,10 @@ body.mobile-all-route .menu-row {
 
 [data-slot="client-service-records"] .service-record-refresh-button {
   display: inline-flex;
-  width: 24px;
-  height: 24px;
-  flex: 0 0 24px;
+  position: relative;
+  width: 32px;
+  height: 32px;
+  flex: 0 0 32px;
   align-items: center;
   justify-content: center;
   padding: 0;
@@ -2503,6 +2484,12 @@ body.mobile-all-route .menu-row {
   background: transparent;
   color: hsl(var(--v3-text-muted));
   cursor: pointer;
+}
+
+[data-slot="client-service-records"] .service-record-refresh-button::after {
+  content: "";
+  position: absolute;
+  inset: -6px;
 }
 
 [data-slot="client-service-records"] .service-record-refresh-button:disabled {

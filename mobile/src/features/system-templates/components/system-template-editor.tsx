@@ -3,7 +3,7 @@ import { normalizeApiError } from "@babyjamjam/shared";
 
 
 import { useState } from 'react';
-import { Plus, X, Loader2 } from 'lucide-react';
+import { Plus, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
@@ -155,7 +155,8 @@ export function SystemTemplateEditor({ template }: Props) {
                 <button
                   type="button"
                   onClick={() => handleRemoveCustomVariable(variable.key)}
-                  className="ml-1 hover:text-destructive"
+                  aria-label={`${variable.label} 변수 삭제`}
+                  className="relative ml-1 hover:text-destructive after:absolute after:left-1/2 after:top-1/2 after:h-11 after:w-11 after:-translate-x-1/2 after:-translate-y-1/2 after:content-['']"
                 >
                   <X className="h-3 w-3" />
                 </button>
@@ -200,12 +201,11 @@ export function SystemTemplateEditor({ template }: Props) {
       <div className="flex gap-2 justify-end">
         <Button
           onClick={handleSave}
+          loading={updateMutation.isPending}
+          loadingLabel="저장 중"
           disabled={!hasChanges || updateMutation.isPending}
         >
-          {updateMutation.isPending && (
-            <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-          )}
-          {updateMutation.isPending ? '저장 중...' : '저장'}
+          저장
         </Button>
       </div>
     </div>

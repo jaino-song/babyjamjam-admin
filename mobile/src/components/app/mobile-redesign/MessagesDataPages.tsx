@@ -1182,7 +1182,7 @@ export function MessagesHistoryPage() {
         description={`${retryTarget?.recipientName?.trim() || "수신자"} 고객에게 같은 메시지로 재발송합니다.`}
         isDescriptionVisuallyHidden={false}
         approvalLabel="재발송"
-        pendingLabel="재발송 중..."
+        pendingLabel="재발송 중"
         isPending={retryMutation.isPending || resendMutation.isPending}
         onApprove={handleConfirmRetry}
       />

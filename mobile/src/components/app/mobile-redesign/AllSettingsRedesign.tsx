@@ -83,6 +83,7 @@ export function AllSettingsRedesign({ menuGroups = defaultMenuGroups }: AllSetti
         <button
           type="button"
           className="profile-edit"
+          data-slot="profile-edit"
           aria-label="프로필 편집"
           hidden
           onClick={() => router.push("/select-branch")}

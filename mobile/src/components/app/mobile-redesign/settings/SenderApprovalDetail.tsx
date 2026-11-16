@@ -303,11 +303,13 @@ export function SenderApprovalDetail({
           data-component={sub("actions_submit")}
           data-slot="submit-button"
           variant="v3"
+          loading={isSubmitting}
+          loadingLabel="신청 중"
           disabled={!canSubmit}
           className={styles.submitButton}
         >
           <Send aria-hidden="true" size={16} strokeWidth={2.5} />
-          {isSubmitting ? "신청 중" : submitLabel}
+          {submitLabel}
         </Button>
       </div>
     </form>

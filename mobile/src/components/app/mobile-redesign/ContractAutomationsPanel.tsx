@@ -42,7 +42,7 @@ export function ContractAutomationsPanel({
   const saved = query.data?.autoFinalize;
   const summary = saved
     ? `검토 필요 → 계약 완료 · ${saved.graceDays === 0 ? "종료일 당일" : `종료일 ${saved.graceDays}일 후`} · 매일 17:00`
-    : "검토 필요 → 계약 완료 · 설정 불러오는 중";
+    : "검토 필요 → 계약 완료";
   const toggle = useCallback((enabled: boolean) => {
     if (saved) mutation.mutate({ ...saved, enabled });
   }, [mutation, saved]);

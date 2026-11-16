@@ -119,7 +119,7 @@ export function ContractAutomationEditor({ onClose }: { onClose: () => void }) {
         ) : null}
         <div className="flex gap-2" data-component={`${EDITOR_BASE}_actions`}>
           <Button type="button" variant="outline" className="min-h-11 flex-1" onClick={reset} disabled={!isDirty || mutation.isPending}>되돌리기</Button>
-          <Button type="button" className="min-h-11 flex-1" onClick={() => void save()} disabled={!isDirty || mutation.isPending}>{mutation.isPending ? "저장 중…" : "저장"}</Button>
+          <Button type="button" className="min-h-11 flex-1" onClick={() => void save()} loading={mutation.isPending} loadingLabel="저장 중" disabled={!isDirty || mutation.isPending}>저장</Button>
         </div>
       </div>
     </MobileDetailPage>
