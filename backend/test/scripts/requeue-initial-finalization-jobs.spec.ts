@@ -11,12 +11,18 @@ jest.mock("../../scripts/repair-eformsign-branch-ownership", () => ({
 }));
 jest.mock("../../application/utils/eformsign-backfill-safety", () => ({ assertEformsignBackfillConfirmation: jest.fn() }));
 
+import { readFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { runInNewContext } from "node:vm";
+import { ConflictException, HttpException } from "@nestjs/common";
 import { PrismaClient } from "@prisma/client";
+import { ModuleKind, ScriptTarget, transpileModule } from "typescript";
+import { codeOnlyProblemBody } from "../../application/utils/problem-bodies";
 import { assertEformsignBackfillConfirmation } from "../../application/utils/eformsign-backfill-safety";
 import { SbEformsignDocumentJobRepository } from "../../infrastructure/database/repositories/sb.eformsign-document-job.repository";
 import { createPrismaClientConfig } from "../../infrastructure/database/prisma-url.utils";
-import { loadOperatorEnvironment } from "../../scripts/repair-eformsign-branch-ownership";
-import { main } from "../../scripts/requeue-initial-finalization-jobs";
+import { loadOperatorEnvironment, resolveOperatorDatabaseTarget } from "../../scripts/repair-eformsign-branch-ownership";
+import { errorCodeOf, main } from "../../scripts/requeue-initial-finalization-jobs";
 
 describe("initial finalization operator diagnostics", () => {
     const branchId = "00000000-0000-4000-8000-000000000010";
@@ -100,5 +106,139 @@ describe("initial finalization operator diagnostics", () => {
         expect(PrismaClient).not.toHaveBeenCalled();
         expect(repository.diagnoseInitialFinalizationJob).not.toHaveBeenCalled();
         expect(repository.requeueInitialFinalizationJob).not.toHaveBeenCalled();
+    });
+});
+
+describe("errorCodeOf", () => {
+    const fallback = "INITIAL_FINALIZATION_REQUEUE_FAILED";
+
+    it.each([
+        "INVALID_ARGUMENTS", "BRANCH_REQUIRED", "BRANCH_CONFIRMATION_REQUIRED",
+        "BRANCH_NOT_FOUND", "BRANCH_CONFIRMATION_MISMATCH", "BRANCH_SCOPE_MISMATCH",
+        "DATABASE_CONFIGURATION_REQUIRED", "TARGET_UNKNOWN", "TARGET_CONFIRMATION_MISMATCH",
+    ])("preserves the operator code %s", (code) => {
+        expect(errorCodeOf(new Error(code))).toBe(code);
+    });
+
+    it("preserves a conflict code", () => {
+        expect(errorCodeOf(new ConflictException("SERVICE_RECORD_WRITE_TARGET_CHANGED")))
+            .toBe("SERVICE_RECORD_WRITE_TARGET_CHANGED");
+    });
+
+    it("uses the problem body code without exposing catalog text", () => {
+        expect(errorCodeOf(new ConflictException(codeOnlyProblemBody("SERVICE_RECORD_WRITE_TARGET_CHANGED"))))
+            .toBe("SERVICE_RECORD_WRITE_TARGET_CHANGED");
+    });
+
+    it("reads code-only conflict bodies", () => {
+        expect(errorCodeOf(new ConflictException({ code: "REQUEST_CONFLICT" }))).toBe("REQUEST_CONFLICT");
+    });
+
+    it("prefers a response code over its message", () => {
+        const error = new ConflictException({ code: "REQUEST_CONFLICT", message: "OTHER_SAFE_CODE" });
+        error.message = "free text";
+        expect(errorCodeOf(error)).toBe("REQUEST_CONFLICT");
+    });
+
+    it("reads safe string and message responses", () => {
+        const stringResponse = new HttpException("REQUEST_CONFLICT", 409);
+        stringResponse.message = "free text";
+        expect(errorCodeOf(stringResponse)).toBe("REQUEST_CONFLICT");
+        const objectResponse = new ConflictException({ code: "free text", message: "REQUEST_CONFLICT" });
+        objectResponse.message = "free text";
+        expect(errorCodeOf(objectResponse)).toBe("REQUEST_CONFLICT");
+    });
+
+    it.each([{ code: "P2002" }, { errorCode: "P1001" }])("reads Prisma-style codes %j", (error) => {
+        expect(errorCodeOf(error)).toBe(Object.values(error)[0]);
+    });
+
+    it.each([
+        new ConflictException({ message: "free text" }),
+        new Error("connect ECONNREFUSED 10.0.0.1:5432"),
+        new Error("Customer synthetic-private-client failed"),
+        new Error("SELECT * FROM clients WHERE name = 'synthetic-private-client'"),
+        new Error("AB"), new Error("A".repeat(81)), new Error("SAFE_CODE\n"),
+        { code: "free text", errorCode: "unsafe-value" },
+        null, "BRANCH_REQUIRED",
+    ])("redacts unsafe errors %#", (error) => {
+        expect(errorCodeOf(error)).toBe(fallback);
+    });
+});
+
+describe("initial finalization CLI failures", () => {
+    const branchId = "00000000-0000-4000-8000-000000000010";
+    const jobId = "00000000-0000-4000-8000-000000000001";
+    const nextJobId = "00000000-0000-4000-8000-000000000002";
+    const applyArgs = ["--branch-id", branchId, "--apply", "--confirm-target", "synthetic-target",
+        "--confirm-branch-slug", "dev-qa"];
+    const scriptPath = resolve(__dirname, "../../scripts/requeue-initial-finalization-jobs.ts");
+    const compiledScript = transpileModule(readFileSync(scriptPath, "utf8"), {
+        compilerOptions: { module: ModuleKind.CommonJS, target: ScriptTarget.ES2022 },
+    }).outputText;
+    const prisma = { branch: { findMany: jest.fn() }, $queryRaw: jest.fn(), $disconnect: jest.fn() };
+    const repository = { requeueInitialFinalizationJob: jest.fn() };
+
+    // Execute the real CLI catch with mocked dependencies; never start a database client.
+    async function runCli(argv: string[]) {
+        const cliProcess = { argv: ["node", scriptPath, ...argv], exitCode: 0,
+            stdout: { write: jest.fn() }, stderr: { write: jest.fn() } };
+        const cliModule = { exports: {} };
+        const cliRequire = Object.assign(
+            (id: string) => require(require.resolve(id, { paths: [dirname(scriptPath)] })),
+            { main: cliModule },
+        );
+        await runInNewContext(compiledScript, {
+            require: cliRequire, module: cliModule, exports: cliModule.exports, process: cliProcess, Error,
+        });
+        return cliProcess;
+    }
+
+    beforeEach(() => {
+        jest.resetAllMocks();
+        jest.mocked(PrismaClient).mockImplementation(() => prisma as unknown as PrismaClient);
+        jest.mocked(SbEformsignDocumentJobRepository).mockImplementation(() => repository as unknown as SbEformsignDocumentJobRepository);
+        jest.mocked(createPrismaClientConfig).mockReturnValue({ missingRequiredEnvVars: [], appliedDefaults: [], options: {} });
+        prisma.branch.findMany.mockResolvedValue([{ id: branchId, slug: "dev-qa" }]);
+        prisma.$queryRaw.mockResolvedValue([{ id: jobId, branch_id: branchId }, { id: nextJobId, branch_id: branchId }]);
+    });
+
+    it.each([
+        [{ environment: "unknown", databaseHost: "synthetic-host", databaseTarget: "synthetic-db" }, "TARGET_UNKNOWN"],
+        [{ environment: "production", databaseHost: "synthetic-host", databaseTarget: "synthetic-db" }, "TARGET_CONFIRMATION_MISMATCH"],
+    ] as const)("classifies confirmation errors without exposing the target: %j", async (target, code) => {
+        jest.mocked(resolveOperatorDatabaseTarget).mockReturnValue(target);
+        jest.mocked(assertEformsignBackfillConfirmation).mockImplementation(() => {
+            throw new Error("Set confirmation to production@synthetic-private-database-target");
+        });
+        const cli = await runCli(applyArgs);
+        expect(cli.stderr.write.mock.calls).toEqual([[`${code}\n`]]);
+        expect(cli.stdout.write).not.toHaveBeenCalled();
+        expect(cli.exitCode).toBe(1);
+        expect(createPrismaClientConfig).not.toHaveBeenCalled();
+        expect(PrismaClient).not.toHaveBeenCalled();
+    });
+
+    it.each([
+        [new ConflictException("SERVICE_RECORD_WRITE_TARGET_CHANGED"), "SERVICE_RECORD_WRITE_TARGET_CHANGED"],
+        [new Error("SELECT synthetic-private-client FROM synthetic-table"), "INITIAL_FINALIZATION_REQUEUE_FAILED"],
+    ] as const)("prints a failed apply job and stops before the next job %#", async (error, code) => {
+        repository.requeueInitialFinalizationJob.mockRejectedValueOnce(error);
+        const cli = await runCli(applyArgs);
+        expect(cli.stdout.write.mock.calls).toEqual([[`${JSON.stringify({ jobId, result: "error", code })}\n`]]);
+        expect(cli.stderr.write.mock.calls).toEqual([[`${code}\n`]]);
+        expect(cli.exitCode).toBe(1);
+        expect(repository.requeueInitialFinalizationJob.mock.calls).toEqual([[{ jobId, branchId }]]);
+        expect(prisma.$disconnect).toHaveBeenCalledTimes(1);
+    });
+
+    it("prints only BRANCH_REQUIRED and exits before environment or database setup", async () => {
+        const cli = await runCli([]);
+        expect(cli.stderr.write.mock.calls).toEqual([["BRANCH_REQUIRED\n"]]);
+        expect(cli.stdout.write).not.toHaveBeenCalled();
+        expect(cli.exitCode).toBe(1);
+        expect(loadOperatorEnvironment).not.toHaveBeenCalled();
+        expect(createPrismaClientConfig).not.toHaveBeenCalled();
+        expect(PrismaClient).not.toHaveBeenCalled();
     });
 });
