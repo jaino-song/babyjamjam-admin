@@ -1933,6 +1933,18 @@
         "replaces": [
           "separate desktop and phone document job pane contents"
         ]
+      },
+      {
+        "name": "MessagesSectionChrome",
+        "layer": "template",
+        "import": "@/components/app/messages/MessagesSectionChrome",
+        "file": "frontend/src/components/app/messages/MessagesSectionChrome.tsx",
+        "exports": [
+          "MessagesSectionChrome"
+        ],
+        "replaces": [
+          "message page-local statistics and section navigation layout"
+        ]
       }
     ],
     "mobile": [

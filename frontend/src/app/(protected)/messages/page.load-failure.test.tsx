@@ -9,6 +9,11 @@ import MessagesPage from "./page";
 // ListPanel (so `emptyState` and children both render) and the real
 // QueryErrorState (never mocked), and assert both directions of each state.
 
+jest.mock("next/navigation", () => ({
+  useRouter: () => ({ push: jest.fn() }),
+  useSearchParams: () => new URLSearchParams(),
+}));
+
 const mockRefetchHistory = jest.fn();
 const mockRefetchUpcoming = jest.fn();
 const mockRefetchUserTemplates = jest.fn();

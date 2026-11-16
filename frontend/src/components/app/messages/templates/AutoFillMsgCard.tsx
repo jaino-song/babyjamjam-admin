@@ -43,6 +43,8 @@ export interface AutoFillMsgCardProps {
   variableEmptyText?: string;
   layout?: AutoFillMsgCardLayout;
   showSide?: boolean;
+  /** Outlined information surface for the template editor preview only. */
+  isTemplatePreview?: boolean;
 }
 
 export interface AutoFillMsgCardSideProps {
@@ -174,6 +176,7 @@ export const AutoFillMsgCard = memo(function AutoFillMsgCard({
   variableEmptyText = "변수 정보가 없습니다.",
   layout = "grouped",
   showSide = true,
+  isTemplatePreview = false,
 }: AutoFillMsgCardProps) {
   const [isCopySuccessOpen, setIsCopySuccessOpen] = useState(false);
 
@@ -197,6 +200,7 @@ export const AutoFillMsgCard = memo(function AutoFillMsgCard({
     <>
       <div
         data-component="desktop_messages_sections_generated-msg-detail-content"
+        style={isTemplatePreview ? { background: "#fff", border: "1px solid #818b98", boxShadow: "none", borderRadius: "16px" } : undefined}
         className={cn(
           "scrollbar-hide flex h-full min-h-0 flex-col",
           APP_CONTENT_CARD_MUTED_CLASS_NAME,
