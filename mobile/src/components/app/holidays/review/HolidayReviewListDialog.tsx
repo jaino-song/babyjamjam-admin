@@ -138,8 +138,8 @@ export function HolidayReviewListDialog({
         className="h-[calc(100dvh-24px)] gap-0 rounded-t-3xl p-0"
       >
         {exitWatcher}
-        <SheetHeader data-component={`${dataComponent}_header`} className="pr-12">
-          <SheetTitle className="text-base leading-snug">{`${describeReviewEvent(event)} · 남은 고객 ${totalOpen}명`}</SheetTitle>
+        <SheetHeader data-component={`${dataComponent}_header`} className="px-12 text-center">
+          <SheetTitle className="text-center text-base leading-snug">{`${describeReviewEvent(event)} · 남은 고객 ${totalOpen}명`}</SheetTitle>
           <SheetDescription className="text-xs leading-relaxed">
             저장된 종료일과 다시 계산한 종료일이 달라요. 선택한 고객만 수정하거나 그대로 둘 수 있어요.
           </SheetDescription>

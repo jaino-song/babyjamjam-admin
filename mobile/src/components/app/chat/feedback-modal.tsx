@@ -37,7 +37,7 @@ export function FeedbackModal({ open, onClose, onSubmit }: FeedbackModalProps) {
         <Dialog open={open} onOpenChange={handleClose}>
             <DialogContent className="sm:max-w-md">
                 <DialogHeader>
-                    <DialogTitle className="flex items-center justify-between">
+                    <DialogTitle className="text-center">
                         어떤 점이 불만족스러우셨나요?
                     </DialogTitle>
                 </DialogHeader>

@@ -91,8 +91,8 @@ export function VersionHistory({ templateKey, onRollback }: Props) {
           </Button>
         </SheetTrigger>
         <SheetContent className="w-[350px]">
-          <SheetHeader>
-            <SheetTitle>버전 기록</SheetTitle>
+          <SheetHeader className="text-center">
+            <SheetTitle className="text-center">버전 기록</SheetTitle>
           </SheetHeader>
 
           <div className="mt-4">

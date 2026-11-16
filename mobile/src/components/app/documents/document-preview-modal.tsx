@@ -131,9 +131,9 @@ export default function DocumentPreviewModal({
         showCloseButton={false}
       >
         {/* Header */}
-        <DialogHeader data-component={`${dataComponent}_header`} className="px-6 py-4 border-b border-border flex-row justify-between items-start">
-          <div>
-            <DialogTitle className="text-lg font-semibold">
+        <DialogHeader data-component={`${dataComponent}_header`} className="px-6 py-4 border-b border-border grid grid-cols-[32px_minmax(0,1fr)_32px] items-start">
+          <div className="col-start-2 min-w-0">
+            <DialogTitle className="break-words text-center text-lg font-semibold">
               {doc.name}
             </DialogTitle>
             <Badge variant="outline" className="mt-1">
