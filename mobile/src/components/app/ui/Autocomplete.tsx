@@ -101,6 +101,9 @@ export function Autocomplete<T>({
     const containerRef = useRef<HTMLDivElement>(null);
     const inputRef = useRef<HTMLInputElement>(null);
     const selectedInputValue = value ? getItemLabel(value) : "";
+    const loadingSubject = (typeof label === "string" || typeof label === "number") && label !== ""
+        ? label
+        : "선택 항목";
     const currentInputValue = controlledInputValue ?? uncontrolledInputValue;
     const isInputControlled = controlledInputValue !== undefined;
     const updateInputValue = (next: string) => {
@@ -293,7 +296,7 @@ export function Autocomplete<T>({
                         </button>
                     )}
                     {isLoading && (
-                        <LoadingState data-component={sub("actions_loading")} inline label={`${label || "선택 항목"} 목록을 불러오는 중`} size="sm" />
+                        <LoadingState data-component={sub("actions_loading")} inline label={`${loadingSubject} 목록을 불러오는 중`} size="sm" />
                     )}
                     {!value && !isLoading && !disabled && (isFocused || isToggledOpen) ? (
                         <button
@@ -336,7 +339,7 @@ export function Autocomplete<T>({
                         className="absolute top-full left-0 right-0 z-50 overflow-hidden rounded-2xl !rounded-t-none border !border-v3-border bg-white shadow-[0_4px_16px_rgba(0,0,0,0.06)] animate-in fade-in-0 zoom-in-95"
                     >
                         {isLoading ? (
-                            <LoadingState data-component={sub("loading")} label={`${label || "선택 항목"} 목록을 불러오는 중`} size="sm" className="py-6" />
+                            <LoadingState data-component={sub("loading")} label={`${loadingSubject} 목록을 불러오는 중`} size="sm" className="py-6" />
                         ) : filteredItems.length === 0 ? (
                             <div data-component={sub("empty")} className="py-6 text-center text-sm text-muted-foreground">
                                 {emptyMessage ?? "결과 없음"}

@@ -19,7 +19,7 @@ export function ContractPdfViewerPlaceholder({
       data-slot="contract-pdf-viewer"
       data-source-component="ContractPdfViewerPlaceholder"
       aria-label={ariaLabel}
-      role="status"
+      role="region"
     >
       <div className="contract-pdf-status" data-slot="contract-pdf-status">
         <LoadingState data-component={`${dataComponent}_loading`} label="PDF 뷰어를 준비하는 중" />
