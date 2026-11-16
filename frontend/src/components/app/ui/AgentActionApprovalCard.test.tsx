@@ -48,6 +48,15 @@ describe("AgentActionApprovalCard", () => {
         expectedRevision: "revision-1",
     };
 
+    it("preserves the legacy surface on a processed approval card", () => {
+        render(<AgentActionApprovalCard {...baseProps} changes={{ id: 1 }} terminal />);
+
+        const card = screen.getByLabelText("처리된 작업 제안");
+        expect(card).toHaveClass("border", "rounded-lg", "!shadow-sm", "border-border", "bg-card", "text-card-foreground");
+        expect(card).not.toHaveClass("border-0");
+        expect(card).not.toHaveClass("rounded-[16px]");
+    });
+
     it("renders the contact node directly under the summary", () => {
         const { container } = render(
             <AgentActionApprovalCard {...baseProps} changes={{ body: "안내" }} contact={<span data-testid="contact">김하늘 · 010-1234-5678</span>} />,
