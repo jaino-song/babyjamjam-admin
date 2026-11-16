@@ -1,6 +1,7 @@
 import { ConflictException, Injectable } from "@nestjs/common";
 import { createHash, randomUUID } from "node:crypto";
 import { Prisma } from "@prisma/client";
+import { toJobErrorCode } from "domain/value-objects/eformsign-job-error-code";
 
 import { isInitialFinalizationJobIdentity, isInitialFinalizationWorkflowScope } from "application/policies/service-record-initial-finalization.policy";
 import { sha256CanonicalJson } from "application/services/eformsign-document-job.service";
@@ -369,6 +370,23 @@ export class SbEformsignDocumentJobRepository implements IEformsignDocumentJobRe
                 if (!initial) return { kind: "lost", reason: "job_not_found" } as const;
 
                 const expected = input.expectedContext;
+                if (expected?.revisionId != null) {
+                    let payload: unknown = initial.payload;
+                    try {
+                        if (typeof payload === "string") payload = JSON.parse(payload);
+                    } catch {
+                        return { kind: "stale", reason: "SERVICE_RECORD_REVISION_CAPABILITY_UNVERIFIED" } as const;
+                    }
+                    if (!isInitialFinalizationJobIdentity({
+                        jobType: initial.job_type,
+                        source: initial.source,
+                        documentId: initial.document_id,
+                        requestKey: initial.request_key,
+                        payload,
+                    })) {
+                        return { kind: "stale", reason: "SERVICE_RECORD_REVISION_CAPABILITY_UNVERIFIED" } as const;
+                    }
+                }
                 const isFinalize = initial.job_type === "finalize_document";
                 const isCreate = initial.job_type === "create_document";
                 if (!isFinalize && !isCreate) {
@@ -387,7 +405,9 @@ export class SbEformsignDocumentJobRepository implements IEformsignDocumentJobRe
                         || initial.branch_id !== expected.branchId
                         || initial.client_id !== expected.clientId
                     ) {
-                        return { kind: "lost", reason: "ownership_changed" } as const;
+                        return expected.revisionId != null
+                            ? { kind: "stale", reason: "SERVICE_RECORD_INITIAL_FINALIZATION_SCOPE_CHANGED" } as const
+                            : { kind: "lost", reason: "ownership_changed" } as const;
                     }
                     branchId = expected.branchId;
                     clientId = expected.clientId;
@@ -442,7 +462,9 @@ export class SbEformsignDocumentJobRepository implements IEformsignDocumentJobRe
                     || current.document_id !== initial.document_id
                     || current.client_id !== initial.client_id
                 ) {
-                    return { kind: "lost", reason: "ownership_changed" } as const;
+                    return expected?.revisionId != null
+                        ? { kind: "stale", reason: "SERVICE_RECORD_INITIAL_FINALIZATION_SCOPE_CHANGED" } as const
+                        : { kind: "lost", reason: "ownership_changed" } as const;
                 }
 
                 if (isFinalize) {
@@ -961,7 +983,7 @@ export class SbEformsignDocumentJobRepository implements IEformsignDocumentJobRe
     async scheduleRetry(id: string, leaseToken: string, nextAttemptAt: Date, errorCode: string) {
         return this.updateOne(Prisma.sql`
             UPDATE "eformsign_document_job" SET status = 'queued', next_attempt_at = ${nextAttemptAt},
-                last_error_code = ${errorCode}, heartbeat_at = NULL, lease_token = NULL, updated_at = now()
+                last_error_code = ${toJobErrorCode(errorCode)}, heartbeat_at = NULL, lease_token = NULL, updated_at = now()
             WHERE id = ${id}::uuid AND lease_token = ${leaseToken}::uuid
               AND status = 'processing' RETURNING *
         `);
@@ -1240,9 +1262,10 @@ export class SbEformsignDocumentJobRepository implements IEformsignDocumentJobRe
         errorCode: string,
         releaseActiveKey: boolean,
     ) {
+        const code = toJobErrorCode(errorCode);
         return this.prisma.$transaction(async (tx) => {
             const rows = await tx.$queryRaw<RawJob[]>(Prisma.sql`
-                UPDATE "eformsign_document_job" SET status = ${status}, last_error_code = ${errorCode},
+                UPDATE "eformsign_document_job" SET status = ${status}, last_error_code = ${code},
                     completed_at = now(),
                     payload = CASE
                         WHEN jsonb_typeof(payload) = 'object'
@@ -1272,7 +1295,7 @@ export class SbEformsignDocumentJobRepository implements IEformsignDocumentJobRe
                     data: {
                         autoFinalizeAttempts: { increment: 1 },
                         autoFinalizeLastAttemptAt: new Date(),
-                        autoFinalizeLastError: errorCode,
+                        autoFinalizeLastError: code,
                     },
                     select: { autoFinalizeAttempts: true },
                 });

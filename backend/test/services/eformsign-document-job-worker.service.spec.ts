@@ -7,6 +7,7 @@ import {
     type ServiceRecordRevisionOperationCoordinatorPort,
 } from "application/services/eformsign-document-job-worker.service";
 import { classifyRecovery, EformsignDocumentJobEntity } from "domain/entities/eformsign-document-job.entity";
+import { toJobErrorCode } from "domain/value-objects/eformsign-job-error-code";
 import { createSchedulerLeaseMock } from "../utils/mocks/scheduler-lease.mock";
 
 const branchId = "00000000-0000-0000-0000-000000000010";
@@ -119,6 +120,7 @@ function buildWorker(overrides: {
     contractSupersede?: Record<string, jest.Mock> | ContractSupersedeService;
     notification?: Record<string, jest.Mock>;
     client?: Record<string, jest.Mock>;
+    contractRecovery?: { recoverBeforeCreation: jest.Mock };
 } = {}) {
     const repository = {
         recoverStale: jest.fn().mockResolvedValue([]),
@@ -192,6 +194,8 @@ function buildWorker(overrides: {
         notificationService as never,
         revisionGenerator as never,
         overrides.revisionOperationCoordinator as never,
+        undefined,
+        overrides.contractRecovery as never,
     );
     return {
         worker,
@@ -425,7 +429,7 @@ describe("EformsignDocumentJobWorkerService", () => {
             expect(reconciliation.reconcile).not.toHaveBeenCalled();
             expect(repository.scheduleRetry).toHaveBeenCalledTimes(1);
             const [id, token, nextAttemptAt, code] = repository.scheduleRetry.mock.calls[0];
-            expect([id, token, code]).toEqual([claimed.id, claimed.leaseToken, "operation_lock_unavailable"]);
+            expect([id, token, code]).toEqual([claimed.id, claimed.leaseToken, "OPERATION_LOCK_UNAVAILABLE"]);
             expect((nextAttemptAt as Date).getTime() - Date.now()).toBeGreaterThan(50_000);
             expect((nextAttemptAt as Date).getTime() - Date.now()).toBeLessThanOrEqual(60_000);
         });
@@ -443,9 +447,30 @@ describe("EformsignDocumentJobWorkerService", () => {
             expect(reconciliation.reconcile).not.toHaveBeenCalled();
             expect(repository.scheduleRetry).toHaveBeenCalledTimes(1);
             const [id, token, nextAttemptAt, code] = repository.scheduleRetry.mock.calls[0];
-            expect([id, token, code]).toEqual([claimed.id, claimed.leaseToken, "operation_lock_unavailable"]);
+            expect([id, token, code]).toEqual([claimed.id, claimed.leaseToken, "OPERATION_LOCK_UNAVAILABLE"]);
             expect((nextAttemptAt as Date).getTime() - Date.now()).toBeGreaterThan(50_000);
             expect((nextAttemptAt as Date).getTime() - Date.now()).toBeLessThanOrEqual(60_000);
+        });
+
+        it("passes a normalized pre-send failure code to contract recovery", async () => {
+            const claimed = job({ contractGeneration: "00000000-0000-0000-0000-000000000011" });
+            const contractRecovery = { recoverBeforeCreation: jest.fn().mockResolvedValue("retry") };
+            const { worker, repository, dispatch, reconciliation } = buildWorker({
+                repository: { claimDue: jest.fn().mockResolvedValue([claimed]) },
+                dispatch: { execute: jest.fn().mockResolvedValue(lockUnavailable) },
+                contractRecovery,
+            });
+
+            await worker.processDueJobs();
+
+            expect(dispatch.execute).toHaveBeenCalled();
+            expect(contractRecovery.recoverBeforeCreation).toHaveBeenCalledWith(
+                { jobId: claimed.id, leaseToken: claimed.leaseToken, contractGeneration: claimed.contractGeneration },
+                expect.any(Date),
+                "OPERATION_LOCK_UNAVAILABLE",
+            );
+            expect(repository.scheduleRetry).not.toHaveBeenCalled();
+            expect(reconciliation.reconcile).not.toHaveBeenCalled();
         });
 
         it("still reconciles a create job whose lock refusal arrives after creating was latched", async () => {
@@ -558,7 +583,7 @@ describe("EformsignDocumentJobWorkerService", () => {
             claimed.id,
             claimed.leaseToken,
             expect.any(Date),
-            reason,
+            toJobErrorCode(reason),
         );
         expect(repository.markReconciling).not.toHaveBeenCalled();
         expect(reconciliation.reconcile).not.toHaveBeenCalled();
@@ -1033,7 +1058,7 @@ describe("EformsignDocumentJobWorkerService", () => {
         expect(repository.markRequiresAttention).toHaveBeenCalledWith(
             claimed.id,
             claimed.leaseToken,
-            "revision_or_business_state_changed",
+            "SERVICE_RECORD_REVISION_DISPATCH_NOT_AUTHORIZED",
         );
     });
 
@@ -1061,8 +1086,49 @@ describe("EformsignDocumentJobWorkerService", () => {
         expect(repository.markRequiresAttention).toHaveBeenCalledWith(
             claimed.id,
             claimed.leaseToken,
-            "ownership_changed",
+            "SERVICE_RECORD_REVISION_DISPATCH_NOT_AUTHORIZED",
         );
+    });
+
+    it.each([
+        { kind: "lost", reason: "ownership_changed", expected: "SERVICE_RECORD_REVISION_DISPATCH_NOT_AUTHORIZED" },
+        { kind: "stale", reason: "SERVICE_RECORD_INITIAL_FINALIZATION_SCOPE_CHANGED", expected: "SERVICE_RECORD_INITIAL_FINALIZATION_SCOPE_CHANGED" },
+        { kind: "stale", reason: "A".repeat(80), expected: "A".repeat(80) },
+        { kind: "lost", reason: "A".repeat(81), expected: "SERVICE_RECORD_REVISION_DISPATCH_NOT_AUTHORIZED" },
+        { kind: "stale", reason: "VALID_CODE:SUFFIX-1", expected: "VALID_CODE:SUFFIX-1" },
+        { kind: "stale", reason: undefined, expected: "SERVICE_RECORD_REVISION_DISPATCH_NOT_AUTHORIZED" },
+    ])("persists the same valid authorization code for legacy attention and terminal outcome %#", async ({ kind, reason, expected }) => {
+        const claimed = job({ source: "auto_finalize", jobType: "finalize_document", documentId: "legacy-doc",
+            payload: { documentId: "legacy-doc" } });
+        const transitioned = job({ status: "requires_attention", autoFinalizeOutcomeAttempts: 2 });
+        const { worker, repository, autoFinalizeScheduler, finalize } = buildWorker({ repository: {
+            claimDue: jest.fn().mockResolvedValue([claimed]),
+            authorizeForDispatch: jest.fn().mockResolvedValue({ kind, reason }),
+            markRequiresAttention: jest.fn().mockResolvedValue(transitioned),
+        } });
+        await worker.processDueJobs();
+        expect(repository.markRequiresAttention).toHaveBeenCalledWith(claimed.id, claimed.leaseToken, expected);
+        expect(autoFinalizeScheduler.recordTerminalFailure).toHaveBeenCalledWith("legacy-doc", expected, 2);
+        expect(finalize.execute).not.toHaveBeenCalled();
+    });
+
+    it.each([
+        { reason: "SERVICE_RECORD_REVISION_SNAPSHOT_FACT_MISSING:clientName", expected: "SERVICE_RECORD_REVISION_DISPATCH_NOT_AUTHORIZED" },
+        { reason: "SERVICE_RECORD_REVISION_SNAPSHOT_FACT_MISSING", expected: "SERVICE_RECORD_REVISION_SNAPSHOT_FACT_MISSING" },
+    ])("persists a valid coordinator refusal code %#", async ({ reason, expected }) => {
+        const claimed = job({ payload: revisionOperationPayload() });
+        const coordinator: ServiceRecordRevisionOperationCoordinatorPort = {
+            process: jest.fn().mockResolvedValue({ status: "requires_attention", reason }),
+        };
+        const { worker, repository } = buildWorker({
+            repository: { claimDue: jest.fn().mockResolvedValue([claimed]) },
+            revisionOperationCoordinator: coordinator,
+        });
+        await worker.processDueJobs();
+        expect(coordinator.process).toHaveBeenCalled();
+        expect(repository.markRequiresAttention).toHaveBeenCalledWith(claimed.id, claimed.leaseToken, expected);
+        expect(repository.markReconciling).not.toHaveBeenCalled();
+        expect(repository.scheduleRetry).not.toHaveBeenCalled();
     });
 
     it("fails closed for malformed operation descriptors without invoking the legacy creation path", async () => {

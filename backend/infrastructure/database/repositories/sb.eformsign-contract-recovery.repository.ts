@@ -8,6 +8,7 @@ import type { EformsignTemplateWorkflow } from "application/utils/eformsign-temp
 import { sha256CanonicalJson } from "application/services/eformsign-document-job.service";
 import { normalizePhone } from "application/utils/normalize-phone";
 import { encodeEformsignStepRecipientTypes } from "domain/value-objects/eformsign-step-recipient-types";
+import { toJobErrorCode } from "domain/value-objects/eformsign-job-error-code";
 import { buildEformsignDispatchBusinessKey } from "application/services/eformsign-dispatch-boundary.service";
 import { EformsignDispatchIntentEntity, type EformsignDispatchAction, type EformsignDispatchIntentStatus } from "domain/entities/eformsign-dispatch-intent.entity";
 import { ContractRecoveryError, type ContractWorkerContext, type ContractRecoveryClaim, type ContractRecoveryState,
@@ -242,7 +243,7 @@ export class SbEformsignContractRecoveryRepository implements IEformsignContract
             if (Boolean(nextAttemptAt) !== (state.job.attempts <= 3)) fail();
             const result = await tx.eformsign_document_job.updateMany({ where: { id: worker.jobId, leaseToken: worker.leaseToken, contractGeneration: worker.contractGeneration, status: "processing" },
                 data: { status: nextAttemptAt ? "queued" : "failed", nextAttemptAt: nextAttemptAt ?? state.job.nextAttemptAt,
-                    lastErrorCode: nextAttemptAt ? errorCode : "PRE_SEND_RETRY_EXHAUSTED", leaseToken: null, heartbeatAt: null,
+                    lastErrorCode: nextAttemptAt ? toJobErrorCode(errorCode) : "PRE_SEND_RETRY_EXHAUSTED", leaseToken: null, heartbeatAt: null,
                     ...(nextAttemptAt ? {} : { completedAt: new Date(), activeKey: null }) } });
             if (result.count !== 1) fail();
             return nextAttemptAt ? "retry" as const : "failed" as const;
