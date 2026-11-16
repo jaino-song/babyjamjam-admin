@@ -106,7 +106,7 @@ describe('MessageMaker', () => {
     queryClient.clear();
   });
   it.each([
-    ['loading', { isLoading: true, isError: false }, '지점 정보를 확인하는 중입니다.'],
+    ['loading', { isLoading: true, isError: false }, '지점 정보를 확인하는 중'],
     ['missing', { isLoading: false, isError: false }, '지점 정보를 확인해 주세요.'],
     ['error', { isLoading: false, isError: true }, '지점 정보를 확인해 주세요.'],
   ] as const)('keeps branch guidance and does not load the catalog when branch is %s', (_label, flags, guidance) => {

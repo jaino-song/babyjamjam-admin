@@ -9,7 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { FieldLabelRow, fieldMessageId } from "@/components/app/ui/FieldLabelRow";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Spinner } from "@/components/ui/spinner";
+import { LoadingState } from "@/components/app/ui/LoadingState";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Separator } from "@/components/ui/separator";
 import { Stepper, Step, StepLabel } from "@/components/ui/stepper";
@@ -431,9 +431,7 @@ export function ClientRegistrationWizard({ onCreated }: ClientRegistrationWizard
                                 )}
 
                                 {voucherType && isVoucherPriceInfosLoading && (
-                                    <div className="flex justify-center py-2">
-                                        <Spinner size="sm" />
-                                    </div>
+                                    <LoadingState data-component={`${WIZARD_BASE}_steps_voucher-prices-loading`} label="바우처 비용 정보를 불러오는 중" size="sm" className="py-2" />
                                 )}
 
                                 {voucherDuration && fullPrice && grant && actualPrice && (

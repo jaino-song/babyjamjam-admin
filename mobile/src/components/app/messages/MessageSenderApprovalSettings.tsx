@@ -11,7 +11,7 @@ import {
 import { ContentPaper } from "@/components/app/root/content-paper";
 import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { Spinner } from "@/components/ui/spinner";
+import { LoadingState } from "@/components/app/ui/LoadingState";
 import { cn } from "@/lib/utils";
 import type { MessageSenderApprovalResponse } from "@/services/api";
 
@@ -121,16 +121,11 @@ export function MessageSenderApprovalSettings({
                 <Button
                   onClick={() => onSubmit()}
                   disabled={isLoading || isSubmitting}
+                  loading={isSubmitting}
+                  loadingLabel="신청 중"
                   className="rounded-full px-5"
                 >
-                  {isSubmitting ? (
-                    <>
-                      <Spinner className="mr-2 h-4 w-4" />
-                      신청 중
-                    </>
-                  ) : (
-                    submitLabel
-                  )}
+                  {submitLabel}
                 </Button>
               </div>
             )}
@@ -170,7 +165,7 @@ export function MessageSenderApprovalSettings({
 
             {isLoading ? (
               <div className="flex items-center justify-center rounded-[18px] border border-dashed border-v3-border px-4 py-8">
-                <Spinner className="h-5 w-5" />
+                <LoadingState data-component="mobile_messages_sender-approval-settings_loading" inline label="승인 상태를 확인하는 중" />
               </div>
             ) : null}
           </div>

@@ -1,3 +1,4 @@
+import { LoadingState } from "@/components/app/ui/LoadingState";
 import { cn } from "@/lib/utils";
 
 interface ContractPdfViewerPlaceholderProps {
@@ -21,7 +22,7 @@ export function ContractPdfViewerPlaceholder({
       role="status"
     >
       <div className="contract-pdf-status" data-slot="contract-pdf-status">
-        PDF 뷰어를 준비하는 중입니다
+        <LoadingState data-component={`${dataComponent}_loading`} label="PDF 뷰어를 준비하는 중" />
       </div>
     </div>
   );

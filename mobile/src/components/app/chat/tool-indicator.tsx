@@ -1,5 +1,7 @@
 "use client";
 
+import { LoadingState } from "@/components/app/ui/LoadingState";
+
 interface ToolIndicatorProps {
     /** Caller-context canonical value for this node. */
     "data-component": string;
@@ -51,6 +53,10 @@ function getToolLabel(toolName: string | null): string {
 
 export function ToolIndicator({ "data-component": dataComponent, toolName, isExecuting }: ToolIndicatorProps) {
     if (!isExecuting) return null;
+
+    if (!toolName) {
+        return <LoadingState data-component={dataComponent} inline label="처리 중" className="py-2 px-4 mb-2" />;
+    }
 
     return (
         <div

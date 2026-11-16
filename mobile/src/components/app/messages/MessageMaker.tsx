@@ -7,6 +7,7 @@ import { ListCard } from '@/components/app/mobile-redesign/primitives';
 import { FieldLabelRow, fieldMessageId } from '@/components/app/ui/FieldLabelRow';
 import { Input } from '@/components/app/v3/Input';
 import { Button } from '@/components/ui/button';
+import { LoadingState } from '@/components/app/ui/LoadingState';
 import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useSystemTemplates } from '@/features/system-templates/hooks/useSystemTemplates';
 import { buildMakerOptions, makerAreaLabel, MAX_MAKER_BODY, PRICE_VARIABLE_KEYS, type MakerOption } from '@/features/message-maker/model';
@@ -82,12 +83,12 @@ function MessageMakerEditor({ base, options }: { base: string; options: MakerOpt
           </Select>
         </MakerField>;
       })}
-      {maker.values.type && (!maker.pricesReady || !maker.priceRows.length) && <div role="status" data-component={`${priceBase}_prices-status`}>
-        {maker.prices.isError ? '비용 정보를 불러오지 못했습니다.' : maker.prices.isLoading || maker.prices.isFetching ? '비용 정보를 불러오는 중입니다.' : '선택한 유형과 연도의 비용 정보가 없습니다.'}
+      {maker.values.type && (!maker.pricesReady || !maker.priceRows.length) && <div role={!maker.prices.isError && (maker.prices.isLoading || maker.prices.isFetching) ? undefined : "status"} data-component={`${priceBase}_prices-status`}>
+        {maker.prices.isError ? '비용 정보를 불러오지 못했습니다.' : maker.prices.isLoading || maker.prices.isFetching ? <LoadingState data-component={`${priceBase}_prices-status_loading`} inline label="비용 정보를 불러오는 중" /> : '선택한 유형과 연도의 비용 정보가 없습니다.'}
         {!maker.prices.isLoading && !maker.prices.isFetching && <Button type="button" variant="ghost" size="sm" data-component={`${priceBase}_prices-status_retry`} onClick={() => void maker.prices.refetch()}>비용 정보 다시 시도</Button>}
       </div>}
-      {(!maker.accountsReady || !maker.accountRows.length) && <div role="status" data-component={`${priceBase}_accounts-status`}>
-        {maker.accounts.isError ? '계좌 정보를 불러오지 못했습니다.' : maker.accounts.isLoading || maker.accounts.isFetching ? '계좌 정보를 불러오는 중입니다.' : '등록된 계좌 정보가 없습니다.'}
+      {(!maker.accountsReady || !maker.accountRows.length) && <div role={!maker.accounts.isError && (maker.accounts.isLoading || maker.accounts.isFetching) ? undefined : "status"} data-component={`${priceBase}_accounts-status`}>
+        {maker.accounts.isError ? '계좌 정보를 불러오지 못했습니다.' : maker.accounts.isLoading || maker.accounts.isFetching ? <LoadingState data-component={`${priceBase}_accounts-status_loading`} inline label="계좌 정보를 불러오는 중" /> : '등록된 계좌 정보가 없습니다.'}
         {!maker.accounts.isLoading && !maker.accounts.isFetching && <Button type="button" variant="ghost" size="sm" data-component={`${priceBase}_accounts-status_retry`} onClick={() => void maker.accounts.refetch()}>계좌 정보 다시 시도</Button>}
       </div>}
       {(maker.price || maker.account) && <div data-component={`${priceBase}_summary`} data-slot="price-info-summary" className={styles.priceInfoSummary}>
@@ -132,7 +133,7 @@ function MessageMakerCatalog({ base }: { base: string }): React.JSX.Element {
     }}>템플릿 다시 시도</Button>
   </div>;
   if (system.isLoading || system.isPlaceholderData || system.data === undefined || user.isLoading || !userReady || user.data === undefined) {
-    return <div role="status" data-component={`${base}_catalog-loading`}>템플릿을 불러오는 중입니다.</div>;
+    return <LoadingState data-component={`${base}_catalog-loading`} label="템플릿을 불러오는 중" />;
   }
   return <MessageMakerEditor key={JSON.stringify([system.data, user.data])} base={base} options={buildMakerOptions(system.data, user.data)} />;
 }
@@ -148,8 +149,8 @@ export function MessageMaker({ 'data-component': base }: { 'data-component': str
         <MessageSectionNav data-component={`${formBase}_section-nav`} activeId="complete" />
         <div data-component={`${formBase}_scroll`} data-slot="messages-scroll" className={styles.msgScroll}>
           <ListCard data-component={cardBase} title="메세지 제작" filters={[]} loadMore={false}>
-            {ready ? <MessageMakerCatalog key={auth.data?.branchId} base={`${cardBase}_body_content`} /> : <div role="status" data-component={`${cardBase}_body_session-status`}>
-              {auth.isError || !auth.data?.branchId && !auth.isLoading ? '지점 정보를 확인해 주세요.' : '지점 정보를 확인하는 중입니다.'}
+            {ready ? <MessageMakerCatalog key={auth.data?.branchId} base={`${cardBase}_body_content`} /> : <div role={auth.isError || !auth.data?.branchId && !auth.isLoading ? "status" : undefined} data-component={`${cardBase}_body_session-status`}>
+              {auth.isError || !auth.data?.branchId && !auth.isLoading ? '지점 정보를 확인해 주세요.' : <LoadingState data-component={`${cardBase}_body_session-status_loading`} inline label="지점 정보를 확인하는 중" />}
               {auth.isError && <Button type="button" variant="ghost" data-component={`${cardBase}_body_session-status_retry`} onClick={() => void auth.refetch()}>지점 정보 다시 시도</Button>}
             </div>}
           </ListCard>
