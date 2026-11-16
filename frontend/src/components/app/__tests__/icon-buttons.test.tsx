@@ -18,7 +18,8 @@ function expectIconSize(button: HTMLElement) {
     "relative", "after:absolute", "after:content-['']",
     "after:h-[calc(44px*var(--glint-ui-scale,1))]", "after:w-[calc(44px*var(--glint-ui-scale,1))]",
   );
-  expect(button).not.toHaveClass("h-8", "w-8");
+  expect(button).not.toHaveClass("h-8");
+  expect(button).not.toHaveClass("w-8");
   expect(button.querySelector("svg")).toHaveClass("h-4", "w-4");
 }
 
