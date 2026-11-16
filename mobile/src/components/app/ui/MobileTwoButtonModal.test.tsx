@@ -3,6 +3,32 @@ import { render, screen } from "@testing-library/react";
 import { MobileTwoButtonModal } from "./MobileTwoButtonModal";
 
 describe("MobileTwoButtonModal", () => {
+  it.each([undefined, "cancel-confirm"] as const)("renders cancel first at one third and confirm second at two thirds (order %s)", (actionOrder) => {
+    const onCancel = jest.fn();
+    const onConfirm = jest.fn();
+    render(
+      <MobileTwoButtonModal
+        data-component="mobile_tests_two-button-modal_order"
+        open
+        title="계속할까요?"
+        description="동작을 확인해 주세요."
+        cancelLabel="취소"
+        confirmLabel="확인"
+        actionOrder={actionOrder}
+        onOpenChange={jest.fn()}
+        onCancel={onCancel}
+        onConfirm={onConfirm}
+      />,
+    );
+
+    const buttons = screen.getAllByRole("button");
+    expect(buttons).toHaveLength(2);
+    expect(buttons[0]).toHaveTextContent("취소");
+    expect(buttons[0]).toHaveClass("min-w-0", "flex-1");
+    expect(buttons[1]).toHaveTextContent("확인");
+    expect(buttons[1]).toHaveClass("min-w-0", "flex-[2_1_0]");
+  });
+
   it("uses the shared left-aligned 16px/14px header and renders form content", () => {
     render(
       <MobileTwoButtonModal

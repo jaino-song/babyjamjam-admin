@@ -6,7 +6,7 @@ describe("Input Component", () => {
   it("renders default variant correctly", () => {
     const { container } = render(<Input />);
     const input = container.querySelector("input");
-    expect(input).toHaveClass("rounded-2xl");
+    expect(input).toHaveClass("h-[44px]", "rounded-[12px]", "text-base");
     expect(input).toHaveClass("border-input");
     expect(input).toHaveClass("border-input");
   });
@@ -22,7 +22,7 @@ describe("Input Component", () => {
       "border-input",
       "px-[14px]",
       "py-0",
-      "text-[0.9rem]",
+      "text-base",
       "leading-normal",
     );
   });

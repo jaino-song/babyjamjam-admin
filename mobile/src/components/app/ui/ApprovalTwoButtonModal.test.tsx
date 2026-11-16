@@ -102,8 +102,33 @@ describe("ApprovalTwoButtonModal", () => {
     expect(description).not.toHaveClass("sr-only");
     expect(cancel.parentElement).toHaveClass("mt-6", "flex", "gap-2");
     expect(cancel.parentElement).not.toHaveClass("mt-4");
-    expect(cancel).toHaveClass("h-11", "w-1/2", "text-base", "leading-6");
-    expect(approve).toHaveClass("h-11", "w-1/2", "text-base", "leading-6", "rounded-full");
+    expect(cancel).toHaveClass("h-11", "min-w-0", "flex-1", "text-base", "leading-6");
+    expect(approve).toHaveClass("h-11", "min-w-0", "flex-[2_1_0]", "text-base", "leading-6", "rounded-full");
+    expect(screen.getAllByRole("button")).toEqual([cancel, approve]);
     expect(screen.getByLabelText("3회차 서비스 제공 날짜")).toBeInTheDocument();
+  });
+
+  it("keeps equal action widths for the public service-record modal", () => {
+    render(
+      <ApprovalTwoButtonModal
+        data-component="mobile_service-record_submit-modal"
+        open
+        onOpenChange={jest.fn()}
+        title="제출 확인"
+        description="제출할까요?"
+        approvalLabel="확인"
+        buttonRatio="equal"
+        onApprove={jest.fn()}
+      />,
+    );
+
+    const buttons = screen.getAllByRole("button");
+    expect(buttons).toHaveLength(2);
+    expect(buttons[0]).toHaveTextContent("취소");
+    expect(buttons[1]).toHaveTextContent("확인");
+    for (const button of buttons) {
+      expect(button).toHaveClass("h-11", "w-1/2", "rounded-full");
+      expect(button).not.toHaveClass("flex-1", "flex-[2_1_0]");
+    }
   });
 });
