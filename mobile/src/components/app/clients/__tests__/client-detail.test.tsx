@@ -1311,7 +1311,7 @@ describe("ClientDetailContent", () => {
         onRetryNotificationLogs: jest.fn(),
       });
 
-      expect(screen.getByRole("button", { name: "다시 시도" })).toBeDisabled();
+      expect(screen.getByRole("button", { name: "다시 시도 중" })).toBeDisabled();
     });
 
     it("shows no notice over cached logs when the load succeeded", () => {
@@ -1373,7 +1373,7 @@ describe("ClientDetailContent", () => {
         rerenderWith(view, { ...props, isNotificationLogsError: true, isNotificationLogsRetrying: true });
 
         expect(screen.getByText("열린 메시지 본문")).toBeInTheDocument();
-        expect(screen.getByRole("button", { name: "다시 시도" })).toBeDisabled();
+        expect(screen.getByRole("button", { name: "다시 시도 중" })).toBeDisabled();
       });
 
       it("shows no notice over the open detail when the load succeeded", async () => {

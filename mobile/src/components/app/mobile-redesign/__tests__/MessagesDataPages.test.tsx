@@ -488,7 +488,7 @@ describe("mobile message data pages (merged 발송 기록 screen)", () => {
     failedHook.mockReturnValue({ data, isLoading: false, isError: true, isFetching: true, refetch });
     rerender(<MessagesHistoryPage />);
     expect(screen.getAllByRole("alert")).toHaveLength(1);
-    expect(screen.getByRole("button", { name: "다시 시도" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "다시 시도 중" })).toBeDisabled();
     expect(row).toBeInTheDocument();
   });
 

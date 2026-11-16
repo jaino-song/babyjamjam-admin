@@ -77,7 +77,7 @@ describe("CallLogSheet — transcript speaker rendering", () => {
     expect(refetch).toHaveBeenCalledTimes(1);
     mockUseCallRecord.mockReturnValue({ data: baseRecord, isError: true, isFetching: true, refetch });
     rerender(<CallLogSheet recordId="rec-1" />);
-    expect(screen.getByRole("button", { name: "다시 시도" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "다시 시도 중" })).toBeDisabled();
     expect(screen.getByText("김서연")).toBeInTheDocument();
     mockUseCallRecord.mockReturnValue({ data: baseRecord, isError: false });
     rerender(<CallLogSheet recordId="rec-1" />);

@@ -321,7 +321,7 @@ describe("ContractsPage list load failures (S5)", () => {
 
     const notice = staleNotice();
     expect(notice).not.toBeNull();
-    expect(within(notice as HTMLElement).getByRole("button", { name: "다시 시도" })).toBeDisabled();
+    expect(within(notice as HTMLElement).getByRole("button", { name: "다시 시도 중" })).toBeDisabled();
   });
 
   it("failed next page: rows stay, notice shown, retry loads the next page once", async () => {
@@ -429,7 +429,7 @@ describe("ContractsPage service-record template lookup failure (S5)", () => {
     expect(list.fetchNextPage).not.toHaveBeenCalled();
     expect(queryClient.getQueryState(TEMPLATE_KEY)).toMatchObject({ status: "error", fetchStatus: "fetching" });
     expect(screen.getAllByRole("alert")).toHaveLength(1);
-    expect(within(staleNotice() as HTMLElement).getByRole("button", { name: "다시 시도" })).toBeDisabled();
+    expect(within(staleNotice() as HTMLElement).getByRole("button", { name: "다시 시도 중" })).toBeDisabled();
     expect(listRows()).toHaveLength(2);
   });
 
@@ -609,7 +609,7 @@ describe("ContractsPage service-record template lookup failure (S5)", () => {
     await flushQueryNotifications();
     expect(listRows()).toHaveLength(2);
     expect(
-      within(staleNotice() as HTMLElement).getByRole("button", { name: "다시 시도" }),
+      within(staleNotice() as HTMLElement).getByRole("button", { name: "다시 시도 중" }),
     ).toBeDisabled();
   });
 
@@ -670,7 +670,7 @@ describe("ContractsPage service-record template lookup failure (S5)", () => {
     expect(list.refetch).not.toHaveBeenCalled();
     await flushQueryNotifications();
     expect(
-      within(listCardPanel() as HTMLElement).getByRole("button", { name: "다시 시도" }),
+      within(listCardPanel() as HTMLElement).getByRole("button", { name: "다시 시도 중" }),
     ).toBeDisabled();
   });
 });

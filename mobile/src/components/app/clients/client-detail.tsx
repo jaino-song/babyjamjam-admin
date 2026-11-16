@@ -1294,7 +1294,7 @@ export function ClientDetailContent({
         description="확정하면 서비스 일정에 따라 상태가 대기·진행·완료로 바뀌고, 제공기록지와 안내 문자가 일정대로 준비됩니다. 확정은 되돌릴 수 없습니다."
         isDescriptionVisuallyHidden={false}
         approvalLabel="예약 확정"
-        pendingLabel="확정 중..."
+        pendingLabel="확정 중"
         isPending={confirmBookingMutation.isPending}
         onApprove={() => void handleConfirmBooking()}
       />
@@ -1311,7 +1311,7 @@ export function ClientDetailContent({
                 description="기존 링크는 만료되고 새 링크가 생성돼요. 메시지는 발송되지 않아요."
                 isDescriptionVisuallyHidden={false}
                 approvalLabel="링크 재설정"
-        pendingLabel="재설정 중..."
+        pendingLabel="재설정 중"
         isPending={isResettingLink}
         onApprove={() => void handleResetServiceRecordLink()}
       />
@@ -1328,7 +1328,7 @@ export function ClientDetailContent({
         description={`${client.name} 산모님께 본인부담금 영수증 안내 메시지를 보낼까요?`}
         isDescriptionVisuallyHidden={false}
         approvalLabel="발송하기"
-        pendingLabel="발송 중..."
+        pendingLabel="발송 중"
         isPending={isSendingReceipt}
         onApprove={() => void handleConfirmReceiptSend()}
       />
@@ -1496,7 +1496,7 @@ export function ClientDetailContent({
         description={`${retryLog?.recipientName?.trim() || "수신자"} 고객에게 같은 메시지로 재발송합니다.`}
         isDescriptionVisuallyHidden={false}
         approvalLabel="재발송"
-        pendingLabel="재발송 중..."
+        pendingLabel="재발송 중"
         isPending={isRetryingMessage}
         onApprove={handleConfirmMessageRetry}
       />

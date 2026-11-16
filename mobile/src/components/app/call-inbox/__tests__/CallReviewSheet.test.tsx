@@ -140,7 +140,7 @@ describe("CallReviewSheet — NEW_CLIENT PENDING", () => {
     expect(refetch).toHaveBeenCalledTimes(1);
     mockUseClientDraft.mockReturnValue({ data: baseDetail, isError: true, isFetching: true, refetch });
     rerender(<CallReviewSheet draftId="draft-1" onClose={jest.fn()} />);
-    expect(screen.getByRole("button", { name: "다시 시도" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "다시 시도 중" })).toBeDisabled();
     expect(screen.getByRole("textbox", { name: /산모명/i })).toHaveValue("김서연");
     mockUseClientDraft.mockReturnValue({ data: baseDetail, isError: false });
     rerender(<CallReviewSheet draftId="draft-1" onClose={jest.fn()} />);

@@ -54,7 +54,7 @@ it('retains cached detail and a single first-child inline notice with retry', ()
   expect(refetch).toHaveBeenCalledTimes(1);
   query = { ...query, isFetching: true, fetchStatus: 'fetching' };
   rerender(<FeedbackDetailPage />);
-  expect(screen.getByRole('button', { name: '다시 시도' })).toBeDisabled();
+  expect(screen.getByRole('button', { name: '다시 시도 중' })).toBeDisabled();
 });
 
 it('keeps successful or paused cached detail without an alert', () => {

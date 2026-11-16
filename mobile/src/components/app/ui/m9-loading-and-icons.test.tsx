@@ -2,7 +2,6 @@ import { fireEvent, render, screen } from "@testing-library/react";
 
 import { ServiceWorkerUpdateOverlay } from "../ServiceWorkerUpdateOverlay";
 import { AdminGuard } from "../auth/AdminGuard";
-import { ToolIndicator } from "../chat/tool-indicator";
 import { ContractPdfViewerPlaceholder } from "../contracts/contract-pdf-viewer-placeholder";
 import { MessageSenderApprovalSettings } from "../messages/MessageSenderApprovalSettings";
 import { MessagingFeatureGate } from "../messages/MessagingFeatureGate";
@@ -46,15 +45,6 @@ describe("M9 loading presentation", () => {
     expect(screen.queryByText("잠시만 기다려 주세요")).not.toBeInTheDocument();
     mockUpdating = false;
     rerender(<ServiceWorkerUpdateOverlay />);
-    expect(screen.queryByRole("status")).not.toBeInTheDocument();
-  });
-
-  it("keeps specific tool information but hides generic processing copy", () => {
-    const { rerender } = render(<ToolIndicator data-component="mobile_chat_assistant_tool-indicator" isExecuting toolName={null} />);
-    expectSpinnerStatus("처리 중");
-    rerender(<ToolIndicator data-component="mobile_chat_assistant_tool-indicator" isExecuting toolName="searchClients" />);
-    expect(screen.getByText("산모 검색 중...")).toBeInTheDocument();
-    rerender(<ToolIndicator data-component="mobile_chat_assistant_tool-indicator" isExecuting={false} toolName={null} />);
     expect(screen.queryByRole("status")).not.toBeInTheDocument();
   });
 

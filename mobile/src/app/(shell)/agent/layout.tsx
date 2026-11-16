@@ -1,7 +1,7 @@
 import { Metadata } from "next";
 
 export const metadata: Metadata = {
-  title: "어시스턴트 - 아가잼잼 관리자",
+  title: "에이전트 - 아가잼잼 관리자",
 };
 
 export default function AgentLayout({ children }: { children: React.ReactNode }) {

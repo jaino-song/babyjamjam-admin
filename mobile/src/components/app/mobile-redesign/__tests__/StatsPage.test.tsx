@@ -276,7 +276,7 @@ describe("StatsPage unknown loads (BJJ-434)", () => {
       );
       fireEvent.click(within(alert).getByRole("button", { name: "다시 시도" }));
       await waitFor(() =>
-        expect(within(within(detailPane()).getByRole("alert")).getByRole("button", { name: "다시 시도" })).toBeDisabled(),
+        expect(within(within(detailPane()).getByRole("alert")).getByRole("button", { name: "다시 시도 중" })).toBeDisabled(),
       );
       expect(within(detailPane()).getByText(/PostHog 사이트 트래픽/)).toBeInTheDocument();
 

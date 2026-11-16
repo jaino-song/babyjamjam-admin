@@ -797,7 +797,7 @@ export default function RegisterPage() {
               aria-label={isLoading ? "회원가입 처리 중" : "회원가입"}
               data-component={`${REGISTER_SUBMIT_FORM}_actions_submit-button`}
             >
-              <ButtonLoadingContent loading={isLoading} loadingLabel="처리 중…">회원가입</ButtonLoadingContent>
+              <ButtonLoadingContent loading={isLoading} loadingLabel="처리 중">회원가입</ButtonLoadingContent>
             </button>
           </div>
         </form>

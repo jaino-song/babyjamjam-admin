@@ -346,7 +346,7 @@ describe("MessageTriggerList", () => {
     expect(alert).toHaveTextContent("최신 정보를 불러오지 못했습니다");
     expect(alert.compareDocumentPosition(row) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(screen.getByText("1개")).toBeInTheDocument();
-    const retry = within(alert).getByRole("button", { name: "다시 시도" });
+    const retry = within(alert).getByRole("button", { name: isFetching ? "다시 시도 중" : "다시 시도" });
     if (isFetching) {
       expect(retry).toBeDisabled();
       expect(messageRuleGroupsApi.list).not.toHaveBeenCalled();

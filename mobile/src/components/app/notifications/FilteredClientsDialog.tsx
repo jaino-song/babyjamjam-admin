@@ -230,7 +230,7 @@ export function FilteredClientsDialog({
                 title={deleteFailureMessage ? "삭제하지 못했어요" : "고객을 삭제하시겠습니까?"}
                 description={deleteFailureMessage ?? "삭제한 고객은 목록에서 사라지고 복구할 수 없어요."}
                 approvalLabel={deleteFailureMessage ? "확인" : "삭제"}
-                pendingLabel="삭제 중..."
+                pendingLabel="삭제 중"
                 approvalVariant="destructive"
                 isPending={deleteClient.isPending}
                 onApprove={handleDeleteConfirm}

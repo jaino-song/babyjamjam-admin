@@ -99,21 +99,28 @@ function DialogFooter({
 }: React.ComponentProps<"div"> & {
   showCloseButton?: boolean
 }) {
+  const isActionPair = React.Children.toArray(children).length + Number(showCloseButton) === 2
+  const closeButton = showCloseButton ? (
+    <DialogPrimitive.Close asChild>
+      <Button variant="outline">Close</Button>
+    </DialogPrimitive.Close>
+  ) : null
+
   return (
     <div
       data-slot="dialog-footer"
       className={cn(
-        "flex flex-col-reverse gap-2 sm:flex-row sm:justify-end",
+        "flex gap-2",
+        isActionPair
+          ? "flex-row [&>*:first-child]:flex-1 [&>*:last-child]:flex-[2]"
+          : "flex-col-reverse sm:flex-row sm:justify-end",
         className
       )}
       {...props}
     >
+      {isActionPair && closeButton}
       {children}
-      {showCloseButton && (
-        <DialogPrimitive.Close asChild>
-          <Button variant="outline">Close</Button>
-        </DialogPrimitive.Close>
-      )}
+      {!isActionPair && closeButton}
     </div>
   )
 }

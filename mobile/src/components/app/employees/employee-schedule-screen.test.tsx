@@ -180,7 +180,7 @@ describe("EmployeeScheduleScreen", () => {
     });
     render(<EmployeeScheduleScreen />);
 
-    expect(screen.getByRole("button", { name: "다시 시도" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "다시 시도 중" })).toBeDisabled();
   });
 
   it("shows the empty text and no alert after a successful load with no schedule", () => {

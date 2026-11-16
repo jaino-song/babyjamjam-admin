@@ -170,7 +170,7 @@ export default function ForgotPasswordPage() {
           disabled={isLoading}
           data-component={`${FORGOT_PASSWORD_BASE}_form_submit-button`}
         >
-          <ButtonLoadingContent loading={isLoading} loadingLabel="처리 중…">비밀번호 재설정 링크 전송</ButtonLoadingContent>
+          <ButtonLoadingContent loading={isLoading} loadingLabel="처리 중">비밀번호 재설정 링크 전송</ButtonLoadingContent>
         </button>
       </form>
 
