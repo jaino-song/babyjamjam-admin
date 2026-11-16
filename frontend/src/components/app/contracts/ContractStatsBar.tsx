@@ -126,6 +126,8 @@ export function ContractStatsBar({
             </p>
             {onRetryStats ? (
               <Button
+                loading={isStatsRefreshing}
+                loadingLabel="다시 시도 중"
                 type="button"
                 size="sm"
                 variant="outline"
@@ -135,7 +137,7 @@ export function ContractStatsBar({
                 disabled={isStatsRefreshing}
                 aria-label="계약 통계 다시 시도"
               >
-                {isStatsRefreshing ? "다시 시도 중…" : "다시 시도"}
+                다시 시도
               </Button>
             ) : null}
           </AlertDescription>

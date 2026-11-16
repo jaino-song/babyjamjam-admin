@@ -1,5 +1,6 @@
 "use client";
 
+import { LoadingState } from "@/components/app/ui/LoadingState";
 import { Button } from "@/components/ui/button";
 import { FormHelperText } from "@/components/app/ui/form-section";
 import type { BusinessDayCalendarError } from "@/hooks/useBusinessDayCalendar";
@@ -22,6 +23,8 @@ export interface CalendarLoadNoticeProps {
   onRetry?: () => void;
   /** Show the muted "loading" line while the calendar is still loading (and there is no error). */
   loading?: boolean;
+  /** Keep the legacy text by default for service-record consumers. */
+  indicator?: "text" | "spinner";
   /** Override when the notice sits inside a differently named parent, per the data-component caller-context rule. */
   dataComponent?: string;
 }
@@ -35,6 +38,7 @@ export function CalendarLoadNotice({
   error,
   onRetry,
   loading = false,
+  indicator = "text",
   dataComponent = DEFAULT_DATA_COMPONENT,
 }: CalendarLoadNoticeProps) {
   if (error === "no-branch") {
@@ -82,6 +86,9 @@ export function CalendarLoadNotice({
   }
 
   if (loading) {
+    if (indicator === "spinner") {
+      return <LoadingState inline label="공휴일 정보를 불러오는 중이에요" data-component={dataComponent} size="sm" />;
+    }
     return (
       <div data-component={dataComponent} data-source-component={SOURCE_COMPONENT} role="status">
         <FormHelperText data-component={`${dataComponent}_message`}>

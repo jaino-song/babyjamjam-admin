@@ -92,7 +92,7 @@ export function ContractDocumentJobsPanes({ ref, memory, onRemember, open, onClo
   }));
   const closeButton = (scope?: string, isList = false) => (
     <Button ref={isList ? listClose : undefined} type="button" variant="ghost" size="icon" aria-label="전자문서 작업 닫기" data-component={scope}
-      className="h-8 w-8 shrink-0 rounded-full border-0 bg-white text-v3-text-muted shadow-none hover:bg-v3-dim-white hover:text-v3-dark" onClick={close}>
+      className="shrink-0 rounded-full border-0 bg-white text-v3-text-muted shadow-none hover:bg-v3-dim-white hover:text-v3-dark" onClick={close}>
       <X aria-hidden="true" className="h-4 w-4" />
     </Button>
   );

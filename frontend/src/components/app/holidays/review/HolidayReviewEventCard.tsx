@@ -59,6 +59,8 @@ export function HolidayReviewEventCard({
           목록 보기
         </Button>
         <Button
+          loading={fixing}
+          loadingLabel="수정 중"
           type="button"
           variant="positive"
           size="sm"
@@ -67,7 +69,7 @@ export function HolidayReviewEventCard({
           aria-busy={fixing || undefined}
           onClick={onFixSafe}
         >
-          {fixing ? "수정 중..." : `${event.safeOpen}명 한 번에 수정`}
+          {`${event.safeOpen}명 한 번에 수정`}
         </Button>
       </div>
     </div>

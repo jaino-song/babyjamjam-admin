@@ -80,7 +80,7 @@ export default function DocumentPreviewModal({
             variant="ghost"
             size="icon"
             aria-label="문서 작업 더보기"
-            className="h-8 w-8"
+
           >
             <MoreVertical className="h-4 w-4" />
           </Button>

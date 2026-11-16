@@ -57,12 +57,14 @@ export function ReceiptSendConfirmDialog({
             취소
           </Button>
           <Button
+            loading={isPending}
+            loadingLabel="발송 예약 중"
             variant="positive"
             onClick={onConfirm}
             disabled={isPending}
             data-component={`${dataComponent}_dialogs_receipt-send-confirm_submit`}
           >
-            {isPending ? "발송 예약 중…" : "발송하기"}
+            발송하기
           </Button>
         </DialogFooter>
       </DialogContent>

@@ -93,6 +93,8 @@ export function ContractAutomationsManager({ dataComponent }: ContractAutomation
       <AlertDescription>
         설정을 확인할 수 없습니다. 잠시 후 다시 시도해 주세요.
         <Button
+          loading={query.isFetching}
+          loadingLabel="재시도 중"
           data-component={component("query-error_retry")}
           type="button"
           variant="outline"
@@ -101,14 +103,14 @@ export function ContractAutomationsManager({ dataComponent }: ContractAutomation
           onClick={() => void query.refetch()}
           disabled={query.isFetching}
         >
-          {query.isFetching ? "재시도 중..." : "다시 시도"}
+          다시 시도
         </Button>
       </AlertDescription>
     </Alert>
   ) : undefined;
   const summary = useMemo(() => {
     if (query.isError) return "자동화 설정을 불러오지 못했습니다";
-    if (!saved) return "검토 필요 → 계약 완료 · 설정 불러오는 중";
+    if (!saved) return "검토 필요 → 계약 완료";
     const timing = formatGraceDays(saved.graceDays);
     return `검토 필요 → 계약 완료 · ${timing} · 매일 17:00`;
   }, [query.isError, saved]);
@@ -178,7 +180,7 @@ export function ContractAutomationsManager({ dataComponent }: ContractAutomation
             footer={current ? (
               <>
                 <Button type="button" variant="outline" size="sm" width="sm" onClick={reset} disabled={!isDirty || mutation.isPending}>되돌리기</Button>
-                <Button type="button" variant="positive" size="sm" width="sm" onClick={save} disabled={!isDirty || mutation.isPending}>{mutation.isPending ? "저장 중..." : "저장"}</Button>
+                <Button loading={mutation.isPending} loadingLabel="저장 중" type="button" variant="positive" size="sm" width="sm" onClick={save} disabled={!isDirty || mutation.isPending}>저장</Button>
               </>
             ) : undefined}
           >

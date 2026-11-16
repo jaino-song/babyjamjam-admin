@@ -108,7 +108,7 @@ export function DocumentEditModal({
             size="icon"
             onClick={onClose}
             disabled={isLoading}
-            className="h-8 w-8 text-muted-foreground hover:text-foreground"
+            className="text-muted-foreground hover:text-foreground"
           >
             <X className="h-4 w-4" />
           </Button>
@@ -192,8 +192,8 @@ export function DocumentEditModal({
           <Button variant="outline" onClick={onClose} disabled={isLoading}>
             취소
           </Button>
-          <Button onClick={handleSave} disabled={isLoading}>
-            {isLoading ? "저장 중..." : "저장"}
+          <Button loading={isLoading} loadingLabel="저장 중" onClick={handleSave} disabled={isLoading}>
+            저장
           </Button>
         </DialogFooter>
       </DialogContent>

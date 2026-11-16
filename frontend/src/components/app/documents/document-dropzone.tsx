@@ -1,14 +1,14 @@
 "use client";
 
+import { LoadingState } from "@/components/app/ui/LoadingState";
 import { useCallback, useState, useEffect } from "react";
 import Image from "next/image";
 import { useDocumentCategories } from "@/hooks/use-document-categories";
-import { CloudUpload, FileText, X, ImageIcon, File, Loader2 } from "lucide-react";
+import { CloudUpload, FileText, X, ImageIcon, File } from "lucide-react";
 import { useLocale } from "@/providers/LocaleProvider";
 import { t } from "@/lib/i18n/translations";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
-import { Spinner } from "@/components/ui/spinner";
 import { QueryErrorState } from "@/components/app/ui/QueryErrorState";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Badge } from "@/components/ui/badge";
@@ -341,9 +341,7 @@ export function DocumentDropzone({
               data-component={`${dataComponent}_visibility-notice_retry`}>다시 시도</Button>
           </>
         ) : !capabilitiesReady ? (
-          <span role="status" aria-label="공개 범위 불러오는 중" data-component={`${dataComponent}_visibility-notice_loading`}>
-            <Loader2 className="h-5 w-5 animate-spin" />
-          </span>
+          <LoadingState inline label="공개 범위 불러오는 중" data-component={`${dataComponent}_visibility-notice_loading`} />
         ) : capabilities?.canChooseVisibilityScope ? (
           <>
             <RadioGroup aria-label="파일 공개 범위" value={chosenScope} disabled={isLoading}
@@ -492,7 +490,7 @@ export function DocumentDropzone({
                 size="icon"
                 onClick={handleRemoveFile}
                 disabled={isLoading}
-                className="h-10 w-10 shrink-0 rounded-full border-0 bg-transparent p-0 text-v3-text-muted shadow-none hover:bg-transparent hover:text-v3-dark"
+                className="shrink-0 rounded-full border-0 bg-transparent p-0 text-v3-text-muted shadow-none hover:bg-transparent hover:text-v3-dark"
               >
                 <X className="h-4 w-4" />
               </Button>
@@ -533,7 +531,7 @@ export function DocumentDropzone({
 
                 <TemplateFieldGridItem dataComponent={`${dataComponent}_upload-form_details_category-field`}>
                   {categoriesLoading ? (
-                    <Spinner role="status" aria-label="카테고리 불러오는 중"
+                    <LoadingState inline label="카테고리 불러오는 중"
                       data-component={`${dataComponent}_upload-form_details_category-field_loading`} />
                   ) : categoriesQuery.isError ? (
                     <QueryErrorState size="inline"
@@ -629,9 +627,7 @@ export function DocumentDropzone({
               {isLoading && (
                 <div className="rounded-[18px] bg-v3-dim-white px-4 py-4">
                   <div className="mb-2 flex items-center justify-between">
-                    <span className="text-[0.8rem] font-semibold text-v3-dark">
-                      업로드 중...
-                    </span>
+                    <LoadingState inline label="업로드 중" data-component={`${dataComponent}_upload-progress_loading`} size="sm" />
                     <span className="text-[0.78rem] font-semibold text-v3-primary">
                       {Math.round(uploadProgress)}%
                     </span>
@@ -645,23 +641,16 @@ export function DocumentDropzone({
 
               {showInlineSubmitButton && (
                 <Button
+                  loading={isLoading}
+                  loadingLabel="업로드 중"
                   type="submit"
                   disabled={!canSubmit}
                   variant="positive"
                   size="lg"
                   className="w-full"
                 >
-                  {isLoading ? (
-                    <>
-                      <Loader2 className="mr-2 h-5 w-5 animate-spin" />
-                      업로드 중...
-                    </>
-                  ) : (
-                    <>
-                      <CloudUpload className="mr-2 h-5 w-5" />
-                      문서 업로드
-                    </>
-                  )}
+                  <CloudUpload className="mr-2 h-5 w-5" />
+                  문서 업로드
                 </Button>
               )}
             </TitleDescChildrenMolecule>
