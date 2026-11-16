@@ -84,7 +84,7 @@ export function MobileBottomNav() {
     zIndex: 0,
   };
 
-  if (!pathname || pathname === "/chat") return null;
+  if (!pathname) return null;
 
   if (isLayoutExcluded(pathname)) return null;
 

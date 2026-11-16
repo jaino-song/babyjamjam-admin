@@ -28,6 +28,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { Spinner } from "@/components/ui/spinner";
 import { MobileTaskControls } from "./MobileTaskControls";
 import type { MobileAgentTaskCommand, MobileAgentTaskMutationResult } from "@/hooks/useAgentChat";
 
@@ -88,7 +89,7 @@ export function MobileAgentPartRegistry({ "data-component": dataComponent, part,
     if (part.type === "dynamic-tool" || part.type.startsWith("tool-")) {
         if (part.state === "output-error") return <p data-slot="tool-error" className="text-sm text-muted-foreground">{part.errorText ?? "도구 결과를 표시할 수 없어요."}</p>;
         if (part.state === "output-available") return <details data-slot="tool-result" className="rounded-lg border p-2"><summary className="text-sm font-medium">{part.toolName ?? part.type.replace(/^tool-/, "").replaceAll("_", ".")} 결과</summary><pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap break-words text-xs">{JSON.stringify(part.output, null, 2)?.slice(0, 4000)}</pre></details>;
-        return <p data-slot="tool-progress" className="text-sm text-muted-foreground">처리 중…</p>;
+        return <div data-component={dataComponent} data-slot="tool-progress" role="status"><Spinner size="sm" aria-hidden="true" /><span className="sr-only">처리 중…</span></div>;
     }
     if (part.type === "data-activity") {
         const parsed = AgentActivityPartSchema.safeParse(part.data);

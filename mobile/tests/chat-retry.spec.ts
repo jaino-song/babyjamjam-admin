@@ -1,113 +1,60 @@
-import { test, expect, type Page, type Route } from '@playwright/test';
+import { expect, test, type Page } from "@playwright/test";
 
-const mockAuthResponse = {
-  id: 'test-user',
-  name: '테스트 사용자',
-  email: 'test@example.com',
-  profile_image: '',
-  role: 'admin',
-};
+// /agent uses the server-owned agent protocol, independently of the former UI flag.
+async function setupAgent(page: Page, persistSession = false) {
+  await page.addInitScript((persist) => {
+    sessionStorage.removeItem("agent_session_id");
+    if (persist) sessionStorage.setItem("agent_session_id", "test-session-id");
+  }, persistSession);
+  await page.route("**/api/ai/agent/capabilities", (route) => route.fulfill({
+    status: 200, contentType: "application/json", body: JSON.stringify([{
+      name: "clients.search", domain: "clients", version: "1.0.0", description: "Search clients",
+      risk: "read", requiredRoles: ["owner"], renderer: "entity-choice",
+      flagKey: "agent.capability.clients.search", sideEffect: false,
+    }]),
+  }));
+  await page.route("**/api/ai/agent/sessions", (route) => route.fulfill({
+    status: 200, contentType: "application/json", body: "[]",
+  }));
+}
 
-const setupAuthMocks = async (page: Page) => {
-  await page.addInitScript(() => {
-    (window as typeof window & { __e2e_auth__?: boolean }).__e2e_auth__ = true;
+const INPUT = '[data-component="mobile_chat_agent-shell_composer_input"]';
+const streamResponse = (text: string) => [
+  'data: {"type":"start","messageId":"assistant-stream"}',
+  `data: ${JSON.stringify({ type: "text-delta", delta: text })}`,
+  'data: [DONE]', '',
+].join("\n\n");
+
+// Agent requests can have effects: unlike legacy chat they must not replay automatically.
+test.beforeEach(async ({ page }) => { await setupAgent(page); });
+
+test("allows an explicit new message after a failed request", async ({ page }) => {
+  let calls = 0;
+  await page.route("**/api/ai/agent/chat", async (route) => {
+    calls += 1;
+    if (calls === 1) { await route.abort("failed"); return; }
+    await route.fulfill({ status: 200, headers: { "content-type": "text/event-stream" }, body: streamResponse("성공적인 응답입니다.") });
   });
+  await page.goto("/agent");
+  await expect(page.locator(INPUT)).toBeEnabled();
+  await page.locator(INPUT).fill("테스트 메시지");
+  await page.locator(INPUT).press("Enter");
+  await expect(page.locator('[data-slot="agent-mobile-shell"]').getByRole("alert")).toContainText("응답 스트림이 중단되었습니다.");
+  expect(calls).toBe(1);
+  await page.locator(INPUT).fill("다시 질문합니다");
+  await page.locator(INPUT).press("Enter");
+  await expect(page.getByText("성공적인 응답입니다.")).toBeVisible();
+  expect(calls).toBe(2);
+});
 
-  await page.route('**/api/auth/me', async (route: Route) => {
-    await route.fulfill({
-      status: 200,
-      contentType: 'application/json',
-      body: JSON.stringify(mockAuthResponse),
-    });
-  });
-
-  await page.route('**/auth/me', async (route: Route) => {
-    await route.fulfill({
-      status: 200,
-      contentType: 'application/json',
-      body: JSON.stringify(mockAuthResponse),
-    });
-  });
-};
-
-test.describe('chat auto-retry', () => {
-  test.beforeEach(async ({ page }) => {
-    await setupAuthMocks(page);
-
-    await page.route('**/api/ai/chat/history**', async (route) => {
-      await route.fulfill({
-        status: 200,
-        contentType: 'application/json',
-        body: JSON.stringify({
-          messages: [],
-          total: 0,
-          hasMore: false,
-          sessionId: null,
-          isSessionActive: false,
-        }),
-      });
-    });
-  });
-
-  test('should auto-retry once on first error then succeed', async ({ page }) => {
-    let callCount = 0;
-
-    await page.route('**/api/ai/chat/stream', async (route) => {
-      callCount++;
-      if (callCount === 1) {
-        // first call fails with network error
-        await route.abort('failed');
-      } else {
-        // second call succeeds
-        const chunks = [
-          'data: {"type":"chunk","content":"성공적인 "}\n\n',
-          'data: {"type":"chunk","content":"응답입니다."}\n\n',
-          'data: {"type":"done","sessionId":"test-session-id"}\n\n',
-        ];
-        await route.fulfill({
-          status: 200,
-          headers: {
-            'content-type': 'text/event-stream',
-            'cache-control': 'no-cache',
-          },
-          body: chunks.join(''),
-        });
-      }
-    });
-
-    // Navigate directly to chat page
-    await page.goto('/chat');
-
-    const chatInput = page.locator('[data-component="mobile_chat_page_input-area_input"]');
-    await expect(chatInput).toBeVisible({ timeout: 10000 });
-    await chatInput.fill('테스트 메시지');
-    await chatInput.press('Enter');
-
-    // Wait for both attempts to complete
-    await page.waitForTimeout(3000);
-    // Verify retry mechanism was called (second request should have been made)
-    expect(callCount).toBe(2);
-  });
-
-  test('should show error after two consecutive failures', async ({ page }) => {
-    let callCount = 0;
-
-    await page.route('**/api/ai/chat/stream', async (route) => {
-      callCount++;
-      await route.abort('failed');
-    });
-
-    // Navigate directly to chat page
-    await page.goto('/chat');
-
-    const chatInput = page.locator('[data-component="mobile_chat_page_input-area_input"]');
-    await expect(chatInput).toBeVisible({ timeout: 10000 });
-    await chatInput.fill('테스트 메시지');
-    await chatInput.press('Enter');
-
-    // Wait for both attempts to fail
-    await page.waitForTimeout(3000);
-    // Verify both attempts were made before giving up
-    expect(callCount).toBe(2);
-  });
+test("shows an error without automatically replaying a failed agent request", async ({ page }) => {
+  let calls = 0;
+  await page.route("**/api/ai/agent/chat", async (route) => { calls += 1; await route.abort("failed"); });
+  await page.goto("/agent");
+  await expect(page.locator(INPUT)).toBeEnabled();
+  await page.locator(INPUT).fill("테스트 메시지");
+  await page.locator(INPUT).press("Enter");
+  await expect(page.locator('[data-slot="agent-mobile-shell"]').getByRole("alert")).toContainText("응답 스트림이 중단되었습니다.");
+  await expect(page.locator('[data-slot="agent-mobile-shell"]').getByRole("alert")).toContainText("작업은 실행되지 않았습니다.");
+  expect(calls).toBe(1);
 });

@@ -73,8 +73,8 @@ function UserMessage({ message }: { message: ChatMessage }) {
 function ToolExecutingIndicator({ toolName }: { toolName: string | null }) {
     return (
         <div className="flex items-center gap-2 mb-4 px-4">
-            <Spinner size="sm" />
-            <span className="text-sm text-muted-foreground">
+            <Spinner size="sm" aria-hidden="true" />
+            <span className="sr-only">
                 {toolName ? `${toolName} 실행 중...` : "처리 중..."}
             </span>
         </div>
@@ -85,8 +85,8 @@ function StateIndicator({ state }: { state: ChatState }) {
     if (state === "connecting") {
         return (
             <div className="flex items-center gap-2 mb-4 px-4">
-                <Spinner size="sm" />
-                <span className="text-sm text-muted-foreground">
+                <Spinner size="sm" aria-hidden="true" />
+                <span className="sr-only">
                     연결 중...
                 </span>
             </div>

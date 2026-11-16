@@ -2,7 +2,7 @@ import { act, renderHook, waitFor } from "@testing-library/react";
 import { TextDecoder as NodeTextDecoder } from "node:util";
 import { AgentTaskSchema, type AgentTask } from "@babyjamjam/shared/agent";
 
-import { useAgentChat, useAgentShellEnabled } from "./useAgentChat";
+import { useAgentChat, useAgentCapabilities } from "./useAgentChat";
 
 const TASK_IDS = {
     task: "11111111-1111-4111-8111-111111111111",
@@ -1130,7 +1130,7 @@ describe("mobile useAgentChat", () => {
     });
 });
 
-describe("mobile useAgentShellEnabled capability discovery", () => {
+describe("mobile useAgentCapabilities capability discovery", () => {
     const originalFlag = process.env.NEXT_PUBLIC_AGENT_SHELL_ENABLED;
 
     beforeEach(() => {
@@ -1145,7 +1145,7 @@ describe("mobile useAgentShellEnabled capability discovery", () => {
     it.each([403, 503])("fails closed for an HTTP %s capability response", async (status) => {
         global.fetch = jest.fn().mockResolvedValue({ ok: false, status } as Response);
 
-        const { result } = renderHook(() => useAgentShellEnabled());
+        const { result } = renderHook(() => useAgentCapabilities());
 
         expect(result.current).toBe("loading");
         await waitFor(() => expect(result.current).toBe("discovery-error"));
@@ -1154,7 +1154,7 @@ describe("mobile useAgentShellEnabled capability discovery", () => {
     it("fails closed when capability discovery rejects", async () => {
         global.fetch = jest.fn().mockRejectedValue(new Error("sensitive provider response"));
 
-        const { result } = renderHook(() => useAgentShellEnabled());
+        const { result } = renderHook(() => useAgentCapabilities());
 
         await waitFor(() => expect(result.current).toBe("discovery-error"));
         expect(result.current).not.toBe(false);
@@ -1166,7 +1166,7 @@ describe("mobile useAgentShellEnabled capability discovery", () => {
             json: jest.fn().mockRejectedValue(new Error("raw response details")),
         } as unknown as Response);
 
-        const { result } = renderHook(() => useAgentShellEnabled());
+        const { result } = renderHook(() => useAgentCapabilities());
 
         await waitFor(() => expect(result.current).toBe("discovery-error"));
     });
@@ -1180,7 +1180,7 @@ describe("mobile useAgentShellEnabled capability discovery", () => {
             json: async () => catalog,
         } as unknown as Response);
 
-        const { result } = renderHook(() => useAgentShellEnabled());
+        const { result } = renderHook(() => useAgentCapabilities());
 
         await waitFor(() => expect(result.current).toBe("discovery-error"));
     });
@@ -1201,18 +1201,19 @@ describe("mobile useAgentShellEnabled capability discovery", () => {
             }],
         } as unknown as Response);
 
-        const { result } = renderHook(() => useAgentShellEnabled());
+        const { result } = renderHook(() => useAgentCapabilities());
 
         await waitFor(() => expect(result.current).toBe("enabled"));
     });
 
-    it("keeps explicit compatibility-off mode out of discovery and on legacy chat", () => {
+    it("still discovers capabilities when the retired UI flag is off", async () => {
         process.env.NEXT_PUBLIC_AGENT_SHELL_ENABLED = "false";
-        global.fetch = jest.fn();
+        global.fetch = jest.fn().mockResolvedValue({ ok: false, status: 503 });
 
-        const { result } = renderHook(() => useAgentShellEnabled());
+        const { result } = renderHook(() => useAgentCapabilities());
 
-        expect(result.current).toBe("compatibility-off");
-        expect(global.fetch).not.toHaveBeenCalled();
+        expect(result.current).toBe("loading");
+        expect(global.fetch).toHaveBeenCalledWith("/api/ai/agent/capabilities", expect.anything());
+        await waitFor(() => expect(result.current).toBe("discovery-error"));
     });
 });

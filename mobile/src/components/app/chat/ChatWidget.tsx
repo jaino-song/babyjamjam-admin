@@ -7,7 +7,7 @@ export function ChatWidget() {
     const router = useRouter();
 
     const handleOpenChat = () => {
-        router.push("/chat");
+        router.push("/agent");
     };
 
     return (
