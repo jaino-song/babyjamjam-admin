@@ -31,9 +31,8 @@ function record(value: unknown): Record<string, unknown> | null {
 }
 
 export function errorCodeOf(error: unknown): string {
-    // Require a full match: JavaScript's $ anchor also permits a final newline.
     const isCode = (value: unknown): value is string =>
-        typeof value === "string" && ERROR_CODE.exec(value)?.[0] === value;
+        typeof value === "string" && ERROR_CODE.test(value);
     if (error instanceof Error && isCode(error.message)) return error.message;
     if (error instanceof HttpException) {
         const response = error.getResponse();
