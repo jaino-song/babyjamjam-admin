@@ -154,8 +154,10 @@ export function VerifyEmailPageContent({ variant }: VerifyEmailPageContentProps)
                   size="lg"
                   className={actionButtonClassName}
                   disabled={resendLoading || !resendEmail.trim()}
+                  loading={resendLoading}
+                  loadingLabel="인증 메일 보내는 중"
                 >
-                  {resendLoading ? <Spinner size="sm" /> : "인증 이메일 재발송"}
+                  인증 이메일 재발송
                 </Button>
               </form>
             </>

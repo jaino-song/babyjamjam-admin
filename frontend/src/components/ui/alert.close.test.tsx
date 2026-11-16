@@ -16,6 +16,7 @@ it("renders a scaled 32px alert close button with a 44px hit area and 16px icon"
     "after:-translate-x-1/2", "after:-translate-y-1/2", "after:content-['']",
     "absolute", "right-1", "top-1", "p-0",
   );
+  expect(close).not.toHaveClass("relative");
   expect(close.querySelector("svg")).toHaveClass("h-4", "w-4");
   fireEvent.click(close);
   expect(onClose).toHaveBeenCalledTimes(1);

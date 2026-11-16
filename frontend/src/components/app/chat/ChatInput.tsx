@@ -87,7 +87,7 @@ export function ChatInput({
                 onClick={handleSubmit}
                 disabled={disabled || !value.trim()}
                 className={cn(
-                    "shrink-0 rounded-full h-10 w-10",
+                    "shrink-0 rounded-full",
                     variant === "workspace" ? "!bg-primary text-primary-foreground" : "!bg-navy text-primary-foreground",
                     "transition-all duration-200",
                     variant === "workspace" ? "hover:!bg-primary/90" : "hover:scale-110 hover:!bg-navy/90 active:scale-95",

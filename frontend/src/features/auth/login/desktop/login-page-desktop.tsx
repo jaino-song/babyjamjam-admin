@@ -6,10 +6,9 @@ import { AuthPanel } from "@/components/auth/auth-panel";
 import { FormField } from "@/components/auth/form-field";
 import { OAuthButtons } from "@/components/auth/oauth-buttons";
 import { Alert } from "@/components/ui/alert";
-import { Button } from "@/components/ui/button";
+import { Button, ButtonLoadingContent } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
-import { Spinner } from "@/components/ui/spinner";
 import { useLocale } from "@/providers/LocaleProvider";
 import { t } from "@/lib/i18n/translations";
 import { useLoginPageController } from "@/features/auth/login/shared/use-login-page-controller";
@@ -57,22 +56,21 @@ export function LoginPageDesktop() {
             {serverError}
             {emailVerificationRequired ? (
               <div data-component="desktop_auth_login_error-message_verify-email" className="mt-2">
-                {isResendingVerification ? (
-                  "재전송 중..."
-                ) : (
-                  <>
-                    이메일이 오지 않았다면{" "}
-                    <button
-                      type="button"
-                      data-component="desktop_auth_login_error-message_verify-email_resend-verification-link"
-                      onClick={handleResendVerification}
-                      className="text-destructive underline hover:no-underline"
-                    >
-                      재전송
-                    </button>
-                    을 눌러주세요.
-                  </>
-                )}
+                이메일이 오지 않았다면{" "}
+                <button
+                  type="button"
+                  data-component="desktop_auth_login_error-message_verify-email_resend-verification-link"
+                  onClick={handleResendVerification}
+                  disabled={isResendingVerification}
+                  aria-busy={isResendingVerification ? "true" : undefined}
+                  data-loading={isResendingVerification ? "" : undefined}
+                  className={isResendingVerification ? "relative text-destructive underline hover:no-underline" : "text-destructive underline hover:no-underline"}
+                >
+                  <ButtonLoadingContent loading={isResendingVerification} loadingLabel="재전송 중">
+                    재전송
+                  </ButtonLoadingContent>
+                </button>
+                을 눌러주세요.
               </div>
             ) : null}
           </div>
@@ -137,8 +135,10 @@ export function LoginPageDesktop() {
           size="lg"
           className="w-full"
           disabled={isLoading}
+          loading={isLoading}
+          loadingLabel="로그인 중"
         >
-          {isLoading ? <Spinner size="sm" /> : "로그인"}
+          로그인
         </Button>
       </form>
 

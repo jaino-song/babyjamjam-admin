@@ -3,7 +3,7 @@
 import { useRef, useEffect, useCallback, useLayoutEffect, useState } from "react";
 import { X, Trash2, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Spinner } from "@/components/ui/spinner";
+import { LoadingState } from "@/components/app/ui/LoadingState";
 import { cn } from "@/lib/utils";
 import { ChatInput } from "./ChatInput";
 import { AssistantMessage } from "./AssistantMessage";
@@ -69,27 +69,20 @@ function UserMessage({ message }: { message: ChatMessage }) {
 
 function ToolExecutingIndicator({ toolName }: { toolName: string | null }) {
     return (
-        <div className="flex items-center gap-2 mb-4 px-4">
-            <Spinner size="sm" />
-            <span className="text-sm text-muted-foreground">
-                {toolName ? `${toolName} 실행 중...` : "처리 중..."}
-            </span>
+        <div data-component="desktop_chat_page_fullscreen_tool-indicator" className="flex items-center gap-2 mb-4 px-4">
+            <LoadingState data-component="desktop_chat_page_fullscreen_tool-indicator_loading" label={toolName ? `${toolName} 실행 중` : "처리 중"} size="sm" inline />
+            {toolName && <span className="text-sm text-muted-foreground">{toolName} 실행 중...</span>}
         </div>
     );
 }
 
 function StateIndicator({ state }: { state: ChatState }) {
-    if (state === "connecting") {
-        return (
-            <div className="flex items-center gap-2 mb-4 px-4">
-                <Spinner size="sm" />
-                <span className="text-sm text-muted-foreground">
-                    연결 중...
-                </span>
-            </div>
-        );
-    }
-    return null;
+    if (state !== "connecting") return null;
+    return (
+        <div data-component="desktop_chat_page_fullscreen_state-indicator" className="flex items-center gap-2 mb-4 px-4">
+            <LoadingState data-component="desktop_chat_page_fullscreen_state-indicator_loading" label="연결 중" size="sm" inline />
+        </div>
+    );
 }
 
 export function ChatFullscreen({ open, onClose }: ChatFullscreenProps) {
@@ -223,7 +216,6 @@ export function ChatFullscreen({ open, onClose }: ChatFullscreenProps) {
                             variant="ghost"
                             size="icon"
                             onClick={clearSession}
-                            className="h-8 w-8"
                             aria-label="대화 삭제"
                             data-testid="chat-fullscreen-clear"
                         >
@@ -233,7 +225,6 @@ export function ChatFullscreen({ open, onClose }: ChatFullscreenProps) {
                             variant="ghost"
                             size="icon"
                             onClick={onClose}
-                            className="h-8 w-8"
                             aria-label="닫기"
                             data-testid="chat-fullscreen-close"
                         >
@@ -249,9 +240,7 @@ export function ChatFullscreen({ open, onClose }: ChatFullscreenProps) {
                     className="flex-1 overflow-auto px-4 sm:px-8 py-6 select-text"
                 >
                     {isLoadingHistory && messages.length > 0 && (
-                        <div className="flex justify-center p-4">
-                            <Spinner size="sm" />
-                        </div>
+                        <LoadingState data-component="desktop_chat_page_fullscreen_messages_history-loading" label="이전 대화 불러오는 중" size="sm" className="p-4" />
                     )}
                     {messages.length === 0 ? (
                         <div className="flex flex-col items-center justify-center h-full text-center text-muted-foreground animate-fade-in">
