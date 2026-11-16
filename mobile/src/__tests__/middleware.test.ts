@@ -37,6 +37,22 @@ describe("middleware API route protection", () => {
     jest.restoreAllMocks();
   });
 
+  it.each(["/privacy", "/terms"])("allows unauthenticated visitors to %s", async (path) => {
+    const fetchMock = jest.spyOn(global, "fetch");
+    const response = await middleware(createRequest(path));
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("location")).toBeNull();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("still redirects an unauthenticated visitor away from protected pages", async () => {
+    const response = await middleware(createRequest("/clients"));
+
+    expect(response.status).toBe(307);
+    expect(response.headers.get("location")).toBe("http://localhost/login");
+  });
+
   it("creates a local development session before rendering the login page", async () => {
     Object.defineProperty(process.env, "NODE_ENV", {
       value: "development",

@@ -14,6 +14,7 @@ import { authApi } from "@/services/api";
 import { resetAuthorityState } from "@/lib/auth/authority-state";
 import { safeStorageGetItem, safeStorageRemoveItem, safeStorageSetItem } from "@/lib/safe-storage";
 import "@/components/app/mobile-redesign/redesign.css";
+import { Spinner } from "@/components/ui/spinner";
 import { LoginAuthErrorModal } from "@/components/auth/login-auth-error-modal";
 
 /** Canonical data-component base for the /login route. */
@@ -173,7 +174,7 @@ const LoginPage = () => {
   const isBusy = isLoading || isNavigationPending;
 
   return (
-    <div className="auth-page" data-component={LOGIN_BASE} data-slot="auth-login-page">
+    <div className="auth-screen" data-component={LOGIN_BASE} data-slot="auth-login-page">
       <Suspense fallback={null}>
         <LoginAuthErrorModal />
       </Suspense>
@@ -196,7 +197,7 @@ const LoginPage = () => {
               disabled={isResendingVerification}
               data-component={`${LOGIN_BASE}_server-error_verify-email-link`}
             >
-              {isResendingVerification ? "재발송 중…" : "인증 이메일 재발송"}
+              {isResendingVerification ? <><Spinner size="sm" aria-hidden="true" /><span className="sr-only">재발송 중…</span></> : "인증 이메일 재발송"}
             </button>
           )}
         </div>
@@ -255,7 +256,7 @@ const LoginPage = () => {
           disabled={isBusy}
           data-component={`${LOGIN_BASE}_form_submit-button`}
         >
-          {isBusy ? "로그인 중…" : "로그인"}
+          {isBusy ? <><Spinner size="sm" aria-hidden="true" /><span className="sr-only">로그인 중…</span></> : "로그인"}
         </button>
       </form>
 

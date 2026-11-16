@@ -2,9 +2,10 @@
 
 import { useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { CheckCircle, AlertTriangle, Loader2 } from "lucide-react";
+import { CheckCircle, AlertTriangle } from "lucide-react";
 import { normalizeApiError } from "@babyjamjam/shared";
 import { authApi } from "@/services/api";
+import { AuthInlineLink } from "@/components/auth/auth-inline-link";
 import { AuthCard } from "@/components/auth/auth-card";
 import { FormField } from "@/components/auth/form-field";
 import { Button } from "@/components/ui/button";
@@ -106,8 +107,8 @@ export default function VerifyEmailPage() {
         return (
             <AuthCard data-component={VERIFY_EMAIL_BASE} data-slot="auth-verify-email-page" disableAnimation>
                 <div data-component={`${VERIFY_EMAIL_BASE}_loading`} className="flex flex-col items-center gap-4 text-center">
-                    <Loader2 className="h-12 w-12 text-primary animate-spin" />
-                    <p className="text-muted-foreground">이메일 인증 중...</p>
+                    <Spinner size="lg" aria-hidden="true" />
+                    <span className="sr-only">이메일 인증 중...</span>
                 </div>
             </AuthCard>
         );
@@ -169,22 +170,20 @@ export default function VerifyEmailPage() {
                         <Button
                             data-component={`${VERIFY_EMAIL_BASE}_error_resend-form_submit-button`}
                             type="submit"
-                            variant="outline"
+                            variant="default"
                             size="lg"
                             className="w-full"
                             disabled={resendLoading || !resendEmail.trim()}
                         >
-                            {resendLoading ? <Spinner size="sm" /> : "인증 이메일 재발송"}
+                            {resendLoading ? <><Spinner size="sm" aria-hidden="true" /><span className="sr-only">인증 이메일 재발송 중</span></> : "인증 이메일 재발송"}
                         </Button>
                     </form>
 
-                    <Button
-                        data-component={`${VERIFY_EMAIL_BASE}_error_login-button`}
-                        variant="ghost"
-                        onClick={() => router.push("/login")}
-                    >
-                        로그인 페이지로 돌아가기
-                    </Button>
+                    <AuthInlineLink
+                        dataComponent={`${VERIFY_EMAIL_BASE}_error_login-button`}
+                        href="/login"
+                        linkLabel="로그인 페이지로 돌아가기"
+                    />
                 </div>
             </AuthCard>
         );
@@ -221,22 +220,20 @@ export default function VerifyEmailPage() {
                     <Button
                         data-component={`${VERIFY_EMAIL_BASE}_no-token_resend-form_submit-button`}
                         type="submit"
-                        variant="outline"
+                        variant="default"
                         size="lg"
                         className="w-full"
                         disabled={resendLoading || !resendEmail.trim()}
                     >
-                        {resendLoading ? <Spinner size="sm" /> : "인증 이메일 재발송"}
+                        {resendLoading ? <><Spinner size="sm" aria-hidden="true" /><span className="sr-only">인증 이메일 재발송 중</span></> : "인증 이메일 재발송"}
                     </Button>
                 </form>
 
-                <Button
-                    data-component={`${VERIFY_EMAIL_BASE}_no-token_login-button`}
-                    variant="ghost"
-                    onClick={() => router.push("/login")}
-                >
-                    로그인 페이지로 돌아가기
-                </Button>
+                <AuthInlineLink
+                    dataComponent={`${VERIFY_EMAIL_BASE}_no-token_login-button`}
+                    href="/login"
+                    linkLabel="로그인 페이지로 돌아가기"
+                />
             </div>
         </AuthCard>
     );

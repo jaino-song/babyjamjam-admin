@@ -1,4 +1,5 @@
 import { Metadata } from "next";
+import { AuthPageLayout } from "@/components/auth/auth-page-layout";
 import "@/components/app/mobile-redesign/redesign.css";
 
 export const metadata: Metadata = {
@@ -6,5 +7,5 @@ export const metadata: Metadata = {
 };
 
 export default function AuthLayout({ children }: { children: React.ReactNode }) {
-  return <>{children}</>;
+  return <AuthPageLayout data-component="mobile_auth_layout">{children}</AuthPageLayout>;
 }

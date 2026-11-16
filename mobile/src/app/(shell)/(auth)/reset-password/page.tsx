@@ -111,7 +111,6 @@ export default function ResetPasswordPage() {
             <CardContainer
                 data-component={RESET_PASSWORD_BASE}
                 data-slot="auth-reset-password-page"
-                className="max-w-[400px] border bg-card text-card-foreground shadow-lg"
             >
                 <div data-component={`${RESET_PASSWORD_CARD_CONTENT}_invalid`} className="flex flex-col items-center gap-4 text-center">
                     <div data-component={`${RESET_PASSWORD_CARD_CONTENT}_invalid_icon`} className="rounded-full bg-destructive/10 p-3">
@@ -147,7 +146,6 @@ export default function ResetPasswordPage() {
             <CardContainer
                 data-component={RESET_PASSWORD_BASE}
                 data-slot="auth-reset-password-page"
-                className="max-w-[400px] border bg-card text-card-foreground shadow-lg"
             >
                 <div data-component={`${RESET_PASSWORD_CARD_CONTENT}_success`} className="flex flex-col items-center gap-4 text-center">
                     <div data-component={`${RESET_PASSWORD_CARD_CONTENT}_success_icon`} className="rounded-full bg-success/10 p-3">
@@ -174,7 +172,6 @@ export default function ResetPasswordPage() {
         <CardContainer
             data-component={RESET_PASSWORD_BASE}
             data-slot="auth-reset-password-page"
-            className="max-w-[400px] border bg-card text-card-foreground shadow-lg"
             contentClassName="flex flex-col gap-6"
             title="새 비밀번호 설정"
             subtitle="새로운 비밀번호를 입력해 주세요."
@@ -224,7 +221,7 @@ export default function ResetPasswordPage() {
                     className="w-full rounded-2xl"
                     disabled={isLoading}
                 >
-                    {isLoading ? <Spinner size="sm" /> : "비밀번호 변경"}
+                    {isLoading ? <><Spinner size="sm" aria-hidden="true" /><span className="sr-only">비밀번호 변경 중</span></> : "비밀번호 변경"}
                 </Button>
             </form>
 
