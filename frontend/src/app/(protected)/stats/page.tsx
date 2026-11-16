@@ -1,4 +1,5 @@
 import { redirect } from "next/navigation";
+
 import { Block } from "@/components/app/v3/Block";
 import {
   StatsPeriodNotice,
@@ -7,6 +8,9 @@ import {
   StatsPeriodSelector,
   StatsUnavailableValue,
 } from "@/components/app/stats/StatsPeriodSelector";
+import { Skeleton } from "@/components/ui/skeleton";
+import { StatsQueryError } from "@/features/stats/StatsQueryError";
+import { loadPostHogStat } from "@/features/stats/load-posthog-stat";
 import { getCurrentUser } from "@/lib/auth/cookies";
 import { ROLES } from "@/lib/constants/roles";
 import { formatDateForDisplay } from "@/lib/date/format-date-for-display";
@@ -82,19 +86,21 @@ export default async function StatsPage({ searchParams }: StatsPageProps) {
   const [sentry, inquiries, inquiriesTrend, funnel, traffic, topPages, devices] =
     await Promise.all([
       getSentrySummary({ statsPeriod: period === 30 ? "30d" : "7d" }),
-      getInquiriesSummary(undefined, period),
-      getInquiriesDailyTrend(period),
-      getFunnelSummary(period),
-      getTrafficSummary(period),
-      getTopPages(period, 4),
-      getDeviceBreakdown(period),
+      loadPostHogStat(getInquiriesSummary(undefined, period)),
+      loadPostHogStat(getInquiriesDailyTrend(period)),
+      loadPostHogStat(getFunnelSummary(period)),
+      loadPostHogStat(getTrafficSummary(period)),
+      loadPostHogStat(getTopPages(period, 4)),
+      loadPostHogStat(getDeviceBreakdown(period)),
     ]);
+
+  const hasPostHogError = [inquiries, inquiriesTrend, funnel, traffic, topPages, devices].some((value) => value === null);
 
   // Build selected-range labels + values for the inquiry mini-bars
   const today = new Date();
   const selectedRangeLabels: string[] = [];
   const selectedRangeValues: number[] = [];
-  const trendMap = new Map(inquiriesTrend.map((p) => [p.day, p.count]));
+  const trendMap = new Map((inquiriesTrend ?? []).map((p) => [p.day, p.count]));
   for (let i = period - 1; i >= 0; i--) {
     const d = new Date(today);
     d.setDate(d.getDate() - i);
@@ -103,11 +109,11 @@ export default async function StatsPage({ searchParams }: StatsPageProps) {
     selectedRangeLabels.push(formatDateForDisplay(d));
   }
 
-  const inquiryDelta = formatDelta(inquiries.today, inquiries.yesterday);
+  const inquiryDelta = inquiries ? formatDelta(inquiries.today, inquiries.yesterday) : undefined;
 
   // Device split for traffic panel
-  const mobile = devices.find((d) => /mobile/i.test(d.deviceType))?.pct ?? 0;
-  const desktop = devices.find((d) => /desktop/i.test(d.deviceType))?.pct ?? 0;
+  const mobile = devices?.find((d) => /mobile/i.test(d.deviceType))?.pct ?? 0;
+  const desktop = devices?.find((d) => /desktop/i.test(d.deviceType))?.pct ?? 0;
 
   return (
     <StatsPeriodProvider key={period} initialPeriod={period}>
@@ -130,6 +136,8 @@ export default async function StatsPage({ searchParams }: StatsPageProps) {
         period={period}
         dataComponent="desktop_stats_page_period-selector"
       />
+
+      {hasPostHogError && <StatsQueryError dataComponent="desktop_stats_page_query-error" />}
 
       {(!sentryConfigured || !posthogConfigured) && (
         <StatsSourceNotice
@@ -211,14 +219,18 @@ export default async function StatsPage({ searchParams }: StatsPageProps) {
             dataComponent="desktop_stats_page_grid_inner_panel-inquiries"
           >
             <div className="flex items-baseline gap-3">
-              <span
+              <div
                 data-component="desktop_stats_page_grid_inner_panel-inquiries-count"
                 className="text-[2.4rem] font-bold leading-none tabular-nums text-v3-primary"
               >
-                {posthogConfigured ? inquiries.today : "—"}
-              </span>
+                {inquiries === null ? (
+                  <Skeleton data-component="desktop_stats_page_grid_inner_panel-inquiries-count_skeleton" className="h-10 w-20" />
+                ) : posthogConfigured ? inquiries.today : "—"}
+              </div>
               <span className="text-[0.85rem] text-v3-text-muted">건 (오늘)</span>
-              {posthogConfigured ? (
+              {inquiryDelta === undefined ? (
+                <Skeleton data-component="desktop_stats_page_grid_inner_panel-inquiries-delta_skeleton" className="h-6 w-20" />
+              ) : posthogConfigured ? (
                 <span
                   className={`ml-auto text-[0.7rem] font-semibold rounded-full px-2.5 py-1 ${
                     inquiryDelta.tone === "up"
@@ -234,9 +246,13 @@ export default async function StatsPage({ searchParams }: StatsPageProps) {
                 <StatsUnavailableValue />
               )}
             </div>
-            {posthogConfigured ? <MiniBars data-component="desktop_stats_page_grid_inner_panel-inquiries_body_trend" values={selectedRangeValues} labels={selectedRangeLabels} /> : <StatsSourceEmpty source="PostHog" dataComponent="desktop_stats_page_grid_inner_panel-inquiries-unavailable" />}
+            {inquiriesTrend === null ? (
+              <Skeleton data-component="desktop_stats_page_grid_inner_panel-inquiries_body_trend_skeleton" className="h-32 w-full" />
+            ) : posthogConfigured ? <MiniBars data-component="desktop_stats_page_grid_inner_panel-inquiries_body_trend" values={selectedRangeValues} labels={selectedRangeLabels} /> : <StatsSourceEmpty source="PostHog" dataComponent="desktop_stats_page_grid_inner_panel-inquiries-unavailable" />}
             <div className="text-[0.78rem] text-v3-text-muted">
-              {posthogConfigured ? (
+              {inquiries === null ? (
+                <Skeleton data-component="desktop_stats_page_grid_inner_panel-inquiries_meta_skeleton" className="h-4 w-40" />
+              ) : posthogConfigured ? (
                 <>
                   {statsPeriodLabel(period)} 평균{" "}
                   <strong className="text-v3-text tabular-nums">
@@ -259,13 +275,15 @@ export default async function StatsPage({ searchParams }: StatsPageProps) {
             detailHref={`/stats/funnel?period=${period}`}
             dataComponent="desktop_stats_page_grid_inner_panel-funnel"
           >
-            {posthogConfigured ? <FunnelBars
+            {funnel === null ? (
+              <Skeleton data-component="desktop_stats_page_grid_inner_panel-funnel_bars_skeleton" className="h-32 w-full" />
+            ) : posthogConfigured ? <FunnelBars
               dataComponent="desktop_stats_page_grid_panel-funnel_bars"
               steps={funnel.steps}
               biggestDropStep={funnel.biggestDropStep}
               variant="compact"
             /> : <StatsSourceEmpty source="PostHog" dataComponent="desktop_stats_page_grid_inner_panel-funnel-unavailable" />}
-            {posthogConfigured && funnel.biggestDropStep && funnel.steps[funnel.biggestDropStep - 1] ? (
+            {posthogConfigured && funnel && funnel.biggestDropStep && funnel.steps[funnel.biggestDropStep - 1] ? (
               <div className="rounded-md border-l-[3px] border-red-500 bg-red-50 px-3 py-2 text-[0.78rem] text-red-700">
                 ⚠ {funnel.biggestDropStep}단계에서{" "}
                 <strong>
@@ -273,11 +291,11 @@ export default async function StatsPage({ searchParams }: StatsPageProps) {
                 </strong>{" "}
                 감소 · 가장 큰 이탈
               </div>
-            ) : posthogConfigured && funnel.totalEntries === 0 ? (
+            ) : posthogConfigured && funnel && funnel.totalEntries === 0 ? (
               <div className="text-[0.78rem] text-v3-text-muted">
                 펀널 진입 이벤트가 아직 없어요.
               </div>
-            ) : posthogConfigured ? (
+            ) : funnel === null ? <Skeleton data-component="desktop_stats_page_grid_inner_panel-funnel_conversion_skeleton" className="h-6 w-full" /> : posthogConfigured ? (
               <div className="rounded-md border-l-[3px] border-green-500 bg-green-50 px-3 py-2 text-[0.78rem] text-green-700">
                 ✓ 전환율 {formatPct(funnel.conversionRate, 1)} · 단계별 이탈 안정적
               </div>
@@ -296,19 +314,25 @@ export default async function StatsPage({ searchParams }: StatsPageProps) {
               <div data-component="desktop_stats_page_grid_inner_panel-traffic-pv">
                 <div className="text-[0.65rem] font-medium text-v3-text-muted">페이지뷰</div>
                 <div className="text-[1.55rem] font-bold tabular-nums leading-none mt-1">
-                  {posthogConfigured ? traffic.today.pv.toLocaleString("ko-KR") : "—"}
+                  {traffic === null ? (
+                    <Skeleton data-component="desktop_stats_page_grid_inner_panel-traffic-pv_value_skeleton" className="h-7 w-20" />
+                  ) : posthogConfigured ? traffic.today.pv.toLocaleString("ko-KR") : "—"}
                 </div>
               </div>
               <div data-component="desktop_stats_page_grid_inner_panel-traffic-unique">
                 <div className="text-[0.65rem] font-medium text-v3-text-muted">방문자</div>
                 <div className="text-[1.55rem] font-bold tabular-nums leading-none mt-1">
-                  {posthogConfigured ? traffic.today.unique.toLocaleString("ko-KR") : "—"}
+                  {traffic === null ? (
+                    <Skeleton data-component="desktop_stats_page_grid_inner_panel-traffic-unique_value_skeleton" className="h-7 w-20" />
+                  ) : posthogConfigured ? traffic.today.unique.toLocaleString("ko-KR") : "—"}
                 </div>
               </div>
               <div data-component="desktop_stats_page_grid_inner_panel-traffic-session">
                 <div className="text-[0.65rem] font-medium text-v3-text-muted">평균 방문 시간</div>
                 <div className="text-[1.55rem] font-bold tabular-nums leading-none mt-1">
-                  {!posthogConfigured || traffic.selectedRange.total.pv === 0
+                  {traffic === null ? (
+                    <Skeleton data-component="desktop_stats_page_grid_inner_panel-traffic-session_value_skeleton" className="h-7 w-20" />
+                  ) : !posthogConfigured || traffic.selectedRange.total.pv === 0
                     ? "—"
                     : `${Math.floor(traffic.selectedRange.avgSessionSeconds / 60)}:${String(Math.round(traffic.selectedRange.avgSessionSeconds % 60)).padStart(2, "0")}`}
                 </div>
@@ -319,7 +343,9 @@ export default async function StatsPage({ searchParams }: StatsPageProps) {
                 인기 페이지
               </div>
               <div data-component="desktop_stats_page_grid_inner_panel-traffic-top-pages">
-                {!posthogConfigured ? (
+                {topPages === null ? (
+                  <Skeleton data-component="desktop_stats_page_grid_inner_panel-traffic-top-pages_skeleton" className="h-32 w-full" />
+                ) : !posthogConfigured ? (
                   <StatsSourceEmpty source="PostHog" dataComponent="desktop_stats_page_grid_inner_panel-traffic-top-pages-unavailable" />
                 ) : topPages.length === 0 ? (
                   <div className="py-2 text-[0.75rem] text-v3-text-muted">데이터 없음</div>
@@ -336,7 +362,9 @@ export default async function StatsPage({ searchParams }: StatsPageProps) {
                 )}
               </div>
             </div>
-              {posthogConfigured ? (
+              {devices === null ? (
+                <Skeleton data-component="desktop_stats_page_grid_inner_panel-traffic_devices_skeleton" className="h-8 w-full" />
+              ) : posthogConfigured ? (
                 <div>
                   <div className="flex h-2 rounded-full overflow-hidden bg-v3-dim-white">
                     <div
