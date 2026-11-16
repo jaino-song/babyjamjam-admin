@@ -136,14 +136,16 @@ export function EmployeeDetailContent({
         menu={canManage ? (
           <DropdownMenu modal={false}>
             <DropdownMenuTrigger asChild>
-              <button
+              <Button
                 type="button"
-                className="flex h-[44px] w-[44px] flex-shrink-0 items-center justify-center rounded-xl text-v3-text-muted transition-colors hover:bg-v3-dim-white"
+                variant="ghost"
+                size="icon"
+                className="flex-shrink-0 rounded-xl text-v3-text-muted hover:bg-v3-dim-white [&_svg]:size-5"
                 aria-label="제공인력 옵션"
                 data-component="mobile_employees_detail-sheet_stack_detail-page_body_header_menu-trigger"
               >
                 <MoreVertical size={20} strokeWidth={2} />
-              </button>
+              </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent
               align="end"

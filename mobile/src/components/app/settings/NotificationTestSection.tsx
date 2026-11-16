@@ -7,7 +7,6 @@ import { Bell } from "lucide-react";
 import { api } from "@/lib/api/client";
 import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { Spinner } from "@/components/ui/spinner";
 
 interface BroadcastResult {
   sent: number;
@@ -57,15 +56,13 @@ export function NotificationTestSection() {
 
       <Button
         onClick={handleTestBroadcast}
+        loading={loading}
+        loadingLabel="전송 중"
         disabled={loading}
         className="gap-2 rounded-full px-6"
       >
-        {loading ? (
-          <Spinner className="h-4 w-4" />
-        ) : (
-          <Bell size={16} />
-        )}
-        {loading ? '전송 중...' : '테스트 알림 보내기'}
+        <Bell size={16} />
+        테스트 알림 보내기
       </Button>
 
 

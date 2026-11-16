@@ -31,6 +31,8 @@ import { useDocumentCategories } from "@/hooks/use-document-categories";
 import { useDocumentUploadCapabilities, useUploadDocument } from "@/hooks/use-documents";
 import { useNavigationPending } from "@/hooks/use-navigation-pending";
 import { useToast } from "@/hooks/use-toast";
+import { LoadingState } from "@/components/app/ui/LoadingState";
+import { ButtonLoadingContent } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
 import { QueryErrorState } from "@/components/app/ui/QueryErrorState";
 
@@ -328,6 +330,7 @@ export function FileUploadScreen() {
                 </div>
                 <span
                   className={styles.filePreviewRemove}
+                  data-slot="file-preview-remove"
                   role="button"
                   tabIndex={0}
                   onClick={(event) => {
@@ -350,7 +353,9 @@ export function FileUploadScreen() {
                 <div data-component="mobile_files-upload_screen_root_scroll_dropzone_progress_bar" className={styles.uploadProgressBar} style={{ width: `${progress}%` }} />
               </div>
               <div data-component="mobile_files-upload_screen_root_scroll_dropzone_progress-meta" className={styles.uploadProgressMeta}>
-                <span>{uploadMutation.isPending ? "업로드 중..." : "업로드 준비됨"}</span>
+                {uploadMutation.isPending ? (
+                  <LoadingState inline size="sm" label="업로드 중" data-component="mobile_files-upload_screen_root_scroll_dropzone_progress-meta_loading" />
+                ) : <span>업로드 준비됨</span>}
                 <span>
                   {fileSizeCompactLabel(uploadedBytes)} / {fileSizeCompactLabel(selectedFile.size)} · {progress}%
                 </span>
@@ -474,6 +479,7 @@ export function FileUploadScreen() {
                   <button
                     type="button"
                     className={styles.tagChipX}
+                    data-slot="tag-chip-x"
                     onClick={() => setTags((currentTags) => currentTags.filter((currentTag) => currentTag !== tag))}
                     aria-label={`${tag} 태그 삭제`}
                   >
@@ -507,11 +513,14 @@ export function FileUploadScreen() {
         </button>
         <button
           type="button"
-          className={`${styles.uploadBtn} ${styles.primary}`}
-          disabled={!canSubmit}
+          className={`${styles.uploadBtn} ${styles.primary} ${isUploading ? "relative" : ""}`}
+          data-slot="upload-btn"
+          disabled={isUploading || !canSubmit}
+          aria-busy={isUploading || undefined}
+          data-loading={isUploading ? "" : undefined}
           onClick={handleSubmit}
         >
-          {isUploading ? "업로드 중..." : "업로드 완료"}
+          <ButtonLoadingContent loading={isUploading} loadingLabel="업로드 중">업로드 완료</ButtonLoadingContent>
         </button>
       </footer>
     </section>

@@ -144,9 +144,11 @@ export function AddCategoryModal({
           </Button>
           <Button
             onClick={handleAdd}
+            loading={isLoading}
+            loadingLabel="추가 중"
             disabled={!name.trim() || !selectedColor || isLoading}
           >
-            {isLoading ? "추가 중..." : "추가"}
+            추가
           </Button>
         </DialogFooter>
       </DialogContent>

@@ -66,10 +66,11 @@ export function HolidayReviewEventCard({
               size="sm"
               data-component={`${dataComponent}_card_actions_fix-safe-trigger`}
               disabled={disabled || event.safeOpen === 0}
-              aria-busy={fixing || undefined}
+              loading={fixing}
+              loadingLabel="수정 중"
               onClick={onFixSafe}
             >
-              {fixing ? "수정 중..." : `${event.safeOpen}명 한 번에 수정`}
+              {`${event.safeOpen}명 한 번에 수정`}
             </Button>
           </div>
         </div>

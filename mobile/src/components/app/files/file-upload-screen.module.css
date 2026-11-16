@@ -423,6 +423,7 @@
 }
 
 .tagChipX {
+  position: relative;
   display: flex;
   width: 16px;
   height: 16px;
@@ -433,6 +434,18 @@
   background: rgba(0, 0, 0, 0.08);
   color: hsl(var(--v3-primary));
   cursor: pointer;
+}
+
+.tagChipX::after {
+  position: absolute;
+  inset: -14px;
+  content: "";
+}
+
+.filePreviewRemove::after {
+  position: absolute;
+  inset: -6px;
+  content: "";
 }
 
 .tagInput {

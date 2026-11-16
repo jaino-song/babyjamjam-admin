@@ -1,7 +1,6 @@
 "use client";
 
 import { Button } from "@/components/ui/button";
-import { Spinner } from "@/components/ui/spinner";
 import type { HolidaySyncYearResult } from "@/services/holiday-settings";
 
 import { describeSyncResult, formatLastSynced } from "./holiday-format";
@@ -83,15 +82,11 @@ export function HolidaySyncStrip({
         className="w-full"
         data-component={`${dataComponent}_sync-trigger`}
         disabled={pending || disabled}
-        aria-busy={pending || undefined}
+        loading={pending}
+        loadingLabel="동기화 중"
         onClick={onSync}
       >
-        {pending ? (
-          <>
-            <Spinner size="sm" aria-hidden="true" data-component={`${dataComponent}_sync-trigger_spinner`} />
-            <span className="sr-only">동기화 중</span>
-          </>
-        ) : "지금 동기화"}
+        지금 동기화
       </Button>
     </div>
   );

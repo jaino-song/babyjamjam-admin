@@ -128,9 +128,10 @@ export function HolidayAddForm({
         type="submit"
         data-component={`${dataComponent}_submit-trigger`}
         disabled={pending}
-        aria-busy={pending || undefined}
+        loading={pending}
+        loadingLabel="추가 중"
       >
-        {pending ? "추가 중..." : "공휴일 추가"}
+        공휴일 추가
       </Button>
     </form>
   );

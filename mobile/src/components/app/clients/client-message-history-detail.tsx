@@ -60,7 +60,7 @@ export function ClientMessageHistoryDetail({
   canRetry = false,
   isRetrying = false,
   onRetry,
-  retryPendingLabel = "재발송 중...",
+  retryPendingLabel = "재발송 중",
   retryBlock,
   canOpenOwnerAdmin = false,
 }: {
@@ -92,10 +92,11 @@ export function ClientMessageHistoryDetail({
       className="w-full"
       data-component={sub("retry-trigger")}
       disabled={view.isRetryBlocked || view.isResent || isRetrying || Boolean(retryBlock)}
-      aria-busy={isRetrying || undefined}
+      loading={isRetrying}
+      loadingLabel={retryPendingLabel}
       onClick={onRetry}
     >
-      {isRetrying ? retryPendingLabel : "재발송"}
+      재발송
     </Button>
   );
 

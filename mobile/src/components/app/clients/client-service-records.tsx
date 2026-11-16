@@ -34,7 +34,7 @@ import {
 import { InfoCard, InfoRow } from "@/components/app/mobile-redesign/detail-sheet";
 import { ApprovalTwoButtonModal } from "@/components/app/ui/ApprovalTwoButtonModal";
 import { QueryErrorState } from "@/components/app/ui/QueryErrorState";
-import { Button } from "@/components/ui/button";
+import { Button, ButtonLoadingContent } from "@/components/ui/button";
 import { Alert, AlertTitle, AlertDescription } from "@/components/ui/alert";
 import { StatusBadge } from "@/components/app/ui/status-badge";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -509,14 +509,16 @@ function LinkCard({
             <div className="detail-actions card-actions flex-col">
                 <button
                     type="button"
-                    className={cn("btn", isResend ? "btn-secondary" : "btn-primary")}
+                    className={cn("btn", isPending && "relative", isResend ? "btn-secondary" : "btn-primary")}
                     data-component={isResend
                         ? `${dataComponent}_actions_resend`
                         : `${dataComponent}_actions_send`}
                     disabled={isPending || isLinkSending}
+                    aria-busy={isPending || undefined}
+                    data-loading={isPending ? "" : undefined}
                     onClick={handleSendClick}
                 >
-                    {isPending ? "발송 중..." : "제공기록지 링크 발송"}
+                    <ButtonLoadingContent loading={isPending} loadingLabel="발송 중">제공기록지 링크 발송</ButtonLoadingContent>
                 </button>
                 {isLinkSending ? (
                     <p className="info-row-value-muted" role="status">
@@ -663,21 +665,22 @@ function ServiceSessionsCard({
                     data-component={`${dataComponent}_header_progress`}
                 >
                     {onRefresh ? (
-                        <button
+                        <Button
                             type="button"
-                            className="service-record-refresh-button"
+                            variant="ghost"
+                            size="icon"
+                            className="shrink-0 rounded-full text-v3-text-muted [&_svg]:size-3.5"
+                            data-slot="service-record-refresh-button"
+                            loading={isRefreshing}
+                            loadingLabel="제공기록 새로고침 중"
                             data-component={`${dataComponent}_header_refresh`}
                             aria-label={isRefreshing ? "제공기록 새로고침 중" : "제공기록 새로고침"}
                             aria-busy={isRefreshing}
                             disabled={isRefreshing}
                             onClick={onRefresh}
                         >
-                            <RefreshCw
-                                size={14}
-                                className={cn(isRefreshing && "animate-spin")}
-                                aria-hidden="true"
-                            />
-                        </button>
+                            <RefreshCw size={14} aria-hidden="true" />
+                        </Button>
                     ) : null}
                     <span className="info-row-value">
                         {`${lockedCount}/${slots.length} 제출완료${draftCount > 0 ? ` · 임시저장 ${draftCount}` : ""}`}

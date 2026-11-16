@@ -3,7 +3,8 @@
 import { normalizeApiError } from "@babyjamjam/shared";
 
 import { useMemo, useState, useEffect } from "react";
-import { Plus, Upload, FileText, Image, File, Loader2 } from "lucide-react";
+import { Plus, Upload, FileText, Image, File } from "lucide-react";
+import { LoadingState } from "@/components/app/ui/LoadingState";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Alert } from "@/components/ui/alert";
@@ -286,9 +287,7 @@ export function DocumentsTable() {
                 subtitle="문서 및 파일을 관리합니다"
                 sx={{ minHeight: "70vh", flexGrow: 1, width: "100%" }}
             >
-                <div className="flex justify-center items-center min-h-[400px]">
-                    <Loader2 className="h-8 w-8 animate-spin text-primary" />
-                </div>
+                <LoadingState label="문서를 불러오는 중" data-component={`${DOCUMENTS_TABLE_BASE}_loading`} className="min-h-[400px]" />
             </ContentPaper>
         );
     }
@@ -436,15 +435,10 @@ export function DocumentsTable() {
                             variant="destructive"
                             onClick={handleDelete}
                             disabled={deleteMutation.isPending}
+                            loading={deleteMutation.isPending}
+                            loadingLabel={t(locale, "common.deleting").replace(/[.\u2026]+$/, "")}
                         >
-                            {deleteMutation.isPending ? (
-                                <>
-                                    <Loader2 className="h-4 w-4 animate-spin mr-2" />
-                                    {t(locale, "common.deleting")}
-                                </>
-                            ) : (
-                                t(locale, "common.delete")
-                            )}
+                            {t(locale, "common.delete")}
                         </Button>
                     </DialogFooter>
                 </DialogContent>
