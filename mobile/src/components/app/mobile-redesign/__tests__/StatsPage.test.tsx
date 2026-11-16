@@ -48,15 +48,11 @@ jest.mock("../sliding-card", () => ({
   ),
 }));
 
-jest.mock("../StatsPeriodSelector", () => ({
-  StatsPeriodSelector: ({ period }: { period: number }) => <output aria-label="선택 기간">{period}</output>,
-}));
-
 const FAILED_DETAIL = "통계 데이터를 불러오지 못했습니다.";
 const NEEDS_CONNECTION = "데이터 연결이 필요합니다.";
 const STALE_NOTICE = "최신 정보를 불러오지 못했습니다";
 const OVERVIEW_FAILED = "통계 개요를 불러오지 못했습니다.";
-const DETAIL_LOADING = "데이터를 불러오는 중…";
+const DETAIL_LOADING = "데이터를 불러오는 중";
 
 const AVAILABILITY = { posthog: "ready", sentry: "ready" } as const;
 
@@ -96,7 +92,7 @@ const TRAFFIC_UNAVAILABLE: StatsViewResponse<"traffic"> = {
   data: null,
 };
 
-function renderPage(view: "overview" | "traffic") {
+function renderPage(view: "overview" | "traffic" | "inquiries" | "errors" | "funnel") {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity } } });
   render(
     <QueryClientProvider client={queryClient}>
@@ -159,6 +155,7 @@ describe("StatsPage unknown loads (BJJ-434)", () => {
 
       expect(await screen.findByText(OVERVIEW_FAILED)).toBeInTheDocument();
       expect(screen.getAllByText(OVERVIEW_FAILED)).toHaveLength(1);
+      expect(document.querySelector('[data-slot="stats-overview-error"]')).toHaveClass("bg-transparent", "border", "border-[#818b98]");
       for (const id of ["errors", "inquiries", "funnel", "traffic"]) {
         expect(document.querySelector(`[data-component$="_item-${id}_value"]`)).toHaveTextContent(/^—$/);
       }
@@ -175,6 +172,12 @@ describe("StatsPage unknown loads (BJJ-434)", () => {
 
       expect(await screen.findByText("오류")).toBeInTheDocument();
       expect(screen.queryByText(OVERVIEW_FAILED)).not.toBeInTheDocument();
+      const selector = screen.getByRole("combobox", { name: "통계 조회 기간" })
+        .closest('[data-source-component="StatsPeriodSelector"]');
+      expect(selector).toHaveClass("bg-v3-dim-white", "rounded-[calc(14px*var(--glint-ui-scale,1))]");
+      for (const outlineClass of ["bg-transparent", "border", "border-[#818b98]"]) {
+        expect(selector).not.toHaveClass(outlineClass);
+      }
     });
   });
 
@@ -185,7 +188,7 @@ describe("StatsPage unknown loads (BJJ-434)", () => {
       try {
         renderPage("traffic");
 
-        expect(await screen.findByText(DETAIL_LOADING)).toBeInTheDocument();
+        expect(await screen.findByRole("status", { name: DETAIL_LOADING })).toBeInTheDocument();
         expect(screen.queryByText(FAILED_DETAIL)).not.toBeInTheDocument();
         expect(screen.queryByText(NEEDS_CONNECTION)).not.toBeInTheDocument();
         expect(headerPill()).toBeEmptyDOMElement();
@@ -200,8 +203,10 @@ describe("StatsPage unknown loads (BJJ-434)", () => {
       );
       renderPage("traffic");
 
-      expect(screen.getByText(DETAIL_LOADING)).toBeInTheDocument();
+      expect(screen.getByRole("status", { name: DETAIL_LOADING })).toBeInTheDocument();
       expect(headerPill()).toBeEmptyDOMElement();
+      expect(screen.getByRole("status", { name: DETAIL_LOADING })).toHaveAttribute("data-slot", "spinner");
+      expect(screen.queryByText(/데이터를 불러오는 중|최근 데이터를 확인/)).not.toBeInTheDocument();
     });
 
     it("failed with nothing cached shows the failure card with a retry and the 조회 오류 pill, never 연결 필요", async () => {
@@ -305,4 +310,54 @@ describe("StatsPage unknown loads (BJJ-434)", () => {
       expect(headerPill()).toHaveTextContent("연결 필요");
     });
   });
+});
+
+it.each(["errors", "inquiries", "funnel", "traffic"] as const)(
+  "outlines the %s detail period selector while preserving its radius and the list selector's surface",
+  async (view) => {
+    mockGetStatsView.mockImplementation((requestedView: string) => Promise.resolve(
+      requestedView === "overview" ? OVERVIEW_READY : { view, availability: AVAILABILITY, state: "unavailable", data: null },
+    ));
+    renderPage(view);
+    await within(detailPane()).findByText(NEEDS_CONNECTION);
+
+    const detailSelector = within(detailPane()).getByRole("combobox", { name: "통계 조회 기간" })
+      .closest('[data-source-component="StatsPeriodSelector"]');
+    expect(detailSelector).toHaveClass("bg-transparent", "border", "border-[#818b98]", "rounded-[calc(14px*var(--glint-ui-scale,1))]");
+    expect(detailSelector).not.toHaveClass("bg-v3-dim-white");
+
+    const listSelector = screen.getAllByRole("combobox", { name: "통계 조회 기간" })[0]
+      .closest('[data-source-component="StatsPeriodSelector"]');
+    expect(listSelector).not.toBe(detailSelector);
+    expect(listSelector).toHaveClass("bg-v3-dim-white", "rounded-[calc(14px*var(--glint-ui-scale,1))]");
+    for (const outlineClass of ["bg-transparent", "border", "border-[#818b98]"]) {
+      expect(listSelector).not.toHaveClass(outlineClass);
+    }
+  },
+);
+
+it("outlines the inquiry report and its nested gray cards while preserving their radii", async () => {
+  const inquiries: StatsViewResponse<"inquiries"> = {
+    view: "inquiries",
+    availability: AVAILABILITY,
+    state: "ready",
+    data: {
+      summary: { today: 1, yesterday: 0, sevenDayTotal: 1, sevenDayAvg: 1, thirtyDayTotal: 1, conversionRate: 10, lastSubmissionAt: null, selectedRange: { days: 7, total: 1, average: 1, conversionRate: 10 } },
+      daily: [],
+      hourly: [],
+      byBranch: [],
+      recent: [{ distinctId: "qa-inquiry", timestamp: "2026-11-15T00:00:00Z", branchSlug: "dev-qa", source: null, pathname: null, deviceType: null }],
+    },
+  };
+  mockGetStatsView.mockImplementation((view: string) => Promise.resolve(view === "overview" ? OVERVIEW_READY : inquiries));
+  renderPage("inquiries");
+  await screen.findByText(/PostHog 상담 문의/);
+  const report = document.querySelector('[data-slot="stats-report-card"]');
+  expect(report).toHaveClass("bg-transparent", "border", "border-[#818b98]", "rounded-[calc(18px*var(--glint-ui-scale,1))]");
+  expect(report).not.toHaveClass("bg-v3-dim-white");
+  // Scope overrides to the report's existing InfoCards; other consumers keep their surface.
+  expect(report).toHaveClass("[&_.bg-v3-dim-white]:bg-transparent", "[&_.bg-v3-dim-white]:border", "[&_.bg-v3-dim-white]:border-[#818b98]");
+  const nestedCards = report?.querySelectorAll('.bg-v3-dim-white');
+  expect(nestedCards).toHaveLength(2);
+  nestedCards?.forEach((card) => expect(card).toHaveClass("rounded-2xl"));
 });

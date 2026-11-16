@@ -261,6 +261,21 @@ describe("MessagesSettingsPage", () => {
     mockedSettingsApi.requestMessageSenderApproval.mockResolvedValue(UNAPPROVED);
   });
 
+  it("opts out of list bottom padding on the message settings screen", async () => {
+    const { container } = renderPage();
+    expect(await screen.findByText("8개")).toBeInTheDocument();
+    expect(container.querySelector('[data-slot="list-pane"]')).toHaveClass("listPaneNoBottomPadding");
+  });
+
+  it("shows only a spinner while the selected policy configuration loads", async () => {
+    mockedSettingsApi.getMessageAutomationConfig.mockImplementationOnce(() => new Promise(() => undefined));
+    mockSearchParams = new URLSearchParams({ item: "trigger-dispatch" });
+    renderPage();
+    const spinner = await screen.findByRole("status", { name: "메시지 설정을 불러오는 중" });
+    expect(spinner).toHaveAttribute("data-slot", "spinner");
+    expect(screen.queryByText("메시지 설정을 불러오는 중")).not.toBeInTheDocument();
+  });
+
   it("shows eight settings without an application item for an approved user", async () => {
     renderPage();
 

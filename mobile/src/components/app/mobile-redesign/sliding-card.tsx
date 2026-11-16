@@ -50,6 +50,7 @@ export interface SlidingCardProps {
   list: ReactNode;
   detail: ReactNode;
   detailHeaderTrailing?: ReactNode;
+  listBottomPadding?: "default" | "none";
 }
 
 export function SlidingCard({
@@ -61,6 +62,7 @@ export function SlidingCard({
   list,
   detail,
   detailHeaderTrailing,
+  listBottomPadding = "default",
 }: SlidingCardProps): ReactElement {
   const detailBodyRef = useRef<HTMLDivElement>(null);
   const detailPaneRef = useRef<HTMLDivElement>(null);
@@ -369,6 +371,7 @@ export function SlidingCard({
           inert={open || undefined}
           className={cn(
             styles.listPane,
+            listBottomPadding === "none" && styles.listPaneNoBottomPadding,
             open && styles.listPaneOpen,
             isDragging && styles.dragging,
           )}

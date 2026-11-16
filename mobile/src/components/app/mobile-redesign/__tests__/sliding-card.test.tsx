@@ -756,3 +756,26 @@ describe("SlidingCard", () => {
     });
   });
 });
+
+it('removes bottom padding only when the caller opts in', () => {
+  const props = {
+    "data-component": DATA_COMPONENT,
+    open: false,
+    onBack: jest.fn(),
+    backLabel: "설정",
+    detailKey: null,
+    list: <div>List content</div>,
+    detail: null,
+  };
+  const { container, rerender } = render(<SlidingCard {...props} />);
+  const listPane = container.querySelector('[data-slot="list-pane"]');
+  expect(listPane).toHaveClass('listPane');
+  expect(listPane).not.toHaveClass('listPaneNoBottomPadding');
+
+  rerender(<SlidingCard {...props} listBottomPadding="none" />);
+  expect(listPane).toHaveClass('listPane', 'listPaneNoBottomPadding');
+  expect(container.querySelector('[data-slot="detail-pane"]')).not.toHaveClass('listPaneNoBottomPadding');
+
+  rerender(<SlidingCard {...props} />);
+  expect(listPane).not.toHaveClass('listPaneNoBottomPadding');
+});

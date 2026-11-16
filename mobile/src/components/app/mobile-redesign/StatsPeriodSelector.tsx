@@ -11,23 +11,29 @@ import {
   STATS_PERIOD_OPTIONS,
   type StatsPeriod,
 } from "@/lib/observability/stats-period";
+import { cn } from "@/lib/utils";
 
 interface StatsPeriodSelectorProps {
   period: StatsPeriod;
   onChange: (period: StatsPeriod) => void;
   dataComponent: string;
+  variant?: "default" | "outline";
 }
 
 export function StatsPeriodSelector({
   period,
   onChange,
   dataComponent,
+  variant = "default",
 }: StatsPeriodSelectorProps) {
   return (
     <div
       data-component={dataComponent}
       data-source-component="StatsPeriodSelector"
-      className="flex items-center justify-between gap-3 rounded-[calc(14px*var(--glint-ui-scale,1))] bg-v3-dim-white px-3 py-2"
+      className={cn(
+        "flex items-center justify-between gap-3 rounded-[calc(14px*var(--glint-ui-scale,1))] px-3 py-2",
+        variant === "outline" ? "border border-[#818b98] bg-transparent" : "bg-v3-dim-white",
+      )}
     >
       <span className="text-[calc(0.68rem*var(--glint-ui-scale,1))] font-semibold text-v3-text-muted">
         조회 기간
