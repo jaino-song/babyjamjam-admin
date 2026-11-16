@@ -2047,14 +2047,10 @@ describe("ClientServiceRecordsTab", () => {
                 "text-v3-dark",
             );
         });
-        expect(within(sessionDetail!).getByText("이상없음")).not.toHaveClass(
-            "rounded-[8px]",
-            "bg-v3-dim-white",
-        );
-        expect(within(sessionDetail!).getByText("실시")).not.toHaveClass(
-            "rounded-[8px]",
-            "bg-v3-primary-light",
-        );
+        expect(within(sessionDetail!).getByText("이상없음")).not.toHaveClass("rounded-[8px]");
+        expect(within(sessionDetail!).getByText("이상없음")).not.toHaveClass("bg-v3-dim-white");
+        expect(within(sessionDetail!).getByText("실시")).not.toHaveClass("rounded-[8px]");
+        expect(within(sessionDetail!).getByText("실시")).not.toHaveClass("bg-v3-primary-light");
         expect(sessionDetail).not.toHaveTextContent("✓");
         expect(within(sessionDetail!).getByText("완료")).not.toHaveClass("text-v3-green");
         expect(within(sessionDetail!).getByText("서명함")).not.toHaveClass("text-v3-green");
