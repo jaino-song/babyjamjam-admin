@@ -457,11 +457,11 @@ export function RegisterPageContent({ variant }: RegisterPageContentProps) {
 
   const primaryButtonClassName = cn(
     REGISTER_PRIMARY_BUTTON_CLASS_NAME,
-    variant === "mobile" && "rounded-2xl",
+    variant === "mobile" && "rounded-full",
   );
   const secondaryButtonClassName = cn(
     REGISTER_SECONDARY_BUTTON_CLASS_NAME,
-    variant === "mobile" && "rounded-2xl",
+    variant === "mobile" && "rounded-full",
   );
   const desktopStepNavigationWidthClassName =
     variant === "desktop" ? "w-1/4" : undefined;

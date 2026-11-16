@@ -15,6 +15,7 @@ describe("VoucherPriceTable year select", () => {
     const trigger = screen.getByRole("combobox", { name: "연도" });
     expect(trigger).toHaveAttribute("id", "price-table-year");
     expect(trigger).toHaveClass("px-3", "w-auto", "min-w-[5.75rem]", "gap-2");
-    expect(trigger).not.toHaveClass("px-1.5", "w-[4.75rem]");
+    expect(trigger).not.toHaveClass("px-1.5");
+    expect(trigger).not.toHaveClass("w-[4.75rem]");
   });
 });

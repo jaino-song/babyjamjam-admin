@@ -1860,7 +1860,7 @@ export function TriggerRulesManager({
           size="detail"
           cancelLabel="취소"
           approvalLabel="확인"
-          pendingLabel="처리 중..."
+          pendingLabel="처리 중"
           isPending={parentActivationMutation.isPending || isParentActivationPending}
           onApprove={() => void handleConfirmParentActivation()}
           dataComponent={component("trigger-rules-parent-activation-modal")}

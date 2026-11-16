@@ -365,7 +365,7 @@ export function FileStoragePage() {
         title="문서를 삭제하시겠습니까?"
         description="이 작업은 되돌릴 수 없어요."
         approvalLabel="삭제"
-        pendingLabel="삭제 중..."
+        pendingLabel="삭제 중"
         approvalVariant="destructive"
         isPending={deleteMutation.isPending}
         onApprove={() => void handleDelete()}

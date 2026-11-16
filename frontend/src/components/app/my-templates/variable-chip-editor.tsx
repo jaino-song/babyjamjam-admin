@@ -269,7 +269,7 @@ export const VariableChipEditor = forwardRef<VariableChipEditorHandle, VariableC
                         ...(ariaInvalid ? { "aria-invalid": "true" } : {}),
                         ...(dataComponent ? { "data-component": `${dataComponent}_control` } : {}),
                         class: cn(
-                            "min-h-[240px] w-full rounded-[13px] border-[1.35px] border-input bg-white px-3.5 py-2 text-[0.8rem] font-[Pretendard] text-v3-dark shadow-none transition-all duration-200",
+                            "min-h-[240px] w-full rounded-[12px] border-[1.35px] border-input bg-white px-3.5 py-2 text-[0.8rem] font-[Pretendard] text-v3-dark shadow-none transition-all duration-200",
                             error && "border-destructive focus-visible:border-destructive focus-visible:ring-destructive",
                             "focus-visible:border-v3-primary focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-inset focus-visible:ring-v3-primary/10 focus-visible:ring-offset-0 focus-visible:shadow-none"
                         ),

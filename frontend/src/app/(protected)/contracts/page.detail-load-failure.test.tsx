@@ -150,7 +150,7 @@ it("retains cached detail during a failed refetch and disables its inline retry 
   let resolve!: (value: EformsignDocument) => void;
   getDetail.mockImplementationOnce(() => new Promise((done) => { resolve = done; }));
   fireEvent.click(within(alert).getByRole("button", { name: "다시 시도" }));
-  await waitFor(() => expect(within(alert).getByRole("button", { name: "다시 시도" })).toBeDisabled());
+  await waitFor(() => expect(within(alert).getByRole("button", { name: "다시 시도 중" })).toBeDisabled());
   expect(screen.getAllByText(cached.document_name).length).toBeGreaterThan(0);
   expect(card).toHaveTextContent(cached.document_name);
   await act(async () => { resolve(cached); });
@@ -195,7 +195,7 @@ it("retains cached header with a notice immediately above it and an in-flight di
   let resolve!: (value: Awaited<ReturnType<typeof serviceRecordsApi.getClientOverview>>) => void;
   getOverview.mockImplementationOnce(() => new Promise((done) => { resolve = done; }));
   fireEvent.click(within(alert).getByRole("button", { name: "다시 시도" }));
-  await waitFor(() => expect(within(alert).getByRole("button", { name: "다시 시도" })).toBeDisabled());
+  await waitFor(() => expect(within(alert).getByRole("button", { name: "다시 시도 중" })).toBeDisabled());
   expect(screen.getByText("캐시 산모")).toBeInTheDocument();
   await act(async () => { resolve({ data: cachedOverview } as Awaited<ReturnType<typeof serviceRecordsApi.getClientOverview>>); });
   await waitFor(() => expect(screen.queryByRole("alert")).not.toBeInTheDocument());

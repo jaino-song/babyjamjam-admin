@@ -10,7 +10,8 @@ describe("Card surfaces", () => {
 
     expect(container.firstElementChild).toHaveAttribute("data-source-component", "Card");
     expect(container.firstElementChild).toHaveClass("bg-white", "border-0", "shadow-v3", "rounded-[16px]");
-    expect(container.firstElementChild).not.toHaveClass("rounded-lg", "rounded-[24px]");
+    expect(container.firstElementChild).not.toHaveClass("rounded-lg");
+    expect(container.firstElementChild).not.toHaveClass("rounded-[24px]");
   });
 
   it("applies the 16px radius to SurfaceCard without changing other CardShell consumers", () => {

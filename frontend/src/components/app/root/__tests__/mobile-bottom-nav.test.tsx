@@ -31,7 +31,7 @@ describe('MobileBottomNav', () => {
     mockUsePathname.mockReturnValue('/agent');
     render(<MobileBottomNav />);
 
-    const assistant = screen.getByRole('link', { name: '어시스턴트' });
+    const assistant = screen.getByRole('link', { name: '에이전트' });
     expect(assistant).toHaveAttribute('href', '/agent');
     expect(assistant).toHaveClass('bg-v3-primary-light', 'text-v3-primary');
     expect(screen.getByRole('link', { name: '홈' })).not.toHaveClass('bg-v3-primary');

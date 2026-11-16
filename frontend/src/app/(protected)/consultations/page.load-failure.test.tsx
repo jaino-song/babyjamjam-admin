@@ -146,7 +146,7 @@ describe("ConsultationsPage load failure", () => {
     list = { ...list, isFetching: true };
     search = { ...search, isFetching: true };
     rerender(<ConsultationsPage />);
-    expect(within(screen.getByRole("alert")).getByRole("button", { name: "다시 시도" })).toBeDisabled();
+    expect(within(screen.getByRole("alert")).getByRole("button", { name: "다시 시도 중" })).toBeDisabled();
     expect(screen.getByText("캐시 상담")).toBeVisible();
   });
 

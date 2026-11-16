@@ -153,7 +153,7 @@ export function LoginPageMobile() {
             type="submit"
             variant="positive"
             size="lg"
-            className="w-full rounded-2xl"
+            className="w-full rounded-full"
             disabled={isLoading}
             loading={isLoading}
             loadingLabel="로그인 중"

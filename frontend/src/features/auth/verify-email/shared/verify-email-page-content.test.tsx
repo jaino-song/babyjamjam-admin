@@ -32,8 +32,10 @@ describe("VerifyEmailPageContent", () => {
     mockStatus = "loading";
     render(<VerifyEmailPageContent variant="desktop" />);
 
-    const status = screen.getByRole("status");
+    const status = screen.getByRole("status", { name: "이메일 인증 중" });
+    expect(screen.queryByText("인증 상태를 확인하고 있습니다.")).not.toBeInTheDocument();
+    expect(status).toHaveAttribute("data-source-component", "LoadingState");
     expect(status.querySelector('[data-slot="spinner"]')).toBeInTheDocument();
-    expect(screen.getByText("이메일 인증 중...")).toHaveClass("sr-only");
+    expect(screen.getByText("이메일 인증 중")).toHaveClass("sr-only");
   });
 });

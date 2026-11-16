@@ -121,7 +121,7 @@ describe("VoucherPriceTable load states", () => {
     it("disables the retry button of the notice while the refetch is in flight", () => {
       setup(loaded([YEAR]), failedWithData([ROW], { isFetching: true }));
 
-      expect(screen.getByRole("button", { name: "다시 시도" })).toBeDisabled();
+      expect(screen.getByRole("button", { name: "다시 시도 중" })).toBeDisabled();
     });
 
     it("keeps the rows untouched when a refetch is merely paused", () => {

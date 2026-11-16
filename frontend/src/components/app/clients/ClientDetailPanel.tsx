@@ -1810,7 +1810,7 @@ function ClientDetailPanelBody({
                 size="detail"
                 cancelLabel="취소"
                 approvalLabel="예약 확정"
-                pendingLabel="확정 중…"
+                pendingLabel="확정 중"
                 isPending={isConfirmingBooking || confirmBooking.isPending}
                 onApprove={() => void handleConfirmBooking()}
             />

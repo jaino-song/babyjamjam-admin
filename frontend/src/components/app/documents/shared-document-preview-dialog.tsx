@@ -577,7 +577,7 @@ export function SharedDocumentPreviewDialog({
           : "미리보기 파일을 확인하는 중입니다";
 
     return (
-      <div className="flex h-full flex-1 items-center justify-center px-6" aria-live="polite">
+      <div className="flex h-full flex-1 items-center justify-center px-6" aria-live={isChecking ? undefined : "polite"}>
         <div
           className={cn(
             "flex items-center gap-3 rounded-2xl bg-white px-5 py-4 text-sm font-medium shadow-sm",
@@ -761,7 +761,6 @@ export function SharedDocumentPreviewDialog({
             {isImage && isPreviewReady && imageLoadStatus === "loading" ? (
               <div
                 className="pointer-events-none absolute inset-0 flex items-center justify-center px-6"
-                aria-live="polite"
               >
                 <LoadingState label="이미지를 불러오는 중입니다" data-component={`${dataComponent}_canvas_image-loading`} size="sm" />
               </div>

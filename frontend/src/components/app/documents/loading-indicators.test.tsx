@@ -19,7 +19,8 @@ describe("document loading indicators", () => {
     // The remove-file action is the icon button in the upload form.
     const remove = container.querySelector('[data-size="icon"]')!;
     expect(remove).toHaveClass("h-[calc(32px*var(--glint-ui-scale,1))]", "after:h-[calc(44px*var(--glint-ui-scale,1))]");
-    expect(remove).not.toHaveClass("h-10", "w-10");
+    expect(remove).not.toHaveClass("h-10");
+    expect(remove).not.toHaveClass("w-10");
 
     rerender(<DocumentDropzone {...props} isLoading uploadProgress={42} />);
     expect(screen.getByText("QA-contract.pdf")).toBeInTheDocument();

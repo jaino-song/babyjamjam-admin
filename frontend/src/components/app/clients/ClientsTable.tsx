@@ -326,7 +326,7 @@ export function ClientsTable() {
                 title={t(locale, "clients.delete-confirm")}
                 description="삭제한 고객은 목록에서 사라지고 복구할 수 없어요."
                 approvalLabel={t(locale, "common.delete")}
-                pendingLabel="삭제 중..."
+                pendingLabel="삭제 중"
                 approvalVariant="destructive"
                 isPending={deleteClient.isPending}
                 onApprove={() => void handleDeleteConfirm()}

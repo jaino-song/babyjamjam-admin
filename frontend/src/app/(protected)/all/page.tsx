@@ -46,7 +46,7 @@ export default function AllMenuPage() {
 
   const shortcuts = useMemo(
     () => [
-      { href: "/agent", label: "AI 어시스턴트", icon: Sparkles },
+      { href: "/agent", label: "에이전트", icon: Sparkles },
       { href: "/contracts", label: "계약 발송", icon: Send },
       { href: "/clients", label: "고객", icon: Users },
       { href: "/messages", label: "메시지", icon: MessageCircle },

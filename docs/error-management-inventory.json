@@ -11215,14 +11215,6 @@
       "discovery_task_id": "1.1.08"
     },
     {
-      "path": "frontend/src/app/(protected)/admin/agent/page.tsx",
-      "root": "frontend/src/",
-      "kind": "runtime",
-      "candidate_count": 1,
-      "review_status": "reviewed",
-      "discovery_task_id": "1.1.08"
-    },
-    {
       "path": "frontend/src/app/(protected)/admin/feedback/[id]/page.tsx",
       "root": "frontend/src/",
       "kind": "runtime",
@@ -50576,39 +50568,6 @@
       "spec_mapping_note": "Server action returns raw strings and axios message with no shared problem code."
     },
     {
-      "id": "owner-8ffaa381edaa",
-      "path": "frontend/src/app/(protected)/admin/agent/page.tsx",
-      "root": "frontend/src/",
-      "classification": "migrated",
-      "reason": "Converted in 6.1f (002e86782, audit SHIP 61fb, merge pending): client error policy — code-based comparisons, authored Korean outcomes (no raw upstream internals), mutation failures surfaced; jest 307/1812, tsc 0, eslint 0e; +2 adjacent-file deviations.",
-      "seams": [
-        {
-          "line": 46,
-          "kinds": [
-            "throw_or_reject"
-          ]
-        }
-      ],
-      "discovery_task_id": "1.1.08",
-      "spec_ids": [
-        "EM-ARCH-05",
-        "EM-CORE-01",
-        "EM-CAT-01",
-        "EM-CHANGE-03",
-        "EM-OBS-04"
-      ],
-      "public_codes": [],
-      "outcome_evidence": null,
-      "consumer_paths": [
-        "어드민 에이전트 진단 화면"
-      ],
-      "test_evidence": [],
-      "followup_task": null,
-      "review_task": "1.1-batch-c",
-      "spec_mapping_status": "mapped-em-v1",
-      "spec_mapping_note": "Local error InfoCard, plain Error thrown, emergency-disable failures silently ignored."
-    },
-    {
       "id": "owner-a8dfacb40536",
       "path": "frontend/src/app/(protected)/chat/page.tsx",
       "root": "frontend/src/",
@@ -52250,9 +52209,7 @@
       ],
       "public_codes": [],
       "outcome_evidence": "Delegates every error response to ai/agent/_proxy.ts; no local error handling.",
-      "consumer_paths": [
-        "frontend/src/app/(protected)/admin/agent/page.tsx (diagnostics actions)"
-      ],
+      "consumer_paths": [],
       "test_evidence": [
         "frontend/src/app/api/ai/agent/__tests__/proxy.test.ts"
       ],
@@ -52283,9 +52240,7 @@
       ],
       "public_codes": [],
       "outcome_evidence": "Delegates every error response to ai/agent/_proxy.ts; no local error handling.",
-      "consumer_paths": [
-        "frontend/src/app/(protected)/admin/agent/page.tsx (diagnostics)"
-      ],
+      "consumer_paths": [],
       "test_evidence": [
         "frontend/src/app/api/ai/agent/__tests__/proxy.test.ts"
       ],
@@ -52316,9 +52271,7 @@
       ],
       "public_codes": [],
       "outcome_evidence": "Delegates every error response to ai/agent/_proxy.ts; no local error handling.",
-      "consumer_paths": [
-        "frontend/src/app/(protected)/admin/agent/page.tsx (emergency disable)"
-      ],
+      "consumer_paths": [],
       "test_evidence": [
         "frontend/src/app/api/ai/agent/__tests__/proxy.test.ts"
       ],

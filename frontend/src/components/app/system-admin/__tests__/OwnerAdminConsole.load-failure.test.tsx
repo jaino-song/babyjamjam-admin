@@ -166,7 +166,7 @@ describe.each(cases)("OwnerAdminConsole $section query states", (testCase) => {
     queries[testCase.key].isFetching = true;
     queries[testCase.key].fetchStatus = "fetching";
     rerender(<OwnerAdminConsole initialSectionId={testCase.section} />);
-    expect(within(screen.getByRole("alert")).getByRole("button", { name: "다시 시도" })).toBeDisabled();
+    expect(within(screen.getByRole("alert")).getByRole("button", { name: "다시 시도 중" })).toBeDisabled();
     expect(within(list(container)).getByText(empty ? testCase.empty : testCase.row)).toBeInTheDocument();
   });
 });

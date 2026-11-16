@@ -206,7 +206,7 @@ export function VersionHistory({ templateKey, onRollback }: Props) {
             : '기본값으로 초기화하시겠습니까? 현재 내용은 새 버전으로 저장됩니다.'
         }
         approvalLabel={confirmDialog?.type === 'rollback' ? '복원' : '초기화'}
-        pendingLabel={confirmDialog?.type === 'rollback' ? '복원 중...' : '초기화 중...'}
+        pendingLabel={confirmDialog?.type === 'rollback' ? '복원 중' : '초기화 중'}
         approvalVariant={confirmDialog?.type === 'reset' ? 'destructive' : 'positive'}
         isPending={rollbackMutation.isPending || resetMutation.isPending}
         onApprove={() => {

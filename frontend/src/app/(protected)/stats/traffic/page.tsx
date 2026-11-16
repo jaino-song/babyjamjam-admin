@@ -64,16 +64,16 @@ export default async function TrafficDetailPage({ searchParams }: TrafficDetailP
 
   const [summary, trend, topPages, devices, browsers, sources, regions] =
     await Promise.all([
-      loadPostHogStat(getTrafficSummary(period)),
-      loadPostHogStat(getTrafficTrend(period)),
-      loadPostHogStat(getTopPages(period, 10)),
-      loadPostHogStat(getDeviceBreakdown(period)),
-      loadPostHogStat(getBrowserBreakdown(period)),
-      loadPostHogStat(getSourceBreakdown(period)),
-      loadPostHogStat(getRegionBreakdown(period)),
+      posthogConfigured ? loadPostHogStat(getTrafficSummary(period)) : null,
+      posthogConfigured ? loadPostHogStat(getTrafficTrend(period)) : null,
+      posthogConfigured ? loadPostHogStat(getTopPages(period, 10)) : null,
+      posthogConfigured ? loadPostHogStat(getDeviceBreakdown(period)) : null,
+      posthogConfigured ? loadPostHogStat(getBrowserBreakdown(period)) : null,
+      posthogConfigured ? loadPostHogStat(getSourceBreakdown(period)) : null,
+      posthogConfigured ? loadPostHogStat(getRegionBreakdown(period)) : null,
     ]);
 
-  const hasPostHogError = [summary, trend, topPages, devices, browsers, sources, regions].some((value) => value === null);
+  const hasPostHogError = posthogConfigured && [summary, trend, topPages, devices, browsers, sources, regions].some((value) => value === null);
 
   const pvDelta = summary ? formatDelta(summary.today.pv, summary.yesterday.pv) : undefined;
   const uniqueDelta = summary ? formatDelta(summary.today.unique, summary.yesterday.unique) : undefined;
@@ -158,7 +158,7 @@ export default async function TrafficDetailPage({ searchParams }: TrafficDetailP
           className="grid grid-cols-2 lg:grid-cols-5 gap-3"
         >
           <KpiCard
-            isLoading={summary === null}
+            isLoading={posthogConfigured && summary === null}
             iconEmoji="🌐"
             label="조회수 (오늘)"
             value={posthogConfigured && summary ? summary.today.pv.toLocaleString("ko-KR") : "—"}
@@ -166,7 +166,7 @@ export default async function TrafficDetailPage({ searchParams }: TrafficDetailP
             dataComponent="desktop_stats-traffic_page_kpi_grid_card-pv"
           />
           <KpiCard
-            isLoading={summary === null}
+            isLoading={posthogConfigured && summary === null}
             iconEmoji="👥"
             label="방문자"
             value={posthogConfigured && summary ? summary.today.unique.toLocaleString("ko-KR") : "—"}
@@ -174,7 +174,7 @@ export default async function TrafficDetailPage({ searchParams }: TrafficDetailP
             dataComponent="desktop_stats-traffic_page_kpi_grid_card-unique"
           />
           <KpiCard
-            isLoading={summary === null}
+            isLoading={posthogConfigured && summary === null}
             iconEmoji="⏱"
             label="평균 방문 시간"
             value={
@@ -186,7 +186,7 @@ export default async function TrafficDetailPage({ searchParams }: TrafficDetailP
             valueSize="sm"
           />
           <KpiCard
-            isLoading={summary === null}
+            isLoading={posthogConfigured && summary === null}
             iconEmoji="↩"
             label={`이탈률 (${statsPeriodLabel(period)})`}
             value={posthogConfigured && summary ? summary.selectedRange.bounceRate.toFixed(1) : "—"}
@@ -195,7 +195,7 @@ export default async function TrafficDetailPage({ searchParams }: TrafficDetailP
             dataComponent="desktop_stats-traffic_page_kpi_grid_card-bounce"
           />
           <KpiCard
-            isLoading={summary === null}
+            isLoading={posthogConfigured && summary === null}
             iconEmoji="✨"
             label={`${statsPeriodLabel(period)} 합계`}
             value={posthogConfigured && summary ? summary.selectedRange.total.pv.toLocaleString("ko-KR") : "—"}
@@ -228,10 +228,10 @@ export default async function TrafficDetailPage({ searchParams }: TrafficDetailP
               </span>
             </div>
           </header>
-          {trend === null ? (
-            <Skeleton data-component="desktop_stats-traffic_page_trend_card_skeleton" className="h-32 w-full" />
-          ) : !posthogConfigured ? (
+          {!posthogConfigured ? (
             <StatsSourceEmpty source="PostHog" dataComponent="desktop_stats-traffic_page_trend-unavailable" />
+          ) : trend === null ? (
+            <Skeleton data-component="desktop_stats-traffic_page_trend_card_skeleton" className="h-32 w-full" />
           ) : selectedRange.every((point) => point.pv === 0) ? (
             <p className="text-center py-10 text-[0.85rem] text-v3-text-muted">
               {statsPeriodLabel(period)} 트래픽 데이터가 없어요.
@@ -314,10 +314,10 @@ export default async function TrafficDetailPage({ searchParams }: TrafficDetailP
               PostHog
             </span>
           </header>
-          {topPages === null ? (
-            <Skeleton data-component="desktop_stats-traffic_page_pages-sources_top-pages-card_skeleton" className="h-32 w-full" />
-          ) : !posthogConfigured ? (
+          {!posthogConfigured ? (
             <StatsSourceEmpty source="PostHog" dataComponent="desktop_stats-traffic_page_top-pages-unavailable" />
+          ) : topPages === null ? (
+            <Skeleton data-component="desktop_stats-traffic_page_pages-sources_top-pages-card_skeleton" className="h-32 w-full" />
           ) : topPages.length === 0 ? (
             <p className="text-center py-6 text-[0.85rem] text-v3-text-muted">데이터 없음</p>
           ) : (
@@ -346,7 +346,7 @@ export default async function TrafficDetailPage({ searchParams }: TrafficDetailP
                       <td className="px-3 py-3 text-right font-semibold tabular-nums">{p.pv}</td>
                       <td className="px-3 py-3 text-right tabular-nums">{p.unique}</td>
                       <td className="px-3 py-3 text-right text-v3-text-muted tabular-nums">
-                        {summary === null ? (
+                        {posthogConfigured && summary === null ? (
                           <Skeleton data-component="desktop_stats-traffic_page_pages-sources_top-pages-card_body_row_share_skeleton" className="h-4 w-12" />
                         ) : `${share.toFixed(1)}%`}
                       </td>
@@ -368,10 +368,10 @@ export default async function TrafficDetailPage({ searchParams }: TrafficDetailP
               PostHog
             </span>
           </header>
-          {sources === null ? (
-            <Skeleton data-component="desktop_stats-traffic_page_pages-sources_sources-card_skeleton" className="h-32 w-full" />
-          ) : !posthogConfigured ? (
+          {!posthogConfigured ? (
             <StatsSourceEmpty source="PostHog" dataComponent="desktop_stats-traffic_page_sources-unavailable" />
+          ) : sources === null ? (
+            <Skeleton data-component="desktop_stats-traffic_page_pages-sources_sources-card_skeleton" className="h-32 w-full" />
           ) : sources.length === 0 ? (
             <p className="text-center py-6 text-[0.85rem] text-v3-text-muted">데이터 없음</p>
           ) : (
@@ -473,10 +473,10 @@ export default async function TrafficDetailPage({ searchParams }: TrafficDetailP
               PostHog
             </span>
           </header>
-          {regions === null ? (
-            <Skeleton data-component="desktop_stats-traffic_page_device-region_region-card_skeleton" className="h-32 w-full" />
-          ) : !posthogConfigured ? (
+          {!posthogConfigured ? (
             <StatsSourceEmpty source="PostHog" dataComponent="desktop_stats-traffic_page_region-unavailable" />
+          ) : regions === null ? (
+            <Skeleton data-component="desktop_stats-traffic_page_device-region_region-card_skeleton" className="h-32 w-full" />
           ) : regions.length === 0 ? (
             <p className="text-center py-6 text-[0.85rem] text-v3-text-muted">
               지역 데이터가 없어요.

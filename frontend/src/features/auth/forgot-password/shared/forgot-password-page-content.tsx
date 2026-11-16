@@ -31,7 +31,7 @@ export function ForgotPasswordPageContent({ variant }: ForgotPasswordPageContent
     goToLogin,
   } = useForgotPasswordPageController();
 
-  const actionButtonClassName = cn("w-full", variant === "mobile" && "rounded-2xl");
+  const actionButtonClassName = cn("w-full", variant === "mobile" && "rounded-full");
 
   return (
     <AuthSurface

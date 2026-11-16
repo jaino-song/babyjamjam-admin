@@ -60,7 +60,7 @@ describe("QueryErrorState", () => {
 
     rerender(<QueryErrorState dataComponent={DC} onRetry={onRetry} isRetrying />);
 
-    const busy = screen.getByRole("button", { name: "다시 시도" });
+    const busy = screen.getByRole("button", { name: "다시 시도 중" });
     expect(busy).toBeDisabled();
     expect(busy.querySelector('[data-slot="spinner"]')).not.toBeNull();
     fireEvent.click(busy);

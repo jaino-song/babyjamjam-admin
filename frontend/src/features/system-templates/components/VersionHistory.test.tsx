@@ -76,8 +76,8 @@ describe('VersionHistory', () => {
   });
 
   it.each([
-    { action: 'rollback', trigger: '이 버전으로 복원', idleLabel: '복원', pendingLabel: '복원 중...' },
-    { action: 'reset', trigger: '기본값으로 초기화', idleLabel: '초기화', pendingLabel: '초기화 중...' },
+    { action: 'rollback', trigger: '이 버전으로 복원', idleLabel: '복원', pendingLabel: '복원 중' },
+    { action: 'reset', trigger: '기본값으로 초기화', idleLabel: '초기화', pendingLabel: '초기화 중' },
   ])('shows a spinner while $action is pending and restores the idle action', ({ action, trigger, idleLabel, pendingLabel }) => {
     const mutation = { mutateAsync: action === 'rollback' ? rollbackMutateAsync : resetMutateAsync, isPending: false };
     jest.mocked(action === 'rollback' ? useRollbackTemplate : useResetTemplate)

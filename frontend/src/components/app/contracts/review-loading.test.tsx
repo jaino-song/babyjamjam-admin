@@ -36,8 +36,8 @@ it("lets the loading label name the document summary retry, retaining the idle a
   expect(screen.queryByRole("button", { name: "전자문서 처리 현황 다시 시도" })).not.toBeInTheDocument();
 });
 
-it("defines the loading component name when a document list has no caller base", () => {
-  render(<ContractDocumentJobsList isLoading collapsed={{ processing: false, attention: false, recent: false }} onToggle={jest.fn()} onSelect={jest.fn()} />);
+it("preserves the caller context on the document list loading state", () => {
+  render(<ContractDocumentJobsList data-component="desktop_contracts_tests_jobs-list" isLoading collapsed={{ processing: false, attention: false, recent: false }} onToggle={jest.fn()} onSelect={jest.fn()} />);
   expect(screen.getByRole("status", { name: "전자문서 작업 불러오는 중" }))
-    .toHaveAttribute("data-component", "desktop_contract-document-jobs-list_loading");
+    .toHaveAttribute("data-component", "desktop_contracts_tests_jobs-list_loading");
 });

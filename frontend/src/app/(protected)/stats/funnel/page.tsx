@@ -59,15 +59,15 @@ export default async function FunnelDetailPage({ searchParams }: FunnelDetailPag
     transitions,
     conversionFunnel,
   ] = await Promise.all([
-    loadPostHogStat(getPageNavSummary(period)),
-    loadPostHogStat(getPagesDetail(period, 20)),
-    loadPostHogStat(getEntryPages(period, 8)),
-    loadPostHogStat(getExitPages(period, 8)),
-    loadPostHogStat(getPageTransitions(period, 12)),
-    loadPostHogStat(getFunnelSummary(period)),
+    posthogConfigured ? loadPostHogStat(getPageNavSummary(period)) : null,
+    posthogConfigured ? loadPostHogStat(getPagesDetail(period, 20)) : null,
+    posthogConfigured ? loadPostHogStat(getEntryPages(period, 8)) : null,
+    posthogConfigured ? loadPostHogStat(getExitPages(period, 8)) : null,
+    posthogConfigured ? loadPostHogStat(getPageTransitions(period, 12)) : null,
+    posthogConfigured ? loadPostHogStat(getFunnelSummary(period)) : null,
   ]);
 
-  const hasPostHogError = [navSummary, pages, entryPages, exitPages, transitions, conversionFunnel].some((value) => value === null);
+  const hasPostHogError = posthogConfigured && [navSummary, pages, entryPages, exitPages, transitions, conversionFunnel].some((value) => value === null);
 
   const maxPv = Math.max(1, ...(pages ?? []).map((p) => p.pv));
   const maxEntry = Math.max(1, ...(entryPages ?? []).map((p) => p.count));
@@ -110,7 +110,7 @@ export default async function FunnelDetailPage({ searchParams }: FunnelDetailPag
           className="grid grid-cols-2 lg:grid-cols-4 gap-3"
         >
           <KpiCard
-            isLoading={navSummary === null}
+            isLoading={posthogConfigured && navSummary === null}
             iconEmoji="📄"
             label="활성 페이지"
             value={posthogConfigured && navSummary ? navSummary.activePages : "—"}
@@ -121,7 +121,7 @@ export default async function FunnelDetailPage({ searchParams }: FunnelDetailPag
             }
           />
           <KpiCard
-            isLoading={navSummary === null}
+            isLoading={posthogConfigured && navSummary === null}
             iconEmoji="👁"
             label={`총 조회수 (${statsPeriodLabel(period)})`}
             value={posthogConfigured && navSummary ? navSummary.totalPv.toLocaleString("ko-KR") : "—"}
@@ -131,7 +131,7 @@ export default async function FunnelDetailPage({ searchParams }: FunnelDetailPag
             }
           />
           <KpiCard
-            isLoading={navSummary === null}
+            isLoading={posthogConfigured && navSummary === null}
             iconEmoji="∅"
             label="평균 조회수/페이지"
             value={posthogConfigured && navSummary ? navSummary.avgPvPerPage.toFixed(1) : "—"}
@@ -141,7 +141,7 @@ export default async function FunnelDetailPage({ searchParams }: FunnelDetailPag
             }
           />
           <KpiCard
-            isLoading={navSummary === null}
+            isLoading={posthogConfigured && navSummary === null}
             iconEmoji="↩"
             label="평균 이탈률"
             value={posthogConfigured && navSummary ? navSummary.avgBouncePct.toFixed(1) : "—"}
@@ -173,15 +173,15 @@ export default async function FunnelDetailPage({ searchParams }: FunnelDetailPag
               PostHog
             </span>
             <div className="ml-auto text-[0.7rem] text-v3-text-muted">
-              {pages === null ? (
+              {!posthogConfigured ? "—" : pages === null ? (
                 <Skeleton data-component="desktop_stats-funnel_page_pages_card_total_skeleton" className="h-4 w-20" />
-              ) : posthogConfigured ? `총 ${pages.length}개 페이지` : "—"}
+              ) : `총 ${pages.length}개 페이지`}
             </div>
           </header>
-          {pages === null ? (
-            <Skeleton data-component="desktop_stats-funnel_page_pages_card_skeleton" className="h-32 w-full" />
-          ) : !posthogConfigured ? (
+          {!posthogConfigured ? (
             <StatsSourceEmpty source="PostHog" dataComponent="desktop_stats-funnel_page_pages-unavailable" />
+          ) : pages === null ? (
+            <Skeleton data-component="desktop_stats-funnel_page_pages_card_skeleton" className="h-32 w-full" />
           ) : pages.length === 0 ? (
             <p className="text-center py-8 text-[0.85rem] text-v3-text-muted">
               {statsPeriodLabel(period)} 트래픽이 없어요.
@@ -255,10 +255,10 @@ export default async function FunnelDetailPage({ searchParams }: FunnelDetailPag
               PostHog
             </span>
           </header>
-          {entryPages === null ? (
-            <Skeleton data-component="desktop_stats-funnel_page_entry-exit_entry-card_skeleton" className="h-32 w-full" />
-          ) : !posthogConfigured ? (
+          {!posthogConfigured ? (
             <StatsSourceEmpty source="PostHog" dataComponent="desktop_stats-funnel_page_entry-unavailable" />
+          ) : entryPages === null ? (
+            <Skeleton data-component="desktop_stats-funnel_page_entry-exit_entry-card_skeleton" className="h-32 w-full" />
           ) : entryPages.length === 0 ? (
             <p className="text-center py-6 text-[0.85rem] text-v3-text-muted">
               세션 데이터가 아직 없어요.
@@ -304,10 +304,10 @@ export default async function FunnelDetailPage({ searchParams }: FunnelDetailPag
               PostHog
             </span>
           </header>
-          {exitPages === null ? (
-            <Skeleton data-component="desktop_stats-funnel_page_entry-exit_exit-card_skeleton" className="h-32 w-full" />
-          ) : !posthogConfigured ? (
+          {!posthogConfigured ? (
             <StatsSourceEmpty source="PostHog" dataComponent="desktop_stats-funnel_page_exit-unavailable" />
+          ) : exitPages === null ? (
+            <Skeleton data-component="desktop_stats-funnel_page_entry-exit_exit-card_skeleton" className="h-32 w-full" />
           ) : exitPages.length === 0 ? (
             <p className="text-center py-6 text-[0.85rem] text-v3-text-muted">
               세션 데이터가 아직 없어요.
@@ -356,15 +356,15 @@ export default async function FunnelDetailPage({ searchParams }: FunnelDetailPag
               PostHog
             </span>
             <div className="ml-auto text-[0.7rem] text-v3-text-muted">
-              {transitions === null ? (
+              {!posthogConfigured ? "—" : transitions === null ? (
                 <Skeleton data-component="desktop_stats-funnel_page_transitions_card_total_skeleton" className="h-4 w-20" />
-              ) : posthogConfigured ? `상위 ${transitions.length}개` : "—"}
+              ) : `상위 ${transitions.length}개`}
             </div>
           </header>
-          {transitions === null ? (
-            <Skeleton data-component="desktop_stats-funnel_page_transitions_card_skeleton" className="h-32 w-full" />
-          ) : !posthogConfigured ? (
+          {!posthogConfigured ? (
             <StatsSourceEmpty source="PostHog" dataComponent="desktop_stats-funnel_page_transitions-unavailable" />
+          ) : transitions === null ? (
+            <Skeleton data-component="desktop_stats-funnel_page_transitions_card_skeleton" className="h-32 w-full" />
           ) : transitions.length === 0 ? (
             <p className="text-center py-8 text-[0.85rem] text-v3-text-muted">
               연속된 페이지뷰 데이터가 아직 없어요. (한 방문에서 페이지를 2개 이상 발생해야 표시됩니다)
@@ -423,29 +423,29 @@ export default async function FunnelDetailPage({ searchParams }: FunnelDetailPag
               PostHog
             </span>
             <div className="ml-auto text-[0.7rem] text-v3-text-muted">
-              {conversionFunnel === null ? (
+              {!posthogConfigured ? "—" : conversionFunnel === null ? (
                 <Skeleton data-component="desktop_stats-funnel_page_conversion_card_rate_skeleton" className="h-4 w-20" />
-              ) : posthogConfigured ? (
+              ) : (
                 <>
                   전환율{" "}
                   <strong className="text-v3-text">
                     {conversionFunnel.conversionRate.toFixed(1)}%
                   </strong>
                 </>
-              ) : "—"}
+              )}
             </div>
           </header>
-          {conversionFunnel === null ? (
+          {!posthogConfigured ? (
+            <StatsSourceEmpty source="PostHog" dataComponent="desktop_stats-funnel_page_conversion-unavailable" />
+          ) : conversionFunnel === null ? (
             <Skeleton data-component="desktop_stats-funnel_page_conversion_card_body_skeleton" className="h-32 w-full" />
-          ) : posthogConfigured ? (
+          ) : (
             <FunnelBars
               dataComponent="desktop_stats-funnel_page_conversion_card_body_bars"
               steps={conversionFunnel.steps}
               biggestDropStep={conversionFunnel.biggestDropStep}
               variant="verbose"
             />
-          ) : (
-            <StatsSourceEmpty source="PostHog" dataComponent="desktop_stats-funnel_page_conversion-unavailable" />
           )}
         </div>
       </Block>

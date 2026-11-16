@@ -204,7 +204,7 @@ test('initial expiry and throttled timers refetch without allowing callback veri
 
 function RouteEntry({ onCloseAutoFocus }: { onCloseAutoFocus?: (event: Event) => void }) {
   const [shown, setShown] = useState(true);
-  return <><ContractDocumentJobsPopover /><button id="custom-focus">사용자 초점</button>
+  return <><ContractDocumentJobsPopover data-component="desktop_contracts_tests_jobs-popover" /><button id="custom-focus">사용자 초점</button>
     {shown ? <ManualDocumentJobRecoveryDialog jobId={jobId} onClose={() => setShown(false)} onCloseAutoFocus={onCloseAutoFocus} /> : null}</>;
 }
 describe.each([390, 1280])('route recovery without an editor at %spx', width => {

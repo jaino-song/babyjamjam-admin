@@ -208,7 +208,7 @@ export function ChatFullscreen({ open, onClose }: ChatFullscreenProps) {
                     <div className="flex items-center gap-2">
                         <Sparkles className="w-5 h-5 text-primary" />
                         <h2 className="text-lg font-semibold">
-                            AI 어시스턴트
+                            에이전트
                         </h2>
                     </div>
                     <div className="flex items-center gap-1">

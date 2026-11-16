@@ -15,7 +15,8 @@ describe("InfoCard surfaces", () => {
     expect(container.firstElementChild).toHaveClass(
       "bg-white", "border", "border-[#818b98]", "rounded-[16px]", "shadow-none",
     );
-    expect(container.firstElementChild).not.toHaveClass("bg-v3-dim-white", "rounded-[18px]");
+    expect(container.firstElementChild).not.toHaveClass("bg-v3-dim-white");
+    expect(container.firstElementChild).not.toHaveClass("rounded-[18px]");
   });
 
   it("preserves the muted ServiceRecordHeaderCard surface", () => {
@@ -25,6 +26,8 @@ describe("InfoCard surfaces", () => {
 
     expect(container.firstElementChild).toHaveAttribute("data-source-component", "ServiceRecordHeaderCard");
     expect(container.firstElementChild).toHaveClass("bg-v3-dim-white", "rounded-[18px]");
-    expect(container.firstElementChild).not.toHaveClass("bg-white", "border-[#818b98]", "rounded-[16px]");
+    expect(container.firstElementChild).not.toHaveClass("bg-white");
+    expect(container.firstElementChild).not.toHaveClass("border-[#818b98]");
+    expect(container.firstElementChild).not.toHaveClass("rounded-[16px]");
   });
 });
