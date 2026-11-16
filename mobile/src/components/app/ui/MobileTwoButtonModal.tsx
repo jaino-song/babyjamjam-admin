@@ -17,6 +17,7 @@ interface MobileTwoButtonModalProps {
   confirmVariant?: ButtonProps["variant"];
   actionOrder?: "cancel-confirm";
   loading?: boolean;
+  loadingLabel?: string;
   confirmDisabled?: boolean;
   children?: ReactNode;
   onOpenChange: (open: boolean) => void;
@@ -35,6 +36,7 @@ export function MobileTwoButtonModal({
   confirmLabel,
   confirmVariant = "destructive",
   loading = false,
+  loadingLabel = "처리 중",
   confirmDisabled = false,
   children,
   onOpenChange,
@@ -48,6 +50,8 @@ export function MobileTwoButtonModal({
       variant={confirmVariant}
       onClick={() => void onConfirm()}
       disabled={loading || confirmDisabled}
+      loading={loading}
+      loadingLabel={loadingLabel}
       className="min-w-0 flex-[2_1_0]"
     >
       {confirmLabel}

@@ -56,7 +56,7 @@ describe("MobileTwoButtonModal", () => {
     expect(screen.getByText("3회차 서비스 제공 날짜를 조정합니다.")).toHaveClass("text-sm", "leading-5");
     expect(screen.getByLabelText("3회차 서비스 제공 날짜")).toBeInTheDocument();
     expect(screen.getByRole("dialog")).toHaveAttribute("aria-busy", "true");
-    expect(screen.getByRole("button", { name: "일정 변경" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "처리 중" })).toBeDisabled();
   });
 
   it("forwards the caller context and keeps the source component identity", () => {

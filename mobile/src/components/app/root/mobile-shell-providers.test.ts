@@ -100,19 +100,20 @@ describe("mobile shell Toaster registration", () => {
     const importMatches = providerSource.match(
       /import\s*\{\s*Toaster\s*\}\s*from\s*["']@\/components\/ui\/toaster["']/g,
     );
-    const providerMounts = providerSource.match(/<Toaster\s*\/>/g);
+    const providerMounts = providerSource.match(/<Toaster\b[^>]*\/>/g);
     const serviceRecordLayoutSource = readFileSync(serviceRecordLayoutPath, "utf8");
-    const serviceRecordMounts = serviceRecordLayoutSource.match(/<Toaster\s*\/>/g);
+    const serviceRecordMounts = serviceRecordLayoutSource.match(/<Toaster\b[^>]*\/>/g);
     const allProductionMounts = productionSourceFiles(
       path.join(mobileRoot, "src"),
     ).flatMap((sourcePath) => {
       const source = readFileSync(sourcePath, "utf8");
-      return (source.match(/<Toaster\s*\/>/g) ?? []).map(() => sourcePath);
+      return (source.match(/<Toaster\b[^>]*\/>/g) ?? []).map(() => sourcePath);
     });
 
     expect(importMatches).toHaveLength(1);
     expect(providerMounts).toHaveLength(1);
     expect(serviceRecordMounts).toHaveLength(1);
+    expect(serviceRecordLayoutSource).toMatch(/<Toaster\b[^>]*\bcloseSize="compact"[^>]*\/>/);
     expect(allProductionMounts.sort()).toEqual(
       [providerPath, serviceRecordLayoutPath].sort(),
     );

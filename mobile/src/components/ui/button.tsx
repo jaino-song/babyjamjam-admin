@@ -1,6 +1,7 @@
 import * as React from "react";
 import { Slot } from "@radix-ui/react-slot";
 import { cva, type VariantProps } from "class-variance-authority";
+import { Spinner } from "@/components/ui/spinner";
 import { cn } from "@/lib/utils";
 
 const buttonVariants = cva(
@@ -52,10 +53,34 @@ export interface ButtonProps
   extends React.ButtonHTMLAttributes<HTMLButtonElement>,
     VariantProps<typeof buttonVariants> {
   asChild?: boolean;
+  loading?: boolean;
+  loadingLabel?: React.ReactNode;
+}
+
+export function ButtonLoadingContent({
+  loading,
+  loadingLabel = "처리 중",
+  children,
+}: {
+  loading?: boolean;
+  loadingLabel?: React.ReactNode;
+  children: React.ReactNode;
+}): React.ReactNode {
+  if (!loading) return children;
+
+  return (
+    <>
+      <span aria-hidden="true" data-slot="button-idle" className="contents invisible">{children}</span>
+      <span data-slot="button-spinner" className="absolute inset-0 flex items-center justify-center">
+        <Spinner size="sm" aria-hidden="true" />
+      </span>
+      <span className="sr-only">{loadingLabel}</span>
+    </>
+  );
 }
 
 const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
-  ({ className, variant, size, width, asChild = false, ...props }, ref) => {
+  ({ className, variant, size, width, asChild = false, loading, loadingLabel = "처리 중", disabled, ...props }, ref) => {
     const resolvedVariant = variant ?? "default";
     const resolvedSize = size ?? "default";
 
@@ -70,7 +95,7 @@ const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
           // React 19 type compatibility: Radix Slot ref types conflict with React's ref types
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           ref={ref as any}
-          {...(props as Record<string, unknown>)}
+          {...({ disabled, ...props } as Record<string, unknown>)}
         />
       );
     }
@@ -80,10 +105,14 @@ const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
         data-slot="button"
         data-variant={resolvedVariant}
         data-width={width}
-        className={cn(buttonVariants({ variant, size, width, className }))}
+        className={cn(buttonVariants({ variant, size, width, className: cn(loading && "relative", className) }))}
         ref={ref}
         {...props}
-      />
+        disabled={loading || disabled}
+        {...(loading ? { "aria-busy": true, "data-loading": "" } as const : {})}
+      >
+        <ButtonLoadingContent loading={loading} loadingLabel={loadingLabel}>{props.children}</ButtonLoadingContent>
+      </button>
     );
   }
 );
