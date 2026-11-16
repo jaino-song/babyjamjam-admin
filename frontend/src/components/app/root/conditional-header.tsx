@@ -8,7 +8,7 @@ import { isPublicAuthPath } from "@/lib/auth/routes";
 // 서버에서 prefetch된 user 데이터를 자동으로 Header에 전달
 export const ConditionalHeader = () => {
   const pathname = usePathname();
-  const hiddenPaths = ["/", "/login", "/chat"];
+  const hiddenPaths = ["/", "/login", "/agent"];
   // Hide header on specific paths or any public auth page (login, register, verify, etc.)
   const shouldHide = hiddenPaths.includes(pathname) || isPublicAuthPath(pathname);
 

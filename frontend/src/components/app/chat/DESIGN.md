@@ -8,7 +8,7 @@ counts, preview selectors or gallery navigation enter the product.
 
 ## Composition and ownership
 
-- `/chat` uses the actual V3 sidebar, mobile header, bottom navigation and quick actions.
+- `/agent` uses the actual V3 sidebar, mobile header, bottom navigation and quick actions.
   The discovery/compatibility route switch is unchanged. The application owns the only `main`.
 - `ChatWorkspace` is a presentation template with slots. `ListPanel` and `DetailPanel`
   provide white rounded surfaces, shared shadows and typography. Primary-light user

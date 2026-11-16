@@ -27,6 +27,16 @@ describe('MobileBottomNav', () => {
     expect(container).toBeEmptyDOMElement();
   });
 
+  it('links the assistant to /agent and keeps it active on that route', () => {
+    mockUsePathname.mockReturnValue('/agent');
+    render(<MobileBottomNav />);
+
+    const assistant = screen.getByRole('link', { name: '어시스턴트' });
+    expect(assistant).toHaveAttribute('href', '/agent');
+    expect(assistant).toHaveClass('bg-v3-primary-light', 'text-v3-primary');
+    expect(screen.getByRole('link', { name: '홈' })).not.toHaveClass('bg-v3-primary');
+  });
+
   it('keeps its mobile-only fixed placement', () => {
     render(<MobileBottomNav />);
 

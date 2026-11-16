@@ -128,7 +128,7 @@ test.describe("Chat live stream smoke", () => {
     });
   });
 
-  test("streams a tool-based response on /chat", async ({ page }) => {
+  test("streams a tool-based response on /agent", async ({ page }) => {
     page.on("console", (msg) => {
       // Useful when debugging auth/stream issues locally.
       if (["warning", "error"].includes(msg.type())) {
@@ -136,7 +136,7 @@ test.describe("Chat live stream smoke", () => {
       }
     });
 
-    await page.goto("/chat");
+    await page.goto("/agent");
     await expect(page.locator('[data-component="desktop_chat_page_header"]').getByRole("heading", { level: 1, name: "새 대화", exact: true })).toBeVisible({ timeout: 15000 });
 
     const input = page.getByPlaceholder("무엇을 도와드릴까요?").first();
@@ -265,7 +265,7 @@ test.describe("Chat quick actions", () => {
         && url.pathname === "/api/ai/chat/history"
         && url.searchParams.get("offset") === "0";
     });
-    await page.goto("/chat");
+    await page.goto("/agent");
     const historyResponse = await initialHistory;
     expect(historyResponse.status()).toBe(200);
     await historyResponse.finished();

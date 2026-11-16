@@ -37,7 +37,7 @@ export function VerifyEmailPageContent({ variant }: VerifyEmailPageContentProps)
         ? "인증 완료!"
         : status === "error"
           ? "인증 실패"
-          : "인증 토큰 없음";
+          : "이메일 확인 필요";
 
   const cardSubtitle =
     status === "loading"
@@ -64,9 +64,9 @@ export function VerifyEmailPageContent({ variant }: VerifyEmailPageContentProps)
       mobileWrapperClassName="px-4 py-6"
     >
       {status === "loading" ? (
-        <div data-component="desktop_auth_verify-email_loading" className="flex flex-col items-center gap-4 py-2 text-center">
-          <Spinner size="lg" className="text-primary" />
-          <p className="text-muted-foreground">이메일 인증 중...</p>
+        <div data-component="desktop_auth_verify-email_loading" role="status" className="flex flex-col items-center gap-4 py-2 text-center">
+          <Spinner data-component="desktop_auth_verify-email_loading_spinner" size="lg" className="text-primary" aria-hidden="true" />
+          <span className="sr-only">이메일 인증 중...</span>
         </div>
       ) : status === "success" ? (
         <div data-component="desktop_auth_verify-email_success" className="flex flex-col items-center gap-4 text-center">
