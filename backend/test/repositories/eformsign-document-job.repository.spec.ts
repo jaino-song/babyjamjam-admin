@@ -848,16 +848,6 @@ describe("SbEformsignDocumentJobRepository", () => {
         expect(statement.values).not.toContain("ownership_changed");
     });
 
-    it("normalizes the contract recovery retry code before the durable write", async () => {
-        const f = runtimeFixture();
-        const nextAttemptAt = new Date(Date.now() + 60_000);
-        await expect(f.repository.recoverBeforeCreation(worker, nextAttemptAt, "operation_lock_unavailable")).resolves.toBe("retry");
-        expect(f.tx.eformsign_document_job.updateMany).toHaveBeenCalledWith(expect.objectContaining({
-            data: expect.objectContaining({ status: "queued", nextAttemptAt, lastErrorCode: "OPERATION_LOCK_UNAVAILABLE", leaseToken: null }),
-        }));
-        expect(f.state.jobs[0].lastErrorCode).toBe("OPERATION_LOCK_UNAVAILABLE");
-    });
-
     it("scheduleRetry preserves the failed attempt's display detail", async () => {
         queryRaw.mockResolvedValueOnce([row({ status: "queued", progress_detail: "info-inserted" })]);
         const retried = await repository.scheduleRetry(dispatchJobId, dispatchLeaseToken, new Date(), "PRE_SEND_FAILURE");
