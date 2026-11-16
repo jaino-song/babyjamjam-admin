@@ -1,8 +1,25 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import type { ServiceRecordOverview } from "@babyjamjam/shared/types/service-record";
+import type { Employee } from "@/hooks/useEmployees";
 import type { Client } from "@/lib/client/types";
+import { ClientFormDialog } from "../ClientFormDialog";
+import { EmployeeFormDialog } from "../../employees/EmployeeFormDialog";
+import { EmployeeDetailContent } from "../../employees/EmployeeDetailContent";
 import { ClientDetailContent } from "../client-detail";
 
 const mockMutateAsync = jest.fn();
+const mockSendLink = jest.fn();
+const mockSendReceipt = jest.fn();
+const mockCreateClient = jest.fn();
+const mockUpdateClient = jest.fn();
+const mockCreateEmployee = jest.fn();
+const mockUpdateEmployee = jest.fn();
+const mockEmptyData: never[] = [];
+let mockIsSendingReceipt = false;
+let mockClientPending = false;
+let mockEmployeePending = false;
+let mockPriceLoading = false;
 jest.mock("@/features/message-triggers/hooks/use-message-triggers", () => ({ useRetryMessageHistory: () => ({ mutateAsync: jest.fn(), isPending: false }), useResendMessageTriggerJob: () => ({ mutateAsync: jest.fn(), isPending: false }) }));
 let mockIsPending = false;
 
@@ -11,8 +28,22 @@ jest.mock("@/features/clients", () => ({
 }));
 
 jest.mock("@/hooks/useEmployees", () => ({
-  useEmployees: () => ({ data: [] }),
+  useEmployees: () => ({ data: mockEmptyData, isLoading: false }),
+  useCreateEmployee: () => ({ mutateAsync: mockCreateEmployee, isPending: mockEmployeePending }),
+  useUpdateEmployee: () => ({ mutateAsync: mockUpdateEmployee, isPending: mockEmployeePending }),
+  useEmployeeActiveClients: () => ({ data: mockEmptyData, isLoading: false }),
+  useEmployeeWorkHistory: () => ({ history: mockEmptyData, isLoading: false, isError: false }),
+  useToggleEmployeeOpenStatus: () => ({ mutate: jest.fn(), isPending: false }),
+  employeeQueryKeys: { all: ["employees"] },
 }));
+
+jest.mock("@tanstack/react-query", () => ({ useQueryClient: () => ({ refetchQueries: jest.fn() }) }));
+jest.mock("@/providers/LocaleProvider", () => ({ useLocale: () => "ko" }));
+jest.mock("@/hooks/useVoucherData", () => ({
+  useVoucherPriceInfos: () => ({ data: mockEmptyData, isLoading: mockPriceLoading }),
+  useOutOfPocketPriceInfos: () => ({ data: mockEmptyData, isLoading: mockPriceLoading, isError: false }),
+}));
+jest.mock("@/lib/api/client", () => ({ api: { get: jest.fn().mockResolvedValue({ data: { exists: false } }) } }));
 
 jest.mock("next/navigation", () => ({
   usePathname: () => "/clients",
@@ -33,9 +64,16 @@ jest.mock("@/hooks/useServiceRecords", () => ({
   fetchClientServiceRecords: jest.fn(),
   resetServiceRecordLink: jest.fn(),
   useClientServiceRecords: () => ({ data: undefined, isError: false, isLoading: false }),
+  useSendServiceRecordLink: () => ({ mutateAsync: mockSendLink, isPending: false }),
+  useKeepPeriodMismatch: () => ({ mutateAsync: jest.fn(), isPending: false }),
+  useFitPeriodMismatch: () => ({ mutateAsync: jest.fn(), isPending: false }),
 }));
 
-jest.mock("@/hooks/useClients", () => ({ fetchClient: jest.fn() }));
+jest.mock("@/hooks/useClients", () => ({
+  fetchClient: jest.fn(),
+  useCreateClient: () => ({ mutateAsync: mockCreateClient, isPending: mockClientPending }),
+  useUpdateClient: () => ({ mutateAsync: mockUpdateClient, isPending: mockClientPending }),
+}));
 
 jest.mock("@/hooks/use-toast", () => ({
   toast: jest.fn(),
@@ -43,7 +81,7 @@ jest.mock("@/hooks/use-toast", () => ({
 }));
 
 jest.mock("@/hooks/use-send-client-receipt", () => ({
-  useSendClientReceipt: () => ({ isSending: false, sendReceipt: jest.fn() }),
+  useSendClientReceipt: () => ({ isSending: mockIsSendingReceipt, sendReceipt: mockSendReceipt }),
 }));
 
 jest.mock("../client-service-records", () => ({ ClientServiceRecords: () => null }));
@@ -93,13 +131,22 @@ function expectBusy(label: string, idleLabel: string) {
   const idle = button.querySelector('[data-slot="button-idle"]');
   expect(idle).toHaveAttribute("aria-hidden", "true");
   expect(idle).toHaveClass("contents", "invisible");
-  expect(idle).toHaveTextContent(idleLabel);
+  if (idleLabel) expect(idle).toHaveTextContent(idleLabel);
+  else expect(idle?.textContent).toBe("");
   expect(button.querySelector('[data-slot="button-spinner"]')).not.toBeNull();
+  expect(button.querySelector('[data-slot="button-spinner"] [data-slot="spinner"]')).toHaveAttribute("aria-hidden", "true");
   expect(screen.getByText(label)).toHaveClass("sr-only");
   return button;
 }
 
-beforeEach(() => { mockIsPending = false; });
+beforeEach(() => {
+  jest.clearAllMocks();
+  mockIsPending = false;
+  mockIsSendingReceipt = false;
+  mockClientPending = false;
+  mockEmployeePending = false;
+  mockPriceLoading = false;
+});
 
 it("uses the action busy label during booking confirmation", () => {
   mockIsPending = true;
@@ -128,4 +175,114 @@ it("uses the shared icon size for client options", () => {
   const button = screen.getByRole("button", { name: "고객 옵션" });
   expect(button).toHaveAttribute("data-size", "icon");
   expect(button).toHaveClass("h-8", "w-8", "relative", "after:-inset-1.5");
+});
+
+it("hides the receipt menu label behind a spinner and blocks another confirmation while sending", async () => {
+  mockIsSendingReceipt = true;
+  renderDetail();
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("button", { name: "고객 옵션" }));
+  const item = screen.getByRole("menuitem", { name: "영수증 발송 중" });
+  expect(item).toHaveAttribute("aria-disabled", "true");
+  expect(item).toHaveAttribute("aria-busy", "true");
+  expect(item).toHaveAttribute("data-loading", "");
+  expect(item).toHaveClass("relative");
+  const idle = item.querySelector('[data-slot="button-idle"]');
+  expect(idle).toHaveAttribute("aria-hidden", "true");
+  expect(idle).toHaveClass("contents", "invisible");
+  expect(idle).toHaveTextContent("본인부담금 영수증 발송");
+  expect(item.querySelector('[data-slot="button-spinner"] [data-slot="spinner"]')).toHaveAttribute("aria-hidden", "true");
+  expect(within(item).getByText("영수증 발송 중")).toHaveClass("sr-only");
+  // Radix blocks pointer input with CSS; jsdom does not apply Tailwind rules.
+  expect(item).toHaveAttribute("data-disabled");
+  fireEvent.keyDown(item, { key: "Enter" });
+  expect(screen.queryByRole("dialog", { name: "본인부담금 영수증 전송" })).not.toBeInTheDocument();
+  expect(mockSendReceipt).not.toHaveBeenCalled();
+});
+
+it.each([false, true])("uses a named submit spinner in the client form (edit: %s)", async (editing) => {
+  const client = editing ? baseClient : undefined;
+  const view = render(<ClientFormDialog open onClose={jest.fn()} client={client} />);
+  await act(async () => {});
+  const idleLabel = editing ? "저장" : "생성";
+  expect(screen.getByRole("button", { name: idleLabel })).toBeEnabled();
+  mockClientPending = true;
+  view.rerender(<ClientFormDialog open onClose={jest.fn()} client={client} />);
+  fireEvent.click(expectBusy(editing ? "저장 중" : "등록 중", idleLabel));
+  expect(mockCreateClient).not.toHaveBeenCalled();
+  expect(mockUpdateClient).not.toHaveBeenCalled();
+});
+
+it.each([false, true])("names the inline client price spinner (voucher: %s)", async (voucherClient) => {
+  mockPriceLoading = true;
+  await act(async () => {
+    render(<ClientFormDialog open onClose={jest.fn()} client={{ ...baseClient, voucherClient, type: "가형" }} />);
+  });
+  const status = screen.getByRole("status", { name: "서비스 기간 요금 정보를 불러오는 중" });
+  expect(status.tagName).toBe("SPAN");
+  expect(status).toHaveAttribute("data-source-component", "LoadingState");
+  expect(status.querySelector('[data-slot="spinner"]')).toHaveAttribute("aria-hidden", "true");
+  expect(within(status).getByText("서비스 기간 요금 정보를 불러오는 중")).toHaveClass("sr-only");
+  expect(screen.getByRole("combobox", { name: "서비스 기간" })).toBeDisabled();
+});
+
+const employee: Employee = {
+  id: 187, name: "QA-제공인력", phone: "01012345678", workArea: [], grade: "스탠다드",
+  openToNextWork: true, registeredDate: null, status: "available",
+};
+
+it.each([false, true])("passes the employee form busy label through the real slide-up action (edit: %s)", async (editing) => {
+  mockEmployeePending = true;
+  await act(async () => {
+    render(<EmployeeFormDialog open onClose={jest.fn()} employee={editing ? employee : undefined} />);
+  });
+  fireEvent.click(expectBusy(editing ? "저장 중" : "등록 중", editing ? "저장" : "등록"));
+  expect(mockCreateEmployee).not.toHaveBeenCalled();
+  expect(mockUpdateEmployee).not.toHaveBeenCalled();
+});
+
+it("uses the 32px icon button with a 44px touch area for employee options", () => {
+  render(<EmployeeDetailContent employee={employee} activeTab="basic" onTabChange={jest.fn()} onEdit={jest.fn()} onDelete={jest.fn()} canManage />);
+  const button = screen.getByRole("button", { name: "제공인력 옵션" });
+  expect(button).toHaveAttribute("data-size", "icon");
+  expect(button).toHaveClass("h-8", "w-8", "relative", "after:-inset-1.5");
+  expect(button).not.toHaveClass("h-[44px]", "w-[44px]");
+});
+
+// Keep the detail-content tests isolated above, but exercise the real records
+// component here so LinkCard and refresh regressions cannot hide behind its mock.
+const { ClientServiceRecords } = jest.requireActual<typeof import("../client-service-records")>("../client-service-records");
+const overview: ServiceRecordOverview = {
+  record: null,
+  assignments: [{
+    scheduleId: 1, startDate: "2026-11-02", endDate: "2026-11-20", replaced: false,
+    employee: { id: employee.id, name: employee.name, phone: employee.phone },
+    link: { status: "none", scheduledFor: null, sentCount: 0, lastSentAt: null, token: null },
+    header: null, totalSessions: 1, sessions: [], signatureDoc: null,
+  }],
+};
+
+it("shows only a named spinner on LinkCard during send and restores the idle action afterwards", async () => {
+  let finish!: (value: { status: string }) => void;
+  mockSendLink.mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+  render(<ClientServiceRecords data-component="mobile_clients_detail_service-records" client={baseClient} activeTab="serviceRecords" overview={overview} isLoading={false} isError={false} />);
+  fireEvent.click(screen.getByRole("button", { name: "제공기록지 링크 발송" }));
+  const button = expectBusy("발송 중", "제공기록지 링크 발송");
+  expect(button).toHaveClass("relative");
+  fireEvent.click(button);
+  expect(mockSendLink).toHaveBeenCalledTimes(1);
+  expect(mockSendLink).toHaveBeenCalledWith({ scheduleId: 1, clientId: baseClient.id });
+  await act(async () => { finish({ status: "sent" }); });
+  expect(screen.getByRole("button", { name: "제공기록지 링크 발송" })).toBeEnabled();
+});
+
+it("centers a named spinner on the refresh icon and blocks refresh while busy", () => {
+  const onRefresh = jest.fn();
+  render(<ClientServiceRecords data-component="mobile_clients_detail_service-records" client={baseClient} activeTab="serviceRecords" overview={overview} isLoading={false} isError={false} isRefreshing onRefresh={onRefresh} />);
+  const button = expectBusy("제공기록 새로고침 중", "");
+  expect(button.querySelector('[data-slot="button-idle"] svg')).not.toBeNull();
+  expect(button).toHaveAttribute("data-size", "icon");
+  expect(button).toHaveClass("h-8", "w-8", "relative", "after:-inset-1.5");
+  fireEvent.click(button);
+  expect(onRefresh).not.toHaveBeenCalled();
 });
