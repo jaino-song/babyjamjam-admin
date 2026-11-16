@@ -39,7 +39,8 @@ export function CodeBlock({ children, language = "text" }: CodeBlockProps) {
                                 variant="ghost"
                                 size="icon"
                                 onClick={handleCopy}
-                                className="h-6 w-6 text-zinc-400 hover:text-zinc-200 hover:bg-zinc-700"
+                                aria-label={copied ? "Copied!" : "Copy code"}
+                                className="text-zinc-400 hover:text-zinc-200 hover:bg-zinc-700"
                             >
                                 {copied ? (
                                     <Check className="w-4 h-4" />

@@ -7,7 +7,6 @@ import { AuthInlineLink } from "@/components/auth/auth-inline-link";
 import { FormField } from "@/components/auth/form-field";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
-import { Spinner } from "@/components/ui/spinner";
 import { MobileInputField } from "@/features/auth/shared/mobile/mobile-input-field";
 import { AuthSurface, type AuthSurfaceVariant } from "@/features/auth/shared/ui/auth-surface";
 import {
@@ -196,8 +195,10 @@ export function ResetPasswordPageContent({ variant }: ResetPasswordPageContentPr
               size="lg"
               className={actionButtonClassName}
               disabled={isLoading}
+              loading={isLoading}
+              loadingLabel="변경 중"
             >
-              {isLoading ? <Spinner size="sm" /> : "비밀번호 변경"}
+              비밀번호 변경
             </Button>
           </form>
 

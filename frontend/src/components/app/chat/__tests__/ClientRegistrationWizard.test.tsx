@@ -679,21 +679,21 @@ describe("ClientRegistrationWizard", () => {
         await waitFor(() => {
             expect(mockRefetchEmployees).toHaveBeenCalledTimes(1);
         });
-        expect(screen.getByRole("button", { name: "재시도 중..." })).toBeDisabled();
-        expect(screen.getByText("다시 확인하고 있어요")).toHaveAttribute("data-slot", "field-message");
+        expect(screen.getByRole("button", { name: "재시도 중" })).toBeDisabled();
+        expect(screen.getByRole("status", { name: "제공인력 다시 확인 중" })).toHaveAttribute("data-slot", "loading-state");
         expect(nextButton).toBeDisabled();
 
         // The refetch remains in progress even after the query's next state is available.
         mockEmployees = [{ id: 10, name: "김제공" }];
         mockEmployeesError = false;
         rerender(<ClientRegistrationWizard initialDraft={initialDraft} />);
-        expect(screen.getByRole("button", { name: "재시도 중..." })).toBeDisabled();
+        expect(screen.getByRole("button", { name: "재시도 중" })).toBeDisabled();
         expect(nextButton).toBeDisabled();
 
         resolveRefetch?.({ data: mockEmployees });
 
         await waitFor(() => {
-            expect(screen.queryByRole("button", { name: "재시도 중..." })).not.toBeInTheDocument();
+            expect(screen.queryByRole("button", { name: "재시도 중" })).not.toBeInTheDocument();
             expect(screen.queryByRole("button", { name: "다시 시도" })).not.toBeInTheDocument();
             expect(nextButton).not.toBeDisabled();
         });
@@ -1029,25 +1029,25 @@ describe("ClientRegistrationWizard", () => {
             fireEvent.click(screen.getByRole("button", { name: "다음" }));
             await screen.findByRole("checkbox", { name: "바우처 대상" });
 
-            const yearMessage = screen.getByText("불러오는 중이에요");
-            expect(yearMessage).toHaveAttribute("data-slot", "field-message");
+            const yearMessage = screen.getByRole("status", { name: "바우처 연도 불러오는 중" });
+            expect(yearMessage).toHaveAttribute("data-slot", "loading-state");
             expect(yearMessage.closest('[data-component$="voucher-year-field"]')).not.toBeNull();
             expect(screen.getByLabelText("바우처 연도")).toBeDisabled();
             expectNoFieldMessageBelowControl(document.body);
 
             mockVoucherYearsLoading = false;
             rerender(<ClientRegistrationWizard initialDraft={draft} />);
-            expect(screen.queryByText("불러오는 중이에요")).not.toBeInTheDocument();
+            expect(screen.queryByRole("status", { name: "바우처 연도 불러오는 중" })).not.toBeInTheDocument();
 
             fireEvent.click(screen.getByLabelText("바우처 유형"));
             fireEvent.click(await screen.findByRole("option", { name: "A가-1형" }));
             mockVoucherPriceInfosLoading = true;
             rerender(<ClientRegistrationWizard initialDraft={draft} />);
 
-            const durationMessage = screen.getByText("불러오는 중이에요");
-            expect(durationMessage).toHaveAttribute("data-slot", "field-message");
+            const durationMessage = screen.getByRole("status", { name: "바우처 기간 불러오는 중" });
+            expect(durationMessage).toHaveAttribute("data-slot", "loading-state");
             expect(durationMessage.closest('[data-component$="voucher-duration-field"]')).not.toBeNull();
-            expect(screen.queryByRole("status")).not.toBeInTheDocument();
+            expect(durationMessage.querySelector(".sr-only")).toHaveTextContent("바우처 기간 불러오는 중");
             expectNoFieldMessageBelowControl(document.body);
         });
     });

@@ -4,7 +4,7 @@ import { useRef, useEffect, useCallback, useLayoutEffect, useSyncExternalStore }
 import { useRouter } from "next/navigation";
 import { ArrowLeft, Trash2, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Spinner } from "@/components/ui/spinner";
+import { LoadingState } from "@/components/app/ui/LoadingState";
 import { ListPanel } from "@/components/app/v3/ListPanel";
 import { ChatWorkspace } from "./ChatWorkspace";
 import { ChatWorkspaceStats } from "./ChatWorkspaceStats";
@@ -30,8 +30,8 @@ function UserMessage({ message }: { message: ChatMessage }) {
 function ToolExecutingIndicator({ toolName }: { toolName: string | null }) {
     return (
         <div data-component="desktop_chat_page_tool-indicator" className="flex items-center gap-2 mb-4 px-4">
-            <Spinner size="sm" />
-            <p className="text-sm text-muted-foreground">{toolName ? `${toolName} 실행 중...` : "처리 중..."}</p>
+            <LoadingState data-component="desktop_chat_page_tool-indicator_loading" label={toolName ? `${toolName} 실행 중` : "처리 중"} size="sm" inline />
+            {toolName && <span className="text-sm text-muted-foreground">{toolName} 실행 중...</span>}
         </div>
     );
 }
@@ -40,8 +40,7 @@ function StateIndicator({ state }: { state: ChatState }) {
     if (state !== "connecting") return null;
     return (
         <div data-component="desktop_chat_page_state-indicator" className="flex items-center gap-2 mb-4 px-4">
-            <Spinner size="sm" />
-            <p className="text-sm text-muted-foreground">연결 중...</p>
+            <LoadingState data-component="desktop_chat_page_state-indicator_loading" label="연결 중" size="sm" inline />
         </div>
     );
 }
@@ -144,7 +143,7 @@ export function LegacyChatPage() {
             </div>
         )}>
             <div data-component="desktop_chat_page_messages" ref={scrollContainerRef} className="min-h-0 flex-1 overflow-auto px-4 sm:px-8 py-6 select-text [-webkit-overflow-scrolling:touch]">
-                {isLoadingHistory && messages.length > 0 && <div data-component="desktop_chat_page_messages_history-loading" className="flex justify-center p-4"><Spinner size="sm" /></div>}
+                {isLoadingHistory && messages.length > 0 && <LoadingState data-component="desktop_chat_page_messages_history-loading" label="이전 대화 불러오는 중" size="sm" className="p-4" />}
                 {messages.length === 0 ? (
                     <div data-component="desktop_chat_page_messages_empty" className="flex flex-col items-center justify-center h-full text-center text-muted-foreground animate-fade-in">
                         <Sparkles className="w-12 h-12 mb-4 opacity-50" />

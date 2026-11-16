@@ -1,6 +1,7 @@
 import * as React from "react";
 import Link from "next/link";
 
+import { Button } from "@/components/ui/button";
 import { Alert, type AlertProps } from "@/components/ui/alert";
 import { cn } from "@/lib/utils";
 
@@ -10,6 +11,8 @@ interface MobileAlertCardProps
   actionLabel?: React.ReactNode;
   actionHref?: string;
   actionOnClick?: () => void;
+  actionLoading?: boolean;
+  actionLoadingLabel?: React.ReactNode;
   "data-component"?: string;
 }
 
@@ -18,6 +21,8 @@ export function MobileAlertCard({
   actionLabel,
   actionHref,
   actionOnClick,
+  actionLoading,
+  actionLoadingLabel,
   "data-component": dataComponent,
   ...alertProps
 }: MobileAlertCardProps) {
@@ -37,14 +42,17 @@ export function MobileAlertCard({
               {actionLabel}
             </Link>
           ) : (
-            <button
+            <Button
+              variant="link"
+              loading={actionLoading}
+              loadingLabel={actionLoadingLabel}
               type="button"
               onClick={actionOnClick}
               data-component={`${componentName}-action-button`}
-              className={cn("text-destructive underline hover:no-underline")}
+              className={cn("h-auto p-0 text-destructive underline hover:no-underline")}
             >
               {actionLabel}
-            </button>
+            </Button>
           )}
         </div>
       ) : null}

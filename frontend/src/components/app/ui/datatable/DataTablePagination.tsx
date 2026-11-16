@@ -64,7 +64,6 @@ export function DataTablePagination({
           variant="ghost"
           size="icon"
           className={cn(
-            "h-8 w-8",
             !canGoPrevious && "opacity-50"
           )}
           onClick={() => onPageChange(page - 1)}
@@ -77,7 +76,6 @@ export function DataTablePagination({
           variant="ghost"
           size="icon"
           className={cn(
-            "h-8 w-8",
             !canGoNext && "opacity-50"
           )}
           onClick={() => onPageChange(page + 1)}
