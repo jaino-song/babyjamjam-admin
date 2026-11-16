@@ -11,7 +11,10 @@ function expectIconSize(button: HTMLElement) {
     "h-[calc(32px*var(--glint-ui-scale,1))]", "w-[calc(32px*var(--glint-ui-scale,1))]",
     "after:h-[calc(44px*var(--glint-ui-scale,1))]", "after:w-[calc(44px*var(--glint-ui-scale,1))]",
   );
-  expect(button).not.toHaveClass("h-6", "w-6", "h-10", "w-10");
+  expect(button).not.toHaveClass("h-6");
+  expect(button).not.toHaveClass("w-6");
+  expect(button).not.toHaveClass("h-10");
+  expect(button).not.toHaveClass("w-10");
 }
 
 it("uses the shared icon size for code copying", () => {

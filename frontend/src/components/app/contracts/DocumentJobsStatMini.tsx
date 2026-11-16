@@ -134,7 +134,7 @@ export function DocumentJobsStatMini({
               className="mt-3"
               onClick={refetchSummary}
               disabled={isSummaryFetching}
-              aria-label="전자문서 처리 현황 다시 시도"
+              aria-label={isSummaryFetching ? undefined : "전자문서 처리 현황 다시 시도"}
             >
               다시 시도
             </Button>

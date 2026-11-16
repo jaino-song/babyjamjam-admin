@@ -4,7 +4,7 @@ import React from "react";
 import { Check } from "lucide-react";
 import { useIsMobile } from "@/hooks/useIsMobile";
 import { SurfaceCard } from "@/components/ui/surface-card";
-import { Button } from "@/components/ui/button";
+import { FooterNavigation } from "@/components/ui/footer-navigation";
 import { SurfaceFrame } from "@/components/ui/surface-frame";
 import { cn } from "@/lib/utils";
 import { SteppedWizardStepper } from "./SteppedWizardStepper";
@@ -237,39 +237,26 @@ export function SteppedWizard({
             )}
           </div>
 
-          <div
-            data-component="desktop_v3_stepped-wizard_body_actions"
-            className={cn(
-              "mt-1 flex items-center justify-between gap-0 border-t border-v3-border pt-3",
-              isMobile && "sticky bottom-0 bg-white rounded-b-[28px] shadow-[0_-4px_20px_hsla(214,50%,20%,0.06)]",
-            )}
-          >
-            <Button
-              data-component="desktop_v3_stepped-wizard_body_prev-btn"
-              type="button"
-              variant="neutral"
-              size="sm"
-              width="sm"
-              disabled={isFirstStep}
-              className={cn(isFirstStep && "pointer-events-none opacity-0")}
-              onClick={handlePrev}
-            >
-              {prevLabel}
-            </Button>
-            <Button
-              data-component={isLastStep ? "desktop_v3_stepped-wizard_body_complete-btn" : "desktop_v3_stepped-wizard_body_next-btn"}
-              type="button"
-              variant="positive"
-              size="sm"
-              width="sm"
-              loading={isSubmitting}
-              loadingLabel="처리 중"
-              disabled={isNextButtonDisabled}
-              onClick={handleNext}
-            >
-              {isLastStep ? completeLabel : nextLabel}
-            </Button>
-          </div>
+          <FooterNavigation
+            dataComponent="desktop_v3_stepped-wizard_body_actions"
+            prevDataComponent="desktop_v3_stepped-wizard_body_prev-btn"
+            nextDataComponent={isLastStep ? "desktop_v3_stepped-wizard_body_complete-btn" : "desktop_v3_stepped-wizard_body_next-btn"}
+            className="mt-1 gap-0"
+            stickyOnMobile={isMobile}
+            prevVariant="neutral"
+            nextVariant="positive"
+            prevWidth="sm"
+            nextWidth="sm"
+            prevDisabled={isFirstStep}
+            prevHidden={isFirstStep}
+            prevLabel={prevLabel}
+            nextLabel={isLastStep ? completeLabel : nextLabel}
+            nextLoading={isSubmitting}
+            nextLoadingLabel="처리 중"
+            nextDisabled={isNextButtonDisabled}
+            onPrev={handlePrev}
+            onNext={handleNext}
+          />
         </div>
       </SurfaceCard>
       </SurfaceFrame>

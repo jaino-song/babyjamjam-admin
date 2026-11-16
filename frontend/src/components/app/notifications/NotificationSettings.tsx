@@ -120,7 +120,7 @@ export function NotificationSettings() {
                 </div>
 
                 {loading ? (
-                    <LoadingState inline size="sm" label="알림 설정을 변경하는 중" data-component="desktop_admin_notification-settings_loading" />
+                    <LoadingState inline size="sm" label={actionLoading ? "알림 설정을 변경하는 중" : "알림 설정을 불러오는 중"} data-component="desktop_admin_notification-settings_loading" />
                 ) : (
                     <div className="flex items-center gap-2">
                         <Label htmlFor="notification-switch" className="sr-only">

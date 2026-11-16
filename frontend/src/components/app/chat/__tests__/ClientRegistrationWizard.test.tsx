@@ -673,6 +673,18 @@ describe("ClientRegistrationWizard", () => {
         const nextButton = screen.getByRole("button", { name: "다음" });
         const retryButton = screen.getByRole("button", { name: "다시 시도" });
         expect(nextButton).toBeDisabled();
+        expect(screen.getByLabelText("제공인력")).toHaveAttribute("aria-describedby", "employee-lookup-message");
+        expect(document.getElementById("employee-lookup-message")).toBeInTheDocument();
+
+        const expectResolvedDescriptions = () => {
+            expect(screen.getByLabelText("제공인력")).not.toHaveAttribute("aria-describedby");
+            document.querySelectorAll("[aria-describedby]").forEach((element) => {
+                const ids = element.getAttribute("aria-describedby")?.trim().split(/\s+/) ?? [];
+                ids.forEach((id) => {
+                    expect(document.getElementById(id)).toBeInTheDocument();
+                });
+            });
+        };
 
         fireEvent.click(retryButton);
 
@@ -680,7 +692,8 @@ describe("ClientRegistrationWizard", () => {
             expect(mockRefetchEmployees).toHaveBeenCalledTimes(1);
         });
         expect(screen.getByRole("button", { name: "재시도 중" })).toBeDisabled();
-        expect(screen.getByRole("status", { name: "제공인력 다시 확인 중" })).toHaveAttribute("data-slot", "loading-state");
+        expect(document.querySelectorAll('[data-slot="button-spinner"], [data-slot="loading-state"]')).toHaveLength(1);
+        expectResolvedDescriptions();
         expect(nextButton).toBeDisabled();
 
         // The refetch remains in progress even after the query's next state is available.
@@ -688,6 +701,7 @@ describe("ClientRegistrationWizard", () => {
         mockEmployeesError = false;
         rerender(<ClientRegistrationWizard initialDraft={initialDraft} />);
         expect(screen.getByRole("button", { name: "재시도 중" })).toBeDisabled();
+        expectResolvedDescriptions();
         expect(nextButton).toBeDisabled();
 
         resolveRefetch?.({ data: mockEmployees });

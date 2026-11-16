@@ -135,7 +135,7 @@ export function ContractStatsBar({
                 className="mt-3"
                 onClick={onRetryStats}
                 disabled={isStatsRefreshing}
-                aria-label="계약 통계 다시 시도"
+                aria-label={isStatsRefreshing ? undefined : "계약 통계 다시 시도"}
               >
                 다시 시도
               </Button>
