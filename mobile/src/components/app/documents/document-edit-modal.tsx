@@ -97,8 +97,8 @@ export function DocumentEditModal({
   return (
     <Dialog open={open} onOpenChange={(isOpen: boolean) => !isOpen && onClose()}>
         <DialogContent data-component={dataComponent} className="sm:max-w-md" showCloseButton={false}>
-        <DialogHeader data-component={`${dataComponent}_header`} className="flex-row justify-between items-center">
-          <DialogTitle>문서 정보 수정</DialogTitle>
+        <DialogHeader data-component={`${dataComponent}_header`} className="grid grid-cols-[32px_minmax(0,1fr)_32px] items-center">
+          <DialogTitle className="col-start-2 min-w-0 break-words text-center">문서 정보 수정</DialogTitle>
           <Button
             variant="ghost"
             size="icon"
