@@ -614,7 +614,7 @@ describe("ClientServiceRecordsTab", () => {
                 />,
             );
 
-            expect(within(screen.getByRole("alert")).getByRole("button", { name: "다시 시도" })).toBeDisabled();
+            expect(within(screen.getByRole("alert")).getByRole("button", { name: "다시 시도 중" })).toBeDisabled();
         });
 
         it("keeps the cached overview and adds a notice whose retry refreshes when a refresh failed", () => {

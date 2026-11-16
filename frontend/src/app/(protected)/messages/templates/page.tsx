@@ -277,7 +277,7 @@ function BranchTemplateDetail({
         description="삭제한 지점 템플릿은 복구할 수 없어요."
         cancelLabel="취소"
         approvalLabel="삭제"
-        pendingLabel="삭제 중..."
+        pendingLabel="삭제 중"
         approvalVariant="destructive"
         isPending={deleteMutation.isPending}
         isDescriptionVisuallyHidden={false}

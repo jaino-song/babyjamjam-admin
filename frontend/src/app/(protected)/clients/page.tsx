@@ -1114,7 +1114,7 @@ export default function ClientsPage() {
                 description="기존 링크가 만료 되었어요. 메시지는 발송되지 않아요."
                 isDescriptionVisuallyHidden={false}
                 approvalLabel="링크 재설정"
-                pendingLabel="재설정 중..."
+                pendingLabel="재설정 중"
                 isPending={isResettingLink}
                 onApprove={() => void handleResetServiceRecordLinkConfirm()}
             />
@@ -1147,7 +1147,7 @@ export default function ClientsPage() {
                 title={t(locale, "clients.delete-confirm")}
                 description="삭제한 고객은 목록에서 사라지고 복구할 수 없어요."
                 approvalLabel={t(locale, "common.delete")}
-                pendingLabel="삭제 중..."
+                pendingLabel="삭제 중"
                 approvalVariant="destructive"
                 isPending={deleteClient.isPending}
                 onApprove={() => void handleDeleteConfirm()}

@@ -75,7 +75,7 @@ export interface ContractDocumentJobsPopoverProps {
   jobsError?: unknown;
   onRetry?: () => void;
   onRetryJobs?: () => void;
-  "data-component"?: string;
+  "data-component": string;
   className?: string;
 }
 
@@ -107,7 +107,7 @@ export function ContractDocumentJobsPopover({
   const resolvedLoading = loading || isJobsLoading;
   const resolvedError = error ?? jobsError ?? null;
   const resolvedRetry = onRetry ?? onRetryJobs;
-  const sub = (suffix: string) => (dataComponent ? `${dataComponent}_${suffix}` : undefined);
+  const sub = (suffix: string) => `${dataComponent}_${suffix}`;
   // Below lg the list is a bottom sheet. A Radix popper wrapper is a transformed, fixed box sized
   // to its content, so a `fixed inset-x-0` child inside it collapses to a sliver; the sheet is a
   // Dialog portal with no such wrapper.

@@ -40,22 +40,24 @@ beforeEach(() => {
 });
 afterEach(() => jest.restoreAllMocks());
 
-// The public owner accepts a caller that omits metadata entirely.
-void (<ContractDocumentJobsModal open={false} onClose={() => {}} anchorRef={React.createRef<HTMLButtonElement>()} isLoading={false} />);
+// The public owner requires caller context for its nested list loading state.
+void (<ContractDocumentJobsModal data-component="desktop_contracts_tests_jobs-modal" open={false} onClose={() => {}} anchorRef={React.createRef<HTMLButtonElement>()} isLoading={false} />);
 
-it.each([undefined, ""])("keeps selection, cached height and keyboard navigation without a namespace (%s)", async (namespace) => {
+it.each([BASE, "desktop_contracts_tests_alternate-jobs"])("keeps selection, cached height and keyboard navigation within caller context (%s)", async (namespace) => {
   render(<Harness data-component={namespace} />);
   const dialog = screen.getByRole("dialog", { name: "전자문서 작업" });
   expect(dialog).toHaveAttribute("data-source-component", "AnchoredNotificationModalShell");
   expect(slot("sliding-detail-panel")).toHaveAttribute("data-motion", "page");
   expect(document.querySelectorAll("[data-slot]").length).toBeGreaterThan(10);
-  expect(document.querySelectorAll("[data-component]")).toHaveLength(0);
+  expect(dialog).toHaveAttribute("data-component", namespace);
+  expect(slot("contract-document-jobs-list")).toHaveAttribute("data-component", `${namespace}_panes_slide_list-pane_body_content_list`);
   expect(dialog).toHaveStyle({ height: "672px" });
   const clicked = card(); clicked.focus(); fireEvent.click(clicked);
   expect(back()).toHaveFocus();
   expect(slot("job-detail-summary")).toBeInTheDocument();
   expect(slot("job-detail-body")).toBeInTheDocument();
-  expect(document.querySelectorAll("[data-component]")).toHaveLength(0);
+  expect(dialog).toHaveAttribute("data-component", namespace);
+  expect(slot("contract-document-jobs-list")).toHaveAttribute("data-component", `${namespace}_panes_slide_list-pane_body_content_list`);
   fireEvent.keyDown(back(), { key: "Escape" });
   expect(clicked).toHaveFocus();
   expect(dialog).toHaveStyle({ height: "672px" });

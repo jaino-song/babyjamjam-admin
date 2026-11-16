@@ -1724,7 +1724,7 @@ describe("TriggerRulesManager", () => {
 
     await waitFor(() => expect(parentMutation).toHaveBeenCalledTimes(1));
     expect(screen.getByRole("button", { name: "취소" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "처리 중..." })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "처리 중" })).toBeDisabled();
     expect(childSwitch).toBeDisabled();
   });
 
@@ -2068,7 +2068,7 @@ describe("TriggerRulesManager unknown loads (BJJ-434)", () => {
 
       render(<TriggerRulesManager dataComponent={DC} />);
 
-      expect(within(screen.getByRole("alert")).getByRole("button", { name: "다시 시도" })).toBeDisabled();
+      expect(within(screen.getByRole("alert")).getByRole("button", { name: "다시 시도 중" })).toBeDisabled();
     });
 
     it("an earlier successful empty load and a failed refetch: the empty text plus the inline notice, not the failure panel", () => {

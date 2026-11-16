@@ -21,7 +21,7 @@ export function MobileBottomNav() {
   }> = [
       { href: "/dashboard", label: "홈", icon: Home, kind: "normal" },
       { href: "/clients", label: "고객", icon: Users, kind: "normal" },
-      { href: "/agent", label: "어시스턴트", icon: Sparkles, kind: "chat" },
+      { href: "/agent", label: "에이전트", icon: Sparkles, kind: "chat" },
       { href: "/contracts", label: "계약", icon: FileText, kind: "normal" },
       { href: "/all", label: "전체", icon: Menu, kind: "normal" },
     ];

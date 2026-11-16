@@ -190,7 +190,7 @@ export function CallIngestTokenSection({ branchId }: CallIngestTokenSectionProps
         }
         cancelLabel="닫기"
         approvalLabel="토큰 취소"
-        pendingLabel="취소 중..."
+        pendingLabel="취소 중"
         approvalVariant="destructive"
         isPending={revokeMutation.isPending}
         onApprove={() => {

@@ -18,7 +18,7 @@ interface ContractDocumentJobsModalProps {
   onRecover?: (jobId: string, trigger: HTMLButtonElement) => void;
   recoveryDialog?: React.ReactNode;
   interactionPaused?: boolean;
-  "data-component"?: string;
+  "data-component": string;
 }
 
 // Explicit height keeps absolute sliding panes out of the shell's natural measurement path.
@@ -35,7 +35,7 @@ export function ContractDocumentJobsModal({ open, onClose, anchorRef, jobs, isLo
   return <AnchoredNotificationModalShell open={open} onClose={onClose} anchorRef={anchorRef} label="전자문서 작업" data-component={base} interactionPaused={interactionPaused}
     preferredHeight={preferredHeight} onEscapeKeyDown={event => panes.current?.onEscapeKeyDown(event)}>
     <ContractDocumentJobsPanes memory={memory} onRemember={remember} ref={panes} open={open} jobs={jobs} isLoading={isLoading} error={error} onRetry={onRetry} onRecover={onRecover}
-      onClose={onClose} interactionPaused={interactionPaused} onNaturalHeight={rememberHeight} data-component={base ? `${base}_panes` : undefined} />
+      onClose={onClose} interactionPaused={interactionPaused} onNaturalHeight={rememberHeight} data-component={`${base}_panes`} />
     {recoveryDialog}
   </AnchoredNotificationModalShell>;
 }

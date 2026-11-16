@@ -65,11 +65,12 @@ No Storybook exists; manifest registration is checked by the existing architectu
 ## Workspace control sizing (C3)
 
 The approved mockup uses a 16px composer font (26px line height), with 44px mobile
-send/suggestion targets. Main measured the live input at 14px/40px on mobile and
+touch targets. Main measured the live input at 14px/40px on mobile and
 11.2px/32px on desktop with Glint 0.8. The workspace and its portal list now mark
 their control scope with `data-chat-workspace-controls`. Scoped CSS keeps native
 input/textarea text at 16px/26px, input minimum height at 44px and design-system
-button targets at least 44px in both axes. Pixel minimums deliberately survive
+text buttons at least 44px in both axes. Icon-only buttons stay 32px visible
+with a 44px touch area provided by their `::after` box. Pixel minimums deliberately survive
 Glint scaling; surrounding admin tokens, spacing and surfaces remain shared.
 This includes real Agent/Legacy controls and drawer actions. Default ChatInput
 widget/fullscreen consumers outside the workspace keep their original styling.

@@ -1366,7 +1366,7 @@ export function TemplateSendForm({
         }
         isDescriptionVisuallyHidden={false}
         approvalLabel="전송"
-        pendingLabel="전송 중..."
+        pendingLabel="전송 중"
         isPending={isSending}
         onApprove={() => void handleConfirmDuplicateSend()}
       >

@@ -34,7 +34,8 @@ it("uses the shared 32px icon button with a 44px hit area for the customer menu"
     "after:h-[calc(44px*var(--glint-ui-scale,1))]",
     "after:w-[calc(44px*var(--glint-ui-scale,1))]",
   );
-  expect(trigger).not.toHaveClass("h-9", "w-9");
+  expect(trigger).not.toHaveClass("h-9");
+  expect(trigger).not.toHaveClass("w-9");
   expect(trigger.querySelector("svg")).toHaveAttribute("aria-hidden", "true");
   expect(trigger.querySelector("svg")).toHaveClass("w-5", "h-5");
   fireEvent.keyDown(trigger, { key: "ArrowDown" });

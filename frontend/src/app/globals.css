@@ -1785,7 +1785,7 @@ body {
   font-size: 16px;
   line-height: 26px;
 }
-[data-chat-workspace-controls] [data-slot="button"] {
+[data-chat-workspace-controls] [data-slot="button"]:not([data-size="icon"]) {
   min-height: 44px;
   min-width: 44px;
 }

@@ -330,8 +330,8 @@ function getTemplateListSkeletons() {
   );
 }
 
-function getRetryButton(scope: HTMLElement) {
-  return within(scope).getByRole("button", { name: "다시 시도" });
+function getRetryButton(scope: HTMLElement, busy = false) {
+  return within(scope).getByRole("button", { name: busy ? "다시 시도 중" : "다시 시도" });
 }
 
 beforeEach(() => {
@@ -410,7 +410,7 @@ describe("messages page 발송 기록 — send history load failure", () => {
     render(<MessagesPage />);
     goToHistorySection();
 
-    expect(getRetryButton(screen.getByRole("alert"))).toBeDisabled();
+    expect(getRetryButton(screen.getByRole("alert"), true)).toBeDisabled();
   });
 
   it("does not let a history failure break the 예정 tab, which only shows upcoming jobs", () => {
@@ -498,7 +498,7 @@ describe("messages page 발송 기록 — upcoming scheduled sends load failure"
     render(<MessagesPage />);
     goToHistorySection();
 
-    expect(getRetryButton(screen.getByRole("alert"))).toBeDisabled();
+    expect(getRetryButton(screen.getByRole("alert"), true)).toBeDisabled();
   });
 
   it("uses one notice whose retry refetches both queries when both have cached data and both failed", () => {
@@ -576,7 +576,7 @@ describe("messages page 템플릿 — template list load failure", () => {
 
     const alerts = screen.getAllByRole("alert");
     expect(alerts).toHaveLength(1);
-    expect(getRetryButton(alerts[0])).toBeDisabled();
+    expect(getRetryButton(alerts[0], true)).toBeDisabled();
   });
 
   it("does not show the branch-template failure on the built-in tab", () => {
@@ -612,7 +612,7 @@ describe("messages page 템플릿 — template list load failure", () => {
     const alerts = screen.getAllByRole("alert");
     expect(alerts).toHaveLength(1);
     expect(within(alerts[0]).getByText("최신 정보를 불러오지 못했습니다")).toBeInTheDocument();
-    expect(getRetryButton(alerts[0])).toBeDisabled();
+    expect(getRetryButton(alerts[0], true)).toBeDisabled();
   });
 
   it("retries the catalog from the cached-rows notice once the refetch is idle", () => {
@@ -932,7 +932,7 @@ describe("messages page 템플릿 — built-in detail failure notice is visible 
       expect(within(alerts[0]).getByText(STALE)).toBeInTheDocument();
       expect(within(alerts[0]).queryByText(DETAIL_FAILED)).not.toBeInTheDocument();
       expect(allAlertsInDocument()).toHaveLength(1);
-      expect(getRetryButton(alerts[0])).toBeDisabled();
+      expect(getRetryButton(alerts[0], true)).toBeDisabled();
       expectRecipientInputsRendered();
     });
 
@@ -1111,7 +1111,7 @@ describe("messages page 템플릿 — built-in detail failure notice is visible 
       const alerts = screen.getAllByRole("alert");
       expect(alerts).toHaveLength(1);
       expect(within(alerts[0]).getByText(STALE)).toBeInTheDocument();
-      expect(getRetryButton(alerts[0])).toBeDisabled();
+      expect(getRetryButton(alerts[0], true)).toBeDisabled();
     });
 
     it("disables the retry while the detail refetch is in flight after switching to 미리보기", () => {
@@ -1125,7 +1125,7 @@ describe("messages page 템플릿 — built-in detail failure notice is visible 
       const alerts = screen.getAllByRole("alert");
       expect(alerts).toHaveLength(1);
       expect(within(alerts[0]).getByText(STALE)).toBeInTheDocument();
-      expect(getRetryButton(alerts[0])).toBeDisabled();
+      expect(getRetryButton(alerts[0], true)).toBeDisabled();
     });
 
     it("shows no alert on either tab when the detail loaded", () => {

@@ -675,7 +675,7 @@ describe("SendNotificationSection", () => {
       fireEvent.click(within(dialog).getByRole("button", { name: "보내기" }));
 
       await waitFor(() => {
-        expect(within(dialog).getByRole("button", { name: "보내는 중..." })).toBeDisabled();
+        expect(within(dialog).getByRole("button", { name: "보내는 중" })).toBeDisabled();
       });
 
       resolveBroadcast({ sent: 2, failed: 0 });

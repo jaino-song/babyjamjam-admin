@@ -136,7 +136,7 @@ describe("FileStoragePage query load states", () => {
     expect(mockDocuments.refetch).toHaveBeenCalledTimes(1);
     mockDocuments = { ...mockDocuments, isFetching: true, fetchStatus: "fetching" };
     rerender(<FileStoragePage />);
-    expect(screen.getByRole("button", { name: "다시 시도" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "다시 시도 중" })).toBeDisabled();
     expect(statValues(container)[0]).toBe(String(data.length));
   });
 
