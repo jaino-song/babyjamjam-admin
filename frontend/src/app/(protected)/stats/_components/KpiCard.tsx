@@ -1,4 +1,6 @@
 import type { LucideIcon } from "lucide-react";
+
+import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 import { InfoTooltip } from "./InfoTooltip";
 
@@ -7,6 +9,7 @@ interface KpiCardProps {
   iconEmoji?: string;
   label: string;
   value: string | number;
+  isLoading?: boolean;
   unit?: string;
   meta?: string;
   delta?: { label: string; tone: "up" | "down" | "flat" };
@@ -35,6 +38,7 @@ export function KpiCard({
   iconEmoji,
   label,
   value,
+  isLoading = false,
   unit,
   meta,
   delta,
@@ -65,19 +69,23 @@ export function KpiCard({
         ) : null}
       </div>
       <div data-component={`${dataComponent}_body`} className="flex items-baseline gap-1.5">
-        <span
-          className={cn(
-            "font-bold leading-none tabular-nums",
-            valueSize === "lg" ? "text-[1.9rem]" : valueSize === "sm" ? "text-[1.15rem]" : "text-[1.55rem]",
-            TONE_CLASSES[tone]
-          )}
-        >
-          {value}
-        </span>
-        {unit ? (
+        {isLoading ? (
+          <Skeleton data-component={`${dataComponent}_body_value-skeleton`} className="h-7 w-20" />
+        ) : (
+          <span
+            className={cn(
+              "font-bold leading-none tabular-nums",
+              valueSize === "lg" ? "text-[1.9rem]" : valueSize === "sm" ? "text-[1.15rem]" : "text-[1.55rem]",
+              TONE_CLASSES[tone]
+            )}
+          >
+            {value}
+          </span>
+        )}
+        {!isLoading && unit ? (
           <span className="text-[0.78rem] text-v3-text-muted font-medium">{unit}</span>
         ) : null}
-        {delta ? (
+        {!isLoading && delta ? (
           <span
             className={cn(
               "ml-auto text-[0.65rem] font-semibold rounded px-1.5 py-0.5 tabular-nums",
@@ -88,7 +96,7 @@ export function KpiCard({
           </span>
         ) : null}
       </div>
-      {meta ? (
+      {!isLoading && meta ? (
         <div
           data-component={`${dataComponent}_meta`}
           className="mt-1.5 text-[0.68rem] text-v3-text-muted leading-tight"

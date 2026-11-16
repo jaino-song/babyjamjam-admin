@@ -1,4 +1,5 @@
 import { redirect } from "next/navigation";
+
 import { Block } from "@/components/app/v3/Block";
 import {
   StatsPeriodNotice,
@@ -7,6 +8,9 @@ import {
   StatsSourceEmpty,
   StatsSourceNotice,
 } from "@/components/app/stats/StatsPeriodSelector";
+import { Skeleton } from "@/components/ui/skeleton";
+import { StatsQueryError } from "@/features/stats/StatsQueryError";
+import { loadPostHogStat } from "@/features/stats/load-posthog-stat";
 import { getCurrentUser } from "@/lib/auth/cookies";
 import { ROLES } from "@/lib/constants/roles";
 import { formatDateForDisplay } from "@/lib/date/format-date-for-display";
@@ -60,21 +64,23 @@ export default async function TrafficDetailPage({ searchParams }: TrafficDetailP
 
   const [summary, trend, topPages, devices, browsers, sources, regions] =
     await Promise.all([
-      getTrafficSummary(period),
-      getTrafficTrend(period),
-      getTopPages(period, 10),
-      getDeviceBreakdown(period),
-      getBrowserBreakdown(period),
-      getSourceBreakdown(period),
-      getRegionBreakdown(period),
+      loadPostHogStat(getTrafficSummary(period)),
+      loadPostHogStat(getTrafficTrend(period)),
+      loadPostHogStat(getTopPages(period, 10)),
+      loadPostHogStat(getDeviceBreakdown(period)),
+      loadPostHogStat(getBrowserBreakdown(period)),
+      loadPostHogStat(getSourceBreakdown(period)),
+      loadPostHogStat(getRegionBreakdown(period)),
     ]);
 
-  const pvDelta = formatDelta(summary.today.pv, summary.yesterday.pv);
-  const uniqueDelta = formatDelta(summary.today.unique, summary.yesterday.unique);
+  const hasPostHogError = [summary, trend, topPages, devices, browsers, sources, regions].some((value) => value === null);
+
+  const pvDelta = summary ? formatDelta(summary.today.pv, summary.yesterday.pv) : undefined;
+  const uniqueDelta = summary ? formatDelta(summary.today.unique, summary.yesterday.unique) : undefined;
 
   // Build selected-range chart
   const todayDate = new Date();
-  const trendMap = new Map(trend.map((p) => [p.day, p]));
+  const trendMap = new Map((trend ?? []).map((p) => [p.day, p]));
   const selectedRange = Array.from({ length: period }, (_, i) => {
     const d = new Date(todayDate);
     d.setDate(d.getDate() - (period - 1 - i));
@@ -114,8 +120,8 @@ export default async function TrafficDetailPage({ searchParams }: TrafficDetailP
     ),
   );
 
-  const mobile = devices.find((d) => /mobile/i.test(d.deviceType)) ?? { pct: 0, count: 0 };
-  const desktop = devices.find((d) => /desktop/i.test(d.deviceType)) ?? { pct: 0, count: 0 };
+  const mobile = devices?.find((d) => /mobile/i.test(d.deviceType)) ?? { pct: 0, count: 0 };
+  const desktop = devices?.find((d) => /desktop/i.test(d.deviceType)) ?? { pct: 0, count: 0 };
 
   return (
     <StatsPeriodProvider key={period} initialPeriod={period}>
@@ -137,6 +143,8 @@ export default async function TrafficDetailPage({ searchParams }: TrafficDetailP
         dataComponent="desktop_stats-traffic_page_period-selector"
       />
 
+      {hasPostHogError && <StatsQueryError dataComponent="desktop_stats-traffic_page_query-error" />}
+
       {!posthogConfigured && (
         <StatsSourceNotice
           sources={["PostHog"]}
@@ -150,24 +158,27 @@ export default async function TrafficDetailPage({ searchParams }: TrafficDetailP
           className="grid grid-cols-2 lg:grid-cols-5 gap-3"
         >
           <KpiCard
+            isLoading={summary === null}
             iconEmoji="🌐"
             label="조회수 (오늘)"
-            value={posthogConfigured ? summary.today.pv.toLocaleString("ko-KR") : "—"}
+            value={posthogConfigured && summary ? summary.today.pv.toLocaleString("ko-KR") : "—"}
             delta={posthogConfigured ? pvDelta : undefined}
             dataComponent="desktop_stats-traffic_page_kpi_grid_card-pv"
           />
           <KpiCard
+            isLoading={summary === null}
             iconEmoji="👥"
             label="방문자"
-            value={posthogConfigured ? summary.today.unique.toLocaleString("ko-KR") : "—"}
+            value={posthogConfigured && summary ? summary.today.unique.toLocaleString("ko-KR") : "—"}
             delta={posthogConfigured ? uniqueDelta : undefined}
             dataComponent="desktop_stats-traffic_page_kpi_grid_card-unique"
           />
           <KpiCard
+            isLoading={summary === null}
             iconEmoji="⏱"
             label="평균 방문 시간"
             value={
-              !posthogConfigured || summary.selectedRange.total.pv === 0
+              !posthogConfigured || !summary || summary.selectedRange.total.pv === 0
                 ? "—"
                 : `${Math.floor(summary.selectedRange.avgSessionSeconds / 60)}:${String(Math.round(summary.selectedRange.avgSessionSeconds % 60)).padStart(2, "0")}`
             }
@@ -175,19 +186,21 @@ export default async function TrafficDetailPage({ searchParams }: TrafficDetailP
             valueSize="sm"
           />
           <KpiCard
+            isLoading={summary === null}
             iconEmoji="↩"
             label={`이탈률 (${statsPeriodLabel(period)})`}
-            value={posthogConfigured ? summary.selectedRange.bounceRate.toFixed(1) : "—"}
-            unit={posthogConfigured ? "%" : undefined}
-            tone={posthogConfigured && summary.selectedRange.bounceRate > 60 ? "warn" : "default"}
+            value={posthogConfigured && summary ? summary.selectedRange.bounceRate.toFixed(1) : "—"}
+            unit={posthogConfigured && summary ? "%" : undefined}
+            tone={posthogConfigured && summary && summary.selectedRange.bounceRate > 60 ? "warn" : "default"}
             dataComponent="desktop_stats-traffic_page_kpi_grid_card-bounce"
           />
           <KpiCard
+            isLoading={summary === null}
             iconEmoji="✨"
             label={`${statsPeriodLabel(period)} 합계`}
-            value={posthogConfigured ? summary.selectedRange.total.pv.toLocaleString("ko-KR") : "—"}
-            unit={posthogConfigured ? "조회" : undefined}
-            meta={posthogConfigured ? `방문자 ${summary.selectedRange.total.unique}명` : undefined}
+            value={posthogConfigured && summary ? summary.selectedRange.total.pv.toLocaleString("ko-KR") : "—"}
+            unit={posthogConfigured && summary ? "조회" : undefined}
+            meta={posthogConfigured && summary ? `방문자 ${summary.selectedRange.total.unique}명` : undefined}
             dataComponent="desktop_stats-traffic_page_kpi_grid_card-week"
             valueSize="sm"
           />
@@ -215,9 +228,11 @@ export default async function TrafficDetailPage({ searchParams }: TrafficDetailP
               </span>
             </div>
           </header>
-          {!posthogConfigured ? (
+          {trend === null ? (
+            <Skeleton data-component="desktop_stats-traffic_page_trend_card_skeleton" className="h-32 w-full" />
+          ) : !posthogConfigured ? (
             <StatsSourceEmpty source="PostHog" dataComponent="desktop_stats-traffic_page_trend-unavailable" />
-          ) : summary.selectedRange.total.pv === 0 ? (
+          ) : selectedRange.every((point) => point.pv === 0) ? (
             <p className="text-center py-10 text-[0.85rem] text-v3-text-muted">
               {statsPeriodLabel(period)} 트래픽 데이터가 없어요.
             </p>
@@ -299,7 +314,9 @@ export default async function TrafficDetailPage({ searchParams }: TrafficDetailP
               PostHog
             </span>
           </header>
-          {!posthogConfigured ? (
+          {topPages === null ? (
+            <Skeleton data-component="desktop_stats-traffic_page_pages-sources_top-pages-card_skeleton" className="h-32 w-full" />
+          ) : !posthogConfigured ? (
             <StatsSourceEmpty source="PostHog" dataComponent="desktop_stats-traffic_page_top-pages-unavailable" />
           ) : topPages.length === 0 ? (
             <p className="text-center py-6 text-[0.85rem] text-v3-text-muted">데이터 없음</p>
@@ -316,7 +333,7 @@ export default async function TrafficDetailPage({ searchParams }: TrafficDetailP
               <tbody>
                 {topPages.map((p, i) => {
                   const share =
-                    summary.selectedRange.total.pv > 0
+                    summary && summary.selectedRange.total.pv > 0
                       ? (p.pv / summary.selectedRange.total.pv) * 100
                       : 0;
                   return (
@@ -329,7 +346,9 @@ export default async function TrafficDetailPage({ searchParams }: TrafficDetailP
                       <td className="px-3 py-3 text-right font-semibold tabular-nums">{p.pv}</td>
                       <td className="px-3 py-3 text-right tabular-nums">{p.unique}</td>
                       <td className="px-3 py-3 text-right text-v3-text-muted tabular-nums">
-                        {share.toFixed(1)}%
+                        {summary === null ? (
+                          <Skeleton data-component="desktop_stats-traffic_page_pages-sources_top-pages-card_body_row_share_skeleton" className="h-4 w-12" />
+                        ) : `${share.toFixed(1)}%`}
                       </td>
                     </tr>
                   );
@@ -349,7 +368,9 @@ export default async function TrafficDetailPage({ searchParams }: TrafficDetailP
               PostHog
             </span>
           </header>
-          {!posthogConfigured ? (
+          {sources === null ? (
+            <Skeleton data-component="desktop_stats-traffic_page_pages-sources_sources-card_skeleton" className="h-32 w-full" />
+          ) : !posthogConfigured ? (
             <StatsSourceEmpty source="PostHog" dataComponent="desktop_stats-traffic_page_sources-unavailable" />
           ) : sources.length === 0 ? (
             <p className="text-center py-6 text-[0.85rem] text-v3-text-muted">데이터 없음</p>
@@ -396,24 +417,32 @@ export default async function TrafficDetailPage({ searchParams }: TrafficDetailP
               <div className="text-[0.62rem] font-bold uppercase tracking-wider text-v3-text-muted mb-2">
                 디바이스
               </div>
-              <div className="flex h-3 rounded-full overflow-hidden bg-v3-dim-white">
-                <div className="bg-v3-primary" style={{ width: `${mobile.pct}%` }} />
-                <div className="bg-blue-400" style={{ width: `${desktop.pct}%` }} />
-              </div>
-              <div className="mt-1.5 flex justify-between text-[0.72rem]">
-                <span>
-                  <strong>📱 Mobile</strong> {mobile.pct.toFixed(0)}% · {mobile.count}
-                </span>
-                <span>
-                  <strong>💻 Desktop</strong> {desktop.pct.toFixed(0)}% · {desktop.count}
-                </span>
-              </div>
+              {devices === null ? (
+                <Skeleton data-component="desktop_stats-traffic_page_device-region_device-card_devices_skeleton" className="h-32 w-full" />
+              ) : (
+                <>
+                  <div className="flex h-3 rounded-full overflow-hidden bg-v3-dim-white">
+                    <div className="bg-v3-primary" style={{ width: `${mobile.pct}%` }} />
+                    <div className="bg-blue-400" style={{ width: `${desktop.pct}%` }} />
+                  </div>
+                  <div className="mt-1.5 flex justify-between text-[0.72rem]">
+                    <span>
+                      <strong>📱 Mobile</strong> {mobile.pct.toFixed(0)}% · {mobile.count}
+                    </span>
+                    <span>
+                      <strong>💻 Desktop</strong> {desktop.pct.toFixed(0)}% · {desktop.count}
+                    </span>
+                  </div>
+                </>
+              )}
             </div>
             <div>
               <div className="text-[0.62rem] font-bold uppercase tracking-wider text-v3-text-muted mb-2">
                 브라우저
               </div>
-              {browsers.length === 0 ? (
+              {browsers === null ? (
+                <Skeleton data-component="desktop_stats-traffic_page_device-region_device-card_browsers_skeleton" className="h-32 w-full" />
+              ) : browsers.length === 0 ? (
                 <p className="text-[0.78rem] text-v3-text-muted">데이터 없음</p>
               ) : (
                 <div>
@@ -444,7 +473,9 @@ export default async function TrafficDetailPage({ searchParams }: TrafficDetailP
               PostHog
             </span>
           </header>
-          {!posthogConfigured ? (
+          {regions === null ? (
+            <Skeleton data-component="desktop_stats-traffic_page_device-region_region-card_skeleton" className="h-32 w-full" />
+          ) : !posthogConfigured ? (
             <StatsSourceEmpty source="PostHog" dataComponent="desktop_stats-traffic_page_region-unavailable" />
           ) : regions.length === 0 ? (
             <p className="text-center py-6 text-[0.85rem] text-v3-text-muted">

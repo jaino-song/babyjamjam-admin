@@ -1,4 +1,5 @@
 import { redirect } from "next/navigation";
+
 import { Block } from "@/components/app/v3/Block";
 import {
   StatsPeriodNotice,
@@ -7,6 +8,9 @@ import {
   StatsSourceEmpty,
   StatsSourceNotice,
 } from "@/components/app/stats/StatsPeriodSelector";
+import { Skeleton } from "@/components/ui/skeleton";
+import { StatsQueryError } from "@/features/stats/StatsQueryError";
+import { loadPostHogStat } from "@/features/stats/load-posthog-stat";
 import { getCurrentUser } from "@/lib/auth/cookies";
 import { ROLES } from "@/lib/constants/roles";
 import {
@@ -55,18 +59,20 @@ export default async function FunnelDetailPage({ searchParams }: FunnelDetailPag
     transitions,
     conversionFunnel,
   ] = await Promise.all([
-    getPageNavSummary(period),
-    getPagesDetail(period, 20),
-    getEntryPages(period, 8),
-    getExitPages(period, 8),
-    getPageTransitions(period, 12),
-    getFunnelSummary(period),
+    loadPostHogStat(getPageNavSummary(period)),
+    loadPostHogStat(getPagesDetail(period, 20)),
+    loadPostHogStat(getEntryPages(period, 8)),
+    loadPostHogStat(getExitPages(period, 8)),
+    loadPostHogStat(getPageTransitions(period, 12)),
+    loadPostHogStat(getFunnelSummary(period)),
   ]);
 
-  const maxPv = Math.max(1, ...pages.map((p) => p.pv));
-  const maxEntry = Math.max(1, ...entryPages.map((p) => p.count));
-  const maxExit = Math.max(1, ...exitPages.map((p) => p.count));
-  const maxTransition = Math.max(1, ...transitions.map((t) => t.count));
+  const hasPostHogError = [navSummary, pages, entryPages, exitPages, transitions, conversionFunnel].some((value) => value === null);
+
+  const maxPv = Math.max(1, ...(pages ?? []).map((p) => p.pv));
+  const maxEntry = Math.max(1, ...(entryPages ?? []).map((p) => p.count));
+  const maxExit = Math.max(1, ...(exitPages ?? []).map((p) => p.count));
+  const maxTransition = Math.max(1, ...(transitions ?? []).map((t) => t.count));
 
   return (
     <StatsPeriodProvider key={period} initialPeriod={period}>
@@ -89,6 +95,8 @@ export default async function FunnelDetailPage({ searchParams }: FunnelDetailPag
         dataComponent="desktop_stats-funnel_page_period-selector"
       />
 
+      {hasPostHogError && <StatsQueryError dataComponent="desktop_stats-funnel_page_query-error" />}
+
       {!posthogConfigured && (
         <StatsSourceNotice
           sources={["PostHog"]}
@@ -102,39 +110,43 @@ export default async function FunnelDetailPage({ searchParams }: FunnelDetailPag
           className="grid grid-cols-2 lg:grid-cols-4 gap-3"
         >
           <KpiCard
+            isLoading={navSummary === null}
             iconEmoji="📄"
             label="활성 페이지"
-            value={posthogConfigured ? navSummary.activePages : "—"}
-            unit={posthogConfigured ? "개" : undefined}
+            value={posthogConfigured && navSummary ? navSummary.activePages : "—"}
+            unit={posthogConfigured && navSummary ? "개" : undefined}
             dataComponent="desktop_stats-funnel_page_kpi_grid_card-pages"
             infoText={
                 `${statsPeriodLabel(period)} 동안 조회수가 1회 이상 기록된 페이지 수.`
             }
           />
           <KpiCard
+            isLoading={navSummary === null}
             iconEmoji="👁"
             label={`총 조회수 (${statsPeriodLabel(period)})`}
-            value={posthogConfigured ? navSummary.totalPv.toLocaleString("ko-KR") : "—"}
+            value={posthogConfigured && navSummary ? navSummary.totalPv.toLocaleString("ko-KR") : "—"}
             dataComponent="desktop_stats-funnel_page_kpi_grid_card-pv"
             infoText={
                 `${statsPeriodLabel(period)}간 발생한 전체 페이지 조회 횟수.\n같은 사용자의 반복 방문도 모두 포함.`
             }
           />
           <KpiCard
+            isLoading={navSummary === null}
             iconEmoji="∅"
             label="평균 조회수/페이지"
-            value={posthogConfigured ? navSummary.avgPvPerPage.toFixed(1) : "—"}
+            value={posthogConfigured && navSummary ? navSummary.avgPvPerPage.toFixed(1) : "—"}
             dataComponent="desktop_stats-funnel_page_kpi_grid_card-avg"
             infoText={
               "총 조회수 ÷ 활성 페이지 수.\n페이지당 평균 방문 빈도를 나타냅니다."
             }
           />
           <KpiCard
+            isLoading={navSummary === null}
             iconEmoji="↩"
             label="평균 이탈률"
-            value={posthogConfigured ? navSummary.avgBouncePct.toFixed(1) : "—"}
-            unit={posthogConfigured ? "%" : undefined}
-            tone={posthogConfigured && navSummary.avgBouncePct > 60 ? "warn" : "default"}
+            value={posthogConfigured && navSummary ? navSummary.avgBouncePct.toFixed(1) : "—"}
+            unit={posthogConfigured && navSummary ? "%" : undefined}
+            tone={posthogConfigured && navSummary && navSummary.avgBouncePct > 60 ? "warn" : "default"}
             dataComponent="desktop_stats-funnel_page_kpi_grid_card-bounce"
             infoText={
               "한 방문에서 한 페이지만 보고 떠난 비율.\n다른 페이지로 이동하지 않고 나간 사용자의 비중을 나타냅니다."
@@ -160,11 +172,15 @@ export default async function FunnelDetailPage({ searchParams }: FunnelDetailPag
             <span className="text-[0.6rem] font-bold uppercase tracking-wider rounded px-1.5 py-0.5 bg-purple-100 text-purple-700">
               PostHog
             </span>
-            <span className="ml-auto text-[0.7rem] text-v3-text-muted">
-              {posthogConfigured ? `총 ${pages.length}개 페이지` : "—"}
-            </span>
+            <div className="ml-auto text-[0.7rem] text-v3-text-muted">
+              {pages === null ? (
+                <Skeleton data-component="desktop_stats-funnel_page_pages_card_total_skeleton" className="h-4 w-20" />
+              ) : posthogConfigured ? `총 ${pages.length}개 페이지` : "—"}
+            </div>
           </header>
-          {!posthogConfigured ? (
+          {pages === null ? (
+            <Skeleton data-component="desktop_stats-funnel_page_pages_card_skeleton" className="h-32 w-full" />
+          ) : !posthogConfigured ? (
             <StatsSourceEmpty source="PostHog" dataComponent="desktop_stats-funnel_page_pages-unavailable" />
           ) : pages.length === 0 ? (
             <p className="text-center py-8 text-[0.85rem] text-v3-text-muted">
@@ -239,7 +255,9 @@ export default async function FunnelDetailPage({ searchParams }: FunnelDetailPag
               PostHog
             </span>
           </header>
-          {!posthogConfigured ? (
+          {entryPages === null ? (
+            <Skeleton data-component="desktop_stats-funnel_page_entry-exit_entry-card_skeleton" className="h-32 w-full" />
+          ) : !posthogConfigured ? (
             <StatsSourceEmpty source="PostHog" dataComponent="desktop_stats-funnel_page_entry-unavailable" />
           ) : entryPages.length === 0 ? (
             <p className="text-center py-6 text-[0.85rem] text-v3-text-muted">
@@ -286,7 +304,9 @@ export default async function FunnelDetailPage({ searchParams }: FunnelDetailPag
               PostHog
             </span>
           </header>
-          {!posthogConfigured ? (
+          {exitPages === null ? (
+            <Skeleton data-component="desktop_stats-funnel_page_entry-exit_exit-card_skeleton" className="h-32 w-full" />
+          ) : !posthogConfigured ? (
             <StatsSourceEmpty source="PostHog" dataComponent="desktop_stats-funnel_page_exit-unavailable" />
           ) : exitPages.length === 0 ? (
             <p className="text-center py-6 text-[0.85rem] text-v3-text-muted">
@@ -335,11 +355,15 @@ export default async function FunnelDetailPage({ searchParams }: FunnelDetailPag
             <span className="text-[0.6rem] font-bold uppercase tracking-wider rounded px-1.5 py-0.5 bg-purple-100 text-purple-700">
               PostHog
             </span>
-            <span className="ml-auto text-[0.7rem] text-v3-text-muted">
-              {posthogConfigured ? `상위 ${transitions.length}개` : "—"}
-            </span>
+            <div className="ml-auto text-[0.7rem] text-v3-text-muted">
+              {transitions === null ? (
+                <Skeleton data-component="desktop_stats-funnel_page_transitions_card_total_skeleton" className="h-4 w-20" />
+              ) : posthogConfigured ? `상위 ${transitions.length}개` : "—"}
+            </div>
           </header>
-          {!posthogConfigured ? (
+          {transitions === null ? (
+            <Skeleton data-component="desktop_stats-funnel_page_transitions_card_skeleton" className="h-32 w-full" />
+          ) : !posthogConfigured ? (
             <StatsSourceEmpty source="PostHog" dataComponent="desktop_stats-funnel_page_transitions-unavailable" />
           ) : transitions.length === 0 ? (
             <p className="text-center py-8 text-[0.85rem] text-v3-text-muted">
@@ -398,8 +422,10 @@ export default async function FunnelDetailPage({ searchParams }: FunnelDetailPag
             <span className="text-[0.6rem] font-bold uppercase tracking-wider rounded px-1.5 py-0.5 bg-purple-100 text-purple-700">
               PostHog
             </span>
-            <span className="ml-auto text-[0.7rem] text-v3-text-muted">
-              {posthogConfigured ? (
+            <div className="ml-auto text-[0.7rem] text-v3-text-muted">
+              {conversionFunnel === null ? (
+                <Skeleton data-component="desktop_stats-funnel_page_conversion_card_rate_skeleton" className="h-4 w-20" />
+              ) : posthogConfigured ? (
                 <>
                   전환율{" "}
                   <strong className="text-v3-text">
@@ -407,9 +433,11 @@ export default async function FunnelDetailPage({ searchParams }: FunnelDetailPag
                   </strong>
                 </>
               ) : "—"}
-            </span>
+            </div>
           </header>
-          {posthogConfigured ? (
+          {conversionFunnel === null ? (
+            <Skeleton data-component="desktop_stats-funnel_page_conversion_card_body_skeleton" className="h-32 w-full" />
+          ) : posthogConfigured ? (
             <FunnelBars
               dataComponent="desktop_stats-funnel_page_conversion_card_body_bars"
               steps={conversionFunnel.steps}
