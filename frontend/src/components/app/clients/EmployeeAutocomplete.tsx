@@ -1,7 +1,7 @@
 "use client";
 
 import { useId, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
-import { Check, ChevronsUpDown, UserPlus, X, Loader2, Play } from "lucide-react";
+import { Check, ChevronsUpDown, UserPlus, X, Play } from "lucide-react";
 import { useEmployees, Employee } from "@/hooks/useEmployees";
 import { useLocale } from "@/providers/LocaleProvider";
 import { t } from "@/lib/i18n/translations";
@@ -15,6 +15,7 @@ import {
     FieldMessageText,
 } from "@/components/app/ui/field-message";
 import { Label } from "@/components/ui/label";
+import { LoadingState } from "@/components/app/ui/LoadingState";
 import { Button } from "@/components/ui/button";
 import { V3_INPUT_CONTROL_CLASS_NAME } from "@/components/ui/input";
 import { getGlintUiScaleForWindow } from "@/components/app/v3/useGlintUiScale";
@@ -305,14 +306,14 @@ export function EmployeeAutocomplete({
                             </span>
                             <div className="flex shrink-0 items-center gap-1">
                                 {isLoading && (
-                                    <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+                                    <LoadingState inline size="sm" label="제공인력 목록을 불러오는 중" data-component={`${dataComponent}_input_loading`} />
                                 )}
                                 {hasDisplayValue && !isLoading && (
                                     <span
                                         role="button"
                                         tabIndex={0}
                                         aria-label="제공인력 선택 해제"
-                                        className="flex h-5 w-5 cursor-pointer items-center justify-center text-muted-foreground transition-colors hover:text-foreground"
+                                        className="relative flex h-[calc(32px*var(--glint-ui-scale,1))] w-[calc(32px*var(--glint-ui-scale,1))] cursor-pointer items-center justify-center after:absolute after:left-1/2 after:top-1/2 after:h-[calc(44px*var(--glint-ui-scale,1))] after:w-[calc(44px*var(--glint-ui-scale,1))] after:-translate-x-1/2 after:-translate-y-1/2 after:content-[''] text-muted-foreground transition-colors hover:text-foreground"
                                         onPointerDown={(event) => {
                                             event.preventDefault();
                                             event.stopPropagation();
@@ -360,24 +361,25 @@ export function EmployeeAutocomplete({
                             }}
                             endElement={
                                 allowManualInput && !selectedEmployee ? (
-                                    <button
+                                    <Button
                                         type="button"
+                                        variant="ghost"
+                                        size="icon"
+                                        data-component={`${dataComponent}_dropdown_manual-input`}
                                         aria-label="수동 입력으로 진행"
                                         title="수동 입력으로 진행"
-                                        className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-transparent text-v3-primary transition-colors hover:text-v3-primary/80 disabled:cursor-not-allowed disabled:opacity-40"
+                                        className="shrink-0 bg-transparent text-v3-primary [&_svg]:size-3.5 transition-colors hover:text-v3-primary/80 disabled:cursor-not-allowed disabled:opacity-40"
                                         disabled={!commandInputValue.trim()}
                                         onClick={commitManualInput}
                                     >
                                         <Play className="h-3.5 w-3.5 fill-current" aria-hidden="true" />
-                                    </button>
+                                    </Button>
                                 ) : undefined
                             }
                         />
                         <CommandList>
                             {isLoading ? (
-                                <div className="flex items-center justify-center py-6">
-                                    <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
-                                </div>
+                                <LoadingState size="sm" label="제공인력 목록을 불러오는 중" data-component={`${dataComponent}_dropdown_loading`} className="py-6" />
                             ) : filteredEmployees.length === 0 ? (
                                 <CommandEmpty>
                                     <span className="text-muted-foreground">

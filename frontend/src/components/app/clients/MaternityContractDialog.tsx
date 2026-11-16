@@ -19,10 +19,10 @@ import {
   APP_DIALOG_FOOTER_CLASS_NAME,
   APP_DIALOG_HEADER_CLASS_NAME,
   APP_DIALOG_HEADER_ROW_CLASS_NAME,
-  APP_DIALOG_INLINE_CLOSE_BUTTON_CLASS_NAME,
   APP_DIALOG_TITLE_CLASS_NAME,
   APP_FORM_DIALOG_CONTENT_CLASS_NAME,
 } from "@/components/ui/app-surface";
+import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import {
   ContractCreationForm,
@@ -113,18 +113,20 @@ export function MaternityContractDialog({
             </DialogTitle>
 
             <DialogClose asChild>
-              <button
+              <Button
                 type="button"
+                variant="ghost"
+                size="icon"
                 disabled={isBusy}
                 data-component={`${BASE_DATA_COMPONENT}_close`}
                 className={cn(
-                  APP_DIALOG_INLINE_CLOSE_BUTTON_CLASS_NAME,
+                  "shrink-0 border-0 text-v3-text-muted hover:bg-transparent hover:text-v3-dark [&_svg]:size-[calc(20px*var(--glint-ui-scale,1))]",
                   isBusy && "cursor-not-allowed opacity-50",
                 )}
               >
                 <X className={APP_DIALOG_CLOSE_ICON_CLASS_NAME} />
                 <span className="sr-only">Close</span>
-              </button>
+              </Button>
             </DialogClose>
           </div>
           <DialogDescription className="sr-only">

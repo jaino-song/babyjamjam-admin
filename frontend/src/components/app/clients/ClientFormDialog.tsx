@@ -63,7 +63,7 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { Spinner } from "@/components/ui/spinner";
+import { LoadingState } from "@/components/app/ui/LoadingState";
 import { FormDialogShell } from "@/components/app/ui/FormDialogShell";
 import { FieldMessageText } from "@/components/app/ui/field-message";
 import {
@@ -1654,6 +1654,7 @@ function ClientFormContent({
     const isPanelSubmitBlocked = isPanelActionBlocked || isCalendarBlockingSubmit;
     const calendarLoadNotice = isCalendarReady && !isEndDateUnsupported && !calendarRefreshFailed ? null : (
         <CalendarLoadNotice
+            indicator="spinner"
             error={calendarError ?? (calendarRefreshFailed ? "load-failed" : isEndDateUnsupported ? "unsupported-year" : null)}
             onRetry={() => { setCalendarRefreshFailed(false); retryCalendar(); }}
             loading={!isCalendarReady && !calendarError}
@@ -1709,12 +1710,12 @@ function ClientFormContent({
                 size="sm"
                 onClick={() => void handleSubmit()}
                 disabled={isSubmitting || isUnknownOutcome || isCalendarBlockingSubmit || (!isLegacyNoopEdit && isPhoneCheckBlockingSubmit)}
+                loading={isSubmitting}
+                loadingLabel={isEditMode ? "저장 중" : "등록 중"}
                 data-component={`${base}_submit`}
                 className="w-full sm:flex-1"
             >
-                {isSubmitting ? (
-                    <Spinner className="h-4 w-4" />
-                ) : isEditMode ? (
+                {isEditMode ? (
                     t(locale, "common.save")
                 ) : (
                     t(locale, "common.create")
@@ -1767,12 +1768,12 @@ function ClientFormContent({
                         size="sm"
                         onClick={() => void handleSubmit()}
                         disabled={isPanelSubmitBlocked}
+                        loading={isSubmitting}
+                        loadingLabel={isEditMode ? "저장 중" : "등록 중"}
                         data-component={`${base}_submit`}
                         className="min-w-[calc(132px*var(--glint-ui-scale,1))]"
                     >
-                        {isSubmitting ? (
-                            <Spinner className="h-4 w-4" />
-                        ) : isEditMode ? (
+                        {isEditMode ? (
                             t(locale, "common.save")
                         ) : (
                             t(locale, "common.create")
@@ -1893,18 +1894,23 @@ function ClientFormContent({
                     label="관할 지역"
                     labelAccessory={renderSlotMessage(areaFieldMessage, areaMessageId, `${base}_basic-grid_field-area_helper`)}
                 >
-                    <FormNativeSelect
-                        id="clients-form-area"
-                        aria-describedby={areaMessageId}
-                        value={formData.areaId ?? ""}
-                        options={areaOptions}
-                        placeholder={isAvailableClientAreasLoading ? "지역을 불러오는 중" : "관할 지역 선택"}
-                        onValueChange={(value) => handleChange("areaId", value || null)}
-                        disabled={isAvailableClientAreasLoading}
-                        wrapDataComponent={`${base}_basic-grid_field-area_select-wrap`}
-                        selectDataComponent={`${base}_basic-grid_field-area_select`}
-                        iconDataComponent={`${base}_basic-grid_field-area_select-icon`}
-                    />
+                    <div className="relative">
+                        <FormNativeSelect
+                            id="clients-form-area"
+                            aria-describedby={areaMessageId}
+                            value={formData.areaId ?? ""}
+                            options={isAvailableClientAreasLoading ? [{ value: "", label: "" }, ...areaOptions] : areaOptions}
+                            placeholder={isAvailableClientAreasLoading ? "" : "관할 지역 선택"}
+                            onValueChange={(value) => handleChange("areaId", value || null)}
+                            disabled={isAvailableClientAreasLoading}
+                            wrapDataComponent={`${base}_basic-grid_field-area_select-wrap`}
+                            selectDataComponent={`${base}_basic-grid_field-area_select`}
+                            iconDataComponent={`${base}_basic-grid_field-area_select-icon`}
+                        />
+                        {isAvailableClientAreasLoading && (
+                            <LoadingState inline size="sm" label="지역을 불러오는 중" data-component={`${base}_basic-grid_field-area_loading`} className="absolute right-10 top-1/2 -translate-y-1/2" />
+                        )}
+                    </div>
                 </FormField>
 
                 <FormField
@@ -2051,7 +2057,7 @@ function ClientFormContent({
                             />
                             {(formData.voucherClient ? isPriceLoading : isOutOfPocketPriceLoading) && (
                                 <div className="absolute right-10 top-1/2 -translate-y-1/2">
-                                    <Spinner className="h-4 w-4" />
+                                    <LoadingState inline size="sm" label="요금 정보를 불러오는 중" data-component={`${base}_service-grid_field-duration_loading`} />
                                 </div>
                             )}
                         </div>
@@ -2340,18 +2346,23 @@ function ClientFormContent({
                 label="관할 지역"
                 labelAccessory={renderSlotMessage(areaFieldMessage, areaMessageId, `${base}_area-field_helper`)}
             >
-                <FormNativeSelect
-                    id="clients-form-panel-area"
-                    aria-describedby={areaMessageId}
-                    value={formData.areaId ?? ""}
-                    options={areaOptions}
-                    placeholder={isAvailableClientAreasLoading ? "지역을 불러오는 중" : "관할 지역 선택"}
-                    onValueChange={(value) => handleChange("areaId", value || null)}
-                    disabled={isAvailableClientAreasLoading}
-                    wrapDataComponent={`${base}_area-field_select-wrap`}
-                    selectDataComponent={`${base}_area-field_select`}
-                    iconDataComponent={`${base}_area-field_select-icon`}
-                />
+                <div className="relative">
+                    <FormNativeSelect
+                        id="clients-form-panel-area"
+                        aria-describedby={areaMessageId}
+                        value={formData.areaId ?? ""}
+                        options={isAvailableClientAreasLoading ? [{ value: "", label: "" }, ...areaOptions] : areaOptions}
+                        placeholder={isAvailableClientAreasLoading ? "" : "관할 지역 선택"}
+                        onValueChange={(value) => handleChange("areaId", value || null)}
+                        disabled={isAvailableClientAreasLoading}
+                        wrapDataComponent={`${base}_area-field_select-wrap`}
+                        selectDataComponent={`${base}_area-field_select`}
+                        iconDataComponent={`${base}_area-field_select-icon`}
+                    />
+                    {isAvailableClientAreasLoading && (
+                        <LoadingState inline size="sm" label="지역을 불러오는 중" data-component={`${base}_area-field_loading`} className="absolute right-10 top-1/2 -translate-y-1/2" />
+                    )}
+                </div>
             </FormField>
 
             <FormField
@@ -2485,7 +2496,7 @@ function ClientFormContent({
                     />
                     {(formData.voucherClient ? isPriceLoading : isOutOfPocketPriceLoading) && (
                         <div className="absolute right-10 top-1/2 -translate-y-1/2">
-                            <Spinner className="h-4 w-4" />
+                            <LoadingState inline size="sm" label="요금 정보를 불러오는 중" data-component={`${base}_duration-field_loading`} />
                         </div>
                     )}
                 </div>

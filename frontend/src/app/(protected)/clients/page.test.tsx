@@ -226,6 +226,7 @@ jest.mock("@/components/ui/alert", () => ({
 }));
 
 jest.mock("@/components/ui/button", () => ({
+  ...jest.requireActual("@/components/ui/button"),
   Button: ({ children, ...props }: { children: ReactNode }) => <button {...props}>{children}</button>,
 }));
 

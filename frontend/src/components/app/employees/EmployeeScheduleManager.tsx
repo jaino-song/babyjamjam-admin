@@ -27,6 +27,7 @@ import { StatusPill } from "@/components/app/ui/status-badge";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { ClientDetailPanel } from "@/components/app/clients/ClientDetailPanel";
+import { LoadingState } from "@/components/app/ui/LoadingState";
 import { QueryErrorState } from "@/components/app/ui/QueryErrorState";
 import { cn } from "@/lib/utils";
 
@@ -308,7 +309,7 @@ function MonthControls({ visibleMonth, range, onMonthChange, onToday }: MonthCon
                 <Button
                     type="button"
                     variant="ghost"
-                    size="sm"
+                    size="icon"
                     aria-label="이전 달"
                     disabled={!canGoPrevious}
                     onClick={() => onMonthChange(-1)}
@@ -322,7 +323,7 @@ function MonthControls({ visibleMonth, range, onMonthChange, onToday }: MonthCon
                 <Button
                     type="button"
                     variant="ghost"
-                    size="sm"
+                    size="icon"
                     aria-label="다음 달"
                     disabled={!canGoNext}
                     onClick={() => onMonthChange(1)}
@@ -599,10 +600,8 @@ export function EmployeeScheduleManager({
                     data-component={component("loading")}
                     data-slot="schedule-loading"
                     className="flex min-h-0 flex-1 items-center justify-center rounded-[28px] bg-white text-sm text-v3-text-muted shadow-v3"
-                    role="status"
-                    aria-label="일정 로딩 중"
                 >
-                    일정 불러오는 중…
+                    <LoadingState label="일정 로딩 중" data-component={component("loading_content")} />
                 </div>
             ) : isError && data === undefined ? (
                 <Alert data-component={component("error")} data-slot="schedule-error" variant="destructive" className="shrink-0">
