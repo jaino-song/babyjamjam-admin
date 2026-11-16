@@ -832,6 +832,22 @@ describe("SbEformsignDocumentJobRepository", () => {
         });
     });
 
+    it("normalizes a caller-supplied retry code in the SQL parameters", async () => {
+        queryRaw.mockResolvedValueOnce([row({ status: "queued" })]);
+        await repository.scheduleRetry(dispatchJobId, dispatchLeaseToken, new Date(), "operation_lock_unavailable");
+        const statement = queryRaw.mock.calls[0][0] as Prisma.Sql;
+        expect(statement.values).toContain("OPERATION_LOCK_UNAVAILABLE");
+        expect(statement.values).not.toContain("operation_lock_unavailable");
+    });
+
+    it.each(["markRequiresAttention", "markFailed"] as const)("normalizes a caller-supplied terminal code through %s", async (transition) => {
+        queryRaw.mockResolvedValueOnce([row({ status: "requires_attention" })]);
+        await repository[transition](dispatchJobId, dispatchLeaseToken, "ownership_changed");
+        const statement = queryRaw.mock.calls[0][0] as Prisma.Sql;
+        expect(statement.values).toContain("OWNERSHIP_CHANGED");
+        expect(statement.values).not.toContain("ownership_changed");
+    });
+
     it("scheduleRetry preserves the failed attempt's display detail", async () => {
         queryRaw.mockResolvedValueOnce([row({ status: "queued", progress_detail: "info-inserted" })]);
         const retried = await repository.scheduleRetry(dispatchJobId, dispatchLeaseToken, new Date(), "PRE_SEND_FAILURE");
@@ -1227,6 +1243,53 @@ describe("stored INITIAL finalization authorization and requeue", () => {
         return { repository: new SbEformsignDocumentJobRepository(prisma as never), stored, state, statements, queryRaw, executeRaw, tx, prisma };
     }
     const authorize = (f: ReturnType<typeof setup>) => f.repository.authorizeForDispatch({ jobId: dispatchJobId, leaseToken: dispatchLeaseToken, expectedContext: context });
+    it.each([dispatchBranchId, "other-branch"])("refuses non-INITIAL revision operations before ownership checks or locks for branch %s", async (branchId) => {
+        const f = setup({ job: {
+            source: "staff", request_key: `service-record-revision-operations:${revisionId}`,
+            payload: { kind: "service_record_revision_operations", context, operations: {} },
+        } });
+        await expect(f.repository.authorizeForDispatch({ jobId: dispatchJobId, leaseToken: dispatchLeaseToken,
+            expectedContext: { ...context, branchId } })).resolves.toEqual({
+            kind: "stale", reason: "SERVICE_RECORD_REVISION_CAPABILITY_UNVERIFIED",
+        });
+        expect(f.queryRaw).toHaveBeenCalledTimes(1);
+        expect(f.statements.join("\n")).not.toMatch(/FOR\s+UPDATE|pg_(?:try_)?advisory/i);
+        expect(f.executeRaw).not.toHaveBeenCalled();
+    });
+    it.each([{ branchId: "other-branch" }, { clientId: 99 }])("returns INITIAL scope changed for an expected owner mismatch %j", async (owner) => {
+        const f = setup();
+        await expect(f.repository.authorizeForDispatch({ jobId: dispatchJobId, leaseToken: dispatchLeaseToken,
+            expectedContext: { ...context, ...owner } })).resolves.toEqual({
+            kind: "stale", reason: "SERVICE_RECORD_INITIAL_FINALIZATION_SCOPE_CHANGED",
+        });
+        expect(f.queryRaw).toHaveBeenCalledTimes(1);
+        expect(f.executeRaw).not.toHaveBeenCalled();
+    });
+    it("returns INITIAL scope changed when the locked job reread has a different branch", async () => {
+        const f = setup();
+        const read = f.queryRaw.getMockImplementation()!; // setup always installs the SQL mock.
+        f.queryRaw.mockImplementation(async (query: unknown) => {
+            const result = await read(query);
+            const sql = sqlText(query);
+            return sql.includes('FROM "eformsign_document_job"') && sql.includes("FOR UPDATE")
+                ? [{ ...f.stored, branch_id: "other-branch" }] : result;
+        });
+        await expect(authorize(f)).resolves.toEqual({
+            kind: "stale", reason: "SERVICE_RECORD_INITIAL_FINALIZATION_SCOPE_CHANGED",
+        });
+        expect(f.statements.some((sql) => sql.includes('FROM "eformsign_document_job"') && sql.includes("FOR UPDATE"))).toBe(true);
+        expect(f.executeRaw).not.toHaveBeenCalled();
+        expect(f.statements.some((sql) => sql.includes('UPDATE "eformsign_document_job"'))).toBe(false);
+    });
+    it("keeps lost ownership_changed for a non-revision create owner mismatch", async () => {
+        const f = setup({ job: { source: "staff", request_key: "legacy-create", payload: { clientId: 7 } } });
+        await expect(f.repository.authorizeForDispatch({ jobId: dispatchJobId, leaseToken: dispatchLeaseToken,
+            expectedContext: { ...dispatchContext, branchId: "other-branch" } })).resolves.toEqual({
+            kind: "lost", reason: "ownership_changed",
+        });
+        expect(f.queryRaw).toHaveBeenCalledTimes(1);
+        expect(f.executeRaw).not.toHaveBeenCalled();
+    });
     const requeue = (f: ReturnType<typeof setup>) => f.repository.requeueInitialFinalizationJob({ jobId: dispatchJobId, branchId: dispatchBranchId });
     const diagnose = (f: ReturnType<typeof setup>) => f.repository.diagnoseInitialFinalizationJob({ jobId: dispatchJobId, branchId: dispatchBranchId });
     function expectReadOnly(f: ReturnType<typeof setup>) {

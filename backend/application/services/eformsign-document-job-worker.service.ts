@@ -1,5 +1,6 @@
 import { Inject, Injectable, Logger, Optional } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
+import { toJobErrorCode } from "domain/value-objects/eformsign-job-error-code";
 
 import {
     INITIAL_FINALIZATION_REQUEST_PREFIX,
@@ -72,6 +73,13 @@ const RETENTION_SWEEP_INTERVAL_MS = 60 * 60_000;
 const RECOVERY_SWEEP_INTERVAL_MS = 60 * 60_000;
 const RECOVERY_RENOTIFY_WINDOW_MS = 24 * 60 * 60_000;
 const FALLBACK_CLIENT_NAME = "고객";
+const REVISION_DISPATCH_ERROR_CODE_PATTERN = /^[A-Z0-9][A-Z0-9_:-]{0,79}$/;
+
+function revisionDispatchErrorCode(reason: unknown): string {
+    return typeof reason === "string" && REVISION_DISPATCH_ERROR_CODE_PATTERN.test(reason)
+        ? reason : "SERVICE_RECORD_REVISION_DISPATCH_NOT_AUTHORIZED";
+}
+
 const TEMPLATE_WORKFLOW_FAILURE_REASONS = new Set([
     "template_workflow_config_invalid",
     "template_workflow_unsupported",
@@ -482,15 +490,16 @@ export class EformsignDocumentJobWorkerService {
             return;
         }
         if (revisionAuthorization.kind !== "allow") {
+            const reason = revisionDispatchErrorCode(revisionAuthorization.reason);
             const attention = await this.repository.markRequiresAttention(
                 job.id,
                 job.leaseToken,
-                revisionAuthorization.reason ?? "SERVICE_RECORD_REVISION_DISPATCH_NOT_AUTHORIZED",
+                reason,
             );
             await this.recordAutoFinalizeTerminalOutcome(
                 job,
                 attention,
-                revisionAuthorization.reason ?? "SERVICE_RECORD_REVISION_DISPATCH_NOT_AUTHORIZED",
+                reason,
             );
             this.notifyTransition(attention);
             return;
@@ -625,8 +634,10 @@ export class EformsignDocumentJobWorkerService {
             return;
         }
 
-        const reason = (typeof result.reason === "string" ? result.reason.trim() : "")
-            || `SERVICE_RECORD_REVISION_OPERATION_${result.status.toUpperCase()}`;
+        const reason = revisionDispatchErrorCode(
+            (typeof result.reason === "string" ? result.reason.trim() : "")
+                || `SERVICE_RECORD_REVISION_OPERATION_${result.status.toUpperCase()}`,
+        );
         const attention = await this.repository.markRequiresAttention(job.id, leaseToken, reason);
         await this.recordAutoFinalizeTerminalOutcome(job, attention, reason);
         this.notifyTransition(attention);
@@ -1007,11 +1018,12 @@ export class EformsignDocumentJobWorkerService {
     private async handlePreSendFailure(job: EformsignDocumentJobEntity, errorCode: string): Promise<void> {
         const leaseToken = job.leaseToken;
         if (!leaseToken) return;
+        const code = toJobErrorCode(errorCode);
         if (job.contractGeneration) {
             const next = job.attempts <= MAX_PRE_SEND_RETRIES ? new Date(Date.now() + (PRE_SEND_RETRY_DELAYS_MS[job.attempts - 1] ?? PRE_SEND_RETRY_DELAYS_MS.at(-1)!)) : null;
             try {
                 if (!this.contractRecovery) return;
-                const result = await this.contractRecovery.recoverBeforeCreation({ jobId: job.id, leaseToken, contractGeneration: job.contractGeneration }, next, errorCode);
+                const result = await this.contractRecovery.recoverBeforeCreation({ jobId: job.id, leaseToken, contractGeneration: job.contractGeneration }, next, code);
                 if (!result) { await this.reconcile(job); return; }
                 if (result === "failed") this.notifyTransition(new EformsignDocumentJobEntity({ ...job, status: "failed", lastErrorCode: "PRE_SEND_RETRY_EXHAUSTED", completedAt: new Date(), leaseToken: null, activeKey: null }));
             } catch { /* Stale durable scope cannot authorize a retry or transition. */ }
@@ -1023,7 +1035,7 @@ export class EformsignDocumentJobWorkerService {
                 job.id,
                 leaseToken,
                 new Date(Date.now() + delayMs),
-                errorCode,
+                code,
             );
             return;
         }
