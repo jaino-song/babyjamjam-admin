@@ -118,11 +118,7 @@ function isTerminalTaskState(state: AgentTask["state"] | undefined): boolean {
     return state === "completed" || state === "failed" || state === "cancelled";
 }
 
-function isTruthy(value: string | undefined): boolean {
-    return value === "1" || value?.toLowerCase() === "true";
-}
-
-export type AgentShellState = "compatibility-off" | "loading" | "enabled" | "discovery-error";
+export type AgentDiscoveryState = "loading" | "enabled" | "discovery-error";
 export const AGENT_DISCOVERY_ERROR_MESSAGE = "AI 운영 코파일럿을 준비하지 못했습니다.";
 
 function isUsableCapabilityCatalog(value: unknown): boolean {
@@ -131,12 +127,10 @@ function isUsableCapabilityCatalog(value: unknown): boolean {
         && value.every((capability) => AgentCapabilityMetaSchema.safeParse(capability).success);
 }
 
-/** Resolve the effective server-side capability flag before mounting the new shell. */
-export function useAgentShellEnabled(): AgentShellState {
-    const shellConfigured = isTruthy(process.env.NEXT_PUBLIC_AGENT_SHELL_ENABLED);
-    const [state, setState] = useState<AgentShellState>(shellConfigured ? "loading" : "compatibility-off");
+/** Validate capabilities on every agent visit, independently of the retired UI flag. */
+export function useAgentCapabilities(): AgentDiscoveryState {
+    const [state, setState] = useState<AgentDiscoveryState>("loading");
     useEffect(() => {
-        if (!shellConfigured) return;
         let active = true;
         void (async () => {
             try {
@@ -150,7 +144,7 @@ export function useAgentShellEnabled(): AgentShellState {
             }
         })();
         return () => { active = false; };
-    }, [shellConfigured]);
+    }, []);
     return state;
 }
 
@@ -796,6 +790,7 @@ export function useAgentChat() {
     }, [refreshSessions, resetTaskSnapshot, stop]);
     return {
         messages,
+        currentSessionId: sessionId.current,
         status,
         errorState,
         sendMessage,

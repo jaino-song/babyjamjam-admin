@@ -33,12 +33,13 @@ describe("MobileBottomNav", () => {
     expect(screen.getByRole("link", { name: "전체" })).toHaveAttribute("aria-current", "page");
   });
 
-  it("leaves the dedicated agent shell full-screen on the chat route", () => {
-    mockUsePathname.mockReturnValue("/chat");
+  it("shows bottom navigation on the agent route", () => {
+    mockUsePathname.mockReturnValue("/agent");
 
     render(<MobileBottomNav />);
 
-    expect(screen.queryByRole("navigation")).not.toBeInTheDocument();
+    expect(screen.getByRole("navigation")).toBeInTheDocument();
+    expect(screen.getAllByRole("link")).toHaveLength(5);
   });
 
   it("keeps All active on the consultations route", () => {
