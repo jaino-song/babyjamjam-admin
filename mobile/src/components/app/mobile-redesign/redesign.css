@@ -4492,7 +4492,8 @@ body:has([data-slot="admin-feedback-content"]) [data-slot="admin-feedback-conten
   flex: 1;
   min-height: 0;
   padding: 12px 14px calc(var(--list-nav-height) + var(--list-nav-bottom) + 12px);
-  overflow: hidden;
+  overflow-x: hidden;
+  overflow-y: auto;
 }
 
 body.mobile-contracts-route [data-slot="list-content"] {
