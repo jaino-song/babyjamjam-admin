@@ -95,7 +95,7 @@ const Alert = React.forwardRef<HTMLDivElement, AlertProps>(
             onClick={onClose}
             data-component={componentSlots.closeButton}
             className={cn(
-              "absolute right-2 top-2 rounded-2xl p-1 opacity-70 ring-offset-background transition-opacity hover:opacity-100 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2",
+              "absolute right-1 top-1 flex h-8 w-8 items-center justify-center rounded-2xl p-0 opacity-70 ring-offset-background transition-opacity hover:opacity-100 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 after:absolute after:-inset-1.5 after:content-['']",
               closeButtonClassName
             )}
             aria-label={closeButtonLabel}

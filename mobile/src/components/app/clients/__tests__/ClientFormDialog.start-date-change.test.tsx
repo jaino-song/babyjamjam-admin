@@ -282,10 +282,11 @@ describe("ClientFormDialog start-date confirmation", () => {
         await screen.findByRole("dialog", { name: recordsTitle });
         await userEvent.setup().click(button("처음부터 시작"));
         expect(button("처음부터 시작")).toBeDisabled();
-        expect(button("모두 옮기기")).toBeDisabled();
+        expect(button("처리 중")).toBeDisabled();
+        expect(button("처리 중").querySelector('[data-slot="button-idle"]')).toHaveTextContent("모두 옮기기");
         expect(modal(recordsTitle)).toHaveAttribute("aria-busy", "true");
         fireEvent.click(button("처음부터 시작"));
-        fireEvent.click(button("모두 옮기기"));
+        fireEvent.click(button("처리 중"));
         expect(updateMutateAsync).toHaveBeenCalledTimes(2);
         await act(async () => resolveRetry(client));
         expect(props.onClose).toHaveBeenCalledTimes(1);

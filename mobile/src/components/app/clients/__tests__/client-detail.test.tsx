@@ -518,7 +518,7 @@ describe("contract void workflow", () => {
     const user = userEvent.setup();
     await user.click(screen.getByRole("button", { name: CONTRACT_VOID_COPY.action }));
     await user.click(screen.getByRole("button", { name: CONTRACT_VOID_COPY.confirm }));
-    const pending = screen.getByRole("button", { name: CONTRACT_VOID_COPY.pending });
+    const pending = screen.getByRole("button", { name: "처리 중" });
     expect(pending).toBeDisabled();
     expect(screen.getByRole("button", { name: CONTRACT_VOID_COPY.cancel })).toBeDisabled();
     await user.click(pending);

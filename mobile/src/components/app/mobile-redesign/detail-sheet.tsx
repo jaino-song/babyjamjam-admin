@@ -17,6 +17,7 @@ import type {
 import { Search, X } from "lucide-react";
 import Link from "next/link";
 
+import { ButtonLoadingContent } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 
@@ -38,6 +39,7 @@ export type DetailAction = {
   onClick?: () => void;
   disabled?: boolean;
   busy?: boolean;
+  busyLabel?: string;
   ariaLabel?: string;
   dataComponent?: string;
   className?: string;
@@ -558,15 +560,18 @@ export function MobileDetailActions({
         return (
           <button
             key={key}
-            className={actionClassName}
+            className={cn(action.busy && "relative", actionClassName)}
             type="button"
             onClick={action.onClick}
-            disabled={isDisabled}
+            disabled={action.busy || isDisabled}
             aria-busy={action.busy}
             aria-label={action.ariaLabel}
+            data-loading={action.busy ? "" : undefined}
             data-component={action.dataComponent ?? `${dataComponent}_action-${index + 1}`}
           >
-            {action.label}
+            <ButtonLoadingContent loading={action.busy} loadingLabel={action.busyLabel ?? "처리 중"}>
+              {action.label}
+            </ButtonLoadingContent>
           </button>
         );
       })}

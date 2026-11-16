@@ -17,6 +17,7 @@ interface ApprovalTwoButtonModalProps {
   cancelLabel?: ReactNode;
   approvalLabel: ReactNode;
   pendingLabel?: ReactNode;
+  pendingDisplay?: "spinner" | "text";
   onApprove: () => void | Promise<void>;
   isPending?: boolean;
   approvalDisabled?: boolean;
@@ -36,6 +37,7 @@ export function ApprovalTwoButtonModal({
   cancelLabel = "취소",
   approvalLabel,
   pendingLabel,
+  pendingDisplay = "spinner",
   onApprove,
   isPending = false,
   approvalDisabled = false,
@@ -124,10 +126,12 @@ export function ApprovalTwoButtonModal({
               )}
               data-component={sub("approve")}
               disabled={isPending || approvalDisabled}
+              loading={pendingDisplay === "spinner" && isPending}
+              loadingLabel={pendingLabel ?? "처리 중"}
               aria-busy={isPending || undefined}
               onClick={() => void onApprove()}
             >
-              {isPending ? (pendingLabel ?? approvalLabel) : approvalLabel}
+              {pendingDisplay === "text" && isPending ? (pendingLabel ?? approvalLabel) : approvalLabel}
             </Button>
           </div>
         </DialogPrimitive.Content>
