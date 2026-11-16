@@ -648,6 +648,17 @@ describe("INITIAL immutable rendering", () => {
         await expect(harness.usecase.executeRevision(input, harness.principal)).rejects.toMatchObject({ response: { code } });
         expect(harness.eformsignClient.createDocument).not.toHaveBeenCalled();
     });
+    it("refuses an INITIAL generation processing at the documents_created step", async () => {
+        const harness = createRevisionHarness();
+        const input = initialGenerationInput();
+        setAuthorizedInitialState(harness, input, { status: "processing", step: "documents_created" });
+
+        await expect(harness.usecase.executeRevision(input, harness.principal)).rejects.toMatchObject({
+            response: { code: "SERVICE_RECORD_REVISION_GENERATION_NOT_READY" },
+        });
+        expect(harness.credentialBoundary.withCredentials).not.toHaveBeenCalled();
+        expect(harness.eformsignClient.createDocument).not.toHaveBeenCalled();
+    });
     it("rejects an INITIAL snapshot reference mismatch", async () => {
         const harness = createRevisionHarness(); const input = initialGenerationInput();
         input.snapshotReference = "service-record-revision:case-1:draft-1";
