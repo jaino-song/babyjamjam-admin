@@ -16,7 +16,7 @@ import {
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Separator } from "@/components/ui/separator";
-import { Spinner } from "@/components/ui/spinner";
+import { ButtonLoadingContent } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { QueryErrorState } from "@/components/app/ui/QueryErrorState";
 import { settingsApi, type RibbonConfig } from "@/services/api";
@@ -339,20 +339,20 @@ export default function WebsiteAdminPage() {
                       <button
                         onClick={handleSave}
                         disabled={!isDirty || updateMutation.isPending}
+                        aria-busy={updateMutation.isPending ? "true" : undefined}
+                        data-loading={updateMutation.isPending ? "" : undefined}
                         className={`
-                          inline-flex items-center gap-2 px-6 py-2.5 rounded-xl text-sm font-medium transition-all duration-200
+                          ${updateMutation.isPending ? "relative" : ""} inline-flex items-center gap-2 px-6 py-2.5 rounded-xl text-sm font-medium transition-all duration-200
                           ${isDirty
                             ? "bg-[hsl(var(--v3-primary))] text-white hover:bg-[hsl(var(--v3-primary-hover))] shadow-md shadow-blue-500/20"
                             : "bg-muted text-muted-foreground cursor-not-allowed"
                           }
                         `}
                       >
-                        {updateMutation.isPending ? (
-                          <Spinner size="sm" />
-                        ) : (
+                        <ButtonLoadingContent loading={updateMutation.isPending} loadingLabel="저장 중">
                           <Save size={16} />
-                        )}
-                        저장
+                          저장
+                        </ButtonLoadingContent>
                       </button>
                     </div>
                   </div>

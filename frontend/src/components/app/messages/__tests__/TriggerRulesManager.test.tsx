@@ -963,7 +963,7 @@ describe("TriggerRulesManager", () => {
     expect(screen.queryByLabelText("발송 템플릿")).not.toBeInTheDocument();
     expect(screen.queryAllByRole("option")).toHaveLength(0);
     expect(screen.queryByText("제공기록지 작성 링크")).not.toBeInTheDocument();
-    expect(screen.getByText("템플릿 정보를 불러오는 중이에요.")).toBeInTheDocument();
+    expect(screen.getByRole("status", { name: "템플릿 정보를 불러오는 중" })).toBeInTheDocument();
   });
 
   it("shows the client registration greeting condition on the existing CLIENT_GREETING rule", () => {
@@ -1158,7 +1158,7 @@ describe("TriggerRulesManager", () => {
 
     const view = render(<TriggerRulesManager dataComponent="desktop_messages_sections_section-content_triggers-section_trigger-rules" />);
     fireEvent.click(screen.getAllByText("인사 메시지")[0]);
-    expect(screen.getAllByText("고객 자동 등록 설정을 불러오는 중이에요.").length).toBeGreaterThan(0);
+    expect(screen.getAllByRole("status", { name: "고객 자동 등록 설정을 불러오는 중" }).length).toBeGreaterThan(0);
     expect(screen.queryByRole("switch", { name: "전자문서 자동 등록 고객에게도 발송" })).not.toBeInTheDocument();
 
     mockSettingsQueries({
@@ -2130,7 +2130,7 @@ describe("TriggerRulesManager unknown loads (BJJ-434)", () => {
 
       render(<TriggerRulesManager dataComponent={DC} />);
 
-      expect(screen.getByText("이 지점의 메시지 자동 발송 설정을 불러오는 중이에요.")).toBeInTheDocument();
+      expect(screen.getByRole("status", { name: "이 지점의 메시지 자동 발송 설정을 불러오는 중" })).toBeInTheDocument();
       expect(screen.queryByText("설정 정보를 불러오지 못했어요.")).not.toBeInTheDocument();
       expect(screen.queryByText("이 지점의 메시지 자동 발송 설정을 확인할 수 없어요.")).not.toBeInTheDocument();
     });
@@ -2175,7 +2175,7 @@ describe("TriggerRulesManager unknown loads (BJJ-434)", () => {
       render(<TriggerRulesManager dataComponent={DC} />);
       fireEvent.click(screen.getAllByText("인사 메시지")[0]);
 
-      expect(screen.getAllByText("고객 자동 등록 설정을 불러오는 중이에요.").length).toBeGreaterThan(0);
+      expect(screen.getAllByRole("status", { name: "고객 자동 등록 설정을 불러오는 중" }).length).toBeGreaterThan(0);
       expect(screen.queryByRole("switch", { name: "전자문서 자동 등록 고객에게도 발송" })).not.toBeInTheDocument();
     });
   });
@@ -2183,7 +2183,7 @@ describe("TriggerRulesManager unknown loads (BJJ-434)", () => {
   describe("template catalog", () => {
     const NO_REQUIREMENTS_TEXT = "이 템플릿은 추가 정보 없이 발송할 수 있습니다.";
     const CATALOG_ERROR_TITLE = "템플릿 정보를 불러오지 못했습니다";
-    const CATALOG_LOADING_TEXT = "템플릿 정보를 불러오는 중이에요.";
+    const CATALOG_LOADING_TEXT = "템플릿 정보를 불러오는 중";
     const SERVICE_INFO_TEMPLATE = {
       key: "SERVICE_INFO",
       name: "서비스 안내",
@@ -2246,7 +2246,7 @@ describe("TriggerRulesManager unknown loads (BJJ-434)", () => {
       render(<TriggerRulesManager dataComponent={DC} />);
       openExistingRuleAndEdit();
 
-      expect(screen.getByText(CATALOG_LOADING_TEXT)).toBeInTheDocument();
+      expect(screen.getByRole("status", { name: CATALOG_LOADING_TEXT })).toBeInTheDocument();
       expect(screen.queryByRole("alert")).not.toBeInTheDocument();
       expect(screen.queryByText(CATALOG_ERROR_TITLE)).not.toBeInTheDocument();
       expect(screen.queryByText(NO_REQUIREMENTS_TEXT)).not.toBeInTheDocument();
@@ -2271,7 +2271,7 @@ describe("TriggerRulesManager unknown loads (BJJ-434)", () => {
       render(<TriggerRulesManager dataComponent={DC} />);
       openExistingRuleAndEdit();
 
-      expect(screen.getByText(CATALOG_LOADING_TEXT)).toBeInTheDocument();
+      expect(screen.getByRole("status", { name: CATALOG_LOADING_TEXT })).toBeInTheDocument();
       expect(screen.queryByText(NO_REQUIREMENTS_TEXT)).not.toBeInTheDocument();
       expect(screen.getByRole("button", { name: "저장" })).toBeDisabled();
     });
@@ -2291,7 +2291,7 @@ describe("TriggerRulesManager unknown loads (BJJ-434)", () => {
 
       expect(screen.getAllByText(NO_REQUIREMENTS_TEXT).length).toBeGreaterThan(0);
       expect(screen.queryByRole("alert")).not.toBeInTheDocument();
-      expect(screen.queryByText(CATALOG_LOADING_TEXT)).not.toBeInTheDocument();
+      expect(screen.queryByRole("status", { name: CATALOG_LOADING_TEXT })).not.toBeInTheDocument();
       expect(screen.getByLabelText("발송 템플릿")).toBeInTheDocument();
       expect(screen.getByRole("button", { name: "저장" })).toBeEnabled();
     });
@@ -2946,7 +2946,7 @@ describe("canonical recipient groups and read-only preview", () => {
     const labels = ["규칙 이름", "이벤트 기준", "발송 시점", "발송 시각 (한국 시간)", "수신 대상", "대상 고객 상태", "기준 일수", "발송 템플릿", ...(operation === "create" ? ["고객 템플릿"] : ["주제공인력 템플릿", "보조제공인력 템플릿"])];
     for (const label of labels) expect(screen.getByLabelText(label)).toBeDisabled();
     expect(screen.getByRole("switch", { name: "실패 시 재전송" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "저장 중..." })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "저장 중" })).toBeDisabled();
     const saved: MessageTriggerRuleGroupView = operation === "create"
       ? { ...group, id: "group-created", name: "저장할 초안", version: 1, recipientMode: "CLIENT", recipientTemplates: { CLIENT: "SERVICE_INFO" }, offsetDays: 7, sendTime: "09:00", rules: [{ ...group.rules[0], id: "created-child", groupId: "group-created", recipientType: "CLIENT", templateKey: "SERVICE_INFO", offsetDays: 7, sendTime: "09:00" }] }
       : { ...group, name: "저장할 초안", version: 5 };

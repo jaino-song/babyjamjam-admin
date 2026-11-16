@@ -171,8 +171,10 @@ export function SystemTemplatesManager({
           data-component={component("footer_save-button")}
           disabled={!draft?.isDirty || !draft.isValid || isSaving}
           onClick={handleSave}
+          loading={isSaving}
+          loadingLabel="저장 중"
         >
-          {isSaving ? "저장 중..." : "저장"}
+          저장
         </Button>
       </div>
     </>

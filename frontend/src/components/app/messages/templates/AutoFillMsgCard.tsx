@@ -21,7 +21,7 @@ export interface AutoFillMsgCardMetaItem {
 export interface AutoFillMsgCardVariableItem {
   token: string;
   label: string;
-  value: string;
+  value: ReactNode;
 }
 
 export type AutoFillMsgCardLayout = "grouped" | "flat";

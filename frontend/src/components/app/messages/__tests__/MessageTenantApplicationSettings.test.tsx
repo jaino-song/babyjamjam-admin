@@ -650,7 +650,7 @@ describe("MessageTenantApplicationSettings", () => {
 
     const view = render(<MessageTenantApplicationSettings />);
 
-    expect(screen.getAllByText("설정 정보를 불러오는 중입니다.")).toHaveLength(2);
+    expect(screen.getAllByRole("status", { name: "설정 정보를 불러오는 중" })).toHaveLength(2);
     expect(screen.queryByText("제공기록지 전송 자동화 규칙")).not.toBeInTheDocument();
 
     mockSettingsQueries(true);
@@ -899,7 +899,7 @@ describe("MessageTenantApplicationSettings", () => {
 
       render(<MessageTenantApplicationSettings />);
 
-      expect(screen.getAllByText("설정 정보를 불러오는 중입니다.")).toHaveLength(2);
+      expect(screen.getAllByRole("status", { name: "설정 정보를 불러오는 중" })).toHaveLength(2);
       expect(screen.queryByText("메시지 발송 기능 신청")).not.toBeInTheDocument();
       expect(screen.queryByText("0개")).not.toBeInTheDocument();
       expect(screen.queryByText("표시할 설정 항목이 없습니다.")).not.toBeInTheDocument();
@@ -913,7 +913,7 @@ describe("MessageTenantApplicationSettings", () => {
 
       render(<MessageTenantApplicationSettings />);
 
-      expect(screen.getAllByText("설정 정보를 불러오는 중입니다.")).toHaveLength(2);
+      expect(screen.getAllByRole("status", { name: "설정 정보를 불러오는 중" })).toHaveLength(2);
       expect(screen.queryByText("0개")).not.toBeInTheDocument();
       expect(screen.queryByText("현재 지점의 메시지 자동 발송 설정을 확인할 수 없어요.")).not.toBeInTheDocument();
       expect(screen.queryByRole("alert")).not.toBeInTheDocument();
@@ -926,7 +926,7 @@ describe("MessageTenantApplicationSettings", () => {
 
       render(<MessageTenantApplicationSettings />);
 
-      expect(screen.getAllByText("설정 정보를 불러오는 중입니다.")).toHaveLength(2);
+      expect(screen.getAllByRole("status", { name: "설정 정보를 불러오는 중" })).toHaveLength(2);
       expect(screen.queryByText("0개")).not.toBeInTheDocument();
     });
 
@@ -943,7 +943,7 @@ describe("MessageTenantApplicationSettings", () => {
       const alert = screen.getByRole("alert");
       expect(within(alert).getByText("자동 전송 루틴을 불러오지 못했습니다")).toBeInTheDocument();
       expect(screen.queryByText(ORDER_EMPTY_TEXT)).not.toBeInTheDocument();
-      expect(screen.queryByText(ORDER_LOADING_TEXT)).not.toBeInTheDocument();
+      expect(screen.queryByRole("status", { name: ORDER_LOADING_TEXT })).not.toBeInTheDocument();
 
       // A dirty form must still not be saveable: the order would be built from zero rules.
       fireEvent.change(screen.getByRole("spinbutton", { name: "늦은 등록 자동 전송 간격" }), {
@@ -963,7 +963,7 @@ describe("MessageTenantApplicationSettings", () => {
       render(<MessageTenantApplicationSettings />);
       fireEvent.click(screen.getAllByText("지난 자동 전송 처리 규칙")[0]);
 
-      expect(screen.getByText(ORDER_LOADING_TEXT)).toBeInTheDocument();
+      expect(screen.getByRole("status", { name: ORDER_LOADING_TEXT })).toBeInTheDocument();
       expect(screen.queryByText(ORDER_EMPTY_TEXT)).not.toBeInTheDocument();
       expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     });

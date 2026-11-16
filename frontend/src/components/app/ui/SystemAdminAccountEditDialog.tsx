@@ -262,8 +262,8 @@ export function SystemAdminAccountEditDialog({
             >
               취소
             </Button>
-            <Button type="submit" form={formId} variant="positive" disabled={isPending}>
-              {isPending ? "저장 중…" : "저장"}
+            <Button type="submit" form={formId} variant="positive" disabled={isPending} loading={isPending} loadingLabel="저장 중">
+              저장
             </Button>
           </>
         }

@@ -319,11 +319,13 @@ export function MessageHistoryDetailPanel({
       size="sm"
       variant="outline"
       onClick={selectedRecord?.isRetryBlocked ? undefined : onRetry}
+      loading={isRetrying}
+      loadingLabel={retryPendingLabel}
       disabled={isRetrying || !!retryBlock || !!selectedRecord?.isRetryBlocked}
       className="rounded-full"
     >
-      <RotateCcw className={cn("h-3.5 w-3.5", isRetrying && "animate-spin")} />
-      {isRetrying ? retryPendingLabel : "재발송"}
+      <RotateCcw className="h-3.5 w-3.5" />
+      재발송
     </Button>
   );
 
