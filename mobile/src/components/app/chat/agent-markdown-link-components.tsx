@@ -20,9 +20,8 @@ import { isSameOriginPath } from "@babyjamjam/shared/utils";
 //
 // This module is shared by every surface that renders model/assistant
 // markdown in this app: MobileAgentPartRegistry (via AgentMarkdownText) and
-// every legacy chat renderer (AssistantMessage and LegacyChatPage). Model
-// output reaches legacy chat on every branch that has not been switched to
-// the AgentShell, so the same link/image restrictions must apply there too.
+// the admin feedback conversation viewer. Both apply the same link/image
+// restrictions to model-authored output.
 
 /**
  * Same-origin check on the exact href value react-markdown renders (after

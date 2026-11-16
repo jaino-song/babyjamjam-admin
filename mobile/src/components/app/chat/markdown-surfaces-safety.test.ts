@@ -2,7 +2,7 @@ import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
 
 // Every file that renders markdown must use the safe link/img overrides
-// (BJJ-352): model-authored markdown reaches chat, legacy chat and the admin
+// (BJJ-352): model-authored markdown reaches the agent and the admin
 // chat-history viewers, and a plain ReactMarkdown renders live external
 // links and <img> (a zero-click exfiltration channel).
 const SRC = join(__dirname, "../../../");

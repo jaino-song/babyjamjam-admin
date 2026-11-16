@@ -93,7 +93,7 @@ it('preserves cached stats with a stats-only stale notice and retry state', () =
   expect(refetch).not.toHaveBeenCalled();
   stats = { ...stats, isFetching: true, fetchStatus: 'fetching' };
   rerender(<AdminFeedbackPage />);
-  expect(screen.getByRole('button', { name: '다시 시도' })).toBeDisabled();
+  expect(screen.getByRole('button', { name: '다시 시도 중' })).toBeDisabled();
 });
 
 it.each([false, true])('uses one list alert to retry both failed queries (cached list=%s)', (cached) => {
@@ -113,7 +113,7 @@ it.each([false, true])('disables the list alert while failed cached stats retry 
   stats = { ...stats, data: { total: 7, positive: 7, negative: 0 }, isError: true, status: 'error', isFetching: true, fetchStatus: 'fetching' };
   render(<AdminFeedbackPage />);
   expect(screen.getAllByRole('alert')).toHaveLength(1);
-  expect(screen.getByRole('button', { name: '다시 시도' })).toBeDisabled();
+  expect(screen.getByRole('button', { name: '다시 시도 중' })).toBeDisabled();
   expect(screen.getAllByText('7')).toHaveLength(1);
 });
 
@@ -153,7 +153,7 @@ it.each([false, true])('keeps cached list (empty=%s) and one inline retry notice
   expect(statsRefetch).not.toHaveBeenCalled();
   list = { ...list, isFetching: true, fetchStatus: 'fetching' };
   rerender(<AdminFeedbackPage />);
-  expect(screen.getByRole('button', { name: '다시 시도' })).toBeDisabled();
+  expect(screen.getByRole('button', { name: '다시 시도 중' })).toBeDisabled();
 });
 
 it('does not turn a cached paused refetch into loading', () => {

@@ -134,6 +134,8 @@ export function MessageTriggerEditor({
   });
   const sendTimeInitialized = useRef(Boolean(rule || group));
   const groupMode = !rule;
+  const hasDeleteAction = Boolean(group || rule && !rule.isDefault);
+  const hasActionPair = Boolean(onCancel) && !hasDeleteAction;
   const [expectedGroupVersion, setExpectedGroupVersion] = useState(group?.version ?? null);
   const [form, setForm] = useState<RuleForm>(() => group ? { ...initialForm(null), name: group.name, isActive: group.isActive, eventType: group.eventType, offsetType: group.offsetType, offsetDays: group.offsetDays, sendTime: group.sendTime, targetClientStatus: group.targetClientStatus, retryOnFailure: group.retryOnFailure } : initialForm(rule));
   const [recipientMode, setRecipientMode] = useState<MessageTriggerRecipientMode>(group?.recipientMode ?? rule?.recipientType ?? "CLIENT");
@@ -462,8 +464,8 @@ export function MessageTriggerEditor({
         {error ? <p className="text-sm font-semibold text-v3-burgundy" role="alert">{error}</p> : null}
 
         <div className="flex gap-2" data-component={`${dataComponent}_form_actions`}>
-          {onCancel ? <Button type="button" data-component={`${dataComponent}_form_actions_cancel`} variant="v3-soft" disabled={isPending} onClick={onCancel}>취소</Button> : null}
-          {(group || rule && !rule.isDefault) ? (
+          {onCancel ? <Button type="button" data-component={`${dataComponent}_form_actions_cancel`} className={hasActionPair ? "flex-1" : undefined} variant="v3-soft" disabled={isPending} onClick={onCancel}>취소</Button> : null}
+          {hasDeleteAction ? (
             <button
               type="button"
               className="btn btn-secondary min-h-11"
@@ -477,7 +479,7 @@ export function MessageTriggerEditor({
           <button
             type="submit"
             data-component={`${dataComponent}_form_actions_save`}
-            className={`btn btn-primary min-h-11 flex-1${isPending ? " relative" : ""}`}
+            className={`btn btn-primary min-h-11 ${hasActionPair ? "flex-[2]!" : "flex-1"}${isPending ? " relative" : ""}`}
             disabled={isPending || !validDraft || groupMode && !branchId}
             aria-busy={isPending ? true : undefined}
             data-loading={isPending ? "" : undefined}

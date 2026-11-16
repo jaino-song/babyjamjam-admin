@@ -78,7 +78,7 @@ export function QueryErrorState({
         data-slot="retry"
         disabled={isRetrying}
         loading={isRetrying}
-        loadingLabel="다시 시도"
+        loadingLabel="다시 시도 중"
         onClick={onRetry}
       >
         다시 시도

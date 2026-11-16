@@ -176,16 +176,6 @@ export function AgentActionApprovalCard({
                 )}
                 {!terminal && <div data-component={sub("actions")} data-slot="actions" className="flex flex-wrap gap-2">
                     <Button
-                        data-component={sub("actions_approve")}
-                        type="button"
-                        size="sm"
-                        className="min-h-11 flex-1"
-                        disabled={approvalDisabled}
-                        onClick={() => onApprove?.(actionId, expectedRevision, acknowledgementToken)}
-                    >
-                        승인하고 실행
-                    </Button>
-                    <Button
                         data-component={sub("actions_reject")}
                         type="button"
                         size="sm"
@@ -195,6 +185,16 @@ export function AgentActionApprovalCard({
                         onClick={() => onReject?.(actionId)}
                     >
                         거절
+                    </Button>
+                    <Button
+                        data-component={sub("actions_approve")}
+                        type="button"
+                        size="sm"
+                        className="min-h-11 flex-[2]"
+                        disabled={approvalDisabled}
+                        onClick={() => onApprove?.(actionId, expectedRevision, acknowledgementToken)}
+                    >
+                        승인하고 실행
                     </Button>
                 </div>}
             </CardContent>

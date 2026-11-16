@@ -76,11 +76,11 @@ export function MessageSenderApprovalModal({
               </Button>
             ) : (
               <>
-                <Button type="button" variant="v3" className="flex-1" onClick={onRequest}>
-                  신청하기
-                </Button>
                 <Button type="button" variant="outline" className="flex-1" onClick={onCancel}>
                   취소
+                </Button>
+                <Button type="button" variant="v3" className="flex-[2]" onClick={onRequest}>
+                  신청하기
                 </Button>
               </>
             )}

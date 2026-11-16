@@ -246,7 +246,7 @@ describe("AI chat API routes", () => {
   });
 
   it("accepts a null sessionId for new chat sessions", async () => {
-    // Regression (PR #236 review): useChatStream sends sessionId: null until
+    // Regression (PR #236 review): new sessions can send sessionId: null until
     // the backend assigns one; the proxy must not 400 first-time chats.
     setAuthCookie("auth-token");
     mockFetch.mockResolvedValue(

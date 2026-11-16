@@ -122,7 +122,7 @@ describe("mobile prices page load failures", () => {
 
       render(<PricesPage />);
 
-      expect(screen.getByRole("button", { name: "다시 시도" })).toBeDisabled();
+      expect(screen.getByRole("button", { name: "다시 시도 중" })).toBeDisabled();
     });
   });
 
@@ -173,7 +173,7 @@ describe("mobile prices page load failures", () => {
 
       render(<PricesPage />);
 
-      expect(screen.getByRole("button", { name: "다시 시도" })).toBeDisabled();
+      expect(screen.getByRole("button", { name: "다시 시도 중" })).toBeDisabled();
     });
 
     it("shows rows with no alert after a successful load", () => {

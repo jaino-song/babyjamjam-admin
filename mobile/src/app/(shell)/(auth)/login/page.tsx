@@ -199,7 +199,7 @@ const LoginPage = () => {
               disabled={isResendingVerification}
               data-component={`${LOGIN_BASE}_server-error_verify-email-link`}
             >
-              <ButtonLoadingContent loading={isResendingVerification} loadingLabel="재발송 중…">인증 이메일 재발송</ButtonLoadingContent>
+              <ButtonLoadingContent loading={isResendingVerification} loadingLabel="재발송 중">인증 이메일 재발송</ButtonLoadingContent>
             </button>
           )}
         </div>
@@ -260,7 +260,7 @@ const LoginPage = () => {
           disabled={isBusy}
           data-component={`${LOGIN_BASE}_form_submit-button`}
         >
-          <ButtonLoadingContent loading={isBusy} loadingLabel="로그인 중…">로그인</ButtonLoadingContent>
+          <ButtonLoadingContent loading={isBusy} loadingLabel="로그인 중">로그인</ButtonLoadingContent>
         </button>
       </form>
 

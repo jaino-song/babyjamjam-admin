@@ -236,7 +236,7 @@ describe("FileStorageScreen documents load states", () => {
     mockDocuments(success([makeDocument("1")], { isError: true, isFetching: true, status: "error" }));
     render(<FileStorageScreen />);
 
-    expect(screen.getByRole("button", { name: "다시 시도" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "다시 시도 중" })).toBeDisabled();
   });
 
   it("shows the empty text plus the inline notice when a refetch fails over a cached empty list", () => {
@@ -277,7 +277,7 @@ describe("FileStorageScreen documents load states", () => {
     const { container } = render(<FileStorageScreen />);
     const pane = openDetailPane(container, "계약서 1.pdf");
 
-    expect(within(pane).getByRole("button", { name: "다시 시도" })).toBeDisabled();
+    expect(within(pane).getByRole("button", { name: "다시 시도 중" })).toBeDisabled();
   });
 
   it("shows no notice in the open detail after a successful load", () => {

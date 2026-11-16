@@ -683,7 +683,7 @@ describe("ClientServiceRecords: loading, failed and empty are different states",
     it("disables the retry button while a refresh is in flight", () => {
         renderState({ isError: true, isRefreshing: true, onRefresh: jest.fn() });
 
-        expect(screen.getByRole("button", { name: "다시 시도" })).toBeDisabled();
+        expect(screen.getByRole("button", { name: "다시 시도 중" })).toBeDisabled();
     });
 
     it("keeps the cached data visible and shows a notice with retry when a refetch failed", async () => {

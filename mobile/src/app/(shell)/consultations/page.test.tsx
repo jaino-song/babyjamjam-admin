@@ -117,7 +117,7 @@ describe("mobile consultations page", () => {
     expect(refetch).toHaveBeenCalledTimes(1);
     mockUseConsultationInquiries.mockReturnValue({ data, isError: true, isLoading: false, isFetching: true, refetch });
     rerender(<ConsultationsPage />);
-    expect(screen.getByRole("button", { name: "다시 시도" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "다시 시도 중" })).toBeDisabled();
   });
 
   it("shows real zero counts and existing empty text after a successful empty load", () => {

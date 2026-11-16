@@ -557,7 +557,7 @@ function LinkCard({
                     : "기존 링크가 그대로 포함된 메시지를 다시 전송합니다."}
                 isDescriptionVisuallyHidden={false}
                 approvalLabel="메시지 재전송"
-                pendingLabel="메시지 재전송 중..."
+                pendingLabel="메시지 재전송 중"
                 approvalDisabled={isLinkSending}
                 isPending={isPending}
                 onApprove={handleConfirmResend}
