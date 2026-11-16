@@ -57,14 +57,14 @@ export default async function InquiriesDetailPage({ searchParams }: InquiriesDet
   const posthogConfigured = isPostHogConfigured();
 
   const [summary, daily, hourly, recent] = await Promise.all([
-    loadPostHogStat(getInquiriesSummary(branchSlug, period)),
-    loadPostHogStat(getInquiriesDailyTrend(period, branchSlug)),
-    loadPostHogStat(getInquiriesHourlyToday(branchSlug)),
-    loadPostHogStat(getRecentInquiries(10, branchSlug, period)),
+    posthogConfigured ? loadPostHogStat(getInquiriesSummary(branchSlug, period)) : null,
+    posthogConfigured ? loadPostHogStat(getInquiriesDailyTrend(period, branchSlug)) : null,
+    posthogConfigured ? loadPostHogStat(getInquiriesHourlyToday(branchSlug)) : null,
+    posthogConfigured ? loadPostHogStat(getRecentInquiries(10, branchSlug, period)) : null,
   ]);
-  const byBranch = isOwner ? await loadPostHogStat(getInquiriesByBranch(period)) : [];
+  const byBranch = posthogConfigured && isOwner ? await loadPostHogStat(getInquiriesByBranch(period)) : [];
 
-  const hasPostHogError = [summary, daily, hourly, recent, byBranch].some((value) => value === null);
+  const hasPostHogError = posthogConfigured && [summary, daily, hourly, recent, byBranch].some((value) => value === null);
 
   // Build selected-range bar data
   const dailyMap = new Map((daily ?? []).map((p) => [p.day, p.count]));
@@ -119,7 +119,7 @@ export default async function InquiriesDetailPage({ searchParams }: InquiriesDet
           className="grid grid-cols-2 lg:grid-cols-5 gap-3"
         >
           <KpiCard
-            isLoading={summary === null}
+            isLoading={posthogConfigured && summary === null}
             iconEmoji="📝"
             label="오늘"
             value={posthogConfigured && summary ? summary.today : "—"}
@@ -128,7 +128,7 @@ export default async function InquiriesDetailPage({ searchParams }: InquiriesDet
             dataComponent="desktop_stats-inquiries_page_kpi_grid_card-today"
           />
           <KpiCard
-            isLoading={summary === null}
+            isLoading={posthogConfigured && summary === null}
             iconEmoji="📅"
             label="어제"
             value={posthogConfigured && summary ? summary.yesterday : "—"}
@@ -136,7 +136,7 @@ export default async function InquiriesDetailPage({ searchParams }: InquiriesDet
             dataComponent="desktop_stats-inquiries_page_kpi_grid_card-yesterday"
           />
           <KpiCard
-            isLoading={summary === null}
+            isLoading={posthogConfigured && summary === null}
             iconEmoji="📊"
             label={`${statsPeriodLabel(period)} 합계`}
             value={posthogConfigured && summary ? summary.selectedRange.total : "—"}
@@ -145,7 +145,7 @@ export default async function InquiriesDetailPage({ searchParams }: InquiriesDet
             dataComponent="desktop_stats-inquiries_page_kpi_grid_card-week"
           />
           <KpiCard
-            isLoading={summary === null}
+            isLoading={posthogConfigured && summary === null}
             iconEmoji="🔀"
             label={`전환율 (${statsPeriodLabel(period)})`}
             value={posthogConfigured && summary ? summary.selectedRange.conversionRate.toFixed(1) : "—"}
@@ -153,7 +153,7 @@ export default async function InquiriesDetailPage({ searchParams }: InquiriesDet
             dataComponent="desktop_stats-inquiries_page_kpi_grid_card-conversion"
           />
           <KpiCard
-            isLoading={summary === null}
+            isLoading={posthogConfigured && summary === null}
             iconEmoji="⏱"
             label="최근 신청"
             value={posthogConfigured && summary ? formatRelativeKo(summary.lastSubmissionAt) : "—"}
@@ -174,15 +174,15 @@ export default async function InquiriesDetailPage({ searchParams }: InquiriesDet
               PostHog
             </span>
             <div className="ml-auto text-[0.7rem] text-v3-text-muted">
-              {summary === null ? (
+              {!posthogConfigured ? "—" : summary === null ? (
                 <Skeleton data-component="desktop_stats-inquiries_page_daily_card_total-skeleton" className="h-4 w-16" />
-              ) : posthogConfigured ? `총 ${summary.selectedRange.total}건` : "—"}
+              ) : `총 ${summary.selectedRange.total}건`}
             </div>
           </header>
-          {daily === null ? (
-            <Skeleton data-component="desktop_stats-inquiries_page_daily_card_skeleton" className="h-32 w-full" />
-          ) : !posthogConfigured ? (
+          {!posthogConfigured ? (
             <StatsSourceEmpty source="PostHog" dataComponent="desktop_stats-inquiries_page_daily-unavailable" />
+          ) : daily === null ? (
+            <Skeleton data-component="desktop_stats-inquiries_page_daily_card_skeleton" className="h-32 w-full" />
           ) : daily.every((point) => point.count === 0) ? (
               <p className="text-center py-10 text-[0.85rem] text-v3-text-muted">
               {statsPeriodLabel(period)} 상담 신청이 없어요.
@@ -230,10 +230,10 @@ export default async function InquiriesDetailPage({ searchParams }: InquiriesDet
               PostHog
             </span>
           </header>
-          {hourly === null ? (
-            <Skeleton data-component="desktop_stats-inquiries_page_breakdown_hourly-card_skeleton" className="h-32 w-full" />
-          ) : !posthogConfigured ? (
+          {!posthogConfigured ? (
             <StatsSourceEmpty source="PostHog" dataComponent="desktop_stats-inquiries_page_breakdown_hourly-unavailable" />
+          ) : hourly === null ? (
+            <Skeleton data-component="desktop_stats-inquiries_page_breakdown_hourly-card_skeleton" className="h-32 w-full" />
           ) : hourly.every((p) => p.count === 0) ? (
             <p className="text-center py-6 text-[0.85rem] text-v3-text-muted">
               오늘은 아직 상담 신청이 없어요.
@@ -283,10 +283,10 @@ export default async function InquiriesDetailPage({ searchParams }: InquiriesDet
                 PostHog
               </span>
             </header>
-            {byBranch === null ? (
-              <Skeleton data-component="desktop_stats-inquiries_page_breakdown_branch-card_skeleton" className="h-32 w-full" />
-            ) : !posthogConfigured ? (
+            {!posthogConfigured ? (
               <StatsSourceEmpty source="PostHog" dataComponent="desktop_stats-inquiries_page_breakdown_branch-unavailable" />
+            ) : byBranch === null ? (
+              <Skeleton data-component="desktop_stats-inquiries_page_breakdown_branch-card_skeleton" className="h-32 w-full" />
             ) : byBranch.length === 0 ? (
               <p className="text-center py-6 text-[0.85rem] text-v3-text-muted">
                 지점별 데이터가 아직 없어요.
@@ -329,10 +329,10 @@ export default async function InquiriesDetailPage({ searchParams }: InquiriesDet
               PII 마스킹 적용
             </span>
           </header>
-          {recent === null ? (
-            <Skeleton data-component="desktop_stats-inquiries_page_recent_card_skeleton" className="h-32 w-full" />
-          ) : !posthogConfigured ? (
+          {!posthogConfigured ? (
             <StatsSourceEmpty source="PostHog" dataComponent="desktop_stats-inquiries_page_recent-unavailable" />
+          ) : recent === null ? (
+            <Skeleton data-component="desktop_stats-inquiries_page_recent_card_skeleton" className="h-32 w-full" />
           ) : recent.length === 0 ? (
             <p className="text-center py-8 text-[0.85rem] text-v3-text-muted">
               {statsPeriodLabel(period)} 상담 신청이 없어요.

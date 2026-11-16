@@ -4,6 +4,7 @@ import { LoginPageMobile } from "./login/mobile/login-page-mobile";
 import { ForgotPasswordPageContent } from "./forgot-password/shared/forgot-password-page-content";
 import { VerifyEmailPageContent } from "./verify-email/shared/verify-email-page-content";
 import { RegisterPageContent } from "./register/shared/register-page-content";
+import { ResetPasswordPageContent } from "./reset-password/shared/reset-password-page-content";
 
 const mockBusy = true;
 const mockResend = jest.fn();
@@ -47,6 +48,13 @@ jest.mock("./register/shared/use-register-page-controller", () => {
   };
 });
 
+jest.mock("./reset-password/shared/use-reset-password-page-controller", () => {
+  const actual = jest.requireActual<typeof import("./reset-password/shared/use-reset-password-page-controller")>("./reset-password/shared/use-reset-password-page-controller");
+  return {
+    useResetPasswordPageController: () => ({ ...actual.useResetPasswordPageController(), status: "ready", isLoading: mockBusy }),
+  };
+});
+
 beforeAll(() => {
   global.ResizeObserver = class { observe() {} unobserve() {} disconnect() {} };
 });
@@ -56,6 +64,7 @@ it.each([
   ["forgot password", () => <ForgotPasswordPageContent variant="mobile" />, "메일 보내는 중"],
   ["verify email", () => <VerifyEmailPageContent variant="mobile" />, "인증 메일 보내는 중"],
   ["register", () => <RegisterPageContent variant="mobile" />, "회원가입 중"],
+  ["reset password", () => <ResetPasswordPageContent variant="mobile" />, "변경 중"],
 ] as const)("keeps the narrow %s primary action at 40px with pill corners", (_page, content, name) => {
   render(content());
   const button = screen.getByRole("button", { name });

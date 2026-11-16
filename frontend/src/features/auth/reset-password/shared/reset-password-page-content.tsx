@@ -39,7 +39,7 @@ export function ResetPasswordPageContent({ variant }: ResetPasswordPageContentPr
     goToForgotPassword,
   } = useResetPasswordPageController();
 
-  const actionButtonClassName = cn("w-full", variant === "mobile" && "rounded-2xl");
+  const actionButtonClassName = cn("w-full", variant === "mobile" && "rounded-full");
 
   // One message per field, in the label-row slot: an error (after a failed
   // submit, naming what is still missing), then live progress, then guidance.

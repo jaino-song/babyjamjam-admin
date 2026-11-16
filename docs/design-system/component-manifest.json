@@ -1607,12 +1607,12 @@
         ]
       },
       {
-        "name": "useV3UiScaleStyle",
+        "name": "useGlintUiScaleStyle",
         "layer": "hook",
-        "import": "@/components/app/v3",
-        "file": "frontend/src/components/app/v3/useV3UiScale.ts",
+        "import": "@/components/app/v3/useGlintUiScale",
+        "file": "frontend/src/components/app/v3/useGlintUiScale.ts",
         "exports": [
-          "useV3UiScaleStyle"
+          "useGlintUiScaleStyle"
         ]
       },
       {
@@ -2085,21 +2085,6 @@
         ]
       },
       {
-        "name": "ConfirmActionModal",
-        "layer": "molecule",
-        "import": "@/components/app/ui/ConfirmActionModal",
-        "file": "mobile/src/components/app/ui/ConfirmActionModal.tsx",
-        "exports": [
-          "ConfirmActionModal"
-        ],
-        "replaces": [
-          "page-local confirm modals"
-        ],
-        "requiredFor": [
-          "destructive confirmations"
-        ]
-      },
-      {
         "name": "DataTable",
         "layer": "molecule",
         "import": "@/components/app/ui/datatable",
@@ -2535,21 +2520,6 @@
         ]
       },
       {
-        "name": "LegacyChatPage",
-        "layer": "organism",
-        "import": "@/components/app/chat/LegacyChatPage",
-        "file": "mobile/src/components/app/chat/LegacyChatPage.tsx",
-        "exports": [
-          "LegacyChatPage"
-        ],
-        "replaces": [
-          "chat page-local legacy implementation"
-        ],
-        "requiredFor": [
-          "chat route legacy flag state"
-        ]
-      },
-      {
         "name": "PageSection",
         "layer": "organism",
         "import": "@/components/app/v3",
@@ -2699,19 +2669,6 @@
         ],
         "replaces": [
           "custom mobile loaders"
-        ]
-      },
-      {
-        "name": "SplitLayout",
-        "layer": "template",
-        "import": "@/components/app/v3",
-        "file": "mobile/src/components/app/v3/SplitLayout.tsx",
-        "exports": [
-          "SplitLayout",
-          "useSplitLayoutNav"
-        ],
-        "replaces": [
-          "page-local layouts"
         ]
       },
       {

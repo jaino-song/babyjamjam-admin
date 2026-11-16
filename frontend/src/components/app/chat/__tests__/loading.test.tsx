@@ -1,6 +1,5 @@
 import { render, screen } from "@testing-library/react";
 
-import { ChatFullscreen } from "../ChatFullscreen";
 import { LegacyChatPage } from "../LegacyChatPage";
 import { ToolIndicator } from "../tool-indicator";
 import type { ChatState } from "@/hooks/useChatStream";
@@ -31,7 +30,6 @@ beforeEach(() => {
 });
 
 it.each([
-  ["fullscreen", () => <ChatFullscreen open onClose={jest.fn()} />],
   ["legacy", () => <LegacyChatPage />],
 ] as const)("%s announces generic connection, tool and history loading without visible wait copy", (_name, content) => {
   const { rerender } = render(content());

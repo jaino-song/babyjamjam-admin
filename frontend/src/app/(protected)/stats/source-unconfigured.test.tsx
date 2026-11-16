@@ -6,6 +6,7 @@ import { getSummary } from "@/lib/observability/sentry";
 import StatsPage from "./page";
 import TrafficDetailPage from "./traffic/page";
 import FunnelDetailPage from "./funnel/page";
+import InquiriesDetailPage from "./inquiries/page";
 
 jest.mock("next/navigation", () => ({
   redirect: jest.fn(() => { throw new Error("redirect"); }),
@@ -14,6 +15,7 @@ jest.mock("next/navigation", () => ({
 jest.mock("@/lib/auth/cookies", () => ({ getCurrentUser: jest.fn() }));
 jest.mock("@/lib/observability/posthog", () => ({
   getInquiriesSummary: jest.fn(), getInquiriesDailyTrend: jest.fn(),
+  getInquiriesHourlyToday: jest.fn(), getRecentInquiries: jest.fn(), getInquiriesByBranch: jest.fn(),
   getFunnelSummary: jest.fn(), getTrafficSummary: jest.fn(), getTrafficTrend: jest.fn(),
   getTopPages: jest.fn(), getDeviceBreakdown: jest.fn(), getBrowserBreakdown: jest.fn(),
   getSourceBreakdown: jest.fn(), getRegionBreakdown: jest.fn(),
@@ -28,6 +30,7 @@ jest.mock("@/lib/observability/sentry", () => ({
 
 it.each([
   ["overview", StatsPage], ["traffic", TrafficDetailPage], ["funnel", FunnelDetailPage],
+  ["inquiries", InquiriesDetailPage],
 ] as const)("shows unavailable fallbacks without queries, skeletons or retries on %s", async (_route, Page) => {
   jest.clearAllMocks();
   jest.mocked(getCurrentUser).mockResolvedValue({ role: "owner" } as never);
