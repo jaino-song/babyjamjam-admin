@@ -30,6 +30,7 @@ describe("Button", () => {
     render(<Button size="md" className="h-[46px] rounded-2xl">다음</Button>);
 
     expect(screen.getByRole("button")).toHaveClass("h-[46px]", "rounded-2xl");
-    expect(screen.getByRole("button")).not.toHaveClass("h-10", "rounded-full");
+    expect(screen.getByRole("button")).not.toHaveClass("h-10");
+    expect(screen.getByRole("button")).not.toHaveClass("rounded-full");
   });
 });

@@ -128,7 +128,8 @@ describe("ApprovalTwoButtonModal", () => {
     expect(buttons[1]).toHaveTextContent("확인");
     for (const button of buttons) {
       expect(button).toHaveClass("h-11", "w-1/2", "rounded-full");
-      expect(button).not.toHaveClass("flex-1", "flex-[2_1_0]");
+      expect(button).not.toHaveClass("flex-1");
+      expect(button).not.toHaveClass("flex-[2_1_0]");
     }
   });
 });
