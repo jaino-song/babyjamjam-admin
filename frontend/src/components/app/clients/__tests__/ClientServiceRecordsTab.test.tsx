@@ -1071,9 +1071,8 @@ describe("ClientServiceRecordsTab", () => {
 
         fireEvent.click(screen.getByRole("button", { name: "링크 수동 전송" }));
 
-        // The label stays put while sending; only the busy state and spinner change,
-        // so the button keeps its width and position.
-        const sendingButton = screen.getByRole("button", { name: "링크 수동 전송" });
+        // The idle content preserves the width while the accessible name announces sending.
+        const sendingButton = screen.getByRole("button", { name: "링크 발송 중" });
         expect(sendingButton).toBeDisabled();
         expect(sendingButton).toHaveAttribute("aria-busy", "true");
         expect(sendingButton).not.toHaveAttribute("data-width", "lg");

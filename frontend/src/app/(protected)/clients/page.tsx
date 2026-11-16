@@ -70,7 +70,7 @@ import { canManageBranchFromAuthQuery } from "@/lib/auth/branch-role-policy";
 import { t } from "@/lib/i18n/translations";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Button } from "@/components/ui/button";
+import { Button, ButtonLoadingContent } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import {
     StatsBar,
@@ -995,11 +995,15 @@ export default function ClientsPage() {
                                         <DropdownMenuItem
                                             data-component="desktop_clients_sections_section-content_list-section_split-layout_detail-selection_detail-panel_header_menu_send-copayment-receipt"
                                             disabled={isSendingReceipt}
+                                            aria-busy={isSendingReceipt || undefined}
+                                            data-loading={isSendingReceipt ? "" : undefined}
                                             onClick={() => void sendReceipt(activeSelectedClient.id)}
-                                            className="gap-2"
+                                            className={isSendingReceipt ? "relative gap-2" : "gap-2"}
                                         >
-                                            <Send className="w-4 h-4" />
-                                            {isSendingReceipt ? "영수증 발송 중..." : "본인부담금 영수증 발송"}
+                                            <ButtonLoadingContent loading={isSendingReceipt} loadingLabel="영수증 발송 중">
+                                                <Send className="w-4 h-4" />
+                                                본인부담금 영수증 발송
+                                            </ButtonLoadingContent>
                                         </DropdownMenuItem>
                                         {canManageBranchFeatures && (
                                             <DropdownMenuItem

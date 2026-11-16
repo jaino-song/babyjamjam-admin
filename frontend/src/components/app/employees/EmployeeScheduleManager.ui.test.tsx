@@ -113,7 +113,7 @@ describe("EmployeeScheduleManager query load failures", () => {
             isFetching: false, isPaused: true, status: "pending", fetchStatus: "paused",
         });
         renderManager();
-        expect(screen.getByText("일정 불러오는 중…")).toBeInTheDocument();
+        expect(screen.getByRole("status", { name: "일정 로딩 중" })).toBeInTheDocument();
         expect(screen.queryByText("조회 기간의 일정이 없습니다.")).not.toBeInTheDocument();
         expect(screen.queryByText(/0건/)).not.toBeInTheDocument();
         expect(screen.queryByRole("alert")).not.toBeInTheDocument();
@@ -157,7 +157,7 @@ describe("EmployeeScheduleManager query load failures", () => {
         mockClients([], { isPaused: true, isFetching: false });
         const { container } = renderManager();
         expect(container.querySelector('[data-slot="schedule-workspace"]')).toBeInTheDocument();
-        expect(screen.queryByText("일정 불러오는 중…")).not.toBeInTheDocument();
+        expect(screen.queryByRole("status", { name: "일정 로딩 중" })).not.toBeInTheDocument();
         expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     });
 
