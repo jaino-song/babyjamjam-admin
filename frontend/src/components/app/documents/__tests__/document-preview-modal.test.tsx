@@ -679,6 +679,6 @@ describe("ContractDocumentPreviewModal", () => {
 
     await screen.findByTestId("pdf-page-1");
 
-    expect(screen.getByRole("button", { name: "확인 중..." })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "확인 중" })).toBeDisabled();
   });
 });

@@ -1,9 +1,9 @@
 "use client";
 
+import { LoadingState } from "@/components/app/ui/LoadingState";
 import { useCallback, useState } from "react";
 import { CloudUpload, FileText } from "lucide-react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { Spinner } from "@/components/ui/spinner";
 import { cn } from "@/lib/utils";
 
 // 허용되는 파일 형식
@@ -138,10 +138,7 @@ export function ImageDropzone({
 
         <div className="flex flex-col items-center gap-4 relative">
           {isLoading ? (
-            <>
-              <Spinner className="h-12 w-12" />
-              <p className="text-muted-foreground">이미지 분석 중...</p>
-            </>
+            <LoadingState inline size="lg" label="이미지 분석 중" data-component="desktop_settings_sections_image-dropzone_paper_loading" />
           ) : selectedFile ? (
             <>
               <FileText className="h-12 w-12 text-primary" />

@@ -1,4 +1,5 @@
 "use client";
+import { LoadingState } from "@/components/app/ui/LoadingState";
 import { formatBirthdayInput, normalizeBirthdayIsoDate } from "@babyjamjam/shared/utils/birthday";
 
 import dayjs from "dayjs";
@@ -16,7 +17,6 @@ import { Input, V3_INPUT_CONTROL_CLASS_NAME } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Separator } from "@/components/ui/separator";
-import { Spinner } from "@/components/ui/spinner";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import {
   Select,
@@ -1476,10 +1476,14 @@ export const ContractCreationForm = ({
         tone={areaTemplateMessage.tone}
         data-component={`desktop_contracts_creation_doc-type-field_status_${isAreaTemplatesError ? "error" : isAreaTemplatesEmpty ? "empty" : isAreaTemplatesLoading ? "loading" : "message"}`}
       >
-        {areaTemplateMessage.text}
+        {isAreaTemplatesLoading && !isAreaTemplatesError ? (
+          <LoadingState inline label={AREA_TEMPLATES_LOADING_MESSAGE} data-component="desktop_contracts_creation_doc-type-field_status_loading_indicator" size="sm" />
+        ) : areaTemplateMessage.text}
       </FieldMessageText>
       {isAreaTemplatesError ? (
         <Button
+          loading={isAreaTemplatesFetching}
+          loadingLabel="재시도 중"
           type="button"
           variant="link"
           size="sm"
@@ -1488,7 +1492,7 @@ export const ContractCreationForm = ({
           onClick={() => void refetchAreaTemplates()}
           disabled={isAreaTemplatesFetching}
         >
-          {isAreaTemplatesFetching ? "재시도 중..." : "다시 시도"}
+          다시 시도
         </Button>
       ) : null}
     </>
@@ -1940,7 +1944,7 @@ export const ContractCreationForm = ({
                 />
                 {isVoucherPriceInfosLoading && (
                   <span className="pointer-events-none absolute right-4 top-1/2 -translate-y-1/2">
-                    <Spinner className="h-4 w-4 text-primary" />
+                    <LoadingState inline label="요금 정보를 불러오는 중" data-component="desktop_contracts_creation_voucher-type-field_loading" size="sm" />
                   </span>
                 )}
               </div>
@@ -2146,6 +2150,7 @@ export const ContractCreationForm = ({
             </div>
           </div>
           <CalendarLoadNotice
+            indicator="spinner"
             error={calendarError ?? (calendarRefreshFailed ? "load-failed" : isEndDateUnsupported ? "unsupported-year" : null)}
             onRetry={() => { setCalendarRefreshFailed(false); retryCalendar(); }}
             loading={!isCalendarReady && !calendarError}
@@ -2251,6 +2256,8 @@ export const ContractCreationForm = ({
         ) : activeStep === CONTRACT_INFO_STEP_INDEX ? (
           <>
             <Button
+              loading={isSubmitting}
+              loadingLabel="처리 중"
               type="button"
               size="sm"
               data-testid="contract-creation-submit"
@@ -2258,7 +2265,7 @@ export const ContractCreationForm = ({
               disabled={!isStep1Valid || !isStep2Valid || !isStep3Valid || isSubmitting || !isCalendarReady || isEndDateUnsupported}
               className="min-w-[calc(132px*var(--glint-ui-scale,1))]"
             >
-              {isSubmitting ? "처리 중..." : t(locale, "contract-msg.contract-creation")}
+              {t(locale, "contract-msg.contract-creation")}
             </Button>
           </>
         ) : hasProcessingSuccess ? (
@@ -2275,6 +2282,8 @@ export const ContractCreationForm = ({
         ) : hasProcessingFailure ? (
           <>
             <Button
+              loading={isSubmitting}
+              loadingLabel="재시도 중"
               type="button"
               size="sm"
               data-testid="contract-creation-retry"
@@ -2282,7 +2291,7 @@ export const ContractCreationForm = ({
               disabled={isSubmitting}
               className="min-w-[calc(132px*var(--glint-ui-scale,1))]"
             >
-              {isSubmitting ? "재시도 중..." : "재시도"}
+              재시도
             </Button>
           </>
         ) : null}

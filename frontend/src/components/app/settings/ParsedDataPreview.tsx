@@ -210,7 +210,7 @@ export function ParsedDataPreview({
                         <Button
                           variant="ghost"
                           size="icon"
-                          className="h-8 w-8"
+
                           onClick={() => handleStartEdit(index)}
                         >
                           <Pencil className="h-4 w-4" />

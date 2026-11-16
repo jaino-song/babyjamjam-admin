@@ -1,9 +1,10 @@
 "use client";
 
+import { LoadingState } from "@/components/app/ui/LoadingState";
 import { normalizeApiError } from "@babyjamjam/shared";
 
 import { useMemo, useState, useEffect } from "react";
-import { Plus, Upload, CloudUpload, FileText, Image as ImageIcon, File, Loader2 } from "lucide-react";
+import { Plus, Upload, CloudUpload, FileText, Image as ImageIcon, File } from "lucide-react";
 import { TwoButtonModal } from "@/components/app/ui/TwoButtonModal";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -298,9 +299,7 @@ export function DocumentsTable() {
                 subtitle="문서 및 파일을 관리합니다"
                 sx={{ minHeight: "70vh", flexGrow: 1, width: "100%" }}
             >
-                <div className="flex justify-center items-center min-h-[400px]">
-                    <Loader2 className="h-8 w-8 animate-spin text-primary" />
-                </div>
+                <LoadingState label="문서를 불러오는 중" data-component="desktop_contracts_documents-table_loading" className="min-h-[400px]" />
             </ContentPaper>
         );
     }
@@ -389,22 +388,15 @@ export function DocumentsTable() {
                         </Button>
                         {uploadDropzoneState.hasSelectedFile && (
                             <Button
+                                loading={uploadMutation.isPending}
+                                loadingLabel="업로드 중"
                                 type="submit"
                                 form={DOCUMENTS_TABLE_UPLOAD_FORM_ID}
                                 variant="positive"
                                 disabled={!uploadDropzoneState.canSubmit}
                             >
-                                {uploadMutation.isPending ? (
-                                    <>
-                                        <Loader2 className="h-4 w-4 animate-spin" />
-                                        업로드 중...
-                                    </>
-                                ) : (
-                                    <>
-                                        <CloudUpload className="h-4 w-4" />
-                                        문서 업로드
-                                    </>
-                                )}
+                                <CloudUpload className="h-4 w-4" />
+                                문서 업로드
                             </Button>
                         )}
                     </DialogFooter>
