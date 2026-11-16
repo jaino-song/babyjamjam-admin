@@ -16,7 +16,7 @@ import { messageTriggerKeys } from "@/features/message-triggers/hooks/keys";
 import { messageRuleGroupsApi, settingsApi } from "@/services/api";
 import { useGetAuthUser } from "@/hooks/useGetAuthUser";
 import { OptionButtonGroup } from "@/components/app/v3/OptionButtonGroup";
-import { Button } from "@/components/ui/button";
+import { Button, ButtonLoadingContent } from "@/components/ui/button";
 import { BellRing, Trash2 } from "lucide-react";
 
 import { InputField } from "@/components/app/v3/InputField";
@@ -474,9 +474,16 @@ export function MessageTriggerEditor({
               규칙 삭제
             </button>
           ) : null}
-          <Button type="submit" data-component={`${dataComponent}_form_actions_save`} className="btn btn-primary min-h-11 flex-1" loading={isPending} loadingLabel="저장 중" disabled={isPending || !validDraft || groupMode && !branchId}>
-            규칙 저장
-          </Button>
+          <button
+            type="submit"
+            data-component={`${dataComponent}_form_actions_save`}
+            className={`btn btn-primary min-h-11 flex-1${isPending ? " relative" : ""}`}
+            disabled={isPending || !validDraft || groupMode && !branchId}
+            aria-busy={isPending ? true : undefined}
+            data-loading={isPending ? "" : undefined}
+          >
+            <ButtonLoadingContent loading={isPending} loadingLabel="저장 중">규칙 저장</ButtonLoadingContent>
+          </button>
         </div>
         </fieldset>
       </form>

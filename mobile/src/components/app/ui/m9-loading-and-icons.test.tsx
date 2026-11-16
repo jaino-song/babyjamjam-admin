@@ -61,7 +61,8 @@ describe("M9 loading presentation", () => {
   it("labels PDF viewer preparation inside the existing viewer shell", () => {
     render(<ContractPdfViewerPlaceholder data-component="mobile_contracts_detail_pdf" aria-label="계약서 PDF" />);
     expectSpinnerStatus("PDF 뷰어를 준비하는 중");
-    expect(screen.getByRole("status", { name: "계약서 PDF" })).toHaveAttribute("data-slot", "contract-pdf-viewer");
+    expect(screen.getByRole("region", { name: "계약서 PDF" })).toHaveAttribute("data-slot", "contract-pdf-viewer");
+    expect(screen.getAllByRole("status")).toHaveLength(1);
   });
 
   it("keeps approval copy after the initial loading status completes", () => {

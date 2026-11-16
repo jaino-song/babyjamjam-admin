@@ -1418,6 +1418,7 @@ describe("ClientDetailContent", () => {
         : slotted(container);
       expect(states).toHaveLength(1);
       expect(states[0]).toHaveAttribute("data-slot", _name === "loading" ? "loading-state" : "detail-empty-state");
+      if (_name === "loading") expect(slotted(container)).toHaveLength(0);
     });
 
     it("marks the truncation notice and the empty contract card with data-slot", () => {
