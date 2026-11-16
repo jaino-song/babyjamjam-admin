@@ -11,7 +11,7 @@ import { AppContentCard } from "@/components/ui/app-surface";
 import { SelectableItemFrame } from "@/components/ui/selectable-item";
 
 export const APP_FORM_CONTROL_CLASS_NAME =
-  "flex h-[calc(38px*var(--glint-ui-scale,1))] min-h-[calc(38px*var(--glint-ui-scale,1))] w-full rounded-[13px] border-[1.35px] border-input bg-white px-[calc(14px*var(--glint-ui-scale,1))] py-[calc(8px*var(--glint-ui-scale,1))] text-[calc(12px*var(--glint-ui-scale,1))] font-[Pretendard] font-medium text-v3-dark shadow-none outline-none transition-all focus-visible:border-v3-primary focus-visible:ring-[3px] focus-visible:ring-inset focus-visible:ring-v3-primary/10 disabled:cursor-not-allowed disabled:opacity-55";
+  "flex h-[calc(38px*var(--glint-ui-scale,1))] min-h-[calc(38px*var(--glint-ui-scale,1))] w-full rounded-[12px] border-[1.35px] border-input bg-white px-[calc(14px*var(--glint-ui-scale,1))] py-[calc(8px*var(--glint-ui-scale,1))] text-[calc(12px*var(--glint-ui-scale,1))] font-[Pretendard] font-medium text-v3-dark shadow-none outline-none transition-all focus-visible:border-v3-primary focus-visible:ring-[3px] focus-visible:ring-inset focus-visible:ring-v3-primary/10 disabled:cursor-not-allowed disabled:opacity-55";
 
 const FORM_SECTION_SOURCE_COMPONENT = "FormSection";
 const FORM_GRID_SOURCE_COMPONENT = "FormGrid";
@@ -326,7 +326,7 @@ function FormNativeSelect({
       <select
         data-component={selectDataComponent ?? sub("select")}
         className={cn(
-          "box-border h-[calc(38px*var(--glint-ui-scale,1))] min-h-[calc(38px*var(--glint-ui-scale,1))] w-full appearance-none rounded-[13px] border-[1.35px] border-input bg-white px-[calc(14px*var(--glint-ui-scale,1))] pr-[calc(44px*var(--glint-ui-scale,1))] text-[calc(12px*var(--glint-ui-scale,1))] font-[Pretendard] font-medium leading-[1.2] text-v3-dark outline-none focus:border-v3-primary focus:ring-[3px] focus:ring-inset focus:ring-v3-primary/10 disabled:cursor-not-allowed disabled:opacity-55",
+          "box-border h-[calc(38px*var(--glint-ui-scale,1))] min-h-[calc(38px*var(--glint-ui-scale,1))] w-full appearance-none rounded-[12px] border-[1.35px] border-input bg-white px-[calc(14px*var(--glint-ui-scale,1))] pr-[calc(44px*var(--glint-ui-scale,1))] text-[calc(12px*var(--glint-ui-scale,1))] font-[Pretendard] font-medium leading-[1.2] text-v3-dark outline-none focus:border-v3-primary focus:ring-[3px] focus:ring-inset focus:ring-v3-primary/10 disabled:cursor-not-allowed disabled:opacity-55",
           value === "" && "text-v3-text-muted/45 font-normal",
           className,
         )}

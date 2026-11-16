@@ -15,12 +15,12 @@ const CARD_TITLE_SOURCE_COMPONENT = "CardTitle"
 const CARD_CONTENT_SOURCE_COMPONENT = "CardContent"
 
 const cardVariants = cva(
-  "rounded-lg border bg-card text-card-foreground shadow-sm",
+  "rounded-[16px] border-0 bg-white text-card-foreground shadow-v3",
   {
     variants: {
       variant: {
         default: "",
-        v3: "rounded-[24px] border-none bg-white shadow-[0_4px_24px_hsla(214,50%,20%,0.06)]",
+        v3: "rounded-[16px] border-0 bg-white shadow-v3",
       },
     },
     defaultVariants: {
