@@ -448,7 +448,7 @@ export function DocumentsTable() {
                 isDescriptionVisuallyHidden={false}
                 cancelLabel={t(locale, "common.cancel")}
                 approvalLabel={t(locale, "common.delete")}
-                pendingLabel={t(locale, "common.deleting")}
+                pendingLabel={t(locale, "common.deleting").replace(/[.…]+$/, "")}
                 approvalVariant="destructive"
                 isPending={deleteMutation.isPending}
                 onApprove={() => void handleDelete()}
