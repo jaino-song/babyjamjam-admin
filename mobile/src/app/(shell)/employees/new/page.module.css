@@ -62,8 +62,8 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 44px;
-  height: 44px;
+  width: 32px;
+  height: 32px;
   flex-shrink: 0;
   padding: 0;
   border: 0;
@@ -72,6 +72,12 @@
   color: white;
   cursor: pointer;
   font-family: inherit;
+}
+
+.navbarIconButton::after {
+  position: absolute;
+  inset: -6px;
+  content: "";
 }
 
 .navbarTitle {
@@ -200,8 +206,9 @@
   margin-bottom: 10px;
   padding: 14px;
   border-radius: 16px;
-  background: white;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+  background: #fff;
+  box-shadow: 0 4px 24px rgba(25, 48, 77, 0.06);
+  border: 0;
 }
 
 .formRow {
@@ -217,10 +224,10 @@
   white-space: nowrap;
   margin-bottom: 6px;
   color: hsl(var(--v3-text-muted));
-  font-size: 0.7rem;
+  font-size: 12px;
   font-weight: 700;
   letter-spacing: 0.04em;
-  text-transform: uppercase;
+  text-transform: none;
 }
 
 /* One label line tall (1lh of the label's own type), so the field's message
@@ -278,14 +285,16 @@
 
 .formInput {
   width: 100%;
-  padding: 13px 14px;
+  padding: 0 14px;
   border: 1.5px solid hsl(var(--v3-border));
   border-radius: 12px;
   outline: none;
   background: white;
   color: hsl(var(--v3-dark));
   font-family: inherit;
-  font-size: 0.9rem;
+  font-size: 16px;
+  height: 44px;
+  box-sizing: border-box;
 }
 
 .formInput:focus {
@@ -497,14 +506,18 @@
 }
 
 .actionButton {
-  flex: 1;
-  padding: 14px;
+  flex: 1 1 0;
+  padding: 0 14px;
   border: 0;
-  border-radius: 14px;
+  border-radius: 9999px;
   cursor: pointer;
   font-family: inherit;
   font-size: 0.92rem;
   font-weight: 700;
+  min-width: 0;
+  height: 40px;
+  min-height: 0;
+  box-sizing: border-box;
 }
 
 .actionButton:disabled {
@@ -522,7 +535,7 @@
 }
 
 .primary {
-  flex: 2;
+  flex: 2 1 0;
   background: hsl(var(--v3-primary));
   color: white;
   box-shadow: 0 4px 14px rgba(20, 50, 100, 0.18);
