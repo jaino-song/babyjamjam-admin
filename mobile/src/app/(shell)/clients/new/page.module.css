@@ -244,8 +244,8 @@
   margin-bottom: 0;
 }
 
-/* One label line tall (1lh of the label's own type), so the field's message
-   slot can never grow the row and shift the input below. */
+/* One 12px label line tall (12px × 1.3), so the message slot cannot grow
+   the row and shift the input below. */
 .formFieldHeader {
   display: flex;
   align-items: center;
@@ -253,7 +253,7 @@
   min-width: 0;
   height: 1lh;
   margin-bottom: 6px;
-  font-size: 0.7rem;
+  font-size: 12px;
   line-height: 1.3;
 }
 

@@ -296,7 +296,7 @@ describe("mobile edit page start-date confirmation", () => {
       await waitFor(() => expect(mockUpdateClient).toHaveBeenCalledTimes(2));
       expectNoConfirmation();
       expect(mockUpdateClient.mock.calls[1][0]).toEqual({ id: 7, dto: { ...mockUpdateClient.mock.calls[0][0].dto, startDateChangeMode: "CONFIRM_STARTED" } });
-      fireEvent.click(button("저장 중..."));
+      fireEvent.click(button("저장 중"));
       expect(mockUpdateClient).toHaveBeenCalledTimes(2);
       await act(async () => finishRetry());
       expect(mockPush).toHaveBeenCalledWith("/clients?id=7");

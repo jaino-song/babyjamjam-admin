@@ -147,7 +147,7 @@ import { matchesKoreanSearch } from "@/lib/search/korean-search";
 import { useClientDialogStore, type ClientWizardPrefill } from "@/stores/client-dialog-store";
 import { useFormStore, type ContractCreationPrefill } from "@/stores/form-store";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { Button } from "@/components/ui/button";
+import { Button, ButtonLoadingContent } from "@/components/ui/button";
 import { QueryErrorState } from "@/components/app/ui/QueryErrorState";
 import {
   beginContractOperation,
@@ -1654,14 +1654,16 @@ function ContractDetailContent({
         menu={
           <DropdownMenu key={detailMenuKey} modal={false}>
             <DropdownMenuTrigger asChild>
-              <button
+              <Button
                 type="button"
-                className="flex h-[44px] w-[44px] flex-shrink-0 items-center justify-center rounded-xl text-v3-text-muted transition-colors hover:bg-v3-dim-white [&_svg]:pointer-events-none"
+                variant="ghost"
+                size="icon"
+                className="flex-shrink-0 rounded-xl text-v3-text-muted transition-colors hover:bg-v3-dim-white [&_svg]:pointer-events-none [&_svg]:size-5"
                 aria-label="계약 옵션"
                 data-component="mobile_contracts_detail-sheet_stack_detail-page_content_header_menu-trigger"
               >
                 <MoreVertical size={20} strokeWidth={2} />
-              </button>
+              </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent
               align="end"
@@ -1744,11 +1746,8 @@ function ContractDetailContent({
                   ...(shouldReRequest || shouldShareReceipt
                     ? [
                         {
-                          label: shouldReRequest
-                            ? isReRequesting
-                              ? "재알림 보내는 중"
-                              : "재알림 보내기"
-                            : "영수증 공유",
+                          label: shouldReRequest ? "재알림 보내기" : "영수증 공유",
+                          busyLabel: "재알림 보내는 중",
                           variant: "primary" as const,
                           onClick: shouldReRequest ? handleDocumentReRequest : handleReceiptShare,
                           disabled: shouldReRequest ? isReRequesting : false,
@@ -3246,11 +3245,13 @@ export default function ContractsPage() {
               </button>
               <button
                 type="button"
-                className="flex-[2] rounded-xl bg-v3-primary py-3 text-[0.88rem] font-bold text-white shadow-[0_4px_14px_rgba(20,50,100,0.18)] disabled:opacity-45"
+                className={`${isFinalizeSubmitting ? "relative " : ""}flex-[2] rounded-xl bg-v3-primary py-3 text-[0.88rem] font-bold text-white shadow-[0_4px_14px_rgba(20,50,100,0.18)] disabled:opacity-45`}
                 onClick={() => void handleFinalizeSubmit()}
                 disabled={isFinalizeSubmitting}
+                aria-busy={isFinalizeSubmitting || undefined}
+                data-loading={isFinalizeSubmitting ? "" : undefined}
               >
-                {isFinalizeSubmitting ? "처리 중..." : "완료"}
+                <ButtonLoadingContent loading={isFinalizeSubmitting} loadingLabel="처리 중">완료</ButtonLoadingContent>
               </button>
             </div>
           </div>
@@ -3274,14 +3275,16 @@ export default function ContractsPage() {
         <div className="fixed inset-0 z-[200] flex flex-col bg-[hsl(var(--v3-dim-white))]" data-component="mobile_contracts_staff-iframe-modal">
           <div className="flex h-14 items-center justify-between border-b border-v3-border bg-white px-4 text-base font-bold text-v3-dark">
             <span>계약서 최종 확인</span>
-            <button
+            <Button
               type="button"
+              variant="ghost"
+              size="icon"
               onClick={closeStaffIframe}
-              className="flex h-[44px] w-[44px] items-center justify-center rounded-xl text-v3-text"
+              className="rounded-xl text-v3-text [&_svg]:size-5"
               aria-label="닫기"
             >
               <X size={20} strokeWidth={2.5} />
-            </button>
+            </Button>
           </div>
           <iframe
             id={STAFF_COMPLETION_IFRAME_ID}

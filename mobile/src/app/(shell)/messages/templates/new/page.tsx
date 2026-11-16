@@ -13,7 +13,7 @@ export default function NewTemplatePage() {
         className="mx-auto px-4 py-6 sm:px-6 md:px-12 sm:py-8"
       >
         <div data-component="mobile_messages_templates_new_page_content_nav" className="mb-4">
-          <Button variant="ghost" size="icon" className="h-[44px] w-[44px]" asChild>
+          <Button variant="ghost" size="icon" asChild>
             <Link href="/messages/templates">
               <ArrowLeft className="h-6 w-6" />
             </Link>

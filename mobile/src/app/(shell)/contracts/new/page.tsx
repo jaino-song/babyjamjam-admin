@@ -58,7 +58,7 @@ import {
 } from "@/components/app/contracts/contract-form-field";
 import { Switch } from "@/components/ui/switch";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Button } from "@/components/ui/button";
+import { Button, ButtonLoadingContent } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import {
   buildContractSubmissionAlert,
@@ -2123,6 +2123,7 @@ export default function ContractCreationPage() {
                       서비스 기간
                     </div>
                     <CalendarLoadNotice
+                      indicator="spinner"
                       error={calendarError ?? (calendarSaveFailed ? "load-failed" : endDateUnsupported ? "unsupported-year" : null)}
                       onRetry={() => { setCalendarSaveFailed(false); retryCalendar(); }}
                       message={calendarSaveMessage}
@@ -2268,10 +2269,14 @@ export default function ContractCreationPage() {
                 data-component="mobile_contracts-new_screen_root_page_root_actions_next-button"
                 type="button"
                 onClick={handleNext}
-                disabled={isPrimaryDisabled}
-                className={cn(styles.wizardButton, styles.primaryButton)}
+                disabled={isBusy || isPrimaryDisabled}
+                aria-busy={isBusy || undefined}
+                data-loading={isBusy ? "" : undefined}
+                className={cn(isBusy && "relative", styles.wizardButton, styles.primaryButton)}
               >
-                {isBusy ? "생성 중..." : isLastStep ? "계약서 생성" : "다음"}
+                <ButtonLoadingContent loading={isBusy} loadingLabel="생성 중">
+                  {isLastStep ? "계약서 생성" : "다음"}
+                </ButtonLoadingContent>
               </button>
             </div>
           </section>

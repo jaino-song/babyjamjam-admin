@@ -160,6 +160,7 @@
 }
 
 .recipientChipX {
+  position: relative;
   display: flex;
   width: 18px;
   height: 18px;
@@ -170,6 +171,13 @@
   background: rgba(0, 0, 0, 0.08);
   color: hsl(var(--v3-primary));
   cursor: pointer;
+}
+
+/* Keep the chip's 18px remove control while providing a 44px touch target. */
+.recipientChipX::after {
+  content: "";
+  position: absolute;
+  inset: -13px;
 }
 
 .templateSelectTrigger {

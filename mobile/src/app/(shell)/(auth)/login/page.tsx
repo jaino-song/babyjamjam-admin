@@ -7,6 +7,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { normalizeApiError } from "@babyjamjam/shared";
 
+import { ButtonLoadingContent } from "@/components/ui/button";
 import { loginSchema, type LoginFormData } from "@/lib/validations/auth";
 import { useNavigationPending } from "@/hooks/use-navigation-pending";
 import { loginWithEmail } from "./actions";
@@ -14,7 +15,6 @@ import { authApi } from "@/services/api";
 import { resetAuthorityState } from "@/lib/auth/authority-state";
 import { safeStorageGetItem, safeStorageRemoveItem, safeStorageSetItem } from "@/lib/safe-storage";
 import "@/components/app/mobile-redesign/redesign.css";
-import { Spinner } from "@/components/ui/spinner";
 import { LoginAuthErrorModal } from "@/components/auth/login-auth-error-modal";
 
 /** Canonical data-component base for the /login route. */
@@ -192,12 +192,14 @@ const LoginPage = () => {
           {emailVerificationRequired && (
             <button
               type="button"
-              className="auth-resend-link"
+              className={`auth-resend-link${isResendingVerification ? " relative" : ""}`}
+              aria-busy={isResendingVerification || undefined}
+              data-loading={isResendingVerification ? "" : undefined}
               onClick={handleResendVerification}
               disabled={isResendingVerification}
               data-component={`${LOGIN_BASE}_server-error_verify-email-link`}
             >
-              {isResendingVerification ? <><Spinner size="sm" aria-hidden="true" /><span className="sr-only">재발송 중…</span></> : "인증 이메일 재발송"}
+              <ButtonLoadingContent loading={isResendingVerification} loadingLabel="재발송 중…">인증 이메일 재발송</ButtonLoadingContent>
             </button>
           )}
         </div>
@@ -252,11 +254,13 @@ const LoginPage = () => {
 
         <button
           type="submit"
-          className="auth-btn"
+          className={`auth-btn${isBusy ? " relative" : ""}`}
+          aria-busy={isBusy || undefined}
+          data-loading={isBusy ? "" : undefined}
           disabled={isBusy}
           data-component={`${LOGIN_BASE}_form_submit-button`}
         >
-          {isBusy ? <><Spinner size="sm" aria-hidden="true" /><span className="sr-only">로그인 중…</span></> : "로그인"}
+          <ButtonLoadingContent loading={isBusy} loadingLabel="로그인 중…">로그인</ButtonLoadingContent>
         </button>
       </form>
 

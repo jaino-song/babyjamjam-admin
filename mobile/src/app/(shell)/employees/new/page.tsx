@@ -11,7 +11,7 @@ import { formatWorkAreaLabel, GRADES, WORK_AREAS } from "@/components/app/employ
 import { useCreateEmployee, type CreateEmployeeDto } from "@/hooks/useEmployees";
 import { getDeletedPhoneMatch, type DeletedPhoneMatch } from "@/components/app/employees/deleted-phone-match";
 import { MobileTwoButtonModal } from "@/components/app/ui/MobileTwoButtonModal";
-import { Button } from "@/components/ui/button";
+import { Button, ButtonLoadingContent } from "@/components/ui/button";
 import { employeeMessages } from "@/features/employees/messages";
 import { EmployeeSmsAutomationField } from "@/components/app/employees/EmployeeSmsAutomationField";
 import { useNavigationPending } from "@/hooks/use-navigation-pending";
@@ -665,12 +665,16 @@ export default function NewEmployeePage() {
             이전
           </button>
           <button
-            className={cn(styles.actionButton, styles.primary)}
+            className={cn(isBusy && "relative", styles.actionButton, styles.primary)}
             type="button"
             onClick={handleNext}
-            disabled={isNextButtonDisabled}
+            disabled={isBusy || isNextButtonDisabled}
+            aria-busy={isBusy || undefined}
+            data-loading={isBusy ? "" : undefined}
           >
-            {isBusy ? "등록 중..." : isLastStep ? "✓ 등록" : "다음 →"}
+            <ButtonLoadingContent loading={isBusy} loadingLabel="등록 중">
+              {isLastStep ? "✓ 등록" : "다음 →"}
+            </ButtonLoadingContent>
           </button>
         </div>
       </div>
