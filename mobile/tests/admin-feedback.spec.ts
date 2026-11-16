@@ -130,7 +130,7 @@ test.describe('Admin Feedback Page', () => {
     await page.goto('/admin');
     await expect(page.getByText('피드백 목록')).toBeVisible({ timeout: 15000 });
     
-    await expect(page.getByText('전체').first()).toBeVisible();
+    await expect(page.getByRole('button', { name: /^전체/ })).toBeVisible();
     await expect(page.getByText('긍정적').first()).toBeVisible();
     await expect(page.getByText('부정적').first()).toBeVisible();
     

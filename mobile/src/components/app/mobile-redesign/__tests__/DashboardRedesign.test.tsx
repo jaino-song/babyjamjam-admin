@@ -46,7 +46,7 @@ describe("DashboardRedesign query states", () => {
   it("keeps the failure visible and prevents repeat retry while fetching", () => {
     render(<DashboardRedesign {...props} isError isRetrying onRetry={jest.fn()} />);
     expect(screen.getByRole("alert")).toHaveTextContent("최근 현황을 불러오지 못했습니다.");
-    expect(screen.getByRole("button", { name: "다시 시도 중…" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "다시 시도 중" })).toBeDisabled();
   });
 
   it("keeps loading distinct from an empty result", () => {

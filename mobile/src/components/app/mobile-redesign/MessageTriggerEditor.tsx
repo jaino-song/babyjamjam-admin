@@ -474,9 +474,9 @@ export function MessageTriggerEditor({
               규칙 삭제
             </button>
           ) : null}
-          <button type="submit" className="btn btn-primary min-h-11 flex-1" disabled={isPending || !validDraft || groupMode && !branchId}>
-            {isPending ? "저장 중…" : "규칙 저장"}
-          </button>
+          <Button type="submit" data-component={`${dataComponent}_form_actions_save`} className="btn btn-primary min-h-11 flex-1" loading={isPending} loadingLabel="저장 중" disabled={isPending || !validDraft || groupMode && !branchId}>
+            규칙 저장
+          </Button>
         </div>
         </fieldset>
       </form>
@@ -488,7 +488,7 @@ export function MessageTriggerEditor({
         description="삭제한 규칙은 복구할 수 없어요."
         isDescriptionVisuallyHidden={false}
         approvalLabel="삭제 확인"
-        pendingLabel="삭제 중…"
+        pendingLabel="삭제 중"
         approvalVariant="destructive"
         isPending={groupPending || deleteMutation.isPending}
         onApprove={handleDelete}

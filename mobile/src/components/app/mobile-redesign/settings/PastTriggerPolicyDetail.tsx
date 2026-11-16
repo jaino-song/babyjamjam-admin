@@ -6,6 +6,7 @@ import { ArrowDown, ArrowUp } from "lucide-react";
 import { isSmsTriggerTemplate } from "@babyjamjam/shared";
 import { mergeRuleOrder } from "@babyjamjam/shared/utils/rule-order";
 import type { MessageAutomationPolicyConfiguration, MessageAutomationPolicyPreviewResponse, MessagePolicyRecipientGroup } from "@babyjamjam/shared/types/message";
+import { LoadingState } from "@/components/app/ui/LoadingState";
 import { InputField } from "@/components/app/v3/InputField";
 import { OptionButtonGroup } from "@/components/app/v3/OptionButtonGroup";
 import { Switch } from "@/components/ui/switch";
@@ -89,7 +90,7 @@ export function PastTriggerPolicyDetail({ "data-component": base, itemId, config
       ))}
       {itemId === "past-trigger" ? (
         <InfoCard data-component={`${base}_order`} title="늦은 등록 자동 전송 순서">
-          {rulesQuery.isError ? <p role="alert">자동 전송 규칙을 불러오지 못했습니다.</p> : rulesQuery.isLoading ? <p role="status">자동 전송 루틴을 불러오는 중</p> : rules.length === 0 ? <p>등록된 자동 전송 루틴 없음</p> : rules.map((rule, index) => (
+          {rulesQuery.isError ? <p role="alert">자동 전송 규칙을 불러오지 못했습니다.</p> : rulesQuery.isLoading ? <LoadingState label="자동 전송 루틴을 불러오는 중" data-component={`${base}_order_loading`} /> : rules.length === 0 ? <p>등록된 자동 전송 루틴 없음</p> : rules.map((rule, index) => (
             <div key={rule.id} data-component={`${base}_order_rule-${index}`} className="flex items-center gap-2">
               <span className="flex-1">{index + 1}. {rule.name}</span>
               <Button data-component={`${base}_order_rule-${index}_up`} variant="v3-soft" size="icon" aria-label={`${rule.name} 위로 이동`} disabled={!canWrite || index === 0} onClick={() => moveRule(rule.id, -1)}><ArrowUp size={16} /></Button>
@@ -113,7 +114,7 @@ export function PastTriggerPolicyDetail({ "data-component": base, itemId, config
       ) : null}
       {invalid ? <p role="alert">{invalid}</p> : null}
       {error ? <p role="alert">{error}</p> : null}
-      <MobileDetailActions data-component={`${base}_actions`} name="message-policy" actions={[{ label: "취소", onClick: onCancel, disabled: isPending }, { label: isPending ? "저장 중…" : "저장", variant: "primary", onClick: onSave, disabled: !canWrite || !dirty || Boolean(invalid) || isPending, busy: isPending }]} />
+      <MobileDetailActions data-component={`${base}_actions`} name="message-policy" actions={[{ label: "취소", onClick: onCancel, disabled: isPending }, { label: "저장", busyLabel: "저장 중", variant: "primary", onClick: onSave, disabled: !canWrite || !dirty || Boolean(invalid) || isPending, busy: isPending }]} />
     </div>
   );
 }
