@@ -4,7 +4,7 @@ import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { QueryErrorState } from "@/components/app/ui/QueryErrorState";
-import { Tabs, TabsList, TabsTrigger } from "@/components/app/ui/tabs";
+import { TogglePill } from "@/components/app/ui/toggle-pill";
 import { EmptyState } from "@/components/app/v3";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
@@ -138,15 +138,11 @@ export function HolidaySettingsSection({ branchId, branchName }: HolidaySettings
   const inactiveOverrides: InactiveHolidayOverride[] = (data?.inactiveOverrides ?? []).filter(
     (override) => override.date >= today,
   );
-  const activeCount = holidays.filter((holiday) => !holiday.excluded).length;
-  const excludedCount = holidays.length - activeCount;
 
   return (
     <HolidayPageShell
       dataComponent={DATA_COMPONENT}
-      title="공휴일"
-      description="계약 종료일과 서비스 일정의 영업일 계산에 쓰는 공휴일이에요."
-      branchName={branchName}
+      title="지점 공휴일"
     >
       <HolidaySyncStrip
         synced={data?.synced ?? false}
@@ -165,24 +161,18 @@ export function HolidaySettingsSection({ branchId, branchName }: HolidaySettings
         data-component={`${DATA_COMPONENT}_toolbar`}
         className="grid gap-2"
       >
-        <Tabs value={String(year)} onValueChange={(value) => setYear(Number(value))}>
-          <TabsList
-            aria-label="연도"
-            data-component={`${DATA_COMPONENT}_toolbar_year-tabs`}
-            className="w-full"
-          >
-            {years.map((tabYear) => (
-              <TabsTrigger key={tabYear} value={String(tabYear)} className="flex-1 tabular-nums">
-                {tabYear}
-              </TabsTrigger>
-            ))}
-          </TabsList>
-        </Tabs>
-        {data ? (
-          <span data-slot="holiday-count" className="text-xs text-v3-text-muted">
-            {`${year}년 공휴일 ${activeCount}일${excludedCount > 0 ? ` · 제외 ${excludedCount}일` : ""}`}
-          </span>
-        ) : null}
+        <TogglePill
+          value={year === currentYear}
+          onValueChange={(current) => setYear(current ? currentYear : currentYear + 1)}
+          leftLabel={String(currentYear)}
+          rightLabel={String(currentYear + 1)}
+          ariaLabel="연도"
+          fullWidth
+          data-component={`${DATA_COMPONENT}_toolbar_year-tabs`}
+          indicatorDataComponent={`${DATA_COMPONENT}_toolbar_year-tabs_indicator`}
+          leftButtonDataComponent={`${DATA_COMPONENT}_toolbar_year-tabs_current`}
+          rightButtonDataComponent={`${DATA_COMPONENT}_toolbar_year-tabs_next`}
+        />
       </div>
 
       <HolidayAddForm
@@ -191,10 +181,6 @@ export function HolidaySettingsSection({ branchId, branchName }: HolidaySettings
         pending={addMutation.isPending}
         onAdd={(input) => addMutation.mutateAsync(input)}
       />
-      <p data-slot="holiday-scope-note" className="text-xs leading-relaxed text-v3-text-muted">
-        공공데이터 공휴일은 모든 지점에 똑같이 적용돼요. 여기서 추가하거나 제외한 날짜는{" "}
-        {branchName ? <b>{branchName}에만</b> : "이 지점에만"} 적용돼요.
-      </p>
 
       {data !== undefined && yearQuery.isError ? (
         <QueryErrorState

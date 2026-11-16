@@ -78,7 +78,7 @@ export function HolidayAddForm({
       noValidate
       data-component={dataComponent}
       data-source-component={SOURCE_COMPONENT}
-      className="grid gap-3 rounded-2xl bg-v3-dim-white px-4 py-3.5"
+      className="grid gap-3 rounded-2xl border border-[#818b98] bg-transparent px-4 py-3.5"
       onSubmit={(event) => void handleSubmit(event)}
     >
       <InputField

@@ -1,35 +1,38 @@
 "use client";
 
-import { normalizeApiError } from "@babyjamjam/shared";
-
-
 import { useCallback, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
+  BadgeCheck,
   ChevronLeft,
+  ClipboardList,
+  FileChartColumn,
+  FilePenLine,
+  FileUser,
+  Megaphone,
+  Receipt,
+  ReceiptText,
+  type LucideIcon,
   File as FileIcon,
   FileSpreadsheet,
   FileText,
   Image as ImageIcon,
   UploadCloud,
-  Loader2,
   X,
 } from "lucide-react";
+import { normalizeApiError } from "@babyjamjam/shared";
+import {
+  DEFAULT_DOCUMENT_UPLOAD_CAPABILITIES,
+  documentUploadAcceptValue,
+  validateDocumentUploadCandidate,
+} from "@babyjamjam/shared/file-storage";
 
 import { useDocumentCategories } from "@/hooks/use-document-categories";
 import { useDocumentUploadCapabilities, useUploadDocument } from "@/hooks/use-documents";
 import { useNavigationPending } from "@/hooks/use-navigation-pending";
 import { useToast } from "@/hooks/use-toast";
-import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
 import { QueryErrorState } from "@/components/app/ui/QueryErrorState";
-import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
-import {
-  DEFAULT_DOCUMENT_UPLOAD_CAPABILITIES,
-  documentUploadAcceptValue,
-  formatFileSizeLimit,
-  validateDocumentUploadCandidate,
-} from "@babyjamjam/shared/file-storage";
 
 import styles from "./file-upload-screen.module.css";
 
@@ -41,6 +44,7 @@ interface UploadCategory {
   id: string;
   label: string;
   kind: UploadCategoryKind;
+  icon: LucideIcon;
 }
 
 function extensionLabel(fileName: string, mimeType: string): string {
@@ -81,21 +85,26 @@ function inferTags(fileName: string, categoryLabel: string): string[] {
   return Array.from(new Set(tags)).slice(0, 3);
 }
 
-function categoryKind(label: string): UploadCategoryKind {
-  if (label.includes("사진") || label.includes("이미지")) return "image";
-  if (label.includes("견적") || label.includes("정산")) return "sheet";
-  if (label.includes("계약") || label.includes("문서")) return "pdf";
-  return "file";
-}
+const CATEGORY_ICONS = [
+  { key: "contract", label: "계약서", icon: FilePenLine },
+  { key: "invoice", label: "청구서", icon: ReceiptText },
+  { key: "receipt", label: "영수증", icon: Receipt },
+  { key: "report", label: "보고서", icon: FileChartColumn },
+  { key: "certificate", label: "증명서", icon: BadgeCheck },
+  { key: "form", label: "양식", icon: ClipboardList },
+  { key: "notice", label: "안내문", icon: Megaphone },
+  { key: "employee-contract", label: "제공인력 계약서", icon: FileUser },
+];
 
-function CategoryIcon({ kind }: { kind: UploadCategory["kind"] }) {
-  const Icon =
-    kind === "image" ? ImageIcon :
-    kind === "sheet" ? FileSpreadsheet :
-    kind === "pdf" ? FileText :
-    FileIcon;
-
-  return <Icon size={14} strokeWidth={2.5} />;
+function categoryAppearance(value: string, label: string): Pick<UploadCategory, "kind" | "icon"> {
+  const mapped = CATEGORY_ICONS.find((category) => category.key === value)
+    ?? CATEGORY_ICONS.find((category) => category.label === label);
+  // Preserve existing icons and tones for categories outside the approved mapping.
+  const kind = label.includes("사진") || label.includes("이미지") ? "image"
+    : label.includes("견적") || label.includes("정산") ? "sheet"
+    : label.includes("계약") || label.includes("문서") ? "pdf" : "file";
+  const fallback = { image: ImageIcon, sheet: FileSpreadsheet, pdf: FileText, file: FileIcon };
+  return { kind, icon: mapped?.icon ?? fallback[kind] };
 }
 
 export function FileUploadScreen() {
@@ -110,8 +119,6 @@ export function FileUploadScreen() {
   const filePolicy = capabilities ?? DEFAULT_DOCUMENT_UPLOAD_CAPABILITIES;
   const capabilitiesReady = Boolean(capabilities && !capabilitiesQuery.isPending && !capabilitiesQuery.isError
     && typeof capabilities.canChooseVisibilityScope === "boolean");
-  const [chosenScope, setChosenScope] = useState<"branch" | "all_branches">("branch");
-  const visibilityScope = capabilities?.canChooseVisibilityScope ? chosenScope : "branch";
   const [uploadProgress, setUploadProgress] = useState(0);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [validationError, setValidationError] = useState<string | null>(null);
@@ -130,7 +137,7 @@ export function FileUploadScreen() {
     return fetchedCategories.map((category) => ({
       id: category.id,
       label: category.label,
-      kind: categoryKind(category.label),
+      ...categoryAppearance(category.value, category.label),
     }));
   }, [fetchedCategories]);
 
@@ -220,9 +227,8 @@ export function FileUploadScreen() {
         categoryId: selectedCategory.id,
         tags: Array.from(new Set([...tags, relatedCustomer.trim()].filter(Boolean))).slice(0, MAX_DOCUMENT_TAGS),
         onProgress: setUploadProgress,
-        visibilityScope,
+        visibilityScope: "branch",
       });
-      setChosenScope("branch");
       toast({ description: "문서를 업로드했어요", variant: "success" });
       startNavigation();
       router.push("/files");
@@ -265,42 +271,21 @@ export function FileUploadScreen() {
           </div>
         )}
 
-        <div
-          data-component="mobile_files-upload_screen_root_scroll_visibility-notice"
-          data-slot="visibility-notice"
-          className={styles.visibilityNotice}
-        >
-          {capabilitiesQuery.isError ? (
-            <>
-              <span data-component="mobile_files-upload_screen_root_scroll_visibility-notice_error">불러오지 못했습니다</span>
-              <Button type="button" variant="outline" onClick={() => { void capabilitiesQuery.refetch(); }}
-                data-component="mobile_files-upload_screen_root_scroll_visibility-notice_retry">다시 시도</Button>
-            </>
-          ) : !capabilitiesReady ? (
-            <span role="status" aria-label="공개 범위 불러오는 중" data-component="mobile_files-upload_screen_root_scroll_visibility-notice_loading">
-              <Loader2 className="h-5 w-5 animate-spin" />
-            </span>
-          ) : capabilities?.canChooseVisibilityScope ? (
-            <>
-              <RadioGroup aria-label="파일 공개 범위" value={chosenScope} disabled={isUploading}
-                onValueChange={(value) => setChosenScope(value as "branch" | "all_branches")}
-                data-component="mobile_files-upload_screen_root_scroll_visibility-notice_choice">
-                <label className="flex items-center gap-2" data-component="mobile_files-upload_screen_root_scroll_visibility-notice_choice_branch">
-                  <RadioGroupItem value="branch" data-component="mobile_files-upload_screen_root_scroll_visibility-notice_choice_branch_radio" />현재 지점
-                </label>
-                <label className="flex items-center gap-2" data-component="mobile_files-upload_screen_root_scroll_visibility-notice_choice_all-branches">
-                  <RadioGroupItem value="all_branches" data-component="mobile_files-upload_screen_root_scroll_visibility-notice_choice_all-branches_radio" />전 지점
-                </label>
-              </RadioGroup>
-              <p data-component="mobile_files-upload_screen_root_scroll_visibility-notice_helper">
-                {chosenScope === "branch" ? "현재 지점에서만 볼 수 있습니다." : "모든 지점에서 볼 수 있습니다."}
-              </p>
-            </>
-          ) : "이 파일은 현재 지점에서만 볼 수 있습니다."}
-        </div>
+        {capabilitiesQuery.isError ? (
+          <QueryErrorState
+            dataComponent="mobile_files-upload_screen_root_scroll_capabilities-error"
+            size="inline"
+            onRetry={() => { void capabilitiesQuery.refetch(); }}
+            isRetrying={capabilitiesQuery.isFetching}
+          />
+        ) : !capabilitiesReady ? (
+          <Spinner role="status" aria-label="업로드 설정 불러오는 중"
+            data-component="mobile_files-upload_screen_root_scroll_capabilities-loading" />
+        ) : null}
 
         <div
           data-component="mobile_files-upload_screen_root_scroll_dropzone"
+          data-slot="dropzone"
           role="button"
           tabIndex={selectionDisabled ? -1 : 0}
           aria-disabled={selectionDisabled}
@@ -376,22 +361,17 @@ export function FileUploadScreen() {
               <div data-component="mobile_files-upload_screen_root_scroll_dropzone_empty-icon" className={styles.dropzoneIcon}>
                 <UploadCloud size={22} strokeWidth={2.5} />
               </div>
-              <div data-component="mobile_files-upload_screen_root_scroll_dropzone_empty-title" className={styles.dropzoneTitle}>파일을 선택하거나 끌어다 놓으세요</div>
-              <div data-component="mobile_files-upload_screen_root_scroll_dropzone_empty-subtitle" className={styles.dropzoneSub}>
-                <b>탭하여 파일 선택</b> · 최대 {formatFileSizeLimit(filePolicy.maxFileSizeBytes)} · 파일 1개
-                <br />
-                {filePolicy.formatGroups.map((group) => `${group.label}: ${group.formats.join("·")}`).join(" / ")}
-              </div>
+              <div data-component="mobile_files-upload_screen_root_scroll_dropzone_empty-title" data-slot="dropzone-title" className={styles.dropzoneTitle}>탭하여 파일 업로드</div>
             </>
           )}
         </div>
 
-        <section data-component="mobile_files-upload_screen_root_scroll_category-card" className={styles.formCard}>
-          <div data-component="mobile_files-upload_screen_root_scroll_category-card_row" className={styles.formRow}>
-            <label className={styles.formLabel}>
+        <section data-component="mobile_files-upload_screen_root_scroll_category-card" data-slot="form-card" className={styles.formCard}>
+          <div data-component="mobile_files-upload_screen_root_scroll_category-card_row" data-slot="form-row" className={styles.formRow}>
+            <label data-slot="form-label" className={styles.formLabel}>
               카테고리 <span className={styles.required}>*</span>
             </label>
-            <div data-component="mobile_files-upload_screen_root_scroll_category-card_row_grid" className={styles.categoryGrid}>
+            <div data-component="mobile_files-upload_screen_root_scroll_category-card_row_grid" data-slot="category-grid" className={styles.categoryGrid}>
               {categoriesLoading ? (
                 <Spinner role="status" aria-label="카테고리 불러오는 중"
                   data-component="mobile_files-upload_screen_root_scroll_category-card_row_grid_loading" />
@@ -403,6 +383,9 @@ export function FileUploadScreen() {
               ) : categories.map((category) => (
                 <button
                   key={category.id}
+                  data-component="mobile_files-upload_screen_root_scroll_category-card_row_grid_chip"
+                  data-slot="category-chip"
+                  aria-pressed={selectedCategory?.id === category.id}
                   type="button"
                   className={`${styles.categoryChip} ${selectedCategory?.id === category.id ? styles.selected : ""}`}
                   onClick={() => {
@@ -412,8 +395,8 @@ export function FileUploadScreen() {
                     }
                   }}
                 >
-                  <span className={`${styles.categoryChipIcon} ${styles[category.kind]}`}>
-                    <CategoryIcon kind={category.kind} />
+                  <span data-slot="category-chip-icon" className={`${styles.categoryChipIcon} ${styles[category.kind]}`}>
+                    <category.icon size={14} strokeWidth={2.5} aria-hidden="true" />
                   </span>
                   {category.label}
                 </button>
@@ -430,13 +413,14 @@ export function FileUploadScreen() {
           </div>
         </section>
 
-        <section data-component="mobile_files-upload_screen_root_scroll_metadata-card" className={styles.formCard}>
-          <div data-component="mobile_files-upload_screen_root_scroll_metadata-card_customer-row" className={styles.formRow}>
-            <label htmlFor="related-customer" className={styles.formLabel}>
+        <section data-component="mobile_files-upload_screen_root_scroll_metadata-card" data-slot="form-card" className={styles.formCard}>
+          <div data-component="mobile_files-upload_screen_root_scroll_metadata-card_customer-row" data-slot="form-row" className={styles.formRow}>
+            <label htmlFor="related-customer" data-slot="form-label" className={styles.formLabel}>
               관련 고객
             </label>
             <input
               id="related-customer"
+              data-slot="form-input"
               className={`${styles.formInput} ${relatedCustomer ? styles.filled : ""}`}
               value={relatedCustomer}
               maxLength={MAX_DOCUMENT_TAG_LENGTH}
@@ -445,12 +429,13 @@ export function FileUploadScreen() {
             />
             <div data-component="mobile_files-upload_screen_root_scroll_metadata-card_customer-row_helper" className={styles.formHelper}>고객 이름을 태그로 저장해 파일 검색에 활용합니다.</div>
           </div>
-          <div data-component="mobile_files-upload_screen_root_scroll_metadata-card_name-row" className={styles.formRow}>
-            <label htmlFor="file-name" className={styles.formLabel}>
+          <div data-component="mobile_files-upload_screen_root_scroll_metadata-card_name-row" data-slot="form-row" className={styles.formRow}>
+            <label htmlFor="file-name" data-slot="form-label" className={styles.formLabel}>
               파일명
             </label>
             <input
               id="file-name"
+              data-slot="form-input"
               className={`${styles.formInput} ${name ? styles.filled : ""}`}
               value={name}
               maxLength={255}
@@ -461,14 +446,14 @@ export function FileUploadScreen() {
           </div>
         </section>
 
-        <section data-component="mobile_files-upload_screen_root_scroll_description-card" className={styles.formCard}>
-          <div data-component="mobile_files-upload_screen_root_scroll_description-card_row" className={styles.formRow}>
-            <label htmlFor="file-description" className={styles.formLabel}>
+        <section data-component="mobile_files-upload_screen_root_scroll_description-card" data-slot="form-card" className={styles.formCard}>
+          <div data-component="mobile_files-upload_screen_root_scroll_description-card_row" data-slot="form-row" className={styles.formRow}>
+            <label htmlFor="file-description" data-slot="form-label" className={styles.formLabel}>
               설명
             </label>
             <textarea
               id="file-description"
-              className={styles.formTextarea}
+              data-slot="form-textarea" className={styles.formTextarea}
               value={description}
               maxLength={2000}
               onChange={(event) => setDescription(event.target.value)}
@@ -477,9 +462,9 @@ export function FileUploadScreen() {
           </div>
         </section>
 
-        <section data-component="mobile_files-upload_screen_root_scroll_tags-card" className={styles.formCard}>
-          <div data-component="mobile_files-upload_screen_root_scroll_tags-card_row" className={styles.formRow}>
-            <label htmlFor="file-tags" className={styles.formLabel}>
+        <section data-component="mobile_files-upload_screen_root_scroll_tags-card" data-slot="form-card" className={styles.formCard}>
+          <div data-component="mobile_files-upload_screen_root_scroll_tags-card_row" data-slot="form-row" className={styles.formRow}>
+            <label htmlFor="file-tags" data-slot="form-label" className={styles.formLabel}>
               태그
             </label>
             <div data-component="mobile_files-upload_screen_root_scroll_tags-card_row_input-wrap" className={styles.tagInputWrap}>

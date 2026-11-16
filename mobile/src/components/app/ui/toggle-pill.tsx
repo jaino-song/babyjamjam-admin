@@ -13,6 +13,7 @@ export interface TogglePillProps extends React.HTMLAttributes<HTMLDivElement> {
   rightLabel: string;
   ariaLabel: string;
   disabled?: boolean;
+  fullWidth?: boolean;
   indicatorDataComponent?: string;
   leftButtonDataComponent?: string;
   rightButtonDataComponent?: string;
@@ -26,6 +27,7 @@ function TogglePill({
   rightLabel,
   ariaLabel,
   disabled = false,
+  fullWidth = false,
   indicatorDataComponent,
   leftButtonDataComponent,
   rightButtonDataComponent,
@@ -62,7 +64,8 @@ function TogglePill({
       role="tablist"
       aria-label={ariaLabel}
       className={cn(
-        "relative isolate inline-grid h-[42px] min-h-[42px] w-fit grid-cols-2 overflow-hidden rounded-full bg-v3-primary/10",
+        "relative isolate inline-grid h-[42px] min-h-[42px] grid-cols-2 overflow-hidden rounded-full bg-v3-primary/10",
+        fullWidth ? "w-full" : "w-fit",
         className,
       )}
       {...props}

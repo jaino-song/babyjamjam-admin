@@ -41,4 +41,18 @@ describe("TogglePill", () => {
 
     expect(onValueChange).toHaveBeenCalledWith(true);
   });
+
+  it("keeps the default fitted width and supports full-width callers", () => {
+    const props = { value: true, onValueChange: jest.fn(), leftLabel: "2026", rightLabel: "2027", ariaLabel: "연도" };
+    const { rerender } = render(<TogglePill {...props} />);
+    expect(screen.getByRole("tablist", { name: "연도" })).toHaveClass("w-fit");
+    expect(screen.getByRole("tablist", { name: "연도" })).not.toHaveClass("w-full");
+    rerender(<TogglePill {...props} fullWidth />);
+    expect(screen.getByRole("tablist", { name: "연도" })).toHaveClass("w-full");
+    expect(screen.getByRole("tablist", { name: "연도" })).not.toHaveClass("w-fit");
+    expect(screen.getByRole("tab", { name: "2026" })).toHaveAttribute("aria-selected", "true");
+    fireEvent.click(screen.getByRole("tab", { name: "2027" }));
+    expect(props.onValueChange).toHaveBeenCalledWith(false);
+  });
+
 });

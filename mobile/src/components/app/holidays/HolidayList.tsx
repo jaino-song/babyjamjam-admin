@@ -45,7 +45,7 @@ function SourceChip({ holiday, dataComponent }: { holiday: BranchHoliday; dataCo
   );
 }
 
-/** One card per holiday: date, name and source on the left, the single row action on the right. */
+/** Equal-width date, source and action columns, followed by the holiday name. */
 export function HolidayList({
   holidays,
   today,
@@ -58,7 +58,7 @@ export function HolidayList({
   const rows = [...holidays].sort((a, b) => a.date.localeCompare(b.date));
 
   return (
-    <ul data-component={dataComponent} data-source-component={SOURCE_COMPONENT} className="grid gap-2">
+    <ul data-component={dataComponent} data-source-component={SOURCE_COMPONENT} className="grid gap-0">
       {rows.map((holiday) => {
         const past = holiday.date < today;
         const day = weekdayIndex(holiday.date);
@@ -70,12 +70,12 @@ export function HolidayList({
             data-slot="holiday-row"
             data-past={past || undefined}
             className={cn(
-              "flex items-start justify-between gap-3 rounded-2xl border border-v3-border px-3.5 py-3 text-sm",
+              "py-3 text-sm",
               past || holiday.excluded ? "text-v3-text-muted" : "text-v3-text",
             )}
           >
-            <div data-component={`${rowComponent}_info`} className="grid min-w-0 flex-1 gap-1">
-              <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+            <div className="flex w-full items-center">
+              <div data-component={`${rowComponent}_info`} data-slot="holiday-date-column" className="flex min-w-0 flex-[1_1_0]">
                 <span
                   data-slot="holiday-date"
                   className={cn(
@@ -86,61 +86,63 @@ export function HolidayList({
                 >
                   {formatHolidayDate(holiday.date)}
                 </span>
+              </div>
+              <div data-slot="holiday-source-column" className="flex min-w-0 flex-[1_1_0] justify-start">
                 <SourceChip holiday={holiday} dataComponent={`${rowComponent}_source`} />
               </div>
-              <p
-                data-slot="holiday-name"
-                className={cn("break-words text-sm leading-snug", holiday.excluded && "line-through")}
-              >
-                {holiday.name}
-              </p>
+              <div data-component={`${rowComponent}_action`} className="flex min-w-0 flex-[1_1_0] justify-end">
+                {past ? (
+                  <StatusBadge
+                    data-component={`${rowComponent}_action_past-chip`}
+                    data-slot="holiday-past-chip"
+                    variant="neutral"
+                  >
+                    지난 날짜
+                  </StatusBadge>
+                ) : holiday.source === "branch_add" && holiday.overrideId ? (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className={NEGATIVE_OUTLINE_CLASS_NAME}
+                    disabled={disabled}
+                    data-component={`${rowComponent}_delete-trigger`}
+                    onClick={() => onDelete(holiday)}
+                  >
+                    삭제
+                  </Button>
+                ) : holiday.excluded && holiday.overrideId ? (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    disabled={disabled}
+                    data-component={`${rowComponent}_restore-trigger`}
+                    onClick={() => onRestore(holiday)}
+                  >
+                    다시 포함
+                  </Button>
+                ) : !holiday.excluded && holiday.source !== "branch_add" && !isWeekend(holiday.date) ? (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className={NEGATIVE_OUTLINE_CLASS_NAME}
+                    disabled={disabled}
+                    data-component={`${rowComponent}_exclude-trigger`}
+                    onClick={() => onExclude(holiday)}
+                  >
+                    제외
+                  </Button>
+                ) : null}
+              </div>
             </div>
-            <div data-component={`${rowComponent}_action`} className="shrink-0">
-              {past ? (
-                <StatusBadge
-                  data-component={`${rowComponent}_action_past-chip`}
-                  data-slot="holiday-past-chip"
-                  variant="neutral"
-                >
-                  지난 날짜
-                </StatusBadge>
-              ) : holiday.source === "branch_add" && holiday.overrideId ? (
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  className={NEGATIVE_OUTLINE_CLASS_NAME}
-                  disabled={disabled}
-                  data-component={`${rowComponent}_delete-trigger`}
-                  onClick={() => onDelete(holiday)}
-                >
-                  삭제
-                </Button>
-              ) : holiday.excluded && holiday.overrideId ? (
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  disabled={disabled}
-                  data-component={`${rowComponent}_restore-trigger`}
-                  onClick={() => onRestore(holiday)}
-                >
-                  다시 포함
-                </Button>
-              ) : !holiday.excluded && holiday.source !== "branch_add" && !isWeekend(holiday.date) ? (
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  className={NEGATIVE_OUTLINE_CLASS_NAME}
-                  disabled={disabled}
-                  data-component={`${rowComponent}_exclude-trigger`}
-                  onClick={() => onExclude(holiday)}
-                >
-                  제외
-                </Button>
-              ) : null}
-            </div>
+            <p
+              data-slot="holiday-name"
+              className={cn("mt-1 break-words text-sm leading-snug", holiday.excluded && "line-through")}
+            >
+              {holiday.name}
+            </p>
           </li>
         );
       })}

@@ -26,10 +26,34 @@ describe("CalendarLoadNotice", () => {
   });
 
   it("shows a muted loading line while loading without an error", () => {
-    render(<CalendarLoadNotice error={null} loading />);
+    const { container } = render(<CalendarLoadNotice error={null} loading />);
 
     expect(screen.getByText("공휴일 정보를 불러오는 중이에요…")).toBeInTheDocument();
+    expect(screen.getByText("공휴일 정보를 불러오는 중이에요…")).not.toHaveClass("sr-only");
+    expect(container.querySelector('[data-slot="spinner"]')).toBeNull();
     expect(screen.queryByRole("button")).not.toBeInTheDocument();
+  });
+
+  it("shows the shared spinner only when opted in, with a screen-reader label", () => {
+    const { container } = render(<CalendarLoadNotice error={null} loading indicator="spinner" />);
+
+    expect(container.querySelector('[data-slot="spinner"]')).toHaveAttribute("aria-hidden", "true");
+    expect(screen.getByText("공휴일 정보를 불러오는 중이에요…")).toHaveClass("sr-only");
+    expect(screen.getByRole("status")).toHaveTextContent("공휴일 정보를 불러오는 중이에요…");
+    expect(screen.queryByRole("button")).not.toBeInTheDocument();
+  });
+
+  it("keeps save-time messages and errors ahead of the opt-in loading spinner", () => {
+    const { container, rerender } = render(
+      <CalendarLoadNotice error={null} loading indicator="spinner" message="공휴일 정보가 변경됐어요." />,
+    );
+    expect(screen.getByText("공휴일 정보가 변경됐어요.")).toBeInTheDocument();
+    expect(container.querySelector('[data-slot="spinner"]')).toBeNull();
+
+    rerender(<CalendarLoadNotice error="load-failed" loading indicator="spinner" onRetry={jest.fn()} />);
+    expect(screen.getByRole("alert")).toHaveTextContent("공휴일 정보를 불러오지 못했어요.");
+    expect(screen.getByRole("button", { name: "다시 시도" })).toBeInTheDocument();
+    expect(container.querySelector('[data-slot="spinner"]')).toBeNull();
   });
 
   it("lets an error take precedence over the loading line", () => {
