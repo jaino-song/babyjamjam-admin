@@ -5,6 +5,7 @@
  * Only pre-dispatch INITIAL jobs are eligible. No provider calls are made.
  * The dry run takes no locks and writes nothing.
  */
+import { HttpException } from "@nestjs/common";
 import { Prisma, PrismaClient } from "@prisma/client";
 import { assertEformsignBackfillConfirmation } from "../application/utils/eformsign-backfill-safety";
 import { SbEformsignDocumentJobRepository } from "../infrastructure/database/repositories/sb.eformsign-document-job.repository";
@@ -22,10 +23,29 @@ Usage: NODE_PATH=. ts-node scripts/requeue-initial-finalization-jobs.ts
   --help                      Print this usage without database access
 `;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const ERROR_CODE = /^[A-Z][A-Z0-9_]{2,79}$/;
 
 function record(value: unknown): Record<string, unknown> | null {
     return value !== null && typeof value === "object" && !Array.isArray(value)
         ? value as Record<string, unknown> : null;
+}
+
+export function errorCodeOf(error: unknown): string {
+    // Require a full match: JavaScript's $ anchor also permits a final newline.
+    const isCode = (value: unknown): value is string =>
+        typeof value === "string" && ERROR_CODE.exec(value)?.[0] === value;
+    if (error instanceof Error && isCode(error.message)) return error.message;
+    if (error instanceof HttpException) {
+        const response = error.getResponse();
+        if (isCode(response)) return response;
+        const body = record(response);
+        if (isCode(body?.["code"])) return body["code"];
+        if (isCode(body?.["message"])) return body["message"];
+    }
+    const details = record(error);
+    if (isCode(details?.["code"])) return details["code"];
+    if (isCode(details?.["errorCode"])) return details["errorCode"];
+    return "INITIAL_FINALIZATION_REQUEUE_FAILED";
 }
 
 export function initialPayloadShapeChecks(payload: unknown): Record<string, boolean> {
@@ -74,7 +94,12 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
     if (branchIds.size === 0) throw new Error("BRANCH_REQUIRED");
     loadOperatorEnvironment();
     if (apply) {
-        assertEformsignBackfillConfirmation(resolveOperatorDatabaseTarget(), confirmTarget);
+        const target = resolveOperatorDatabaseTarget();
+        try {
+            assertEformsignBackfillConfirmation(target, confirmTarget);
+        } catch {
+            throw new Error(Object.values(target ?? {}).includes("unknown") ? "TARGET_UNKNOWN" : "TARGET_CONFIRMATION_MISMATCH");
+        }
         if (slugs.size === 0) throw new Error("BRANCH_CONFIRMATION_REQUIRED");
     }
     const config = createPrismaClientConfig();
@@ -102,7 +127,13 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
         for (const candidate of candidates) {
             if (!branchIds.has(candidate.branch_id)) throw new Error("BRANCH_SCOPE_MISMATCH");
             if (apply) {
-                const result = await repository.requeueInitialFinalizationJob({ jobId: candidate.id, branchId: candidate.branch_id });
+                let result;
+                try {
+                    result = await repository.requeueInitialFinalizationJob({ jobId: candidate.id, branchId: candidate.branch_id });
+                } catch (error) {
+                    process.stdout.write(`${JSON.stringify({ jobId: candidate.id, result: "error", code: errorCodeOf(error) })}\n`);
+                    throw error;
+                }
                 process.stdout.write(`${JSON.stringify({ jobId: candidate.id, result: result.kind,
                     ...(result.kind === "not_requeueable" ? { reason: result.reason } : {}) })}\n`);
                 continue;
@@ -125,5 +156,5 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
 }
 
 if (require.main === module) {
-    main().catch(() => { process.stderr.write("INITIAL_FINALIZATION_REQUEUE_FAILED\n"); process.exitCode = 1; });
+    main().catch((error: unknown) => { process.stderr.write(`${errorCodeOf(error)}\n`); process.exitCode = 1; });
 }
