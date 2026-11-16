@@ -1409,13 +1409,15 @@ describe("ClientDetailContent", () => {
       ["loading", { isNotificationLogsLoading: true }],
       ["error", { isNotificationLogsError: true }],
       ["empty", {}],
-    ] as const)("marks the %s message history state with data-slot", (_name, flags) => {
+    ] as const)("marks the %s message history state with its component slot", (_name, flags) => {
       const { container } = render(
         <ClientDetailContent {...baseProps} activeTab="message" notificationLogs={[]} {...flags} />,
       );
-      const states = slotted(container);
+      const states = _name === "loading"
+        ? screen.getAllByRole("status", { name: "발송 내역을 불러오는 중" })
+        : slotted(container);
       expect(states).toHaveLength(1);
-      expect(states[0]).toHaveAttribute("data-slot", "detail-empty-state");
+      expect(states[0]).toHaveAttribute("data-slot", _name === "loading" ? "loading-state" : "detail-empty-state");
     });
 
     it("marks the truncation notice and the empty contract card with data-slot", () => {

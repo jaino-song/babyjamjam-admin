@@ -527,6 +527,7 @@ export function EmployeeFormDialog({
                 onClick: () => void handleSubmit(),
                 disabled: isLoading,
                 busy: isLoading,
+                busyLabel: isEditMode ? "저장 중" : "등록 중",
                 dataComponent: "employees-form-dialog-submit",
             }}
         >

@@ -1,4 +1,5 @@
 "use client";
+
 import { normalizeBirthdayIsoDate } from "@babyjamjam/shared/utils/birthday";
 import { formatIsoDateInput } from "@babyjamjam/shared/utils/date-input";
 import { useState, useEffect, useMemo, useRef } from "react";
@@ -76,7 +77,7 @@ import { TogglePill } from "@/components/app/ui/toggle-pill";
 import { Separator } from "@/components/ui/separator";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { StatusBadge } from "@/components/app/ui/status-badge";
-import { Spinner } from "@/components/ui/spinner";
+import { LoadingState } from "@/components/app/ui/LoadingState";
 import { MobileTwoButtonModal } from "@/components/app/ui/MobileTwoButtonModal";
 
 interface ClientFormDialogProps {
@@ -1108,9 +1109,13 @@ export function ClientFormDialog({ open, onClose, client, onSuccess }: ClientFor
                                         </SelectContent>
                                     </Select>
                                     {(formData.voucherClient ? isPriceLoading : isOutOfPocketPriceLoading) && (
-                                        <div className="absolute right-10 top-1/2 -translate-y-1/2">
-                                            <Spinner className="h-4 w-4" />
-                                        </div>
+                                        <LoadingState
+                                            inline
+                                            size="sm"
+                                            label="서비스 기간 요금 정보를 불러오는 중"
+                                            data-component={`${CLIENT_FORM_DIALOG_BASE}_content_duration-field_loading`}
+                                            className="absolute right-10 top-1/2 -translate-y-1/2"
+                                        />
                                     )}
                                 </div>
                             </div>
@@ -1352,14 +1357,13 @@ export function ClientFormDialog({ open, onClose, client, onSuccess }: ClientFor
                     <Button variant="outline" onClick={onClose} disabled={isSubmitting}>
                         {t(locale, "common.cancel")}
                     </Button>
-                    <Button onClick={handleSubmit} disabled={isSubmitting || hasUnknownMutationOutcome}>
-                        {isSubmitting ? (
-                            <Spinner className="h-4 w-4" />
-                        ) : isEditMode ? (
-                            t(locale, "common.save")
-                        ) : (
-                            t(locale, "common.create")
-                        )}
+                    <Button
+                        onClick={handleSubmit}
+                        disabled={isSubmitting || hasUnknownMutationOutcome}
+                        loading={isSubmitting}
+                        loadingLabel={isEditMode ? "저장 중" : "등록 중"}
+                    >
+                        {isEditMode ? t(locale, "common.save") : t(locale, "common.create")}
                     </Button>
                 </DialogFooter>
 

@@ -188,8 +188,8 @@ export function DocumentEditModal({
           <Button variant="outline" onClick={onClose} disabled={isLoading}>
             취소
           </Button>
-          <Button onClick={handleSave} disabled={isLoading}>
-            {isLoading ? "저장 중..." : "저장"}
+          <Button onClick={handleSave} loading={isLoading} loadingLabel="저장 중" disabled={isLoading}>
+            저장
           </Button>
         </DialogFooter>
       </DialogContent>
