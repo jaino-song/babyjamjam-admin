@@ -39,8 +39,6 @@ import {
 } from "@babyjamjam/shared/types/system-template";
 import { t } from "@/lib/i18n/translations";
 import { useLocale } from "@/providers/LocaleProvider";
-import { useGetAuthUser } from "@/hooks/useGetAuthUser";
-import { canManageBranchFromAuthQuery } from "@/lib/auth/branch-role-policy";
 import { useMessageTemplates } from "@/features/message-templates/hooks/use-message-templates";
 import { useSystemTemplate, useSystemTemplates } from "@/features/system-templates/hooks";
 import type { SystemTemplate } from "@/features/system-templates/types";
@@ -75,7 +73,6 @@ import {
   getScheduledRecipientBadge,
   MessageHistoryDetailPanel, MESSAGE_HISTORY_STATUS_META,
   formatMessageHistoryDate as formatHistoryDate,
-  type MessageHistoryFilter,
   type MessageHistoryRecord,
 } from "@/components/app/messages/MessageHistoryDetailPanel";
 import {
@@ -129,7 +126,6 @@ import {
   FileSignature,
   FileText,
   Heart,
-  History,
   Info,
   Loader2,
   MessageCircle,
@@ -850,7 +846,7 @@ function MessageHistorySection({ listState }: { listState: ReturnType<typeof use
                 className="ml-auto flex flex-1 items-center justify-end gap-1.5"
               >
                 {(hasDatePartFilter || relativeDateFilter !== "all") && (
-                  <button
+                  <Button
                     type="button"
                     aria-label="필터 초기화"
                     title="필터 초기화"
@@ -860,10 +856,11 @@ function MessageHistorySection({ listState }: { listState: ReturnType<typeof use
                       setDateMonth("");
                       setRelativeDateFilter("all");
                     }}
-                    className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[10px] bg-white text-v3-text-muted transition-colors hover:bg-v3-dim-white hover:text-v3-dark"
+                    variant="ghost"
+                    size="icon"
                   >
-                    <RotateCcw className="h-3.5 w-3.5" aria-hidden="true" />
-                  </button>
+                    <RotateCcw className="!h-3.5 !w-3.5" aria-hidden="true" />
+                  </Button>
                 )}
                 <CompactDateSelect
                   ariaLabel="발송 연도"
@@ -1316,8 +1313,6 @@ export default function MessagesPage() {
   const systemTemplateEditorRef = useRef<SystemTemplateEditorHandle>(null);
   const [templateSendSubmitState, setTemplateSendSubmitState] =
     useState<TemplateSendFormSubmitState | null>(null);
-  const authUserQuery = useGetAuthUser();
-  const canManageBranchMessages = canManageBranchFromAuthQuery(authUserQuery);
   const activeBranchId = useActiveBranchId();
   const messageSections = useMessageSections();
 
@@ -1636,14 +1631,12 @@ export default function MessagesPage() {
           type="submit"
           form={templateSendSubmitState?.formId ?? TEMPLATE_SEND_FORM_ID}
           disabled={!templateSendSubmitState || templateSendSubmitState.isSubmitDisabled}
+          loading={templateSendSubmitState?.isSending}
+          loadingLabel="발송 중"
           className="shrink-0"
         >
-          {templateSendSubmitState?.isSending ? (
-            <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
-          ) : (
-            <Send className="h-4 w-4" aria-hidden="true" />
-          )}
-          {templateSendSubmitState?.isSending ? "발송 중…" : "즉시 발송"}
+          <Send className="h-4 w-4" aria-hidden="true" />
+          즉시 발송
         </Button>
       ) : null}
     </>
@@ -1751,8 +1744,10 @@ export default function MessagesPage() {
           data-component="desktop_messages_sections_templates_split-layout_detail-panel_footer_save-button"
           disabled={!systemTemplateDraft?.isDirty || !systemTemplateDraft.isValid || isSystemTemplateSaving}
           onClick={() => void systemTemplateEditorRef.current?.save()}
+          loading={isSystemTemplateSaving}
+          loadingLabel="저장 중"
         >
-          {isSystemTemplateSaving ? "저장 중..." : "저장"}
+          저장
         </Button>
       </DetailPanelFooterActions>
     ) : undefined;

@@ -1549,6 +1549,8 @@ export function OwnerAdminConsole({
                                 />
 
                                 <Button
+                                  loading={approveUserMutation.isPending && approveUserMutation.variables?.id === pendingAccountApproval.userId}
+                                  loadingLabel="승인 중"
                                   type="button"
                                   size="sm"
                                   variant="positive"
@@ -1569,14 +1571,12 @@ export function OwnerAdminConsole({
                                     })
                                   }
                                 >
-                                  {approveUserMutation.isPending &&
-                                  approveUserMutation.variables?.id ===
-                                    pendingAccountApproval.userId
-                                    ? "승인 중…"
-                                    : "승인"}
+                                  승인
                                 </Button>
 
                                 <Button
+                                  loading={rejectUserMutation.isPending && rejectUserMutation.variables === pendingAccountApproval.userId}
+                                  loadingLabel="거절 중"
                                   type="button"
                                   size="sm"
                                   variant="negative-outline"
@@ -1585,10 +1585,7 @@ export function OwnerAdminConsole({
                                     rejectUserMutation.mutate(pendingAccountApproval.userId)
                                   }
                                 >
-                                  {rejectUserMutation.isPending &&
-                                  rejectUserMutation.variables === pendingAccountApproval.userId
-                                    ? "거절 중…"
-                                    : "거절"}
+                                  거절
                                 </Button>
                               </div>
 
@@ -1610,6 +1607,8 @@ export function OwnerAdminConsole({
                           {approveAction ? (
                             <div className="space-y-2">
                               <Button
+                                loading={approveMessageSenderMutation.isPending}
+                                loadingLabel="승인 중"
                                 type="button"
                                 size="md"
                                 variant="positive"
@@ -1619,7 +1618,7 @@ export function OwnerAdminConsole({
                                   approveMessageSenderMutation.mutate(approveAction.branchId)
                                 }
                               >
-                                {approveMessageSenderMutation.isPending ? "승인 중…" : "승인"}
+                                승인
                               </Button>
                               {approveMessageSenderMutation.error ? (
                                 <p role="alert" className="text-sm text-destructive">

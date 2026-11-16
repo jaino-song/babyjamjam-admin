@@ -2,7 +2,7 @@
 
 
 import { type CSSProperties, useCallback, useMemo, useState } from "react";
-import { ArrowLeft, FileText, Loader2, Plus, Trash2 } from "lucide-react";
+import { ArrowLeft, FileText, Plus, Trash2 } from "lucide-react";
 import {
   useDeleteMessageTemplate,
   useMessageTemplates,
@@ -263,9 +263,10 @@ function BranchTemplateDetail({
           disabled={!hasChanges || updateMutation.isPending}
           aria-describedby={hasValidationErrors ? validationSummaryId : undefined}
           data-component="desktop_messages_sections_templates-user-detail_templates-user-actions_save"
+          loading={updateMutation.isPending}
+          loadingLabel="저장 중"
         >
-          {updateMutation.isPending && <Loader2 className="h-4 w-4 animate-spin" />}
-          {updateMutation.isPending ? "저장 중..." : "저장"}
+          저장
         </Button>
       </div>
 

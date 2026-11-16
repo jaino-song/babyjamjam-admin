@@ -9,7 +9,7 @@ import {
 import { isAxiosError } from "axios";
 import { useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { Calendar, Loader2, Send, X } from "lucide-react";
+import { Calendar, Send, X } from "lucide-react";
 
 import { resolveFieldMessage } from "@babyjamjam/shared/utils/field-validation-message";
 import { ClientAutocomplete, type ClientAutocompleteLabelMessage } from "@/components/app/clients/ClientAutocomplete";
@@ -691,7 +691,8 @@ export function TemplateSendForm({
           </span>
           <button
             type="button"
-            className="flex h-[calc(12px*var(--glint-ui-scale,1))] w-[calc(12px*var(--glint-ui-scale,1))] shrink-0 items-center justify-center rounded-full text-v3-primary/70 transition-colors hover:text-v3-primary"
+            data-component="desktop_messages_sections_template-send-form-recipient_remove"
+            className="relative after:absolute after:left-1/2 after:top-1/2 after:h-[calc(44px*var(--glint-ui-scale,1))] after:w-[calc(44px*var(--glint-ui-scale,1))] after:-translate-x-1/2 after:-translate-y-1/2 after:content-[''] flex h-[calc(12px*var(--glint-ui-scale,1))] w-[calc(12px*var(--glint-ui-scale,1))] shrink-0 items-center justify-center rounded-full text-v3-primary/70 transition-colors hover:text-v3-primary"
             aria-label="수신자 제거"
             onClick={() => handleRemoveQueuedRecipient(item)}
           >
@@ -1247,14 +1248,12 @@ export function TemplateSendForm({
           <Button
             type="submit"
             disabled={isSubmitDisabled}
+            loading={isSending || isActiveDuplicateCheck}
+            loadingLabel={isSending ? "발송 중" : "확인 중"}
             className="shrink-0"
           >
-            {isSending || isActiveDuplicateCheck ? (
-              <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
-            ) : (
-              <Send className="h-4 w-4" aria-hidden="true" />
-            )}
-            {isSending ? "발송 중…" : isActiveDuplicateCheck ? "확인 중…" : "즉시 발송"}
+            <Send className="h-4 w-4" aria-hidden="true" />
+            즉시 발송
           </Button>
         ) : null}
       </div>

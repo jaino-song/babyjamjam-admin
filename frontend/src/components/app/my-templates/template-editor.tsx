@@ -241,10 +241,12 @@ export const TemplateEditor = ({ initialData }: TemplateEditorProps) => {
                 </Button>
                 <Button
                     onClick={handleSave}
+                    loading={isPending}
+                    loadingLabel={t(locale, "common.saving")}
                     disabled={isPending || isOverBodyLimit}
                     aria-describedby={hasValidationErrors ? validationSummaryId : undefined}
                 >
-                    {isPending ? t(locale, "common.saving") : t(locale, "common.save")}
+                    {t(locale, "common.save")}
                 </Button>
             </div>
         </div>
