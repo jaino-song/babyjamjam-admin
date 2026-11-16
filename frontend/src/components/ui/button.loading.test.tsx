@@ -44,11 +44,13 @@ describe("Button loading", () => {
     const { container, rerender } = render(
       <Button asChild disabled={disabled}><button type="button">열기</button></Button>,
     );
+    expect(screen.getByRole("button", { name: "열기" })).toHaveProperty("disabled", disabled === true);
     const original = container.innerHTML;
 
     rerender(<Button asChild loading loadingLabel="열기 중" disabled={disabled}><button type="button">열기</button></Button>);
     expect(container.innerHTML).toBe(original);
     const child = screen.getByRole("button", { name: "열기" });
+    expect(child).toHaveProperty("disabled", disabled === true);
     expect(child).not.toHaveAttribute("loading");
     expect(child).not.toHaveAttribute("loadingLabel");
     expect(child).not.toHaveAttribute("aria-busy");
