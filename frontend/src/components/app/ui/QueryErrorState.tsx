@@ -3,7 +3,6 @@
 import { AlertTriangle } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
-import { Spinner } from "@/components/ui/spinner";
 import { cn } from "@/lib/utils";
 
 export interface QueryErrorStateProps {
@@ -78,11 +77,10 @@ export function QueryErrorState({
         data-component={`${dataComponent}_retry`}
         data-slot="retry"
         disabled={isRetrying}
+        loading={isRetrying}
+        loadingLabel="다시 시도"
         onClick={onRetry}
       >
-        {isRetrying ? (
-          <Spinner size="sm" aria-hidden="true" data-component={`${dataComponent}_retry_spinner`} />
-        ) : null}
         다시 시도
       </Button>
     </div>
