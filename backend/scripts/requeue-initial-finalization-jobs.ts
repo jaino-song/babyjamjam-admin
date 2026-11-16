@@ -3,15 +3,13 @@
  * Apply: add --apply --confirm-target '<environment>@<sanitized-db-target>'
  *        --confirm-branch-slug <slug> (repeat for every requested branch).
  * Only pre-dispatch INITIAL jobs are eligible. No provider calls are made.
+ * The dry run takes no locks and writes nothing.
  */
 import { Prisma, PrismaClient } from "@prisma/client";
-import { isValidServiceRecordDispatchContext } from "../application/policies/service-record-revision-state.policy";
-import { lockServiceRecordWriteSet } from "../application/policies/service-record-write-lock.policy";
 import { assertEformsignBackfillConfirmation } from "../application/utils/eformsign-backfill-safety";
 import { SbEformsignDocumentJobRepository } from "../infrastructure/database/repositories/sb.eformsign-document-job.repository";
 import { createPrismaClientConfig } from "../infrastructure/database/prisma-url.utils";
 import { loadOperatorEnvironment, resolveOperatorDatabaseTarget } from "./repair-eformsign-branch-ownership";
-import type { ServiceRecordRevisionDispatchContext } from "@babyjamjam/shared/types/service-record";
 import type { PrismaService } from "../infrastructure/database/prisma.service";
 
 const USAGE = `Requeue initial service-record finalization jobs (dry-run by default).
@@ -109,34 +107,19 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
                     ...(result.kind === "not_requeueable" ? { reason: result.reason } : {}) })}\n`);
                 continue;
             }
-            // Read-only operator diagnostics intentionally reuse the private verifier,
-            // preserving its client -> job -> state lock order without authorizing dispatch.
-            const diagnostic = await prisma.$transaction(async (tx) => {
-                const initial = await repository["readDispatchJob"](tx, candidate.id, false);
-                const context = record(record(initial?.payload)?.["context"]) as ServiceRecordRevisionDispatchContext | null;
-                if (!initial || initial.branch_id !== candidate.branch_id || context?.branchId !== candidate.branch_id
-                    || initial.client_id !== context?.clientId || !isValidServiceRecordDispatchContext(context)) {
-                    return { jobId: candidate.id, verifier: false, reason: "INVALID_DISPATCH_CONTEXT" };
-                }
-                await lockServiceRecordWriteSet(tx, { branchId: candidate.branch_id,
-                    clientId: context.clientId, caseId: context.serviceRecordCaseId });
-                const job = await repository["readDispatchJob"](tx, candidate.id, true);
-                if (!job || job.branch_id !== candidate.branch_id || job.client_id !== context.clientId) {
-                    return { jobId: candidate.id, verifier: false, reason: "BRANCH_SCOPE_MISMATCH" };
-                }
-                const verified = await repository["verifyInitialFinalizationDispatch"](tx, job, context);
-                const payload = record(job.payload);
-                const stateId = payload?.["documentStateId"];
-                const state = typeof stateId === "string" && UUID.test(stateId)
-                    ? await tx.service_record_revision_document_state.findFirst({ where: {
-                        id: stateId, branchId: candidate.branch_id, clientId: context.clientId,
-                        serviceRecordCaseId: context.serviceRecordCaseId,
-                    }, select: { status: true } }) : null;
-                return { jobId: candidate.id, verifier: verified.kind === "allow", stateStatus: state?.status ?? null,
-                    progressStep: job.progress_step, payloadChecks: initialPayloadShapeChecks(payload),
-                    ...(verified.kind !== "allow" ? { reason: verified.reason } : {}) };
+            const diagnostic = await repository.diagnoseInitialFinalizationJob({
+                jobId: candidate.id, branchId: candidate.branch_id,
             });
-            process.stdout.write(`${JSON.stringify(diagnostic)}\n`);
+            if (diagnostic.kind === "not_found") {
+                process.stdout.write(`${JSON.stringify({ jobId: candidate.id, result: "not_found" })}\n`);
+                continue;
+            }
+            process.stdout.write(`${JSON.stringify({ jobId: diagnostic.jobId, verifier: diagnostic.verifier,
+                ...(diagnostic.reason === undefined ? {} : { reason: diagnostic.reason }),
+                jobEligible: diagnostic.jobEligible,
+                ...(diagnostic.jobReason === undefined ? {} : { jobReason: diagnostic.jobReason }),
+                stateStatus: diagnostic.stateStatus, progressStep: diagnostic.progressStep,
+                payloadChecks: initialPayloadShapeChecks(diagnostic.payload) })}\n`);
         }
     } finally { await prisma.$disconnect(); }
 }

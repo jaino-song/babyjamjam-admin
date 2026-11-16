@@ -83,7 +83,24 @@ export type RequeueInitialFinalizationJobResult =
     | { kind: "not_found" }
     | { kind: "not_requeueable"; reason: string };
 
+export type DiagnoseInitialFinalizationJobResult =
+    | { kind: "not_found" }
+    | {
+        kind: "diagnosed";
+        jobId: string;
+        verifier: boolean;
+        reason?: string;
+        jobEligible: boolean;
+        jobReason?: string;
+        stateStatus: string | null;
+        progressStep: string | null;
+        /** In-process shape checks only; never log or print the payload. */
+        payload: unknown;
+    };
+
 export interface IEformsignDocumentJobRepository {
+    /** Read-only diagnosis without write-set or row locks. */
+    diagnoseInitialFinalizationJob(input: { jobId: string; branchId: string }): Promise<DiagnoseInitialFinalizationJobResult>;
     requeueInitialFinalizationJob(input: { jobId: string; branchId: string }): Promise<RequeueInitialFinalizationJobResult>;
     enqueue(input: EnqueueEformsignDocumentJobInput): Promise<{ job: EformsignDocumentJobEntity; existing: boolean }>;
     /** Read one immutable request-key row inside an already-owned transaction. */

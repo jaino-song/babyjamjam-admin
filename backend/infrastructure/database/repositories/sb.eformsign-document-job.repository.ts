@@ -31,6 +31,7 @@ import {
     ManualRecoveryInput,
     ResolveManuallyResult,
     RequeueInitialFinalizationJobResult,
+    DiagnoseInitialFinalizationJobResult,
 } from "domain/repositories/eformsign-document-job.repository.interface";
 import { PrismaService } from "infrastructure/database/prisma.service";
 import { ContractRecoveryError } from "domain/repositories/eformsign-contract-recovery.repository.interface";
@@ -40,6 +41,7 @@ import { lockAuthorityScope, reserveAuthority } from "../utils/eformsign-contrac
 import {
     authorizeServiceRecordDispatch,
     deriveServiceRecordDocumentSyncStatus,
+    isValidServiceRecordDispatchContext,
 } from "application/policies/service-record-revision-state.policy";
 import { lockServiceRecordWriteSet } from "application/policies/service-record-write-lock.policy";
 import type {
@@ -72,6 +74,16 @@ type DispatchDocumentSnapshot = {
     clientId: number | null;
     serviceRecordCaseId: string | null;
 };
+
+function initialFinalizationJobIneligibility(job: DispatchJobSnapshot): string | undefined {
+    if (!["", "queued", "validating", "preparing"].includes(job.progress_step ?? "")) {
+        return "SERVICE_RECORD_INITIAL_FINALIZATION_SEND_EVIDENCE_PRESENT";
+    }
+    if (!["requires_attention", "failed"].includes(job.status)) {
+        return "SERVICE_RECORD_INITIAL_FINALIZATION_JOB_NOT_STOPPED";
+    }
+    return undefined;
+}
 
 function stableJson(value: unknown): string {
     if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`;
@@ -592,6 +604,7 @@ export class SbEformsignDocumentJobRepository implements IEformsignDocumentJobRe
         tx: Prisma.TransactionClient,
         job: DispatchJobSnapshot,
         expected: ServiceRecordRevisionDispatchContext,
+        options: { lock: boolean } = { lock: true },
     ) {
         let payload: Record<string, unknown> | null;
         try {
@@ -629,7 +642,7 @@ export class SbEformsignDocumentJobRepository implements IEformsignDocumentJobRe
                 input_fingerprint AS "inputFingerprint", workflow_scope AS "workflowScope", status, version
             FROM "service_record_revision_document_state"
             WHERE id = ${payload["documentStateId"]}::uuid
-            FOR UPDATE
+            ${options.lock ? Prisma.sql`FOR UPDATE` : Prisma.empty}
         `);
         const state = states[0];
         if (!state || state.branchId !== expected.branchId || state.clientId !== expected.clientId
@@ -672,6 +685,44 @@ export class SbEformsignDocumentJobRepository implements IEformsignDocumentJobRe
         return { kind: "allow", state } as const;
     }
 
+    async diagnoseInitialFinalizationJob(
+        input: { jobId: string; branchId: string },
+    ): Promise<DiagnoseInitialFinalizationJobResult> {
+        if (!UUID_PATTERN.test(input.jobId) || !UUID_PATTERN.test(input.branchId)) return { kind: "not_found" };
+        return this.prisma.$transaction(async (tx) => {
+            await tx.$executeRaw(Prisma.sql`SET TRANSACTION READ ONLY`);
+            const job = await this.readDispatchJob(tx, input.jobId, false);
+            const context = job ? payloadContext(job.payload) : null;
+            if (!job || !context || job.branch_id !== input.branchId
+                || context.branchId !== input.branchId || job.client_id !== context.clientId
+                || !isValidServiceRecordDispatchContext(context)) {
+                return { kind: "not_found" };
+            }
+            const jobReason = initialFinalizationJobIneligibility(job);
+            const verified = await this.verifyInitialFinalizationDispatch(tx, job, context, { lock: false });
+            let payload: unknown = job.payload;
+            if (typeof payload === "string") {
+                try { payload = JSON.parse(payload) as unknown; } catch { payload = null; }
+            }
+            const stateId = payload && typeof payload === "object" && !Array.isArray(payload)
+                ? (payload as Record<string, unknown>)["documentStateId"] : null;
+            const states = typeof stateId === "string" && UUID_PATTERN.test(stateId)
+                ? await tx.$queryRaw<Array<{ status: string }>>(Prisma.sql`
+                    SELECT status FROM "service_record_revision_document_state"
+                    WHERE id = ${stateId}::uuid AND branch_id = ${input.branchId}::uuid
+                      AND client_id = ${context.clientId}
+                      AND service_record_case_id = ${context.serviceRecordCaseId}::uuid
+                `) : [];
+            return {
+                kind: "diagnosed", jobId: job.id, verifier: verified.kind === "allow",
+                ...(verified.kind !== "allow" ? { reason: verified.reason } : {}),
+                jobEligible: jobReason === undefined,
+                ...(jobReason === undefined ? {} : { jobReason }),
+                stateStatus: states[0]?.status ?? null, progressStep: job.progress_step, payload: job.payload,
+            };
+        });
+    }
+
     async requeueInitialFinalizationJob(
         input: { jobId: string; branchId: string },
     ): Promise<RequeueInitialFinalizationJobResult> {
@@ -688,9 +739,9 @@ export class SbEformsignDocumentJobRepository implements IEformsignDocumentJobRe
             });
             const job = await this.readDispatchJob(tx, input.jobId, true);
             if (!job || job.branch_id !== input.branchId || job.client_id !== context.clientId) return { kind: "not_found" };
-            if (!["requires_attention", "failed"].includes(job.status)
-                || !["", "queued", "validating", "preparing"].includes(job.progress_step ?? "")) {
-                return { kind: "not_requeueable", reason: "SERVICE_RECORD_INITIAL_FINALIZATION_STATE_NOT_READY" };
+            const jobReason = initialFinalizationJobIneligibility(job);
+            if (jobReason !== undefined) {
+                return { kind: "not_requeueable", reason: jobReason };
             }
             const observed = payloadContext(job.payload);
             if (!observed || observed.branchId !== input.branchId || observed.clientId !== job.client_id) return { kind: "not_found" };
