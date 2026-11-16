@@ -27,6 +27,57 @@ const makeProps = (overrides: Partial<MobileServiceRecordScreenProps> = {}): Mob
     onOpenSubmitModal: jest.fn(), onEditSection: jest.fn(), ...overrides,
 });
 
+describe("service-record button appearance after shared Button changes", () => {
+    it.each<[MobileServiceRecordScreenProps["screen"], number, string]>([
+        ["phone", 0, "확인하기"],
+        ["service", 0, "다음"],
+        ["day", 0, "다음"],
+        ["day", 1, "다음"],
+        ["day", 2, "다음"],
+        ["day", 3, "확인"],
+    ])("keeps the %s step's page %i primary action 46px high", (step, pageIdx, label) => {
+        render(<MobileServiceRecordScreen {...makeProps({ screen: step, pageIdx })} />);
+
+        expect(screen.getByRole("button", { name: label })).toHaveClass("h-[46px]", "rounded-full");
+    });
+
+    it.each<[MobileServiceRecordScreenProps["screen"], number]>([
+        ["service", 0],
+        ["day", 0],
+        ["day", 1],
+        ["day", 2],
+        ["day", 3],
+    ])("keeps the %s step's page %i back button rounded with a 16px radius", (step, pageIdx) => {
+        render(<MobileServiceRecordScreen {...makeProps({ screen: step, pageIdx })} />);
+
+        const back = screen.getByRole("button", { name: "이전" });
+        expect(back).toHaveClass("rounded-2xl");
+        expect(back).not.toHaveClass("rounded-full");
+    });
+
+    it("keeps the overview help radius and the flexible action's minimum height", () => {
+        render(<MobileServiceRecordScreen {...makeProps()} />);
+
+        expect(screen.getByRole("button", { name: "사용방법" })).toHaveClass("rounded-2xl", "h-auto");
+        expect(screen.getByRole("button", { name: "기록 시작" })).toHaveClass("h-auto", "min-h-[46px]");
+    });
+
+    it("keeps both submitted-record actions 46px high", () => {
+        const props = makeProps({
+            screen: "day", pageIdx: 3, editing: true,
+            context: {
+                totalSessions: 3, startDate: "2026-09-21", header: {},
+                sessions: [{ sessionIndex: 1, serviceDate: "2026-09-21", locked: true, clientSignature: "saved" }],
+            },
+        });
+        render(<MobileServiceRecordScreen {...props} />);
+
+        for (const label of ["기록 삭제", "확인"]) {
+            expect(screen.getByRole("button", { name: label })).toHaveClass("h-[46px]", "rounded-full");
+        }
+    });
+});
+
 describe("MobileServiceRecordScreen", () => {
     beforeEach(() => { jest.useFakeTimers(); jest.setSystemTime(new Date("2026-09-21T00:00:00Z")); });
     afterEach(() => jest.useRealTimers());

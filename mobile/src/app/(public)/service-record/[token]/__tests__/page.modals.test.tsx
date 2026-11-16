@@ -62,6 +62,39 @@ async function openEdit() {
     expect(screen.getByTestId("screen")).toHaveTextContent("day");
 }
 
+it.each([
+    ["submit", "제출하시겠어요?", "확인"],
+    ["delete", "1회차 기록을 삭제할까요?", "삭제"],
+])("keeps equal-width actions in the public %s modal", async (trigger, title, approvalLabel) => {
+    await openEdit();
+    fireEvent.click(screen.getByText(trigger));
+
+    const dialog = screen.getByRole("dialog", { name: title });
+    const cancel = within(dialog).getByRole("button", { name: "취소" });
+    const approve = within(dialog).getByRole("button", { name: approvalLabel });
+    expect(within(dialog).getAllByRole("button")).toEqual([cancel, approve]);
+    for (const button of [cancel, approve]) {
+        expect(button).toHaveClass("w-1/2");
+        expect(button).not.toHaveClass("flex-1");
+        expect(button).not.toHaveClass("flex-[2_1_0]");
+    }
+});
+
+it("keeps the date sheet's button sizes and close-button shape", async () => {
+    await openEdit();
+    fireEvent.click(screen.getByText("date"));
+
+    const sheet = within(screen.getByRole("dialog"));
+    const close = sheet.getByRole("button", { name: "닫기" });
+    expect(close).toHaveClass("h-11", "w-11", "rounded-2xl", "after:content-none");
+    for (const label of ["취소", "선택"]) {
+        expect(sheet.getByRole("button", { name: label })).toHaveClass("h-[46px]");
+    }
+    for (const label of [/이전 달/, /다음 달/]) {
+        expect(sheet.getByRole("button", { name: label })).toHaveClass("h-11", "rounded-xl");
+    }
+});
+
 it("resubmits the newly picked date rather than the stored date", async () => {
     await openEdit();
     fireEvent.click(screen.getByText("date"));
