@@ -13,8 +13,11 @@ export function HolidayBranchRequired() {
   return (
     <HolidayPageShell
       dataComponent={DATA_COMPONENT}
-      title="공휴일"
-      description="공휴일은 지점별로 관리돼요. 상단에서 지점을 먼저 선택해 주세요."
-    />
+      title="지점 공휴일"
+    >
+      <p data-component={`${DATA_COMPONENT}_message`} className="text-xs leading-relaxed text-v3-text-muted">
+        공휴일은 지점별로 관리돼요. 상단에서 지점을 먼저 선택해 주세요.
+      </p>
+    </HolidayPageShell>
   );
 }

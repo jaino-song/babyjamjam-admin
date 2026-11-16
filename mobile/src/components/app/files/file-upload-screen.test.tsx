@@ -24,7 +24,7 @@ function selectFile(container: HTMLElement) {
   });
 }
 
-describe("FileUploadScreen visibility", () => {
+describe("FileUploadScreen", () => {
   beforeEach(() => {
     mockCategories.mockReturnValue({ data: [{ id: "contract", label: "계약서" }], isSuccess: true });
     upload.mockReset().mockResolvedValue({ id: "doc-1" });
@@ -38,7 +38,7 @@ describe("FileUploadScreen visibility", () => {
     expect(container.querySelector('input[type="file"]')).toBeDisabled();
     expect(screen.getByRole("button", { name: "업로드 완료" })).toBeDisabled();
     expect(screen.queryByText(/현재 지점/)).not.toBeInTheDocument();
-    expect(screen.getByRole("status")).toBeInTheDocument();
+    expect(screen.getByRole("status", { name: "업로드 설정 불러오는 중" })).toBeInTheDocument();
   });
 
   it("blocks errors even with stale capabilities and retries", () => {
@@ -52,16 +52,17 @@ describe("FileUploadScreen visibility", () => {
     expect(refetch).toHaveBeenCalledTimes(1);
   });
 
-  it.each(["branch", "all_branches"] as const)("defaults to branch, sends %s and resets after success", async (scope) => {
+  it.each([true, false])("has no visibility picker and sends branch (scope capability: %s)", async (canChooseVisibilityScope) => {
+    mockCapabilities.mockReturnValue({ data: { ...ownerCapabilities, canChooseVisibilityScope }, isPending: false, isError: false });
     const { container } = render(<FileUploadScreen />);
-    expect(screen.getByRole("radio", { name: "현재 지점" })).toHaveAttribute("aria-checked", "true");
+    expect(screen.queryByRole("radiogroup", { name: "파일 공개 범위" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("radio")).not.toBeInTheDocument();
+    expect(screen.queryByText(/현재 지점|전 지점|모든 지점/)).not.toBeInTheDocument();
+    expect(container.querySelector('[data-slot="visibility-notice"]')).toBeNull();
     selectFile(container);
     expect(screen.getByRole("button", { name: "업로드 완료" })).toBeEnabled();
-    if (scope === "all_branches") fireEvent.click(screen.getByRole("radio", { name: "전 지점" }));
-    expect(screen.getByText(scope === "branch" ? "현재 지점에서만 볼 수 있습니다." : "모든 지점에서 볼 수 있습니다.")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "업로드 완료" }));
-    await waitFor(() => expect(upload).toHaveBeenCalledWith(expect.objectContaining({ visibilityScope: scope })));
-    await waitFor(() => expect(screen.getByRole("radio", { name: "현재 지점" })).toHaveAttribute("aria-checked", "true"));
+    await waitFor(() => expect(upload).toHaveBeenCalledWith(expect.objectContaining({ visibilityScope: "branch" })));
   });
 
   it.each([
@@ -94,21 +95,10 @@ describe("FileUploadScreen visibility", () => {
     expect(screen.getByRole("button", { name: "업로드 완료" })).toBeDisabled();
   });
 
-  it("shows branch-only notice and sends branch for non-owners", async () => {
-    mockCapabilities.mockReturnValue({ data: DEFAULT_DOCUMENT_UPLOAD_CAPABILITIES, isError: false, isPending: false });
-    const { container } = render(<FileUploadScreen />);
-    expect(screen.getByText("이 파일은 현재 지점에서만 볼 수 있습니다.")).toBeInTheDocument();
-    expect(screen.queryByRole("radio")).not.toBeInTheDocument();
-    selectFile(container);
-    fireEvent.click(screen.getByRole("button", { name: "업로드 완료" }));
-    await waitFor(() => expect(upload).toHaveBeenCalledWith(expect.objectContaining({ visibilityScope: "branch" })));
-  });
-
-  it("blocks a ready form when permissions fail and keeps the choice after an upload failure", async () => {
+  it("blocks a ready form when settings fail and retains the branch payload after an upload failure", async () => {
     upload.mockRejectedValue(new Error("upload failed"));
     const { container, rerender } = render(<FileUploadScreen />);
     selectFile(container);
-    fireEvent.click(screen.getByRole("radio", { name: "전 지점" }));
     mockCapabilities.mockReturnValue({ data: ownerCapabilities, isError: true, isPending: false, refetch: jest.fn() });
     rerender(<FileUploadScreen />);
     expect(screen.getByRole("button", { name: "업로드 완료" })).toBeDisabled();
@@ -118,6 +108,79 @@ describe("FileUploadScreen visibility", () => {
     rerender(<FileUploadScreen />);
     fireEvent.click(screen.getByRole("button", { name: "업로드 완료" }));
     await waitFor(() => expect(upload).toHaveBeenCalledTimes(1));
-    expect(screen.getByRole("radio", { name: "전 지점" })).toHaveAttribute("aria-checked", "true");
+    expect(upload).toHaveBeenCalledWith(expect.objectContaining({ visibilityScope: "branch" }));
+    expect(screen.queryByRole("radio")).not.toBeInTheDocument();
   });
+
+  it("keeps back, cancel and file selection locked while uploading", () => {
+    mockUpload.mockReturnValue({ mutateAsync: upload, isPending: true });
+    const { container } = render(<FileUploadScreen />);
+    expect(screen.getByRole("button", { name: "파일" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "취소" })).toBeDisabled();
+    expect(container.querySelector('input[type="file"]')).toBeDisabled();
+    selectFile(container);
+    expect(screen.getByText("탭하여 파일 업로드")).toBeInTheDocument();
+    expect(upload).not.toHaveBeenCalled();
+  });
+
+  it("shows the tap-to-upload title without a dropzone subtitle", () => {
+    const { container } = render(<FileUploadScreen />);
+    expect(screen.getByText("탭하여 파일 업로드")).toBeInTheDocument();
+    expect(screen.queryByText("파일을 선택하거나 끌어다 놓으세요")).not.toBeInTheDocument();
+    expect(container.querySelector('[data-component$="empty-subtitle"]')).toBeNull();
+    expect(screen.queryByText(/최대 .*파일 1개/)).not.toBeInTheDocument();
+  });
+
+  it.each([
+    ["contract", "계약서", "file-pen-line"],
+    ["invoice", "청구서", "receipt-text"],
+    ["receipt", "영수증", "receipt"],
+    ["report", "보고서", "file-chart-column"],
+    ["certificate", "증명서", "badge-check"],
+    ["form", "양식", "clipboard-list"],
+    ["notice", "안내문", "megaphone"],
+    ["employee-contract", "제공인력 계약서", "file-user"],
+  ])("maps category %s by stable key and falls back to label", (value, label, icon) => {
+    mockCategories.mockReturnValue({ data: [
+      { id: "stable", value, label: "이름 변경" },
+      { id: "label", value: "custom", label },
+    ], isSuccess: true });
+    render(<FileUploadScreen />);
+    for (const name of ["이름 변경", label]) {
+      expect(screen.getByRole("button", { name }).querySelector(`svg.lucide-${icon}`)).not.toBeNull();
+    }
+  });
+
+  it("prefers the stable key over a different known label", () => {
+    mockCategories.mockReturnValue({ data: [{ id: "stable", value: "invoice", label: "계약서" }], isSuccess: true });
+    render(<FileUploadScreen />);
+    expect(screen.getByRole("button", { name: "계약서" }).querySelector("svg.lucide-receipt-text")).not.toBeNull();
+  });
+
+  it.each([
+    ["사진", "image"], ["정산", "file-spreadsheet"], ["문서", "file-text"], ["기타", "file"],
+  ])("keeps the existing fallback icon for %s", (label, icon) => {
+    mockCategories.mockReturnValue({ data: [{ id: "custom", value: "custom", label }], isSuccess: true });
+    render(<FileUploadScreen />);
+    expect(screen.getByRole("button", { name: label }).querySelector(`svg.lucide-${icon}`)).not.toBeNull();
+  });
+
+  it("moves the selected chip class and icon treatment with the selection", () => {
+    mockCategories.mockReturnValue({ data: [
+      { id: "contract", value: "contract", label: "계약서" },
+      { id: "invoice", value: "invoice", label: "청구서" },
+    ], isSuccess: true });
+    render(<FileUploadScreen />);
+    const contract = screen.getByRole("button", { name: "계약서" });
+    const invoice = screen.getByRole("button", { name: "청구서" });
+    expect(contract).toHaveClass("categoryChip", "selected");
+    expect(invoice).not.toHaveClass("selected");
+    expect(contract).toHaveAttribute("aria-pressed", "true");
+    fireEvent.click(invoice);
+    expect(invoice).toHaveClass("selected");
+    expect(invoice).toHaveAttribute("aria-pressed", "true");
+    expect(contract).not.toHaveClass("selected");
+    expect(contract).toHaveAttribute("aria-pressed", "false");
+  });
+
 });

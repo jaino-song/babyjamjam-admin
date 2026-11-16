@@ -17,6 +17,7 @@ import {
   ListLoadMoreSentinel,
   ListRowsSkeleton,
 } from "@/components/app/mobile-redesign/primitives";
+import { Spinner } from "@/components/ui/spinner";
 import { QueryErrorState } from "@/components/app/ui/QueryErrorState";
 import { useListInfiniteScroll } from "@/hooks/useListInfiniteScroll";
 import { useAuthenticatedFileUrl } from "@/hooks/useAuthenticatedFileUrl";
@@ -123,7 +124,11 @@ function FilePreview({ doc }: { doc: Document }) {
   const preview = useAuthenticatedFileUrl(sourceUrl, canPreview);
 
   if (canPreview && preview.loading) {
-    return <InfoCard data-component="mobile_files_detail-panel_preview-loading" title="미리보기" padded>파일을 불러오는 중입니다.</InfoCard>;
+    return (
+      <InfoCard data-component="mobile_files_detail-panel_preview-loading" title="미리보기" padded>
+        <Spinner role="status" aria-label="파일 불러오는 중" data-component="mobile_files_detail-panel_preview-loading_spinner" />
+      </InfoCard>
+    );
   }
   if (canPreview && (preview.error || !preview.url)) {
     return <InfoCard data-component="mobile_files_detail-panel_preview-error" title="미리보기" padded>파일 미리보기를 불러오지 못했습니다.</InfoCard>;
@@ -511,7 +516,7 @@ export function FileStorageScreen() {
       isOpen={Boolean(selectedDoc)}
       onClose={() => setSelectedDoc(null)}
       list={
-        <div className="shell-content" data-component="mobile_files_detail-sheet_stack_list-page_content">
+        <div className="shell-content" data-component="mobile_files_detail-sheet_stack_list-page_content" data-slot="files-content">
           <ListCard
             data-component="mobile_files_detail-sheet_stack_list-page_content_list-card"
             title="파일"

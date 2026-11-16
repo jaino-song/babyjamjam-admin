@@ -1,6 +1,7 @@
 "use client";
 
 import { Button } from "@/components/ui/button";
+import { Spinner } from "@/components/ui/spinner";
 import type { HolidaySyncYearResult } from "@/services/holiday-settings";
 
 import { describeSyncResult, formatLastSynced } from "./holiday-format";
@@ -39,18 +40,16 @@ export function HolidaySyncStrip({
     <div
       data-component={dataComponent}
       data-source-component={SOURCE_COMPONENT}
-      className="grid gap-3 rounded-2xl bg-v3-dim-white px-4 py-3.5"
+      className="grid gap-3 rounded-2xl border border-[#818b98] bg-transparent px-4 py-3.5"
     >
-      <div data-component={`${dataComponent}_info`} className="grid min-w-0 gap-1">
-        <p data-slot="holiday-sync-status" className="text-sm font-semibold text-v3-dark">
+      <div data-component={`${dataComponent}_info`} className="grid min-w-0 justify-items-center gap-1 text-center">
+        <p data-slot="holiday-sync-title" className="text-sm font-semibold text-v3-dark">대한민국 공휴일</p>
+        <p data-slot="holiday-sync-status" className="text-xs text-v3-text-muted">
           {statusUnknown
             ? "—"
             : synced
               ? `마지막 동기화 ${lastSyncedLabel}`.trim()
               : "아직 동기화되지 않았어요 (기본 공휴일 목록 사용 중)"}
-        </p>
-        <p className="text-xs text-v3-text-muted">
-          매일 새벽 4시에 한국천문연구원 특일 정보에서 받아와요.
         </p>
         {results && results.length > 0 ? (
           <ul
@@ -81,14 +80,18 @@ export function HolidaySyncStrip({
       </div>
       <Button
         type="button"
-        variant="outline"
-        size="sm"
+        className="w-full"
         data-component={`${dataComponent}_sync-trigger`}
         disabled={pending || disabled}
         aria-busy={pending || undefined}
         onClick={onSync}
       >
-        {pending ? "동기화 중..." : "지금 동기화"}
+        {pending ? (
+          <>
+            <Spinner size="sm" aria-hidden="true" data-component={`${dataComponent}_sync-trigger_spinner`} />
+            <span className="sr-only">동기화 중</span>
+          </>
+        ) : "지금 동기화"}
       </Button>
     </div>
   );

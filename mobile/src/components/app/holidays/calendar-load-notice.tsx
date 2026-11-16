@@ -1,6 +1,7 @@
 "use client";
 
 import { Button } from "@/components/ui/button";
+import { Spinner } from "@/components/ui/spinner";
 import { cn } from "@/lib/utils";
 import type { BusinessDayCalendarError } from "@/hooks/useBusinessDayCalendar";
 
@@ -24,6 +25,8 @@ export interface CalendarLoadNoticeProps {
   onRetry?: () => void;
   /** Show the muted "loading" line while the calendar is still loading (and there is no error). */
   loading?: boolean;
+  /** Opt in to a spinner; existing callers keep the loading text. */
+  indicator?: "text" | "spinner";
   /** Save-time revision notice in the existing inline message slot. */
   message?: string | null;
   /** Override when the notice sits inside a differently named parent, per the data-component caller-context rule. */
@@ -39,6 +42,7 @@ export function CalendarLoadNotice({
   error,
   onRetry,
   loading = false,
+  indicator = "text",
   message = null,
   dataComponent = DEFAULT_DATA_COMPONENT,
 }: CalendarLoadNoticeProps) {
@@ -66,7 +70,12 @@ export function CalendarLoadNotice({
         data-component={`${dataComponent}_message`}
         data-slot="message"
       >
-        {text}
+        {indicator === "spinner" && loading && error === null && !message ? (
+          <>
+            <Spinner data-component={`${dataComponent}_message_loading`} aria-hidden="true" />
+            <span className="sr-only">공휴일 정보를 불러오는 중이에요…</span>
+          </>
+        ) : text}
       </p>
       {failed ? (
         <Button
