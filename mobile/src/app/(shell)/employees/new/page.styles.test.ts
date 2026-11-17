@@ -55,3 +55,9 @@ it("keeps the label class with 12px type and no uppercase transformation", () =>
   expect(rule(".formLabel")).toContain("font-size: 12px;");
   expect(rule(".formLabel")).toContain("text-transform: none;");
 });
+
+it("uses exact grid tracks for padded wizard actions", () => {
+  expect(rule(".actions")).toContain("display: grid;");
+  expect(rule(".actions")).toContain("grid-template-columns: minmax(0, 1fr) minmax(0, 2fr);");
+  expect(rule(".actions > :only-child")).toContain("grid-column: 1 / -1;");
+});

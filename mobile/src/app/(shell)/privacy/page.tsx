@@ -9,6 +9,7 @@ export default function PrivacyPage() {
   return (
     <AuthPageLayout data-component="mobile_privacy_layout">
       <AuthCard
+        spacing="legal"
         data-component="mobile_privacy_page"
         data-slot="auth-privacy-page"
       >

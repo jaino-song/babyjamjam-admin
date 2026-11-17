@@ -6,6 +6,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { CalendarCheck } from "lucide-react";
 import { normalizeApiError } from "@babyjamjam/shared";
 
+import { ActionRow } from "@/components/ui/action-row";
 import { MobileDetailHeader, MobileDetailPage } from "@/components/app/mobile-redesign/detail-sheet";
 import { FormNativeSelect, FormSection } from "@/components/app/ui/form-section";
 import { ToggleRow } from "@/components/app/ui/toggle-row";
@@ -117,10 +118,10 @@ export function ContractAutomationEditor({ onClose }: { onClose: () => void }) {
             </InfoCard>
           </>
         ) : null}
-        <div className="flex gap-2" data-component={`${EDITOR_BASE}_actions`}>
+        <ActionRow className="gap-2" data-component={`${EDITOR_BASE}_actions`}>
           <Button type="button" variant="outline" className="min-h-11 flex-1" onClick={reset} disabled={!isDirty || mutation.isPending}>되돌리기</Button>
           <Button type="button" className="min-h-11 flex-[2]" onClick={() => void save()} loading={mutation.isPending} loadingLabel="저장 중" disabled={!isDirty || mutation.isPending}>저장</Button>
-        </div>
+        </ActionRow>
       </div>
     </MobileDetailPage>
   );

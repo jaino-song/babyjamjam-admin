@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  Children,
   createContext,
   useCallback,
   useContext,
@@ -17,6 +18,7 @@ import type {
 import { Search, X } from "lucide-react";
 import Link from "next/link";
 
+import { ActionRow } from "@/components/ui/action-row";
 import { ButtonLoadingContent } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
@@ -532,10 +534,14 @@ export function MobileDetailActions({
   children?: ReactNode;
   className?: string;
 }) {
+  const isActionPair = (actions?.length ?? 0) + Children.toArray(children).length === 2
+    && !className?.split(/\s+/).includes("flex-col");
+  const Container = isActionPair ? ActionRow : "div";
   return (
-    <div
+    <Container
       className={cn("detail-actions", className)}
       data-component={dataComponent}
+      data-slot="detail-actions"
       data-source-component={MOBILE_DETAIL_ACTIONS_SOURCE_COMPONENT}
     >
       {actions?.map((action, index) => {
@@ -576,7 +582,7 @@ export function MobileDetailActions({
         );
       })}
       {children}
-    </div>
+    </Container>
   );
 }
 

@@ -60,3 +60,9 @@ it("uses 40px pills and a 1:2 action ratio without changing secondary colors", (
   expect(rule(".secondaryAction")).toContain("background: hsl(220 20% 97%);");
   expect(rule(".secondaryAction")).toContain("color: hsl(var(--v3-text));");
 });
+
+it("uses exact grid tracks only for the two-action footer", () => {
+  const paired = rule(".footer:has(> :first-child:nth-last-child(2))");
+  expect(paired).toContain("display: grid;");
+  expect(paired).toContain("grid-template-columns: minmax(0, 1fr) minmax(0, 2fr);");
+});

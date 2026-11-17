@@ -411,7 +411,8 @@
   bottom: 0;
   left: 0;
   z-index: 100;
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 2fr);
   gap: 8px;
   padding: 12px 14px 18px;
   background: white;
@@ -547,4 +548,8 @@
   margin: 0;
   color: hsl(var(--v3-text-muted));
   font-size: 0.75rem;
+}
+
+.wizardActions > :only-child {
+  grid-column: 1 / -1;
 }

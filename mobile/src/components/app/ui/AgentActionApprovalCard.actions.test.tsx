@@ -8,5 +8,6 @@ it("puts rejection before approval with one-third and two-thirds widths", () => 
   const approve = screen.getByRole("button", { name: "승인하고 실행" });
   expect(screen.getAllByRole("button")).toEqual([reject, approve]);
   expect(reject).toHaveClass("flex-1", "min-h-11", "border");
+  expect(approve.parentElement).toHaveClass("grid!", "grid-cols-[minmax(0,1fr)_minmax(0,2fr)]");
   expect(approve).toHaveClass("flex-[2]", "min-h-11");
 });

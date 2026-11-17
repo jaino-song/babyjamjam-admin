@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import path from "node:path";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { DEFAULT_DOCUMENT_UPLOAD_CAPABILITIES } from "@babyjamjam/shared/file-storage";
 import { useDocumentUploadCapabilities, useUploadDocument } from "@/hooks/use-documents";
@@ -183,4 +185,22 @@ describe("FileUploadScreen", () => {
     expect(contract).toHaveAttribute("aria-pressed", "false");
   });
 
+});
+
+it("uses shared pill footer actions and exact thirds after the gap", () => {
+  const { container } = render(<FileUploadScreen />);
+  const cancel = screen.getByRole("button", { name: "취소" });
+  const submit = screen.getByRole("button", { name: "업로드 완료" });
+  expect(cancel.parentElement?.children).toHaveLength(2);
+  expect(cancel.nextElementSibling).toBe(submit);
+  for (const [button, suffix] of [[cancel, "cancel"], [submit, "submit"]] as const) {
+    expect(button).toHaveClass("h-10", "rounded-full");
+    expect(button).toHaveAttribute("data-component", `mobile_files-upload_screen_root_actions_${suffix}`);
+    expect(button).toHaveAttribute("data-slot", "button");
+  }
+  const css = readFileSync(path.join(__dirname, "file-upload-screen.module.css"), "utf8");
+  expect(css).toMatch(/\.uploadActions \{[^}]*display: grid;[^}]*grid-template-columns: minmax\(0, 1fr\) minmax\(0, 2fr\);/);
+  expect(css).toMatch(/\.tagInputWrap \{[^}]*min-height: 44px;[^}]*border-radius: 12px;[^}]*background: white;/);
+  expect(css).toMatch(/\.tagInput \{[^}]*font-size: 16px;/);
+  expect(container.querySelector('[data-slot="tag-input-wrap"]')).toContainElement(screen.getByPlaceholderText("태그 추가..."));
 });

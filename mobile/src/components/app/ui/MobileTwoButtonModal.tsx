@@ -3,6 +3,7 @@
 import { Dialog as DialogPrimitive } from "radix-ui";
 import type { ReactNode } from "react";
 
+import { ActionRow } from "@/components/ui/action-row";
 import { Button, type ButtonProps } from "@/components/ui/button";
 
 const SOURCE_COMPONENT = "MobileTwoButtonModal";
@@ -101,10 +102,10 @@ export function MobileTwoButtonModal({
             </DialogPrimitive.Description>
           </div>
           {children}
-          <div className="mt-2 flex gap-2" data-component={sub("actions")}>
+          <ActionRow className="mt-2 gap-2" data-component={sub("actions")}>
             {cancelButton}
             {confirmButton}
-          </div>
+          </ActionRow>
         </DialogPrimitive.Content>
       </DialogPrimitive.Portal>
     </DialogPrimitive.Root>

@@ -1,4 +1,5 @@
 "use client";
+
 import { MESSAGE_HISTORY_STATUS_LABELS, normalizeApiError, resolveProblemPresentation } from "@babyjamjam/shared";
 
 
@@ -29,6 +30,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import dynamic from "next/dynamic";
 import { useRouter } from "next/navigation";
 
+import { ActionRow } from "@/components/ui/action-row";
 import { useEformsignAuth } from "@/hooks/useEformsignAuth";
 import { useEformsignDocumentEvents } from "@/hooks/useEformsignDocumentEvents";
 import {
@@ -3234,7 +3236,7 @@ export default function ContractsPage() {
                 {finalizeErrorHint}
               </div>
             ) : null}
-            <div className="mt-5 flex gap-2">
+            <ActionRow className="mt-5">
               <button
                 type="button"
                 className="flex-1 rounded-xl bg-[hsl(220_20%_97%)] py-3 text-[0.88rem] font-bold text-v3-text"
@@ -3253,7 +3255,7 @@ export default function ContractsPage() {
               >
                 <ButtonLoadingContent loading={isFinalizeSubmitting} loadingLabel="처리 중">완료</ButtonLoadingContent>
               </button>
-            </div>
+            </ActionRow>
           </div>
         </div>
       ) : null}

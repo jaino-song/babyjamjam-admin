@@ -38,6 +38,7 @@ it("puts cancel before the raw save action at one third and two thirds, includin
   const save = screen.getByRole("button", { name: "규칙 저장" });
   expect(Array.from(save.parentElement!.children)).toEqual([cancel, save]);
   expect(cancel).toHaveClass("flex-1");
+  expect(save.parentElement).toHaveClass("grid!", "grid-cols-[minmax(0,1fr)_minmax(0,2fr)]");
   expect(save).toHaveClass("btn", "btn-primary", "flex-[2]!");
   fireEvent.click(cancel);
   expect(onCancel).toHaveBeenCalledTimes(1);

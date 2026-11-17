@@ -9,6 +9,7 @@ export default function TermsPage() {
   return (
     <AuthPageLayout data-component="mobile_terms_layout">
       <AuthCard
+        spacing="legal"
         data-component="mobile_terms_page"
         data-slot="auth-terms-page"
       >

@@ -410,7 +410,8 @@
   bottom: 0;
   left: 0;
   z-index: 100;
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 2fr);
   gap: 8px;
   padding: 12px 14px 18px;
   background: white;
@@ -476,4 +477,8 @@
 .pageRoot [data-slot="autocomplete-input"]:focus {
   border-color: hsl(var(--v3-primary));
   box-shadow: none;
+}
+
+.wizardActions > :only-child {
+  grid-column: 1 / -1;
 }

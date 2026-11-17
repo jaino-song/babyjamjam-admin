@@ -1,5 +1,6 @@
 "use client";
 
+import { useRef } from "react";
 import { Dialog as DialogPrimitive } from "radix-ui";
 
 import { Button } from "@/components/ui/button";
@@ -22,6 +23,8 @@ export function MessageSenderApprovalModal({
   onCancel,
   onRequest,
 }: MessageSenderApprovalModalProps) {
+  const contentRef = useRef<HTMLDivElement>(null);
+  const openerRef = useRef<HTMLElement | null>(null);
   const isConfirmOnly = isApprovalPending || needsRequestPermission;
 
   return (
@@ -32,7 +35,20 @@ export function MessageSenderApprovalModal({
           className="fixed inset-0 z-[200] bg-black/50 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=open]:fade-in-0 data-[state=closed]:fade-out-0"
         />
         <DialogPrimitive.Content
+          ref={contentRef}
+          tabIndex={-1}
+          onOpenAutoFocus={(event) => {
+            event.preventDefault();
+            openerRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+            contentRef.current?.focus({ preventScroll: true });
+          }}
+          onCloseAutoFocus={(event) => {
+            event.preventDefault();
+            if (openerRef.current?.isConnected) openerRef.current.focus({ preventScroll: true });
+          }}
           data-component="mobile_messages_sender-approval-modal_panel"
+          // Inline styles preserve the panel shape against the unlayered global :focus-visible rule.
+          style={{ outline: "none", borderRadius: "16px" }}
           className="fixed top-1/2 left-1/2 z-[201] grid w-[calc(100vw-2.5rem)] max-w-[340px] -translate-x-1/2 -translate-y-1/2 gap-3 rounded-2xl border bg-background p-5 shadow-lg outline-none duration-200 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=open]:fade-in-0 data-[state=closed]:fade-out-0 data-[state=open]:zoom-in-95 data-[state=closed]:zoom-out-95"
           onEscapeKeyDown={(event) => event.preventDefault()}
           onPointerDownOutside={(event) => event.preventDefault()}
@@ -69,7 +85,7 @@ export function MessageSenderApprovalModal({
               </DialogPrimitive.Description>
             )}
           </DialogHeader>
-          <div className="mt-2 flex gap-2" data-component="mobile_messages_sender-approval-modal_panel_actions">
+          <div className={isConfirmOnly ? "mt-2 flex gap-2" : "mt-2 grid grid-cols-[minmax(0,1fr)_minmax(0,2fr)] gap-2 [&>*]:min-w-0"} data-component="mobile_messages_sender-approval-modal_panel_actions">
             {isConfirmOnly ? (
               <Button type="button" variant="v3" className="flex-1" onClick={onCancel}>
                 확인

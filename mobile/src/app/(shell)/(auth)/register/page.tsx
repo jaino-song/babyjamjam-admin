@@ -1,6 +1,5 @@
 "use client";
 
-
 import { useEffect, useState } from "react";
 import Image from "next/image";
 import Link from "next/link";
@@ -9,6 +8,7 @@ import { CheckCircle, ChevronDown, ChevronLeft, ChevronRight, Link2 } from "luci
 import { normalizeApiError, type NormalizedApiError, REGISTERABLE_ROLE_OPTIONS } from "@babyjamjam/shared";
 import { formatIsoDateInput } from "@babyjamjam/shared/utils/date-input";
 
+import { ActionRow } from "@/components/ui/action-row";
 import { LoadingState } from "@/components/app/ui/LoadingState";
 import { ButtonLoadingContent } from "@/components/ui/button";
 import { FieldLabelRow, fieldMessageId } from "@/components/app/ui/FieldLabelRow";
@@ -741,7 +741,7 @@ export default function RegisterPage() {
             />
           </div>
 
-          <div className="auth-actions" data-component={`${REGISTER_PROFILE_FORM}_actions`}>
+          <ActionRow data-slot="auth-actions" className="auth-actions" data-component={`${REGISTER_PROFILE_FORM}_actions`}>
             <button type="button" className="auth-btn secondary" onClick={handlePreviousStep} disabled={isLoading}>
               <ChevronLeft size={14} strokeWidth={2.5} />
               이전
@@ -750,7 +750,7 @@ export default function RegisterPage() {
               다음
               <ChevronRight size={14} strokeWidth={2.5} />
             </button>
-          </div>
+          </ActionRow>
         </form>
       )}
 
@@ -783,7 +783,7 @@ export default function RegisterPage() {
             </div>
           </div>
 
-          <div className="auth-actions" data-component={`${REGISTER_SUBMIT_FORM}_actions`}>
+          <ActionRow data-slot="auth-actions" className="auth-actions" data-component={`${REGISTER_SUBMIT_FORM}_actions`}>
             <button type="button" className="auth-btn secondary" onClick={handlePreviousStep} disabled={isLoading}>
               <ChevronLeft size={14} strokeWidth={2.5} />
               이전
@@ -799,7 +799,7 @@ export default function RegisterPage() {
             >
               <ButtonLoadingContent loading={isLoading} loadingLabel="처리 중">회원가입</ButtonLoadingContent>
             </button>
-          </div>
+          </ActionRow>
         </form>
       )}
 

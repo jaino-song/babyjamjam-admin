@@ -498,7 +498,8 @@
   right: 0;
   bottom: 0;
   left: 0;
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 2fr);
   gap: 8px;
   padding: 12px 14px 18px;
   border-top: 1px solid hsl(var(--v3-border));
@@ -543,4 +544,8 @@
 
 .primary:disabled {
   opacity: 0.6;
+}
+
+.actions > :only-child {
+  grid-column: 1 / -1;
 }
