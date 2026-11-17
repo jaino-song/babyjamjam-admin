@@ -203,6 +203,32 @@ describe("useListInfiniteScroll with attached list refs", () => {
   });
 
   it.each([
+    { rowHeight: 72, initialCount: 7 },
+    { rowHeight: 96, initialCount: 5 },
+  ])("reveals all search matches with $rowHeight px non-shrinking rows and resets when cleared", ({ rowHeight, initialCount }) => {
+    scrollHeight = 500;
+    jest.spyOn(HTMLElement.prototype, "offsetHeight", "get").mockReturnValue(rowHeight);
+    const { rerender } = render(<ScrollList totalItems={15} />);
+
+    expect(rowCount()).toBe(initialCount);
+    rerender(<ScrollList totalItems={12} resetKey="search" />);
+    expect(rowCount()).toBe(initialCount);
+    expect(screen.getByTestId("phase")).toHaveTextContent("initial");
+
+    fireEvent.click(screen.getByRole("button", { name: "Load more" }));
+    expect(rowCount()).toBe(Math.min(initialCount + 6, 12));
+    if (rowCount() < 12) intersect();
+    expect(rowCount()).toBe(12);
+    expect(screen.getByText("Record 12")).toBeInTheDocument();
+    expect(screen.queryByTestId("sentinel")).not.toBeInTheDocument();
+
+    rerender(<ScrollList totalItems={15} />);
+    expect(rowCount()).toBe(initialCount);
+    expect(screen.getByTestId("phase")).toHaveTextContent("initial");
+    expect(observers.every((observer) => observer.disconnect.mock.calls.length > 0)).toBe(true);
+  });
+
+  it.each([
     { rowHeight: 80, initialCount: 4, mode: "measured" },
     { rowHeight: 0, initialCount: 6, mode: "fallback" },
   ])("restores $mode rows and automatic paging after filter reset and empty-to-loaded", ({ rowHeight, initialCount }) => {
