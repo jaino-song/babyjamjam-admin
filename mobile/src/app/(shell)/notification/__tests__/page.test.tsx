@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import NotificationPage from "../page";
@@ -76,6 +78,22 @@ function renderPage() {
 }
 
 describe("NotificationPage", () => {
+  const rowStyle = document.createElement("style");
+
+  beforeAll(() => {
+    const css = readFileSync(join(process.cwd(), "src/components/app/mobile-redesign/redesign.css"), "utf8");
+    const rules = css.match(/body\.mobile-all-route \.notification-settings-row\s*\{[^}]*\}/g) ?? [];
+    expect(rules).toHaveLength(1);
+    rowStyle.textContent = rules.join("\n");
+    document.head.append(rowStyle);
+    document.body.classList.add("mobile-all-route");
+  });
+
+  afterAll(() => {
+    rowStyle.remove();
+    document.body.classList.remove("mobile-all-route");
+  });
+
   beforeEach(() => {
     window.localStorage.clear();
     mockedSettingsApi.getNotificationPreferences.mockResolvedValue({
@@ -103,7 +121,11 @@ describe("NotificationPage", () => {
 
     const rows = container.querySelectorAll('[data-slot="notification-settings-row"]');
     expect(rows.length).toBeGreaterThanOrEqual(3);
-    rows.forEach((row) => expect(row).toHaveStyle({ padding: "12px 0" }));
+    rows.forEach((row) => {
+      expect(row).toHaveClass("notification-settings-row");
+      expect(row).not.toHaveAttribute("style");
+      expect(row).toHaveStyle({ padding: "12px 0" });
+    });
 
     expect(within(rows[0] as HTMLElement).getByText("앱 알림")).toBeInTheDocument();
     expect(within(rows[1] as HTMLElement).getByText("이메일 알림")).toBeInTheDocument();
