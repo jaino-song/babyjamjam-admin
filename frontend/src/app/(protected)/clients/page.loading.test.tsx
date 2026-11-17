@@ -24,6 +24,7 @@ jest.mock("@/features/clients/hooks/use-clients", () => ({
     hasNextPage: false, isFetchingNextPage: false,
   }),
   useClientListSummary: () => ({ isBranchContextReady: true, isInitialLoading: false, isInitialError: false }),
+  useServiceRecordMissingClients: () => ({ data: { count: 0, items: [] }, error: null, refetch: jest.fn() }),
   useClient: () => ({ data: mockClient, isBranchContextReady: true, isLoading: false, isError: false }),
   useDeleteClient: () => ({ isPending: false }),
 }));
