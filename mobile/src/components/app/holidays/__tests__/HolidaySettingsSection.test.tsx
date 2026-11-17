@@ -109,7 +109,7 @@ describe("HolidaySettingsSection", () => {
       const sync = screen.getByRole("button", { name: "지금 동기화" });
       const tabs = screen.getByRole("tablist", { name: "연도" });
       const controls = tabs.closest('[data-slot="holiday-sync-controls"]');
-      expect(controls).toHaveAttribute("data-component", "mobile_holidays_settings_sync-controls");
+      expect(controls).toHaveAttribute("data-component", "mobile_holidays_settings_content_card_body_sync-controls");
       expect(controls).toContainElement(sync);
       expect(controls).toHaveClass(styles.syncControls);
       expect(controls).toHaveStyle({ display: "flex", flexDirection: "column", gap: "34px", flexShrink: "0" });
@@ -132,6 +132,41 @@ describe("HolidaySettingsSection", () => {
     expect(scroller).not.toContainElement(screen.getByRole("button", { name: "지금 동기화" }));
     expect(scroller).not.toContainElement(screen.getByRole("tablist", { name: "연도" }));
     expect(scroller).not.toContainElement(screen.getByRole("button", { name: "공휴일 추가" }));
+  });
+
+  it("keeps each shell-body child and sync control under its full parent data-component prefix", async () => {
+    renderSection();
+    await screen.findByText("한글날");
+
+    const body = document.querySelector('[data-slot="holiday-settings-body"]');
+    const controls = document.querySelector('[data-slot="holiday-sync-controls"]');
+    const strip = screen.getByRole("button", { name: "지금 동기화" }).parentElement;
+    const tabs = screen.getByRole("tablist", { name: "연도" });
+    const toolbar = tabs.parentElement;
+    const addForm = screen.getByRole("button", { name: "공휴일 추가" }).closest("form");
+    const scroller = document.querySelector('[data-slot="holiday-list-scroll"]');
+
+    expect(body).toHaveAttribute("data-component", "mobile_holidays_settings_content_card_body");
+    const children = [
+      [controls, body, "sync-controls"],
+      [strip, controls, "sync-strip"],
+      [toolbar, controls, "toolbar"],
+      [tabs, toolbar, "year-tabs"],
+      [tabs.querySelector('span[aria-hidden="true"]'), tabs, "indicator"],
+      [screen.getByRole("tab", { name: "2026" }), tabs, "current"],
+      [screen.getByRole("tab", { name: "2027" }), tabs, "next"],
+      [addForm, body, "add-form"],
+      [scroller, body, "list-scroll"],
+    ] as const;
+
+    for (const [child, parent, suffix] of children) {
+      expect(parent).toHaveAttribute("data-component");
+      expect(child).toHaveAttribute("data-component");
+      expect(child?.parentElement).toBe(parent);
+      const parentPrefix = `${parent?.getAttribute("data-component")}_`;
+      expect(child?.getAttribute("data-component")?.startsWith(parentPrefix)).toBe(true);
+      expect(child).toHaveAttribute("data-component", `${parentPrefix}${suffix}`);
+    }
   });
 
   it.each([1, 12])("keeps %i review events in the list scroller so they cannot crowd out the controls", async (count) => {
@@ -210,7 +245,7 @@ describe("HolidaySettingsSection", () => {
     await screen.findByText("한글날");
 
     const tab2026 = screen.getByRole("tab", { name: "2026" });
-    expect(screen.getByRole("tablist", { name: "연도" })).toHaveAttribute("data-component", "mobile_holidays_settings_toolbar_year-tabs");
+    expect(screen.getByRole("tablist", { name: "연도" })).toHaveAttribute("data-component", "mobile_holidays_settings_content_card_body_sync-controls_toolbar_year-tabs");
     act(() => tab2026.focus());
     fireEvent.keyDown(tab2026, { key: "ArrowRight" });
 
