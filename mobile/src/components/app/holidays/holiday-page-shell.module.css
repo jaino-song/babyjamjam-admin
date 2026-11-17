@@ -43,6 +43,13 @@
   flex-shrink: 0;
 }
 
+/* The mock keeps the sync/year separation larger than the remaining 16px gaps. */
+.syncControls {
+  display: flex;
+  flex-direction: column;
+  gap: 34px;
+}
+
 .listScroll {
   display: flex;
   flex: 1;

@@ -145,33 +145,35 @@ export function HolidaySettingsSection({ branchId, branchName }: HolidaySettings
       dataComponent={DATA_COMPONENT}
       title="지점 공휴일"
     >
-      <HolidaySyncStrip
-        synced={data?.synced ?? false}
-        statusUnknown={data === undefined}
-        lastSyncedAt={data?.lastSyncedAt ?? null}
-        pending={syncMutation.isPending}
-        disabled={busy}
-        results={syncResults}
-        errorMessage={syncError}
-        onSync={() => syncMutation.mutate()}
-      />
-
-      <div
-        data-component={`${DATA_COMPONENT}_toolbar`}
-        className="grid gap-2"
-      >
-        <TogglePill
-          value={year === currentYear}
-          onValueChange={(current) => setYear(current ? currentYear : currentYear + 1)}
-          leftLabel={String(currentYear)}
-          rightLabel={String(currentYear + 1)}
-          ariaLabel="연도"
-          fullWidth
-          data-component={`${DATA_COMPONENT}_toolbar_year-tabs`}
-          indicatorDataComponent={`${DATA_COMPONENT}_toolbar_year-tabs_indicator`}
-          leftButtonDataComponent={`${DATA_COMPONENT}_toolbar_year-tabs_current`}
-          rightButtonDataComponent={`${DATA_COMPONENT}_toolbar_year-tabs_next`}
+      <div data-slot="holiday-sync-controls" className={styles.syncControls}>
+        <HolidaySyncStrip
+          synced={data?.synced ?? false}
+          statusUnknown={data === undefined}
+          lastSyncedAt={data?.lastSyncedAt ?? null}
+          pending={syncMutation.isPending}
+          disabled={busy}
+          results={syncResults}
+          errorMessage={syncError}
+          onSync={() => syncMutation.mutate()}
         />
+
+        <div
+          data-component={`${DATA_COMPONENT}_toolbar`}
+          className="grid gap-2"
+        >
+          <TogglePill
+            value={year === currentYear}
+            onValueChange={(current) => setYear(current ? currentYear : currentYear + 1)}
+            leftLabel={String(currentYear)}
+            rightLabel={String(currentYear + 1)}
+            ariaLabel="연도"
+            fullWidth
+            data-component={`${DATA_COMPONENT}_toolbar_year-tabs`}
+            indicatorDataComponent={`${DATA_COMPONENT}_toolbar_year-tabs_indicator`}
+            leftButtonDataComponent={`${DATA_COMPONENT}_toolbar_year-tabs_current`}
+            rightButtonDataComponent={`${DATA_COMPONENT}_toolbar_year-tabs_next`}
+          />
+        </div>
       </div>
 
       <HolidayAddForm
