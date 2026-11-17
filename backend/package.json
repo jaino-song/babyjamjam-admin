@@ -10,6 +10,7 @@
   },
   "license": "UNLICENSED",
   "scripts": {
+    "repair:service-record-initial-finalization": "NODE_PATH=. ts-node scripts/requeue-initial-finalization-jobs.ts",
     "generate": "prisma generate",
     "prestart": "prisma generate",
     "prestart:dev": "prisma generate",

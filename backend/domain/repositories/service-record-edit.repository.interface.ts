@@ -656,6 +656,12 @@ export interface IServiceRecordEditRepository {
         context: ServiceRecordEditTransactionContext,
         input: AllocateServiceRecordRevisionDocumentVersionInput,
     ): Promise<number>;
+    /** Record initial creation while retaining the completion-only usable pointer. */
+    recordInitialFinalizationDocumentsCreated(input: PromoteServiceRecordRevisionSnapshotInput): Promise<boolean>;
+    recordInitialFinalizationDocumentsCreatedInTransaction(
+        context: ServiceRecordEditTransactionContext,
+        input: PromoteServiceRecordRevisionSnapshotInput,
+    ): Promise<boolean>;
     /** Promote a complete chunk/document set and advance usable pointers atomically. */
     promoteServiceRecordRevisionSnapshot(
         input: PromoteServiceRecordRevisionSnapshotInput,
