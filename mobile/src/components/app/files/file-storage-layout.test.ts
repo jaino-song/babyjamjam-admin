@@ -47,6 +47,57 @@ function paddingTopFor(selector: string, source = css): number {
   return top;
 }
 
+function assertNoAtRulePadding(selector: string, source = css): void {
+  const blocks: { atRule: boolean; matchesSelector: boolean }[] = [];
+  let start = 0;
+  for (const token of source.matchAll(/[{};]/g)) {
+    const index = token.index;
+    const statement = source.slice(start, index).trim();
+    if (token[0] === "{") {
+      const parent = blocks.at(-1);
+      const atRule = statement.startsWith("@");
+      blocks.push({
+        atRule: atRule || Boolean(parent?.atRule),
+        matchesSelector: atRule
+          ? Boolean(parent?.matchesSelector)
+          : statement.split(",").some((part) => part.trim() === selector),
+      });
+    } else {
+      const block = blocks.at(-1);
+      if (block?.atRule && block.matchesSelector && /^(padding|padding-top)\s*:/i.test(statement)) {
+        throw new Error(`Update file-storage-layout.test.ts before adding padding inside at-rules for ${selector}: ${statement}`);
+      }
+      if (token[0] === "}") blocks.pop();
+    }
+    start = index + 1;
+  }
+}
+
+it.each([
+  "@media (min-width: 99999px) { .files { padding-top: 0; } }",
+  "@media (min-width: 0px) { .files { padding-top: 0; } }",
+  "@supports (display: grid) { .files { padding: 0 } }",
+  "@container (min-width: 0px) { .other, .files { padding-top: 0; } }",
+  "@layer layout { .files { padding: 0 !important; } }",
+  "@media (min-width: 0px) { @supports (display: grid) { .files { padding-top: 0; } } }",
+  ".files { @media (min-width: 0px) { padding-top: 0; } }",
+  ".files { @media (min-width: 0px) { @supports (display: grid) { padding: 0 } } }",
+])("rejects file-list padding inside at-rules: %s", (source) => {
+  expect(() => assertNoAtRulePadding(".files", source)).toThrow("Update file-storage-layout.test.ts");
+});
+
+it("allows top-level padding, unrelated selectors and non-padding at-rule declarations", () => {
+  expect(() => assertNoAtRulePadding(".files", `
+    .files { padding: 12px 14px; }
+    @media (min-width: 0px) { .other { padding-top: 0; } .files { color: red; } }
+    .files { @supports (display: grid) { display: grid; } padding-top: 28px; }
+  `)).not.toThrow();
+});
+
+it("requires updating this test before file-list padding is added inside any at-rule", () => {
+  expect(() => assertNoAtRulePadding('body:has([data-slot="files-content"]) [data-slot="files-content"]')).not.toThrow();
+});
+
 it.each([
   "@media (min-width: 99999px) { .files { padding-top: 28px; } }",
   "@supports (display: grid) { .files { padding-top: 28px; } }",
