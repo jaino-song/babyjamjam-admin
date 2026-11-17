@@ -114,7 +114,7 @@ const CLIENT_DETAIL_TABS = [
     { key: "service-records", label: "제공기록지" },
 ] as const;
 
-type ClientDetailTabKey = (typeof CLIENT_DETAIL_TABS)[number]["key"];
+export type ClientDetailTabKey = (typeof CLIENT_DETAIL_TABS)[number]["key"];
 
 const CLIENT_MESSAGE_HISTORY_PAGE_SIZE = 50;
 const CLIENT_UPCOMING_MESSAGE_LIMIT = 50;
@@ -1098,6 +1098,7 @@ function ClientMessageDetailSlide({
 export interface ClientDetailPanelProps {
     /** The currently selected client to render detail for. */
     client: Client;
+    tabRequest?: { clientId: number; tab: ClientDetailTabKey; nonce: number } | null;
     /** Page-specific trailing action (e.g. edit/delete menu, or a link-only menu). */
     trailing: ReactNode;
     /** Stack basic information when embedded in a narrow detail pane. */
@@ -1128,6 +1129,7 @@ export interface ClientDetailPanelProps {
 
 function ClientDetailPanelBody({
     client: selectedClient,
+    tabRequest,
     trailing,
     layout = "desktop",
     basicInfoColumns = layout === "mobile" ? 1 : 2,
@@ -1192,7 +1194,7 @@ function ClientDetailPanelBody({
         && (client.serviceStatus ?? "pre_booking") === "pre_booking";
     const bookingDatesHelpId = `${dataComponentPrefix}_header_confirm-booking_help`;
 
-    const [activeDetailTab, setActiveDetailTab] = useState<ClientDetailTabKey>("basic");
+    const [activeDetailTab, setActiveDetailTab] = useState<ClientDetailTabKey>(tabRequest?.clientId === selectedClient.id ? tabRequest.tab : "basic");
     const [selectedMessageHistoryId, setSelectedMessageHistoryId] = useState<number | string | null>(null);
     const [isMessageHistoryDetailVisible, setIsMessageHistoryDetailVisible] = useState(false);
     const clearMessageHistorySelectionTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -1417,6 +1419,13 @@ function ClientDetailPanelBody({
             clearClientMessageHistoryDetail();
         }
     };
+
+    const appliedTabRequest = useRef<number | undefined>(undefined);
+    useEffect(() => {
+        if (!tabRequest || tabRequest.clientId !== selectedClient.id || appliedTabRequest.current === tabRequest.nonce) return;
+        appliedTabRequest.current = tabRequest.nonce;
+        handleDetailTabChange(tabRequest.tab);
+    });
 
     const handleConfirmBooking = async () => {
         if (bookingConfirmationInFlightRef.current || !canConfirmBooking || !hasBookingDates) return;

@@ -15,6 +15,8 @@ import {
   type QuerySnapshot,
 } from '@/lib/query/optimistic-list-cache';
 
+import type { ServiceRecordMissingClients } from '../types/service-record-missing';
+
 import { clientsApi } from '../api/clients.api';
 import { clientKeys } from './keys';
 import type {
@@ -259,6 +261,25 @@ export function useClientListSummary(options: UseClientListSummaryOptions = {}) 
     hasStaleData: branchContextReady && query.isRefetchError && visibleData !== undefined,
     isBranchContextReady: branchContextReady,
   };
+}
+
+/** Daily missing-record alert, scoped independently from the directory filters. */
+export function useServiceRecordMissingClients() {
+  const branchId = useActiveBranchId();
+  const branchContextReady = isBranchContextAligned(branchId);
+  const query = useQuery<ServiceRecordMissingClients>({
+    queryKey: clientKeys.serviceRecordMissing(branchId),
+    queryFn: async () => {
+      if (!branchId || !isBranchContextAligned(branchId)) {
+        throw new Error('Branch selection required');
+      }
+      const response = await clientsApi.listServiceRecordMissing();
+      return response.data;
+    },
+    enabled: branchContextReady,
+    staleTime: CLIENT_QUERY_STALE_TIME_MS,
+  });
+  return { ...query, data: branchContextReady ? query.data : undefined };
 }
 
 /**

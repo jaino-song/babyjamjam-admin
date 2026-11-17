@@ -6,6 +6,8 @@ const mockRouter = { replace: jest.fn(), push: jest.fn() };
 let mockSearchParams = new URLSearchParams();
 const mockDirectory = jest.fn();
 const mockListSummary = jest.fn();
+let mockMissingData: { count: number; items: Array<{ clientId: number; clientName: string; primaryEmployeeName: string; unwrittenThroughSessionIndex: number }> } | undefined;
+const mockServiceRecordMissing = jest.fn(() => ({ data: mockMissingData, error: null, refetch: jest.fn() }));
 let mockActiveBranchId = "branch-a";
 let mockClientFromParam: { id: number; name: string; serviceStatus?: string | null; bookingConfirmedAt?: string | null } | undefined;
 const mockClientRefetch = jest.fn();
@@ -54,6 +56,7 @@ jest.mock("@/features/system-templates/branch-context", () => ({
 jest.mock("@/features/clients/hooks/use-clients", () => ({
   useClientDirectory: () => mockDirectory(),
   useClientListSummary: () => mockListSummary(),
+  useServiceRecordMissingClients: () => mockServiceRecordMissing(),
   useDeleteClient: () => ({ mutateAsync: jest.fn(), isPending: false }),
   useClient: () => ({
     data: mockClientFromParam,
@@ -139,12 +142,13 @@ jest.mock("@/components/app/contracts/ContractClientSelector", () => ({
 }));
 
 jest.mock("@/components/app/clients/ClientDetailPanel", () => ({
-  ClientDetailPanel: ({ client, trailing, onBookingConfirmed }: {
+  ClientDetailPanel: ({ client, trailing, onBookingConfirmed, tabRequest }: {
     client: { id: number; name: string; bookingConfirmedAt?: string | null; serviceStatus?: string | null };
     trailing?: ReactNode;
+    tabRequest?: { clientId: number; tab: string; nonce: number } | null;
     onBookingConfirmed?: (booking: { id: number; bookingConfirmedAt: string; serviceStatus: "waiting" }) => void;
   }) => (
-    <div data-testid="client-detail" data-booking-confirmed-at={client.bookingConfirmedAt} data-service-status={client.serviceStatus}>
+    <div data-testid="client-detail" data-tab={tabRequest?.tab ?? "basic"} data-nonce={tabRequest?.nonce} data-booking-confirmed-at={client.bookingConfirmedAt} data-service-status={client.serviceStatus}>
       {client.name}{trailing}
       <button onClick={() => onBookingConfirmed?.({ id: client.id, bookingConfirmedAt: "2026-10-13T00:00:00.000Z", serviceStatus: "waiting" })}>확정 응답 적용</button>
     </div>
@@ -282,8 +286,9 @@ jest.mock("@/components/app/v3", () => ({
   SplitLayout: ({ children, hasSelection }: { children: ReactNode; hasSelection?: boolean }) => (
     <div data-testid="clients-split-layout" data-has-selection={String(Boolean(hasSelection))}>{children}</div>
   ),
-  StatsBar: ({ items = [], isLoading }: { items?: Array<{ label: string; value: unknown }>; isLoading?: boolean }) => (
+  StatsBar: ({ items = [], isLoading, trailing }: { items?: Array<{ label: string; value: unknown }>; isLoading?: boolean; trailing?: ReactNode }) => (
     <div data-testid="clients-stats" data-loading={String(Boolean(isLoading))}>
+      {trailing}
       {items.map((item) => (
         <span key={item.label} data-testid={`clients-stat-${item.label}`}>{String(item.value)}</span>
       ))}
@@ -306,6 +311,7 @@ jest.mock("@/services/api", () => ({
 }));
 
 afterEach(() => {
+  mockMissingData = undefined;
   mockAuthUser = { role: "owner", branchRole: null };
   mockActiveBranchId = "branch-a";
   mockClientFromParam = undefined;
@@ -1114,5 +1120,124 @@ describe("ClientsPage a new ?id= outranks a stale row selection (BJJ-432)", () =
     rerender(<ClientsPage />);
 
     expect(screen.getByTestId("client-detail")).toHaveTextContent(CLIENT_A.name);
+  });
+});
+
+describe("ClientsPage missing service record navigation", () => {
+  let ClientsPage: ComponentType;
+  const clientA = { id: 21, name: "QA-목록 고객" };
+  const clientB = { id: 42, name: "QA-미작성 고객" };
+  const openMissing = () => fireEvent.click(screen.getByRole("button", { name: "제공기록지 미작성 고객 보기" }));
+  const clickMissing = () => fireEvent.click(screen.getByRole("button", { name: `${clientB.name} 제공기록지 보기` }));
+
+  beforeAll(async () => { ClientsPage = (await import("./page")).default; });
+  beforeEach(() => {
+    mockSearchParams = new URLSearchParams();
+    mockRouter.replace.mockReset();
+    mockClientFromParam = undefined;
+    mockListSummary.mockReturnValue({ data: undefined, isBranchContextReady: true });
+    mockDirectory.mockReturnValue({
+      clients: [clientA], data: { pages: [{ data: [clientA], total: 1 }] }, matchedTotal: 1,
+      isBranchContextReady: true, isEndOfList: true, refetch: jest.fn(), fetchNextPage: jest.fn(),
+    });
+    mockMissingData = { count: 1, items: [{ clientId: clientB.id, clientName: clientB.name, primaryEmployeeName: "QA-관리사", unwrittenThroughSessionIndex: 3 }] };
+  });
+  afterEach(cleanup);
+
+  it.each([true, false])("jumps via ?id= whether the client is in the current list: %s, then clears the tab request on list selection", inList => {
+    if (inList) mockDirectory.mockReturnValue({ clients: [clientA, clientB], data: {}, matchedTotal: 2, isBranchContextReady: true });
+    const { rerender } = render(<ClientsPage />);
+    fireEvent.click(screen.getByRole("button", { name: clientA.name }));
+    openMissing();
+    clickMissing();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(mockRouter.replace).toHaveBeenLastCalledWith("/clients?id=42");
+    mockSearchParams = new URLSearchParams("id=42");
+    mockClientFromParam = clientB;
+    rerender(<ClientsPage />);
+    expect(screen.getByTestId("client-detail")).toHaveTextContent(clientB.name);
+    expect(screen.getByTestId("client-detail")).toHaveAttribute("data-tab", "service-records");
+    fireEvent.click(screen.getByRole("button", { name: clientA.name }));
+    expect(screen.getByTestId("client-detail")).toHaveTextContent(clientA.name);
+    expect(screen.getByTestId("client-detail")).toHaveAttribute("data-tab", "basic");
+
+    // Matching the original request's client id must not revive a stale request.
+    mockDirectory.mockReturnValue({ clients: [clientA, clientB], data: {}, matchedTotal: 2, isBranchContextReady: true });
+    rerender(<ClientsPage />);
+    fireEvent.click(screen.getByRole("button", { name: clientB.name }));
+    expect(screen.getByTestId("client-detail")).toHaveTextContent(clientB.name);
+    expect(screen.getByTestId("client-detail")).toHaveAttribute("data-tab", "basic");
+    expect(screen.getByTestId("client-detail")).not.toHaveAttribute("data-nonce");
+  });
+
+  it("requests a new nonce for an already selected URL client", () => {
+    mockSearchParams = new URLSearchParams("id=42");
+    mockClientFromParam = clientB;
+    render(<ClientsPage />);
+    expect(screen.getByTestId("client-detail")).toHaveAttribute("data-tab", "basic");
+    openMissing(); clickMissing();
+    const previousNonce = screen.getByTestId("client-detail").getAttribute("data-nonce");
+    expect(screen.getByTestId("client-detail")).toHaveAttribute("data-tab", "service-records");
+    openMissing(); clickMissing();
+    expect(screen.getByTestId("client-detail").getAttribute("data-nonce")).not.toBe(previousNonce);
+  });
+
+  it("switches automation to list and opens the URL client", () => {
+    const { rerender } = render(<ClientsPage />);
+    fireEvent.click(screen.getByRole("button", { name: "자동화" }));
+    expect(screen.queryByRole("heading", { name: "고객 목록" })).not.toBeInTheDocument();
+    openMissing(); clickMissing();
+    expect(screen.getByRole("heading", { name: "고객 목록" })).toBeInTheDocument();
+    mockSearchParams = new URLSearchParams("id=42"); mockClientFromParam = clientB;
+    rerender(<ClientsPage />);
+    expect(screen.getByTestId("client-detail")).toHaveTextContent(clientB.name);
+    expect(screen.getByTestId("client-detail")).toHaveAttribute("data-tab", "service-records");
+  });
+
+  it.each([true, false])("protects a dirty create form and permits a clean create form: dirty=%s", dirty => {
+    const { rerender } = render(<ClientsPage />);
+    fireEvent.click(screen.getByRole("button", { name: "고객 추가" }));
+    if (dirty) fireEvent.click(screen.getByRole("button", { name: "입력 시작" }));
+    openMissing(); clickMissing();
+    if (dirty) {
+      expect(screen.getByRole("dialog", { name: "제공기록지 미작성" })).toBeInTheDocument();
+      expect(mockRouter.replace).not.toHaveBeenCalledWith("/clients?id=42");
+      expect(screen.getByTestId("client-form-panel")).toBeInTheDocument();
+    } else {
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+      expect(screen.queryByTestId("client-form-panel")).not.toBeInTheDocument();
+      mockSearchParams = new URLSearchParams("id=42"); mockClientFromParam = clientB;
+      rerender(<ClientsPage />);
+      expect(screen.getByTestId("client-detail")).toHaveAttribute("data-tab", "service-records");
+    }
+  });
+
+  it("clears a request on branch change before the same client is opened again via URL", () => {
+    mockSearchParams = new URLSearchParams("id=42"); mockClientFromParam = clientB;
+    const { rerender } = render(<ClientsPage />);
+    openMissing(); clickMissing();
+    expect(screen.getByTestId("client-detail")).toHaveTextContent(clientB.name);
+    expect(screen.getByTestId("client-detail")).toHaveAttribute("data-tab", "service-records");
+    expect(screen.getByTestId("client-detail")).toHaveAttribute("data-nonce");
+
+    mockActiveBranchId = "branch-b";
+    rerender(<ClientsPage />);
+    expect(screen.queryByTestId("client-detail")).not.toBeInTheDocument();
+    expect(mockRouter.replace).toHaveBeenLastCalledWith("/clients");
+
+    // Resolve the branch-change URL cleanup, then return without a list selection
+    // (which would independently clear the request and mask a missing branch clear).
+    mockSearchParams = new URLSearchParams();
+    mockClientFromParam = undefined;
+    rerender(<ClientsPage />);
+    mockActiveBranchId = "branch-a";
+    rerender(<ClientsPage />);
+    mockSearchParams = new URLSearchParams("id=42");
+    mockClientFromParam = clientB;
+    rerender(<ClientsPage />);
+
+    expect(screen.getByTestId("client-detail")).toHaveTextContent(clientB.name);
+    expect(screen.getByTestId("client-detail")).toHaveAttribute("data-tab", "basic");
+    expect(screen.getByTestId("client-detail")).not.toHaveAttribute("data-nonce");
   });
 });
