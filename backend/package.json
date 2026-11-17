@@ -31,7 +31,7 @@
     "start": "node dist/main",
     "start:dev": "node scripts/start-dev-lan.mjs",
     "start:prod": "node dist/main",
-    "test": "NODE_OPTIONS=--experimental-vm-modules jest",
+    "test": "NODE_OPTIONS='--experimental-vm-modules --max-old-space-size=4096' jest",
     "e2e:full-flow": "node scripts/run-full-flow-e2e.mjs",
     "test:integrity": "node scripts/run-state-integrity.mjs",
     "e2e:message-automation-cron": "node scripts/run-message-automation-cron-e2e.mjs",
