@@ -402,6 +402,8 @@ export function SlidingCard({
           data-slot="detail-pane"
           aria-hidden={!open}
           inert={!open || undefined}
+          // Inline styles outrank the unlayered global :focus-visible rule.
+          style={{ outline: "none", borderRadius: 0 }}
           className={cn(
             styles.detailPane,
             "outline-none",
