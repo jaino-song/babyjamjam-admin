@@ -35,7 +35,7 @@ function paddingTopFor(selector: string, source = css): number {
   let important = false;
   for (const declaration of declarationsFor(selector, source).split(";")) {
     const statement = declaration.trim();
-    const property = statement.match(/^(padding[^\s:]*)\s*:/i)?.[1];
+    const property = statement.match(/^([^\s:]*padding[^\s:]*)\s*:/i)?.[1];
     // Fail closed for padding properties that this cascade resolver cannot model.
     if (property && !/^(padding|padding-top)$/i.test(property)) {
       throw new Error(`Unsupported padding property for ${selector}: ${property}. Update file-storage-layout.test.ts before adding it.`);
@@ -70,7 +70,7 @@ function assertNoAtRulePadding(selector: string, source = css): void {
       });
     } else {
       const block = blocks.at(-1);
-      if (block?.atRule && block.matchesSelector && /^padding[^\s:]*\s*:/i.test(statement)) {
+      if (block?.atRule && block.matchesSelector && /^[^\s:]*padding[^\s:]*\s*:/i.test(statement)) {
         throw new Error(`Update file-storage-layout.test.ts before adding padding inside at-rules for ${selector}: ${statement}`);
       }
       if (token[0] === "}") blocks.pop();
@@ -84,6 +84,7 @@ it.each([
   "@media (min-width: 0px) { .files { padding-top: 0; } }",
   "@media (min-width:0) { .files { padding-block-start: 0 } }",
   "@media (min-width:0) { .files { padding-block: 0 } }",
+  "@media (min-width:0) { .files { -webkit-padding-before: 0 } }",
   "@supports (display: grid) { .files { padding: 0 } }",
   "@container (min-width: 0px) { .other, .files { padding-top: 0; } }",
   "@layer layout { .files { padding: 0 !important; } }",
@@ -107,6 +108,11 @@ const unsupportedPaddingProperties = [
   "padding-left",
   "PADDING-BLOCK-START",
   "padding-future-property",
+  "-webkit-padding-before",
+  "-webkit-padding-start",
+  "-moz-padding-start",
+  "-WEBKIT-PADDING-BEFORE",
+  "future-padding",
 ];
 
 it.each(unsupportedPaddingProperties)("rejects %s inside at-rules", (property) => {
