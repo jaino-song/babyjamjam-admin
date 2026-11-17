@@ -18,6 +18,8 @@ const config: Config = {
     // one full-suite run in four — timeouts, stray 401s and missed mock calls.
     // Cap the workers and give a slow-under-load test room to finish.
     maxWorkers: "50%",
+    // Recycle after a test file at 1GB to leave headroom below Node's ~2GB heap limit.
+    workerIdleMemoryLimit: "1GB",
     testTimeout: 15000,
     // test/e2e needs a live DB/env — it gets its own gated runner, keep the unit suite hermetic.
     testPathIgnorePatterns: [
