@@ -9,6 +9,11 @@ import {
 import { ConfigService } from "@nestjs/config";
 import { Prisma } from "@prisma/client";
 import { createHash } from "crypto";
+
+import {
+    initialFinalizationRequestKey,
+    isInitialFinalizationWorkflowScope,
+} from "application/policies/service-record-initial-finalization.policy";
 import { EFORMSIGN_CLIENT_REPOSITORY, IEformsignClientRepository } from "domain/repositories/eformsign.client.interface";
 import { EFORMSIGN_DOCUMENT_KIND } from "domain/entities/eformsign-doc.entity";
 import {
@@ -124,6 +129,7 @@ type RevisionSnapshotStateRow = Pick<
     | "status"
     | "step"
     | "version"
+    | "workflowScope"
 >;
 
 interface FrozenRevisionSource {
@@ -386,6 +392,7 @@ export class CreateAndSendServiceRecordSnapshotUsecase {
                 operation: true,
                 generation: true,
                 immutableInput: true,
+                workflowScope: true,
                 inputFingerprint: true,
                 documentVersion: true,
                 status: true,
@@ -542,10 +549,13 @@ export class CreateAndSendServiceRecordSnapshotUsecase {
         if (documentIds.length !== chunks.length) {
             throw new ConflictException({ code: "SERVICE_RECORD_REVISION_CHUNKS_INCOMPLETE" });
         }
-        if (!this.editRepository?.promoteServiceRecordRevisionSnapshot) {
+        const recordDocuments = input.generationKind === "INITIAL_FINALIZATION"
+            ? this.editRepository?.recordInitialFinalizationDocumentsCreated?.bind(this.editRepository)
+            : this.editRepository?.promoteServiceRecordRevisionSnapshot?.bind(this.editRepository);
+        if (!recordDocuments) {
             throw new ConflictException({ code: "SERVICE_RECORD_REVISION_POINTER_PROMOTION_UNAVAILABLE" });
         }
-        const promoted = await this.editRepository.promoteServiceRecordRevisionSnapshot({
+        const promoted = await recordDocuments({
             branchId: input.branchId,
             clientId: input.clientId,
             serviceRecordCaseId: input.serviceRecordCaseId,
@@ -586,6 +596,10 @@ export class CreateAndSendServiceRecordSnapshotUsecase {
         ) {
             throw new ConflictException({ code: "SERVICE_RECORD_REVISION_GENERATION_INVALID" });
         }
+        if (input.generationKind === "INITIAL_FINALIZATION"
+            && input.snapshotReference !== initialFinalizationRequestKey(input.revisionId!)) {
+            throw new ConflictException({ code: "SERVICE_RECORD_REVISION_GENERATION_INVALID" });
+        }
         if (input.documentSyncStatus === "capability_unverified") {
             throw new ConflictException({ code: "SERVICE_RECORD_REVISION_CAPABILITY_UNVERIFIED" });
         }
@@ -618,8 +632,20 @@ export class CreateAndSendServiceRecordSnapshotUsecase {
         input: ServiceRecordRevisionGenerationInput,
         state: RevisionSnapshotStateRow,
     ): void {
+        if (input.generationKind !== "INITIAL_FINALIZATION"
+            && isRecord(state.workflowScope) && state.workflowScope["generationKind"] === "INITIAL_FINALIZATION") {
+            throw new ConflictException({ code: "SERVICE_RECORD_REVISION_GENERATION_SCOPE_CHANGED" });
+        }
         if (state.status === "capability_unverified" || state.step === "capability_unverified") {
             throw new ConflictException({ code: "SERVICE_RECORD_REVISION_CAPABILITY_UNVERIFIED" });
+        }
+        if (input.generationKind === "INITIAL_FINALIZATION") {
+            if (!isInitialFinalizationWorkflowScope(state.workflowScope, input.snapshotReference)) {
+                throw new ConflictException({ code: "SERVICE_RECORD_REVISION_GENERATION_SCOPE_CHANGED" });
+            }
+            if (state.status !== "processing" || state.step !== "dispatch_authorized") {
+                throw new ConflictException({ code: "SERVICE_RECORD_REVISION_GENERATION_NOT_READY" });
+            }
         }
         if ([
             "not_required",
