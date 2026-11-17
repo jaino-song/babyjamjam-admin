@@ -49,6 +49,14 @@ it.each(["primary", "secondary"] as const)("allows a sole %s action to fill the 
   const action = screen.getByRole("button", { name: "확인" });
   expect(within(action.parentElement as HTMLElement).getAllByRole("button")).toEqual([action]);
   expect(rule(".footer")).toContain("display: flex;");
+  const style = document.createElement("style");
+  style.textContent = css;
+  document.head.append(style);
+  try {
+    expect(getComputedStyle(action).gridColumn).toBe("1 / -1");
+  } finally {
+    style.remove();
+  }
 });
 
 it("uses 40px pills and a 1:2 action ratio without changing secondary colors", () => {

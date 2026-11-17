@@ -517,10 +517,12 @@ test.describe("Mobile contracts list rows", () => {
     await expect(loadMoreButton).toBeVisible({ timeout: 15000 });
     await expect(loadMoreButton).toContainText("탭하여 더보기");
 
-    // Only the first server page has been revealed while the teaser is showing.
+    // With 12px vertical row padding this viewport fits nine rows plus the
+    // teaser's peek row. The next six-row server page is prefetched below;
+    // the nine-row first request is a network page size, not a reveal cap.
+    await expect(rows).toHaveCount(10);
     const revealedBeforeTap = await rows.count();
     expect(revealedBeforeTap).toBeGreaterThan(0);
-    expect(revealedBeforeTap).toBeLessThanOrEqual(9);
 
     // The next server page is pulled with the smaller page size at the first-page offset.
     await expect.poll(() =>
@@ -1361,6 +1363,7 @@ test.describe("Mobile contracts list rows", () => {
   });
 
   test("matches the clients search bar spacing", async ({ page }) => {
+    await installPhase3ShellFixture(page);
     await page.route("**/api/access-token", async (route) => {
       await route.fulfill({
         status: 200,
@@ -1378,8 +1381,18 @@ test.describe("Mobile contracts list rows", () => {
     const search = page.locator('[data-component="mobile_contracts_detail-sheet_stack_list-page_content_list-card_search"]');
     await expect(search).toBeVisible();
     await expect(search).toHaveCSS("margin-top", "4px");
-    await expect(search).toHaveCSS("margin-right", "12px");
+    await expect(search).toHaveCSS("margin-right", "0px");
     await expect(search).toHaveCSS("margin-bottom", "8px");
-    await expect(search).toHaveCSS("margin-left", "12px");
+    await expect(search).toHaveCSS("margin-left", "0px");
+    await expect(search).toHaveCSS("padding-right", "12px");
+    await expect(search).toHaveCSS("padding-left", "12px");
+
+    await page.goto("/clients");
+    const clientsSearch = page.locator('[data-component="mobile_clients_detail-sheet_stack_list-page_content_list-card_search"]');
+    await expect(clientsSearch).toBeVisible();
+    await expect(clientsSearch).toHaveCSS("margin-right", "0px");
+    await expect(clientsSearch).toHaveCSS("margin-left", "0px");
+    await expect(clientsSearch).toHaveCSS("padding-right", "12px");
+    await expect(clientsSearch).toHaveCSS("padding-left", "12px");
   });
 });

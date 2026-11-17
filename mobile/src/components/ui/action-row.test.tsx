@@ -27,6 +27,43 @@ it("allows callers to hide the row or change its display at a breakpoint", () =>
   expect(container.firstElementChild).not.toHaveClass("grid!");
 });
 
+describe("action track layout", () => {
+  let style: HTMLStyleElement;
+
+  beforeEach(() => {
+    style = document.createElement("style");
+    // jsdom does not load Tailwind; these equivalents still require the rendered utilities.
+    style.textContent = `
+      .grid { display: grid; }
+      [class~="grid-cols-[minmax(0,1fr)_minmax(0,2fr)]"] {
+        grid-template-columns: minmax(0, 1fr) minmax(0, 2fr);
+      }
+      [class~="[&>:only-child]:col-span-full"] > :only-child { grid-column: 1 / -1; }
+    `;
+    document.head.append(style);
+  });
+
+  afterEach(() => style.remove());
+
+  it.each([undefined, false, null])("spans a sole action with an omitted %s sibling", (sibling) => {
+    render(<ActionRow>{sibling && <Button>취소</Button>}<Button>보내기</Button></ActionRow>);
+
+    const action = screen.getByRole("button", { name: "보내기" });
+    expect(screen.getAllByRole("button")).toHaveLength(1);
+    expect(getComputedStyle(action).gridColumn).toBe("1 / -1");
+  });
+
+  it("keeps two actions in separate 1:2 tracks", () => {
+    const { container } = render(<ActionRow><Button>취소</Button><Button>보내기</Button></ActionRow>);
+
+    expect(getComputedStyle(container.firstElementChild!).display).toBe("grid");
+    expect(getComputedStyle(container.firstElementChild!).gridTemplateColumns).toBe("minmax(0, 1fr) minmax(0, 2fr)");
+    const actions = screen.getAllByRole("button");
+    expect(actions).toHaveLength(2);
+    actions.forEach((action) => expect(getComputedStyle(action).gridColumn).not.toBe("1 / -1"));
+  });
+});
+
 it.each(["auth-actions", "detail-actions"])("keeps exact grid tracks in %s without overriding hidden rows", (className) => {
   const css = readFileSync(join(process.cwd(), "src/components/app/mobile-redesign/redesign.css"), "utf8");
   const style = document.createElement("style");

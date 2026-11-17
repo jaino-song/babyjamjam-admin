@@ -10,7 +10,7 @@ export function ActionRow({ className, ...props }: ActionRowProps): ReactElement
     <div
       data-slot="action-row"
       data-source-component="ActionRow"
-      className={cn("action-row grid grid-cols-[minmax(0,1fr)_minmax(0,2fr)] gap-2 [&>*]:min-w-0", className)}
+      className={cn("action-row grid grid-cols-[minmax(0,1fr)_minmax(0,2fr)] gap-2 [&>*]:min-w-0 [&>:only-child]:col-span-full", className)}
       {...props}
     />
   );
