@@ -12,6 +12,7 @@ import { t } from "@/lib/i18n/translations";
 import { ExpandableSearch } from "@/components/app/v3/ExpandableSearch";
 import { TwoButtonModal } from "@/components/app/ui/TwoButtonModal";
 import { Badge } from "@/components/ui/badge";
+import { LoadingState } from "@/components/app/ui/LoadingState";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { SelectableItemFrame } from "@/components/ui/selectable-item";
@@ -242,7 +243,7 @@ export function ClientsTable() {
                 <div data-component="desktop_clients_table_body" className="p-3 bg-[hsl(220,20%,99%)] flex-1 overflow-y-auto">
                     <div className="space-y-2">
                         {isLoading ? (
-                             <div className="p-8 text-center text-muted-foreground">Loading...</div>
+                             <LoadingState label="고객 목록을 불러오는 중" data-component="desktop_clients_table_body_loading" />
                         ) : filteredClients.length === 0 ? (
                              <div className="p-8 text-center text-muted-foreground">{t(locale, "clients.no-data")}</div>
                         ) : (
@@ -325,7 +326,7 @@ export function ClientsTable() {
                 title={t(locale, "clients.delete-confirm")}
                 description="삭제한 고객은 목록에서 사라지고 복구할 수 없어요."
                 approvalLabel={t(locale, "common.delete")}
-                pendingLabel="삭제 중..."
+                pendingLabel="삭제 중"
                 approvalVariant="destructive"
                 isPending={deleteClient.isPending}
                 onApprove={() => void handleDeleteConfirm()}

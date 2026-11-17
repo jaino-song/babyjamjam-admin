@@ -125,6 +125,8 @@ export function DocumentJobsStatMini({
                 : "처리 중인 전자문서 수를 확인할 수 없어요. 다시 시도해 주세요."}
             </p>
             <Button
+              loading={isSummaryFetching}
+              loadingLabel="다시 시도 중"
               type="button"
               size="sm"
               variant="outline"
@@ -132,9 +134,9 @@ export function DocumentJobsStatMini({
               className="mt-3"
               onClick={refetchSummary}
               disabled={isSummaryFetching}
-              aria-label="전자문서 처리 현황 다시 시도"
+              aria-label={isSummaryFetching ? undefined : "전자문서 처리 현황 다시 시도"}
             >
-              {isSummaryFetching ? "다시 시도 중…" : "다시 시도"}
+              다시 시도
             </Button>
           </AlertDescription>
         </Alert>

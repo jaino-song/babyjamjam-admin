@@ -3,6 +3,7 @@
 import type { ReactNode } from "react";
 import { Dialog as DialogPrimitive } from "radix-ui";
 
+import { ActionRow } from "@/components/ui/action-row";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
@@ -17,12 +18,14 @@ interface ApprovalTwoButtonModalProps {
   cancelLabel?: ReactNode;
   approvalLabel: ReactNode;
   pendingLabel?: ReactNode;
+  pendingDisplay?: "spinner" | "text";
   onApprove: () => void | Promise<void>;
   isPending?: boolean;
   approvalDisabled?: boolean;
   approvalVariant?: "positive" | "destructive";
   isDescriptionVisuallyHidden?: boolean;
   size?: "compact" | "detail";
+  buttonRatio?: "one-two" | "equal";
 }
 
 export function ApprovalTwoButtonModal({
@@ -35,13 +38,16 @@ export function ApprovalTwoButtonModal({
   cancelLabel = "취소",
   approvalLabel,
   pendingLabel,
+  pendingDisplay = "spinner",
   onApprove,
   isPending = false,
   approvalDisabled = false,
   approvalVariant = "positive",
   isDescriptionVisuallyHidden = true,
   size = "compact",
+  buttonRatio = "one-two",
 }: ApprovalTwoButtonModalProps) {
+  const Footer = buttonRatio === "equal" ? "div" : ActionRow;
   const sub = (suffix: string) => `${dataComponent}_${suffix}`;
   const handleOpenChange = (nextOpen: boolean) => {
     if (!nextOpen && isPending) return;
@@ -97,12 +103,15 @@ export function ApprovalTwoButtonModal({
             </div>
           ) : null}
 
-          <div data-component={sub("footer")} className="mt-6 flex gap-2">
+          <Footer data-component={sub("footer")} className={buttonRatio === "equal" ? "mt-6 flex gap-2" : "mt-6"}>
             <Button
               type="button"
               variant="v3-outline"
               size="sm"
-              className="h-11 w-1/2 text-base leading-6"
+              className={cn(
+                "h-11 text-base leading-6",
+                buttonRatio === "equal" ? "w-1/2" : "min-w-0 flex-1",
+              )}
               data-component={sub("cancel")}
               disabled={isPending}
               onClick={() => handleOpenChange(false)}
@@ -113,15 +122,20 @@ export function ApprovalTwoButtonModal({
               type="button"
               variant={approvalVariant === "destructive" ? "destructive" : "v3"}
               size="sm"
-              className="h-11 w-1/2 rounded-full text-base leading-6"
+              className={cn(
+                "h-11 rounded-full text-base leading-6",
+                buttonRatio === "equal" ? "w-1/2" : "min-w-0 flex-[2_1_0]",
+              )}
               data-component={sub("approve")}
               disabled={isPending || approvalDisabled}
+              loading={pendingDisplay === "spinner" && isPending}
+              loadingLabel={pendingLabel ?? "처리 중"}
               aria-busy={isPending || undefined}
               onClick={() => void onApprove()}
             >
-              {isPending ? (pendingLabel ?? approvalLabel) : approvalLabel}
+              {pendingDisplay === "text" && isPending ? (pendingLabel ?? approvalLabel) : approvalLabel}
             </Button>
-          </div>
+          </Footer>
         </DialogPrimitive.Content>
       </DialogPrimitive.Portal>
     </DialogPrimitive.Root>

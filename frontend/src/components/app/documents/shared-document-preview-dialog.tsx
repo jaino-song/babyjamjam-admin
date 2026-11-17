@@ -1,5 +1,6 @@
 "use client";
 
+import { LoadingState } from "@/components/app/ui/LoadingState";
 import {
   Fragment,
   useCallback,
@@ -15,7 +16,6 @@ import { Download, Eye, Printer, X } from "lucide-react";
 import "@/lib/pdf-config";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
-import { Spinner } from "@/components/ui/spinner";
 import { cn } from "@/lib/utils";
 import { HwpDocumentPreview } from "./hwp-document-preview";
 
@@ -577,17 +577,17 @@ export function SharedDocumentPreviewDialog({
           : "미리보기 파일을 확인하는 중입니다";
 
     return (
-      <div className="flex h-full flex-1 items-center justify-center px-6" aria-live="polite">
+      <div className="flex h-full flex-1 items-center justify-center px-6">
         <div
           className={cn(
-            "flex items-center gap-3 rounded-2xl bg-white px-5 py-4 text-sm font-medium shadow-sm",
+            "flex items-center rounded-2xl bg-white px-5 py-4 text-sm font-medium shadow-sm",
             previewAvailabilityStatus === "missing" || previewAvailabilityStatus === "error"
               ? "text-v3-burgundy"
               : "text-v3-text"
           )}
         >
-          {isChecking && <Spinner size="sm" className="text-v3-primary" />}
-          {message}
+          {isChecking && <LoadingState inline label={message} data-component={`${dataComponent}_canvas_availability-loading`} size="sm" />}
+          <span aria-live="polite" data-component={`${dataComponent}_canvas_availability-message`}>{isChecking ? null : message}</span>
         </div>
       </div>
     );
@@ -663,7 +663,7 @@ export function SharedDocumentPreviewDialog({
             size="icon"
             aria-label="미리보기 닫기"
             onClick={handleClose}
-            className="h-8 w-8 text-muted-foreground hover:text-foreground"
+            className="text-muted-foreground hover:text-foreground"
           >
             <X className="h-4 w-4" />
           </Button>
@@ -703,12 +703,7 @@ export function SharedDocumentPreviewDialog({
                   key={previewKey}
                   file={previewUrl}
                   loading={
-                    <div className="flex min-h-full items-center justify-center">
-                      <div className="flex items-center gap-3 rounded-2xl bg-white px-5 py-4 text-sm font-medium text-v3-text shadow-sm">
-                        <Spinner size="sm" className="text-v3-primary" />
-                        PDF를 불러오는 중입니다
-                      </div>
-                    </div>
+                    <LoadingState label="PDF를 불러오는 중입니다" data-component={`${dataComponent}_canvas_pdf-loading`} size="sm" className="min-h-full" />
                   }
                   error={
                     <div className="flex min-h-full items-center justify-center">
@@ -767,12 +762,8 @@ export function SharedDocumentPreviewDialog({
             {isImage && isPreviewReady && imageLoadStatus === "loading" ? (
               <div
                 className="pointer-events-none absolute inset-0 flex items-center justify-center px-6"
-                aria-live="polite"
               >
-                <div className="flex items-center gap-3 rounded-2xl bg-white px-5 py-4 text-sm font-medium text-v3-text shadow-sm">
-                  <Spinner size="sm" className="text-v3-primary" />
-                  이미지를 불러오는 중입니다
-                </div>
+                <LoadingState label="이미지를 불러오는 중입니다" data-component={`${dataComponent}_canvas_image-loading`} size="sm" />
               </div>
             ) : null}
 
@@ -787,6 +778,7 @@ export function SharedDocumentPreviewDialog({
             {isHwp && isPreviewReady && (
               <div ref={previewViewportRef} className="h-full overflow-auto px-6 pb-24 pt-6">
                 <HwpDocumentPreview
+                  data-component={`${dataComponent}_canvas_hwp-preview`}
                   key={previewKey}
                   previewUrl={previewUrl}
                   previewKey={previewKey}

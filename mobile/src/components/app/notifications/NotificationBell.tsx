@@ -99,10 +99,12 @@ function groupNotificationsByDate(notifications: Notification[]): GroupedNotific
 export function NotificationBell({
     "data-component": dataComponent,
     className,
+    disabled = false,
 }: {
     /** Caller-context canonical base, e.g. `mobile_shell_header_icons_notification-bell`. */
     "data-component"?: string;
     className?: string;
+    disabled?: boolean;
 }) {
     const router = useRouter();
     const [isOpen, setIsOpen] = useState(false);
@@ -375,8 +377,9 @@ export function NotificationBell({
                         className="min-h-0 px-4 py-8"
                     />
                 ) : notificationsLoading && !notificationsHasData ? (
-                    <div className="p-8 flex justify-center">
-                        <Spinner size="default" />
+                    <div data-component={dataComponent ? `${dataComponent}_list-loading` : undefined} role="status" aria-label="알림을 불러오는 중" className="p-8 flex justify-center">
+                        <Spinner aria-hidden="true" />
+                        <span className="sr-only">알림을 불러오는 중</span>
                     </div>
                 ) : (
                     <>
@@ -406,8 +409,9 @@ export function NotificationBell({
                             </div>
                         ) : null}
                         {notificationsLoading || (notificationsNormalizedError?.suppress && !notificationsHasData) ? (
-                            <div className="p-8 flex justify-center">
-                                <Spinner size="default" />
+                            <div data-component={dataComponent ? `${dataComponent}_list-loading` : undefined} role="status" aria-label="알림을 불러오는 중" className="p-8 flex justify-center">
+                                <Spinner aria-hidden="true" />
+                                <span className="sr-only">알림을 불러오는 중</span>
                             </div>
                         ) : notifications.length === 0 ? (
                     <div className="p-8 text-center">
@@ -501,15 +505,16 @@ export function NotificationBell({
                     <Button
                         variant="ghost"
                         size="icon"
-                        aria-label="알림 열기"
+                        aria-label={isLoading ? undefined : "알림 열기"}
+                        loading={isLoading}
+                        loadingLabel="알림 상태를 확인하는 중"
+                        disabled={disabled}
                         onClick={handleClick}
                         data-component={dataComponent}
                         data-testid="notification-bell"
                         className={cn("relative transition-transform duration-200 hover:scale-110 active:scale-95", className)}
                     >
-                        {isLoading ? (
-                            <Spinner size="sm" />
-                        ) : !PWA_NOTIFICATIONS_ENABLED || isSubscribed ? (
+                        {!PWA_NOTIFICATIONS_ENABLED || isSubscribed ? (
                             <>
                                 <Bell className="!h-5 !w-5 text-primary" />
                                 {unreadCount !== undefined && unreadCount > 0 && (

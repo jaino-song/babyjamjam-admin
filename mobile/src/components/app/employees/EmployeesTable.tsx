@@ -225,7 +225,7 @@ export function EmployeesTable() {
                     title={t(locale, "employees.delete-confirm.title")}
                     description={t(locale, "employees.delete-confirm.message")}
                     approvalLabel={t(locale, "common.delete")}
-                    pendingLabel="삭제 중..."
+                    pendingLabel="삭제 중"
                     approvalVariant="destructive"
                     isPending={deleteEmployee.isPending}
                     onApprove={handleDeleteConfirm}

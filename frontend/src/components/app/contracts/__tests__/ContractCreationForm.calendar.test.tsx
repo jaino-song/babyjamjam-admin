@@ -226,13 +226,13 @@ describe("ContractCreationForm — branch business-day calendar", () => {
     const { rerender } = render(buildUi());
 
     expect(screen.getByTestId("contract-creation-submit")).toBeDisabled();
-    expect(screen.getByText("공휴일 정보를 불러오는 중이에요…")).toBeInTheDocument();
+    expect(screen.getByText("공휴일 정보를 불러오는 중이에요")).toBeInTheDocument();
 
     mockedHook.mockImplementation(() => hookResult());
     rerender(buildUi());
 
     expect(screen.getByTestId("contract-creation-submit")).not.toBeDisabled();
-    expect(screen.queryByText("공휴일 정보를 불러오는 중이에요…")).not.toBeInTheDocument();
+    expect(screen.queryByText("공휴일 정보를 불러오는 중이에요")).not.toBeInTheDocument();
   });
 
   it("shows the retry notice when the calendar fails to load and retries on click", () => {

@@ -62,7 +62,7 @@ function renderCards() {
       <HolidayReviewCards branchId="branch-1" />
     </QueryClientProvider>,
   );
-  return { invalidate };
+  return { invalidate, queryClient };
 }
 
 describe("HolidayReviewCards", () => {
@@ -79,14 +79,14 @@ describe("HolidayReviewCards", () => {
     api.resolve.mockResolvedValue({ fixed: 0, kept: 0, skipped: [] });
   });
 
-  it("keeps its slot root but renders nothing inside when there are no events", async () => {
+  it("renders no grid root while loading or after an empty events response", async () => {
     api.listEvents.mockResolvedValue([]);
-    renderCards();
+    const { queryClient } = renderCards();
 
+    expect(document.querySelector("[data-slot='holiday-review-cards']")).not.toBeInTheDocument();
     await waitFor(() => expect(api.listEvents).toHaveBeenCalledWith("branch-1"));
-    const root = document.querySelector("[data-slot='holiday-review-cards']");
-    expect(root).not.toBeNull();
-    expect(root).toBeEmptyDOMElement();
+    await waitFor(() => expect(queryClient.getQueryData(["holiday-review-events", "branch-1"])).toEqual([]));
+    expect(document.querySelector("[data-slot='holiday-review-cards']")).not.toBeInTheDocument();
   });
 
   it("names its wrapper with the platform-prefixed data-component and the component in data-source-component", async () => {
@@ -140,6 +140,21 @@ describe("HolidayReviewCards", () => {
   });
 
   describe("bulk fix", () => {
+    it("keeps the result after the last event disappears and removes the grid on dismissal", async () => {
+      api.listItems.mockResolvedValue(SAFE_ITEMS);
+      api.resolve.mockResolvedValue({ fixed: 2, kept: 0, skipped: [] });
+      renderCards();
+      fireEvent.click(await screen.findByRole("button", { name: "2명 한 번에 수정" }));
+      api.listEvents.mockResolvedValue([]);
+      fireEvent.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "2명 수정" }));
+
+      expect(await screen.findByText("2명 수정했어요")).toBeInTheDocument();
+      await waitFor(() => expect(document.querySelector("[data-slot='holiday-review-panel']")).not.toBeInTheDocument());
+      expect(document.querySelector("[data-slot='holiday-review-cards']")).toBeInTheDocument();
+      fireEvent.click(screen.getByRole("button", { name: "닫기" }));
+      expect(document.querySelector("[data-slot='holiday-review-cards']")).not.toBeInTheDocument();
+    });
+
     it("asks for confirmation first and sends nothing when cancelled", async () => {
       renderCards();
       fireEvent.click(await screen.findByRole("button", { name: "2명 한 번에 수정" }));
@@ -381,7 +396,7 @@ describe("HolidayReviewCards", () => {
       fireEvent.keyDown(dialog, { key: "Escape" });
 
       await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
-      expect(document.querySelector("[data-slot='holiday-review-cards']")).toBeEmptyDOMElement();
+      expect(document.querySelector("[data-slot='holiday-review-cards']")).not.toBeInTheDocument();
     });
 
     it("refetches the open rows after a RECALCULATED_CHANGED skip so the refreshed new end date shows", async () => {

@@ -117,7 +117,7 @@ describe("mobile consultations page", () => {
     expect(refetch).toHaveBeenCalledTimes(1);
     mockUseConsultationInquiries.mockReturnValue({ data, isError: true, isLoading: false, isFetching: true, refetch });
     rerender(<ConsultationsPage />);
-    expect(screen.getByRole("button", { name: "다시 시도" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "다시 시도 중" })).toBeDisabled();
   });
 
   it("shows real zero counts and existing empty text after a successful empty load", () => {
@@ -130,15 +130,16 @@ describe("mobile consultations page", () => {
     expect(screen.getByTestId("pills")).toHaveTextContent("전체:0미확인:0확인:0");
   });
 
-  it("shows existing loading text, not an alert or empty text, during a no-data retry", () => {
+  it("shows a named Spinner status without an alert or empty text during a no-data retry", () => {
     mockUseConsultationInquiries.mockReturnValue({ data: undefined, isLoading: true, isError: false, isFetching: true });
     render(<ConsultationsPage />);
-    expect(screen.getByText("불러오는 중...")).toBeInTheDocument();
+    expect(screen.getByRole("status", { name: "불러오는 중" })).toBeInTheDocument();
+    expect(screen.getByText("불러오는 중")).toHaveClass("sr-only");
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     expect(screen.queryByText("상담 문의가 없습니다.")).not.toBeInTheDocument();
   });
 
-  it("shows the loading text, not the empty text, with unknown counts while the load is paused offline", () => {
+  it("shows a named Spinner status with unknown counts while the load is paused offline", () => {
     // react-query state for a query started offline: pending but paused, so isLoading is false.
     mockUseConsultationInquiries.mockReturnValue({
       data: undefined,
@@ -151,7 +152,8 @@ describe("mobile consultations page", () => {
       fetchStatus: "paused",
     });
     const { container } = render(<ConsultationsPage />);
-    expect(screen.getByText("불러오는 중...")).toBeInTheDocument();
+    expect(screen.getByRole("status", { name: "불러오는 중" })).toBeInTheDocument();
+    expect(screen.getByText("불러오는 중")).toHaveClass("sr-only");
     expect(screen.queryByText("상담 문의가 없습니다.")).not.toBeInTheDocument();
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     expect(Array.from(container.querySelectorAll('[data-slot="stat-mini-value"]')).map((el) => el.textContent)).toEqual(["—", "—", "—", "—"]);
@@ -166,7 +168,7 @@ describe("mobile consultations page", () => {
     });
     render(<ConsultationsPage />);
     expect(screen.getByRole("button", { name: "김상담" })).toBeInTheDocument();
-    expect(screen.queryByText("불러오는 중...")).not.toBeInTheDocument();
+    expect(screen.queryByRole("status", { name: "불러오는 중" })).not.toBeInTheDocument();
   });
 
   it("renders the consultation stats in the canonical order", () => {

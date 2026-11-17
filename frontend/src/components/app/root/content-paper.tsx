@@ -95,7 +95,6 @@ export const ContentPaper = React.forwardRef<HTMLDivElement, ContentPaperProps>(
                 data-component="desktop_chrome_content-paper"
                 data-testid="ContentPaper"
                 className={cn(
-                    variant !== "v3" && "rounded-lg", // 8px radius - reference design match (only for default)
                     !disableAnimation && (variant === "v3" ? "animate-v3-slide-up" : "animate-fade-in"),
                     sxClasses,
                     className

@@ -7,6 +7,7 @@ import {
   type ContractMockDocument,
 } from "./helpers/contracts-api-mock";
 import { selectContractsSection } from "./helpers/contracts-ui";
+import { expectMeasuredInitialRows } from "./helpers/list-reveal";
 import { installPhase3ShellFixture } from "./helpers/phase3-fixtures";
 
 async function createPreviewPdf(): Promise<Buffer> {
@@ -517,10 +518,12 @@ test.describe("Mobile contracts list rows", () => {
     await expect(loadMoreButton).toBeVisible({ timeout: 15000 });
     await expect(loadMoreButton).toContainText("탭하여 더보기");
 
-    // Only the first server page has been revealed while the teaser is showing.
-    const revealedBeforeTap = await rows.count();
+    // Server page sizes and the measured reveal window are independent.
+    const revealedBeforeTap = await expectMeasuredInitialRows(
+      page.locator(".list-card-scroll"),
+      PAGINATED_DOCUMENTS.documents.length,
+    );
     expect(revealedBeforeTap).toBeGreaterThan(0);
-    expect(revealedBeforeTap).toBeLessThanOrEqual(9);
 
     // The next server page is pulled with the smaller page size at the first-page offset.
     await expect.poll(() =>
@@ -588,6 +591,14 @@ test.describe("Mobile contracts list rows", () => {
     await page.goto("/contracts");
     // Anchor: wait for the mocked rows to land before child assertions.
     await expect(page.locator('[data-component="mobile_contracts_detail-sheet_stack_list-page_content_list-card_body_row"]').first()).toBeVisible({ timeout: 15000 });
+    const initialCount = await expectMeasuredInitialRows(
+      page.locator(".list-card-scroll"),
+      STAGE_DOCUMENTS.documents.length,
+    );
+    if (initialCount < STAGE_DOCUMENTS.documents.length) {
+      await page.getByRole("button", { name: "더 많은 항목 불러오기" }).click();
+    }
+    await expect(page.locator(".list-card-scroll .list-item")).toHaveCount(STAGE_DOCUMENTS.documents.length);
 
     const waitingRow = page.locator('[data-component="mobile_contracts_detail-sheet_stack_list-page_content_list-card_body_row"]', { hasText: "대기고객" });
     const openedRow = page.locator('[data-component="mobile_contracts_detail-sheet_stack_list-page_content_list-card_body_row"]', { hasText: "열람고객" });
@@ -992,6 +1003,13 @@ test.describe("Mobile contracts list rows", () => {
 
     await page.goto("/contracts");
 
+    const initialCount = await expectMeasuredInitialRows(
+      page.locator(".list-card-scroll"),
+      STAGE_DOCUMENTS.documents.length,
+    );
+    if (initialCount < STAGE_DOCUMENTS.documents.length) {
+      await page.getByRole("button", { name: "더 많은 항목 불러오기" }).click();
+    }
     await page.locator('[data-component="mobile_contracts_detail-sheet_stack_list-page_content_list-card_body_row"]', { hasText: "완료고객" }).click();
     await expect(page.locator('[data-component="mobile_contracts_detail-sheet_stack_detail-page_content_pdf-preview"]')).toHaveCount(0);
     const receiptShareButton = page.locator('[data-component="mobile_contracts_detail-sheet_stack_detail-page_actions_receipt-share"]');
@@ -1361,6 +1379,7 @@ test.describe("Mobile contracts list rows", () => {
   });
 
   test("matches the clients search bar spacing", async ({ page }) => {
+    await installPhase3ShellFixture(page);
     await page.route("**/api/access-token", async (route) => {
       await route.fulfill({
         status: 200,
@@ -1378,8 +1397,18 @@ test.describe("Mobile contracts list rows", () => {
     const search = page.locator('[data-component="mobile_contracts_detail-sheet_stack_list-page_content_list-card_search"]');
     await expect(search).toBeVisible();
     await expect(search).toHaveCSS("margin-top", "4px");
-    await expect(search).toHaveCSS("margin-right", "12px");
+    await expect(search).toHaveCSS("margin-right", "0px");
     await expect(search).toHaveCSS("margin-bottom", "8px");
-    await expect(search).toHaveCSS("margin-left", "12px");
+    await expect(search).toHaveCSS("margin-left", "0px");
+    await expect(search).toHaveCSS("padding-right", "12px");
+    await expect(search).toHaveCSS("padding-left", "12px");
+
+    await page.goto("/clients");
+    const clientsSearch = page.locator('[data-component="mobile_clients_detail-sheet_stack_list-page_content_list-card_search"]');
+    await expect(clientsSearch).toBeVisible();
+    await expect(clientsSearch).toHaveCSS("margin-right", "0px");
+    await expect(clientsSearch).toHaveCSS("margin-left", "0px");
+    await expect(clientsSearch).toHaveCSS("padding-right", "12px");
+    await expect(clientsSearch).toHaveCSS("padding-left", "12px");
   });
 });

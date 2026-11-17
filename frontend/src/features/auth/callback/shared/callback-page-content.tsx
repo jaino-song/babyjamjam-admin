@@ -2,7 +2,7 @@
 
 
 import { Button } from "@/components/ui/button";
-import { Spinner } from "@/components/ui/spinner";
+import { LoadingState } from "@/components/app/ui/LoadingState";
 import { AuthSurface, type AuthSurfaceVariant } from "@/features/auth/shared/ui/auth-surface";
 import { useCallbackPageController } from "@/features/auth/callback/shared/use-callback-page-controller";
 
@@ -25,8 +25,7 @@ export function CallbackPageContent({ variant }: CallbackPageContentProps) {
         subtitle: "desktop_auth_callback_subtitle",
         content: "desktop_auth_callback_content",
       }}
-      title={status === "error" ? "로그인 실패" : "로그인 중..."}
-      subtitle={status === "error" ? undefined : "인증 정보를 확인하고 있습니다."}
+      title={status === "error" ? "로그인 실패" : undefined}
       contentClassName="flex flex-col items-center gap-4 text-center"
       mobileWrapperClassName="px-4 py-6"
     >
@@ -42,10 +41,7 @@ export function CallbackPageContent({ variant }: CallbackPageContentProps) {
           </Button>
         </>
       ) : (
-        <>
-          <Spinner size="lg" />
-          <p className="text-foreground">로그인 중...</p>
-        </>
+        <LoadingState data-component="desktop_auth_callback_content_loading" label="로그인 중" size="lg" />
       )}
     </AuthSurface>
   );

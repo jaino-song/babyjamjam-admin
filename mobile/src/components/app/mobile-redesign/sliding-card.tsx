@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import type {
   PointerEvent as ReactPointerEvent,
   ReactElement,
@@ -50,6 +50,7 @@ export interface SlidingCardProps {
   list: ReactNode;
   detail: ReactNode;
   detailHeaderTrailing?: ReactNode;
+  listBottomPadding?: "default" | "none";
 }
 
 export function SlidingCard({
@@ -61,12 +62,13 @@ export function SlidingCard({
   list,
   detail,
   detailHeaderTrailing,
+  listBottomPadding = "default",
 }: SlidingCardProps): ReactElement {
   const detailBodyRef = useRef<HTMLDivElement>(null);
   const detailPaneRef = useRef<HTMLDivElement>(null);
+  const detailTitleId = useId();
   const listPaneRef = useRef<HTMLDivElement>(null);
   const listDimRef = useRef<HTMLDivElement>(null);
-  const backButtonRef = useRef<HTMLButtonElement>(null);
   const gestureRef = useRef<GestureState>({
     pointerId: null,
     startX: 0,
@@ -148,7 +150,7 @@ export function SlidingCard({
       restoreFocusRef.current = lastListFocusRef.current;
       // preventScroll: 슬라이드 중인 pane 안 요소에 focus가 가면 브라우저가
       // overflow:hidden stage를 강제 스크롤해 전환이 점프/튕김으로 보인다.
-      backButtonRef.current?.focus({ preventScroll: true });
+      detailPaneRef.current?.focus({ preventScroll: true });
     } else if (wasOpen && !open) {
       const elementToRestore = restoreFocusRef.current;
       if (elementToRestore?.isConnected) {
@@ -349,6 +351,30 @@ export function SlidingCard({
 
   const renderedDetail = open ? detail : cachedDetail?.detail;
 
+  useLayoutEffect(() => {
+    const body = detailBodyRef.current;
+    const pane = detailPaneRef.current;
+    if (!body || !pane) return;
+
+    const labelFromDetailTitle = () => {
+      const title = body.querySelector<HTMLElement>(
+        ".client-detail-name, [data-slot='sheet-title'], h1, h2, h3, [role='heading']",
+      );
+      if (!title) {
+        pane.removeAttribute("aria-labelledby");
+        return;
+      }
+      if (!title.id) title.id = detailTitleId;
+      pane.setAttribute("aria-labelledby", title.id);
+    };
+
+    // Resolve before programmatic focus; keep async and cached detail titles connected.
+    labelFromDetailTitle();
+    const observer = new MutationObserver(labelFromDetailTitle);
+    observer.observe(body, { childList: true, subtree: true });
+    return () => observer.disconnect();
+  }, [detailTitleId, renderedDetail]);
+
   return (
     <div
       data-component={dataComponent}
@@ -369,6 +395,7 @@ export function SlidingCard({
           inert={open || undefined}
           className={cn(
             styles.listPane,
+            listBottomPadding === "none" && styles.listPaneNoBottomPadding,
             open && styles.listPaneOpen,
             isDragging && styles.dragging,
           )}
@@ -393,12 +420,18 @@ export function SlidingCard({
 
         <div
           ref={detailPaneRef}
+          tabIndex={-1}
+          role="region"
+          aria-label="상세 정보"
           data-component={`${dataComponent}_stage_detail-pane`}
           data-slot="detail-pane"
           aria-hidden={!open}
           inert={!open || undefined}
+          // Inline styles outrank the unlayered global :focus-visible rule.
+          style={{ outline: "none", borderRadius: 0 }}
           className={cn(
             styles.detailPane,
+            "outline-none",
             open && styles.detailPaneOpen,
             isDragging && styles.dragging,
           )}
@@ -428,7 +461,6 @@ export function SlidingCard({
             className={styles.detailHeader}
           >
             <button
-              ref={backButtonRef}
               type="button"
               aria-label={`${backLabel} 목록으로 돌아가기`}
               data-component={`${dataComponent}_stage_detail-pane_header_back`}

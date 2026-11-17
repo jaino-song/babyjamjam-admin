@@ -71,7 +71,7 @@ import { canManageBranchFromAuthQuery } from "@/lib/auth/branch-role-policy";
 import { t } from "@/lib/i18n/translations";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Button } from "@/components/ui/button";
+import { Button, ButtonLoadingContent } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import {
     StatsBar,
@@ -1018,11 +1018,15 @@ export default function ClientsPage() {
                                         <DropdownMenuItem
                                             data-component="desktop_clients_sections_section-content_list-section_split-layout_detail-selection_detail-panel_header_menu_send-copayment-receipt"
                                             disabled={isSendingReceipt}
+                                            aria-busy={isSendingReceipt || undefined}
+                                            data-loading={isSendingReceipt ? "" : undefined}
                                             onClick={() => void sendReceipt(activeSelectedClient.id)}
-                                            className="gap-2"
+                                            className={isSendingReceipt ? "relative gap-2" : "gap-2"}
                                         >
-                                            <Send className="w-4 h-4" />
-                                            {isSendingReceipt ? "영수증 발송 중..." : "본인부담금 영수증 발송"}
+                                            <ButtonLoadingContent loading={isSendingReceipt} loadingLabel="영수증 발송 중">
+                                                <Send className="w-4 h-4" />
+                                                본인부담금 영수증 발송
+                                            </ButtonLoadingContent>
                                         </DropdownMenuItem>
                                         {canManageBranchFeatures && (
                                             <DropdownMenuItem
@@ -1133,7 +1137,7 @@ export default function ClientsPage() {
                 description="기존 링크가 만료 되었어요. 메시지는 발송되지 않아요."
                 isDescriptionVisuallyHidden={false}
                 approvalLabel="링크 재설정"
-                pendingLabel="재설정 중..."
+                pendingLabel="재설정 중"
                 isPending={isResettingLink}
                 onApprove={() => void handleResetServiceRecordLinkConfirm()}
             />
@@ -1166,7 +1170,7 @@ export default function ClientsPage() {
                 title={t(locale, "clients.delete-confirm")}
                 description="삭제한 고객은 목록에서 사라지고 복구할 수 없어요."
                 approvalLabel={t(locale, "common.delete")}
-                pendingLabel="삭제 중..."
+                pendingLabel="삭제 중"
                 approvalVariant="destructive"
                 isPending={deleteClient.isPending}
                 onApprove={() => void handleDeleteConfirm()}

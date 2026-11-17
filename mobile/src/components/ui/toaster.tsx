@@ -74,7 +74,7 @@ export function ToastAction({
   );
 }
 
-export function Toaster() {
+export function Toaster({ closeSize = "touch" }: { closeSize?: "touch" | "compact" } = {}) {
   const { toasts, dismiss } = useToast();
 
   return (
@@ -138,7 +138,10 @@ export function Toaster() {
               type="button"
               onClick={() => dismiss(toast.id)}
               aria-label="알림 닫기"
-              className="absolute -right-2 -top-2 flex h-6 w-6 items-center justify-center rounded-full border border-white/20 bg-v3-dark text-white opacity-0 transition-opacity focus:opacity-100 focus:outline-none focus:ring-2 focus:ring-[#9cc3ff] group-hover:opacity-100"
+              className={cn(
+                "absolute -right-2 -top-2 flex h-6 w-6 items-center justify-center rounded-full border border-white/20 bg-v3-dark text-white opacity-0 transition-opacity focus:opacity-100 focus:outline-none focus:ring-2 focus:ring-[#9cc3ff] group-hover:opacity-100",
+                closeSize === "touch" && "-right-3 -top-3 h-8 w-8 after:absolute after:-inset-1.5 after:content-['']",
+              )}
             >
               <X className="h-3.5 w-3.5" />
             </button>

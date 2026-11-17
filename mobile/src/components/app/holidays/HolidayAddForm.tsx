@@ -78,7 +78,7 @@ export function HolidayAddForm({
       noValidate
       data-component={dataComponent}
       data-source-component={SOURCE_COMPONENT}
-      className="grid gap-3 rounded-2xl bg-v3-dim-white px-4 py-3.5"
+      className="grid gap-3 rounded-[16px] border border-[#818b98] bg-transparent px-4 py-3.5"
       onSubmit={(event) => void handleSubmit(event)}
     >
       <InputField
@@ -128,9 +128,10 @@ export function HolidayAddForm({
         type="submit"
         data-component={`${dataComponent}_submit-trigger`}
         disabled={pending}
-        aria-busy={pending || undefined}
+        loading={pending}
+        loadingLabel="추가 중"
       >
-        {pending ? "추가 중..." : "공휴일 추가"}
+        공휴일 추가
       </Button>
     </form>
   );

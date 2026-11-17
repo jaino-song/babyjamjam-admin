@@ -22,6 +22,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { LoadingState } from "@/components/app/ui/LoadingState";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Document, getDownloadUrl } from "@/hooks/use-documents";
@@ -131,9 +132,9 @@ export default function DocumentPreviewModal({
         showCloseButton={false}
       >
         {/* Header */}
-        <DialogHeader data-component={`${dataComponent}_header`} className="px-6 py-4 border-b border-border flex-row justify-between items-start">
-          <div>
-            <DialogTitle className="text-lg font-semibold">
+        <DialogHeader data-component={`${dataComponent}_header`} className="px-6 py-4 border-b border-border grid grid-cols-[32px_minmax(0,1fr)_32px] items-start">
+          <div className="col-start-2 min-w-0">
+            <DialogTitle className="break-words text-center text-lg font-semibold">
               {doc.name}
             </DialogTitle>
             <Badge variant="outline" className="mt-1">
@@ -228,7 +229,7 @@ export default function DocumentPreviewModal({
                 src={`${preview.url}#toolbar=0`}
                 className="w-full h-full border-none"
                 title={doc.name}
-              /> : <p className="m-auto text-muted-foreground">파일을 불러오는 중입니다.</p>
+              /> : <LoadingState label="파일을 불러오는 중" data-component={`${dataComponent}_preview_pdf-loading`} className="m-auto" />
             )}
 
             {isImage && (
@@ -242,7 +243,7 @@ export default function DocumentPreviewModal({
                     transform: `scale(${zoom})`,
                     transformOrigin: "center center",
                   }}
-                /> : <p className="text-muted-foreground">파일을 불러오는 중입니다.</p>}
+                /> : <LoadingState label="파일을 불러오는 중" data-component={`${dataComponent}_preview_image-loading`} />}
 
                 {/* Zoom controls for image */}
                 <div className="absolute bottom-4 left-1/2 -translate-x-1/2 bg-black/60 rounded-full flex items-center gap-1 p-1">

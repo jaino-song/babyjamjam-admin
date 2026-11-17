@@ -540,7 +540,7 @@ export function EmployeeDirectoryManager({ dataComponent }: { dataComponent: str
                 title="제공인력을 삭제하시겠어요?"
                 description="삭제한 제공인력은 목록에서 사라져요."
                 approvalLabel="삭제"
-                pendingLabel="삭제 중..."
+                pendingLabel="삭제 중"
                 approvalVariant="destructive"
                 isPending={deleteEmployee.isPending}
                 onApprove={() => void handleDeleteConfirm()}

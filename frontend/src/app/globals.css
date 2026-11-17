@@ -1761,7 +1761,8 @@ body {
 [data-slot="client-detail-presentation"][data-layout="mobile"] [data-slot="detail-panel-header"] { padding: 16px; }
 [data-slot="client-detail-presentation"][data-layout="mobile"] [data-slot="detail-panel-scroll-content"] { padding: 16px; }
 [data-slot="client-detail-presentation"][data-layout="mobile"] [data-slot="detail-panel-bottom-spacer"] { height: 0; }
-[data-slot="client-detail-presentation"][data-layout="mobile"] :is([data-source-component="InfoCard"], [data-source-component="ServiceRecordHeaderCard"]) { padding: 14px 16px; border-radius: 18px; background: hsl(var(--v3-dim-white)); }
+[data-slot="client-detail-presentation"][data-layout="mobile"] [data-source-component="InfoCard"] { padding: 14px 16px; border: 1px solid #818b98; border-radius: 16px; background: #fff; }
+[data-slot="client-detail-presentation"][data-layout="mobile"] [data-source-component="ServiceRecordHeaderCard"] { padding: 14px 16px; border-radius: 18px; background: hsl(var(--v3-dim-white)); }
 [data-slot="client-detail-presentation"][data-layout="mobile"] :is([data-source-component="InfoCard"], [data-source-component="ServiceRecordHeaderCard"]) h3 { font-size: .6rem; letter-spacing: .08em; margin-bottom: 8px; }
 [data-slot="client-detail-presentation"][data-layout="mobile"] [data-source-component="InfoRow"] { gap: 12px; padding: 8px 0; }
 [data-slot="client-detail-presentation"][data-layout="mobile"] [data-source-component="InfoRow"] > span { font-size: .78rem; word-break: keep-all; }
@@ -1784,7 +1785,7 @@ body {
   font-size: 16px;
   line-height: 26px;
 }
-[data-chat-workspace-controls] [data-slot="button"] {
+[data-chat-workspace-controls] [data-slot="button"]:not([data-size="icon"]) {
   min-height: 44px;
   min-width: 44px;
 }

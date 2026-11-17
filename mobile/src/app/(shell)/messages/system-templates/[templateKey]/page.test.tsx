@@ -57,7 +57,7 @@ describe("system template failed loads", () => {
     const content = screen.getByText("저장된 메시지 내용");
     expect(alert.compareDocumentPosition(content) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(screen.queryByText("템플릿을 찾을 수 없습니다.")).not.toBeInTheDocument();
-    const retry = screen.getByRole("button", { name: "다시 시도" });
+    const retry = screen.getByRole("button", { name: isFetching ? "다시 시도 중" : "다시 시도" });
     if (isFetching) expect(retry).toBeDisabled();
     else {
       fireEvent.click(retry);

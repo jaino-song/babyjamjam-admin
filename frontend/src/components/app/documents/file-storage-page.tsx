@@ -1,9 +1,8 @@
 "use client";
 
-
 import { useMemo, useState } from "react";
 import dynamic from "next/dynamic";
-import { FolderOpen, FileText, Image as ImageIcon, File, Upload, CloudUpload, Loader2, Tag, MoreVertical, Pencil, Trash2, Eye, X } from "lucide-react";
+import { FolderOpen, FileText, Image as ImageIcon, File, Upload, CloudUpload, Tag, MoreVertical, Pencil, Trash2, Eye, X } from "lucide-react";
 import { TwoButtonModal } from "@/components/app/ui/TwoButtonModal";
 import { QueryErrorState } from "@/components/app/ui/QueryErrorState";
 import { StatsBar, SplitLayout, ListPanel, DetailPanel, InfoCard, InfoRow, HeaderActionButton, AnimatedSlotList, AnimatedSlotListItemContent, EmptyState, PageSection, DetailSkeleton, ListEmptyState } from "@/components/app/v3";
@@ -322,22 +321,15 @@ export function FileStoragePage() {
             <Button variant="outline" onClick={() => handleUploadOpenChange(false)} disabled={uploadMutation.isPending}>취소</Button>
             {uploadDropzoneState.hasSelectedFile && (
               <Button
+                loading={uploadMutation.isPending}
+                loadingLabel="업로드 중"
                 type="submit"
                 form={FILES_UPLOAD_FORM_ID}
                 variant="positive"
                 disabled={!uploadDropzoneState.canSubmit}
               >
-                {uploadMutation.isPending ? (
-                  <>
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                    업로드 중...
-                  </>
-                ) : (
-                  <>
-                    <CloudUpload className="h-4 w-4" />
-                    문서 업로드
-                  </>
-                )}
+                <CloudUpload className="h-4 w-4" />
+                문서 업로드
               </Button>
             )}
           </DialogFooter>
@@ -373,7 +365,7 @@ export function FileStoragePage() {
         title="문서를 삭제하시겠습니까?"
         description="이 작업은 되돌릴 수 없어요."
         approvalLabel="삭제"
-        pendingLabel="삭제 중..."
+        pendingLabel="삭제 중"
         approvalVariant="destructive"
         isPending={deleteMutation.isPending}
         onApprove={() => void handleDelete()}
@@ -417,13 +409,16 @@ function FileDetail({ document: doc, getCategoryLabel, onPreview, onEdit, onDele
 
           {doc.canManage && <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <button
+              <Button
                 type="button"
+                variant="ghost"
+                size="icon"
                 aria-label="문서 작업 더보기"
-                className="w-9 h-9 flex items-center justify-center rounded-full hover:bg-v3-dim-white transition-colors"
+                data-component="desktop_files_split-layout_detail-panel_files-detail-actions_more"
+                className="[&_svg]:size-5"
               >
                 <MoreVertical className="w-5 h-5 text-v3-text-muted" />
-              </button>
+              </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="min-w-[140px]">
               <DropdownMenuItem onClick={onEdit} className="gap-2">

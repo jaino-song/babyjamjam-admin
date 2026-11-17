@@ -30,7 +30,7 @@ interface LastResult {
 
 /**
  * Holiday changes (public data or this branch's own settings) that left some clients' stored end date
- * different from the recalculated one. The root is always rendered so the settings section keeps its slot.
+ * different from the recalculated one. An empty review must not occupy a gap in the list scroller.
  */
 export function HolidayReviewCards({ branchId }: HolidayReviewCardsProps) {
   const { toast } = useToast();
@@ -63,6 +63,8 @@ export function HolidayReviewCards({ branchId }: HolidayReviewCardsProps) {
       },
     );
   }
+
+  if (events.length === 0 && !eventsQuery.isError && !lastResult && !listEvent) return null;
 
   return (
     <div

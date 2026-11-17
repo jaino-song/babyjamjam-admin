@@ -90,11 +90,11 @@ async function setupMockRoutes(page: Page) {
 
 test.describe("Mobile operational copilot real backend", () => {
   test("streams through the mobile proxy and restores the server-owned session", async ({ page }) => {
-    test.skip(!enabled, "Run with RUN_AGENT_REAL_E2E=1 after building with the agent shell enabled");
-    await page.goto("/chat");
+    test.skip(!enabled, "Run with RUN_AGENT_REAL_E2E=1 for the authenticated agent backend contract");
+    await page.goto("/agent");
     await expect(page.locator('[data-component="mobile_chat_agent-shell"]')).toBeVisible();
     await expect(page.locator('[data-component="mobile_shell_header"]')).toHaveCount(0);
-    await expect(page.locator('[data-component="mobile_shell_bottom-nav"]')).toHaveCount(0);
+    await expect(page.locator('[data-component="mobile_shell_bottom-nav"]')).toBeVisible();
 
     const input = page.getByLabel("질문 입력");
     await input.fill("홍길동 산모 찾아줘");
@@ -102,13 +102,13 @@ test.describe("Mobile operational copilot real backend", () => {
     await expect(page.getByText("[agent-e2e-stub] 조회 결과를 확인했습니다.")).toBeVisible({ timeout: 20_000 });
     await expect(page.getByRole("button", { name: "전송" })).toBeVisible();
 
-    await page.getByRole("button", { name: "대화 목록" }).click();
-    await expect(page.getByText("브랜치별 대화는 안전하게 분리됩니다.")).toBeVisible();
-    await page.getByRole("button", { name: "닫기" }).click();
+    await page.getByRole("button", { name: "대화 목록", exact: true }).click();
+    await expect(page.getByRole("dialog", { name: "대화 목록", exact: true })).toBeVisible();
+    await page.getByRole("button", { name: "대화 목록", exact: true }).click();
 
     await page.reload();
     await expect(page.locator('[data-component="mobile_chat_agent-shell"]')).toBeVisible();
-    await page.getByRole("button", { name: "대화 목록" }).click();
+    await page.getByRole("button", { name: "대화 목록", exact: true }).click();
     await expect(page.locator('[data-component="mobile_chat_agent-shell_drawer"] button').first()).toBeVisible();
   });
 });
@@ -118,7 +118,7 @@ test.describe("Mobile operational copilot browser contract", () => {
     test.skip(!mockedEnabled, "Run with RUN_AGENT_E2E=1 for the authenticated mocked browser contract");
     const routes = await setupMockRoutes(page);
     await page.setViewportSize({ width: 390, height: 844 });
-    await page.goto("/chat");
+    await page.goto("/agent");
     await expect(page.locator('[data-component="mobile_chat_agent-shell"]')).toBeVisible();
 
     const input = page.getByLabel("질문 입력");
@@ -130,7 +130,7 @@ test.describe("Mobile operational copilot browser contract", () => {
     await expect.poll(routes.streamCount).toBe(1);
     await expect(page.getByText("모바일 브라우저 계약 응답입니다.")).toBeVisible();
 
-    const menu = page.getByRole("button", { name: "대화 목록" });
+    const menu = page.getByRole("button", { name: "대화 목록", exact: true });
     await menu.focus();
     await menu.click();
     const drawer = page.locator('[data-component="mobile_chat_agent-shell_drawer"]');
@@ -139,7 +139,7 @@ test.describe("Mobile operational copilot browser contract", () => {
     await expect(drawer).toHaveAttribute("aria-modal", "true");
     await expect.poll(() => page.evaluate(() => document.activeElement?.getAttribute("data-component"))).toBe("mobile_chat_agent-shell_drawer");
     await expect(content).toHaveJSProperty("inert", true);
-    await page.getByRole("button", { name: "닫기" }).click();
+    await page.getByRole("button", { name: "대화 목록", exact: true }).click();
     await expect(content).toHaveJSProperty("inert", false);
     await expect.poll(() => page.evaluate(() => document.activeElement?.getAttribute("aria-label"))).toBe("대화 목록");
 

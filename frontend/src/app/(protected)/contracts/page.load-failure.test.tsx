@@ -165,7 +165,7 @@ describe.each([
 
     listState({ documents: [document], isError: true, isRefetching: true, isFetching: true });
     view.rerenderPage();
-    expect(within(screen.getByRole("alert")).getByRole("button", { name: "다시 시도" })).toBeDisabled();
+    expect(within(screen.getByRole("alert")).getByRole("button", { name: "다시 시도 중" })).toBeDisabled();
     expect(row()).toBeInTheDocument();
   });
 
@@ -186,7 +186,7 @@ describe.each([
     listState({ documents: [document], hasNextPage: true, isError: true,
       isFetchNextPageError: true, isFetchingNextPage: true, isFetching: true });
     view.rerenderPage();
-    expect(within(screen.getByRole("alert")).getByRole("button", { name: "다시 시도" })).toBeDisabled();
+    expect(within(screen.getByRole("alert")).getByRole("button", { name: "다시 시도 중" })).toBeDisabled();
     listState({ documents: [document], hasNextPage: true });
     view.rerenderPage();
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();

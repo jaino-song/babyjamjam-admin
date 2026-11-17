@@ -16,7 +16,7 @@ export const mobileScreenshotRoutes: ScreenshotRoute[] = [
   { slug: "admin", path: "/admin", auth: "authenticated" },
   { slug: "admin-feedback", path: "/admin/feedback", auth: "authenticated" },
   { slug: "all", path: "/all", auth: "authenticated" },
-  { slug: "chat", path: "/chat", auth: "authenticated" },
+  { slug: "agent", path: "/agent", auth: "authenticated" },
   { slug: "clients", path: "/clients", auth: "authenticated" },
   { slug: "clients-new", path: "/clients/new", auth: "authenticated" },
   { slug: "contracts", path: "/contracts", auth: "authenticated" },
@@ -32,7 +32,6 @@ export const mobileScreenshotRoutes: ScreenshotRoute[] = [
   { slug: "messages-templates-new", path: "/messages/templates/new", auth: "authenticated" },
   { slug: "select-branch", path: "/select-branch", auth: "authenticated" },
   { slug: "settings", path: "/settings", auth: "authenticated" },
-  { slug: "test", path: "/test", auth: "authenticated" },
 ];
 
 export const mobileDynamicScreenshotRoutes: ScreenshotRoute[] = [

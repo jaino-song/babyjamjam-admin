@@ -3,6 +3,7 @@
 import React from "react";
 
 import { AppContentCard } from "@/components/ui/app-surface";
+import { cn } from "@/lib/utils";
 import { InfoCardDataComponentProvider } from "./InfoCardDataComponentContext";
 
 const SOURCE_COMPONENT = "InfoCard";
@@ -48,7 +49,11 @@ export function InfoCard({
         titleElement="h3"
         titleTrailing={titleTrailing}
         contentClassName={contentClassName ?? "block"}
-        className={className}
+        className={cn(
+          sourceComponent === SOURCE_COMPONENT &&
+            "rounded-[16px] border border-[#818b98] bg-white shadow-none",
+          className,
+        )}
       >
         {children}
       </AppContentCard>

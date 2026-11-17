@@ -100,8 +100,9 @@ export function AgentActionApprovalCard({ "data-component": dataComponent, actio
     const requiresStrongAcknowledgement = Boolean(acknowledgementToken)
         || ["irreversible-write", "external-side-effect", "paid-action", "privileged-administration"].includes(risk ?? "");
 
+    // shadow-v3 is a custom utility retained by tailwind-merge; explicitly override it for the legacy agent surface.
     return (
-        <Card data-component={dataComponent} sourceComponent="Card" className={terminal ? "border-border bg-card text-card-foreground" : "border-amber-300 bg-amber-50 text-amber-950"} aria-label={terminal ? "처리된 작업 제안" : "승인 대기 작업"}>
+        <Card data-component={dataComponent} sourceComponent="Card" className={terminal ? "rounded-lg border !shadow-sm border-border bg-card text-card-foreground" : "rounded-lg border !shadow-sm border-amber-300 bg-amber-50 text-amber-950"} aria-label={terminal ? "처리된 작업 제안" : "승인 대기 작업"}>
             <CardContent data-component={`${dataComponent}_content`} className="flex flex-col gap-3 p-4">
                 <div data-component={`${dataComponent}_content_header`} data-slot="header" className="flex items-start justify-between gap-3"><div data-component={`${dataComponent}_content_header_identity`}><p data-component={`${dataComponent}_content_header_title`} className="text-sm font-semibold">{title}</p><p data-component={`${dataComponent}_content_header_capability`} className="text-xs opacity-75">{capability}</p></div><span data-component={`${dataComponent}_content_header_expiry`} data-slot="expiry" className="text-xs">{terminal ? "읽기 전용" : expired ? "만료됨" : `만료 ${new Date(expiresAt).toLocaleString()}`}</span></div>
                 <p data-component={`${dataComponent}_content_summary`} data-slot="summary" className="whitespace-pre-wrap text-sm">{summary}</p>

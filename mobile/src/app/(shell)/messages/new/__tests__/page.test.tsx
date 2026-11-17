@@ -1219,7 +1219,7 @@ describe("NewMessagePage", () => {
         "border-[1.5px]",
         "px-[14px]",
         "py-0",
-        "text-[0.9rem]",
+        "text-base",
       );
     }
   });

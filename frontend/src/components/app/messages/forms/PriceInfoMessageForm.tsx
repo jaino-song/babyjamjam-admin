@@ -3,6 +3,7 @@ import { useState, useEffect, useRef, type ReactNode } from "react";
 import voucherOptions from "../templates/json/voucher.json";
 import { AutoFillMsgCard } from "../templates/AutoFillMsgCard";
 import bankAccountJSON from "../templates/json/bank-account.json";
+import { LoadingState } from "@/components/app/ui/LoadingState";
 import { t } from "@/lib/i18n/translations";
 import { useFormStore } from "@/stores/form-store";
 import { useLocale } from "@/providers/LocaleProvider";
@@ -362,9 +363,10 @@ export const PriceInfoMessageForm = ({
       )}
       <TemplateFieldGridItem>
         <RequiredLabel>
-          {isVoucherPriceInfosLoading
-            ? t(locale, "common.loading")
-            : t(locale, "price-info-msg.voucher-type-label")}
+          {t(locale, "price-info-msg.voucher-type-label")}
+          {isVoucherPriceInfosLoading ? (
+            <LoadingState inline size="sm" className="ml-2" label={t(locale, "common.loading")} data-component="desktop_messages_sections_price-info-message-form_voucher-type_loading" />
+          ) : null}
         </RequiredLabel>
         <Select
           value={formData.type}

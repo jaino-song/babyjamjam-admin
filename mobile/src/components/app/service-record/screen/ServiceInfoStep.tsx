@@ -123,7 +123,7 @@ export function ServiceInfoStep({
                     variant="ghost"
                     size="sm"
                     data-component={child("body_service-back")}
-                    className="text-sm -ml-3 self-start text-v3-text-muted"
+                    className="text-sm -ml-3 self-start rounded-2xl text-v3-text-muted"
                     onClick={onBack}
                 >
                     {BACK_LABEL}
@@ -214,7 +214,7 @@ export function ServiceInfoStep({
             </div>
             <StickyActionBar data-component={child("body_service-actions")}>
                 <Button
-                    className="text-base"
+                    className="h-[46px] text-base"
                     type="button"
                     variant="v3"
                     size="md"

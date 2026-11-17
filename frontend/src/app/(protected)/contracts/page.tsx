@@ -1140,7 +1140,7 @@ export default function ContractsPage() {
         title="문서를 삭제하시겠습니까?"
         description="전자문서가 취소되어 수신자가 더 이상 서명할 수 없어요. 복구할 수 없어요."
         approvalLabel="삭제"
-        pendingLabel="삭제 중..."
+        pendingLabel="삭제 중"
         approvalVariant="destructive"
         isPending={deleteDocument.isPending}
         onApprove={() => void handleDeleteConfirm()}
@@ -2059,6 +2059,7 @@ export function ContractDetail({
         />
       )}
       <DetailTabPanels
+        insetPanels
         activeTab={activeDetailTab}
         data-component={`${dataComponent}_content`}
         data-panel-component={`${dataComponent}_content_panel`}
@@ -2150,7 +2151,7 @@ export function ContractDetail({
         description="제공기록지를 검토 완료 처리합니다."
         cancelLabel="취소"
         approvalLabel="완료"
-        pendingLabel="처리 중..."
+        pendingLabel="처리 중"
         isPending={isFinalizePending}
         onApprove={handleServiceRecordFinalizeApprove}
       />

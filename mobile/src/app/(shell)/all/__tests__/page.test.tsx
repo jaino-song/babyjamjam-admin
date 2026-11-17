@@ -50,7 +50,18 @@ describe("AllMenuPage 설정 group", () => {
     mockAuthFetching = false;
   });
 
-  it("shows 공휴일 after 알림 설정 for a branch manager, linking to /holidays", () => {
+  it("places the main agent group first, above branch management", () => {
+    render(<AllMenuPage />);
+    const titles = screen.getAllByText(/^(메인|지점 관리|서비스 관리|설정)$/, { selector: ".menu-group-title" });
+    expect(titles.map((title) => title.textContent)).toEqual(["메인", "지점 관리", "서비스 관리", "설정"]);
+    const main = titles[0].closest(".menu-group") as HTMLElement;
+    const links = within(main).getAllByRole("link");
+    expect(links).toHaveLength(1);
+    expect(links[0]).toHaveAccessibleName(/에이전트/);
+    expect(links[0]).toHaveAttribute("href", "/agent");
+  });
+
+  it("shows 공휴일 before 알림 설정 for a branch manager, linking to /holidays", () => {
     mockAuthUser = { id: "u1", name: "관리자", role: "staff", branchRole: "manager" };
     render(<AllMenuPage />);
 
@@ -64,7 +75,7 @@ describe("AllMenuPage 설정 group", () => {
     const notificationIndex = labels.findIndex((text) => text.includes("알림 설정"));
     const holidaysIndex = labels.findIndex((text) => text.includes("공휴일"));
     expect(notificationIndex).toBeGreaterThanOrEqual(0);
-    expect(holidaysIndex).toBe(notificationIndex + 1);
+    expect(holidaysIndex).toBe(notificationIndex - 1);
   });
 
   it("shows 공휴일 for a branch admin and an owner too", () => {

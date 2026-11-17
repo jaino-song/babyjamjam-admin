@@ -767,8 +767,8 @@ describe("ClientDetailPanel messages tab", () => {
         });
 
         describe("retry button reflects the in-flight retry", () => {
-            const retryButton = (zone: HTMLElement) =>
-                within(within(zone).getByRole("alert")).getByRole("button", { name: "다시 시도" });
+            const retryButton = (zone: HTMLElement, busy = false) =>
+                within(within(zone).getByRole("alert")).getByRole("button", { name: busy ? "다시 시도 중" : "다시 시도" });
 
             const sections = [
                 {
@@ -795,14 +795,14 @@ describe("ClientDetailPanel messages tab", () => {
                 mockFor({ isFetchNextPageError: true, hasNextPage: true, isFetchingNextPage: true, isRefetching: false });
                 openMessagesTab();
 
-                expect(retryButton(zone())).toBeDisabled();
+                expect(retryButton(zone(), true)).toBeDisabled();
             });
 
             it.each(sections)("$name: disables retry while the list is being refetched", ({ zone, mockFor }) => {
                 mockFor({ isRefetching: true });
                 openMessagesTab();
 
-                expect(retryButton(zone())).toBeDisabled();
+                expect(retryButton(zone(), true)).toBeDisabled();
             });
 
             it.each(sections)("$name: keeps retry enabled when nothing is in flight", ({ zone, mockFor }) => {

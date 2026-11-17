@@ -11,6 +11,7 @@ import {
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { normalizeApiError } from "@babyjamjam/shared";
+import { LoadingState } from "@/components/app/ui/LoadingState";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -132,11 +133,12 @@ interface WizardFieldRowProps {
     message?: FieldMessageView | null;
     /** A small link-style action that sits next to the message in the slot, e.g. a retry. */
     action?: ReactNode;
+    loadingLabel?: string;
     children: ReactNode;
 }
 
 /** A label whose validation message sits at the right end of the same row and never changes its height. */
-function WizardFieldRow({ field, message, action, children }: WizardFieldRowProps) {
+function WizardFieldRow({ field, message, action, loadingLabel, children }: WizardFieldRowProps) {
     const { id, label } = field in WIZARD_OTHER_ROW_CONFIG
         ? WIZARD_OTHER_ROW_CONFIG[field as WizardOtherRow]
         : WIZARD_INPUT_FIELD_CONFIG[field as WizardInputField];
@@ -144,9 +146,13 @@ function WizardFieldRow({ field, message, action, children }: WizardFieldRowProp
         <div className="space-y-2" data-component={`${WIZARD_BASE}_${id}-field`}>
             <div className="flex h-[1lh] min-w-0 items-center justify-between gap-2 text-sm leading-[1.3]">
                 <Label htmlFor={id} className="shrink-0 whitespace-nowrap leading-[1.3]">{label}</Label>
-                {message || action ? (
+                {message || action || loadingLabel ? (
                     <div className="ml-auto flex h-[1lh] min-w-0 items-center justify-end gap-2">
-                        {message ? (
+                        {loadingLabel ? (
+                            <span id={`${id}-message`}>
+                                <LoadingState data-component={`${WIZARD_BASE}_${id}-field_message`} label={loadingLabel} size="sm" inline />
+                            </span>
+                        ) : message ? (
                             <FieldMessageText
                                 id={`${id}-message`}
                                 tone={message.tone}
@@ -397,19 +403,9 @@ export function ClientRegistrationWizard({
     const isEmployeeLookupProblemVisible = Boolean(employeeName.trim())
         && createdEmployeeId === null
         && (isEmployeesError || isEmployeeRetrying);
-    const employeeLookupMessage: FieldMessageView | null = isEmployeeRetrying
-        ? { tone: "hint", text: "다시 확인하고 있어요" }
-        : isEmployeesError
+    const employeeLookupMessage: FieldMessageView | null = !isEmployeeRetrying && isEmployeesError
             ? { tone: "error", text: "제공인력 정보를 불러오지 못했어요" }
             : null;
-
-    // Loading status of the voucher selects, shown in their label-row slots.
-    const voucherYearMessage: FieldMessageView | null = isVoucherYearsLoading
-        ? { tone: "hint", text: "불러오는 중이에요" }
-        : null;
-    const voucherDurationMessage: FieldMessageView | null = isVoucherPriceInfosLoading
-        ? { tone: "hint", text: "불러오는 중이에요" }
-        : null;
 
     const hasBasicsProblem = WIZARD_BASIC_FIELDS.some(
         (field) => resolveWizardFieldMessage(field, true)?.tone === "error",
@@ -689,9 +685,10 @@ export function ClientRegistrationWizard({
                                         className="h-auto shrink-0 p-0 text-[calc(12px*var(--glint-ui-scale,1))]"
                                         onClick={() => void handleEmployeeRetry()}
                                         disabled={isEmployeeRetrying}
-                                        aria-busy={isEmployeeRetrying}
+                                        loading={isEmployeeRetrying}
+                                        loadingLabel="재시도 중"
                                     >
-                                        {isEmployeeRetrying ? "재시도 중..." : "다시 시도"}
+                                        다시 시도
                                     </Button>
                                 }
                             >
@@ -701,7 +698,7 @@ export function ClientRegistrationWizard({
                                     readOnly
                                     error={!isEmployeeRetrying}
                                     aria-invalid={!isEmployeeRetrying}
-                                    aria-describedby={`${EMPLOYEE_LOOKUP_ROW.id}-message`}
+                                    aria-describedby={employeeLookupMessage ? `${EMPLOYEE_LOOKUP_ROW.id}-message` : undefined}
                                 />
                             </WizardFieldRow>
                         )}
@@ -789,7 +786,7 @@ export function ClientRegistrationWizard({
 
                         {voucherClient && (
                             <>
-                                <WizardFieldRow field="voucherYear" message={voucherYearMessage}>
+                                <WizardFieldRow field="voucherYear" loadingLabel={isVoucherYearsLoading ? "바우처 연도 불러오는 중" : undefined}>
                                     <Select
                                         value={resolvedVoucherYear?.toString() ?? ""}
                                         onValueChange={handleVoucherYearChange}
@@ -833,7 +830,7 @@ export function ClientRegistrationWizard({
                                 </WizardFieldRow>
 
                                 {voucherType && (
-                                    <WizardFieldRow field="voucherDuration" message={voucherDurationMessage}>
+                                    <WizardFieldRow field="voucherDuration" loadingLabel={isVoucherPriceInfosLoading ? "바우처 기간 불러오는 중" : undefined}>
                                         <Select
                                             value={voucherDuration}
                                             onValueChange={handleVoucherDurationChange}

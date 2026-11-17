@@ -3,8 +3,9 @@
 import Link from 'next/link';
 import { use } from 'react';
 import { normalizeApiError } from '@babyjamjam/shared';
-import { FileText, Loader2, Monitor, Send, Workflow } from 'lucide-react';
+import { FileText, Monitor, Send, Workflow } from 'lucide-react';
 import { useRouter } from 'next/navigation';
+import { LoadingState } from '@/components/app/ui/LoadingState';
 import { InfoCard } from '@/components/app/mobile-redesign/detail-sheet';
 import { MobileDetailSlideUp } from '@/components/app/mobile-redesign/mobile-detail-slideup';
 import { useSystemTemplate } from '@/features/system-templates/hooks';
@@ -32,14 +33,7 @@ export default function EditSystemTemplatePage({ params }: { params: Promise<{ t
         onClose={handleClose}
         title="시스템 템플릿"
       >
-        <div className="detail-empty-state" data-component="mobile_messages_system-templates_template-key-detail_loading">
-          <div
-            className="flex items-center justify-center"
-            data-component="mobile_messages_system-templates_template-key-detail_loading_spinner"
-          >
-            <Loader2 className="h-8 w-8 animate-spin text-primary" />
-          </div>
-        </div>
+        <LoadingState label="시스템 템플릿을 불러오는 중" size="lg" data-component="mobile_messages_system-templates_template-key-detail_loading" />
       </MobileDetailSlideUp>
     );
   }

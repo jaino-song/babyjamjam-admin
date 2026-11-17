@@ -5,7 +5,7 @@ import { AlertTriangle, CheckCircle } from "lucide-react";
 import { FormField } from "@/components/auth/form-field";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
-import { Spinner } from "@/components/ui/spinner";
+import { LoadingState } from "@/components/app/ui/LoadingState";
 import { MobileInput } from "@/features/auth/shared/mobile/mobile-input";
 import { MobileInputField } from "@/features/auth/shared/mobile/mobile-input-field";
 import { AuthSurface, type AuthSurfaceVariant } from "@/features/auth/shared/ui/auth-surface";
@@ -28,7 +28,7 @@ export function VerifyEmailPageContent({ variant }: VerifyEmailPageContentProps)
     goToLogin,
   } = useVerifyEmailPageController();
 
-  const actionButtonClassName = cn("w-full", variant === "mobile" && "rounded-2xl");
+  const actionButtonClassName = cn("w-full", variant === "mobile" && "rounded-full");
 
   const cardTitle =
     status === "loading"
@@ -37,12 +37,7 @@ export function VerifyEmailPageContent({ variant }: VerifyEmailPageContentProps)
         ? "인증 완료!"
         : status === "error"
           ? "인증 실패"
-          : "인증 토큰 없음";
-
-  const cardSubtitle =
-    status === "loading"
-      ? "인증 상태를 확인하고 있습니다."
-      : undefined;
+          : "이메일 확인 필요";
 
   const showResendForm = status === "error" || status === "no-token";
 
@@ -59,15 +54,11 @@ export function VerifyEmailPageContent({ variant }: VerifyEmailPageContentProps)
         content: "desktop_auth_verify-email_content",
       }}
       title={cardTitle}
-      subtitle={cardSubtitle}
       contentClassName="flex flex-col gap-6"
       mobileWrapperClassName="px-4 py-6"
     >
       {status === "loading" ? (
-        <div data-component="desktop_auth_verify-email_loading" className="flex flex-col items-center gap-4 py-2 text-center">
-          <Spinner size="lg" className="text-primary" />
-          <p className="text-muted-foreground">이메일 인증 중...</p>
-        </div>
+        <LoadingState data-component="desktop_auth_verify-email_loading" label="이메일 인증 중" size="lg" />
       ) : status === "success" ? (
         <div data-component="desktop_auth_verify-email_success" className="flex flex-col items-center gap-4 text-center">
           <div data-component="desktop_auth_verify-email_success_icon" className="rounded-full bg-success/10 p-3">
@@ -154,8 +145,10 @@ export function VerifyEmailPageContent({ variant }: VerifyEmailPageContentProps)
                   size="lg"
                   className={actionButtonClassName}
                   disabled={resendLoading || !resendEmail.trim()}
+                  loading={resendLoading}
+                  loadingLabel="인증 메일 보내는 중"
                 >
-                  {resendLoading ? <Spinner size="sm" /> : "인증 이메일 재발송"}
+                  인증 이메일 재발송
                 </Button>
               </form>
             </>

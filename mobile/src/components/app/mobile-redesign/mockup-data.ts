@@ -1,5 +1,4 @@
 import {
-  BarChart3,
   Bell,
   Calendar,
   Calculator,
@@ -256,7 +255,6 @@ export const menuGroups: MenuGroup[] = [
       { label: "제공인력", href: "/employees", icon: UserCheck, tone: "purple", value: "12명" },
       { label: "전자문서", href: "/contracts", icon: FileText, tone: "green" },
       { label: "일정 캘린더", href: "/employees/schedule", icon: Calendar, tone: "orange", disabled: true, statusLabel: "출시 예정" },
-      { label: "통계 보고서", href: "/dashboard/analytics", icon: BarChart3, tone: "green", disabled: true, statusLabel: "출시 예정" },
     ],
   },
   {

@@ -1,5 +1,6 @@
 "use client";
 
+import { LoadingState } from "@/components/app/ui/LoadingState";
 import { isAxiosError } from "axios";
 import dayjs from "dayjs";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -10,7 +11,6 @@ import { TwoButtonModal } from "@/components/app/ui/TwoButtonModal";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Dialog } from "@/components/ui/dialog";
-import { Spinner } from "@/components/ui/spinner";
 import { documentJobRecoveryPresentation, type DocumentJobRecoveryMetadata } from "@/features/document-jobs/recovery-presentation";
 import { useDocumentJobs } from "@/features/document-jobs/DocumentJobsProvider";
 import { useToast } from "@/hooks/use-toast";
@@ -218,7 +218,7 @@ function RoutedDocumentJobRecoveryDialog(props: RoutedDocumentJobRecoveryDialogP
         </>}
       >
         {pending
-          ? <div data-component={`${base}_loading`} role="status" aria-label="작업 불러오는 중" className="flex min-h-24 items-center justify-center"><Spinner size="sm" /></div>
+          ? <LoadingState label="작업 불러오는 중" data-component={`${base}_loading`} className="min-h-24" size="sm" />
           : <p data-component={`${base}_failure`} className="text-[calc(14px*var(--glint-ui-scale,1))] text-v3-text">{unavailable ? COPY.unavailable : COPY.gone}</p>}
       </FormDialogShell>
     </Dialog>
@@ -430,14 +430,7 @@ function LegacyDocumentJobRecoveryDialog({
   const renderBody = () => {
     if (isClaiming) {
       return (
-        <div
-          data-component={sub("loading")}
-          role="status"
-          aria-label="작업 불러오는 중"
-          className="flex min-h-24 items-center justify-center"
-        >
-          <Spinner size="sm" />
-        </div>
+        <LoadingState label="작업 불러오는 중" data-component={sub("loading")} className="min-h-24" size="sm" />
       );
     }
 
@@ -492,6 +485,8 @@ function LegacyDocumentJobRecoveryDialog({
           {isExpired ? (
             <>
               <Button
+                loading={isBusy}
+                loadingLabel="처리 중"
                 type="button"
                 variant="outline"
                 size="sm"
@@ -499,7 +494,7 @@ function LegacyDocumentJobRecoveryDialog({
                 disabled={isBusy}
                 onClick={() => void handleResolveOnly("목록에서 닫았어요")}
               >
-                {isBusy ? "처리 중…" : resolveFailed ? "처리됨 표시 다시 시도" : "목록에서 닫기"}
+                {resolveFailed ? "처리됨 표시 다시 시도" : "목록에서 닫기"}
               </Button>
               {jobType === "create_document" ? (
                 <Button type="button" size="sm" data-component={sub("start-fresh")} disabled={isBusy} onClick={requestFresh}>

@@ -344,7 +344,7 @@ export function SendNotificationSection({ branchId }: SendNotificationSectionPro
         isDescriptionVisuallyHidden={false}
         cancelLabel="닫기"
         approvalLabel="보내기"
-        pendingLabel="보내는 중..."
+        pendingLabel="보내는 중"
         isPending={sendMutation.isPending}
         approvalDisabled={!canSend}
         onApprove={handleApprove}

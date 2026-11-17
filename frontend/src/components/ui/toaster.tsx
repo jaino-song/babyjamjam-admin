@@ -4,6 +4,7 @@ import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import { STATUS_SURFACE } from "@/components/app/ui/status-surface";
 import { X } from "lucide-react";
+import { usePathname } from "next/navigation";
 
 /**
  * Desktop toasts sit in the bottom-right corner, out of the way of the sidebar
@@ -18,6 +19,7 @@ const TOASTER_POSITION = "fixed bottom-6 right-6 w-[calc(100vw-48px)] max-w-[420
  * modal.
  */
 const TOASTER_LAYER = "z-[1000]";
+const SERVICE_RECORD_ADMIN_PREFIX = "/service-record-admin";
 
 const VARIANT_SURFACE = {
   // A plain toast is a floating surface rather than a state, so it keeps the
@@ -28,8 +30,16 @@ const VARIANT_SURFACE = {
   destructive: STATUS_SURFACE.danger,
 } as const;
 
-export function Toaster() {
+export interface ToasterProps {
+  closeSize?: "touch" | "compact";
+}
+
+export function Toaster({ closeSize = "touch" }: ToasterProps = {}) {
   const { toasts, dismiss } = useToast();
+  const pathname = usePathname();
+  const isServiceRecordAdmin = pathname === SERVICE_RECORD_ADMIN_PREFIX ||
+    pathname?.startsWith(`${SERVICE_RECORD_ADMIN_PREFIX}/`);
+  const compact = isServiceRecordAdmin || closeSize === "compact";
 
   return (
     <div
@@ -48,7 +58,8 @@ export function Toaster() {
         <div
           key={toast.id}
           className={cn(
-            "group pointer-events-auto relative flex items-center justify-between gap-4 rounded-lg border p-4 pr-8 shadow-lg transition-all duration-300",
+            "group pointer-events-auto relative flex items-center justify-between gap-4 rounded-lg border p-4 shadow-lg transition-all duration-300",
+            compact ? "pr-8" : "pr-12",
             "animate-in slide-in-from-bottom-2 fade-in-0",
             VARIANT_SURFACE[toast.variant ?? "default"],
           )}
@@ -66,7 +77,12 @@ export function Toaster() {
             type="button"
             onClick={() => dismiss(toast.id)}
             aria-label="알림 닫기"
-            className="absolute right-2 top-2 rounded-md p-1 opacity-0 transition-opacity focus:opacity-100 focus:outline-none focus:ring-2 group-hover:opacity-100"
+            className={cn(
+              "absolute rounded-md opacity-0 transition-opacity focus:opacity-100 focus:outline-none focus:ring-2 group-hover:opacity-100",
+              compact
+                ? "right-2 top-2 p-1"
+                : "right-1 top-1 inline-flex items-center justify-center h-[calc(32px*var(--glint-ui-scale,1))] w-[calc(32px*var(--glint-ui-scale,1))] p-0 after:absolute after:left-1/2 after:top-1/2 after:h-[calc(44px*var(--glint-ui-scale,1))] after:w-[calc(44px*var(--glint-ui-scale,1))] after:-translate-x-1/2 after:-translate-y-1/2 after:content-['']",
+            )}
           >
             <X className="h-4 w-4" />
           </button>

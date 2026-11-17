@@ -1,5 +1,6 @@
 "use client";
 
+import { LoadingState } from "@/components/app/ui/LoadingState";
 import { useState, useEffect } from "react";
 import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
@@ -7,7 +8,6 @@ import { Bell, BellOff } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 
-import { Spinner } from "@/components/ui/spinner";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import {
     Popover,
@@ -68,7 +68,7 @@ function groupNotificationsByDate(notifications: Notification[]): GroupedNotific
     if (!Array.isArray(notifications)) {
         return [];
     }
-    
+
     const groups = new Map<string, Notification[]>();
 
     notifications.forEach((notification) => {
@@ -281,9 +281,7 @@ export function NotificationBell({ className }: { className?: string }) {
                 </div>
 
                 {notificationsLoading ? (
-                    <div className="p-8 flex justify-center">
-                        <Spinner size="default" />
-                    </div>
+                    <LoadingState label="알림을 불러오는 중" data-component="desktop_chrome_notification-bell_popover_loading" className="p-8" />
                 ) : notifications.length === 0 ? (
                     <div className="p-8 text-center">
                         <p className="text-muted-foreground">알림이 없습니다</p>
@@ -354,13 +352,13 @@ export function NotificationBell({ className }: { className?: string }) {
                         size="icon"
                         onClick={handleClick}
                         disabled={isLoading}
+                        loading={isLoading}
+                        loadingLabel="알림 설정을 불러오는 중"
                         data-component="desktop_chrome_notification-bell"
                         data-testid="notification-bell"
                         className={cn("relative transition-transform duration-200 hover:scale-110 active:scale-95", className)}
                     >
-                        {isLoading ? (
-                            <Spinner size="sm" />
-                        ) : !PWA_NOTIFICATIONS_ENABLED || isSubscribed ? (
+                        {!PWA_NOTIFICATIONS_ENABLED || isSubscribed ? (
                             <>
                                 <Bell className="!h-5 !w-5" />
                                 {unreadCount > 0 && (

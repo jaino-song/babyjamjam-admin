@@ -203,7 +203,7 @@ describe("NotificationPage email preference load failures", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "다시 시도" }));
 
-    await waitFor(() => expect(screen.getByRole("button", { name: "다시 시도" })).toBeDisabled());
+    await waitFor(() => expect(screen.getByRole("button", { name: "다시 시도 중" })).toBeDisabled());
     expect(mockedSettingsApi.getNotificationPreferences.mock.calls.length).toBe(callsBeforeRetry + 1);
 
     await act(async () => {

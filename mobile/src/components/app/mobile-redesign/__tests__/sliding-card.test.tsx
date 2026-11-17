@@ -1,10 +1,27 @@
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import { useState } from "react";
+import userEvent from "@testing-library/user-event";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 
 import { SlidingCard } from "../sliding-card";
 
 const DATA_COMPONENT = "mobile_tests_settings_sliding-card";
 const DETAIL_PANE_SELECTOR =
   `[data-component="${DATA_COMPONENT}_stage_detail-pane"]`;
+
+let globalFocusStyle: HTMLStyleElement;
+
+beforeEach(() => {
+  globalFocusStyle = document.createElement("style");
+  const globals = readFileSync(join(process.cwd(), "src/app/globals.css"), "utf8");
+  const focusRule = globals.match(/^\*:focus-visible[^{]*\{[^}]*\}/m);
+  expect(focusRule).not.toBeNull();
+  globalFocusStyle.textContent = focusRule?.[0] ?? "";
+  document.head.append(globalFocusStyle);
+});
+
+afterEach(() => globalFocusStyle.remove());
 
 const originalPointerEvent = Object.getOwnPropertyDescriptor(
   globalThis,
@@ -125,6 +142,41 @@ function renderOpenSlidingCard() {
 }
 
 describe("SlidingCard", () => {
+  it("names the pane from the current detail title and preserves existing heading IDs", () => {
+    const props = {
+      "data-component": DATA_COMPONENT,
+      open: true,
+      onBack: jest.fn(),
+      backLabel: "운영 통계",
+      list: <h2>운영 통계</h2>,
+    };
+    const { rerender } = render(
+      <SlidingCard {...props} detailKey="clients" detail={<><h2 id="client-stats-title">고객 통계</h2><p>고객 수 10명</p></>} />,
+    );
+    const pane = screen.getByRole("region", { name: "고객 통계" });
+    expect(pane).toHaveFocus();
+    expect(screen.getByRole("heading", { name: "고객 통계" })).toHaveAttribute("id", "client-stats-title");
+
+    rerender(<SlidingCard {...props} detailKey="employees" detail={<h2>제공인력 통계</h2>} />);
+    expect(pane).toHaveAccessibleName("제공인력 통계");
+    expect(screen.getByRole("button", { name: "운영 통계 목록으로 돌아가기" })).toBeInTheDocument();
+
+    rerender(<SlidingCard {...props} detailKey="empty" detail={<p>상세 내용 없음</p>} />);
+    expect(pane).toHaveAccessibleName("상세 정보");
+    expect(pane).not.toHaveAttribute("aria-labelledby");
+  });
+
+  it("uses the detail header name and follows titles that arrive after loading", async () => {
+    function Detail() {
+      const [loaded, setLoaded] = useState(false);
+      return <><button onClick={() => setLoaded(true)}>Load detail</button>{loaded ? <div className="client-detail-name">테스트 고객</div> : <span role="status" aria-label="불러오는 중" />}</>;
+    }
+    render(<SlidingCard data-component={DATA_COMPONENT} open onBack={jest.fn()} backLabel="고객 목록" detailKey="client" list={null} detail={<Detail />} />);
+    const pane = screen.getByRole("region", { name: "상세 정보" });
+    fireEvent.click(screen.getByRole("button", { name: "Load detail" }));
+    await waitFor(() => expect(pane).toHaveAccessibleName("테스트 고객"));
+  });
+
   it("keeps the list pane available and the detail pane hidden when closed", () => {
     const { container } = render(
       <SlidingCard
@@ -151,7 +203,8 @@ describe("SlidingCard", () => {
     expect(detailPane).toHaveAttribute("inert");
   });
 
-  it("hides the list pane and focuses the back button when open", () => {
+  it("hides the list pane and focuses the detail container without a button ring when open", async () => {
+    const user = userEvent.setup();
     const { container } = render(
       <SlidingCard
         data-component={DATA_COMPONENT}
@@ -160,7 +213,7 @@ describe("SlidingCard", () => {
         backLabel="설정"
         detailKey="detail-a"
         list={<div>List content</div>}
-        detail={<div>Detail content</div>}
+        detail={<h2>알림 설정</h2>}
       />,
     );
 
@@ -178,7 +231,21 @@ describe("SlidingCard", () => {
     expect(listPane).toHaveAttribute("inert");
     expect(detailPane).not.toHaveAttribute("aria-hidden", "true");
     expect(detailPane).not.toHaveAttribute("inert");
+    expect(detailPane).toHaveFocus();
+    expect(detailPane).toHaveAttribute("tabindex", "-1");
+    expect(detailPane).toHaveAttribute("role", "region");
+    expect(detailPane).toHaveAccessibleName("알림 설정");
+    expect(detailPane).toHaveClass("outline-none");
+    expect(detailPane).toBeInstanceOf(HTMLElement);
+    const pane = detailPane as HTMLElement;
+    expect(pane.matches(":focus-visible")).toBe(true);
+    expect(getComputedStyle(pane).outline).toBe("none");
+    expect(getComputedStyle(pane).borderRadius).toBe("0");
+    expect(backButton).not.toHaveFocus();
+    await user.tab();
     expect(backButton).toHaveFocus();
+    expect(getComputedStyle(backButton).outline).not.toBe("none");
+    expect(getComputedStyle(backButton).outline).not.toBe("");
   });
 
   it("calls onBack when the back button is clicked", () => {
@@ -549,9 +616,9 @@ describe("SlidingCard", () => {
       backLabel: "설정",
       detailKey: "detail-a",
       list: <button type="button">Open detail</button>,
-      detail: <div>Detail content</div>,
+      detail: <h2>알림 설정</h2>,
     };
-    const { rerender } = render(<SlidingCard {...props} open={false} />);
+    const { container, rerender } = render(<SlidingCard {...props} open={false} />);
     const opener = screen.getByRole("button", { name: "Open detail" });
     opener.focus();
     fireEvent.focusIn(opener);
@@ -561,12 +628,18 @@ describe("SlidingCard", () => {
     expect(document.body).toHaveFocus();
 
     rerender(<SlidingCard {...props} open />);
+    const detailPane = container.querySelector<HTMLElement>('[data-slot="detail-pane"]')!;
     const backButton = screen.getByRole("button", {
       name: "설정 목록으로 돌아가기",
     });
-    expect(backButton).toHaveFocus();
+    expect(detailPane).toHaveFocus();
+    expect(detailPane).toHaveAttribute("tabindex", "-1");
+    expect(detailPane).toHaveAttribute("role", "region");
+    expect(detailPane).toHaveAccessibleName("알림 설정");
+    expect(detailPane).toHaveClass("outline-none");
+    expect(backButton).not.toHaveFocus();
 
-    backButton.blur();
+    detailPane.blur();
     expect(document.body).toHaveFocus();
 
     rerender(
@@ -755,4 +828,33 @@ describe("SlidingCard", () => {
       ).toBeInTheDocument();
     });
   });
+});
+
+it('removes bottom padding only when the caller opts in', () => {
+  const props = {
+    "data-component": DATA_COMPONENT,
+    open: false,
+    onBack: jest.fn(),
+    backLabel: "설정",
+    detailKey: null,
+    list: <div>List content</div>,
+    detail: null,
+  };
+  const { container, rerender } = render(<SlidingCard {...props} />);
+  const listPane = container.querySelector('[data-slot="list-pane"]');
+  expect(listPane).toHaveClass('listPane');
+  expect(listPane).not.toHaveClass('listPaneNoBottomPadding');
+
+  rerender(<SlidingCard {...props} listBottomPadding="none" />);
+  expect(listPane).toHaveClass('listPane', 'listPaneNoBottomPadding');
+  expect(container.querySelector('[data-slot="detail-pane"]')).not.toHaveClass('listPaneNoBottomPadding');
+
+  rerender(<SlidingCard {...props} />);
+  expect(listPane).not.toHaveClass('listPaneNoBottomPadding');
+});
+
+it("uses the shared 16px card radius", () => {
+  const css = readFileSync(join(__dirname, "../sliding-card.module.css"), "utf8");
+  const cardRule = css.match(/\.slidingCard\s*\{[^}]+\}/)?.[0];
+  expect(cardRule).toContain("border-radius: calc(16px*var(--glint-ui-scale, 1))");
 });

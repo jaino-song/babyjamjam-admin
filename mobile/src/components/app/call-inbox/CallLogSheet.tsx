@@ -1,6 +1,7 @@
 "use client";
 
 import { MobileDetailHeader, MobileDetailPage } from "@/components/app/mobile-redesign/detail-sheet";
+import { LoadingState } from "@/components/app/ui/LoadingState";
 import { QueryErrorState } from "@/components/app/ui/QueryErrorState";
 import { useCallRecord } from "@/hooks/useCallInbox";
 import { formatCallTime, formatPhoneNumber } from "@/lib/call-inbox/format";
@@ -38,9 +39,7 @@ export function CallLogSheet({ recordId }: { recordId: string | null }) {
         />
       )}
       {isLoading || (!record && !isError) ? (
-        <div className="p-4 text-[0.82rem] text-v3-text-muted" data-component={`${LOG_BASE}_loading`}>
-          불러오는 중...
-        </div>
+        <LoadingState data-component={`${LOG_BASE}_loading`} label="불러오는 중" />
       ) : !record ? (
         <QueryErrorState
           dataComponent={`${LOG_BASE}_error`}

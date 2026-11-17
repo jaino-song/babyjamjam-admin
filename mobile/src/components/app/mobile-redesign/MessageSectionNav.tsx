@@ -101,6 +101,7 @@ export function MessageSectionNav({
       ariaLabel="메시지 기능"
       items={sectionNavItems}
       activeId={activeId}
+      preserveDisabledActive={needsSenderApproval}
       onSelect={handleSectionSelect}
     />
   );

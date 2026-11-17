@@ -1,5 +1,6 @@
 "use client";
 
+import { Button } from "@/components/ui/button";
 import { Bell, X } from "lucide-react";
 import { useEffect, useId, useState } from "react";
 import { PWA_NOTIFICATIONS_ENABLED } from "@/lib/notification-config";
@@ -118,14 +119,16 @@ export function NotificationPermissionPrompt() {
                     </button>
                 </div>
             </div>
-            <button
+            <Button
                 type="button"
+                variant="ghost"
+                size="icon"
                 onClick={handleDismiss}
-                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-v3-primary focus-visible:ring-offset-2 dark:hover:bg-gray-700 dark:hover:text-gray-300"
+                className="shrink-0 rounded-full text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-v3-primary focus-visible:ring-offset-2 dark:hover:bg-gray-700 dark:hover:text-gray-300"
                 aria-label="알림 권한 안내 닫기"
             >
                 <X className="h-4 w-4" aria-hidden="true" />
-            </button>
+            </Button>
         </div>
     );
 }

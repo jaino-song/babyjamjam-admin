@@ -39,18 +39,16 @@ export function HolidaySyncStrip({
     <div
       data-component={dataComponent}
       data-source-component={SOURCE_COMPONENT}
-      className="grid gap-3 rounded-2xl bg-v3-dim-white px-4 py-3.5"
+      className="grid gap-3 rounded-[16px] border border-[#818b98] bg-transparent px-4 py-3.5"
     >
-      <div data-component={`${dataComponent}_info`} className="grid min-w-0 gap-1">
-        <p data-slot="holiday-sync-status" className="text-sm font-semibold text-v3-dark">
+      <div data-component={`${dataComponent}_info`} className="grid min-w-0 justify-items-center gap-1 text-center">
+        <p data-slot="holiday-sync-title" className="text-sm font-semibold text-v3-dark">대한민국 공휴일</p>
+        <p data-slot="holiday-sync-status" className="text-xs text-v3-text-muted">
           {statusUnknown
             ? "—"
             : synced
               ? `마지막 동기화 ${lastSyncedLabel}`.trim()
               : "아직 동기화되지 않았어요 (기본 공휴일 목록 사용 중)"}
-        </p>
-        <p className="text-xs text-v3-text-muted">
-          매일 새벽 4시에 한국천문연구원 특일 정보에서 받아와요.
         </p>
         {results && results.length > 0 ? (
           <ul
@@ -81,14 +79,14 @@ export function HolidaySyncStrip({
       </div>
       <Button
         type="button"
-        variant="outline"
-        size="sm"
+        className="w-full"
         data-component={`${dataComponent}_sync-trigger`}
         disabled={pending || disabled}
-        aria-busy={pending || undefined}
+        loading={pending}
+        loadingLabel="동기화 중"
         onClick={onSync}
       >
-        {pending ? "동기화 중..." : "지금 동기화"}
+        지금 동기화
       </Button>
     </div>
   );

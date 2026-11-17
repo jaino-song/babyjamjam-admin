@@ -3,6 +3,7 @@
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ArrowLeft, Pencil, Plus, Send, Sparkles, Square, Trash2 } from "lucide-react";
+import { LoadingState } from "@/components/app/ui/LoadingState";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -29,7 +30,7 @@ const REFRESHABLE_TASK_ERROR_CODES = new Set([
 ]);
 
 export function AgentShellLoading() {
-    return <section data-component="desktop_chat_agent-shell_loading" data-source-component="AgentShell" className="grid h-full min-h-0 place-items-center overflow-hidden" role="status" aria-live="polite">AI 운영 코파일럿 준비 중...</section>;
+    return <section data-component="desktop_chat_agent-shell_loading" data-source-component="AgentShell" className="grid h-full min-h-0 place-items-center overflow-hidden"><LoadingState data-component="desktop_chat_agent-shell_loading_indicator" label="AI 운영 코파일럿 준비 중" /></section>;
 }
 
 export function AgentShell() {

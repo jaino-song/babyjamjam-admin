@@ -45,7 +45,7 @@ import {
 } from "@/components/app/clients/client-update-payload";
 import { EmployeeFormDialog } from "@/components/app/employees/EmployeeFormDialog";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { Button } from "@/components/ui/button";
+import { Button, ButtonLoadingContent } from "@/components/ui/button";
 import { FormNativeSelect } from "@/components/app/ui/form-section";
 import { MobileTwoButtonModal } from "@/components/app/ui/MobileTwoButtonModal";
 import { TogglePill } from "@/components/app/ui/toggle-pill";
@@ -1943,6 +1943,7 @@ export default function NewClientPage() {
                   <div className={styles.formCard} data-component="mobile_clients-new_screen_root_page_wizard_form-scroll_service-period-card">
                     <div className={styles.formCardTitle} data-component="mobile_clients-new_screen_root_page_wizard_form-scroll_service-period-card_card-title">서비스 기간</div>
                     <CalendarLoadNotice
+                      indicator="spinner"
                       error={calendarError ?? (calendarSaveFailed ? "load-failed" : endDateUnsupported ? "unsupported-year" : null)}
                       onRetry={() => { setCalendarSaveFailed(false); retryCalendar(); }}
                       message={calendarSaveMessage}
@@ -2006,10 +2007,14 @@ export default function NewClientPage() {
               <button
                 type="button"
                 onClick={handleNext}
-                disabled={isPrimaryDisabled}
-                className={cn(styles.wizardButton, styles.primaryButton)}
+                disabled={isSaving || isPrimaryDisabled}
+                aria-busy={isSaving || undefined}
+                data-loading={isSaving ? "" : undefined}
+                className={cn(isSaving && "relative", styles.wizardButton, styles.primaryButton)}
               >
-                {isSaving ? (isEditMode ? "저장 중..." : "등록 중...") : isLastStep ? (isEditMode ? "저장" : "등록") : "다음"}
+                <ButtonLoadingContent loading={isSaving} loadingLabel={isEditMode ? "저장 중" : "등록 중"}>
+                  {isLastStep ? (isEditMode ? "저장" : "등록") : "다음"}
+                </ButtonLoadingContent>
               </button>
             </div>
           </section>

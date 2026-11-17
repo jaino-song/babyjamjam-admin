@@ -87,10 +87,10 @@
 .formLabel {
   display: block;
   color: hsl(var(--v3-text-muted));
-  font-size: 0.7rem;
+  font-size: 12px;
   font-weight: 600;
   letter-spacing: 0.04em;
-  text-transform: uppercase;
+  text-transform: none;
 }
 
 .required {
@@ -160,6 +160,7 @@
 }
 
 .recipientChipX {
+  position: relative;
   display: flex;
   width: 18px;
   height: 18px;
@@ -170,6 +171,13 @@
   background: rgba(0, 0, 0, 0.08);
   color: hsl(var(--v3-primary));
   cursor: pointer;
+}
+
+/* Keep the chip's 18px remove control while providing a 44px touch target. */
+.recipientChipX::after {
+  content: "";
+  position: absolute;
+  inset: -13px;
 }
 
 .templateSelectTrigger {

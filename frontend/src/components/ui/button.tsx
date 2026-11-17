@@ -2,6 +2,7 @@ import * as React from "react";
 import { Slot } from "@radix-ui/react-slot";
 import { cva, type VariantProps } from "class-variance-authority";
 import { cn } from "@/lib/utils";
+import { Spinner } from "@/components/ui/spinner";
 
 const buttonVariants = cva(
   "inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-full border-2 border-transparent text-sm font-semibold cursor-pointer transition-all duration-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:size-4 [&_svg]:shrink-0 btn-press",
@@ -36,11 +37,11 @@ const buttonVariants = cva(
           "bg-google text-google-foreground border border-border shadow-sm hover:bg-muted",
       },
       size: {
-        default: "h-10 px-4",
-        md: "h-11 px-6",
+        default: "h-[calc(40px*var(--glint-ui-scale,1))] px-4",
+        md: "h-[calc(40px*var(--glint-ui-scale,1))] px-6",
         sm: "h-9 px-3 text-xs",
-        lg: "h-12 px-8 text-base",
-        icon: "h-10 w-10 p-0",
+        lg: "h-[calc(40px*var(--glint-ui-scale,1))] px-8 text-base",
+        icon: "h-[calc(32px*var(--glint-ui-scale,1))] w-[calc(32px*var(--glint-ui-scale,1))] p-0 relative after:absolute after:left-1/2 after:top-1/2 after:h-[calc(44px*var(--glint-ui-scale,1))] after:w-[calc(44px*var(--glint-ui-scale,1))] after:-translate-x-1/2 after:-translate-y-1/2 after:content-['']",
       },
       width: {
         sm: "w-1/4",
@@ -59,10 +60,30 @@ export interface ButtonProps
   extends React.ButtonHTMLAttributes<HTMLButtonElement>,
     VariantProps<typeof buttonVariants> {
   asChild?: boolean;
+  loading?: boolean;
+  loadingLabel?: React.ReactNode;
+}
+
+export function ButtonLoadingContent({
+  loading,
+  loadingLabel = "처리 중",
+  children,
+}: Pick<ButtonProps, "loading" | "loadingLabel" | "children">) {
+  if (!loading) return children;
+
+  return (
+    <>
+      <span aria-hidden="true" data-slot="button-idle" className="contents invisible">{children}</span>
+      <span data-slot="button-spinner" className="absolute inset-0 flex items-center justify-center">
+        <Spinner size="sm" aria-hidden="true" />
+      </span>
+      <span className="sr-only">{loadingLabel}</span>
+    </>
+  );
 }
 
 const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
-  ({ className, variant, size, width, asChild = false, ...props }, ref) => {
+  ({ className, variant, size, width, asChild = false, loading, loadingLabel = "처리 중", disabled, children, ...props }, ref) => {
     const resolvedVariant = variant ?? "positive";
     const resolvedSize = size ?? "default";
 
@@ -77,8 +98,10 @@ const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
           // React 19 type compatibility: Radix Slot ref types conflict with React's ref types
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           ref={ref as any}
-          {...(props as Record<string, unknown>)}
-        />
+          {...({ ...props, disabled } as Record<string, unknown>)}
+        >
+          {children}
+        </Slot>
       );
     }
     return (
@@ -87,10 +110,16 @@ const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
         data-slot="button"
         data-variant={resolvedVariant}
         data-width={width}
-        className={cn(buttonVariants({ variant, size, width, className }))}
+        className={cn(buttonVariants({ variant, size, width, className: cn(loading && "relative", className) }))}
         ref={ref}
         {...props}
-      />
+        disabled={loading || disabled}
+        {...(loading ? { "aria-busy": "true" as const, "data-loading": "" } : {})}
+      >
+        <ButtonLoadingContent loading={loading} loadingLabel={loadingLabel}>
+          {children}
+        </ButtonLoadingContent>
+      </button>
     );
   }
 );

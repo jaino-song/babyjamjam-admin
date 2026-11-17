@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef } from "react";
+import { useState, useRef, type FocusEvent } from "react";
 import { Search } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Input } from "@/components/ui/input";
@@ -12,6 +12,7 @@ interface ExpandableSearchProps {
   onChange: (value: string) => void;
   placeholder?: string;
   expandedWidth?: string;
+  onExpandedChange?: (expanded: boolean) => void;
   className?: string;
   openLabel?: string;
   closeLabel?: string;
@@ -23,7 +24,8 @@ export function ExpandableSearch({
   value,
   onChange,
   placeholder = "검색...",
-  expandedWidth = "w-20",
+  expandedWidth = "w-full",
+  onExpandedChange,
   className,
   openLabel = "검색 열기",
   closeLabel = "검색 닫기",
@@ -32,29 +34,38 @@ export function ExpandableSearch({
   const [expanded, setExpanded] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
+  const changeExpanded = (nextExpanded: boolean) => {
+    setExpanded(nextExpanded);
+    onExpandedChange?.(nextExpanded);
+  };
+
   const handleToggle = () => {
     if (!expanded) {
       setTimeout(() => inputRef.current?.focus(), 50);
     } else {
       onChange("");
     }
-    setExpanded(!expanded);
+    changeExpanded(!expanded);
   };
 
-  const handleBlur = () => {
-    if (!value) setExpanded(false);
+  const handleBlur = (event: FocusEvent<HTMLInputElement>) => {
+    if (event.currentTarget.parentElement?.contains(event.relatedTarget)) return;
+    if (!value) changeExpanded(false);
   };
 
   return (
-    <div data-component={dataComponent} data-slot="expandable-search" className={cn("flex items-center gap-1.5", className)}>
+    <div data-component={dataComponent} data-slot="expandable-search" data-source-component="ExpandableSearch" className={cn("flex items-center gap-1.5", expanded && "min-w-0 flex-1", className)}>
       <button
+        data-component={dataComponent ? `${dataComponent}_toggle` : undefined}
+        type="button"
         onClick={handleToggle}
         aria-label={expanded ? closeLabel : openLabel}
-        className="flex h-[44px] w-[44px] items-center justify-center rounded-2xl hover:bg-v3-dim-white"
+        className="relative flex h-8 w-8 shrink-0 items-center justify-center rounded-2xl hover:bg-v3-dim-white after:absolute after:-inset-1.5 after:content-['']"
       >
         <Search className={expanded ? "hidden" : "w-[18px] h-[18px] text-v3-text-muted"} />
       </button>
       <Input
+        data-component={dataComponent ? `${dataComponent}_input` : undefined}
         ref={inputRef}
         type="text"
         aria-label={inputLabel}
@@ -62,10 +73,9 @@ export function ExpandableSearch({
         value={value}
         onChange={(e) => onChange(e.target.value)}
         onBlur={handleBlur}
-        style={{ border: "none", outline: "none", boxShadow: "none" }}
         className={cn(
-          "h-auto border-none bg-transparent p-0 text-sm text-v3-dark caret-v3-primary placeholder:text-v3-text-muted/50 focus-visible:ring-0 focus-visible:ring-offset-0",
-          expanded ? expandedWidth : "w-0"
+          "border-0 bg-v3-dim-white text-v3-dark caret-v3-primary placeholder:text-v3-text-muted focus-visible:ring-0 focus-visible:ring-offset-0",
+          expanded ? cn("min-w-0 flex-1", expandedWidth) : "h-0 w-0 rounded-none p-0"
         )}
       />
     </div>

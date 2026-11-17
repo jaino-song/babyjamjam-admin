@@ -2,13 +2,14 @@
 
 "use client";
 
+import { LoadingState } from "@/components/app/ui/LoadingState";
 import { useEffect, useState } from "react";
 
-import { Spinner } from "@/components/ui/spinner";
 
 const RHWP_WASM_PATH = "/vendor/rhwp/rhwp_bg.wasm";
 
 interface HwpDocumentPreviewProps {
+  "data-component": string;
   previewUrl: string;
   previewKey?: string;
   title: string;
@@ -79,6 +80,7 @@ async function loadRhwpCore(): Promise<RhwpCoreModule> {
 }
 
 export function HwpDocumentPreview({
+  "data-component": dataComponent,
   previewUrl,
   previewKey,
   title,
@@ -147,12 +149,7 @@ export function HwpDocumentPreview({
 
   if (state.status === "loading") {
     return (
-      <div className="flex min-h-full items-center justify-center">
-        <div className="flex items-center gap-3 rounded-2xl bg-white px-5 py-4 text-sm font-medium text-v3-text shadow-sm">
-          <Spinner size="sm" className="text-v3-primary" />
-          한글 문서를 불러오는 중입니다
-        </div>
-      </div>
+      <LoadingState label="한글 문서를 불러오는 중입니다" data-component={`${dataComponent}_loading`} size="sm" className="min-h-full" />
     );
   }
 

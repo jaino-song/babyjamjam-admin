@@ -21,7 +21,7 @@ export const frontendScreenshotRoutes: ScreenshotRoute[] = [
 
   { slug: "admin", path: "/admin", auth: "authenticated" },
   { slug: "all", path: "/all", auth: "authenticated" },
-  { slug: "chat", path: "/chat", auth: "authenticated" },
+  { slug: "agent", path: "/agent", auth: "authenticated" },
   { slug: "clients", path: "/clients", auth: "authenticated" },
   { slug: "clients-filtered", path: "/clients/filtered", auth: "authenticated" },
   { slug: "clients-new", path: "/clients/new", auth: "authenticated" },
@@ -41,7 +41,6 @@ export const frontendScreenshotRoutes: ScreenshotRoute[] = [
   { slug: "settings-general", path: "/settings/general", auth: "authenticated" },
   { slug: "settings-voucher-price", path: "/settings/voucher-price", auth: "authenticated" },
   { slug: "system-admin", path: "/system-admin", auth: "authenticated" },
-  { slug: "test", path: "/test", auth: "authenticated" },
 ];
 
 export const frontendDynamicScreenshotRoutes: ScreenshotRoute[] = [

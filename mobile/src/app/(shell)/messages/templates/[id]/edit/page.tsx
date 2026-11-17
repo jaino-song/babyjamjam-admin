@@ -1,8 +1,9 @@
 "use client";
 
 import { useParams, useRouter } from "next/navigation";
-import { ArrowLeft, Loader2, Monitor, Send } from "lucide-react";
+import { ArrowLeft, Monitor, Send } from "lucide-react";
 import Link from "next/link";
+import { LoadingState } from "@/components/app/ui/LoadingState";
 import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { useMessageTemplate } from "@/hooks/use-message-templates";
@@ -33,7 +34,7 @@ export default function EditTemplatePage() {
         <div data-component="mobile_messages_templates_edit_page_loading" className="mx-auto px-4 py-6 sm:px-6 sm:py-8 md:px-12">
           <BackButton />
           <ContentPaper title="템플릿" className="flex min-h-[70vh] items-center justify-center">
-            <Loader2 className="h-8 w-8 animate-spin text-primary" />
+            <LoadingState label="템플릿을 불러오는 중" size="lg" data-component="mobile_messages_templates_edit_page_loading_status" />
           </ContentPaper>
         </div>
       </div>

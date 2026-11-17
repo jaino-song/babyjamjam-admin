@@ -1,24 +1,47 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 import { AgentMobileShell } from "./AgentMobileShell";
+
+jest.mock("next/navigation", () => ({ usePathname: () => "/agent" }));
+jest.mock("@/providers/UserProvider", () => ({ useInitialUser: () => ({ name: "관리자", branchName: "개발QA점" }) }));
+jest.mock("@/components/app/notifications/NotificationBell", () => ({
+    NotificationBell: (props: { "data-component"?: string; disabled?: boolean }) => <button {...props} aria-label="알림 열기" />,
+}));
 
 const mockSendMessage = jest.fn();
 const mockRefreshTask = jest.fn();
 const mockMessages: unknown[] = [];
 let mockTaskNeedsReconciliation = false;
+let mockDiscovery = "enabled";
+const mockSelectSession = jest.fn();
+const mockDeleteSession = jest.fn();
+const mockResetBranch = jest.fn();
+const mockNow = new Date();
+const mockDate = (days: number) => {
+    const date = new Date(mockNow);
+    date.setDate(date.getDate() - days);
+    return date.toISOString();
+};
 
 jest.mock("@/hooks/useAgentChat", () => ({
+    AGENT_DISCOVERY_ERROR_MESSAGE: "AI 운영 코파일럿을 준비하지 못했습니다.",
+    useAgentCapabilities: () => mockDiscovery,
     useAgentChat: () => ({
         messages: mockMessages,
         status: "ready",
         errorState: null,
         sendMessage: mockSendMessage,
         stop: jest.fn(),
-        resetBranch: jest.fn(),
-        sessions: [{ id: "session-a", title: "첫 대화" }],
-        selectSession: jest.fn(),
-        deleteSession: jest.fn(),
+        resetBranch: mockResetBranch,
+        sessions: [
+            { id: "session-old", title: "이전 대화", updatedAt: mockDate(10) },
+            { id: "session-a", title: "첫 대화", updatedAt: mockDate(0) },
+            { id: "session-week", title: "최근 대화", updatedAt: mockDate(3) },
+        ],
+        currentSessionId: "session-a",
+        selectSession: mockSelectSession,
+        deleteSession: mockDeleteSession,
         approveAction: jest.fn(),
         rejectAction: jest.fn(),
         submitStructuredForm: jest.fn(),
@@ -32,10 +55,156 @@ jest.mock("@/hooks/useAgentChat", () => ({
 
 describe("AgentMobileShell drawer accessibility", () => {
     beforeEach(() => {
+        mockDiscovery = "enabled";
+        mockSelectSession.mockClear();
+        mockDeleteSession.mockClear();
+        mockResetBranch.mockClear();
         mockMessages.length = 0;
         mockSendMessage.mockClear();
         mockRefreshTask.mockClear();
         mockTaskNeedsReconciliation = false;
+    });
+
+    it("reuses the shell greeting and branch between the menu and compose/bell actions", () => {
+        render(<AgentMobileShell />);
+        const header = screen.getByRole("banner");
+        expect(header).toHaveAttribute("data-slot", "agent-header");
+        expect(header).toHaveAttribute("data-source-component", "V3MobileHeader");
+        expect(header).toHaveClass("existing-navbar", "relative");
+        expect(header).not.toHaveClass("fixed");
+        expect(within(header).getByText("관리자 님")).toBeInTheDocument();
+        expect(within(header).getByText("개발QA점")).toBeInTheDocument();
+        expect(screen.queryByText("AI 운영 코파일럿")).not.toBeInTheDocument();
+        const menu = within(header).getByRole("button", { name: "대화 목록" });
+        const compose = within(header).getByRole("button", { name: "새 대화" });
+        const bell = within(header).getByRole("button", { name: "알림 열기" });
+        expect(within(header).getAllByRole("button")).toEqual([menu, compose, bell]);
+        for (const button of [menu, compose]) {
+            expect(button).toHaveClass("h-8", "w-8", "relative", "after:-inset-1.5");
+        }
+        expect(compose.querySelector("svg")).toHaveClass("lucide-square-pen");
+        fireEvent.click(compose);
+        expect(mockResetBranch).toHaveBeenCalledTimes(1);
+        fireEvent.click(menu);
+        expect(compose).toBeDisabled();
+        const drawer = screen.getByRole("dialog", { name: "대화 목록" });
+        const newConversation = within(drawer).getByRole("button", { name: "새 대화" });
+        expect(within(drawer).getAllByRole("button")[0]).toBe(newConversation);
+        expect(newConversation).toHaveClass("w-full", "rounded-full", "bg-primary");
+        expect(newConversation.querySelector("svg")).toHaveClass("lucide-square-pen");
+        fireEvent.click(newConversation);
+        expect(mockResetBranch).toHaveBeenCalledTimes(2);
+        expect(drawer).toHaveAttribute("data-open", "false");
+    });
+
+    it("groups real sessions, marks the current session, and closes on scrim tap", async () => {
+        const user = userEvent.setup();
+        const { container } = render(<AgentMobileShell />);
+        await user.click(screen.getByRole("button", { name: "대화 목록" }));
+        const drawer = screen.getByRole("dialog", { name: "대화 목록" });
+        expect(drawer).toHaveAttribute("data-open", "true");
+        expect(Array.from(drawer.querySelectorAll("h2")).map((heading) => heading.textContent)).toEqual(["오늘", "지난 7일", "이전"]);
+        expect(screen.getByRole("button", { name: "첫 대화" })).toHaveAttribute("aria-current", "true");
+        expect(container.querySelector('[data-slot="agent-session-row"][data-current="true"]')).toHaveTextContent("첫 대화");
+        await user.click(screen.getByRole("button", { name: "대화 목록 닫기" }));
+        expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+        expect(drawer).toHaveAttribute("data-open", "false");
+    });
+
+    it("toggles the drawer from the hamburger and traps Tab within its controls", async () => {
+        const user = userEvent.setup();
+        render(<AgentMobileShell />);
+        const menu = screen.getByRole("button", { name: "대화 목록" });
+        await user.click(menu);
+        await user.tab({ shift: true });
+        expect(screen.getByRole("button", { name: "이전 대화 삭제" })).toHaveFocus();
+        await user.tab();
+        expect(menu).toHaveFocus();
+        await user.click(menu);
+        expect(menu).toHaveAttribute("aria-expanded", "false");
+        expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    });
+
+    it("disables the notification bell while the drawer is open and restores it after closing", async () => {
+        const user = userEvent.setup();
+        render(<AgentMobileShell />);
+        const menu = screen.getByRole("button", { name: "대화 목록" });
+        const bell = screen.getByRole("button", { name: "알림 열기" });
+        expect(bell).toBeEnabled();
+
+        await user.click(menu);
+        const drawer = screen.getByRole("dialog", { name: "대화 목록" });
+        expect(bell).toBeDisabled();
+        await user.click(bell);
+        expect(bell).not.toHaveFocus();
+        expect(drawer).toHaveAttribute("data-open", "true");
+        await user.tab();
+        expect(menu).toHaveFocus();
+        await user.tab();
+        expect(within(drawer).getByRole("button", { name: "새 대화" })).toHaveFocus();
+
+        await user.keyboard("{Escape}");
+        expect(bell).toBeEnabled();
+        expect(menu).toHaveFocus();
+        await user.tab();
+        await user.tab();
+        expect(bell).toHaveFocus();
+    });
+
+    it("preserves selection, deletion, and new conversation actions", async () => {
+        const user = userEvent.setup();
+        render(<AgentMobileShell />);
+        const menu = screen.getByRole("button", { name: "대화 목록" });
+        await user.click(menu);
+        await user.click(screen.getByRole("button", { name: "최근 대화 삭제" }));
+        expect(mockDeleteSession).toHaveBeenCalledWith("session-week");
+        await user.click(screen.getByRole("button", { name: "최근 대화" }));
+        expect(mockSelectSession).toHaveBeenCalledWith("session-week");
+        expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+        await user.click(menu);
+        const drawer = screen.getByRole("dialog");
+        fireEvent.click(drawer.querySelector('[data-slot="agent-session-new"]')!);
+        expect(mockResetBranch).toHaveBeenCalledTimes(1);
+        expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    });
+
+    it("shows a safe discovery error and prevents sending a broken chat", () => {
+        mockDiscovery = "discovery-error";
+        render(<AgentMobileShell />);
+        expect(screen.getByRole("alert")).toHaveTextContent("AI 운영 코파일럿을 준비하지 못했습니다.");
+        expect(screen.getByRole("textbox", { name: "질문 입력" })).toBeDisabled();
+        expect(screen.getByRole("button", { name: "전송" })).toBeDisabled();
+        expect(mockSendMessage).not.toHaveBeenCalled();
+    });
+
+    it.each(["loading", "discovery-error"])("disables all session actions during %s while keeping the hamburger usable", async (discovery) => {
+        mockDiscovery = discovery;
+        const user = userEvent.setup();
+        render(<AgentMobileShell />);
+        const menu = screen.getByRole("button", { name: "대화 목록" });
+        expect(screen.getByRole("button", { name: "새 대화" })).toBeDisabled();
+        await user.click(menu);
+        const drawer = screen.getByRole("dialog", { name: "대화 목록" });
+        const actions = within(drawer).getAllByRole("button");
+        expect(actions).toHaveLength(7);
+        for (const action of actions) {
+            expect(action).toBeDisabled();
+            await user.click(action);
+        }
+        expect(mockResetBranch).not.toHaveBeenCalled();
+        expect(mockSelectSession).not.toHaveBeenCalled();
+        expect(mockDeleteSession).not.toHaveBeenCalled();
+        expect(menu).not.toBeDisabled();
+        await user.click(menu);
+        expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    });
+
+    it("announces discovery loading with the shared spinner and a hidden label", () => {
+        mockDiscovery = "loading";
+        render(<AgentMobileShell />);
+        expect(screen.getByRole("status")).toHaveTextContent("대화를 준비하고 있습니다.");
+        expect(screen.getByText("대화를 준비하고 있습니다.")).toHaveClass("sr-only");
+        expect(screen.getByRole("textbox", { name: "질문 입력" })).toBeDisabled();
     });
 
     it("hides assistant bubbles containing only invisible parts", () => {
@@ -69,6 +238,7 @@ describe("AgentMobileShell drawer accessibility", () => {
         const dialog = screen.getByRole("dialog", { name: "대화 목록" });
         expect(dialog).toHaveFocus();
         expect(document.querySelector('[data-slot="application-content"]')).toHaveProperty("inert", true);
+        expect(menu).not.toBeDisabled();
 
         await user.keyboard("{Escape}");
 

@@ -444,9 +444,11 @@ function ClientMessageHistoryList({
                         size="sm"
                         className="w-full"
                         disabled={isFetchingNextPage}
+                        loading={isFetchingNextPage}
+                        loadingLabel="불러오는 중"
                         onClick={onLoadMore}
                     >
-                        {isFetchingNextPage ? "불러오는 중..." : "이전 발송 기록 더 불러오기"}
+                        이전 발송 기록 더 불러오기
                     </Button>
                 </div>
             ) : null}
@@ -662,9 +664,11 @@ function ClientUpcomingMessageList({
                     size="sm"
                     className="w-full"
                     disabled={isFetchingNextPage}
+                    loading={isFetchingNextPage}
+                    loadingLabel="불러오는 중"
                     onClick={onLoadMore}
                 >
-                    {isFetchingNextPage ? "불러오는 중..." : "더 불러오기"}
+                    더 불러오기
                 </Button>
             ) : null}
         </div>
@@ -991,7 +995,7 @@ function ClientContractsList({
                 cancelLabel={CONTRACT_VOID_COPY.cancel}
                 approvalLabel={CONTRACT_VOID_COPY.confirm}
                 approvalVariant="destructive"
-                pendingLabel={CONTRACT_VOID_COPY.pending}
+                pendingLabel={CONTRACT_VOID_COPY.pending.replace(/[.…]+$/u, "")}
                 isPending={voidMutation.isPending}
                 onApprove={() => {
                     if (voidTargetId !== null && !voidMutation.isPending) {
@@ -1544,6 +1548,7 @@ function ClientDetailPanelBody({
                 }
             >
                 <DetailTabPanels
+                    insetPanels
                     activeTab={activeDetailTab}
                     durationMs={layout === "mobile" ? 0 : undefined}
                     dataComponent={`${dataComponentPrefix}_content`}
@@ -1815,7 +1820,7 @@ function ClientDetailPanelBody({
                 size="detail"
                 cancelLabel="취소"
                 approvalLabel="예약 확정"
-                pendingLabel="확정 중…"
+                pendingLabel="확정 중"
                 isPending={isConfirmingBooking || confirmBooking.isPending}
                 onApprove={() => void handleConfirmBooking()}
             />

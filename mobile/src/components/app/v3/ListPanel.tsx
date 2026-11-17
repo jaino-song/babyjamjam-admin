@@ -63,6 +63,7 @@ export function ListPanel({
           ? `flex ${headerAlignmentClass} justify-between p-6 pb-0 shrink-0`
           : `flex ${headerAlignmentClass} justify-between p-6 shrink-0`;
   const [dropdownOpen, setDropdownOpen] = useState(false);
+  const [searchExpanded, setSearchExpanded] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -79,7 +80,7 @@ export function ListPanel({
   const activeTabLabel = tabs?.find(t => t.value === activeTab)?.label ?? tabs?.[0]?.label ?? "";
 
   return (
-    <div data-component={dataComponent} className="bg-white rounded-2xl shadow-v3 flex flex-col overflow-hidden h-full min-h-0">
+    <div data-component={dataComponent} className="bg-white rounded-[16px] shadow-v3 flex flex-col overflow-hidden h-full min-h-0">
       <div data-component={sub("header")} className={headerClassName}>
         <PanelTitleGroup
           component="list-panel"
@@ -93,7 +94,7 @@ export function ListPanel({
       {showTabs && (
         <div data-component={sub("tabs")} className="flex items-center justify-between px-6 pt-4 shrink-0">
           {tabsVariant === "dropdown" ? (
-            <div ref={dropdownRef} className="relative">
+            <div ref={dropdownRef} hidden={searchExpanded} className={cn("relative", searchExpanded && "hidden")}>
               <button
                 onClick={() => setDropdownOpen(prev => !prev)}
                 className="flex items-center gap-1.5 text-[0.8rem] font-semibold text-v3-dark px-3 py-1.5 rounded-2xl border border-v3-border hover:bg-v3-dim-white transition-colors"
@@ -121,7 +122,7 @@ export function ListPanel({
               )}
             </div>
           ) : (
-            <div className="flex gap-1">
+            <div hidden={searchExpanded} className={searchExpanded ? "hidden" : "flex gap-1"}>
               {(tabs ?? []).map((tab) => (
                 <button
                   data-component={sub("tabs_tab-button")}
@@ -151,6 +152,7 @@ export function ListPanel({
               data-component={sub("tabs_search")}
               value={searchValue!}
               onChange={onSearchChange!}
+              onExpandedChange={setSearchExpanded}
               placeholder={searchPlaceholder}
               className={tabsVariant === "inline" ? "pb-2" : undefined}
             />

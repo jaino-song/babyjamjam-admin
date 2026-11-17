@@ -7,7 +7,7 @@ import { getClientDocumentStatusMeta } from "@babyjamjam/shared/constants/client
 import type { StatusBadgeVariant } from "@babyjamjam/shared/tokens/status-badge";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Spinner } from "@/components/ui/spinner";
+import { LoadingState } from "@/components/app/ui/LoadingState";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import {
     Dialog,
@@ -155,9 +155,7 @@ export function FilteredClientsDialog({
 
                     <div data-component="mobile_notifications_filtered-clients_dialog_body" className="overflow-y-auto flex-1">
                         {isLoading ? (
-                            <div className="flex justify-center py-16">
-                                <Spinner size="default" />
-                            </div>
+                            <LoadingState data-component="mobile_notifications_filtered-clients_dialog_body_loading" label="고객 목록을 불러오는 중" className="py-16" />
                         ) : error ? (
                             <div className="p-4">
                                 <Alert variant="destructive">
@@ -232,7 +230,7 @@ export function FilteredClientsDialog({
                 title={deleteFailureMessage ? "삭제하지 못했어요" : "고객을 삭제하시겠습니까?"}
                 description={deleteFailureMessage ?? "삭제한 고객은 목록에서 사라지고 복구할 수 없어요."}
                 approvalLabel={deleteFailureMessage ? "확인" : "삭제"}
-                pendingLabel="삭제 중..."
+                pendingLabel="삭제 중"
                 approvalVariant="destructive"
                 isPending={deleteClient.isPending}
                 onApprove={handleDeleteConfirm}

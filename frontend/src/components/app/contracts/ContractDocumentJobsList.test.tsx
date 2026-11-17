@@ -83,10 +83,10 @@ test("renders loading, safe retryable errors, callback-free errors and per-secti
   expect(screen.getByText("확인이 필요한 전자문서가 없습니다.")).toBeInTheDocument(); expect(screen.getByText("최근 처리한 전자문서가 없습니다.")).toBeInTheDocument();
 });
 
-test("uses safe fallback copy and never invents a namespace when its optional base is absent", () => {
-  const { container } = render(<ContractDocumentJobsList {...props} data-component={undefined} jobs={{ active: [{ jobId: "u", jobType: "create_document", clientName: "  ", status: "future" }], requiresAttention: [], recent: [] }} />);
+test("uses safe fallback copy within the required caller namespace", () => {
+  const { container } = render(<ContractDocumentJobsList {...props} data-component="desktop_contracts_tests_jobs-list" jobs={{ active: [{ jobId: "u", jobType: "create_document", clientName: "  ", status: "future" }], requiresAttention: [], recent: [] }} />);
   expect(screen.getByRole("button", { name: "고객 정보 확인 필요 · 작업 유형 확인 필요 · 상태 확인 필요 상세 보기" })).toBeInTheDocument();
-  expect(container.querySelector("[data-component]")).toBeNull();
+  expect(container.firstElementChild).toHaveAttribute("data-component", "desktop_contracts_tests_jobs-list");
 });
 
 // Read the shipped CSS; ordered full-rule inventory catches appended overrides too.

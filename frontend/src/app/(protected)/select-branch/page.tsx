@@ -7,7 +7,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { useQueryClient } from "@tanstack/react-query";
 import { Building2 } from "lucide-react";
 import { AuthPanel } from "@/components/auth/auth-panel";
-import { Spinner } from "@/components/ui/spinner";
+import { LoadingState } from "@/components/app/ui/LoadingState";
 import { Skeleton } from "@/components/ui/skeleton";
 import { SelectableItemFrame } from "@/components/ui/selectable-item";
 import { Button } from "@/components/ui/button";
@@ -151,8 +151,7 @@ export default function SelectBranchPage() {
                 containerClassName="!h-full min-h-0 items-center overflow-hidden py-0 md:py-0"
                 className="min-h-[70vh] gap-5 !p-5 sm:!p-6 [&_[data-component='select-branch-title']]:!text-[1.72rem] md:[&_[data-component='select-branch-title']]:!text-[1.5rem] [&_[data-component='select-branch-subtitle']]:!max-w-[30ch] [&_[data-component='select-branch-subtitle']]:!text-[0.82rem] md:[&_[data-component='select-branch-subtitle']]:!text-[0.76rem]"
                 contentClassName="flex-1 gap-5"
-                title="지점 불러오는 중"
-                subtitle="계정에 연결된 지점을 정리하고 있습니다."
+                title={<LoadingState data-component="desktop_select-branch_title_loading" label="지점 불러오는 중" inline />}
             >
                 <div data-component="desktop_select-branch_loading" className="flex w-full flex-1 flex-col gap-3">
                     {Array.from({ length: 3 }).map((_, index) => (
@@ -234,9 +233,11 @@ export default function SelectBranchPage() {
                         <Button
                             variant="outline"
                             onClick={handleLogout}
+                            loading={loggingOut}
+                            loadingLabel="로그아웃 중"
                             disabled={loggingOut}
                         >
-                            {loggingOut ? "로그아웃 중..." : "로그아웃"}
+                            로그아웃
                         </Button>
                     </div>
                 </div>
@@ -320,9 +321,7 @@ export default function SelectBranchPage() {
                                         </span>
                                     </span>
                                     {selecting === org.id ? (
-                                        <span data-component="desktop_select-branch_list_card-row_spinner" className="flex h-8 w-8 items-center justify-center rounded-full bg-v3-primary/10">
-                                            <Spinner size="sm" className="text-v3-primary" />
-                                        </span>
+                                        <LoadingState data-component="desktop_select-branch_list_card-row_spinner" label="지점 선택 중" size="sm" inline />
                                     ) : (
                                         <Badge
                                             variant={getRoleBadgeVariant(org.role)}

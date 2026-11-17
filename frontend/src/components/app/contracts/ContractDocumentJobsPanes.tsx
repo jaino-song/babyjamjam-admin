@@ -33,7 +33,7 @@ interface ContractDocumentJobsPanesProps {
   interactionPaused?: boolean;
   inset?: "default" | "compact";
   onNaturalHeight?: (height: number) => void;
-  "data-component"?: string;
+  "data-component": string;
 }
 
 export function ContractDocumentJobsPanes({ ref, memory, onRemember, open, onClose, jobs, isLoading, error, onRetry, onRecover, interactionPaused = false, inset = "default", onNaturalHeight, "data-component": base }: ContractDocumentJobsPanesProps): React.ReactElement {
@@ -48,7 +48,7 @@ export function ContractDocumentJobsPanes({ ref, memory, onRemember, open, onClo
   const savedScroll = React.useRef(0);
   const restorePending = React.useRef(false);
   const selected = open ? [...(jobs?.active ?? []), ...(jobs?.requiresAttention ?? []), ...(jobs?.recent ?? [])].find((job) => job.jobId === selectedId) : undefined;
-  const slide = base ? `${base}_slide` : undefined;
+  const slide = `${base}_slide`;
 
   React.useLayoutEffect(() => {
     if (!open) {
@@ -92,7 +92,7 @@ export function ContractDocumentJobsPanes({ ref, memory, onRemember, open, onClo
   }));
   const closeButton = (scope?: string, isList = false) => (
     <Button ref={isList ? listClose : undefined} type="button" variant="ghost" size="icon" aria-label="전자문서 작업 닫기" data-component={scope}
-      className="h-8 w-8 shrink-0 rounded-full border-0 bg-white text-v3-text-muted shadow-none hover:bg-v3-dim-white hover:text-v3-dark" onClick={close}>
+      className="shrink-0 rounded-full border-0 bg-white text-v3-text-muted shadow-none hover:bg-v3-dim-white hover:text-v3-dark" onClick={close}>
       <X aria-hidden="true" className="h-4 w-4" />
     </Button>
   );
@@ -101,11 +101,11 @@ export function ContractDocumentJobsPanes({ ref, memory, onRemember, open, onClo
       <div data-component={base} data-source-component="ContractDocumentJobsPanes" data-slot="document-jobs-interaction" inert={interactionPaused || undefined} className="flex min-h-0 flex-1 flex-col">
       {open ? <SlidingDetailPanel data-component={slide} motion="page" headerInset={inset} open={Boolean(selected)} onBack={back} backLabel="목록으로 돌아가기" interactionPaused={interactionPaused}
         list={<>
-          <PaneHeader ref={setHeaderNode} variant="title" title="전자문서 작업" inset={inset} actions={closeButton(slide ? `${slide}_list-pane_header_actions_close` : undefined, true)} data-component={slide ? `${slide}_list-pane_header` : undefined} />
-          <div ref={listScroller} data-component={slide ? `${slide}_list-pane_body` : undefined} data-slot="document-jobs-list-scroller" className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
-            <div ref={setInnerNode} data-component={slide ? `${slide}_list-pane_body_content` : undefined} data-slot="document-jobs-natural-content" className={inset === "compact" ? "shrink-0 px-5 pt-2 pb-6" : "shrink-0 px-6 pt-3 pb-6"}>
+          <PaneHeader ref={setHeaderNode} variant="title" title="전자문서 작업" inset={inset} actions={closeButton(`${slide}_list-pane_header_actions_close`, true)} data-component={`${slide}_list-pane_header`} />
+          <div ref={listScroller} data-component={`${slide}_list-pane_body`} data-slot="document-jobs-list-scroller" className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
+            <div ref={setInnerNode} data-component={`${slide}_list-pane_body_content`} data-slot="document-jobs-natural-content" className={inset === "compact" ? "shrink-0 px-5 pt-2 pb-6" : "shrink-0 px-6 pt-3 pb-6"}>
               <ContractDocumentJobsList cardVariant="compact" jobs={jobs} isLoading={isLoading} error={error} onRetry={onRetry} collapsed={collapsed}
-                data-component={slide ? `${slide}_list-pane_body_content_list` : undefined} onToggle={(section) => {
+                data-component={`${slide}_list-pane_body_content_list`} onToggle={(section) => {
                   const next = { ...collapsed, [section]: !collapsed[section] };
                   setCollapsed(next);
                   onRemember?.({ collapsed: next });
@@ -120,12 +120,12 @@ export function ContractDocumentJobsPanes({ ref, memory, onRemember, open, onClo
             </div>
           </div>
         </>}
-        headerActions={closeButton(slide ? `${slide}_detail-pane_header_row_actions_close` : undefined)}
-        detail={selected ? <div data-component={slide ? `${slide}_detail-pane_body_scroll` : undefined} data-slot="document-jobs-detail-scroller" className={inset === "compact" ? "min-h-0 flex-1 overflow-y-auto overscroll-contain px-5 pt-4 pb-6" : "min-h-0 flex-1 overflow-y-auto overscroll-contain px-6 pt-4 pb-6"}>
-          <div data-component={slide ? `${slide}_detail-pane_body_scroll_summary` : undefined} className="mb-4">
-            <ContractDocumentJobSummary job={selected} data-component={slide ? `${slide}_detail-pane_body_scroll_summary_job` : undefined} />
+        headerActions={closeButton(`${slide}_detail-pane_header_row_actions_close`)}
+        detail={selected ? <div data-component={`${slide}_detail-pane_body_scroll`} data-slot="document-jobs-detail-scroller" className={inset === "compact" ? "min-h-0 flex-1 overflow-y-auto overscroll-contain px-5 pt-4 pb-6" : "min-h-0 flex-1 overflow-y-auto overscroll-contain px-6 pt-4 pb-6"}>
+          <div data-component={`${slide}_detail-pane_body_scroll_summary`} className="mb-4">
+            <ContractDocumentJobSummary job={selected} data-component={`${slide}_detail-pane_body_scroll_summary_job`} />
           </div>
-          <ContractDocumentJobDetail job={selected} onDocumentNavigate={close} onRecover={onRecover} data-component={slide ? `${slide}_detail-pane_body_scroll_job` : undefined} />
+          <ContractDocumentJobDetail job={selected} onDocumentNavigate={close} onRecover={onRecover} data-component={`${slide}_detail-pane_body_scroll_job`} />
         </div> : null} /> : null}
       </div>
   );

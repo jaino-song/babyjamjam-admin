@@ -6,7 +6,6 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { 
   LayoutDashboard, 
-  BarChart3, 
   Users, 
   UserCheck, 
   Calendar, 
@@ -38,7 +37,6 @@ const NAV_SECTIONS: NavSection[] = [
     title: "메인",
     items: [
       { label: "대시보드", href: "/dashboard", icon: LayoutDashboard },
-      { label: "분석", href: "/dashboard/analytics", icon: BarChart3 },
     ],
   },
   {
@@ -87,7 +85,6 @@ export const V3Sidebar = ({
   };
 
   const isActive = (href: string) => {
-    if (href === "/dashboard" && pathname === "/dashboard/analytics") return false;
     if (href === "/employees" && pathname === "/employees/schedule") return false;
     return pathname.startsWith(href);
   };

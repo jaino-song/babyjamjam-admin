@@ -1038,7 +1038,7 @@ describe("ContractPdfViewer", () => {
       />
     );
 
-    const placeholder = screen.getByRole("status");
+    const placeholder = screen.getByRole("region", { name: "계약서 PDF 미리보기" });
     expect(placeholder).toHaveClass(
       "contract-pdf-viewer",
       "contract-preview-frame"
@@ -1047,5 +1047,9 @@ describe("ContractPdfViewer", () => {
       "aria-label",
       "계약서 PDF 미리보기"
     );
+    const status = screen.getByRole("status", { name: "PDF 뷰어를 준비하는 중" });
+    expect(screen.getAllByRole("status")).toHaveLength(1);
+    expect(within(placeholder).getByRole("status")).toBe(status);
+    expect(status).toHaveAttribute("data-slot", "loading-state");
   });
 });

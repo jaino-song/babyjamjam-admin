@@ -84,7 +84,7 @@ export function MobileBottomNav() {
     zIndex: 0,
   };
 
-  if (!pathname || pathname === "/chat") return null;
+  if (!pathname) return null;
 
   if (isLayoutExcluded(pathname)) return null;
 
@@ -94,6 +94,7 @@ export function MobileBottomNav() {
     <nav
       data-component={NAV_BASE}
       data-slot="mobile-bottom-nav"
+      data-variant={safePathname === "/agent" || safePathname === "/admin/feedback" ? "standard" : undefined}
       className={cn(
         isChatRoute
           ? "z-[var(--mobile-z-nav,30)]"

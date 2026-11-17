@@ -6,6 +6,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
   LayoutDashboard,
+  Bot,
   Users,
   UserCheck,
   UserKey,
@@ -47,6 +48,7 @@ const BASE_NAV_SECTIONS: NavSection[] = [
     title: "메인",
     items: [
       { label: "대시보드", href: "/dashboard", icon: LayoutDashboard },
+      { label: "에이전트", href: "/agent", icon: Bot },
       // { label: "서비스 일정", href: "/schedule", icon: Calendar },
     ],
   },
@@ -258,6 +260,7 @@ export const V3Sidebar = () => {
                         href={item.href}
                         prefetch={false}
                         data-component={`sidebar-nav-${itemName}`}
+                        aria-current={active ? "page" : undefined}
                         className={navItemClassName}
                       >
                         {content}

@@ -13,6 +13,7 @@ import { eformsignApi } from "@/services/api";
 import { t } from "@/lib/i18n/translations";
 import { toast } from "@/hooks/use-toast";
 import { MobileTwoButtonModal } from "@/components/app/ui/MobileTwoButtonModal";
+import { LoadingState } from "@/components/app/ui/LoadingState";
 import { Button } from "@/components/ui/button";
 import type { Client } from "@/lib/client/types";
 import type { EformsignDocument } from "@/lib/eformsign/types";
@@ -262,14 +263,10 @@ export function useClientDetailController({
   const detail = (
     <>
       {isDetailRefreshing ? (
-        <div
-          className="detail-empty-state"
-          role="status"
-          aria-label="고객 정보 새로고침 중"
+        <LoadingState
+          label="고객 정보 새로고침 중"
           data-component={`${dataComponent}_fresh-loading`}
-        >
-          고객 정보를 불러오는 중입니다.
-        </div>
+        />
       ) : null}
       {detailRefreshError ? (
         <div

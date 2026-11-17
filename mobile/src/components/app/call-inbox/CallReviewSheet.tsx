@@ -6,6 +6,7 @@ import { useState } from "react";
 import { normalizeApiError } from "@babyjamjam/shared";
 
 import { Input } from "@/components/ui/input";
+import { LoadingState } from "@/components/app/ui/LoadingState";
 import { QueryErrorState } from "@/components/app/ui/QueryErrorState";
 import { Switch } from "@/components/ui/switch";
 import { FieldLabelRow, fieldMessageId } from "@/components/app/ui/FieldLabelRow";
@@ -220,9 +221,7 @@ export function CallReviewSheet({
         />
       )}
       {isLoading || (!draft && !isError) ? (
-        <div className="p-4 text-[0.82rem] text-v3-text-muted" data-component={`${REVIEW_BASE}_loading`}>
-          불러오는 중...
-        </div>
+        <LoadingState data-component={`${REVIEW_BASE}_loading`} label="불러오는 중" />
       ) : !draft ? (
         <QueryErrorState
           dataComponent={`${REVIEW_BASE}_error`}
@@ -525,7 +524,8 @@ function NewClientReview({
               busy: discardDraft.isPending,
             },
             {
-              label: confirmDraft.isPending ? "등록 중..." : "고객 등록",
+              label: "고객 등록",
+              busyLabel: "등록 중",
               variant: "primary",
               onClick: handleConfirm,
               disabled: busy,
@@ -787,9 +787,8 @@ function ClientUpdateReview({
               busy: discardDraft.isPending,
             },
             {
-              label: confirmDraft.isPending
-                ? "적용 중..."
-                : `변경 적용 (${includedCount}건)`,
+              label: `변경 적용 (${includedCount}건)`,
+              busyLabel: "적용 중",
               variant: "primary",
               onClick: handleApply,
               disabled: !isLinked || includedCount === 0 || busy,

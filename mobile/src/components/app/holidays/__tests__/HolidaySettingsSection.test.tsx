@@ -2,10 +2,14 @@ import { QueryClient, QueryClientProvider, onlineManager } from "@tanstack/react
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 
 import { holidaySettingsApi } from "@/services/holiday-settings";
+import { holidayReviewApi, type HolidayReviewEvent } from "@/services/holiday-review";
 import type { BranchHolidayYear } from "@/services/holidays";
 import { PROBLEM_CATALOG } from "@babyjamjam/shared";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 
 import { HolidaySettingsSection } from "../HolidaySettingsSection";
+import styles from "../holiday-page-shell.module.css";
 
 const mockToast = jest.fn();
 jest.mock("@/hooks/use-toast", () => ({
@@ -36,6 +40,7 @@ jest.mock("@/services/holiday-review", () => ({
 }));
 
 const api = holidaySettingsApi as jest.Mocked<typeof holidaySettingsApi>;
+const reviewApi = holidayReviewApi as jest.Mocked<typeof holidayReviewApi>;
 
 const YEAR_2026: BranchHolidayYear = {
   year: 2026,
@@ -88,32 +93,147 @@ function rowFor(name: string): HTMLElement {
 describe("HolidaySettingsSection", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    reviewApi.listEvents.mockResolvedValue([]);
     api.getYear.mockImplementation(async (_branchId, year) => (year === 2027 ? YEAR_2027 : YEAR_2026));
     api.createOverride.mockResolvedValue(undefined);
     api.deleteOverride.mockResolvedValue(undefined);
   });
 
-  it("shows the branch, the scope note, the year tabs and the last sync time (KST)", async () => {
+  it("keeps a 34px sync/year gap while the add form and list retain 16px gaps", async () => {
+    const style = document.createElement("style");
+    style.textContent = readFileSync(join(__dirname, "../holiday-page-shell.module.css"), "utf8");
+    document.head.append(style);
+    try {
+      renderSection();
+      await screen.findByText("한글날");
+      const sync = screen.getByRole("button", { name: "지금 동기화" });
+      const tabs = screen.getByRole("tablist", { name: "연도" });
+      const controls = tabs.closest('[data-slot="holiday-sync-controls"]');
+      expect(controls).toHaveAttribute("data-component", "mobile_holidays_settings_content_card_body_sync-controls");
+      expect(controls).toContainElement(sync);
+      expect(controls).toHaveClass(styles.syncControls);
+      expect(controls).toHaveStyle({ display: "flex", flexDirection: "column", gap: "34px", flexShrink: "0" });
+      expect(controls?.parentElement).toHaveStyle({ gap: "16px", minHeight: "0", overflowY: "auto" });
+      expect(controls).not.toContainElement(screen.getByRole("button", { name: "공휴일 추가" }));
+      expect(document.querySelector('[data-slot="holiday-list-scroll"]')).toHaveStyle({ minHeight: "128px", overflowY: "auto" });
+    } finally {
+      style.remove();
+    }
+  });
+
+  it("keeps controls outside the internal holiday-list scroller", async () => {
+    renderSection();
+    await screen.findByText("한글날");
+    const scroller = document.querySelector('[data-slot="holiday-list-scroll"]');
+    expect(scroller).toContainElement(screen.getByText("한글날"));
+    expect(scroller).toContainElement(screen.getByText("옛 임시공휴일"));
+    expect(scroller?.firstElementChild).toContainElement(screen.getByText("한글날"));
+    expect(scroller).not.toContainElement(screen.getByRole("heading", { name: "지점 공휴일" }));
+    expect(scroller).not.toContainElement(screen.getByRole("button", { name: "지금 동기화" }));
+    expect(scroller).not.toContainElement(screen.getByRole("tablist", { name: "연도" }));
+    expect(scroller).not.toContainElement(screen.getByRole("button", { name: "공휴일 추가" }));
+  });
+
+  it("keeps each shell-body child and sync control under its full parent data-component prefix", async () => {
+    renderSection();
+    await screen.findByText("한글날");
+
+    const body = document.querySelector('[data-slot="holiday-settings-body"]');
+    const controls = document.querySelector('[data-slot="holiday-sync-controls"]');
+    const strip = screen.getByRole("button", { name: "지금 동기화" }).parentElement;
+    const tabs = screen.getByRole("tablist", { name: "연도" });
+    const toolbar = tabs.parentElement;
+    const addForm = screen.getByRole("button", { name: "공휴일 추가" }).closest("form");
+    const scroller = document.querySelector('[data-slot="holiday-list-scroll"]');
+
+    expect(body).toHaveAttribute("data-component", "mobile_holidays_settings_content_card_body");
+    const children = [
+      [controls, body, "sync-controls"],
+      [strip, controls, "sync-strip"],
+      [toolbar, controls, "toolbar"],
+      [tabs, toolbar, "year-tabs"],
+      [tabs.querySelector('span[aria-hidden="true"]'), tabs, "indicator"],
+      [screen.getByRole("tab", { name: "2026" }), tabs, "current"],
+      [screen.getByRole("tab", { name: "2027" }), tabs, "next"],
+      [addForm, body, "add-form"],
+      [scroller, body, "list-scroll"],
+    ] as const;
+
+    for (const [child, parent, suffix] of children) {
+      expect(parent).toHaveAttribute("data-component");
+      expect(child).toHaveAttribute("data-component");
+      expect(child?.parentElement).toBe(parent);
+      const parentPrefix = `${parent?.getAttribute("data-component")}_`;
+      expect(child?.getAttribute("data-component")?.startsWith(parentPrefix)).toBe(true);
+      expect(child).toHaveAttribute("data-component", `${parentPrefix}${suffix}`);
+    }
+  });
+
+  it.each([1, 12])("keeps %i review events in the list scroller so they cannot crowd out the controls", async (count) => {
+    const events: HolidayReviewEvent[] = Array.from({ length: count }, (_, index) => ({
+      id: `review-${index}`,
+      date: "2026-10-21",
+      change: "added",
+      name: `QA-확인 공휴일 ${index}`,
+      source: "kasi",
+      safeOpen: 1,
+      riskOpen: 1,
+      createdAt: "2026-10-01T00:00:00.000Z",
+    }));
+    reviewApi.listEvents.mockResolvedValue(events);
+    renderSection();
+
+    expect(await screen.findAllByRole("button", { name: "목록 보기" })).toHaveLength(count);
+    const scroller = document.querySelector('[data-slot="holiday-list-scroll"]');
+    const reviews = document.querySelector<HTMLElement>('[data-slot="holiday-review-cards"]');
+    expect(scroller).toContainElement(reviews);
+    expect(scroller?.firstElementChild).toBe(reviews);
+    expect(scroller).toContainElement(screen.getByText("한글날"));
+    expect(scroller).toContainElement(screen.getByText("옛 임시공휴일"));
+    expect(scroller).not.toContainElement(screen.getByRole("button", { name: "지금 동기화" }));
+    expect(scroller).not.toContainElement(screen.getByRole("tablist", { name: "연도" }));
+    expect(scroller).not.toContainElement(screen.getByLabelText("날짜"));
+    expect(scroller).not.toContainElement(screen.getByLabelText("이름"));
+    expect(scroller).not.toContainElement(screen.getByRole("button", { name: "공휴일 추가" }));
+
+    fireEvent.change(screen.getByLabelText("날짜"), { target: { value: "20261022" } });
+    fireEvent.change(screen.getByLabelText("이름"), { target: { value: "QA-추가 공휴일" } });
+    fireEvent.click(screen.getByRole("button", { name: "공휴일 추가" }));
+    await waitFor(() => {
+      expect(api.createOverride).toHaveBeenCalledWith("branch-1", {
+        date: "2026-10-22",
+        kind: "add",
+        name: "QA-추가 공휴일",
+      });
+      expect(screen.getByLabelText("날짜")).toHaveValue("");
+    });
+  });
+
+  it("shows the simplified header, full-width year toggle and last sync time (KST)", async () => {
     renderSection();
 
     expect(await screen.findByText("대체공휴일(개천절)")).toBeInTheDocument();
     expect(api.getYear).toHaveBeenCalledWith("branch-1", 2026);
-    expect(screen.getByText("인천 남동지점", { selector: "[data-slot='holiday-branch-pill']" })).toBeInTheDocument();
-    expect(screen.getByText(/공공데이터 공휴일은 모든 지점에 똑같이 적용돼요/)).toHaveTextContent(
-      "여기서 추가하거나 제외한 날짜는 인천 남동지점에만 적용돼요.",
-    );
+    expect(screen.getByRole("heading", { name: "지점 공휴일" })).toBeInTheDocument();
+    expect(document.querySelector("[data-slot='holiday-branch-pill']")).toBeNull();
+    expect(document.querySelector("[data-slot='holiday-count']")).toBeNull();
+    expect(document.querySelector("[data-slot='holiday-scope-note']")).toBeNull();
+    expect(screen.queryByText(/공공데이터 공휴일은 모든 지점에 똑같이 적용돼요/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/계약 종료일과 서비스 일정의 영업일 계산/)).not.toBeInTheDocument();
+    expect(document.querySelector("[data-slot='list-panel-header'] svg")).toBeNull();
+    expect(screen.getByRole("tablist", { name: "연도" })).toHaveAttribute("data-source-component", "TogglePill");
+    expect(screen.getByRole("tablist", { name: "연도" })).toHaveClass("w-full");
     expect(screen.getByRole("tab", { name: "2026" })).toHaveAttribute("aria-selected", "true");
     expect(screen.getByRole("tab", { name: "2027" })).toHaveAttribute("aria-selected", "false");
     expect(screen.getByText("마지막 동기화 10월 1일 04:00")).toBeInTheDocument();
-    expect(document.querySelector("[data-slot='holiday-review-cards']")).not.toBeNull();
+    expect(document.querySelector("[data-slot='holiday-review-cards']")).toBeNull();
   });
 
   it("shows the not-synced notice and loads the next year on its tab", async () => {
     renderSection();
     await screen.findByText("한글날");
 
-    // Radix tabs activate on pointer-down (not click).
-    fireEvent.mouseDown(screen.getByRole("tab", { name: "2027" }));
+    fireEvent.click(screen.getByRole("tab", { name: "2027" }));
 
     expect(await screen.findByText("신정")).toBeInTheDocument();
     expect(api.getYear).toHaveBeenCalledWith("branch-1", 2027);
@@ -125,7 +245,7 @@ describe("HolidaySettingsSection", () => {
     await screen.findByText("한글날");
 
     const tab2026 = screen.getByRole("tab", { name: "2026" });
-    expect(screen.getByRole("tablist", { name: "연도" })).toHaveAttribute("data-component", "mobile_holidays_settings_toolbar_year-tabs");
+    expect(screen.getByRole("tablist", { name: "연도" })).toHaveAttribute("data-component", "mobile_holidays_settings_content_card_body_sync-controls_toolbar_year-tabs");
     act(() => tab2026.focus());
     fireEvent.keyDown(tab2026, { key: "ArrowRight" });
 
@@ -155,6 +275,31 @@ describe("HolidaySettingsSection", () => {
     const addedRow = rowFor("임시공휴일");
     expect(within(addedRow).getByText("지점 추가")).toBeInTheDocument();
     expect(within(addedRow).getByRole("button", { name: "삭제" })).toBeInTheDocument();
+  });
+
+  it("aligns date, source and past status in equal columns with the name below", async () => {
+    renderSection();
+    await screen.findByText("한글날");
+    for (const name of ["추석", "대체공휴일(개천절)"]) {
+      const row = rowFor(name);
+      const dateColumn = row.querySelector('[data-slot="holiday-date-column"]');
+      const sourceColumn = row.querySelector('[data-slot="holiday-source-column"]');
+      const line = dateColumn?.parentElement;
+      expect(line?.children).toHaveLength(3);
+      for (const column of Array.from(line?.children ?? [])) {
+        expect(column).toHaveClass("min-w-0", "flex-[1_1_0]");
+      }
+      expect(sourceColumn).toHaveClass("justify-start");
+      expect(line?.lastElementChild).toHaveClass("justify-end");
+      expect(line?.nextElementSibling).toHaveAttribute("data-slot", "holiday-name");
+      expect(line?.nextElementSibling).toHaveClass("mt-1");
+      expect(row).toHaveClass("py-3");
+      expect(row).not.toHaveClass("border", "rounded-2xl");
+      expect(row.parentElement).toHaveClass("gap-0");
+    }
+    const content = document.querySelector('[data-slot="holiday-settings-content"]');
+    expect(content).not.toBeNull();
+    expect(content?.querySelectorAll('[data-slot="holiday-settings-content"]')).toHaveLength(0);
   });
 
   it("locks rows before today (no actions) and rows on a weekend get no 제외", async () => {
@@ -359,7 +504,7 @@ describe("HolidaySettingsSection", () => {
 
       onlineManager.setOnline(false);
       try {
-        fireEvent.mouseDown(screen.getByRole("tab", { name: "2027" }));
+        fireEvent.click(screen.getByRole("tab", { name: "2027" }));
 
         await waitFor(() => {
           expect(document.querySelector("[data-component='mobile_holidays_settings_skeleton']")).not.toBeNull();
@@ -387,7 +532,7 @@ describe("HolidaySettingsSection", () => {
     it("a successful unsynced year still says it is not synced yet", async () => {
       renderSection();
       await screen.findByText("한글날");
-      fireEvent.mouseDown(screen.getByRole("tab", { name: "2027" }));
+      fireEvent.click(screen.getByRole("tab", { name: "2027" }));
 
       expect(await screen.findByText("신정")).toBeInTheDocument();
       expect(statusLine()).toBe(NOT_SYNCED);
@@ -418,7 +563,7 @@ describe("HolidaySettingsSection", () => {
       );
       fireEvent.click(within(alert).getByRole("button", { name: "다시 시도" }));
       await waitFor(() =>
-        expect(within(screen.getByRole("alert")).getByRole("button", { name: "다시 시도" })).toBeDisabled(),
+        expect(within(screen.getByRole("alert")).getByRole("button", { name: "다시 시도 중" })).toBeDisabled(),
       );
       expect(screen.getByText("한글날")).toBeInTheDocument();
 

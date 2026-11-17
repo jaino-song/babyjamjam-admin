@@ -2,7 +2,8 @@
 
 import React, { useEffect, useMemo, useRef } from "react";
 import Link from "next/link";
-import { AlertTriangle, Loader2, Users } from "lucide-react";
+import { LoadingState } from "@/components/app/ui/LoadingState";
+import { AlertTriangle, Users } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   getClientBadgeAvatarClassName,
@@ -231,9 +232,7 @@ export function RecentActivitiesPanel({
       ) : null}
 
       {isFetchingMore ? (
-        <div className="flex justify-center py-4">
-          <Loader2 className="w-5 h-5 animate-spin text-v3-primary" />
-        </div>
+        <LoadingState data-component="desktop_dashboard_split_activities-panel_list-panel_loading-more" label="최근 활동 더 불러오는 중" size="sm" className="py-4" />
       ) : null}
 
       {hasMore && !onLoadMore ? (

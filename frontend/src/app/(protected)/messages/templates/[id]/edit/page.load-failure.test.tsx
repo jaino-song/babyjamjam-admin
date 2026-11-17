@@ -88,7 +88,7 @@ describe("edit template load states", () => {
   it("disables cached-data retry during refetch without hiding the editor", async () => {
     mockDetail.mockReturnValue(query(template, "failed", true));
     await act(async () => { render(<EditTemplatePage />); });
-    expect(screen.getByRole("button", { name: "다시 시도" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "다시 시도 중" })).toBeDisabled();
     expect(screen.getByLabelText(/템플릿 이름/)).toHaveValue(template.name);
   });
 });

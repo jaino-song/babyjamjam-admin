@@ -195,8 +195,8 @@ test.describe('Chat client registration wizard', () => {
       });
     });
 
-    // The dashboard chat widget was removed; the chat is its own /chat page.
-    await page.goto('/chat');
+    // The dashboard chat widget was removed; the chat is its own /agent page.
+    await page.goto('/agent');
     await expect(page.locator('[data-component="desktop_chat_page_header"]').getByRole('heading', { level: 1, name: '새 대화', exact: true })).toBeVisible({ timeout: 10000 });
 
     await page.getByRole('button', { name: '산모 등록' }).click();

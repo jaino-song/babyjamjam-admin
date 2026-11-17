@@ -264,6 +264,68 @@ beforeEach(() => {
 });
 
 describe("OwnerAdminConsole", () => {
+  it.each([
+    { action: "account approval", mutationIndex: 3, idleLabel: "승인", loadingLabel: "승인 중", variables: { id: "pending-user" } },
+    { action: "account rejection", mutationIndex: 4, idleLabel: "거절", loadingLabel: "거절 중", variables: "pending-user" },
+    { action: "message sender approval", mutationIndex: 0, idleLabel: "승인", loadingLabel: "승인 중", variables: "branch-real-gangnam" },
+  ])("shows a spinner only for the pending $action action", ({ mutationIndex, idleLabel, loadingLabel, variables }) => {
+    // Keep each hook's result stable across rerenders, as React Query does.
+    const mutations = Array.from({ length: 7 }, () => ({
+      mutate: approveMutate,
+      reset: resetMutation,
+      isPending: false,
+      variables: undefined as unknown,
+    }));
+    let mutationCall = 0;
+    mockedUseMutation.mockImplementation(() => (
+      mutations[mutationCall++ % mutations.length] as unknown as ReturnType<typeof useMutation>
+    ));
+    const { rerender } = render(<OwnerAdminConsole />);
+
+    if (mutationIndex === 0) {
+      fireEvent.click(screen.getByRole("button", { name: /강남점/ }));
+    } else {
+      fireEvent.click(screen.getAllByRole("button", { name: "계정 관리" })[0]);
+      fireEvent.click(screen.getByRole("button", { name: "가입 대기" }));
+      fireEvent.click(screen.getByRole("button", { name: /가입 대기 계정/ }));
+      fireEvent.change(screen.getByRole("combobox", { name: "가입 대기 계정 승인 지점 선택" }), {
+        target: { value: "branch-real-gangnam" },
+      });
+    }
+
+    expect(screen.getByRole("button", { name: idleLabel })).toBeEnabled();
+    mutations[mutationIndex].isPending = true;
+    mutations[mutationIndex].variables = variables;
+    rerender(<OwnerAdminConsole />);
+
+    const busyButton = screen.getByRole("button", { name: loadingLabel });
+    expect(busyButton).toBeDisabled();
+    expect(busyButton).toHaveAttribute("aria-busy", "true");
+    expect(busyButton).toHaveAttribute("data-loading", "");
+    const idleContent = busyButton.querySelector('[data-slot="button-idle"]');
+    expect(idleContent).toHaveTextContent(idleLabel);
+    expect(idleContent).toHaveAttribute("aria-hidden", "true");
+    expect(idleContent).toHaveClass("contents", "invisible");
+    expect(busyButton.querySelector('[data-slot="button-spinner"] [data-slot="spinner"]'))
+      .toHaveAttribute("aria-hidden", "true");
+    expect(within(busyButton).getByText(loadingLabel)).toHaveClass("sr-only");
+    if (mutationIndex !== 0) {
+      const otherButton = screen.getByRole("button", { name: idleLabel === "승인" ? "거절" : "승인" });
+      expect(otherButton).toBeDisabled();
+      expect(otherButton).not.toHaveAttribute("data-loading");
+    }
+    fireEvent.click(busyButton);
+    expect(approveMutate).not.toHaveBeenCalled();
+
+    mutations[mutationIndex].isPending = false;
+    rerender(<OwnerAdminConsole />);
+    const idleButton = screen.getByRole("button", { name: idleLabel });
+    expect(idleButton).toBeEnabled();
+    expect(idleButton).not.toHaveAttribute("aria-busy");
+    expect(idleButton).not.toHaveAttribute("data-loading");
+    expect(idleButton.querySelector('[data-slot="button-spinner"]')).toBeNull();
+  });
+
   it("uses the warning color family for incomplete account information", () => {
     const incompleteStat = source.slice(
       source.indexOf('label: "추가 정보 필요"'),

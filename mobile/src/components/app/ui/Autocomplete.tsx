@@ -8,12 +8,13 @@ import {
     useRef,
     type ReactNode,
 } from "react";
-import { Check, X, Loader2, Play } from "lucide-react";
+import { Check, X, Play } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 import type { SlotMessage } from "@/lib/validations/field-message";
 import { Input } from "@/components/app/v3";
 
+import { LoadingState } from "./LoadingState";
 import { FieldLabelRow } from "./FieldLabelRow";
 
 const SOURCE_COMPONENT = "Autocomplete";
@@ -100,6 +101,9 @@ export function Autocomplete<T>({
     const containerRef = useRef<HTMLDivElement>(null);
     const inputRef = useRef<HTMLInputElement>(null);
     const selectedInputValue = value ? getItemLabel(value) : "";
+    const loadingSubject = (typeof label === "string" || typeof label === "number") && label !== ""
+        ? label
+        : "선택 항목";
     const currentInputValue = controlledInputValue ?? uncontrolledInputValue;
     const isInputControlled = controlledInputValue !== undefined;
     const updateInputValue = (next: string) => {
@@ -284,15 +288,15 @@ export function Autocomplete<T>({
                         <button
                             type="button"
                             onClick={handleClear}
-                            className="flex h-[44px] w-[44px] items-center justify-center rounded-2xl"
+                            className="relative flex h-8 w-8 items-center justify-center rounded-2xl after:absolute after:-inset-1.5 after:content-['']"
                             aria-label="선택 해제"
                             data-component={clearBtnDc}
                         >
-                            <X className="h-3.5 w-3.5 translate-x-[9px] text-muted-foreground hover:text-foreground" />
+                            <X className="h-3.5 w-3.5 text-muted-foreground hover:text-foreground" />
                         </button>
                     )}
                     {isLoading && (
-                        <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+                        <LoadingState data-component={sub("actions_loading")} inline label={`${loadingSubject} 목록을 불러오는 중`} size="sm" />
                     )}
                     {!value && !isLoading && !disabled && (isFocused || isToggledOpen) ? (
                         <button
@@ -315,13 +319,13 @@ export function Autocomplete<T>({
                                     }
                                 }
                             }}
-                            className="flex h-[44px] w-[44px] items-center justify-center rounded-2xl text-v3-primary transition-colors hover:text-v3-primary/80 disabled:cursor-not-allowed disabled:opacity-40"
+                            className="relative flex h-8 w-8 items-center justify-center rounded-2xl after:absolute after:-inset-1.5 after:content-[''] text-v3-primary transition-colors hover:text-v3-primary/80 disabled:cursor-not-allowed disabled:opacity-40"
                             aria-label={toggleActionLabel}
                             title={toggleActionLabel}
                             data-component={toggleDc}
                             data-slot="autocomplete-toggle"
                         >
-                            <Play className="h-3.5 w-3.5 translate-x-[9px] fill-current" aria-hidden="true" />
+                            <Play className="h-3.5 w-3.5 fill-current" aria-hidden="true" />
                         </button>
                     ) : null}
                 </div>
@@ -335,9 +339,7 @@ export function Autocomplete<T>({
                         className="absolute top-full left-0 right-0 z-50 overflow-hidden rounded-2xl !rounded-t-none border !border-v3-border bg-white shadow-[0_4px_16px_rgba(0,0,0,0.06)] animate-in fade-in-0 zoom-in-95"
                     >
                         {isLoading ? (
-                            <div data-component={sub("loading")} className="flex items-center justify-center py-6">
-                                <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
-                            </div>
+                            <LoadingState data-component={sub("loading")} label={`${loadingSubject} 목록을 불러오는 중`} size="sm" className="py-6" />
                         ) : filteredItems.length === 0 ? (
                             <div data-component={sub("empty")} className="py-6 text-center text-sm text-muted-foreground">
                                 {emptyMessage ?? "결과 없음"}

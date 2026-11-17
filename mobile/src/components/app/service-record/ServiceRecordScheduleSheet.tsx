@@ -401,7 +401,7 @@ export function ServiceRecordScheduleSheet({
           {phase === "error" ? (
             <div role="alert" className="grid justify-items-center gap-3 py-8 text-center text-sm text-v3-text-muted">
               <p>{text("load-error")}</p>
-              <Button type="button" variant="outline" size="sm" className="min-h-11" onClick={retryLoad}>
+              <Button type="button" variant="outline" size="sm" className="min-h-11 rounded-2xl" onClick={retryLoad}>
                 {text("retry")}
               </Button>
             </div>
@@ -451,7 +451,7 @@ export function ServiceRecordScheduleSheet({
                     size="sm"
                     disabled={saving}
                     data-component={part("body_section-calendar_revert")}
-                    className="min-h-11 px-1 font-bold"
+                    className="min-h-11 rounded-2xl px-1 font-bold"
                     onClick={handleRevert}
                   >
                     {text("revert")}
@@ -483,7 +483,7 @@ export function ServiceRecordScheduleSheet({
                     {calendarError ? (
                       <>
                         <span>{text("calendar-error")}</span>
-                        <Button type="button" variant="outline" size="sm" className="min-h-11" onClick={retryCalendar}>
+                        <Button type="button" variant="outline" size="sm" className="min-h-11 rounded-2xl" onClick={retryCalendar}>
                           {text("retry")}
                         </Button>
                       </>
@@ -583,7 +583,7 @@ export function ServiceRecordScheduleSheet({
             variant="outline"
             disabled={closeDisabled}
             data-component={part("footer_cancel")}
-            className="h-11 min-w-0 flex-1"
+            className="h-11 min-w-0 flex-1 rounded-2xl"
             onClick={() => close(onClose)}
           >
             {text("cancel")}
@@ -592,7 +592,7 @@ export function ServiceRecordScheduleSheet({
             type="button"
             disabled={saveDisabled}
             data-component={part("footer_save")}
-            className="h-11 min-w-0 flex-1"
+            className="h-11 min-w-0 flex-1 rounded-2xl"
             onClick={() => void handleSave()}
           >
             {saving ? (

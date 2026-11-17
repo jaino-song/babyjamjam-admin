@@ -139,7 +139,7 @@ function GuidePanel({ sheet, open, onClose, nextRef }: GuidePanelProps) {
                         size="sm"
                         data-component={`${sheet}_skip`}
                         data-slot="skip"
-                        className={styles.skip}
+                        className={`rounded-2xl ${styles.skip}`}
                         onClick={onClose}
                     >
                         건너뛰기

@@ -4,7 +4,6 @@ import { CheckCircle2, Send } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Spinner } from "@/components/ui/spinner";
 import type { EformsignDocument } from "@/lib/eformsign/types";
 import { formatDateForDisplay } from "@/lib/date/format-date-for-display";
 import {
@@ -98,6 +97,8 @@ export function ContractDocumentPreviewModal({
       receiptDownloadFileName={customerName ? `${customerName} 산모님 영수증.png` : "영수증.png"}
       receiptSendAction={onSendReceiptLink ? (
         <Button
+          loading={isSendingReceiptLink}
+          loadingLabel="영수증 문자 발송 중"
           key="receipt-send"
           variant="positive"
           size="sm"
@@ -106,7 +107,7 @@ export function ContractDocumentPreviewModal({
           disabled={isSendingReceiptLink}
           className="min-w-[88px]"
         >
-          {isSendingReceiptLink ? <Spinner className="mr-2 h-4 w-4" /> : <Send className="mr-2 h-4 w-4" />}
+          <Send className="mr-2 h-4 w-4" />
           영수증 문자 발송
         </Button>
       ) : undefined}
@@ -114,6 +115,8 @@ export function ContractDocumentPreviewModal({
       previewKey={document.id}
       footerAction={onReviewConfirm ? (
         <Button
+          loading={isReviewConfirming}
+          loadingLabel="확인 중"
           variant="positive"
           size="sm"
           data-component={`${dataComponent}_footer_review-action_review-confirm`}
@@ -121,12 +124,8 @@ export function ContractDocumentPreviewModal({
           disabled={isReviewConfirming}
           className="min-w-[88px] hover:translate-y-0 hover:shadow-[0_4px_24px_hsla(214,50%,20%,0.06)]"
         >
-          {isReviewConfirming ? (
-            <Spinner className="mr-2 h-4 w-4" />
-          ) : (
-            <CheckCircle2 className="mr-2 h-4 w-4" />
-          )}
-          {isReviewConfirming ? "확인 중..." : "확인"}
+          <CheckCircle2 className="mr-2 h-4 w-4" />
+          확인
         </Button>
       ) : undefined}
     />

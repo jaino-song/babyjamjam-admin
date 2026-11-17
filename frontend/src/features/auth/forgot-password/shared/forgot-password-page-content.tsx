@@ -7,7 +7,6 @@ import { AuthInlineLink } from "@/components/auth/auth-inline-link";
 import { FormField } from "@/components/auth/form-field";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
-import { Spinner } from "@/components/ui/spinner";
 import { MobileInput } from "@/features/auth/shared/mobile/mobile-input";
 import { MobileInputField } from "@/features/auth/shared/mobile/mobile-input-field";
 import { AuthSurface, type AuthSurfaceVariant } from "@/features/auth/shared/ui/auth-surface";
@@ -32,7 +31,7 @@ export function ForgotPasswordPageContent({ variant }: ForgotPasswordPageContent
     goToLogin,
   } = useForgotPasswordPageController();
 
-  const actionButtonClassName = cn("w-full", variant === "mobile" && "rounded-2xl");
+  const actionButtonClassName = cn("w-full", variant === "mobile" && "rounded-full");
 
   return (
     <AuthSurface
@@ -128,8 +127,10 @@ export function ForgotPasswordPageContent({ variant }: ForgotPasswordPageContent
               size="lg"
               className={actionButtonClassName}
               disabled={isLoading || !email.trim()}
+              loading={isLoading}
+              loadingLabel="메일 보내는 중"
             >
-              {isLoading ? <Spinner size="sm" /> : "비밀번호 재설정 링크 전송"}
+              비밀번호 재설정 링크 전송
             </Button>
           </form>
 
