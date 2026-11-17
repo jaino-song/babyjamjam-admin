@@ -111,6 +111,9 @@ jest.mock("@/components/app/clients/ClientFormDialog", () => ({
       <button type="button" onClick={() => onDirtyChange?.(true)}>
         입력 시작
       </button>
+      <button type="button" onClick={() => onDirtyChange?.(false)}>
+        입력 되돌리기
+      </button>
       <button
         type="button"
         onClick={() => {
@@ -1165,6 +1168,65 @@ describe("ClientsPage missing service record navigation", () => {
     mockDirectory.mockReturnValue({ clients: [clientA, clientB], data: {}, matchedTotal: 2, isBranchContextReady: true });
     rerender(<ClientsPage />);
     fireEvent.click(screen.getByRole("button", { name: clientB.name }));
+    expect(screen.getByTestId("client-detail")).toHaveTextContent(clientB.name);
+    expect(screen.getByTestId("client-detail")).toHaveAttribute("data-tab", "basic");
+    expect(screen.getByTestId("client-detail")).not.toHaveAttribute("data-nonce");
+  });
+
+  it("keeps the missing modal open while a create discard confirmation is pending", () => {
+    render(<ClientsPage />);
+    fireEvent.click(screen.getByRole("button", { name: "고객 추가" }));
+    fireEvent.click(screen.getByRole("button", { name: "입력 시작" }));
+    fireEvent.click(screen.getByRole("button", { name: "고객 추가 취소" }));
+    expect(screen.getByRole("alertdialog", { hidden: true })).toBeInTheDocument();
+
+    // Reverting to the baseline clears dirty state while confirmation stays pending.
+    // Otherwise the following dirty-form guard would hide a missing pending-dialog guard.
+    fireEvent.click(screen.getByRole("button", { name: "입력 되돌리기" }));
+    openMissing();
+    clickMissing();
+
+    expect(mockRouter.replace).not.toHaveBeenCalledWith(`/clients?id=${clientB.id}`);
+    expect(screen.getByRole("dialog", { name: "제공기록지 미작성" })).toBeInTheDocument();
+    expect(screen.getByRole("alertdialog", { hidden: true })).toBeInTheDocument();
+    expect(screen.getByTestId("client-form-panel")).toBeInTheDocument();
+  });
+
+  it("clears the tab request on a same-client list click while its URL id stays unchanged", () => {
+    mockSearchParams = new URLSearchParams(`id=${clientB.id}`);
+    mockClientFromParam = clientB;
+    mockDirectory.mockReturnValue({ clients: [clientB], data: {}, matchedTotal: 1, isBranchContextReady: true });
+    const { rerender } = render(<ClientsPage />);
+    openMissing();
+    clickMissing();
+    expect(screen.getByTestId("client-detail")).toHaveAttribute("data-tab", "service-records");
+
+    fireEvent.click(screen.getByRole("button", { name: clientB.name }));
+    rerender(<ClientsPage />);
+
+    expect(mockSearchParams.get("id")).toBe(String(clientB.id));
+    expect(screen.getByTestId("client-detail")).toHaveTextContent(clientB.name);
+    expect(screen.getByTestId("client-detail")).toHaveAttribute("data-tab", "basic");
+    expect(screen.getByTestId("client-detail")).not.toHaveAttribute("data-nonce");
+  });
+
+  it("clears a pending tab request when the branch changes before its URL navigation completes", () => {
+    const { rerender } = render(<ClientsPage />);
+    openMissing();
+    clickMissing();
+    expect(mockRouter.replace).toHaveBeenLastCalledWith(`/clients?id=${clientB.id}`);
+    expect(mockSearchParams.has("id")).toBe(false);
+
+    // The branch changes before Next applies the queued ?id=B navigation.
+    // No URL effect has run to clear the request, and no list click masks it.
+    mockActiveBranchId = "branch-b";
+    rerender(<ClientsPage />);
+    expect(mockSearchParams.has("id")).toBe(false);
+
+    mockSearchParams = new URLSearchParams(`id=${clientB.id}`);
+    mockClientFromParam = clientB;
+    rerender(<ClientsPage />);
+
     expect(screen.getByTestId("client-detail")).toHaveTextContent(clientB.name);
     expect(screen.getByTestId("client-detail")).toHaveAttribute("data-tab", "basic");
     expect(screen.getByTestId("client-detail")).not.toHaveAttribute("data-nonce");
