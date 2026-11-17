@@ -62,6 +62,8 @@ export const clientKeys = {
       branchId: branchScope(filters.branchId),
       search: searchScope(filters.search),
     }] as const,
+  serviceRecordMissing: (branchId?: string | null) =>
+    [...clientKeys.all, "service-record-missing", { branchId: branchScope(branchId) }] as const,
   details: () => [...clientKeys.all, "detail"] as const,
   /**
    * Keep the historical unscoped key available as a prefix for invalidation

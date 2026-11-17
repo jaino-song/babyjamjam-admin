@@ -54,7 +54,8 @@ import {
 } from "@/components/app/clients/ClientFormDialog";
 import { MaternityContractDialog } from "@/components/app/clients/MaternityContractDialog";
 import { canCreateNewContractDocument } from "@/components/app/contracts/ContractClientSelector";
-import { ClientDetailPanel } from "@/components/app/clients/ClientDetailPanel";
+import { ServiceRecordMissingStatMini } from "@/components/app/clients/ServiceRecordMissingStatMini";
+import { ClientDetailPanel, type ClientDetailTabKey } from "@/components/app/clients/ClientDetailPanel";
 import { getClientDisplayLabel } from "@/components/app/clients/client-display";
 import { TwoButtonModal } from "@/components/app/ui/TwoButtonModal";
 import { QueryErrorState } from "@/components/app/ui/QueryErrorState";
@@ -284,6 +285,8 @@ export default function ClientsPage() {
     const [activeFilter, setActiveFilter] = useState<ClientListTab>("all");
     const [activeSection, setActiveSection] = useState<ClientSectionId>("list");
     const [clientFormActiveStep, setClientFormActiveStep] = useState(0);
+    const [tabRequest, setTabRequest] = useState<{ clientId: number; tab: ClientDetailTabKey; nonce: number } | null>(null);
+    const tabRequestNonce = useRef(0);
     const [detailModalOpen, setDetailModalOpen] = useState(false);
 
     const [debouncedSearchQuery] = useDebounce(searchQuery.trim(), 300);
@@ -369,6 +372,7 @@ export default function ClientsPage() {
         endingSoonCount: summary?.serviceEnd.count ?? "—",
     };
     const clearClientSelectionSources = useCallback(() => {
+        setTabRequest(null);
         createdClientSelectionRef.current = null;
         setSelectedClient(null);
         setIsCreatingClient(false);
@@ -439,7 +443,23 @@ export default function ClientsPage() {
         setIsCreatingClient(true);
     };
 
+    const handleSelectServiceRecordMissingClient = (clientId: number): boolean => {
+        if (formDialogOpen || pendingCreateDiscard !== null) return false;
+        if (shouldShowClientFormPanel && isCreateFormDirty) return false;
+        setActiveSection("list");
+        setIsCreatingClient(false);
+        setClientFormActiveStep(0);
+        setIsCreateFormDirty(false);
+        setUrlSelectionSuppressed(false);
+        // The URL owns selection, including when it already names this client.
+        setSelectedClient(null);
+        setTabRequest({ clientId, tab: "service-records", nonce: ++tabRequestNonce.current });
+        router.replace(`/clients?id=${clientId}`);
+        return true;
+    };
+
     const applyClientSelection = (client: Client) => {
+        setTabRequest(null);
         setActiveSection("list");
         clearClientSelectionSources();
         setSelectedClient(client);
@@ -720,6 +740,7 @@ export default function ClientsPage() {
             <StatsBar
                 name="clients" density="responsive-square" showDocumentJobs="whenActive"
                 isLoading={isSummaryInitialLoading}
+                trailing={<ServiceRecordMissingStatMini name="clients" density="responsive-square" onSelectClient={handleSelectServiceRecordMissingClient} />}
                 items={[
                     { icon: Calendar, value: stats.thisMonthCount, label: "이번 달 출산 예정", counter: "명" },
                     { icon: CalendarDays, value: stats.nextMonthCount, label: "다음 달 출산 예정", counter: "명", colorIndex: 1 },
@@ -954,6 +975,7 @@ export default function ClientsPage() {
                     >
                         <ClientDetailPanel
                             client={activeSelectedClient}
+                            tabRequest={tabRequest?.clientId === activeSelectedClient.id ? tabRequest : null}
                             dataComponentPrefix="desktop_clients_sections_section-content_list-section_split-layout_detail-selection_detail-panel"
                             messageHistoryDataComponentPrefix="desktop_clients_sections_section-content_list-section_split-layout_detail-selection_detail-panel_message-history"
                             compactBackLabel="고객 목록으로 돌아가기"

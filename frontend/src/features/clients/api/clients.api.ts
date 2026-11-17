@@ -1,3 +1,4 @@
+import type { ServiceRecordMissingClients } from '../types/service-record-missing';
 import { api } from '@/lib/api/client';
 import type {
   Client,
@@ -26,6 +27,8 @@ export interface ClientListSummaryParams {
  * All API calls go through the Next.js /api proxy for CORS safety
  */
 export const clientsApi = {
+  listServiceRecordMissing: () => api.get<ServiceRecordMissingClients>('/clients/service-record-missing'),
+
   /**
    * Fetch paginated clients list
    */

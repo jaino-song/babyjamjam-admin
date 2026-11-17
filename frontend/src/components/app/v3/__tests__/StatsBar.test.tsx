@@ -140,3 +140,23 @@ describe("StatsBar document jobs card", () => {
     expect(container.querySelector('[data-component="desktop_chat_stats_stats_item-1"]')).toHaveTextContent("독립 완료");
   });
 });
+
+describe("StatsBar trailing slot", () => {
+  it("renders trailing after existing mapped items", () => {
+    render(<JobsTestWrapper queryClient={createTestQueryClient()}>
+      <StatsBar name="clients" items={ITEMS} trailing={<span>추가 통계</span>} />
+    </JobsTestWrapper>);
+    const bar = document.querySelector('[data-component="clients_stats"]')!;
+    expect(bar.lastElementChild).toHaveTextContent("추가 통계");
+    expect(bar.children[0]).toHaveAttribute("data-component", "clients_stats_item-0");
+    expect(bar.children[1]).toHaveAttribute("data-component", "clients_stats_item-1");
+  });
+
+  it("preserves the empty-row early return even with a trailing slot", () => {
+    render(<JobsTestWrapper queryClient={createTestQueryClient()}>
+      <StatsBar name="clients" items={[]} trailing={<span>추가 통계</span>} />
+    </JobsTestWrapper>);
+    expect(document.querySelector('[data-component="clients_stats"]')).toBeNull();
+    expect(screen.queryByText("추가 통계")).not.toBeInTheDocument();
+  });
+});
