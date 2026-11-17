@@ -18,11 +18,14 @@ it.each([".auth-input", '[data-slot="auth-register-page"] .auth-input'])("sizes 
 it.each([PrivacyPage, TermsPage])("uses shared legal spacing for %p", (Page) => {
   const { container } = render(<Page />);
   const content = container.querySelector('[data-slot="auth-card-content"]');
-  expect(content).toHaveClass("gap-[25px]!", "[&>.list-title]:h-auto!", "[&>.list-title]:min-h-0!", "[&>.list-title]:py-0!", "[&>p:last-child]:pt-[30px]");
+  // The mock has a 4px title/body gap and a 4 + 30 = 34px body/link gap.
+  expect(content).toHaveClass("gap-[4px]!", "[&>.list-title]:h-auto!", "[&>.list-title]:min-h-0!", "[&>.list-title]:py-0!", "[&>p:last-child]:pt-[30px]");
   expect(content?.lastElementChild).toContainElement(screen.getByRole("link", { name: "로그인으로 돌아가기" }));
 });
 
 it("preserves default auth-card spacing outside legal pages", () => {
   const { container } = render(<AuthCard data-component="mobile_login_card">내용</AuthCard>);
-  expect(container.querySelector('[data-slot="auth-card-content"]')).not.toHaveClass("gap-[25px]!");
+  const content = container.querySelector('[data-slot="auth-card-content"]');
+  expect(content).not.toHaveClass("gap-[4px]!");
+  expect(content).not.toHaveClass("[&>p:last-child]:pt-[30px]");
 });

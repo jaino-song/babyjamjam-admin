@@ -5,8 +5,11 @@ import { holidaySettingsApi } from "@/services/holiday-settings";
 import { holidayReviewApi, type HolidayReviewEvent } from "@/services/holiday-review";
 import type { BranchHolidayYear } from "@/services/holidays";
 import { PROBLEM_CATALOG } from "@babyjamjam/shared";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 
 import { HolidaySettingsSection } from "../HolidaySettingsSection";
+import styles from "../holiday-page-shell.module.css";
 
 const mockToast = jest.fn();
 jest.mock("@/hooks/use-toast", () => ({
@@ -94,6 +97,27 @@ describe("HolidaySettingsSection", () => {
     api.getYear.mockImplementation(async (_branchId, year) => (year === 2027 ? YEAR_2027 : YEAR_2026));
     api.createOverride.mockResolvedValue(undefined);
     api.deleteOverride.mockResolvedValue(undefined);
+  });
+
+  it("keeps a 34px sync/year gap while the add form and list retain 16px gaps", async () => {
+    const style = document.createElement("style");
+    style.textContent = readFileSync(join(__dirname, "../holiday-page-shell.module.css"), "utf8");
+    document.head.append(style);
+    try {
+      renderSection();
+      await screen.findByText("한글날");
+      const sync = screen.getByRole("button", { name: "지금 동기화" });
+      const tabs = screen.getByRole("tablist", { name: "연도" });
+      const controls = tabs.closest('[data-slot="holiday-sync-controls"]');
+      expect(controls).toContainElement(sync);
+      expect(controls).toHaveClass(styles.syncControls);
+      expect(controls).toHaveStyle({ display: "flex", flexDirection: "column", gap: "34px", flexShrink: "0" });
+      expect(controls?.parentElement).toHaveStyle({ gap: "16px", minHeight: "0", overflowY: "auto" });
+      expect(controls).not.toContainElement(screen.getByRole("button", { name: "공휴일 추가" }));
+      expect(document.querySelector('[data-slot="holiday-list-scroll"]')).toHaveStyle({ minHeight: "128px", overflowY: "auto" });
+    } finally {
+      style.remove();
+    }
   });
 
   it("keeps controls outside the internal holiday-list scroller", async () => {

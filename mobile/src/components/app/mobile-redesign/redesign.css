@@ -4500,6 +4500,19 @@ body:has([data-slot="admin-feedback-content"]) [data-slot="admin-feedback-conten
   overflow-y: auto;
 }
 
+/* Keep the file card at 92px without shifting the detail stack or its scrim
+   below the shared 64px header inset. */
+body:has([data-slot="files-content"]) [data-slot="files-content"] {
+  padding-top: 28px;
+}
+
+/* Holidays opts into mobile-all-route: its nav is 40px + 10px padding +
+   2px border, positioned 12px from the bottom (780px at a height of 844px). */
+body:has([data-slot="holiday-settings-content"]) [data-slot="holiday-settings-content"] {
+  --list-nav-height: 52px;
+  --list-nav-bottom: 12px;
+}
+
 body.mobile-contracts-route [data-slot="list-content"] {
   padding: 12px 14px 76px;
   overflow-y: auto;

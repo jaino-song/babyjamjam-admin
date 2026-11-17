@@ -54,7 +54,7 @@ export function AuthCard({
           className={cn(
             "p-0",
             isV3 && "pb-8 pt-4",
-            spacing === "legal" && "gap-[25px]! [&>.list-title]:h-auto! [&>.list-title]:min-h-0! [&>.list-title]:py-0! [&>p:last-child]:pt-[30px]",
+            spacing === "legal" && "gap-[4px]! [&>.list-title]:h-auto! [&>.list-title]:min-h-0! [&>.list-title]:py-0! [&>p:last-child]:pt-[30px]",
             contentClassName
           )}
         >
