@@ -2,13 +2,12 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { render, screen } from "@testing-library/react";
 
-it("keeps template rows at natural height without changing another list's row styling", () => {
+it("keeps template and other list rows at natural height with the shared base rule", () => {
   const css = readFileSync(join(process.cwd(), "src/components/app/mobile-redesign/redesign.css"), "utf8");
   const style = document.createElement("style");
   style.textContent = [
     css.match(/^\.list-item \{[^}]+\}/m)?.[0],
     css.match(/^\.list-card-scroll \{[^}]+\}/m)?.[0],
-    css.match(/^\[data-page="messages-templates"\] \.list-card-scroll \.list-item \{[^}]+\}/m)?.[0],
   ].join("\n");
   document.head.append(style);
   try {
@@ -17,7 +16,7 @@ it("keeps template rows at natural height without changing another list's row st
     const other = screen.getByText("Other list");
     expect(template).toHaveStyle({ flexShrink: "0", padding: "12px 0", height: "auto" });
     expect(template.closest(".list-card-scroll")).toHaveStyle({ overflowY: "auto" });
-    expect(getComputedStyle(other).flexShrink).not.toBe("0");
+    expect(getComputedStyle(other).flexShrink).toBe("0");
     expect(other).toHaveStyle({ padding: "12px 0", height: "auto", border: "0px" });
   } finally {
     style.remove();
