@@ -178,10 +178,11 @@ export function authorizeServiceRecordDispatch(
 export function isRevisionDocumentDispatchAllowed(
     context: ServiceRecordRevisionDispatchContext | null | undefined,
 ): boolean {
-    // Phase0 capability is still unverified. Every revision-bound operation
-    // must remain manual-review only, regardless of the contract-stage label
-    // or a worker-supplied pending/completed status. Legacy jobs have no
-    // revision identity and continue through their existing path.
+    // Every revision-bound context passed here is refused, regardless of its
+    // contract-stage label or worker-supplied pending/completed status.
+    // INITIAL_FINALIZATION jobs identified from stored rows are authorized on
+    // a separate path via isInitialFinalizationJobIdentity and never reach
+    // this function. Legacy jobs continue through their existing path.
     return isValidServiceRecordDispatchContext(context)
         && context.revisionId === null
         && context.documentSyncStatus !== "unknown"

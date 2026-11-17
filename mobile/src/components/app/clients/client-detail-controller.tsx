@@ -27,6 +27,7 @@ import {
 export interface UseClientDetailControllerOptions {
   client?: Client | null;
   clientId?: number | null;
+  initialTab?: DetailTabId;
   dataComponent: string;
   onClientUpdated?: (client: Client) => void;
   onClientDeleted?: (clientId: number) => void;
@@ -52,6 +53,7 @@ export interface ClientDetailControllerResult {
 export function useClientDetailController({
   client,
   clientId,
+  initialTab = "basic",
   dataComponent,
   onClientUpdated,
   onClientDeleted,
@@ -69,7 +71,7 @@ export function useClientDetailController({
     : null;
   const detailQuery = useClient(resolvedClientId ?? 0);
   const [detailClient, setDetailClient] = useState<Client | null>(resolvedClient);
-  const [detailSheetTab, setDetailSheetTab] = useState<DetailTabId>("basic");
+  const [detailSheetTab, setDetailSheetTab] = useState<DetailTabId>(initialTab);
   const [isDetailRefreshing, setIsDetailRefreshing] = useState(false);
   const [detailRefreshError, setDetailRefreshError] = useState(false);
   const [deleteTargetClientId, setDeleteTargetClientId] = useState<number | null>(null);
@@ -101,11 +103,11 @@ export function useClientDetailController({
     if (deletedDetailIdRef.current !== resolvedClientId) deletedDetailIdRef.current = null;
     /* eslint-disable-next-line react-hooks/set-state-in-effect -- selected-row or URL identity changes reset controller state. */
     setDetailClient(resolvedClient);
-    setDetailSheetTab("basic");
+    setDetailSheetTab(initialTab);
     setIsDetailRefreshing(false);
     setDetailRefreshError(false);
     setDeleteTargetClientId(null);
-  }, [resolvedClient, resolvedClientId]);
+  }, [initialTab, resolvedClient, resolvedClientId]);
 
   useEffect(() => {
     if (
@@ -118,8 +120,8 @@ export function useClientDetailController({
     ) return;
     /* eslint-disable-next-line react-hooks/set-state-in-effect -- query completion supplies the URL-selected client. */
     setDetailClient(detailQuery.data);
-    setDetailSheetTab("basic");
-  }, [detailClient, detailQuery.data, resolvedClient, resolvedClientId]);
+    setDetailSheetTab(initialTab);
+  }, [detailClient, detailQuery.data, initialTab, resolvedClient, resolvedClientId]);
 
   const retryDetail = useCallback(() => {
     if (resolvedClientId === null || deletedDetailIdRef.current === resolvedClientId) return;

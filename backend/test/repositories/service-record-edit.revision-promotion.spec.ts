@@ -1,5 +1,5 @@
 import { sha256CanonicalJson } from "application/services/eformsign-document-job.service";
-import { ServiceRecordEditRepository } from "infrastructure/database/repositories/service-record-edit.repository";
+import { assertNoBlockingRevisionDocumentStates, ServiceRecordEditRepository } from "infrastructure/database/repositories/service-record-edit.repository";
 import type {
     AllocateServiceRecordRevisionDocumentVersionInput,
     PromoteServiceRecordRevisionSnapshotInput,
@@ -394,5 +394,66 @@ describe("ServiceRecordEditRepository revision snapshot version/promotion seams"
         const sqlCalls = harness.queryRaw.mock.calls.map(([query]) => sqlText(query));
         expect(sqlCalls.some((query) => query.includes("UPDATE \"service_record_case\""))).toBe(true);
         expect(sqlCalls.some((query) => query.includes("UPDATE \"service_record_revision_document_state\""))).toBe(true);
+    });
+});
+
+describe("INITIAL documents-created boundary", () => {
+    const scope = { generationKind: "INITIAL_FINALIZATION", requestKey: `service-record-initial-finalization:${revisionId}` };
+    function initialRows(options: { state?: Record<string, unknown>; owner?: Record<string, unknown>; chunks?: unknown[] } = {}) {
+        return [...promotionRows([]).slice(0, 10),
+            [{ ...ownerCase(), status: "READY_TO_FINALIZE", ...options.owner }],
+            [stateRow({ workflowScope: scope, status: "processing", step: "dispatch_authorized", ...options.state })],
+            options.chunks ?? [{ ...validChunk(), documentStatusType: "070" }]];
+    }
+    it("accepts review-requested documents, keeps pointer null, records creation and revokes tokens", async () => {
+        const f = transactionHarness(initialRows());
+        const repo = new ServiceRecordEditRepository(f.prisma as never);
+        await expect(repo.recordInitialFinalizationDocumentsCreated(promotionInput())).resolves.toBe(true);
+        const writes = f.executeRaw.mock.calls.map(([sql]) => sqlText(sql));
+        expect(writes).toHaveLength(3);
+        expect(writes[0]).toContain("status = 'processing', step = 'documents_created'");
+        expect(writes[1]).toContain("status = 'DOCUMENTS_CREATED'");
+        expect(writes[2]).toContain('UPDATE "service_record_token" SET active = false');
+        expect(writes.join(" ")).not.toContain("current_usable_revision_id");
+        expect(writes.join(" ")).not.toContain("waiting_for_completion");
+    });
+    it("replays documents_created idempotently without writes", async () => {
+        const f = transactionHarness(initialRows({ state: { step: "documents_created" }, owner: { status: "DOCUMENTS_CREATED" } }));
+        const repo = new ServiceRecordEditRepository(f.prisma as never);
+        await expect(repo.recordInitialFinalizationDocumentsCreated(promotionInput())).resolves.toBe(true);
+        expect(f.executeRaw).not.toHaveBeenCalled();
+    });
+    it.each([
+        { state: { status: "capability_unverified", step: "capability_unverified" } },
+        { state: { workflowScope: { ...scope, generationKind: "REVISION_SNAPSHOT" } } },
+        { chunks: [] }, { owner: { status: "COMPLETED" } },
+        { chunks: [{ ...validChunk(), documentClientId: 999 }] },
+    ])("refuses invalid creation scope before writes %#", async (options) => {
+        const f = transactionHarness(initialRows(options));
+        const repo = new ServiceRecordEditRepository(f.prisma as never);
+        await expect(repo.recordInitialFinalizationDocumentsCreated(promotionInput())).resolves.toBe(false);
+        expect(f.executeRaw).not.toHaveBeenCalled();
+    });
+    it("throws on a lost case CAS so prior state writes roll back", async () => {
+        const f = transactionHarness(initialRows());
+        f.executeRaw.mockResolvedValueOnce(1).mockResolvedValueOnce(0);
+        const repo = new ServiceRecordEditRepository(f.prisma as never);
+        await expect(repo.recordInitialFinalizationDocumentsCreated(promotionInput())).rejects.toThrow("case CAS lost");
+        expect(f.executeRaw).toHaveBeenCalledTimes(2);
+    });
+    it("blocks the staff-confirm operation guard until Step B completes INITIAL", async () => {
+        const state = stateRow({ workflowScope: scope, status: "processing", step: "documents_created" });
+        const tx = { $queryRaw: jest.fn(async (query: unknown) => {
+            const sql = sqlText(query);
+            expect(sql).toContain("state.status IN ('not_required', 'completed')");
+            expect(sql).not.toContain("'processing'");
+            return state.status === "completed" ? [] : [state];
+        }) };
+        const input = { branchId, clientId, serviceRecordCaseId: caseId };
+        await expect(assertNoBlockingRevisionDocumentStates(tx as never, input)).rejects.toMatchObject({
+            code: "SERVICE_RECORD_REVISION_OPERATION_UNRESOLVED", status: "processing", operation: "record_snapshot",
+        });
+        state.status = "completed"; state.step = "completed";
+        await expect(assertNoBlockingRevisionDocumentStates(tx as never, input)).resolves.toBeUndefined();
     });
 });

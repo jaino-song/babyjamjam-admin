@@ -2,6 +2,7 @@ import { act, renderHook } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
+import { clientKeys } from "@/features/clients/hooks/keys";
 import { allQueryKeyRoots, queryKeyRootsForKinds } from "@/lib/realtime/entity-query-keys";
 
 import { useRealtimeInvalidation } from "../useRealtimeInvalidation";
@@ -155,6 +156,24 @@ describe("useRealtimeInvalidation", () => {
     expect(MockEventSource.instances).toHaveLength(0);
   });
 
+  it("invalidates the missing-clients query on service-record events without invalidating client lists", async () => {
+    // Use the real cache matcher, so a wrong or overly broad root is observable.
+    invalidateSpy.mockRestore();
+    invalidateSpy = jest.spyOn(queryClient, "invalidateQueries");
+    const missingKey = clientKeys.serviceRecordMissing("branch-1");
+    const listKey = clientKeys.list({ page: 1 });
+    queryClient.setQueryData(missingKey, { count: 1, items: [] });
+    queryClient.setQueryData(listKey, { data: [] });
+
+    mountStream();
+    const source = MockEventSource.instances[0];
+    act(() => source.fireOpen());
+    emitEntityChanged(source, ["service-record"]);
+
+    expect(queryClient.getQueryState(missingKey)?.isInvalidated).toBe(true);
+    expect(queryClient.getQueryState(listKey)?.isInvalidated).toBe(false);
+  });
+
   test("invalidates only the roots of the received kinds on entity-changed", () => {
     mountStream();
     const source = MockEventSource.instances[0];
@@ -197,18 +216,18 @@ describe("useRealtimeInvalidation", () => {
     act(() => source.fireOpen());
 
     emitEntityChanged(source, ["service-record"]);
-    expect(invalidateSpy).toHaveBeenCalledTimes(2);
+    expect(invalidateSpy).toHaveBeenCalledTimes(3);
 
     act(() => {
       jest.advanceTimersByTime(1499);
     });
-    expect(invalidateSpy).toHaveBeenCalledTimes(2);
+    expect(invalidateSpy).toHaveBeenCalledTimes(3);
 
     act(() => {
       jest.advanceTimersByTime(1);
     });
-    expect(invalidateSpy).toHaveBeenCalledTimes(4);
-    expect(invalidatedKeys()).toEqual(["service-records", "employees", "service-records", "employees"]);
+    expect(invalidateSpy).toHaveBeenCalledTimes(6);
+    expect(invalidatedKeys()).toEqual(["service-records", "employees", "clients", "service-records", "employees", "clients"]);
   });
 
   test("coalesces events inside the window into one trailing refresh covering the union", () => {

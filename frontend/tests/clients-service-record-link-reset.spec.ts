@@ -134,6 +134,14 @@ test("resets the service-record link without resending a message and shows the U
         return route.fulfill({ status: 200, contentType: "application/json", body: "{}" });
     });
 
+    await page.route("**/api/clients/service-record-missing**", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ count: 0, items: [] }),
+      });
+    });
+
     await page.goto("/clients?id=1");
     await expect(page.getByText("링크 테스트 고객", { exact: true }).first()).toBeVisible();
     await page.waitForTimeout(2_000);

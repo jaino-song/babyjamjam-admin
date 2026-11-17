@@ -1,6 +1,11 @@
 import { ConflictException, Inject, Injectable, Logger, Optional } from "@nestjs/common";
 import type { Prisma } from "@prisma/client";
 import { randomUUID } from "node:crypto";
+
+import {
+    INITIAL_FINALIZATION_REQUEST_PREFIX,
+    initialFinalizationRequestKey,
+} from "application/policies/service-record-initial-finalization.policy";
 import { CreateAndSendServiceRecordSnapshotUsecase } from "application/usecases/eformsign-doc/create-and-send-service-record-snapshot.usecase";
 import { PrismaService } from "infrastructure/database/prisma.service";
 import { captureServiceRecordError } from "infrastructure/observability/service-record-sentry";
@@ -694,9 +699,8 @@ export class ServiceRecordFinalizationService {
                     return { claimed: false, attempts: 0, blockedGeneration: true };
                 }
                 await this.freezeInitialFinalizationGeneration(tx, source, calendar);
-                // Phase0 capability remains unverified. The durable job is a
-                // manual-review intent; no case claim or provider execution is
-                // allowed from this scheduler path.
+                // INITIAL 생성은 worker의 저장 행 기반 repository 승인 후 실행한다.
+                // 스케줄러는 동결만 수행하고 case를 직접 claim하지 않는다.
                 return {
                     claimed: false,
                     attempts: current.finalizationAttempts,
@@ -850,7 +854,7 @@ export class ServiceRecordFinalizationService {
             throw new ConflictException({ code: "SERVICE_RECORD_REVISION_GENERATION_UNAVAILABLE" });
         }
 
-        const requestKey = `service-record-initial-finalization:${revisionId}`;
+        const requestKey = initialFinalizationRequestKey(revisionId);
         const existing = await this.documentJobService.findByRequestKeyInTransaction(tx, requestKey);
         if (existing) {
             const existingPayload = existing.payload;
@@ -981,7 +985,7 @@ export class ServiceRecordFinalizationService {
             jobType: "create_document",
             source: "auto_finalize",
             requestKey,
-            activeKey: `service-record-initial-finalization:${source.id}`,
+            activeKey: `${INITIAL_FINALIZATION_REQUEST_PREFIX}${source.id}`,
             payload,
             payloadFingerprint,
             // The provider worker is the generation principal. The user who
@@ -997,7 +1001,8 @@ export class ServiceRecordFinalizationService {
      * Keep the provider job and the operation-state row tied to the same
      * immutable generation.  The finalizer already owns the caller
      * transaction and has locked the client/case source; this method never
-     * opens a nested transaction or reads mutable rows.
+     * opens a nested transaction or reads mutable rows. The worker authorizes
+     * INITIAL generation from these stored rows before creating documents.
      */
     private async ensureInitialFinalizationState(
         tx: Prisma.TransactionClient,
