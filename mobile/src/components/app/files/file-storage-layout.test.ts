@@ -5,24 +5,41 @@ const css = readFileSync(join(__dirname, "../mobile-redesign/redesign.css"), "ut
 
 function declarationsFor(selector: string): string {
   return [...css.matchAll(/([^{}]+)\{([^{}]*)\}/g)]
-    .filter((match) => match[1].split(",\n").some((part) => part.trim() === selector))
+    .filter((match) => match[1].split(",").some((part) => part.trim() === selector))
     .map((match) => match[2]).join("\n");
 }
 
+// These exact-selector rules have equal specificity. A later padding shorthand
+// resets padding-top too; !important declarations retain their higher priority.
+function paddingTopFor(selector: string): number {
+  let top = NaN;
+  let important = false;
+  for (const declaration of declarationsFor(selector).split(";")) {
+    const match = declaration.trim().match(/^(padding|padding-top)\s*:\s*(.*?)\s*(!important)?$/);
+    if (!match) continue;
+    const nextImportant = Boolean(match[3]);
+    if (important && !nextImportant) continue;
+    // Both shorthand and longhand start with the top value in these rules.
+    const pixels = match[2].match(/^(\d+)px(?:\s|$)/);
+    if (!pixels) throw new Error(`Unsupported padding value: ${match[2]}`);
+    top = Number(pixels[1]);
+    important = nextImportant;
+  }
+  return top;
+}
+
 it("keeps the card at 92px with a 64px main inset and 28px list padding", () => {
-  const main = declarationsFor('body:has([data-slot="files-content"]) [data-slot="main-content"]');
-  const top = Number([...main.matchAll(/padding:\s*(\d+)px 0 0 !important/g)].at(-1)?.[1]);
+  const top = paddingTopFor('body:has([data-slot="files-content"]) [data-slot="main-content"]');
   expect(top).toBe(64);
   const content = declarationsFor('body:has([data-slot="files-content"]) [data-slot="files-content"]');
   expect(content).toContain("padding: 12px 14px calc(var(--list-nav-height) + var(--list-nav-bottom) + 12px)");
-  const listTop = Number([...content.matchAll(/padding-top:\s*(\d+)px/g)].at(-1)?.[1]);
-  expect(listTop).toBe(28);
+  const listTop = paddingTopFor('body:has([data-slot="files-content"]) [data-slot="files-content"]');
   expect(top + listTop).toBe(92);
+  expect(listTop).toBe(28);
 });
 
 it("keeps the detail sheet at 114px and the scrim flush with the 64px header", () => {
-  const main = declarationsFor('body:has([data-slot="files-content"]) [data-slot="main-content"]');
-  const mainTop = Number([...main.matchAll(/padding:\s*(\d+)px 0 0 !important/g)].at(-1)?.[1]);
+  const mainTop = paddingTopFor('body:has([data-slot="files-content"]) [data-slot="main-content"]');
   expect(mainTop).toBe(64);
   const track = declarationsFor('body:has([data-slot="files-content"]) [data-slot="mobile-detail-stack-track"]');
   expect(track).toContain("inset: 0;");
