@@ -2059,6 +2059,7 @@ export function ContractDetail({
         />
       )}
       <DetailTabPanels
+        insetPanels
         activeTab={activeDetailTab}
         data-component={`${dataComponent}_content`}
         data-panel-component={`${dataComponent}_content_panel`}

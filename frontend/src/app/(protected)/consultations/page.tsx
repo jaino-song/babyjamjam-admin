@@ -341,6 +341,7 @@ export default function ConsultationsPage() {
                         }
                     >
                         <DetailTabPanels
+                            insetPanels
                             activeTab={activeDetailTab}
                             dataComponent="desktop_consultations_split-layout_detail-panel_consultations-detail"
                             panelDataComponent="desktop_consultations_split-layout_detail-panel_consultations-detail-panel"

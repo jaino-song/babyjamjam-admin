@@ -3,9 +3,29 @@ import { render, screen } from "@testing-library/react";
 import { DetailTabPanels } from "../DetailTabPanels";
 
 describe("DetailTabPanels", () => {
-  it.each([0, 300])("insets every panel's cards without removing slide clipping (duration %s)", (durationMs) => {
+  it.each([0, 300])("keeps panels flush by default (duration %s)", (durationMs) => {
+    render(
+      <DetailTabPanels
+        activeTab="calendar"
+        durationMs={durationMs}
+        idPrefix="schedule"
+        panels={[
+          { key: "calendar", children: "달력" },
+          { key: "list", children: "목록" },
+        ]}
+      />,
+    );
+
+    for (const panel of screen.getAllByRole("tabpanel", { hidden: true })) {
+      expect(panel).toHaveClass("w-full", "min-w-0", "shrink-0");
+      expect(panel).not.toHaveClass("px-px");
+    }
+  });
+
+  it.each([0, 300])("insets opted-in panels without removing slide clipping (duration %s)", (durationMs) => {
     const { container, rerender } = render(
       <DetailTabPanels
+        insetPanels
         activeTab="basic"
         durationMs={durationMs}
         idPrefix="detail"
@@ -23,6 +43,7 @@ describe("DetailTabPanels", () => {
 
     rerender(
       <DetailTabPanels
+        insetPanels
         activeTab="contracts"
         durationMs={durationMs}
         idPrefix="detail"
