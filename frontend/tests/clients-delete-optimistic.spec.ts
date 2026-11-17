@@ -115,6 +115,14 @@ test("closes and unlocks the page before a pending delete settles", async ({ pag
     return route.fulfill({ status: 200, contentType: "application/json", body: "{}" });
   });
 
+  await page.route("**/api/clients/service-record-missing**", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ count: 0, items: [] }),
+    });
+  });
+
   await page.goto("/clients");
   const listPanel = page.locator('[data-component="desktop_clients_sections_section-content_list-section_split-layout_list-panel"]');
   await listPanel.getByText(CLIENT_A.name, { exact: true }).click();

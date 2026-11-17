@@ -60,6 +60,13 @@ test.describe("Mobile nav: center chat + /all menu", () => {
         body: JSON.stringify([{ id: 1 }, { id: 2 }]),
       });
     });
+    await page.route("**/api/clients/service-record-missing**", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ count: 0, items: [] }),
+      });
+    });
     await page.route("**/api/employees**", async (route) => {
       await employeesReady;
       await route.fulfill({
@@ -376,6 +383,13 @@ test.describe("Mobile nav: center chat + /all menu", () => {
         body: JSON.stringify([{ id: 1 }, { id: 2 }]),
       });
     });
+    await page.route("**/api/clients/service-record-missing**", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ count: 0, items: [] }),
+      });
+    });
     await page.route("**/api/employees**", async (route) => {
       await route.fulfill({
         status: 200,
@@ -474,6 +488,13 @@ test.describe("Mobile nav: center chat + /all menu", () => {
         status: 200,
         contentType: "application/json",
         body: JSON.stringify([{ id: 1 }, { id: 2 }]),
+      });
+    });
+    await page.route("**/api/clients/service-record-missing**", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ count: 0, items: [] }),
       });
     });
     await page.route("**/api/employees**", async (route) => {

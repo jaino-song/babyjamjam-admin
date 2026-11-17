@@ -9,7 +9,8 @@ import type {
   UpdateClientDto,
   TerminateServiceDto,
   RequestReplacementDto,
-  PaginatedResponse
+  PaginatedResponse,
+  ServiceRecordMissingClientsResponse
 } from '../types';
 
 function isValidClientId(id: number): boolean {
@@ -24,6 +25,14 @@ export function useClients(page: number = 1, limit: number = 10, search?: string
     queryKey: clientKeys.list({ page, limit, search }),
     queryFn: () => clientsApi.list({ page, limit, search }).then(r => r.data),
     staleTime: 1000 * 60 * 5, // 5 minutes
+  });
+}
+
+export function useServiceRecordMissingClients() {
+  return useQuery<ServiceRecordMissingClientsResponse>({
+    queryKey: clientKeys.serviceRecordMissing(),
+    queryFn: async () => (await clientsApi.listServiceRecordMissing()).data,
+    staleTime: 1000 * 60 * 5,
   });
 }
 

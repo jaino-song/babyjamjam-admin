@@ -20,6 +20,7 @@ import {
     type LatestContractSignal,
 } from "application/utils/current-contract-document";
 import { resolveEformsignDocDisplayStatus } from "application/utils/eformsign-doc-display-status";
+import { findMissingServiceRecordAlertsWithProgress } from "application/policies/missing-service-record-alert.policy";
 import { EformsignDocumentSnapshotService } from "application/services/eformsign-document-snapshot.service";
 import {
     configuredServiceRecordTemplateIds,
@@ -3230,6 +3231,31 @@ export class ClientService {
         }
         // Keep this legacy cleanup hook after a successful delete.
         await this.triggerService?.cancelPendingJobsForClientDeletion(branchid, id);
+    }
+
+    async getServiceRecordMissing(branchId: string): Promise<{
+        count: number;
+        items: Array<{
+            clientId: number;
+            clientName: string;
+            primaryEmployeeName: string;
+            unwrittenThroughSessionIndex: number;
+        }>;
+    }> {
+        if (!branchId) return { count: 0, items: [] };
+
+        const [candidates, calendar] = await Promise.all([
+            this.clientRepository.findServiceRecordAlertCandidates(branchId),
+            this.holidayCalendar.forBranch(branchId),
+        ]);
+        const items = findMissingServiceRecordAlertsWithProgress(candidates, branchId, calendar, new Date())
+            .map(({ clientId, clientName, primaryEmployeeName, unwrittenThroughSessionIndex }) => ({
+                clientId, clientName, primaryEmployeeName, unwrittenThroughSessionIndex,
+            }))
+            .sort((left, right) => right.unwrittenThroughSessionIndex - left.unwrittenThroughSessionIndex
+                || left.clientName.localeCompare(right.clientName, "ko")
+                || left.clientId - right.clientId);
+        return { count: items.length, items };
     }
 
     async getStats(branchid: string): Promise<{

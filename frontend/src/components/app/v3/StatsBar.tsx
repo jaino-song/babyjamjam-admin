@@ -27,6 +27,7 @@ interface StatsBarProps {
    * "whenActive" shows it only while there are active jobs or unresolved failures.
    */
   showDocumentJobs?: DocumentJobsStatMode;
+  trailing?: React.ReactNode;
 }
 
 export function StatsBar({
@@ -35,6 +36,7 @@ export function StatsBar({
   density = "default",
   name,
   showDocumentJobs,
+  trailing,
 }: StatsBarProps) {
   const documentJobsVisible = useDocumentJobsStatVisible(showDocumentJobs);
 
@@ -60,6 +62,7 @@ export function StatsBar({
           density={density}
         />
       ))}
+      {trailing}
     </div>
   );
 }
