@@ -32,7 +32,7 @@ The through-line is **convention-by-example, not convention-by-enforcement.** Sh
 | `backendJsonResponse()` (preserve upstream status) | 22 / 91 | ~69 can collapse 4xx/5xx → 200 |
 | `readJsonObjectBody()` (safe parse) | 17 / 91 | rest throw on bad JSON |
 | shared `getAuthToken` / `getAuthHeaders` | — | 15 routes redefine locally |
-| raw `fetch()` instead of `serverAPIClient` | — | 23 `fetch()` call-sites (`ai/chat/*`) |
+| raw `fetch()` instead of `serverAPIClient` | — | 1 `fetch()` call-site (`ai/chat/stream`) |
 
 Error-response shape also varies (`.data?.error` vs `.data?.message` vs `axiosError.message`).
 **Standard:** every plain-JSON proxy route = thin wrapper of {`getAuthToken` → `serverAPIClient` + `getAuthHeaders` → `readJsonObjectBody` → `backendJsonResponse` → `errorResponse`}; gold reference: `api/clients/route.ts`, `api/employees/route.ts`. (Streaming/multipart/auth-cookie routes keep their transport but standardize error handling.)
