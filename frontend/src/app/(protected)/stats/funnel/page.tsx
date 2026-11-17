@@ -89,13 +89,13 @@ export default async function FunnelDetailPage({ searchParams }: FunnelDetailPag
         />
       </Block>
 
+      {hasPostHogError && <StatsQueryError dataComponent="desktop_stats-funnel_page_query-error" />}
+
       <StatsPeriodSelector
         basePath="/stats/funnel"
         period={period}
         dataComponent="desktop_stats-funnel_page_period-selector"
       />
-
-      {hasPostHogError && <StatsQueryError dataComponent="desktop_stats-funnel_page_query-error" />}
 
       {!posthogConfigured && (
         <StatsSourceNotice

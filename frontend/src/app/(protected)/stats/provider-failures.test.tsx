@@ -6,6 +6,7 @@ import { getSummary as getSentrySummary } from "@/lib/observability/sentry";
 import StatsPage from "./page";
 import TrafficDetailPage from "./traffic/page";
 import FunnelDetailPage from "./funnel/page";
+import InquiriesDetailPage from "./inquiries/page";
 
 jest.mock("next/navigation", () => ({
   redirect: jest.fn(() => { throw new Error("redirect"); }),
@@ -14,6 +15,7 @@ jest.mock("next/navigation", () => ({
 jest.mock("@/lib/auth/cookies", () => ({ getCurrentUser: jest.fn() }));
 jest.mock("@/lib/observability/posthog", () => ({
   getInquiriesSummary: jest.fn(), getInquiriesDailyTrend: jest.fn(),
+  getInquiriesHourlyToday: jest.fn(), getRecentInquiries: jest.fn(), getInquiriesByBranch: jest.fn(),
   getFunnelSummary: jest.fn(), getTrafficSummary: jest.fn(), getTrafficTrend: jest.fn(),
   getTopPages: jest.fn(), getDeviceBreakdown: jest.fn(), getBrowserBreakdown: jest.fn(),
   getSourceBreakdown: jest.fn(), getRegionBreakdown: jest.fn(),
@@ -65,6 +67,9 @@ function setup() {
     steps: [], conversionRate: 0, biggestDropStep: null, completedConversions: 0, totalEntries: 0,
   });
   jest.mocked(posthog.getInquiriesDailyTrend).mockResolvedValue([]);
+  jest.mocked(posthog.getInquiriesHourlyToday).mockResolvedValue([]);
+  jest.mocked(posthog.getRecentInquiries).mockResolvedValue([]);
+  jest.mocked(posthog.getInquiriesByBranch).mockResolvedValue([]);
   jest.mocked(posthog.getTrafficTrend).mockResolvedValue([
     { day: new Date().toISOString().slice(0, 10), pv: 123, unique: 45 },
   ]);
@@ -86,6 +91,22 @@ describe("PostHog failures across statistics routes", () => {
     jest.spyOn(console, "error").mockImplementation(() => undefined);
   });
   afterEach(() => jest.restoreAllMocks());
+
+  it.each([
+    ["overview", StatsPage, posthog.getTrafficSummary, "desktop_stats_page_hero"],
+    ["traffic", TrafficDetailPage, posthog.getTrafficSummary, "desktop_stats-traffic_page_hero"],
+    ["funnel", FunnelDetailPage, posthog.getPageNavSummary, "desktop_stats-funnel_page_hero"],
+    ["inquiries", InquiriesDetailPage, posthog.getInquiriesSummary, "desktop_stats-inquiries_page_hero"],
+  ] as const)("places the %s error directly between the hero and period selector", async (_name, Page, query, hero) => {
+    jest.mocked(query).mockRejectedValue(new Error("failed"));
+    render(await Page({}));
+
+    const error = screen.getByRole("alert");
+    expect(error).toHaveAttribute("data-size", "inline");
+    expect(error.previousElementSibling).toHaveAttribute("data-component", hero);
+    expect(error.nextElementSibling).toBe(screen.getByLabelText("통계 기간 선택"));
+    expect(screen.getByRole("button", { name: "다시 시도" })).toBeInTheDocument();
+  });
 
   it.each([
     ["overview", StatsPage, overviewQueries],

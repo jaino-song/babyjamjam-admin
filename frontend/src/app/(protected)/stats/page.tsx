@@ -131,13 +131,13 @@ export default async function StatsPage({ searchParams }: StatsPageProps) {
         />
       </Block>
 
+      {hasPostHogError && <StatsQueryError dataComponent="desktop_stats_page_query-error" />}
+
       <StatsPeriodSelector
         basePath="/stats"
         period={period}
         dataComponent="desktop_stats_page_period-selector"
       />
-
-      {hasPostHogError && <StatsQueryError dataComponent="desktop_stats_page_query-error" />}
 
       {(!sentryConfigured || !posthogConfigured) && (
         <StatsSourceNotice

@@ -116,7 +116,9 @@ export function DetailTabPanels({
               inert={isActive ? undefined : true}
               style={durationMs === 0 && !isActive ? { display: "none" } : undefined}
               className={cn(
-                "w-full min-w-0 shrink-0",
+                // Keep card borders inside the clipping viewport without
+                // changing the panel width used by percentage slide offsets.
+                "w-full min-w-0 shrink-0 px-px",
                 !isActive && "pointer-events-none",
                 !isVisible && "max-h-0 overflow-hidden",
                 panelClassName,
