@@ -26,19 +26,19 @@ describe("ClientService.getServiceRecordMissing", () => {
         excluded.source.client.branchId = "other-branch";
         const { service, repository, holidayCalendar } = createService([
             missingRecordCandidate(5, "가산모", 2),
-            missingRecordCandidate(4, "나산모", 3),
+            missingRecordCandidate(4, "가산모", 3),
             missingRecordCandidate(3, "가산모", 3),
             excluded,
-            missingRecordCandidate(2, "가산모", 3),
+            missingRecordCandidate(2, "나산모", 3),
             missingRecordCandidate(1, "하산모", 4),
         ]);
         const result = await service.getServiceRecordMissing(MISSING_RECORD_BRANCH_ID);
         expect(result.count).toBe(result.items.length);
         expect(result).toEqual({ count: 5, items: [
             { clientId: 1, clientName: "하산모", primaryEmployeeName: "이관리", unwrittenThroughSessionIndex: 4 },
-            { clientId: 2, clientName: "가산모", primaryEmployeeName: "이관리", unwrittenThroughSessionIndex: 3 },
             { clientId: 3, clientName: "가산모", primaryEmployeeName: "이관리", unwrittenThroughSessionIndex: 3 },
-            { clientId: 4, clientName: "나산모", primaryEmployeeName: "이관리", unwrittenThroughSessionIndex: 3 },
+            { clientId: 4, clientName: "가산모", primaryEmployeeName: "이관리", unwrittenThroughSessionIndex: 3 },
+            { clientId: 2, clientName: "나산모", primaryEmployeeName: "이관리", unwrittenThroughSessionIndex: 3 },
             { clientId: 5, clientName: "가산모", primaryEmployeeName: "이관리", unwrittenThroughSessionIndex: 2 },
         ] });
         expect(repository.findServiceRecordAlertCandidates).toHaveBeenCalledTimes(1);
