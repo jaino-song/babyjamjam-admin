@@ -7,6 +7,7 @@ import { fetchClient, useClient, useDeleteClient } from "@/hooks/useClients";
 import { useInfiniteClients } from "@/hooks/useInfiniteClients";
 import { useServiceRecordMissingClients } from "@/features/clients/hooks/use-clients";
 import ClientsPage from "./page";
+import { api } from "@/lib/api/client";
 
 const mockRouter = { push: jest.fn(), replace: jest.fn() };
 let mockClientId: string | null = "1";
@@ -30,6 +31,8 @@ jest.mock("@/hooks/useClients", () => ({
   useClient: jest.fn(),
   useDeleteClient: jest.fn(),
 }));
+
+jest.mock("@/lib/api/client", () => ({ api: { get: jest.fn() } }));
 
 jest.mock("@/features/clients/hooks/use-clients", () => ({
   useServiceRecordMissingClients: jest.fn(),
@@ -527,6 +530,24 @@ describe("ClientsPage service-record-missing filter", () => {
     view.rerender(<QueryClientProvider client={queryClient}><ClientsPage /></QueryClientProvider>);
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "고객 3" })).toBeInTheDocument();
+  });
+
+  it("keeps the list and an uncounted missing tab when the API returns a list-shaped body", async () => {
+    const actualHooks = jest.requireActual<typeof import("@/features/clients/hooks/use-clients")>("@/features/clients/hooks/use-clients");
+    mockedUseServiceRecordMissingClients.mockImplementation(actualHooks.useServiceRecordMissingClients);
+    jest.mocked(api.get).mockResolvedValue({ data: { data: [], total: 0 } });
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    renderPage(queryClient);
+
+    await waitFor(() => expect(queryClient.getQueryState(["clients", "service-record-missing"])?.status).toBe("error"));
+    expect(screen.getByRole("button", { name: "고객 1" })).toBeInTheDocument();
+    const tab = screen.getByRole("button", { name: "기록지 미작성" });
+    expect(tab).toHaveTextContent(/^기록지 미작성\s*$/);
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    fireEvent.click(tab);
+    expect(screen.getByRole("alert")).toBeInTheDocument();
+    expect(screen.queryByText("조건에 맞는 고객이 없습니다.")).not.toBeInTheDocument();
+    queryClient.clear();
   });
 
   it("keeps cached matching rows with a stale notice and hides the failed count", () => {
