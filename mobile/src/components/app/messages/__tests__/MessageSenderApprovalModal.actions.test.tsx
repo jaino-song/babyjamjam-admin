@@ -1,8 +1,23 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { useState } from "react";
 import userEvent from "@testing-library/user-event";
 import { fireEvent, render, screen } from "@testing-library/react";
 
 import { MessageSenderApprovalModal } from "../MessageSenderApprovalModal";
+
+let globalFocusStyle: HTMLStyleElement;
+
+beforeEach(() => {
+  globalFocusStyle = document.createElement("style");
+  const globals = readFileSync(join(process.cwd(), "src/app/globals.css"), "utf8");
+  const focusRule = globals.match(/^\*:focus-visible[^{]*\{[^}]*\}/m);
+  expect(focusRule).not.toBeNull();
+  globalFocusStyle.textContent = focusRule?.[0] ?? "";
+  document.head.append(globalFocusStyle);
+});
+
+afterEach(() => globalFocusStyle.remove());
 
 it("puts outline cancel before request with one-third and two-thirds widths", () => {
   const onCancel = jest.fn();
@@ -17,6 +32,8 @@ it("puts outline cancel before request with one-third and two-thirds widths", ()
   expect(screen.getByRole("dialog")).toHaveFocus();
   expect(screen.getByRole("dialog")).toHaveAttribute("tabindex", "-1");
   expect(screen.getByRole("dialog")).toHaveClass("outline-none");
+  expect(screen.getByRole("dialog").matches(":focus-visible")).toBe(true);
+  expect(getComputedStyle(screen.getByRole("dialog")).outline).toBe("none");
   fireEvent.click(cancel);
   fireEvent.click(request);
   expect(onCancel).toHaveBeenCalledTimes(1);
@@ -43,6 +60,8 @@ it("keeps keyboard navigation inside the modal and restores its opener", async (
   const cancel = screen.getByRole("button", { name: "취소" });
   expect(cancel).toHaveFocus();
   expect(cancel).toHaveClass("focus-visible:ring-2");
+  expect(getComputedStyle(cancel).outline).not.toBe("none");
+  expect(getComputedStyle(cancel).outline).not.toBe("");
   await user.tab();
   expect(screen.getByRole("button", { name: "신청하기" })).toHaveFocus();
   await user.tab();

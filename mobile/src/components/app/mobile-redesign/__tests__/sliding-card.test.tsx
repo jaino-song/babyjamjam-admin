@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import userEvent from "@testing-library/user-event";
 import { act, fireEvent, render, screen } from "@testing-library/react";
 
 import { SlidingCard } from "../sliding-card";
@@ -7,6 +8,19 @@ import { SlidingCard } from "../sliding-card";
 const DATA_COMPONENT = "mobile_tests_settings_sliding-card";
 const DETAIL_PANE_SELECTOR =
   `[data-component="${DATA_COMPONENT}_stage_detail-pane"]`;
+
+let globalFocusStyle: HTMLStyleElement;
+
+beforeEach(() => {
+  globalFocusStyle = document.createElement("style");
+  const globals = readFileSync(join(process.cwd(), "src/app/globals.css"), "utf8");
+  const focusRule = globals.match(/^\*:focus-visible[^{]*\{[^}]*\}/m);
+  expect(focusRule).not.toBeNull();
+  globalFocusStyle.textContent = focusRule?.[0] ?? "";
+  document.head.append(globalFocusStyle);
+});
+
+afterEach(() => globalFocusStyle.remove());
 
 const originalPointerEvent = Object.getOwnPropertyDescriptor(
   globalThis,
@@ -153,7 +167,8 @@ describe("SlidingCard", () => {
     expect(detailPane).toHaveAttribute("inert");
   });
 
-  it("hides the list pane and focuses the detail container without a button ring when open", () => {
+  it("hides the list pane and focuses the detail container without a button ring when open", async () => {
+    const user = userEvent.setup();
     const { container } = render(
       <SlidingCard
         data-component={DATA_COMPONENT}
@@ -185,7 +200,16 @@ describe("SlidingCard", () => {
     expect(detailPane).toHaveAttribute("role", "region");
     expect(detailPane).toHaveAccessibleName("설정");
     expect(detailPane).toHaveClass("outline-none");
+    expect(detailPane).toBeInstanceOf(HTMLElement);
+    const pane = detailPane as HTMLElement;
+    expect(pane.matches(":focus-visible")).toBe(true);
+    expect(getComputedStyle(pane).outline).toBe("none");
+    expect(getComputedStyle(pane).borderRadius).toBe("0");
     expect(backButton).not.toHaveFocus();
+    await user.tab();
+    expect(backButton).toHaveFocus();
+    expect(getComputedStyle(backButton).outline).not.toBe("none");
+    expect(getComputedStyle(backButton).outline).not.toBe("");
   });
 
   it("calls onBack when the back button is clicked", () => {
