@@ -137,13 +137,13 @@ export default async function TrafficDetailPage({ searchParams }: TrafficDetailP
         />
       </Block>
 
+      {hasPostHogError && <StatsQueryError dataComponent="desktop_stats-traffic_page_query-error" />}
+
       <StatsPeriodSelector
         basePath="/stats/traffic"
         period={period}
         dataComponent="desktop_stats-traffic_page_period-selector"
       />
-
-      {hasPostHogError && <StatsQueryError dataComponent="desktop_stats-traffic_page_query-error" />}
 
       {!posthogConfigured && (
         <StatsSourceNotice

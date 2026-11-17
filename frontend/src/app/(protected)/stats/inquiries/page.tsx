@@ -98,13 +98,13 @@ export default async function InquiriesDetailPage({ searchParams }: InquiriesDet
         />
       </Block>
 
+      {hasPostHogError && <StatsQueryError dataComponent="desktop_stats-inquiries_page_query-error" />}
+
       <StatsPeriodSelector
         basePath="/stats/inquiries"
         period={period}
         dataComponent="desktop_stats-inquiries_page_period-selector"
       />
-
-      {hasPostHogError && <StatsQueryError dataComponent="desktop_stats-inquiries_page_query-error" />}
 
       {!posthogConfigured && (
         <StatsSourceNotice
