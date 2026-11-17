@@ -1,5 +1,6 @@
 import { expect, type Page, test } from "@playwright/test";
 
+import { expectMeasuredInitialRows } from "./helpers/list-reveal";
 import { QUERY_RETRY_SETTLE_MS } from "./helpers/query-retry";
 
 const MOCK_EMPLOYEES = [
@@ -162,16 +163,26 @@ test.describe("employees mobile detail layout", () => {
     await page.goto("/employees");
     const rows = page.locator('[data-component="mobile_employees_detail-sheet_stack_list-page_content_list-card_body_section_row"]');
     const search = page.getByRole("textbox", { name: "이름, 근무 지역 검색" });
-    await expect(rows).toHaveCount(8);
+    const scrollContainer = page.locator(".list-card-scroll");
+    const totalEmployees = MOCK_EMPLOYEES.length + matches.length;
+    await expectMeasuredInitialRows(scrollContainer, totalEmployees);
     await search.fill("검색대상");
-    await expect(rows).toHaveCount(8);
     await expect(page.getByRole("button", { name: "전체 12", exact: true })).toBeVisible();
+    const initialMatches = await expectMeasuredInitialRows(scrollContainer, matches.length);
+    expect(initialMatches).toBeLessThan(matches.length);
     await page.getByRole("button", { name: "더 많은 항목 불러오기" }).click();
+    // A shorter viewport can need another sentinel reveal after the first tap.
+    await expect(async () => {
+      await scrollContainer.evaluate((container) => {
+        container.scrollTop = container.scrollHeight;
+      });
+      await expect(rows).toHaveCount(12, { timeout: 1_000 });
+    }).toPass({ timeout: 15_000 });
     await expect(rows).toHaveCount(12);
     await expect(rows.filter({ hasText: "검색대상" })).toHaveCount(12);
     await search.fill("");
     await expect(page.getByRole("button", { name: "전체 15", exact: true })).toBeVisible();
-    await expect(rows).toHaveCount(8);
+    await expectMeasuredInitialRows(scrollContainer, totalEmployees);
   });
 
   test("uses the shared absolute detail-sheet geometry", async ({ page }) => {

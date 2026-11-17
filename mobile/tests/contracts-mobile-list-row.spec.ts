@@ -7,6 +7,7 @@ import {
   type ContractMockDocument,
 } from "./helpers/contracts-api-mock";
 import { selectContractsSection } from "./helpers/contracts-ui";
+import { expectMeasuredInitialRows } from "./helpers/list-reveal";
 import { installPhase3ShellFixture } from "./helpers/phase3-fixtures";
 
 async function createPreviewPdf(): Promise<Buffer> {
@@ -517,11 +518,11 @@ test.describe("Mobile contracts list rows", () => {
     await expect(loadMoreButton).toBeVisible({ timeout: 15000 });
     await expect(loadMoreButton).toContainText("탭하여 더보기");
 
-    // With 12px vertical row padding this viewport fits nine rows plus the
-    // teaser's peek row. The next six-row server page is prefetched below;
-    // the nine-row first request is a network page size, not a reveal cap.
-    await expect(rows).toHaveCount(10);
-    const revealedBeforeTap = await rows.count();
+    // Server page sizes and the measured reveal window are independent.
+    const revealedBeforeTap = await expectMeasuredInitialRows(
+      page.locator(".list-card-scroll"),
+      PAGINATED_DOCUMENTS.documents.length,
+    );
     expect(revealedBeforeTap).toBeGreaterThan(0);
 
     // The next server page is pulled with the smaller page size at the first-page offset.
@@ -590,6 +591,14 @@ test.describe("Mobile contracts list rows", () => {
     await page.goto("/contracts");
     // Anchor: wait for the mocked rows to land before child assertions.
     await expect(page.locator('[data-component="mobile_contracts_detail-sheet_stack_list-page_content_list-card_body_row"]').first()).toBeVisible({ timeout: 15000 });
+    const initialCount = await expectMeasuredInitialRows(
+      page.locator(".list-card-scroll"),
+      STAGE_DOCUMENTS.documents.length,
+    );
+    if (initialCount < STAGE_DOCUMENTS.documents.length) {
+      await page.getByRole("button", { name: "더 많은 항목 불러오기" }).click();
+    }
+    await expect(page.locator(".list-card-scroll .list-item")).toHaveCount(STAGE_DOCUMENTS.documents.length);
 
     const waitingRow = page.locator('[data-component="mobile_contracts_detail-sheet_stack_list-page_content_list-card_body_row"]', { hasText: "대기고객" });
     const openedRow = page.locator('[data-component="mobile_contracts_detail-sheet_stack_list-page_content_list-card_body_row"]', { hasText: "열람고객" });
@@ -994,6 +1003,13 @@ test.describe("Mobile contracts list rows", () => {
 
     await page.goto("/contracts");
 
+    const initialCount = await expectMeasuredInitialRows(
+      page.locator(".list-card-scroll"),
+      STAGE_DOCUMENTS.documents.length,
+    );
+    if (initialCount < STAGE_DOCUMENTS.documents.length) {
+      await page.getByRole("button", { name: "더 많은 항목 불러오기" }).click();
+    }
     await page.locator('[data-component="mobile_contracts_detail-sheet_stack_list-page_content_list-card_body_row"]', { hasText: "완료고객" }).click();
     await expect(page.locator('[data-component="mobile_contracts_detail-sheet_stack_detail-page_content_pdf-preview"]')).toHaveCount(0);
     const receiptShareButton = page.locator('[data-component="mobile_contracts_detail-sheet_stack_detail-page_actions_receipt-share"]');
