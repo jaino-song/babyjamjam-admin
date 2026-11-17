@@ -174,9 +174,9 @@
         "288:65-288:91|visualTailwindInPage",
         "290:61-290:100|visualTailwindInPage",
         "324:137-324:275|visualTailwindInPage",
-        "386:160-386:233|visualTailwindInPage",
-        "387:73-387:116|visualTailwindInPage",
-        "388:172-388:248|visualTailwindInPage"
+        "387:160-387:233|visualTailwindInPage",
+        "388:73-388:116|visualTailwindInPage",
+        "389:172-389:248|visualTailwindInPage"
       ]
     },
     "frontend/src/app/(protected)/contracts/page.tsx": {
@@ -224,13 +224,13 @@
         "1091:25-1091:129|visualTailwindInPage",
         "1114:27-1114:147|visualTailwindInPage",
         "1127:29-1127:43|visualTailwindInPage",
-        "1231:52-1231:84|visualTailwindInPage",
-        "1609:21-1609:141|visualTailwindInPage",
-        "1889:45-1889:127|visualTailwindInPage",
-        "1891:55-1891:87|visualTailwindInPage",
-        "1894:55-1894:81|visualTailwindInPage",
-        "1934:35-1934:139|visualTailwindInPage",
-        "1946:35-1951:27|visualTailwindInPage",
+        "1232:52-1232:84|visualTailwindInPage",
+        "1610:21-1610:141|visualTailwindInPage",
+        "1890:45-1890:127|visualTailwindInPage",
+        "1892:55-1892:87|visualTailwindInPage",
+        "1895:55-1895:81|visualTailwindInPage",
+        "1935:35-1935:139|visualTailwindInPage",
+        "1947:35-1952:27|visualTailwindInPage",
         "522:25-522:166|visualTailwindInPage",
         "557:37-557:154|visualTailwindInPage",
         "573:25-573:129|visualTailwindInPage",
