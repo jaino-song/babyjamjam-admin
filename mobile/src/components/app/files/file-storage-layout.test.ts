@@ -34,7 +34,13 @@ function paddingTopFor(selector: string, source = css): number {
   let top = NaN;
   let important = false;
   for (const declaration of declarationsFor(selector, source).split(";")) {
-    const match = declaration.trim().match(/^(padding|padding-top)\s*:\s*(.*?)\s*(!important)?$/);
+    const statement = declaration.trim();
+    const property = statement.match(/^(padding[^\s:]*)\s*:/i)?.[1];
+    // Fail closed for padding properties that this cascade resolver cannot model.
+    if (property && !/^(padding|padding-top)$/i.test(property)) {
+      throw new Error(`Unsupported padding property for ${selector}: ${property}. Update file-storage-layout.test.ts before adding it.`);
+    }
+    const match = statement.match(/^(padding|padding-top)\s*:\s*(.*?)\s*(!important)?$/i);
     if (!match) continue;
     const nextImportant = Boolean(match[3]);
     if (important && !nextImportant) continue;
@@ -64,7 +70,7 @@ function assertNoAtRulePadding(selector: string, source = css): void {
       });
     } else {
       const block = blocks.at(-1);
-      if (block?.atRule && block.matchesSelector && /^(padding|padding-top)\s*:/i.test(statement)) {
+      if (block?.atRule && block.matchesSelector && /^padding[^\s:]*\s*:/i.test(statement)) {
         throw new Error(`Update file-storage-layout.test.ts before adding padding inside at-rules for ${selector}: ${statement}`);
       }
       if (token[0] === "}") blocks.pop();
@@ -76,14 +82,42 @@ function assertNoAtRulePadding(selector: string, source = css): void {
 it.each([
   "@media (min-width: 99999px) { .files { padding-top: 0; } }",
   "@media (min-width: 0px) { .files { padding-top: 0; } }",
+  "@media (min-width:0) { .files { padding-block-start: 0 } }",
+  "@media (min-width:0) { .files { padding-block: 0 } }",
   "@supports (display: grid) { .files { padding: 0 } }",
   "@container (min-width: 0px) { .other, .files { padding-top: 0; } }",
   "@layer layout { .files { padding: 0 !important; } }",
   "@media (min-width: 0px) { @supports (display: grid) { .files { padding-top: 0; } } }",
   ".files { @media (min-width: 0px) { padding-top: 0; } }",
   ".files { @media (min-width: 0px) { @supports (display: grid) { padding: 0 } } }",
+  ".files { @media (min-width:0) { padding-block-start: 0 } }",
 ])("rejects file-list padding inside at-rules: %s", (source) => {
   expect(() => assertNoAtRulePadding(".files", source)).toThrow("Update file-storage-layout.test.ts");
+});
+
+const unsupportedPaddingProperties = [
+  "padding-block-start",
+  "padding-block-end",
+  "padding-block",
+  "padding-inline-start",
+  "padding-inline-end",
+  "padding-inline",
+  "padding-right",
+  "padding-bottom",
+  "padding-left",
+  "PADDING-BLOCK-START",
+  "padding-future-property",
+];
+
+it.each(unsupportedPaddingProperties)("rejects %s inside at-rules", (property) => {
+  expect(() => assertNoAtRulePadding(".files", `
+    @media (min-width:0) { @supports (display: grid) { .other, .files { ${property}: 0 } } }
+  `)).toThrow("Update file-storage-layout.test.ts");
+});
+
+it.each(unsupportedPaddingProperties)("rejects unresolved top-level %s", (property) => {
+  expect(() => paddingTopFor(".files", `.files { padding-top: 28px; ${property}: 0 }`))
+    .toThrow(`Unsupported padding property for .files: ${property}`);
 });
 
 it("allows top-level padding, unrelated selectors and non-padding at-rule declarations", () => {
