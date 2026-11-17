@@ -34,6 +34,7 @@ it("puts outline cancel before request with one-third and two-thirds widths", ()
   expect(screen.getByRole("dialog")).toHaveClass("outline-none");
   expect(screen.getByRole("dialog").matches(":focus-visible")).toBe(true);
   expect(getComputedStyle(screen.getByRole("dialog")).outline).toBe("none");
+  expect(getComputedStyle(screen.getByRole("dialog")).borderRadius).toBe("16px");
   fireEvent.click(cancel);
   fireEvent.click(request);
   expect(onCancel).toHaveBeenCalledTimes(1);
@@ -44,6 +45,11 @@ it.each([{ isApprovalPending: true, needsRequestPermission: false }, { needsRequ
   render(<MessageSenderApprovalModal open {...props} onOpenChange={jest.fn()} onCancel={jest.fn()} onRequest={jest.fn()} />);
   expect(screen.getAllByRole("button")).toHaveLength(1);
   expect(screen.getByRole("button", { name: "확인" })).toHaveClass("flex-1");
+  const dialog = screen.getByRole("dialog");
+  expect(dialog).toHaveFocus();
+  expect(dialog.matches(":focus-visible")).toBe(true);
+  expect(getComputedStyle(dialog).outline).toBe("none");
+  expect(getComputedStyle(dialog).borderRadius).toBe("16px");
 });
 
 it("keeps keyboard navigation inside the modal and restores its opener", async () => {
