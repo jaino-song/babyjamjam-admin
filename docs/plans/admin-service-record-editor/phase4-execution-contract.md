@@ -27,6 +27,8 @@ Admin revision may be confirmed while later sessions unwritten. The immutable re
 Capabilities:
 Phase0 is unproven. New revision external operations default capability_unverified/manual_review, zero external calls. Persist safe intents/status, never claim API/PDF evidence or enable vendor via env/default. Completed contract new document/new user signature only; old current usable retained; full document workflow in Phase5. Protect Phase0 ledgers and do not read/use/reset them. No live DB/SMS/browser/vendor/support/network. Parent owns disposable PG lease; workers unit mocks only until exact DB guard/lease assigned. No AppModule/schedulers. Parent provisions deps offline and controls integrated actual PG verification.
 
+> 2026-11-16 사용자 결정: INITIAL_FINALIZATION은 live 검증 없이 코드의 저장 행 기반 승인 후 생성을 허용한다. REVISION_SNAPSHOT과 revision operations는 기존 capability gate를 유지한다.
+
 Verification:
 Workers run only exact affected --runTestsByPath suites and local compile/build checks appropriate to owned code; no task-level audit or repeated full-suite gate. Parent integrates all lanes then one Phase4 suite/PG races/fault-injection/idempotency and Sol/high phase audit. Need actual PG atomic rollback after each write boundary, same-key concurrent confirm/no-op/different-body/foreign/stale, both confirm vs message/eDoc dispatch orders and finalization/provider stale-date races. Do not claim mocks are PG/live proof. Known baseline5 receipt helper type errors deferred Phase5.4, no unrelated fixes.
 

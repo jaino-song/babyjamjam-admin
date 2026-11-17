@@ -2747,3 +2747,46 @@ describe("ServiceRecordLifecycleService client service days", () => {
         }));
     });
 });
+
+describe("INITIAL completion-only pointer promotion", () => {
+    const revisionId = "44444444-4444-4444-8444-444444444444";
+    function setup(options: { state?: Record<string, unknown>; noState?: boolean; snapshotStatus?: string; pointerCas?: number; stateCas?: number } = {}) {
+        const state = { id: "state-1", generation: "generation-1", version: 2,
+            workflowScope: { generationKind: "INITIAL_FINALIZATION", requestKey: `service-record-initial-finalization:${revisionId}` },
+            status: "processing", step: "documents_created", ...options.state };
+        const tx = {
+            eformsign_doc: { findFirst: jest.fn().mockResolvedValue({ serviceRecordCaseId: rawQueryCaseId, revisionId, snapshotVersion: 3 }) },
+            $queryRaw: jest.fn().mockResolvedValueOnce([{ id: rawQueryCaseId, clientId: 7, version: 4,
+                currentRevisionId: revisionId, currentUsableRevisionId: null, currentUsableDocumentVersion: null }])
+                .mockResolvedValueOnce(options.noState ? [] : [state])
+                .mockResolvedValueOnce([lockedSnapshot({ revisionId, snapshotVersion: 3, statusType: options.snapshotStatus ?? "003" })]),
+            $executeRaw: jest.fn().mockResolvedValueOnce(options.pointerCas ?? 1).mockResolvedValueOnce(options.stateCas ?? 1),
+            service_record_case: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
+        };
+        const prisma = { $transaction: jest.fn((callback: (client: typeof tx) => Promise<unknown>) => callback(tx)) };
+        return { tx, service: new ServiceRecordLifecycleService(prisma as never, createHolidayCalendarStub()) };
+    }
+    const complete = (f: ReturnType<typeof setup>) => f.service.completeServiceRecordSnapshotIfReady({ branchId: rawQueryBranchId, documentId: rawQueryDocumentId });
+    it("atomically moves the usable pointer and completes state/case after all documents complete", async () => {
+        const f = setup();
+        await expect(complete(f)).resolves.toBe(true);
+        const sql = f.tx.$executeRaw.mock.calls.map(([value]) => (value as { strings: string[] }).strings.join(" "));
+        expect(sql[0]).toContain("SET current_usable_revision_id"); expect(sql[0]).toContain("version = version + 1");
+        expect(sql[1]).toContain("status = 'completed', step = 'completed'");
+        expect((f.tx.$queryRaw.mock.calls[1][0] as { strings: string[] }).strings.join(" ")).toContain("FOR UPDATE");
+        expect(f.tx.service_record_case.updateMany).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ status: "COMPLETED" }) }));
+    });
+    it.each([
+        { noState: true }, { state: { step: "dispatch_authorized" } }, { state: { status: "waiting_for_completion" } },
+        { state: { workflowScope: { generationKind: "REVISION_SNAPSHOT" } } }, { snapshotStatus: "070" },
+    ])("does not complete an unready INITIAL or an unpromoted REVISION_SNAPSHOT %#", async (options) => {
+        const f = setup(options);
+        await expect(complete(f)).resolves.toBe(false);
+        expect(f.tx.$executeRaw).not.toHaveBeenCalled(); expect(f.tx.service_record_case.updateMany).not.toHaveBeenCalled();
+    });
+    it.each([{ pointerCas: 0 }, { stateCas: 0 }])("throws on a lost completion CAS %#", async (options) => {
+        const f = setup(options);
+        await expect(complete(f)).rejects.toBeInstanceOf(ConflictException);
+        expect(f.tx.service_record_case.updateMany).not.toHaveBeenCalled();
+    });
+});
