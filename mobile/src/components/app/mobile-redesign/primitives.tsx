@@ -158,10 +158,12 @@ export function ListRowsSkeleton({
    */
   variantHeader?: boolean;
 }) {
+  // These display:contents children are flex items in the bounded list scroller.
+  // Preserve their content height instead of compressing the loading rows to fit.
   const rows = Array.from({ length: rowCount }).map((_, index) => (
     <div
       key={`${dataComponent}-skeleton-${index}`}
-      className="list-item"
+      className="list-item shrink-0"
       data-component={`${dataComponent}_row`}
       aria-hidden="true"
       style={{ animationDelay: `${Math.min(index, 4) * 40}ms` }}

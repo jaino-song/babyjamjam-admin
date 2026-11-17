@@ -134,3 +134,7 @@
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 2fr);
 }
+
+.footer > :only-child {
+  grid-column: 1 / -1;
+}
