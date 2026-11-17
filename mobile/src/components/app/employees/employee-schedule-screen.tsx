@@ -410,7 +410,7 @@ export function EmployeeScheduleScreen({
           if (next) setKindFilter(next.key);
         }}
         beforeFilters={
-          <div className={styles.toolbar} data-component={`${cardBase}_toolbar`}>
+          <div className={styles.toolbar} data-component={`${cardBase}_toolbar`} data-slot="schedule-toolbar">
             <MobileSearchBar
               data-component={`${cardBase}_toolbar_search`}
               placeholder="고객 이름, 제공인력 검색"

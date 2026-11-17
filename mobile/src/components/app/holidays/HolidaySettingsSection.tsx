@@ -24,6 +24,7 @@ import { HolidayPageShell } from "./HolidayPageShell";
 import { HolidaySyncStrip } from "./HolidaySyncStrip";
 import { HolidayReviewCards } from "./review/HolidayReviewCards";
 import { formatHolidayDate } from "./holiday-format";
+import styles from "./holiday-page-shell.module.css";
 
 const DATA_COMPONENT = "mobile_holidays_settings";
 const RATE_LIMITED_MESSAGE = "잠시 후 다시 시도해 주세요.";
@@ -182,70 +183,76 @@ export function HolidaySettingsSection({ branchId, branchName }: HolidaySettings
         onAdd={(input) => addMutation.mutateAsync(input)}
       />
 
-      {data !== undefined && yearQuery.isError ? (
-        <QueryErrorState
-          dataComponent={`${DATA_COMPONENT}_stale-error`}
-          size="inline"
-          title="최신 정보를 불러오지 못했습니다"
-          onRetry={retryYear}
-          isRetrying={yearQuery.isFetching}
-        />
-      ) : null}
-      {isYearLoading ? (
-        <div data-component={`${DATA_COMPONENT}_skeleton`} className="space-y-2">
-          <Skeleton className="h-16 w-full" />
-          <Skeleton className="h-16 w-full" />
-          <Skeleton className="h-16 w-full" />
-        </div>
-      ) : data === undefined && yearQuery.isError ? (
-        <QueryErrorState
-          dataComponent={`${DATA_COMPONENT}_error`}
-          size="inline"
-          title="공휴일 목록을 불러오지 못했어요."
-          onRetry={retryYear}
-          isRetrying={yearQuery.isFetching}
-        />
-      ) : holidays.length === 0 ? (
-        <EmptyState
-          name={`${DATA_COMPONENT}_empty`}
-          className="py-8 shadow-none"
-          message={
-            data?.supported === false ? "이 연도의 공휴일 정보가 아직 없어요." : "표시할 공휴일이 없어요."
-          }
-        />
-      ) : (
-        <HolidayList
-          holidays={holidays}
-          today={today}
-          disabled={busy}
-          onExclude={(holiday) => excludeMutation.mutate(holiday)}
-          onRestore={(holiday) =>
-            holiday.overrideId &&
-            deleteMutation.mutate({
-              overrideId: holiday.overrideId,
-              message: `${formatHolidayDate(holiday.date)} ${holiday.name}을 다시 공휴일로 포함했어요.`,
-            })
-          }
-          onDelete={(holiday) =>
-            holiday.overrideId &&
-            deleteMutation.mutate({
-              overrideId: holiday.overrideId,
-              message: `${formatHolidayDate(holiday.date)} ${holiday.name}을 삭제했어요.`,
-            })
-          }
-        />
-      )}
+      <div
+        data-component={`${DATA_COMPONENT}_list-scroll`}
+        data-slot="holiday-list-scroll"
+        className={styles.listScroll}
+      >
+        {data !== undefined && yearQuery.isError ? (
+          <QueryErrorState
+            dataComponent={`${DATA_COMPONENT}_stale-error`}
+            size="inline"
+            title="최신 정보를 불러오지 못했습니다"
+            onRetry={retryYear}
+            isRetrying={yearQuery.isFetching}
+          />
+        ) : null}
+        {isYearLoading ? (
+          <div data-component={`${DATA_COMPONENT}_skeleton`} className="space-y-2">
+            <Skeleton className="h-16 w-full" />
+            <Skeleton className="h-16 w-full" />
+            <Skeleton className="h-16 w-full" />
+          </div>
+        ) : data === undefined && yearQuery.isError ? (
+          <QueryErrorState
+            dataComponent={`${DATA_COMPONENT}_error`}
+            size="inline"
+            title="공휴일 목록을 불러오지 못했어요."
+            onRetry={retryYear}
+            isRetrying={yearQuery.isFetching}
+          />
+        ) : holidays.length === 0 ? (
+          <EmptyState
+            name={`${DATA_COMPONENT}_empty`}
+            className="py-8 shadow-none"
+            message={
+              data?.supported === false ? "이 연도의 공휴일 정보가 아직 없어요." : "표시할 공휴일이 없어요."
+            }
+          />
+        ) : (
+          <HolidayList
+            holidays={holidays}
+            today={today}
+            disabled={busy}
+            onExclude={(holiday) => excludeMutation.mutate(holiday)}
+            onRestore={(holiday) =>
+              holiday.overrideId &&
+              deleteMutation.mutate({
+                overrideId: holiday.overrideId,
+                message: `${formatHolidayDate(holiday.date)} ${holiday.name}을 다시 공휴일로 포함했어요.`,
+              })
+            }
+            onDelete={(holiday) =>
+              holiday.overrideId &&
+              deleteMutation.mutate({
+                overrideId: holiday.overrideId,
+                message: `${formatHolidayDate(holiday.date)} ${holiday.name}을 삭제했어요.`,
+              })
+            }
+          />
+        )}
 
-      <HolidayInactiveOverrides
-        overrides={inactiveOverrides}
-        disabled={busy}
-        onDelete={(override) =>
-          deleteMutation.mutate({
-            overrideId: override.id,
-            message: `${formatHolidayDate(override.date)} 지점 설정을 삭제했어요.`,
-          })
-        }
-      />
+        <HolidayInactiveOverrides
+          overrides={inactiveOverrides}
+          disabled={busy}
+          onDelete={(override) =>
+            deleteMutation.mutate({
+              overrideId: override.id,
+              message: `${formatHolidayDate(override.date)} 지점 설정을 삭제했어요.`,
+            })
+          }
+        />
+      </div>
     </HolidayPageShell>
   );
 }

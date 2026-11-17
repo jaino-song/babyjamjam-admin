@@ -39,7 +39,7 @@ export function HolidaySyncStrip({
     <div
       data-component={dataComponent}
       data-source-component={SOURCE_COMPONENT}
-      className="grid gap-3 rounded-2xl border border-[#818b98] bg-transparent px-4 py-3.5"
+      className="grid gap-3 rounded-[16px] border border-[#818b98] bg-transparent px-4 py-3.5"
     >
       <div data-component={`${dataComponent}_info`} className="grid min-w-0 justify-items-center gap-1 text-center">
         <p data-slot="holiday-sync-title" className="text-sm font-semibold text-v3-dark">대한민국 공휴일</p>

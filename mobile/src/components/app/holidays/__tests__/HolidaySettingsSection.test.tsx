@@ -93,6 +93,18 @@ describe("HolidaySettingsSection", () => {
     api.deleteOverride.mockResolvedValue(undefined);
   });
 
+  it("keeps controls outside the internal holiday-list scroller", async () => {
+    renderSection();
+    await screen.findByText("한글날");
+    const scroller = document.querySelector('[data-slot="holiday-list-scroll"]');
+    expect(scroller).toContainElement(screen.getByText("한글날"));
+    expect(scroller).toContainElement(screen.getByText("옛 임시공휴일"));
+    expect(scroller).not.toContainElement(screen.getByRole("heading", { name: "지점 공휴일" }));
+    expect(scroller).not.toContainElement(screen.getByRole("button", { name: "지금 동기화" }));
+    expect(scroller).not.toContainElement(screen.getByRole("tablist", { name: "연도" }));
+    expect(scroller).not.toContainElement(screen.getByRole("button", { name: "공휴일 추가" }));
+  });
+
   it("shows the simplified header, full-width year toggle and last sync time (KST)", async () => {
     renderSection();
 

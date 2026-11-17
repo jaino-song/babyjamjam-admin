@@ -19,6 +19,12 @@ function renderStrip(props: Partial<Parameters<typeof HolidaySyncStrip>[0]> = {}
 }
 
 describe("HolidaySyncStrip status line", () => {
+  it("uses the approved 16px outlined surface", () => {
+    const { container } = renderStrip();
+    expect(container.firstElementChild).toHaveClass("rounded-[16px]", "bg-transparent", "border");
+    expect(container.firstElementChild).not.toHaveClass("rounded-2xl");
+  });
+
   it("says it is not synced when the year loaded and was never synced (default)", () => {
     renderStrip();
 

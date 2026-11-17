@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { act, fireEvent, render, screen } from "@testing-library/react";
 
 import { SlidingCard } from "../sliding-card";
@@ -778,4 +780,10 @@ it('removes bottom padding only when the caller opts in', () => {
 
   rerender(<SlidingCard {...props} />);
   expect(listPane).not.toHaveClass('listPaneNoBottomPadding');
+});
+
+it("uses the shared 16px card radius", () => {
+  const css = readFileSync(join(__dirname, "../sliding-card.module.css"), "utf8");
+  const cardRule = css.match(/\.slidingCard\s*\{[^}]+\}/)?.[0];
+  expect(cardRule).toContain("border-radius: calc(16px*var(--glint-ui-scale, 1))");
 });

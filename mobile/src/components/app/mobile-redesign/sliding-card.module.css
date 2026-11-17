@@ -4,7 +4,7 @@
   flex-direction: column;
   min-height: 0;
   overflow: hidden;
-  border-radius: calc(22px*var(--glint-ui-scale, 1));
+  border-radius: calc(16px*var(--glint-ui-scale, 1));
   background: white;
   box-shadow:
     0 calc(4px*var(--glint-ui-scale, 1))

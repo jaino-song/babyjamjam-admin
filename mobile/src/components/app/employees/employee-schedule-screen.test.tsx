@@ -78,6 +78,21 @@ describe("EmployeeScheduleScreen", () => {
     jest.clearAllMocks();
   });
 
+  it("places search on its own row above the month controls in both views", () => {
+    mockClients([]);
+    const { container } = render(<EmployeeScheduleScreen />);
+    const search = screen.getByRole("textbox", { name: "고객 이름, 제공인력 검색" }).closest('[data-slot="search-bar"]');
+    const toolbar = container.querySelector('[data-slot="schedule-toolbar"]');
+    const monthControls = container.querySelector('[data-slot="month-controls"]');
+    expect(search?.parentElement).toBe(toolbar);
+    expect(search?.nextElementSibling).toBe(monthControls);
+    expect(monthControls).not.toContainElement(search as HTMLElement);
+    expect(search?.querySelector("svg")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "목록" }));
+    expect(screen.getByRole("textbox", { name: "고객 이름, 제공인력 검색" }).closest('[data-slot="search-bar"]')?.parentElement).toHaveAttribute("data-slot", "schedule-toolbar");
+    expect(container.querySelector('[data-slot="month-controls"]')).toBeNull();
+  });
+
   it("shows the inclusive calendar, selected-day agenda, view toggle, and detail slide", () => {
     const client = makeClient(1, { startDate: "2026-09-18" });
     mockClients([client]);

@@ -103,6 +103,7 @@ describe("NotificationPage", () => {
 
     const rows = container.querySelectorAll('[data-slot="notification-settings-row"]');
     expect(rows.length).toBeGreaterThanOrEqual(3);
+    rows.forEach((row) => expect(row).toHaveStyle({ padding: "12px 0" }));
 
     expect(within(rows[0] as HTMLElement).getByText("앱 알림")).toBeInTheDocument();
     expect(within(rows[1] as HTMLElement).getByText("이메일 알림")).toBeInTheDocument();
