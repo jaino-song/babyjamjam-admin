@@ -165,6 +165,9 @@ test.describe("employees mobile detail layout", () => {
     const search = page.getByRole("textbox", { name: "이름, 근무 지역 검색" });
     const scrollContainer = page.locator(".list-card-scroll");
     const totalEmployees = MOCK_EMPLOYEES.length + matches.length;
+    // Wait for real rows and the footer that reduces the scroll container's height.
+    await expect(rows.first()).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByRole("button", { name: "더 많은 항목 불러오기" })).toBeVisible();
     await expectMeasuredInitialRows(scrollContainer, totalEmployees);
     await search.fill("검색대상");
     await expect(page.getByRole("button", { name: "전체 12", exact: true })).toBeVisible();
