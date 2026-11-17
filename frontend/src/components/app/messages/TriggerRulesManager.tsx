@@ -1476,6 +1476,7 @@ export function TriggerRulesManager({
               )}
             >
               <DetailTabPanels
+                insetPanels
                 activeTab={activeDetailTab}
                 dataComponent={component("trigger-rules-detail-tabpanes")}
                 panelDataComponent={component("template-detail-pane")}

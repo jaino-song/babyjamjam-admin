@@ -17,6 +17,8 @@ export interface DetailTabPanelsProps {
   className?: string;
   trackClassName?: string;
   panelClassName?: string;
+  /** Opt in to a 1px horizontal inset for bordered InfoCards. Defaults to false. */
+  insetPanels?: boolean;
   "data-component"?: string;
   "data-panel-component"?: string;
   dataComponent?: string;
@@ -31,6 +33,7 @@ export function DetailTabPanels({
   className,
   trackClassName,
   panelClassName,
+  insetPanels = false,
   "data-component": canonicalDataComponent,
   "data-panel-component": canonicalPanelDataComponent,
   dataComponent: legacyDataComponent,
@@ -118,7 +121,8 @@ export function DetailTabPanels({
               className={cn(
                 // Keep card borders inside the clipping viewport without
                 // changing the panel width used by percentage slide offsets.
-                "w-full min-w-0 shrink-0 px-px",
+                "w-full min-w-0 shrink-0",
+                insetPanels && "px-px",
                 !isActive && "pointer-events-none",
                 !isVisible && "max-h-0 overflow-hidden",
                 panelClassName,

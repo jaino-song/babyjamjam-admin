@@ -1539,6 +1539,7 @@ function ClientDetailPanelBody({
                 }
             >
                 <DetailTabPanels
+                    insetPanels
                     activeTab={activeDetailTab}
                     durationMs={layout === "mobile" ? 0 : undefined}
                     dataComponent={`${dataComponentPrefix}_content`}

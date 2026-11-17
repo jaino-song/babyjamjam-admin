@@ -185,6 +185,7 @@ export function ContractAutomationsManager({ dataComponent }: ContractAutomation
             ) : undefined}
           >
             {query.isError ? queryErrorState : <DetailTabPanels
+              insetPanels
               activeTab={activeTab}
               dataComponent={component("detail-tabs")}
               className="flex min-h-0 flex-1"

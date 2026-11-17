@@ -439,6 +439,7 @@ export function EmployeeDetailPanel({
                 )}
             >
                 <DetailTabPanels
+                    insetPanels
                     data-component={`${dataComponent}_tab-panels`}
                     panels={[
                         {

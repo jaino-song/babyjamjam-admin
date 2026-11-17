@@ -1141,6 +1141,7 @@ function MessageHistorySection({ listState }: { listState: ReturnType<typeof use
           }
         >
           <DetailTabPanels
+            insetPanels
             activeTab={scheduledDetailTab}
             dataComponent="desktop_messages_sections_upcoming-detail-tab-panels"
             panelDataComponent="desktop_messages_sections_upcoming-detail-tab-panel"

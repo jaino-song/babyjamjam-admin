@@ -171,6 +171,21 @@ describe("EmployeeScheduleManager query load failures", () => {
 });
 
 describe("EmployeeScheduleManager interactions", () => {
+    it("keeps the calendar and list flush inside the clipping viewport", () => {
+        mockClients([]);
+        const { container } = renderManager();
+        const calendar = container.querySelector('section[data-panel="calendar"]');
+        const list = container.querySelector('section[data-panel="list"]');
+        expect(calendar).toHaveClass("w-full", "min-w-0", "shrink-0");
+        expect(list).toHaveClass("w-full", "min-w-0", "shrink-0");
+        expect(calendar).not.toHaveClass("px-px");
+        expect(list).not.toHaveClass("px-px");
+        expect(calendar?.parentElement?.parentElement).toHaveClass("overflow-hidden");
+        fireEvent.click(screen.getByRole("tab", { name: "목록" }));
+        expect(list).toHaveAttribute("aria-hidden", "false");
+        expect(list).not.toHaveClass("px-px");
+    });
+
     afterEach(() => {
         jest.clearAllMocks();
     });
