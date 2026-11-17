@@ -203,9 +203,9 @@ describe("useListInfiniteScroll with attached list refs", () => {
   });
 
   it.each([
-    { rowHeight: 72, initialCount: 7 },
-    { rowHeight: 96, initialCount: 5 },
-  ])("reveals all search matches with $rowHeight px non-shrinking rows and resets when cleared", ({ rowHeight, initialCount }) => {
+    { rowHeight: 72, initialCount: 7, observerCount: 0 },
+    { rowHeight: 96, initialCount: 5, observerCount: 1 },
+  ])("reveals all search matches with $rowHeight px non-shrinking rows and resets when cleared", ({ rowHeight, initialCount, observerCount }) => {
     scrollHeight = 500;
     jest.spyOn(HTMLElement.prototype, "offsetHeight", "get").mockReturnValue(rowHeight);
     const { rerender } = render(<ScrollList totalItems={15} />);
@@ -225,7 +225,10 @@ describe("useListInfiniteScroll with attached list refs", () => {
     rerender(<ScrollList totalItems={15} />);
     expect(rowCount()).toBe(initialCount);
     expect(screen.getByTestId("phase")).toHaveTextContent("initial");
-    expect(observers.every((observer) => observer.disconnect.mock.calls.length > 0)).toBe(true);
+    expect(observers).toHaveLength(observerCount);
+    for (const observer of observers) {
+      expect(observer.disconnect).toHaveBeenCalled();
+    }
   });
 
   it.each([
