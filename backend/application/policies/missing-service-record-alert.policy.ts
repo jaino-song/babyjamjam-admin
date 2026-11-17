@@ -10,6 +10,15 @@ export interface MissingServiceRecordAlert {
     scheduleId: number;
 }
 
+export interface MissingServiceRecordAlertWithProgress extends MissingServiceRecordAlert {
+    unwrittenThroughSessionIndex: number;
+}
+
+interface MissingServiceRecordAlertRow {
+    alert: MissingServiceRecordAlert;
+    unwrittenThroughSessionIndex: number;
+}
+
 function validDate(value: string | null): value is string {
     if (!value || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
     const millis = Date.parse(`${value}T00:00:00Z`);
@@ -23,7 +32,26 @@ export function findMissingServiceRecordAlerts(
     branchCalendar: KrBusinessDayCalendar,
     now: Date,
 ): MissingServiceRecordAlert[] {
-    const alerts = new Map<number, MissingServiceRecordAlert>();
+    return collectMissingServiceRecordAlerts(candidates, branchId, branchCalendar, now).map((row) => row.alert);
+}
+
+export function findMissingServiceRecordAlertsWithProgress(
+    candidates: ServiceRecordAlertCandidate[],
+    branchId: string,
+    branchCalendar: KrBusinessDayCalendar,
+    now: Date,
+): MissingServiceRecordAlertWithProgress[] {
+    return collectMissingServiceRecordAlerts(candidates, branchId, branchCalendar, now)
+        .map(({ alert, unwrittenThroughSessionIndex }) => ({ ...alert, unwrittenThroughSessionIndex }));
+}
+
+function collectMissingServiceRecordAlerts(
+    candidates: ServiceRecordAlertCandidate[],
+    branchId: string,
+    branchCalendar: KrBusinessDayCalendar,
+    now: Date,
+): MissingServiceRecordAlertRow[] {
+    const alerts = new Map<number, MissingServiceRecordAlertRow>();
     for (const candidate of candidates) {
         // Bad/unsupported source evidence must not prevent other clients' alerts.
         try {
@@ -72,9 +100,26 @@ export function findMissingServiceRecordAlerts(
             if (!validDate(secondDate)) continue;
             const threshold = Date.parse(`${secondDate}T18:00:00+09:00`);
             if (!(now.getTime() >= threshold)) continue;
+            // Sessions 1 and 2 are already proven unwritten and due by the alert rule.
+            // Extend only the consecutive prefix, using that same lifecycle window.
+            let unwrittenThroughSessionIndex = 2;
+            const entriesByIndex = new Map(projection.entries.map((entry) => [entry.sessionIndex, entry]));
+            const writtenIndexes = new Set(source.sessions.filter((session) => validDate(session.serviceDate)
+                && session.serviceDate >= windowStartDate && session.serviceDate <= windowEndDate)
+                .map((session) => session.sessionIndex));
+            for (let index = 3; ; index++) {
+                const entry = entriesByIndex.get(index);
+                if (!entry || writtenIndexes.has(index) || !validDate(entry.serviceDate)) break;
+                const entryThreshold = Date.parse(`${entry.serviceDate}T18:00:00+09:00`);
+                if (!(now.getTime() >= entryThreshold)) break;
+                unwrittenThroughSessionIndex = index;
+            }
             alerts.set(source.client.id, {
-                clientId: source.client.id, clientName: source.client.name,
-                primaryEmployeeName: active.primaryEmployeeName, scheduleId: active.scheduleId,
+                alert: {
+                    clientId: source.client.id, clientName: source.client.name,
+                    primaryEmployeeName: active.primaryEmployeeName, scheduleId: active.scheduleId,
+                },
+                unwrittenThroughSessionIndex,
             });
         } catch {
             // Fail closed for invalid vectors and unsupported holiday years. No PII logs.

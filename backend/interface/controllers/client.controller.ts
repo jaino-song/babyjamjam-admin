@@ -120,6 +120,11 @@ export class ClientController {
         return this.clientService.getStats(tenant.branchId ?? "");
     }
 
+    @Get("service-record-missing")
+    getServiceRecordMissing(@CurrentTenant() tenant: { branchId?: string }) {
+        return this.clientService.getServiceRecordMissing(tenant.branchId ?? "");
+    }
+
     @Get("list-summary")
     getListSummary(
         @CurrentTenant() tenant: { branchId?: string },
