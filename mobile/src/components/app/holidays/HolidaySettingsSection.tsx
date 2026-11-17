@@ -156,8 +156,6 @@ export function HolidaySettingsSection({ branchId, branchName }: HolidaySettings
         onSync={() => syncMutation.mutate()}
       />
 
-      <HolidayReviewCards branchId={branchId} />
-
       <div
         data-component={`${DATA_COMPONENT}_toolbar`}
         className="grid gap-2"
@@ -188,6 +186,9 @@ export function HolidaySettingsSection({ branchId, branchName }: HolidaySettings
         data-slot="holiday-list-scroll"
         className={styles.listScroll}
       >
+        {/* Review events can grow without bound; keep them in the scroller with the list. */}
+        <HolidayReviewCards branchId={branchId} />
+
         {data !== undefined && yearQuery.isError ? (
           <QueryErrorState
             dataComponent={`${DATA_COMPONENT}_stale-error`}

@@ -2,6 +2,7 @@ import { QueryClient, QueryClientProvider, onlineManager } from "@tanstack/react
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 
 import { holidaySettingsApi } from "@/services/holiday-settings";
+import { holidayReviewApi, type HolidayReviewEvent } from "@/services/holiday-review";
 import type { BranchHolidayYear } from "@/services/holidays";
 import { PROBLEM_CATALOG } from "@babyjamjam/shared";
 
@@ -36,6 +37,7 @@ jest.mock("@/services/holiday-review", () => ({
 }));
 
 const api = holidaySettingsApi as jest.Mocked<typeof holidaySettingsApi>;
+const reviewApi = holidayReviewApi as jest.Mocked<typeof holidayReviewApi>;
 
 const YEAR_2026: BranchHolidayYear = {
   year: 2026,
@@ -88,6 +90,7 @@ function rowFor(name: string): HTMLElement {
 describe("HolidaySettingsSection", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    reviewApi.listEvents.mockResolvedValue([]);
     api.getYear.mockImplementation(async (_branchId, year) => (year === 2027 ? YEAR_2027 : YEAR_2026));
     api.createOverride.mockResolvedValue(undefined);
     api.deleteOverride.mockResolvedValue(undefined);
@@ -103,6 +106,46 @@ describe("HolidaySettingsSection", () => {
     expect(scroller).not.toContainElement(screen.getByRole("button", { name: "지금 동기화" }));
     expect(scroller).not.toContainElement(screen.getByRole("tablist", { name: "연도" }));
     expect(scroller).not.toContainElement(screen.getByRole("button", { name: "공휴일 추가" }));
+  });
+
+  it.each([1, 12])("keeps %i review events in the list scroller so they cannot crowd out the controls", async (count) => {
+    const events: HolidayReviewEvent[] = Array.from({ length: count }, (_, index) => ({
+      id: `review-${index}`,
+      date: "2026-10-21",
+      change: "added",
+      name: `QA-확인 공휴일 ${index}`,
+      source: "kasi",
+      safeOpen: 1,
+      riskOpen: 1,
+      createdAt: "2026-10-01T00:00:00.000Z",
+    }));
+    reviewApi.listEvents.mockResolvedValue(events);
+    renderSection();
+
+    expect(await screen.findAllByRole("button", { name: "목록 보기" })).toHaveLength(count);
+    const scroller = document.querySelector('[data-slot="holiday-list-scroll"]');
+    const reviews = document.querySelector<HTMLElement>('[data-slot="holiday-review-cards"]');
+    expect(scroller).toContainElement(reviews);
+    expect(scroller?.firstElementChild).toBe(reviews);
+    expect(scroller).toContainElement(screen.getByText("한글날"));
+    expect(scroller).toContainElement(screen.getByText("옛 임시공휴일"));
+    expect(scroller).not.toContainElement(screen.getByRole("button", { name: "지금 동기화" }));
+    expect(scroller).not.toContainElement(screen.getByRole("tablist", { name: "연도" }));
+    expect(scroller).not.toContainElement(screen.getByLabelText("날짜"));
+    expect(scroller).not.toContainElement(screen.getByLabelText("이름"));
+    expect(scroller).not.toContainElement(screen.getByRole("button", { name: "공휴일 추가" }));
+
+    fireEvent.change(screen.getByLabelText("날짜"), { target: { value: "20261022" } });
+    fireEvent.change(screen.getByLabelText("이름"), { target: { value: "QA-추가 공휴일" } });
+    fireEvent.click(screen.getByRole("button", { name: "공휴일 추가" }));
+    await waitFor(() => {
+      expect(api.createOverride).toHaveBeenCalledWith("branch-1", {
+        date: "2026-10-22",
+        kind: "add",
+        name: "QA-추가 공휴일",
+      });
+      expect(screen.getByLabelText("날짜")).toHaveValue("");
+    });
   });
 
   it("shows the simplified header, full-width year toggle and last sync time (KST)", async () => {
