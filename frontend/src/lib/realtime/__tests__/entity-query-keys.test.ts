@@ -79,6 +79,7 @@ const REAL_KEYS: Record<RealtimeEntityKind, Array<[label: string, key: QueryKey]
         ["dynamic-select data source (inline literal)", ["data-source", "message-variables"]],
     ],
     "service-record": [
+        ["clientKeys.serviceRecordMissing", clientKeys.serviceRecordMissing("branch-1")],
         ["employeeQueryKeys.detail", employeeQueryKeys.detail(1)],
         ["serviceRecordKeys.clientOverview", serviceRecordKeys.clientOverview(1)],
         ["serviceRecordKeys.revisionHistory", serviceRecordKeys.revisionHistory(1)],
@@ -145,6 +146,15 @@ describe("queryKeyRootsForKinds", () => {
         });
     });
 
+    it("pins service-record invalidation to the missing-clients factory without reaching client lists", () => {
+        expect(ENTITY_QUERY_KEY_ROOTS["service-record"]).toEqual([
+            serviceRecordKeys.all,
+            employeeQueryKeys.all,
+            clientKeys.serviceRecordMissing("branch-1").slice(0, 2),
+        ]);
+        expect(reachesKey(queryKeyRootsForKinds(["service-record"]), clientKeys.list({ branchId: "branch-1" }))).toBe(false);
+    });
+
     it("maps call to nothing on desktop", () => {
         expect(queryKeyRootsForKinds(["call"])).toEqual([]);
     });
@@ -184,11 +194,11 @@ describe("queryKeyRootsForKinds", () => {
 
 describe("allQueryKeyRoots", () => {
     it("is the de-duplicated union of every root in the map", () => {
-        const roots = allQueryKeyRoots().map((root) => root[0]);
+        const roots = allQueryKeyRoots().map((root) => JSON.stringify(root));
         expect(new Set(roots).size).toBe(roots.length);
 
         const expected = new Set(
-            KINDS.flatMap((kind) => ENTITY_QUERY_KEY_ROOTS[kind].map((root) => root[0])),
+            KINDS.flatMap((kind) => ENTITY_QUERY_KEY_ROOTS[kind].map((root) => JSON.stringify(root))),
         );
         expect(new Set(roots)).toEqual(expected);
     });
