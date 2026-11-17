@@ -94,6 +94,7 @@ export function MobileBottomNav() {
     <nav
       data-component={NAV_BASE}
       data-slot="mobile-bottom-nav"
+      data-variant={safePathname === "/agent" || safePathname === "/admin/feedback" ? "standard" : undefined}
       className={cn(
         isChatRoute
           ? "z-[var(--mobile-z-nav,30)]"

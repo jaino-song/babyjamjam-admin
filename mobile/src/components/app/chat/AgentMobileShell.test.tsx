@@ -3,6 +3,12 @@ import userEvent from "@testing-library/user-event";
 
 import { AgentMobileShell } from "./AgentMobileShell";
 
+jest.mock("next/navigation", () => ({ usePathname: () => "/agent" }));
+jest.mock("@/providers/UserProvider", () => ({ useInitialUser: () => ({ name: "관리자", branchName: "개발QA점" }) }));
+jest.mock("@/components/app/notifications/NotificationBell", () => ({
+    NotificationBell: (props: { "data-component"?: string }) => <button {...props} aria-label="알림 열기" />,
+}));
+
 const mockSendMessage = jest.fn();
 const mockRefreshTask = jest.fn();
 const mockMessages: unknown[] = [];
@@ -57,6 +63,38 @@ describe("AgentMobileShell drawer accessibility", () => {
         mockSendMessage.mockClear();
         mockRefreshTask.mockClear();
         mockTaskNeedsReconciliation = false;
+    });
+
+    it("reuses the shell greeting and branch between the menu and compose/bell actions", () => {
+        render(<AgentMobileShell />);
+        const header = screen.getByRole("banner");
+        expect(header).toHaveAttribute("data-slot", "agent-header");
+        expect(header).toHaveAttribute("data-source-component", "V3MobileHeader");
+        expect(header).toHaveClass("existing-navbar", "relative");
+        expect(header).not.toHaveClass("fixed");
+        expect(within(header).getByText("관리자 님")).toBeInTheDocument();
+        expect(within(header).getByText("개발QA점")).toBeInTheDocument();
+        expect(screen.queryByText("AI 운영 코파일럿")).not.toBeInTheDocument();
+        const menu = within(header).getByRole("button", { name: "대화 목록" });
+        const compose = within(header).getByRole("button", { name: "새 대화" });
+        const bell = within(header).getByRole("button", { name: "알림 열기" });
+        expect(within(header).getAllByRole("button")).toEqual([menu, compose, bell]);
+        for (const button of [menu, compose]) {
+            expect(button).toHaveClass("h-8", "w-8", "relative", "after:-inset-1.5");
+        }
+        expect(compose.querySelector("svg")).toHaveClass("lucide-square-pen");
+        fireEvent.click(compose);
+        expect(mockResetBranch).toHaveBeenCalledTimes(1);
+        fireEvent.click(menu);
+        expect(compose).toBeDisabled();
+        const drawer = screen.getByRole("dialog", { name: "대화 목록" });
+        const newConversation = within(drawer).getByRole("button", { name: "새 대화" });
+        expect(within(drawer).getAllByRole("button")[0]).toBe(newConversation);
+        expect(newConversation).toHaveClass("w-full", "rounded-full", "bg-primary");
+        expect(newConversation.querySelector("svg")).toHaveClass("lucide-square-pen");
+        fireEvent.click(newConversation);
+        expect(mockResetBranch).toHaveBeenCalledTimes(2);
+        expect(drawer).toHaveAttribute("data-open", "false");
     });
 
     it("groups real sessions, marks the current session, and closes on scrim tap", async () => {

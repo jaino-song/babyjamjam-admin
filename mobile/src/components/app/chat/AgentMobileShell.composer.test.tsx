@@ -2,6 +2,9 @@ import { render, screen } from "@testing-library/react";
 
 import { AgentMobileShell } from "./AgentMobileShell";
 
+jest.mock("next/navigation", () => ({ usePathname: () => "/agent" }));
+jest.mock("@/components/app/notifications/NotificationBell", () => ({ NotificationBell: () => null }));
+
 jest.mock("@/hooks/useAgentChat", () => ({
   useAgentCapabilities: () => "enabled",
   useAgentChat: () => ({ messages: [], status: "ready", sessions: [] }),

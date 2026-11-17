@@ -42,6 +42,24 @@ describe("MobileBottomNav", () => {
     expect(screen.getAllByRole("link")).toHaveLength(5);
   });
 
+  it.each(["/agent", "/admin/feedback"])("uses the standard nav geometry on %s", (pathname) => {
+    mockUsePathname.mockReturnValue(pathname);
+    render(<MobileBottomNav />);
+    expect(screen.getByRole("navigation")).toHaveAttribute("data-variant", "standard");
+  });
+
+  it.each(["/clients", "/calls", "/contracts", "/consultations", "/all"])("preserves existing nav styling on %s", (pathname) => {
+    mockUsePathname.mockReturnValue(pathname);
+    render(<MobileBottomNav />);
+    expect(screen.getByRole("navigation")).not.toHaveAttribute("data-variant");
+  });
+
+  it("keeps other admin routes excluded from bottom navigation", () => {
+    mockUsePathname.mockReturnValue("/admin/other");
+    render(<MobileBottomNav />);
+    expect(screen.queryByRole("navigation")).not.toBeInTheDocument();
+  });
+
   it("keeps All active on the consultations route", () => {
     mockUsePathname.mockReturnValue("/consultations");
 
