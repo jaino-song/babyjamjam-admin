@@ -17,7 +17,7 @@ interface HolidayPageShellProps {
   dataComponent?: string;
 }
 
-/** Holiday settings chrome with a single scrolling content area and list-panel title. */
+/** Holiday settings chrome with fixed controls above an internal list scroller. */
 export function HolidayPageShell({
   title,
   children,
@@ -42,14 +42,14 @@ export function HolidayPageShell({
         data-slot="holiday-settings-content"
         className={styles.content}
       >
-        <div data-component={`${dataComponent}_content_card`} className="list-card pop-up">
+        <div data-component={`${dataComponent}_content_card`} data-slot="holiday-settings-card" className={`list-card pop-up ${styles.card}`}>
           <div data-component={`${dataComponent}_content_card_header`} data-slot="list-panel-header" className="flex items-start justify-between gap-3">
             <div data-component={`${dataComponent}_content_card_header_title-group`} className="min-w-0 flex-1">
               <h2 className="text-[18px] font-bold leading-[1.35] text-v3-dark">{title}</h2>
             </div>
           </div>
           {children ? (
-            <div data-component={`${dataComponent}_content_card_body`} className="mt-5 grid gap-4">
+            <div data-component={`${dataComponent}_content_card_body`} data-slot="holiday-settings-body" className={styles.body}>
               {children}
             </div>
           ) : null}

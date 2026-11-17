@@ -1,9 +1,9 @@
 "use client";
 
 
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { BellRing, Mail, Send, type LucideIcon } from "lucide-react";
+import { BellRing, Mail, Send } from "lucide-react";
 import { normalizeApiError } from "@babyjamjam/shared";
 
 import { LoadingState } from "@/components/app/ui/LoadingState";
@@ -21,6 +21,8 @@ import {
 } from "@/lib/notification-config";
 import "@/components/app/mobile-redesign/redesign.css";
 
+import { NotificationSettingsRow } from "./_components/notification-settings-row";
+
 /** Canonical data-component base for the /notification settings route. */
 const NOTIFICATION_SETTINGS_BASE = "mobile_notification_settings";
 const NOTIFICATION_SETTINGS_SCROLL = `${NOTIFICATION_SETTINGS_BASE}_content_card_scroll`;
@@ -32,57 +34,6 @@ const NOTIFICATION_ROUTE_BODY_CLASS = "mobile-all-route";
 interface BroadcastResult {
   sent: number;
   failed: number;
-}
-
-interface NotificationSettingsRowProps {
-  /** Canonical data-component value for this row. */
-  dataComponent: string;
-  label: string;
-  icon: LucideIcon;
-  tone: "primary" | "orange" | "green" | "purple" | "muted" | "burgundy";
-  description: ReactNode;
-  rightContent?: ReactNode;
-  className?: string;
-}
-
-function NotificationSettingsRow({
-  dataComponent,
-  label,
-  icon: Icon,
-  tone,
-  description,
-  rightContent,
-  className,
-}: NotificationSettingsRowProps) {
-  return (
-    <div
-      className={`list-item notification-settings-row ${className ?? ""}`}
-      data-component={dataComponent}
-      data-slot="notification-settings-row"
-    >
-      <div
-        className={`trigger-icon trigger-icon-${tone}`}
-        data-component={`${dataComponent}_icon`}
-      >
-        <Icon size={18} strokeWidth={2.5} />
-      </div>
-
-      <div className="trigger-info" data-component={`${dataComponent}_info`}>
-        <div className="trigger-title" data-component={`${dataComponent}_info_title`}>
-          {label}
-        </div>
-        <div className="trigger-meta" data-component={`${dataComponent}_info_meta`}>
-          {description}
-        </div>
-      </div>
-
-      {rightContent ? (
-        <div className="notification-row-control" data-component={`${dataComponent}_control`}>
-          {rightContent}
-        </div>
-      ) : null}
-    </div>
-  );
 }
 
 export default function NotificationPage() {

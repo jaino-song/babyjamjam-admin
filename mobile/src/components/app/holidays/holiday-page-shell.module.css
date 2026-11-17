@@ -1,4 +1,4 @@
-/* Same visual shell as the /notification settings route: a white list-card in a scrolling content area. */
+/* Fixed card geometry matches /clients: 12px above the bottom navigation. */
 .page {
   display: flex;
   flex: 1;
@@ -6,9 +6,56 @@
 }
 
 .content {
+  display: flex;
   flex: 1;
   min-width: 0;
   min-height: 0;
+  overflow: hidden;
+  padding: 12px 14px 76px;
+}
+
+.content .card {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  margin-bottom: 0;
+  overflow: hidden;
+}
+
+.card > [data-slot="list-panel-header"] {
+  flex-shrink: 0;
+}
+
+.body {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  margin-top: 20px;
+  gap: 16px;
+  overflow: hidden;
+}
+
+.body > :not(.listScroll) {
+  flex-shrink: 0;
+}
+
+.listScroll {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  gap: 16px;
   overflow-y: auto;
-  padding: 12px 14px;
+  scrollbar-width: none;
+}
+
+.listScroll > * {
+  flex-shrink: 0;
+}
+
+.listScroll::-webkit-scrollbar {
+  display: none;
 }

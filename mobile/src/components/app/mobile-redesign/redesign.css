@@ -809,6 +809,11 @@ main[data-slot="main-content"]:has([data-slot="dashboard-page"]) > [data-slot="d
   cursor: pointer;
   transition: background 0.15s ease;
 }
+/* Template rows live in a bounded flex scroller: preserve content and vertical padding.
+   Scope this to templates so other list layouts retain their existing geometry. */
+[data-page="messages-templates"] .list-card-scroll .list-item {
+  flex-shrink: 0;
+}
 .list-item:hover,
 .list-item:active { background: hsl(var(--v3-primary-light)); }
 .list-item,

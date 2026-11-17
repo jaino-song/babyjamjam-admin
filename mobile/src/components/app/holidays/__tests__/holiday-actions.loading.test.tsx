@@ -30,3 +30,9 @@ it("blocks repeated holiday fixes even when only fixing is set", () => {
   fireEvent.click(expectBusy("수정 중", "2명 한 번에 수정"));
   expect(onFixSafe).not.toHaveBeenCalled();
 });
+
+it("uses the approved 16px add-form surface", () => {
+  const { container } = render(<HolidayAddForm today="2026-11-17" years={[2026]} onAdd={jest.fn()} />);
+  expect(container.querySelector("form")).toHaveClass("rounded-[16px]", "bg-transparent", "border");
+  expect(container.querySelector("form")).not.toHaveClass("rounded-2xl");
+});
