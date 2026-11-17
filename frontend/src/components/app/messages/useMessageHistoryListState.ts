@@ -243,4 +243,3 @@ export function useMessageHistoryListState() {
     filteredUpcomingJobs, filteredHistoryRecords, statusCounts,
   };
 }
-
