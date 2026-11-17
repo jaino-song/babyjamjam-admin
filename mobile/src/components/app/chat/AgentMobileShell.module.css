@@ -13,14 +13,8 @@
 .shell:has(.drawer[data-open="true"]) { z-index: 40; }
 .shell > [data-slot="application-content"] { background: hsl(var(--background)); }
 .header {
-  display: flex;
-  align-items: center;
-  flex-shrink: 0;
   gap: 8px;
-  height: 64px;
-  padding: 0 14px 0 9px;
-  background: #004bad;
-  color: white;
+  padding-left: 9px;
 }
 .header .headerIcon {
   flex-shrink: 0;

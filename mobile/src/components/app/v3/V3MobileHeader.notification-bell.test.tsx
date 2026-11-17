@@ -30,3 +30,16 @@ it('keeps the real shell notification bell at 32px with a 44px touch area', () =
   expect(bell).not.toHaveClass('!h-[44px]');
   expect(bell).not.toHaveClass('!w-[44px]');
 });
+
+it('retains the same real notification bell in the embedded agent header', () => {
+  render(<V3MobileHeader
+    data-component="mobile_chat_agent-shell_header"
+    data-slot="agent-header"
+    embedded
+    trailingSlot={<button aria-label="새 대화" />}
+  />);
+  const bell = screen.getByRole('button', { name: '알림 열기' });
+  expect(bell).toHaveAttribute('data-component', 'mobile_chat_agent-shell_header_icons_notification-bell');
+  expect(bell).toHaveClass('h-8', 'w-8', 'relative', 'after:absolute', 'after:-inset-1.5', "after:content-['']");
+  expect(screen.getAllByRole('button')).toEqual([screen.getByRole('button', { name: '새 대화' }), bell]);
+});

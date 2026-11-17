@@ -2528,7 +2528,8 @@ body.mobile-all-route .menu-row {
 
 body:has([data-slot="clients-content"]) [data-slot="mobile-bottom-nav"],
 body:has([data-slot="calls-content"]) [data-slot="mobile-bottom-nav"],
-body:has([data-slot="consultations-content"]) [data-slot="mobile-bottom-nav"] {
+body:has([data-slot="consultations-content"]) [data-slot="mobile-bottom-nav"],
+[data-slot="mobile-bottom-nav"][data-variant="standard"] {
   position: absolute !important;
   left: 14px !important;
   right: 14px !important;
@@ -2553,7 +2554,8 @@ body:has([data-slot="consultations-content"]) [data-slot="mobile-bottom-nav"] > 
 
 body:has([data-slot="clients-content"]) [data-slot="mobile-bottom-nav"] a,
 body:has([data-slot="calls-content"]) [data-slot="mobile-bottom-nav"] a,
-body:has([data-slot="consultations-content"]) [data-slot="mobile-bottom-nav"] a {
+body:has([data-slot="consultations-content"]) [data-slot="mobile-bottom-nav"] a,
+[data-slot="mobile-bottom-nav"][data-variant="standard"] a {
   gap: 2px;
   padding: 5px 4px;
   border-radius: 14px;
@@ -2562,14 +2564,16 @@ body:has([data-slot="consultations-content"]) [data-slot="mobile-bottom-nav"] a 
 
 body:has([data-slot="clients-content"]) [data-slot="mobile-bottom-nav"] svg,
 body:has([data-slot="calls-content"]) [data-slot="mobile-bottom-nav"] svg,
-body:has([data-slot="consultations-content"]) [data-slot="mobile-bottom-nav"] svg {
+body:has([data-slot="consultations-content"]) [data-slot="mobile-bottom-nav"] svg,
+[data-slot="mobile-bottom-nav"][data-variant="standard"] svg {
   width: 18px;
   height: 18px;
 }
 
 body:has([data-slot="clients-content"]) [data-slot="mobile-bottom-nav"] span,
 body:has([data-slot="calls-content"]) [data-slot="mobile-bottom-nav"] span,
-body:has([data-slot="consultations-content"]) [data-slot="mobile-bottom-nav"] span {
+body:has([data-slot="consultations-content"]) [data-slot="mobile-bottom-nav"] span,
+[data-slot="mobile-bottom-nav"][data-variant="standard"] span {
   font-size: 10px;
   font-weight: 500;
   line-height: 1;
