@@ -19613,6 +19613,14 @@
       "discovery_task_id": "1.1.10"
     },
     {
+      "path": "mobile/src/app/api/ai/chat/stream/route.test.ts",
+      "root": "mobile/src/",
+      "kind": "test",
+      "candidate_count": 0,
+      "review_status": "unverified",
+      "discovery_task_id": "1.1.10"
+    },
+    {
       "path": "mobile/src/app/api/ai/chat/stream/route.ts",
       "root": "mobile/src/",
       "kind": "runtime",
@@ -64065,11 +64073,13 @@
       ],
       "outcome_evidence": null,
       "consumer_paths": [],
-      "test_evidence": [],
+      "test_evidence": [
+        "mobile/src/app/api/ai/chat/stream/route.test.ts"
+      ],
       "followup_task": null,
       "review_task": "1.1-batch-d",
       "spec_mapping_status": "mapped-em-v1",
-      "spec_mapping_note": "Retained unchanged as a D13 cutover sentinel until legacy removal is authorized; uses shared parseBody and problem-response helpers. Legacy route tests were removed with the unused chat API."
+      "spec_mapping_note": "Retained unchanged as a D13 cutover sentinel until legacy removal is authorized; uses shared parseBody and problem-response helpers. Direct route tests cover auth refusal, body validation, successful stream forwarding and sanitized upstream/transport SSE errors."
     },
     {
       "id": "owner-e3a601cb213a",
