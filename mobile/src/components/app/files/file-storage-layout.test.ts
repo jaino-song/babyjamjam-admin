@@ -3,18 +3,37 @@ import { join } from "node:path";
 
 const css = readFileSync(join(__dirname, "../mobile-redesign/redesign.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
 
-function declarationsFor(selector: string): string {
-  return [...css.matchAll(/([^{}]+)\{([^{}]*)\}/g)]
-    .filter((match) => match[1].split(",").some((part) => part.trim() === selector))
-    .map((match) => match[2]).join("\n");
+function declarationsFor(selector: string, source = css): string {
+  const declarations: string[] = [];
+  let depth = 0;
+  let start = 0;
+  let matchesSelector = false;
+  // Only collect direct declarations of a matching top-level rule. Conditional
+  // blocks (including nested at-rules) cannot establish unconditional spacing.
+  for (const token of source.matchAll(/[{};]/g)) {
+    const index = token.index;
+    if (token[0] === "{") {
+      if (depth === 0) {
+        matchesSelector = source.slice(start, index).split(",").some((part) => part.trim() === selector);
+      }
+      depth += 1;
+    } else {
+      if (depth === 1 && matchesSelector) {
+        declarations.push(`${source.slice(start, index)};`);
+      }
+      if (token[0] === "}") depth -= 1;
+    }
+    start = index + 1;
+  }
+  return declarations.join("\n");
 }
 
 // These exact-selector rules have equal specificity. A later padding shorthand
 // resets padding-top too; !important declarations retain their higher priority.
-function paddingTopFor(selector: string): number {
+function paddingTopFor(selector: string, source = css): number {
   let top = NaN;
   let important = false;
-  for (const declaration of declarationsFor(selector).split(";")) {
+  for (const declaration of declarationsFor(selector, source).split(";")) {
     const match = declaration.trim().match(/^(padding|padding-top)\s*:\s*(.*?)\s*(!important)?$/);
     if (!match) continue;
     const nextImportant = Boolean(match[3]);
@@ -27,6 +46,51 @@ function paddingTopFor(selector: string): number {
   }
   return top;
 }
+
+it.each([
+  "@media (min-width: 99999px) { .files { padding-top: 28px; } }",
+  "@supports (display: grid) { .files { padding-top: 28px; } }",
+  "@layer layout { .files { padding-top: 28px; } }",
+  "@media (min-width: 99999px) { @supports (display: grid) { .files { padding-top: 28px; } } }",
+])("ignores at-rule declarations: %s", (nestedRule) => {
+  expect(paddingTopFor(".files", `.files { padding: 12px 14px; } ${nestedRule}`)).toBe(12);
+});
+
+it("does not find an unconditional padding when only an at-rule defines it", () => {
+  expect(paddingTopFor(".files", "@media (min-width: 99999px) { .files { padding-top: 28px; } }")).toBeNaN();
+});
+
+it("ignores nested at-rules inside a matching rule and resumes after them", () => {
+  expect(paddingTopFor(".files", `
+    .files { padding: 12px 14px; @media (min-width: 99999px) { padding-top: 28px; } }
+  `)).toBe(12);
+  expect(paddingTopFor(".files", `
+    .files {
+      padding: 12px 14px;
+      @media (min-width: 99999px) { padding-top: 28px; }
+      padding-top: 16px;
+    }
+    @supports (display: grid) { .files { padding-top: 28px; } }
+    .other, .files { padding-top: 20px }
+  `)).toBe(20);
+});
+
+it("rejects a 28px file-list padding moved into a never-matching media query", () => {
+  const selector = 'body:has([data-slot="files-content"]) [data-slot="files-content"]';
+  const rule = `${selector} {\n  padding-top: 28px;\n}`;
+  expect(css).toContain(rule);
+  const mutatedCss = css.replace(rule, `@media (min-width: 99999px) { ${rule} }`);
+  expect(paddingTopFor(selector, mutatedCss)).toBe(12);
+});
+
+it.each([
+  [".files { padding-top: 28px; } .files { padding: 12px 14px; }", 12],
+  [".files { padding: 12px 14px; } .files { padding-top: 28px; }", 28],
+  [".files { padding-top: 28px !important; } .files { padding: 12px 14px; }", 28],
+  [".files { padding-top: 28px !important; } .files { padding: 12px 14px !important; }", 12],
+])("preserves cascade priority for %s", (source, expected) => {
+  expect(paddingTopFor(".files", source)).toBe(expected);
+});
 
 it("keeps the card at 92px with a 64px main inset and 28px list padding", () => {
   const top = paddingTopFor('body:has([data-slot="files-content"]) [data-slot="main-content"]');
