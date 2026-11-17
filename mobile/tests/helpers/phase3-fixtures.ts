@@ -45,6 +45,11 @@ export const PHASE3_OUT_OF_POCKET_PRICES = [
  */
 export async function installPhase3ShellFixture(page: Page) {
   await page.route("**/api/**", async (route: Route) => {
+    const pathname = new URL(route.request().url()).pathname;
+    if (pathname === "/api/clients/service-record-missing") {
+      await route.fulfill(phase3Json({ count: 0, items: [] }));
+      return;
+    }
     await route.fulfill(phase3Json([]));
   });
 
