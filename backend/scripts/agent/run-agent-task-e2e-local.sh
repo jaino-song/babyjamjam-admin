@@ -255,8 +255,8 @@ for base_var in PATH HOME TMPDIR USER LANG; do
     add_isolated_env "$base_var"
 done
 [[ -n "${TERM:-}" ]] && add_isolated_env TERM
-# backend/package.json's test:agent-e2e ("jest --config jest.agent-e2e.config.ts")
-# does not read NODE_OPTIONS, so it is deliberately not forwarded.
+# backend/package.json's test:agent-e2e ("NODE_OPTIONS=--max-old-space-size=4096 jest --config jest.agent-e2e.config.ts")
+# sets its own NODE_OPTIONS, so the caller's is deliberately not forwarded.
 for owned in "${SCRIPT_OWNED_KEYS[@]}"; do
     add_isolated_env "$owned"
 done
