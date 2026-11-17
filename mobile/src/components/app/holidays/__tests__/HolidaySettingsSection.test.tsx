@@ -102,6 +102,7 @@ describe("HolidaySettingsSection", () => {
     const scroller = document.querySelector('[data-slot="holiday-list-scroll"]');
     expect(scroller).toContainElement(screen.getByText("한글날"));
     expect(scroller).toContainElement(screen.getByText("옛 임시공휴일"));
+    expect(scroller?.firstElementChild).toContainElement(screen.getByText("한글날"));
     expect(scroller).not.toContainElement(screen.getByRole("heading", { name: "지점 공휴일" }));
     expect(scroller).not.toContainElement(screen.getByRole("button", { name: "지금 동기화" }));
     expect(scroller).not.toContainElement(screen.getByRole("tablist", { name: "연도" }));
@@ -165,7 +166,7 @@ describe("HolidaySettingsSection", () => {
     expect(screen.getByRole("tab", { name: "2026" })).toHaveAttribute("aria-selected", "true");
     expect(screen.getByRole("tab", { name: "2027" })).toHaveAttribute("aria-selected", "false");
     expect(screen.getByText("마지막 동기화 10월 1일 04:00")).toBeInTheDocument();
-    expect(document.querySelector("[data-slot='holiday-review-cards']")).not.toBeNull();
+    expect(document.querySelector("[data-slot='holiday-review-cards']")).toBeNull();
   });
 
   it("shows the not-synced notice and loads the next year on its tab", async () => {

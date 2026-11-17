@@ -1,4 +1,5 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { StrictMode, useState, type ComponentProps } from "react";
 
 import { ExpandableSearch } from "./ExpandableSearch";
@@ -49,12 +50,21 @@ describe("ExpandableSearch accessibility labels", () => {
     const toggle = screen.getByRole("button", { name: "검색 열기" });
     expect(toggle).toHaveClass("h-8", "w-8", "after:-inset-1.5");
     fireEvent.click(toggle);
-    expect(input).toHaveClass("h-[44px]", "rounded-[12px]", "text-base", "px-3", "bg-v3-dim-white", "w-20");
+    expect(input).toHaveClass("h-[44px]", "rounded-[12px]", "text-base", "px-3", "bg-v3-dim-white", "w-full", "min-w-0", "flex-1");
     expect(input).not.toHaveClass("h-auto", "text-sm", "p-0", "w-0");
     expect(input).not.toHaveAttribute("style");
     expect(input).toHaveAttribute("data-component", "mobile_admin_feedback_split-layout_list-panel_tabs_search_input");
     fireEvent.click(screen.getByRole("button", { name: "검색 닫기" }));
     expect(input).toHaveClass("w-0", "h-0", "p-0");
+  });
+
+  it("keeps autofocus without the shared Input focus ring", async () => {
+    renderSearch();
+    fireEvent.click(screen.getByRole("button", { name: "검색 열기" }));
+    const input = screen.getByRole("textbox", { name: "검색어" });
+    await waitFor(() => expect(input).toHaveFocus());
+    expect(input).toHaveClass("focus-visible:ring-0", "focus-visible:ring-offset-0");
+    expect(input).not.toHaveClass("focus-visible:ring-2", "focus-visible:ring-offset-2");
   });
 
   it("uses caller-provided names for the toggle and input", () => {
@@ -69,6 +79,15 @@ describe("ExpandableSearch accessibility labels", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "고객 검색 열기" }));
     expect(screen.getByRole("button", { name: "고객 검색 닫기" })).toBeInTheDocument();
+  });
+
+  it("closes an empty focused search when clicking its toggle", async () => {
+    const user = userEvent.setup();
+    renderSearch();
+    await user.click(screen.getByRole("button", { name: "검색 열기" }));
+    await waitFor(() => expect(screen.getByRole("textbox")).toHaveFocus());
+    await user.click(screen.getByRole("button", { name: "검색 닫기" }));
+    expect(screen.getByRole("button", { name: "검색 열기" })).toBeInTheDocument();
   });
 
   it("clears a controlled value exactly once when closing under StrictMode", async () => {

@@ -27,7 +27,6 @@ export function NotificationSettingsRow({
       data-component={dataComponent}
       data-slot="notification-settings-row"
       data-source-component="NotificationSettingsRow"
-      style={{ padding: "12px 0" }}
     >
       <div
         className={`trigger-icon trigger-icon-${tone}`}
