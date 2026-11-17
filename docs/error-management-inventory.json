@@ -19613,59 +19613,11 @@
       "discovery_task_id": "1.1.10"
     },
     {
-      "path": "mobile/src/app/api/ai/chat/__tests__/route.test.ts",
+      "path": "mobile/src/app/api/ai/chat/stream/route.test.ts",
       "root": "mobile/src/",
       "kind": "test",
       "candidate_count": 0,
       "review_status": "unverified",
-      "discovery_task_id": "1.1.10"
-    },
-    {
-      "path": "mobile/src/app/api/ai/chat/confirm/route.test.ts",
-      "root": "mobile/src/",
-      "kind": "test",
-      "candidate_count": 0,
-      "review_status": "unverified",
-      "discovery_task_id": "1.1.10"
-    },
-    {
-      "path": "mobile/src/app/api/ai/chat/confirm/route.ts",
-      "root": "mobile/src/",
-      "kind": "runtime",
-      "candidate_count": 3,
-      "review_status": "reviewed",
-      "discovery_task_id": "1.1.10"
-    },
-    {
-      "path": "mobile/src/app/api/ai/chat/feedback/route.ts",
-      "root": "mobile/src/",
-      "kind": "runtime",
-      "candidate_count": 2,
-      "review_status": "reviewed",
-      "discovery_task_id": "1.1.10"
-    },
-    {
-      "path": "mobile/src/app/api/ai/chat/history/route.ts",
-      "root": "mobile/src/",
-      "kind": "runtime",
-      "candidate_count": 3,
-      "review_status": "reviewed",
-      "discovery_task_id": "1.1.10"
-    },
-    {
-      "path": "mobile/src/app/api/ai/chat/persist/route.ts",
-      "root": "mobile/src/",
-      "kind": "runtime",
-      "candidate_count": 3,
-      "review_status": "reviewed",
-      "discovery_task_id": "1.1.10"
-    },
-    {
-      "path": "mobile/src/app/api/ai/chat/sessions/[id]/route.ts",
-      "root": "mobile/src/",
-      "kind": "runtime",
-      "candidate_count": 6,
-      "review_status": "reviewed",
       "discovery_task_id": "1.1.10"
     },
     {
@@ -23877,14 +23829,6 @@
       "discovery_task_id": "1.1.10"
     },
     {
-      "path": "mobile/src/lib/api/feedback.ts",
-      "root": "mobile/src/",
-      "kind": "runtime",
-      "candidate_count": 1,
-      "review_status": "reviewed",
-      "discovery_task_id": "1.1.10"
-    },
-    {
       "path": "mobile/src/lib/api/receipt-auth.ts",
       "root": "mobile/src/",
       "kind": "runtime",
@@ -24785,14 +24729,6 @@
       "root": "mobile/tests/",
       "kind": "test",
       "candidate_count": 1,
-      "review_status": "unverified",
-      "discovery_task_id": "1.1.11"
-    },
-    {
-      "path": "mobile/tests/chat-feedback.spec.ts",
-      "root": "mobile/tests/",
-      "kind": "test",
-      "candidate_count": 0,
       "review_status": "unverified",
       "discovery_task_id": "1.1.11"
     },
@@ -64100,248 +64036,6 @@
       "spec_mapping_note": "Forwards raw Unauthorized 401 and raw Upstream unavailable 502."
     },
     {
-      "id": "owner-9df6fe6ea814",
-      "path": "mobile/src/app/api/ai/chat/confirm/route.ts",
-      "root": "mobile/src/",
-      "classification": "migrated",
-      "reason": "Converted in 6h1 (efb566de0, corr fdd2dad1a): raw bodies → mobile problem-responses helpers; check-email false-success 제거; refresh cookie-clearing 유지.",
-      "seams": [
-        {
-          "line": 18,
-          "kinds": [
-            "http_endpoint"
-          ]
-        },
-        {
-          "line": 40,
-          "kinds": [
-            "catch_boundary"
-          ]
-        },
-        {
-          "line": 49,
-          "kinds": [
-            "catch_boundary"
-          ]
-        }
-      ],
-      "discovery_task_id": "1.1.10",
-      "spec_ids": [
-        "EM-API-01",
-        "EM-API-02",
-        "EM-CAT-01",
-        "EM-VAL-04",
-        "EM-MAP-04"
-      ],
-      "public_codes": [
-        "VALIDATION_FAILED"
-      ],
-      "outcome_evidence": null,
-      "consumer_paths": [],
-      "test_evidence": [
-        "mobile/src/app/api/ai/chat/confirm/route.test.ts"
-      ],
-      "followup_task": null,
-      "review_task": "1.1-batch-d",
-      "spec_mapping_status": "mapped-em-v1",
-      "spec_mapping_note": "Shared parseBody but raw 401 and legacy non-catalog UPSTREAM_ERROR response."
-    },
-    {
-      "id": "owner-df00f968a405",
-      "path": "mobile/src/app/api/ai/chat/feedback/route.ts",
-      "root": "mobile/src/",
-      "classification": "migrated",
-      "reason": "Converted in 6h1 (efb566de0, corr fdd2dad1a): raw bodies → mobile problem-responses helpers; check-email false-success 제거; refresh cookie-clearing 유지.",
-      "seams": [
-        {
-          "line": 22,
-          "kinds": [
-            "http_endpoint"
-          ]
-        },
-        {
-          "line": 44,
-          "kinds": [
-            "catch_boundary"
-          ]
-        }
-      ],
-      "discovery_task_id": "1.1.10",
-      "spec_ids": [
-        "EM-API-01",
-        "EM-API-02",
-        "EM-CAT-01",
-        "EM-VAL-04"
-      ],
-      "public_codes": [
-        "VALIDATION_FAILED"
-      ],
-      "outcome_evidence": null,
-      "consumer_paths": [
-        "mobile/src/lib/api/feedback.ts:9"
-      ],
-      "test_evidence": [
-        "mobile/src/app/api/ai/chat/__tests__/route.test.ts"
-      ],
-      "followup_task": null,
-      "review_task": "1.1-batch-d",
-      "spec_mapping_status": "mapped-em-v1",
-      "spec_mapping_note": "Shared parseBody but raw 401 and raw English 500 body."
-    },
-    {
-      "id": "owner-f5c080929fb5",
-      "path": "mobile/src/app/api/ai/chat/history/route.ts",
-      "root": "mobile/src/",
-      "classification": "migrated",
-      "reason": "Converted in 6h1 (efb566de0, corr fdd2dad1a): raw bodies → mobile problem-responses helpers; check-email false-success 제거; refresh cookie-clearing 유지.",
-      "seams": [
-        {
-          "line": 44,
-          "kinds": [
-            "http_endpoint"
-          ]
-        },
-        {
-          "line": 86,
-          "kinds": [
-            "catch_boundary"
-          ]
-        },
-        {
-          "line": 91,
-          "kinds": [
-            "catch_boundary"
-          ]
-        }
-      ],
-      "discovery_task_id": "1.1.10",
-      "spec_ids": [
-        "EM-API-01",
-        "EM-API-02",
-        "EM-CAT-01",
-        "EM-MAP-04"
-      ],
-      "public_codes": [],
-      "outcome_evidence": null,
-      "consumer_paths": [],
-      "test_evidence": [
-        "mobile/src/app/api/ai/chat/__tests__/route.test.ts"
-      ],
-      "followup_task": null,
-      "review_task": "1.1-batch-d",
-      "spec_mapping_status": "mapped-em-v1",
-      "spec_mapping_note": "Raw 401, raw English param 400, legacy upstreamJsonErrorResponse."
-    },
-    {
-      "id": "owner-368d29aced35",
-      "path": "mobile/src/app/api/ai/chat/persist/route.ts",
-      "root": "mobile/src/",
-      "classification": "migrated",
-      "reason": "Converted in 6h1 (efb566de0, corr fdd2dad1a): raw bodies → mobile problem-responses helpers; check-email false-success 제거; refresh cookie-clearing 유지.",
-      "seams": [
-        {
-          "line": 22,
-          "kinds": [
-            "http_endpoint"
-          ]
-        },
-        {
-          "line": 47,
-          "kinds": [
-            "catch_boundary"
-          ]
-        },
-        {
-          "line": 56,
-          "kinds": [
-            "catch_boundary"
-          ]
-        }
-      ],
-      "discovery_task_id": "1.1.10",
-      "spec_ids": [
-        "EM-API-01",
-        "EM-API-02",
-        "EM-CAT-01",
-        "EM-VAL-04",
-        "EM-MAP-04"
-      ],
-      "public_codes": [
-        "VALIDATION_FAILED"
-      ],
-      "outcome_evidence": null,
-      "consumer_paths": [],
-      "test_evidence": [
-        "mobile/src/app/api/ai/chat/__tests__/route.test.ts"
-      ],
-      "followup_task": null,
-      "review_task": "1.1-batch-d",
-      "spec_mapping_status": "mapped-em-v1",
-      "spec_mapping_note": "Shared parseBody but raw 401 and legacy upstreamJsonErrorResponse."
-    },
-    {
-      "id": "owner-3506fa97d624",
-      "path": "mobile/src/app/api/ai/chat/sessions/[id]/route.ts",
-      "root": "mobile/src/",
-      "classification": "migrated",
-      "reason": "Converted in 6h1 (efb566de0, corr fdd2dad1a): raw bodies → mobile problem-responses helpers; check-email false-success 제거; refresh cookie-clearing 유지.",
-      "seams": [
-        {
-          "line": 28,
-          "kinds": [
-            "http_endpoint"
-          ]
-        },
-        {
-          "line": 53,
-          "kinds": [
-            "catch_boundary"
-          ]
-        },
-        {
-          "line": 58,
-          "kinds": [
-            "catch_boundary"
-          ]
-        },
-        {
-          "line": 67,
-          "kinds": [
-            "http_endpoint"
-          ]
-        },
-        {
-          "line": 92,
-          "kinds": [
-            "catch_boundary"
-          ]
-        },
-        {
-          "line": 101,
-          "kinds": [
-            "catch_boundary"
-          ]
-        }
-      ],
-      "discovery_task_id": "1.1.10",
-      "spec_ids": [
-        "EM-API-01",
-        "EM-API-02",
-        "EM-CAT-01",
-        "EM-MAP-04"
-      ],
-      "public_codes": [],
-      "outcome_evidence": null,
-      "consumer_paths": [],
-      "test_evidence": [
-        "mobile/src/app/api/ai/chat/__tests__/route.test.ts"
-      ],
-      "followup_task": null,
-      "review_task": "1.1-batch-d",
-      "spec_mapping_status": "mapped-em-v1",
-      "spec_mapping_note": "Raw 401/session-id 400 and legacy upstreamJsonErrorResponse in GET/DELETE."
-    },
-    {
       "id": "owner-aa33b21bf336",
       "path": "mobile/src/app/api/ai/chat/stream/route.ts",
       "root": "mobile/src/",
@@ -64380,12 +64074,12 @@
       "outcome_evidence": null,
       "consumer_paths": [],
       "test_evidence": [
-        "mobile/src/app/api/ai/chat/__tests__/route.test.ts"
+        "mobile/src/app/api/ai/chat/stream/route.test.ts"
       ],
       "followup_task": null,
       "review_task": "1.1-batch-d",
       "spec_mapping_status": "mapped-em-v1",
-      "spec_mapping_note": "Shared parseBody but raw 401 and legacy upstreamSseErrorResponse on SSE."
+      "spec_mapping_note": "Retained unchanged as a D13 cutover sentinel until legacy removal is authorized; uses shared parseBody and problem-response helpers. Direct route tests cover auth refusal, body validation, successful stream forwarding and sanitized upstream/transport SSE errors."
     },
     {
       "id": "owner-e3a601cb213a",
@@ -71740,7 +71434,10 @@
       ],
       "public_codes": [],
       "outcome_evidence": null,
-      "consumer_paths": [],
+      "consumer_paths": [
+        "mobile/src/app/(shell)/contracts/new/page.tsx",
+        "mobile/src/app/(shell)/contracts/page.tsx"
+      ],
       "test_evidence": [],
       "followup_task": null,
       "review_task": "1.1-batch-d",
@@ -72136,34 +71833,6 @@
       "review_task": "1.1-batch-d",
       "spec_mapping_status": "mapped-em-v1",
       "spec_mapping_note": "Browser transport rejects raw errors and captures Sentry; normalize and define retry/capture ownership."
-    },
-    {
-      "id": "owner-f2b98bdcf991",
-      "path": "mobile/src/lib/api/feedback.ts",
-      "root": "mobile/src/",
-      "classification": "migrated",
-      "reason": "Converted in 6.1g (686583ea3+f6af0485c, audit SHIP 61gb): mobile client error policy — authored Korean copy, code-based comparisons, surfaced mutation failures; jest 186/1208+32/172, tsc 0, eslint 0 (2 justified disables); usePushNotification lint residual declared.",
-      "seams": [
-        {
-          "line": 17,
-          "kinds": [
-            "throw_or_reject"
-          ]
-        }
-      ],
-      "discovery_task_id": "1.1.10",
-      "spec_ids": [
-        "EM-FE-01",
-        "EM-CAT-01"
-      ],
-      "public_codes": [],
-      "outcome_evidence": null,
-      "consumer_paths": [],
-      "test_evidence": [],
-      "followup_task": null,
-      "review_task": "1.1-batch-d",
-      "spec_mapping_status": "mapped-em-v1",
-      "spec_mapping_note": "Throws raw English Error outside shared contract; no static runtime consumer found."
     },
     {
       "id": "owner-75c141a0a6cf",

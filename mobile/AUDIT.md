@@ -21,7 +21,7 @@ The through-line is **convention-by-example, not convention-by-enforcement.** Sh
 `PendingClientsTable`, `TodayScheduleList`, `ServiceDistributionChart` imported fabricated data from `@/mocks/dashboard`. They were **superseded by `components/app/mobile-redesign/DashboardRedesign`** and imported nowhere — dead code carrying a mock-data import. Deleted along with the now-orphaned `src/mocks/dashboard.ts`. (No real endpoint exists for pending-clients / today-schedules / monthly-comparison; `useDashboardAnalytics` returns aggregate counts only.)
 
 ### 2. No input validation at server trust boundaries
-`zod` is imported in **1 file** (`src/lib/validations/auth.ts`) and used **only for client-side form validation** (`register`/`login`/`forgot-password`/`reset-password` pages). On the server, **22 / 91 API routes call `request.json()` with no schema validation** and forward the raw body upstream — including the eformsign webhook (`api/eformsign-docs/events`) and `api/ai/chat/stream`. Client-side zod is trivially bypassed; the server boundary is unguarded.
+`zod` is imported in **1 file** (`src/lib/validations/auth.ts`) and used **only for client-side form validation** (`register`/`login`/`forgot-password`/`reset-password` pages). On the server, **22 / 91 API routes call `request.json()` with no schema validation** and forward the raw body upstream — including the eformsign webhook (`api/eformsign-docs/events`). Client-side zod is trivially bypassed; the server boundary is unguarded.
 **Standard:** validate every route body/param/query + every webhook + env with zod `safeParse` at entry.
 
 ### 3. Proxy-layer hardening only ~24% rolled out

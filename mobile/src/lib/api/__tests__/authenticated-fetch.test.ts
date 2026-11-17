@@ -154,7 +154,7 @@ describe("authenticatedFetch", () => {
             .mockResolvedValueOnce(new Response(null, { status: 204 }))
             .mockResolvedValueOnce(new Response("data: streamed"));
 
-        const response = await authenticatedFetch("/api/ai/chat/stream", {
+        const response = await authenticatedFetch("/api/ai/agent/sessions", {
             method: "POST",
             signal: controller.signal,
         });
@@ -170,7 +170,7 @@ describe("authenticatedFetch", () => {
             return Response.json({ code: "UPSTREAM_ERROR" }, { status: 401 });
         });
 
-        await expect(authenticatedFetch("/api/ai/chat/stream", {
+        await expect(authenticatedFetch("/api/ai/agent/sessions", {
             signal: controller.signal,
         })).rejects.toMatchObject({ name: "AbortError" });
 
