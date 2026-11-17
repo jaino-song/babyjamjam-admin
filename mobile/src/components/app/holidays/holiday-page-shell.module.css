@@ -35,7 +35,8 @@
   min-height: 0;
   margin-top: 20px;
   gap: 16px;
-  overflow: hidden;
+  /* Short screens scroll the controls and list together once the list hits its floor. */
+  overflow-y: auto;
 }
 
 .body > :not(.listScroll) {
@@ -46,7 +47,8 @@
   display: flex;
   flex: 1;
   flex-direction: column;
-  min-height: 0;
+  /* Reserve visible rows without displacing the controls on a normal 390x844 screen. */
+  min-height: 128px;
   gap: 16px;
   overflow-y: auto;
   scrollbar-width: none;

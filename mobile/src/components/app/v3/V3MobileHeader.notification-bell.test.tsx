@@ -1,4 +1,5 @@
 import { render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 
 import { V3MobileHeader } from './V3MobileHeader';
 
@@ -42,4 +43,20 @@ it('retains the same real notification bell in the embedded agent header', () =>
   expect(bell).toHaveAttribute('data-component', 'mobile_chat_agent-shell_header_icons_notification-bell');
   expect(bell).toHaveClass('h-8', 'w-8', 'relative', 'after:absolute', 'after:-inset-1.5', "after:content-['']");
   expect(screen.getAllByRole('button')).toEqual([screen.getByRole('button', { name: '새 대화' }), bell]);
+});
+
+it('blocks the real notification popover while notifications are disabled and restores it afterwards', async () => {
+  const user = userEvent.setup();
+  const { rerender } = render(<V3MobileHeader data-component="mobile_chat_agent-shell_header" embedded notificationsDisabled />);
+  const bell = screen.getByRole('button', { name: '알림 열기' });
+  expect(bell).toBeDisabled();
+  await user.click(bell);
+  await user.tab();
+  expect(bell).not.toHaveFocus();
+  expect(screen.queryByTestId('notification-popover')).not.toBeInTheDocument();
+
+  rerender(<V3MobileHeader data-component="mobile_chat_agent-shell_header" embedded />);
+  expect(bell).toBeEnabled();
+  await user.click(bell);
+  expect(screen.getByTestId('notification-popover')).toBeInTheDocument();
 });

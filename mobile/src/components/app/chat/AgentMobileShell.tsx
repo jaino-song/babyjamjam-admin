@@ -84,7 +84,7 @@ export function AgentMobileShell() {
         requestAnimationFrame(() => menuButtonRef.current?.focus());
     };
     return <main data-component="mobile_chat_agent-shell" data-slot="agent-mobile-shell" className={styles.shell}>
-        <V3MobileHeader data-component="mobile_chat_agent-shell_header" data-slot="agent-header" embedded className={styles.header} leadingSlot={
+        <V3MobileHeader data-component="mobile_chat_agent-shell_header" data-slot="agent-header" embedded notificationsDisabled={drawerOpen} className={styles.header} leadingSlot={
             <Button ref={menuButtonRef} data-component="mobile_chat_agent-shell_header_menu" data-slot="agent-header-menu" type="button" size="icon" variant="ghost" className={styles.headerIcon} aria-label="대화 목록" aria-controls="agent-mobile-session-drawer" aria-expanded={drawerOpen} onClick={() => drawerOpen ? closeDrawer() : setDrawerOpen(true)}><Menu aria-hidden="true" /></Button>
         } trailingSlot={
             <Button data-component="mobile_chat_agent-shell_header_new" data-slot="agent-header-new" type="button" variant="ghost" size="icon" className={styles.headerIcon} aria-label="새 대화" disabled={drawerOpen || !agentReady} onClick={resetBranch}><SquarePen aria-hidden="true" /></Button>

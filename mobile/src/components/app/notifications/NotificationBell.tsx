@@ -99,10 +99,12 @@ function groupNotificationsByDate(notifications: Notification[]): GroupedNotific
 export function NotificationBell({
     "data-component": dataComponent,
     className,
+    disabled = false,
 }: {
     /** Caller-context canonical base, e.g. `mobile_shell_header_icons_notification-bell`. */
     "data-component"?: string;
     className?: string;
+    disabled?: boolean;
 }) {
     const router = useRouter();
     const [isOpen, setIsOpen] = useState(false);
@@ -506,6 +508,7 @@ export function NotificationBell({
                         aria-label={isLoading ? undefined : "알림 열기"}
                         loading={isLoading}
                         loadingLabel="알림 상태를 확인하는 중"
+                        disabled={disabled}
                         onClick={handleClick}
                         data-component={dataComponent}
                         data-testid="notification-bell"
