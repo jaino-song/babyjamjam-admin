@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import type {
   PointerEvent as ReactPointerEvent,
   ReactElement,
@@ -66,6 +66,7 @@ export function SlidingCard({
 }: SlidingCardProps): ReactElement {
   const detailBodyRef = useRef<HTMLDivElement>(null);
   const detailPaneRef = useRef<HTMLDivElement>(null);
+  const detailTitleId = useId();
   const listPaneRef = useRef<HTMLDivElement>(null);
   const listDimRef = useRef<HTMLDivElement>(null);
   const gestureRef = useRef<GestureState>({
@@ -350,6 +351,30 @@ export function SlidingCard({
 
   const renderedDetail = open ? detail : cachedDetail?.detail;
 
+  useLayoutEffect(() => {
+    const body = detailBodyRef.current;
+    const pane = detailPaneRef.current;
+    if (!body || !pane) return;
+
+    const labelFromDetailTitle = () => {
+      const title = body.querySelector<HTMLElement>(
+        ".client-detail-name, [data-slot='sheet-title'], h1, h2, h3, [role='heading']",
+      );
+      if (!title) {
+        pane.removeAttribute("aria-labelledby");
+        return;
+      }
+      if (!title.id) title.id = detailTitleId;
+      pane.setAttribute("aria-labelledby", title.id);
+    };
+
+    // Resolve before programmatic focus; keep async and cached detail titles connected.
+    labelFromDetailTitle();
+    const observer = new MutationObserver(labelFromDetailTitle);
+    observer.observe(body, { childList: true, subtree: true });
+    return () => observer.disconnect();
+  }, [detailTitleId, renderedDetail]);
+
   return (
     <div
       data-component={dataComponent}
@@ -397,7 +422,7 @@ export function SlidingCard({
           ref={detailPaneRef}
           tabIndex={-1}
           role="region"
-          aria-label={backLabel}
+          aria-label="상세 정보"
           data-component={`${dataComponent}_stage_detail-pane`}
           data-slot="detail-pane"
           aria-hidden={!open}

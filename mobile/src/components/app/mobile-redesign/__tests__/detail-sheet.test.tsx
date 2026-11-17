@@ -628,12 +628,12 @@ it.each([1, 2, 3])("uses exact grid tracks only for a two-action horizontal deta
   render(<MobileDetailActions data-component="mobile_clients_detail_actions" name="clients" actions={Array.from({ length: count }, (_, index) => ({ label: `동작 ${index}`, onClick: jest.fn() }))} />);
   const row = screen.getByRole("button", { name: "동작 0" }).parentElement;
   if (count === 2) {
-    expect(row).toHaveClass("grid!", "grid-cols-[minmax(0,1fr)_minmax(0,2fr)]", "[&>*]:min-w-0");
+    expect(row).toHaveClass("grid", "grid-cols-[minmax(0,1fr)_minmax(0,2fr)]", "[&>*]:min-w-0");
     expect(row).toHaveAttribute("data-source-component", "MobileDetailActions");
-  } else expect(row).not.toHaveClass("grid!");
+  } else expect(row).not.toHaveClass("grid");
 });
 
 it("preserves an explicitly vertical two-action detail layout", () => {
   render(<MobileDetailActions data-component="mobile_clients_detail_actions" name="clients" className="flex-col" actions={[{ label: "취소", onClick: jest.fn() }, { label: "확인", onClick: jest.fn() }]} />);
-  expect(screen.getByRole("button", { name: "취소" }).parentElement).not.toHaveClass("grid!");
+  expect(screen.getByRole("button", { name: "취소" }).parentElement).not.toHaveClass("grid");
 });

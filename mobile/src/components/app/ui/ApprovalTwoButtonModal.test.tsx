@@ -100,7 +100,7 @@ describe("ApprovalTwoButtonModal", () => {
       "mt-0", "text-center", "text-base", "leading-6", "break-keep", "[overflow-wrap:anywhere]", "text-v3-text-muted",
     );
     expect(description).not.toHaveClass("sr-only");
-    expect(cancel.parentElement).toHaveClass("mt-6", "grid!", "grid-cols-[minmax(0,1fr)_minmax(0,2fr)]", "gap-2");
+    expect(cancel.parentElement).toHaveClass("mt-6", "grid", "grid-cols-[minmax(0,1fr)_minmax(0,2fr)]", "gap-2");
     expect(cancel.parentElement).not.toHaveClass("mt-4");
     expect(cancel).toHaveClass("h-11", "min-w-0", "flex-1", "text-base", "leading-6");
     expect(approve).toHaveClass("h-11", "min-w-0", "flex-[2_1_0]", "text-base", "leading-6", "rounded-full");

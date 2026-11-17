@@ -13,6 +13,6 @@ it("puts revert before save with one-third and two-thirds widths", () => {
   const save = screen.getByRole("button", { name: "저장" });
   expect(Array.from(save.parentElement!.children)).toEqual([revert, save]);
   expect(revert).toHaveClass("flex-1", "min-h-11");
-  expect(save.parentElement).toHaveClass("grid!", "grid-cols-[minmax(0,1fr)_minmax(0,2fr)]");
+  expect(save.parentElement).toHaveClass("grid", "grid-cols-[minmax(0,1fr)_minmax(0,2fr)]");
   expect(save).toHaveClass("flex-[2]", "min-h-11");
 });
