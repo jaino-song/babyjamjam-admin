@@ -5,6 +5,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { Client } from "@/lib/client/types";
 import { fetchClient, useClient, useDeleteClient } from "@/hooks/useClients";
 import { useInfiniteClients } from "@/hooks/useInfiniteClients";
+import { useServiceRecordMissingClients } from "@/features/clients/hooks/use-clients";
 import ClientsPage from "./page";
 
 const mockRouter = { push: jest.fn(), replace: jest.fn() };
@@ -28,6 +29,10 @@ jest.mock("@/hooks/useClients", () => ({
   fetchClient: jest.fn(),
   useClient: jest.fn(),
   useDeleteClient: jest.fn(),
+}));
+
+jest.mock("@/features/clients/hooks/use-clients", () => ({
+  useServiceRecordMissingClients: jest.fn(),
 }));
 
 jest.mock("@/hooks/useInfiniteClients", () => ({
@@ -87,7 +92,7 @@ jest.mock("@/components/app/mobile-redesign/primitives", () => ({
     beforeFilters?: ReactNode;
     children: ReactNode;
     count?: ReactNode;
-    filters: Array<{ label: string; count: ReactNode }>;
+    filters: Array<{ label: string; count: ReactNode; skeleton?: boolean }>;
     onFilterChange?: (label: string) => void;
     title?: string;
   }) => (
@@ -97,7 +102,7 @@ jest.mock("@/components/app/mobile-redesign/primitives", () => ({
       <div data-testid="list-card-filters">
         {filters.map((filter) => (
           <button key={filter.label} type="button" onClick={() => onFilterChange?.(filter.label)}>
-            {filter.label} {filter.count}
+            {filter.label} {filter.skeleton ? <span aria-label="개수 로딩 중">로딩 중</span> : filter.count}
           </button>
         ))}
       </div>
@@ -158,12 +163,14 @@ jest.mock("@/components/app/clients/client-detail", () => ({
   }),
   ClientDetailContent: ({
     client,
+    activeTab,
     onDelete,
   }: {
     client: Client;
+    activeTab: string;
     onDelete: (id: number) => void;
   }) => (
-    <div data-testid={`client-detail-${client.id}`}>
+    <div data-testid={`client-detail-${client.id}`} data-active-tab={activeTab}>
       <span>{client.name}</span>
       <button type="button" aria-label={`delete client ${client.id}`} onClick={() => onDelete(client.id)}>
         삭제
@@ -196,6 +203,14 @@ const mockedFetchClient = jest.mocked(fetchClient);
 const mockedUseClient = jest.mocked(useClient);
 const mockedUseDeleteClient = jest.mocked(useDeleteClient);
 const mockedUseInfiniteClients = jest.mocked(useInfiniteClients);
+const mockedUseServiceRecordMissingClients = jest.mocked(useServiceRecordMissingClients);
+
+beforeEach(() => {
+  mockedUseServiceRecordMissingClients.mockReturnValue({
+    data: { count: 0, items: [] }, isLoading: false, isError: false,
+    isFetching: false, refetch: jest.fn(),
+  } as unknown as ReturnType<typeof useServiceRecordMissingClients>);
+});
 
 function makeClient(id: number): Client {
   return {
@@ -372,7 +387,7 @@ describe("ClientsPage list load states", () => {
     expect(screen.queryByText("등록된 고객이 없습니다.")).not.toBeInTheDocument();
     expect(screen.getByTestId("list-card-header-count")).not.toHaveTextContent("0명");
     const pills = within(screen.getByTestId("list-card-filters")).getAllByRole("button");
-    expect(pills).toHaveLength(3);
+    expect(pills).toHaveLength(4);
     for (const pill of pills) {
       expect(pill).not.toHaveTextContent("0");
       expect(pill).toBeEnabled();
@@ -424,5 +439,116 @@ describe("ClientsPage list load states", () => {
     expect(screen.getAllByText("로딩 중").length).toBeGreaterThan(0);
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     expect(screen.queryByText("등록된 고객이 없습니다.")).not.toBeInTheDocument();
+  });
+});
+
+
+describe("ClientsPage service-record-missing filter", () => {
+  const refetchMissing = jest.fn();
+  const clients = [makeClient(3), makeClient(1), makeClient(2)];
+  const missingData = {
+    count: 3,
+    items: [2, 3, 99].map((clientId) => ({
+      clientId, clientName: `고객 ${clientId}`, primaryEmployeeName: "제공인력",
+      unwrittenThroughSessionIndex: 4,
+    })),
+  };
+  function setMissing({ data, isLoading = false, isError = false }: {
+    data?: typeof missingData; isLoading?: boolean; isError?: boolean;
+  }) {
+    mockedUseServiceRecordMissingClients.mockReturnValue({
+      data, isLoading, isError, isFetching: false, refetch: refetchMissing,
+    } as unknown as ReturnType<typeof useServiceRecordMissingClients>);
+  }
+  beforeEach(() => {
+    jest.clearAllMocks();
+    mockClientId = null;
+    mockedUseClient.mockReturnValue({ data: undefined } as ReturnType<typeof useClient>);
+    mockedUseDeleteClient.mockReturnValue({ isPending: false, mutateAsync: jest.fn() } as unknown as ReturnType<typeof useDeleteClient>);
+    mockedFetchClient.mockImplementation(async (id) => makeClient(id));
+    mockedUseInfiniteClients.mockImplementation(({ search, searchFn } = {}) => ({
+      allClients: clients,
+      allFilteredClients: search?.trim() && searchFn ? clients.filter((client) => searchFn(client, search)) : clients,
+      total: clients.length, isLoading: false, isFetching: false, isError: false,
+      refetch: jest.fn(),
+    } as unknown as ReturnType<typeof useInfiniteClients>));
+    setMissing({ data: missingData });
+  });
+
+  it("places the tab after 계약서 필요, intersects loaded rows in list order, and applies search", () => {
+    renderPage(new QueryClient());
+    const tabs = within(screen.getByTestId("list-card-filters")).getAllByRole("button");
+    expect(tabs.map((tab) => tab.textContent?.trim())).toEqual([
+      "전체 3", "계약서 필요 3", "기록지 미작성 2", "진행 중 3",
+    ]);
+    expect(screen.getByRole("button", { name: "고객 1" })).toBeInTheDocument();
+    fireEvent.click(tabs[2]);
+    expect(screen.queryByRole("button", { name: "고객 1" })).not.toBeInTheDocument();
+    const row3 = screen.getByRole("button", { name: "고객 3" });
+    const row2 = screen.getByRole("button", { name: "고객 2" });
+    expect(row3.compareDocumentPosition(row2) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "고객 99" })).not.toBeInTheDocument();
+    fireEvent.change(screen.getByRole("textbox", { name: "고객 검색" }), { target: { value: "고객 2" } });
+    expect(screen.getByRole("button", { name: "기록지 미작성 1" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "고객 3" })).not.toBeInTheDocument();
+    fireEvent.change(screen.getByRole("textbox", { name: "고객 검색" }), { target: { value: "" } });
+    fireEvent.click(screen.getByRole("button", { name: "전체 3" }));
+    expect(screen.getByRole("button", { name: "고객 1" })).toBeInTheDocument();
+  });
+
+  it("shows a skeleton count and rows while loading, then a successful zero", () => {
+    setMissing({ isLoading: true });
+    const queryClient = new QueryClient();
+    const view = renderPage(queryClient);
+    const tab = screen.getByRole("button", { name: /기록지 미작성/ });
+    expect(within(tab).getByLabelText("개수 로딩 중")).toBeInTheDocument();
+    fireEvent.click(tab);
+    expect(screen.queryByText("조건에 맞는 고객이 없습니다.")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "고객 3" })).not.toBeInTheDocument();
+    setMissing({ data: { count: 0, items: [] } });
+    view.rerender(<QueryClientProvider client={queryClient}><ClientsPage /></QueryClientProvider>);
+    expect(screen.getByRole("button", { name: "기록지 미작성 0" })).toBeInTheDocument();
+    expect(screen.getByText("조건에 맞는 고객이 없습니다.")).toBeInTheDocument();
+  });
+
+  it.each([undefined, { count: 0, items: [] }])("shows a retryable error without zero or an empty success list (cache: %j), then recovers", (data) => {
+    setMissing({ data, isError: true });
+    const queryClient = new QueryClient();
+    const view = renderPage(queryClient);
+    expect(screen.getByRole("button", { name: "고객 1" })).toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "기록지 미작성" }));
+    expect(screen.getByRole("alert")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "기록지 미작성 0" })).not.toBeInTheDocument();
+    expect(screen.queryByText("조건에 맞는 고객이 없습니다.")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "다시 시도" }));
+    expect(refetchMissing).toHaveBeenCalledTimes(1);
+    setMissing({ data: missingData });
+    view.rerender(<QueryClientProvider client={queryClient}><ClientsPage /></QueryClientProvider>);
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "고객 3" })).toBeInTheDocument();
+  });
+
+  it("keeps cached matching rows with a stale notice and hides the failed count", () => {
+    setMissing({ data: missingData, isError: true });
+    renderPage(new QueryClient());
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "기록지 미작성" }));
+    expect(screen.getByRole("status")).toHaveTextContent("새로 불러오지 못해 최근에 확인된 목록을 표시하고 있어요");
+    expect(screen.getByRole("button", { name: "고객 3" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "고객 1" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("opens a missing row on serviceRecords and an 전체 row on basic", async () => {
+    renderPage(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
+    fireEvent.click(screen.getByRole("button", { name: "기록지 미작성 2" }));
+    fireEvent.click(screen.getByRole("button", { name: "고객 3" }));
+    await waitFor(() => expect(screen.getByTestId("client-detail-3")).toHaveAttribute("data-active-tab", "serviceRecords"));
+    fireEvent.click(screen.getByRole("button", { name: "전체 3" }));
+    // Changing the filter does not reset the already open client's selected tab.
+    expect(screen.getByTestId("client-detail-3")).toHaveAttribute("data-active-tab", "serviceRecords");
+    fireEvent.click(screen.getByRole("button", { name: "고객 1" }));
+    await waitFor(() => expect(screen.getByTestId("client-detail-1")).toHaveAttribute("data-active-tab", "basic"));
   });
 });

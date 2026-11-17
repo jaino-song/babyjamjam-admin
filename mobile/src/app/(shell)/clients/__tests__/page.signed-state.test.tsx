@@ -40,6 +40,10 @@ jest.mock("@/hooks/useClients", () => ({
   useDeleteClient: () => ({ isPending: false, mutateAsync: jest.fn() }),
 }));
 
+jest.mock("@/features/clients/hooks/use-clients", () => ({
+  useServiceRecordMissingClients: () => ({ data: { count: 0, items: [] }, isLoading: false, isError: false }),
+}));
+
 jest.mock("@/hooks/useInfiniteClients", () => ({
   useInfiniteClients: jest.fn(),
 }));

@@ -189,3 +189,13 @@ export function canEditServiceRecordSchedule(client: { serviceStatus?: ServiceSt
 export const CONTRACT_STATUS_OPTIONS = SERVICE_STATUS_OPTIONS;
 /** @deprecated Use ServiceStatus instead */
 export type ContractStatus = ServiceStatus;
+
+export interface ServiceRecordMissingClientsResponse {
+    count: number;
+    items: Array<{
+        clientId: number;
+        clientName: string;
+        primaryEmployeeName: string;
+        unwrittenThroughSessionIndex: number;
+    }>;
+}

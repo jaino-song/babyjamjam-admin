@@ -6,6 +6,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { useClientDetailController } from "@/components/app/clients/client-detail-controller";
 import { QueryErrorState } from "@/components/app/ui/QueryErrorState";
 import { StaleDataNotice } from "@/components/app/ui/StaleDataNotice";
+import { useServiceRecordMissingClients } from "@/features/clients/hooks/use-clients";
 import { useInfiniteClients } from "@/hooks/useInfiniteClients";
 import { useListInfiniteScroll } from "@/hooks/useListInfiniteScroll";
 import { Client } from "@/lib/client/types";
@@ -36,6 +37,7 @@ import "@/components/app/mobile-redesign/redesign.css";
 
 const ALL_FILTER = "전체";
 const CONTRACT_REQUIRED_FILTER = "계약서 필요";
+const SERVICE_RECORD_MISSING_FILTER = "기록지 미작성";
 const CLIENT_SECTIONS = [
   { id: "list", label: "고객 목록", icon: Users },
   { id: "automation", label: "자동화", icon: Workflow },
@@ -130,6 +132,8 @@ export default function ClientsPage() {
         ? matchesKoreanSearch(c.primaryEmployee.name, query)
         : false),
   });
+  const missingClientsQuery = useServiceRecordMissingClients();
+  const isMissingFilter = activeFilter === SERVICE_RECORD_MISSING_FILTER;
   const isClientsFetching = isLoading || (isFetching && allClients.length === 0);
 
   const handleCloseDetailSheet = () => {
@@ -147,6 +151,7 @@ export default function ClientsPage() {
   const detailController = useClientDetailController({
     client: selectedClient,
     clientId: selectedClientIdFromParam,
+    initialTab: isMissingFilter ? "serviceRecords" : "basic",
     dataComponent: "mobile_clients_detail-sheet_stack_detail-page_content",
     onClientUpdated: handleClientUpdated,
     onClientDeleted: handleCloseDetailSheet,
@@ -171,6 +176,10 @@ export default function ClientsPage() {
     () => allFilteredClients.filter(hasContractRequiredBadge),
     [allFilteredClients],
   );
+  const serviceRecordMissingClients = useMemo(() => {
+    const missingIds = new Set(missingClientsQuery.data?.items.map((item) => item.clientId));
+    return allFilteredClients.filter((client) => missingIds.has(client.id));
+  }, [allFilteredClients, missingClientsQuery.data]);
   const displayedClientCount = searchQuery.trim()
     ? allFilteredClients.length
     : total ?? allClients.length;
@@ -180,6 +189,7 @@ export default function ClientsPage() {
       return [
         { label: ALL_FILTER, count: "", skeleton: true },
         { label: CONTRACT_REQUIRED_FILTER, count: "", skeleton: true },
+        { label: SERVICE_RECORD_MISSING_FILTER, count: "", skeleton: true },
         ...GROUPS.map((g) => ({ label: g.title, count: "", skeleton: true })),
       ];
     }
@@ -194,6 +204,11 @@ export default function ClientsPage() {
         label: CONTRACT_REQUIRED_FILTER,
         count: hideCounts ? "" : String(contractRequiredClients.length),
       },
+      {
+        label: SERVICE_RECORD_MISSING_FILTER,
+        count: hideCounts || missingClientsQuery.isError ? "" : String(serviceRecordMissingClients.length),
+        skeleton: missingClientsQuery.isLoading,
+      },
     ];
     for (const g of GROUPS) {
       items.push({
@@ -202,7 +217,7 @@ export default function ClientsPage() {
       });
     }
     return items;
-  }, [allClients.length, contractRequiredClients.length, displayedClientCount, grouped.counts, isClientsFetching, isError]);
+  }, [allClients.length, contractRequiredClients.length, displayedClientCount, grouped.counts, isClientsFetching, isError, missingClientsQuery.isError, missingClientsQuery.isLoading, serviceRecordMissingClients.length]);
 
   const sectionsFull = useMemo(() => {
     type Section = {
@@ -233,6 +248,18 @@ export default function ClientsPage() {
         : [];
     }
 
+    if (activeFilter === SERVICE_RECORD_MISSING_FILTER) {
+      return serviceRecordMissingClients.length > 0
+        ? [{
+            key: "service_record_missing",
+            title: `${SERVICE_RECORD_MISSING_FILTER} · ${serviceRecordMissingClients.length}명`,
+            group: GROUPS[0],
+            fullRows: serviceRecordMissingClients,
+            fullCount: serviceRecordMissingClients.length,
+          }]
+        : [];
+    }
+
     // 개별 필터: 해당 상태 그룹 단일 섹션.
     const sections: Section[] = [];
     for (const g of GROUPS) {
@@ -248,7 +275,7 @@ export default function ClientsPage() {
       });
     }
     return sections;
-  }, [activeFilter, contractRequiredClients, grouped.map, allFilteredClients]);
+  }, [activeFilter, contractRequiredClients, serviceRecordMissingClients, grouped.map, allFilteredClients]);
 
   const maxFullCount = useMemo(
     () => sectionsFull.reduce((m, s) => Math.max(m, s.fullCount), 0),
@@ -332,7 +359,13 @@ export default function ClientsPage() {
                   message="새로 불러오지 못해 최근에 확인된 목록을 표시하고 있어요"
                 />
               )}
-              {isClientsFetching ? (
+              {isMissingFilter && missingClientsQuery.isError && serviceRecordMissingClients.length > 0 && (
+                <StaleDataNotice
+                  dataComponent="mobile_clients_detail-sheet_stack_list-page_content_list-card_body_missing-cached-error"
+                  message="새로 불러오지 못해 최근에 확인된 목록을 표시하고 있어요"
+                />
+              )}
+              {isClientsFetching || (isMissingFilter && missingClientsQuery.isLoading) ? (
                 <ListRowsSkeleton
                   data-component="mobile_clients_detail-sheet_stack_list-page_content_list-card_body_rows-skeleton"
                 />
@@ -342,6 +375,13 @@ export default function ClientsPage() {
                   size="panel"
                   onRetry={() => void refetch()}
                   isRetrying={isFetching}
+                />
+              ) : isMissingFilter && missingClientsQuery.isError && serviceRecordMissingClients.length === 0 ? (
+                <QueryErrorState
+                  dataComponent="mobile_clients_detail-sheet_stack_list-page_content_list-card_body_missing-error"
+                  size="panel"
+                  onRetry={() => void missingClientsQuery.refetch()}
+                  isRetrying={missingClientsQuery.isFetching}
                 />
               ) : visibleSections.length === 0 ? (
                 <div
