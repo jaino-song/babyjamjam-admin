@@ -2,6 +2,7 @@ import "reflect-metadata";
 
 import { ExecutionContext, INestApplication } from "@nestjs/common";
 import { Test } from "@nestjs/testing";
+import { GUARDS_METADATA } from "@nestjs/common/constants";
 import request from "supertest";
 
 import { ClientService } from "application/services/client.service";
@@ -12,6 +13,66 @@ import { TenantGuard } from "infrastructure/tenant";
 import { ClientController } from "./client.controller";
 
 const BRANCH_ID = "11111111-1111-1111-1111-111111111111";
+
+describe("ClientController GET /clients/service-record-missing", () => {
+    let app: INestApplication;
+    let controller: ClientController;
+    const service = { getServiceRecordMissing: jest.fn(), findById: jest.fn() };
+    const result = {
+        count: 1,
+        items: [{ clientId: 42, clientName: "김산모", primaryEmployeeName: "이관리", unwrittenThroughSessionIndex: 3 }],
+    };
+    const guard = {
+        canActivate: (context: ExecutionContext) => {
+            context.switchToHttp().getRequest().tenant = { branchId: BRANCH_ID };
+            return true;
+        },
+    };
+
+    beforeAll(async () => {
+        const moduleRef = await Test.createTestingModule({
+            controllers: [ClientController],
+            providers: [{ provide: ClientService, useValue: service }],
+        })
+            .overrideGuard(JwtGuard).useValue(guard)
+            .overrideGuard(TenantGuard).useValue(guard)
+            .compile();
+        controller = moduleRef.get(ClientController);
+        app = moduleRef.createNestApplication();
+        await app.init();
+    });
+
+    beforeEach(() => {
+        jest.clearAllMocks();
+        service.getServiceRecordMissing.mockResolvedValue(result);
+        service.findById.mockResolvedValue({ id: 42 });
+    });
+
+    afterAll(async () => { await app?.close(); });
+
+    it("routes the literal path ahead of :id and forwards the tenant branch", async () => {
+        await request(app.getHttpServer()).get("/clients/service-record-missing").expect(200, result);
+        expect(service.getServiceRecordMissing).toHaveBeenCalledTimes(1);
+        expect(service.getServiceRecordMissing).toHaveBeenCalledWith(BRANCH_ID);
+        expect(service.findById).not.toHaveBeenCalled();
+    });
+
+    it("keeps the numeric client lookup route available", async () => {
+        await request(app.getHttpServer()).get("/clients/42").expect(200, { id: 42 });
+        expect(service.findById).toHaveBeenCalledWith(BRANCH_ID, 42);
+        expect(service.getServiceRecordMissing).not.toHaveBeenCalled();
+    });
+
+    it("forwards an absent tenant branch as an empty string", async () => {
+        expect(await controller.getServiceRecordMissing({})).toEqual(result);
+        expect(service.getServiceRecordMissing).toHaveBeenCalledWith("");
+    });
+
+    it("inherits the existing JWT and tenant guards", () => {
+        expect(Reflect.getMetadata(GUARDS_METADATA, ClientController)).toEqual([JwtGuard, TenantGuard]);
+        expect(Reflect.getMetadata(GUARDS_METADATA, controller.getServiceRecordMissing)).toBeUndefined();
+    });
+});
 
 describe("ClientController PATCH /clients/:id expectedEndDate", () => {
     let app: INestApplication;
