@@ -16,6 +16,7 @@ export function ServiceRecordMissingStatMini({ name, density, onSelectClient }: 
   const { data, error, refetch } = useServiceRecordMissingClients();
   const [open, setOpen] = useState(false);
   const anchorRef = useRef<HTMLButtonElement | HTMLDivElement>(null);
+  if (data === undefined && open) setOpen(false);
   if (data === undefined || (data.count === 0 && !open)) return null;
   const base = `${name}_stats_service-record-missing`;
   return <>

@@ -72,6 +72,23 @@ it.each([true, false])("closes only when selection accepts the client: %s", acce
   expect(Boolean(screen.queryByRole("dialog"))).toBe(!accepted);
 });
 
+it.each([0, 2])("closes on a data reset and stays closed when new data has count %s", count => {
+  const { rerender } = render(<ServiceRecordMissingStatMini name="clients" onSelectClient={() => true} />);
+  fireEvent.click(trigger());
+  expect(screen.getByRole("dialog", { name: "제공기록지 미작성" })).toBeInTheDocument();
+
+  mockData = undefined;
+  rerender(<ServiceRecordMissingStatMini name="clients" onSelectClient={() => true} />);
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  expect(screen.queryByRole("button")).not.toBeInTheDocument();
+
+  mockData = { count, items: count === 0 ? [] : items };
+  rerender(<ServiceRecordMissingStatMini name="clients" onSelectClient={() => true} />);
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  if (count === 0) expect(screen.queryByRole("button")).not.toBeInTheDocument();
+  else expect(trigger()).toHaveAttribute("aria-expanded", "false");
+});
+
 it("keeps the mounted trigger and modal on refetch error, shows retry, and recovers", () => {
   const { rerender } = render(<ServiceRecordMissingStatMini name="clients" onSelectClient={() => true} />);
   const card = trigger();
@@ -79,6 +96,8 @@ it("keeps the mounted trigger and modal on refetch error, shows retry, and recov
   mockError = new Error("refetch failed");
   rerender(<ServiceRecordMissingStatMini name="clients" onSelectClient={() => true} />);
   expect(trigger()).toBe(card);
+  expect(trigger()).toHaveAttribute("aria-expanded", "true");
+  expect(screen.getByRole("dialog", { name: "제공기록지 미작성" })).toBeInTheDocument();
   expect(screen.getByRole("alert")).toHaveTextContent("제공기록지 미작성 고객을 불러오지 못했습니다.");
   expect(screen.queryByText("미작성 중인 서비스가 없습니다.")).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "다시 시도" }));

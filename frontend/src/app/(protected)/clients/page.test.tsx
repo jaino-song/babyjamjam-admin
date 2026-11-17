@@ -1170,6 +1170,31 @@ describe("ClientsPage missing service record navigation", () => {
     expect(screen.getByTestId("client-detail")).not.toHaveAttribute("data-nonce");
   });
 
+  it("clears the tab request after deep-linking from B to C and back to B", () => {
+    const clientC = { id: 63, name: "QA-다른 고객" };
+    const { rerender } = render(<ClientsPage />);
+    openMissing();
+    clickMissing();
+    mockSearchParams = new URLSearchParams(`id=${clientB.id}`);
+    mockClientFromParam = clientB;
+    rerender(<ClientsPage />);
+    expect(screen.getByTestId("client-detail")).toHaveTextContent(clientB.name);
+    expect(screen.getByTestId("client-detail")).toHaveAttribute("data-tab", "service-records");
+
+    mockSearchParams = new URLSearchParams(`id=${clientC.id}`);
+    mockClientFromParam = clientC;
+    rerender(<ClientsPage />);
+    expect(screen.getByTestId("client-detail")).toHaveTextContent(clientC.name);
+    expect(screen.getByTestId("client-detail")).toHaveAttribute("data-tab", "basic");
+
+    mockSearchParams = new URLSearchParams(`id=${clientB.id}`);
+    mockClientFromParam = clientB;
+    rerender(<ClientsPage />);
+    expect(screen.getByTestId("client-detail")).toHaveTextContent(clientB.name);
+    expect(screen.getByTestId("client-detail")).toHaveAttribute("data-tab", "basic");
+    expect(screen.getByTestId("client-detail")).not.toHaveAttribute("data-nonce");
+  });
+
   it("requests a new nonce for an already selected URL client", () => {
     mockSearchParams = new URLSearchParams("id=42");
     mockClientFromParam = clientB;
