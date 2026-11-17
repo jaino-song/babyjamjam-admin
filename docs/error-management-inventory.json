@@ -19613,6 +19613,14 @@
       "discovery_task_id": "1.1.10"
     },
     {
+      "path": "mobile/src/app/api/ai/chat/stream/route.ts",
+      "root": "mobile/src/",
+      "kind": "runtime",
+      "candidate_count": 3,
+      "review_status": "reviewed",
+      "discovery_task_id": "1.1.10"
+    },
+    {
       "path": "mobile/src/app/api/area-templates/__tests__/route.test.ts",
       "root": "mobile/src/",
       "kind": "test",
@@ -64018,6 +64026,50 @@
       "review_task": "1.1-batch-d",
       "spec_mapping_status": "mapped-em-v1",
       "spec_mapping_note": "Forwards raw Unauthorized 401 and raw Upstream unavailable 502."
+    },
+    {
+      "id": "owner-aa33b21bf336",
+      "path": "mobile/src/app/api/ai/chat/stream/route.ts",
+      "root": "mobile/src/",
+      "classification": "migrated",
+      "reason": "Converted in 6h1 (efb566de0, corr fdd2dad1a): raw bodies → mobile problem-responses helpers; check-email false-success 제거; refresh cookie-clearing 유지.",
+      "seams": [
+        {
+          "line": 20,
+          "kinds": [
+            "http_endpoint"
+          ]
+        },
+        {
+          "line": 45,
+          "kinds": [
+            "catch_boundary"
+          ]
+        },
+        {
+          "line": 56,
+          "kinds": [
+            "catch_boundary"
+          ]
+        }
+      ],
+      "discovery_task_id": "1.1.10",
+      "spec_ids": [
+        "EM-API-01",
+        "EM-API-02",
+        "EM-CAT-01",
+        "EM-ASYNC-02"
+      ],
+      "public_codes": [
+        "VALIDATION_FAILED"
+      ],
+      "outcome_evidence": null,
+      "consumer_paths": [],
+      "test_evidence": [],
+      "followup_task": null,
+      "review_task": "1.1-batch-d",
+      "spec_mapping_status": "mapped-em-v1",
+      "spec_mapping_note": "Retained unchanged as a D13 cutover sentinel until legacy removal is authorized; uses shared parseBody and problem-response helpers. Legacy route tests were removed with the unused chat API."
     },
     {
       "id": "owner-e3a601cb213a",
