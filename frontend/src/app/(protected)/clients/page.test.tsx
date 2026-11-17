@@ -1160,6 +1160,14 @@ describe("ClientsPage missing service record navigation", () => {
     fireEvent.click(screen.getByRole("button", { name: clientA.name }));
     expect(screen.getByTestId("client-detail")).toHaveTextContent(clientA.name);
     expect(screen.getByTestId("client-detail")).toHaveAttribute("data-tab", "basic");
+
+    // Matching the original request's client id must not revive a stale request.
+    mockDirectory.mockReturnValue({ clients: [clientA, clientB], data: {}, matchedTotal: 2, isBranchContextReady: true });
+    rerender(<ClientsPage />);
+    fireEvent.click(screen.getByRole("button", { name: clientB.name }));
+    expect(screen.getByTestId("client-detail")).toHaveTextContent(clientB.name);
+    expect(screen.getByTestId("client-detail")).toHaveAttribute("data-tab", "basic");
+    expect(screen.getByTestId("client-detail")).not.toHaveAttribute("data-nonce");
   });
 
   it("requests a new nonce for an already selected URL client", () => {
@@ -1204,13 +1212,32 @@ describe("ClientsPage missing service record navigation", () => {
     }
   });
 
-  it("clears a request on branch change", () => {
+  it("clears a request on branch change before the same client is opened again via URL", () => {
     mockSearchParams = new URLSearchParams("id=42"); mockClientFromParam = clientB;
     const { rerender } = render(<ClientsPage />);
     openMissing(); clickMissing();
+    expect(screen.getByTestId("client-detail")).toHaveTextContent(clientB.name);
+    expect(screen.getByTestId("client-detail")).toHaveAttribute("data-tab", "service-records");
+    expect(screen.getByTestId("client-detail")).toHaveAttribute("data-nonce");
+
     mockActiveBranchId = "branch-b";
     rerender(<ClientsPage />);
-    fireEvent.click(screen.getByRole("button", { name: clientA.name }));
+    expect(screen.queryByTestId("client-detail")).not.toBeInTheDocument();
+    expect(mockRouter.replace).toHaveBeenLastCalledWith("/clients");
+
+    // Resolve the branch-change URL cleanup, then return without a list selection
+    // (which would independently clear the request and mask a missing branch clear).
+    mockSearchParams = new URLSearchParams();
+    mockClientFromParam = undefined;
+    rerender(<ClientsPage />);
+    mockActiveBranchId = "branch-a";
+    rerender(<ClientsPage />);
+    mockSearchParams = new URLSearchParams("id=42");
+    mockClientFromParam = clientB;
+    rerender(<ClientsPage />);
+
+    expect(screen.getByTestId("client-detail")).toHaveTextContent(clientB.name);
     expect(screen.getByTestId("client-detail")).toHaveAttribute("data-tab", "basic");
+    expect(screen.getByTestId("client-detail")).not.toHaveAttribute("data-nonce");
   });
 });
