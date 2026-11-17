@@ -6,7 +6,7 @@ import { AgentMobileShell } from "./AgentMobileShell";
 jest.mock("next/navigation", () => ({ usePathname: () => "/agent" }));
 jest.mock("@/providers/UserProvider", () => ({ useInitialUser: () => ({ name: "관리자", branchName: "개발QA점" }) }));
 jest.mock("@/components/app/notifications/NotificationBell", () => ({
-    NotificationBell: (props: { "data-component"?: string }) => <button {...props} aria-label="알림 열기" />,
+    NotificationBell: (props: { "data-component"?: string; disabled?: boolean }) => <button {...props} aria-label="알림 열기" />,
 }));
 
 const mockSendMessage = jest.fn();
@@ -123,6 +123,32 @@ describe("AgentMobileShell drawer accessibility", () => {
         await user.click(menu);
         expect(menu).toHaveAttribute("aria-expanded", "false");
         expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    });
+
+    it("disables the notification bell while the drawer is open and restores it after closing", async () => {
+        const user = userEvent.setup();
+        render(<AgentMobileShell />);
+        const menu = screen.getByRole("button", { name: "대화 목록" });
+        const bell = screen.getByRole("button", { name: "알림 열기" });
+        expect(bell).toBeEnabled();
+
+        await user.click(menu);
+        const drawer = screen.getByRole("dialog", { name: "대화 목록" });
+        expect(bell).toBeDisabled();
+        await user.click(bell);
+        expect(bell).not.toHaveFocus();
+        expect(drawer).toHaveAttribute("data-open", "true");
+        await user.tab();
+        expect(menu).toHaveFocus();
+        await user.tab();
+        expect(within(drawer).getByRole("button", { name: "새 대화" })).toHaveFocus();
+
+        await user.keyboard("{Escape}");
+        expect(bell).toBeEnabled();
+        expect(menu).toHaveFocus();
+        await user.tab();
+        await user.tab();
+        expect(bell).toHaveFocus();
     });
 
     it("preserves selection, deletion, and new conversation actions", async () => {

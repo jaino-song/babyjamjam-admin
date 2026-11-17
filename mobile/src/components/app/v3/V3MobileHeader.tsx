@@ -20,6 +20,8 @@ interface V3MobileHeaderProps {
   trailingSlot?: ReactNode;
   /** Render inside a route's own shell instead of the fixed global header. */
   embedded?: boolean;
+  /** Disable the bell while a route-owned modal drawer contains focus. */
+  notificationsDisabled?: boolean;
   className?: string;
 }
 
@@ -29,6 +31,7 @@ export function V3MobileHeader({
   leadingSlot,
   trailingSlot,
   embedded = false,
+  notificationsDisabled = false,
   className,
 }: V3MobileHeaderProps) {
   const pathname = usePathname();
@@ -56,7 +59,7 @@ export function V3MobileHeader({
       </div>
       <div className="navbar-icons" data-component={sub("icons")} data-slot="mobile-header-icons">
         {trailingSlot}
-        <NotificationBell data-component={`${sub("icons")}_notification-bell`} className="!rounded-xl bg-transparent hover:bg-transparent hover:scale-100 active:scale-100 text-v3-text" />
+        <NotificationBell data-component={`${sub("icons")}_notification-bell`} disabled={notificationsDisabled} className="!rounded-xl bg-transparent hover:bg-transparent hover:scale-100 active:scale-100 text-v3-text" />
       </div>
     </header>
   );
