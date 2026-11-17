@@ -27,6 +27,10 @@ import { formatHolidayDate } from "./holiday-format";
 import styles from "./holiday-page-shell.module.css";
 
 const DATA_COMPONENT = "mobile_holidays_settings";
+const BODY_DATA_COMPONENT = `${DATA_COMPONENT}_content_card_body`;
+const SYNC_CONTROLS_DATA_COMPONENT = `${BODY_DATA_COMPONENT}_sync-controls`;
+const TOOLBAR_DATA_COMPONENT = `${SYNC_CONTROLS_DATA_COMPONENT}_toolbar`;
+const YEAR_TABS_DATA_COMPONENT = `${TOOLBAR_DATA_COMPONENT}_year-tabs`;
 const RATE_LIMITED_MESSAGE = "잠시 후 다시 시도해 주세요.";
 
 interface HolidaySettingsSectionProps {
@@ -146,11 +150,12 @@ export function HolidaySettingsSection({ branchId, branchName }: HolidaySettings
       title="지점 공휴일"
     >
       <div
-        data-component={`${DATA_COMPONENT}_sync-controls`}
+        data-component={SYNC_CONTROLS_DATA_COMPONENT}
         data-slot="holiday-sync-controls"
         className={styles.syncControls}
       >
         <HolidaySyncStrip
+          dataComponent={`${SYNC_CONTROLS_DATA_COMPONENT}_sync-strip`}
           synced={data?.synced ?? false}
           statusUnknown={data === undefined}
           lastSyncedAt={data?.lastSyncedAt ?? null}
@@ -162,7 +167,7 @@ export function HolidaySettingsSection({ branchId, branchName }: HolidaySettings
         />
 
         <div
-          data-component={`${DATA_COMPONENT}_toolbar`}
+          data-component={TOOLBAR_DATA_COMPONENT}
           className="grid gap-2"
         >
           <TogglePill
@@ -172,15 +177,16 @@ export function HolidaySettingsSection({ branchId, branchName }: HolidaySettings
             rightLabel={String(currentYear + 1)}
             ariaLabel="연도"
             fullWidth
-            data-component={`${DATA_COMPONENT}_toolbar_year-tabs`}
-            indicatorDataComponent={`${DATA_COMPONENT}_toolbar_year-tabs_indicator`}
-            leftButtonDataComponent={`${DATA_COMPONENT}_toolbar_year-tabs_current`}
-            rightButtonDataComponent={`${DATA_COMPONENT}_toolbar_year-tabs_next`}
+            data-component={YEAR_TABS_DATA_COMPONENT}
+            indicatorDataComponent={`${YEAR_TABS_DATA_COMPONENT}_indicator`}
+            leftButtonDataComponent={`${YEAR_TABS_DATA_COMPONENT}_current`}
+            rightButtonDataComponent={`${YEAR_TABS_DATA_COMPONENT}_next`}
           />
         </div>
       </div>
 
       <HolidayAddForm
+        dataComponent={`${BODY_DATA_COMPONENT}_add-form`}
         today={today}
         years={years}
         pending={addMutation.isPending}
@@ -188,7 +194,7 @@ export function HolidaySettingsSection({ branchId, branchName }: HolidaySettings
       />
 
       <div
-        data-component={`${DATA_COMPONENT}_list-scroll`}
+        data-component={`${BODY_DATA_COMPONENT}_list-scroll`}
         data-slot="holiday-list-scroll"
         className={styles.listScroll}
       >
