@@ -12,6 +12,7 @@ import {
 import type { CreateMessageTriggerRuleGroupDto, MessageTriggerRuleGroupView, MessageTriggerRecipientMode, MessageTriggerRecipientType, MessageTriggerTemplateKey, MessageTriggerRuleGroupPreviewResponse } from "@babyjamjam/shared/types/message";
 import { isAxiosError } from "axios";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { ActionRow } from "@/components/ui/action-row";
 import { messageTriggerKeys } from "@/features/message-triggers/hooks/keys";
 import { messageRuleGroupsApi, settingsApi } from "@/services/api";
 import { useGetAuthUser } from "@/hooks/useGetAuthUser";
@@ -135,7 +136,8 @@ export function MessageTriggerEditor({
   const sendTimeInitialized = useRef(Boolean(rule || group));
   const groupMode = !rule;
   const hasDeleteAction = Boolean(group || rule && !rule.isDefault);
-  const hasActionPair = Boolean(onCancel) && !hasDeleteAction;
+  const hasActionPair = Number(Boolean(onCancel)) + Number(hasDeleteAction) === 1;
+  const ActionContainer = hasActionPair ? ActionRow : "div";
   const [expectedGroupVersion, setExpectedGroupVersion] = useState(group?.version ?? null);
   const [form, setForm] = useState<RuleForm>(() => group ? { ...initialForm(null), name: group.name, isActive: group.isActive, eventType: group.eventType, offsetType: group.offsetType, offsetDays: group.offsetDays, sendTime: group.sendTime, targetClientStatus: group.targetClientStatus, retryOnFailure: group.retryOnFailure } : initialForm(rule));
   const [recipientMode, setRecipientMode] = useState<MessageTriggerRecipientMode>(group?.recipientMode ?? rule?.recipientType ?? "CLIENT");
@@ -463,7 +465,7 @@ export function MessageTriggerEditor({
         </div> : null}
         {error ? <p className="text-sm font-semibold text-v3-burgundy" role="alert">{error}</p> : null}
 
-        <div className="flex gap-2" data-component={`${dataComponent}_form_actions`}>
+        <ActionContainer className={hasActionPair ? undefined : "flex gap-2"} data-component={`${dataComponent}_form_actions`}>
           {onCancel ? <Button type="button" data-component={`${dataComponent}_form_actions_cancel`} className={hasActionPair ? "flex-1" : undefined} variant="v3-soft" disabled={isPending} onClick={onCancel}>취소</Button> : null}
           {hasDeleteAction ? (
             <button
@@ -486,7 +488,7 @@ export function MessageTriggerEditor({
           >
             <ButtonLoadingContent loading={isPending} loadingLabel="저장 중">규칙 저장</ButtonLoadingContent>
           </button>
-        </div>
+        </ActionContainer>
         </fieldset>
       </form>
 

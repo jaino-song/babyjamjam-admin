@@ -3,6 +3,7 @@
 import type { ReactNode } from "react";
 import { Dialog as DialogPrimitive } from "radix-ui";
 
+import { ActionRow } from "@/components/ui/action-row";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
@@ -46,6 +47,7 @@ export function ApprovalTwoButtonModal({
   size = "compact",
   buttonRatio = "one-two",
 }: ApprovalTwoButtonModalProps) {
+  const Footer = buttonRatio === "equal" ? "div" : ActionRow;
   const sub = (suffix: string) => `${dataComponent}_${suffix}`;
   const handleOpenChange = (nextOpen: boolean) => {
     if (!nextOpen && isPending) return;
@@ -101,7 +103,7 @@ export function ApprovalTwoButtonModal({
             </div>
           ) : null}
 
-          <div data-component={sub("footer")} className="mt-6 flex gap-2">
+          <Footer data-component={sub("footer")} className={buttonRatio === "equal" ? "mt-6 flex gap-2" : "mt-6"}>
             <Button
               type="button"
               variant="v3-outline"
@@ -133,7 +135,7 @@ export function ApprovalTwoButtonModal({
             >
               {pendingDisplay === "text" && isPending ? (pendingLabel ?? approvalLabel) : approvalLabel}
             </Button>
-          </div>
+          </Footer>
         </DialogPrimitive.Content>
       </DialogPrimitive.Portal>
     </DialogPrimitive.Root>

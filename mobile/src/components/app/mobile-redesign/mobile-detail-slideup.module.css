@@ -129,3 +129,8 @@
   opacity: 0.45;
   box-shadow: none;
 }
+
+.footer:has(> :first-child:nth-last-child(2)) {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 2fr);
+}

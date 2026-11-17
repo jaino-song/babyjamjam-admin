@@ -32,7 +32,7 @@ import { useDocumentUploadCapabilities, useUploadDocument } from "@/hooks/use-do
 import { useNavigationPending } from "@/hooks/use-navigation-pending";
 import { useToast } from "@/hooks/use-toast";
 import { LoadingState } from "@/components/app/ui/LoadingState";
-import { ButtonLoadingContent } from "@/components/ui/button";
+import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
 import { QueryErrorState } from "@/components/app/ui/QueryErrorState";
 
@@ -472,7 +472,7 @@ export function FileUploadScreen() {
             <label htmlFor="file-tags" data-slot="form-label" className={styles.formLabel}>
               태그
             </label>
-            <div data-component="mobile_files-upload_screen_root_scroll_tags-card_row_input-wrap" className={styles.tagInputWrap}>
+            <div data-component="mobile_files-upload_screen_root_scroll_tags-card_row_input-wrap" data-slot="tag-input-wrap" className={styles.tagInputWrap}>
               {tags.map((tag) => (
                 <span key={tag} className={styles.tagChip}>
                   {tag}
@@ -489,6 +489,7 @@ export function FileUploadScreen() {
               ))}
               <input
                 id="file-tags"
+                data-slot="tag-input"
                 className={styles.tagInput}
                 value={tagInput}
                 maxLength={MAX_DOCUMENT_TAG_LENGTH}
@@ -502,26 +503,26 @@ export function FileUploadScreen() {
         </section>
       </main>
 
-      <footer data-component="mobile_files-upload_screen_root_actions" className={styles.uploadActions}>
-        <button
+      <footer data-component="mobile_files-upload_screen_root_actions" data-slot="upload-actions" className={styles.uploadActions}>
+        <Button
           type="button"
-          className={`${styles.uploadBtn} ${styles.secondary}`}
+          variant="secondary"
+          data-component="mobile_files-upload_screen_root_actions_cancel"
           onClick={handleExit}
           disabled={isUploading}
         >
           취소
-        </button>
-        <button
+        </Button>
+        <Button
           type="button"
-          className={`${styles.uploadBtn} ${styles.primary} ${isUploading ? "relative" : ""}`}
-          data-slot="upload-btn"
-          disabled={isUploading || !canSubmit}
-          aria-busy={isUploading || undefined}
-          data-loading={isUploading ? "" : undefined}
+          data-component="mobile_files-upload_screen_root_actions_submit"
+          disabled={!canSubmit}
+          loading={isUploading}
+          loadingLabel="업로드 중"
           onClick={handleSubmit}
         >
-          <ButtonLoadingContent loading={isUploading} loadingLabel="업로드 중">업로드 완료</ButtonLoadingContent>
-        </button>
+          업로드 완료
+        </Button>
       </footer>
     </section>
   );

@@ -153,7 +153,7 @@ describe("SlidingCard", () => {
     expect(detailPane).toHaveAttribute("inert");
   });
 
-  it("hides the list pane and focuses the back button when open", () => {
+  it("hides the list pane and focuses the detail container without a button ring when open", () => {
     const { container } = render(
       <SlidingCard
         data-component={DATA_COMPONENT}
@@ -180,7 +180,12 @@ describe("SlidingCard", () => {
     expect(listPane).toHaveAttribute("inert");
     expect(detailPane).not.toHaveAttribute("aria-hidden", "true");
     expect(detailPane).not.toHaveAttribute("inert");
-    expect(backButton).toHaveFocus();
+    expect(detailPane).toHaveFocus();
+    expect(detailPane).toHaveAttribute("tabindex", "-1");
+    expect(detailPane).toHaveAttribute("role", "region");
+    expect(detailPane).toHaveAccessibleName("설정");
+    expect(detailPane).toHaveClass("outline-none");
+    expect(backButton).not.toHaveFocus();
   });
 
   it("calls onBack when the back button is clicked", () => {
@@ -553,7 +558,7 @@ describe("SlidingCard", () => {
       list: <button type="button">Open detail</button>,
       detail: <div>Detail content</div>,
     };
-    const { rerender } = render(<SlidingCard {...props} open={false} />);
+    const { container, rerender } = render(<SlidingCard {...props} open={false} />);
     const opener = screen.getByRole("button", { name: "Open detail" });
     opener.focus();
     fireEvent.focusIn(opener);
@@ -563,12 +568,18 @@ describe("SlidingCard", () => {
     expect(document.body).toHaveFocus();
 
     rerender(<SlidingCard {...props} open />);
+    const detailPane = container.querySelector<HTMLElement>('[data-slot="detail-pane"]')!;
     const backButton = screen.getByRole("button", {
       name: "설정 목록으로 돌아가기",
     });
-    expect(backButton).toHaveFocus();
+    expect(detailPane).toHaveFocus();
+    expect(detailPane).toHaveAttribute("tabindex", "-1");
+    expect(detailPane).toHaveAttribute("role", "region");
+    expect(detailPane).toHaveAccessibleName("설정");
+    expect(detailPane).toHaveClass("outline-none");
+    expect(backButton).not.toHaveFocus();
 
-    backButton.blur();
+    detailPane.blur();
     expect(document.body).toHaveFocus();
 
     rerender(

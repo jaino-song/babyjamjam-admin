@@ -50,3 +50,9 @@ it("uses the approved outline for the not-proceeding action", () => {
     expect(rule(".secondaryButton")).toContain(declaration);
   }
 });
+
+it("uses exact grid tracks for padded wizard actions", () => {
+  expect(rule(".wizardActions")).toContain("display: grid;");
+  expect(rule(".wizardActions")).toContain("grid-template-columns: minmax(0, 1fr) minmax(0, 2fr);");
+  expect(rule(".wizardActions > :only-child")).toContain("grid-column: 1 / -1;");
+});

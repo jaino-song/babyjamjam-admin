@@ -68,7 +68,6 @@ export function SlidingCard({
   const detailPaneRef = useRef<HTMLDivElement>(null);
   const listPaneRef = useRef<HTMLDivElement>(null);
   const listDimRef = useRef<HTMLDivElement>(null);
-  const backButtonRef = useRef<HTMLButtonElement>(null);
   const gestureRef = useRef<GestureState>({
     pointerId: null,
     startX: 0,
@@ -150,7 +149,7 @@ export function SlidingCard({
       restoreFocusRef.current = lastListFocusRef.current;
       // preventScroll: 슬라이드 중인 pane 안 요소에 focus가 가면 브라우저가
       // overflow:hidden stage를 강제 스크롤해 전환이 점프/튕김으로 보인다.
-      backButtonRef.current?.focus({ preventScroll: true });
+      detailPaneRef.current?.focus({ preventScroll: true });
     } else if (wasOpen && !open) {
       const elementToRestore = restoreFocusRef.current;
       if (elementToRestore?.isConnected) {
@@ -396,12 +395,16 @@ export function SlidingCard({
 
         <div
           ref={detailPaneRef}
+          tabIndex={-1}
+          role="region"
+          aria-label={backLabel}
           data-component={`${dataComponent}_stage_detail-pane`}
           data-slot="detail-pane"
           aria-hidden={!open}
           inert={!open || undefined}
           className={cn(
             styles.detailPane,
+            "outline-none",
             open && styles.detailPaneOpen,
             isDragging && styles.dragging,
           )}
@@ -431,7 +434,6 @@ export function SlidingCard({
             className={styles.detailHeader}
           >
             <button
-              ref={backButtonRef}
               type="button"
               aria-label={`${backLabel} 목록으로 돌아가기`}
               data-component={`${dataComponent}_stage_detail-pane_header_back`}

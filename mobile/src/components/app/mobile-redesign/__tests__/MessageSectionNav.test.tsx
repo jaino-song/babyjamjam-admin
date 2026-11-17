@@ -171,3 +171,16 @@ describe("MessageSectionNav", () => {
     expect(screen.getByRole("button", { name: BRANCH_MANAGEMENT_LABEL })).toBeEnabled();
   });
 });
+
+it("keeps the current message section active while sender approval is pending", () => {
+  mockUseGetAuthUser.mockReturnValue({ data: { role: "owner" }, isPending: false, isError: false });
+  mockUseMessagesPermissionGuard.mockReturnValue({ isLoading: false, needsSenderApproval: true });
+  render(<MessageSectionNav data-component="mobile_tests_message-section-nav" activeId="triggers" />);
+  const active = screen.getByRole("button", { name: "자동 전송" });
+  expect(active).toBeDisabled();
+  expect(active).toHaveAttribute("aria-pressed", "true");
+  expect(active).toHaveClass("bg-[hsl(var(--v3-primary))]", "text-white");
+  expect(active).not.toHaveClass("opacity-40");
+  fireEvent.click(active);
+  expect(mockPush).not.toHaveBeenCalled();
+});

@@ -3236,11 +3236,12 @@ body:has(.auth-layout .auth-screen) main[data-slot="main-content"] {
 }
 .auth-input {
   width: 100%;
-  padding: 14px 16px;
+  height: 44px;
+  padding: 0 16px;
   border: 1px solid hsl(var(--v3-border));
-  border-radius: 14px;
+  border-radius: 12px;
   font-family: inherit;
-  font-size: 0.9rem;
+  font-size: 16px;
   color: hsl(var(--v3-dark));
   background: white;
   outline: none;
@@ -4026,8 +4027,10 @@ body:has([data-slot="auth-register-page"]) main[data-slot="main-content"] {
 }
 
 [data-slot="auth-register-page"] .auth-input {
-  padding: 13px 16px;
-  font-size: 0.9rem;
+  height: 44px;
+  padding: 0 16px;
+  border-radius: 12px;
+  font-size: 16px;
 }
 
 [data-slot="auth-register-page"] .auth-input.has-trailing {

@@ -10,6 +10,7 @@ interface AuthCardProps {
   contentClassName?: string;
   disableAnimation?: boolean;
   variant?: "default" | "v3";
+  spacing?: "default" | "legal";
   /** Canonical data-component value for the surface that renders this card. */
   "data-component": string;
   "data-slot"?: string;
@@ -23,6 +24,7 @@ export function AuthCard({
   contentClassName,
   disableAnimation = false,
   variant = "default",
+  spacing = "default",
   "data-component": dataComponent,
   "data-slot": dataSlot,
 }: AuthCardProps) {
@@ -52,6 +54,7 @@ export function AuthCard({
           className={cn(
             "p-0",
             isV3 && "pb-8 pt-4",
+            spacing === "legal" && "gap-[25px]! [&>.list-title]:h-auto! [&>.list-title]:min-h-0! [&>.list-title]:py-0! [&>p:last-child]:pt-[30px]",
             contentClassName
           )}
         >

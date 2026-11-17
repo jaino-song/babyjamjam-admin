@@ -110,10 +110,10 @@ function DialogFooter({
     <div
       data-slot="dialog-footer"
       className={cn(
-        "flex gap-2",
+        "gap-2",
         isActionPair
-          ? "flex-row [&>*:first-child]:flex-1 [&>*:last-child]:flex-[2]"
-          : "flex-col-reverse sm:flex-row sm:justify-end",
+          ? "grid grid-cols-[minmax(0,1fr)_minmax(0,2fr)] [&>*]:min-w-0"
+          : "flex flex-col-reverse sm:flex-row sm:justify-end",
         className
       )}
       {...props}
