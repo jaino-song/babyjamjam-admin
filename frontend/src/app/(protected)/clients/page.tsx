@@ -393,6 +393,7 @@ export default function ClientsPage() {
             return;
         }
         previousClientIdParamRef.current = clientIdParam;
+        setTabRequest(request => request?.clientId === Number(clientIdParam) ? request : null);
         if (clientIdParam) {
             setSelectedClient(null);
             setUrlSelectionSuppressed(false);
