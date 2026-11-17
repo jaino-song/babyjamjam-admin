@@ -4428,12 +4428,6 @@ body:has([data-slot="consultations-content"]) [data-slot="main-content"] {
   color: hsl(var(--v3-text));
 }
 
-/* /files originally inherited V3MainContent's pt-20 in the approved snapshot.
-   Keep that 80px inset while retaining the bounded list/detail shell. */
-body:has([data-slot="files-content"]) [data-slot="main-content"] {
-  padding: 80px 0 0 !important;
-}
-
 body:has([data-slot="files-content"]) .mobile-detail-sheet,
 body:has([data-slot="clients-content"]) .mobile-detail-sheet,
 body:has([data-slot="calls-content"]) .mobile-detail-sheet,
@@ -4504,6 +4498,12 @@ body:has([data-slot="admin-feedback-content"]) [data-slot="admin-feedback-conten
   padding: 12px 14px calc(var(--list-nav-height) + var(--list-nav-bottom) + 12px);
   overflow-x: hidden;
   overflow-y: auto;
+}
+
+/* Keep the file card at 92px without shifting the detail stack or its scrim
+   below the shared 64px header inset. */
+body:has([data-slot="files-content"]) [data-slot="files-content"] {
+  padding-top: 28px;
 }
 
 /* Holidays opts into mobile-all-route: its nav is 40px + 10px padding +
