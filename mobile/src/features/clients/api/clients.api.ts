@@ -5,7 +5,8 @@ import type {
   UpdateClientDto,
   TerminateServiceDto,
   RequestReplacementDto,
-  PaginatedResponse
+  PaginatedResponse,
+  ServiceRecordMissingClientsResponse
 } from '../types';
 
 /**
@@ -24,6 +25,9 @@ export const clientsApi = {
 
     return api.get<PaginatedResponse<Client>>(`/clients?${searchParams.toString()}`);
   },
+
+  listServiceRecordMissing: () =>
+    api.get<ServiceRecordMissingClientsResponse>('/clients/service-record-missing'),
 
   /**
    * Fetch all clients (non-paginated, for dropdowns)
