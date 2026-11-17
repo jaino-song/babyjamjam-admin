@@ -23,7 +23,7 @@ describe("MobileTwoButtonModal", () => {
 
     const buttons = screen.getAllByRole("button");
     expect(buttons).toHaveLength(2);
-    expect(buttons[0].parentElement).toHaveClass("grid!", "grid-cols-[minmax(0,1fr)_minmax(0,2fr)]");
+    expect(buttons[0].parentElement).toHaveClass("grid", "grid-cols-[minmax(0,1fr)_minmax(0,2fr)]");
     expect(buttons[0]).toHaveTextContent("취소");
     expect(buttons[0]).toHaveClass("min-w-0", "flex-1");
     expect(buttons[1]).toHaveTextContent("확인");

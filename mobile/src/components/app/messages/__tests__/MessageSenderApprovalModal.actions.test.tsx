@@ -29,6 +29,10 @@ it("puts outline cancel before request with one-third and two-thirds widths", ()
   expect(cancel).toHaveClass("flex-1", "border");
   expect(request).toHaveClass("flex-[2]");
   expect(cancel.parentElement).toHaveClass("grid", "grid-cols-[minmax(0,1fr)_minmax(0,2fr)]", "[&>*]:min-w-0");
+  expect(cancel.parentElement).toHaveAttribute("data-source-component", "ActionRow");
+  expect(cancel.parentElement).toHaveAttribute("data-slot", "action-row");
+  expect(cancel).toHaveClass("h-10", "rounded-full");
+  expect(request).toHaveClass("h-10", "rounded-full");
   expect(screen.getByRole("dialog")).toHaveFocus();
   expect(screen.getByRole("dialog")).toHaveAttribute("tabindex", "-1");
   expect(screen.getByRole("dialog")).toHaveClass("outline-none");
@@ -45,6 +49,8 @@ it.each([{ isApprovalPending: true, needsRequestPermission: false }, { needsRequ
   render(<MessageSenderApprovalModal open {...props} onOpenChange={jest.fn()} onCancel={jest.fn()} onRequest={jest.fn()} />);
   expect(screen.getAllByRole("button")).toHaveLength(1);
   expect(screen.getByRole("button", { name: "확인" })).toHaveClass("flex-1");
+  expect(screen.getByRole("button", { name: "확인" }).parentElement).toHaveClass("flex");
+  expect(screen.getByRole("button", { name: "확인" }).parentElement).not.toHaveAttribute("data-source-component", "ActionRow");
   const dialog = screen.getByRole("dialog");
   expect(dialog).toHaveFocus();
   expect(dialog.matches(":focus-visible")).toBe(true);

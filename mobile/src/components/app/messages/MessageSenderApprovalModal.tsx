@@ -3,6 +3,7 @@
 import { useRef } from "react";
 import { Dialog as DialogPrimitive } from "radix-ui";
 
+import { ActionRow } from "@/components/ui/action-row";
 import { Button } from "@/components/ui/button";
 import { DialogHeader } from "@/components/ui/dialog";
 
@@ -26,6 +27,7 @@ export function MessageSenderApprovalModal({
   const contentRef = useRef<HTMLDivElement>(null);
   const openerRef = useRef<HTMLElement | null>(null);
   const isConfirmOnly = isApprovalPending || needsRequestPermission;
+  const Actions = isConfirmOnly ? "div" : ActionRow;
 
   return (
     <DialogPrimitive.Root open={open} onOpenChange={onOpenChange}>
@@ -85,7 +87,7 @@ export function MessageSenderApprovalModal({
               </DialogPrimitive.Description>
             )}
           </DialogHeader>
-          <div className={isConfirmOnly ? "mt-2 flex gap-2" : "mt-2 grid grid-cols-[minmax(0,1fr)_minmax(0,2fr)] gap-2 [&>*]:min-w-0"} data-component="mobile_messages_sender-approval-modal_panel_actions">
+          <Actions className={isConfirmOnly ? "mt-2 flex gap-2" : "mt-2"} data-component="mobile_messages_sender-approval-modal_panel_actions">
             {isConfirmOnly ? (
               <Button type="button" variant="v3" className="flex-1" onClick={onCancel}>
                 확인
@@ -100,7 +102,7 @@ export function MessageSenderApprovalModal({
                 </Button>
               </>
             )}
-          </div>
+          </Actions>
         </DialogPrimitive.Content>
       </DialogPrimitive.Portal>
     </DialogPrimitive.Root>

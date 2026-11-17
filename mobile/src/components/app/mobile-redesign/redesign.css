@@ -2039,8 +2039,10 @@ body.mobile-all-route .menu-row {
 
 /* ===== Detail action button row ===== */
 .detail-actions {
-  display: flex;
   gap: 8px;
+}
+.detail-actions:not(.action-row) {
+  display: flex;
 }
 /* Only horizontal rows with exactly two actions use the shared ratio. */
 .detail-actions:not(.flex-col) > .btn:first-child:nth-last-child(2) {
@@ -4104,9 +4106,12 @@ body:has([data-slot="auth-register-page"]) main[data-slot="main-content"] {
 }
 
 [data-slot="auth-register-page"] .auth-actions {
-  display: flex;
   gap: 8px;
   margin-top: 16px;
+}
+
+[data-slot="auth-register-page"] .auth-actions:not(.action-row) {
+  display: flex;
 }
 
 [data-slot="auth-register-page"] .auth-btn {
