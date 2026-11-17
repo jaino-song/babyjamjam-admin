@@ -145,7 +145,11 @@ export function HolidaySettingsSection({ branchId, branchName }: HolidaySettings
       dataComponent={DATA_COMPONENT}
       title="지점 공휴일"
     >
-      <div data-slot="holiday-sync-controls" className={styles.syncControls}>
+      <div
+        data-component={`${DATA_COMPONENT}_sync-controls`}
+        data-slot="holiday-sync-controls"
+        className={styles.syncControls}
+      >
         <HolidaySyncStrip
           synced={data?.synced ?? false}
           statusUnknown={data === undefined}

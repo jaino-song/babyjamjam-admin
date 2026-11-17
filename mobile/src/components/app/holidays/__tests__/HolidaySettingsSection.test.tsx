@@ -109,6 +109,7 @@ describe("HolidaySettingsSection", () => {
       const sync = screen.getByRole("button", { name: "지금 동기화" });
       const tabs = screen.getByRole("tablist", { name: "연도" });
       const controls = tabs.closest('[data-slot="holiday-sync-controls"]');
+      expect(controls).toHaveAttribute("data-component", "mobile_holidays_settings_sync-controls");
       expect(controls).toContainElement(sync);
       expect(controls).toHaveClass(styles.syncControls);
       expect(controls).toHaveStyle({ display: "flex", flexDirection: "column", gap: "34px", flexShrink: "0" });
