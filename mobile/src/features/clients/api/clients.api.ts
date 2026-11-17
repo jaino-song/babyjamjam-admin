@@ -1,12 +1,13 @@
 import { api } from '@/lib/api/client';
+
+import { parseServiceRecordMissingClients } from './service-record-missing';
 import type {
   Client,
   CreateClientDto,
   UpdateClientDto,
   TerminateServiceDto,
   RequestReplacementDto,
-  PaginatedResponse,
-  ServiceRecordMissingClientsResponse
+  PaginatedResponse
 } from '../types';
 
 /**
@@ -26,8 +27,10 @@ export const clientsApi = {
     return api.get<PaginatedResponse<Client>>(`/clients?${searchParams.toString()}`);
   },
 
-  listServiceRecordMissing: () =>
-    api.get<ServiceRecordMissingClientsResponse>('/clients/service-record-missing'),
+  listServiceRecordMissing: async () => {
+    const response = await api.get<unknown>('/clients/service-record-missing');
+    return { ...response, data: parseServiceRecordMissingClients(response.data) };
+  },
 
   /**
    * Fetch all clients (non-paginated, for dropdowns)

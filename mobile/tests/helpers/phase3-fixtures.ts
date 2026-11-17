@@ -125,6 +125,13 @@ export async function installPhase3WizardFixture(
     }
     await route.fulfill(phase3Json([]));
   });
+  await page.route("**/api/clients/service-record-missing**", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ count: 0, items: [] }),
+    });
+  });
 
   await page.route("**/api/employees**", async (route: Route) => {
     if (options.onEmployees) {
