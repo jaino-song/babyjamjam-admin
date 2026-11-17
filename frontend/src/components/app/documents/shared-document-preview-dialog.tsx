@@ -580,14 +580,14 @@ export function SharedDocumentPreviewDialog({
       <div className="flex h-full flex-1 items-center justify-center px-6">
         <div
           className={cn(
-            "flex items-center gap-3 rounded-2xl bg-white px-5 py-4 text-sm font-medium shadow-sm",
+            "flex items-center rounded-2xl bg-white px-5 py-4 text-sm font-medium shadow-sm",
             previewAvailabilityStatus === "missing" || previewAvailabilityStatus === "error"
               ? "text-v3-burgundy"
               : "text-v3-text"
           )}
         >
           {isChecking && <LoadingState inline label={message} data-component={`${dataComponent}_canvas_availability-loading`} size="sm" />}
-          <span aria-live="polite" className="contents" data-component={`${dataComponent}_canvas_availability-message`}>{isChecking ? null : message}</span>
+          <span aria-live="polite" data-component={`${dataComponent}_canvas_availability-message`}>{isChecking ? null : message}</span>
         </div>
       </div>
     );

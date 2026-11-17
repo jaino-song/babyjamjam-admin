@@ -47,6 +47,7 @@ it("announces a missing original in the polite live region mounted before availa
   try {
     const liveRegion = view.baseElement.querySelector('[aria-live="polite"]');
     expect(liveRegion).toBeInTheDocument();
+    expect(liveRegion).not.toHaveClass("contents");
     expect(liveRegion).toBeEmptyDOMElement();
     const checking = screen.getByRole("status", { name: "미리보기 파일을 확인하는 중입니다" });
     expect(checking.parentElement?.closest('[aria-live], [role="status"]')).toBeNull();
