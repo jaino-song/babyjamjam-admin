@@ -80,11 +80,13 @@ function stripUrlUserinfo(value: string): string {
     // Recover malformed username:password URLs with raw ? or / in the password.
     // Stop at the first @, then strip any remaining userinfo only in the authority.
     const userinfo = value.match(MALFORMED_URL_USERINFO_PATTERN)?.[0];
-    // Query assignments make recovery ambiguous; discard the entire URL.
-    if (userinfo && /[=&#]/.test(userinfo)) return `/${FILTERED_VALUE}`;
-    return value
+    const recovered = value
       .replace(MALFORMED_URL_USERINFO_PATTERN, "$1")
       .replace(URL_USERINFO_PATTERN, "$1");
+    // Check both sides of @: query values must not become a recovered origin.
+    const authority = recovered.match(/^[a-z][a-z0-9+.-]*:\/\/[^/?#\s]*/i)?.[0] ?? "";
+    if (userinfo && /[=&#]/.test(userinfo + authority)) return `/${FILTERED_VALUE}`;
+    return recovered;
   }
 }
 
