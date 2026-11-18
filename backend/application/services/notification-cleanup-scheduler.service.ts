@@ -5,6 +5,7 @@ import {
     IBranchRepository,
     BRANCH_REPOSITORY,
 } from "domain/repositories/branch.repository.interface";
+import { captureBackendError } from "infrastructure/observability/service-record-sentry";
 import { SchedulerLeaseService } from "./scheduler-lease.service";
 
 const RETENTION_DAYS = 30;
@@ -56,6 +57,14 @@ export class NotificationCleanupSchedulerService {
                 `[Notification Cleanup] Deleted ${deletedCount} notifications older than ${RETENTION_DAYS} days across ${processedCount} branches`,
             );
         } catch (error) {
+            try {
+                captureBackendError(error instanceof Error ? error : new Error("Notification cleanup scheduler tick failed"), {
+                    handled: true,
+                    operation: "notification-cleanup-scheduler:tick",
+                });
+            } catch {
+                // Reporting must not interrupt background processing.
+            }
             this.logger.error("[Notification Cleanup] Failed to cleanup notifications", error);
         }
     }

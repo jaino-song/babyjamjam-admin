@@ -1,6 +1,7 @@
 import { findMissingServiceRecordAlerts } from "application/policies/missing-service-record-alert.policy";
 import { Injectable, Inject, Logger } from "@nestjs/common";
 import { Cron } from "@nestjs/schedule";
+import { captureBackendError } from "infrastructure/observability/service-record-sentry";
 import {
     type DailyDigestNotificationItem,
     type DailyDigestSection,
@@ -129,6 +130,14 @@ export class PwaNotificationSchedulerService {
                 );
                 claimToken = null;
             } catch (error) {
+                try {
+                    captureBackendError(error instanceof Error ? error : new Error("Pwa notification scheduler branch failed"), {
+                        handled: true,
+                        operation: "pwa-notification-scheduler:branch",
+                    });
+                } catch {
+                    // Reporting must not interrupt background processing.
+                }
                 this.logger.error(
                     `[PWA Scheduler] Failed to process branch ${org.id}`,
                     error instanceof Error ? error.stack : String(error),
@@ -136,6 +145,14 @@ export class PwaNotificationSchedulerService {
                 if (claimToken) {
                     await this.completePwaDigestDelivery(deliveryKey, claimToken, "uncertain").catch(
                         (completionError: unknown) => {
+                            try {
+                                captureBackendError(completionError instanceof Error ? completionError : new Error("Pwa notification scheduler persist uncertain failed"), {
+                                    handled: true,
+                                    operation: "pwa-notification-scheduler:persist-uncertain",
+                                });
+                            } catch {
+                                // Reporting must not interrupt background processing.
+                            }
                             this.logger.error(
                                 `[PWA Scheduler] Failed to persist uncertain delivery state for branch ${org.id}`,
                                 completionError instanceof Error ? completionError.stack : String(completionError),
@@ -325,6 +342,14 @@ export class PwaNotificationSchedulerService {
             }
             return result.failed === 0;
         } catch (error) {
+            try {
+                captureBackendError(error instanceof Error ? error : new Error("Pwa notification scheduler send digest failed"), {
+                    handled: true,
+                    operation: "pwa-notification-scheduler:send-digest",
+                });
+            } catch {
+                // Reporting must not interrupt background processing.
+            }
             this.logger.error(
                 `[PWA Scheduler] Failed to send daily digest for branch ${branchId}`,
                 error instanceof Error ? error.stack : String(error),
@@ -371,6 +396,14 @@ export class PwaNotificationSchedulerService {
             ]);
             return { items, total, loaded: true };
         } catch (error) {
+            try {
+                captureBackendError(error instanceof Error ? error : new Error("Pwa notification scheduler load undelivered failed"), {
+                    handled: true,
+                    operation: "pwa-notification-scheduler:load-undelivered",
+                });
+            } catch {
+                // Reporting must not interrupt background processing.
+            }
             this.logger.error(
                 `[PWA Scheduler] Failed to load undelivered messages for branch ${branchId}`,
                 error instanceof Error ? error.stack : String(error),
@@ -463,6 +496,14 @@ export class PwaNotificationSchedulerService {
         try {
             return await query();
         } catch (error) {
+            try {
+                captureBackendError(error instanceof Error ? error : new Error("Pwa notification scheduler collect failed"), {
+                    handled: true,
+                    operation: "pwa-notification-scheduler:collect",
+                });
+            } catch {
+                // Reporting must not interrupt background processing.
+            }
             this.logger.error(
                 `[PWA Scheduler] Failed to load ${label} for branch ${branchId}`,
                 error instanceof Error ? error.stack : String(error),

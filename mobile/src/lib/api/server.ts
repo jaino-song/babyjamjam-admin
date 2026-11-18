@@ -6,7 +6,7 @@ import {
     getServerRuntimeConfig,
     resolveServerBackendBaseUrl,
 } from "@/lib/env";
-import { captureAndFlushServiceRecordError } from "@/lib/observability/capture-service-record-error";
+import { captureAndFlushApiError } from "@/lib/observability/capture-service-record-error";
 
 export class BackendBaseUrlConfigError extends Error {
     constructor(message = "Backend API base URL is not configured") {
@@ -50,7 +50,7 @@ serverAPIClient.interceptors.request.use((config) => {
 serverAPIClient.interceptors.response.use(
     (response) => response,
     async (error: unknown) => {
-        await captureAndFlushServiceRecordError(error);
+        await captureAndFlushApiError(error);
         return Promise.reject(error);
     },
 );

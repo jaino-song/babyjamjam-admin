@@ -15,6 +15,10 @@ import { createSchedulerLeaseMock } from "../utils/mocks/scheduler-lease.mock";
 import { createHolidayCalendarStub } from "../utils/holiday-calendar.stub";
 import { KR_BUILTIN_CALENDAR } from "domain/utils/business-days";
 
+jest.mock("infrastructure/observability/service-record-sentry", () => ({
+    captureBackendError: jest.fn(),
+}));
+
 describe("PwaNotificationSchedulerService", () => {
     const testFrontendUrl = "https://admin.babyjamjam.com";
     const emailTemplateContext = {

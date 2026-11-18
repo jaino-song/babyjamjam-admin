@@ -8,6 +8,7 @@ import {
     MESSAGE_AUTOMATION_INTENT_RETRY_REASON,
     MESSAGE_AUTOMATION_INTENT_RULE_ID,
 } from "domain/constants/message-automation-intent";
+import { captureBackendError } from "infrastructure/observability/service-record-sentry";
 import { PrismaService } from "infrastructure/database/prisma.service";
 import { withoutEntityChangeHints } from "infrastructure/database/entity-change-suppression";
 import {
@@ -261,6 +262,14 @@ export class MessageAutomationIntentService {
             try {
                 if (await this.fulfillCandidate(candidate)) fulfilled += 1;
             } catch (error) {
+                try {
+                    captureBackendError(error instanceof Error ? error : new Error("Message automation intent retry failed"), {
+                        handled: true,
+                        operation: "message-automation-intent:retry",
+                    });
+                } catch {
+                    // Reporting must not interrupt background processing.
+                }
                 this.logger.warn(
                     `[Message Automation Intent] Retry failed: ${error instanceof Error ? error.message : String(error)}`,
                 );
@@ -341,6 +350,14 @@ export class MessageAutomationIntentService {
         try {
             await this.releaseIntent(claim);
         } catch (releaseError) {
+            try {
+                captureBackendError(releaseError instanceof Error ? releaseError : new Error("Message automation intent release claim failed"), {
+                    handled: true,
+                    operation: "message-automation-intent:release-claim",
+                });
+            } catch {
+                // Reporting must not interrupt background processing.
+            }
             this.logger.error(
                 `[Message Automation Intent] Failed to release claim ${claim.id} after ${String(originalError)}: ${String(releaseError)}`,
             );
@@ -471,6 +488,14 @@ export class MessageAutomationIntentService {
             },
         });
         this.logger.error(`[Message Automation Intent] Quarantined malformed intent ${id}`);
+        try {
+            captureBackendError(new Error("Message automation intent payload is invalid"), {
+                handled: true,
+                operation: "message-automation-intent:quarantine",
+            });
+        } catch {
+            // Reporting must not interrupt background processing.
+        }
     }
 
     private readTemplateVariables(payload: Prisma.JsonValue): Record<string, string> {

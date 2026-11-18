@@ -6,6 +6,10 @@ import type { IAligoSmsApiPort } from "domain/ports/aligo-sms-api.port";
 import type { IMessageLogRepository } from "domain/repositories/message-log.repository.interface";
 import { createSchedulerLeaseMock } from "../utils/mocks/scheduler-lease.mock";
 
+jest.mock("infrastructure/observability/service-record-sentry", () => ({
+    captureBackendError: jest.fn(),
+}));
+
 describe("SmsCarrierCheckService", () => {
     const createLog = (
         id: number,

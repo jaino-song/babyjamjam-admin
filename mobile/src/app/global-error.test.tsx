@@ -1,4 +1,7 @@
+import * as Sentry from "@sentry/nextjs";
 import { fireEvent, render, screen } from "@testing-library/react";
+
+jest.mock("@sentry/nextjs", () => ({ captureException: jest.fn() }));
 
 import GlobalError from "./global-error";
 
@@ -26,5 +29,29 @@ describe("mobile global error boundary", () => {
     fireEvent.click(retry);
 
     expect(reset).toHaveBeenCalledTimes(2);
+  });
+});
+
+
+describe("Sentry error reporting", () => {
+  beforeEach(() => jest.clearAllMocks());
+
+  it("captures once for each error and keeps the same-error rerender quiet", () => {
+    const error = new Error("render failed");
+    const reset = jest.fn();
+    const consoleSpy = jest.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const { rerender } = render(<GlobalError error={error} reset={reset} />);
+      expect(Sentry.captureException).toHaveBeenCalledTimes(1);
+      expect(Sentry.captureException).toHaveBeenCalledWith(error);
+      rerender(<GlobalError error={error} reset={reset} />);
+      expect(Sentry.captureException).toHaveBeenCalledTimes(1);
+      const nextError = new Error("next render failed");
+      rerender(<GlobalError error={nextError} reset={reset} />);
+      expect(Sentry.captureException).toHaveBeenCalledTimes(2);
+      expect(Sentry.captureException).toHaveBeenLastCalledWith(nextError);
+    } finally {
+      consoleSpy.mockRestore();
+    }
   });
 });

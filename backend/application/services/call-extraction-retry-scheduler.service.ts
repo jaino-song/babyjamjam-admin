@@ -1,5 +1,6 @@
 import { Injectable, Logger } from "@nestjs/common";
 import { Cron } from "@nestjs/schedule";
+import { captureBackendError } from "infrastructure/observability/service-record-sentry";
 import { PrismaService } from "infrastructure/database/prisma.service";
 import {
     CALL_PROCESSING_CLAIM_LEASE_MS,
@@ -143,6 +144,14 @@ export class CallExtractionRetrySchedulerService {
                         }
                         await this.processingService.processCallRecord(candidate.id);
                     } catch (error) {
+                        try {
+                            captureBackendError(error instanceof Error ? error : new Error("Call extraction retry scheduler process failed"), {
+                                handled: true,
+                                operation: "call-extraction-retry-scheduler:process",
+                            });
+                        } catch {
+                            // Reporting must not interrupt background processing.
+                        }
                         this.logger.warn(
                             `[CallRetry] Unexpected error processing candidate ${candidate.id}; skipping`,
                             error instanceof Error ? error.stack : String(error),
@@ -179,6 +188,14 @@ export class CallExtractionRetrySchedulerService {
                 );
             }
         } catch (error) {
+            try {
+                captureBackendError(error instanceof Error ? error : new Error("Call extraction retry scheduler tick failed"), {
+                    handled: true,
+                    operation: "call-extraction-retry-scheduler:tick",
+                });
+            } catch {
+                // Reporting must not interrupt background processing.
+            }
             if (isTransientPrismaConnectivityError(error)) {
                 this.executionGuard.enterCooldown(summarizePrismaError(error));
                 return;

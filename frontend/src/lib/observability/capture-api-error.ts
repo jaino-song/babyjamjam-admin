@@ -10,6 +10,15 @@ import {
 } from "./sentry-config";
 
 const reportedErrors = new WeakSet<object>();
+const MIN_OPAQUE_ID_LENGTH = 16;
+// Literal collection operations found in document BFF routes and API callers.
+const DOCUMENT_COLLECTION_ROUTES = new Set([
+  ...["completed", "in-progress", "status-counts", "rejected", "expired", "upload", "capabilities"]
+    .map((route) => `/api/documents/${route}`),
+  ...["completed", "in-progress", "status-counts", "rejected", "expired"]
+    .flatMap((route) => [`/api/eformsign/documents/${route}`, `/eformsign/documents/${route}`]),
+  "/documents/upload", "/documents/capabilities",
+]);
 
 export type ServiceRecordOperation =
   | "public-link"
@@ -20,6 +29,16 @@ export type ServiceRecordOperation =
   | "submit-session"
   | "finalize"
   | "render";
+
+function templateDocumentPath(path: string): string {
+  if (DOCUMENT_COLLECTION_ROUTES.has(path)) return path;
+
+  return path.split("/").map((segment, index, segments) => (
+    segments[index - 1] === "documents" && segment
+      ? ":id"
+      : segment
+  )).join("/");
+}
 
 function getRequestPath(url: string | undefined): string {
   if (!url) return "unknown";
@@ -57,17 +76,26 @@ export function captureApiError(error: unknown): boolean {
   if (typeof status === "number" && status < 500) return false;
   const method = (error.config?.method ?? "unknown").toUpperCase();
   const path = getRequestPath(error.config?.url);
-  if (!isServiceRecordSentrySignal(path)) return false;
   if (reportedErrors.has(error)) return false;
 
   reportedErrors.add(error);
 
-  const sanitizedPath = sanitizeSentryUrl(path) ?? "unknown";
+  const documentPath = templateDocumentPath(path);
+  const isServiceRecord = isServiceRecordSentrySignal(documentPath);
+  const sanitizedPath = sanitizeSentryUrl(isServiceRecord ? path : documentPath) ?? "unknown";
   const statusLabel = status ? String(status) : "network";
-  const operation = getServiceRecordOperation(path);
+  const pathTemplate = isServiceRecord ? sanitizedPath : sanitizedPath
+    .split("/")
+    .map((segment) => (
+      /^\d+$/.test(segment) || (segment.length >= MIN_OPAQUE_ID_LENGTH && /\d/.test(segment))
+        ? ":id"
+        : segment
+    ))
+    .join("/");
+  const operation = isServiceRecord ? getServiceRecordOperation(path) : undefined;
   const capturedError = Object.assign(
-    new Error(`Service-record API request failed: ${method} ${sanitizedPath} (${statusLabel})`),
-    { name: "ServiceRecordApiRequestError" },
+    new Error(`${isServiceRecord ? "Service-record API" : "API"} request failed: ${method} ${sanitizedPath} (${statusLabel})`),
+    { name: isServiceRecord ? "ServiceRecordApiRequestError" : "ApiRequestError" },
   );
   if (error.stack) {
     capturedError.stack = [
@@ -78,21 +106,21 @@ export function captureApiError(error: unknown): boolean {
 
   Sentry.withScope((scope) => {
     scope.setLevel(status && status >= 500 ? "error" : "warning");
-    scope.setTag(SERVICE_RECORD_SENTRY_TAG, SERVICE_RECORD_SENTRY_FEATURE);
+    scope.setTag(SERVICE_RECORD_SENTRY_TAG, isServiceRecord ? SERVICE_RECORD_SENTRY_FEATURE : "api");
     scope.setTag("app", "frontend");
     scope.setTag("runtime", typeof window === "undefined" ? "server" : "browser");
-    scope.setTag("operation", operation);
+    if (operation) scope.setTag("operation", operation);
     scope.setTag("handled", "true");
     scope.setTag("status_code", statusLabel);
     scope.setContext("api", {
       method,
-      path: sanitizedPath,
-      operation,
+      path: pathTemplate,
+      ...(operation ? { operation } : {}),
       status: status ?? null,
       code: error.code ?? null,
       runtime: typeof window === "undefined" ? "server" : "browser",
     });
-    scope.setFingerprint(["api-error", method, sanitizedPath, statusLabel]);
+    scope.setFingerprint(["api-error", method, pathTemplate, statusLabel]);
     Sentry.captureException(capturedError);
   });
   return true;
