@@ -113,14 +113,17 @@ function sanitizeUrl(value: string, isHeader = false): string {
       !parsed.hostname.startsWith("[") && !HOSTNAME_PATTERN.test(parsed.hostname)
     )) return FILTERED_VALUE;
 
-    parsed.pathname = stripEmbeddedUrlCredentials(parsed.pathname);
+    const strippedPathname = stripEmbeddedUrlCredentials(parsed.pathname);
+    const hasCredentials = parsed.username || parsed.password || strippedPathname !== parsed.pathname;
+    parsed.pathname = strippedPathname;
 
     // Preserve header text masking before whitespace is URL-encoded, but only
-    // after parsing succeeds. Credentials never participate in this second parse.
-    if (isHeader && (parsed.username || parsed.password)) {
+    // after parsing succeeds. Use the cleaned path when normalization exposed
+    // nested credentials, so the raw value cannot reintroduce them.
+    if (isHeader && hasCredentials) {
       parsed.pathname = sanitizeSentryText(decodeURI(parsed.pathname));
     }
-    const pathname = isHeader && !parsed.username && !parsed.password
+    const pathname = isHeader && !hasCredentials
       ? new URL(sanitizeSentryText(stripEmbeddedUrlCredentials(trimmed)), baseUrl).pathname
       : parsed.pathname;
     const path = sanitizeSentryText(pathname).replace(
