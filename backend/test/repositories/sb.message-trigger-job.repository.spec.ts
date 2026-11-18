@@ -14,6 +14,8 @@ import { ordinaryAutomationJobWhere } from "application/utils/message-automation
 import { MESSAGE_AUTOMATION_INTENT_RULE_ID } from "domain/constants/message-automation-intent";
 import {
     SERVICE_RECORD_LINK_RULE_ID,
+    SERVICE_RECORD_LINK_RESCHEDULED_REASON,
+    SERVICE_RECORD_LINK_BRANCH_DISABLED_REASON,
     SERVICE_RECORD_LINK_ENDED_REASON,
     SERVICE_RECORD_LINK_PRE_BOOKING_REASON,
     SERVICE_RECORD_LINK_SCHEDULING_RETRY_REASON,
@@ -3263,5 +3265,224 @@ describeReal("TIME-1 real PostgreSQL cadence and reclaim fences", () => {
         job.defer("transient", "reclaim");
         expect(await repository.reclaimWithClaimFence(job, snapshot)).toBe(false);
         expect(await handle.raw.message_trigger_job.findUnique({ where: { id: job.id } })).toMatchObject(change);
+    });
+});
+
+describe("automatic service-record date replacement", () => {
+    beforeEach(() => jest.useFakeTimers().setSystemTime(new Date("2027-01-08T00:00:00Z")));
+    afterEach(() => jest.useRealTimers());
+    const branchId = "99000000-0000-4000-8000-000000000001";
+    const key = `${SERVICE_RECORD_LINK_RULE_ID}:schedule:10:primary`;
+    const reason = "Service record link rescheduled";
+    const snake = (name: string) => name.replace(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`);
+    function fixture() {
+        const replacement = MessageTriggerJobEntity.create({ branchId, ruleId: SERVICE_RECORD_LINK_RULE_ID, clientId: 20,
+            employeeScheduleId: 10, scheduledFor: new Date("2027-01-10T03:00:00Z"),
+            recipientType: MessageTriggerRecipientType.PRIMARY_EMPLOYEE, recipientPhone: "01000000030",
+            templateKey: MessageTriggerTemplateKey.SERVICE_RECORD_LINK, dedupeKey: key,
+            payload: { memberId: "employee:30", recipientName: "QA-care", recipientPhone: "01000000030",
+                templateVariables: { serviceStartDate: "2027-01-11", serviceEndDate: "2027-01-20" } } });
+        const raw = (id: string, dedupeKey = key) => ({ id, branch_id: branchId, rule_id: SERVICE_RECORD_LINK_RULE_ID,
+            client_id: 20, employee_schedule_id: 10, dedupe_key: dedupeKey, status: "pending", canceled_by_user: false,
+            scheduled_for: new Date("2027-01-09T03:00:00Z"), sent_at: null, canceled_at: null, cancel_reason: null,
+            attempts: 0, next_attempt_at: null, claim_token: null, processing_deadline_at: null,
+            recipient_type: replacement.recipientType, recipient_phone: replacement.recipientPhone, template_key: replacement.templateKey,
+            payload: { ...replacement.payload, templateVariables: { serviceStartDate: "2027-01-10", serviceEndDate: "2027-01-20" } },
+            created_at: new Date("2026-11-01Z"), updated_at: new Date("2026-11-01Z") });
+        let rows: Array<Record<string, unknown>> = [raw("automatic"), raw("manual", `${key}:manual:00000000-0000-4000-8000-000000000030`),
+            { ...raw("other-branch"), branch_id: "other" }, { ...raw("other-schedule"), employee_schedule_id: 11 }];
+        let logs: Array<Record<string, unknown>> = [{ id: 1, branch_id: branchId, trigger_job_id: "automatic", safe: true, status: "failed", next_retry_at: new Date() },
+            { id: 2, branch_id: branchId, trigger_job_id: "manual", safe: true, status: "failed", next_retry_at: new Date() },
+            { id: 3, branch_id: branchId, trigger_job_id: null, safe: false, status: "failed", next_retry_at: new Date() },
+            { id: 4, branch_id: "other", trigger_job_id: "automatic", safe: true, status: "failed", next_retry_at: new Date() }];
+        const statements: Prisma.Sql[] = [];
+        const matches = (row: Record<string, unknown>, where: Record<string, unknown>) => Object.entries(where).every(([name, value]) => {
+            const actual = row[snake(name)];
+            return value && typeof value === "object" && "in" in value ? (value.in as unknown[]).includes(actual) : actual === value;
+        });
+        const sqlMatches = (row: Record<string, unknown>, sql: Prisma.Sql) => [...sql.text.matchAll(/\b(branch_id|client_id|rule_id|employee_schedule_id|dedupe_key|trigger_job_id)\s*=\s*\$(\d+)/g)]
+            .every((match) => row[match[1]!] === sql.values[Number(match[2]) - 1]);
+        const tx = {
+            $executeRaw: jest.fn(async (sql: Prisma.Sql) => { statements.push(sql); return 1; }),
+            $queryRaw: jest.fn(async (sql: Prisma.Sql) => {
+                statements.push(sql);
+                if (sql.text.includes('FROM "message_trigger_rule"')) return [{ id: SERVICE_RECORD_LINK_RULE_ID }];
+                if (sql.text.includes('FROM "service_record_token"')) return [{ id: "active-token" }];
+                if (sql.text.includes('FROM "message_log"')) return logs.filter((row) => sqlMatches(row, sql));
+                if (sql.text.includes('FROM "message_trigger_job" AS blocker')) {
+                    const excludedId = sql.text.match(/blocker.id <> \$(\d+)/)!;
+                    return rows.filter((row) => sqlMatches(row, sql)
+                        && row["id"] !== sql.values[Number(excludedId[1]) - 1]
+                        && (["pending", "processing", "dispatching", "sent", "needs_setup"].includes(String(row["status"]))
+                            || (row["status"] === "failed" && row["cancel_reason"] !== SERVICE_RECORD_LINK_SCHEDULING_RETRY_REASON)
+                            || (row["status"] === "canceled" && (row["canceled_by_user"] === true || row["cancel_reason"] === null
+                                || ![SERVICE_RECORD_LINK_RESCHEDULED_REASON, SERVICE_RECORD_LINK_ENDED_REASON,
+                                    SERVICE_RECORD_LINK_BRANCH_DISABLED_REASON, SERVICE_RECORD_LINK_PRE_BOOKING_REASON,
+                                    MESSAGE_SENDER_APPROVAL_REQUIRED_CANCEL_REASON].includes(String(row["cancel_reason"]))))));
+                }
+                if (sql.text.includes('SELECT id, status, canceled_by_user')) return rows.filter((row) => sqlMatches(row, sql));
+                if (sql.text.includes('INSERT INTO "message_trigger_job"')) {
+                    const columns = sql.text.match(/INSERT INTO "message_trigger_job"\s*\(([^)]+)\)/)![1]!.split(",").map((column) => column.trim());
+                    const tokens = sql.text.match(/VALUES\s*\(([\s\S]+)\)\s*ON CONFLICT/)![1]!.split(",").map((token) => token.trim());
+                    const data = Object.fromEntries(columns.map((column, index) => {
+                        const token = tokens[index]!; const param = token.match(/^\$(\d+)/);
+                        let value: unknown = param ? sql.values[Number(param[1]) - 1] : token === "'pending'" ? "pending" : token === "0" ? 0 : null;
+                        if (column === "payload" && typeof value === "string") value = JSON.parse(value);
+                        return [column, value];
+                    }));
+                    const row = rows.find((candidate) => candidate["dedupe_key"] === data["dedupe_key"] && candidate["branch_id"] === data["branch_id"])!;
+                    Object.assign(row, data, { updated_at: new Date() }); return [row];
+                }
+                throw new Error(`Unexpected SQL: ${sql.text}`);
+            }),
+            message_trigger_job: { updateMany: jest.fn(async ({ where, data }: { where: Record<string, unknown>; data: Record<string, unknown> }) => {
+                const selected = rows.filter((row) => matches(row, where));
+                selected.forEach((row) => Object.entries(data).forEach(([name, value]) => { row[snake(name)] = value; }));
+                return { count: selected.length };
+            }) },
+            message_log: { updateMany: jest.fn(async ({ where, data }: { where: Record<string, unknown>; data: Record<string, unknown> }) => {
+                const selected = logs.filter((row) => matches(row, where));
+                selected.forEach((row) => Object.entries(data).forEach(([name, value]) => { row[snake(name)] = value; }));
+                return { count: selected.length };
+            }) },
+        };
+        const prisma = { $transaction: async (work: (transaction: typeof tx) => Promise<unknown>) => {
+            const beforeRows = structuredClone(rows), beforeLogs = structuredClone(logs);
+            try { return await work(tx); } catch (error) { rows = beforeRows; logs = beforeLogs; throw error; }
+        } };
+        const repository = new SbMessageTriggerJobRepository(prisma as never);
+        return { tx, repository, replacement, statements, rows: () => rows, logs: () => logs,
+            run: () => repository.replacePendingJobsUnlessInFlight(replacement, reason, { automaticOnly: true, requireActiveLinkToken: "synthetic-active" }) };
+    }
+
+    it("moves only the exact automatic job and supersedes only its proven retry, preserving a queued manual send and its log", async () => {
+        const f = fixture(); const beforeRows = structuredClone(f.rows().slice(1)), beforeLogs = structuredClone(f.logs().slice(1));
+        expect((await f.run()).kind).toBe("replaced");
+        expect(f.rows()[0]).toMatchObject({ status: "pending", scheduled_for: f.replacement.scheduledFor, payload: f.replacement.payload });
+        expect(f.logs()[0]).toMatchObject({ status: "failed", error_message: reason, next_retry_at: null });
+        expect(f.rows().slice(1)).toEqual(beforeRows); expect(f.logs().slice(1)).toEqual(beforeLogs);
+        const logRead = f.statements.find((sql) => sql.text.includes('FROM "message_log"'))!;
+        expect(logRead.text).toMatch(/branch_id = \$\d+::uuid AND trigger_job_id = \$\d+/);
+        expect(logRead.text).toContain("provider_acceptance_state IN ('rejected', 'reconciled_not_delivered')");
+        const before = structuredClone({ rows: f.rows(), logs: f.logs() });
+        expect((await f.run()).kind).toBe("protected");
+        expect({ rows: f.rows(), logs: f.logs() }).toEqual(before);
+    });
+
+    it.each(["sent", "canceled", "failed", "user-canceled", "processing", "dispatching", "task", "irreversible-log"])("protects %s without touching manual or unrelated work", async (state) => {
+        const f = fixture(); const row = f.rows()[0]!;
+        if (["sent", "canceled", "failed", "processing", "dispatching"].includes(state)) row["status"] = state;
+        if (state === "user-canceled") row["canceled_by_user"] = true;
+        if (state === "task") (row["payload"] as Record<string, unknown>)["taskAutomationReference"] = { actionId: "reviewed" };
+        if (state === "irreversible-log") f.logs()[0]!["safe"] = false;
+        const before = structuredClone({ rows: f.rows(), logs: f.logs() });
+        expect((await f.run()).kind).toBe(["processing", "dispatching"].includes(state) ? "in_flight" : "protected");
+        expect({ rows: f.rows(), logs: f.logs() }).toEqual(before);
+    });
+
+    it.each(["pending", "canceled"])("rolls the %s reservation and log writes back together when supersession fails", async (status) => {
+        const f = fixture();
+        Object.assign(f.rows()[0]!, { status, cancel_reason: status === "canceled" ? SERVICE_RECORD_LINK_ENDED_REASON : null });
+        if (status === "canceled") Object.assign(f.rows()[1]!, { status: "canceled", cancel_reason: SERVICE_RECORD_LINK_RESCHEDULED_REASON });
+        const before = structuredClone({ rows: f.rows(), logs: f.logs() });
+        f.tx.message_log.updateMany.mockRejectedValueOnce(new Error("log write conflict"));
+        await expect(f.run()).rejects.toThrow("log write conflict");
+        expect({ rows: f.rows(), logs: f.logs() }).toEqual(before);
+    });
+
+    it("keeps the link catch-up when an eligible schedule's start moves into the past", async () => {
+        jest.setSystemTime(new Date("2027-01-11T00:00:00Z"));
+        const f = fixture();
+        f.rows()[0]!["scheduled_for"] = new Date("2027-01-12T03:00:00Z");
+        const unrelated = structuredClone({ rows: f.rows().slice(1), logs: f.logs().slice(1) });
+        expect((await f.run()).kind).toBe("replaced");
+        expect(f.rows()[0]).toMatchObject({ status: "pending", scheduled_for: f.replacement.scheduledFor });
+        expect(f.logs()[0]).toMatchObject({ error_message: reason, next_retry_at: null });
+        expect({ rows: f.rows().slice(1), logs: f.logs().slice(1) }).toEqual(unrelated);
+    });
+
+    it.each([
+        SERVICE_RECORD_LINK_RESCHEDULED_REASON,
+        SERVICE_RECORD_LINK_ENDED_REASON,
+        SERVICE_RECORD_LINK_BRANCH_DISABLED_REASON,
+        SERVICE_RECORD_LINK_PRE_BOOKING_REASON,
+        MESSAGE_SENDER_APPROVAL_REQUIRED_CANCEL_REASON,
+    ])("reactivates a system cancellation (%s) even when its time and source are unchanged", async (cancelReason) => {
+        const f = fixture(); const row = f.rows()[0]!;
+        Object.assign(row, { status: "canceled", cancel_reason: cancelReason,
+            scheduled_for: f.replacement.scheduledFor, payload: structuredClone(f.replacement.payload) });
+        // An inactive, system-canceled manual row does not block a fresh automatic reservation.
+        Object.assign(f.rows()[1]!, { status: "canceled", cancel_reason: SERVICE_RECORD_LINK_RESCHEDULED_REASON });
+        // No delivery attempt was made before this system cancellation.
+        f.logs().splice(0, 1);
+        const unrelated = structuredClone({ rows: f.rows().slice(1), logs: f.logs() });
+        expect((await f.run()).kind).toBe("replaced");
+        expect(f.rows()[0]).toMatchObject({ status: "pending", cancel_reason: null, canceled_at: null });
+        expect({ rows: f.rows().slice(1), logs: f.logs() }).toEqual(unrelated);
+        const current = structuredClone({ rows: f.rows(), logs: f.logs() });
+        expect((await f.run()).kind).toBe("protected");
+        expect({ rows: f.rows(), logs: f.logs() }).toEqual(current);
+    });
+
+    it.each([
+        { status: "pending" }, { status: "needs_setup" }, { status: "processing" }, { status: "dispatching" }, { status: "sent" },
+        { status: "failed", cancel_reason: null },
+        { status: "canceled", cancel_reason: null },
+        { status: "canceled", cancel_reason: "Service record access revoked" },
+        { status: "canceled", cancel_reason: SERVICE_RECORD_LINK_RESCHEDULED_REASON, canceled_by_user: true },
+    ])("does not reclaim a system-canceled automatic link when the schedule has a manual blocker %j", async (blocker) => {
+        for (const cancelReason of [SERVICE_RECORD_LINK_RESCHEDULED_REASON, SERVICE_RECORD_LINK_ENDED_REASON,
+            SERVICE_RECORD_LINK_BRANCH_DISABLED_REASON, SERVICE_RECORD_LINK_PRE_BOOKING_REASON,
+            MESSAGE_SENDER_APPROVAL_REQUIRED_CANCEL_REASON]) {
+            const f = fixture();
+            Object.assign(f.rows()[0]!, { status: "canceled", cancel_reason: cancelReason });
+            Object.assign(f.rows()[1]!, blocker);
+            const before = structuredClone({ rows: f.rows(), logs: f.logs() });
+            expect((await f.run()).kind).toBe("protected");
+            expect({ rows: f.rows(), logs: f.logs() }).toEqual(before);
+            expect(f.tx.message_trigger_job.updateMany).not.toHaveBeenCalled();
+            expect(f.tx.message_log.updateMany).not.toHaveBeenCalled();
+            expect(f.statements.some((sql) => sql.text.includes('INSERT INTO "message_trigger_job"'))).toBe(false);
+        }
+    });
+
+    it("reclaims with only nonblocking or unrelated schedule rows under the existing lock fence", async () => {
+        const f = fixture();
+        Object.assign(f.rows()[0]!, { status: "canceled", cancel_reason: SERVICE_RECORD_LINK_ENDED_REASON });
+        Object.assign(f.rows()[1]!, { status: "failed", cancel_reason: SERVICE_RECORD_LINK_SCHEDULING_RETRY_REASON });
+        // Pending rows in another branch, schedule, or rule must remain untouched.
+        f.rows().push({ ...structuredClone(f.rows()[1]!), id: "other-rule", rule_id: "other-rule", status: "sent" });
+        const unrelated = structuredClone({ rows: f.rows().slice(1), logs: f.logs().slice(1) });
+        expect((await f.run()).kind).toBe("replaced");
+        expect(f.rows()[0]).toMatchObject({ status: "pending", cancel_reason: null });
+        expect({ rows: f.rows().slice(1), logs: f.logs().slice(1) }).toEqual(unrelated);
+        const blockerIndex = f.statements.findIndex((sql) => sql.text.includes('FROM "message_trigger_job" AS blocker'));
+        expect(blockerIndex).toBeGreaterThan(f.statements.findIndex((sql) => sql.text.includes('FROM "message_trigger_rule"')));
+        expect(blockerIndex).toBeLessThan(f.statements.findIndex((sql) => sql.text.includes('FROM "message_log"')));
+        const scan = f.statements[blockerIndex]!;
+        expect(scan.text).toMatch(/blocker.branch_id = \$\d+::uuid/);
+        expect(scan.values).toEqual(expect.arrayContaining([branchId, SERVICE_RECORD_LINK_RULE_ID, 10, "automatic"]));
+        expect(scan.text).toContain("ORDER BY blocker.id");
+        expect(scan.text).toContain("FOR UPDATE");
+        expect(scan.text).not.toContain("dedupe_key =");
+        expect(scan.text).not.toContain("client_id =");
+    });
+
+    it.each(["Service record access revoked", "Service record link reset without resend", "SERVICE_RECORD_REVISION_SUPERSEDED"])(
+        "does not replay historical or operator cancellations (%s)", async (cancelReason) => {
+            const f = fixture(); Object.assign(f.rows()[0]!, { status: "canceled", cancel_reason: cancelReason });
+            const before = structuredClone({ rows: f.rows(), logs: f.logs() });
+            expect((await f.run()).kind).toBe("protected");
+            expect({ rows: f.rows(), logs: f.logs() }).toEqual(before);
+        },
+    );
+
+    it.each(["user-canceled", "irreversible-log"])("protects a system cancellation with %s", async (state) => {
+        const f = fixture(); Object.assign(f.rows()[0]!, { status: "canceled", cancel_reason: SERVICE_RECORD_LINK_ENDED_REASON });
+        if (state === "user-canceled") f.rows()[0]!["canceled_by_user"] = true;
+        else f.logs()[0]!["safe"] = false;
+        const before = structuredClone({ rows: f.rows(), logs: f.logs() });
+        expect((await f.run()).kind).toBe("protected");
+        expect({ rows: f.rows(), logs: f.logs() }).toEqual(before);
     });
 });
