@@ -360,6 +360,47 @@ describe("frontend Sentry error coverage", () => {
 
 describe("URL-valued request headers", () => {
   it.each([
+    ["https://h/proxy/https://alice:s3cr!t@i/x", "https://h/proxy/https://i/x"],
+    ["https://h/proxy/http://alice:a@b!c@i/x", "https://h/proxy/http://i/x"],
+    ["//h/proxy/https://alice:s3cr!t@i/x", "https://h/proxy/https://i/x"],
+    ["/proxy/https://alice:s3cr!t@i/x", "/proxy/https://i/x"],
+    ["https://outer:outer-pass@h/proxy/https://alice:s3cr!t@i/x", "https://h/proxy/https://i/x"],
+    ["https://h/proxy/https://alice:s3cr!t@i/http://bob:other-pass@j/x", "https://h/proxy/https://i/http://j/x"],
+    ["https://h/proxy/https://alice:s3cr!t@i/x?documentId=qa-nested-query#private", "https://h/proxy/https://i/x"],
+  ])("removes nested URL credentials (sentry-coverage-u7f1-r3/F1): %s", (value, expected) => {
+    expect(sanitizeSentryUrl(value)).toBe(expected);
+
+    const sent = getSentryRuntimeOptions().beforeSend({
+      type: undefined,
+      request: {
+        url: value,
+        headers: { Referer: value, "X-Forwarded-Uri": value, "X-Detail": value },
+      },
+      contexts: { api: { path: value } },
+    });
+
+    expect(sent.request?.url).toBe(expected);
+    expect(sent.request?.headers).toEqual({
+      Referer: expected, "X-Forwarded-Uri": expected, "X-Detail": expected,
+    });
+    expect(sent.contexts?.api?.path).toBe(expected);
+    expect(JSON.stringify(sent)).not.toMatch(/alice|s3cr|b!c|outer-pass|bob|other-pass|\[Email\]|[?#]|documentId|qa-nested-query/);
+  });
+
+  it.each([
+    "https://h/proxy/https://i/x",
+    "https://h/proxy/HTTPS://Inner.Example:443/x",
+    "https://h/proxy/https://i/notify/@team",
+  ])("preserves credential-free nested URLs: %s", (value) => {
+    expect(sanitizeSentryUrl(value)).toBe(value);
+    const sent = getSentryRuntimeOptions().beforeSend({
+      type: undefined,
+      request: { headers: { Referer: value } },
+    });
+    expect(sent.request?.headers?.Referer).toBe(value);
+  });
+
+  it.each([
     ["Referer", "//alice:s3cr!t@admin.example.com/x?documentId=abc"],
     ["X-Forwarded-Uri", "//alice:s3cr!t@admin.example.com/x"],
     ["Referer", " //alice:s3cr!t@admin.example.com/x?documentId=abc"],
