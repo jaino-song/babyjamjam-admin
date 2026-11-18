@@ -1,5 +1,8 @@
+import { URL as NativeURL } from "node:url";
+
 import {
   getSentryRuntimeOptions,
+  sanitizeSentryText,
   sanitizeSentryUrl,
 } from "./sentry-config";
 
@@ -616,6 +619,50 @@ describe("origin-only request header privacy", () => {
 
 
 describe("credential-bearing path segment privacy", () => {
+  it("sanitizes a 200,000-separator path segment in under 50 ms", () => {
+    const options = getSentryRuntimeOptions();
+    const url = `https://h/proxy/${":".repeat(200_000)}/x`;
+    const event = { type: undefined, request: { url } };
+    // Measure with the runtime's native parser rather than jsdom's slow JS URL polyfill.
+    const urlSpy = jest.spyOn(globalThis, "URL")
+      .mockImplementation((value, base) => new NativeURL(value, base));
+
+    try {
+      const start = performance.now();
+      const sent = options.beforeSend(event);
+      const elapsed = performance.now() - start;
+
+      expect(sent.request?.url).toBe(url);
+      expect(elapsed).toBeLessThan(50);
+    } finally {
+      urlSpy.mockRestore();
+    }
+  });
+
+  it.each([
+    "alice:pw@host",
+    "a@b:c@d",
+    "x@y%2Fz@host",
+    "https:%5C%5Calice:pw@x",
+    "@team",
+    "a@b.com",
+    "x:y",
+    "a%2Fb%40c",
+    "::@",
+    "@:",
+  ])("matches the original userinfo regex for raw and decoded segments: %s", (segment) => {
+    const originalPattern = /[:/\\][^@]*@/;
+    const filtered = originalPattern.test(segment)
+      || originalPattern.test(decodeURIComponent(segment));
+    const expected = filtered ? "[Filtered]" : sanitizeSentryText(segment);
+    const sent = getSentryRuntimeOptions().beforeSend({
+      type: undefined,
+      request: { url: `https://h/proxy/${segment}/x` },
+    });
+
+    expect(sent.request?.url).toBe(`https://h/proxy/${expected}/x`);
+  });
+
   it.each([
     "https:%5C%5Calice:pw@inner.example",
     "https:%2F%2Fbob:x%40inner.example",

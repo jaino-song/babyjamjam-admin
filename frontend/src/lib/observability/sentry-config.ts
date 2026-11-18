@@ -17,7 +17,6 @@ const URL_FIELD_PATTERN = /(^|[._-])(url|uri|path)([._-]|$)/i;
 const REFERER_HEADER_PATTERN = /^referer$/i;
 const URL_HEADER_PATTERN = /^(origin|location|destination|link|refresh)$/i;
 const URL_HEADER_VALUE_PATTERN = /^(?:[a-z][a-z0-9+.-]*:[/\\]|[/\\]{2,}|\/)/i;
-const USERINFO_PATH_SEGMENT_PATTERN = /[:/\\][^@]*@/;
 const URL_AUTHORITY_PATTERN = /[a-z][a-z0-9+.-]*:\/\/[^/?#\s]+/gi;
 const HOSTNAME_PATTERN = /^(?=.{1,253}\.?$)[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*\.?$/i;
 const QUERY_FIELD_PATTERN = /(^|[._-])query(?:_string)?([._-]|$)/i;
@@ -81,12 +80,23 @@ function stripEmbeddedUrlCredentials(value: string): string {
   });
 }
 
+function hasPathSegmentUserinfo(segment: string): boolean {
+  const lastAtIndex = segment.lastIndexOf("@");
+  if (lastAtIndex === -1) return false;
+
+  for (let index = 0; index < lastAtIndex; index += 1) {
+    const character = segment[index];
+    if (character === ":" || character === "/" || character === "\\") return true;
+  }
+  return false;
+}
+
 // Inspect raw and decoded segments before text masking can hide credentials.
 function sanitizePathSegment(segment: string): string {
-  if (USERINFO_PATH_SEGMENT_PATTERN.test(segment)) return FILTERED_VALUE;
+  if (hasPathSegmentUserinfo(segment)) return FILTERED_VALUE;
 
   try {
-    return USERINFO_PATH_SEGMENT_PATTERN.test(decodeURIComponent(segment))
+    return hasPathSegmentUserinfo(decodeURIComponent(segment))
       ? FILTERED_VALUE
       : segment;
   } catch {
