@@ -111,6 +111,7 @@ import { MessageTriggerDeliveryService } from "./message-trigger-delivery.servic
 import { buildSmsProviderAcceptanceFingerprint, buildSmsProviderAcceptanceKey } from "./sms-provider-acceptance.service";
 import {
     SMS_DELIVERY_SNAPSHOT_VARIABLE,
+    SmsTriggerDeliveryService,
     type SmsTriggerDeliveryPreparation,
 } from "./sms-trigger-delivery.service";
 import { hasColumn, hasTable } from "infrastructure/database/schema-capabilities";
@@ -691,6 +692,8 @@ export class MessageTriggerService {
         private readonly smsAutomationSafeguard?: SmsAutomationSafeguardService,
         private readonly caregiverRecipients?: MessageTriggerRecipientResolverService,
         private readonly caregiverTemplates?: CaregiverTemplateResolverService,
+        // Date refresh also owns the prepared SMS draft, under the same transaction.
+        private readonly smsDelivery?: SmsTriggerDeliveryService,
     ) {
         // Preserve constructor-based callers while sharing exactly the same read
         // implementation; the production module injects its registered reader.
@@ -2752,7 +2755,8 @@ export class MessageTriggerService {
                     if (protectedSlot) return;
                     if (current?.status === "canceled" && current.cancelReason !== CLIENT_DATE_AUTOMATION_CHANGED_REASON
                         && current.cancelReason !== MESSAGE_SENDER_APPROVAL_REQUIRED_CANCEL_REASON) return;
-                    if (!(await this.persistPendingJob(job, rule, includePast || existingOccurrence === true, rule.jobsStale, false, tx))) {
+                    if (!(await this.persistPendingJob(job, rule, includePast || existingOccurrence === true, rule.jobsStale, false, tx,
+                        undefined, existingOccurrence && current.status === "pending" ? current : undefined))) {
                         throw new ConflictException("Message rule changed while reconciling dates");
                     }
                 } });
@@ -3287,6 +3291,7 @@ export class MessageTriggerService {
         preserveExisting = false,
         transaction?: Prisma.TransactionClient,
         taskAutomationReference?: AgentAutomationTaskCommitReference,
+        pendingOccurrence?: MessageTriggerJobReviewSnapshot,
     ): Promise<boolean> {
         if (!job) return true;
         // The reference is carried only in the materialized job payload. It is
@@ -3321,6 +3326,7 @@ export class MessageTriggerService {
                     expectedJobsStale,
                     preserveExisting,
                     transaction,
+                    ...(pendingOccurrence ? [pendingOccurrence] as const : []),
                 )
                 : preserveExisting
                     ? this.jobRepository.upsertPendingForRuleGeneration(
@@ -3338,6 +3344,10 @@ export class MessageTriggerService {
                 if (!transaction || !this.automationDeliveryGate) throw new ServiceUnavailableException("Message automation authority is not configured");
                 await this.automationDeliveryGate.bindMaterialization(transaction, persisted,
                     (candidate, tx) => this.deliveryService.resolveCanonicalDeliverySnapshot(candidate, tx));
+                if (pendingOccurrence && persisted.status === "pending") {
+                    if (!this.smsDelivery) throw new ServiceUnavailableException("SMS date refresh is not configured");
+                    await this.smsDelivery.refreshPendingQuietAttempt(pendingOccurrence, persisted, transaction);
+                }
             }
             return persisted;
         };

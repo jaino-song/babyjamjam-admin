@@ -1,3 +1,4 @@
+import { isManualMessageTriggerJob } from "domain/constants/message-trigger-job-ownership";
 import { agentBindingHash } from "domain/repositories/agent-linked-action.types";
 import { agentAutomationSourcePayload } from "application/services/agent-automation-job-binding";
 import { buildSmsProviderAcceptanceKey } from "application/services/sms-provider-acceptance.service";
@@ -1996,6 +1997,7 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
         expectedJobsStale: boolean,
         preserveExisting = false,
         transaction?: Prisma.TransactionClient,
+        pendingOccurrence?: MessageTriggerJobReviewSnapshot,
     ): Promise<MessageTriggerJobEntity | null> {
         if (isReservedAutomationJob(job)) return null;
         const branchPredicate = job.branchId === null
@@ -2030,6 +2032,36 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
                 return null;
             }
 
+            if (pendingOccurrence) {
+                const old = pendingOccurrence;
+                if (!transaction || preserveExisting || old.status !== "pending" || old.canceledByUser
+                    || old.claimToken !== null || old.processingDeadlineAt !== null
+                    || isManualMessageTriggerJob(old) || isManualMessageTriggerJob(job)
+                    || isReservedAutomationJob(old) || old.payload.taskAutomationReference || job.payload.taskAutomationReference
+                    || old.branchId !== job.branchId || old.ruleId !== job.ruleId || old.clientId !== job.clientId
+                    || old.employeeScheduleId !== job.employeeScheduleId || old.recipientType !== job.recipientType
+                    || old.templateKey !== job.templateKey || old.dedupeKey !== job.dedupeKey
+                    || old.scheduledFor.getTime() !== job.scheduledFor.getTime()) return null;
+                this.assertOrdinaryJob(job);
+                // UPDATE, never INSERT/revive. Source/branch locks belong to the date reconciler;
+                // this generation and exact reviewed-row CAS also fence claims and source drift.
+                const rows = await transactionClient.$queryRaw<MessageTriggerJobRawRow[]>(Prisma.sql`
+                    UPDATE "message_trigger_job" AS job
+                    SET recipient_phone = ${job.recipientPhone}, payload = ${JSON.stringify(job.payload)}::jsonb,
+                        updated_at = date_trunc('milliseconds', clock_timestamp())
+                    WHERE job.id = ${old.id} AND job.branch_id = ${job.branchId}::uuid
+                      AND job.rule_id = ${job.ruleId} AND job.client_id IS NOT DISTINCT FROM ${job.clientId}
+                      AND job.employee_schedule_id IS NOT DISTINCT FROM ${job.employeeScheduleId}
+                      AND job.recipient_type = ${job.recipientType} AND job.template_key = ${job.templateKey}
+                      AND job.dedupe_key = ${job.dedupeKey} AND job.scheduled_for = ${job.scheduledFor}
+                      AND job.status = 'pending' AND job.canceled_by_user = false
+                      AND job.claim_token IS NULL AND job.processing_deadline_at IS NULL
+                      AND job.updated_at = ${old.updatedAt} AND job.payload = ${JSON.stringify(old.payload)}::jsonb
+                      AND ${ordinaryAutomationJobSql({ ruleId: Prisma.sql`job.rule_id`, dedupeKey: Prisma.sql`job.dedupe_key`, payload: Prisma.sql`job.payload` })}
+                    RETURNING job.*
+                `);
+                return rows[0] ? this.rawRowToDomain(rows[0]) : null;
+            }
             return this.upsertPendingWithClient(transactionClient, job, preserveExisting);
         };
         return transaction ? run(transaction) : this.prisma.$transaction(run);

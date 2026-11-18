@@ -10,7 +10,7 @@ import { MessageTriggerRecipientType } from "domain/constants/message-trigger-ca
 import { isCaregiverTriggerTemplate } from "domain/constants/message-trigger-catalog";
 import { CaregiverTemplateResolverService } from "./caregiver-template-resolver.service";
 import { isCaregiverSystemTemplateKey } from "domain/constants/system-template-registry";
-import type { Prisma } from "@prisma/client";
+import { Prisma } from "@prisma/client";
 import { Inject, Injectable, Logger, Optional } from "@nestjs/common";
 import { createHash } from "node:crypto";
 import { SystemSettingService } from "./system-setting.service";
@@ -318,6 +318,65 @@ export class SmsTriggerDeliveryService {
         }
 
         return canonical;
+    }
+
+    /** Only the locked date reconciler may rebind a never-started, exact-job DEFER draft. */
+    async refreshPendingQuietAttempt(previous: MessageTriggerJobEntity, job: MessageTriggerJobEntity,
+        transaction: Prisma.TransactionClient): Promise<void> {
+        const refuse = () => { throw new AgentAutomationDispatchUncertainError(); };
+        if (!job.branchId || previous.id !== job.id || previous.branchId !== job.branchId
+            || previous.ruleId !== job.ruleId || previous.clientId !== job.clientId
+            || previous.employeeScheduleId !== job.employeeScheduleId || previous.recipientType !== job.recipientType
+            || previous.templateKey !== job.templateKey || previous.dedupeKey !== job.dedupeKey
+            || previous.scheduledFor.getTime() !== job.scheduledFor.getTime()
+            || [previous, job].some(row => row.status !== "pending" || row.claimToken !== null
+                || row.processingDeadlineAt !== null || isManualMessageTriggerJob(row) || isReservedAutomationJob(row)
+                || row.payload.taskAutomationReference)) return refuse();
+        await transaction.$queryRaw(Prisma.sql`SELECT id FROM "message_log"
+            WHERE branch_id = ${job.branchId}::uuid AND trigger_job_id = ${job.id}
+              AND provider = 'aligo_sms' ORDER BY id FOR UPDATE`);
+        const logs = await transaction.message_log.findMany({
+            where: { branchId: job.branchId, triggerJobId: job.id, provider: "aligo_sms" }, orderBy: { id: "asc" },
+        });
+        if (!logs.length) return;
+        const log = logs[0]!;
+        const hold = parseMessageQuietHold(log.variables);
+        const variables = log.variables && typeof log.variables === "object" && !Array.isArray(log.variables) ? log.variables : {};
+        // Same strict association proof as automatic quiet-link replacement. Anything
+        // sent, started, uncertain, unbound, or carrying a retry is not a mutable draft.
+        if (logs.length !== 1 || !hold || log.branchId !== job.branchId || log.triggerJobId !== job.id
+            || log.provider !== "aligo_sms" || previous.attempts !== 0 || job.attempts !== 0
+            || !previous.nextAttemptAt || previous.nextAttemptAt < hold.releaseAt
+            || job.nextAttemptAt?.getTime() !== previous.nextAttemptAt.getTime()
+            || hold.originalScheduledFor.getTime() !== previous.scheduledFor.getTime()
+            || (previous.payload.existingMessageLogId !== undefined && previous.payload.existingMessageLogId !== log.id)
+            || (job.payload.existingMessageLogId !== undefined && job.payload.existingMessageLogId !== log.id)
+            || log.status !== "pending" || log.attempts !== 0 || log.nextRetryAt !== null
+            || log.providerAcceptanceState !== "prepared" || log.providerCallStartedAt !== null
+            || log.providerAcceptedAt !== null || log.aligoMid !== null
+            || log.providerAcceptanceKey !== buildSmsProviderAcceptanceKey("automation", `${job.branchId}:${job.id}`)
+            || !log.providerAcceptanceFingerprint?.trim()
+            || ["partial", "uncertain", "delivered", "manual-provider-rejected"].includes(String(variables["retrySafety"] ?? ""))) return refuse();
+        this.assertDeliveryJob(job);
+        const config = SMS_TEMPLATE_DELIVERY[job.templateKey as MessageTriggerTemplateKey];
+        if (!config) return refuse();
+        const snapshot = await this.resolveCanonicalDeliverySnapshot(job, transaction);
+        const refreshed = this.buildSmsLog({ job, config, snapshot, receiver: snapshot.receiver, status: "pending",
+            aligoMid: null, errorMessage: null, msgType: snapshot.requestedDeliveryType,
+            templateVariables: job.payload.templateVariables, retryDelayMs: 0 });
+        const changed = await transaction.message_log.updateMany({
+            where: { id: log.id, branchId: job.branchId, triggerJobId: job.id, provider: "aligo_sms",
+                status: "pending", attempts: 0, nextRetryAt: null, providerAcceptanceState: "prepared",
+                providerCallStartedAt: null, providerAcceptedAt: null, aligoMid: null, updatedAt: log.updatedAt,
+                providerAcceptanceKey: log.providerAcceptanceKey, providerAcceptanceFingerprint: log.providerAcceptanceFingerprint,
+                variables: { equals: log.variables as Prisma.InputJsonValue } },
+            data: { receiver: refreshed.receiver, messageBody: refreshed.messageBody,
+                recipientName: refreshed.recipientName, recipientPhone: refreshed.recipientPhone,
+                templateKey: refreshed.templateKey, providerAcceptanceFingerprint: refreshed.providerAcceptanceFingerprint,
+                variables: { ...refreshed.variables, ...messageQuietHoldVariables(hold) } },
+        });
+        if (changed.count !== 1) return refuse();
+        job.quietHold = hold;
     }
 
     /** Resolve the current provider-bound target without trusting staged data. */

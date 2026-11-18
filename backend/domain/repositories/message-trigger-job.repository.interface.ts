@@ -361,6 +361,8 @@ export interface IMessageTriggerJobRepository {
         expectedJobsStale: boolean,
         preserveExisting?: boolean,
         transaction?: Prisma.TransactionClient,
+        /** Locked date refresh only: update this exact pending occurrence without resetting retry state or inserting. */
+        pendingOccurrence?: MessageTriggerJobReviewSnapshot,
     ): Promise<MessageTriggerJobEntity | null>;
     /**
      * Lock and compare a rejected source job, then create the action-bound

@@ -3796,3 +3796,79 @@ describe("automatic service-record date replacement", () => {
         expect({ rows: f.rows(), logs: f.logs() }).toEqual(before);
     });
 });
+
+describe("locked same-occurrence date refresh", () => {
+    const generation = new Date("2026-11-18T00:00:00Z");
+    function fixture() {
+        const old = Object.assign(MessageTriggerJobEntity.create({ branchId: "branch-1", ruleId: "rule-1", clientId: 7,
+            employeeScheduleId: 91, recipientType: MessageTriggerRecipientType.PRIMARY_EMPLOYEE,
+            templateKey: MessageTriggerTemplateKey.CAREGIVER_SERVICE_START_NOTICE, recipientPhone: "01000000011",
+            dedupeKey: "same-occurrence", scheduledFor: generation,
+            payload: { memberId: "7", recipientName: "QA", recipientPhone: "01000000011", templateVariables: { end: "old" } } }),
+        { id: "exact-job", canceledByUser: false, attempts: 2, nextAttemptAt: new Date(generation.getTime() + 600_000) });
+        const fresh = MessageTriggerJobEntity.create({ ...old, branchId: old.branchId!, payload: { ...old.payload, templateVariables: { end: "new" } } });
+        const sqls: Prisma.Sql[] = [];
+        const tx = { $queryRaw: jest.fn(async (sql: Prisma.Sql) => {
+            sqls.push(sql);
+            if (sql.sql.includes('FROM "message_trigger_rule"')) return [{ id: old.ruleId, branch_id: old.branchId, updated_at: generation, jobs_stale: false }];
+            const preserve = sql.sql.includes('UPDATE "message_trigger_job" AS job');
+            const row = { ...old, payload: fresh.payload, attempts: preserve ? old.attempts : 0, nextAttemptAt: preserve ? old.nextAttemptAt : null };
+            return [{ id: row.id, branch_id: row.branchId, rule_id: row.ruleId, status: row.status,
+                scheduled_for: row.scheduledFor, sent_at: null, canceled_at: null, cancel_reason: null,
+                client_id: row.clientId, employee_schedule_id: row.employeeScheduleId, recipient_type: row.recipientType,
+                recipient_phone: row.recipientPhone, template_key: row.templateKey, dedupe_key: row.dedupeKey,
+                payload: row.payload, created_at: row.createdAt, updated_at: row.updatedAt, attempts: row.attempts,
+                next_attempt_at: row.nextAttemptAt, claim_token: null, processing_deadline_at: null }];
+        }) };
+        const repo = new SbMessageTriggerJobRepository({} as never);
+        return { old, fresh, tx, repo, sqls };
+    }
+    it("preserves retry state only with exact pending identity, generation and reviewed-row fences", async () => {
+        const f = fixture();
+        const result = await f.repo.upsertPendingForRuleGeneration(f.fresh, generation, false, false, f.tx as never, f.old);
+        expect(result).toMatchObject({ id: f.old.id, attempts: 2, nextAttemptAt: f.old.nextAttemptAt, payload: f.fresh.payload });
+        const update = f.sqls[1]!;
+        const set = update.sql.split("WHERE")[0]!;
+        for (const field of ["attempts", "next_attempt_at", "scheduled_for", "status", "claim_token"]) expect(set).not.toContain(field);
+        for (const fence of ["job.id =", "job.branch_id =", "job.rule_id =", "job.client_id IS NOT DISTINCT FROM",
+            "job.employee_schedule_id IS NOT DISTINCT FROM", "job.recipient_type =", "job.template_key =", "job.dedupe_key =",
+            "job.scheduled_for =", "job.status = 'pending'", "job.canceled_by_user = false", "job.claim_token IS NULL",
+            "job.processing_deadline_at IS NULL", "job.updated_at =", "job.payload ="]) expect(update.sql).toContain(fence);
+        expect(update.sql).not.toContain("INSERT");
+        expect(update.values).toEqual(expect.arrayContaining([f.old.id, f.old.branchId, f.old.ruleId, f.old.dedupeKey, f.old.scheduledFor, f.old.updatedAt]));
+    });
+    it.each(["key", "time", "rule", "branch", "recipient", "schedule", "client", "template", "canceled", "sent", "processing", "manual", "task", "claim", "deadline", "user"])("refuses %s drift without falling back to ordinary insertion", async drift => {
+        const f = fixture();
+        if (drift === "key") f.fresh.dedupeKey += "new";
+        if (drift === "time") f.fresh.scheduledFor = new Date(generation.getTime() + 1);
+        if (drift === "rule") f.old.ruleId += "old";
+        if (drift === "branch") f.old.branchId += "old";
+        if (drift === "recipient") f.old.recipientType = MessageTriggerRecipientType.CLIENT;
+        if (drift === "schedule") f.old.employeeScheduleId = 92;
+        if (drift === "client") f.old.clientId = 8;
+        if (drift === "template") f.old.templateKey = MessageTriggerTemplateKey.INFO;
+        if (["canceled", "sent", "processing"].includes(drift)) f.old.status = drift as "canceled" | "sent" | "processing";
+        if (drift === "manual") f.old.ruleId = "manual:qa";
+        if (drift === "task") f.old.payload.taskAutomationReference = {} as never;
+        if (drift === "claim") f.old.claimToken = "claim";
+        if (drift === "deadline") f.old.processingDeadlineAt = generation;
+        if (drift === "user") f.old.canceledByUser = true;
+        expect(await f.repo.upsertPendingForRuleGeneration(f.fresh, generation, false, false, f.tx as never, f.old)).toBeNull();
+        expect(f.sqls).toHaveLength(1);
+    });
+    it("rejects a changed generation before refreshing and a lost exact-row CAS without fallback", async () => {
+        const f = fixture();
+        expect(await f.repo.upsertPendingForRuleGeneration(f.fresh, new Date(0), false, false, f.tx as never, f.old)).toBeNull();
+        f.tx.$queryRaw.mockImplementationOnce(async () => [{ id: f.old.ruleId, branch_id: f.old.branchId, updated_at: generation, jobs_stale: false }]);
+        f.tx.$queryRaw.mockImplementationOnce(async () => []);
+        expect(await f.repo.upsertPendingForRuleGeneration(f.fresh, generation, false, false, f.tx as never, f.old)).toBeNull();
+    });
+    it("keeps ordinary upsert retry reset behavior unchanged", async () => {
+        const f = fixture();
+        const result = await f.repo.upsertPendingForRuleGeneration(f.fresh, generation, false, false, f.tx as never);
+        expect(result).toMatchObject({ attempts: 0, nextAttemptAt: null });
+        expect(f.sqls[1]!.sql).toContain('ON CONFLICT ("dedupe_key")');
+        expect(f.sqls[1]!.sql).toContain("attempts = 0");
+        expect(f.sqls[1]!.sql).toContain("next_attempt_at = NULL");
+    });
+});
