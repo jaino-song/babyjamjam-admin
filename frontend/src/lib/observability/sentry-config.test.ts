@@ -359,6 +359,30 @@ describe("frontend Sentry error coverage", () => {
 
 
 describe("URL-valued request headers", () => {
+  it.each([
+    ["X-Detail", "Contact 010 1234 5678 via https://example.com/help", "Contact [Phone] via https://example.com/help"],
+    ["X-Detail", "See https://example.com/help or call 010 1234 5678", "See https://example.com/help or call [Phone]"],
+    ["User-Agent", "ExampleBot/1.0 (+https://example.com/bot)", "ExampleBot/1.0 (+https://example.com/bot)"],
+    ["User-Agent", "ExampleBot/1.0 (+http://example.com/bot)", "ExampleBot/1.0 (+http://example.com/bot)"],
+  ])("sanitizes free-text %s without treating an embedded URL as the whole value", (header, value, expected) => {
+    const sent = getSentryRuntimeOptions().beforeSend({
+      type: undefined,
+      request: { headers: { [header]: value } },
+    });
+
+    expect(sent.request?.headers?.[header]).toBe(expected);
+    expect(JSON.stringify(sent)).not.toMatch(/010(?: |%20)1234(?: |%20)5678/);
+  });
+
+  it("strips queries and fragments from relative URLs in custom headers", () => {
+    const sent = getSentryRuntimeOptions().beforeSend({
+      type: undefined,
+      request: { headers: { "X-Custom-Header": "/contracts?documentId=abc#x" } },
+    });
+
+    expect(sent.request?.headers?.["X-Custom-Header"]).toBe("/contracts");
+  });
+
   it.each(["Referer", "referer", "REFERER", "Origin", "x-forwarded-uri", "X-Original-URL", "Location", "Link", "Refresh", "X-Custom-Header"])("strips queries and fragments from %s", (header) => {
     const sent = getSentryRuntimeOptions().beforeSend({
       type: undefined,
