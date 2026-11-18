@@ -7,6 +7,7 @@ import {
     EmailPort,
     EmailProviderError,
 } from "domain/ports/email.port";
+import { captureBackendError } from "infrastructure/observability/service-record-sentry";
 import { PrismaService } from "infrastructure/database/prisma.service";
 import { AuthEmailTokenService } from "./auth-email-token.service";
 import { SchedulerLeaseService } from "./scheduler-lease.service";
@@ -271,6 +272,16 @@ export class AuthEmailOutboxService {
                 attemptVersion: item.attempt_version,
             }));
         } catch (error) {
+            if (!(error instanceof AuthTokenUnavailableError)) {
+                try {
+                    captureBackendError(error instanceof Error ? error : new Error("Auth email outbox deliver failed"), {
+                        handled: true,
+                        operation: "auth-email-outbox:deliver",
+                    });
+                } catch {
+                    // Reporting must not interrupt background processing.
+                }
+            }
             const retryable = error instanceof EmailProviderError
                 ? error.stage === "pre_send"
                 : !providerCallStarted;
@@ -372,6 +383,14 @@ export class AuthEmailOutboxService {
                 },
             });
         } catch (persistError) {
+            try {
+                captureBackendError(persistError instanceof Error ? persistError : new Error("Auth email outbox persist pre send failure failed"), {
+                    handled: true,
+                    operation: "auth-email-outbox:persist-pre-send-failure",
+                });
+            } catch {
+                // Reporting must not interrupt background processing.
+            }
             this.logger.error(JSON.stringify({
                 event: "auth_email_outbox",
                 result: "pre_send_failure_persistence_failed",
@@ -406,6 +425,14 @@ export class AuthEmailOutboxService {
                 },
             });
         } catch (persistError) {
+            try {
+                captureBackendError(persistError instanceof Error ? persistError : new Error("Auth email outbox persist uncertain failed"), {
+                    handled: true,
+                    operation: "auth-email-outbox:persist-uncertain",
+                });
+            } catch {
+                // Reporting must not interrupt background processing.
+            }
             this.logger.error(JSON.stringify({
                 event: "auth_email_outbox",
                 result: "uncertain_persistence_failed",

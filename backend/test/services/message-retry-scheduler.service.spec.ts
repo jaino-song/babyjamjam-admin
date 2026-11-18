@@ -4,6 +4,10 @@ import { MessageLogEntity } from "domain/entities/message-log.entity";
 import { IMessageLogRepository } from "domain/repositories/message-log.repository.interface";
 import { createSchedulerLeaseMock } from "../utils/mocks/scheduler-lease.mock";
 
+jest.mock("infrastructure/observability/service-record-sentry", () => ({
+    captureBackendError: jest.fn(),
+}));
+
 describe("MessageRetrySchedulerService", () => {
     const createLog = (
         provider: string,

@@ -10,6 +10,7 @@ import { SmsRetryService, SmsRetryTimingPolicyUnavailableError } from "./sms-ret
 import { SystemSettingService } from "./system-setting.service";
 import { SmsHistoryReconciliationService } from "./sms-history-reconciliation.service";
 import { parseMessageQuietHold } from "domain/message-policy-evaluator";
+import { captureBackendError } from "infrastructure/observability/service-record-sentry";
 import {
     isTransientPrismaConnectivityError,
     summarizePrismaError,
@@ -61,7 +62,17 @@ export class MessageRetrySchedulerService {
         }
 
         try {
-            await this.smsHistoryReconciliationService?.reconcile().catch(() => this.logger.warn("Aligo history reconciliation step failed"));
+            await this.smsHistoryReconciliationService?.reconcile().catch((error: unknown) => {
+                try {
+                    captureBackendError(error instanceof Error ? error : new Error("Message retry scheduler reconcile history failed"), {
+                        handled: true,
+                        operation: "message-retry-scheduler:reconcile-history",
+                    });
+                } catch {
+                    // Reporting must not interrupt background processing.
+                }
+                this.logger.warn("Aligo history reconciliation step failed");
+            });
             const pendingLogs = await this.logRepository.findPendingRetriesSystemScope();
             if (pendingLogs.length === 0) return;
 
@@ -122,7 +133,15 @@ export class MessageRetrySchedulerService {
                     if (quietHeldRetry && (log.triggerJobId !== null || manualQuietRetry)) {
                         try {
                             await this.smsRetryService.retry(log, "automatic");
-                        } catch {
+                        } catch (error) {
+                            try {
+                                captureBackendError(error instanceof Error ? error : new Error("Message retry scheduler quiet admission failed"), {
+                                    handled: true,
+                                    operation: "message-retry-scheduler:quiet-admission",
+                                });
+                            } catch {
+                                // Reporting must not interrupt background processing.
+                            }
                             // A held acceptance is still provider-unstarted. A
                             // failed admission/read must not rewrite its stale
                             // snapshot as another failed delivery attempt.
@@ -157,6 +176,14 @@ export class MessageRetrySchedulerService {
                         await this.logRepository.update(log);
                     }
                 } catch (error) {
+                    try {
+                        captureBackendError(error instanceof Error ? error : new Error("Message retry scheduler retry failed"), {
+                            handled: true,
+                            operation: "message-retry-scheduler:retry",
+                        });
+                    } catch {
+                        // Reporting must not interrupt background processing.
+                    }
                     if (error instanceof SmsRetryTimingPolicyUnavailableError) {
                         this.logger.warn(`[Retry] Timing policy unavailable for log ${log.id}; stored retry unchanged`);
                         continue;
@@ -164,7 +191,15 @@ export class MessageRetrySchedulerService {
                     let retryDelayMs: number;
                     try {
                         retryDelayMs = await this.smsRetryService.getRetryDelayMs(log.branchId);
-                    } catch {
+                    } catch (timingError) {
+                        try {
+                            captureBackendError(timingError instanceof Error ? timingError : new Error("Message retry scheduler retry delay failed"), {
+                                handled: true,
+                                operation: "message-retry-scheduler:retry-delay",
+                            });
+                        } catch {
+                            // Reporting must not interrupt background processing.
+                        }
                         this.logger.warn(`[Retry] Could not resolve failure timing for log ${log.id}; stored retry unchanged`);
                         continue;
                     }
@@ -174,6 +209,14 @@ export class MessageRetrySchedulerService {
                 }
             }
         } catch (error) {
+            try {
+                captureBackendError(error instanceof Error ? error : new Error("Message retry scheduler tick failed"), {
+                    handled: true,
+                    operation: "message-retry-scheduler:tick",
+                });
+            } catch {
+                // Reporting must not interrupt background processing.
+            }
             if (isTransientPrismaConnectivityError(error)) {
                 this.executionGuard.enterCooldown(summarizePrismaError(error));
                 return;

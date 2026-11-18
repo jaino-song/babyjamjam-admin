@@ -31,6 +31,7 @@ import {
 } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import { createHash } from "node:crypto";
+import { captureBackendError } from "infrastructure/observability/service-record-sentry";
 import { normalizeKoreanPhoneLookupKey } from "infrastructure/database/repositories/stored-phone-lookup";
 import { PrismaService } from "infrastructure/database/prisma.service";
 import type { ServiceRecordRevisionDispatchContext } from "@babyjamjam/shared/types/service-record";
@@ -4021,6 +4022,14 @@ export class MessageTriggerService {
             // dispatching marker must remain untouched.
             if (job.status === "processing") {
                 job.markFailed("Provider disabled or delivery failed");
+                try {
+                    captureBackendError(new Error("Message delivery provider disabled failed"), {
+                        handled: true,
+                        operation: "message-delivery:provider-disabled",
+                    });
+                } catch {
+                    // Reporting must not interrupt background processing.
+                }
                 await this.persistTriggerJobStatus(job, "persist unsupported trigger delivery");
             } else if (job.status === "canceled" || job.status === "needs_setup") {
                 // Delivery policy skips can cancel in memory without writing
@@ -4248,6 +4257,14 @@ export class MessageTriggerService {
                 await this.deferOrReturnToNeedsSetup(job, error, resend);
             } else {
                 job.markFailed(error instanceof Error ? error.message : String(error));
+                try {
+                    captureBackendError(error instanceof Error ? error : new Error("Message delivery prepare failed"), {
+                        handled: true,
+                        operation: "message-delivery:prepare",
+                    });
+                } catch {
+                    // Reporting must not interrupt background processing.
+                }
             }
             await this.persistTriggerJobStatus(job, "persist failed trigger delivery preparation");
             return null;
@@ -4265,6 +4282,14 @@ export class MessageTriggerService {
             return true;
         } catch (error) {
             job.markFailed(error instanceof Error ? error.message : String(error));
+            try {
+                captureBackendError(error instanceof Error ? error : new Error("Message delivery persist prepared failed"), {
+                    handled: true,
+                    operation: "message-delivery:persist-prepared",
+                });
+            } catch {
+                // Reporting must not interrupt background processing.
+            }
             await this.persistTriggerJobStatus(job, "persist failed frozen delivery snapshot");
             return false;
         }
@@ -4760,6 +4785,14 @@ export class MessageTriggerService {
     ): Promise<void> {
         if (job.ruleId.startsWith(MANUAL_SMS_RULE_PREFIX)) {
             job.markFailed(error.message);
+            try {
+                captureBackendError(error instanceof Error ? error : new Error("Message delivery manual deferred failed"), {
+                    handled: true,
+                    operation: "message-delivery:manual-deferred",
+                });
+            } catch {
+                // Reporting must not interrupt background processing.
+            }
             job.nextAttemptAt = null;
             return;
         }
@@ -4787,6 +4820,14 @@ export class MessageTriggerService {
                 job.nextAttemptAt = null;
             } else if (job.status === "processing" || job.status === "dispatching") {
                 job.markFailed("Provider disabled or delivery failed");
+                try {
+                    captureBackendError(new Error("Message delivery provider disabled failed"), {
+                        handled: true,
+                        operation: "message-delivery:provider-disabled",
+                    });
+                } catch {
+                    // Reporting must not interrupt background processing.
+                }
             }
         } catch (error) {
             // The final admission read may have observed a newer terminal
@@ -4797,6 +4838,14 @@ export class MessageTriggerService {
                 await this.deferOrReturnToNeedsSetup(job, error, resend);
             } else {
                 job.markFailed(error instanceof Error ? error.message : String(error));
+                try {
+                    captureBackendError(error instanceof Error ? error : new Error("Message delivery send failed"), {
+                        handled: true,
+                        operation: "message-delivery:send",
+                    });
+                } catch {
+                    // Reporting must not interrupt background processing.
+                }
             }
         }
         return "persist-result";
@@ -5328,12 +5377,28 @@ export class MessageTriggerService {
                 job.markSent();
             } else if (uncertainIds.has(job.id)) {
                 job.markFailed(SMS_PROVIDER_ACCEPTANCE_UNCERTAIN_REASON);
+                try {
+                    captureBackendError(new Error("Message delivery sms acceptance uncertain failed"), {
+                        handled: true,
+                        operation: "message-delivery:sms-acceptance-uncertain",
+                    });
+                } catch {
+                    // Reporting must not interrupt background processing.
+                }
             } else if (job.status === "dispatching") {
                 // Dispatch authorization is the irreversible crossing into
                 // the provider path. A worker crash after that CAS cannot
                 // prove that no provider request was accepted, so never
                 // re-queue the row for another send.
                 job.markFailed(SMS_PROVIDER_ACCEPTANCE_UNCERTAIN_REASON);
+                try {
+                    captureBackendError(new Error("Message delivery sms acceptance uncertain failed"), {
+                        handled: true,
+                        operation: "message-delivery:sms-acceptance-uncertain",
+                    });
+                } catch {
+                    // Reporting must not interrupt background processing.
+                }
             } else if (job.status === "processing" && job.cancelReason !== null) {
                 // A manual-resend claim (BJJ-444): the claim left the setup
                 // reason on the row. Never `pending`: the ordinary dispatcher
@@ -5349,6 +5414,14 @@ export class MessageTriggerService {
                         ...(job.payload.existingMessageLogId ? { id: job.payload.existingMessageLogId } : {}) } });
                     if (!prepared || !prepared.providerAcceptanceKey || !prepared.providerAcceptanceFingerprint) {
                         job.markFailed(SMS_PROVIDER_ACCEPTANCE_UNCERTAIN_REASON);
+                        try {
+                            captureBackendError(new Error("Message delivery sms acceptance uncertain failed"), {
+                                handled: true,
+                                operation: "message-delivery:sms-acceptance-uncertain",
+                            });
+                        } catch {
+                            // Reporting must not interrupt background processing.
+                        }
                     } else {
                         job.status = "pending";
                         job.nextAttemptAt = job.nextAttemptAt ?? hold?.releaseAt ?? null;

@@ -5,6 +5,10 @@ import { PrismaService } from "infrastructure/database/prisma.service";
 import { createSchedulerLeaseMock } from "../utils/mocks/scheduler-lease.mock";
 import { createLifecycleTransactionProbe } from "../utils/lifecycle-transaction-probe";
 
+jest.mock("infrastructure/observability/service-record-sentry", () => ({
+    captureBackendError: jest.fn(),
+}));
+
 describe("ClientDueDateSchedulerService", () => {
     const createMockPrismaService = () => ({
         client: {

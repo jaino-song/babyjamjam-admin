@@ -2,6 +2,10 @@ import { MessageTriggerSchedulerService } from "application/services/message-tri
 import { MessageTriggerService } from "application/services/message-trigger.service";
 import { createSchedulerLeaseMock } from "../utils/mocks/scheduler-lease.mock";
 
+jest.mock("infrastructure/observability/service-record-sentry", () => ({
+    captureBackendError: jest.fn(),
+}));
+
 describe("MessageTriggerSchedulerService", () => {
     const createMockTriggerService = () => ({
         dispatchDueJobs: jest.fn(),

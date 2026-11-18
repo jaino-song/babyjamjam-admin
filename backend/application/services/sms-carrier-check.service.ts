@@ -10,6 +10,7 @@ import {
     MESSAGE_LOG_REPOSITORY,
     type IMessageLogRepository,
 } from "domain/repositories/message-log.repository.interface";
+import { captureBackendError } from "infrastructure/observability/service-record-sentry";
 import {
     isTransientPrismaConnectivityError,
     summarizePrismaError,
@@ -115,6 +116,14 @@ export class SmsCarrierCheckService {
                 try {
                     await this.checkOne(log, warnedStates);
                 } catch (error) {
+                    try {
+                        captureBackendError(error instanceof Error ? error : new Error("Sms carrier check process failed"), {
+                            handled: true,
+                            operation: "sms-carrier-check:process",
+                        });
+                    } catch {
+                        // Reporting must not interrupt background processing.
+                    }
                     if (isTransientPrismaConnectivityError(error)) {
                         this.executionGuard.enterCooldown(summarizePrismaError(error));
                         return;
@@ -127,6 +136,14 @@ export class SmsCarrierCheckService {
                 }
             }
         } catch (error) {
+            try {
+                captureBackendError(error instanceof Error ? error : new Error("Sms carrier check tick failed"), {
+                    handled: true,
+                    operation: "sms-carrier-check:tick",
+                });
+            } catch {
+                // Reporting must not interrupt background processing.
+            }
             if (isTransientPrismaConnectivityError(error)) {
                 this.executionGuard.enterCooldown(summarizePrismaError(error));
                 return;
@@ -160,6 +177,14 @@ export class SmsCarrierCheckService {
                 });
                 return;
             } catch (saveError) {
+                try {
+                    captureBackendError(saveError instanceof Error ? saveError : new Error("Sms carrier check close lookup failed"), {
+                        handled: true,
+                        operation: "sms-carrier-check:close-lookup",
+                    });
+                } catch {
+                    // Reporting must not interrupt background processing.
+                }
                 this.logger.warn(
                     `[CarrierCheck] Could not close log ${log.id} as lookup_error, postponing instead: ${describeErrorWithoutDetails(saveError)}`,
                 );
@@ -172,6 +197,14 @@ export class SmsCarrierCheckService {
                 new Date(Date.now() + FAILED_ROW_BACKOFF_MS),
             );
         } catch (postponeError) {
+            try {
+                captureBackendError(postponeError instanceof Error ? postponeError : new Error("Sms carrier check postpone failed"), {
+                    handled: true,
+                    operation: "sms-carrier-check:postpone",
+                });
+            } catch {
+                // Reporting must not interrupt background processing.
+            }
             this.logger.warn(
                 `[CarrierCheck] Could not postpone log ${log.id}: ${describeErrorWithoutDetails(postponeError)}`,
             );
@@ -224,7 +257,15 @@ export class SmsCarrierCheckService {
         let details: AligoSmsDeliveryDetailsResult;
         try {
             details = await this.aligoSmsApi.getSmsDeliveryDetails!(mid);
-        } catch {
+        } catch (error) {
+            try {
+                captureBackendError(error instanceof Error ? error : new Error("Sms carrier check lookup failed"), {
+                    handled: true,
+                    operation: "sms-carrier-check:lookup",
+                });
+            } catch {
+                // Reporting must not interrupt background processing.
+            }
             this.logger.warn(`[CarrierCheck] Carrier lookup failed for log ${log.id} (mid ${mid})`);
             return lookupError;
         }

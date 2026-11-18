@@ -13,6 +13,7 @@ import {
 } from "domain/repositories/holiday-review.repository.interface";
 import { KrBusinessDayCalendar, UnsupportedKoreanHolidayYearError } from "domain/utils/business-days";
 import { withClientServiceDays } from "domain/utils/client-service-days";
+import { captureBackendError } from "infrastructure/observability/service-record-sentry";
 
 /** A save in flight computed with the pre-change calendar must land before the event is processed. */
 export const HOLIDAY_REVIEW_GRACE_MS = 2 * 60 * 1000;
@@ -66,6 +67,14 @@ export class HolidayReviewProcessorService {
         try {
             await this.processDueEvents();
         } catch (error) {
+            try {
+                captureBackendError(error instanceof Error ? error : new Error("Holiday review processor tick failed"), {
+                    handled: true,
+                    operation: "holiday-review-processor:tick",
+                });
+            } catch {
+                // Reporting must not interrupt background processing.
+            }
             this.logger.error(`[Holiday Review] scheduled run crashed: ${this.describeError(error)}`);
         }
     }
@@ -84,6 +93,14 @@ export class HolidayReviewProcessorService {
         // backlog drains over several runs instead of stalling the guard. An event that appears
         // mid-run trips the guard and ends the run; the next run lists it.
         const queue = await this.repository.listUnprocessedEvents().catch((error: unknown) => {
+            try {
+                captureBackendError(error instanceof Error ? error : new Error("Holiday review processor list events failed"), {
+                    handled: true,
+                    operation: "holiday-review-processor:list-events",
+                });
+            } catch {
+                // Reporting must not interrupt background processing.
+            }
             this.logger.error(`[Holiday Review] could not list events: ${this.describeError(error)}`);
             return null;
         });
@@ -105,6 +122,14 @@ export class HolidayReviewProcessorService {
                 }
                 if (outcome === "applied") processed += 1;
             } catch (error) {
+                try {
+                    captureBackendError(error instanceof Error ? error : new Error("Holiday review processor process event failed"), {
+                        handled: true,
+                        operation: "holiday-review-processor:process-event",
+                    });
+                } catch {
+                    // Reporting must not interrupt background processing.
+                }
                 this.logger.error(
                     `[Holiday Review] event ${event.id} (${event.change} ${event.date}) failed, `
                     + `stopping the batch: ${this.describeError(error)}`,

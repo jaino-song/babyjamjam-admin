@@ -8,6 +8,7 @@ import {
     ReviewStageContract,
 } from "domain/repositories/eformsign-doc.repository.interface";
 import { isoDateInKorea } from "domain/utils/business-days";
+import { captureBackendError } from "infrastructure/observability/service-record-sentry";
 import {
     isTransientPrismaConnectivityError,
     summarizePrismaError,
@@ -94,6 +95,14 @@ export class ContractAutoFinalizeSchedulerService {
         try {
             await this.processDueContracts(sinceDate);
         } catch (error) {
+            try {
+                captureBackendError(error instanceof Error ? error : new Error("Contract auto finalize scheduler tick failed"), {
+                    handled: true,
+                    operation: "contract-auto-finalize-scheduler:tick",
+                });
+            } catch {
+                // Reporting must not interrupt background processing.
+            }
             if (isTransientPrismaConnectivityError(error)) {
                 this.executionGuard.enterCooldown(summarizePrismaError(error));
                 return;
@@ -191,6 +200,14 @@ export class ContractAutoFinalizeSchedulerService {
                 `[Contract Auto Finalize] Enqueued ${documentId} (end date ${contract.contractEndDate}, request ${requestKey})`,
             );
         } catch (error) {
+            try {
+                captureBackendError(error instanceof Error ? error : new Error("Contract auto finalize scheduler enqueue failed"), {
+                    handled: true,
+                    operation: "contract-auto-finalize-scheduler:enqueue",
+                });
+            } catch {
+                // Reporting must not interrupt background processing.
+            }
             // Queue infrastructure failure is not a provider terminal outcome:
             // leave the document's attempt budget untouched for the next tick.
             this.logger.error(
@@ -226,6 +243,14 @@ export class ContractAutoFinalizeSchedulerService {
                 { dedupe: { type: CONTRACT_AUTO_FINALIZE_FAILED_NOTIFICATION_TYPE, documentId } },
             );
         } catch (error) {
+            try {
+                captureBackendError(error instanceof Error ? error : new Error("Contract auto finalize scheduler notify failed"), {
+                    handled: true,
+                    operation: "contract-auto-finalize-scheduler:notify",
+                });
+            } catch {
+                // Reporting must not interrupt background processing.
+            }
             this.logger.error(
                 `[Contract Auto Finalize] Failed to notify branch ${branchId} about ${documentId}`,
                 error instanceof Error ? error.stack : String(error),
