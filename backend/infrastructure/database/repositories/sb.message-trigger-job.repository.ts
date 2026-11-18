@@ -1220,9 +1220,12 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
 
     async releaseProcessingForDateRefresh(job: MessageTriggerJobEntity, transaction: Prisma.TransactionClient): Promise<boolean> {
         if (!job.branchId || job.clientId === null || !job.claimToken) return false;
+        // Match stale-claim recovery: only a needs_setup claim retains its
+        // persisted setup reason. Ordinary claims clear it at claim time.
         const rows = await transaction.$queryRaw<Array<{ id: string }>>(Prisma.sql`
             UPDATE "message_trigger_job" AS job
-            SET status = 'pending', claim_token = NULL, processing_deadline_at = NULL,
+            SET status = CASE WHEN job.cancel_reason IS NOT NULL THEN 'needs_setup' ELSE 'pending' END,
+                claim_token = NULL, processing_deadline_at = NULL,
                 updated_at = date_trunc('milliseconds', clock_timestamp())
             WHERE job.id = ${job.id} AND job.branch_id = ${job.branchId}::uuid AND job.client_id = ${job.clientId}
               AND job.rule_id = ${job.ruleId} AND job.dedupe_key = ${job.dedupeKey}
