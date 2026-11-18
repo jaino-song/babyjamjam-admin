@@ -343,9 +343,11 @@ export class SmsTriggerDeliveryService {
         const hold = parseMessageQuietHold(log.variables);
         const variables = log.variables && typeof log.variables === "object" && !Array.isArray(log.variables) ? log.variables : {};
         // Same strict association proof as automatic quiet-link replacement. Anything
-        // sent, started, uncertain, unbound, or carrying a retry is not a mutable draft.
+        // sent, started, uncertain, unbound, or carrying a provider-log retry is
+        // not a mutable draft. Trigger preparation can defer before any provider
+        // call, so its retry count may be nonzero but must be preserved exactly.
         if (logs.length !== 1 || !hold || log.branchId !== job.branchId || log.triggerJobId !== job.id
-            || log.provider !== "aligo_sms" || previous.attempts !== 0 || job.attempts !== 0
+            || log.provider !== "aligo_sms" || previous.attempts !== job.attempts
             || !previous.nextAttemptAt || previous.nextAttemptAt < hold.releaseAt
             || job.nextAttemptAt?.getTime() !== previous.nextAttemptAt.getTime()
             || hold.originalScheduledFor.getTime() !== previous.scheduledFor.getTime()
