@@ -1,4 +1,5 @@
 import { HttpException, Logger } from "@nestjs/common";
+import { captureBackendError } from "infrastructure/observability/service-record-sentry";
 import { KasiHolidayError } from "infrastructure/api/kasi-holiday.client";
 import { HolidaySyncService } from "./holiday-sync.service";
 
@@ -22,6 +23,7 @@ describe("HolidaySyncService", () => {
     let warnSpy: jest.SpyInstance;
 
     beforeEach(() => {
+        jest.mocked(captureBackendError).mockReset();
         logSpy = jest.spyOn(Logger.prototype, "log").mockImplementation(() => undefined);
         warnSpy = jest.spyOn(Logger.prototype, "warn").mockImplementation(() => undefined);
         jest.spyOn(Logger.prototype, "error").mockImplementation(() => undefined);
@@ -97,6 +99,21 @@ describe("HolidaySyncService", () => {
                 { year: 2027, status: "failed", added: 0, removed: 0, error: "not_configured" },
             ]);
             expect(repository.applyYearSync).not.toHaveBeenCalled();
+            // Fails if the not_configured reporting guard becomes unconditional.
+            expect(captureBackendError).not.toHaveBeenCalled();
+        });
+
+        it("reports a network fetch failure once", async () => {
+            const { service, client, repository } = makeService();
+            const failure = new KasiHolidayError("network");
+            client.fetchYear.mockRejectedValue(failure);
+
+            await service.syncYears([2026], "cron");
+
+            expect(repository.applyYearSync).not.toHaveBeenCalled();
+            // Exact count and operation pin this fetch capture independently of write.
+            expect(captureBackendError).toHaveBeenCalledTimes(1);
+            expect(captureBackendError).toHaveBeenCalledWith(failure, { handled: true, operation: "holiday-sync:fetch" });
         });
 
         it("maps KASI failures to their reason and keeps going with the next year", async () => {
@@ -117,11 +134,15 @@ describe("HolidaySyncService", () => {
         it("a repository failure becomes write_failed", async () => {
             const { service, client, repository } = makeService();
             client.fetchYear.mockResolvedValue({ year: 2026, items: anchorItems(2026), rawCount: 8 });
-            repository.applyYearSync.mockRejectedValue(new Error("boom"));
+            const failure = new Error("boom");
+            repository.applyYearSync.mockRejectedValue(failure);
 
             await expect(service.syncYears([2026], "manual")).resolves.toEqual([
                 { year: 2026, status: "failed", added: 0, removed: 0, error: "write_failed" },
             ]);
+            // Removing the write capture must fail even though write_failed still returns.
+            expect(captureBackendError).toHaveBeenCalledTimes(1);
+            expect(captureBackendError).toHaveBeenCalledWith(failure, { handled: true, operation: "holiday-sync:write" });
         });
 
         it("syncs years strictly one after another", async () => {
@@ -159,6 +180,18 @@ describe("HolidaySyncService", () => {
             await service.syncScheduled();
 
             expect(client.fetchYear.mock.calls.map(([year]) => year)).toEqual([2027, 2028]);
+        });
+
+        it("reports an unexpected scheduled orchestration failure", async () => {
+            const { service } = makeService();
+            const failure = new Error("scheduled orchestration failed");
+            jest.spyOn(service, "syncYears").mockRejectedValue(failure);
+
+            await expect(service.syncScheduled()).resolves.toBeUndefined();
+
+            // The tick capture is separate from the per-year fetch/write captures.
+            expect(captureBackendError).toHaveBeenCalledTimes(1);
+            expect(captureBackendError).toHaveBeenCalledWith(failure, { handled: true, operation: "holiday-sync:tick" });
         });
 
         it("never throws", async () => {
