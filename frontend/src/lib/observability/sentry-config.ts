@@ -17,8 +17,10 @@ const URL_FIELD_PATTERN = /(^|[._-])(url|uri|path)([._-]|$)/i;
 const REFERER_HEADER_PATTERN = /^referer$/i;
 const URL_HEADER_PATTERN = /^(origin|location|destination|link|refresh)$/i;
 const URL_HEADER_VALUE_PATTERN = /^(?:https?:\/\/|\/)/i;
-// Greedy through the last @: malformed userinfo can contain raw ? or /.
-const URL_USERINFO_PATTERN = /([a-z][a-z0-9+.-]*:\/\/)[^\s]*@/gi;
+// Userinfo ends within the authority, before any path, query or fragment.
+const URL_USERINFO_PATTERN = /([a-z][a-z0-9+.-]*:\/\/)[^/?#\s]*@/gi;
+const MALFORMED_URL_USERINFO_PATTERN =
+  /([a-z][a-z0-9+.-]*:\/\/)[^/?#:\s]+:[^@\s]*@/gi;
 const QUERY_FIELD_PATTERN = /(^|[._-])query(?:_string)?([._-]|$)/i;
 const EMAIL_PATTERN = /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi;
 const PHONE_PATTERN = /(?:\+?82[-\s]?)?0?1[016789][-.\s]?\d{3,4}[-.\s]?\d{4}/g;
@@ -66,10 +68,30 @@ export function sanitizeSentryText(value: string): string {
     .replace(UUID_PATH_SEGMENT_PATTERN, `/${FILTERED_VALUE}`);
 }
 
+function stripUrlUserinfo(value: string): string {
+  const stripped = value.replace(URL_USERINFO_PATTERN, "$1");
+  if (stripped !== value) return stripped;
+
+  try {
+    // A valid URL's path, query and fragment must never be treated as userinfo.
+    new URL(value, "https://sentry.local");
+    return value;
+  } catch {
+    // Recover malformed username:password URLs with raw ? or / in the password.
+    // Stop at the first @, then strip any remaining userinfo only in the authority.
+    const userinfo = value.match(MALFORMED_URL_USERINFO_PATTERN)?.[0];
+    // Query assignments make recovery ambiguous; discard the entire URL.
+    if (userinfo && /[=&#]/.test(userinfo)) return `/${FILTERED_VALUE}`;
+    return value
+      .replace(MALFORMED_URL_USERINFO_PATTERN, "$1")
+      .replace(URL_USERINFO_PATTERN, "$1");
+  }
+}
+
 export function sanitizeSentryUrl(value: string | undefined): string | undefined {
   if (!value) return value;
 
-  const urlWithoutUserinfo = value.replace(URL_USERINFO_PATTERN, "$1");
+  const urlWithoutUserinfo = stripUrlUserinfo(value);
   try {
     const baseUrl = "https://sentry.local";
     const parsed = new URL(urlWithoutUserinfo, baseUrl);
@@ -134,7 +156,7 @@ function sanitizeHeaders(headers: Record<string, string> | undefined): Record<st
         || URL_HEADER_PATTERN.test(key) || URL_HEADER_VALUE_PATTERN.test(value)
       ) {
         // Strip userinfo before email masking can hide the URL's credential delimiter.
-        const urlWithoutUserinfo = value.replace(URL_USERINFO_PATTERN, "$1");
+        const urlWithoutUserinfo = stripUrlUserinfo(value);
         // Redact before URL parsing can encode whitespace and hide sensitive text.
         const sanitizedUrl = sanitizeSentryUrl(sanitizeSentryText(urlWithoutUserinfo)) ?? FILTERED_VALUE;
         // Preserve browser origins without the root slash added by URL parsing.
