@@ -9753,6 +9753,42 @@ describe("service-record date reconciliation", () => {
         expect(f.tx.message_trigger_job.updateMany).not.toHaveBeenCalled();
     });
 
+    it.each([
+        ["within", "2026-10-31Z", true],
+        ["outside", "2026-10-30Z", false],
+    ] as const)("applies ordinary grace to a moved occurrence %s 24 hours when past triggers are disabled", async (_window, endDate, eligible) => {
+        const f = fixture();
+        const now = new Date();
+        const previous = f.seed();
+        expect(previous.scheduledFor.getTime()).toBeGreaterThan(now.getTime());
+        f.client.endDate = new Date(endDate);
+        const recipe = buildClientMessageRecipe(f.endRule, f.client, now)!;
+        if (eligible) expect(now.getTime() - recipe.scheduledFor.getTime()).toBe(22.5 * 60 * 60 * 1000);
+
+        await f.service.reconcileServiceRecordDateRules(branchId, 7, scope);
+
+        expect(new Date()).toEqual(now);
+        expect(previous).toMatchObject({ status: "canceled", cancelReason: CLIENT_DATE_AUTOMATION_CHANGED_REASON,
+            canceledAt: now, claimToken: null, nextAttemptAt: null, canceledByUser: false });
+        const pending = f.rows.filter((row) => row.status === "pending");
+        expect(pending).toHaveLength(eligible ? 1 : 0);
+        expect(f.rows).toHaveLength(eligible ? 2 : 1);
+        expect(f.jobs.upsertPendingForRuleGeneration).toHaveBeenCalledTimes(eligible ? 1 : 0);
+        expect(f.sources.getMessagePolicyEnabled).toHaveBeenCalledWith(branchId, "past-trigger", f.tx);
+        expect(f.sources.getRetroactiveSendConfig).not.toHaveBeenCalled();
+        if (eligible) {
+            expect(pending[0]).toMatchObject(recipe);
+            expect(pending[0]!.dedupeKey).not.toBe(previous.dedupeKey);
+            expect(pending[0]!.payload.catchUp).toBeUndefined();
+        }
+
+        const before = structuredClone(f.rows);
+        await f.service.reconcileServiceRecordDateRules(branchId, 7, scope);
+        expect(f.rows).toEqual(before);
+        expect(f.jobs.upsertPendingForRuleGeneration).toHaveBeenCalledTimes(eligible ? 1 : 0);
+        expect(f.tx.message_trigger_job.updateMany).toHaveBeenCalledTimes(1);
+    });
+
     it("does not create a catch-up reservation when the changed anchor is past and the branch disables past triggers", async () => {
         const f = fixture(); f.seed(); f.client.endDate = new Date("2026-10-25Z");
         await f.service.reconcileServiceRecordDateRules(branchId, 7, scope);

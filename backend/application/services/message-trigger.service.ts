@@ -2699,8 +2699,7 @@ export class MessageTriggerService {
                 // Refreshing an accepted same-key occurrence is not a new catch-up send.
                 const existingOccurrence = current && ["pending", "processing"].includes(current.status) && job?.dedupeKey === current.dedupeKey
                     && job.scheduledFor.getTime() === current.scheduledFor.getTime();
-                const eligible = job && (existingOccurrence || ((includePast || job.scheduledFor.getTime() > Date.now())
-                    && !(includePast && rule.recipientType === MessageTriggerRecipientType.CLIENT && this.shouldSkipPreStartCatchUp(rule, client))
+                const eligible = job && (existingOccurrence || (!(includePast && rule.recipientType === MessageTriggerRecipientType.CLIENT && this.shouldSkipPreStartCatchUp(rule, client))
                     && isMessageRecipeWithinMaterializationWindow(job, rule, includePast, new Date())));
                 if (!operatorReservation && !replacementBlocked && eligible && !existingOccurrence && !currentEquivalent) catchUpCandidates.push({ rule, job });
                 reconciliations.push({ job, apply: async () => {
