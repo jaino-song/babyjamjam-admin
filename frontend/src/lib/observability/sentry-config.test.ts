@@ -359,6 +359,42 @@ describe("frontend Sentry error coverage", () => {
 
 
 describe("URL-valued request headers", () => {
+  describe.each([
+    ["https://h", "https://h"],
+    ["//h", "https://h"],
+    ["", ""],
+    ["https://outer:outer-pass@h", "https://h"],
+  ])("%s normalized nested credentials", (prefix, origin) => {
+    it.each([
+      "https:/.//alice:pw@inner.example/x",
+      "https:/%2e//alice:pw@inner.example/x",
+      "https:\\\\alice:pw@inner.example/x",
+      "htt\tps://alice:pw@inner.example/x",
+      "https://ali\tce:pw@inner.example/x",
+      "https:// alice:pw@inner.example/x",
+      "https://alice:pw @inner.example/x",
+    ])("removes credentials after URL normalization (sentry-coverage-u7f1-r3/F3): %s", (nested) => {
+      const value = `${prefix}/proxy/${nested}?documentId=qa-nested-query#private`;
+      const expected = `${origin}/proxy/https://inner.example/x`;
+      const sent = getSentryRuntimeOptions().beforeSend({
+        type: undefined,
+        request: {
+          url: value,
+          headers: { Referer: value, "X-Forwarded-Uri": value, "X-Detail": value },
+        },
+        contexts: { api: { path: value } },
+      });
+
+      expect(sanitizeSentryUrl(value)).toBe(expected);
+      expect(sent.request?.url).toBe(expected);
+      expect(sent.request?.headers).toEqual({
+        Referer: expected, "X-Forwarded-Uri": expected, "X-Detail": expected,
+      });
+      expect(sent.contexts?.api?.path).toBe(expected);
+      expect(JSON.stringify(sent)).not.toMatch(/alice|pw|outer-pass|\[Email\]|[?#]|documentId|qa-nested-query/);
+    });
+  });
+
   it.each([
     ["https://h/proxy/https://alice:s3cr!t@i/x", "https://h/proxy/https://i/x"],
     ["https://h/proxy/http://alice:a@b!c@i/x", "https://h/proxy/http://i/x"],
