@@ -362,6 +362,8 @@ describe("URL-valued request headers", () => {
   it.each([
     ["Referer", "https://alice:s3cr!t@admin.example.com/x?documentId=abc"],
     ["x-forwarded-uri", "https://alice:s3cr!t@admin.example.com/x"],
+    ["Referer", "https://alice:a@b!c@admin.example.com/x?documentId=abc"],
+    ["x-forwarded-uri", "https://alice:a@b!c@admin.example.com/x"],
   ])("removes URL credentials before text masking in %s", (header, value) => {
     const sent = getSentryRuntimeOptions().beforeSend({
       type: undefined,
@@ -369,7 +371,7 @@ describe("URL-valued request headers", () => {
     });
 
     expect(sent.request?.headers?.[header]).toBe("https://admin.example.com/x");
-    expect(JSON.stringify(sent)).not.toMatch(/alice|s3cr|\[Email\]/);
+    expect(JSON.stringify(sent)).not.toMatch(/alice|s3cr|b!c|\[Email\]/);
   });
 
   it("preserves a credential-free Referer and masks email in a non-URL header", () => {
@@ -390,11 +392,13 @@ describe("URL-valued request headers", () => {
   it.each([
     ["https://alice:s3cr!t@admin.example.com/x?documentId=abc", "https://admin.example.com/x"],
     ["https://alice:s3cr!t@[invalid/x?documentId=abc", "https://[invalid/x"],
+    ["https://alice:a@b!c@admin.example.com/x?documentId=abc", "https://admin.example.com/x"],
+    ["https://alice:a@b!c@[invalid/x?documentId=abc", "https://[invalid/x"],
   ])("removes URL credentials from direct URL sanitization: %s", (value, expected) => {
     const sanitized = sanitizeSentryUrl(value);
 
     expect(sanitized).toBe(expected);
-    expect(sanitized).not.toMatch(/alice|s3cr|\[Email\]/);
+    expect(sanitized).not.toMatch(/alice|s3cr|b!c|\[Email\]/);
   });
 
   describe.each(["X-Detail", "Referer", "x-forwarded-uri"])("%s URL-prefixed text privacy", (header) => {
