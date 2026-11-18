@@ -1670,6 +1670,26 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
                             SERVICE_RECORD_LINK_BRANCH_DISABLED_REASON, SERVICE_RECORD_LINK_PRE_BOOKING_REASON,
                             MESSAGE_SENDER_APPROVAL_REQUIRED_CANCEL_REASON].includes(existing.cancel_reason);
                     if (!["pending", "needs_setup"].includes(existing.status) && !reclaimableCancellation) return { kind: "protected" };
+                    if (reclaimableCancellation) {
+                        // Reclaiming must honor the base scheduler's schedule-wide blockers:
+                        // a manual send may have committed while this automatic row was canceled.
+                        const blockers = await transaction.$queryRaw<Array<{ id: string }>>(Prisma.sql`
+                            SELECT blocker.id
+                            FROM "message_trigger_job" AS blocker
+                            WHERE blocker.branch_id = ${replacement.branchId}::uuid
+                              AND blocker.rule_id = ${ruleId}
+                              AND blocker.employee_schedule_id = ${employeeScheduleId}
+                              AND blocker.id <> ${existing.id}
+                              AND ${serviceRecordScheduleBlockerSql({
+                                  status: Prisma.sql`blocker."status"`,
+                                  cancelReason: Prisma.sql`blocker."cancel_reason"`,
+                                  canceledByUser: Prisma.sql`blocker."canceled_by_user"`,
+                              })}
+                            ORDER BY blocker.id
+                            FOR UPDATE
+                        `);
+                        if (blockers.length > 0) return { kind: "protected" };
+                    }
                     if (options.requireActiveLinkToken !== undefined
                         && !(await activeLinkTokenExists(transaction, options.requireActiveLinkToken, employeeScheduleId, replacement.branchId))) return { kind: "link_revoked" };
                     const sameTime = new Date(existing.scheduled_for).getTime() === replacement.scheduledFor.getTime();
