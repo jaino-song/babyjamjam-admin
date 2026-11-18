@@ -86,13 +86,7 @@ function transactionalPrisma<T extends Record<string, unknown>>(transactionClien
 }
 
 function automationDelegates() {
-    const messageReservations = [
-        { id: "survey", templateKey: "SURVEY", status: "pending", claimToken: null },
-        { id: "end-notice", templateKey: "SERVICE_END_NOTICE", status: "processing", claimToken: "synthetic-claim" },
-        { id: "unrelated", templateKey: "INFO", status: "dispatching", claimToken: "synthetic-dispatch" },
-    ];
     return {
-        messageReservations,
         message_trigger_rule: { findUnique: jest.fn().mockResolvedValue({ id: "marker" }) },
         message_trigger_job: { upsert: jest.fn(), updateMany: jest.fn() },
     };
@@ -1056,21 +1050,20 @@ describe("ServiceRecordEditRepository", () => {
             }
         });
 
-        it("confirms a note-only edit without touching SURVEY/SERVICE_END_NOTICE reservations or creating intents", async () => {
+        it("confirms a note-only edit with document supersession and no message writes or intents", async () => {
             const source = futureSource();
-            const { tx } = await confirmWith({
+            const { tx, response } = await confirmWith({
                 sessions: [{ ...source.sessions[0]!, notes: "updated note" }],
                 assignments: [{ assignmentId: source.assignments[0]!.id, scheduleId: 55,
                     startDate: "2026-09-01", endDate: "2026-09-02", datesChanged: false }],
                 documentJob: { requestKey: "service-record-revision:note", activeKey: "note",
                     payload: { kind: "service_record_revision", periodChanged: false }, payloadFingerprint: "c".repeat(64) },
             });
-            expect(tx.service_record_day.updateMany).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ notes: "updated note" }) }));
-            expect(tx.messageReservations).toEqual([
-                { id: "survey", templateKey: "SURVEY", status: "pending", claimToken: null },
-                { id: "end-notice", templateKey: "SERVICE_END_NOTICE", status: "processing", claimToken: "synthetic-claim" },
-                { id: "unrelated", templateKey: "INFO", status: "dispatching", claimToken: "synthetic-dispatch" },
-            ]);
+            expect(response.status).toBe("confirmed");
+            expect(tx.service_record_day.updateMany).toHaveBeenCalledWith({
+                where: { id: source.sessions[0]!.sourceRowId, branchId, serviceRecordCaseId: caseId },
+                data: expect.objectContaining({ notes: "updated note" }),
+            });
             expect(tx.message_trigger_job.upsert).not.toHaveBeenCalled();
             expect(tx.message_trigger_job.updateMany).not.toHaveBeenCalled();
             const statements = [...tx.$queryRaw.mock.calls, ...tx.$executeRaw.mock.calls].map(([sql]) => sqlText(sql));
