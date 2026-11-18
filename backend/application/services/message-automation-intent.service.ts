@@ -3,6 +3,8 @@ import { Cron } from "@nestjs/schedule";
 import { Prisma } from "@prisma/client";
 import {
     getEmployeeAutomationIntentDedupeKey,
+    getClientAutomationIntentDedupeKey,
+    type ClientDateAutomationScope,
     getScheduleAutomationIntentDedupeKey,
     MESSAGE_AUTOMATION_INTENT_INVALID_REASON,
     MESSAGE_AUTOMATION_INTENT_RETRY_REASON,
@@ -32,6 +34,7 @@ function toDate(value: Date | string): Date {
 
 interface IntentCandidate {
     id: string;
+    dedupeKey?: string;
     branchId: string | null;
     clientId: number | null;
     employeeScheduleId: number | null;
@@ -130,12 +133,17 @@ export class MessageAutomationIntentService {
         scheduleId: number;
         includePast: boolean;
         replaceExisting?: boolean;
+        refreshServiceRecordLink?: boolean;
+        intentKey?: string;
         intentAt?: Date;
         taskOrigin?: boolean;
         taskAutomationReference?: AgentAutomationTaskCommitReference;
     }): Promise<boolean> {
-        const dedupeKey = getScheduleAutomationIntentDedupeKey(params.branchId, params.scheduleId);
-        const claim = await this.claimIntent(dedupeKey, params.intentAt);
+        if (params.refreshServiceRecordLink && !params.intentKey) return false;
+        const genericKey = getScheduleAutomationIntentDedupeKey(params.branchId, params.scheduleId);
+        if (params.intentKey && (!params.refreshServiceRecordLink || !params.intentKey.startsWith(`${genericKey}:dates:`))) return false;
+        const dedupeKey = params.intentKey ?? genericKey;
+        const claim = await this.claimIntent(dedupeKey, params.intentAt, params.refreshServiceRecordLink ? { branchId: params.branchId, scheduleId: params.scheduleId } : undefined);
         if (!claim) return false;
 
         try {
@@ -143,7 +151,7 @@ export class MessageAutomationIntentService {
                 await this.releaseIntent(claim);
                 return false;
             }
-            const refreshed = await this.triggerService.syncEmployeeAssignmentRulesForSchedule(
+            const refreshed = params.refreshServiceRecordLink ? true : await this.triggerService.syncEmployeeAssignmentRulesForSchedule(
                 params.branchId,
                 params.scheduleId,
                 params.includePast,
@@ -168,8 +176,35 @@ export class MessageAutomationIntentService {
                     params.scheduleId,
                     { taskAutomationReference: params.taskAutomationReference },
                 );
+            } else if (params.refreshServiceRecordLink) {
+                await this.serviceRecordLinkService.scheduleForServiceStart(params.scheduleId, {
+                    rescheduleAutomatic: true, branchId: params.branchId,
+                });
             } else {
                 await this.serviceRecordLinkService.scheduleForServiceStart(params.scheduleId);
+            }
+            return this.deleteClaimedIntent(claim);
+        } catch (error) {
+            await this.releaseAfterFailure(claim, error);
+            throw error;
+        }
+    }
+
+    async fulfillClientDateIntent(params: {
+        branchId: string; clientId: number; dedupeKey: string; intentAt: Date; dateScope: ClientDateAutomationScope;
+    }): Promise<boolean> {
+        if (!params.dedupeKey.startsWith(`${getClientAutomationIntentDedupeKey(params.branchId, params.clientId)}:dates:`)) return false;
+        const claim = await this.claimIntent(params.dedupeKey, params.intentAt, { branchId: params.branchId, clientId: params.clientId });
+        if (!claim) return false;
+        try {
+            if (!(await this.isBranchApproved(params.branchId))) {
+                await this.releaseIntent(claim);
+                return false;
+            }
+            await this.triggerService.reconcileServiceRecordDateRules(params.branchId, params.clientId, params.dateScope);
+            if (!(await this.isBranchApproved(params.branchId))) {
+                await this.releaseIntent(claim);
+                return false;
             }
             return this.deleteClaimedIntent(claim);
         } catch (error) {
@@ -242,6 +277,7 @@ export class MessageAutomationIntentService {
             },
             select: {
                 id: true,
+                dedupeKey: true,
                 branchId: true,
                 clientId: true,
                 employeeScheduleId: true,
@@ -272,6 +308,7 @@ export class MessageAutomationIntentService {
     private async claimIntent(
         dedupeKey: string,
         expectedIntentAt?: Date,
+        owner?: { branchId: string; clientId?: number; scheduleId?: number },
     ): Promise<ScheduleIntentClaim | null> {
         const expectedIntentFilter = expectedIntentAt
             ? Prisma.sql`AND scheduled_for = ${expectedIntentAt}`
@@ -289,6 +326,9 @@ export class MessageAutomationIntentService {
                 updated_at = date_trunc('milliseconds', clock_timestamp())
             WHERE dedupe_key = ${dedupeKey}
               AND rule_id = ${MESSAGE_AUTOMATION_INTENT_RULE_ID}
+              ${owner ? Prisma.sql`AND branch_id = ${owner.branchId}::uuid` : Prisma.empty}
+              ${owner?.clientId !== undefined ? Prisma.sql`AND client_id = ${owner.clientId}` : Prisma.empty}
+              ${owner?.scheduleId !== undefined ? Prisma.sql`AND employee_schedule_id = ${owner.scheduleId}` : Prisma.empty}
               AND status = 'failed'
               AND cancel_reason = ${MESSAGE_AUTOMATION_INTENT_RETRY_REASON}
               AND canceled_by_user = false
@@ -391,6 +431,25 @@ export class MessageAutomationIntentService {
             await this.quarantineInvalidIntent(candidate.id, expectedVersion);
             return false;
         }
+        if (kind === "client_dates") {
+            let scope: ClientDateAutomationScope | undefined;
+            try {
+                const parsed: unknown = JSON.parse(variables["dateScope"] ?? "null");
+                if (parsed && typeof parsed === "object" && "startDate" in parsed && "endDate" in parsed
+                    && "scheduleIds" in parsed && typeof parsed.startDate === "boolean" && typeof parsed.endDate === "boolean"
+                    && Array.isArray(parsed.scheduleIds) && parsed.scheduleIds.every((id: unknown) => typeof id === "number" && Number.isSafeInteger(id) && id > 0)) {
+                    scope = parsed as ClientDateAutomationScope;
+                }
+            } catch { /* Malformed markers are quarantined below. */ }
+            if (!scope || taskOrigin || candidate.clientId === null || !candidate.dedupeKey?.startsWith(
+                `${getClientAutomationIntentDedupeKey(candidate.branchId, candidate.clientId)}:dates:`,
+            )) {
+                await this.quarantineInvalidIntent(candidate.id, expectedVersion);
+                return false;
+            }
+            return this.fulfillClientDateIntent({ branchId: candidate.branchId, clientId: candidate.clientId,
+                dedupeKey: candidate.dedupeKey, intentAt: candidate.scheduledFor, dateScope: scope });
+        }
         if (kind === "client" && candidate.clientId !== null) {
             return this.fulfillClientIntent({
                 branchId: candidate.branchId,
@@ -402,11 +461,20 @@ export class MessageAutomationIntentService {
             });
         }
         if (kind === "schedule" && candidate.employeeScheduleId !== null) {
+            const refreshServiceRecordLink = variables["refreshServiceRecordLink"] === "true";
+            if (refreshServiceRecordLink && (!candidate.dedupeKey?.startsWith(
+                `${getScheduleAutomationIntentDedupeKey(candidate.branchId, candidate.employeeScheduleId)}:dates:`,
+            ) || taskOrigin)) {
+                await this.quarantineInvalidIntent(candidate.id, expectedVersion);
+                return false;
+            }
             return this.fulfillScheduleIntent({
                 branchId: candidate.branchId,
                 scheduleId: candidate.employeeScheduleId,
                 includePast,
                 replaceExisting,
+                refreshServiceRecordLink,
+                ...(refreshServiceRecordLink ? { intentKey: candidate.dedupeKey } : {}),
                 intentAt: candidate.scheduledFor,
                 taskOrigin,
                 ...(taskReference ? { taskAutomationReference: taskReference } : {}),
