@@ -237,6 +237,44 @@ describe("all mobile Sentry errors", () => {
 
 
 describe("URL-valued request headers", () => {
+  it.each([
+    ["Referer", "https://alice:s3cr!t@admin.example.com/x?documentId=abc"],
+    ["x-forwarded-uri", "https://alice:s3cr!t@admin.example.com/x"],
+  ])("removes URL credentials before text masking in %s", (header, value) => {
+    const sent = getSentryRuntimeOptions().beforeSend({
+      type: undefined,
+      request: { headers: { [header]: value } },
+    });
+
+    expect(sent.request?.headers?.[header]).toBe("https://admin.example.com/x");
+    expect(JSON.stringify(sent)).not.toMatch(/alice|s3cr|\[Email\]/);
+  });
+
+  it("preserves a credential-free Referer and masks email in a non-URL header", () => {
+    const sent = getSentryRuntimeOptions().beforeSend({
+      type: undefined,
+      request: { headers: {
+        Referer: "https://admin.example.com/x?documentId=abc",
+        "X-Detail": "Contact user@example.com",
+      } },
+    });
+
+    expect(sent.request?.headers).toEqual({
+      Referer: "https://admin.example.com/x",
+      "X-Detail": "Contact [Email]",
+    });
+  });
+
+  it.each([
+    ["https://alice:s3cr!t@admin.example.com/x?documentId=abc", "https://admin.example.com/x"],
+    ["https://alice:s3cr!t@[invalid/x?documentId=abc", "https://[invalid/x"],
+  ])("removes URL credentials from direct URL sanitization: %s", (value, expected) => {
+    const sanitized = sanitizeSentryUrl(value);
+
+    expect(sanitized).toBe(expected);
+    expect(sanitized).not.toMatch(/alice|s3cr|\[Email\]/);
+  });
+
   describe.each(["X-Detail", "Referer", "x-forwarded-uri"])("%s URL-prefixed text privacy", (header) => {
     it.each([
       ["/retry with Bearer qa-header-credential", "/retry%20with%20Bearer%20[Filtered]"],

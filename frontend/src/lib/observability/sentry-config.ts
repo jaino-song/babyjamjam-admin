@@ -17,6 +17,7 @@ const URL_FIELD_PATTERN = /(^|[._-])(url|uri|path)([._-]|$)/i;
 const REFERER_HEADER_PATTERN = /^referer$/i;
 const URL_HEADER_PATTERN = /^(origin|location|destination|link|refresh)$/i;
 const URL_HEADER_VALUE_PATTERN = /^(?:https?:\/\/|\/)/i;
+const URL_USERINFO_PATTERN = /([a-z][a-z0-9+.-]*:\/\/)[^\s/?#@]*@/gi;
 const QUERY_FIELD_PATTERN = /(^|[._-])query(?:_string)?([._-]|$)/i;
 const EMAIL_PATTERN = /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi;
 const PHONE_PATTERN = /(?:\+?82[-\s]?)?0?1[016789][-.\s]?\d{3,4}[-.\s]?\d{4}/g;
@@ -76,7 +77,9 @@ export function sanitizeSentryUrl(value: string | undefined): string | undefined
     );
     return parsed.origin === baseUrl ? path : `${parsed.origin}${path}`;
   } catch {
-    return sanitizeSentryText(value.split(/[?#]/, 1)[0] ?? value).replace(
+    const urlWithoutUserinfo = (value.split(/[?#]/, 1)[0] ?? value)
+      .replace(URL_USERINFO_PATTERN, "$1");
+    return sanitizeSentryText(urlWithoutUserinfo).replace(
       SERVICE_RECORD_ACCESS_TOKEN_PATTERN,
       `$1${FILTERED_VALUE}`,
     );
@@ -129,8 +132,10 @@ function sanitizeHeaders(headers: Record<string, string> | undefined): Record<st
         REFERER_HEADER_PATTERN.test(key) || URL_FIELD_PATTERN.test(key)
         || URL_HEADER_PATTERN.test(key) || URL_HEADER_VALUE_PATTERN.test(value)
       ) {
+        // Strip userinfo before email masking can hide the URL's credential delimiter.
+        const urlWithoutUserinfo = value.replace(URL_USERINFO_PATTERN, "$1");
         // Redact before URL parsing can encode whitespace and hide sensitive text.
-        return [key, sanitizeSentryUrl(sanitizeSentryText(value)) ?? FILTERED_VALUE];
+        return [key, sanitizeSentryUrl(sanitizeSentryText(urlWithoutUserinfo)) ?? FILTERED_VALUE];
       }
       return [key, sanitizeSentryText(value)];
     }),
