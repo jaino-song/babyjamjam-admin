@@ -4,7 +4,7 @@ export const MESSAGE_AUTOMATION_INTENT_INVALID_REASON =
     "메시지 자동화 복구 표식 손상 - 수동 확인 필요";
 export const EMPLOYEE_ASSIGNMENT_AUTOMATION_CHANGED_CANCEL_REASON = "Employee assignment changed";
 
-export type MessageAutomationIntentKind = "client" | "schedule" | "employee";
+export type MessageAutomationIntentKind = "client" | "client_dates" | "schedule" | "employee";
 
 export function getClientAutomationIntentDedupeKey(branchId: string, clientId: number): string {
     return `${MESSAGE_AUTOMATION_INTENT_RULE_ID}:branch:${branchId}:client:${clientId}`;
@@ -25,3 +25,16 @@ export function getEmployeeAutomationIntentDedupeKey(
 }
 
 export const getEmployeeProfileRefreshAutomationIntentDedupeKey = getEmployeeAutomationIntentDedupeKey;
+
+/** Immutable per-confirmation work; generic client writers never address this key. */
+export function getClientDateAutomationIntentDedupeKey(branchId: string, clientId: number, confirmation: string): string {
+    return `${getClientAutomationIntentDedupeKey(branchId, clientId)}:dates:${confirmation}`;
+}
+
+export interface ClientDateAutomationScope {
+    startDate: boolean;
+    endDate: boolean;
+    scheduleIds: number[];
+}
+
+export const CLIENT_DATE_AUTOMATION_CHANGED_REASON = "Service record dates changed";

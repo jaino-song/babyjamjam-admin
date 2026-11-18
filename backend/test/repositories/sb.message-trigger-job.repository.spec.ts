@@ -3265,3 +3265,117 @@ describeReal("TIME-1 real PostgreSQL cadence and reclaim fences", () => {
         expect(await handle.raw.message_trigger_job.findUnique({ where: { id: job.id } })).toMatchObject(change);
     });
 });
+
+describe("automatic service-record date replacement", () => {
+    const branchId = "99000000-0000-4000-8000-000000000001";
+    const key = `${SERVICE_RECORD_LINK_RULE_ID}:schedule:10:primary`;
+    const reason = "Service record link rescheduled";
+    const snake = (name: string) => name.replace(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`);
+    function fixture() {
+        const replacement = MessageTriggerJobEntity.create({ branchId, ruleId: SERVICE_RECORD_LINK_RULE_ID, clientId: 20,
+            employeeScheduleId: 10, scheduledFor: new Date("2027-01-10T03:00:00Z"),
+            recipientType: MessageTriggerRecipientType.PRIMARY_EMPLOYEE, recipientPhone: "01000000030",
+            templateKey: MessageTriggerTemplateKey.SERVICE_RECORD_LINK, dedupeKey: key,
+            payload: { memberId: "employee:30", recipientName: "QA-care", recipientPhone: "01000000030",
+                templateVariables: { serviceStartDate: "2027-01-11", serviceEndDate: "2027-01-20" } } });
+        const raw = (id: string, dedupeKey = key) => ({ id, branch_id: branchId, rule_id: SERVICE_RECORD_LINK_RULE_ID,
+            client_id: 20, employee_schedule_id: 10, dedupe_key: dedupeKey, status: "pending", canceled_by_user: false,
+            scheduled_for: new Date("2027-01-09T03:00:00Z"), sent_at: null, canceled_at: null, cancel_reason: null,
+            attempts: 0, next_attempt_at: null, claim_token: null, processing_deadline_at: null,
+            recipient_type: replacement.recipientType, recipient_phone: replacement.recipientPhone, template_key: replacement.templateKey,
+            payload: { ...replacement.payload, templateVariables: { serviceStartDate: "2027-01-10", serviceEndDate: "2027-01-20" } },
+            created_at: new Date("2026-11-01Z"), updated_at: new Date("2026-11-01Z") });
+        let rows: Array<Record<string, unknown>> = [raw("automatic"), raw("manual", `${key}:manual:00000000-0000-4000-8000-000000000030`),
+            { ...raw("other-branch"), branch_id: "other" }, { ...raw("other-schedule"), employee_schedule_id: 11 }];
+        let logs: Array<Record<string, unknown>> = [{ id: 1, branch_id: branchId, trigger_job_id: "automatic", safe: true, status: "failed", next_retry_at: new Date() },
+            { id: 2, branch_id: branchId, trigger_job_id: "manual", safe: true, status: "failed", next_retry_at: new Date() },
+            { id: 3, branch_id: branchId, trigger_job_id: null, safe: false, status: "failed", next_retry_at: new Date() },
+            { id: 4, branch_id: "other", trigger_job_id: "automatic", safe: true, status: "failed", next_retry_at: new Date() }];
+        const statements: Prisma.Sql[] = [];
+        const matches = (row: Record<string, unknown>, where: Record<string, unknown>) => Object.entries(where).every(([name, value]) => {
+            const actual = row[snake(name)];
+            return value && typeof value === "object" && "in" in value ? (value.in as unknown[]).includes(actual) : actual === value;
+        });
+        const sqlMatches = (row: Record<string, unknown>, sql: Prisma.Sql) => [...sql.text.matchAll(/\b(branch_id|client_id|rule_id|employee_schedule_id|dedupe_key|trigger_job_id)\s*=\s*\$(\d+)/g)]
+            .every((match) => row[match[1]!] === sql.values[Number(match[2]) - 1]);
+        const tx = {
+            $executeRaw: jest.fn(async (sql: Prisma.Sql) => { statements.push(sql); return 1; }),
+            $queryRaw: jest.fn(async (sql: Prisma.Sql) => {
+                statements.push(sql);
+                if (sql.text.includes('FROM "message_trigger_rule"')) return [{ id: SERVICE_RECORD_LINK_RULE_ID }];
+                if (sql.text.includes('FROM "service_record_token"')) return [{ id: "active-token" }];
+                if (sql.text.includes('FROM "message_log"')) return logs.filter((row) => sqlMatches(row, sql));
+                if (sql.text.includes('SELECT id, status, canceled_by_user')) return rows.filter((row) => sqlMatches(row, sql));
+                if (sql.text.includes('INSERT INTO "message_trigger_job"')) {
+                    const columns = sql.text.match(/INSERT INTO "message_trigger_job"\s*\(([^)]+)\)/)![1]!.split(",").map((column) => column.trim());
+                    const tokens = sql.text.match(/VALUES\s*\(([\s\S]+)\)\s*ON CONFLICT/)![1]!.split(",").map((token) => token.trim());
+                    const data = Object.fromEntries(columns.map((column, index) => {
+                        const token = tokens[index]!; const param = token.match(/^\$(\d+)/);
+                        let value: unknown = param ? sql.values[Number(param[1]) - 1] : token === "'pending'" ? "pending" : token === "0" ? 0 : null;
+                        if (column === "payload" && typeof value === "string") value = JSON.parse(value);
+                        return [column, value];
+                    }));
+                    const row = rows.find((candidate) => candidate["dedupe_key"] === data["dedupe_key"] && candidate["branch_id"] === data["branch_id"])!;
+                    Object.assign(row, data, { updated_at: new Date() }); return [row];
+                }
+                throw new Error(`Unexpected SQL: ${sql.text}`);
+            }),
+            message_trigger_job: { updateMany: jest.fn(async ({ where, data }: { where: Record<string, unknown>; data: Record<string, unknown> }) => {
+                const selected = rows.filter((row) => matches(row, where));
+                selected.forEach((row) => Object.entries(data).forEach(([name, value]) => { row[snake(name)] = value; }));
+                return { count: selected.length };
+            }) },
+            message_log: { updateMany: jest.fn(async ({ where, data }: { where: Record<string, unknown>; data: Record<string, unknown> }) => {
+                const selected = logs.filter((row) => matches(row, where));
+                selected.forEach((row) => Object.entries(data).forEach(([name, value]) => { row[snake(name)] = value; }));
+                return { count: selected.length };
+            }) },
+        };
+        const prisma = { $transaction: async (work: (transaction: typeof tx) => Promise<unknown>) => {
+            const beforeRows = structuredClone(rows), beforeLogs = structuredClone(logs);
+            try { return await work(tx); } catch (error) { rows = beforeRows; logs = beforeLogs; throw error; }
+        } };
+        const repository = new SbMessageTriggerJobRepository(prisma as never);
+        return { tx, repository, replacement, statements, rows: () => rows, logs: () => logs,
+            run: () => repository.replacePendingJobsUnlessInFlight(replacement, reason, { automaticOnly: true, requireActiveLinkToken: "synthetic-active" }) };
+    }
+
+    it("moves only the exact automatic job and supersedes only its proven retry, preserving a queued manual send and its log", async () => {
+        const f = fixture(); const beforeRows = structuredClone(f.rows().slice(1)), beforeLogs = structuredClone(f.logs().slice(1));
+        expect((await f.run()).kind).toBe("replaced");
+        expect(f.rows()[0]).toMatchObject({ status: "pending", scheduled_for: f.replacement.scheduledFor, payload: f.replacement.payload });
+        expect(f.logs()[0]).toMatchObject({ status: "failed", error_message: reason, next_retry_at: null });
+        expect(f.rows().slice(1)).toEqual(beforeRows); expect(f.logs().slice(1)).toEqual(beforeLogs);
+        const logRead = f.statements.find((sql) => sql.text.includes('FROM "message_log"'))!;
+        expect(logRead.text).toMatch(/branch_id = \$\d+::uuid AND trigger_job_id = \$\d+/);
+        expect(logRead.text).toContain("provider_acceptance_state IN ('rejected', 'reconciled_not_delivered')");
+        const before = structuredClone({ rows: f.rows(), logs: f.logs() });
+        expect((await f.run()).kind).toBe("protected");
+        expect({ rows: f.rows(), logs: f.logs() }).toEqual(before);
+    });
+
+    it.each(["sent", "canceled", "failed", "user-canceled", "processing", "dispatching", "task", "irreversible-log"])("protects %s without touching manual or unrelated work", async (state) => {
+        const f = fixture(); const row = f.rows()[0]!;
+        if (["sent", "canceled", "failed", "processing", "dispatching"].includes(state)) row["status"] = state;
+        if (state === "user-canceled") row["canceled_by_user"] = true;
+        if (state === "task") (row["payload"] as Record<string, unknown>)["taskAutomationReference"] = { actionId: "reviewed" };
+        if (state === "irreversible-log") f.logs()[0]!["safe"] = false;
+        const before = structuredClone({ rows: f.rows(), logs: f.logs() });
+        expect((await f.run()).kind).toBe(["processing", "dispatching"].includes(state) ? "in_flight" : "protected");
+        expect({ rows: f.rows(), logs: f.logs() }).toEqual(before);
+    });
+
+    it("rolls the reservation and log writes back together when supersession fails", async () => {
+        const f = fixture(); const before = structuredClone({ rows: f.rows(), logs: f.logs() });
+        f.tx.message_log.updateMany.mockRejectedValueOnce(new Error("log write conflict"));
+        await expect(f.run()).rejects.toThrow("log write conflict");
+        expect({ rows: f.rows(), logs: f.logs() }).toEqual(before);
+    });
+
+    it("cancels a stale date occurrence moved into the past without creating a catch-up", async () => {
+        const f = fixture(); f.replacement.scheduledFor = new Date("2000-01-01Z");
+        expect((await f.run()).kind).toBe("canceled");
+        expect(f.rows()[0]!["status"]).toBe("canceled");
+        expect(f.statements.some((sql) => sql.text.includes("INSERT INTO"))).toBe(false);
+    });
+});

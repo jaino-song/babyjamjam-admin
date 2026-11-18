@@ -85,6 +85,19 @@ function transactionalPrisma<T extends Record<string, unknown>>(transactionClien
     };
 }
 
+function automationDelegates() {
+    const messageReservations = [
+        { id: "survey", templateKey: "SURVEY", status: "pending", claimToken: null },
+        { id: "end-notice", templateKey: "SERVICE_END_NOTICE", status: "processing", claimToken: "synthetic-claim" },
+        { id: "unrelated", templateKey: "INFO", status: "dispatching", claimToken: "synthetic-dispatch" },
+    ];
+    return {
+        messageReservations,
+        message_trigger_rule: { findUnique: jest.fn().mockResolvedValue({ id: "marker" }) },
+        message_trigger_job: { upsert: jest.fn(), updateMany: jest.fn() },
+    };
+}
+
 function futureSource(): ServiceRecordEditSource {
     const assignmentId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
     return {
@@ -964,7 +977,9 @@ describe("ServiceRecordEditRepository", () => {
             const activeDraft = draftRow({ sourceCaseVersion: source.caseVersion });
             const order: string[] = [];
             const tx = {
+                ...automationDelegates(),
                 $queryRaw: jest.fn().mockResolvedValue([]),
+                $executeRaw: jest.fn().mockResolvedValue(1),
                 service_record_edit_draft: {
                     findFirst: jest.fn().mockResolvedValue(activeDraft),
                     updateMany: jest.fn().mockImplementation(async () => {
@@ -1041,6 +1056,47 @@ describe("ServiceRecordEditRepository", () => {
             }
         });
 
+        it("confirms a note-only edit without touching SURVEY/SERVICE_END_NOTICE reservations or creating intents", async () => {
+            const source = futureSource();
+            const { tx } = await confirmWith({
+                sessions: [{ ...source.sessions[0]!, notes: "updated note" }],
+                assignments: [{ assignmentId: source.assignments[0]!.id, scheduleId: 55,
+                    startDate: "2026-09-01", endDate: "2026-09-02", datesChanged: false }],
+                documentJob: { requestKey: "service-record-revision:note", activeKey: "note",
+                    payload: { kind: "service_record_revision", periodChanged: false }, payloadFingerprint: "c".repeat(64) },
+            });
+            expect(tx.service_record_day.updateMany).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ notes: "updated note" }) }));
+            expect(tx.messageReservations).toEqual([
+                { id: "survey", templateKey: "SURVEY", status: "pending", claimToken: null },
+                { id: "end-notice", templateKey: "SERVICE_END_NOTICE", status: "processing", claimToken: "synthetic-claim" },
+                { id: "unrelated", templateKey: "INFO", status: "dispatching", claimToken: "synthetic-dispatch" },
+            ]);
+            expect(tx.message_trigger_job.upsert).not.toHaveBeenCalled();
+            expect(tx.message_trigger_job.updateMany).not.toHaveBeenCalled();
+            const statements = [...tx.$queryRaw.mock.calls, ...tx.$executeRaw.mock.calls].map(([sql]) => sqlText(sql));
+            expect(statements.some((sql) => sql.includes('UPDATE "eformsign_document_job"'))).toBe(true);
+            expect(statements.some((sql) => sql.includes('"message_trigger_job"'))).toBe(false);
+        });
+
+        it("does not create reevaluation work for token expiry alone", async () => {
+            const { tx } = await confirmWith({ status: "no_changes", tokenExpiryMode: "raise_only" });
+            expect(tx.message_trigger_job.upsert).not.toHaveBeenCalled();
+        });
+
+        it("writes only changed schedule scopes and immutable client work for a real schedule date change", async () => {
+            const source = futureSource();
+            const { tx } = await confirmWith({ assignments: [{ assignmentId: source.assignments[0]!.id, scheduleId: 55,
+                startDate: "2026-09-01", endDate: "2026-09-03", datesChanged: true }] });
+            expect(tx.message_trigger_job.upsert).toHaveBeenCalledTimes(2);
+            const calls = tx.message_trigger_job.upsert.mock.calls.map(([call]) => call);
+            expect(calls[0]).toMatchObject({ update: {}, create: { branchId, clientId: source.client.id,
+                dedupeKey: expect.stringContaining(":dates:"), payload: { templateVariables: {
+                    intentKind: "client_dates", dateScope: JSON.stringify({ startDate: false, endDate: false, scheduleIds: [55] }),
+                } } } });
+            expect(calls[1]).toMatchObject({ update: {}, create: { employeeScheduleId: 55,
+                dedupeKey: expect.stringContaining(":schedule:55:dates:"), payload: { templateVariables: { refreshServiceRecordLink: "true" } } } });
+        });
+
         const toggles = { saturday: true, sunday: false, holiday: true };
         const flagWrite = (source: ServiceRecordEditSource) => ({
             where: { id: source.client.id, branchId },
@@ -1085,10 +1141,12 @@ describe("ServiceRecordEditRepository", () => {
         ];
         const toggles = { saturday: true, sunday: false, holiday: false };
 
-        async function confirmMaterialized(materialize: { plannedSessions: unknown; endDate: string | null }, finalizationDueAt?: string) {
+        async function confirmMaterialized(materialize: { plannedSessions: unknown; endDate: string | null }, finalizationDueAt?: string, projectedCaseEnd?: string) {
             const source = futureSource();
+            if (projectedCaseEnd) source.endDate = projectedCaseEnd;
             const activeDraft = draftRow({ sourceCaseVersion: source.caseVersion });
             const tx = {
+                ...automationDelegates(),
                 $queryRaw: jest.fn().mockResolvedValue([]),
                 service_record_edit_draft: {
                     findFirst: jest.fn().mockResolvedValue(activeDraft),
@@ -1143,6 +1201,21 @@ describe("ServiceRecordEditRepository", () => {
             });
             return { tx, response, source };
         }
+
+        it("materialization reevaluates the stored client end date when the case already projects the new date", async () => {
+            const { tx } = await confirmMaterialized({ plannedSessions: vector, endDate: "2026-09-05" }, undefined, "2026-09-05");
+            expect(tx.message_trigger_job.upsert).toHaveBeenCalledTimes(1);
+            expect(tx.message_trigger_job.upsert).toHaveBeenCalledWith(expect.objectContaining({
+                update: {}, create: expect.objectContaining({ payload: expect.objectContaining({ templateVariables: expect.objectContaining({
+                    intentKind: "client_dates", dateScope: JSON.stringify({ startDate: false, endDate: true, scheduleIds: [] }),
+                }) }) }),
+            }));
+        });
+
+        it("flags/vector materialization retaining the stored dates creates no automation work", async () => {
+            const { tx } = await confirmMaterialized({ plannedSessions: vector, endDate: "2026-09-02" });
+            expect(tx.message_trigger_job.upsert).not.toHaveBeenCalled();
+        });
 
         it("stores the vector, the version bump and the new end date without a revision, document or start date", async () => {
             const { tx, response, source } = await confirmMaterialized({ plannedSessions: vector, endDate: "2026-09-05" });
@@ -1849,23 +1922,20 @@ describe("ServiceRecordEditRepository", () => {
         }));
     });
 
-    it("does not cancel a message job after it enters dispatching", async () => {
+    it("allows unrelated message dispatching during document supersession", async () => {
         const tx = {
-            $queryRaw: jest.fn()
-                .mockResolvedValueOnce([])
-                .mockResolvedValueOnce([{ id: "message-job-1" }]),
+            $queryRaw: jest.fn().mockResolvedValue([]),
+            $executeRaw: jest.fn().mockResolvedValue(1),
         };
         const repository = new ServiceRecordEditRepository({} as never);
-
         await expect((repository as unknown as {
             invalidateSupersededJobs: (client: unknown, branch: string, serviceCase: string, clientId: number) => Promise<void>;
-        }).invalidateSupersededJobs(tx, branchId, caseId, 101)).rejects.toThrow(
-            "A service-record message dispatch is already irreversible",
-        );
-        expect(tx.$queryRaw).toHaveBeenCalledTimes(2);
+        }).invalidateSupersededJobs(tx, branchId, caseId, 101)).resolves.toBeUndefined();
+        const statements = [...tx.$queryRaw.mock.calls, ...tx.$executeRaw.mock.calls].map(([sql]) => sqlText(sql));
+        expect(statements.every((sql) => !sql.includes('"message_trigger_job"'))).toBe(true);
     });
 
-    it("fences legacy client-owned eform jobs without payload case metadata and clears message claims", async () => {
+    it("fences legacy client-owned eform jobs without touching message claims", async () => {
         // The two in-flight probes are row-returning selects; the supersession updates have no
         // rows to read, so they go through `$executeRaw` (the affected count drives the hint).
         const tx = {
@@ -1880,13 +1950,12 @@ describe("ServiceRecordEditRepository", () => {
             invalidateSupersededJobs: (client: unknown, branch: string, serviceCase: string, clientId: number) => Promise<void>;
         }).invalidateSupersededJobs(tx, branchId, caseId, 101)).resolves.toBeUndefined();
 
-        expect(tx.$queryRaw).toHaveBeenCalledTimes(2);
-        expect(tx.$executeRaw).toHaveBeenCalledTimes(2);
+        expect(tx.$queryRaw).toHaveBeenCalledTimes(1);
+        expect(tx.$executeRaw).toHaveBeenCalledTimes(1);
         const documentUpdate = sqlText(tx.$executeRaw.mock.calls[0]?.[0]);
         expect(documentUpdate).toContain("job_type IN ('create_document', 'finalize_document')");
         expect(documentUpdate).not.toContain("payload->'context'");
-        const messageUpdate = sqlText(tx.$executeRaw.mock.calls[1]?.[0]);
-        expect(messageUpdate).toContain("claim_token = NULL");
+        expect(documentUpdate).not.toContain("message_trigger_job");
     });
 
     it("preserves revision generation payloads while superseding queued document jobs", async () => {

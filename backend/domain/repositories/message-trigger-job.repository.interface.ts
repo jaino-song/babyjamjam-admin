@@ -48,7 +48,9 @@ export type ReplacePendingJobsResult =
     | { kind: "replaced"; job: MessageTriggerJobEntity; canceledJobIds: string[] }
     | { kind: "in_flight"; inFlightJobIds: string[] }
     | { kind: "lock_timeout" }
-    | { kind: "link_revoked" };
+    | { kind: "link_revoked" }
+    | { kind: "protected" }
+    | { kind: "canceled"; canceledJobIds: string[] };
 
 /**
  * Outcome of claiming a provider-rejected job for an action-bound retry.
@@ -71,6 +73,9 @@ export type ClaimProviderRejectedForRetryResult =
  */
 export interface ScheduleFenceLinkOptions {
     requireActiveLinkToken?: string;
+    /** Date-edit replacement of the exact canonical automatic slot only. */
+    automaticOnly?: boolean;
+    transaction?: Prisma.TransactionClient;
 }
 
 /**

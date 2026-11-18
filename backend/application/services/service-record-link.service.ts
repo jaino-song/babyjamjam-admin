@@ -1,3 +1,4 @@
+import { lockServiceRecordWriteSet } from "application/policies/service-record-write-lock.policy";
 import { randomUUID } from "node:crypto";
 
 import { BadRequestException, ConflictException, Inject, Injectable, Logger, NotFoundException, Optional, ServiceUnavailableException } from "@nestjs/common";
@@ -113,7 +114,7 @@ export class ServiceRecordLinkService {
     /** Ensure the assignment link exists and schedule the SMS for service-start day 15:00 KST. */
     async scheduleForServiceStart(
         scheduleId: number,
-        options: { taskAutomationReference?: AgentAutomationTaskCommitReference } = {},
+        options: { taskAutomationReference?: AgentAutomationTaskCommitReference; rescheduleAutomatic?: boolean; branchId?: string } = {},
     ): Promise<boolean> {
         try {
             const { scheduledFor, employeeId, jobEnqueued } = await this.issueServiceRecordLinkJob(scheduleId, {
@@ -121,6 +122,8 @@ export class ServiceRecordLinkService {
                 recordMissingPhoneFailure: true,
                 isManualSend: false,
                 taskAutomationReference: options.taskAutomationReference,
+                rescheduleAutomatic: options.rescheduleAutomatic,
+                branchId: options.branchId,
             });
             if (jobEnqueued) {
                 this.logger.log(
@@ -384,6 +387,8 @@ export class ServiceRecordLinkService {
             isManualSend: boolean;
             recipientPhone?: string;
             taskAutomationReference?: AgentAutomationTaskCommitReference;
+            rescheduleAutomatic?: boolean;
+            branchId?: string;
         },
     ): Promise<{
         scheduledFor: Date;
@@ -399,6 +404,7 @@ export class ServiceRecordLinkService {
             throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
         }
 
+        if (options.rescheduleAutomatic && options.branchId !== schedule.branchId) throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
         if (options.isManualSend) this.assertClientCanReceiveLink(schedule.client);
         await this.ensureSystemRule(schedule.branchId, options.isManualSend);
         const employee = schedule.primaryEmployee;
@@ -410,6 +416,12 @@ export class ServiceRecordLinkService {
         const scheduledFor = options.scheduledFor ?? getServiceRecordLinkScheduledFor(schedule.startDate);
         const automaticDedupeKey = this.buildDedupeKey(scheduleId, false);
         let automaticSchedulingClaim: AutomaticSchedulingClaim | null = null;
+        const automaticReplacement = options.rescheduleAutomatic
+            ? await this.prisma.message_trigger_job.findUnique({ where: { dedupeKey: automaticDedupeKey, branchId: schedule.branchId } }) : null;
+        if (automaticReplacement && (automaticReplacement.branchId !== schedule.branchId
+            || automaticReplacement.employeeScheduleId !== scheduleId || automaticReplacement.clientId !== schedule.clientId)) {
+            throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
+        }
         if (!options.isManualSend) {
             // 종료일은 KST 자정까지 유효하므로 종료일 당일의 늦은 등록도 발송한다.
             if (
@@ -426,26 +438,28 @@ export class ServiceRecordLinkService {
             ) {
                 return { scheduledFor, employeeId: employee.id, jobEnqueued: false, jobId: null };
             }
-            automaticSchedulingClaim = await this.claimAutomaticScheduling({
-                branchId: schedule.branchId,
-                scheduleId,
-                clientId: schedule.clientId,
-                clientName: schedule.client?.name ?? "고객",
-                employeeId: employee.id,
-                employeeName: employee.name,
-                recipientPhone: resolvedRecipientPhone,
-                scheduledFor,
-                dedupeKey: automaticDedupeKey,
-                serviceStartDate: this.formatDate(schedule.startDate),
-                serviceEndDate: this.formatDate(schedule.endDate),
-            });
-            if (!automaticSchedulingClaim) {
-                return {
-                    scheduledFor,
+            if (!automaticReplacement) {
+                automaticSchedulingClaim = await this.claimAutomaticScheduling({
+                    branchId: schedule.branchId,
+                    scheduleId,
+                    clientId: schedule.clientId,
+                    clientName: schedule.client?.name ?? "고객",
                     employeeId: employee.id,
-                    jobEnqueued: false,
-                    jobId: null,
-                };
+                    employeeName: employee.name,
+                    recipientPhone: resolvedRecipientPhone,
+                    scheduledFor,
+                    dedupeKey: automaticDedupeKey,
+                    serviceStartDate: this.formatDate(schedule.startDate),
+                    serviceEndDate: this.formatDate(schedule.endDate),
+                });
+                if (!automaticSchedulingClaim) {
+                    return {
+                        scheduledFor,
+                        employeeId: employee.id,
+                        jobEnqueued: false,
+                        jobId: null,
+                    };
+                }
             }
         }
 
@@ -596,7 +610,35 @@ export class ServiceRecordLinkService {
                 linkGuard,
             );
             let persistedJob: MessageTriggerJobEntity | null;
-            if (automaticSchedulingClaim) {
+            if (automaticReplacement) {
+                if (!this.branchLock || !this.automationActivationService) throw new ServiceUnavailableException("Message automation activation is not configured");
+                persistedJob = await this.branchLock.runExclusive(schedule.branchId, async (transaction) => {
+                    await lockServiceRecordWriteSet(transaction, { branchId: schedule.branchId!, clientId: schedule.clientId });
+                    const current = await transaction.employee_schedule.findFirst({
+                        where: { id: scheduleId, branchId: schedule.branchId, clientId: schedule.clientId },
+                        include: { primaryEmployee: true, client: true },
+                    });
+                    if (!current || current.replaced || current.terminatedAt || current.startDate.getTime() !== schedule.startDate.getTime()
+                        || current.endDate.getTime() !== schedule.endDate.getTime() || current.primaryEmployeeId !== schedule.primaryEmployeeId
+                        || current.primaryEmployee.name !== employee.name || current.primaryEmployee.phone !== employee.phone
+                        || current.client.name !== schedule.client.name || current.client.serviceStatus !== schedule.client.serviceStatus
+                        || current.client.startDate?.getTime() !== schedule.client.startDate?.getTime()
+                        || current.client.endDate?.getTime() !== schedule.client.endDate?.getTime()
+                        || current.client.bookingConfirmedAt?.getTime() !== schedule.client.bookingConfirmedAt?.getTime()) {
+                        throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
+                    }
+                    if (!(await this.automationActivationService!.getTriggerDispatchEnabled(schedule.branchId!, transaction))) return null;
+                    const override = await transaction.message_trigger_rule_branch_override.findUnique({
+                        where: { branchId_ruleId: { branchId: schedule.branchId!, ruleId: SERVICE_RECORD_LINK_RULE_ID } },
+                    });
+                    if (override?.isActive === false) return null;
+                    const result = await this.jobRepository.replacePendingJobsUnlessInFlight(pendingJob,
+                        SERVICE_RECORD_LINK_RESCHEDULED_REASON, { ...linkGuard, automaticOnly: true, transaction });
+                    if (result.kind === "protected" || result.kind === "canceled") return null;
+                    if (result.kind !== "replaced") throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
+                    return result.job;
+                });
+            } else if (automaticSchedulingClaim) {
                 persistedJob = await this.branchLock!.runExclusive(
                     schedule.branchId,
                     (transaction) => promote(transaction),
@@ -617,7 +659,9 @@ export class ServiceRecordLinkService {
                     ),
                 );
                 if (
-                    replaced.kind === "in_flight"
+                    replaced.kind === "protected"
+                    || replaced.kind === "canceled"
+                    || replaced.kind === "in_flight"
                     || replaced.kind === "lock_timeout"
                     || replaced.kind === "link_revoked"
                 ) {

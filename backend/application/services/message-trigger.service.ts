@@ -63,7 +63,7 @@ import {
 import { findUnsupportedRequiredMessageTriggerVariables } from "domain/constants/message-trigger-variable-sources";
 import { codeOnlyProblemBody, problemBody } from "application/utils/problem-bodies";
 import { SystemTemplateKey } from "domain/constants/system-template-registry";
-import { EMPLOYEE_ASSIGNMENT_AUTOMATION_CHANGED_CANCEL_REASON } from "domain/constants/message-automation-intent";
+import { CLIENT_DATE_AUTOMATION_CHANGED_REASON, type ClientDateAutomationScope, EMPLOYEE_ASSIGNMENT_AUTOMATION_CHANGED_CANCEL_REASON } from "domain/constants/message-automation-intent";
 import {
     MESSAGE_SENDER_APPROVAL_REQUIRED_CANCEL_REASON,
     PAST_OCCURRENCE_GRACE_MS,
@@ -96,6 +96,7 @@ import {
     MESSAGE_TRIGGER_JOB_REPOSITORY,
     IMessageTriggerJobRepository,
     type MessageDispatchSelectedJob,
+    type MessageTriggerJobReviewSnapshot,
     type ClientUpcomingMessageTriggerJobCursor,
     type ClientUpcomingMessageTriggerJobRecord,
 } from "domain/repositories/message-trigger-job.repository.interface";
@@ -2617,6 +2618,115 @@ export class MessageTriggerService {
                 intentOptions?.taskOrigin ? intentOptions.taskAutomationReference : undefined,
             );
         }
+    }
+
+    /** Date edits reconcile current sources without invoking the generic client's broad cancellation path. */
+    async reconcileServiceRecordDateRules(branchId: string, clientId: number, scope: ClientDateAutomationScope): Promise<void> {
+        if (!this.messageAutomationBranchLockService) throw new ServiceUnavailableException("Message automation lock is not configured");
+        await this.messageAutomationBranchLockService.runExclusive(branchId, async (tx) => {
+            await lockServiceRecordWriteSet(tx, { branchId, clientId });
+            const client = await this.readClientAutomationSource(branchId, clientId, tx);
+            if (!client) return;
+            const statusFacts = await tx.client.findFirst({ where: { id: clientId, branchId, deletedAt: null },
+                select: { serviceStatus: true, bookingConfirmedAt: true, startDate: true, endDate: true } });
+            if (!statusFacts) return;
+            const rules = (await this.ruleRepository.findAll(branchId, tx)).filter((rule) => rule.branchId === branchId
+                && rule.isActive && !isManualMessageTriggerRule(rule) && [MessageTriggerEventType.CLIENT_CREATED,
+                    MessageTriggerEventType.SERVICE_START, MessageTriggerEventType.SERVICE_END,
+                    ...(scope.scheduleIds.length ? [MessageTriggerEventType.EMPLOYEE_ASSIGNED] : [])].includes(rule.eventType));
+            if (!rules.length) return;
+            // Source locks precede rule/job locks, matching dispatch authorization. Lock even empty scopes against new claims.
+            const ids = rules.map((rule) => rule.id).sort();
+            await tx.$queryRaw(Prisma.sql`SELECT id FROM "message_trigger_rule"
+                WHERE branch_id = ${branchId}::uuid AND id IN (${Prisma.join(ids)}) ORDER BY id FOR UPDATE`);
+            await tx.$queryRaw(Prisma.sql`SELECT id FROM "message_trigger_job"
+                WHERE branch_id = ${branchId}::uuid AND client_id = ${clientId}
+                  AND rule_id IN (${Prisma.join(ids)}) ORDER BY id FOR UPDATE`);
+            const previous = await this.jobRepository.findForClientAutomationReview(branchId, clientId, ids, tx);
+            if (previous.length > 500) throw new ServiceUnavailableException("Message date reconciliation exceeds bounded scope");
+            const ordinary = (job: MessageTriggerJobReviewSnapshot) => job.branchId === branchId && job.clientId === clientId
+                && !isManualMessageTriggerJob(job) && !isReservedAutomationJob(job) && !job.payload.taskAutomationReference;
+            const old = previous.filter((job) => job.branchId === branchId && job.clientId === clientId && !isManualMessageTriggerJob(job));
+            const sameSource = (a: MessageTriggerJobEntity, b: MessageTriggerJobEntity) => a.recipientPhone === b.recipientPhone
+                && agentBindingHash(agentAutomationSourcePayload(a.payload, a.templateKey)) === agentBindingHash(agentAutomationSourcePayload(b.payload, b.templateKey));
+            const reconcile = async (rule: MessageTriggerRuleEntity, job: MessageTriggerJobEntity | null,
+                family: MessageTriggerJobReviewSnapshot[], anchorChanged: boolean) => {
+                const current = job ? family.find((row) => row.dedupeKey === job.dedupeKey)
+                    ?? (rule.offsetType === MessageTriggerOffsetType.IMMEDIATE ? family.find((row) => row.status === "pending") : undefined) : undefined;
+                // Immediate rules have no date-derived send time; retain their accepted reservation.
+                if (job && current && rule.offsetType === MessageTriggerOffsetType.IMMEDIATE) {
+                    job.scheduledFor = current.scheduledFor;
+                    job.dedupeKey = current.dedupeKey;
+                }
+                const statusEligible = targetClientStatusAllowsSend(rule.targetClientStatus, statusFacts);
+                const affected = anchorChanged || !statusEligible || family.some((row) => job && !sameSource(row, job));
+                if (!affected) return;
+                // Logical recipient scope spans historical date keys. Delivery uncertainty is never replayed.
+                if (family.some((row) => row.canceledByUser || ["sent", "dispatching", "failed"].includes(row.status)
+                    || row.payload.taskAutomationReference || isReservedAutomationJob(row)
+                    || row.cancelReason === "SERVICE_RECORD_REVISION_SUPERSEDED")) return;
+                if (family.some((row) => row.status === "processing" && (!job || !statusEligible || row.dedupeKey !== job.dedupeKey || !sameSource(row, job)))) {
+                    throw new ConflictException("Message date reconciliation is waiting for a processing reservation");
+                }
+                const currentEquivalent = current && job && sameSource(current, job)
+                    && current.scheduledFor.getTime() === job.scheduledFor.getTime()
+                    && ["pending", "processing"].includes(current.status);
+                // Refreshing an accepted same-key occurrence is not a new catch-up send.
+                const existingOccurrence = current && ["pending", "processing"].includes(current.status) && job?.dedupeKey === current.dedupeKey
+                    && job.scheduledFor.getTime() === current.scheduledFor.getTime() && !current.payload.catchUp;
+                const eligible = job && statusEligible && (existingOccurrence || (job.scheduledFor.getTime() > Date.now()
+                    && isMessageRecipeWithinMaterializationWindow(job, rule, false, new Date())));
+                const stale = family.filter((row) => row.status === "pending"
+                    && (!eligible || row.dedupeKey !== job!.dedupeKey));
+                if (stale.length) {
+                    await tx.message_trigger_job.updateMany({
+                        where: { branchId, clientId, ruleId: rule.id, id: { in: stale.map((row) => row.id) }, status: "pending", canceledByUser: false },
+                        data: { status: "canceled", canceledAt: new Date(), cancelReason: CLIENT_DATE_AUTOMATION_CHANGED_REASON,
+                            claimToken: null, nextAttemptAt: null },
+                    });
+                }
+                if (!eligible || currentEquivalent) return;
+                // A protected task-owned slot is kept separate even if its reviewed source has drifted.
+                const protectedSlot = previous.some((row) => row.dedupeKey === job!.dedupeKey && !ordinary(row));
+                if (protectedSlot) return;
+                if (current?.status === "canceled" && current.cancelReason !== CLIENT_DATE_AUTOMATION_CHANGED_REASON
+                    && current.cancelReason !== MESSAGE_SENDER_APPROVAL_REQUIRED_CANCEL_REASON) return;
+                if (!(await this.persistPendingJob(job, rule, existingOccurrence === true, rule.jobsStale, false, tx))) {
+                    throw new ConflictException("Message rule changed while reconciling dates");
+                }
+            };
+            for (const rule of rules.filter((row) => row.recipientType === MessageTriggerRecipientType.CLIENT && !isCaregiverTriggerTemplate(row.templateKey))) {
+                const family = old.filter((row) => row.ruleId === rule.id && row.employeeScheduleId === null && row.recipientType === rule.recipientType);
+                const job = this.buildClientJob(rule, client);
+                await reconcile(rule, job, family, (scope.startDate && rule.eventType === MessageTriggerEventType.SERVICE_START)
+                    || (scope.endDate && rule.eventType === MessageTriggerEventType.SERVICE_END));
+            }
+            const careRules = rules.filter((rule) => isCaregiverTriggerTemplate(rule.templateKey));
+            if (careRules.length) {
+                if (!this.caregiverRecipients) throw new ServiceUnavailableException("Caregiver recipient resolver is not configured");
+                const set = await this.caregiverRecipients.resolve(branchId, clientId, careRules, tx);
+                if (!set.complete) throw new ServiceUnavailableException("Caregiver source is unavailable");
+                for (const recipient of set.recipients) {
+                    if (!scope.startDate && !scope.endDate && !scope.scheduleIds.includes(recipient.employeeScheduleId!)) continue;
+                    const rule = careRules.find((row) => row.id === recipient.ruleId)!;
+                    const family = old.filter((row) => row.ruleId === rule.id && row.employeeScheduleId === recipient.employeeScheduleId
+                        && row.recipientType === recipient.recipientType && row.payload.employeeId === recipient.employeeId);
+                    const job = recipient.outcome === "ready" && recipient.recipe ? MessageTriggerJobEntity.create(recipient.recipe) : null;
+                    await reconcile(rule, job, family, true);
+                }
+            }
+            for (const scheduleId of scope.scheduleIds) {
+                const schedule = await tx.employee_schedule.findFirst({ where: { id: scheduleId, branchId, clientId },
+                    include: { client: true, primaryEmployee: true, secondaryEmployee: true } });
+                if (!schedule) continue;
+                for (const rule of rules.filter((row) => row.eventType === MessageTriggerEventType.EMPLOYEE_ASSIGNED)) {
+                    const job = schedule.replaced ? null : this.buildEmployeeAssignmentJob(rule, schedule);
+                    const family = old.filter((row) => row.ruleId === rule.id && row.employeeScheduleId === scheduleId
+                        && row.recipientType === rule.recipientType);
+                    await reconcile(rule, job, family, true);
+                }
+            }
+        });
     }
 
     private async retainExistingMixedBatchClientSlots(branchId: string, candidates: ClientRuleJobCandidate[], batchAt: Date,
