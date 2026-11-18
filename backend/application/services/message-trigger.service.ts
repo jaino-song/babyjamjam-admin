@@ -2688,14 +2688,14 @@ export class MessageTriggerService {
                     && reversible(operatorDestination) && operatorDestination.status === "canceled"
                     && (operatorDestination.cancelReason === CLIENT_DATE_AUTOMATION_CHANGED_REASON
                         || operatorDestination.cancelReason === MESSAGE_SENDER_APPROVAL_REQUIRED_CANCEL_REASON);
-                if (operatorReservation && job && (operatorReservations.length !== 1
-                    || (operatorDestination && !reclaimableOperatorDestination))) {
-                    throw new ConflictException("Message date reconciliation conflicts with an operator reservation");
-                }
                 if (family.some((row) => reversible(row) && row.status === "processing"
                     && (!job || row.dedupeKey !== job.dedupeKey || !sameSource(row, job)))) {
                     throw new ConflictException("Message date reconciliation is waiting for a processing reservation");
                 }
+                // Permanent key conflicts leave this family operator-only. A stale claim above must
+                // still release or complete before the date intent can drain for the client.
+                const operatorMoveBlocked = operatorReservation && job && (operatorReservations.length !== 1
+                    || (operatorDestination && !reclaimableOperatorDestination));
                 const currentEquivalent = current && job && sameSource(current, job)
                     && current.scheduledFor.getTime() === job.scheduledFor.getTime()
                     && ["pending", "processing"].includes(current.status);
@@ -2709,7 +2709,8 @@ export class MessageTriggerService {
                     // Protected history blocks replacement, but cannot keep obsolete reversible siblings dispatchable.
                     const stale = family.filter((row) => reversible(row) && row.status === "pending"
                         && (!eligible || row.dedupeKey !== job!.dedupeKey
-                            || (replacementBlocked && (!sameSource(row, job!) || row.scheduledFor.getTime() !== job!.scheduledFor.getTime()))));
+                            || ((replacementBlocked || operatorMoveBlocked)
+                                && (!sameSource(row, job!) || row.scheduledFor.getTime() !== job!.scheduledFor.getTime()))));
                     if (stale.length) {
                         await tx.message_trigger_job.updateMany({
                             where: { branchId, clientId, ruleId: rule.id, id: { in: stale.map((row) => row.id) }, status: "pending", canceledByUser: false },
@@ -2718,7 +2719,7 @@ export class MessageTriggerService {
                         });
                     }
                     if (operatorReservation) {
-                        if (!job) return;
+                        if (!job || operatorMoveBlocked) return;
                         if (operatorReservation.dedupeKey === job.dedupeKey && sameSource(operatorReservation, job)
                             && operatorReservation.scheduledFor.getTime() === job.scheduledFor.getTime()) return;
                         if (operatorDestination && reclaimableOperatorDestination) {

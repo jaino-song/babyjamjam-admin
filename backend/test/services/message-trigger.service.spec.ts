@@ -9042,6 +9042,146 @@ describe("service-record date reconciliation", () => {
         return { ...f, jobs, db, intents, events, acceptance, core, provider, delivery, prepare, authorize, confirm, seed };
     }
 
+    function collisionWorker(f: ReturnType<typeof dispatchFixture>) {
+        const worker = new MessageAutomationIntentService(f.db as never, f.service, {} as never, {} as never);
+        const intent = f.intents[0]!;
+        const write = jest.mocked(f.db.message_trigger_job.updateMany);
+        const apply = write.getMockImplementation()!;
+        write.mockImplementation(async (input) => {
+            if (input.where["id"] === intent["id"] && input.where["ruleId"] === MESSAGE_AUTOMATION_INTENT_RULE_ID
+                && input.where["scheduledFor"] === intent["scheduledFor"] && input.where["updatedAt"] === intent["updatedAt"]) {
+                Object.assign(intent, input.data); return { count: 1 };
+            }
+            return apply(input);
+        });
+        return { intent, fulfill: () => worker.fulfillClientDateIntent({ branchId, clientId: 7, dedupeKey: String(intent["dedupeKey"]),
+            intentAt: intent["scheduledFor"] as Date, dateScope: scope }) };
+    }
+
+    it("drains a legacy canceled-key revert without suppressing independent current-date delivery", async () => {
+        const f = dispatchFixture();
+        f.client.startDate = new Date("2026-10-10Z");
+        f.client.endDate = new Date("2026-10-25Z");
+        f.sources.getMessagePolicyEnabled.mockResolvedValue(true);
+        Object.assign((f.service as unknown as { messageSenderApprovalService: object }).messageSenderApprovalService,
+            { isApproved: async () => true });
+        Object.assign((f.service as unknown as { ruleRepository: object }).ruleRepository,
+            { findActiveByEventTypes: async () => [f.endRule] });
+        const original = f.seed();
+        Object.assign(f.jobs, { cancelPendingForRuleGeneration: async (_branch: string, id: string, _generation: Date, _stale: boolean, reason: string) => {
+            expect(id).toBe(f.endRule.id); original.cancel(reason); return 1;
+        } });
+        await f.service.syncClientRulesForClient(branchId, 7, true);
+        expect(original).toMatchObject({ status: "canceled", cancelReason: "Client data changed" });
+        const oldHistory = structuredClone(original);
+        const operator = f.rows.find((row) => row.status === "pending")!;
+        expect(operator.payload.catchUp?.originalScheduledFor).toBe("2026-10-25T01:30:00.000Z");
+        operator.markNeedsSetup("QA-operator");
+        f.client.endDate = new Date("2026-11-25Z");
+        await f.service.reconcileServiceRecordDateRules(branchId, 7, scope);
+        const operatorBefore = structuredClone(operator);
+        const obsolete = f.seed(f.endRule, { dedupeKey: "QA-obsolete-sibling" });
+        const independent = f.rule("independent");
+        f.activeRules.push(independent);
+        const independentStale = f.seed(independent);
+        const fresh = f.seed(f.createdRule), freshBefore = structuredClone(fresh);
+        await f.confirm(scope, { branchId, clientId: 7 }, "2026-10-25Z");
+        const recovery = collisionWorker(f);
+        await expect(recovery.fulfill()).resolves.toBe(true);
+        expect(f.intents).toEqual([]);
+        expect(original).toEqual(oldHistory);
+        expect(operator).toEqual(operatorBefore);
+        expect(fresh).toEqual(freshBefore);
+        expect(obsolete.status).toBe("canceled");
+        expect(independentStale.status).toBe("canceled");
+        expect(f.rows.filter(row => row.ruleId === f.endRule.id && row.status === "pending")).toEqual([]);
+        const current = f.rows.find(row => row.ruleId === independent.id && row.status === "pending")!;
+        expect(current.payload.catchUp?.originalScheduledFor).toBe("2026-10-25T01:30:00.000Z");
+        jest.setSystemTime(current.scheduledFor);
+        const due = (await f.prepare(current))!;
+        expect(due).not.toBeNull();
+        expect(await f.authorize(due)).toBe(true);
+        await f.delivery.sendPreparedJob(due.job, due.preparation);
+        expect(f.provider).toHaveBeenCalledTimes(1);
+        expect(f.provider).toHaveBeenCalledWith(expect.objectContaining({message: "QA-synthetic 2026-10-25T00:00:00.000Z"}));
+        jest.setSystemTime(obsolete.scheduledFor);
+        for (const row of f.rows.filter(job => job.ruleId === f.endRule.id && job.status === "pending" && job.scheduledFor <= new Date())) {
+            const staleDue = await f.prepare(row);
+            if (staleDue && await f.authorize(staleDue)) await f.delivery.sendPreparedJob(staleDue.job, staleDue.preparation);
+        }
+        expect(f.provider).toHaveBeenCalledTimes(1);
+    });
+
+    it("keeps the intent retryable with a stale processing sibling despite a permanent operator collision", async () => {
+        const f = dispatchFixture();
+        const history = f.seed(f.endRule, {status: "canceled", cancelReason: "Client data changed"});
+        const historyBefore = structuredClone(history);
+        f.client.endDate = new Date("2026-11-25Z");
+        const operator = f.seed(f.endRule, {status: "needs_setup", cancelReason: "QA-operator"});
+        const operatorBefore = structuredClone(operator);
+        const sibling = f.seed(f.endRule, {dedupeKey: "QA-processing-sibling"});
+        const preparation = (await f.prepare(sibling))!;
+        expect(preparation).not.toBeNull();
+        await f.confirm(scope, {branchId, clientId: 7}, "2026-11-20Z");
+        const recovery = collisionWorker(f);
+        await expect(recovery.fulfill()).rejects.toThrow("processing reservation");
+        expect(f.intents).toHaveLength(1);
+        expect((recovery.intent["nextAttemptAt"] as Date).getTime()).toBeGreaterThan(Date.now());
+        expect(sibling.status).toBe("processing");
+        expect(await f.authorize(preparation)).toBe(false);
+        expect(sibling.status).toBe("pending");
+        jest.setSystemTime((recovery.intent["nextAttemptAt"] as Date).getTime() + 1);
+        await expect(recovery.fulfill()).resolves.toBe(true);
+        expect(f.intents).toEqual([]);
+        expect(sibling.status).toBe("canceled");
+        expect(history).toEqual(historyBefore);
+        expect(operator).toEqual(operatorBefore);
+        expect(f.provider).not.toHaveBeenCalled();
+    });
+
+    it("keeps a movable operator intent retryable when its exact transition CAS loses", async () => {
+        const f = dispatchFixture();
+        const operator = f.seed(f.endRule, {status: "needs_setup", cancelReason: "QA-operator"});
+        f.client.endDate = new Date("2026-11-25Z");
+        const destination = f.seed(f.endRule, {status: "canceled", cancelReason: CLIENT_DATE_AUTOMATION_CHANGED_REASON});
+        const before = structuredClone(operator);
+        const destinationBefore = structuredClone(destination);
+        const runTransaction = f.db.$transaction;
+        f.db.$transaction = async <T>(work: (tx: Prisma.TransactionClient) => Promise<T>): Promise<T> => {
+            const snapshot = f.rows.map(row => ({row, before: structuredClone(row)}));
+            try { return await runTransaction(work); }
+            catch (error) {
+                for (const entry of snapshot) Object.assign(entry.row, entry.before);
+                throw error;
+            }
+        };
+        await f.confirm();
+        const recovery = collisionWorker(f);
+        const write = jest.mocked(f.db.message_trigger_job.updateMany);
+        const apply = write.getMockImplementation()!;
+        let failMove = true;
+        write.mockImplementation(async (input) => {
+            if (failMove && input.where["id"] === operator.id && input.where["status"] === "needs_setup") {
+                expect(destination.dedupeKey).not.toBe(destinationBefore.dedupeKey);
+                expect(destination.status).toBe("canceled");
+                failMove = false; return {count: 0};
+            }
+            return apply(input);
+        });
+        await expect(recovery.fulfill()).rejects.toThrow("lost an operator reservation");
+        expect(f.rows).toEqual([before, destinationBefore]);
+        expect(f.intents).toHaveLength(1);
+        expect((recovery.intent["nextAttemptAt"] as Date).getTime()).toBeGreaterThan(Date.now());
+        jest.setSystemTime((recovery.intent["nextAttemptAt"] as Date).getTime() + 1);
+        await expect(recovery.fulfill()).resolves.toBe(true);
+        expect(f.intents).toEqual([]);
+        expect(operator).toMatchObject({status: "needs_setup", cancelReason: "QA-operator",
+            dedupeKey: destinationBefore.dedupeKey, scheduledFor: new Date("2026-11-25T01:30:00Z")});
+        expect(destination.dedupeKey).not.toBe(destinationBefore.dedupeKey);
+        expect({...destination, dedupeKey: destinationBefore.dedupeKey}).toEqual(destinationBefore);
+        expect(f.provider).not.toHaveBeenCalled();
+    });
+
     it("keeps a real needs_setup resend operator-only through date drift, intent drain and a due scan, then resends current content", async () => {
         const f = dispatchFixture();
         const reason = "QA-operator setup reason";
@@ -9235,33 +9375,34 @@ describe("service-record date reconciliation", () => {
         });
     });
 
-    it.each(["sent", "pending", "processing", "needs_setup", "task"])("rejects an operator move into a protected %s destination", async (status) => {
+    it.each(["sent", "pending", "processing", "needs_setup", "task"])("isolates an operator move into a protected %s destination", async (status) => {
         const f = fixture();
         f.seed(f.endRule, { status: "needs_setup", cancelReason: "QA-setup" });
         f.client.endDate = new Date("2026-11-25Z");
         const destination = f.seed(f.endRule, { status: status === "task" ? "pending" : status as MessageTriggerJobEntity["status"] });
         if (status === "task") destination.payload.taskAutomationReference = { actionId: "reviewed" } as never;
         const before = structuredClone(f.rows);
-        await expect(f.service.reconcileServiceRecordDateRules(branchId, 7, scope)).rejects.toThrow("operator reservation");
+        await expect(f.service.reconcileServiceRecordDateRules(branchId, 7, scope)).resolves.toBeUndefined();
         expect(f.rows).toEqual(before);
         expect(f.jobs.upsertPendingForRuleGeneration).not.toHaveBeenCalled();
     });
 
-    it.each(["user", "other-reason", "task", "reserved", "manual", "other-schedule", "other-branch"])(
-        "rejects an operator move into %s canceled history", async (mode) => {
+    it.each(["user", "other-reason", "legacy-sync", "task", "reserved", "manual", "other-schedule", "other-branch"])(
+        "isolates an operator move into %s canceled history", async (mode) => {
             const f = fixture();
             f.seed(f.endRule, { status: "needs_setup", cancelReason: "QA-setup" });
             f.client.endDate = new Date("2026-11-25Z");
             const destination = f.seed(f.endRule, { status: "canceled", cancelReason: CLIENT_DATE_AUTOMATION_CHANGED_REASON });
             if (mode === "user") destination.canceledByUser = true;
             if (mode === "other-reason") destination.cancelReason = "SERVICE_RECORD_REVISION_SUPERSEDED";
+            if (mode === "legacy-sync") destination.cancelReason = "Client data changed";
             if (mode === "task") destination.payload.taskAutomationReference = { actionId: "reviewed" } as never;
             if (mode === "reserved") Object.assign(destination.payload, { agentAutomationRecord: {} });
             if (mode === "manual") destination.ruleId = `${MANUAL_SMS_RULE_PREFIX}QA`;
             if (mode === "other-schedule") destination.employeeScheduleId = 92;
             if (mode === "other-branch") destination.branchId = "98000000-0000-4000-8000-000000000002";
             const before = structuredClone(f.rows);
-            await expect(f.service.reconcileServiceRecordDateRules(branchId, 7, scope)).rejects.toThrow("operator reservation");
+            await expect(f.service.reconcileServiceRecordDateRules(branchId, 7, scope)).resolves.toBeUndefined();
             expect(f.rows).toEqual(before);
             expect(f.tx.message_trigger_job.updateMany).not.toHaveBeenCalled();
             expect(f.jobs.upsertPendingForRuleGeneration).not.toHaveBeenCalled();
