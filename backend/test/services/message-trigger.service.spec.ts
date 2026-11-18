@@ -9411,6 +9411,33 @@ describe("service-record date reconciliation", () => {
         expect(f.rows.filter((row) => row.ruleId !== "created" && row.status === "pending")).toHaveLength(2);
     });
 
+    it("excludes a protected family from catch-up ordering for an eligible occurrence in the same recipient group", async () => {
+        const f = fixture();
+        f.sources.getMessagePolicyEnabled.mockResolvedValue(true);
+        const eligibleRule = f.rule("second-end"); f.activeRules.push(eligibleRule);
+        const protectedOccurrence = f.seed(f.endRule, { status: "sent" });
+        const protectedBefore = structuredClone(protectedOccurrence);
+        const previous = f.seed(eligibleRule);
+        f.client.endDate = new Date("2026-10-25Z");
+
+        await f.service.reconcileServiceRecordDateRules(branchId, 7, scope);
+
+        expect(protectedOccurrence).toEqual(protectedBefore);
+        expect(f.rows.filter((row) => row.ruleId === f.endRule.id)).toEqual([protectedOccurrence]);
+        expect(previous.status).toBe("canceled");
+        const pending = f.rows.filter((row) => row.status === "pending");
+        expect(pending).toHaveLength(1);
+        expect(pending[0]).toMatchObject({
+            ruleId: eligibleRule.id,
+            clientId: protectedOccurrence.clientId,
+            recipientType: protectedOccurrence.recipientType,
+            scheduledFor: new Date("2026-11-01T00:00:00Z"),
+            payload: { catchUp: { originalScheduledFor: "2026-10-25T01:30:00.000Z",
+                sequence: 1, intervalMinutes: 3, predecessorDedupeKey: null } },
+        });
+        expect(f.jobs.upsertPendingForRuleGeneration.mock.calls.map(([job]) => job.ruleId)).toEqual([eligibleRule.id]);
+    });
+
     it.each(["sent", "user-canceled"])("does not catch up a moved %s occurrence even when past triggers are enabled", async (status) => {
         const f = fixture(); f.sources.getMessagePolicyEnabled.mockResolvedValue(true);
         const previous = f.seed();
