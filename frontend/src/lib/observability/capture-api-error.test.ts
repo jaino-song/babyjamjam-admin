@@ -44,6 +44,40 @@ describe("captureApiError", () => {
     mockFlush.mockResolvedValue(true);
   });
 
+  it("preserves the raw service-record revision document retry path", () => {
+    const path = "/api/admin/service-records/revisions/[Filtered]/documents/[Filtered]/retry";
+    const error = createAxiosError({
+      status: 503,
+      method: "post",
+      url: "/api/admin/service-records/revisions/123e4567-e89b-42d3-a456-426614174000/documents/223e4567-e89b-42d3-a456-426614174001/retry",
+    });
+
+    expect(captureApiError(error)).toBe(true);
+    expect(mockCaptureException).toHaveBeenCalledTimes(1);
+    expect(mockCaptureException).toHaveBeenCalledWith(expect.objectContaining({
+      name: "ServiceRecordApiRequestError",
+      message: `Service-record API request failed: POST ${path} (503)`,
+    }));
+    expect(mockScope.setLevel).toHaveBeenCalledWith("error");
+    expect(mockScope.setTag.mock.calls).toEqual([
+      ["feature", "service-records"],
+      ["app", "frontend"],
+      ["runtime", "browser"],
+      ["operation", "public-link"],
+      ["handled", "true"],
+      ["status_code", "503"],
+    ]);
+    expect(mockScope.setFingerprint).toHaveBeenCalledWith(["api-error", "POST", path, "503"]);
+    expect(mockScope.setContext).toHaveBeenCalledWith("api", {
+      method: "POST",
+      path,
+      operation: "public-link",
+      status: 503,
+      code: null,
+      runtime: "browser",
+    });
+  });
+
   it("ignores expected client errors and cancelled requests", () => {
     captureApiError(createAxiosError({ status: 409 }));
     captureApiError(createAxiosError({ status: 404 }));
