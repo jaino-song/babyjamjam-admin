@@ -11,6 +11,10 @@ import {
 
 const reportedErrors = new WeakSet<object>();
 const MIN_OPAQUE_ID_LENGTH = 16;
+// Literal collection operations found in document BFF routes and API callers.
+const DOCUMENT_COLLECTION_ROUTES = new Set([
+  "completed", "in-progress", "status-counts", "rejected", "expired", "upload", "capabilities",
+]);
 
 export type ServiceRecordOperation =
   | "public-link"
@@ -69,6 +73,11 @@ export function captureApiError(error: unknown): boolean {
     .split("/")
     .map((segment) => (
       /^\d+$/.test(segment) || (segment.length >= MIN_OPAQUE_ID_LENGTH && /\d/.test(segment))
+        ? ":id"
+        : segment
+    ))
+    .map((segment, index, segments) => (
+      segments[index - 1] === "documents" && segment && !DOCUMENT_COLLECTION_ROUTES.has(segment)
         ? ":id"
         : segment
     ))

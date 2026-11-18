@@ -604,7 +604,7 @@ describe.each([
                 }));
                 expect(mockScope.setLevel).toHaveBeenCalledWith(failure === "502" ? "error" : "warning");
                 expect(mockScope.setFingerprint).toHaveBeenCalledWith([
-                    "api-error", "GET", originalRequest.url?.replace("123", ":id"), failure,
+                    "api-error", "GET", originalRequest.url?.replace("123", ":id").replace("/documents/document-1", "/documents/:id"), failure,
                 ]);
             }
             expect(mockAxios).toHaveBeenCalledTimes(isQueued ? 2 : 1);

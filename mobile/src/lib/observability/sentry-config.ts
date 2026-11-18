@@ -1,5 +1,7 @@
+import * as Sentry from "@sentry/nextjs";
 import type { Breadcrumb, ErrorEvent, Event } from "@sentry/nextjs";
 
+type SentryIntegration = ReturnType<typeof Sentry.getDefaultIntegrations>[number];
 type SentryTransactionEvent = Event & { type: "transaction" };
 
 const FILTERED_VALUE = "[Filtered]";
@@ -13,6 +15,8 @@ const SENSITIVE_FIELD_PATTERN =
   /authorization|cookie|password|token|secret|api[_-]?key|email|phone|mobile|address|birth|resident|content|message|body/i;
 const URL_FIELD_PATTERN = /(^|[._-])(url|uri|path)([._-]|$)/i;
 const REFERER_HEADER_PATTERN = /^referer$/i;
+const URL_HEADER_PATTERN = /^(origin|location|destination|link|refresh)$/i;
+const URL_HEADER_VALUE_PATTERN = /https?:\/\/|^\//i;
 const QUERY_FIELD_PATTERN = /(^|[._-])query(?:_string)?([._-]|$)/i;
 const EMAIL_PATTERN = /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi;
 const PHONE_PATTERN = /(?:\+?82[-\s]?)?0?1[016789][-.\s]?\d{3,4}[-.\s]?\d{4}/g;
@@ -142,7 +146,10 @@ function sanitizeHeaders(
   return Object.fromEntries(
     Object.entries(headers).map(([key, value]) => {
       if (SENSITIVE_FIELD_PATTERN.test(key)) return [key, FILTERED_VALUE];
-      if (REFERER_HEADER_PATTERN.test(key)) {
+      if (
+        REFERER_HEADER_PATTERN.test(key) || URL_FIELD_PATTERN.test(key)
+        || URL_HEADER_PATTERN.test(key) || URL_HEADER_VALUE_PATTERN.test(value)
+      ) {
         return [key, sanitizeSentryUrl(value) ?? FILTERED_VALUE];
       }
       return [key, sanitizeSentryText(value)];
@@ -275,6 +282,18 @@ export function getSentryRuntimeOptions() {
       ?? process.env.SENTRY_RELEASE
       ?? process.env.VERCEL_GIT_COMMIT_SHA,
     sampleRate: 1,
+    integrations: (defaults: SentryIntegration[]): SentryIntegration[] => defaults.map((integration): SentryIntegration => {
+      if (integration.name !== "Dedupe") return integration;
+      const dedupe = Sentry.dedupeIntegration();
+      return {
+        ...integration,
+        processEvent(event, hint, client) {
+          // API errors already deduplicate by object identity in captureApiError.
+          if (event.tags?.feature === "api") return event;
+          return dedupe.processEvent ? dedupe.processEvent(event, hint, client) : event;
+        },
+      };
+    }),
     tracesSampler: ({
       name,
       inheritOrSampleWith,

@@ -234,3 +234,35 @@ describe("all mobile Sentry errors", () => {
     expect(options.beforeSendTransaction({ type: "transaction", transaction: "GET /dashboard" })).toBeNull();
   });
 });
+
+
+describe("URL-valued request headers", () => {
+  it.each(["Referer", "referer", "REFERER", "Origin", "x-forwarded-uri", "X-Original-URL", "Location", "Link", "Refresh", "X-Custom-Header"])("strips queries and fragments from %s", (header) => {
+    const sent = getSentryRuntimeOptions().beforeSend({
+      type: undefined,
+      request: { headers: {
+        [header]: "https://admin.example/contracts?documentId=abc&phone=01012345678#x",
+      } },
+    });
+    expect(sent.request?.headers?.[header]).toBe("https://admin.example/contracts");
+    expect(JSON.stringify(sent)).not.toMatch(/[?#]|documentId|abc|01012345678|#x/);
+  });
+
+  it("sanitizes relative and malformed header URLs while retaining ordinary headers", () => {
+    const sent = getSentryRuntimeOptions().beforeSend({
+      type: undefined,
+      request: { headers: {
+        "x-forwarded-uri": "/contracts?documentId=abc#x",
+        Referer: "https://[invalid/contracts?documentId=abc#x",
+        Authorization: "Bearer private-fixture",
+        "User-Agent": "Test browser",
+      } },
+    });
+    expect(sent.request?.headers).toEqual({
+      "x-forwarded-uri": "/contracts",
+      Referer: "https://[invalid/contracts",
+      Authorization: "[Filtered]",
+      "User-Agent": "Test browser",
+    });
+  });
+});

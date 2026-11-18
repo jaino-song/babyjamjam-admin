@@ -4,7 +4,7 @@ import { parse } from "cookie";
 import { invalidateAuthUser } from "@/lib/auth/invalidate-auth-user";
 import { refreshApplicationSession } from "@/lib/auth/session-refresh";
 import { getServerRuntimeConfig } from "@/lib/env";
-import { captureApiError } from "@/lib/observability/capture-service-record-error";
+import { captureApiError, captureSessionRefreshNetworkError } from "@/lib/observability/capture-service-record-error";
 
 const API_BASE_URL = typeof window === 'undefined'
     ? getServerRuntimeConfig().backendBaseUrl
@@ -89,6 +89,11 @@ api.interceptors.response.use(
                 await refreshApplicationSession();
                 return api(originalRequest);
             } catch (refreshError) {
+                try {
+                    captureSessionRefreshNetworkError(refreshError);
+                } catch {
+                    // Observability must never replace the original refresh rejection.
+                }
                 return Promise.reject(refreshError);
             }
         }

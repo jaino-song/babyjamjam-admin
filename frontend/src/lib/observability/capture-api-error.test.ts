@@ -151,8 +151,8 @@ describe("captureApiError", () => {
   it.each([
     ["a1b2c3d4e5f6a7b8c9d0", ":id"],
     ["1234567890abcdef", ":id"],
-    ["short123", "short123"],
-    ["longalphabeticsegment", "longalphabeticsegment"],
+    ["short123", ":id"],
+    ["longalphabeticsegment", ":id"],
   ])("templates opaque document id %s as %s", (id, template) => {
     captureApiError(createAxiosError({
       status: 500, url: `https://admin.example.com/api/eformsign/documents/${id}/supersede?token=private`,
@@ -215,5 +215,25 @@ describe("captureApiError", () => {
     expect(capturedError).toBeInstanceOf(Error);
     expect(capturedError.config).toBeUndefined();
     expect(capturedError.message).not.toContain("efl_sensitive_value");
+  });
+});
+
+
+describe("API document path templates and opaque id bounds", () => {
+  beforeEach(() => jest.clearAllMocks());
+
+  it.each([
+    ["/api/documents/abcdefghijklmnop/void", "/api/documents/:id/void"],
+    ["/eformsign/documents/letters/download_files", "/eformsign/documents/:id/download_files"],
+    ["/documents/file/download", "/documents/:id/download"],
+    ...["completed", "in-progress", "status-counts", "rejected", "expired", "upload", "capabilities"].map((route) => [`/api/documents/${route}`, `/api/documents/${route}`]),
+    ["/api/clients/123", "/api/clients/:id"],
+    ["/api/eformsign/documents/a1b2c3d4e5f6a7b8c9d0/supersede", "/api/eformsign/documents/:id/supersede"],
+    ["/api/clients/abcdefghijklmn1", "/api/clients/abcdefghijklmn1"],
+    ["/api/clients/abcdefghijklmno1", "/api/clients/:id"],
+  ])("templates %s as %s", (url, path) => {
+    captureApiError(createAxiosError({ status: 500, url }));
+    expect(mockScope.setFingerprint).toHaveBeenCalledWith(["api-error", "GET", path, "500"]);
+    expect(mockScope.setContext).toHaveBeenCalledWith("api", expect.objectContaining({ path }));
   });
 });

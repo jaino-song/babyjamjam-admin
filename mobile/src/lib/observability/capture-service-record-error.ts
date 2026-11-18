@@ -30,6 +30,11 @@ interface ServiceRecordErrorContext {
 }
 
 const reportedErrors = new WeakSet<object>();
+const MIN_OPAQUE_ID_LENGTH = 16;
+// Literal collection operations found in document BFF routes and API callers.
+const DOCUMENT_COLLECTION_ROUTES = new Set([
+  "completed", "in-progress", "status-counts", "rejected", "expired", "upload", "capabilities",
+]);
 
 function isAxiosErrorLike(error: unknown): error is AxiosError {
   return (
@@ -141,7 +146,12 @@ export function captureApiError(error: unknown): boolean {
   // Sanitize URLs before templating; never attach request/response bodies or query strings.
   const path = (sanitizeSentryUrl(rawPath) ?? "unknown")
     .split("/")
-    .map((segment) => /^\d+$/.test(segment) || (segment.length >= 16 && /\d/.test(segment)) ? ":id" : segment)
+    .map((segment) => /^\d+$/.test(segment) || (segment.length >= MIN_OPAQUE_ID_LENGTH && /\d/.test(segment)) ? ":id" : segment)
+    .map((segment, index, segments) => (
+      segments[index - 1] === "documents" && segment && !DOCUMENT_COLLECTION_ROUTES.has(segment)
+        ? ":id"
+        : segment
+    ))
     .join("/");
   const statusLabel = status === undefined ? "network" : String(status);
   const runtime = typeof window === "undefined" ? "server" : "browser";
@@ -168,6 +178,18 @@ export function captureApiError(error: unknown): boolean {
     Sentry.captureException(capturedError);
   });
   return true;
+}
+
+export function captureSessionRefreshNetworkError(error: unknown): boolean {
+  // Fetch network failures are TypeErrors; HTTP refresh outcomes have their own error class.
+  if (!(error instanceof TypeError) || reportedErrors.has(error)) return false;
+  reportedErrors.add(error);
+  // Construct an allowlisted API failure, never forwarding the raw message or stack.
+  return captureApiError({
+    isAxiosError: true,
+    code: "ERR_NETWORK",
+    config: { method: "post", url: "/api/auth/refresh" },
+  });
 }
 
 export async function captureAndFlushApiError(error: unknown): Promise<void> {
