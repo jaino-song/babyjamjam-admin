@@ -17,6 +17,7 @@ const URL_FIELD_PATTERN = /(^|[._-])(url|uri|path)([._-]|$)/i;
 const REFERER_HEADER_PATTERN = /^referer$/i;
 const URL_HEADER_PATTERN = /^(origin|location|destination|link|refresh)$/i;
 const URL_HEADER_VALUE_PATTERN = /^(?:https?:\/\/|\/)/i;
+const URL_AUTHORITY_PATTERN = /[a-z][a-z0-9+.-]*:\/\/[^/?#\s]+/gi;
 const HOSTNAME_PATTERN = /^(?=.{1,253}\.?$)[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*\.?$/i;
 const QUERY_FIELD_PATTERN = /(^|[._-])query(?:_string)?([._-]|$)/i;
 const EMAIL_PATTERN = /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi;
@@ -65,6 +66,20 @@ export function sanitizeSentryText(value: string): string {
     .replace(UUID_PATH_SEGMENT_PATTERN, `/${FILTERED_VALUE}`);
 }
 
+// Parse each embedded authority before text masking can obscure its userinfo.
+function stripEmbeddedUrlCredentials(value: string): string {
+  return value.replace(URL_AUTHORITY_PATTERN, (authority) => {
+    if (!authority.includes("@")) return authority;
+
+    try {
+      const parsed = new URL(authority);
+      return `${parsed.protocol}//${parsed.host}`;
+    } catch {
+      return FILTERED_VALUE;
+    }
+  });
+}
+
 function sanitizeUrl(value: string, isHeader = false): string {
   const trimmed = value.trim();
   if (isHeader && !URL_HEADER_VALUE_PATTERN.test(trimmed)) return FILTERED_VALUE;
@@ -77,13 +92,15 @@ function sanitizeUrl(value: string, isHeader = false): string {
       !parsed.hostname.startsWith("[") && !HOSTNAME_PATTERN.test(parsed.hostname)
     )) return FILTERED_VALUE;
 
+    parsed.pathname = stripEmbeddedUrlCredentials(parsed.pathname);
+
     // Preserve header text masking before whitespace is URL-encoded, but only
     // after parsing succeeds. Credentials never participate in this second parse.
     if (isHeader && (parsed.username || parsed.password)) {
       parsed.pathname = sanitizeSentryText(decodeURI(parsed.pathname));
     }
     const pathname = isHeader && !parsed.username && !parsed.password
-      ? new URL(sanitizeSentryText(trimmed), baseUrl).pathname
+      ? new URL(sanitizeSentryText(stripEmbeddedUrlCredentials(trimmed)), baseUrl).pathname
       : parsed.pathname;
     const path = sanitizeSentryText(pathname).replace(
       SERVICE_RECORD_ACCESS_TOKEN_PATTERN,
