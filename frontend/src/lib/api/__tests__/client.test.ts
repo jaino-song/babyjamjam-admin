@@ -5,6 +5,19 @@ import { AUTH_USER_QUERY_KEY } from "@/lib/auth/query-keys";
 import { getQueryClient } from "@/lib/queryClient";
 import { QueryObserver } from "@tanstack/react-query";
 
+const mockScope = {
+    setLevel: jest.fn(),
+    setTag: jest.fn(),
+    setContext: jest.fn(),
+    setFingerprint: jest.fn(),
+};
+const mockCaptureException = jest.fn();
+
+jest.mock("@sentry/nextjs", () => ({
+    withScope: (callback: (scope: typeof mockScope) => void) => callback(mockScope),
+    captureException: (error: unknown) => mockCaptureException(error),
+}));
+
 type AxiosMockInternals = {
     requestInterceptorUse: jest.Mock;
     responseInterceptorUse: jest.Mock;
@@ -526,4 +539,79 @@ describe("api client eformsign refresh failure classification", () => {
         expect(mockAxios).toHaveBeenCalledWith(firstRequest);
         expect(mockAxios).toHaveBeenCalledWith(secondRequest);
     });
+});
+
+describe.each([
+    "app session",
+    "eformsign refresh",
+    "eformsign credential recovery",
+    "queued eformsign refresh",
+    "queued eformsign credential recovery",
+])("api client replay after %s", (refreshPath) => {
+    beforeEach(() => {
+        mockAxios.mockReset();
+        mockAxios.__mockApi.apiPost.mockReset();
+        mockAxios.__mockApi.barePost.mockReset();
+        mockResetAuthorityState.mockReset();
+        mockCaptureException.mockClear();
+        Object.values(mockScope).forEach((mock) => mock.mockClear());
+        window.history.replaceState({}, "", "/login");
+        sessionStorage.clear();
+    });
+
+    it.each(["502", "network", "401", "404", "canceled"])(
+        "preserves the replay %s failure and captures only reportable errors once",
+        async (failure) => {
+            const isAppSession = refreshPath === "app session";
+            const isQueued = refreshPath.startsWith("queued");
+            const usesCredentials = refreshPath.endsWith("credential recovery");
+            const originalRequest: RetryableRequestConfig = {
+                method: "GET",
+                url: isAppSession ? "/clients/123" : "/eformsign/documents/document-1",
+            };
+            const replayError = failure === "network" || failure === "canceled"
+                ? createNetworkError(originalRequest)
+                : createResponseError(originalRequest, Number(failure));
+            if (failure === "canceled") replayError.code = "ERR_CANCELED";
+            mockAxios.mockImplementation((config) => config === originalRequest
+                ? Promise.reject(replayError)
+                : Promise.resolve({ data: { success: true } }));
+            mockAxios.__mockApi.barePost.mockResolvedValue({ data: { success: true } });
+
+            const refreshError = createResponseError(
+                { method: "POST", url: "/refresh-access-token" }, 400,
+            );
+            let finishRefresh: (() => void) | undefined;
+            mockAxios.__mockApi.apiPost.mockImplementationOnce(() => new Promise((resolve, reject) => {
+                finishRefresh = () => usesCredentials ? reject(refreshError) : resolve({ data: {} });
+            }));
+            mockAxios.__mockApi.apiPost.mockResolvedValue({ data: { success: true } });
+
+            const handler = getResponseRejectedHandler();
+            const initiatingRequest = isQueued
+                ? handler(createUnauthorizedError({ method: "GET", url: "/eformsign/documents/document-2" }))
+                : undefined;
+            const request = handler(createUnauthorizedError(originalRequest));
+            const rejection = expect(request).rejects.toBe(replayError);
+            finishRefresh?.();
+            await Promise.all([rejection, initiatingRequest]);
+
+            const shouldCapture = failure === "502" || failure === "network";
+            expect(mockCaptureException).toHaveBeenCalledTimes(shouldCapture ? 1 : 0);
+            if (shouldCapture) {
+                expect(mockCaptureException).toHaveBeenCalledWith(expect.objectContaining({
+                    name: "ApiRequestError",
+                }));
+                expect(mockScope.setLevel).toHaveBeenCalledWith(failure === "502" ? "error" : "warning");
+                expect(mockScope.setFingerprint).toHaveBeenCalledWith([
+                    "api-error", "GET", originalRequest.url?.replace("123", ":id"), failure,
+                ]);
+            }
+            expect(mockAxios).toHaveBeenCalledTimes(isQueued ? 2 : 1);
+            expect(mockAxios.__mockApi.apiPost).toHaveBeenCalledTimes(isAppSession ? 0 : usesCredentials ? 2 : 1);
+            expect(mockAxios.__mockApi.barePost).toHaveBeenCalledTimes(isAppSession ? 1 : 0);
+            expect(mockResetAuthorityState).not.toHaveBeenCalled();
+            if (!isAppSession) expect(sessionStorage.getItem("eformsign_auth_time")).not.toBeNull();
+        },
+    );
 });
