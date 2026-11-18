@@ -91,7 +91,7 @@ describe("service-record backend Sentry contract", () => {
             },
             { originalException: new ServiceUnavailableException() },
         )).toMatchObject({
-            message: "Backend failure",
+            message: "Backend failure (list)",
             tags: { feature: "backend", operation: "list" },
             user: undefined,
             request: {
