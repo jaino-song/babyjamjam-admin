@@ -125,6 +125,61 @@ export function captureServiceRecordError(
   return true;
 }
 
+export function captureApiError(error: unknown): boolean {
+  if (!isAxiosErrorLike(error) || error.code === "ERR_CANCELED") return false;
+  if (reportedErrors.has(error)) return false;
+
+  const status = error.response?.status;
+  if (error.response && (typeof status !== "number" || status < 500)) return false;
+
+  const rawPath = getRequestPath(error.config?.url);
+  // Delegate before recording: the service-record capture owns the shared dedupe entry.
+  if (isServiceRecordSentrySignal(rawPath)) return captureServiceRecordError(error);
+  reportedErrors.add(error);
+
+  const method = sanitizeSentryText((error.config?.method ?? "unknown").toUpperCase());
+  // Sanitize URLs before templating; never attach request/response bodies or query strings.
+  const path = (sanitizeSentryUrl(rawPath) ?? "unknown")
+    .split("/")
+    .map((segment) => /^\d+$/.test(segment) || (segment.length >= 16 && /\d/.test(segment)) ? ":id" : segment)
+    .join("/");
+  const statusLabel = status === undefined ? "network" : String(status);
+  const runtime = typeof window === "undefined" ? "server" : "browser";
+  const capturedError = Object.assign(
+    new Error(`API request failed: ${method} ${path} (${statusLabel})`),
+    { name: "ApiRequestError" },
+  );
+
+  Sentry.withScope((scope) => {
+    scope.setLevel(status !== undefined && status >= 500 ? "error" : "warning");
+    scope.setTag("feature", "api");
+    scope.setTag("app", "mobile");
+    scope.setTag("runtime", runtime);
+    scope.setTag("handled", "true");
+    scope.setTag("status_code", statusLabel);
+    scope.setContext("api", {
+      method,
+      path,
+      status: status ?? null,
+      code: error.code ? sanitizeSentryText(error.code) : null,
+      runtime,
+    });
+    scope.setFingerprint(["api-error", method, path, statusLabel]);
+    Sentry.captureException(capturedError);
+  });
+  return true;
+}
+
+export async function captureAndFlushApiError(error: unknown): Promise<void> {
+  if (captureApiError(error)) {
+    try {
+      await Sentry.flush(2_000);
+    } catch {
+      // Observability must never replace the original proxy failure.
+    }
+  }
+}
+
 export async function captureAndFlushServiceRecordError(error: unknown): Promise<void> {
   if (captureServiceRecordError(error)) {
     try {

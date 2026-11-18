@@ -1,6 +1,20 @@
 /**
  * @jest-environment node
  */
+import { AxiosError } from "axios";
+
+const mockScope = {
+    setLevel: jest.fn(), setTag: jest.fn(), setContext: jest.fn(), setFingerprint: jest.fn(),
+};
+const mockCaptureException = jest.fn();
+const mockFlush = jest.fn().mockResolvedValue(true);
+
+jest.mock("@sentry/nextjs", () => ({
+    withScope: (callback: (scope: typeof mockScope) => void) => callback(mockScope),
+    captureException: (error: unknown) => mockCaptureException(error),
+    flush: (timeout: number) => mockFlush(timeout),
+}));
+
 import { resolveBackendBaseUrl, serverAPIClient } from "../server";
 
 type BackendEnv = Parameters<typeof resolveBackendBaseUrl>[0];
@@ -57,5 +71,35 @@ describe("serverAPIClient", () => {
         expect(validateStatus?.(399)).toBe(true);
         expect(validateStatus?.(400)).toBe(false);
         expect(validateStatus?.(500)).toBe(false);
+    });
+});
+
+
+describe("server API error monitoring", () => {
+    const originalAdapter = serverAPIClient.defaults.adapter;
+
+    afterEach(() => {
+        serverAPIClient.defaults.adapter = originalAdapter;
+        jest.clearAllMocks();
+    });
+
+    it("captures and flushes a non-service-record 502 before propagating the original error", async () => {
+        let failure: AxiosError | undefined;
+        serverAPIClient.defaults.adapter = async (config) => {
+            failure = new AxiosError("upstream failed", "ERR_BAD_RESPONSE", config, undefined, {
+                status: 502, statusText: "Bad Gateway", headers: {}, config, data: { private: "response body" },
+            });
+            throw failure;
+        };
+        const caught = await serverAPIClient.get("/clients/123?token=private").catch((error: unknown) => error);
+        expect(caught).toBe(failure);
+        expect(mockCaptureException).toHaveBeenCalledTimes(1);
+        expect(mockCaptureException).toHaveBeenCalledWith(expect.objectContaining({ name: "ApiRequestError" }));
+        expect(mockScope.setContext).toHaveBeenCalledWith("api", {
+            method: "GET", path: "/clients/:id", status: 502, code: "ERR_BAD_RESPONSE", runtime: "server",
+        });
+        expect(mockFlush).toHaveBeenCalledTimes(1);
+        expect(mockFlush).toHaveBeenCalledWith(2_000);
+        expect(mockCaptureException.mock.invocationCallOrder[0]).toBeLessThan(mockFlush.mock.invocationCallOrder[0]);
     });
 });

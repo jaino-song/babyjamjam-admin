@@ -13,6 +13,7 @@ jest.mock("@/lib/auth/session-refresh", () => ({
 }));
 jest.mock("@/lib/observability/capture-service-record-error", () => ({
     captureServiceRecordError: jest.fn(),
+    captureApiError: jest.fn(),
 }));
 
 const mockInvalidateAuthUser = jest.mocked(invalidateAuthUser);

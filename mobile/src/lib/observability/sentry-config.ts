@@ -11,7 +11,8 @@ export const SERVICE_RECORD_SENTRY_TAG = "feature";
 
 const SENSITIVE_FIELD_PATTERN =
   /authorization|cookie|password|token|secret|api[_-]?key|email|phone|mobile|address|birth|resident|content|message|body/i;
-const URL_FIELD_PATTERN = /(^|[._-])(url|uri)([._-]|$)/i;
+const URL_FIELD_PATTERN = /(^|[._-])(url|uri|path)([._-]|$)/i;
+const REFERER_HEADER_PATTERN = /^referer$/i;
 const QUERY_FIELD_PATTERN = /(^|[._-])query(?:_string)?([._-]|$)/i;
 const EMAIL_PATTERN = /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi;
 const PHONE_PATTERN = /(?:\+?82[-\s]?)?0?1[016789][-.\s]?\d{3,4}[-.\s]?\d{4}/g;
@@ -139,10 +140,13 @@ function sanitizeHeaders(
   if (!headers) return headers;
 
   return Object.fromEntries(
-    Object.entries(headers).map(([key, value]) => [
-      key,
-      SENSITIVE_FIELD_PATTERN.test(key) ? FILTERED_VALUE : sanitizeSentryText(value),
-    ]),
+    Object.entries(headers).map(([key, value]) => {
+      if (SENSITIVE_FIELD_PATTERN.test(key)) return [key, FILTERED_VALUE];
+      if (REFERER_HEADER_PATTERN.test(key)) {
+        return [key, sanitizeSentryUrl(value) ?? FILTERED_VALUE];
+      }
+      return [key, sanitizeSentryText(value)];
+    }),
   );
 }
 
@@ -157,9 +161,13 @@ export function sanitizeSentryBreadcrumb(breadcrumb: Breadcrumb): Breadcrumb {
 }
 
 export function sanitizeSentryEvent(event: Event): Event {
+  const serviceRecord = isServiceRecordSentryEvent(event);
+  const errorMessage = serviceRecord ? "Service-record error" : "Mobile error";
+  const { trace, ...contexts } = event.contexts ?? {};
+
   return {
     ...event,
-    message: event.message ? "Service-record error" : event.message,
+    message: event.message ? errorMessage : event.message,
     transaction: event.transaction
       ? sanitizeSentryText(event.transaction.replace(/[?#].*$/, ""))
       : event.transaction,
@@ -176,7 +184,7 @@ export function sanitizeSentryEvent(event: Event): Event {
       : event.request,
     logentry: event.logentry
       ? {
-          message: event.logentry.message ? "Service-record error" : event.logentry.message,
+          message: event.logentry.message ? errorMessage : event.logentry.message,
           params: undefined,
         }
       : event.logentry,
@@ -185,10 +193,24 @@ export function sanitizeSentryEvent(event: Event): Event {
           ...event.exception,
           values: event.exception.values?.map((exception) => ({
             ...exception,
-            value: exception.value ? "Service-record error" : exception.value,
+            value: exception.value ? errorMessage : exception.value,
           })),
         }
       : event.exception,
+    contexts: event.contexts
+      ? {
+          ...(sanitizeUnknown(contexts) as Event["contexts"]),
+          ...("trace" in event.contexts ? { trace } : {}),
+        }
+      : event.contexts,
+    tags: event.tags || !serviceRecord
+      ? {
+          ...Object.fromEntries(Object.entries(event.tags ?? {}).map(([key, value]) => [
+            key, typeof value === "string" ? sanitizeSentryText(value) : value,
+          ])),
+          ...(!serviceRecord && event.tags?.feature === undefined ? { feature: "mobile" } : {}),
+        }
+      : event.tags,
     breadcrumbs: undefined,
     extra: event.extra ? (sanitizeUnknown(event.extra) as Record<string, unknown>) : event.extra,
     spans: event.spans?.map((span) => ({
@@ -225,8 +247,7 @@ export function isServiceRecordSentryEvent(event: Event): boolean {
     || hasServiceRecordStackFrame(event);
 }
 
-function filterAndSanitizeSentryErrorEvent(event: ErrorEvent): ErrorEvent | null {
-  if (!isServiceRecordSentryEvent(event)) return null;
+function filterAndSanitizeSentryErrorEvent(event: ErrorEvent): ErrorEvent {
   return sanitizeSentryEvent(event) as ErrorEvent;
 }
 
@@ -265,6 +286,12 @@ export function getSentryRuntimeOptions() {
         ? inheritOrSampleWith(tracesSampleRate)
         : 0
     ),
+    denyUrls: [
+      /^chrome-extension:\/\//,
+      /^moz-extension:\/\//,
+      /^safari(-web)?-extension:\/\//,
+    ],
+    ignoreErrors: [/^ResizeObserver loop/],
     sendDefaultPii: false,
     attachStacktrace: true,
     initialScope: {

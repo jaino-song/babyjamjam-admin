@@ -1,5 +1,8 @@
 "use client";
 
+import * as Sentry from "@sentry/nextjs";
+import { useEffect } from "react";
+
 import { ErrorFallback } from "@/components/app/ui/error-fallback";
 
 interface DashboardErrorProps {
@@ -7,7 +10,11 @@ interface DashboardErrorProps {
   reset: () => void;
 }
 
-export default function DashboardError({ reset }: DashboardErrorProps) {
+export default function DashboardError({ error, reset }: DashboardErrorProps) {
+  useEffect(() => {
+    Sentry.captureException(error);
+  }, [error]);
+
   return (
     <ErrorFallback
       description="잠시 후 다시 시도해주세요."
