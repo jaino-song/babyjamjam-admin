@@ -10,6 +10,10 @@ import { createAgentAutomationTaskCommitReference } from "application/agent/agen
 import { createSchedulerLeaseMock } from "../utils/mocks/scheduler-lease.mock";
 import { isEntityChangeHintsSuppressed } from "infrastructure/database/entity-change-suppression";
 
+jest.mock("infrastructure/observability/service-record-sentry", () => ({
+    captureBackendError: jest.fn(),
+}));
+
 describe("MessageAutomationIntentService", () => {
     const setup = (schedulerLease: ReturnType<typeof createSchedulerLeaseMock> = createSchedulerLeaseMock()) => {
         const prisma = {

@@ -1,5 +1,6 @@
 import { Injectable, Logger, Optional } from "@nestjs/common";
 import { Cron } from "@nestjs/schedule";
+import { captureBackendError } from "infrastructure/observability/service-record-sentry";
 import { PrismaService } from "infrastructure/database/prisma.service";
 import { computeServiceStatus } from "domain/value-objects/service-status.vo";
 import { MessageTriggerService } from "./message-trigger.service";
@@ -61,6 +62,14 @@ export class ClientDueDateSchedulerService {
                 this.logger.log(`[Client Due Date] Copied dueDate to startDate for ${count} clients`);
             }
         } catch (error) {
+            try {
+                captureBackendError(error instanceof Error ? error : new Error("Client due date scheduler tick failed"), {
+                    handled: true,
+                    operation: "client-due-date-scheduler:tick",
+                });
+            } catch {
+                // Reporting must not interrupt background processing.
+            }
             if (isTransientPrismaConnectivityError(error)) {
                 this.executionGuard.enterCooldown(summarizePrismaError(error));
                 return;
@@ -190,6 +199,14 @@ export class ClientDueDateSchedulerService {
             }
             await this.triggerService!.syncClientRulesForClient(branchId, clientId, false);
         } catch (error) {
+            try {
+                captureBackendError(error instanceof Error ? error : new Error("Client due date scheduler sync rules failed"), {
+                    handled: true,
+                    operation: "client-due-date-scheduler:sync-rules",
+                });
+            } catch {
+                // Reporting must not interrupt background processing.
+            }
             this.logger.error(
                 `[Client Due Date] Failed to sync trigger rules for client ${clientId}`,
                 error instanceof Error ? error.stack : String(error),

@@ -8,6 +8,7 @@ import {
     HolidaySyncItem,
 } from "domain/repositories/holiday-sync.repository.interface";
 import { isoDateInKorea } from "domain/utils/business-days";
+import { captureBackendError } from "infrastructure/observability/service-record-sentry";
 import { KasiHolidayClient, KasiHolidayError } from "infrastructure/api/kasi-holiday.client";
 
 export type HolidaySyncTrigger = "cron" | "manual";
@@ -47,6 +48,14 @@ export class HolidaySyncService {
         try {
             await this.syncYears(this.currentAndNextYear(), "cron");
         } catch (error) {
+            try {
+                captureBackendError(error instanceof Error ? error : new Error("Holiday sync tick failed"), {
+                    handled: true,
+                    operation: "holiday-sync:tick",
+                });
+            } catch {
+                // Reporting must not interrupt background processing.
+            }
             // syncYears never throws per year; this only guards the unexpected.
             this.logger.error(`[Holiday Sync] scheduled run crashed: ${this.describeError(error)}`);
         }
@@ -102,9 +111,27 @@ export class HolidaySyncService {
             if (error instanceof KasiHolidayError) {
                 const level = error.reason === "not_configured" ? "log" : "warn";
                 this.logger[level](`[Holiday Sync] ${year}: ${error.message} (${trigger})`);
+                if (error.reason !== "not_configured") {
+                    try {
+                        captureBackendError(error instanceof Error ? error : new Error("Holiday sync fetch failed"), {
+                            handled: true,
+                            operation: "holiday-sync:fetch",
+                        });
+                    } catch {
+                        // Reporting must not interrupt background processing.
+                    }
+                }
                 return this.failed(year, error.reason);
             }
             this.logger.error(`[Holiday Sync] ${year}: write failed: ${this.describeError(error)} (${trigger})`);
+            try {
+                captureBackendError(error instanceof Error ? error : new Error("Holiday sync write failed"), {
+                    handled: true,
+                    operation: "holiday-sync:write",
+                });
+            } catch {
+                // Reporting must not interrupt background processing.
+            }
             return this.failed(year, "write_failed");
         }
     }

@@ -14,6 +14,10 @@ import { AGENT_ACTION_REPOSITORY } from "domain/repositories/agent-action.reposi
 import { SchedulerLeaseService } from "application/services/scheduler-lease.service";
 import { createSchedulerLeaseMock } from "../../test/utils/mocks/scheduler-lease.mock";
 
+jest.mock("infrastructure/observability/service-record-sentry", () => ({
+    captureBackendError: jest.fn(),
+}));
+
 const principal = { userId: "user-a", branchId: "branch-a", globalRole: "admin", branchRole: "admin" };
 
 function capability(risk: "read" | "reversible-write" = "reversible-write") {

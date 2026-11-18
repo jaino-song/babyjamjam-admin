@@ -2,6 +2,10 @@ import { HttpException, Logger } from "@nestjs/common";
 import { KasiHolidayError } from "infrastructure/api/kasi-holiday.client";
 import { HolidaySyncService } from "./holiday-sync.service";
 
+jest.mock("infrastructure/observability/service-record-sentry", () => ({
+    captureBackendError: jest.fn(),
+}));
+
 const ANCHORS = ["01-01", "03-01", "05-05", "06-06", "08-15", "10-03", "10-09", "12-25"];
 const anchorItems = (year: number) => ANCHORS.map((md) => ({ date: `${year}-${md}`, name: `h-${md}` }));
 

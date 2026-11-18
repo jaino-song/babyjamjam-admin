@@ -16,6 +16,7 @@ import { AgentActionPreviewSchema, type AgentActionRisk, type AgentActionStatus,
 import type { BjjUIMessage } from "@babyjamjam/shared";
 import type { AgentActionEntity, AgentActionOwner } from "domain/entities/agent-action.entity";
 import { AGENT_ACTION_REPOSITORY, type IAgentActionRepository } from "domain/repositories/agent-action.repository.interface";
+import { captureBackendError } from "infrastructure/observability/service-record-sentry";
 import type { VerifiedTenantPrincipal } from "infrastructure/tenant/tenant.context";
 import { PrismaService } from "infrastructure/database/prisma.service";
 import { codeOnlyProblemBody, problemBody, uncertainProblemBody } from "application/utils/problem-bodies";
@@ -983,7 +984,15 @@ export class ActionCoordinatorService implements AgentTaskReviewPort {
                     const outcome = await this.reconcile(record.id, principal);
                     if (outcome.status !== "uncertain") reconciled += 1;
                     else await this.advanceUncertainAction(record.id, record.branchId, record.updatedAt);
-                } catch {
+                } catch (error) {
+                    try {
+                        captureBackendError(error instanceof Error ? error : new Error("Action coordinator reconcile uncertain failed"), {
+                            handled: true,
+                            operation: "action-coordinator:reconcile-uncertain",
+                        });
+                    } catch {
+                        // Reporting must not interrupt background processing.
+                    }
                     // A status lookup failure leaves the action uncertain. It must
                     // never be converted to failed or retried as a side effect.
                     await this.advanceUncertainAction(record.id, record.branchId, record.updatedAt);
@@ -1006,7 +1015,15 @@ export class ActionCoordinatorService implements AgentTaskReviewPort {
                 where: { id, branchId, status: "uncertain" },
                 data: { updatedAt: new Date(Math.max(now, previous + 1)) },
             });
-        } catch {
+        } catch (error) {
+            try {
+                captureBackendError(error instanceof Error ? error : new Error("Action coordinator advance uncertain failed"), {
+                    handled: true,
+                    operation: "action-coordinator:advance-uncertain",
+                });
+            } catch {
+                // Reporting must not interrupt background processing.
+            }
             // Preserve the original uncertain outcome if the cursor update is
             // unavailable; the next sweep can retry the bookkeeping.
         }

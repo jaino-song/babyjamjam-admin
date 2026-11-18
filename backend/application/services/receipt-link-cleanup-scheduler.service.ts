@@ -1,6 +1,7 @@
 import { Inject, Injectable, Logger } from "@nestjs/common";
 import { Cron } from "@nestjs/schedule";
 import { FILE_STORAGE_PORT, FileStoragePort } from "domain/ports/file-storage.port";
+import { captureBackendError } from "infrastructure/observability/service-record-sentry";
 import { ReceiptLinkTokenService } from "./receipt-link-token.service";
 import { SchedulerLeaseService } from "./scheduler-lease.service";
 
@@ -32,6 +33,14 @@ export class ReceiptLinkCleanupSchedulerService {
                 await this.storage.delete(path);
                 removedImages += 1;
             } catch (error) {
+                try {
+                    captureBackendError(error instanceof Error ? error : new Error("Receipt link cleanup scheduler delete image failed"), {
+                        handled: true,
+                        operation: "receipt-link-cleanup-scheduler:delete-image",
+                    });
+                } catch {
+                    // Reporting must not interrupt background processing.
+                }
                 allImagesRemoved = false;
                 this.logger.warn(`[ReceiptLink] failed to delete ${path}: ${error instanceof Error ? error.message : String(error)}`);
             }

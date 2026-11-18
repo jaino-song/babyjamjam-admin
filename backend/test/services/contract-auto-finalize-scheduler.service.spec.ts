@@ -9,6 +9,10 @@ import type { ReviewStageContract } from "domain/repositories/eformsign-doc.repo
 import { isoDateInKorea } from "domain/utils/business-days";
 import { createSchedulerLeaseMock } from "../utils/mocks/scheduler-lease.mock";
 
+jest.mock("infrastructure/observability/service-record-sentry", () => ({
+    captureBackendError: jest.fn(),
+}));
+
 function contract(overrides: Partial<ReviewStageContract> = {}): ReviewStageContract {
     return {
         documentId: "doc-1",

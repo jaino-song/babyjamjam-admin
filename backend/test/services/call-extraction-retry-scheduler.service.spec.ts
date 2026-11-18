@@ -1,6 +1,10 @@
 import { CallExtractionRetrySchedulerService } from "application/services/call-extraction-retry-scheduler.service";
 import { createSchedulerLeaseMock } from "../utils/mocks/scheduler-lease.mock";
 
+jest.mock("infrastructure/observability/service-record-sentry", () => ({
+    captureBackendError: jest.fn(),
+}));
+
 const CALL_PROCESSING_CLAIM_LEASE_MS = 10 * 60 * 1000;
 const MAX_ATTEMPTS = 3;
 
