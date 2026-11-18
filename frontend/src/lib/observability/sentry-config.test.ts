@@ -376,6 +376,7 @@ describe("URL-valued request headers", () => {
     ])("removes credentials after URL normalization (sentry-coverage-u7f1-r3/F3): %s", (nested) => {
       const value = `${prefix}/proxy/${nested}?documentId=qa-nested-query#private`;
       const expected = `${origin}/proxy/https://inner.example/x`;
+      const headerOrigin = origin || "[Filtered]";
       const sent = getSentryRuntimeOptions().beforeSend({
         type: undefined,
         request: {
@@ -388,22 +389,23 @@ describe("URL-valued request headers", () => {
       expect(sanitizeSentryUrl(value)).toBe(expected);
       expect(sent.request?.url).toBe(expected);
       expect(sent.request?.headers).toEqual({
-        Referer: expected, "X-Forwarded-Uri": expected, "X-Detail": expected,
+        Referer: headerOrigin, "X-Forwarded-Uri": headerOrigin, "X-Detail": headerOrigin,
       });
+      expect(JSON.stringify(sent.request?.headers)).not.toMatch(/proxy|inner|\/x/);
       expect(sent.contexts?.api?.path).toBe(expected);
       expect(JSON.stringify(sent)).not.toMatch(/alice|pw|outer-pass|\[Email\]|[?#]|documentId|qa-nested-query/);
     });
   });
 
   it.each([
-    ["https://h/proxy/https://alice:s3cr!t@i/x", "https://h/proxy/https://i/x"],
-    ["https://h/proxy/http://alice:a@b!c@i/x", "https://h/proxy/http://i/x"],
-    ["//h/proxy/https://alice:s3cr!t@i/x", "https://h/proxy/https://i/x"],
-    ["/proxy/https://alice:s3cr!t@i/x", "/proxy/https://i/x"],
-    ["https://outer:outer-pass@h/proxy/https://alice:s3cr!t@i/x", "https://h/proxy/https://i/x"],
-    ["https://h/proxy/https://alice:s3cr!t@i/http://bob:other-pass@j/x", "https://h/proxy/https://i/http://j/x"],
-    ["https://h/proxy/https://alice:s3cr!t@i/x?documentId=qa-nested-query#private", "https://h/proxy/https://i/x"],
-  ])("removes nested URL credentials (sentry-coverage-u7f1-r3/F1): %s", (value, expected) => {
+    ["https://h/proxy/https://alice:s3cr!t@i/x", "https://h/proxy/https://i/x", "https://h"],
+    ["https://h/proxy/http://alice:a@b!c@i/x", "https://h/proxy/http://i/x", "https://h"],
+    ["//h/proxy/https://alice:s3cr!t@i/x", "https://h/proxy/https://i/x", "https://h"],
+    ["/proxy/https://alice:s3cr!t@i/x", "/proxy/https://i/x", "[Filtered]"],
+    ["https://outer:outer-pass@h/proxy/https://alice:s3cr!t@i/x", "https://h/proxy/https://i/x", "https://h"],
+    ["https://h/proxy/https://alice:s3cr!t@i/http://bob:other-pass@j/x", "https://h/proxy/https://i/http://j/x", "https://h"],
+    ["https://h/proxy/https://alice:s3cr!t@i/x?documentId=qa-nested-query#private", "https://h/proxy/https://i/x", "https://h"],
+  ])("removes nested URL credentials (sentry-coverage-u7f1-r3/F1): %s", (value, expected, headerOrigin) => {
     expect(sanitizeSentryUrl(value)).toBe(expected);
 
     const sent = getSentryRuntimeOptions().beforeSend({
@@ -417,8 +419,9 @@ describe("URL-valued request headers", () => {
 
     expect(sent.request?.url).toBe(expected);
     expect(sent.request?.headers).toEqual({
-      Referer: expected, "X-Forwarded-Uri": expected, "X-Detail": expected,
+      Referer: headerOrigin, "X-Forwarded-Uri": headerOrigin, "X-Detail": headerOrigin,
     });
+    expect(JSON.stringify(sent.request?.headers)).not.toMatch(/proxy|\/i|\/j|\/x/);
     expect(sent.contexts?.api?.path).toBe(expected);
     expect(JSON.stringify(sent)).not.toMatch(/alice|s3cr|b!c|outer-pass|bob|other-pass|\[Email\]|[?#]|documentId|qa-nested-query/);
   });
@@ -433,7 +436,8 @@ describe("URL-valued request headers", () => {
       type: undefined,
       request: { headers: { Referer: value } },
     });
-    expect(sent.request?.headers?.Referer).toBe(value);
+    expect(sent.request?.headers?.Referer).toBe("https://h");
+    expect(JSON.stringify(sent)).not.toMatch(/proxy|inner|notify|@team|\/x/i);
   });
 
   it.each([
@@ -447,8 +451,8 @@ describe("URL-valued request headers", () => {
       request: { headers: { [header]: value } },
     });
 
-    expect(sent.request?.headers?.[header]).toBe("https://admin.example.com/x");
-    expect(JSON.stringify(sent)).not.toMatch(/alice|s3cr|\[Email\]|\?|documentId/);
+    expect(sent.request?.headers?.[header]).toBe("https://admin.example.com");
+    expect(JSON.stringify(sent)).not.toMatch(/alice|s3cr|\[Email\]|\/x|\?|documentId/);
   });
 
   it.each([
@@ -470,7 +474,7 @@ describe("URL-valued request headers", () => {
     expect(JSON.stringify(sent)).not.toMatch(/alice|s3cr|kim|qa-document|qa-query-secret|documentId|\[Email\]|[?#]/);
   });
 
-  it.each(["contracts", "?a@secret", "ftp://example.com/x", "https://bad|host/x", "https://bad_host/x", "prefix //alice:s3cr!t@admin.example.com/x"])("filters unsupported or invalid header URLs: %s", (value) => {
+  it.each(["contracts", "?a@secret", "ftp://example.com/x", "https://bad|host/x", "prefix //alice:s3cr!t@admin.example.com/x"])("filters unsupported or invalid header URLs: %s", (value) => {
     const sent = getSentryRuntimeOptions().beforeSend({
       type: undefined,
       request: { headers: { Referer: value } },
@@ -479,25 +483,25 @@ describe("URL-valued request headers", () => {
   });
 
   it.each([
-    ["https://admin.example.com/x?q=kim@example.com&phone=01012345678&token=qa-query-secret&documentId=qa-document", "https://admin.example.com/x"],
-    ["https://admin.example.com?q=kim@example.com&phone=01012345678", "https://admin.example.com/"],
-    ["https://admin.example.com/x#kim@example.com&phone=01012345678", "https://admin.example.com/x"],
-    ["https://admin.example.com/notify/@team?q=kim@example.com&token=qa-query-secret", "https://admin.example.com/notify/@team"],
-    ["https://alice:password@admin.example.com/x?q=kim@example.com&token=qa-query-secret", "https://admin.example.com/x"],
-    ["https://alice:a@b!c@admin.example.com/x?q=kim@example.com&documentId=qa-document", "https://admin.example.com/x"],
-    ["https://alice:p?ss@admin.example.com/x?q=kim@example.com&phone=01012345678", "[Filtered]"],
-    ["https://alice:p/ss@admin.example.com/x?q=kim@example.com&token=qa-query-secret", "[Filtered]"],
-    ["https://[invalid/x?q=kim@example.com&phone=01012345678", "[Filtered]"],
-    ["https://admin.example.com:8443/x?q=kim@example.com&phone=01012345678", "https://admin.example.com:8443/x"],
-    ["https://admin.example.com:bad/x?q=kim@example.com&phone=01012345678", "[Filtered]"],
-    ["https://host:bad/x?a@b&token=qa-query-secret&documentId=qa-document", "[Filtered]"],
-    ["https://host:bad/x?a@b&documentId=qa-document", "[Filtered]"],
-    ["https://host:bad/x?a@b&documentId=qa-document/next", "[Filtered]"],
-    ["https://host:bad/x?a@b;documentId=qa-document", "[Filtered]"],
-    ["https://alice:p?key=value@admin.example.com/x?q=kim@example.com&phone=01012345678", "[Filtered]"],
-    ["https://alice:p?ss@[invalid/x?q=kim@example.com&documentId=qa-document", "[Filtered]"],
-    ["//admin.example.com/x?q=kim@example.com&token=qa-query-secret", "https://admin.example.com/x"],
-  ])("keeps path and query @ characters out of the origin (sentry-coverage-u7/F1): %s", (value, expected) => {
+    ["https://admin.example.com/x?q=kim@example.com&phone=01012345678&token=qa-query-secret&documentId=qa-document", "https://admin.example.com/x", "https://admin.example.com"],
+    ["https://admin.example.com?q=kim@example.com&phone=01012345678", "https://admin.example.com/", "https://admin.example.com"],
+    ["https://admin.example.com/x#kim@example.com&phone=01012345678", "https://admin.example.com/x", "https://admin.example.com"],
+    ["https://admin.example.com/notify/@team?q=kim@example.com&token=qa-query-secret", "https://admin.example.com/notify/@team", "https://admin.example.com"],
+    ["https://alice:password@admin.example.com/x?q=kim@example.com&token=qa-query-secret", "https://admin.example.com/x", "https://admin.example.com"],
+    ["https://alice:a@b!c@admin.example.com/x?q=kim@example.com&documentId=qa-document", "https://admin.example.com/x", "https://admin.example.com"],
+    ["https://alice:p?ss@admin.example.com/x?q=kim@example.com&phone=01012345678", "[Filtered]", "[Filtered]"],
+    ["https://alice:p/ss@admin.example.com/x?q=kim@example.com&token=qa-query-secret", "[Filtered]", "[Filtered]"],
+    ["https://[invalid/x?q=kim@example.com&phone=01012345678", "[Filtered]", "[Filtered]"],
+    ["https://admin.example.com:8443/x?q=kim@example.com&phone=01012345678", "https://admin.example.com:8443/x", "https://admin.example.com:8443"],
+    ["https://admin.example.com:bad/x?q=kim@example.com&phone=01012345678", "[Filtered]", "[Filtered]"],
+    ["https://host:bad/x?a@b&token=qa-query-secret&documentId=qa-document", "[Filtered]", "[Filtered]"],
+    ["https://host:bad/x?a@b&documentId=qa-document", "[Filtered]", "[Filtered]"],
+    ["https://host:bad/x?a@b&documentId=qa-document/next", "[Filtered]", "[Filtered]"],
+    ["https://host:bad/x?a@b;documentId=qa-document", "[Filtered]", "[Filtered]"],
+    ["https://alice:p?key=value@admin.example.com/x?q=kim@example.com&phone=01012345678", "[Filtered]", "[Filtered]"],
+    ["https://alice:p?ss@[invalid/x?q=kim@example.com&documentId=qa-document", "[Filtered]", "[Filtered]"],
+    ["//admin.example.com/x?q=kim@example.com&token=qa-query-secret", "https://admin.example.com/x", "https://admin.example.com"],
+  ])("keeps path and query @ characters out of the origin (sentry-coverage-u7/F1): %s", (value, expected, headerOrigin) => {
     expect(sanitizeSentryUrl(value)).toBe(expected);
 
     const sent = getSentryRuntimeOptions().beforeSend({
@@ -506,7 +510,8 @@ describe("URL-valued request headers", () => {
     });
 
     expect(sent.request?.url).toBe(expected);
-    expect(sent.request?.headers?.Referer).toBe(expected);
+    expect(sent.request?.headers?.Referer).toBe(headerOrigin);
+    expect(sent.request?.headers?.Referer).not.toMatch(/\/x|notify|@team/);
     expect(JSON.stringify(sent)).not.toMatch(/alice|password|kim|01012345678|qa-query-secret|qa-document|[?#]/);
   });
 
@@ -522,7 +527,7 @@ describe("URL-valued request headers", () => {
     });
     const sanitized = sent.request?.headers?.[header];
 
-    expect(sanitized).toBeDefined();
+    expect(sanitized).toBe("[Filtered]");
     expect(sanitized).not.toMatch(/[?#]|documentId|token|qa-query-value|details/);
   });
 
@@ -570,8 +575,8 @@ describe("URL-valued request headers", () => {
       request: { headers: { [header]: value } },
     });
 
-    expect(sent.request?.headers?.[header]).toBe("https://admin.example.com/x");
-    expect(JSON.stringify(sent)).not.toMatch(/alice|s3cr|b!c|\[Email\]/);
+    expect(sent.request?.headers?.[header]).toBe("https://admin.example.com");
+    expect(JSON.stringify(sent)).not.toMatch(/alice|s3cr|b!c|\[Email\]|\/x/);
   });
 
   it("preserves a credential-free Referer and masks email in a non-URL header", () => {
@@ -584,9 +589,10 @@ describe("URL-valued request headers", () => {
     });
 
     expect(sent.request?.headers).toEqual({
-      Referer: "https://admin.example.com/x",
+      Referer: "https://admin.example.com",
       "X-Detail": "Contact [Email]",
     });
+    expect(JSON.stringify(sent)).not.toMatch(/documentId|abc|user@example|\/x/);
   });
 
   it.each([
@@ -603,22 +609,22 @@ describe("URL-valued request headers", () => {
 
   describe.each(["X-Detail", "Referer", "x-forwarded-uri"])("%s URL-prefixed text privacy", (header) => {
     it.each([
-      ["/retry with Bearer qa-header-credential", "/retry%20with%20Bearer%20[Filtered]"],
-      ["https://x/retry with Bearer qa-header-credential", "https://x/retry%20with%20Bearer%20[Filtered]"],
-      ["http://x/retry with Bearer qa-header-credential", "http://x/retry%20with%20Bearer%20[Filtered]"],
-      ["//alice:s3cr!t@x/retry with Bearer qa-header-credential", "https://x/retry%20with%20Bearer%20[Filtered]"],
-      ["/help call 010 1234 5678", "/help%20call%20[Phone]"],
-      ["https://x/help call 010 1234 5678", "https://x/help%20call%20[Phone]"],
-      ["/help contact user@example.com", "/help%20contact%20[Email]"],
-      ["/retry with token=qa-header-credential", "/retry%20with%20token=[Filtered]"],
-    ])("redacts sensitive text before URL encoding: %s", (value, expected) => {
+      ["/retry with Bearer qa-header-credential", "[Filtered]"],
+      ["https://x/retry with Bearer qa-header-credential", "https://x"],
+      ["http://x/retry with Bearer qa-header-credential", "http://x"],
+      ["//alice:s3cr!t@x/retry with Bearer qa-header-credential", "https://x"],
+      ["/help call 010 1234 5678", "[Filtered]"],
+      ["https://x/help call 010 1234 5678", "https://x"],
+      ["/help contact user@example.com", "[Filtered]"],
+      ["/retry with token=qa-header-credential", "[Filtered]"],
+    ])("drops sensitive header paths: %s", (value, expected) => {
       const sent = getSentryRuntimeOptions().beforeSend({
         type: undefined,
         request: { headers: { [header]: value } },
       });
 
       expect(sent.request?.headers?.[header]).toBe(expected);
-      expect(JSON.stringify(sent)).not.toMatch(/qa-header-credential|010(?: |%20)1234(?: |%20)5678|user(?:@|%40)example\.com/);
+      expect(JSON.stringify(sent)).not.toMatch(/retry|help|Bearer|token|qa-header-credential|010(?: |%20)1234(?: |%20)5678|user(?:@|%40)example\.com/);
     });
   });
 
@@ -643,7 +649,8 @@ describe("URL-valued request headers", () => {
       request: { headers: { "X-Custom-Header": "/contracts?documentId=abc#x" } },
     });
 
-    expect(sent.request?.headers?.["X-Custom-Header"]).toBe("/contracts");
+    expect(sent.request?.headers?.["X-Custom-Header"]).toBe("[Filtered]");
+    expect(JSON.stringify(sent)).not.toMatch(/contracts|documentId|abc|#x/);
   });
 
   it.each(["Referer", "referer", "REFERER", "Origin", "x-forwarded-uri", "X-Original-URL", "Location", "Link", "Refresh", "X-Custom-Header"])("strips queries and fragments from %s", (header) => {
@@ -653,8 +660,8 @@ describe("URL-valued request headers", () => {
         [header]: "https://admin.example/contracts?documentId=abc&phone=01012345678#x",
       } },
     });
-    expect(sent.request?.headers?.[header]).toBe("https://admin.example/contracts");
-    expect(JSON.stringify(sent)).not.toMatch(/[?#]|documentId|abc|01012345678|#x/);
+    expect(sent.request?.headers?.[header]).toBe("https://admin.example");
+    expect(JSON.stringify(sent)).not.toMatch(/contracts|[?#]|documentId|abc|01012345678|#x/);
   });
 
   it("sanitizes relative and malformed header URLs while retaining ordinary headers", () => {
@@ -668,10 +675,63 @@ describe("URL-valued request headers", () => {
       } },
     });
     expect(sent.request?.headers).toEqual({
-      "x-forwarded-uri": "/contracts",
+      "x-forwarded-uri": "[Filtered]",
       Referer: "[Filtered]",
       Authorization: "[Filtered]",
       "User-Agent": "Test browser",
     });
+    expect(JSON.stringify(sent)).not.toMatch(/contracts|documentId|abc|private-fixture|#x/);
+  });
+});
+
+
+describe("origin-only request header privacy", () => {
+  describe.each([
+    "Referer", "Origin", "Location", "Destination", "Link", "Refresh",
+    "x-forwarded-uri", "x-original-url", "x-middleware-rewrite",
+    "x-nextjs-rewrite", "next-url", "X-Custom-Header",
+  ])("%s", (header) => {
+    it.each([
+      ["https://h/proxy/https://bob:x@j/y/https:%5C%5Calice:pw@inner.example/x", "https://h"],
+      ["https://h/proxy/https:%5C%5Calice:pw@inner.example/x", "https://h"],
+      ["https://h/proxy/htt%09ps://alice:pw@inner.example/x", "https://h"],
+      ["//alice:s3cr!t@admin.example.com/x?documentId=abc", "https://admin.example.com"],
+      ["https://alice:p?ss@admin.example.com/x?redirect=https://kim@example.com", "[Filtered]"],
+      ["https://host:bad/x?a@qa-query-secret", "[Filtered]"],
+      ["https://admin.example.com/contracts?documentId=abc", "https://admin.example.com"],
+      ["https://admin.example.com", "https://admin.example.com"],
+      ["https://01012345678.example.com/x", "[Filtered]"],
+      ["/x?token=abc", "[Filtered]"],
+      [" https://alice:pw@ADMIN.example.com:443/contracts?documentId=abc#fragment ", "https://admin.example.com"],
+      ["http://admin.example.com:8080/contracts?documentId=abc", "http://admin.example.com:8080"],
+      ["https://sentry.local/contracts?documentId=abc", "https://sentry.local"],
+      ["https://bad_host/x", "https://bad_host"],
+      ["https://[::1]:8443/x", "https://[::1]:8443"],
+    ])("emits only the parsed safe origin for %s", (value, expected) => {
+      const sent = getSentryRuntimeOptions().beforeSend({
+        type: undefined,
+        request: { headers: { [header]: value } },
+      });
+
+      expect(sent.request?.headers?.[header]).toBe(expected);
+      expect(JSON.stringify(sent)).not.toMatch(/alice|bob|pw|kim|documentId|qa-query-secret|proxy|inner|contracts|redirect|token|fragment|abc|s3cr|01012345678|\/x|\/y|%5C|%09/);
+    });
+  });
+
+  it.each([
+    ["Link", "<https://a.example/x?documentId=abc>"],
+    ["Refresh", "0; url=https://a.example/x?documentId=abc"],
+    ["Referer", "ftp://a.example/x?documentId=abc"],
+    ["Origin", "null"],
+    ["Location", "contracts"],
+    ["Referer", ""],
+  ])("filters non-HTTP URL or composite %s: %s", (header, value) => {
+    const sent = getSentryRuntimeOptions().beforeSend({
+      type: undefined,
+      request: { headers: { [header]: value } },
+    });
+
+    expect(sent.request?.headers?.[header]).toBe("[Filtered]");
+    expect(JSON.stringify(sent)).not.toMatch(/a\.example|contracts|documentId|abc|\/x/);
   });
 });

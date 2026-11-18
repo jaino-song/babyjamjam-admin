@@ -80,9 +80,8 @@ function stripEmbeddedUrlCredentials(value: string): string {
   });
 }
 
-function sanitizeUrl(value: string, isHeader = false): string {
+function sanitizeUrl(value: string): string {
   const trimmed = value.trim();
-  if (isHeader && !URL_HEADER_VALUE_PATTERN.test(trimmed)) return FILTERED_VALUE;
 
   try {
     const baseUrl = "https://sentry.local";
@@ -92,25 +91,13 @@ function sanitizeUrl(value: string, isHeader = false): string {
       !parsed.hostname.startsWith("[") && !HOSTNAME_PATTERN.test(parsed.hostname)
     )) return FILTERED_VALUE;
 
-    const strippedPathname = stripEmbeddedUrlCredentials(parsed.pathname);
-    const hasCredentials = parsed.username || parsed.password || strippedPathname !== parsed.pathname;
-    parsed.pathname = strippedPathname;
-
-    // Preserve header text masking before whitespace is URL-encoded, but only
-    // after parsing succeeds. Use the cleaned path when normalization exposed
-    // nested credentials, so the raw value cannot reintroduce them.
-    if (isHeader && hasCredentials) {
-      parsed.pathname = sanitizeSentryText(decodeURI(parsed.pathname));
-    }
-    const pathname = isHeader && !hasCredentials
-      ? new URL(sanitizeSentryText(stripEmbeddedUrlCredentials(trimmed)), baseUrl).pathname
-      : parsed.pathname;
+    parsed.pathname = stripEmbeddedUrlCredentials(parsed.pathname);
+    const pathname = parsed.pathname;
     const path = sanitizeSentryText(pathname).replace(
       SERVICE_RECORD_ACCESS_TOKEN_PATTERN,
       `$1${FILTERED_VALUE}`,
     );
-    const isPathOnlyHeader = isHeader && trimmed.startsWith("/") && !trimmed.startsWith("//");
-    return isPathOnlyHeader || parsed.origin === baseUrl ? path : `${parsed.origin}${path}`;
+    return parsed.origin === baseUrl ? path : `${parsed.origin}${path}`;
   } catch {
     return FILTERED_VALUE;
   }
@@ -156,6 +143,22 @@ function sanitizeUnknown(value: unknown, depth = 0): unknown {
   );
 }
 
+function sanitizeHeaderUrl(value: string): string {
+  const trimmed = value.trim();
+
+  try {
+    const parsed = trimmed.startsWith("//")
+      ? new URL(trimmed, "https://sentry.local")
+      : new URL(trimmed);
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return FILTERED_VALUE;
+
+    const origin = parsed.origin;
+    return sanitizeSentryText(origin) === origin ? origin : FILTERED_VALUE;
+  } catch {
+    return FILTERED_VALUE;
+  }
+}
+
 function sanitizeHeaders(headers: Record<string, string> | undefined): Record<string, string> | undefined {
   if (!headers) return headers;
 
@@ -166,11 +169,7 @@ function sanitizeHeaders(headers: Record<string, string> | undefined): Record<st
         REFERER_HEADER_PATTERN.test(key) || URL_FIELD_PATTERN.test(key)
         || URL_HEADER_PATTERN.test(key) || URL_HEADER_VALUE_PATTERN.test(value.trim())
       ) {
-        const sanitizedUrl = sanitizeUrl(value, true);
-        // Preserve browser origins without the root slash added by URL parsing.
-        return [key, key.toLowerCase() === "origin"
-          ? sanitizedUrl.replace(/^([a-z][a-z0-9+.-]*:\/\/[^/]+)\/$/i, "$1")
-          : sanitizedUrl];
+        return [key, sanitizeHeaderUrl(value)];
       }
       return [key, sanitizeSentryText(value)];
     }),
