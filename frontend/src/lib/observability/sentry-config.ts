@@ -11,7 +11,7 @@ export const SERVICE_RECORD_SENTRY_TAG = "feature";
 
 const SENSITIVE_FIELD_PATTERN =
   /authorization|cookie|password|token|secret|api[_-]?key|email|phone|mobile|address|birth|resident|content|message|body/i;
-const URL_FIELD_PATTERN = /(^|[._-])(url|uri)([._-]|$)/i;
+const URL_FIELD_PATTERN = /(^|[._-])(url|uri|path)([._-]|$)/i;
 const QUERY_FIELD_PATTERN = /(^|[._-])query(?:_string)?([._-]|$)/i;
 const EMAIL_PATTERN = /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi;
 const PHONE_PATTERN = /(?:\+?82[-\s]?)?0?1[016789][-.\s]?\d{3,4}[-.\s]?\d{4}/g;
