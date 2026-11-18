@@ -8,7 +8,20 @@ import {
 } from "application/services/eformsign-document-job-worker.service";
 import { classifyRecovery, EformsignDocumentJobEntity } from "domain/entities/eformsign-document-job.entity";
 import { toJobErrorCode } from "domain/value-objects/eformsign-job-error-code";
+import * as sentryReporting from "infrastructure/observability/service-record-sentry";
 import { createSchedulerLeaseMock } from "../utils/mocks/scheduler-lease.mock";
+
+const mockSentryScope = {
+    setLevel: jest.fn(), setTag: jest.fn(), setContext: jest.fn(), setFingerprint: jest.fn(),
+};
+const mockSentryCapture = jest.fn((error: unknown) => {
+    void error;
+    return "event-id";
+});
+jest.mock("@sentry/nestjs", () => ({
+    withScope: (callback: (scope: typeof mockSentryScope) => unknown) => callback(mockSentryScope),
+    captureException: (error: unknown) => mockSentryCapture(error),
+}));
 
 const branchId = "00000000-0000-0000-0000-000000000010";
 const workerPrincipal = { branchId, source: "worker" as const };
@@ -2813,5 +2826,130 @@ describe("INITIAL finalization worker authorization", () => {
         expect(repository.markRequiresAttention).toHaveBeenCalledWith(recovered.id, recovered.leaseToken, "SERVICE_RECORD_REVISION_MANUAL_REVIEW_REQUIRED");
         expect(clientRepository.findById).not.toHaveBeenCalled();
         expect(reconciliation.reconcile).not.toHaveBeenCalled();
+    });
+});
+
+describe("document-job worker Sentry coverage", () => {
+    beforeEach(() => jest.clearAllMocks());
+    afterEach(() => jest.restoreAllMocks());
+
+    type TransitionWorker = {
+        notifyTransition(value: EformsignDocumentJobEntity | null): void;
+        notifyStaffFailure(value: EformsignDocumentJobEntity): Promise<void>;
+    };
+
+    it("captures a provider-state transition once and still notifies staff on both paths", () => {
+        const { worker } = buildWorker();
+        const target = worker as unknown as TransitionWorker;
+        const notify = jest.spyOn(target, "notifyStaffFailure").mockResolvedValue(undefined);
+        const transitioned = job({
+            id: "00000000-0000-0000-0000-000000000201",
+            status: "requires_attention", lastErrorCode: "PROVIDER_STATE_UNAVAILABLE",
+            completedAt: new Date("2026-11-18T00:00:00Z"),
+        });
+        target.notifyTransition(transitioned);
+        target.notifyTransition(transitioned);
+        expect(mockSentryCapture).toHaveBeenCalledTimes(1);
+        expect(Object.fromEntries(mockSentryScope.setTag.mock.calls)).toEqual({
+            feature: "document-jobs", app: "backend", runtime: "node", handled: "true",
+            operation: "create_document", "job.status": "requires_attention",
+            "job.error_code": "PROVIDER_STATE_UNAVAILABLE",
+        });
+        expect(mockSentryScope.setFingerprint).toHaveBeenCalledWith([
+            "document-jobs", "create_document", "requires_attention", "PROVIDER_STATE_UNAVAILABLE",
+        ]);
+        expect(mockSentryScope.setContext).toHaveBeenCalledWith("job", {
+            jobId: transitioned.id, jobType: "create_document", status: "requires_attention",
+            errorCode: "PROVIDER_STATE_UNAVAILABLE", attempts: 1,
+        });
+        expect(notify).toHaveBeenCalledTimes(2);
+        expect(notify).toHaveBeenCalledWith(transitioned);
+    });
+
+    it("reports non-contract revision jobs and finalization jobs too", () => {
+        const { worker } = buildWorker();
+        const target = worker as unknown as TransitionWorker;
+        jest.spyOn(target, "notifyStaffFailure").mockResolvedValue(undefined);
+        target.notifyTransition(job({
+            id: "00000000-0000-0000-0000-000000000202",
+            payload: revisionOperationPayload(), requestKey: "service-record-revision",
+            status: "failed", lastErrorCode: "ADOPTION_FAILED",
+        }));
+        target.notifyTransition(job({
+            id: "00000000-0000-0000-0000-000000000203",
+            jobType: "finalize_document", source: "auto_finalize", status: "failed",
+        }));
+        expect(mockSentryCapture).toHaveBeenCalledTimes(2);
+        expect(mockSentryScope.setTag).toHaveBeenCalledWith("operation", "finalize_document");
+    });
+
+    it("reports a requeued job again when only its completion time changed", () => {
+        const { worker } = buildWorker();
+        const target = worker as unknown as TransitionWorker;
+        jest.spyOn(target, "notifyStaffFailure").mockResolvedValue(undefined);
+        const first = job({
+            id: "00000000-0000-0000-0000-000000000205", status: "failed",
+            lastErrorCode: "PRE_SEND_RETRY_EXHAUSTED", attempts: 1,
+            completedAt: new Date("2026-11-18T00:00:00Z"),
+        });
+        target.notifyTransition(first);
+        target.notifyTransition(job({ ...first, completedAt: new Date("2026-11-18T00:01:00Z") }));
+        expect(mockSentryCapture).toHaveBeenCalledTimes(2);
+    });
+
+    it("does not capture missing rows or non-failure transitions", () => {
+        const { worker } = buildWorker();
+        const target = worker as unknown as TransitionWorker;
+        jest.spyOn(target, "notifyStaffFailure").mockResolvedValue(undefined);
+        target.notifyTransition(null);
+        target.notifyTransition(job({ status: "completed" }));
+        expect(mockSentryCapture).not.toHaveBeenCalled();
+    });
+
+    it("preserves the transition and staff notification when Sentry throws", async () => {
+        const transitioned = job({
+            id: "00000000-0000-0000-0000-000000000204",
+            status: "requires_attention", lastErrorCode: "PROVIDER_STATE_UNAVAILABLE",
+        });
+        const { worker, repository } = buildWorker({
+            repository: {
+                claimDue: jest.fn().mockResolvedValue([job({ payload: null })]),
+                markRequiresAttention: jest.fn().mockResolvedValue(transitioned),
+            },
+        });
+        const notify = jest.spyOn(worker as unknown as TransitionWorker, "notifyStaffFailure").mockResolvedValue(undefined);
+        mockSentryCapture.mockImplementationOnce(() => { throw new Error("Sentry unavailable"); });
+        await expect(worker.processDueJobs()).resolves.toBeUndefined();
+        expect(repository.markRequiresAttention).toHaveBeenCalledWith(job().id, job().leaseToken, "MISSING_JOB_PAYLOAD");
+        expect(notify).toHaveBeenCalledWith(transitioned);
+        expect(repository.scheduleRetry).not.toHaveBeenCalled();
+    });
+
+    it("captures the execution cause while preserving the existing retry handling", async () => {
+        const error = new Error("browser disconnected");
+        const capture = jest.spyOn(sentryReporting, "captureBackendError");
+        const { worker, repository } = buildWorker({
+            repository: { claimDue: jest.fn().mockResolvedValue([job()]) },
+            dispatch: { execute: jest.fn().mockRejectedValue(error) },
+        });
+        const handleFailure = jest.spyOn(worker as unknown as {
+            handleExecutionFailure(job: EformsignDocumentJobEntity, evidence: { step?: string }, progress?: string): Promise<void>;
+        }, "handleExecutionFailure");
+        await worker.processDueJobs();
+        expect(capture).toHaveBeenCalledWith(error, { handled: true, operation: "document-job-execution" });
+        expect(handleFailure).toHaveBeenCalledWith(expect.objectContaining({ id: job().id }), { step: undefined }, undefined);
+        expect(repository.scheduleRetry).toHaveBeenCalledWith(job().id, job().leaseToken, expect.any(Date), "HEADLESS_EXECUTION_FAILURE");
+    });
+
+    it("captures a swallowed tick failure and releases the running flag even when Sentry throws", async () => {
+        const error = new Error("repository unavailable");
+        const capture = jest.spyOn(sentryReporting, "captureBackendError").mockImplementation(() => { throw new Error("Sentry unavailable"); });
+        const { worker, repository } = buildWorker({
+            repository: { recoverStale: jest.fn().mockRejectedValueOnce(error).mockResolvedValue([]) },
+        });
+        await expect(worker.processDueJobs()).resolves.toBeUndefined();
+        expect(capture).toHaveBeenCalledWith(error, { handled: true, operation: "document-job-tick" });
+        await worker.processDueJobs();
+        expect(repository.claimDue).toHaveBeenCalledTimes(1);
     });
 });
