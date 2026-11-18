@@ -1,5 +1,6 @@
 "use client";
 
+import * as Sentry from "@sentry/nextjs";
 import { useRouter } from "next/navigation";
 import { startTransition, useEffect } from "react";
 
@@ -17,6 +18,7 @@ export default function AppError({ error, reset }: AppErrorProps) {
 
   useEffect(() => {
     console.error(error);
+    Sentry.captureException(error);
   }, [error]);
 
   // A failed server render (for example a protected layout that could not reach

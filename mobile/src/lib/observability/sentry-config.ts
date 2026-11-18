@@ -157,9 +157,13 @@ export function sanitizeSentryBreadcrumb(breadcrumb: Breadcrumb): Breadcrumb {
 }
 
 export function sanitizeSentryEvent(event: Event): Event {
+  const serviceRecord = isServiceRecordSentryEvent(event);
+  const errorMessage = serviceRecord ? "Service-record error" : "Mobile error";
+  const { trace, ...contexts } = event.contexts ?? {};
+
   return {
     ...event,
-    message: event.message ? "Service-record error" : event.message,
+    message: event.message ? errorMessage : event.message,
     transaction: event.transaction
       ? sanitizeSentryText(event.transaction.replace(/[?#].*$/, ""))
       : event.transaction,
@@ -176,7 +180,7 @@ export function sanitizeSentryEvent(event: Event): Event {
       : event.request,
     logentry: event.logentry
       ? {
-          message: event.logentry.message ? "Service-record error" : event.logentry.message,
+          message: event.logentry.message ? errorMessage : event.logentry.message,
           params: undefined,
         }
       : event.logentry,
@@ -185,10 +189,24 @@ export function sanitizeSentryEvent(event: Event): Event {
           ...event.exception,
           values: event.exception.values?.map((exception) => ({
             ...exception,
-            value: exception.value ? "Service-record error" : exception.value,
+            value: exception.value ? errorMessage : exception.value,
           })),
         }
       : event.exception,
+    contexts: event.contexts
+      ? {
+          ...(sanitizeUnknown(contexts) as Event["contexts"]),
+          ...("trace" in event.contexts ? { trace } : {}),
+        }
+      : event.contexts,
+    tags: event.tags || !serviceRecord
+      ? {
+          ...Object.fromEntries(Object.entries(event.tags ?? {}).map(([key, value]) => [
+            key, typeof value === "string" ? sanitizeSentryText(value) : value,
+          ])),
+          ...(!serviceRecord && event.tags?.feature === undefined ? { feature: "mobile" } : {}),
+        }
+      : event.tags,
     breadcrumbs: undefined,
     extra: event.extra ? (sanitizeUnknown(event.extra) as Record<string, unknown>) : event.extra,
     spans: event.spans?.map((span) => ({
@@ -225,8 +243,7 @@ export function isServiceRecordSentryEvent(event: Event): boolean {
     || hasServiceRecordStackFrame(event);
 }
 
-function filterAndSanitizeSentryErrorEvent(event: ErrorEvent): ErrorEvent | null {
-  if (!isServiceRecordSentryEvent(event)) return null;
+function filterAndSanitizeSentryErrorEvent(event: ErrorEvent): ErrorEvent {
   return sanitizeSentryEvent(event) as ErrorEvent;
 }
 
@@ -265,6 +282,12 @@ export function getSentryRuntimeOptions() {
         ? inheritOrSampleWith(tracesSampleRate)
         : 0
     ),
+    denyUrls: [
+      /^chrome-extension:\/\//,
+      /^moz-extension:\/\//,
+      /^safari(-web)?-extension:\/\//,
+    ],
+    ignoreErrors: [/^ResizeObserver loop/],
     sendDefaultPii: false,
     attachStacktrace: true,
     initialScope: {

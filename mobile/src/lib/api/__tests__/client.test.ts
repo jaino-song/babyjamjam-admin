@@ -1,20 +1,20 @@
 import { AxiosError } from "axios";
 
 import { resetAuthorityState } from "@/lib/auth/authority-state";
-import { captureServiceRecordError } from "@/lib/observability/capture-service-record-error";
+import { captureApiError } from "@/lib/observability/capture-service-record-error";
 
 import { api } from "../client";
 import { authenticatedFetch } from "../authenticated-fetch";
 
 jest.mock("@/lib/observability/capture-service-record-error", () => ({
-    captureServiceRecordError: jest.fn(),
+    captureApiError: jest.fn(),
 }));
 
 jest.mock("@/lib/auth/authority-state", () => ({
     resetAuthorityState: jest.fn(),
 }));
 
-const mockCaptureServiceRecordError = jest.mocked(captureServiceRecordError);
+const mockCaptureApiError = jest.mocked(captureApiError);
 const mockResetAuthorityState = jest.mocked(resetAuthorityState);
 
 describe("service-record API error monitoring", () => {
@@ -22,7 +22,7 @@ describe("service-record API error monitoring", () => {
 
     afterEach(() => {
         api.defaults.adapter = originalAdapter;
-        mockCaptureServiceRecordError.mockReset();
+        mockCaptureApiError.mockReset();
     });
 
     it("captures a service-record network failure once after the retry is exhausted", async () => {
@@ -36,8 +36,8 @@ describe("service-record API error monitoring", () => {
         });
 
         expect(adapter).toHaveBeenCalledTimes(2);
-        expect(mockCaptureServiceRecordError).toHaveBeenCalledTimes(1);
-        expect(mockCaptureServiceRecordError).toHaveBeenCalledWith(
+        expect(mockCaptureApiError).toHaveBeenCalledTimes(1);
+        expect(mockCaptureApiError).toHaveBeenCalledWith(
             expect.objectContaining({
                 code: "ERR_NETWORK",
                 config: expect.objectContaining({
@@ -87,7 +87,40 @@ describe("service-record API error monitoring", () => {
         });
 
         expect(adapter).toHaveBeenCalledTimes(1);
-        expect(mockCaptureServiceRecordError).toHaveBeenCalledTimes(1);
+        expect(mockCaptureApiError).toHaveBeenCalledTimes(1);
+    });
+});
+
+describe("general API error monitoring", () => {
+    const originalAdapter = api.defaults.adapter;
+
+    afterEach(() => {
+        api.defaults.adapter = originalAdapter;
+        mockCaptureApiError.mockReset();
+    });
+
+    it("captures a non-service-record 502 once without replacing the failure", async () => {
+        let failure: AxiosError | undefined;
+        api.defaults.adapter = async (config) => {
+            failure = new AxiosError("upstream failure", "ERR_BAD_RESPONSE", config, undefined, {
+                status: 502, statusText: "Bad Gateway", headers: {}, config, data: {},
+            });
+            throw failure;
+        };
+        const caught = await api.get("/clients/123").catch((error: unknown) => error);
+        expect(caught).toBe(failure);
+        expect(mockCaptureApiError).toHaveBeenCalledTimes(1);
+        expect(mockCaptureApiError).toHaveBeenCalledWith(failure);
+    });
+
+    it("captures a non-service-record network error after the single retry", async () => {
+        const adapter = jest.fn(async (config) => {
+            throw new AxiosError("Network Error", "ERR_NETWORK", config);
+        });
+        api.defaults.adapter = adapter;
+        await expect(api.get("/clients")).rejects.toMatchObject({ code: "ERR_NETWORK" });
+        expect(adapter).toHaveBeenCalledTimes(2);
+        expect(mockCaptureApiError).toHaveBeenCalledTimes(1);
     });
 });
 
