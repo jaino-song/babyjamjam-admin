@@ -2,6 +2,8 @@ import { Injectable } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import { randomUUID } from "node:crypto";
 
+import { initialFinalizationRequestKey, isInitialFinalizationWorkflowScope } from "application/policies/service-record-initial-finalization.policy";
+
 import {
     ServiceRecordEditConflictError,
     ServiceRecordEditDraftConflictError,
@@ -1087,6 +1089,7 @@ async function selectRevisionDocumentStateForBranch(
 
 type RevisionGenerationCaseRow = {
     id: string;
+    status: string;
     formVersion: number;
     currentRevisionId: string | null;
     currentUsableRevisionId: string | null;
@@ -1221,6 +1224,7 @@ async function selectRevisionGenerationCase(
     const rows = await rawStateQuery<RevisionGenerationCaseRow[]>(tx, Prisma.sql`
         SELECT
             id,
+            status,
             form_version AS "formVersion",
             current_revision_id AS "currentRevisionId",
             current_usable_revision_id AS "currentUsableRevisionId",
@@ -3192,6 +3196,96 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
         }
         await persistRevisionJobDocumentVersion(context.tx, input, nextVersion);
         return nextVersion;
+    }
+
+    async recordInitialFinalizationDocumentsCreated(
+        input: PromoteServiceRecordRevisionSnapshotInput,
+    ): Promise<boolean> {
+        assertRevisionPromotionInput(input);
+        return this.prisma.$transaction((tx) => this.recordInitialFinalizationDocumentsCreatedInTransaction({ tx }, input));
+    }
+
+    async recordInitialFinalizationDocumentsCreatedInTransaction(
+        context: ServiceRecordEditTransactionContext,
+        input: PromoteServiceRecordRevisionSnapshotInput,
+    ): Promise<boolean> {
+        assertRevisionPromotionInput(input);
+        await lockRevisionDocumentTargets(context.tx, input);
+        const ownerCase = await selectRevisionGenerationCase(context.tx, input);
+        if (!ownerCase || ownerCase.currentRevisionId !== input.revisionId
+            || !["READY_TO_FINALIZE", "FINALIZATION_FAILED", "FINALIZING", "DOCUMENTS_CREATED"].includes(ownerCase.status)) {
+            return false;
+        }
+        const stateRows = await selectRevisionDocumentState(context.tx, {
+            branchId: input.branchId, clientId: input.clientId, serviceRecordCaseId: input.serviceRecordCaseId,
+            revisionId: input.revisionId, stateId: input.documentStateId, generation: input.generation, forUpdate: true,
+        });
+        const state = stateRows[0];
+        if (!state || state.operation !== "record_snapshot") return false;
+        const current = toRevisionDocumentState(state);
+        if (current.documentVersion !== input.documentVersion
+            || !isInitialFinalizationWorkflowScope(current.workflowScope, initialFinalizationRequestKey(input.revisionId))) return false;
+        const replay = current.status === "processing" && current.step === "documents_created"
+            && ownerCase.status === "DOCUMENTS_CREATED";
+        if (!replay && (current.status !== "processing" || current.step !== "dispatch_authorized"
+            || ownerCase.status === "DOCUMENTS_CREATED")) return false;
+        const rows = await selectRevisionSnapshotChunks(context.tx, input);
+        if (rows.length !== input.chunkCount) return false;
+        const persistedIds = new Set<string>();
+        const indexes = new Set<number>();
+        for (const row of rows) {
+            if (
+                row.revisionId !== input.revisionId
+                || row.snapshotVersion !== input.documentVersion
+                || row.status !== "CREATED"
+                || row.chunkCount !== input.chunkCount
+                || !Number.isInteger(row.chunkIndex)
+                || row.chunkIndex < 1
+                || row.chunkIndex > input.chunkCount
+                || indexes.has(row.chunkIndex)
+                || !row.documentId
+                || !row.storedDocumentId
+                || row.documentId !== row.storedDocumentId
+                || row.documentRevisionId !== input.revisionId
+                || row.documentBranchId !== input.branchId
+                || row.documentClientId !== input.clientId
+                || row.documentCaseId !== input.serviceRecordCaseId
+                || row.documentKind !== "service_record_snapshot"
+                || row.documentSnapshotVersion !== input.documentVersion
+                || row.documentSnapshotChunkIndex !== row.chunkIndex
+            ) return false;
+            indexes.add(row.chunkIndex);
+            persistedIds.add(row.documentId);
+        }
+        if (indexes.size !== input.chunkCount || persistedIds.size !== input.chunkCount) return false;
+        const suppliedIds = new Set(input.documentIds);
+        if (suppliedIds.size !== persistedIds.size || [...suppliedIds].some((id) => !persistedIds.has(id))) {
+            return false;
+        }
+
+        if (replay) return true;
+        const stateUpdated = await rawStateExecute(context.tx, Prisma.sql`
+            UPDATE "service_record_revision_document_state"
+            SET status = 'processing', step = 'documents_created', last_error_code = NULL,
+                version = version + 1, updated_at = now()
+            WHERE id = ${input.documentStateId}::uuid AND generation = ${input.generation}
+              AND version = ${current.version}
+        `);
+        if (stateUpdated !== 1) throw new ServiceRecordEditConflictError("Initial documents-created state CAS lost");
+        const caseUpdated = await rawStateExecute(context.tx, Prisma.sql`
+            UPDATE "service_record_case"
+            SET status = 'DOCUMENTS_CREATED', finalized_at = COALESCE(finalized_at, now()), next_attempt_at = NULL,
+                last_error = NULL, version = version + 1, updated_at = now()
+            WHERE id = ${input.serviceRecordCaseId}::uuid AND branch_id = ${input.branchId}::uuid
+              AND client_id = ${input.clientId} AND current_revision_id = ${input.revisionId}::uuid
+              AND status IN ('READY_TO_FINALIZE', 'FINALIZATION_FAILED', 'FINALIZING')
+        `);
+        if (caseUpdated !== 1) throw new ServiceRecordEditConflictError("Initial documents-created case CAS lost");
+        await rawStateExecute(context.tx, Prisma.sql`
+            UPDATE "service_record_token" SET active = false, revoked_at = now()
+            WHERE service_record_case_id = ${input.serviceRecordCaseId}::uuid AND active = true
+        `);
+        return true;
     }
 
     async promoteServiceRecordRevisionSnapshot(

@@ -1,6 +1,11 @@
 import type { StartDateChangeMode } from "@babyjamjam/shared/types/start-date-change";
 import { ConflictException, Injectable, Logger, NotFoundException } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
+
+import {
+    initialFinalizationRequestKey,
+    isInitialFinalizationWorkflowScope,
+} from "application/policies/service-record-initial-finalization.policy";
 import {
     getServiceRecordFinalizationDueAt,
     getServiceRecordTokenExpiresAt,
@@ -66,6 +71,8 @@ type LockedServiceRecordSnapshot = {
 
 type LockedServiceRecordCaseRevisionState = {
     id: string;
+    clientId: number | null;
+    version: number;
     currentRevisionId: string | null;
     currentUsableRevisionId: string | null;
     currentUsableDocumentVersion: number | null;
@@ -1065,7 +1072,7 @@ export class ServiceRecordLifecycleService {
 
         const cases = await tx.$queryRaw<LockedServiceRecordCaseRevisionState[]>(Prisma.sql`
             SELECT
-                id,
+                id, client_id AS "clientId", version,
                 current_revision_id AS "currentRevisionId",
                 current_usable_revision_id AS "currentUsableRevisionId",
                 current_usable_document_version AS "currentUsableDocumentVersion"
@@ -1084,20 +1091,35 @@ export class ServiceRecordLifecycleService {
         const currentUsableRevisionId = normalizeRevisionId(lockedCase.currentUsableRevisionId);
         const currentUsableDocumentVersion = normalizeSnapshotVersion(lockedCase.currentUsableDocumentVersion);
 
+        let initialState: { id: string; generation: string; version: number } | null = null;
         if (triggerRevisionId === null) {
             if (!isLegacyCaseRevisionState(lockedCase)) return false;
-        } else if (
-            currentRevisionId !== triggerRevisionId
-            || currentUsableRevisionId !== triggerRevisionId
-            || currentUsableDocumentVersion === null
-            || triggerSnapshotVersion === null
-            || !Number.isInteger(currentUsableDocumentVersion)
-            || currentUsableDocumentVersion < 1
-            || !Number.isInteger(triggerSnapshotVersion)
-            || triggerSnapshotVersion < 1
-            || currentUsableDocumentVersion !== triggerSnapshotVersion
-        ) {
-            return false;
+        } else {
+            if (currentRevisionId !== triggerRevisionId || triggerSnapshotVersion === null
+                || !Number.isInteger(triggerSnapshotVersion) || triggerSnapshotVersion < 1) return false;
+            const pointerMatches = currentUsableRevisionId === triggerRevisionId
+                && currentUsableDocumentVersion === triggerSnapshotVersion;
+            if (!pointerMatches) {
+                const states = await tx.$queryRaw<Array<{
+                    id: string; generation: string; version: number; workflowScope: Prisma.JsonValue;
+                    status: string; step: string;
+                }>>(Prisma.sql`
+                    SELECT id, generation, version, workflow_scope AS "workflowScope", status, step
+                    FROM service_record_revision_document_state
+                    WHERE branch_id = ${params.branchId}::uuid
+                      AND client_id = ${lockedCase.clientId}
+                      AND service_record_case_id = ${trigger.serviceRecordCaseId}::uuid
+                      AND revision_id = ${triggerRevisionId}::uuid
+                      AND document_version = ${triggerSnapshotVersion}
+                      AND operation = 'record_snapshot'
+                    FOR UPDATE
+                `);
+                const matching = states.filter((state) => state.status === "processing"
+                    && state.step === "documents_created"
+                    && isInitialFinalizationWorkflowScope(state.workflowScope, initialFinalizationRequestKey(triggerRevisionId)));
+                if (matching.length !== 1) return false;
+                initialState = matching[0]!;
+            }
         }
 
         const snapshots = await tx.$queryRaw<LockedServiceRecordSnapshot[]>(Prisma.sql`
@@ -1157,6 +1179,32 @@ export class ServiceRecordLifecycleService {
                 || !EFORMSIGN_COMPLETED_STATUS_CODES.has(snapshot.statusType))
         ) return false;
 
+        if (initialState) {
+            const pointer = await tx.$executeRaw(Prisma.sql`
+                UPDATE service_record_case
+                SET current_usable_revision_id = ${triggerRevisionId}::uuid,
+                    current_usable_document_version = ${triggerSnapshotVersion},
+                    version = version + 1, updated_at = now()
+                WHERE id = ${trigger.serviceRecordCaseId}::uuid AND branch_id = ${params.branchId}::uuid
+                  AND client_id = ${lockedCase.clientId} AND current_revision_id = ${triggerRevisionId}::uuid
+                  AND version = ${lockedCase.version} AND status = 'DOCUMENTS_CREATED'
+                  AND (current_usable_revision_id IS NULL
+                    OR (current_usable_revision_id = ${triggerRevisionId}::uuid
+                        AND current_usable_document_version = ${triggerSnapshotVersion})
+                    OR (current_usable_revision_id IS NOT NULL AND current_usable_revision_id <> ${triggerRevisionId}::uuid
+                        AND current_usable_document_version IS NOT NULL
+                        AND current_usable_document_version < ${triggerSnapshotVersion}))
+            `);
+            if (pointer !== 1) throw new ConflictException({ code: "SERVICE_RECORD_REVISION_POINTER_PROMOTION_STALE" });
+            const stateCompleted = await tx.$executeRaw(Prisma.sql`
+                UPDATE service_record_revision_document_state
+                SET status = 'completed', step = 'completed', last_error_code = NULL,
+                    version = version + 1, updated_at = now()
+                WHERE id = ${initialState.id}::uuid AND generation = ${initialState.generation}
+                  AND version = ${initialState.version} AND status = 'processing' AND step = 'documents_created'
+            `);
+            if (stateCompleted !== 1) throw new ConflictException({ code: "SERVICE_RECORD_REVISION_POINTER_PROMOTION_STALE" });
+        }
         const completed = await tx.service_record_case.updateMany({
             where: {
                 id: trigger.serviceRecordCaseId,
@@ -1169,6 +1217,9 @@ export class ServiceRecordLifecycleService {
                 version: { increment: 1 },
             },
         });
+        if (initialState && completed.count !== 1) {
+            throw new ConflictException({ code: "SERVICE_RECORD_REVISION_POINTER_PROMOTION_STALE" });
+        }
         return completed.count === 1;
     }
 

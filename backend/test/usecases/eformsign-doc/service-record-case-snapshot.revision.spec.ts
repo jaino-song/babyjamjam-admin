@@ -1,3 +1,4 @@
+import { ServiceRecordFinalizationService } from "application/services/service-record-finalization.service";
 import { CreateAndSendServiceRecordSnapshotUsecase } from "application/usecases/eformsign-doc/create-and-send-service-record-snapshot.usecase";
 import { sha256CanonicalJson } from "application/services/eformsign-document-job.service";
 import type { ServiceRecordRevisionGenerationInput } from "domain/entities/eformsign-document-job.entity";
@@ -260,6 +261,7 @@ type HarnessPrisma = {
 };
 
 type HarnessRevisionRepository = {
+    recordInitialFinalizationDocumentsCreated: jest.Mock;
     allocateServiceRecordRevisionDocumentVersion: jest.Mock;
     promoteServiceRecordRevisionSnapshot: jest.Mock;
 };
@@ -438,6 +440,7 @@ function createRevisionHarness(options: RevisionHarnessOptions = {}) {
         $transaction: jest.fn(async (callback: (tx: HarnessPrisma) => Promise<unknown>) => callback(prisma)),
     };
     const repository: HarnessRevisionRepository = {
+        recordInitialFinalizationDocumentsCreated: jest.fn().mockResolvedValue(true),
         allocateServiceRecordRevisionDocumentVersion: jest.fn().mockResolvedValue(3),
         promoteServiceRecordRevisionSnapshot: jest.fn().mockResolvedValue(true),
     };
@@ -606,5 +609,92 @@ describe("revised snapshot of a case whose current caregiver backfilled sessions
             [ASSIGNMENT_A, 1, 7],
             [ASSIGNMENT_B, 8, 15],
         ]);
+    });
+});
+
+function initialGenerationInput(): ServiceRecordRevisionGenerationInput {
+    return { ...makeGenerationInput(), generationKind: "INITIAL_FINALIZATION", lifecycleStatus: "READY_TO_FINALIZE",
+        snapshotReference: "service-record-initial-finalization:revision-1" };
+}
+function setAuthorizedInitialState(harness: ReturnType<typeof createRevisionHarness>, input: ServiceRecordRevisionGenerationInput, overrides: Record<string, unknown> = {}) {
+    harness.prisma.service_record_revision_document_state.findUnique.mockResolvedValue({
+        id: input.documentStateId, branchId: input.branchId, clientId: input.clientId, serviceRecordCaseId: input.serviceRecordCaseId,
+        revisionId: input.revisionId, operation: "record_snapshot", generation: input.generation,
+        immutableInput: input.immutablePayload, inputFingerprint: input.payloadFingerprint, documentVersion: input.documentVersion,
+        status: "processing", step: "dispatch_authorized", version: 1,
+        workflowScope: { generationKind: "INITIAL_FINALIZATION", requestKey: input.snapshotReference }, ...overrides,
+    });
+}
+
+describe("INITIAL immutable rendering", () => {
+    it("creates review-requested documents and calls Step A instead of promoting", async () => {
+        const harness = createRevisionHarness();
+        const input = initialGenerationInput(); setAuthorizedInitialState(harness, input);
+        await expect(harness.usecase.executeRevision(input, harness.principal)).resolves.toEqual({
+            documentIds: ["revision-doc-1"], documentVersion: 3, chunkCount: 1,
+        });
+        expect(harness.prisma.eformsign_doc.upsert).toHaveBeenCalledWith(expect.objectContaining({ create: expect.objectContaining({ statusType: "070" }) }));
+        expect(harness.repository.recordInitialFinalizationDocumentsCreated).toHaveBeenCalledWith(expect.objectContaining({
+            revisionId: input.revisionId, documentVersion: 3, documentIds: ["revision-doc-1"],
+        }));
+        expect(harness.repository.promoteServiceRecordRevisionSnapshot).not.toHaveBeenCalled();
+    });
+    it.each([
+        { state: { status: "capability_unverified", step: "capability_unverified" }, code: "SERVICE_RECORD_REVISION_CAPABILITY_UNVERIFIED" },
+        { state: { status: "pending", step: "pending" }, code: "SERVICE_RECORD_REVISION_GENERATION_NOT_READY" },
+        { state: { workflowScope: { generationKind: "REVISION_SNAPSHOT" } }, code: "SERVICE_RECORD_REVISION_GENERATION_SCOPE_CHANGED" },
+    ])("refuses an unauthorized INITIAL state %#", async ({ state, code }) => {
+        const harness = createRevisionHarness(); const input = initialGenerationInput(); setAuthorizedInitialState(harness, input, state);
+        await expect(harness.usecase.executeRevision(input, harness.principal)).rejects.toMatchObject({ response: { code } });
+        expect(harness.eformsignClient.createDocument).not.toHaveBeenCalled();
+    });
+    it("refuses an INITIAL generation processing at the documents_created step", async () => {
+        const harness = createRevisionHarness();
+        const input = initialGenerationInput();
+        setAuthorizedInitialState(harness, input, { status: "processing", step: "documents_created" });
+
+        await expect(harness.usecase.executeRevision(input, harness.principal)).rejects.toMatchObject({
+            response: { code: "SERVICE_RECORD_REVISION_GENERATION_NOT_READY" },
+        });
+        expect(harness.credentialBoundary.withCredentials).not.toHaveBeenCalled();
+        expect(harness.eformsignClient.createDocument).not.toHaveBeenCalled();
+    });
+    it("rejects an INITIAL snapshot reference mismatch", async () => {
+        const harness = createRevisionHarness(); const input = initialGenerationInput();
+        input.snapshotReference = "service-record-revision:case-1:draft-1";
+        await expect(harness.usecase.executeRevision(input, harness.principal)).rejects.toMatchObject({ response: { code: "SERVICE_RECORD_REVISION_GENERATION_INVALID" } });
+        expect(harness.eformsignClient.createDocument).not.toHaveBeenCalled();
+    });
+    it.each(["processing", "capability_unverified"])("rejects a REVISION_SNAPSHOT disguised with INITIAL scope at %s", async (status) => {
+        const harness = createRevisionHarness(); const input = makeGenerationInput(); setAuthorizedInitialState(harness, input, { status });
+        await expect(harness.usecase.executeRevision(input, harness.principal)).rejects.toMatchObject({ response: { code: "SERVICE_RECORD_REVISION_GENERATION_SCOPE_CHANGED" } });
+        expect(harness.eformsignClient.createDocument).not.toHaveBeenCalled();
+    });
+    it("accepts the real finalizer freeze without a payload adaptation", async () => {
+        const harness = createRevisionHarness(); const base = initialGenerationInput();
+        const day = new Date("2026-09-08T00:00:00.000Z");
+        const finalizer = Object.create(ServiceRecordFinalizationService.prototype) as {
+            buildInitialFinalizationPayload(source: unknown, revision: unknown, generation: string): Record<string, unknown>;
+        };
+        const frozen = finalizer.buildInitialFinalizationPayload({
+            id: "case-1", branchId: "branch-1", branchName: "테스트 지점", clientId: 10, status: "READY_TO_FINALIZE",
+            formVersion: 2, requiredSessionCount: 1, startDate: day, endDate: day,
+            momName: "산모", momBirth: "900101", babyName: "아기", babyBirth: "260701", deliveryType: "자연분만", babyWeight: "3.2",
+            client: { id: 10, name: "고객", duration: 1, startDate: day, endDate: day, serviceStatus: "in_progress" },
+            assignments: [{ id: "assignment-1", scheduleId: 100, employeeId: 12, employeeNameSnapshot: "제공인력", startDate: day, endDate: day }],
+            plannedSessions: [{ sessionIndex: 1, serviceDate: "2026-09-08", assignmentId: "assignment-1" }],
+            days: [{ id: "day-1", caseSessionIndex: 1, scheduleId: 100, employeeId: 12, employeeNameSnapshot: "제공인력",
+                formVersion: 2, serviceDate: day, answers: {}, etcService: null, notes: "freeze", paymentConfirmed: true,
+                momApproval: "approved", clientSignature: "signature", clientSignedAt: day, submittedAt: day, locked: true }],
+        }, { id: "revision-1", revisionNumber: 1, payload: {} }, "generation-1");
+        const fingerprint = sha256CanonicalJson(frozen);
+        const input = { ...base, immutablePayload: frozen, payloadFingerprint: fingerprint, businessFingerprint: fingerprint };
+        setAuthorizedInitialState(harness, input);
+        await expect(harness.usecase.executeRevision(input, harness.principal)).resolves.toEqual({
+            documentIds: ["revision-doc-1"], documentVersion: 3, chunkCount: 1,
+        });
+        expect(harness.eformsignClient.createDocument).toHaveBeenCalledTimes(1);
+        expect(harness.repository.recordInitialFinalizationDocumentsCreated).toHaveBeenCalledTimes(1);
+        expect(harness.repository.promoteServiceRecordRevisionSnapshot).not.toHaveBeenCalled();
     });
 });

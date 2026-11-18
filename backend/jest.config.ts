@@ -17,6 +17,9 @@ const config: Config = {
     // one full-suite run in four — timeouts, stray 401s and missed mock calls.
     // Cap the workers and give a slow-under-load test room to finish.
     maxWorkers: "50%",
+    // Workers get a 4GB heap from the test script and are recycled at 2GB.
+    // A 1GB limit recycled workers after almost every file and made CI time out.
+    workerIdleMemoryLimit: "2GB",
     testTimeout: 15000,
     // test/e2e needs a live DB/env — it gets its own gated runner, keep the unit suite hermetic.
     testPathIgnorePatterns: [
