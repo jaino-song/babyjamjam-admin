@@ -127,6 +127,51 @@ describe("mobile service-record Sentry scope", () => {
 
 
 describe("all mobile Sentry errors", () => {
+  it.each(["mobile", "service-records"])("strips query strings and fragments from %s context paths (F1)", (feature) => {
+    const trace = { trace_id: "trace-id", span_id: "span-id", op: "http.server" };
+    const sent = getSentryRuntimeOptions().beforeSend({
+      type: undefined,
+      tags: { feature },
+      contexts: {
+        trace,
+        nextjs: { request_path: "/callback?code=oauth-code-fixture&state=state-fixture#fragment-fixture" },
+        api: { path: "/api/service-record/access-fixture/context?code=oauth-code-fixture" },
+      },
+    });
+
+    expect(sent.contexts?.nextjs).toEqual({ request_path: "/callback" });
+    expect(sent.contexts?.api).toEqual({ path: "/api/service-record/[Filtered]/context" });
+    expect(sent.contexts?.trace).toBe(trace);
+    expect(JSON.stringify(sent)).not.toMatch(/oauth-code-fixture|state-fixture|fragment-fixture|access-fixture|[?#]/);
+  });
+
+  it.each(["mobile", "service-records"])("sanitizes %s Referer headers case-insensitively (F2)", (feature) => {
+    const sent = getSentryRuntimeOptions().beforeSend({
+      type: undefined,
+      tags: { feature },
+      request: {
+        headers: {
+          Referer: "https://mobile.example.com/callback?code=oauth-code-fixture&state=state-fixture#fragment-fixture",
+          referer: "/receipt/receipt-fixture?code=oauth-code-fixture#fragment-fixture",
+          REFERER: "https://[invalid/callback?code=oauth-code-fixture#fragment-fixture",
+          Authorization: "Bearer authorization-fixture",
+          "User-Agent": "Mobile browser",
+          "X-Detail": "person@example.com 010-1234-5678",
+        },
+      },
+    });
+
+    expect(sent.request?.headers).toEqual({
+      Referer: "https://mobile.example.com/callback",
+      referer: "/receipt/[Filtered]",
+      REFERER: "https://[invalid/callback",
+      Authorization: "[Filtered]",
+      "User-Agent": "Mobile browser",
+      "X-Detail": "[Email] [Phone]",
+    });
+    expect(JSON.stringify(sent)).not.toMatch(/oauth-code-fixture|state-fixture|fragment-fixture|receipt-fixture|authorization-fixture|[?#]/);
+  });
+
   it("removes private data from plain errors while keeping their type and stack", () => {
     const stacktrace = { frames: [{ filename: "dashboard.tsx", lineno: 12 }] };
     const sent = getSentryRuntimeOptions().beforeSend({
