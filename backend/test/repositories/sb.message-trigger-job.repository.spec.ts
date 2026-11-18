@@ -14,6 +14,8 @@ import { ordinaryAutomationJobWhere } from "application/utils/message-automation
 import { MESSAGE_AUTOMATION_INTENT_RULE_ID } from "domain/constants/message-automation-intent";
 import {
     SERVICE_RECORD_LINK_RULE_ID,
+    SERVICE_RECORD_LINK_RESCHEDULED_REASON,
+    SERVICE_RECORD_LINK_BRANCH_DISABLED_REASON,
     SERVICE_RECORD_LINK_ENDED_REASON,
     SERVICE_RECORD_LINK_PRE_BOOKING_REASON,
     SERVICE_RECORD_LINK_SCHEDULING_RETRY_REASON,
@@ -3267,6 +3269,8 @@ describeReal("TIME-1 real PostgreSQL cadence and reclaim fences", () => {
 });
 
 describe("automatic service-record date replacement", () => {
+    beforeEach(() => jest.useFakeTimers().setSystemTime(new Date("2027-01-08T00:00:00Z")));
+    afterEach(() => jest.useRealTimers());
     const branchId = "99000000-0000-4000-8000-000000000001";
     const key = `${SERVICE_RECORD_LINK_RULE_ID}:schedule:10:primary`;
     const reason = "Service record link rescheduled";
@@ -3365,17 +3369,62 @@ describe("automatic service-record date replacement", () => {
         expect({ rows: f.rows(), logs: f.logs() }).toEqual(before);
     });
 
-    it("rolls the reservation and log writes back together when supersession fails", async () => {
-        const f = fixture(); const before = structuredClone({ rows: f.rows(), logs: f.logs() });
+    it.each(["pending", "canceled"])("rolls the %s reservation and log writes back together when supersession fails", async (status) => {
+        const f = fixture();
+        Object.assign(f.rows()[0]!, { status, cancel_reason: status === "canceled" ? SERVICE_RECORD_LINK_ENDED_REASON : null });
+        const before = structuredClone({ rows: f.rows(), logs: f.logs() });
         f.tx.message_log.updateMany.mockRejectedValueOnce(new Error("log write conflict"));
         await expect(f.run()).rejects.toThrow("log write conflict");
         expect({ rows: f.rows(), logs: f.logs() }).toEqual(before);
     });
 
-    it("cancels a stale date occurrence moved into the past without creating a catch-up", async () => {
-        const f = fixture(); f.replacement.scheduledFor = new Date("2000-01-01Z");
-        expect((await f.run()).kind).toBe("canceled");
-        expect(f.rows()[0]!["status"]).toBe("canceled");
-        expect(f.statements.some((sql) => sql.text.includes("INSERT INTO"))).toBe(false);
+    it("keeps the link catch-up when an eligible schedule's start moves into the past", async () => {
+        jest.setSystemTime(new Date("2027-01-11T00:00:00Z"));
+        const f = fixture();
+        f.rows()[0]!["scheduled_for"] = new Date("2027-01-12T03:00:00Z");
+        const unrelated = structuredClone({ rows: f.rows().slice(1), logs: f.logs().slice(1) });
+        expect((await f.run()).kind).toBe("replaced");
+        expect(f.rows()[0]).toMatchObject({ status: "pending", scheduled_for: f.replacement.scheduledFor });
+        expect(f.logs()[0]).toMatchObject({ error_message: reason, next_retry_at: null });
+        expect({ rows: f.rows().slice(1), logs: f.logs().slice(1) }).toEqual(unrelated);
+    });
+
+    it.each([
+        SERVICE_RECORD_LINK_RESCHEDULED_REASON,
+        SERVICE_RECORD_LINK_ENDED_REASON,
+        SERVICE_RECORD_LINK_BRANCH_DISABLED_REASON,
+        SERVICE_RECORD_LINK_PRE_BOOKING_REASON,
+        MESSAGE_SENDER_APPROVAL_REQUIRED_CANCEL_REASON,
+    ])("reactivates a system cancellation (%s) even when its time and source are unchanged", async (cancelReason) => {
+        const f = fixture(); const row = f.rows()[0]!;
+        Object.assign(row, { status: "canceled", cancel_reason: cancelReason,
+            scheduled_for: f.replacement.scheduledFor, payload: structuredClone(f.replacement.payload) });
+        // No delivery attempt was made before this system cancellation.
+        f.logs().splice(0, 1);
+        const unrelated = structuredClone({ rows: f.rows().slice(1), logs: f.logs() });
+        expect((await f.run()).kind).toBe("replaced");
+        expect(f.rows()[0]).toMatchObject({ status: "pending", cancel_reason: null, canceled_at: null });
+        expect({ rows: f.rows().slice(1), logs: f.logs() }).toEqual(unrelated);
+        const current = structuredClone({ rows: f.rows(), logs: f.logs() });
+        expect((await f.run()).kind).toBe("protected");
+        expect({ rows: f.rows(), logs: f.logs() }).toEqual(current);
+    });
+
+    it.each(["Service record access revoked", "Service record link reset without resend", "SERVICE_RECORD_REVISION_SUPERSEDED"])(
+        "does not replay historical or operator cancellations (%s)", async (cancelReason) => {
+            const f = fixture(); Object.assign(f.rows()[0]!, { status: "canceled", cancel_reason: cancelReason });
+            const before = structuredClone({ rows: f.rows(), logs: f.logs() });
+            expect((await f.run()).kind).toBe("protected");
+            expect({ rows: f.rows(), logs: f.logs() }).toEqual(before);
+        },
+    );
+
+    it.each(["user-canceled", "irreversible-log"])("protects a system cancellation with %s", async (state) => {
+        const f = fixture(); Object.assign(f.rows()[0]!, { status: "canceled", cancel_reason: SERVICE_RECORD_LINK_ENDED_REASON });
+        if (state === "user-canceled") f.rows()[0]!["canceled_by_user"] = true;
+        else f.logs()[0]!["safe"] = false;
+        const before = structuredClone({ rows: f.rows(), logs: f.logs() });
+        expect((await f.run()).kind).toBe("protected");
+        expect({ rows: f.rows(), logs: f.logs() }).toEqual(before);
     });
 });
