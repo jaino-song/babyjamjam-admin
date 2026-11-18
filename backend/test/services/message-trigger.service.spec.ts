@@ -8788,7 +8788,8 @@ describe("service-record date reconciliation", () => {
             startDate: new Date("2026-11-10Z"), endDate: new Date("2026-11-20Z"), serviceEndNoticeSentAt: null };
         const schedule = { id: 91, branchId, clientId: 7, incarnationId: "98000000-0000-4000-8000-000000000091",
             primaryEmployeeId: 11, secondaryEmployeeId: null, startDate: new Date(client.startDate), endDate: new Date(client.endDate),
-            replaced: false, terminatedAt: null, primaryEmployee: { id: 11, branchId, name: "QA-care", phone: "01000000011", deletedAt: null, smsAutomationEnabled: true }, secondaryEmployee: null };
+            client, workAddress: "QA-address", replaced: false, terminatedAt: null,
+            primaryEmployee: { id: 11, branchId, name: "QA-care", phone: "01000000011", deletedAt: null, smsAutomationEnabled: true }, secondaryEmployee: null };
         const rule = (id: string, eventType = MessageTriggerEventType.SERVICE_END, caregiver = false) => Object.assign(MessageTriggerRuleEntity.create({
             branchId, name: id, isActive: true, eventType, offsetType: MessageTriggerOffsetType.SAME_DAY, offsetDays: 0, sendTime: "10:30",
             recipientType: caregiver ? MessageTriggerRecipientType.PRIMARY_EMPLOYEE : MessageTriggerRecipientType.CLIENT,
@@ -8896,6 +8897,7 @@ describe("service-record date reconciliation", () => {
         });
         const reconcileUpdate = f.tx.message_trigger_job.updateMany;
         Object.assign(db.message_trigger_job, {
+            findUnique: jest.fn(async ({ where }: { where: Record<string, unknown> }) => structuredClone(find(where) ?? null)),
             findFirst: jest.fn(async ({ where }: { where: Record<string, unknown> }) => structuredClone(find(where) ?? null)),
             findMany: jest.fn(async ({ where }: { where: Prisma.message_trigger_jobWhereInput }) => {
                 if (!where["OR"]) return []; // No consent records: exercise the existing real legacy authority path.
@@ -8920,7 +8922,7 @@ describe("service-record date reconciliation", () => {
             }),
         });
         const repository = new SbMessageTriggerJobRepository(db as never);
-        Object.assign(f.jobs, {
+        const jobs = Object.assign(f.jobs, {
             findOutstandingDateIntents: repository.findOutstandingDateIntents.bind(repository),
             releaseProcessingForDateRefresh: jest.fn(repository.releaseProcessingForDateRefresh.bind(repository)),
             update: jest.fn(async (job: MessageTriggerJobEntity) => {
@@ -8935,17 +8937,24 @@ describe("service-record date reconciliation", () => {
         });
         const rules = { findAll: async () => f.activeRules, findByIdIncludingGlobal: async (_branch: string, ruleId: string) => f.activeRules.find((rule) => rule.id === ruleId) ?? null };
         const lock = new MessageAutomationBranchLockService(db as never);
-        const authority = new AgentAutomationJobAuthorityService(new AgentAutomationAuthorityService(new AgentAutomationRecordStoreService(lock)), f.sources as never, {} as never);
+        const authority = new AgentAutomationJobAuthorityService(new AgentAutomationAuthorityService(new AgentAutomationRecordStoreService(lock)),
+            f.sources as never, {} as never, undefined, f.recipients);
         const gate = new AgentAutomationDeliveryGateService(db as never, lock, authority);
         const provider = jest.fn(async () => true);
         const snapshot = { snapshotHash: "synthetic-frozen" };
         const delivery = {
-            resolveCanonicalDeliverySnapshot: async () => snapshot,
-            prepareJob: jest.fn(async (job: MessageTriggerJobEntity) => {
+            resolveCanonicalDeliverySnapshot: async (job: MessageTriggerJobEntity) => {
+                if (job.templateKey !== MessageTriggerTemplateKey.CAREGIVER_SERVICE_START_NOTICE) return snapshot;
+                const set = await f.recipients.resolve(branchId, 7, [f.careRule], db as never);
+                const recipient = set.recipients.find((row) => row.employeeScheduleId === job.employeeScheduleId);
+                return { ...snapshot, message: recipient?.body, receiver: recipient?.recipe?.recipientPhone };
+            },
+            prepareJob: jest.fn(async (job: MessageTriggerJobEntity): Promise<SmsTriggerDeliveryPreparation | null> => {
                 if (!await gate.consumePreparation(job)) return null;
-                const serializedSnapshot = JSON.stringify(snapshot);
+                const currentSnapshot = await delivery.resolveCanonicalDeliverySnapshot(job);
+                const serializedSnapshot = JSON.stringify(currentSnapshot);
                 job.payload.templateVariables[SMS_DELIVERY_SNAPSHOT_VARIABLE] = serializedSnapshot;
-                return { snapshot, serializedSnapshot } as SmsTriggerDeliveryPreparation;
+                return { snapshot: currentSnapshot, serializedSnapshot } as SmsTriggerDeliveryPreparation;
             }),
             sendPreparedJob: async (job: MessageTriggerJobEntity, preparation: SmsTriggerDeliveryPreparation) => {
                 await gate.consumeDispatch(job, preparation); events.push("provider"); return provider();
@@ -8977,12 +8986,15 @@ describe("service-record date reconciliation", () => {
         const confirm = async (dateScope = scope, owner = { branchId, clientId: 7 }) => {
             await db.$transaction(async (tx) => {
                 await lockServiceRecordWriteSet(tx, owner);
-                if (owner.branchId === branchId && owner.clientId === 7) f.client.endDate = new Date("2026-11-25Z");
+                if (owner.branchId === branchId && owner.clientId === 7) {
+                    f.client.endDate = new Date("2026-11-25Z");
+                    if (dateScope.scheduleIds.includes(f.schedule.id)) f.schedule.endDate = new Date(f.client.endDate);
+                }
                 await persistClientDateMessageAutomationIntent(tx, { ...owner, confirmation: "confirm-1", dateScope, intentAt: new Date() });
             });
             events.push("confirmation-committed");
         };
-        return { ...f, db, intents, events, acceptance, core, provider, delivery, prepare, authorize, confirm, seed };
+        return { ...f, jobs, db, intents, events, acceptance, core, provider, delivery, prepare, authorize, confirm, seed };
     }
 
     it("holds an old occurrence after confirmation and a future intent lease, then authorizes the reconciled move", async () => {
@@ -9047,16 +9059,91 @@ describe("service-record date reconciliation", () => {
         expect(old).toEqual(before); expect(f.events).not.toContain("claim-released"); expect(f.provider).not.toHaveBeenCalled();
     });
 
-    it.each(["branch", "client", "schedule"])("ignores an outstanding intent for a different %s", async (scopeKind) => {
+    it.each(["branch", "client"])("ignores an outstanding intent for a different %s", async (scopeKind) => {
         const f = dispatchFixture(); const old = f.seed(); const prepared = (await f.prepare(old))!;
-        if (scopeKind === "schedule") {
-            await persistScheduleMessageAutomationIntent(f.db as never, { branchId, clientId: 7, scheduleId: 92,
-                refreshServiceRecordLink: true, confirmation: "other-schedule", includePast: false, intentAt: new Date() });
-        } else await f.confirm(scope, { branchId: scopeKind === "branch" ? "98000000-0000-4000-8000-000000000002" : branchId,
+        await f.confirm(scope, { branchId: scopeKind === "branch" ? "98000000-0000-4000-8000-000000000002" : branchId,
             clientId: scopeKind === "client" ? 8 : 7 });
         expect(await f.authorize(prepared)).toBe(true);
         await f.delivery.sendPreparedJob(prepared.job, prepared.preparation);
         expect(f.provider).toHaveBeenCalledTimes(1);
+    });
+
+    it.each([91, 92])("scopes final link authorization to refresh intent schedule %s", async (scheduleId) => {
+        const f = dispatchFixture();
+        const old = f.seed(f.endRule, { ruleId: "system:service_record_link", templateKey: MessageTriggerTemplateKey.SERVICE_RECORD_LINK,
+            employeeScheduleId: 91, recipientType: MessageTriggerRecipientType.PRIMARY_EMPLOYEE });
+        old.payload.buttonUrl = "https://qa.invalid/service-record/QA-synthetic-token";
+        const prepared = await f.prepare(old);
+        expect(prepared).not.toBeNull();
+        await persistScheduleMessageAutomationIntent(f.db as never, { branchId, clientId: 7, scheduleId,
+            refreshServiceRecordLink: true, confirmation: "schedule-binding", includePast: false, intentAt: new Date() });
+        expect(await f.authorize(prepared!)).toBe(scheduleId !== 91);
+        if (scheduleId === 91) {
+            expect(old.status).toBe("pending"); expect(old.claimToken).toBeNull();
+            expect(f.jobs.releaseProcessingForDateRefresh).toHaveBeenCalledTimes(1);
+            expect(f.provider).not.toHaveBeenCalled();
+        } else {
+            expect(old.status).toBe("dispatching");
+            expect(f.jobs.releaseProcessingForDateRefresh).not.toHaveBeenCalled();
+            await f.delivery.sendPreparedJob(prepared!.job, prepared!.preparation);
+            expect(f.provider).toHaveBeenCalledTimes(1);
+        }
+    });
+
+    it.each(["caregiver", "assignment"])("releases a stale %s claim for its outstanding schedule date edit before preparation", async (kind) => {
+        const f = dispatchFixture();
+        const rule = kind === "caregiver" ? f.careRule : Object.assign(f.rule("assignment", MessageTriggerEventType.EMPLOYEE_ASSIGNED), {
+            recipientType: MessageTriggerRecipientType.PRIMARY_EMPLOYEE, templateKey: MessageTriggerTemplateKey.EMPLOYEE_ASSIGNED,
+            offsetType: MessageTriggerOffsetType.IMMEDIATE,
+        });
+        f.activeRules.push(rule);
+        const recipe = kind === "caregiver"
+            ? (await f.recipients.resolve(branchId, 7, [rule], f.db as never)).recipients[0]!.recipe!
+            : buildEmployeeAssignmentMessageRecipe(rule, f.schedule, new Date())!;
+        const old = f.seed(f.endRule, recipe);
+        const untouched = f.seed(f.createdRule), untouchedBefore = structuredClone(untouched);
+        const oldPayload = structuredClone(old.payload), oldDedupeKey = old.dedupeKey;
+        await f.confirm({ ...scope, scheduleIds: [91] });
+        expect(await f.prepare(old)).toBeNull();
+        expect(old.status).toBe("pending"); expect(old.claimToken).toBeNull();
+        expect(old.canceledByUser).toBe(false); expect(old.payload).toEqual(oldPayload);
+        expect(f.jobs.releaseProcessingForDateRefresh).toHaveBeenCalledTimes(1);
+        expect(f.delivery.prepareJob).not.toHaveBeenCalled(); expect(f.provider).not.toHaveBeenCalled();
+        expect(untouched).toEqual(untouchedBefore);
+
+        const worker = new MessageAutomationIntentService(f.db as never, f.service, {} as never, {} as never);
+        const intent = f.intents[0]!;
+        expect(await worker.fulfillClientDateIntent({ branchId, clientId: 7, dedupeKey: String(intent["dedupeKey"]),
+            intentAt: intent["scheduledFor"] as Date, dateScope: { ...scope, scheduleIds: [91] } })).toBe(true);
+        expect(f.intents).toEqual([]);
+        const refreshed = f.rows.find((row) => row.ruleId === rule.id && row.status === "pending")!;
+        expect(refreshed.dedupeKey).toBe(oldDedupeKey);
+        expect(refreshed.payload).not.toEqual(oldPayload);
+        if (kind === "caregiver") {
+            expect(refreshed.payload.caregiverSourceSnapshot!.schedule.endDate).toBe("2026-11-25T00:00:00.000Z");
+        }
+        const current = await f.prepare(refreshed);
+        expect(current).not.toBeNull(); expect(await f.authorize(current!)).toBe(true);
+        await f.delivery.sendPreparedJob(current!.job, current!.preparation);
+        expect(f.provider).toHaveBeenCalledTimes(1);
+        expect(untouched).toEqual(untouchedBefore);
+    });
+
+    it("releases an assignment changed after preparation before the existing stale-source cancellation", async () => {
+        const f = dispatchFixture();
+        const rule = Object.assign(f.rule("assignment", MessageTriggerEventType.EMPLOYEE_ASSIGNED), {
+            recipientType: MessageTriggerRecipientType.PRIMARY_EMPLOYEE, templateKey: MessageTriggerTemplateKey.EMPLOYEE_ASSIGNED,
+            offsetType: MessageTriggerOffsetType.IMMEDIATE,
+        });
+        f.activeRules.push(rule);
+        const old = f.seed(f.endRule, buildEmployeeAssignmentMessageRecipe(rule, f.schedule, new Date())!);
+        const prepared = await f.prepare(old);
+        expect(prepared).not.toBeNull();
+        await f.confirm({ ...scope, scheduleIds: [91] });
+        expect(await f.authorize(prepared!)).toBe(false);
+        expect(old.status).toBe("pending"); expect(old.claimToken).toBeNull();
+        expect(f.jobs.releaseProcessingForDateRefresh).toHaveBeenCalledTimes(1);
+        expect(f.events).not.toContain("dispatch-authorized"); expect(f.provider).not.toHaveBeenCalled();
     });
 
     it("keeps an unchanged start SMS independent of an end-date intent", async () => {
