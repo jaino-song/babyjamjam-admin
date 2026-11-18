@@ -613,3 +613,88 @@ describe("origin-only request header privacy", () => {
     expect(JSON.stringify(sent)).not.toMatch(/a\.example|contracts|documentId|abc|\/x/);
   });
 });
+
+
+describe("credential-bearing path segment privacy", () => {
+  it.each([
+    "https:%5C%5Calice:pw@inner.example",
+    "https:%2F%2Fbob:x%40inner.example",
+    "alice:pw@inner.example",
+    "alice%3Apw%40inner.example",
+    "%2Falice%40inner.example",
+    "%5Calice%40inner.example",
+    "https:%5c%5calice:pw%40inner.example",
+    "bad%ZZalice@inner.example",
+    "bad%ZZalice%40inner.example",
+  ])("filters raw or decoded userinfo before text masking: %s", (segment) => {
+    const url = `https://h/proxy/${segment}/x`;
+    const sent = getSentryRuntimeOptions().beforeSend({
+      type: undefined,
+      request: { url },
+      contexts: { api: { path: url } },
+    });
+
+    expect(sanitizeSentryUrl(url)).toBe("https://h/proxy/[Filtered]/x");
+    expect(sent.request?.url).toBe("https://h/proxy/[Filtered]/x");
+    expect(sent.contexts?.api?.path).toBe("https://h/proxy/[Filtered]/x");
+    expect(JSON.stringify(sent)).not.toMatch(/alice|bob|pw|inner\.example|\[Email\]/);
+  });
+
+  it.each([
+    ["/contracts", "/contracts"],
+    ["http://localhost:3000/x", "http://localhost:3000/x"],
+    ["https://admin.example.com/clients/7", "https://admin.example.com/clients/7"],
+    ["https://h/notify/@team", "https://h/notify/@team"],
+    ["https://h/notify/a@b.com", "https://h/notify/[Email]"],
+    ["https://h/notify/a%40b.com", "https://h/notify/a%40b.com"],
+    ["https://h/notify/bad%ZZ", "https://h/notify/bad%ZZ"],
+    ["/service-record/efl_secret/context", "/service-record/[Filtered]/context"],
+    ["/clients/123e4567-e89b-42d3-a456-426614174000", "/clients/[Filtered]"],
+  ])("preserves existing page URL sanitization: %s", (url, expected) => {
+    const sent = getSentryRuntimeOptions().beforeSend({ type: undefined, request: { url } });
+
+    expect(sanitizeSentryUrl(url)).toBe(expected);
+    expect(sent.request?.url).toBe(expected);
+  });
+});
+
+describe("noncanonical URL-valued header privacy", () => {
+  it.each([
+    ["https:/alice:pw@host.example/x?documentId=abc", "https://host.example"],
+    [String.raw`https:\alice:pw@host.example/x?documentId=abc`, "https://host.example"],
+    [String.raw`\\alice:pw@host.example/x?documentId=abc`, "[Filtered]"],
+    [String.raw`/\alice:pw@host.example/x?documentId=abc`, "[Filtered]"],
+    [String.raw`\/alice:pw@host.example/x?documentId=abc`, "[Filtered]"],
+    [String.raw`\\\alice:pw@host.example/x?documentId=abc`, "[Filtered]"],
+    ["ftp:/alice:pw@host.example/x?documentId=abc", "[Filtered]"],
+    [String.raw`custom+scheme:\alice:pw@host.example/x?documentId=abc`, "[Filtered]"],
+    ["https:/alice:pw@[invalid/x?documentId=abc", "[Filtered]"],
+  ])("routes trimmed custom header values through URL sanitization: %s", (value, expected) => {
+    const sent = getSentryRuntimeOptions().beforeSend({
+      type: undefined,
+      request: { headers: { "x-custom-header": ` ${value} ` } },
+    });
+
+    expect(sent.request?.headers?.["x-custom-header"]).toBe(expected);
+    expect(JSON.stringify(sent)).not.toMatch(/alice|pw|documentId|abc|\[Email\]/);
+  });
+
+  it("preserves ordinary header values and sensitive-name filtering", () => {
+    const sent = getSentryRuntimeOptions().beforeSend({
+      type: undefined,
+      request: { headers: {
+        "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)",
+        "x-custom-header": "Contact a@b.com",
+        "x-detail": String.raw`\relative-path`,
+        authorization: "ordinary value",
+      } },
+    });
+
+    expect(sent.request?.headers).toEqual({
+      "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)",
+      "x-custom-header": "Contact [Email]",
+      "x-detail": String.raw`\relative-path`,
+      authorization: "[Filtered]",
+    });
+  });
+});
