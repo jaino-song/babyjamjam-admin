@@ -3309,6 +3309,17 @@ describe("automatic service-record date replacement", () => {
                 if (sql.text.includes('FROM "message_trigger_rule"')) return [{ id: SERVICE_RECORD_LINK_RULE_ID }];
                 if (sql.text.includes('FROM "service_record_token"')) return [{ id: "active-token" }];
                 if (sql.text.includes('FROM "message_log"')) return logs.filter((row) => sqlMatches(row, sql));
+                if (sql.text.includes('FROM "message_trigger_job" AS blocker')) {
+                    const excludedId = sql.text.match(/blocker.id <> \$(\d+)/)!;
+                    return rows.filter((row) => sqlMatches(row, sql)
+                        && row["id"] !== sql.values[Number(excludedId[1]) - 1]
+                        && (["pending", "processing", "dispatching", "sent", "needs_setup"].includes(String(row["status"]))
+                            || (row["status"] === "failed" && row["cancel_reason"] !== SERVICE_RECORD_LINK_SCHEDULING_RETRY_REASON)
+                            || (row["status"] === "canceled" && (row["canceled_by_user"] === true || row["cancel_reason"] === null
+                                || ![SERVICE_RECORD_LINK_RESCHEDULED_REASON, SERVICE_RECORD_LINK_ENDED_REASON,
+                                    SERVICE_RECORD_LINK_BRANCH_DISABLED_REASON, SERVICE_RECORD_LINK_PRE_BOOKING_REASON,
+                                    MESSAGE_SENDER_APPROVAL_REQUIRED_CANCEL_REASON].includes(String(row["cancel_reason"]))))));
+                }
                 if (sql.text.includes('SELECT id, status, canceled_by_user')) return rows.filter((row) => sqlMatches(row, sql));
                 if (sql.text.includes('INSERT INTO "message_trigger_job"')) {
                     const columns = sql.text.match(/INSERT INTO "message_trigger_job"\s*\(([^)]+)\)/)![1]!.split(",").map((column) => column.trim());
@@ -3372,6 +3383,7 @@ describe("automatic service-record date replacement", () => {
     it.each(["pending", "canceled"])("rolls the %s reservation and log writes back together when supersession fails", async (status) => {
         const f = fixture();
         Object.assign(f.rows()[0]!, { status, cancel_reason: status === "canceled" ? SERVICE_RECORD_LINK_ENDED_REASON : null });
+        if (status === "canceled") Object.assign(f.rows()[1]!, { status: "canceled", cancel_reason: SERVICE_RECORD_LINK_RESCHEDULED_REASON });
         const before = structuredClone({ rows: f.rows(), logs: f.logs() });
         f.tx.message_log.updateMany.mockRejectedValueOnce(new Error("log write conflict"));
         await expect(f.run()).rejects.toThrow("log write conflict");
@@ -3399,6 +3411,8 @@ describe("automatic service-record date replacement", () => {
         const f = fixture(); const row = f.rows()[0]!;
         Object.assign(row, { status: "canceled", cancel_reason: cancelReason,
             scheduled_for: f.replacement.scheduledFor, payload: structuredClone(f.replacement.payload) });
+        // An inactive, system-canceled manual row does not block a fresh automatic reservation.
+        Object.assign(f.rows()[1]!, { status: "canceled", cancel_reason: SERVICE_RECORD_LINK_RESCHEDULED_REASON });
         // No delivery attempt was made before this system cancellation.
         f.logs().splice(0, 1);
         const unrelated = structuredClone({ rows: f.rows().slice(1), logs: f.logs() });
@@ -3408,6 +3422,50 @@ describe("automatic service-record date replacement", () => {
         const current = structuredClone({ rows: f.rows(), logs: f.logs() });
         expect((await f.run()).kind).toBe("protected");
         expect({ rows: f.rows(), logs: f.logs() }).toEqual(current);
+    });
+
+    it.each([
+        { status: "pending" }, { status: "needs_setup" }, { status: "processing" }, { status: "dispatching" }, { status: "sent" },
+        { status: "failed", cancel_reason: null },
+        { status: "canceled", cancel_reason: null },
+        { status: "canceled", cancel_reason: "Service record access revoked" },
+        { status: "canceled", cancel_reason: SERVICE_RECORD_LINK_RESCHEDULED_REASON, canceled_by_user: true },
+    ])("does not reclaim a system-canceled automatic link when the schedule has a manual blocker %j", async (blocker) => {
+        for (const cancelReason of [SERVICE_RECORD_LINK_RESCHEDULED_REASON, SERVICE_RECORD_LINK_ENDED_REASON,
+            SERVICE_RECORD_LINK_BRANCH_DISABLED_REASON, SERVICE_RECORD_LINK_PRE_BOOKING_REASON,
+            MESSAGE_SENDER_APPROVAL_REQUIRED_CANCEL_REASON]) {
+            const f = fixture();
+            Object.assign(f.rows()[0]!, { status: "canceled", cancel_reason: cancelReason });
+            Object.assign(f.rows()[1]!, blocker);
+            const before = structuredClone({ rows: f.rows(), logs: f.logs() });
+            expect((await f.run()).kind).toBe("protected");
+            expect({ rows: f.rows(), logs: f.logs() }).toEqual(before);
+            expect(f.tx.message_trigger_job.updateMany).not.toHaveBeenCalled();
+            expect(f.tx.message_log.updateMany).not.toHaveBeenCalled();
+            expect(f.statements.some((sql) => sql.text.includes('INSERT INTO "message_trigger_job"'))).toBe(false);
+        }
+    });
+
+    it("reclaims with only nonblocking or unrelated schedule rows under the existing lock fence", async () => {
+        const f = fixture();
+        Object.assign(f.rows()[0]!, { status: "canceled", cancel_reason: SERVICE_RECORD_LINK_ENDED_REASON });
+        Object.assign(f.rows()[1]!, { status: "failed", cancel_reason: SERVICE_RECORD_LINK_SCHEDULING_RETRY_REASON });
+        // Pending rows in another branch, schedule, or rule must remain untouched.
+        f.rows().push({ ...structuredClone(f.rows()[1]!), id: "other-rule", rule_id: "other-rule", status: "sent" });
+        const unrelated = structuredClone({ rows: f.rows().slice(1), logs: f.logs().slice(1) });
+        expect((await f.run()).kind).toBe("replaced");
+        expect(f.rows()[0]).toMatchObject({ status: "pending", cancel_reason: null });
+        expect({ rows: f.rows().slice(1), logs: f.logs().slice(1) }).toEqual(unrelated);
+        const blockerIndex = f.statements.findIndex((sql) => sql.text.includes('FROM "message_trigger_job" AS blocker'));
+        expect(blockerIndex).toBeGreaterThan(f.statements.findIndex((sql) => sql.text.includes('FROM "message_trigger_rule"')));
+        expect(blockerIndex).toBeLessThan(f.statements.findIndex((sql) => sql.text.includes('FROM "message_log"')));
+        const scan = f.statements[blockerIndex]!;
+        expect(scan.text).toMatch(/blocker.branch_id = \$\d+::uuid/);
+        expect(scan.values).toEqual(expect.arrayContaining([branchId, SERVICE_RECORD_LINK_RULE_ID, 10, "automatic"]));
+        expect(scan.text).toContain("ORDER BY blocker.id");
+        expect(scan.text).toContain("FOR UPDATE");
+        expect(scan.text).not.toContain("dedupe_key =");
+        expect(scan.text).not.toContain("client_id =");
     });
 
     it.each(["Service record access revoked", "Service record link reset without resend", "SERVICE_RECORD_REVISION_SUPERSEDED"])(
