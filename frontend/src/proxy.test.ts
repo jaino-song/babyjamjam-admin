@@ -2,10 +2,11 @@
  * @jest-environment node
  */
 import { jwtDecode } from "jwt-decode";
+import { tryToParsePath } from "next/dist/lib/try-to-parse-path";
 import { NextRequest } from "next/server";
 
 import { getMobileGatewayRedirectUrl, isMobileUserAgent } from "@/lib/gateway/mobile-redirect";
-import { proxy } from "@/proxy";
+import { config, proxy } from "@/proxy";
 
 jest.mock("jwt-decode", () => ({
   jwtDecode: jest.fn(),
@@ -20,6 +21,35 @@ const IPHONE_USER_AGENT =
 const DESKTOP_USER_AGENT =
   "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) AppleWebKit/537.36 " +
   "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
+
+describe("admin proxy matcher", () => {
+  // Next compiles matcher sources with its bundled path-to-regexp parser.
+  const matchers = config.matcher.map((source) => {
+    const { regexStr, error } = tryToParsePath(source);
+    if (!regexStr) {
+      throw error ?? new Error(`Invalid proxy matcher: ${source}`);
+    }
+    return new RegExp(regexStr);
+  });
+
+  it.each(["/monitoring", "/monitoring?o=1&p=2", "/monitoring/"])(
+    "excludes the Sentry tunnel from the auth proxy (%s)", (path) => {
+      expect(matchers.some((matcher) => matcher.test(path))).toBe(false);
+    },
+  );
+
+  it.each(["/contracts", "/clients/7", "/login", "/monitoringx", "/api/documents/x"])(
+    "continues to proxy application routes (%s)", (path) => {
+      expect(matchers.some((matcher) => matcher.test(path))).toBe(true);
+    },
+  );
+
+  it.each(["/_next/static/a.js", "/_next/image", "/favicon.ico", "/logo.png"])(
+    "continues to exclude static assets (%s)", (path) => {
+      expect(matchers.some((matcher) => matcher.test(path))).toBe(false);
+    },
+  );
+});
 
 describe("admin gateway proxy", () => {
   beforeEach(() => {
