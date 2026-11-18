@@ -1,3 +1,5 @@
+import { buildSmsProviderAcceptanceKey } from "application/services/sms-provider-acceptance.service";
+import { messageQuietHoldVariables } from "domain/message-policy-evaluator";
 import { SystemSettingService } from "application/services/system-setting.service";
 import { createLegacyAutomationDeliveryGate } from "../fixtures/legacy-automation-delivery-gate";
 import { Prisma } from "@prisma/client";
@@ -74,6 +76,82 @@ describe("SmsTriggerDeliveryService", () => {
             new Date("2026-06-05T00:00:00.000Z"),
             new Date("2026-06-05T00:00:00.000Z"),
         );
+
+    function refreshFixture() {
+        const previous = createServiceInfoJob();
+        const releaseAt = new Date("2026-06-13T00:00:00Z");
+        previous.nextAttemptAt = releaseAt;
+        const job = Object.assign(Object.create(MessageTriggerJobEntity.prototype) as MessageTriggerJobEntity, structuredClone(previous));
+        job.payload.templateVariables["name"] = "QA-current";
+        const log = { id: 11, branchId, triggerJobId: job.id, provider: "aligo_sms", status: "pending", attempts: 0,
+            nextRetryAt: null, providerAcceptanceState: "prepared", providerCallStartedAt: null, providerAcceptedAt: null,
+            aligoMid: null, updatedAt: new Date("2026-06-12Z"),
+            providerAcceptanceKey: buildSmsProviderAcceptanceKey("automation", `${branchId}:${job.id}`),
+            providerAcceptanceFingerprint: "old-fingerprint", variables: messageQuietHoldVariables({ originalScheduledFor: previous.scheduledFor,
+                releaseAt, policyRevision: "original-policy", reason: "message_quiet_hours:DEFER" }) };
+        const logs = [log];
+        const tx = { $queryRaw: jest.fn(async () => [{ id: log.id }]), message_log: {
+            findMany: jest.fn(async () => logs), updateMany: jest.fn<Promise<{ count: number }>, [unknown]>().mockResolvedValue({ count: 1 }),
+        } };
+        const templates = { getByKeyForBranch: jest.fn(async () => ({ content: "{{name}} current", updatedAt: new Date("2026-06-01Z") })) };
+        const provider = { sendSms: jest.fn() };
+        const service = new SmsTriggerDeliveryService(provider as never, templates as never, {} as never);
+        return { previous, job, log, logs, tx, templates, provider, service };
+    }
+
+    it.each([0, 1, 2])("rebuilds only validated delivery details and keeps the exact DEFER metadata and key with %s trigger deferrals", async attempts => {
+        const f = refreshFixture();
+        f.previous.attempts = f.job.attempts = attempts;
+        const deadline = new Date(f.previous.nextAttemptAt!.getTime() + attempts * 300_000);
+        f.previous.nextAttemptAt = f.job.nextAttemptAt = deadline;
+        await f.service.refreshPendingQuietAttempt(f.previous, f.job, f.tx as never);
+        const write = f.tx.message_log.updateMany.mock.calls[0]![0] as unknown as { where: Record<string, unknown>; data: Record<string, unknown> };
+        expect(write.where).toMatchObject({ id: f.log.id, branchId, triggerJobId: f.job.id, providerAcceptanceState: "prepared",
+            providerAcceptanceKey: f.log.providerAcceptanceKey, providerAcceptanceFingerprint: "old-fingerprint",
+            providerCallStartedAt: null, providerAcceptedAt: null, nextRetryAt: null, attempts: 0, updatedAt: f.log.updatedAt });
+        expect(write.data).toMatchObject({ messageBody: "QA-current current", variables: expect.objectContaining(f.log.variables) });
+        expect(write.data["providerAcceptanceFingerprint"]).not.toBe("old-fingerprint");
+        expect(f.job).toMatchObject({ attempts, nextAttemptAt: deadline, quietHold: expect.objectContaining({
+            releaseAt: new Date("2026-06-13T00:00:00Z"), originalScheduledFor: f.previous.scheduledFor,
+        }) });
+        for (const field of ["triggerJobId", "providerAcceptanceKey", "nextRetryAt", "providerAcceptanceState", "status", "attempts"]) expect(write.data).not.toHaveProperty(field);
+        expect(f.provider.sendSms).not.toHaveBeenCalled();
+    });
+
+    it.each(["started", "accepted", "sent", "retry", "attempted", "wrong-key", "missing-fingerprint", "wrong-job", "wrong-branch",
+        "wrong-original", "bad-hold", "missing-hold", "duplicate", "late-deadline", "changed-attempts", "claim", "task", "manual", "uncertain"])("refuses %s quiet association before rendering or overwriting a fingerprint", async mode => {
+        const f = refreshFixture();
+        f.previous.attempts = f.job.attempts = 1;
+        if (mode === "started") f.log.providerCallStartedAt = new Date() as never;
+        if (mode === "accepted") f.log.providerAcceptedAt = new Date() as never;
+        if (mode === "sent") f.log.status = "sent";
+        if (mode === "retry") f.log.nextRetryAt = new Date() as never;
+        if (mode === "attempted") f.log.attempts = 1;
+        if (mode === "wrong-key") f.log.providerAcceptanceKey = "different-key";
+        if (mode === "missing-fingerprint") f.log.providerAcceptanceFingerprint = " ";
+        if (mode === "wrong-job") f.log.triggerJobId = "different-job";
+        if (mode === "wrong-branch") f.log.branchId = "different-branch";
+        if (mode === "wrong-original") f.log.variables["quietHoursOriginalScheduledFor"] = new Date(0).toISOString();
+        if (mode === "bad-hold") f.log.variables["quietHoursReleaseAt"] = "invalid";
+        if (mode === "missing-hold") f.log.variables = {};
+        if (mode === "duplicate") f.logs.push({ ...f.log, id: 12 });
+        if (mode === "late-deadline") f.job.nextAttemptAt = new Date(f.previous.nextAttemptAt!.getTime() - 1);
+        if (mode === "changed-attempts") f.job.attempts = 0;
+        if (mode === "claim") f.job.claimToken = "other-claim";
+        if (mode === "task") f.job.payload.taskAutomationReference = {} as never;
+        if (mode === "manual") f.job.dedupeKey = "manual:qa";
+        if (mode === "uncertain") f.log.variables["retrySafety"] = "uncertain";
+        await expect(f.service.refreshPendingQuietAttempt(f.previous, f.job, f.tx as never)).rejects.toThrow();
+        expect(f.tx.message_log.updateMany).not.toHaveBeenCalled();
+        expect(f.templates.getByKeyForBranch).not.toHaveBeenCalled();
+        expect(f.provider.sendSms).not.toHaveBeenCalled();
+    });
+
+    it("fails closed if the exact prepared log changes during rebind", async () => {
+        const f = refreshFixture(); f.tx.message_log.updateMany.mockResolvedValueOnce({ count: 0 });
+        await expect(f.service.refreshPendingQuietAttempt(f.previous, f.job, f.tx as never)).rejects.toThrow();
+        expect(f.provider.sendSms).not.toHaveBeenCalled();
+    });
 
     const createTransientPrismaError = () =>
         new Prisma.PrismaClientKnownRequestError("Can't reach database server", {

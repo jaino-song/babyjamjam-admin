@@ -52,7 +52,7 @@ import { PrismaService } from "infrastructure/database/prisma.service";
 import { sha256CanonicalJson } from "application/services/eformsign-document-job.service";
 import { selectCurrentContractDocument } from "application/utils/current-contract-document";
 import {
-    persistClientMessageAutomationIntent,
+    persistClientDateMessageAutomationIntent,
     persistScheduleMessageAutomationIntent,
 } from "application/services/message-automation-intent-writer";
 import {
@@ -3724,7 +3724,6 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
                     supersessionScope,
                 );
             }
-            await this.persistReevaluationIntents(tx, input.branchId, source.client.id, plan.assignments, now);
             if (revision && plan.documentJob && plan.dispatchContext) {
                 const generation = randomUUID();
                 const documentState = await this.createRevisionDocumentStateInTransaction({ tx }, {
@@ -3842,6 +3841,8 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
             }
         }
 
+        await this.persistReevaluationIntents(tx, input.branchId, source, plan, `${input.draftId}:${draft.draftVersion}`, now);
+
         const response: ServiceRecordEditConfirmResponse = {
             status: plan.status,
             caseId: source.caseId,
@@ -3878,7 +3879,7 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
     }
 
     /**
-     * Confirmation invalidates old pending work and leaves a durable marker
+     * Date changes leave an independent durable marker
      * for the existing automation reconciler to recalculate future jobs. The
      * marker is written in this transaction so any later failure rolls it back
      * with the case, day, revision, and draft writes.
@@ -3886,44 +3887,47 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
     private async persistReevaluationIntents(
         tx: Prisma.TransactionClient,
         branchId: string,
-        clientId: number,
-        assignments: ServiceRecordEditConfirmPlan["assignments"],
+        source: ServiceRecordEditSource,
+        plan: ServiceRecordEditConfirmPlan,
+        confirmation: string,
         intentAt: Date,
     ): Promise<void> {
+        const startDate = plan.status === "confirmed" ? plan.startDate : source.client.startDate;
+        const endDate = plan.status === "confirmed" ? plan.endDate
+            : plan.clientServiceDays && plan.materializedPlannedSessions?.endDate
+                ? plan.materializedPlannedSessions.endDate : source.client.endDate;
+        const scheduleIds = plan.status === "confirmed" ? [...new Set(plan.assignments.filter((assignment) => {
+            if (assignment.datesChanged === false || assignment.scheduleId === null) return false;
+            const before = source.assignments.find((row) => row.scheduleId === assignment.scheduleId);
+            return (dateValue(assignment.startDate) !== null && assignment.startDate !== before?.scheduleStartDate)
+                || (dateValue(assignment.endDate) !== null && assignment.endDate !== before?.scheduleEndDate);
+        }).map((assignment) => assignment.scheduleId!))].sort((a, b) => a - b) : [];
+        const dateScope = { startDate: startDate !== source.client.startDate, endDate: endDate !== source.client.endDate, scheduleIds };
+        if (!dateScope.startDate && !dateScope.endDate && !scheduleIds.length) return;
+        const clientId = source.client.id;
         const transaction = tx as unknown as {
-            message_trigger_rule?: { upsert?: unknown };
+            message_trigger_rule?: { findUnique?: unknown };
             message_trigger_job?: { upsert?: unknown };
         };
         // Narrow unit doubles used by older repository tests do not expose the
         // message delegates. A real Prisma transaction always does, and the
         // production path therefore remains durable and atomic.
         if (
-            typeof transaction.message_trigger_rule?.upsert !== "function"
+            typeof transaction.message_trigger_rule?.findUnique !== "function"
             || typeof transaction.message_trigger_job?.upsert !== "function"
         ) {
             return;
         }
-        await persistClientMessageAutomationIntent(tx, {
-            branchId,
-            clientId,
-            includePast: false,
-            suppressGreeting: true,
-            intentAt,
+        await persistClientDateMessageAutomationIntent(tx, {
+            branchId, clientId, confirmation, dateScope, intentAt,
         });
-        const scheduleIds = [...new Set(
-            assignments
-                .map((assignment) => assignment.scheduleId)
-                .filter((scheduleId): scheduleId is number => (
-                    typeof scheduleId === "number"
-                    && Number.isInteger(scheduleId)
-                    && scheduleId > 0
-                )),
-        )].sort((left, right) => left - right);
         for (const scheduleId of scheduleIds) {
             await persistScheduleMessageAutomationIntent(tx, {
                 branchId,
                 clientId,
                 scheduleId,
+                refreshServiceRecordLink: true,
+                confirmation,
                 includePast: false,
                 intentAt,
             });
@@ -3976,17 +3980,9 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
                 WHERE ${eformsignDocumentJobOwnershipPredicate(branchId, source.client.id)}
                 FOR UPDATE
             `);
-            await transaction.$queryRaw(Prisma.sql`
-                SELECT id
-                FROM "message_trigger_job"
-                WHERE branch_id = ${branchId}::uuid
-                  AND client_id = ${source.client.id}
-                FOR UPDATE
-            `);
         } else {
             const jobs = tx as unknown as {
                 eformsign_document_job?: { findMany?: (args: unknown) => Promise<unknown> };
-                message_trigger_job?: { findMany?: (args: unknown) => Promise<unknown> };
             };
             const ownedDocumentIds = await findClientOwnedLegacyDocumentIds(tx, branchId, source.client.id);
             await jobs.eformsign_document_job?.findMany?.({
@@ -3998,10 +3994,6 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
                             : []),
                     ],
                 },
-                select: { id: true },
-            });
-            await jobs.message_trigger_job?.findMany?.({
-                where: { branchId, clientId: source.client.id },
                 select: { id: true },
             });
         }
@@ -4043,19 +4035,6 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
                     "A service-record document dispatch is already irreversible",
                 );
             }
-            const inFlightMessages = await transaction.$queryRaw<Array<{ id: string }>>(Prisma.sql`
-                SELECT id
-                FROM "message_trigger_job"
-                WHERE branch_id = ${branchId}::uuid
-                  AND client_id = ${clientId}
-                  AND status = 'dispatching'
-                FOR UPDATE
-            `);
-            if (inFlightMessages.length > 0) {
-                throw new ServiceRecordEditConflictError(
-                    "A service-record message dispatch is already irreversible",
-                );
-            }
             await rawStateExecute(transaction, Prisma.sql`
                 UPDATE "eformsign_document_job" AS job
                 SET status = 'failed',
@@ -4078,18 +4057,6 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
                   AND job.status IN ('queued', 'processing', 'reconciling')
                   AND ${documentJobSupersessionPredicate(scope)}
             `);
-            await rawStateExecute(transaction, Prisma.sql`
-                UPDATE "message_trigger_job"
-                SET status = 'canceled',
-                    canceled_at = now(),
-                    cancel_reason = 'SERVICE_RECORD_REVISION_SUPERSEDED',
-                    canceled_by_user = false,
-                    claim_token = NULL,
-                    updated_at = now()
-                WHERE branch_id = ${branchId}::uuid
-                  AND client_id = ${clientId}
-                  AND status IN ('pending', 'processing')
-            `);
             return;
         }
         const fallback = tx as unknown as {
@@ -4101,10 +4068,6 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
                     requestKey?: string;
                     payload?: unknown;
                 }>>;
-                updateMany?: (args: unknown) => Promise<unknown>;
-            };
-            message_trigger_job?: {
-                findMany?: (args: unknown) => Promise<Array<{ id?: string; status?: string }>>;
                 updateMany?: (args: unknown) => Promise<unknown>;
             };
         };
@@ -4133,15 +4096,6 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
         if (scopedInFlightDocuments.length > 0) {
             throw new ServiceRecordEditConflictError(
                 "A service-record document dispatch is already irreversible",
-            );
-        }
-        const inFlightMessages = await fallback.message_trigger_job?.findMany?.({
-            where: { branchId, clientId, status: "dispatching" },
-            select: { id: true, status: true },
-        }) ?? [];
-        if (inFlightMessages.length > 0) {
-            throw new ServiceRecordEditConflictError(
-                "A service-record message dispatch is already irreversible",
             );
         }
         const cancellableDocuments = await fallback.eformsign_document_job?.findMany?.({
@@ -4188,16 +4142,6 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
                 data: { ...cancellationData, payload: null },
             });
         }
-        await fallback.message_trigger_job?.updateMany?.({
-            where: { branchId, clientId, status: { in: ["pending", "processing"] } },
-            data: {
-                status: "canceled",
-                canceledAt: new Date(),
-                cancelReason: "SERVICE_RECORD_REVISION_SUPERSEDED",
-                canceledByUser: false,
-                claimToken: null,
-            },
-        });
     }
 
     private async enqueueRevisionJob(
