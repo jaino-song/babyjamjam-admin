@@ -108,6 +108,29 @@ describe("service-record backend Sentry contract", () => {
             expect(captured.stack?.split("\n")).toEqual([header, ...frames]);
             expect(captured.stack).not.toMatch(/Hong Gildong|lobby|third/);
         });
+
+        it("keeps a real frame repeated in the message when the stack starts with the error header", () => {
+            const frames = ["    at syncRules (/app/backend/lifecycle.js:12:4)", "    at run (/app/backend/worker.js:23:8)"];
+            const error = new Error(`first line\n${frames[0]}\nthird`);
+            error.stack = [String(error), ...frames].join("\n");
+
+            capture(error);
+
+            const captured = mockCaptureException.mock.calls[0]?.[0] as Error;
+            expect(captured.stack?.split("\n")).toEqual([header, ...frames]);
+        });
+
+        it("filters a message frame after real frames in a custom stack with a shorter prefix than the header", () => {
+            const messageFrame = "    at Hong Gildong (lobby)";
+            const error = new Error(`first line\n${messageFrame}\nthird`);
+            const frames = ["    at syncRules (/app/backend/lifecycle.js:12:4)", "    at run (/app/backend/worker.js:23:8)"];
+            error.stack = ["Overwritten stack", ...frames, messageFrame].join("\n");
+
+            capture(error);
+
+            const captured = mockCaptureException.mock.calls[0]?.[0] as Error;
+            expect(captured.stack?.split("\n")).toEqual([header, ...frames]);
+        });
     });
 
     it("keeps actionable 5xx failures and drops expected 4xx failures", () => {
