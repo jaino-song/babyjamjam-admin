@@ -2692,7 +2692,8 @@ export class MessageTriggerService {
                     && (!job || row.dedupeKey !== job.dedupeKey || !sameSource(row, job)))) {
                     throw new ConflictException("Message date reconciliation is waiting for a processing reservation");
                 }
-                // Permanent key conflicts leave this family operator-only. A stale claim above must
+                // Permanent key conflicts keep the needs_setup row in place without automatic replacement.
+                // A valid ordinary destination retains its slot; a stale processing claim above must
                 // still release or complete before the date intent can drain for the client.
                 const operatorMoveBlocked = operatorReservation && job && (operatorReservations.length !== 1
                     || (operatorDestination && !reclaimableOperatorDestination));

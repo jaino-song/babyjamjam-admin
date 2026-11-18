@@ -9139,6 +9139,26 @@ describe("service-record date reconciliation", () => {
         expect(f.provider).not.toHaveBeenCalled();
     });
 
+    it.each([true, false])("handles a same-key ordinary destination with source drift=%s during an operator collision", async (drifted) => {
+        const f = fixture();
+        const operator = f.seed(f.endRule, {status: "needs_setup", cancelReason: "QA-operator"});
+        const before = structuredClone(operator);
+        f.client.endDate = new Date("2026-11-25Z");
+        const destination = f.seed(f.endRule);
+        if (drifted) destination.recipientPhone = "01000000099";
+        const destinationBefore = structuredClone(destination);
+        await expect(f.service.reconcileServiceRecordDateRules(branchId, 7, scope)).resolves.toBeUndefined();
+        expect(operator).toEqual(before);
+        expect(f.rows).toEqual([operator, destination]);
+        expect(f.jobs.upsertPendingForRuleGeneration).not.toHaveBeenCalled();
+        if (drifted) {
+            expect(destination).toMatchObject({id: destinationBefore.id, dedupeKey: destinationBefore.dedupeKey,
+                status: "canceled", cancelReason: CLIENT_DATE_AUTOMATION_CHANGED_REASON});
+        } else {
+            expect(destination).toEqual(destinationBefore);
+        }
+    });
+
     it("keeps a movable operator intent retryable when its exact transition CAS loses", async () => {
         const f = dispatchFixture();
         const operator = f.seed(f.endRule, {status: "needs_setup", cancelReason: "QA-operator"});
