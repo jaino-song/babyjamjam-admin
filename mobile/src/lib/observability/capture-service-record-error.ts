@@ -33,8 +33,22 @@ const reportedErrors = new WeakSet<object>();
 const MIN_OPAQUE_ID_LENGTH = 16;
 // Literal collection operations found in document BFF routes and API callers.
 const DOCUMENT_COLLECTION_ROUTES = new Set([
-  "completed", "in-progress", "status-counts", "rejected", "expired", "upload", "capabilities",
+  ...["completed", "in-progress", "status-counts", "rejected", "expired", "upload", "capabilities"]
+    .map((route) => `/api/documents/${route}`),
+  ...["completed", "in-progress", "status-counts", "rejected", "expired"]
+    .flatMap((route) => [`/api/eformsign/documents/${route}`, `/eformsign/documents/${route}`]),
+  "/documents/upload", "/documents/capabilities",
 ]);
+
+function templateDocumentPath(path: string): string {
+  if (DOCUMENT_COLLECTION_ROUTES.has(path)) return path;
+
+  return path.split("/").map((segment, index, segments) => (
+    segments[index - 1] === "documents" && segment
+      ? ":id"
+      : segment
+  )).join("/");
+}
 
 function isAxiosErrorLike(error: unknown): error is AxiosError {
   return (
@@ -138,20 +152,16 @@ export function captureApiError(error: unknown): boolean {
   if (error.response && (typeof status !== "number" || status < 500)) return false;
 
   const rawPath = getRequestPath(error.config?.url);
+  const documentPath = templateDocumentPath(rawPath);
   // Delegate before recording: the service-record capture owns the shared dedupe entry.
-  if (isServiceRecordSentrySignal(rawPath)) return captureServiceRecordError(error);
+  if (isServiceRecordSentrySignal(documentPath)) return captureServiceRecordError(error);
   reportedErrors.add(error);
 
   const method = sanitizeSentryText((error.config?.method ?? "unknown").toUpperCase());
-  // Sanitize URLs before templating; never attach request/response bodies or query strings.
-  const path = (sanitizeSentryUrl(rawPath) ?? "unknown")
+  // Sanitize the document template; never attach request/response bodies or query strings.
+  const path = (sanitizeSentryUrl(documentPath) ?? "unknown")
     .split("/")
     .map((segment) => /^\d+$/.test(segment) || (segment.length >= MIN_OPAQUE_ID_LENGTH && /\d/.test(segment)) ? ":id" : segment)
-    .map((segment, index, segments) => (
-      segments[index - 1] === "documents" && segment && !DOCUMENT_COLLECTION_ROUTES.has(segment)
-        ? ":id"
-        : segment
-    ))
     .join("/");
   const statusLabel = status === undefined ? "network" : String(status);
   const runtime = typeof window === "undefined" ? "server" : "browser";
