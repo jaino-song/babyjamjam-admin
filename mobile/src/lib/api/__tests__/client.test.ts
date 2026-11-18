@@ -8,6 +8,7 @@ import { authenticatedFetch } from "../authenticated-fetch";
 
 jest.mock("@/lib/observability/capture-service-record-error", () => ({
     captureApiError: jest.fn(),
+    captureSessionRefreshNetworkError: jest.fn(),
 }));
 
 jest.mock("@/lib/auth/authority-state", () => ({

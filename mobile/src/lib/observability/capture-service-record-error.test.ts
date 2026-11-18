@@ -16,6 +16,7 @@ jest.mock("@sentry/nextjs", () => ({
 import {
   captureAndFlushApiError,
   captureApiError,
+  captureSessionRefreshNetworkError,
   captureAndFlushServiceRecordError,
   captureServiceRecordError,
   captureServiceRecordResponseError,
@@ -242,5 +243,52 @@ describe("captureApiError", () => {
     await captureAndFlushApiError(createAxiosError({ status: 404 }));
     expect(mockFlush).toHaveBeenCalledTimes(1);
     expect(mockFlush).toHaveBeenCalledWith(2_000);
+  });
+});
+
+
+describe("API document path templates and opaque id bounds", () => {
+  beforeEach(() => jest.clearAllMocks());
+
+  it.each([
+    ["/api/documents/abcdefghijklmnop/void", "/api/documents/:id/void"],
+    ["/eformsign/documents/letters/download_files", "/eformsign/documents/:id/download_files"],
+    ["/documents/file/download", "/documents/:id/download"],
+    ...["completed", "in-progress", "status-counts", "rejected", "expired", "upload", "capabilities"].map((route) => [`/api/documents/${route}`, `/api/documents/${route}`]),
+    ["/api/clients/123", "/api/clients/:id"],
+    ["/api/eformsign/documents/a1b2c3d4e5f6a7b8c9d0/supersede", "/api/eformsign/documents/:id/supersede"],
+    ["/api/clients/abcdefghijklmn1", "/api/clients/abcdefghijklmn1"],
+    ["/api/clients/abcdefghijklmno1", "/api/clients/:id"],
+  ])("templates %s as %s", (url, path) => {
+    captureApiError(createAxiosError({ status: 500, url }));
+    expect(mockScope.setFingerprint).toHaveBeenCalledWith(["api-error", "GET", path, "500"]);
+    expect(mockScope.setContext).toHaveBeenCalledWith("api", expect.objectContaining({ path }));
+  });
+});
+
+
+describe("captureSessionRefreshNetworkError", () => {
+  beforeEach(() => jest.clearAllMocks());
+
+  it("deduplicates a shared refresh network failure without forwarding its raw details", () => {
+    const failure = new TypeError("https://private.example/refresh?token=private-fixture");
+    expect(captureSessionRefreshNetworkError(failure)).toBe(true);
+    expect(captureSessionRefreshNetworkError(failure)).toBe(false);
+    expect(mockCaptureException).toHaveBeenCalledTimes(1);
+    const captured = mockCaptureException.mock.calls[0][0] as Error;
+    expect(captured).not.toBe(failure);
+    expect(captured.name).toBe("ApiRequestError");
+    expect(captured.message).toBe("API request failed: POST /api/auth/refresh (network)");
+    expect(captured.stack).not.toContain("private-fixture");
+  });
+
+  it("ignores non-network refresh outcomes", () => {
+    const httpFailure = Object.assign(new Error("Application session refresh failed"), {
+      name: "ApplicationSessionRefreshError", status: 401,
+    });
+    for (const failure of [httpFailure, new Error("Unexpected failure"), null]) {
+      expect(captureSessionRefreshNetworkError(failure)).toBe(false);
+    }
+    expect(mockCaptureException).not.toHaveBeenCalled();
   });
 });

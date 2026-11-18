@@ -356,3 +356,121 @@ describe("frontend Sentry error coverage", () => {
     expect(options.ignoreErrors.some((pattern) => pattern.test("Render failed"))).toBe(false);
   });
 });
+
+
+describe("URL-valued request headers", () => {
+  it.each([
+    ["Referer", "https://alice:s3cr!t@admin.example.com/x?documentId=abc"],
+    ["x-forwarded-uri", "https://alice:s3cr!t@admin.example.com/x"],
+    ["Referer", "https://alice:a@b!c@admin.example.com/x?documentId=abc"],
+    ["x-forwarded-uri", "https://alice:a@b!c@admin.example.com/x"],
+  ])("removes URL credentials before text masking in %s", (header, value) => {
+    const sent = getSentryRuntimeOptions().beforeSend({
+      type: undefined,
+      request: { headers: { [header]: value } },
+    });
+
+    expect(sent.request?.headers?.[header]).toBe("https://admin.example.com/x");
+    expect(JSON.stringify(sent)).not.toMatch(/alice|s3cr|b!c|\[Email\]/);
+  });
+
+  it("preserves a credential-free Referer and masks email in a non-URL header", () => {
+    const sent = getSentryRuntimeOptions().beforeSend({
+      type: undefined,
+      request: { headers: {
+        Referer: "https://admin.example.com/x?documentId=abc",
+        "X-Detail": "Contact user@example.com",
+      } },
+    });
+
+    expect(sent.request?.headers).toEqual({
+      Referer: "https://admin.example.com/x",
+      "X-Detail": "Contact [Email]",
+    });
+  });
+
+  it.each([
+    ["https://alice:s3cr!t@admin.example.com/x?documentId=abc", "https://admin.example.com/x"],
+    ["https://alice:s3cr!t@[invalid/x?documentId=abc", "https://[invalid/x"],
+    ["https://alice:a@b!c@admin.example.com/x?documentId=abc", "https://admin.example.com/x"],
+    ["https://alice:a@b!c@[invalid/x?documentId=abc", "https://[invalid/x"],
+  ])("removes URL credentials from direct URL sanitization: %s", (value, expected) => {
+    const sanitized = sanitizeSentryUrl(value);
+
+    expect(sanitized).toBe(expected);
+    expect(sanitized).not.toMatch(/alice|s3cr|b!c|\[Email\]/);
+  });
+
+  describe.each(["X-Detail", "Referer", "x-forwarded-uri"])("%s URL-prefixed text privacy", (header) => {
+    it.each([
+      ["/retry with Bearer qa-header-credential", "/retry%20with%20Bearer%20[Filtered]"],
+      ["https://x/retry with Bearer qa-header-credential", "https://x/retry%20with%20Bearer%20[Filtered]"],
+      ["http://x/retry with Bearer qa-header-credential", "http://x/retry%20with%20Bearer%20[Filtered]"],
+      ["/help call 010 1234 5678", "/help%20call%20[Phone]"],
+      ["https://x/help call 010 1234 5678", "https://x/help%20call%20[Phone]"],
+      ["/help contact user@example.com", "/help%20contact%20[Email]"],
+      ["/retry with token=qa-header-credential", "/retry%20with%20token=[Filtered]"],
+    ])("redacts sensitive text before URL encoding: %s", (value, expected) => {
+      const sent = getSentryRuntimeOptions().beforeSend({
+        type: undefined,
+        request: { headers: { [header]: value } },
+      });
+
+      expect(sent.request?.headers?.[header]).toBe(expected);
+      expect(JSON.stringify(sent)).not.toMatch(/qa-header-credential|010(?: |%20)1234(?: |%20)5678|user(?:@|%40)example\.com/);
+    });
+  });
+
+  it.each([
+    ["X-Detail", "Contact 010 1234 5678 via https://example.com/help", "Contact [Phone] via https://example.com/help"],
+    ["X-Detail", "See https://example.com/help or call 010 1234 5678", "See https://example.com/help or call [Phone]"],
+    ["User-Agent", "ExampleBot/1.0 (+https://example.com/bot)", "ExampleBot/1.0 (+https://example.com/bot)"],
+    ["User-Agent", "ExampleBot/1.0 (+http://example.com/bot)", "ExampleBot/1.0 (+http://example.com/bot)"],
+  ])("sanitizes free-text %s without treating an embedded URL as the whole value", (header, value, expected) => {
+    const sent = getSentryRuntimeOptions().beforeSend({
+      type: undefined,
+      request: { headers: { [header]: value } },
+    });
+
+    expect(sent.request?.headers?.[header]).toBe(expected);
+    expect(JSON.stringify(sent)).not.toMatch(/010(?: |%20)1234(?: |%20)5678/);
+  });
+
+  it("strips queries and fragments from relative URLs in custom headers", () => {
+    const sent = getSentryRuntimeOptions().beforeSend({
+      type: undefined,
+      request: { headers: { "X-Custom-Header": "/contracts?documentId=abc#x" } },
+    });
+
+    expect(sent.request?.headers?.["X-Custom-Header"]).toBe("/contracts");
+  });
+
+  it.each(["Referer", "referer", "REFERER", "Origin", "x-forwarded-uri", "X-Original-URL", "Location", "Link", "Refresh", "X-Custom-Header"])("strips queries and fragments from %s", (header) => {
+    const sent = getSentryRuntimeOptions().beforeSend({
+      type: undefined,
+      request: { headers: {
+        [header]: "https://admin.example/contracts?documentId=abc&phone=01012345678#x",
+      } },
+    });
+    expect(sent.request?.headers?.[header]).toBe("https://admin.example/contracts");
+    expect(JSON.stringify(sent)).not.toMatch(/[?#]|documentId|abc|01012345678|#x/);
+  });
+
+  it("sanitizes relative and malformed header URLs while retaining ordinary headers", () => {
+    const sent = getSentryRuntimeOptions().beforeSend({
+      type: undefined,
+      request: { headers: {
+        "x-forwarded-uri": "/contracts?documentId=abc#x",
+        Referer: "https://[invalid/contracts?documentId=abc#x",
+        Authorization: "Bearer private-fixture",
+        "User-Agent": "Test browser",
+      } },
+    });
+    expect(sent.request?.headers).toEqual({
+      "x-forwarded-uri": "/contracts",
+      Referer: "https://[invalid/contracts",
+      Authorization: "[Filtered]",
+      "User-Agent": "Test browser",
+    });
+  });
+});
