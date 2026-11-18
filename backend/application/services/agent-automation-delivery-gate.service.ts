@@ -93,7 +93,8 @@ export class AgentAutomationDeliveryGateService {
     }
 
     async authorizeDispatch(job: MessageTriggerJobEntity, preparation: SmsTriggerDeliveryPreparation,
-        render: CanonicalAutomationRenderer, compareAndSet: Fence): Promise<AutomationDeliveryFence> {
+        render: CanonicalAutomationRenderer, compareAndSet: Fence,
+        dateRefresh?: { lockClaim: Fence; hold: Fence }): Promise<AutomationDeliveryFence> {
         const admitted = this.admitted.get(job);
         if (!job.branchId || !admitted) return { kind: "lost" };
         let final: FinalAdmission | undefined;
@@ -104,7 +105,18 @@ export class AgentAutomationDeliveryGateService {
                 || (admitted.authority === "allowed" && agentBindingHash(binding) !== agentBindingHash(admitted.binding))) {
                 return this.cancelProcessing(transaction, job);
             }
+            // Source locks must precede the row lock. Re-prove the admitted
+            // binding and persisted snapshot under those locks before a date
+            // hold can relinquish this reversible claim.
+            if (dateRefresh) {
+                const locked = await dateRefresh.lockClaim(transaction);
+                if (locked.kind !== "allow") return locked;
+            }
             if (!await this.matchesStored(transaction, job, binding, "processing", preparation.serializedSnapshot)) return { kind: "lost" as const };
+            if (dateRefresh) {
+                const held = await dateRefresh.hold(transaction);
+                if (held.kind !== "allow") return held;
+            }
             const canonical = await render(job, transaction);
             if (agentBindingHash(canonical) !== agentBindingHash(preparation.snapshot)) return this.cancelProcessing(transaction, job);
             const authority = await this.authority.checkAutomaticJob(transaction, job, "dispatch", render, preparation.snapshot.snapshotHash);
