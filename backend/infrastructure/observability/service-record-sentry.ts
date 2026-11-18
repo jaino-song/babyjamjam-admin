@@ -148,6 +148,7 @@ const DATABASE_CREDENTIAL_URL_PATTERN =
     /\b(?:postgres(?:ql)?|mysql|mariadb|mongodb(?:\+srv)?|redis):\/\/[^\s"'<>]+/gi;
 const EMAIL_PATTERN = /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi;
 const PHONE_PATTERN = /(?:\+?82[-\s]?)?0?1[016789][-.\s]?\d{3,4}[-.\s]?\d{4}/g;
+const CANONICAL_UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const BEARER_PATTERN = /(bearer\s+)[^\s,;]+/gi;
 const SERVICE_RECORD_TOKEN_PATTERN =
     /(\/(?:api\/)?service-record\/link\/)[^/?#\s]+/gi;
@@ -246,7 +247,9 @@ function sanitizeUnknown(value: unknown, depth = 0): unknown {
     return Object.fromEntries(
         Object.entries(value).map(([key, nestedValue]) => [
             key,
-            SENSITIVE_FIELD_PATTERN.test(key)
+            key === "jobId" && typeof nestedValue === "string" && CANONICAL_UUID_PATTERN.test(nestedValue)
+                ? nestedValue
+                : SENSITIVE_FIELD_PATTERN.test(key)
                 ? FILTERED_VALUE
                 : URL_FIELD_PATTERN.test(key) && typeof nestedValue === "string"
                 ? sanitizeSentryUrl(nestedValue)
@@ -470,6 +473,9 @@ function hasServiceRecordStack(event: Event): boolean {
 
 export function isServiceRecordEvent(event: Event): boolean {
     if (event.tags?.["feature"] === SERVICE_RECORD_FEATURE) return true;
+    if (event.tags?.["feature"] === BACKEND_FEATURE
+        && typeof event.tags["operation"] === "string"
+        && event.tags["operation"] !== "http") return false;
     return [
         event.transaction,
         event.request?.url,
@@ -577,6 +583,17 @@ function setPublicProblemTags(
     }
 }
 
+function getV8StackLines(sourceError: Error): string[] {
+    if (!sourceError.stack) return [];
+    const header = String(sourceError);
+    const lines = sourceError.stack.split("\n");
+    if (sourceError.stack === header || sourceError.stack.startsWith(`${header}\n`)) {
+        return lines.slice(header.split("\n").length).filter((line) => /^\s+at /.test(line));
+    }
+    const messageLines = new Set(sourceError.message.split("\n"));
+    return lines.filter((line) => /^\s+at /.test(line) && !messageLines.has(line));
+}
+
 export function captureBackendError(
     error: unknown,
     context: BackendErrorContext,
@@ -593,7 +610,7 @@ export function captureBackendError(
     if (sourceError.stack) {
         capturedError.stack = [
             capturedError.toString(),
-            ...sourceError.stack.split("\n").slice(1),
+            ...getV8StackLines(sourceError),
         ].join("\n");
     }
 
@@ -661,7 +678,7 @@ export function captureServiceRecordError(
     if (sourceError.stack) {
         capturedError.stack = [
             capturedError.toString(),
-            ...sourceError.stack.split("\n").slice(1),
+            ...getV8StackLines(sourceError),
         ].join("\n");
     }
     return Sentry.withScope((scope) => {
@@ -700,7 +717,7 @@ export function capturePrismaError(
     const capturedError = new Error(context.eligible || context.code === "P2024"
         ? "Database connectivity failure" : "Database operation failure");
     if (error instanceof Error && error.stack) {
-        capturedError.stack = [capturedError.toString(), ...error.stack.split("\n").slice(1).map(sanitizeText)].join("\n");
+        capturedError.stack = [capturedError.toString(), ...getV8StackLines(error).map(sanitizeText)].join("\n");
     }
     capturedError.name = "Prisma database error";
 
