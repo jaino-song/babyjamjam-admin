@@ -2,6 +2,7 @@ import { MessageAutomationIntentService } from "application/services/message-aut
 import { persistClientDateMessageAutomationIntent, persistScheduleMessageAutomationIntent } from "application/services/message-automation-intent-writer";
 import { lockServiceRecordWriteSet } from "application/policies/service-record-write-lock.policy";
 import { CLIENT_DATE_AUTOMATION_CHANGED_REASON, MESSAGE_AUTOMATION_INTENT_RULE_ID, MESSAGE_AUTOMATION_INTENT_RETRY_REASON } from "domain/constants/message-automation-intent";
+import { MESSAGE_SENDER_APPROVAL_REQUIRED_CANCEL_REASON } from "domain/constants/message-automation-policy";
 import type { SmsTriggerDeliveryPreparation } from "application/services/sms-trigger-delivery.service";
 import { ClientAutomationImpactService } from "application/services/client-automation-impact.service";
 import { ClientAutomationSourceReader } from "application/services/client-automation-source.reader";
@@ -36,6 +37,7 @@ import {
     EVENT_OFFSET_OPTIONS,
     MESSAGE_TRIGGER_TEMPLATE_CATALOG,
     MANUAL_SMS_TEMPLATE_KEY,
+    MANUAL_SMS_RULE_PREFIX,
     MessageTriggerEventType,
     MessageTriggerOffsetType,
     MessageTriggerRecipientType,
@@ -8812,6 +8814,9 @@ describe("service-record date reconciliation", () => {
                     && row.branchId === where.branchId && row.clientId === where.clientId && row.ruleId === where.ruleId
                     && row.status === where.status && !row.canceledByUser
                     && Object.entries(where).every(([key, value]) => key === "id" || row[key as keyof typeof row] === value));
+                if (data.dedupeKey && matches.some((row) => rows.some((other) => other.id !== row.id && other.dedupeKey === data.dedupeKey))) {
+                    throw new Error("Unique dedupe key conflict");
+                }
                 matches.forEach((row) => Object.assign(row, data)); return { count: matches.length };
             }) },
         };
@@ -8931,7 +8936,7 @@ describe("service-record date reconciliation", () => {
                 if (index < 0) return { count: 0 }; intents.splice(index, 1); return { count: 1 };
             }),
             updateMany: jest.fn(async (input: { where: Record<string, unknown>; data: Record<string, unknown> }) => {
-                if (typeof input.where["id"] !== "string") return reconcileUpdate(input as never);
+                if (typeof input.where["id"] !== "string" || input.where["dedupeKey"] !== undefined) return reconcileUpdate(input as never);
                 const row = find(input.where); if (!row) return { count: 0 };
                 Object.assign(row, structuredClone(input.data)); return { count: 1 };
             }),
@@ -9015,11 +9020,11 @@ describe("service-record date reconciliation", () => {
             if (result.kind !== "allow") return false;
             prepared.job.markDispatchAuthorized(); return true;
         };
-        const confirm = async (dateScope = scope, owner = { branchId, clientId: 7 }) => {
+        const confirm = async (dateScope = scope, owner = { branchId, clientId: 7 }, endDate = "2026-11-25Z") => {
             await db.$transaction(async (tx) => {
                 await lockServiceRecordWriteSet(tx, owner);
                 if (owner.branchId === branchId && owner.clientId === 7) {
-                    f.client.endDate = new Date("2026-11-25Z");
+                    f.client.endDate = new Date(endDate);
                     if (dateScope.scheduleIds.includes(f.schedule.id)) f.schedule.endDate = new Date(f.client.endDate);
                 }
                 await persistClientDateMessageAutomationIntent(tx, { ...owner, confirmation: "confirm-1", dateScope, intentAt: new Date() });
@@ -9102,24 +9107,89 @@ describe("service-record date reconciliation", () => {
         expect(old.attempts).toBe(0);
     });
 
-    it("moves an operator reservation without suppressing an independent rule for the same date", async () => {
+    it("drains a date revert into canceled history while keeping the real resend operator-only", async () => {
         const f = dispatchFixture();
-        const operator = f.seed(f.endRule, { status: "needs_setup", cancelReason: "QA-setup" });
-        const independent = f.rule("independent"); f.activeRules.push(independent);
+        const canceled = f.seed();
+        const originalKey = canceled.dedupeKey;
+        const worker = new MessageAutomationIntentService(f.db as never, f.service, {} as never, {} as never);
+        const drain = async () => {
+            const intent = f.intents[0]!;
+            expect(await worker.fulfillClientDateIntent({ branchId, clientId: 7, dedupeKey: String(intent["dedupeKey"]),
+                intentAt: intent["scheduledFor"] as Date, dateScope: scope })).toBe(true);
+            expect(f.intents).toEqual([]);
+        };
         await f.confirm();
+        await drain();
+        expect(canceled).toMatchObject({ status: "canceled", cancelReason: CLIENT_DATE_AUTOMATION_CHANGED_REASON });
+        const history = structuredClone(canceled);
+        const operator = f.rows.find((row) => row.ruleId === "end" && row.status === "pending")!;
+        const reason = "QA-operator setup reason";
+        operator.markNeedsSetup(reason);
+        const originalPrepare = f.delivery.prepareJob.getMockImplementation()!;
+        f.delivery.prepareJob.mockImplementationOnce(async (job) => {
+            const prepared = await originalPrepare(job);
+            expect(operator).toMatchObject({ status: "processing", cancelReason: reason });
+            await f.confirm(scope, { branchId, clientId: 7 }, "2026-11-20Z");
+            return prepared;
+        });
+        await f.service.resendNeedsSetupJob(branchId, operator.id);
+        expect(f.events).toContain("claimed-needs_setup");
+        expect(operator).toMatchObject({ status: "needs_setup", cancelReason: reason, claimToken: null, attempts: 0 });
+        expect(f.provider).not.toHaveBeenCalled();
+        await drain();
+        expect(operator).toMatchObject({ dedupeKey: originalKey, status: "needs_setup", cancelReason: reason,
+            scheduledFor: new Date("2026-11-20T01:30:00Z"), attempts: 0 });
+        expect(canceled.dedupeKey).not.toBe(originalKey);
+        expect({ ...canceled, dedupeKey: originalKey }).toEqual(history);
+        expect(f.rows).toHaveLength(2);
+        expect(f.rows.filter((row) => row.status === "pending")).toEqual([]);
+        const before = structuredClone(f.rows);
         await f.service.reconcileServiceRecordDateRules(branchId, 7, scope);
-        expect(operator).toMatchObject({ status: "needs_setup", cancelReason: "QA-setup", attempts: 0 });
-        expect(f.rows.filter((row) => row.ruleId === "end")).toEqual([operator]);
-        const automatic = f.rows.find((row) => row.ruleId === independent.id)!;
-        expect(automatic.status).toBe("pending");
-        jest.setSystemTime(automatic.scheduledFor);
-        // Only the independent rule is eligible for the automatic claim.
-        const prepared = (await f.prepare(automatic))!;
-        expect(await f.authorize(prepared)).toBe(true);
-        await f.delivery.sendPreparedJob(prepared.job, prepared.preparation);
+        expect(f.rows).toEqual(before);
+
+        jest.setSystemTime(new Date("2026-11-20T01:31:00Z"));
+        const due = jest.fn(async () => f.rows.filter((row) => row.status === "pending"
+            && row.scheduledFor <= new Date() && (!row.nextAttemptAt || row.nextAttemptAt <= new Date())));
+        Object.assign(f.jobs, { cancelOrphanedPending: async () => undefined,
+            findDueDispatchBranchIds: async () => [branchId], consumeDispatchSlotsAndFindDueJobs: due });
+        Object.assign(f.service, { reclaimStaleProcessingJobs: async () => undefined,
+            recoverApprovedBranches: async () => undefined, processStaleRuleRebuilds: async () => undefined });
+        f.sources.getMessagePolicyEnabled.mockResolvedValue(true);
+        await f.service.dispatchDueJobs();
+        expect(due).toHaveBeenCalledTimes(1);
+        expect(f.provider).not.toHaveBeenCalled();
+        expect(operator).toMatchObject({ status: "needs_setup", cancelReason: reason, attempts: 0 });
+        expect(await f.service.resendNeedsSetupJob(branchId, operator.id)).toMatchObject({ status: "sent" });
         expect(f.provider).toHaveBeenCalledTimes(1);
-        expect(operator.status).toBe("needs_setup");
+        expect(f.provider).toHaveBeenCalledWith(expect.objectContaining({ message: "QA-synthetic 2026-11-20T00:00:00.000Z" }));
+        expect(f.jobs.claimPendingWithRuleFence).not.toHaveBeenCalled();
     });
+
+    it.each([CLIENT_DATE_AUTOMATION_CHANGED_REASON, MESSAGE_SENDER_APPROVAL_REQUIRED_CANCEL_REASON])(
+        "moves an operator reservation into %s history without suppressing an independent rule for the same date", async (cancelReason) => {
+            const f = dispatchFixture();
+            const operator = f.seed(f.endRule, { status: "needs_setup", cancelReason: "QA-setup" });
+            f.client.endDate = new Date("2026-11-25Z");
+            const destination = f.seed(f.endRule, { status: "canceled", cancelReason });
+            f.client.endDate = new Date("2026-11-20Z");
+            const independent = f.rule("independent"); f.activeRules.push(independent);
+            await f.confirm();
+            await f.service.reconcileServiceRecordDateRules(branchId, 7, scope);
+            expect(operator).toMatchObject({ status: "needs_setup", cancelReason: "QA-setup", attempts: 0 });
+            expect(f.rows.filter((row) => row.ruleId === "end")).toEqual([operator, destination]);
+            expect(destination.status).toBe("canceled");
+            expect(destination.dedupeKey).not.toBe(operator.dedupeKey);
+            const automatic = f.rows.find((row) => row.ruleId === independent.id)!;
+            expect(automatic.status).toBe("pending");
+            jest.setSystemTime(automatic.scheduledFor);
+            // Only the independent rule is eligible for the automatic claim.
+            const prepared = (await f.prepare(automatic))!;
+            expect(await f.authorize(prepared)).toBe(true);
+            await f.delivery.sendPreparedJob(prepared.job, prepared.preparation);
+            expect(f.provider).toHaveBeenCalledTimes(1);
+            expect(operator.status).toBe("needs_setup");
+        },
+    );
 
     it("refreshes only the exact operator row alongside protected history without creating automatic work", async () => {
         const f = fixture();
@@ -9166,6 +9236,49 @@ describe("service-record date reconciliation", () => {
         const before = structuredClone(f.rows);
         await expect(f.service.reconcileServiceRecordDateRules(branchId, 7, scope)).rejects.toThrow("operator reservation");
         expect(f.rows).toEqual(before);
+        expect(f.jobs.upsertPendingForRuleGeneration).not.toHaveBeenCalled();
+    });
+
+    it.each(["user", "other-reason", "task", "reserved", "manual", "other-schedule", "other-branch"])(
+        "rejects an operator move into %s canceled history", async (mode) => {
+            const f = fixture();
+            f.seed(f.endRule, { status: "needs_setup", cancelReason: "QA-setup" });
+            f.client.endDate = new Date("2026-11-25Z");
+            const destination = f.seed(f.endRule, { status: "canceled", cancelReason: CLIENT_DATE_AUTOMATION_CHANGED_REASON });
+            if (mode === "user") destination.canceledByUser = true;
+            if (mode === "other-reason") destination.cancelReason = "SERVICE_RECORD_REVISION_SUPERSEDED";
+            if (mode === "task") destination.payload.taskAutomationReference = { actionId: "reviewed" } as never;
+            if (mode === "reserved") Object.assign(destination.payload, { agentAutomationRecord: {} });
+            if (mode === "manual") destination.ruleId = `${MANUAL_SMS_RULE_PREFIX}QA`;
+            if (mode === "other-schedule") destination.employeeScheduleId = 92;
+            if (mode === "other-branch") destination.branchId = "98000000-0000-4000-8000-000000000002";
+            const before = structuredClone(f.rows);
+            await expect(f.service.reconcileServiceRecordDateRules(branchId, 7, scope)).rejects.toThrow("operator reservation");
+            expect(f.rows).toEqual(before);
+            expect(f.tx.message_trigger_job.updateMany).not.toHaveBeenCalled();
+            expect(f.jobs.upsertPendingForRuleGeneration).not.toHaveBeenCalled();
+        },
+    );
+
+    it.each(["destination", "operator"])("rolls back canceled-key retirement if the %s fence is lost", async (lost) => {
+        const f = fixture();
+        f.seed(f.endRule, { status: "needs_setup", cancelReason: "QA-setup" });
+        f.client.endDate = new Date("2026-11-25Z");
+        const destination = f.seed(f.endRule, { status: "canceled", cancelReason: CLIENT_DATE_AUTOMATION_CHANGED_REASON });
+        const before = structuredClone(f.rows);
+        const update = f.tx.message_trigger_job.updateMany.getMockImplementation()!;
+        if (lost === "operator") f.tx.message_trigger_job.updateMany.mockImplementationOnce(update);
+        f.tx.message_trigger_job.updateMany.mockResolvedValueOnce({ count: 0 });
+        await expect(f.service.reconcileServiceRecordDateRules(branchId, 7, scope)).rejects.toThrow(
+            lost === "operator" ? "lost an operator reservation" : "lost a canceled reservation");
+        expect(f.rows).toEqual(before);
+        expect(f.tx.message_trigger_job.updateMany).toHaveBeenNthCalledWith(1, {
+            where: { id: destination.id, branchId, clientId: 7, ruleId: f.endRule.id,
+                status: "canceled", canceledByUser: false, cancelReason: CLIENT_DATE_AUTOMATION_CHANGED_REASON,
+                dedupeKey: before[1]!.dedupeKey, employeeScheduleId: null, recipientType: destination.recipientType,
+                templateKey: destination.templateKey, claimToken: destination.claimToken },
+            data: { dedupeKey: `${before[1]!.dedupeKey}:superseded:${destination.id}` },
+        });
         expect(f.jobs.upsertPendingForRuleGeneration).not.toHaveBeenCalled();
     });
 
