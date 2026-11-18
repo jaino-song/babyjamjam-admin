@@ -238,6 +238,55 @@ describe("all mobile Sentry errors", () => {
 
 describe("URL-valued request headers", () => {
   it.each([
+    ["Referer", "admin.example.com/x?documentId=qa-query-value#details"],
+    ["x-forwarded-uri", "contracts?documentId=qa-query-value#details"],
+    ["Link", "<https://a.example/x?documentId=qa-query-value>"],
+    ["Refresh", "0; url=/x?token=qa-query-value"],
+  ])("routes non-URL-shaped %s values by header name", (header, value) => {
+    const sent = getSentryRuntimeOptions().beforeSend({
+      type: undefined,
+      request: { headers: { [header]: value } },
+    });
+    const sanitized = sent.request?.headers?.[header];
+
+    expect(sanitized).toBeDefined();
+    expect(sanitized).not.toMatch(/[?#]|documentId|token|qa-query-value|details/);
+  });
+
+  it.each(["?", "/", "?/", "/?"])("strips userinfo containing an unencoded %s before parsing a Referer", (separator) => {
+    const sent = getSentryRuntimeOptions().beforeSend({
+      type: undefined,
+      request: { headers: {
+        Referer: `https://alice:p${separator}ss@admin.example.com/x?documentId=abc`,
+      } },
+    });
+
+    expect(sent.request?.headers?.Referer).toBe("https://admin.example.com/x");
+    expect(JSON.stringify(sent)).not.toMatch(/alice|p[?/]ss|ss@|documentId|abc/);
+  });
+
+  it.each([
+    ["https://alice:p?ss@admin.example.com/x?documentId=abc", "https://admin.example.com/x"],
+    ["https://alice:p/ss@admin.example.com/x?documentId=abc", "https://admin.example.com/x"],
+    ["https://alice:p?ss@[invalid/x?documentId=abc", "https://[invalid/x"],
+    ["https://alice:p/ss@[invalid/x?documentId=abc", "https://[invalid/x"],
+  ])("strips ambiguous userinfo from direct URL sanitization: %s", (value, expected) => {
+    const sanitized = sanitizeSentryUrl(value);
+
+    expect(sanitized).toBe(expected);
+    expect(sanitized).not.toMatch(/alice|p[?/]ss|ss@|documentId|abc/);
+  });
+
+  it.each(["origin", "Origin", "ORIGIN"])("preserves a browser %s header without adding a trailing slash", (header) => {
+    const sent = getSentryRuntimeOptions().beforeSend({
+      type: undefined,
+      request: { headers: { [header]: "https://admin.example.com" } },
+    });
+
+    expect(sent.request?.headers?.[header]).toBe("https://admin.example.com");
+  });
+
+  it.each([
     ["Referer", "https://alice:s3cr!t@admin.example.com/x?documentId=abc"],
     ["x-forwarded-uri", "https://alice:s3cr!t@admin.example.com/x"],
     ["Referer", "https://alice:a@b!c@admin.example.com/x?documentId=abc"],

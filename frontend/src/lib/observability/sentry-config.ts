@@ -17,7 +17,8 @@ const URL_FIELD_PATTERN = /(^|[._-])(url|uri|path)([._-]|$)/i;
 const REFERER_HEADER_PATTERN = /^referer$/i;
 const URL_HEADER_PATTERN = /^(origin|location|destination|link|refresh)$/i;
 const URL_HEADER_VALUE_PATTERN = /^(?:https?:\/\/|\/)/i;
-const URL_USERINFO_PATTERN = /([a-z][a-z0-9+.-]*:\/\/)[^\s/?#]*@/gi;
+// Greedy through the last @: malformed userinfo can contain raw ? or /.
+const URL_USERINFO_PATTERN = /([a-z][a-z0-9+.-]*:\/\/)[^\s]*@/gi;
 const QUERY_FIELD_PATTERN = /(^|[._-])query(?:_string)?([._-]|$)/i;
 const EMAIL_PATTERN = /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi;
 const PHONE_PATTERN = /(?:\+?82[-\s]?)?0?1[016789][-.\s]?\d{3,4}[-.\s]?\d{4}/g;
@@ -68,18 +69,18 @@ export function sanitizeSentryText(value: string): string {
 export function sanitizeSentryUrl(value: string | undefined): string | undefined {
   if (!value) return value;
 
+  const urlWithoutUserinfo = value.replace(URL_USERINFO_PATTERN, "$1");
   try {
     const baseUrl = "https://sentry.local";
-    const parsed = new URL(value, baseUrl);
+    const parsed = new URL(urlWithoutUserinfo, baseUrl);
     const path = sanitizeSentryText(parsed.pathname).replace(
       SERVICE_RECORD_ACCESS_TOKEN_PATTERN,
       `$1${FILTERED_VALUE}`,
     );
     return parsed.origin === baseUrl ? path : `${parsed.origin}${path}`;
   } catch {
-    const urlWithoutUserinfo = (value.split(/[?#]/, 1)[0] ?? value)
-      .replace(URL_USERINFO_PATTERN, "$1");
-    return sanitizeSentryText(urlWithoutUserinfo).replace(
+    const urlWithoutQuery = urlWithoutUserinfo.split(/[?#]/, 1)[0] ?? urlWithoutUserinfo;
+    return sanitizeSentryText(urlWithoutQuery).replace(
       SERVICE_RECORD_ACCESS_TOKEN_PATTERN,
       `$1${FILTERED_VALUE}`,
     );
@@ -135,7 +136,11 @@ function sanitizeHeaders(headers: Record<string, string> | undefined): Record<st
         // Strip userinfo before email masking can hide the URL's credential delimiter.
         const urlWithoutUserinfo = value.replace(URL_USERINFO_PATTERN, "$1");
         // Redact before URL parsing can encode whitespace and hide sensitive text.
-        return [key, sanitizeSentryUrl(sanitizeSentryText(urlWithoutUserinfo)) ?? FILTERED_VALUE];
+        const sanitizedUrl = sanitizeSentryUrl(sanitizeSentryText(urlWithoutUserinfo)) ?? FILTERED_VALUE;
+        // Preserve browser origins without the root slash added by URL parsing.
+        return [key, key.toLowerCase() === "origin"
+          ? sanitizedUrl.replace(/^([a-z][a-z0-9+.-]*:\/\/[^/]+)\/$/i, "$1")
+          : sanitizedUrl];
       }
       return [key, sanitizeSentryText(value)];
     }),
@@ -291,9 +296,13 @@ export function getSentryRuntimeOptions() {
       return {
         ...integration,
         processEvent(event, hint, client) {
-          // API errors already deduplicate by object identity in captureApiError.
-          if (event.tags?.feature === "api") return event;
-          return dedupe.processEvent ? dedupe.processEvent(event, hint, client) : event;
+          // Always update SDK state, including for API failures deduplicated by object identity.
+          const dedupedEvent = dedupe.processEvent ? dedupe.processEvent(event, hint, client) : event;
+          if (
+            event.tags?.feature === "api"
+            || event.fingerprint?.[0] === "api-error"
+          ) return event;
+          return dedupedEvent;
         },
       };
     }),
