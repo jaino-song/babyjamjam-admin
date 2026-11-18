@@ -4539,8 +4539,22 @@ export class MessageTriggerService {
             // Automatic delivery has no one-step compatibility bypass.
             if (!preparation) return { kind: "stale", reason: "문자 발송 준비를 다시 확인해야 합니다" };
             if (!this.automationDeliveryGate) throw new ServiceUnavailableException("Message automation authority is not configured");
+            // Match the legacy date-fence scope and its narrow test-double
+            // boundary. Revised jobs retain their existing revision checks.
+            const hasDateRefreshSource = (tx: Prisma.TransactionClient): boolean =>
+                job.payload.serviceRecordRevisionContext === undefined
+                && typeof tx.service_record_case?.findUnique === "function";
             return this.automationDeliveryGate.authorizeDispatch(job, preparation,
-                (candidate, tx) => this.deliveryService.resolveCanonicalDeliverySnapshot(candidate, tx), authorize);
+                (candidate, tx) => this.deliveryService.resolveCanonicalDeliverySnapshot(candidate, tx), authorize, {
+                    lockClaim: async (tx) => {
+                        if (!job.branchId || job.clientId === null || !hasDateRefreshSource(tx)) return { kind: "allow" };
+                        await lockServiceRecordWriteSet(tx, { branchId: job.branchId, clientId: job.clientId });
+                        return this.fenceClaimTokenBeforeProviderSend(job, tx, preparation.serializedSnapshot);
+                    },
+                    hold: async (tx) => hasDateRefreshSource(tx)
+                        ? this.fenceOutstandingDateRefresh(job, tx)
+                        : { kind: "allow" },
+                });
         }
         return this.prisma.$transaction(authorize, {
             maxWait: CLAIM_DISPATCH_AUTHORIZATION_TIMEOUT_MS,

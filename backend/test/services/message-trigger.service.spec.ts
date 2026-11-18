@@ -8874,6 +8874,7 @@ describe("service-record date reconciliation", () => {
                 events.push("claim-released"); return [{ id: row["id"] }];
             }
             if (query.includes("SELECT status,")) {
+                events.push("claim-locked");
                 const row = f.rows.find((row) => values.includes(row["id"]));
                 return row ? [{ status: row["status"], claim_token: row["claimToken"], branch_id: row["branchId"], rule_id: row["ruleId"],
                     client_id: row["clientId"], employee_schedule_id: row["employeeScheduleId"], recipient_type: row["recipientType"],
@@ -8889,7 +8890,7 @@ describe("service-record date reconciliation", () => {
         });
         const db = Object.assign(f.tx, {
             $queryRaw: raw,
-            $executeRaw: jest.fn(async () => 1),
+            $executeRaw: jest.fn(async () => { events.push("branch-locked"); return 1; }),
             $transaction: async <T>(work: (tx: Prisma.TransactionClient) => Promise<T>): Promise<T> => work(db as never),
             service_record_case: { findUnique: jest.fn(async () => null) },
             message_trigger_rule: { findUnique: jest.fn(async () => ({ id: MESSAGE_AUTOMATION_INTENT_RULE_ID })) },
@@ -8898,7 +8899,9 @@ describe("service-record date reconciliation", () => {
         const reconcileUpdate = f.tx.message_trigger_job.updateMany;
         Object.assign(db.message_trigger_job, {
             findUnique: jest.fn(async ({ where }: { where: Record<string, unknown> }) => structuredClone(find(where) ?? null)),
-            findFirst: jest.fn(async ({ where }: { where: Record<string, unknown> }) => structuredClone(find(where) ?? null)),
+            findFirst: jest.fn(async ({ where }: { where: Record<string, unknown> }) => {
+                events.push("binding-read"); return structuredClone(find(where) ?? null);
+            }),
             findMany: jest.fn(async ({ where }: { where: Prisma.message_trigger_jobWhereInput }) => {
                 if (!where["OR"]) return []; // No consent records: exercise the existing real legacy authority path.
                 events.push("outstanding-intents-read");
@@ -9192,6 +9195,55 @@ describe("service-record date reconciliation", () => {
         expect(untouched).toEqual(untouchedBefore);
     });
 
+    it("holds a prepared caregiver before canonical refusal, then sends its recovered latest snapshot", async () => {
+        const f = dispatchFixture();
+        f.activeRules.push(f.careRule);
+        const recipe = (await f.recipients.resolve(branchId, 7, [f.careRule], f.db as never)).recipients[0]!.recipe!;
+        const old = f.seed(f.endRule, recipe), oldDedupeKey = old.dedupeKey;
+        const prepared = (await f.prepare(old))!;
+        expect(prepared).not.toBeNull();
+        const oldPayload = structuredClone(old.payload);
+        const unaffected = f.seed(f.createdRule), unaffectedPrepared = (await f.prepare(unaffected))!;
+        const changedScope = { ...scope, scheduleIds: [91] };
+        await f.confirm(changedScope);
+        const latestSnapshot = await f.delivery.resolveCanonicalDeliverySnapshot(prepared.job);
+        expect(latestSnapshot).not.toEqual(prepared.preparation.snapshot);
+        const finalEventsStart = f.events.length;
+        expect(await f.authorize(prepared)).toBe(false);
+        expect(old.status).toBe("pending"); expect(old.claimToken).toBeNull();
+        expect(old.canceledAt).toBeNull(); expect(old.cancelReason).toBeNull();
+        expect(old.payload).toEqual(oldPayload); expect(old.dedupeKey).toBe(oldDedupeKey);
+        expect(f.jobs.releaseProcessingForDateRefresh).toHaveBeenCalledTimes(1);
+        expect(f.events).not.toContain("dispatch-authorized"); expect(f.provider).not.toHaveBeenCalled();
+        expect(f.intents).toHaveLength(1);
+        const finalEvents = f.events.slice(finalEventsStart);
+        expect(finalEvents.indexOf("branch-locked")).toBeLessThan(finalEvents.indexOf("client-source-locked"));
+        expect(finalEvents.indexOf("client-source-locked")).toBeLessThan(finalEvents.indexOf("claim-locked"));
+        expect(finalEvents.indexOf("claim-locked")).toBeLessThan(finalEvents.indexOf("binding-read"));
+        expect(finalEvents.indexOf("binding-read")).toBeLessThan(finalEvents.indexOf("outstanding-intents-read"));
+        expect(finalEvents.indexOf("outstanding-intents-read")).toBeLessThan(finalEvents.indexOf("claim-released"));
+
+        // An outstanding marker must not freeze an unchanged scoped reservation.
+        expect(await f.authorize(unaffectedPrepared)).toBe(true);
+        await f.delivery.sendPreparedJob(unaffectedPrepared.job, unaffectedPrepared.preparation);
+        expect(f.provider).toHaveBeenCalledTimes(1); expect(f.intents).toHaveLength(1);
+
+        const worker = new MessageAutomationIntentService(f.db as never, f.service, {} as never, {} as never);
+        const intent = f.intents[0]!;
+        expect(await worker.fulfillClientDateIntent({ branchId, clientId: 7, dedupeKey: String(intent["dedupeKey"]),
+            intentAt: intent["scheduledFor"] as Date, dateScope: changedScope })).toBe(true);
+        expect(f.intents).toEqual([]);
+        const refreshed = f.rows.find((row) => row.ruleId === f.careRule.id && row.status === "pending")!;
+        expect(refreshed.dedupeKey).toBe(oldDedupeKey);
+        expect(refreshed.payload.caregiverSourceSnapshot!.schedule.endDate).toBe("2026-11-25T00:00:00.000Z");
+        const current = (await f.prepare(refreshed))!;
+        expect(current.preparation.snapshot).toEqual(latestSnapshot);
+        expect(current.preparation.serializedSnapshot).not.toBe(prepared.preparation.serializedSnapshot);
+        expect(await f.authorize(current)).toBe(true);
+        await f.delivery.sendPreparedJob(current.job, current.preparation);
+        expect(f.provider).toHaveBeenCalledTimes(2);
+    });
+
     it("releases an assignment changed after preparation before the existing stale-source cancellation", async () => {
         const f = dispatchFixture();
         const rule = Object.assign(f.rule("assignment", MessageTriggerEventType.EMPLOYEE_ASSIGNED), {
@@ -9206,6 +9258,48 @@ describe("service-record date reconciliation", () => {
         expect(await f.authorize(prepared!)).toBe(false);
         expect(old.status).toBe("pending"); expect(old.claimToken).toBeNull();
         expect(f.jobs.releaseProcessingForDateRefresh).toHaveBeenCalledTimes(1);
+        expect(f.events).not.toContain("dispatch-authorized"); expect(f.provider).not.toHaveBeenCalled();
+    });
+
+    it.each(["claim", "snapshot", "seal", "source"])("does not release a prepared caregiver with a mismatching stored %s", async (changed) => {
+        const f = dispatchFixture(); f.activeRules.push(f.careRule);
+        const recipe = (await f.recipients.resolve(branchId, 7, [f.careRule], f.db as never)).recipients[0]!.recipe!;
+        const old = f.seed(f.endRule, recipe), prepared = (await f.prepare(old))!;
+        expect(prepared).not.toBeNull();
+        await f.confirm({ ...scope, scheduleIds: [91] });
+        if (changed === "claim") old.claimToken = "other-worker";
+        if (changed === "snapshot") old.payload.templateVariables[SMS_DELIVERY_SNAPSHOT_VARIABLE] = "other-snapshot";
+        if (changed === "seal") old.payload.agentAutomationSeal = { version: 2 } as never;
+        if (changed === "source") old.payload.recipientName = "QA-changed";
+        const before = structuredClone(old);
+        expect(await f.authorize(prepared)).toBe(false);
+        expect(old).toEqual(before); expect(f.intents).toHaveLength(1);
+        expect(f.jobs.releaseProcessingForDateRefresh).not.toHaveBeenCalled();
+        expect(f.events).not.toContain("dispatch-authorized"); expect(f.provider).not.toHaveBeenCalled();
+    });
+
+    it("still refuses caregiver authority while an unchanged date scope is outstanding", async () => {
+        const f = dispatchFixture(); f.activeRules.push(f.careRule);
+        const recipe = (await f.recipients.resolve(branchId, 7, [f.careRule], f.db as never)).recipients[0]!.recipe!;
+        const old = f.seed(f.endRule, recipe), prepared = (await f.prepare(old))!;
+        expect(prepared).not.toBeNull();
+        await persistClientDateMessageAutomationIntent(f.db as never, { branchId, clientId: 7,
+            confirmation: "unchanged-dates", dateScope: { ...scope, scheduleIds: [91] }, intentAt: new Date() });
+        f.sources.readClientAutomationSettings.mockRejectedValue(new Error("Settings unavailable"));
+        expect(await f.authorize(prepared)).toBe(false);
+        expect(old.status).toBe("canceled"); expect(old.claimToken).toBeNull();
+        expect(f.intents).toHaveLength(1); expect(f.jobs.releaseProcessingForDateRefresh).not.toHaveBeenCalled();
+        expect(f.events).not.toContain("dispatch-authorized"); expect(f.provider).not.toHaveBeenCalled();
+    });
+
+    it("still cancels a changed caregiver canonical snapshot without an outstanding date marker", async () => {
+        const f = dispatchFixture(); f.activeRules.push(f.careRule);
+        const recipe = (await f.recipients.resolve(branchId, 7, [f.careRule], f.db as never)).recipients[0]!.recipe!;
+        const old = f.seed(f.endRule, recipe), prepared = (await f.prepare(old))!;
+        expect(prepared).not.toBeNull();
+        f.client.endDate = new Date("2026-11-25Z"); f.schedule.endDate = new Date(f.client.endDate);
+        expect(await f.authorize(prepared)).toBe(false);
+        expect(old.status).toBe("canceled"); expect(f.jobs.releaseProcessingForDateRefresh).not.toHaveBeenCalled();
         expect(f.events).not.toContain("dispatch-authorized"); expect(f.provider).not.toHaveBeenCalled();
     });
 
