@@ -2670,10 +2670,13 @@ export class MessageTriggerService {
                 const affected = anchorChanged || family.some((row) => job && !sameSource(row, job));
                 if (!affected) return;
                 // Logical recipient scope spans historical date keys. Delivery uncertainty is never replayed.
-                if (family.some((row) => row.canceledByUser || ["sent", "dispatching", "failed"].includes(row.status)
+                const replacementBlocked = family.some((row) => row.canceledByUser || ["sent", "dispatching", "failed"].includes(row.status)
                     || row.payload.taskAutomationReference || isReservedAutomationJob(row)
-                    || row.cancelReason === "SERVICE_RECORD_REVISION_SUPERSEDED")) return;
-                if (family.some((row) => row.status === "processing" && (!job || row.dedupeKey !== job.dedupeKey || !sameSource(row, job)))) {
+                    || row.cancelReason === "SERVICE_RECORD_REVISION_SUPERSEDED");
+                const reversible = (row: MessageTriggerJobReviewSnapshot) => ordinary(row) && !row.canceledByUser
+                    && row.cancelReason !== "SERVICE_RECORD_REVISION_SUPERSEDED";
+                if (family.some((row) => reversible(row) && row.status === "processing"
+                    && (!job || row.dedupeKey !== job.dedupeKey || !sameSource(row, job)))) {
                     throw new ConflictException("Message date reconciliation is waiting for a processing reservation");
                 }
                 const currentEquivalent = current && job && sameSource(current, job)
@@ -2685,10 +2688,12 @@ export class MessageTriggerService {
                 const eligible = job && (existingOccurrence || ((includePast || job.scheduledFor.getTime() > Date.now())
                     && !(includePast && rule.recipientType === MessageTriggerRecipientType.CLIENT && this.shouldSkipPreStartCatchUp(rule, client))
                     && isMessageRecipeWithinMaterializationWindow(job, rule, includePast, new Date())));
-                if (eligible && !existingOccurrence && !currentEquivalent) catchUpCandidates.push({ rule, job });
+                if (!replacementBlocked && eligible && !existingOccurrence && !currentEquivalent) catchUpCandidates.push({ rule, job });
                 reconciliations.push({ job, apply: async () => {
-                    const stale = family.filter((row) => row.status === "pending"
-                        && (!eligible || row.dedupeKey !== job!.dedupeKey));
+                    // Protected history blocks replacement, but cannot keep obsolete reversible siblings dispatchable.
+                    const stale = family.filter((row) => reversible(row) && row.status === "pending"
+                        && (!eligible || row.dedupeKey !== job!.dedupeKey
+                            || (replacementBlocked && (!sameSource(row, job!) || row.scheduledFor.getTime() !== job!.scheduledFor.getTime()))));
                     if (stale.length) {
                         await tx.message_trigger_job.updateMany({
                             where: { branchId, clientId, ruleId: rule.id, id: { in: stale.map((row) => row.id) }, status: "pending", canceledByUser: false },
@@ -2696,7 +2701,7 @@ export class MessageTriggerService {
                                 claimToken: null, nextAttemptAt: null },
                         });
                     }
-                    if (!eligible || currentEquivalent) return;
+                    if (replacementBlocked || !eligible || currentEquivalent) return;
                     // A protected task-owned slot is kept separate even if its reviewed source has drifted.
                     const protectedSlot = previous.some((row) => row.dedupeKey === job!.dedupeKey && !ordinary(row));
                     if (protectedSlot) return;

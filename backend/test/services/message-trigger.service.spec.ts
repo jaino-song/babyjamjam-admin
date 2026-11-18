@@ -1,7 +1,7 @@
 import { MessageAutomationIntentService } from "application/services/message-automation-intent.service";
 import { persistClientDateMessageAutomationIntent, persistScheduleMessageAutomationIntent } from "application/services/message-automation-intent-writer";
 import { lockServiceRecordWriteSet } from "application/policies/service-record-write-lock.policy";
-import { MESSAGE_AUTOMATION_INTENT_RULE_ID, MESSAGE_AUTOMATION_INTENT_RETRY_REASON } from "domain/constants/message-automation-intent";
+import { CLIENT_DATE_AUTOMATION_CHANGED_REASON, MESSAGE_AUTOMATION_INTENT_RULE_ID, MESSAGE_AUTOMATION_INTENT_RETRY_REASON } from "domain/constants/message-automation-intent";
 import type { SmsTriggerDeliveryPreparation } from "application/services/sms-trigger-delivery.service";
 import { ClientAutomationImpactService } from "application/services/client-automation-impact.service";
 import { ClientAutomationSourceReader } from "application/services/client-automation-source.reader";
@@ -9031,6 +9031,69 @@ describe("service-record date reconciliation", () => {
         expect(f.provider).toHaveBeenCalledTimes(1);
     });
 
+    it("retires obsolete pending work despite failed history before a due second attempt after marker consumption", async () => {
+        const f = dispatchFixture();
+        f.client.endDate = new Date("2026-11-15Z");
+        const failed = f.seed(f.endRule, { status: "failed", attempts: 3 });
+        const failedBefore = structuredClone(failed);
+        f.client.endDate = new Date("2026-11-20Z");
+        const obsolete = f.seed(), originalDueAt = new Date(obsolete.scheduledFor);
+        jest.setSystemTime(originalDueAt);
+        await f.confirm();
+        expect(await f.prepare(obsolete)).toBeNull();
+        expect(obsolete.status).toBe("pending"); expect(obsolete.claimToken).toBeNull();
+        expect(f.intents).toHaveLength(1);
+        expect(f.delivery.prepareJob).not.toHaveBeenCalled(); expect(f.provider).not.toHaveBeenCalled();
+
+        const worker = new MessageAutomationIntentService(f.db as never, f.service, {} as never, {} as never);
+        const intent = f.intents[0]!;
+        expect(await worker.fulfillClientDateIntent({ branchId, clientId: 7, dedupeKey: String(intent["dedupeKey"]),
+            intentAt: intent["scheduledFor"] as Date, dateScope: scope })).toBe(true);
+        expect(f.intents).toEqual([]);
+        // Retry at a due instant: the base's surviving pending reservation reaches the provider here.
+        jest.setSystemTime(new Date(originalDueAt.getTime() + 60_000));
+        expect(originalDueAt.getTime()).toBeLessThan(Date.now());
+        expect(obsolete.nextAttemptAt).toBeNull();
+        for (const row of f.rows.filter((row) => row.status === "pending" && !row.canceledByUser
+            && row.scheduledFor.getTime() <= Date.now() && (!row.nextAttemptAt || row.nextAttemptAt.getTime() <= Date.now()))) {
+            const prepared = await f.prepare(row);
+            if (prepared && await f.authorize(prepared)) await f.delivery.sendPreparedJob(prepared.job, prepared.preparation);
+        }
+        expect(f.provider).not.toHaveBeenCalled();
+        expect(obsolete.status).toBe("canceled");
+        expect(obsolete.cancelReason).toBe(CLIENT_DATE_AUTOMATION_CHANGED_REASON);
+        expect(failed).toEqual(failedBefore); expect(f.rows).toHaveLength(2);
+        expect(f.jobs.upsertPendingForRuleGeneration).not.toHaveBeenCalled();
+    });
+
+    it("retains a date marker for a stale processing sibling despite failed history until its claim is released", async () => {
+        const f = dispatchFixture();
+        f.client.endDate = new Date("2026-11-15Z");
+        const failed = f.seed(f.endRule, { status: "failed" }), failedBefore = structuredClone(failed);
+        f.client.endDate = new Date("2026-11-20Z");
+        const obsolete = f.seed(), prepared = (await f.prepare(obsolete))!;
+        expect(prepared).not.toBeNull();
+        await f.confirm();
+        const processingBefore = structuredClone(obsolete);
+        const worker = new MessageAutomationIntentService(f.db as never, f.service, {} as never, {} as never);
+        const intent = f.intents[0]!;
+        const fulfill = () => worker.fulfillClientDateIntent({ branchId, clientId: 7, dedupeKey: String(intent["dedupeKey"]),
+            intentAt: intent["scheduledFor"] as Date, dateScope: scope });
+        await expect(fulfill()).rejects.toThrow("processing reservation");
+        expect(f.intents).toHaveLength(1); expect(obsolete).toEqual(processingBefore);
+        expect(failed).toEqual(failedBefore); expect(f.provider).not.toHaveBeenCalled();
+        expect(f.jobs.upsertPendingForRuleGeneration).not.toHaveBeenCalled();
+
+        expect(await f.authorize(prepared)).toBe(false);
+        expect(obsolete.status).toBe("pending"); expect(obsolete.claimToken).toBeNull();
+        expect(f.jobs.releaseProcessingForDateRefresh).toHaveBeenCalledTimes(1);
+        jest.setSystemTime(new Date(Date.now() + 600_000));
+        expect(await fulfill()).toBe(true); expect(f.intents).toEqual([]);
+        expect(obsolete.status).toBe("canceled"); expect(failed).toEqual(failedBefore);
+        expect(f.rows).toHaveLength(2); expect(f.jobs.upsertPendingForRuleGeneration).not.toHaveBeenCalled();
+        expect(f.provider).not.toHaveBeenCalled();
+    });
+
     it("holds a confirmation winner before preparation without canceling the reservation", async () => {
         const f = dispatchFixture(); const old = f.seed(); await f.confirm();
         expect(await f.prepare(old)).toBeNull();
@@ -9216,6 +9279,71 @@ describe("service-record date reconciliation", () => {
         await f.service.reconcileServiceRecordDateRules(branchId, 7, scope);
         expect(stale.status).toBe("canceled"); expect(current).toEqual(before);
         expect(f.jobs.upsertPendingForRuleGeneration).not.toHaveBeenCalled();
+    });
+
+    it("retires only the obsolete sibling alongside failed history and a fully matching pending occurrence", async () => {
+        const f = fixture();
+        f.client.endDate = new Date("2026-11-15Z");
+        const failed = f.seed(f.endRule, { status: "failed" }), failedBefore = structuredClone(failed);
+        f.client.endDate = new Date("2026-11-20Z");
+        const obsolete = f.seed();
+        f.client.endDate = new Date("2026-11-25Z");
+        const current = f.seed(), currentBefore = structuredClone(current);
+        await f.service.reconcileServiceRecordDateRules(branchId, 7, scope);
+        await f.service.reconcileServiceRecordDateRules(branchId, 7, scope);
+        expect(obsolete.status).toBe("canceled");
+        expect(obsolete.cancelReason).toBe(CLIENT_DATE_AUTOMATION_CHANGED_REASON);
+        expect(failed).toEqual(failedBefore); expect(current).toEqual(currentBefore);
+        expect(f.rows).toHaveLength(3); expect(f.jobs.upsertPendingForRuleGeneration).not.toHaveBeenCalled();
+        expect(f.tx.message_trigger_job.updateMany).toHaveBeenCalledTimes(1);
+        expect(f.tx.message_trigger_job.updateMany).toHaveBeenCalledWith({
+            where: { branchId, clientId: 7, ruleId: f.endRule.id, id: { in: [obsolete.id] }, status: "pending", canceledByUser: false },
+            data: { status: "canceled", canceledAt: expect.any(Date), cancelReason: CLIENT_DATE_AUTOMATION_CHANGED_REASON,
+                claimToken: null, nextAttemptAt: null },
+        });
+    });
+
+    it.each(["source", "scheduled-time"])("retires a protected family's same-key pending reservation with %s drift without replay", async (drift) => {
+        const f = fixture();
+        // Synthetic generic schedule state: no template rendering or employee reassignment is needed.
+        const rule = Object.assign(f.rule("generic-schedule", MessageTriggerEventType.EMPLOYEE_ASSIGNED), {
+            recipientType: MessageTriggerRecipientType.PRIMARY_EMPLOYEE,
+            offsetType: drift === "source" ? MessageTriggerOffsetType.IMMEDIATE : MessageTriggerOffsetType.SAME_DAY,
+        });
+        f.activeRules.push(rule);
+        f.sources.getMessagePolicyEnabled.mockResolvedValue(true);
+        const recipe = buildEmployeeAssignmentMessageRecipe(rule, f.schedule, new Date())!;
+        const failed = f.seed(f.endRule, { ...recipe, dedupeKey: `${recipe.dedupeKey}:earlier-occurrence`,
+            scheduledFor: new Date(Date.now() - 120_000), status: "failed", attempts: 3 });
+        const failedBefore = structuredClone(failed);
+        const obsolete = f.seed(f.endRule, { ...structuredClone(recipe),
+            scheduledFor: new Date(Date.now() - (drift === "source" ? 0 : 60_000)) });
+        if (drift === "source") f.schedule.endDate = new Date("2026-11-25Z");
+        const current = buildEmployeeAssignmentMessageRecipe(rule, f.schedule, new Date())!;
+        expect(obsolete.dedupeKey).toBe(current.dedupeKey);
+        expect(failed.dedupeKey).not.toBe(current.dedupeKey);
+        if (drift === "source") {
+            expect(obsolete.payload.employeeScheduleFingerprint).not.toBe(current.payload.employeeScheduleFingerprint);
+            expect(obsolete.scheduledFor).toEqual(current.scheduledFor);
+        } else {
+            expect(obsolete.payload).toEqual(current.payload);
+            expect(obsolete.scheduledFor).not.toEqual(current.scheduledFor);
+        }
+
+        const scheduleScope = { startDate: false, endDate: false, scheduleIds: [f.schedule.id] };
+        await f.service.reconcileServiceRecordDateRules(branchId, 7, scheduleScope);
+        await f.service.reconcileServiceRecordDateRules(branchId, 7, scheduleScope);
+        expect(obsolete.status).toBe("canceled");
+        expect(obsolete.cancelReason).toBe(CLIENT_DATE_AUTOMATION_CHANGED_REASON);
+        expect(failed).toEqual(failedBefore);
+        expect(f.rows).toHaveLength(2);
+        expect(f.jobs.upsertPendingForRuleGeneration).not.toHaveBeenCalled();
+        expect(f.tx.message_trigger_job.updateMany).toHaveBeenCalledTimes(1);
+        expect(f.tx.message_trigger_job.updateMany).toHaveBeenCalledWith({
+            where: { branchId, clientId: 7, ruleId: rule.id, id: { in: [obsolete.id] }, status: "pending", canceledByUser: false },
+            data: { status: "canceled", canceledAt: expect.any(Date), cancelReason: CLIENT_DATE_AUTOMATION_CHANGED_REASON,
+                claimToken: null, nextAttemptAt: null },
+        });
     });
 
     it("overlapping date scopes reconcile each event against the current source and leave another branch alone", async () => {
