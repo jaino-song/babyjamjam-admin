@@ -1,5 +1,6 @@
 import { agentBindingHash } from "domain/repositories/agent-linked-action.types";
 import { agentAutomationSourcePayload } from "application/services/agent-automation-job-binding";
+import { buildSmsProviderAcceptanceKey } from "application/services/sms-provider-acceptance.service";
 import { MANUAL_SMS_TEMPLATE_KEY, MANUAL_SMS_RULE_PREFIX } from "domain/constants/message-trigger-catalog";
 import { parseMessageQuietHold, messageQuietHoldVariables, type MessageQuietHold, type MessageQuietHoursDecision } from "domain/message-policy-evaluator";
 import type { MessageQuietHeldJob } from "domain/repositories/message-trigger-job.repository.interface";
@@ -1221,7 +1222,7 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
         if (!job.branchId || job.clientId === null || !job.claimToken) return false;
         const rows = await transaction.$queryRaw<Array<{ id: string }>>(Prisma.sql`
             UPDATE "message_trigger_job" AS job
-            SET status = 'pending', claim_token = NULL, processing_deadline_at = NULL, next_attempt_at = NULL,
+            SET status = 'pending', claim_token = NULL, processing_deadline_at = NULL,
                 updated_at = date_trunc('milliseconds', clock_timestamp())
             WHERE job.id = ${job.id} AND job.branch_id = ${job.branchId}::uuid AND job.client_id = ${job.clientId}
               AND job.rule_id = ${job.ruleId} AND job.dedupe_key = ${job.dedupeKey}
@@ -1699,8 +1700,10 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
                         || replacement.dedupeKey !== `${SERVICE_RECORD_LINK_RULE_ID}:schedule:${employeeScheduleId}:primary`) {
                         throw new Error("Automatic replacement requires the canonical service-record link key");
                     }
-                    const rows = await transaction.$queryRaw<Array<{ id: string; status: string; canceled_by_user: boolean; cancel_reason: string | null; payload: unknown; scheduled_for: Date; recipient_phone: string | null }>>(Prisma.sql`
-                        SELECT id, status, canceled_by_user, cancel_reason, payload, scheduled_for, recipient_phone FROM "message_trigger_job"
+                    const rows = await transaction.$queryRaw<Array<{ id: string; status: string; canceled_by_user: boolean; cancel_reason: string | null; payload: unknown; scheduled_for: Date; recipient_phone: string | null;
+                        attempts: number; next_attempt_at: Date | null; claim_token: string | null; processing_deadline_at: Date | null }>>(Prisma.sql`
+                        SELECT id, status, canceled_by_user, cancel_reason, payload, scheduled_for, recipient_phone,
+                            attempts, next_attempt_at, claim_token, processing_deadline_at FROM "message_trigger_job"
                         WHERE branch_id = ${replacement.branchId}::uuid AND client_id = ${replacement.clientId}
                           AND rule_id = ${ruleId} AND employee_schedule_id = ${employeeScheduleId}
                           AND dedupe_key = ${replacement.dedupeKey} FOR UPDATE
@@ -1745,9 +1748,16 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
                         return { kind: "protected" };
                     }
                     // Lock exactly bound attempts. Unbound schedule logs and manual attempts never enter this set.
-                    const logs = await transaction.$queryRaw<Array<{ id: number; safe: boolean }>>(Prisma.sql`
-                        SELECT id, (
+                    const logs = await transaction.$queryRaw<Array<{ id: number; safe: boolean; status: string; variables: Prisma.JsonValue;
+                        attempts: number; nextRetryAt: Date | null; providerAcceptanceKey: string | null; providerAcceptanceFingerprint: string | null;
+                        providerAcceptanceState: string; providerCallStartedAt: Date | null; providerAcceptedAt: Date | null; aligoMid: string | null;
+                        updatedAt: Date }>>(Prisma.sql`
+                        SELECT id, status, variables, attempts, next_retry_at AS "nextRetryAt",
+                            provider_acceptance_key AS "providerAcceptanceKey", provider_acceptance_fingerprint AS "providerAcceptanceFingerprint",
+                            provider_acceptance_state AS "providerAcceptanceState", provider_call_started_at AS "providerCallStartedAt",
+                            provider_accepted_at AS "providerAcceptedAt", aligo_mid AS "aligoMid", updated_at AS "updatedAt", (
                             status IN ('pending', 'failed') AND next_retry_at IS NOT NULL
+                            AND provider_accepted_at IS NULL AND aligo_mid IS NULL
                             AND COALESCE(variables->>'retrySafety', '') NOT IN ('partial', 'uncertain', 'delivered', 'manual-provider-rejected')
                             AND (provider_acceptance_state IN ('rejected', 'reconciled_not_delivered')
                                 OR (provider_acceptance_state = 'prepared' AND provider_call_started_at IS NULL)
@@ -1756,7 +1766,23 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
                         WHERE branch_id = ${replacement.branchId}::uuid AND trigger_job_id = ${existing.id}
                           AND provider = 'aligo_sms' ORDER BY id FOR UPDATE
                     `);
-                    if (logs.some((log) => !log.safe)) return { kind: "protected" };
+                    const quietLogs = logs.filter((log) => {
+                        const hold = parseMessageQuietHold(log.variables);
+                        const variables = log.variables as Record<string, unknown> | null;
+                        return hold && (existing.status === "pending" || reclaimableCancellation) && existing.attempts === 0
+                            && existing.claim_token === null && existing.processing_deadline_at === null
+                            && existing.next_attempt_at !== null && existing.next_attempt_at >= hold.releaseAt
+                            && hold.originalScheduledFor.getTime() === new Date(existing.scheduled_for).getTime()
+                            && (!(existing.payload && typeof existing.payload === "object" && "existingMessageLogId" in existing.payload)
+                                || existing.payload.existingMessageLogId === log.id)
+                            && log.status === "pending" && log.attempts === 0 && log.nextRetryAt === null
+                            && log.providerAcceptanceState === "prepared" && log.providerCallStartedAt === null
+                            && log.providerAcceptedAt === null && log.aligoMid === null
+                            && log.providerAcceptanceKey === buildSmsProviderAcceptanceKey("automation", `${replacement.branchId}:${existing.id}`)
+                            && !!log.providerAcceptanceFingerprint?.trim()
+                            && !["partial", "uncertain", "delivered", "manual-provider-rejected"].includes(String(variables?.["retrySafety"] ?? ""));
+                    });
+                    if (quietLogs.length > 1 || logs.some((log) => !log.safe && !quietLogs.includes(log))) return { kind: "protected" };
                     // Both the reservation and its proven retry attempts change in this transaction.
                     const canceled = await transaction.message_trigger_job.updateMany({
                         where: { id: existing.id, branchId: replacement.branchId, employeeScheduleId,
@@ -1767,13 +1793,31 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
                     if (canceled.count !== 1) throw new Error("Automatic reservation changed while locked");
                     // Like the base link scheduler, catch up while the service is still eligible.
                     // The caller rechecks the current service window under its source locks.
+                    for (const log of quietLogs) {
+                        // The upsert keeps the job id. Retire both live associations so
+                        // readQuietHold and acceptance preparation cannot reuse this old snapshot.
+                        const retired = await transaction.message_log.updateMany({
+                            where: { id: log.id, branchId: replacement.branchId, triggerJobId: existing.id, provider: "aligo_sms",
+                                status: "pending", attempts: 0, nextRetryAt: null, providerAcceptanceState: "prepared",
+                                providerCallStartedAt: null, providerAcceptedAt: null, aligoMid: null, updatedAt: log.updatedAt,
+                                providerAcceptanceKey: log.providerAcceptanceKey, providerAcceptanceFingerprint: log.providerAcceptanceFingerprint,
+                                variables: { equals: log.variables as Prisma.JsonObject } },
+                            data: { status: "failed", errorMessage: reason, nextRetryAt: null, triggerJobId: null,
+                                providerAcceptanceKey: null, providerAcceptanceFingerprint: null,
+                                variables: { ...(log.variables as Prisma.JsonObject), supersededTriggerJobId: existing.id,
+                                    supersededProviderAcceptanceKey: log.providerAcceptanceKey,
+                                    supersededProviderAcceptanceFingerprint: log.providerAcceptanceFingerprint } },
+                        });
+                        if (retired.count !== 1) throw new Error("Automatic quiet hold changed while locked");
+                    }
                     const job = await this.upsertPendingWithClient(transaction, replacement);
-                    if (logs.length) {
+                    const retries = logs.filter((log) => !quietLogs.includes(log));
+                    if (retries.length) {
                         const superseded = await transaction.message_log.updateMany({
-                            where: { branchId: replacement.branchId, triggerJobId: existing.id, id: { in: logs.map((log) => log.id) } },
+                            where: { branchId: replacement.branchId, triggerJobId: existing.id, id: { in: retries.map((log) => log.id) } },
                             data: { status: "failed", errorMessage: reason, nextRetryAt: null },
                         });
-                        if (superseded.count !== logs.length) throw new Error("Automatic retry attempts changed while locked");
+                        if (superseded.count !== retries.length) throw new Error("Automatic retry attempts changed while locked");
                     }
                     return { kind: "replaced", job, canceledJobIds: [existing.id] };
                 }
