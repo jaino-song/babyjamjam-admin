@@ -1653,8 +1653,8 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
                         || replacement.dedupeKey !== `${SERVICE_RECORD_LINK_RULE_ID}:schedule:${employeeScheduleId}:primary`) {
                         throw new Error("Automatic replacement requires the canonical service-record link key");
                     }
-                    const rows = await transaction.$queryRaw<Array<{ id: string; status: string; canceled_by_user: boolean; payload: unknown; scheduled_for: Date; recipient_phone: string | null }>>(Prisma.sql`
-                        SELECT id, status, canceled_by_user, payload, scheduled_for, recipient_phone FROM "message_trigger_job"
+                    const rows = await transaction.$queryRaw<Array<{ id: string; status: string; canceled_by_user: boolean; cancel_reason: string | null; payload: unknown; scheduled_for: Date; recipient_phone: string | null }>>(Prisma.sql`
+                        SELECT id, status, canceled_by_user, cancel_reason, payload, scheduled_for, recipient_phone FROM "message_trigger_job"
                         WHERE branch_id = ${replacement.branchId}::uuid AND client_id = ${replacement.clientId}
                           AND rule_id = ${ruleId} AND employee_schedule_id = ${employeeScheduleId}
                           AND dedupe_key = ${replacement.dedupeKey} FOR UPDATE
@@ -1663,11 +1663,17 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
                     if (!existing || existing.canceled_by_user || isReservedAutomationJob({ payload: existing.payload })
                         || (existing.payload && typeof existing.payload === "object" && "taskAutomationReference" in existing.payload)) return { kind: "protected" };
                     if (["processing", "dispatching"].includes(existing.status)) return { kind: "in_flight", inFlightJobIds: [existing.id] };
-                    if (!["pending", "needs_setup"].includes(existing.status)) return { kind: "protected" };
+                    // Match the base automatic claim's explicit system-cancellation allow-list.
+                    // Operator revocations and historical revision cancellations stay protected.
+                    const reclaimableCancellation = existing.status === "canceled" && existing.cancel_reason !== null
+                        && [SERVICE_RECORD_LINK_RESCHEDULED_REASON, SERVICE_RECORD_LINK_ENDED_REASON,
+                            SERVICE_RECORD_LINK_BRANCH_DISABLED_REASON, SERVICE_RECORD_LINK_PRE_BOOKING_REASON,
+                            MESSAGE_SENDER_APPROVAL_REQUIRED_CANCEL_REASON].includes(existing.cancel_reason);
+                    if (!["pending", "needs_setup"].includes(existing.status) && !reclaimableCancellation) return { kind: "protected" };
                     if (options.requireActiveLinkToken !== undefined
                         && !(await activeLinkTokenExists(transaction, options.requireActiveLinkToken, employeeScheduleId, replacement.branchId))) return { kind: "link_revoked" };
                     const sameTime = new Date(existing.scheduled_for).getTime() === replacement.scheduledFor.getTime();
-                    if (sameTime && existing.recipient_phone === replacement.recipientPhone
+                    if (!reclaimableCancellation && sameTime && existing.recipient_phone === replacement.recipientPhone
                         && agentBindingHash(agentAutomationSourcePayload(existing.payload, replacement.templateKey))
                             === agentBindingHash(agentAutomationSourcePayload(replacement.payload, replacement.templateKey))) {
                         return { kind: "protected" };
@@ -1688,12 +1694,14 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
                     // Both the reservation and its proven retry attempts change in this transaction.
                     const canceled = await transaction.message_trigger_job.updateMany({
                         where: { id: existing.id, branchId: replacement.branchId, employeeScheduleId,
-                            dedupeKey: replacement.dedupeKey, status: { in: ["pending", "needs_setup"] }, canceledByUser: false },
+                            dedupeKey: replacement.dedupeKey, status: existing.status, canceledByUser: false,
+                            ...(reclaimableCancellation ? { cancelReason: existing.cancel_reason } : {}) },
                         data: { status: "canceled", canceledAt: new Date(), cancelReason: reason, claimToken: null },
                     });
                     if (canceled.count !== 1) throw new Error("Automatic reservation changed while locked");
-                    const cancelOnly = !sameTime && replacement.scheduledFor.getTime() <= Date.now();
-                    const job = cancelOnly ? null : await this.upsertPendingWithClient(transaction, replacement);
+                    // Like the base link scheduler, catch up while the service is still eligible.
+                    // The caller rechecks the current service window under its source locks.
+                    const job = await this.upsertPendingWithClient(transaction, replacement);
                     if (logs.length) {
                         const superseded = await transaction.message_log.updateMany({
                             where: { branchId: replacement.branchId, triggerJobId: existing.id, id: { in: logs.map((log) => log.id) } },
@@ -1701,8 +1709,7 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
                         });
                         if (superseded.count !== logs.length) throw new Error("Automatic retry attempts changed while locked");
                     }
-                    return job ? { kind: "replaced", job, canceledJobIds: [existing.id] }
-                        : { kind: "canceled", canceledJobIds: [existing.id] };
+                    return { kind: "replaced", job, canceledJobIds: [existing.id] };
                 }
                 // Row-lock every live job. A claim that already committed is seen here
                 // as processing (refuse); none can start while the rule lock is held.
