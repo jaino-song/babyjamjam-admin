@@ -11,7 +11,7 @@ export const SERVICE_RECORD_SENTRY_TAG = "feature";
 
 const SENSITIVE_FIELD_PATTERN =
   /authorization|cookie|password|token|secret|api[_-]?key|email|phone|mobile|address|birth|resident|content|message|body/i;
-const URL_FIELD_PATTERN = /(^|[._-])(url|uri)([._-]|$)/i;
+const URL_FIELD_PATTERN = /(^|[._-])(url|uri|path)([._-]|$)/i;
 const QUERY_FIELD_PATTERN = /(^|[._-])query(?:_string)?([._-]|$)/i;
 const EMAIL_PATTERN = /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi;
 const PHONE_PATTERN = /(?:\+?82[-\s]?)?0?1[016789][-.\s]?\d{3,4}[-.\s]?\d{4}/g;
@@ -136,9 +136,13 @@ export function sanitizeSentryBreadcrumb(breadcrumb: Breadcrumb): Breadcrumb {
 }
 
 export function sanitizeSentryEvent(event: Event): Event {
+  const isServiceRecord = isServiceRecordSentryEvent(event);
+  const errorMessage = isServiceRecord ? "Service-record error" : "Frontend error";
+  const tags = isServiceRecord ? event.tags : { feature: "frontend", ...event.tags };
+
   return {
     ...event,
-    message: event.message ? "Service-record error" : event.message,
+    message: event.message ? errorMessage : event.message,
     transaction: event.transaction
       ? sanitizeSentryText(event.transaction.replace(/[?#].*$/, ""))
       : event.transaction,
@@ -155,7 +159,7 @@ export function sanitizeSentryEvent(event: Event): Event {
       : event.request,
     logentry: event.logentry
       ? {
-          message: event.logentry.message ? "Service-record error" : event.logentry.message,
+          message: event.logentry.message ? errorMessage : event.logentry.message,
           params: undefined,
         }
       : event.logentry,
@@ -164,11 +168,25 @@ export function sanitizeSentryEvent(event: Event): Event {
           ...event.exception,
           values: event.exception.values?.map((exception) => ({
             ...exception,
-            value: exception.value ? "Service-record error" : exception.value,
+            value: exception.value ? errorMessage : exception.value,
           })),
         }
       : event.exception,
     breadcrumbs: undefined,
+    ...(event.contexts ? {
+      contexts: Object.fromEntries(
+        Object.entries(sanitizeUnknown(event.contexts) as NonNullable<Event["contexts"]>)
+          .map(([key, value]) => [key, key === "trace" ? event.contexts?.trace : value]),
+      ),
+    } : {}),
+    ...(tags ? {
+      tags: Object.fromEntries(
+        Object.entries(tags).map(([key, value]) => [
+          key,
+          typeof value === "string" ? sanitizeSentryText(value) : value,
+        ]),
+      ),
+    } : {}),
     extra: event.extra ? (sanitizeUnknown(event.extra) as Record<string, unknown>) : event.extra,
     spans: event.spans?.map((span) => ({
       ...span,
@@ -212,8 +230,7 @@ export function isServiceRecordSentryEvent(event: Event): boolean {
     || hasServiceRecordStackFrame(event);
 }
 
-function filterAndSanitizeSentryErrorEvent(event: ErrorEvent): ErrorEvent | null {
-  if (!isServiceRecordSentryEvent(event)) return null;
+function filterAndSanitizeSentryErrorEvent(event: ErrorEvent): ErrorEvent {
   return sanitizeSentryErrorEvent(event);
 }
 
@@ -264,6 +281,12 @@ export function getSentryRuntimeOptions() {
     ),
     sendDefaultPii: false,
     attachStacktrace: true,
+    denyUrls: [
+      /^chrome-extension:\/\//,
+      /^moz-extension:\/\//,
+      /^safari(-web)?-extension:\/\//,
+    ],
+    ignoreErrors: [/^ResizeObserver loop/],
     initialScope: {
       tags: {
         app: SENTRY_APP_TAG,

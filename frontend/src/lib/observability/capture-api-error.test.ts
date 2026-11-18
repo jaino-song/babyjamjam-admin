@@ -46,31 +46,33 @@ describe("captureApiError", () => {
 
   it("ignores expected client errors and cancelled requests", () => {
     captureApiError(createAxiosError({ status: 409 }));
+    captureApiError(createAxiosError({ status: 404 }));
     captureApiError(createAxiosError({ code: "ERR_CANCELED" }));
 
     expect(mockCaptureException).not.toHaveBeenCalled();
   });
 
-  it("ignores server errors outside the service-record feature", () => {
+  it("reports server errors outside the service-record feature", () => {
     const error = createAxiosError({
       status: 503,
       method: "post",
       url: "/messages/send?phone=01012345678",
     });
 
-    captureApiError(error);
-
-    expect(mockCaptureException).not.toHaveBeenCalled();
+    expect(captureApiError(error)).toBe(true);
+    expect(mockCaptureException).toHaveBeenCalledTimes(1);
+    expect(mockScope.setTag).toHaveBeenCalledWith("feature", "api");
   });
 
-  it("ignores failures from removed schedule-change routes", () => {
+  it("reports failures from removed schedule-change routes as API errors", () => {
     captureApiError(createAxiosError({
       status: 503,
       method: "post",
       url: "/schedule-change-requests/schedules/431/apply",
     }));
 
-    expect(mockCaptureException).not.toHaveBeenCalled();
+    expect(mockCaptureException).toHaveBeenCalledTimes(1);
+    expect(mockScope.setTag).toHaveBeenCalledWith("feature", "api");
   });
 
   it("reports a service-record server error once with sanitized endpoint context", () => {
@@ -84,6 +86,10 @@ describe("captureApiError", () => {
     captureApiError(error);
 
     expect(mockCaptureException).toHaveBeenCalledTimes(1);
+    expect(mockCaptureException).toHaveBeenCalledWith(expect.objectContaining({
+      name: "ServiceRecordApiRequestError",
+      message: "Service-record API request failed: POST /admin/service-records/schedules/[Filtered]/send-link (503)",
+    }));
     expect(mockScope.setLevel).toHaveBeenCalledWith("error");
     expect(mockScope.setTag).toHaveBeenCalledWith("feature", "service-records");
     expect(mockScope.setContext).toHaveBeenCalledWith("api", {
@@ -113,6 +119,60 @@ describe("captureApiError", () => {
 
     expect(mockCaptureException).toHaveBeenCalledTimes(1);
     expect(mockScope.setLevel).toHaveBeenCalledWith("warning");
+  });
+
+  it("reports and deduplicates a client API 502 with a templated fingerprint and context", () => {
+    const error = createAxiosError({
+      status: 502,
+      url: "/api/clients/123?email=user@example.com&phone=01012345678#private",
+      data: { name: "Private client", token: "private-body" },
+    });
+    expect(captureApiError(error)).toBe(true);
+    expect(captureApiError(error)).toBe(false);
+    expect(mockCaptureException).toHaveBeenCalledTimes(1);
+    expect(mockCaptureException).toHaveBeenCalledWith(expect.objectContaining({
+      name: "ApiRequestError", message: "API request failed: GET /api/clients/123 (502)",
+    }));
+    expect(mockScope.setLevel).toHaveBeenCalledWith("error");
+    for (const [key, value] of Object.entries({ feature: "api", app: "frontend", runtime: "browser", handled: "true", status_code: "502" })) {
+      expect(mockScope.setTag).toHaveBeenCalledWith(key, value);
+    }
+    expect(mockScope.setTag).not.toHaveBeenCalledWith("operation", expect.anything());
+    expect(mockScope.setContext).toHaveBeenCalledWith("api", {
+      method: "GET", path: "/api/clients/:id", status: 502, code: null, runtime: "browser",
+    });
+    expect(mockScope.setFingerprint).toHaveBeenCalledWith(["api-error", "GET", "/api/clients/:id", "502"]);
+    captureApiError(createAxiosError({ status: 502, url: "/api/clients/456" }));
+    expect(mockScope.setFingerprint).toHaveBeenLastCalledWith(["api-error", "GET", "/api/clients/:id", "502"]);
+    expect(JSON.stringify(mockScope.setContext.mock.calls)).not.toMatch(/user@example|01012345678|private|Private client/);
+    expect(mockCaptureException.mock.calls[0][0].config).toBeUndefined();
+  });
+
+  it.each([
+    ["a1b2c3d4e5f6a7b8c9d0", ":id"],
+    ["1234567890abcdef", ":id"],
+    ["short123", "short123"],
+    ["longalphabeticsegment", "longalphabeticsegment"],
+  ])("templates opaque document id %s as %s", (id, template) => {
+    captureApiError(createAxiosError({
+      status: 500, url: `https://admin.example.com/api/eformsign/documents/${id}/supersede?token=private`,
+    }));
+    const path = `/api/eformsign/documents/${template}/supersede`;
+    expect(mockScope.setFingerprint).toHaveBeenCalledWith(["api-error", "GET", path, "500"]);
+    expect(mockScope.setContext).toHaveBeenCalledWith("api", expect.objectContaining({ path }));
+  });
+
+  it("reports non-service-record network failures as warnings", () => {
+    captureApiError(createAxiosError({ code: "ERR_NETWORK", url: "/api/contracts/123" }));
+    expect(mockCaptureException).toHaveBeenCalledTimes(1);
+    expect(mockCaptureException).toHaveBeenCalledWith(expect.objectContaining({
+      name: "ApiRequestError", message: "API request failed: GET /api/contracts/123 (network)",
+    }));
+    expect(mockScope.setLevel).toHaveBeenCalledWith("warning");
+    expect(mockScope.setContext).toHaveBeenCalledWith("api", {
+      method: "GET", path: "/api/contracts/:id", status: null, code: "ERR_NETWORK", runtime: "browser",
+    });
+    expect(mockScope.setFingerprint).toHaveBeenCalledWith(["api-error", "GET", "/api/contracts/:id", "network"]);
   });
 
   it("flushes captured proxy failures before the serverless response finishes", async () => {

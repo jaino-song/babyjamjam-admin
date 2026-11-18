@@ -143,10 +143,13 @@ describe("service-record Sentry scope", () => {
     else process.env.NEXT_PUBLIC_SENTRY_TRACES_SAMPLE_RATE = previousRate;
   });
 
-  it("drops unrelated errors and keeps tagged service-record errors", () => {
+  it("keeps unrelated errors and tagged service-record errors", () => {
     const options = getSentryRuntimeOptions();
 
-    expect(options.beforeSend({ type: undefined, message: "dashboard failed" })).toBeNull();
+    expect(options.beforeSend({ type: undefined, message: "dashboard failed" })).toMatchObject({
+      message: "Frontend error",
+      tags: { feature: "frontend" },
+    });
     expect(
       options.beforeSend({
         type: undefined,
@@ -182,11 +185,14 @@ describe("service-record Sentry scope", () => {
     ).toBeNull();
   });
 
-  it("excludes removed schedule-change routes from feature errors and traces", () => {
+  it("reports removed schedule-change route errors without sampling their traces", () => {
     const options = getSentryRuntimeOptions();
     const path = "/api/schedule-change-requests/schedules/431/preview";
 
-    expect(options.beforeSend({ type: undefined, request: { url: path } })).toBeNull();
+    expect(options.beforeSend({ type: undefined, request: { url: path } })).toMatchObject({
+      tags: { feature: "frontend" },
+      request: { url: "/api/schedule-change-requests/schedules/[Filtered]/preview" },
+    });
     expect(options.tracesSampler({
       name: `POST ${path}`,
       inheritOrSampleWith: (rate: number) => rate,
@@ -218,5 +224,135 @@ describe("service-record Sentry scope", () => {
     } else {
       process.env.NEXT_PUBLIC_SENTRY_TRACES_SAMPLE_RATE = previousRate;
     }
+  });
+});
+
+
+describe("frontend Sentry error coverage", () => {
+  it("sends a sanitized render error without its original PII or request payload", () => {
+    const detail = "user@example.com 010-1234-5678";
+    const stacktrace = { frames: [{ filename: "/contracts/page.tsx", function: "render" }] };
+    const sent = getSentryRuntimeOptions().beforeSend({
+      type: undefined,
+      message: `Failed for ${detail}`,
+      logentry: { message: detail, params: [detail] },
+      exception: { values: [{ type: "TypeError", value: detail, stacktrace }] },
+      user: { email: "user@example.com" },
+      request: {
+        url: "/contracts?token=private#details",
+        data: { detail },
+        query_string: detail,
+        cookies: { session: "private" },
+      },
+      breadcrumbs: [{ message: detail }],
+    });
+
+    expect(sent).toMatchObject({
+      message: "Frontend error",
+      logentry: { message: "Frontend error", params: undefined },
+      exception: { values: [{ type: "TypeError", value: "Frontend error", stacktrace }] },
+      tags: { feature: "frontend" },
+      user: undefined,
+      request: { url: "/contracts", data: undefined, query_string: undefined, cookies: undefined },
+      breadcrumbs: undefined,
+    });
+    expect(JSON.stringify(sent)).not.toContain("user@example.com");
+    expect(JSON.stringify(sent)).not.toContain("010-1234-5678");
+    expect(JSON.stringify(sent)).not.toContain("private");
+  });
+
+  it("preserves the existing service-record output without adding a feature tag", () => {
+    const stacktrace = { frames: [{ filename: "/service-record/page.tsx" }] };
+    expect(getSentryRuntimeOptions().beforeSend({
+      type: undefined,
+      message: "service-record failed",
+      logentry: { message: "private detail", params: ["private"] },
+      exception: { values: [{ type: "TypeError", value: "private", stacktrace }] },
+      user: { id: "private" },
+      request: { url: "/api/service-record/private/context?token=private", data: "private" },
+      breadcrumbs: [{ message: "private" }],
+      extra: { email: "user@example.com", operation: "context" },
+    })).toEqual({
+      type: undefined,
+      message: "Service-record error",
+      transaction: undefined,
+      logentry: { message: "Service-record error", params: undefined },
+      exception: { values: [{ type: "TypeError", value: "Service-record error", stacktrace }] },
+      user: undefined,
+      request: {
+        url: "/api/service-record/[Filtered]/context", data: undefined,
+        query_string: undefined, cookies: undefined, headers: undefined,
+      },
+      breadcrumbs: undefined,
+      extra: { email: "[Filtered]", operation: "context" },
+      spans: undefined,
+    });
+  });
+
+  it.each(["frontend", "service-records"])("sanitizes contexts and tags for %s while preserving trace linkage", (feature) => {
+    const trace = { trace_id: "0123456789abcdef0123456789abcdef", span_id: "0123456789abcdef" };
+    const sent = getSentryRuntimeOptions().beforeSend({
+      type: undefined,
+      tags: { feature, detail: "user@example.com 010-1234-5678", count: 7, enabled: true },
+      contexts: {
+        trace,
+        diagnostic: {
+          detail: "user@example.com 010-1234-5678",
+          nested: { email: "user@example.com", phone: "010-1234-5678" },
+          url: "/clients?token=private",
+          query_string: "private",
+        },
+      },
+    });
+    expect(sent).toMatchObject({
+      tags: { feature, detail: "[Email] [Phone]", count: 7, enabled: true },
+      contexts: {
+        trace,
+        diagnostic: {
+          detail: "[Email] [Phone]",
+          nested: { email: "[Filtered]", phone: "[Filtered]" },
+          url: "/clients",
+          query_string: "[Filtered]",
+        },
+      },
+    });
+    expect(sent?.contexts?.trace).toBe(trace);
+    expect(JSON.stringify(sent)).not.toMatch(/user@example\.com|010-1234-5678|private/);
+  });
+
+  it("preserves an existing feature tag on a non-service-record event", () => {
+    expect(getSentryRuntimeOptions().beforeSend({ type: undefined, tags: { feature: "api" } })).toMatchObject({
+      tags: { feature: "api" },
+    });
+  });
+
+  describe.each(["frontend", "service-records"])("%s request path privacy", (feature) => {
+    it.each([
+      ["/clients?search=QA-Client-Name#details", "/clients"],
+      ["https://admin.example.com/contracts?search=QA-Client-Name#details", "https://admin.example.com/contracts"],
+      ["/clients?search=QA%20Client%20Name#details", "/clients"],
+    ])("strips queries and fragments from contexts.nextjs.request_path: %s", (requestPath, expectedPath) => {
+      const trace = { trace_id: "0123456789abcdef0123456789abcdef", span_id: "0123456789abcdef" };
+      const sent = getSentryRuntimeOptions().beforeSend({
+        type: undefined,
+        tags: { feature },
+        contexts: { trace, nextjs: { request_path: requestPath } },
+      });
+
+      expect(sent.contexts?.nextjs?.request_path).toBe(expectedPath);
+      expect(sent.contexts?.trace).toBe(trace);
+      expect(sent.tags?.feature).toBe(feature);
+      expect(JSON.stringify(sent)).not.toMatch(/search|QA-Client-Name|QA%20Client%20Name|details/);
+    });
+  });
+
+  it("filters browser extensions and ResizeObserver loop noise", () => {
+    const options = getSentryRuntimeOptions();
+    for (const url of ["chrome-extension://abc/script.js", "moz-extension://abc/script.js", "safari-extension://abc/script.js", "safari-web-extension://abc/script.js"]) {
+      expect(options.denyUrls.some((pattern) => pattern.test(url))).toBe(true);
+    }
+    expect(options.denyUrls.some((pattern) => pattern.test("https://admin.example.com/script.js"))).toBe(false);
+    expect(options.ignoreErrors.some((pattern) => pattern.test("ResizeObserver loop limit exceeded"))).toBe(true);
+    expect(options.ignoreErrors.some((pattern) => pattern.test("Render failed"))).toBe(false);
   });
 });
