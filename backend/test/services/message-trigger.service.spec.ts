@@ -9915,8 +9915,10 @@ describe("service-record date reconciliation", () => {
             $queryRaw: jest.fn(async (sql: Prisma.Sql) => {
                 sqls.push(sql);
                 if (sql.sql.includes("WITH policy(branch_id, automatic_enabled, retry_enabled")) {
-                    return job.status === "pending" && job.nextAttemptAt && job.nextAttemptAt <= new Date()
-                        ? [{ id: job.id, expired: isSelectedMessageJobExpired(job, 24, new Date()), expiry_anchor: job.scheduledFor,
+                    const hold = parseMessageQuietHold(logs[0]?.["variables"]);
+                    const retryEnabled = sql.values[2] === true;
+                    return (retryEnabled || job.attempts === 0) && job.status === "pending" && job.nextAttemptAt && job.nextAttemptAt <= new Date()
+                        ? [{ id: job.id, expired: isSelectedMessageJobExpired(job, 24, new Date(), hold?.releaseAt), expiry_anchor: hold?.releaseAt ?? job.scheduledFor,
                             past_expiry_hours: 24, selected_at: new Date() }] : [];
                 }
                 if (sql.sql.includes("WITH policy(branch_id, automatic_enabled)")) {
@@ -9950,10 +9952,11 @@ describe("service-record date reconciliation", () => {
         const provider = jest.fn(async () => ({ request: { receiver: job.recipientPhone, msgType: "LMS" },
             response: { result_code: 1, message: "success", msg_id: 123, success_cnt: 1, error_cnt: 0 } }));
         const templates = { resolve: async () => ({ content: "{{clientName}} {{serviceEndDate}}", version: "template-v1", hash: "template-hash", requiredVariableKeys: [] }) };
+        const deliveryRules = { findByIdIncludingGlobal: jest.fn(async () => f.careRule) };
         const sms = new SmsTriggerDeliveryService({ sendSms: provider } as never, {} as never, logRepository,
             new SmsProviderAcceptanceService(logRepository), undefined,
             { consumePreparation: async () => true, consumeDispatch: async () => undefined } as never,
-            { findByIdIncludingGlobal: async () => f.careRule } as never, settings as never, templates as never, quiet, repository);
+            deliveryRules as never, settings as never, templates as never, quiet, repository);
         Object.assign(f.service, { smsDelivery: sms, deliveryService: sms });
         const send = async () => {
             job.markProcessing("quiet-claim");
@@ -9962,7 +9965,7 @@ describe("service-record date reconciliation", () => {
             return sms.sendPreparedJob(job, prepared);
         };
         const eligibility = [{ branchId, automaticEnabled: true, retryEnabled: false, intervalMinutes: 1, pastExpiryHours: 24 }];
-        return { ...f, job, logs, sms, send, provider, repository, eligibility, sqls, tx };
+        return { ...f, job, logs, sms, send, provider, repository, eligibility, sqls, tx, deliveryRules };
     }
 
     it("defers the refreshed current caregiver body until its retained backoff expires", async () => {
@@ -10017,6 +10020,58 @@ describe("service-record date reconciliation", () => {
         const queueSql = f.sqls.find(sql => sql.sql.includes("WITH policy(branch_id, automatic_enabled)"))!;
         expect(queueSql.sql).toContain("quietHoursOriginalScheduledFor");
         expect(queueSql.sql).not.toContain("retry_enabled");
+        expect(await f.send()).toBe(true);
+        expect(f.provider).toHaveBeenCalledTimes(1);
+        expect(f.provider).toHaveBeenCalledWith(expect.objectContaining({ message: expect.stringContaining("2026-11-25") }));
+        expect(f.logs).toHaveLength(1);
+    });
+
+    it("refreshes a never-started quiet hold after a release-time transient deferral without resetting its retry deadline", async () => {
+        const f = await quietRefreshFixture();
+        expect(await f.send()).toBe(false);
+        const hold = parseMessageQuietHold(f.logs[0]!["variables"])!;
+        const key = f.logs[0]!["providerAcceptanceKey"], fingerprint = f.logs[0]!["providerAcceptanceFingerprint"];
+        const scheduledFor = new Date(f.job.scheduledFor), dedupeKey = f.job.dedupeKey;
+        // A transient failure while preparing the released reservation increments
+        // the trigger retry count without starting its prepared provider attempt.
+        jest.setSystemTime(new Date("2026-11-02T02:00:00Z"));
+        f.deliveryRules.findByIdIncludingGlobal.mockRejectedValueOnce(new Error("QA-transient rule read"));
+        f.job.markProcessing();
+        await expect(f.sms.prepareJob(f.job)).rejects.toThrow("Rule retry policy could not be read");
+        f.job.defer("transient", "Rule retry policy could not be read", 300_000);
+        const deadline = new Date(f.job.nextAttemptAt!);
+        expect(f.job).toMatchObject({ status: "pending", attempts: 1, claimToken: null, processingDeadlineAt: null });
+        expect(f.logs[0]).toMatchObject({ status: "pending", attempts: 0, nextRetryAt: null,
+            providerAcceptanceState: "prepared", providerCallStartedAt: null });
+        f.schedule.endDate = new Date("2026-11-25Z");
+
+        await f.service.reconcileServiceRecordDateRules(branchId, 7, scope);
+        await f.service.reconcileServiceRecordDateRules(branchId, 7, scope);
+
+        expect(f.job).toMatchObject({ status: "pending", attempts: 1, nextAttemptAt: deadline, scheduledFor, dedupeKey });
+        expect(f.job.payload.caregiverSourceSnapshot!.schedule.endDate).toBe("2026-11-25T00:00:00.000Z");
+        expect(f.logs).toHaveLength(1);
+        expect(f.logs[0]).toMatchObject({ status: "pending", attempts: 0, nextRetryAt: null,
+            providerAcceptanceKey: key, providerAcceptanceState: "prepared", providerCallStartedAt: null });
+        expect(f.logs[0]!["providerAcceptanceFingerprint"]).not.toBe(fingerprint);
+        expect(parseMessageQuietHold(f.logs[0]!["variables"])).toEqual(hold);
+        expect(f.logs[0]!["messageBody"]).toContain("2026-11-25");
+        expect(isSelectedMessageJobExpired(f.job, 24, new Date())).toBe(true);
+        expect(isSelectedMessageJobExpired(f.job, 24, new Date(), hold.releaseAt)).toBe(false);
+        // After a transient trigger deferral, ordinary retry policy still governs
+        // selection; the separate unattempted quiet queue must not revive it.
+        expect(await f.repository.findDueQuietQueueJobs(f.eligibility, new Date())).toEqual([]);
+        const eligibility = f.eligibility.map(branch => ({ ...branch, retryEnabled: true }));
+        expect(await f.repository.consumeDispatchSlotsAndFindDueJobs(eligibility, new Date())).toEqual([]);
+        jest.setSystemTime(new Date(deadline.getTime() - 1));
+        expect(await f.repository.consumeDispatchSlotsAndFindDueJobs(eligibility, new Date())).toEqual([]);
+        expect(f.provider).not.toHaveBeenCalled();
+        jest.setSystemTime(deadline);
+        expect(await f.repository.findDueQuietQueueJobs(f.eligibility, new Date())).toEqual([]);
+        expect(await f.repository.consumeDispatchSlotsAndFindDueJobs(f.eligibility, new Date())).toEqual([]);
+        const selected = await f.repository.consumeDispatchSlotsAndFindDueJobs(eligibility, new Date());
+        expect(selected.map(job => job.id)).toEqual([f.job.id]);
+        expect(selected[0]!.dispatchSelection).toMatchObject({ expired: false, anchor: hold.releaseAt });
         expect(await f.send()).toBe(true);
         expect(f.provider).toHaveBeenCalledTimes(1);
         expect(f.provider).toHaveBeenCalledWith(expect.objectContaining({ message: expect.stringContaining("2026-11-25") }));

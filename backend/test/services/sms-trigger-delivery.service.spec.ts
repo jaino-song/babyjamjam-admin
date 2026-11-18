@@ -99,8 +99,11 @@ describe("SmsTriggerDeliveryService", () => {
         return { previous, job, log, logs, tx, templates, provider, service };
     }
 
-    it("rebuilds only validated delivery details and keeps the exact DEFER metadata and key", async () => {
+    it.each([0, 1, 2])("rebuilds only validated delivery details and keeps the exact DEFER metadata and key with %s trigger deferrals", async attempts => {
         const f = refreshFixture();
+        f.previous.attempts = f.job.attempts = attempts;
+        const deadline = new Date(f.previous.nextAttemptAt!.getTime() + attempts * 300_000);
+        f.previous.nextAttemptAt = f.job.nextAttemptAt = deadline;
         await f.service.refreshPendingQuietAttempt(f.previous, f.job, f.tx as never);
         const write = f.tx.message_log.updateMany.mock.calls[0]![0] as unknown as { where: Record<string, unknown>; data: Record<string, unknown> };
         expect(write.where).toMatchObject({ id: f.log.id, branchId, triggerJobId: f.job.id, providerAcceptanceState: "prepared",
@@ -108,13 +111,17 @@ describe("SmsTriggerDeliveryService", () => {
             providerCallStartedAt: null, providerAcceptedAt: null, nextRetryAt: null, attempts: 0, updatedAt: f.log.updatedAt });
         expect(write.data).toMatchObject({ messageBody: "QA-current current", variables: expect.objectContaining(f.log.variables) });
         expect(write.data["providerAcceptanceFingerprint"]).not.toBe("old-fingerprint");
+        expect(f.job).toMatchObject({ attempts, nextAttemptAt: deadline, quietHold: expect.objectContaining({
+            releaseAt: new Date("2026-06-13T00:00:00Z"), originalScheduledFor: f.previous.scheduledFor,
+        }) });
         for (const field of ["triggerJobId", "providerAcceptanceKey", "nextRetryAt", "providerAcceptanceState", "status", "attempts"]) expect(write.data).not.toHaveProperty(field);
         expect(f.provider.sendSms).not.toHaveBeenCalled();
     });
 
     it.each(["started", "accepted", "sent", "retry", "attempted", "wrong-key", "missing-fingerprint", "wrong-job", "wrong-branch",
-        "wrong-original", "bad-hold", "missing-hold", "duplicate", "late-deadline", "claim", "task", "manual", "uncertain"])("refuses %s quiet association before rendering or overwriting a fingerprint", async mode => {
+        "wrong-original", "bad-hold", "missing-hold", "duplicate", "late-deadline", "changed-attempts", "claim", "task", "manual", "uncertain"])("refuses %s quiet association before rendering or overwriting a fingerprint", async mode => {
         const f = refreshFixture();
+        f.previous.attempts = f.job.attempts = 1;
         if (mode === "started") f.log.providerCallStartedAt = new Date() as never;
         if (mode === "accepted") f.log.providerAcceptedAt = new Date() as never;
         if (mode === "sent") f.log.status = "sent";
@@ -129,6 +136,7 @@ describe("SmsTriggerDeliveryService", () => {
         if (mode === "missing-hold") f.log.variables = {};
         if (mode === "duplicate") f.logs.push({ ...f.log, id: 12 });
         if (mode === "late-deadline") f.job.nextAttemptAt = new Date(f.previous.nextAttemptAt!.getTime() - 1);
+        if (mode === "changed-attempts") f.job.attempts = 0;
         if (mode === "claim") f.job.claimToken = "other-claim";
         if (mode === "task") f.job.payload.taskAutomationReference = {} as never;
         if (mode === "manual") f.job.dedupeKey = "manual:qa";
