@@ -129,7 +129,8 @@ function sanitizeHeaders(headers: Record<string, string> | undefined): Record<st
         REFERER_HEADER_PATTERN.test(key) || URL_FIELD_PATTERN.test(key)
         || URL_HEADER_PATTERN.test(key) || URL_HEADER_VALUE_PATTERN.test(value)
       ) {
-        return [key, sanitizeSentryUrl(value) ?? FILTERED_VALUE];
+        // Redact before URL parsing can encode whitespace and hide sensitive text.
+        return [key, sanitizeSentryUrl(sanitizeSentryText(value)) ?? FILTERED_VALUE];
       }
       return [key, sanitizeSentryText(value)];
     }),

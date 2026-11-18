@@ -237,6 +237,26 @@ describe("all mobile Sentry errors", () => {
 
 
 describe("URL-valued request headers", () => {
+  describe.each(["X-Detail", "Referer", "x-forwarded-uri"])("%s URL-prefixed text privacy", (header) => {
+    it.each([
+      ["/retry with Bearer qa-header-credential", "/retry%20with%20Bearer%20[Filtered]"],
+      ["https://x/retry with Bearer qa-header-credential", "https://x/retry%20with%20Bearer%20[Filtered]"],
+      ["http://x/retry with Bearer qa-header-credential", "http://x/retry%20with%20Bearer%20[Filtered]"],
+      ["/help call 010 1234 5678", "/help%20call%20[Phone]"],
+      ["https://x/help call 010 1234 5678", "https://x/help%20call%20[Phone]"],
+      ["/help contact user@example.com", "/help%20contact%20[Email]"],
+      ["/retry with token=qa-header-credential", "/retry%20with%20token=[Filtered]"],
+    ])("redacts sensitive text before URL encoding: %s", (value, expected) => {
+      const sent = getSentryRuntimeOptions().beforeSend({
+        type: undefined,
+        request: { headers: { [header]: value } },
+      });
+
+      expect(sent.request?.headers?.[header]).toBe(expected);
+      expect(JSON.stringify(sent)).not.toMatch(/qa-header-credential|010(?: |%20)1234(?: |%20)5678|user(?:@|%40)example\.com/);
+    });
+  });
+
   it.each([
     ["X-Detail", "Contact 010 1234 5678 via https://example.com/help", "Contact [Phone] via https://example.com/help"],
     ["X-Detail", "See https://example.com/help or call 010 1234 5678", "See https://example.com/help or call [Phone]"],
