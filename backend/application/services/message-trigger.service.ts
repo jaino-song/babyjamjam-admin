@@ -2679,8 +2679,14 @@ export class MessageTriggerService {
                 // identity, never materialize an automatic sibling around it.
                 const operatorReservations = family.filter((row) => reversible(row) && row.status === "needs_setup");
                 const operatorReservation = operatorReservations[0];
+                const operatorDestination = operatorReservation && job
+                    ? previous.find((row) => row.id !== operatorReservation.id && row.dedupeKey === job.dedupeKey) : undefined;
+                const reclaimableOperatorDestination = operatorDestination && family.includes(operatorDestination)
+                    && reversible(operatorDestination) && operatorDestination.status === "canceled"
+                    && (operatorDestination.cancelReason === CLIENT_DATE_AUTOMATION_CHANGED_REASON
+                        || operatorDestination.cancelReason === MESSAGE_SENDER_APPROVAL_REQUIRED_CANCEL_REASON);
                 if (operatorReservation && job && (operatorReservations.length !== 1
-                    || previous.some((row) => row.id !== operatorReservation.id && row.dedupeKey === job.dedupeKey))) {
+                    || (operatorDestination && !reclaimableOperatorDestination))) {
                     throw new ConflictException("Message date reconciliation conflicts with an operator reservation");
                 }
                 if (family.some((row) => reversible(row) && row.status === "processing"
@@ -2713,6 +2719,19 @@ export class MessageTriggerService {
                         if (!job) return;
                         if (operatorReservation.dedupeKey === job.dedupeKey && sameSource(operatorReservation, job)
                             && operatorReservation.scheduledFor.getTime() === job.scheduledFor.getTime()) return;
+                        if (operatorDestination && reclaimableOperatorDestination) {
+                            // Retain canceled history and its log associations while freeing the unique occurrence key.
+                            // Both this retirement and the exact operator move roll back if either fence is lost.
+                            const retired = await tx.message_trigger_job.updateMany({
+                                where: { id: operatorDestination.id, branchId, clientId, ruleId: rule.id,
+                                    status: "canceled", canceledByUser: false, cancelReason: operatorDestination.cancelReason,
+                                    dedupeKey: operatorDestination.dedupeKey, employeeScheduleId: operatorDestination.employeeScheduleId,
+                                    recipientType: operatorDestination.recipientType, templateKey: operatorDestination.templateKey,
+                                    claimToken: operatorDestination.claimToken },
+                                data: { dedupeKey: `${operatorDestination.dedupeKey}:superseded:${operatorDestination.id}` },
+                            });
+                            if (retired.count !== 1) throw new ConflictException("Message date reconciliation lost a canceled reservation");
+                        }
                         // Source/rule/job locks above serialize with claims. Keep
                         // the exact reservation, its setup reason and retry state;
                         // explicit resend still has to match this current recipe.
