@@ -40,6 +40,76 @@ describe("service-record backend Sentry contract", () => {
         jest.clearAllMocks();
     });
 
+    it.each([
+        ["client-due-date-scheduler:tick", "backend", "Backend failure (client-due-date-scheduler:tick)"],
+        ["document-job-revision-coordinator", "backend", "Backend failure (document-job-revision-coordinator)"],
+        ["http", "service-records", "Service-record backend failure"],
+    ])("classifies backend operation %s despite service-record URL and stack signals", (operation, feature, value) => {
+        const event: ErrorEvent = {
+            type: undefined,
+            tags: { feature: "backend", operation },
+            request: { url: "/service-record/context" },
+            exception: { values: [{
+                value: "private failure",
+                stacktrace: { frames: [{
+                    filename: "/app/backend/dist/application/services/service-record-lifecycle.service.js",
+                    function: "ServiceRecordLifecycleService.syncRules",
+                }] },
+            }] },
+        };
+
+        const result = filterAndSanitizeSentryEvent(event, {
+            originalException: new ServiceUnavailableException(),
+        });
+        expect(result?.tags).toEqual({ feature, operation });
+        expect(result?.exception?.values?.[0]?.value).toBe(value);
+        expect(result?.exception?.values?.[0]?.stacktrace?.frames?.[0]).toMatchObject(
+            event.exception?.values?.[0]?.stacktrace?.frames?.[0] ?? {},
+        );
+        expect(filterAndSanitizeSentryEvent(event, {
+            originalException: new BadRequestException(),
+        })).toBeNull();
+    });
+
+    describe.each([
+        ["captureBackendError", (error: Error) => captureBackendError(error, {
+            handled: true, operation: "client-due-date-scheduler:tick",
+        }), "Error: Backend failure"],
+        ["captureServiceRecordError", (error: Error) => captureServiceRecordError(error, {
+            handled: true, operation: "snapshot-create",
+        }), "Error: Service-record snapshot-create failed"],
+        ["capturePrismaError", (error: Error) => capturePrismaError(error, {
+            code: "P1001", eligible: true, route: "shared",
+        }), "Error: Database connectivity failure"],
+    ] as const)("%s stack privacy", (_name, capture, header) => {
+        it("keeps every V8 frame and removes multiline message text", () => {
+            const error = new Error("first line\ncontacted at Hong Gildong (lobby)\nthird");
+            const frames = error.stack?.split("\n").filter((line) => /^\s+at /.test(line)) ?? [];
+            expect(frames.length).toBeGreaterThan(0);
+
+            capture(error);
+
+            const captured = mockCaptureException.mock.calls[0]?.[0] as Error;
+            expect(captured.stack?.split("\n")).toEqual([header, ...frames]);
+            expect(captured.stack).not.toMatch(/Hong Gildong|lobby|third/);
+        });
+
+        it.each([false, true])("rejects message lines resembling frames with custom stack=%s", (customStack) => {
+            const messageFrame = "    at Hong Gildong (lobby)";
+            const error = new Error(`first line\n${messageFrame}\nthird`);
+            const frames = ["    at syncRules (/app/backend/lifecycle.js:12:4)", "    at run (/app/backend/worker.js:23:8)"];
+            error.stack = customStack
+                ? ["Overwritten stack", messageFrame, "third", ...frames, "not a frame"].join("\n")
+                : [String(error), ...frames, "not a frame"].join("\n");
+
+            capture(error);
+
+            const captured = mockCaptureException.mock.calls[0]?.[0] as Error;
+            expect(captured.stack?.split("\n")).toEqual([header, ...frames]);
+            expect(captured.stack).not.toMatch(/Hong Gildong|lobby|third/);
+        });
+    });
+
     it("keeps actionable 5xx failures and drops expected 4xx failures", () => {
         const serviceRecordEvent: ErrorEvent = {
             type: undefined,

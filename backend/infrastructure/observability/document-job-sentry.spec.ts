@@ -121,6 +121,39 @@ describe("document-job Sentry reporting", () => {
         expect(result?.message).toBe("Document job unknown: unknown UNKNOWN");
     });
 
+    it("re-normalizes all document-job tags from raw events", () => {
+        const result = filterAndSanitizeSentryEvent({
+            type: undefined,
+            tags: {
+                feature: "document-jobs",
+                operation: "CREATE Document",
+                "job.status": "pending",
+                "job.error_code": "failure 010-1234-5678",
+            },
+            message: "private",
+        });
+
+        expect(result?.tags).toEqual({
+            feature: "document-jobs",
+            operation: "unknown",
+            "job.status": "unknown",
+            "job.error_code": "UNKNOWN",
+        });
+    });
+
+    it("preserves canonical job UUIDs while masking non-UUID job IDs and other keys", () => {
+        const jobId = "76217524-3851-41b6-8327-75b9f61be24c";
+        captureDocumentJobFailure(failure({ jobId }));
+        const event = capturedEvent();
+        event.extra = { otherId: jobId, jobId: "010-1234-5678" };
+
+        const result = filterAndSanitizeSentryEvent(event);
+
+        expect(result?.contexts?.["job"]?.["jobId"]).toBe(jobId);
+        expect(result?.extra?.["jobId"]).toBe("[Phone]");
+        expect(result?.extra?.["otherId"]).toBe("762[Phone]-41b6-8327-75b9f61be24c");
+    });
+
     it("dedupes one completed transition, but reports a failure after requeue even with the same attempts", () => {
         const context = failure();
         captureDocumentJobFailure(context);
