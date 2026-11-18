@@ -95,6 +95,14 @@ export class HolidaySyncService {
                 this.logger.warn(
                     `[Holiday Sync] ${year}: anchors missing (${missing.join(",")}); keeping previous data (${trigger})`,
                 );
+                try {
+                    captureBackendError(new Error("Holiday sync response is missing required dates"), {
+                        handled: true,
+                        operation: "holiday-sync:anchors-missing",
+                    });
+                } catch {
+                    // Reporting must not interrupt background processing.
+                }
                 return this.failed(year, "anchors_missing");
             }
 
