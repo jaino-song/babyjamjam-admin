@@ -2647,10 +2647,21 @@ export class MessageTriggerService {
             const ordinary = (job: MessageTriggerJobReviewSnapshot) => job.branchId === branchId && job.clientId === clientId
                 && !isManualMessageTriggerJob(job) && !isReservedAutomationJob(job) && !job.payload.taskAutomationReference;
             const old = previous.filter((job) => job.branchId === branchId && job.clientId === clientId && !isManualMessageTriggerJob(job));
+            const includePast = await this.getMessagePolicyEnabled(branchId, "past-trigger", tx);
+            const catchUpCandidates: ClientRuleJobCandidate[] = [];
+            const reconciliations: Array<{ job: MessageTriggerJobEntity | null; apply: () => Promise<void> }> = [];
             const sameSource = (a: MessageTriggerJobEntity, b: MessageTriggerJobEntity) => a.recipientPhone === b.recipientPhone
                 && agentBindingHash(agentAutomationSourcePayload(a.payload, a.templateKey)) === agentBindingHash(agentAutomationSourcePayload(b.payload, b.templateKey));
             const reconcile = async (rule: MessageTriggerRuleEntity, job: MessageTriggerJobEntity | null,
                 family: MessageTriggerJobReviewSnapshot[], anchorChanged: boolean) => {
+                // Repeated intents retain the accepted catch-up slot for this source occurrence.
+                const catchUp = job && family.find((row) => ["pending", "processing"].includes(row.status)
+                    && row.payload.catchUp?.originalScheduledFor === job.scheduledFor.toISOString());
+                if (job && catchUp) {
+                    job.scheduledFor = catchUp.scheduledFor;
+                    job.dedupeKey = catchUp.dedupeKey;
+                    job.payload.catchUp = catchUp.payload.catchUp;
+                }
                 const current = job ? family.find((row) => row.dedupeKey === job.dedupeKey)
                     ?? (rule.offsetType === MessageTriggerOffsetType.IMMEDIATE ? family.find((row) => row.status === "pending") : undefined) : undefined;
                 // Immediate rules have no date-derived send time; retain their accepted reservation.
@@ -2673,27 +2684,31 @@ export class MessageTriggerService {
                     && ["pending", "processing"].includes(current.status);
                 // Refreshing an accepted same-key occurrence is not a new catch-up send.
                 const existingOccurrence = current && ["pending", "processing"].includes(current.status) && job?.dedupeKey === current.dedupeKey
-                    && job.scheduledFor.getTime() === current.scheduledFor.getTime() && !current.payload.catchUp;
-                const eligible = job && statusEligible && (existingOccurrence || (job.scheduledFor.getTime() > Date.now()
-                    && isMessageRecipeWithinMaterializationWindow(job, rule, false, new Date())));
-                const stale = family.filter((row) => row.status === "pending"
-                    && (!eligible || row.dedupeKey !== job!.dedupeKey));
-                if (stale.length) {
-                    await tx.message_trigger_job.updateMany({
-                        where: { branchId, clientId, ruleId: rule.id, id: { in: stale.map((row) => row.id) }, status: "pending", canceledByUser: false },
-                        data: { status: "canceled", canceledAt: new Date(), cancelReason: CLIENT_DATE_AUTOMATION_CHANGED_REASON,
-                            claimToken: null, nextAttemptAt: null },
-                    });
-                }
-                if (!eligible || currentEquivalent) return;
-                // A protected task-owned slot is kept separate even if its reviewed source has drifted.
-                const protectedSlot = previous.some((row) => row.dedupeKey === job!.dedupeKey && !ordinary(row));
-                if (protectedSlot) return;
-                if (current?.status === "canceled" && current.cancelReason !== CLIENT_DATE_AUTOMATION_CHANGED_REASON
-                    && current.cancelReason !== MESSAGE_SENDER_APPROVAL_REQUIRED_CANCEL_REASON) return;
-                if (!(await this.persistPendingJob(job, rule, existingOccurrence === true, rule.jobsStale, false, tx))) {
-                    throw new ConflictException("Message rule changed while reconciling dates");
-                }
+                    && job.scheduledFor.getTime() === current.scheduledFor.getTime();
+                const eligible = job && statusEligible && (existingOccurrence || ((includePast || job.scheduledFor.getTime() > Date.now())
+                    && !(includePast && rule.recipientType === MessageTriggerRecipientType.CLIENT && this.shouldSkipPreStartCatchUp(rule, client))
+                    && isMessageRecipeWithinMaterializationWindow(job, rule, includePast, new Date())));
+                if (eligible && !existingOccurrence && !currentEquivalent) catchUpCandidates.push({ rule, job });
+                reconciliations.push({ job, apply: async () => {
+                    const stale = family.filter((row) => row.status === "pending"
+                        && (!eligible || row.dedupeKey !== job!.dedupeKey));
+                    if (stale.length) {
+                        await tx.message_trigger_job.updateMany({
+                            where: { branchId, clientId, ruleId: rule.id, id: { in: stale.map((row) => row.id) }, status: "pending", canceledByUser: false },
+                            data: { status: "canceled", canceledAt: new Date(), cancelReason: CLIENT_DATE_AUTOMATION_CHANGED_REASON,
+                                claimToken: null, nextAttemptAt: null },
+                        });
+                    }
+                    if (!eligible || currentEquivalent) return;
+                    // A protected task-owned slot is kept separate even if its reviewed source has drifted.
+                    const protectedSlot = previous.some((row) => row.dedupeKey === job!.dedupeKey && !ordinary(row));
+                    if (protectedSlot) return;
+                    if (current?.status === "canceled" && current.cancelReason !== CLIENT_DATE_AUTOMATION_CHANGED_REASON
+                        && current.cancelReason !== MESSAGE_SENDER_APPROVAL_REQUIRED_CANCEL_REASON) return;
+                    if (!(await this.persistPendingJob(job, rule, includePast || existingOccurrence === true, rule.jobsStale, false, tx))) {
+                        throw new ConflictException("Message rule changed while reconciling dates");
+                    }
+                } });
             };
             for (const rule of rules.filter((row) => row.recipientType === MessageTriggerRecipientType.CLIENT && !isCaregiverTriggerTemplate(row.templateKey))) {
                 const family = old.filter((row) => row.ruleId === rule.id && row.employeeScheduleId === null && row.recipientType === rule.recipientType);
@@ -2726,6 +2741,11 @@ export class MessageTriggerService {
                     await reconcile(rule, job, family, true);
                 }
             }
+            // Batch moved occurrences together so branch rule ordering and spacing remain intact.
+            await this.applyRetroactiveSendConfig(branchId, catchUpCandidates, undefined, tx);
+            // Materialize predecessors first, as required by the existing catch-up authority gate.
+            reconciliations.sort((a, b) => (a.job?.scheduledFor.getTime() ?? 0) - (b.job?.scheduledFor.getTime() ?? 0));
+            for (const { apply } of reconciliations) await apply();
         });
     }
 
