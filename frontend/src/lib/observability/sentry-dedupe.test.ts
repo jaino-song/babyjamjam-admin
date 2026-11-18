@@ -7,14 +7,21 @@ import { getSentryRuntimeOptions } from "./sentry-config";
 // No network transport: even SDK outcomes stay inside this process.
 describe("real browser SDK API deduplication", () => {
   let events: ErrorEvent[];
+  let defaultIntegrations: ReturnType<typeof Sentry.getDefaultIntegrations>;
 
   const originalGetEntries = Object.getOwnPropertyDescriptor(performance, "getEntriesByType");
 
   beforeAll(() => {
     Object.defineProperty(performance, "getEntriesByType", { configurable: true, value: () => [] });
     events = [];
+    const runtimeOptions = getSentryRuntimeOptions();
     Sentry.init({
-      ...getSentryRuntimeOptions(),
+      ...runtimeOptions,
+      integrations: (defaults) => {
+        // Snapshot the SDK input before the application callback can change it.
+        defaultIntegrations = [...defaults];
+        return runtimeOptions.integrations(defaults);
+      },
       dsn: "https://public@example.invalid/1",
       enabled: true,
       transport: () => ({
@@ -72,8 +79,8 @@ describe("real browser SDK API deduplication", () => {
   });
 
   it("replaces only Dedupe and preserves default integration order and identities", () => {
-    const defaults = Sentry.getClient()?.getOptions().integrations ?? [];
-    const integrations = getSentryRuntimeOptions().integrations(defaults);
+    const defaults = defaultIntegrations;
+    const integrations = Sentry.getClient()?.getOptions().integrations ?? [];
     expect(defaults.some((integration) => integration.name === "Dedupe")).toBe(true);
     expect(integrations.map((integration) => integration.name)).toEqual(defaults.map((integration) => integration.name));
     defaults.forEach((integration, index) => {
