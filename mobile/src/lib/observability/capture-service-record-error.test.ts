@@ -250,8 +250,56 @@ describe("captureApiError", () => {
 describe("API document path templates and opaque id bounds", () => {
   beforeEach(() => jest.clearAllMocks());
 
+  it("preserves the real service-record capture output", () => {
+    const path = "/api/service-record/[Filtered]/header";
+    captureApiError(createAxiosError({
+      status: 502, method: "post", url: "/api/service-record/qa-access-token/header",
+    }));
+
+    expect(mockScope.setTag).toHaveBeenCalledWith("feature", "service-records");
+    expect(mockScope.setTag).toHaveBeenCalledWith("operation", "save-header");
+    expect(mockScope.setContext).toHaveBeenCalledWith("serviceRecord", {
+      method: "POST", path, operation: "save-header", status: 502, code: null, runtime: "browser",
+    });
+    expect(mockScope.setFingerprint).toHaveBeenCalledWith(["service-record", "save-header", "POST", path, "502"]);
+    expect(mockCaptureException).toHaveBeenCalledWith(expect.objectContaining({
+      name: "ServiceRecordError", message: `Service-record save-header failed: POST ${path} (502)`,
+    }));
+  });
+
+  it.each(["completed", "status-counts"])("preserves the complete %s collection endpoint", (collection) => {
+    const path = `/api/documents/${collection}`;
+    captureApiError(createAxiosError({ status: 502, url: path }));
+    expect(mockScope.setContext).toHaveBeenCalledWith("api", expect.objectContaining({ path }));
+    expect(mockScope.setFingerprint).toHaveBeenCalledWith(["api-error", "GET", path, "502"]);
+  });
+
+  it.each(["opaque-service-record-secret", "opaque-service_records-secret"])("templates document id %s before feature classification", (id) => {
+    const subroute = "void";
+    const path = `/api/documents/:id/${subroute}`;
+    const error = createAxiosError({ status: 502, url: `/api/documents/${id}/${subroute}` });
+    error.stack = "Error: Request failed\n    at request (api-client.ts:1:1)";
+    captureApiError(error);
+
+    expect(mockScope.setFingerprint).toHaveBeenCalledWith(["api-error", "GET", path, "502"]);
+    expect(mockScope.setContext).toHaveBeenCalledWith("api", expect.objectContaining({ path }));
+    expect(mockScope.setTag).toHaveBeenCalledWith("feature", "api");
+    const captured = mockCaptureException.mock.calls[0][0] as Error;
+    expect(JSON.stringify([
+      mockScope.setContext.mock.calls, mockScope.setTag.mock.calls,
+      mockScope.setFingerprint.mock.calls, captured.message, captured.stack,
+    ])).not.toContain(id);
+  });
+
   it.each([
     ["/api/documents/abcdefghijklmnop/void", "/api/documents/:id/void"],
+    ["/api/documents/completed/supersede", "/api/documents/:id/supersede"],
+    ["/api/documents/status-counts/void", "/api/documents/:id/void"],
+    ["/eformsign/documents/completed", "/eformsign/documents/completed"],
+    ["/api/eformsign/documents/status-counts", "/api/eformsign/documents/status-counts"],
+    ["/documents/upload", "/documents/upload"],
+    ["/documents/capabilities", "/documents/capabilities"],
+    ["/other/documents/completed", "/other/documents/:id"],
     ["/eformsign/documents/letters/download_files", "/eformsign/documents/:id/download_files"],
     ["/documents/file/download", "/documents/:id/download"],
     ...["completed", "in-progress", "status-counts", "rejected", "expired", "upload", "capabilities"].map((route) => [`/api/documents/${route}`, `/api/documents/${route}`]),

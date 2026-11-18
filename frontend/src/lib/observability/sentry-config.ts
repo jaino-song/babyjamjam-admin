@@ -17,7 +17,8 @@ const URL_FIELD_PATTERN = /(^|[._-])(url|uri|path)([._-]|$)/i;
 const REFERER_HEADER_PATTERN = /^referer$/i;
 const URL_HEADER_PATTERN = /^(origin|location|destination|link|refresh)$/i;
 const URL_HEADER_VALUE_PATTERN = /^(?:https?:\/\/|\/)/i;
-const URL_USERINFO_PATTERN = /([a-z][a-z0-9+.-]*:\/\/)[^\s/?#]*@/gi;
+const URL_AUTHORITY_PATTERN = /[a-z][a-z0-9+.-]*:\/\/[^/?#\s]+/gi;
+const HOSTNAME_PATTERN = /^(?=.{1,253}\.?$)[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*\.?$/i;
 const QUERY_FIELD_PATTERN = /(^|[._-])query(?:_string)?([._-]|$)/i;
 const EMAIL_PATTERN = /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi;
 const PHONE_PATTERN = /(?:\+?82[-\s]?)?0?1[016789][-.\s]?\d{3,4}[-.\s]?\d{4}/g;
@@ -65,25 +66,45 @@ export function sanitizeSentryText(value: string): string {
     .replace(UUID_PATH_SEGMENT_PATTERN, `/${FILTERED_VALUE}`);
 }
 
-export function sanitizeSentryUrl(value: string | undefined): string | undefined {
-  if (!value) return value;
+// Parse each embedded authority before text masking can obscure its userinfo.
+function stripEmbeddedUrlCredentials(value: string): string {
+  return value.replace(URL_AUTHORITY_PATTERN, (authority) => {
+    if (!authority.includes("@")) return authority;
+
+    try {
+      const parsed = new URL(authority);
+      return `${parsed.protocol}//${parsed.host}`;
+    } catch {
+      return FILTERED_VALUE;
+    }
+  });
+}
+
+function sanitizeUrl(value: string): string {
+  const trimmed = value.trim();
 
   try {
     const baseUrl = "https://sentry.local";
-    const parsed = new URL(value, baseUrl);
-    const path = sanitizeSentryText(parsed.pathname).replace(
+    // Validate the original authority before any masking; origin excludes userinfo.
+    const parsed = new URL(trimmed, baseUrl);
+    if (!parsed.hostname || (
+      !parsed.hostname.startsWith("[") && !HOSTNAME_PATTERN.test(parsed.hostname)
+    )) return FILTERED_VALUE;
+
+    parsed.pathname = stripEmbeddedUrlCredentials(parsed.pathname);
+    const pathname = parsed.pathname;
+    const path = sanitizeSentryText(pathname).replace(
       SERVICE_RECORD_ACCESS_TOKEN_PATTERN,
       `$1${FILTERED_VALUE}`,
     );
     return parsed.origin === baseUrl ? path : `${parsed.origin}${path}`;
   } catch {
-    const urlWithoutUserinfo = (value.split(/[?#]/, 1)[0] ?? value)
-      .replace(URL_USERINFO_PATTERN, "$1");
-    return sanitizeSentryText(urlWithoutUserinfo).replace(
-      SERVICE_RECORD_ACCESS_TOKEN_PATTERN,
-      `$1${FILTERED_VALUE}`,
-    );
+    return FILTERED_VALUE;
   }
+}
+
+export function sanitizeSentryUrl(value: string | undefined): string | undefined {
+  return value ? sanitizeUrl(value) : value;
 }
 
 export function isServiceRecordSentrySignal(value: string | undefined): boolean {
@@ -122,6 +143,22 @@ function sanitizeUnknown(value: unknown, depth = 0): unknown {
   );
 }
 
+function sanitizeHeaderUrl(value: string): string {
+  const trimmed = value.trim();
+
+  try {
+    const parsed = trimmed.startsWith("//")
+      ? new URL(trimmed, "https://sentry.local")
+      : new URL(trimmed);
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return FILTERED_VALUE;
+
+    const origin = parsed.origin;
+    return sanitizeSentryText(origin) === origin ? origin : FILTERED_VALUE;
+  } catch {
+    return FILTERED_VALUE;
+  }
+}
+
 function sanitizeHeaders(headers: Record<string, string> | undefined): Record<string, string> | undefined {
   if (!headers) return headers;
 
@@ -130,12 +167,9 @@ function sanitizeHeaders(headers: Record<string, string> | undefined): Record<st
       if (SENSITIVE_FIELD_PATTERN.test(key)) return [key, FILTERED_VALUE];
       if (
         REFERER_HEADER_PATTERN.test(key) || URL_FIELD_PATTERN.test(key)
-        || URL_HEADER_PATTERN.test(key) || URL_HEADER_VALUE_PATTERN.test(value)
+        || URL_HEADER_PATTERN.test(key) || URL_HEADER_VALUE_PATTERN.test(value.trim())
       ) {
-        // Strip userinfo before email masking can hide the URL's credential delimiter.
-        const urlWithoutUserinfo = value.replace(URL_USERINFO_PATTERN, "$1");
-        // Redact before URL parsing can encode whitespace and hide sensitive text.
-        return [key, sanitizeSentryUrl(sanitizeSentryText(urlWithoutUserinfo)) ?? FILTERED_VALUE];
+        return [key, sanitizeHeaderUrl(value)];
       }
       return [key, sanitizeSentryText(value)];
     }),
@@ -291,9 +325,13 @@ export function getSentryRuntimeOptions() {
       return {
         ...integration,
         processEvent(event, hint, client) {
-          // API errors already deduplicate by object identity in captureApiError.
-          if (event.tags?.feature === "api") return event;
-          return dedupe.processEvent ? dedupe.processEvent(event, hint, client) : event;
+          // Always update SDK state, including for API failures deduplicated by object identity.
+          const dedupedEvent = dedupe.processEvent ? dedupe.processEvent(event, hint, client) : event;
+          if (
+            event.tags?.feature === "api"
+            || event.fingerprint?.[0] === "api-error"
+          ) return event;
+          return dedupedEvent;
         },
       };
     }),

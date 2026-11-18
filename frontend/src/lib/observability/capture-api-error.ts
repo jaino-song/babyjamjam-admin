@@ -13,7 +13,11 @@ const reportedErrors = new WeakSet<object>();
 const MIN_OPAQUE_ID_LENGTH = 16;
 // Literal collection operations found in document BFF routes and API callers.
 const DOCUMENT_COLLECTION_ROUTES = new Set([
-  "completed", "in-progress", "status-counts", "rejected", "expired", "upload", "capabilities",
+  ...["completed", "in-progress", "status-counts", "rejected", "expired", "upload", "capabilities"]
+    .map((route) => `/api/documents/${route}`),
+  ...["completed", "in-progress", "status-counts", "rejected", "expired"]
+    .flatMap((route) => [`/api/eformsign/documents/${route}`, `/eformsign/documents/${route}`]),
+  "/documents/upload", "/documents/capabilities",
 ]);
 
 export type ServiceRecordOperation =
@@ -25,6 +29,16 @@ export type ServiceRecordOperation =
   | "submit-session"
   | "finalize"
   | "render";
+
+function templateDocumentPath(path: string): string {
+  if (DOCUMENT_COLLECTION_ROUTES.has(path)) return path;
+
+  return path.split("/").map((segment, index, segments) => (
+    segments[index - 1] === "documents" && segment
+      ? ":id"
+      : segment
+  )).join("/");
+}
 
 function getRequestPath(url: string | undefined): string {
   if (!url) return "unknown";
@@ -66,18 +80,14 @@ export function captureApiError(error: unknown): boolean {
 
   reportedErrors.add(error);
 
-  const sanitizedPath = sanitizeSentryUrl(path) ?? "unknown";
+  const documentPath = templateDocumentPath(path);
+  const isServiceRecord = isServiceRecordSentrySignal(documentPath);
+  const sanitizedPath = sanitizeSentryUrl(isServiceRecord ? path : documentPath) ?? "unknown";
   const statusLabel = status ? String(status) : "network";
-  const isServiceRecord = isServiceRecordSentrySignal(path);
   const pathTemplate = isServiceRecord ? sanitizedPath : sanitizedPath
     .split("/")
     .map((segment) => (
       /^\d+$/.test(segment) || (segment.length >= MIN_OPAQUE_ID_LENGTH && /\d/.test(segment))
-        ? ":id"
-        : segment
-    ))
-    .map((segment, index, segments) => (
-      segments[index - 1] === "documents" && segment && !DOCUMENT_COLLECTION_ROUTES.has(segment)
         ? ":id"
         : segment
     ))
