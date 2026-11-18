@@ -326,6 +326,26 @@ describe("frontend Sentry error coverage", () => {
     });
   });
 
+  describe.each(["frontend", "service-records"])("%s request path privacy", (feature) => {
+    it.each([
+      ["/clients?search=QA-Client-Name#details", "/clients"],
+      ["https://admin.example.com/contracts?search=QA-Client-Name#details", "https://admin.example.com/contracts"],
+      ["/clients?search=QA%20Client%20Name#details", "/clients"],
+    ])("strips queries and fragments from contexts.nextjs.request_path: %s", (requestPath, expectedPath) => {
+      const trace = { trace_id: "0123456789abcdef0123456789abcdef", span_id: "0123456789abcdef" };
+      const sent = getSentryRuntimeOptions().beforeSend({
+        type: undefined,
+        tags: { feature },
+        contexts: { trace, nextjs: { request_path: requestPath } },
+      });
+
+      expect(sent.contexts?.nextjs?.request_path).toBe(expectedPath);
+      expect(sent.contexts?.trace).toBe(trace);
+      expect(sent.tags?.feature).toBe(feature);
+      expect(JSON.stringify(sent)).not.toMatch(/search|QA-Client-Name|QA%20Client%20Name|details/);
+    });
+  });
+
   it("filters browser extensions and ResizeObserver loop noise", () => {
     const options = getSentryRuntimeOptions();
     for (const url of ["chrome-extension://abc/script.js", "moz-extension://abc/script.js", "safari-extension://abc/script.js", "safari-web-extension://abc/script.js"]) {
