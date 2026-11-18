@@ -761,6 +761,8 @@ describe("credential-bearing path segment privacy", () => {
 
   it.each([
     "alice:pw@host",
+    "a@b:c@d",
+    "x@y%2Fz@host",
     "https:%5C%5Calice:pw@x",
     "@team",
     "a@b.com",
