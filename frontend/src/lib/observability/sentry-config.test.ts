@@ -360,6 +360,34 @@ describe("frontend Sentry error coverage", () => {
 
 describe("URL-valued request headers", () => {
   it.each([
+    ["https://admin.example.com/x?q=kim@example.com&phone=01012345678&token=qa-query-secret&documentId=qa-document", "https://admin.example.com/x"],
+    ["https://admin.example.com?q=kim@example.com&phone=01012345678", "https://admin.example.com/"],
+    ["https://admin.example.com/x#kim@example.com&phone=01012345678", "https://admin.example.com/x"],
+    ["https://admin.example.com/notify/@team?q=kim@example.com&token=qa-query-secret", "https://admin.example.com/notify/@team"],
+    ["https://alice:password@admin.example.com/x?q=kim@example.com&token=qa-query-secret", "https://admin.example.com/x"],
+    ["https://alice:a@b!c@admin.example.com/x?q=kim@example.com&documentId=qa-document", "https://admin.example.com/x"],
+    ["https://alice:p?ss@admin.example.com/x?q=kim@example.com&phone=01012345678", "https://admin.example.com/x"],
+    ["https://alice:p/ss@admin.example.com/x?q=kim@example.com&token=qa-query-secret", "https://admin.example.com/x"],
+    ["https://[invalid/x?q=kim@example.com&phone=01012345678", "https://[invalid/x"],
+    ["https://admin.example.com:8443/x?q=kim@example.com&phone=01012345678", "https://admin.example.com:8443/x"],
+    ["https://admin.example.com:bad/x?q=kim@example.com&phone=01012345678", "/[Filtered]"],
+    ["https://alice:p?key=value@admin.example.com/x?q=kim@example.com&phone=01012345678", "/[Filtered]"],
+    ["https://alice:p?ss@[invalid/x?q=kim@example.com&documentId=qa-document", "https://[invalid/x"],
+    ["//admin.example.com/x?q=kim@example.com&token=qa-query-secret", "https://admin.example.com/x"],
+  ])("keeps path and query @ characters out of the origin (sentry-coverage-u7/F1): %s", (value, expected) => {
+    expect(sanitizeSentryUrl(value)).toBe(expected);
+
+    const sent = getSentryRuntimeOptions().beforeSend({
+      type: undefined,
+      request: { url: value, headers: { Referer: value } },
+    });
+
+    expect(sent.request?.url).toBe(expected);
+    expect(sent.request?.headers?.Referer).toBe(expected);
+    expect(JSON.stringify(sent)).not.toMatch(/alice|password|kim|01012345678|qa-query-secret|qa-document|[?#]/);
+  });
+
+  it.each([
     ["Referer", "admin.example.com/x?documentId=qa-query-value#details"],
     ["x-forwarded-uri", "contracts?documentId=qa-query-value#details"],
     ["Link", "<https://a.example/x?documentId=qa-query-value>"],
