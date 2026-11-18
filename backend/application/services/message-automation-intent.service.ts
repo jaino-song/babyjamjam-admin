@@ -488,6 +488,14 @@ export class MessageAutomationIntentService {
             },
         });
         this.logger.error(`[Message Automation Intent] Quarantined malformed intent ${id}`);
+        try {
+            captureBackendError(new Error("Message automation intent payload is invalid"), {
+                handled: true,
+                operation: "message-automation-intent:quarantine",
+            });
+        } catch {
+            // Reporting must not interrupt background processing.
+        }
     }
 
     private readTemplateVariables(payload: Prisma.JsonValue): Record<string, string> {

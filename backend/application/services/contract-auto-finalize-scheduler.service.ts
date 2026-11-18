@@ -87,6 +87,14 @@ export class ContractAutoFinalizeSchedulerService {
             this.logger.error(
                 "[Contract Auto Finalize] CONTRACT_AUTO_FINALIZE_SINCE is missing or not YYYY-MM-DD; refusing to run",
             );
+            try {
+                captureBackendError(new Error("Contract auto finalize activation date is invalid"), {
+                    handled: true,
+                    operation: "contract-auto-finalize:config",
+                });
+            } catch {
+                // Reporting must not interrupt background processing.
+            }
             return;
         }
         const runToken = this.executionGuard.tryStart();

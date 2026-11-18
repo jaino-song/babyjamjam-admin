@@ -273,6 +273,14 @@ export class SmsCarrierCheckService {
             this.logger.warn(
                 `[CarrierCheck] Carrier lookup returned result code ${details.resultCode} for log ${log.id} (mid ${mid})`,
             );
+            try {
+                captureBackendError(new Error("Sms carrier check returned an unsuccessful result"), {
+                    handled: true,
+                    operation: "sms-carrier-check:result-code",
+                });
+            } catch {
+                // Reporting must not interrupt background processing.
+            }
             return lookupError;
         }
 
