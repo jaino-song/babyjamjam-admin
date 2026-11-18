@@ -264,7 +264,7 @@ describe("SbMessageTriggerJobRepository", () => {
         expect(await repo.releaseProcessingForDateRefresh(job, tx as never)).toBe(true);
         expect(await repo.releaseProcessingForDateRefresh(job, tx as never)).toBe(false);
         const sql = tx.$queryRaw.mock.calls[0]![0] as Prisma.Sql;
-        expect(sql.sql).toContain("SET status = 'pending'");
+        expect(sql.sql).toContain("SET status = CASE WHEN job.cancel_reason IS NOT NULL THEN 'needs_setup' ELSE 'pending' END");
         expect(sql.sql.split("WHERE")[0]).not.toContain("next_attempt_at");
         for (const clause of ["job.branch_id =", "job.client_id =", "job.rule_id =", "job.dedupe_key =",
             "job.employee_schedule_id IS NOT DISTINCT FROM", "job.recipient_type =", "job.template_key =",
@@ -279,6 +279,48 @@ describe("SbMessageTriggerJobRepository", () => {
         expect(tx.$queryRaw).toHaveBeenCalledTimes(2);
     });
 
+
+    it.each(["needs_setup", "pending"] as const)("releases a real %s claim using its persisted origin and retains retry timing", async (origin) => {
+        const row = createRow({ status: origin, cancelReason: "QA-existing reason", attempts: 2,
+            nextAttemptAt: new Date("2026-11-25T02:00:00Z") });
+        const retryAt = row.nextAttemptAt;
+        const tx = { $queryRaw: jest.fn(async (sql: Prisma.Sql) => {
+            if (sql.sql.includes("WITH candidate_job AS MATERIALIZED")) {
+                expect(sql.sql).toContain(`job.status = '${origin}'`);
+                row.status = "processing"; row.claimToken = "persisted-token";
+                if (sql.sql.includes("cancel_reason = NULL")) row.cancelReason = null;
+                return [{ id: row.id, claim_token: row.claimToken }];
+            }
+            // Evaluate the generated assignment against the stored row, not the caller's reason.
+            if (row.status !== "processing" || !sql.values.includes(row.claimToken!)) return [];
+            row.status = sql.sql.includes("WHEN job.cancel_reason IS NOT NULL THEN 'needs_setup'") && row.cancelReason !== null
+                ? "needs_setup" : "pending";
+            row.claimToken = null;
+            return [{ id: row.id }];
+        }) };
+        const repo = new SbMessageTriggerJobRepository({} as never);
+        const claim = origin === "needs_setup" ? repo.claimNeedsSetupWithRuleFence.bind(repo) : repo.claimPendingWithRuleFence.bind(repo);
+        const token = await claim(row.id, row.branchId, tx as never);
+        const job = createJob();
+        Object.assign(job, { id: row.id, branchId: row.branchId, clientId: row.clientId, ruleId: row.ruleId,
+            status: "processing", claimToken: token, cancelReason: origin === "needs_setup" ? null : "QA-transient-reason" });
+        // A stale owner cannot change the row; terminal rows also stay unchanged.
+        job.claimToken = "wrong-token";
+        expect(await repo.releaseProcessingForDateRefresh(job, tx as never)).toBe(false);
+        expect(row.status).toBe("processing");
+        job.claimToken = token;
+        expect(await repo.releaseProcessingForDateRefresh(job, tx as never)).toBe(true);
+        expect(row.status).toBe(origin);
+        expect(row.cancelReason).toBe(origin === "needs_setup" ? "QA-existing reason" : null);
+        expect(row.attempts).toBe(2); expect(row.nextAttemptAt).toBe(retryAt);
+        const sql = tx.$queryRaw.mock.calls.at(-1)![0];
+        expect(sql.sql).toContain("WHEN job.cancel_reason IS NOT NULL THEN 'needs_setup'");
+        expect(sql.sql.split("WHERE")[0]).not.toContain("cancel_reason =");
+        expect(sql.sql.split("WHERE")[0]).not.toContain("next_attempt_at");
+        row.status = "sent";
+        expect(await repo.releaseProcessingForDateRefresh(job, tx as never)).toBe(false);
+        expect(row.status).toBe("sent");
+    });
 
     const createJob = () =>
         MessageTriggerJobEntity.create({

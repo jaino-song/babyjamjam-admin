@@ -2675,6 +2675,14 @@ export class MessageTriggerService {
                     || row.cancelReason === "SERVICE_RECORD_REVISION_SUPERSEDED");
                 const reversible = (row: MessageTriggerJobReviewSnapshot) => ordinary(row) && !row.canceledByUser
                     && row.cancelReason !== "SERVICE_RECORD_REVISION_SUPERSEDED";
+                // A date move must carry an operator-only occurrence to its new
+                // identity, never materialize an automatic sibling around it.
+                const operatorReservations = family.filter((row) => reversible(row) && row.status === "needs_setup");
+                const operatorReservation = operatorReservations[0];
+                if (operatorReservation && job && (operatorReservations.length !== 1
+                    || previous.some((row) => row.id !== operatorReservation.id && row.dedupeKey === job.dedupeKey))) {
+                    throw new ConflictException("Message date reconciliation conflicts with an operator reservation");
+                }
                 if (family.some((row) => reversible(row) && row.status === "processing"
                     && (!job || row.dedupeKey !== job.dedupeKey || !sameSource(row, job)))) {
                     throw new ConflictException("Message date reconciliation is waiting for a processing reservation");
@@ -2688,7 +2696,7 @@ export class MessageTriggerService {
                 const eligible = job && (existingOccurrence || ((includePast || job.scheduledFor.getTime() > Date.now())
                     && !(includePast && rule.recipientType === MessageTriggerRecipientType.CLIENT && this.shouldSkipPreStartCatchUp(rule, client))
                     && isMessageRecipeWithinMaterializationWindow(job, rule, includePast, new Date())));
-                if (!replacementBlocked && eligible && !existingOccurrence && !currentEquivalent) catchUpCandidates.push({ rule, job });
+                if (!operatorReservation && !replacementBlocked && eligible && !existingOccurrence && !currentEquivalent) catchUpCandidates.push({ rule, job });
                 reconciliations.push({ job, apply: async () => {
                     // Protected history blocks replacement, but cannot keep obsolete reversible siblings dispatchable.
                     const stale = family.filter((row) => reversible(row) && row.status === "pending"
@@ -2700,6 +2708,25 @@ export class MessageTriggerService {
                             data: { status: "canceled", canceledAt: new Date(), cancelReason: CLIENT_DATE_AUTOMATION_CHANGED_REASON,
                                 claimToken: null, nextAttemptAt: null },
                         });
+                    }
+                    if (operatorReservation) {
+                        if (!job) return;
+                        if (operatorReservation.dedupeKey === job.dedupeKey && sameSource(operatorReservation, job)
+                            && operatorReservation.scheduledFor.getTime() === job.scheduledFor.getTime()) return;
+                        // Source/rule/job locks above serialize with claims. Keep
+                        // the exact reservation, its setup reason and retry state;
+                        // explicit resend still has to match this current recipe.
+                        const moved = await tx.message_trigger_job.updateMany({
+                            where: { id: operatorReservation.id, branchId, clientId, ruleId: rule.id,
+                                status: "needs_setup", canceledByUser: false, cancelReason: operatorReservation.cancelReason,
+                                dedupeKey: operatorReservation.dedupeKey, employeeScheduleId: operatorReservation.employeeScheduleId,
+                                recipientType: operatorReservation.recipientType, templateKey: operatorReservation.templateKey,
+                                claimToken: operatorReservation.claimToken },
+                            data: { dedupeKey: job.dedupeKey, scheduledFor: job.scheduledFor, recipientPhone: job.recipientPhone,
+                                templateKey: job.templateKey, payload: job.payload as unknown as Prisma.InputJsonObject },
+                        });
+                        if (moved.count !== 1) throw new ConflictException("Message date reconciliation lost an operator reservation");
+                        return;
                     }
                     if (replacementBlocked || !eligible || currentEquivalent) return;
                     // A protected task-owned slot is kept separate even if its reviewed source has drifted.
