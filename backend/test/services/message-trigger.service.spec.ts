@@ -1,3 +1,8 @@
+import { MessageAutomationIntentService } from "application/services/message-automation-intent.service";
+import { persistClientDateMessageAutomationIntent, persistScheduleMessageAutomationIntent } from "application/services/message-automation-intent-writer";
+import { lockServiceRecordWriteSet } from "application/policies/service-record-write-lock.policy";
+import { MESSAGE_AUTOMATION_INTENT_RULE_ID, MESSAGE_AUTOMATION_INTENT_RETRY_REASON } from "domain/constants/message-automation-intent";
+import type { SmsTriggerDeliveryPreparation } from "application/services/sms-trigger-delivery.service";
 import { ClientAutomationImpactService } from "application/services/client-automation-impact.service";
 import { ClientAutomationSourceReader } from "application/services/client-automation-source.reader";
 import { CaregiverTemplateResolverService } from "application/services/caregiver-template-resolver.service";
@@ -342,6 +347,7 @@ describe("MessageTriggerService", () => {
             clearJobsStaleIfUnchanged: jest.fn().mockResolvedValue(true),
         };
         const jobRepository = {
+            findOutstandingDateIntents: jest.fn().mockResolvedValue([]),
             cancelOrphanedPending: jest.fn().mockResolvedValue(0),
             findRecoverableOrphanedClientJobs: jest.fn().mockResolvedValue([]),
             markOrphanedJobsReconciled: jest.fn().mockResolvedValue(0),
@@ -474,6 +480,7 @@ describe("MessageTriggerService", () => {
             sendPreparedJob: jest.fn(async (job: MessageTriggerJobEntity) => sendJob(job)),
         };
         const jobRepository = {
+            findOutstandingDateIntents: jest.fn().mockResolvedValue([]),
             cancelOrphanedPending: jest.fn().mockResolvedValue(0),
             findDueDispatchBranchIds: jest.fn().mockResolvedValue([branchId]),
             consumeDispatchSlotsAndFindDueJobs: jest.fn().mockResolvedValue([]),
@@ -8840,12 +8847,250 @@ describe("service-record date reconciliation", () => {
         return { client, schedule, rule, endRule, createdRule, careRule, activeRules, rows, tx, jobs, sources, recipients, gate, service, seed };
     }
 
+    function dispatchFixture() {
+        const f = fixture();
+        const intents: Array<Record<string, unknown>> = [];
+        const events: string[] = [];
+        const acceptance = new Set<string>();
+        const id = (n: number) => `98000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
+        const find = (where: Record<string, unknown>) => f.rows.find((row) => row["id"] === where["id"]
+            && (!where["branchId"] || row["branchId"] === where["branchId"]) && (!where["status"] || row["status"] === where["status"])
+            && (!where["claimToken"] || row["claimToken"] === where["claimToken"]));
+        const raw = jest.fn(async (sql: Prisma.Sql) => {
+            const query = sql.sql, values = sql.values;
+            if (query.includes("SET next_attempt_at = clock_timestamp()")) {
+                const intent = intents.find((row) => values.includes(row["dedupeKey"] as string) && row["status"] === "failed");
+                if (!intent) return [];
+                Object.assign(intent, { nextAttemptAt: new Date(Date.now() + 600_000), updatedAt: new Date() });
+                events.push("intent-leased");
+                return [{ id: intent["id"], scheduled_for: intent["scheduledFor"], updated_at: intent["updatedAt"] }];
+            }
+            if (query.includes('UPDATE "message_trigger_job" AS job')) {
+                const row = f.rows.find((row) => values.includes(row["id"]) && values.includes(row["claimToken"]!)
+                    && row["status"] === "processing" && !row["canceledByUser"] && !acceptance.has(row["id"]));
+                if (!row) return [];
+                Object.assign(row, { status: "pending", claimToken: null, processingDeadlineAt: null, nextAttemptAt: null });
+                events.push("claim-released"); return [{ id: row["id"] }];
+            }
+            if (query.includes("SELECT status,")) {
+                const row = f.rows.find((row) => values.includes(row["id"]));
+                return row ? [{ status: row["status"], claim_token: row["claimToken"], branch_id: row["branchId"], rule_id: row["ruleId"],
+                    client_id: row["clientId"], employee_schedule_id: row["employeeScheduleId"], recipient_type: row["recipientType"],
+                    template_key: row["templateKey"], payload: structuredClone(row["payload"]) }] : [];
+            }
+            if (query.includes("SET status = 'dispatching'")) {
+                const row = f.rows.find((row) => values.includes(row["id"]) && values.includes(row["claimToken"]!) && row["status"] === "processing");
+                if (!row) return [];
+                row["status"] = "dispatching"; events.push("dispatch-authorized"); return [{ id: row["id"] }];
+            }
+            if (query.includes('FROM "client"')) events.push("client-source-locked");
+            return [{ id: 7 }];
+        });
+        const db = Object.assign(f.tx, {
+            $queryRaw: raw,
+            $executeRaw: jest.fn(async () => 1),
+            $transaction: async <T>(work: (tx: Prisma.TransactionClient) => Promise<T>): Promise<T> => work(db as never),
+            service_record_case: { findUnique: jest.fn(async () => null) },
+            message_trigger_rule: { findUnique: jest.fn(async () => ({ id: MESSAGE_AUTOMATION_INTENT_RULE_ID })) },
+            branch: { findUnique: jest.fn(async () => ({ smsSenderApprovalStatus: "approved" })) },
+        });
+        const reconcileUpdate = f.tx.message_trigger_job.updateMany;
+        Object.assign(db.message_trigger_job, {
+            findFirst: jest.fn(async ({ where }: { where: Record<string, unknown> }) => structuredClone(find(where) ?? null)),
+            findMany: jest.fn(async ({ where }: { where: Prisma.message_trigger_jobWhereInput }) => {
+                if (!where["OR"]) return []; // No consent records: exercise the existing real legacy authority path.
+                events.push("outstanding-intents-read");
+                return intents.filter((row) => row["branchId"] === where["branchId"] && row["clientId"] === where["clientId"]
+                    && row["status"] === "failed" && row["cancelReason"] === MESSAGE_AUTOMATION_INTENT_RETRY_REASON && !row["canceledByUser"]);
+            }),
+            upsert: jest.fn(async ({ create }: { create: Record<string, unknown> }) => {
+                const existing = intents.find((row) => row["dedupeKey"] === create["dedupeKey"]);
+                if (existing) return existing;
+                const row = { ...structuredClone(create), id: id(900 + intents.length), updatedAt: new Date() };
+                intents.push(row); return row;
+            }),
+            deleteMany: jest.fn(async ({ where }: { where: { id: string } }) => {
+                const index = intents.findIndex((row) => row["id"] === where["id"]);
+                if (index < 0) return { count: 0 }; intents.splice(index, 1); return { count: 1 };
+            }),
+            updateMany: jest.fn(async (input: { where: Record<string, unknown>; data: Record<string, unknown> }) => {
+                if (typeof input.where["id"] !== "string") return reconcileUpdate(input as never);
+                const row = find(input.where); if (!row) return { count: 0 };
+                Object.assign(row, structuredClone(input.data)); return { count: 1 };
+            }),
+        });
+        const repository = new SbMessageTriggerJobRepository(db as never);
+        Object.assign(f.jobs, {
+            findOutstandingDateIntents: repository.findOutstandingDateIntents.bind(repository),
+            releaseProcessingForDateRefresh: jest.fn(repository.releaseProcessingForDateRefresh.bind(repository)),
+            update: jest.fn(async (job: MessageTriggerJobEntity) => {
+                const row = find({ id: job.id, status: "processing", claimToken: job.claimToken });
+                if (!row) throw new Error("Claim lost"); Object.assign(row, structuredClone(job)); return job;
+            }),
+        });
+        f.jobs.upsertPendingForRuleGeneration.mockImplementation(async (job: MessageTriggerJobEntity) => {
+            const row = f.rows.find((row) => row["dedupeKey"] === job.dedupeKey);
+            if (row) { Object.assign(row, job, { id: row["id"] }); return row; }
+            const saved = Object.assign(job, { id: id(101 + f.rows.length), canceledByUser: false }); f.rows.push(saved); return saved;
+        });
+        const rules = { findAll: async () => f.activeRules, findByIdIncludingGlobal: async (_branch: string, ruleId: string) => f.activeRules.find((rule) => rule.id === ruleId) ?? null };
+        const lock = new MessageAutomationBranchLockService(db as never);
+        const authority = new AgentAutomationJobAuthorityService(new AgentAutomationAuthorityService(new AgentAutomationRecordStoreService(lock)), f.sources as never, {} as never);
+        const gate = new AgentAutomationDeliveryGateService(db as never, lock, authority);
+        const provider = jest.fn(async () => true);
+        const snapshot = { snapshotHash: "synthetic-frozen" };
+        const delivery = {
+            resolveCanonicalDeliverySnapshot: async () => snapshot,
+            prepareJob: jest.fn(async (job: MessageTriggerJobEntity) => {
+                if (!await gate.consumePreparation(job)) return null;
+                const serializedSnapshot = JSON.stringify(snapshot);
+                job.payload.templateVariables[SMS_DELIVERY_SNAPSHOT_VARIABLE] = serializedSnapshot;
+                return { snapshot, serializedSnapshot } as SmsTriggerDeliveryPreparation;
+            }),
+            sendPreparedJob: async (job: MessageTriggerJobEntity, preparation: SmsTriggerDeliveryPreparation) => {
+                await gate.consumeDispatch(job, preparation); events.push("provider"); return provider();
+            },
+        };
+        Object.assign(f.service, { prisma: db, ruleRepository: rules, deliveryService: delivery,
+            messageAutomationBranchLockService: lock, automationDeliveryGate: gate,
+            messageAutomationActivationService: { getTriggerDispatchEnabled: async () => true, assertTriggerDispatchEnabled: async () => undefined } });
+        type Fence = { kind: string };
+        const core = f.service as unknown as {
+            authorizeClaimedJobBeforePreparation: (job: MessageTriggerJobEntity) => Promise<Fence>;
+            authorizeClaimedJobForDispatch: (job: MessageTriggerJobEntity, prepared: SmsTriggerDeliveryPreparation) => Promise<Fence>;
+            persistPreparedDelivery: (job: MessageTriggerJobEntity) => Promise<boolean>;
+        };
+        const seed = (rule = f.endRule, changes: Partial<MessageTriggerJobEntity> = {}) => Object.assign(f.seed(rule, changes), { id: id(100 + f.rows.length) });
+        const prepare = async (row: MessageTriggerJobEntity) => {
+            row["markProcessing"](`claim-${row["id"]}`);
+            const job = Object.assign(Object.create(MessageTriggerJobEntity.prototype) as MessageTriggerJobEntity, structuredClone(row));
+            if ((await core.authorizeClaimedJobBeforePreparation(job)).kind !== "allow") return null;
+            const preparation = await delivery.prepareJob(job); if (!preparation) return null;
+            expect(await core.persistPreparedDelivery(job)).toBe(true);
+            return { job, preparation };
+        };
+        const authorize = async (prepared: NonNullable<Awaited<ReturnType<typeof prepare>>>) => {
+            const result = await core.authorizeClaimedJobForDispatch(prepared.job, prepared.preparation);
+            if (result.kind !== "allow") return false;
+            prepared.job.markDispatchAuthorized(); return true;
+        };
+        const confirm = async (dateScope = scope, owner = { branchId, clientId: 7 }) => {
+            await db.$transaction(async (tx) => {
+                await lockServiceRecordWriteSet(tx, owner);
+                if (owner.branchId === branchId && owner.clientId === 7) f.client.endDate = new Date("2026-11-25Z");
+                await persistClientDateMessageAutomationIntent(tx, { ...owner, confirmation: "confirm-1", dateScope, intentAt: new Date() });
+            });
+            events.push("confirmation-committed");
+        };
+        return { ...f, db, intents, events, acceptance, core, provider, delivery, prepare, authorize, confirm, seed };
+    }
+
+    it("holds an old occurrence after confirmation and a future intent lease, then authorizes the reconciled move", async () => {
+        const f = dispatchFixture(); const old = f.seed();
+        const prepared = (await f.prepare(old))!;
+        expect(prepared).not.toBeNull();
+        await f.confirm();
+        let resume!: () => void;
+        const paused = new Promise<void>((resolve) => { resume = resolve; });
+        let leased!: () => void;
+        const leaseObserved = new Promise<void>((resolve) => { leased = resolve; });
+        const worker = new MessageAutomationIntentService(f.db as never, {
+            reconcileServiceRecordDateRules: async () => { leased(); await paused; await f.service.reconcileServiceRecordDateRules(branchId, 7, scope); },
+        } as never, {} as never, {} as never);
+        const intent = f.intents[0]!;
+        const recovery = worker.fulfillClientDateIntent({ branchId, clientId: 7, dedupeKey: String(intent["dedupeKey"]), intentAt: intent["scheduledFor"] as Date, dateScope: scope });
+        await leaseObserved;
+        expect(intent["nextAttemptAt"]).toEqual(new Date(Date.now() + 600_000));
+        expect(await f.authorize(prepared)).toBe(false);
+        expect(old.status).toBe("pending"); expect(old.claimToken).toBeNull();
+        expect(f.provider).not.toHaveBeenCalled();
+        expect(f.events.indexOf("confirmation-committed")).toBeLessThan(f.events.indexOf("intent-leased"));
+        expect(f.events.indexOf("intent-leased")).toBeLessThan(f.events.indexOf("claim-released"));
+        expect(f.events.lastIndexOf("client-source-locked")).toBeGreaterThan(f.events.indexOf("confirmation-committed"));
+        expect(f.events.lastIndexOf("client-source-locked")).toBeLessThan(f.events.lastIndexOf("outstanding-intents-read"));
+        resume(); expect(await recovery).toBe(true); expect(f.intents).toEqual([]);
+        expect(old.status).toBe("canceled");
+        const moved = f.rows.find((row) => row["ruleId"] === "end" && row["status"] === "pending")!;
+        expect(moved.scheduledFor).toEqual(new Date("2026-11-25T01:30:00Z"));
+        jest.setSystemTime(moved.scheduledFor);
+        const current = (await f.prepare(moved))!;
+        expect(await f.authorize(current)).toBe(true);
+        await f.delivery.sendPreparedJob(current.job, current.preparation);
+        expect(f.provider).toHaveBeenCalledTimes(1);
+    });
+
+    it("holds a confirmation winner before preparation without canceling the reservation", async () => {
+        const f = dispatchFixture(); const old = f.seed(); await f.confirm();
+        expect(await f.prepare(old)).toBeNull();
+        expect(old.status).toBe("pending"); expect(old.claimToken).toBeNull();
+        expect(f.delivery.prepareJob).not.toHaveBeenCalled(); expect(f.provider).not.toHaveBeenCalled();
+    });
+
+    it("holds only the automatic link bound to a schedule-refresh intent", async () => {
+        const f = dispatchFixture();
+        const old = f.seed(f.endRule, { ruleId: "system:service_record_link", templateKey: MessageTriggerTemplateKey.SERVICE_RECORD_LINK,
+            employeeScheduleId: 91, recipientType: MessageTriggerRecipientType.PRIMARY_EMPLOYEE });
+        await persistScheduleMessageAutomationIntent(f.db as never, { branchId, clientId: 7, scheduleId: 91,
+            refreshServiceRecordLink: true, confirmation: "same-schedule", includePast: false, intentAt: new Date() });
+        expect(await f.prepare(old)).toBeNull();
+        expect(old.status).toBe("pending"); expect(old.claimToken).toBeNull(); expect(f.provider).not.toHaveBeenCalled();
+    });
+
+    it.each(["manual", "task"])("leaves the %s owner outside date-claim release", async (owner) => {
+        const f = dispatchFixture(); const old = f.seed(); await f.confirm();
+        old.markProcessing("owned-claim");
+        if (owner === "manual") old.ruleId = "agent_sms:owned";
+        else old.payload.taskAutomationReference = { actionId: "owned" } as never;
+        const before = structuredClone(old);
+        const fence = f.service as unknown as { fenceServiceRecordRevisionBeforeProviderSend: (job: MessageTriggerJobEntity, tx: Prisma.TransactionClient) => Promise<{ kind: string }> };
+        expect(await fence.fenceServiceRecordRevisionBeforeProviderSend(old, f.db as never)).toEqual({ kind: "allow" });
+        expect(old).toEqual(before); expect(f.events).not.toContain("claim-released"); expect(f.provider).not.toHaveBeenCalled();
+    });
+
+    it.each(["branch", "client", "schedule"])("ignores an outstanding intent for a different %s", async (scopeKind) => {
+        const f = dispatchFixture(); const old = f.seed(); const prepared = (await f.prepare(old))!;
+        if (scopeKind === "schedule") {
+            await persistScheduleMessageAutomationIntent(f.db as never, { branchId, clientId: 7, scheduleId: 92,
+                refreshServiceRecordLink: true, confirmation: "other-schedule", includePast: false, intentAt: new Date() });
+        } else await f.confirm(scope, { branchId: scopeKind === "branch" ? "98000000-0000-4000-8000-000000000002" : branchId,
+            clientId: scopeKind === "client" ? 8 : 7 });
+        expect(await f.authorize(prepared)).toBe(true);
+        await f.delivery.sendPreparedJob(prepared.job, prepared.preparation);
+        expect(f.provider).toHaveBeenCalledTimes(1);
+    });
+
+    it("keeps an unchanged start SMS independent of an end-date intent", async () => {
+        const f = dispatchFixture(); const start = f.rule("start", MessageTriggerEventType.SERVICE_START); f.activeRules.push(start);
+        const old = f.seed(start), prepared = (await f.prepare(old))!;
+        await f.confirm(); expect(await f.authorize(prepared)).toBe(true);
+        await f.delivery.sendPreparedJob(prepared.job, prepared.preparation);
+        expect(f.provider).toHaveBeenCalledTimes(1);
+    });
+
+    it("allows a genuinely authorized occurrence to cross the provider boundary after a later confirmation", async () => {
+        const f = dispatchFixture(); const old = f.seed(), prepared = (await f.prepare(old))!;
+        expect(await f.authorize(prepared)).toBe(true); expect(old.status).toBe("dispatching");
+        await f.confirm(); await f.delivery.sendPreparedJob(prepared.job, prepared.preparation);
+        expect(f.provider).toHaveBeenCalledTimes(1); expect(old.status).toBe("dispatching");
+    });
+
+    it.each(["user-canceled", "uncertain", "accepted"])("does not return a protected %s occurrence to pending", async (mode) => {
+        const f = dispatchFixture(); const old = f.seed(), prepared = (await f.prepare(old))!;
+        await f.confirm();
+        if (mode === "user-canceled") { old.status = "canceled"; old.canceledByUser = true; old.claimToken = null; }
+        else f.acceptance.add(old.id);
+        const before = structuredClone(old);
+        expect(await f.authorize(prepared)).toBe(false);
+        expect(old).toEqual(before); expect(f.provider).not.toHaveBeenCalled();
+    });
+
     it("moves only an affected future reservation, preserves unrelated creation work, and repeats without rewriting", async () => {
         const f = fixture();
         const previous = f.seed(), unrelated = f.seed(f.createdRule);
         const unrelatedBefore = structuredClone(unrelated);
         f.client.endDate = new Date("2026-11-25Z");
         await f.service.reconcileServiceRecordDateRules(branchId, 7, scope);
+        expect(f.tx.client.findFirst).not.toHaveBeenCalled();
         expect(previous.status).toBe("canceled");
         expect(f.rows.filter((row) => row.ruleId === "end" && row.status === "pending")).toHaveLength(1);
         expect(unrelated).toEqual(unrelatedBefore);
@@ -8854,6 +9099,28 @@ describe("service-record date reconciliation", () => {
         expect(f.jobs.upsertPendingForRuleGeneration).toHaveBeenCalledTimes(1);
         expect(f.tx.message_trigger_job.updateMany).toHaveBeenCalledTimes(1);
         expect(f.sources.readClientAutomationSource).toHaveBeenCalledWith(branchId, 7, f.tx);
+    });
+
+    it("reserves a moved active-target occurrence while waiting, retaining an unrelated nonmatching creation rule", async () => {
+        const f = fixture();
+        f.endRule.targetClientStatus = "active";
+        f.createdRule.targetClientStatus = "pre_booking";
+        const previous = f.seed(), unrelated = f.seed(f.createdRule);
+        const before = structuredClone(unrelated);
+        f.client.endDate = new Date("2026-11-25Z");
+        await f.service.reconcileServiceRecordDateRules(branchId, 7, scope);
+        expect(previous.status).toBe("canceled");
+        const moved = f.rows.find((row) => row.ruleId === "end" && row.status === "pending")!;
+        expect(moved?.scheduledFor).toEqual(new Date("2026-11-25T01:30:00Z"));
+        expect(unrelated).toEqual(before);
+        const gate = f.service as unknown as { cancelJobOutsideRuleTargetClientStatus: (job: MessageTriggerJobEntity) => Promise<boolean> };
+        Object.assign(f.service, { ruleRepository: { findByIdIncludingGlobal: async () => f.endRule },
+            jobRepository: { update: jest.fn(async () => moved) } });
+        // The dispatch predicate still rejects a send now, and admits it once the service starts.
+        expect(await gate.cancelJobOutsideRuleTargetClientStatus(Object.assign(Object.create(MessageTriggerJobEntity.prototype), structuredClone(moved)))).toBe(true);
+        jest.setSystemTime(new Date("2026-11-10T01:30:00Z"));
+        expect(await gate.cancelJobOutsideRuleTargetClientStatus(moved)).toBe(false);
+        expect(moved.status).toBe("pending");
     });
 
     it("keeps a current equivalent reservation while canceling stale older date keys", async () => {

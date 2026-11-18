@@ -11,7 +11,8 @@ import {
 } from "domain/constants/message-automation-policy";
 import { AGENT_AUTOMATION_RECORD_DEDUPE_PREFIX, AGENT_AUTOMATION_RECORD_PAYLOAD_KEY } from "domain/constants/agent-automation-storage";
 import { ordinaryAutomationJobWhere } from "application/utils/message-automation-record-sql";
-import { MESSAGE_AUTOMATION_INTENT_RULE_ID } from "domain/constants/message-automation-intent";
+import { MESSAGE_AUTOMATION_INTENT_RULE_ID, MESSAGE_AUTOMATION_INTENT_RETRY_REASON,
+    getClientDateAutomationIntentDedupeKey, getScheduleAutomationIntentDedupeKey } from "domain/constants/message-automation-intent";
 import {
     SERVICE_RECORD_LINK_RULE_ID,
     SERVICE_RECORD_LINK_RESCHEDULED_REASON,
@@ -224,6 +225,55 @@ describe("SbMessageTriggerJobRepository", () => {
         ...baseRow(),
         ...overrides,
     });
+
+    it("reads outstanding immutable date intents in the caller transaction without filtering leased retry times", async () => {
+        const branchId = "98000000-0000-4000-8000-000000000001";
+        const leased = { dedupeKey: getClientDateAutomationIntentDedupeKey(branchId, 7, "confirmation"),
+            employeeScheduleId: null, payload: { templateVariables: { intentKind: "client_dates" } }, nextAttemptAt: new Date("2099-01-01Z") };
+        const schedule = { ...leased, dedupeKey: `${getScheduleAutomationIntentDedupeKey(branchId, 91)}:dates:confirmation`, employeeScheduleId: 91 };
+        const wrongBinding = { ...schedule, dedupeKey: `${getScheduleAutomationIntentDedupeKey(branchId, 92)}:dates:confirmation` };
+        const pool = { message_trigger_job: { findMany: jest.fn() } };
+        const tx = { message_trigger_job: { findMany: jest.fn<Promise<unknown[]>, [unknown]>().mockResolvedValue([leased, schedule, wrongBinding]) } };
+        const repo = new SbMessageTriggerJobRepository(pool as never);
+        expect(await repo.findOutstandingDateIntents(branchId, 7, tx as never)).toEqual([leased, schedule]);
+        expect(pool.message_trigger_job.findMany).not.toHaveBeenCalled();
+        const query = tx.message_trigger_job.findMany.mock.calls[0]![0] as unknown as { where: Record<string, unknown> };
+        expect(query.where).toMatchObject({ branchId, clientId: 7, ruleId: MESSAGE_AUTOMATION_INTENT_RULE_ID,
+            status: "failed", canceledByUser: false, cancelReason: MESSAGE_AUTOMATION_INTENT_RETRY_REASON });
+        expect(query.where).not.toHaveProperty("nextAttemptAt");
+        expect(query.where).not.toHaveProperty("scheduledFor");
+        expect(query.where["OR"]).toEqual([
+            { dedupeKey: { startsWith: getClientDateAutomationIntentDedupeKey(branchId, 7, "") },
+                payload: { path: ["templateVariables", "intentKind"], equals: "client_dates" } },
+            { payload: { path: ["templateVariables", "refreshServiceRecordLink"], equals: "true" } },
+        ]);
+    });
+
+    it("releases only the exact reversible date-refresh claim and preserves provider/cancellation ownership", async () => {
+        const row = baseRow();
+        const job = MessageTriggerJobEntity.create({ branchId: row.branchId!, ruleId: row.ruleId, clientId: row.clientId,
+            employeeScheduleId: 91, recipientType: MessageTriggerRecipientType.CLIENT, templateKey: MessageTriggerTemplateKey.INFO,
+            recipientPhone: row.recipientPhone, scheduledFor: row.scheduledFor, dedupeKey: row.dedupeKey, payload: row.payload });
+        Object.assign(job, { id: row.id, claimToken: "exact-claim", status: "processing" });
+        const tx = { $queryRaw: jest.fn().mockResolvedValueOnce([{ id: row.id }]).mockResolvedValueOnce([]) };
+        const repo = new SbMessageTriggerJobRepository({} as never);
+        expect(await repo.releaseProcessingForDateRefresh(job, tx as never)).toBe(true);
+        expect(await repo.releaseProcessingForDateRefresh(job, tx as never)).toBe(false);
+        const sql = tx.$queryRaw.mock.calls[0]![0] as Prisma.Sql;
+        expect(sql.sql).toContain("SET status = 'pending'");
+        for (const clause of ["job.branch_id =", "job.client_id =", "job.rule_id =", "job.dedupe_key =",
+            "job.employee_schedule_id IS NOT DISTINCT FROM", "job.recipient_type =", "job.template_key =",
+            "job.status = 'processing'", "job.claim_token =", "job.canceled_by_user = false", "taskAutomationReference",
+            "log.provider_call_started_at IS NOT NULL", "log.provider_accepted_at IS NOT NULL", "log.aligo_mid IS NOT NULL",
+            "log.status = 'sent'", "'started', 'accepted', 'uncertain', 'reconciled_delivered'", "processing_deadline_at = NULL",
+            "NOT IN ('rejected', 'reconciled_not_delivered')", "'uncertain', 'partial'"]) expect(sql.sql).toContain(clause);
+        expect(sql.values).toEqual(expect.arrayContaining([job.id, job.branchId, job.clientId, job.ruleId, job.dedupeKey,
+            job.employeeScheduleId, job.recipientType, job.templateKey, job.claimToken, MESSAGE_AUTOMATION_INTENT_RULE_ID]));
+        job.claimToken = null;
+        expect(await repo.releaseProcessingForDateRefresh(job, tx as never)).toBe(false);
+        expect(tx.$queryRaw).toHaveBeenCalledTimes(2);
+    });
+
 
     const createJob = () =>
         MessageTriggerJobEntity.create({

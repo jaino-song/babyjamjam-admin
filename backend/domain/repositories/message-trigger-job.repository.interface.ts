@@ -122,6 +122,11 @@ export interface MessageQuietHeldJob {
 }
 
 export interface IMessageTriggerJobRepository {
+    /** Outstanding immutable date work, including leased intents whose retry time is in the future. */
+    findOutstandingDateIntents(branchId: string, clientId: number, transaction: Prisma.TransactionClient): Promise<Array<Pick<MessageTriggerJobEntity,
+        "dedupeKey" | "employeeScheduleId" | "payload">>>;
+    /** Return only this still-reversible, unaccepted claim to the ordinary reconciler. */
+    releaseProcessingForDateRefresh(job: MessageTriggerJobEntity, transaction: Prisma.TransactionClient): Promise<boolean>;
     createManualSmsJob(job: MessageTriggerJobEntity, existingMessageLogId: number, transaction: Prisma.TransactionClient): Promise<MessageTriggerJobEntity>;
     findDueQuietQueueJobs(eligibility: MessageDispatchBranchEligibility[], now: Date, limit?: number): Promise<MessageDispatchSelectedJob[]>;
     findQuietHeldJobs(branchId: string, transaction?: Prisma.TransactionClient): Promise<MessageQuietHeldJob[]>;

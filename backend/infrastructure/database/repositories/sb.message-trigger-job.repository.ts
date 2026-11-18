@@ -39,7 +39,8 @@ import {
     MessageTriggerRecipientType,
     MessageTriggerTemplateKey,
 } from "domain/constants/message-trigger-catalog";
-import { MESSAGE_AUTOMATION_INTENT_RULE_ID } from "domain/constants/message-automation-intent";
+import { MESSAGE_AUTOMATION_INTENT_RULE_ID, MESSAGE_AUTOMATION_INTENT_RETRY_REASON,
+    getClientAutomationIntentDedupeKey, getScheduleAutomationIntentDedupeKey } from "domain/constants/message-automation-intent";
 import { MESSAGE_SENDER_APPROVAL_REQUIRED_CANCEL_REASON, PAST_OCCURRENCE_GRACE_MS } from "domain/constants/message-automation-policy";
 import {
     SERVICE_RECORD_LINK_BRANCH_DISABLED_REASON,
@@ -1196,6 +1197,51 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
             orderBy: { id: "asc" }, take: 501,
         });
         return rows.map((row) => Object.assign(this.toDomain(row), { canceledByUser: row.canceledByUser }));
+    }
+
+    async findOutstandingDateIntents(branchId: string, clientId: number, transaction: Prisma.TransactionClient): Promise<Array<Pick<MessageTriggerJobEntity,
+        "dedupeKey" | "employeeScheduleId" | "payload">>> {
+        // A worker lease changes nextAttemptAt, not whether the source edit is outstanding.
+        const rows = await transaction.message_trigger_job.findMany({
+            where: { branchId, clientId, ruleId: MESSAGE_AUTOMATION_INTENT_RULE_ID, status: "failed",
+                cancelReason: MESSAGE_AUTOMATION_INTENT_RETRY_REASON, canceledByUser: false,
+                OR: [
+                    { dedupeKey: { startsWith: `${getClientAutomationIntentDedupeKey(branchId, clientId)}:dates:` },
+                        payload: { path: ["templateVariables", "intentKind"], equals: "client_dates" } },
+                    { payload: { path: ["templateVariables", "refreshServiceRecordLink"], equals: "true" } },
+                ] },
+            select: { dedupeKey: true, employeeScheduleId: true, payload: true },
+        });
+        return rows.filter((row) => row.employeeScheduleId === null || row.dedupeKey.startsWith(
+            `${getScheduleAutomationIntentDedupeKey(branchId, row.employeeScheduleId)}:dates:`,
+        )).map((row) => ({ ...row, payload: row.payload as unknown as MessageTriggerJobPayload }));
+    }
+
+    async releaseProcessingForDateRefresh(job: MessageTriggerJobEntity, transaction: Prisma.TransactionClient): Promise<boolean> {
+        if (!job.branchId || job.clientId === null || !job.claimToken) return false;
+        const rows = await transaction.$queryRaw<Array<{ id: string }>>(Prisma.sql`
+            UPDATE "message_trigger_job" AS job
+            SET status = 'pending', claim_token = NULL, processing_deadline_at = NULL, next_attempt_at = NULL,
+                updated_at = date_trunc('milliseconds', clock_timestamp())
+            WHERE job.id = ${job.id} AND job.branch_id = ${job.branchId}::uuid AND job.client_id = ${job.clientId}
+              AND job.rule_id = ${job.ruleId} AND job.dedupe_key = ${job.dedupeKey}
+              AND job.employee_schedule_id IS NOT DISTINCT FROM ${job.employeeScheduleId}::integer
+              AND job.recipient_type = ${job.recipientType} AND job.template_key = ${job.templateKey}
+              AND job.status = 'processing' AND job.claim_token = ${job.claimToken} AND job.canceled_by_user = false
+              AND ${ordinaryAutomationJobSql({ ruleId: Prisma.sql`job.rule_id`, dedupeKey: Prisma.sql`job.dedupe_key`, payload: Prisma.sql`job.payload` })}
+              AND NOT (${manualMessageTriggerJobPredicate({ ruleId: Prisma.sql`job.rule_id`, dedupeKey: Prisma.sql`job.dedupe_key`, templateKey: Prisma.sql`job.template_key` })})
+              AND NOT (job.payload ? 'taskAutomationReference')
+              AND NOT EXISTS (SELECT 1 FROM "message_log" AS log
+                  WHERE log.branch_id = job.branch_id AND log.trigger_job_id = job.id
+                    AND (log.status = 'sent'
+                        OR (log.provider_call_started_at IS NOT NULL
+                            AND log.provider_acceptance_state NOT IN ('rejected', 'reconciled_not_delivered'))
+                        OR log.provider_accepted_at IS NOT NULL OR log.aligo_mid IS NOT NULL
+                        OR log.provider_acceptance_state IN ('started', 'accepted', 'uncertain', 'reconciled_delivered')
+                        OR log.variables->>'retrySafety' IN ('uncertain', 'partial')))
+            RETURNING job.id
+        `);
+        return rows.length === 1;
     }
 
     async findPendingByRuleIdsAndEmployeeScheduleId(

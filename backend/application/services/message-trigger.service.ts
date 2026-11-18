@@ -63,7 +63,8 @@ import {
 import { findUnsupportedRequiredMessageTriggerVariables } from "domain/constants/message-trigger-variable-sources";
 import { codeOnlyProblemBody, problemBody } from "application/utils/problem-bodies";
 import { SystemTemplateKey } from "domain/constants/system-template-registry";
-import { CLIENT_DATE_AUTOMATION_CHANGED_REASON, type ClientDateAutomationScope, EMPLOYEE_ASSIGNMENT_AUTOMATION_CHANGED_CANCEL_REASON } from "domain/constants/message-automation-intent";
+import { CLIENT_DATE_AUTOMATION_CHANGED_REASON, type ClientDateAutomationScope, EMPLOYEE_ASSIGNMENT_AUTOMATION_CHANGED_CANCEL_REASON,
+    getClientAutomationIntentDedupeKey, getScheduleAutomationIntentDedupeKey } from "domain/constants/message-automation-intent";
 import {
     MESSAGE_SENDER_APPROVAL_REQUIRED_CANCEL_REASON,
     PAST_OCCURRENCE_GRACE_MS,
@@ -2627,9 +2628,6 @@ export class MessageTriggerService {
             await lockServiceRecordWriteSet(tx, { branchId, clientId });
             const client = await this.readClientAutomationSource(branchId, clientId, tx);
             if (!client) return;
-            const statusFacts = await tx.client.findFirst({ where: { id: clientId, branchId, deletedAt: null },
-                select: { serviceStatus: true, bookingConfirmedAt: true, startDate: true, endDate: true } });
-            if (!statusFacts) return;
             const rules = (await this.ruleRepository.findAll(branchId, tx)).filter((rule) => rule.branchId === branchId
                 && rule.isActive && !isManualMessageTriggerRule(rule) && [MessageTriggerEventType.CLIENT_CREATED,
                     MessageTriggerEventType.SERVICE_START, MessageTriggerEventType.SERVICE_END,
@@ -2669,14 +2667,13 @@ export class MessageTriggerService {
                     job.scheduledFor = current.scheduledFor;
                     job.dedupeKey = current.dedupeKey;
                 }
-                const statusEligible = targetClientStatusAllowsSend(rule.targetClientStatus, statusFacts);
-                const affected = anchorChanged || !statusEligible || family.some((row) => job && !sameSource(row, job));
+                const affected = anchorChanged || family.some((row) => job && !sameSource(row, job));
                 if (!affected) return;
                 // Logical recipient scope spans historical date keys. Delivery uncertainty is never replayed.
                 if (family.some((row) => row.canceledByUser || ["sent", "dispatching", "failed"].includes(row.status)
                     || row.payload.taskAutomationReference || isReservedAutomationJob(row)
                     || row.cancelReason === "SERVICE_RECORD_REVISION_SUPERSEDED")) return;
-                if (family.some((row) => row.status === "processing" && (!job || !statusEligible || row.dedupeKey !== job.dedupeKey || !sameSource(row, job)))) {
+                if (family.some((row) => row.status === "processing" && (!job || row.dedupeKey !== job.dedupeKey || !sameSource(row, job)))) {
                     throw new ConflictException("Message date reconciliation is waiting for a processing reservation");
                 }
                 const currentEquivalent = current && job && sameSource(current, job)
@@ -2685,7 +2682,7 @@ export class MessageTriggerService {
                 // Refreshing an accepted same-key occurrence is not a new catch-up send.
                 const existingOccurrence = current && ["pending", "processing"].includes(current.status) && job?.dedupeKey === current.dedupeKey
                     && job.scheduledFor.getTime() === current.scheduledFor.getTime();
-                const eligible = job && statusEligible && (existingOccurrence || ((includePast || job.scheduledFor.getTime() > Date.now())
+                const eligible = job && (existingOccurrence || ((includePast || job.scheduledFor.getTime() > Date.now())
                     && !(includePast && rule.recipientType === MessageTriggerRecipientType.CLIENT && this.shouldSkipPreStartCatchUp(rule, client))
                     && isMessageRecipeWithinMaterializationWindow(job, rule, includePast, new Date())));
                 if (eligible && !existingOccurrence && !currentEquivalent) catchUpCandidates.push({ rule, job });
@@ -4735,7 +4732,7 @@ export class MessageTriggerService {
                 branchId: job.branchId,
                 clientId: job.clientId,
             });
-            return { kind: "allow" };
+            return this.fenceOutstandingDateRefresh(job, transaction);
         }
         if (
             !job.branchId
@@ -4875,6 +4872,83 @@ export class MessageTriggerService {
         return authorization.kind === "lost"
             ? { kind: "lost" }
             : { kind: "allow" };
+    }
+
+    /** Called with the same client-source locks as confirmation, before locking/authorizing the claim. */
+    private async fenceOutstandingDateRefresh(job: MessageTriggerJobEntity, tx: Prisma.TransactionClient): Promise<PreProviderSendFenceResult> {
+        if (!job.branchId || job.clientId === null || !this.isAutomaticMessageJob(job)
+            || isReservedAutomationJob(job) || job.payload.taskAutomationReference) return { kind: "allow" };
+        const intents = await this.jobRepository.findOutstandingDateIntents(job.branchId, job.clientId, tx);
+        const scopes: ClientDateAutomationScope[] = [];
+        let scheduleRefresh = false;
+        for (const intent of intents) {
+            const variables = intent.payload.templateVariables;
+            if (intent.payload.taskAutomationReference || variables["taskOrigin"] === "true") continue;
+            if (variables["intentKind"] === "schedule" && variables["refreshServiceRecordLink"] === "true"
+                && job.employeeScheduleId !== null && intent.employeeScheduleId === job.employeeScheduleId
+                && intent.dedupeKey.startsWith(`${getScheduleAutomationIntentDedupeKey(job.branchId, job.employeeScheduleId)}:dates:`)) {
+                scheduleRefresh = true;
+            }
+            if (variables["intentKind"] !== "client_dates" || !intent.dedupeKey.startsWith(
+                `${getClientAutomationIntentDedupeKey(job.branchId, job.clientId)}:dates:`,
+            )) continue;
+            try {
+                const scope: unknown = JSON.parse(variables["dateScope"] ?? "null");
+                if (scope && typeof scope === "object" && "startDate" in scope && "endDate" in scope && "scheduleIds" in scope
+                    && typeof scope.startDate === "boolean" && typeof scope.endDate === "boolean" && Array.isArray(scope.scheduleIds)
+                    && scope.scheduleIds.every((id: unknown) => typeof id === "number" && Number.isSafeInteger(id) && id > 0)) {
+                    scopes.push(scope as ClientDateAutomationScope);
+                }
+            } catch { /* Invalid markers remain owned by the recovery worker's quarantine path. */ }
+        }
+        const clientDates = scopes.some((scope) => scope.startDate || scope.endDate);
+        const scheduleDates = job.employeeScheduleId !== null && scopes.some((scope) => scope.scheduleIds.includes(job.employeeScheduleId!));
+        if (!clientDates && !scheduleDates && !scheduleRefresh) return { kind: "allow" };
+
+        let changed = false;
+        if (job.ruleId === SERVICE_RECORD_LINK_RULE_ID) {
+            changed = scheduleRefresh;
+        } else {
+            const rule = await this.ruleRepository.findByIdIncludingGlobal(job.branchId, job.ruleId, tx);
+            if (!rule || !rule.isActive || isManualMessageTriggerRule(rule)
+                || ![MessageTriggerEventType.CLIENT_CREATED, MessageTriggerEventType.SERVICE_START,
+                    MessageTriggerEventType.SERVICE_END, MessageTriggerEventType.EMPLOYEE_ASSIGNED].includes(rule.eventType)) return { kind: "allow" };
+            let current: MessageTriggerJobEntity | null = null;
+            if (isCaregiverTriggerTemplate(rule.templateKey)) {
+                if (!this.caregiverRecipients || job.employeeScheduleId === null) return { kind: "lost" };
+                const set = await this.caregiverRecipients.resolve(job.branchId, job.clientId, [rule], tx,
+                    { employeeScheduleId: job.employeeScheduleId });
+                if (!set.complete) return { kind: "lost" };
+                const recipient = set.recipients.find((row) => row.recipientType === job.recipientType && row.employeeId === job.payload.employeeId);
+                current = recipient?.recipe ? MessageTriggerJobEntity.create(recipient.recipe) : null;
+            } else if (rule.eventType === MessageTriggerEventType.EMPLOYEE_ASSIGNED) {
+                if (!scheduleDates && !scheduleRefresh) return { kind: "allow" };
+                const schedule = await tx.employee_schedule.findFirst({ where: { id: job.employeeScheduleId!, branchId: job.branchId, clientId: job.clientId },
+                    include: { client: true, primaryEmployee: true, secondaryEmployee: true } });
+                current = schedule && !schedule.replaced ? this.buildEmployeeAssignmentJob(rule, schedule) : null;
+            } else {
+                if (!clientDates || job.employeeScheduleId !== null || job.recipientType !== MessageTriggerRecipientType.CLIENT) return { kind: "allow" };
+                const client = await this.readClientAutomationSource(job.branchId, job.clientId, tx);
+                if (!client) return { kind: "lost" };
+                // The existing already-sent notice fence owns this cancellation.
+                if (job.templateKey === MessageTriggerTemplateKey.SERVICE_END_NOTICE && client.serviceEndNoticeSentAt) return { kind: "allow" };
+                current = this.buildClientJob(rule, client);
+            }
+            const originalScheduledFor = job.payload.catchUp?.originalScheduledFor ?? job.scheduledFor.toISOString();
+            changed = !current || current.recipientType !== job.recipientType || current.templateKey !== job.templateKey
+                || current.employeeScheduleId !== job.employeeScheduleId || current.recipientPhone !== job.recipientPhone
+                || (rule.offsetType !== MessageTriggerOffsetType.IMMEDIATE && rule.eventType !== MessageTriggerEventType.EMPLOYEE_ASSIGNED
+                    && current.scheduledFor.toISOString() !== originalScheduledFor)
+                || agentBindingHash(agentAutomationSourcePayload({ ...job.payload, catchUp: undefined }, job.templateKey))
+                    !== agentBindingHash(agentAutomationSourcePayload({ ...current.payload, catchUp: undefined }, current.templateKey));
+        }
+        if (!changed) return { kind: "allow" };
+        const claim = await this.fenceClaimTokenBeforeProviderSend(job, tx);
+        if (claim.kind !== "allow") return claim;
+        // No cancellation or new queue: relinquish only this token's reversible claim.
+        // Failure to release is still a lost grant; accepted/uncertain/user-canceled rows stay untouched.
+        await this.jobRepository.releaseProcessingForDateRefresh(job, tx);
+        return { kind: "lost" };
     }
 
     /**
