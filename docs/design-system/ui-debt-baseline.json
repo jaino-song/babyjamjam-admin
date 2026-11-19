@@ -73,7 +73,7 @@
         "193:10-193:24|pageLocalComponent"
       ],
       "ui-architecture/no-visual-tailwind-in-pages": [
-        "143:123-143:205|visualTailwindInPage",
+        "143:128-143:210|visualTailwindInPage",
         "144:45-144:77|visualTailwindInPage",
         "147:45-147:78|visualTailwindInPage",
         "148:45-148:71|visualTailwindInPage",
@@ -87,7 +87,7 @@
         "287:39-287:74|visualTailwindInPage",
         "291:41-291:90|visualTailwindInPage",
         "295:36-295:82|visualTailwindInPage",
-        "297:117-297:157|visualTailwindInPage",
+        "297:122-297:162|visualTailwindInPage",
         "302:63-302:109|visualTailwindInPage",
         "303:65-303:110|visualTailwindInPage",
         "304:65-304:113|visualTailwindInPage",
@@ -159,7 +159,7 @@
       "ui-architecture/no-visual-tailwind-in-pages": [
         "1000:69-1000:97|visualTailwindInPage",
         "797:39-801:30|visualTailwindInPage",
-        "859:193-859:355|visualTailwindInPage",
+        "859:198-859:360|visualTailwindInPage",
         "860:78-860:180|visualTailwindInPage",
         "863:78-863:174|visualTailwindInPage",
         "864:78-864:213|visualTailwindInPage",
@@ -173,10 +173,10 @@
         "287:65-287:96|visualTailwindInPage",
         "288:65-288:91|visualTailwindInPage",
         "290:61-290:100|visualTailwindInPage",
-        "324:137-324:275|visualTailwindInPage",
-        "387:160-387:233|visualTailwindInPage",
+        "324:142-324:280|visualTailwindInPage",
+        "387:165-387:238|visualTailwindInPage",
         "388:73-388:116|visualTailwindInPage",
-        "389:172-389:248|visualTailwindInPage"
+        "389:177-389:253|visualTailwindInPage"
       ]
     },
     "frontend/src/app/(protected)/contracts/page.tsx": {
