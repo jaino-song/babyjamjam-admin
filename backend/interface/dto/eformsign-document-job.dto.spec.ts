@@ -232,3 +232,20 @@ describe("document job recovery API contract", () => {
         }
     });
 });
+
+
+describe("document job cancellation projection", () => {
+    it.each([
+        ["requires_attention", true, "info-inserted", "manual_send"],
+        ["requires_attention", false, "info-inserted", "verify_result"],
+        ["failed", false, "info-inserted", "manual_send"],
+        ["failed", false, "cancelled", null],
+    ] as const)("projects %s cancellable=%s progress=%s", (status, cancellable, progressStep, recoveryKind) => {
+        expect(toEformsignDocumentJobResponse(job({ contractGeneration: "generation", status, cancellable, progressStep })))
+            .toMatchObject({ cancellable, recoveryKind, recoveryPresentation: recoveryKind ? "iframe" : null });
+    });
+    it("always exposes a boolean, including legacy and scheduler jobs", () => {
+        expect(toEformsignDocumentJobResponse(job()).cancellable).toBe(false);
+        expect(toEformsignDocumentJobResponse(job({ source: "auto_finalize" })).cancellable).toBe(false);
+    });
+});

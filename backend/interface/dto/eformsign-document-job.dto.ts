@@ -182,6 +182,8 @@ export interface EformsignDocumentJobResponseDto extends EformsignDocumentJobDis
     createdAt: string;
     updatedAt: string;
     clientName: string | null;
+    /** Display hint only; the cancel endpoint rechecks the locked proof. */
+    cancellable: boolean;
     /** What staff may do with a stuck contract job; `null` for every other job. */
     recoveryKind: RecoveryClassification | null;
     /** Safe routing hint only; never exposes generation or recovery authority. */
@@ -250,6 +252,7 @@ export const toEformsignDocumentJobResponse = (
         createdAt: job.createdAt.toISOString(),
         updatedAt: job.updatedAt.toISOString(),
         clientName: job.clientName ?? null,
+        cancellable: job.cancellable === true,
         recoveryKind,
         recoveryPresentation: recoveryKind === null ? null
             : job.contractGeneration ? (job.jobType === "create_document" ? "iframe" : null) : "legacy",

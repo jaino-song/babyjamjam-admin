@@ -490,6 +490,65 @@ async function bounded<T>(promise: Promise<T>, ms: number): Promise<T> {
     const nextInput = (s: Awaited<ReturnType<typeof runtime>>) => ({ ...s.enqueue, requestKey: `next-${randomUUID()}`, activeKey: `next-${randomUUID()}` });
     const recoveryIn = (tx: Prisma.TransactionClient, s: Awaited<ReturnType<typeof runtime>>) =>
         new SbEformsignContractRecoveryRepository({ $transaction: (run: (tx: Prisma.TransactionClient) => unknown) => run(tx) } as unknown as PrismaService, s.options);
+    const cancelInput = (s: Awaited<ReturnType<typeof runtime>>) => ({ jobId: s.worker.jobId,
+        branchId: branches[0]!, userId: users[0]!, now: new Date() });
+    async function projectedCancellation(s: Awaited<ReturnType<typeof runtime>>) {
+        const list = await s.jobRepository.listForBranch(branches[0]!, new Date(0));
+        return list.requiresAttention.find(job => job.id === s.worker.jobId)?.cancellable;
+    }
+    it("CANCEL real happy path clears payload/key and claim pair, hides history and admits a fresh request", async () => {
+        const s = await exhaustedRuntime();
+        await db.eformsign_document_job.update({ where: { id: s.worker.jobId }, data: { activeKey: s.enqueue.activeKey } });
+        await db.eformsign_contract_authority.update({ where: { branchId_clientId: { branchId: branches[0]!, clientId: clients[0]! } },
+            data: { claimUserId: users[0]!, claimExpiresAt: new Date(0) } });
+        const before = await db.eformsign_document_job.findUniqueOrThrow({ where: { id: s.worker.jobId } });
+        expect(await projectedCancellation(s)).toBe(true);
+        expect(await s.jobRepository.cancel(cancelInput(s))).toEqual({ kind: "cancelled" });
+        const cancelled = await db.eformsign_document_job.findUniqueOrThrow({ where: { id: s.worker.jobId } });
+        expect(cancelled).toMatchObject({ status: "failed", progressStep: "cancelled", activeKey: null, payload: null,
+            leaseToken: null, heartbeatAt: null, completedAt: before.completedAt, lastErrorCode: before.lastErrorCode, documentId: before.documentId });
+        expect(cancelled.updatedAt.getTime()).toBeGreaterThanOrEqual(before.updatedAt.getTime());
+        expect((await read())[0]).toMatchObject({ phase: "closed", claimUserId: null, claimExpiresAt: null, providerDocumentId: null });
+        expect(await s.jobRepository.cancel(cancelInput(s))).toEqual({ kind: "already_cancelled" });
+        expect(await db.eformsign_document_job.findUniqueOrThrow({ where: { id: s.worker.jobId } })).toEqual(cancelled);
+        const list = await s.jobRepository.listForBranch(branches[0]!, new Date(0)), summary = await s.jobRepository.getSummary(branches[0]!);
+        expect([...list.requiresAttention, ...list.recent].map(job => job.id)).not.toContain(s.worker.jobId);
+        expect(summary.failedCount).toBe(0); expect(summary.unresolvedCount).toBe(0); expect(summary.unresolvedJobIds).not.toContain(s.worker.jobId);
+        expect(await s.jobRepository.enqueue(s.enqueue)).toMatchObject({ existing: true, job: { id: s.worker.jobId, progressStep: "cancelled" } });
+        const next = await s.jobRepository.enqueue({ ...s.enqueue, requestKey: `cancel-next-${randomUUID()}` });
+        expect(next.existing).toBe(false); expect(next.job.contractGeneration).not.toBe(s.worker.contractGeneration);
+        expect(await db.eformsign_document_job.findUniqueOrThrow({ where: { id: s.worker.jobId } })).toEqual(cancelled);
+    });
+    it("CANCEL real reconciled_not_delivered creation projects eligible and cancels", async () => {
+        const s = await runtime(), claimed = await s.recovery.claimCreation(s.input, s.worker, s.effect);
+        await s.recovery.markAutomaticUncertain(s.worker);
+        await db.eformsign_document_job.update({ where: { id: s.worker.jobId }, data: { status: "requires_attention", leaseToken: null,
+            progressStep: "processing", progressDetail: "info-inserted", completedAt: new Date() } });
+        await new SbEformsignDispatchIntentRepository(db as unknown as PrismaService).reconcile({ intentId: claimed.intent.id,
+            branchId: branches[0]!, outcome: "not_delivered", actorUserId: users[0]!, reason: "Synthetic provider confirms no delivery", attemptCount: claimed.intent.attemptCount });
+        expect(await projectedCancellation(s)).toBe(true);
+        expect(await s.jobRepository.cancel(cancelInput(s))).toEqual({ kind: "cancelled" });
+    });
+    it.each(["pointer", "create-uncertain", "draft-uncertain", "creating", "sent", "leased", "live-claim", "legacy", "auto_finalize", "pending-zero"])("CANCEL real %s veto agrees with display proof (live claim is hint-only)", async defect => {
+        const s = await exhaustedRuntime();
+        const where = { id: s.worker.jobId }, scope = { branchId_clientId: { branchId: branches[0]!, clientId: clients[0]! } };
+        if (defect === "pointer") await db.client.update({ where: { id: clients[0]! }, data: { eDocId: documents[0]! } });
+        if (defect === "create-uncertain" || defect === "draft-uncertain") await db.eformsign_dispatch_intent.create({ data: {
+            branchId: branches[0]!, clientId: clients[0]!, businessKey: digest(`cancel-${randomUUID()}`), generation: "synthetic",
+            fingerprint: "a".repeat(64), action: defect === "create-uncertain" ? "create" : "create_draft", status: "uncertain", attemptCount: 1 } });
+        if (defect === "creating" || defect === "sent") await db.eformsign_document_job.update({ where, data: { progressDetail: defect } });
+        if (defect === "leased") await db.eformsign_document_job.update({ where, data: { leaseToken: randomUUID() } });
+        if (defect === "live-claim") await db.eformsign_contract_authority.update({ where: scope, data: { claimUserId: users[0]!, claimExpiresAt: new Date(Date.now() + 60000) } });
+        // An authority FK binds generation; remove it first to represent a genuine legacy job.
+        if (defect === "legacy") { await db.eformsign_contract_authority.delete({ where: scope }); await db.eformsign_document_job.update({ where, data: { contractGeneration: null } }); }
+        if (defect === "auto_finalize") await db.eformsign_document_job.update({ where, data: { source: "auto_finalize", status: "requires_attention" } });
+        if (defect === "pending-zero") await db.eformsign_contract_authority.update({ where: scope, data: { phase: "creation_pending" } });
+        const before = await db.eformsign_document_job.findUniqueOrThrow({ where });
+        expect(await projectedCancellation(s)).toBe(defect === "live-claim");
+        expect(await s.jobRepository.cancel(cancelInput(s))).toMatchObject({ kind: "not_cancellable" });
+        expect(await db.eformsign_document_job.findUniqueOrThrow({ where })).toEqual(before);
+    });
+
     it.each([false, true])("P13 replaces pre-send exhaustion with purged payload=%s and removes stale popup entries", async purged => {
         const s = await exhaustedRuntime();
         if (purged) await db.eformsign_document_job.update({ where: { id: s.worker.jobId }, data: { payload: Prisma.DbNull } });

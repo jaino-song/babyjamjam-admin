@@ -333,3 +333,17 @@ describe("PLAN5 bounded no-effect exits", () => {
         expect(f.events).not.toContain("authority.rotate"); expect(f.state.jobs[0].progressStep).not.toBe("superseded");
     });
 });
+
+
+describe("retirement marker and close patch", () => {
+    it.each(["superseded", "cancelled"])("retires as %s while keeping claim clearing cancel-only", async progressStep => {
+        const f = runtimeFixture(); f.manual();
+        const a = f.state.authorities[0]; Object.assign(a, { claimUserId: U, claimExpiresAt: new Date(0) });
+        const before = structuredClone(a);
+        const retired = progressStep === "superseded" ? await retireProvenNoEffect(f.tx, a, "prior-doc")
+            : await retireProvenNoEffect(f.tx, a, "prior-doc", progressStep, { claimUserId: null, claimExpiresAt: null });
+        expect(retired).toBe(true); expect(f.state.jobs[0]).toMatchObject({ progressStep, payload: null });
+        expect(f.state.authorities[0]).toMatchObject({ phase: "closed", claimUserId: progressStep === "cancelled" ? null : before.claimUserId,
+            claimExpiresAt: progressStep === "cancelled" ? null : before.claimExpiresAt });
+    });
+});
