@@ -1203,6 +1203,7 @@ describe("SbEformsignDocumentJobRepository", () => {
             expect(attention.values).toContain("cancelled"); expect(recent.values).toContain("cancelled");
             expect(attention.text).toContain("a.creation_job_id = j.id");
             expect(attention.text).toContain("a.generation = j.contract_generation");
+            expect(attention.text).toContain("u.provider_document_id IS NULL OR u.provider_document_id !~ '\\S'");
             expect(attention.text).toContain("AS cancellable");
             expect(attention.text).not.toContain("claim_expires_at");
         });
