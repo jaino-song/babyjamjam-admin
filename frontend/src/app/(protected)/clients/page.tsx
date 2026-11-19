@@ -739,9 +739,9 @@ export default function ClientsPage() {
                 </Alert>
             ) : null}
             <StatsBar
-                name="clients" density="responsive-square" showDocumentJobs="whenActive"
+                name="desktop_clients_sections" density="responsive-square" showDocumentJobs="whenActive"
                 isLoading={isSummaryInitialLoading}
-                trailing={<ServiceRecordMissingStatMini name="clients" density="responsive-square" onSelectClient={handleSelectServiceRecordMissingClient} />}
+                trailing={<ServiceRecordMissingStatMini name="desktop_clients_sections" density="responsive-square" onSelectClient={handleSelectServiceRecordMissingClient} />}
                 items={[
                     { icon: Calendar, value: stats.thisMonthCount, label: "이번 달 출산 예정", counter: "명" },
                     { icon: CalendarDays, value: stats.nextMonthCount, label: "다음 달 출산 예정", counter: "명", colorIndex: 1 },

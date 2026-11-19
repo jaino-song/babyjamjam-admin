@@ -157,7 +157,7 @@ export function FileStoragePage() {
   return (
     <PageSection name="files">
       <StatsBar
-        name="files" showDocumentJobs="whenActive"
+        name="desktop_files" showDocumentJobs="whenActive"
         items={[
           { icon: FolderOpen, value: stats.total, label: "전체 파일", counter: "건" },
           { icon: Tag, value: stats.categoryCount, label: "카테고리", counter: "개", colorIndex: 1 },

@@ -55,7 +55,7 @@ describe("WebsiteAdminPage ribbon load", () => {
   it.each([false, true])("renders a first-child jobs-only row only when active: %s", (active) => {
     mockDocumentJobsActive = active;
     const { container, unmount } = renderPage({ data: config });
-    const row = container.querySelector('[data-component="website-admin_stats"]');
+    const row = container.querySelector('[data-component="desktop_website-admin_stats"]');
     if (active) {
       expect(row?.parentElement?.firstElementChild).toBe(row);
       expect(row?.firstElementChild).toBe(screen.getByRole("button", { name: "전자문서 처리중 작업 보기" }));

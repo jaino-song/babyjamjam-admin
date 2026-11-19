@@ -31,7 +31,7 @@ describe("ConsultationsPage narrow viewport layout (below md)", () => {
     expect(region).toHaveClass("contents", "max-md:flex", "max-md:min-h-0", "max-md:flex-1", "max-md:flex-col", "max-md:overflow-y-auto");
     expect(region.className).not.toContain("[&>[data-slot=split-layout]]");
     expect(region.parentElement).toHaveAttribute("data-component", "consultations");
-    expect(region.firstElementChild).toBe(container.querySelector('[data-component="consultations_stats"]'));
+    expect(region.firstElementChild).toBe(container.querySelector('[data-component="desktop_consultations_stats"]'));
     expect(region.lastElementChild).toBe(splitArea);
 
     // SplitLayout sizes its compact panels from its parent's box width, so that parent

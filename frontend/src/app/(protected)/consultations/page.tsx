@@ -202,7 +202,7 @@ export default function ConsultationsPage() {
     return (
         <PageSection name="consultations"><div data-slot="page-scroll-region" className="contents max-md:flex max-md:min-h-0 max-md:flex-1 max-md:flex-col max-md:gap-[calc(24px*var(--glint-ui-scale,1))] max-md:overflow-y-auto">
             <StatsBar
-                name="consultations" showDocumentJobs="whenActive"
+                name="desktop_consultations" showDocumentJobs="whenActive"
                 isLoading={isListLoading || isStatsLoading}
                 items={[
                     { icon: Headset, value: statsUnavailable ? "—" : stats.currentMonthTotal, label: "이번달 전체 상담", counter: "건" },
