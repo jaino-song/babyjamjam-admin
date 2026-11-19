@@ -579,6 +579,31 @@ async function bounded<T>(promise: Promise<T>, ms: number): Promise<T> {
             await expectRefusedWithoutWrites(s, "effect_not_disproved");
         });
 
+        it("allows an accepted create from an unrelated generation with a normal provider receipt", async () => {
+            const s = await exhaustedRuntime();
+            await db.eformsign_dispatch_intent.create({ data: {
+                branchId: branches[0]!, clientId: clients[0]!, action: "create",
+                generation: "unrelated", fingerprint: "b".repeat(64),
+                businessKey: digest(`cancel-accepted-${randomUUID()}`),
+                status: "accepted", attemptCount: 1, providerDocumentId: `prior-accepted-${randomUUID()}`,
+            } });
+            expect(await projectedCancellation(s)).toBe(true);
+            expect(await s.jobRepository.cancel(cancelInput(s))).toEqual({ kind: "cancelled" });
+        });
+
+        it("refuses an accepted create intent with an NBSP-only provider receipt without writes", async () => {
+            const s = await exhaustedRuntime();
+            expect(await projectedCancellation(s)).toBe(true);
+            // The storage CHECK trims spaces only; NBSP reaches the trim-based proof.
+            await db.eformsign_dispatch_intent.create({ data: {
+                branchId: branches[0]!, clientId: clients[0]!, action: "create",
+                generation: "unrelated", fingerprint: "b".repeat(64),
+                businessKey: digest(`cancel-nbsp-${randomUUID()}`),
+                status: "accepted", attemptCount: 1, providerDocumentId: "\u00a0",
+            } });
+            await expectRefusedWithoutWrites(s, "effect_not_disproved");
+        });
+
         it("refuses a discovered human-intent business key without an authority reference", async () => {
             const s = await exhaustedRuntime();
             expect(await projectedCancellation(s)).toBe(true);
