@@ -48,7 +48,9 @@ export type ReplacePendingJobsResult =
     | { kind: "replaced"; job: MessageTriggerJobEntity; canceledJobIds: string[] }
     | { kind: "in_flight"; inFlightJobIds: string[] }
     | { kind: "lock_timeout" }
-    | { kind: "link_revoked" };
+    | { kind: "link_revoked" }
+    | { kind: "protected" }
+    | { kind: "canceled"; canceledJobIds: string[] };
 
 /**
  * Outcome of claiming a provider-rejected job for an action-bound retry.
@@ -71,6 +73,9 @@ export type ClaimProviderRejectedForRetryResult =
  */
 export interface ScheduleFenceLinkOptions {
     requireActiveLinkToken?: string;
+    /** Date-edit replacement of the exact canonical automatic slot only. */
+    automaticOnly?: boolean;
+    transaction?: Prisma.TransactionClient;
 }
 
 /**
@@ -117,6 +122,11 @@ export interface MessageQuietHeldJob {
 }
 
 export interface IMessageTriggerJobRepository {
+    /** Outstanding immutable date work, including leased intents whose retry time is in the future. */
+    findOutstandingDateIntents(branchId: string, clientId: number, transaction: Prisma.TransactionClient): Promise<Array<Pick<MessageTriggerJobEntity,
+        "dedupeKey" | "employeeScheduleId" | "payload">>>;
+    /** Return only this still-reversible, unaccepted claim to the ordinary reconciler. */
+    releaseProcessingForDateRefresh(job: MessageTriggerJobEntity, transaction: Prisma.TransactionClient): Promise<boolean>;
     createManualSmsJob(job: MessageTriggerJobEntity, existingMessageLogId: number, transaction: Prisma.TransactionClient): Promise<MessageTriggerJobEntity>;
     findDueQuietQueueJobs(eligibility: MessageDispatchBranchEligibility[], now: Date, limit?: number): Promise<MessageDispatchSelectedJob[]>;
     findQuietHeldJobs(branchId: string, transaction?: Prisma.TransactionClient): Promise<MessageQuietHeldJob[]>;
@@ -351,6 +361,8 @@ export interface IMessageTriggerJobRepository {
         expectedJobsStale: boolean,
         preserveExisting?: boolean,
         transaction?: Prisma.TransactionClient,
+        /** Locked date refresh only: update this exact pending occurrence without resetting retry state or inserting. */
+        pendingOccurrence?: MessageTriggerJobReviewSnapshot,
     ): Promise<MessageTriggerJobEntity | null>;
     /**
      * Lock and compare a rejected source job, then create the action-bound

@@ -4,6 +4,10 @@ import { EmailPort } from "domain/ports/email.port";
 import { PrismaService } from "infrastructure/database/prisma.service";
 import { createSchedulerLeaseMock } from "../utils/mocks/scheduler-lease.mock";
 
+jest.mock("infrastructure/observability/service-record-sentry", () => ({
+    captureBackendError: jest.fn(),
+}));
+
 const OUTBOX_ID = "11111111-1111-1111-1111-111111111111";
 const TOKEN_ID = "22222222-2222-2222-2222-222222222222";
 const IDEMPOTENCY_KEY = "auth-email:attempt-key";

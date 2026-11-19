@@ -1,0 +1,16 @@
+.templateGroupLabel {
+  width: 100%;
+  margin-bottom: 4px;
+  padding: 6px 8px;
+  background: hsl(var(--v3-dim-white));
+  color: hsl(var(--v3-text));
+  font-size: 0.75rem;
+  font-weight: 800;
+  line-height: 1.5;
+}
+
+.templateGroupSeparator {
+  height: 1px;
+  margin: 8px 0;
+  background: hsl(var(--v3-border));
+}

@@ -1,6 +1,8 @@
 import { Prisma } from "@prisma/client";
 import {
     getClientAutomationIntentDedupeKey,
+    getClientDateAutomationIntentDedupeKey,
+    type ClientDateAutomationScope,
     getEmployeeAutomationIntentDedupeKey,
     getScheduleAutomationIntentDedupeKey,
     EMPLOYEE_ASSIGNMENT_AUTOMATION_CHANGED_CANCEL_REASON,
@@ -30,6 +32,8 @@ interface PersistIntentParams {
     suppressGreeting: boolean;
     intentAt: Date;
     replaceExisting: boolean;
+    dateScope?: ClientDateAutomationScope;
+    refreshServiceRecordLink?: boolean;
     taskOrigin?: boolean;
     taskAutomationReference?: AgentAutomationTaskCommitReference;
 }
@@ -59,6 +63,24 @@ export async function persistClientMessageAutomationIntent(
     });
 }
 
+export async function persistClientDateMessageAutomationIntent(
+    transaction: Prisma.TransactionClient,
+    params: { branchId: string; clientId: number; confirmation: string; dateScope: ClientDateAutomationScope; intentAt: Date },
+): Promise<void> {
+    if (!params.confirmation) throw new Error("Date intent requires an immutable confirmation key");
+    await persistMessageAutomationIntent(transaction, {
+        ...params,
+        employeeScheduleId: null,
+        recipientType: MessageTriggerRecipientType.CLIENT,
+        templateKey: MessageTriggerTemplateKey.CLIENT_GREETING,
+        dedupeKey: getClientDateAutomationIntentDedupeKey(params.branchId, params.clientId, params.confirmation),
+        kind: "client_dates",
+        includePast: false,
+        suppressGreeting: false,
+        replaceExisting: false,
+    });
+}
+
 export async function persistScheduleMessageAutomationIntent(
     transaction: Prisma.TransactionClient,
     params: {
@@ -68,22 +90,28 @@ export async function persistScheduleMessageAutomationIntent(
         includePast: boolean;
         intentAt: Date;
         replaceExisting?: boolean;
+        refreshServiceRecordLink?: boolean;
+        confirmation?: string;
         taskOrigin?: boolean;
         taskAutomationReference?: AgentAutomationTaskCommitReference;
     },
 ): Promise<void> {
+    if (params.refreshServiceRecordLink && (!params.confirmation || params.taskOrigin || params.replaceExisting)) {
+        throw new Error("Date-link intent requires an independent confirmation without task or replacement flags");
+    }
     await persistMessageAutomationIntent(transaction, {
         branchId: params.branchId,
         clientId: params.clientId,
         employeeScheduleId: params.scheduleId,
         recipientType: MessageTriggerRecipientType.PRIMARY_EMPLOYEE,
         templateKey: MessageTriggerTemplateKey.EMPLOYEE_ASSIGNED,
-        dedupeKey: getScheduleAutomationIntentDedupeKey(params.branchId, params.scheduleId),
+        dedupeKey: `${getScheduleAutomationIntentDedupeKey(params.branchId, params.scheduleId)}${params.confirmation ? `:dates:${params.confirmation}` : ""}`,
         kind: "schedule",
         includePast: params.includePast,
         suppressGreeting: false,
         intentAt: params.intentAt,
         replaceExisting: params.replaceExisting ?? false,
+        refreshServiceRecordLink: params.refreshServiceRecordLink,
         taskOrigin: params.taskOrigin,
         taskAutomationReference: params.taskAutomationReference,
     });
@@ -185,6 +213,8 @@ async function persistMessageAutomationIntent(
             includePast: String(params.includePast),
             suppressGreeting: String(params.suppressGreeting),
             replaceExisting: String(params.replaceExisting),
+            ...(params.dateScope ? { dateScope: JSON.stringify(params.dateScope) } : {}),
+            ...(params.refreshServiceRecordLink ? { refreshServiceRecordLink: "true" } : {}),
             ...(params.taskOrigin ? { taskOrigin: "true" } : {}),
         },
         ...(taskAutomationReference ? { taskAutomationReference } : {}),
@@ -210,7 +240,7 @@ async function persistMessageAutomationIntent(
             attempts: 0,
             nextAttemptAt: params.intentAt,
         },
-        update: {
+        update: params.kind === "client_dates" || params.refreshServiceRecordLink ? {} : {
             status: "failed",
             scheduledFor: params.intentAt,
             sentAt: null,

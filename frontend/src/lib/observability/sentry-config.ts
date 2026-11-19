@@ -1,5 +1,7 @@
+import * as Sentry from "@sentry/nextjs";
 import type { Breadcrumb, ErrorEvent, Event, Log } from "@sentry/nextjs";
 
+type SentryIntegration = ReturnType<typeof Sentry.getDefaultIntegrations>[number];
 type SentryTransactionEvent = Event & { type: "transaction" };
 
 const FILTERED_VALUE = "[Filtered]";
@@ -11,7 +13,12 @@ export const SERVICE_RECORD_SENTRY_TAG = "feature";
 
 const SENSITIVE_FIELD_PATTERN =
   /authorization|cookie|password|token|secret|api[_-]?key|email|phone|mobile|address|birth|resident|content|message|body/i;
-const URL_FIELD_PATTERN = /(^|[._-])(url|uri)([._-]|$)/i;
+const URL_FIELD_PATTERN = /(^|[._-])(url|uri|path)([._-]|$)/i;
+const REFERER_HEADER_PATTERN = /^referer$/i;
+const URL_HEADER_PATTERN = /^(origin|location|destination|link|refresh)$/i;
+const URL_HEADER_VALUE_PATTERN = /^(?:[a-z][a-z0-9+.-]*:[/\\]|[/\\]{2,}|\/)/i;
+const URL_AUTHORITY_PATTERN = /[a-z][a-z0-9+.-]*:\/\/[^/?#\s]+/gi;
+const HOSTNAME_PATTERN = /^(?=.{1,253}\.?$)[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*\.?$/i;
 const QUERY_FIELD_PATTERN = /(^|[._-])query(?:_string)?([._-]|$)/i;
 const EMAIL_PATTERN = /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi;
 const PHONE_PATTERN = /(?:\+?82[-\s]?)?0?1[016789][-.\s]?\d{3,4}[-.\s]?\d{4}/g;
@@ -59,23 +66,69 @@ export function sanitizeSentryText(value: string): string {
     .replace(UUID_PATH_SEGMENT_PATTERN, `/${FILTERED_VALUE}`);
 }
 
-export function sanitizeSentryUrl(value: string | undefined): string | undefined {
-  if (!value) return value;
+// Parse each embedded authority before text masking can obscure its userinfo.
+function stripEmbeddedUrlCredentials(value: string): string {
+  return value.replace(URL_AUTHORITY_PATTERN, (authority) => {
+    if (!authority.includes("@")) return authority;
+
+    try {
+      const parsed = new URL(authority);
+      return `${parsed.protocol}//${parsed.host}`;
+    } catch {
+      return FILTERED_VALUE;
+    }
+  });
+}
+
+function hasPathSegmentUserinfo(segment: string): boolean {
+  const lastAtIndex = segment.lastIndexOf("@");
+  if (lastAtIndex === -1) return false;
+
+  for (let index = 0; index < lastAtIndex; index += 1) {
+    const character = segment[index];
+    if (character === ":" || character === "/" || character === "\\") return true;
+  }
+  return false;
+}
+
+// Inspect raw and decoded segments before text masking can hide credentials.
+function sanitizePathSegment(segment: string): string {
+  if (hasPathSegmentUserinfo(segment)) return FILTERED_VALUE;
+
+  try {
+    return hasPathSegmentUserinfo(decodeURIComponent(segment))
+      ? FILTERED_VALUE
+      : segment;
+  } catch {
+    return /@|%40/i.test(segment) ? FILTERED_VALUE : segment;
+  }
+}
+
+function sanitizeUrl(value: string): string {
+  const trimmed = value.trim();
 
   try {
     const baseUrl = "https://sentry.local";
-    const parsed = new URL(value, baseUrl);
-    const path = sanitizeSentryText(parsed.pathname).replace(
+    // Validate the original authority before any masking; origin excludes userinfo.
+    const parsed = new URL(trimmed, baseUrl);
+    if (!parsed.hostname || (
+      !parsed.hostname.startsWith("[") && !HOSTNAME_PATTERN.test(parsed.hostname)
+    )) return FILTERED_VALUE;
+
+    parsed.pathname = stripEmbeddedUrlCredentials(parsed.pathname);
+    const pathname = parsed.pathname.split("/").map(sanitizePathSegment).join("/");
+    const path = sanitizeSentryText(pathname).replace(
       SERVICE_RECORD_ACCESS_TOKEN_PATTERN,
       `$1${FILTERED_VALUE}`,
     );
     return parsed.origin === baseUrl ? path : `${parsed.origin}${path}`;
   } catch {
-    return sanitizeSentryText(value.split(/[?#]/, 1)[0] ?? value).replace(
-      SERVICE_RECORD_ACCESS_TOKEN_PATTERN,
-      `$1${FILTERED_VALUE}`,
-    );
+    return FILTERED_VALUE;
   }
+}
+
+export function sanitizeSentryUrl(value: string | undefined): string | undefined {
+  return value ? sanitizeUrl(value) : value;
 }
 
 export function isServiceRecordSentrySignal(value: string | undefined): boolean {
@@ -114,14 +167,36 @@ function sanitizeUnknown(value: unknown, depth = 0): unknown {
   );
 }
 
+function sanitizeHeaderUrl(value: string): string {
+  const trimmed = value.trim();
+
+  try {
+    const parsed = trimmed.startsWith("//")
+      ? new URL(trimmed, "https://sentry.local")
+      : new URL(trimmed);
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return FILTERED_VALUE;
+
+    const origin = parsed.origin;
+    return sanitizeSentryText(origin) === origin ? origin : FILTERED_VALUE;
+  } catch {
+    return FILTERED_VALUE;
+  }
+}
+
 function sanitizeHeaders(headers: Record<string, string> | undefined): Record<string, string> | undefined {
   if (!headers) return headers;
 
   return Object.fromEntries(
-    Object.entries(headers).map(([key, value]) => [
-      key,
-      SENSITIVE_FIELD_PATTERN.test(key) ? FILTERED_VALUE : sanitizeSentryText(value),
-    ]),
+    Object.entries(headers).map(([key, value]) => {
+      if (SENSITIVE_FIELD_PATTERN.test(key)) return [key, FILTERED_VALUE];
+      if (
+        REFERER_HEADER_PATTERN.test(key) || URL_FIELD_PATTERN.test(key)
+        || URL_HEADER_PATTERN.test(key) || URL_HEADER_VALUE_PATTERN.test(value.trim())
+      ) {
+        return [key, sanitizeHeaderUrl(value)];
+      }
+      return [key, sanitizeSentryText(value)];
+    }),
   );
 }
 
@@ -136,9 +211,13 @@ export function sanitizeSentryBreadcrumb(breadcrumb: Breadcrumb): Breadcrumb {
 }
 
 export function sanitizeSentryEvent(event: Event): Event {
+  const isServiceRecord = isServiceRecordSentryEvent(event);
+  const errorMessage = isServiceRecord ? "Service-record error" : "Frontend error";
+  const tags = isServiceRecord ? event.tags : { feature: "frontend", ...event.tags };
+
   return {
     ...event,
-    message: event.message ? "Service-record error" : event.message,
+    message: event.message ? errorMessage : event.message,
     transaction: event.transaction
       ? sanitizeSentryText(event.transaction.replace(/[?#].*$/, ""))
       : event.transaction,
@@ -155,7 +234,7 @@ export function sanitizeSentryEvent(event: Event): Event {
       : event.request,
     logentry: event.logentry
       ? {
-          message: event.logentry.message ? "Service-record error" : event.logentry.message,
+          message: event.logentry.message ? errorMessage : event.logentry.message,
           params: undefined,
         }
       : event.logentry,
@@ -164,11 +243,25 @@ export function sanitizeSentryEvent(event: Event): Event {
           ...event.exception,
           values: event.exception.values?.map((exception) => ({
             ...exception,
-            value: exception.value ? "Service-record error" : exception.value,
+            value: exception.value ? errorMessage : exception.value,
           })),
         }
       : event.exception,
     breadcrumbs: undefined,
+    ...(event.contexts ? {
+      contexts: Object.fromEntries(
+        Object.entries(sanitizeUnknown(event.contexts) as NonNullable<Event["contexts"]>)
+          .map(([key, value]) => [key, key === "trace" ? event.contexts?.trace : value]),
+      ),
+    } : {}),
+    ...(tags ? {
+      tags: Object.fromEntries(
+        Object.entries(tags).map(([key, value]) => [
+          key,
+          typeof value === "string" ? sanitizeSentryText(value) : value,
+        ]),
+      ),
+    } : {}),
     extra: event.extra ? (sanitizeUnknown(event.extra) as Record<string, unknown>) : event.extra,
     spans: event.spans?.map((span) => ({
       ...span,
@@ -212,8 +305,7 @@ export function isServiceRecordSentryEvent(event: Event): boolean {
     || hasServiceRecordStackFrame(event);
 }
 
-function filterAndSanitizeSentryErrorEvent(event: ErrorEvent): ErrorEvent | null {
-  if (!isServiceRecordSentryEvent(event)) return null;
+function filterAndSanitizeSentryErrorEvent(event: ErrorEvent): ErrorEvent {
   return sanitizeSentryErrorEvent(event);
 }
 
@@ -251,6 +343,22 @@ export function getSentryRuntimeOptions() {
       ?? process.env.SENTRY_RELEASE
       ?? process.env.VERCEL_GIT_COMMIT_SHA,
     sampleRate: 1,
+    integrations: (defaults: SentryIntegration[]): SentryIntegration[] => defaults.map((integration): SentryIntegration => {
+      if (integration.name !== "Dedupe") return integration;
+      const dedupe = Sentry.dedupeIntegration();
+      return {
+        ...integration,
+        processEvent(event, hint, client) {
+          // Always update SDK state, including for API failures deduplicated by object identity.
+          const dedupedEvent = dedupe.processEvent ? dedupe.processEvent(event, hint, client) : event;
+          if (
+            event.tags?.feature === "api"
+            || event.fingerprint?.[0] === "api-error"
+          ) return event;
+          return dedupedEvent;
+        },
+      };
+    }),
     tracesSampler: ({
       name,
       inheritOrSampleWith,
@@ -264,6 +372,12 @@ export function getSentryRuntimeOptions() {
     ),
     sendDefaultPii: false,
     attachStacktrace: true,
+    denyUrls: [
+      /^chrome-extension:\/\//,
+      /^moz-extension:\/\//,
+      /^safari(-web)?-extension:\/\//,
+    ],
+    ignoreErrors: [/^ResizeObserver loop/],
     initialScope: {
       tags: {
         app: SENTRY_APP_TAG,

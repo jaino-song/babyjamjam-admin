@@ -30,7 +30,7 @@ export function MessagesAutomationPage() {
           data-component={`${AUTOMATION_BASE}_content_list-card`}
           title="메시지"
           actionLabel="+ 새 메시지"
-          actionHref="/messages/new"
+          actionHref="/messages"
           filters={[]}
           loadMore={false}
         >

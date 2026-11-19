@@ -10,6 +10,7 @@ import {
   type EformsignDocumentJobList,
   useEformsignDocumentJobs,
   useEformsignDocumentJobsSummary,
+  useCancelDocumentJob,
 } from "../useEformsignDocumentJobs";
 
 const DOCUMENT_JOBS_A: EformsignDocumentJobList = {
@@ -187,5 +188,30 @@ describe("useEformsignDocumentJobsSummary branch scope", () => {
 
     await waitFor(() => expect(result.current.data?.active[0]?.jobId).toBe("job-a"));
     expect(getJobs).toHaveBeenCalled();
+  });
+});
+
+describe("useCancelDocumentJob", () => {
+  afterEach(() => jest.restoreAllMocks());
+  it.each(["cancelled", "already_cancelled"] as const)("invalidates job lists, summary and documents after %s", async outcome => {
+    const cancel = jest.spyOn(eformsignApi, "cancelDocumentJob").mockResolvedValue({ jobId: "job-a", outcome });
+    const client = new QueryClient();
+    const invalidate = jest.spyOn(client, "invalidateQueries");
+    const { result } = renderHook(() => useCancelDocumentJob(), { wrapper: createWrapper(client) });
+    await act(async () => { await result.current.mutateAsync("job-a"); });
+    expect(cancel).toHaveBeenCalledWith("job-a");
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: eformsignDocumentJobsQueryKeys.all });
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: ["eformsign-documents"] });
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+  });
+  it("keeps service failures available to the confirmation UI without success invalidation", async () => {
+    const error = { response: { status: 409, data: { code: "JOB_NOT_CANCELLABLE" } } };
+    jest.spyOn(eformsignApi, "cancelDocumentJob").mockRejectedValue(error);
+    const client = new QueryClient();
+    const invalidate = jest.spyOn(client, "invalidateQueries");
+    const { result } = renderHook(() => useCancelDocumentJob(), { wrapper: createWrapper(client) });
+    await act(async () => { await expect(result.current.mutateAsync("job-a")).rejects.toBe(error); });
+    await waitFor(() => expect(result.current.isError).toBe(true));
+    expect(invalidate).not.toHaveBeenCalled();
   });
 });

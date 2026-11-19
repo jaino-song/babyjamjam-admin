@@ -67,7 +67,7 @@ export function DocumentJobFailurePopup({
         size="icon"
         variant="ghost"
         data-component={`${dataComponent}_close`}
-        className="absolute right-1 top-1 h-8 w-8 text-v3-text-muted"
+        className="absolute right-1 top-1 text-v3-text-muted"
         aria-label={closeLabel}
         onClick={onClose}
       >

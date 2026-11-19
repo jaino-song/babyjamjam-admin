@@ -199,3 +199,10 @@ describe('stage failure reasons', () => {
     expect(describeJobFailureDetail({ ...FAILURE_JOB, progressStep: 'reconciling', progressDetail: 'unknown' })?.reason).toBe('전송 결과를 확인하지 못했어요.');
   });
 });
+
+it.each([["manual_send", "수동 전송"], ["verify_result", "결과 확인"]] as const)("requires_attention follows %s for its action", (recoveryKind, actionLabel) => {
+  const job = { ...FAILURE_JOB, status: "requires_attention", recoveryKind, recoveryPresentation: "iframe" as const };
+  expect(describeJobFailureDetail(job)).toMatchObject({ actionKind: recoveryKind, actionLabel });
+  render(React.createElement(ContractDocumentJobDetail, { job }));
+  expect(screen.getByRole("link", { name: actionLabel })).toBeInTheDocument();
+});

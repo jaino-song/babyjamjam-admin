@@ -7,6 +7,7 @@ import {
     formatShortDate,
     getServiceRecordHeaderErrors,
     hasInvalidServiceRecordNumericAnswers,
+    hasInvalidServiceRecordStoolColor,
     hasServiceRecordHeaderValues,
 } from "@babyjamjam/service-record-ui";
 import type {
@@ -685,6 +686,7 @@ export function ServiceRecordAdminWizard({
     const headerErrors: ServiceRecordHeaderErrors = getServiceRecordHeaderErrors(headerChangesToValidationRecord(headerPatch));
     const hasHeaderErrors = Object.keys(headerErrors).length > 0;
     const hasInvalidNumericAnswers = hasInvalidServiceRecordNumericAnswers(draft);
+    const hasInvalidChangedStoolColor = hasInvalidServiceRecordStoolColor(patch.answers ?? {});
     const changed = !supplemental && (editingHeader
         ? Object.keys(headerPatch).length > 0 : Object.keys(patch).length > 1 || Boolean(dateMove));
     const locked = busy || needsReload || Boolean(supplemental);
@@ -781,6 +783,7 @@ export function ServiceRecordAdminWizard({
             setError("숫자 입력값을 확인해 주세요.");
             return;
         }
+        if (!editingHeader && hasInvalidChangedStoolColor) return;
         if (editingHeader) {
             if (!hasServiceRecordHeaderValues(headerDraft)) {
                 setError("필수 기본정보를 모두 입력해 주세요.");
@@ -1227,7 +1230,7 @@ export function ServiceRecordAdminWizard({
                         ),
                         adminSessionAction: ({ hasInvalidNumericAnswers: slotHasInvalidNumericAnswers }) => (
                             <Button data-component={`${ADMIN_WIZARD_COMPONENT}_body_confirmation-action_confirm`} type="button" variant="positive"
-                                disabled={busy || slotHasInvalidNumericAnswers || (!calendarReady && changed) || (needsReload && changed)}
+                                disabled={busy || slotHasInvalidNumericAnswers || hasInvalidChangedStoolColor || (!calendarReady && changed) || (needsReload && changed)}
                                 onClick={() => supplemental ? resetLocal() : void accept()}>
                                 {busy ? "확인 중…" : changed ? "수정 확인" : "확인"}
                             </Button>

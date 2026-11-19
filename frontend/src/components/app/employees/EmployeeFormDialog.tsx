@@ -45,7 +45,6 @@ import {
     PopoverContent,
     PopoverTrigger,
 } from "@/components/ui/popover";
-import { Spinner } from "@/components/ui/spinner";
 import { FormDialogShell } from "@/components/app/ui/FormDialogShell";
 import { TwoButtonModal } from "@/components/app/ui/TwoButtonModal";
 import { getDeletedPhoneMatch, type DeletedPhoneMatch } from "./deleted-phone-match";
@@ -801,12 +800,12 @@ function EmployeeFormContent({
                 size="sm"
                 onClick={() => void handleSubmit()}
                 disabled={isLoading || isSubmitBlocked}
+                loading={isLoading}
+                loadingLabel={isEditMode ? "저장 중" : "등록 중"}
                 data-component="desktop_employees_form-dialog_submit"
                 className="w-full sm:flex-1"
             >
-                {isLoading ? (
-                    <Spinner className="h-4 w-4" />
-                ) : isEditMode ? (
+                {isEditMode ? (
                     t(locale, "common.save")
                 ) : (
                     t(locale, "common.create")
@@ -836,12 +835,12 @@ function EmployeeFormContent({
                     size="sm"
                     onClick={() => void handleSubmit()}
                     disabled={isLoading || isSubmitBlocked}
+                    loading={isLoading}
+                    loadingLabel={isEditMode ? "저장 중" : "등록 중"}
                     data-component="desktop_employees_form-panel_submit"
                     className="min-w-[calc(132px*var(--glint-ui-scale,1))]"
                 >
-                    {isLoading ? (
-                        <Spinner className="h-4 w-4" />
-                    ) : isEditMode ? (
+                    {isEditMode ? (
                         t(locale, "common.save")
                     ) : (
                         t(locale, "common.create")

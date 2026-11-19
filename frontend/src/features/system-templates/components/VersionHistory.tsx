@@ -1,9 +1,10 @@
 'use client';
 
 import { useState } from 'react';
-import { History, Eye, RotateCcw, RefreshCcw, Loader2 } from 'lucide-react';
+import { History, Eye, RotateCcw, RefreshCcw } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
 
+import { LoadingState } from "@/components/app/ui/LoadingState";
 import { Button } from '@/components/ui/button';
 import { Separator } from '@/components/ui/separator';
 import { Card } from '@/components/ui/card';
@@ -104,9 +105,7 @@ export function VersionHistory({ templateKey, onRollback }: Props) {
 
           <div className="mt-4">
             {isLoading ? (
-              <div className="flex justify-center py-4">
-                <Loader2 className="h-6 w-6 animate-spin text-primary" />
-              </div>
+              <LoadingState label="버전 기록을 불러오는 중" data-component="desktop_system-templates_version-history_loading" className="py-4" />
             ) : (
               <ul className="space-y-0">
                 {versions?.map((version) => (
@@ -126,7 +125,6 @@ export function VersionHistory({ templateKey, onRollback }: Props) {
                       <Button
                         variant="ghost"
                         size="icon"
-                        className="h-8 w-8"
                         onClick={() => setPreviewVersion(version)}
                         title="미리보기"
                       >
@@ -135,7 +133,6 @@ export function VersionHistory({ templateKey, onRollback }: Props) {
                       <Button
                         variant="ghost"
                         size="icon"
-                        className="h-8 w-8"
                         onClick={() =>
                           setConfirmDialog({ type: 'rollback', version: version.versionNumber })
                         }
@@ -172,9 +169,7 @@ export function VersionHistory({ templateKey, onRollback }: Props) {
             </DialogTitle>
           </DialogHeader>
           {isPreviewLoading ? (
-            <div className="flex justify-center py-6">
-              <Loader2 className="h-6 w-6 animate-spin text-primary" />
-            </div>
+            <LoadingState label="버전 미리보기를 불러오는 중" data-component="desktop_system-templates_version-preview_loading" className="py-6" />
           ) : (
             <>
               {previewVersion && (
@@ -211,7 +206,7 @@ export function VersionHistory({ templateKey, onRollback }: Props) {
             : '기본값으로 초기화하시겠습니까? 현재 내용은 새 버전으로 저장됩니다.'
         }
         approvalLabel={confirmDialog?.type === 'rollback' ? '복원' : '초기화'}
-        pendingLabel={confirmDialog?.type === 'rollback' ? '복원 중...' : '초기화 중...'}
+        pendingLabel={confirmDialog?.type === 'rollback' ? '복원 중' : '초기화 중'}
         approvalVariant={confirmDialog?.type === 'reset' ? 'destructive' : 'positive'}
         isPending={rollbackMutation.isPending || resetMutation.isPending}
         onApprove={() => {

@@ -118,7 +118,7 @@ jest.mock("@/components/app/v3", () => ({
   ),
   PageSection: ({ children }: { children: ReactNode }) => <main>{children}</main>,
   SplitLayout: ({ children }: { children: ReactNode }) => <div>{children}</div>,
-  StatsBar: () => null,
+  StatsBar: jest.requireActual("@/components/app/v3/StatsBar").StatsBar,
 }));
 
 const mockedUseInfiniteEmployees = jest.mocked(useInfiniteEmployees);
@@ -154,6 +154,17 @@ describe("EmployeeDirectoryManager employee list query states", () => {
     mockRefetch.mockReset();
     mockFetchNextPage.mockReset();
     mockedUseInfiniteEmployees.mockReset();
+  });
+
+  it.each([
+    "desktop_employees_sections_section-content_directory_manager",
+    "desktop_employees_sections_section-content_alternate_manager",
+  ])("scopes the stats to the supplied manager owner: %s", (base) => {
+    mockedUseInfiniteEmployees.mockReturnValue(makeQueryResult());
+    const { container } = render(<EmployeeDirectoryManager dataComponent={base} />);
+    const bar = container.querySelector(`[data-component="${base}_stats"]`);
+    expect(bar).toBeInTheDocument();
+    expect(bar?.parentElement).toHaveAttribute("data-component", base);
   });
 
   it("keeps loading distinct from a genuine empty list", () => {

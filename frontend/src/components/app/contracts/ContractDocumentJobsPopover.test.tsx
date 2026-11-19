@@ -106,7 +106,7 @@ async function expectNoEditorFocus(ending: '503' | 'verify_only' | 'expired', re
   });
   cta.blur(); expect(document.body).toHaveFocus();
   if (removeCta) {
-    view.rerender(<ContractDocumentJobsPopover open documentJobs={{ active: [], requiresAttention: [], recent: [{ ...RECOVERY_JOB, status: 'completed', recoveryKind: null }] }} trigger={<button type="button">전자문서 처리중</button>} />);
+    view.rerender(<ContractDocumentJobsPopover data-component="desktop_contracts_tests_jobs-popover" open documentJobs={{ active: [], requiresAttention: [], recent: [{ ...RECOVERY_JOB, status: 'completed', recoveryKind: null }] }} trigger={<button type="button">전자문서 처리중</button>} />);
     expect(cta.isConnected).toBe(false);
   }
   const target = removeCta ? screen.getByRole('button', { name: '전자문서 처리중', hidden: true }) : cta;
@@ -195,7 +195,7 @@ const JOBS: ContractDocumentJobsData = {
 
 function renderOpenPopover(overrides: Partial<React.ComponentProps<typeof ContractDocumentJobsPopover>> = {}) {
   return render(
-    <ContractDocumentJobsPopover
+    <ContractDocumentJobsPopover data-component="desktop_contracts_tests_jobs-popover"
       open
       summary={{ activeCount: 4, requiresAttentionCount: 1 }}
       documentJobs={JOBS}
@@ -564,7 +564,7 @@ describe("ContractDocumentJobsPopover", () => {
     it("opens from its trigger", () => {
       const onOpenChange = jest.fn();
       render(
-        <ContractDocumentJobsPopover
+        <ContractDocumentJobsPopover data-component="desktop_contracts_tests_jobs-popover"
           onOpenChange={onOpenChange}
           documentJobs={JOBS}
           trigger={<button type="button">전자문서 처리중</button>}
@@ -721,7 +721,7 @@ describe("ContractDocumentJobsPopover", () => {
 
   it.each(["Enter", " "])("keeps real trigger/ref and a single toggle for a %s native-key/click sequence", (key) => {
     const ref = createRef<HTMLButtonElement>(), clicked = jest.fn(), changed = jest.fn();
-    const { container } = render(<ContractDocumentJobsPopover onOpenChange={changed} jobs={JOBS}
+    const { container } = render(<ContractDocumentJobsPopover data-component="desktop_contracts_tests_jobs-popover" onOpenChange={changed} jobs={JOBS}
       trigger={<button ref={ref} onClick={clicked}>실제 트리거</button>} />);
     const trigger = screen.getByRole("button", { name: "실제 트리거" });
     const anchor = jest.spyOn(trigger, "getBoundingClientRect").mockReturnValue({ left: 123, top: 20, bottom: 52 } as DOMRect);
@@ -745,26 +745,23 @@ describe("ContractDocumentJobsPopover", () => {
 
   it("retains controlled open and defaultOpen without double callbacks", () => {
     const changed = jest.fn();
-    const { rerender } = render(<ContractDocumentJobsPopover open={false} onOpenChange={changed} />);
+    const { rerender } = render(<ContractDocumentJobsPopover data-component="desktop_contracts_tests_jobs-popover" open={false} onOpenChange={changed} />);
     fireEvent.click(screen.getByRole("button", { name: "전자문서 처리중" }));
     expect(changed.mock.calls).toEqual([[true]]);
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
-    rerender(<ContractDocumentJobsPopover open onOpenChange={changed} />);
+    rerender(<ContractDocumentJobsPopover data-component="desktop_contracts_tests_jobs-popover" open onOpenChange={changed} />);
     fireEvent.click(screen.getByRole("button", { name: "전자문서 작업 닫기" }));
     expect(changed.mock.calls).toEqual([[true], [false]]);
     expect(screen.getByRole("dialog")).toBeInTheDocument();
-    rerender(<ContractDocumentJobsPopover open={false} onOpenChange={changed} />);
+    rerender(<ContractDocumentJobsPopover data-component="desktop_contracts_tests_jobs-popover" open={false} onOpenChange={changed} />);
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 
-  it.each([undefined, "", "desktop_contracts_stats_document-jobs-popover"])("forwards optional caller metadata %s verbatim", (base) => {
+  it.each(["desktop_contracts_stats_document-jobs-popover", "desktop_contracts_tests_jobs-popover"])("forwards required caller metadata %s verbatim", (base) => {
     render(<ContractDocumentJobsPopover defaultOpen jobs={JOBS} data-component={base} />);
     const dialog = screen.getByRole("dialog");
-    if (base) {
-      expect(dialog).toHaveAttribute("data-component", "desktop_contracts_stats_document-jobs-popover");
-      expect(document.querySelector('[data-slot="sliding-detail-panel"]')).toHaveAttribute("data-component", "desktop_contracts_stats_document-jobs-popover_panes_slide");
-    } else expect(dialog.querySelectorAll("[data-component]")).toHaveLength(0);
-    expect(dialog.getAttribute("data-component")).toBe(base || null);
+    expect(dialog).toHaveAttribute("data-component", base);
+    expect(document.querySelector('[data-slot="sliding-detail-panel"]')).toHaveAttribute("data-component", `${base}_panes_slide`);
   });
 
   it.each(["isLoading", "isJobsLoading"] as const)("forwards %s and legacy loading aliases", (flag) => {
@@ -777,9 +774,9 @@ describe("ContractDocumentJobsPopover", () => {
     const { rerender } = renderOpenPopover({ error: new Error("primary"), jobsError: new Error("alias"), onRetry: retry, onRetryJobs: aliasRetry });
     fireEvent.click(screen.getByRole("button", { name: "다시 시도" }));
     expect(retry).toHaveBeenCalledTimes(1); expect(aliasRetry).not.toHaveBeenCalled();
-    rerender(<ContractDocumentJobsPopover open jobs={JOBS} error={false} jobsError={new Error("ignored")} />);
+    rerender(<ContractDocumentJobsPopover data-component="desktop_contracts_tests_jobs-popover" open jobs={JOBS} error={false} jobsError={new Error("ignored")} />);
     expect(screen.getAllByRole("button", { name: /상세 보기$/ })).toHaveLength(2);
-    rerender(<ContractDocumentJobsPopover open jobsError={new Error("alias")} onRetryJobs={aliasRetry} />);
+    rerender(<ContractDocumentJobsPopover data-component="desktop_contracts_tests_jobs-popover" open jobsError={new Error("alias")} onRetryJobs={aliasRetry} />);
     fireEvent.click(screen.getByRole("button", { name: "다시 시도" }));
     expect(aliasRetry).toHaveBeenCalledTimes(1);
   });
@@ -788,7 +785,7 @@ describe("ContractDocumentJobsPopover", () => {
     const alias = { ...JOBS, active: [{ ...JOBS.active[0], clientName: "별칭 고객" }] };
     const { rerender } = renderOpenPopover({ jobs: alias });
     expect(screen.queryByText("별칭 고객")).not.toBeInTheDocument();
-    rerender(<ContractDocumentJobsPopover open jobs={alias} documentJobs={null} />);
+    rerender(<ContractDocumentJobsPopover data-component="desktop_contracts_tests_jobs-popover" open jobs={alias} documentJobs={null} />);
     expect(screen.getByRole("button", { name: /별칭 고객.*상세 보기$/ })).toBeInTheDocument();
   });
 });
@@ -828,9 +825,37 @@ test('phone recovery returns focus to the sheet trigger when its source is remov
     fireEvent.click(screen.getByRole('button', { name: '수동 전송' }));
     const frame = await screen.findByTitle<HTMLIFrameElement>('이폼사인 수동 전송');
     jest.spyOn(frame.contentWindow!, 'postMessage').mockImplementation(() => {});
-    view.rerender(<ContractDocumentJobsPopover open documentJobs={{ active: [], requiresAttention: [], recent: [] }} trigger={<button>전자문서 처리중</button>} />);
+    view.rerender(<ContractDocumentJobsPopover data-component="desktop_contracts_tests_jobs-popover" open documentJobs={{ active: [], requiresAttention: [], recent: [] }} trigger={<button>전자문서 처리중</button>} />);
     fireEvent.click(screen.getByRole('button', { name: 'Close' }));
     await waitFor(() => expect(document.querySelector('[data-slot="document-jobs-trigger"]')).toHaveFocus());
     expect(screen.getByRole('dialog', { name: '전자문서 작업' })).toBeInTheDocument();
   } finally { Object.defineProperty(window, 'innerWidth', { configurable: true, value: width }); jest.restoreAllMocks(); }
+});
+
+test.each([390, 1280])("requires_attention + manual_send opens ManualDocumentJobRecoveryDialog iframe at %spx", async width => {
+  const originalWidth = window.innerWidth;
+  Object.defineProperty(window, "innerWidth", { configurable: true, value: width });
+  mockPathname = "/contracts"; mockPush.mockClear();
+  const job = { ...RECOVERY_JOB, status: "requires_attention" as const };
+  const open = jest.spyOn(eformsignApi, "openDocumentJobRecovery").mockResolvedValue({ kind: "editable", jobId: job.jobId, claimEpoch: "42", claimExpiresAt: new Date(Date.now() + 60000).toISOString(), document: { companyId: "company-abc", templateId: "template_ABC", documentId: "document012" } });
+  const changed = jest.fn();
+  try {
+    renderOpenPopover({ documentJobs: { active: [], requiresAttention: [job], recent: [] }, onOpenChange: changed });
+    fireEvent.click(screen.getByRole("button", { name: /복구 고객.*상세 보기/ }));
+    fireEvent.click(screen.getByRole("button", { name: "수동 전송" }));
+    const frame = await screen.findByTitle<HTMLIFrameElement>("이폼사인 수동 전송");
+    jest.spyOn(frame.contentWindow!, "postMessage").mockImplementation(() => {});
+    expect(frame).toBeInTheDocument();
+    expect(screen.getByRole("dialog", { name: "전자문서 수동 전송" })).toContainElement(frame);
+    expect(open).toHaveBeenCalledWith(job.jobId);
+    expect(mockPush).not.toHaveBeenCalled();
+    expect(changed).not.toHaveBeenCalledWith(false);
+  } finally { Object.defineProperty(window, "innerWidth", { configurable: true, value: originalWidth }); open.mockRestore(); }
+});
+
+test("requires_attention + verify_result keeps the 결과 확인 popover action", () => {
+  renderOpenPopover({ documentJobs: { active: [], requiresAttention: [{ ...RECOVERY_JOB, status: "requires_attention", recoveryKind: "verify_result" }], recent: [] } });
+  fireEvent.click(screen.getByRole("button", { name: /복구 고객.*상세 보기/ }));
+  expect(screen.getByRole("button", { name: "결과 확인" })).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "수동 전송" })).not.toBeInTheDocument();
 });

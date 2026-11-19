@@ -48,8 +48,11 @@ describe("ServiceRecordLinkService", () => {
             $transaction: jest.fn(),
             employee_schedule: {
                 findUnique: jest.fn(),
+                findFirst: jest.fn(),
+                findMany: jest.fn().mockResolvedValue([]),
             },
             message_trigger_job: {
+                findUnique: jest.fn().mockResolvedValue(null),
                 updateMany: jest.fn().mockResolvedValue({ count: 0 }),
             },
             message_trigger_rule: {
@@ -161,6 +164,76 @@ describe("ServiceRecordLinkService", () => {
             endDate: new Date("2026-07-12T00:00:00.000Z"),
         },
         ...overrides,
+    });
+
+    it("routes a date change through automatic-only replacement under current source locks", async () => {
+        const prisma = createPrisma(), jobs = createJobRepository(), logs = createLogRepository(), tokens = createTokenService();
+        const schedule = createSchedule({ primaryEmployeeId: 30 });
+        prisma.employee_schedule.findUnique.mockResolvedValue(schedule);
+        prisma.employee_schedule.findFirst.mockResolvedValue(schedule);
+        prisma.employee_schedule.findMany.mockResolvedValue([schedule] as never);
+        prisma.message_trigger_job.findUnique.mockResolvedValue({ id: "automatic", branchId: "branch-1", clientId: 20,
+            employeeScheduleId: 10, status: "pending" } as never);
+        const lock = createBranchLock(prisma);
+        const service = new ServiceRecordLinkService(prisma as never, tokens as never, createConfigService() as never,
+            jobs as never, logs as never, createOverrideRepository() as never, undefined, undefined, lock as never,
+            createAutomationActivationService() as never);
+        expect(await service.scheduleForServiceStart(10, { rescheduleAutomatic: true, branchId: "branch-1" })).toBe(true);
+        expect(jobs.replacePendingJobsUnlessInFlight).toHaveBeenCalledWith(expect.objectContaining({
+            dedupeKey: `${SERVICE_RECORD_LINK_RULE_ID}:schedule:10:primary`, branchId: "branch-1", employeeScheduleId: 10,
+        }), SERVICE_RECORD_LINK_RESCHEDULED_REASON, { automaticOnly: true, requireActiveLinkToken: "efl_token", transaction: prisma });
+        expect(jobs.promoteAutomaticSchedulingClaim).not.toHaveBeenCalled();
+        expect(logs.findRetryableServiceRecordSmsByScheduleId).not.toHaveBeenCalled();
+        expect(prisma.employee_schedule.findFirst).toHaveBeenCalledWith(expect.objectContaining({ where: { id: 10, branchId: "branch-1", clientId: 20 } }));
+        jobs.replacePendingJobsUnlessInFlight.mockResolvedValueOnce({ kind: "in_flight", inFlightJobIds: ["automatic"] } as never);
+        await expect(service.scheduleForServiceStart(10, { rescheduleAutomatic: true, branchId: "branch-1" })).rejects.toBeInstanceOf(ConflictException);
+    });
+
+    it.each(["pending", "canceled"])("reconciles an eligible past start with an existing %s automatic link", async (status) => {
+        const prisma = createPrisma(), jobs = createJobRepository(), tokens = createTokenService();
+        const schedule = createSchedule({ primaryEmployeeId: 30, startDate: new Date("2026-06-30T00:00:00Z") });
+        prisma.employee_schedule.findUnique.mockResolvedValue(schedule);
+        prisma.employee_schedule.findFirst.mockResolvedValue(schedule);
+        prisma.message_trigger_job.findUnique.mockResolvedValue({ id: "automatic", branchId: "branch-1", clientId: 20,
+            employeeScheduleId: 10, status, cancelReason: status === "canceled" ? SERVICE_RECORD_LINK_ENDED_REASON : null } as never);
+        const service = new ServiceRecordLinkService(prisma as never, tokens as never, createConfigService() as never,
+            jobs as never, createLogRepository() as never, createOverrideRepository() as never, undefined, undefined,
+            createBranchLock(prisma) as never, createAutomationActivationService() as never);
+        expect(await service.scheduleForServiceStart(10, { rescheduleAutomatic: true, branchId: "branch-1" })).toBe(true);
+        expect(jobs.replacePendingJobsUnlessInFlight).toHaveBeenCalledWith(expect.objectContaining({
+            scheduledFor: new Date("2026-06-29T03:00:00Z"),
+            dedupeKey: `${SERVICE_RECORD_LINK_RULE_ID}:schedule:10:primary`,
+        }), SERVICE_RECORD_LINK_RESCHEDULED_REASON, expect.objectContaining({ automaticOnly: true, transaction: prisma }));
+        expect(jobs.promoteAutomaticSchedulingClaim).not.toHaveBeenCalled();
+    });
+
+    it.each(["ended", "pre_booking", "terminated"])("keeps an existing automatic link canceled while the schedule is %s", async (state) => {
+        const prisma = createPrisma(), jobs = createJobRepository(), tokens = createTokenService();
+        const schedule = createSchedule({ primaryEmployeeId: 30, startDate: new Date("2026-06-20T00:00:00Z"),
+            ...(state === "ended" ? { endDate: new Date("2026-06-30T00:00:00Z") } : {}),
+            ...(state === "terminated" ? { terminatedAt: new Date("2026-06-30T00:00:00Z") } : {}),
+        });
+        if (state === "pre_booking") Object.assign(schedule.client, { serviceStatus: "pre_booking", bookingConfirmedAt: null });
+        prisma.employee_schedule.findUnique.mockResolvedValue(schedule);
+        prisma.message_trigger_job.findUnique.mockResolvedValue({ id: "automatic", branchId: "branch-1", clientId: 20,
+            employeeScheduleId: 10, status: "canceled", cancelReason: SERVICE_RECORD_LINK_ENDED_REASON } as never);
+        const service = new ServiceRecordLinkService(prisma as never, tokens as never, createConfigService() as never,
+            jobs as never, createLogRepository() as never, createOverrideRepository() as never, undefined, undefined,
+            createBranchLock(prisma) as never, createAutomationActivationService() as never);
+        expect(await service.scheduleForServiceStart(10, { rescheduleAutomatic: true, branchId: "branch-1" })).toBe(false);
+        expect(tokens.issueLink).not.toHaveBeenCalled();
+        expect(jobs.replacePendingJobsUnlessInFlight).not.toHaveBeenCalled();
+        expect(jobs.promoteAutomaticSchedulingClaim).not.toHaveBeenCalled();
+    });
+
+    it("rejects a date-link request for another branch before token or queue writes", async () => {
+        const prisma = createPrisma(), jobs = createJobRepository(), tokens = createTokenService();
+        prisma.employee_schedule.findUnique.mockResolvedValue(createSchedule());
+        const service = new ServiceRecordLinkService(prisma as never, tokens as never, createConfigService() as never,
+            jobs as never, createLogRepository() as never, createOverrideRepository() as never, undefined, undefined,
+            createBranchLock(prisma) as never, createAutomationActivationService() as never);
+        await expect(service.scheduleForServiceStart(10, { rescheduleAutomatic: true, branchId: "other" })).rejects.toBeInstanceOf(ConflictException);
+        expect(tokens.issueLink).not.toHaveBeenCalled(); expect(jobs.replacePendingJobsUnlessInFlight).not.toHaveBeenCalled();
     });
 
     it.each([

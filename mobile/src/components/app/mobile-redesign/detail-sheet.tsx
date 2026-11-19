@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  Children,
   createContext,
   useCallback,
   useContext,
@@ -17,6 +18,8 @@ import type {
 import { Search, X } from "lucide-react";
 import Link from "next/link";
 
+import { ActionRow } from "@/components/ui/action-row";
+import { ButtonLoadingContent } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 
@@ -38,6 +41,7 @@ export type DetailAction = {
   onClick?: () => void;
   disabled?: boolean;
   busy?: boolean;
+  busyLabel?: string;
   ariaLabel?: string;
   dataComponent?: string;
   className?: string;
@@ -530,10 +534,14 @@ export function MobileDetailActions({
   children?: ReactNode;
   className?: string;
 }) {
+  const isActionPair = (actions?.length ?? 0) + Children.toArray(children).length === 2
+    && !className?.split(/\s+/).includes("flex-col");
+  const Container = isActionPair ? ActionRow : "div";
   return (
-    <div
+    <Container
       className={cn("detail-actions", className)}
       data-component={dataComponent}
+      data-slot="detail-actions"
       data-source-component={MOBILE_DETAIL_ACTIONS_SOURCE_COMPONENT}
     >
       {actions?.map((action, index) => {
@@ -558,20 +566,23 @@ export function MobileDetailActions({
         return (
           <button
             key={key}
-            className={actionClassName}
+            className={cn(action.busy && "relative", actionClassName)}
             type="button"
             onClick={action.onClick}
-            disabled={isDisabled}
+            disabled={action.busy || isDisabled}
             aria-busy={action.busy}
             aria-label={action.ariaLabel}
+            data-loading={action.busy ? "" : undefined}
             data-component={action.dataComponent ?? `${dataComponent}_action-${index + 1}`}
           >
-            {action.label}
+            <ButtonLoadingContent loading={action.busy} loadingLabel={action.busyLabel ?? "처리 중"}>
+              {action.label}
+            </ButtonLoadingContent>
           </button>
         );
       })}
       {children}
-    </div>
+    </Container>
   );
 }
 

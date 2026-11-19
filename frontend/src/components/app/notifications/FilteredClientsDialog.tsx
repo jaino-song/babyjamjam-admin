@@ -1,5 +1,6 @@
 "use client";
 
+import { LoadingState } from "@/components/app/ui/LoadingState";
 import { useState } from "react";
 import { X } from "lucide-react";
 import { TwoButtonModal } from "@/components/app/ui/TwoButtonModal";
@@ -7,7 +8,6 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { getClientDocumentStatusMeta } from "@babyjamjam/shared/constants/client-document-status";
 import type { StatusBadgeVariant } from "@babyjamjam/shared/tokens/status-badge";
-import { Spinner } from "@/components/ui/spinner";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import {
     Dialog,
@@ -153,16 +153,14 @@ export function FilteredClientsDialog({
                         <DialogDescription className="sr-only">
                             {title}에 해당하는 클라이언트 목록
                         </DialogDescription>
-                        <Button aria-label="Close" variant="ghost" size="icon" onClick={onClose} className="h-8 w-8">
+                        <Button aria-label="Close" variant="ghost" size="icon" onClick={onClose}>
                             <X className="h-5 w-5" />
                         </Button>
                     </DialogHeader>
 
                     <div data-component="desktop_admin_filtered-clients-dialog_body" className="overflow-y-auto max-h-[calc(80vh-4rem)]">
                         {isLoading ? (
-                            <div className="flex justify-center py-16">
-                                <Spinner size="default" />
-                            </div>
+                            <LoadingState label="고객 목록을 불러오는 중" data-component="desktop_admin_filtered-clients-dialog_body_loading" className="py-16" />
                         ) : error ? (
                             <div className="p-4">
                                 <Alert variant="destructive">
@@ -234,7 +232,7 @@ export function FilteredClientsDialog({
                 title="고객을 삭제하시겠습니까?"
                 description="삭제한 고객은 목록에서 사라지고 복구할 수 없어요."
                 approvalLabel="삭제"
-                pendingLabel="삭제 중..."
+                pendingLabel="삭제 중"
                 approvalVariant="destructive"
                 isPending={deleteClient.isPending}
                 onApprove={() => void handleDeleteConfirm()}

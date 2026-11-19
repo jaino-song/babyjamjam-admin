@@ -275,7 +275,7 @@ export function VoucherPriceTable() {
                 label: `${year}년`,
                 value: String(year),
               }))}
-              triggerClassName="xl:text-[0.85rem]"
+              triggerClassName="w-auto min-w-[5.75rem] gap-2 px-3 xl:text-[0.85rem]"
             />
           </div>
         </CardHeader>

@@ -88,7 +88,7 @@ export function AddCategoryModal({
             variant="ghost"
             size="icon"
             onClick={handleClose}
-            className="h-8 w-8 text-muted-foreground hover:text-foreground"
+            className="text-muted-foreground hover:text-foreground"
           >
             <X className="h-4 w-4" />
           </Button>
@@ -140,10 +140,12 @@ export function AddCategoryModal({
             취소
           </Button>
           <Button
+            loading={isLoading}
+            loadingLabel="추가 중"
             onClick={handleAdd}
             disabled={!name.trim() || !selectedColor || isLoading}
           >
-            {isLoading ? "추가 중..." : "추가"}
+            추가
           </Button>
         </DialogFooter>
       </DialogContent>

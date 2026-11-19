@@ -233,7 +233,7 @@ export const TemplateEditor = ({ initialData }: TemplateEditorProps) => {
                 </Alert>
             )}
 
-            <TemplatePreview content={content} variables={variables} />
+            <TemplatePreview isTemplatePreview content={content} variables={variables} />
 
             <div className="flex justify-end gap-3 pb-6">
                 <Button variant="outline" onClick={() => router.back()}>
@@ -241,10 +241,12 @@ export const TemplateEditor = ({ initialData }: TemplateEditorProps) => {
                 </Button>
                 <Button
                     onClick={handleSave}
+                    loading={isPending}
+                    loadingLabel="저장 중"
                     disabled={isPending || isOverBodyLimit}
                     aria-describedby={hasValidationErrors ? validationSummaryId : undefined}
                 >
-                    {isPending ? t(locale, "common.saving") : t(locale, "common.save")}
+                    {t(locale, "common.save")}
                 </Button>
             </div>
         </div>

@@ -1,5 +1,6 @@
 import {
     hasDisplayValue,
+    hasInvalidServiceRecordStoolColor,
     isDailyItemComplete,
     type DailyItem,
     type ServiceRecordNumericErrors,
@@ -29,6 +30,7 @@ export function getDailyItemProblem(
         ));
         return count ? { kind: "count", countKey: count.k } : null;
     }
+    if (item.type === "stool" && hasInvalidServiceRecordStoolColor(draft)) return { kind: "stoolColor" };
     if (isDailyItemComplete(item, draft)) return null;
     if (item.type === "stool" && hasDisplayValue(draft[item.key])) return { kind: "stoolColor" };
     return { kind: "option" };

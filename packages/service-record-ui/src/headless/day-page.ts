@@ -1,5 +1,6 @@
 import {
     DAILY_ITEMS,
+    hasInvalidServiceRecordStoolColor,
     type DailyItem,
     type ServiceRecordNumericErrors,
 } from "../form-definition";
@@ -27,7 +28,7 @@ export function getFirstDayPageProblem(
 }
 
 export function hasInvalidTextAnswers(draft: Record<string, unknown>): boolean {
-    return DAILY_ITEMS.some((item) => item.type === "textarea"
+    return hasInvalidServiceRecordStoolColor(draft) || DAILY_ITEMS.some((item) => item.type === "textarea"
         && item.maxLength !== undefined && typeof draft[item.key] === "string"
         && (draft[item.key] as string).length > item.maxLength);
 }

@@ -11,7 +11,6 @@ import {
   useState,
   type ReactNode,
 } from 'react';
-import { Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useToast } from '@/hooks/use-toast';
 import {
@@ -491,12 +490,11 @@ export const SystemTemplateEditor = forwardRef<
           <Button
             data-component={`${dataComponent}_save-button`}
             onClick={() => void handleSave()}
+            loading={updateMutation.isPending}
+            loadingLabel="저장 중"
             disabled={!hasChanges || !isValid || updateMutation.isPending}
           >
-            {updateMutation.isPending && (
-              <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-            )}
-            {updateMutation.isPending ? '저장 중...' : '저장'}
+            저장
           </Button>
         </div>
       ) : null}

@@ -1,7 +1,7 @@
 "use client";
 
 import { useId, useState, useMemo, useRef } from "react";
-import { UserPlus, FileCheck, ChevronsUpDown, Check, X, Loader2, Play } from "lucide-react";
+import { UserPlus, FileCheck, ChevronsUpDown, Check, X, Play } from "lucide-react";
 import { useAllClients } from "@/hooks/useClients";
 import { useLocale } from "@/providers/LocaleProvider";
 import { t } from "@/lib/i18n/translations";
@@ -11,6 +11,7 @@ import { formatKoreanPhoneNumber, normalizeKoreanPhoneLookupKey } from "@/lib/ph
 import { matchesSearchQuery } from "@/lib/search/korean-search";
 import { cn } from "@/lib/utils";
 
+import { LoadingState } from "@/components/app/ui/LoadingState";
 import { Button } from "@/components/ui/button";
 import {
     Popover,
@@ -327,14 +328,14 @@ export function ClientAutocomplete({
                             </span>
                             <div className="flex shrink-0 items-center gap-1">
                                 {isLoading && (
-                                    <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+                                    <LoadingState inline size="sm" label="고객 목록을 불러오는 중" data-component={`${dataComponent}_input_loading`} />
                                 )}
                                 {hasDisplayValue && !isLoading && !disabled && (
                                     <span
                                         role="button"
                                         tabIndex={0}
                                         aria-label={clearLabel}
-                                        className="flex h-5 w-5 cursor-pointer items-center justify-center text-muted-foreground transition-colors hover:text-foreground"
+                                        className="relative flex h-[calc(32px*var(--glint-ui-scale,1))] w-[calc(32px*var(--glint-ui-scale,1))] cursor-pointer items-center justify-center after:absolute after:left-1/2 after:top-1/2 after:h-[calc(44px*var(--glint-ui-scale,1))] after:w-[calc(44px*var(--glint-ui-scale,1))] after:-translate-x-1/2 after:-translate-y-1/2 after:content-[''] text-muted-foreground transition-colors hover:text-foreground"
                                         onPointerDown={(event) => {
                                             event.preventDefault();
                                             event.stopPropagation();
@@ -382,24 +383,25 @@ export function ClientAutocomplete({
                             }}
                             endElement={
                                 allowsInlineManualValue ? (
-                                    <button
+                                    <Button
                                         type="button"
+                                        variant="ghost"
+                                        size="icon"
+                                        data-component={`${dataComponent}_dropdown_manual-input`}
                                         aria-label="수동 입력으로 진행"
                                         title="수동 입력으로 진행"
-                                        className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-transparent text-v3-primary transition-colors hover:text-v3-primary/80 disabled:cursor-not-allowed disabled:opacity-40"
+                                        className="shrink-0 bg-transparent text-v3-primary [&_svg]:size-3.5 transition-colors hover:text-v3-primary/80 disabled:cursor-not-allowed disabled:opacity-40"
                                         disabled={!commandInputValue.trim()}
                                         onClick={commitInlineManualValue}
                                     >
                                         <Play className="h-3.5 w-3.5 fill-current" aria-hidden="true" />
-                                    </button>
+                                    </Button>
                                 ) : undefined
                             }
                         />
                         <CommandList>
                             {isLoading ? (
-                                <div className="flex items-center justify-center py-6">
-                                    <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
-                                </div>
+                                <LoadingState size="sm" label="고객 목록을 불러오는 중" data-component={`${dataComponent}_dropdown_loading`} className="py-6" />
                             ) : filteredClients.length === 0 ? (
                                 <CommandEmpty>
                                     <span className="text-muted-foreground">

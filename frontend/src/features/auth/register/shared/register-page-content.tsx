@@ -13,7 +13,6 @@ import { AuthInlineLink } from "@/components/auth/auth-inline-link";
 import { FormField } from "@/components/auth/form-field";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
-import { Spinner } from "@/components/ui/spinner";
 import { AuthSurface, type AuthSurfaceVariant } from "@/features/auth/shared/ui/auth-surface";
 import { useFieldInputStates } from "@/hooks/useFieldInputStates";
 import {
@@ -458,11 +457,11 @@ export function RegisterPageContent({ variant }: RegisterPageContentProps) {
 
   const primaryButtonClassName = cn(
     REGISTER_PRIMARY_BUTTON_CLASS_NAME,
-    variant === "mobile" && "rounded-2xl",
+    variant === "mobile" && "rounded-full",
   );
   const secondaryButtonClassName = cn(
     REGISTER_SECONDARY_BUTTON_CLASS_NAME,
-    variant === "mobile" && "rounded-2xl",
+    variant === "mobile" && "rounded-full",
   );
   const desktopStepNavigationWidthClassName =
     variant === "desktop" ? "w-1/4" : undefined;
@@ -605,12 +604,12 @@ export function RegisterPageContent({ variant }: RegisterPageContentProps) {
                     ? desktopStepNavigationWidthClassName ?? "w-auto"
                         : "flex-1 md:min-w-[132px] md:flex-none",
                     )}
+                    loading={isLoading}
+                    loadingLabel="회원가입 중"
                     disabled={isLoading || isCurrentStepActionDisabled}
                   >
                     {currentStep < REGISTER_STEP_TOTAL - 1 ? (
                       "다음"
-                    ) : isLoading ? (
-                      <Spinner size="sm" />
                     ) : (
                       "회원가입"
                     )}

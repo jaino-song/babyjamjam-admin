@@ -6,7 +6,6 @@ import { AuthInlineLink } from "@/components/auth/auth-inline-link";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
-import { Spinner } from "@/components/ui/spinner";
 import { useLoginPageController } from "@/features/auth/login/shared/use-login-page-controller";
 import { MobileAlertCard } from "@/features/auth/shared/mobile/mobile-alert-card";
 import { MobileAuthCardContainer } from "@/features/auth/shared/mobile/mobile-auth-card-container";
@@ -63,7 +62,9 @@ export function LoginPageMobile() {
             variant="destructive"
             data-component="desktop_auth_login_error"
             message={serverError}
-            actionLabel={emailVerificationRequired ? (isResendingVerification ? "재발송 중..." : "인증 이메일 재발송") : undefined}
+            actionLabel={emailVerificationRequired ? "인증 이메일 재발송" : undefined}
+            actionLoading={isResendingVerification}
+            actionLoadingLabel="재발송 중"
             actionOnClick={emailVerificationRequired ? handleResendVerification : undefined}
           />
         ) : null}
@@ -152,10 +153,12 @@ export function LoginPageMobile() {
             type="submit"
             variant="positive"
             size="lg"
-            className="w-full rounded-2xl"
+            className="w-full rounded-full"
             disabled={isLoading}
+            loading={isLoading}
+            loadingLabel="로그인 중"
           >
-            {isLoading ? <Spinner size="sm" /> : "로그인"}
+            로그인
           </Button>
         </form>
 

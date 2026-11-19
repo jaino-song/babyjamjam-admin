@@ -28,7 +28,8 @@ import { fetchClient } from "@/hooks/useClients";
 import { useConfirmBooking } from "@/features/clients";
 import { canEditServiceRecordSchedule } from "@/features/clients/types";
 import { eformsignApi, type EformsignLinkConfirmation } from "@/services/api";
-import { Button } from "@/components/ui/button";
+import { LoadingState } from "@/components/app/ui/LoadingState";
+import { Button, ButtonLoadingContent } from "@/components/ui/button";
 import { toast } from "@/hooks/use-toast";
 import { canManageBranchFromAuthQuery } from "@/lib/auth/branch-role-policy";
 import { formatDateForDisplay } from "@/lib/date/format-date-for-display";
@@ -1168,14 +1169,16 @@ export function ClientDetailContent({
         menu={
           <DropdownMenu modal={false}>
             <DropdownMenuTrigger asChild>
-              <button
+              <Button
                 type="button"
-                className="flex h-[44px] w-[44px] flex-shrink-0 items-center justify-center rounded-xl text-v3-text-muted transition-colors hover:bg-v3-dim-white"
+                variant="ghost"
+                size="icon"
+                className="flex-shrink-0 rounded-xl text-v3-text-muted hover:bg-v3-dim-white [&_svg]:size-5"
                 aria-label="고객 옵션"
                 data-component={`${dataComponent}_header_menu-trigger`}
               >
                 <MoreVertical size={20} strokeWidth={2} />
-              </button>
+              </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent
               align="end"
@@ -1193,12 +1196,16 @@ export function ClientDetailContent({
               </DropdownMenuItem>
               <DropdownMenuItem
                 disabled={isSendingReceipt}
+                aria-busy={isSendingReceipt || undefined}
+                data-loading={isSendingReceipt ? "" : undefined}
                 onClick={() => setReceiptSendConfirmOpen(true)}
-                className="min-h-[44px] gap-2 rounded-md px-3 py-2 text-[0.82rem] leading-none"
+                className="relative min-h-[44px] gap-2 rounded-md px-3 py-2 text-[0.82rem] leading-none"
                 data-component={`${dataComponent}_header_menu_send-copayment-receipt`}
               >
-                <Send className="size-[15px]" strokeWidth={2} />
-                {isSendingReceipt ? "영수증 발송 중..." : "본인부담금 영수증 발송"}
+                <ButtonLoadingContent loading={isSendingReceipt} loadingLabel="영수증 발송 중">
+                  <Send className="size-[15px]" strokeWidth={2} />
+                  본인부담금 영수증 발송
+                </ButtonLoadingContent>
               </DropdownMenuItem>
               {canManageBranchFeatures && canEditServiceRecordSchedule(client) ? (
                 <DropdownMenuItem
@@ -1254,7 +1261,8 @@ export function ClientDetailContent({
           },
           ...(canConfirmBooking
             ? [{
-                label: confirmBookingMutation.isPending ? "확정 중..." : "예약 확정",
+                label: "예약 확정",
+                busyLabel: "확정 중",
                 variant: "secondary" as const,
                 onClick: () => setConfirmBookingOpen(true),
                 disabled: isBookingDateMissing || confirmBookingMutation.isPending,
@@ -1263,7 +1271,8 @@ export function ClientDetailContent({
               }]
             : []),
           {
-            label: isIssuingContract ? "발급 중..." : "계약서 발급",
+            label: "계약서 발급",
+            busyLabel: "발급 중",
             variant: "primary",
             onClick: () => onIssueContract(client),
             disabled: isIssuingContract,
@@ -1285,7 +1294,7 @@ export function ClientDetailContent({
         description="확정하면 서비스 일정에 따라 상태가 대기·진행·완료로 바뀌고, 제공기록지와 안내 문자가 일정대로 준비됩니다. 확정은 되돌릴 수 없습니다."
         isDescriptionVisuallyHidden={false}
         approvalLabel="예약 확정"
-        pendingLabel="확정 중..."
+        pendingLabel="확정 중"
         isPending={confirmBookingMutation.isPending}
         onApprove={() => void handleConfirmBooking()}
       />
@@ -1302,7 +1311,7 @@ export function ClientDetailContent({
                 description="기존 링크는 만료되고 새 링크가 생성돼요. 메시지는 발송되지 않아요."
                 isDescriptionVisuallyHidden={false}
                 approvalLabel="링크 재설정"
-        pendingLabel="재설정 중..."
+        pendingLabel="재설정 중"
         isPending={isResettingLink}
         onApprove={() => void handleResetServiceRecordLink()}
       />
@@ -1319,7 +1328,7 @@ export function ClientDetailContent({
         description={`${client.name} 산모님께 본인부담금 영수증 안내 메시지를 보낼까요?`}
         isDescriptionVisuallyHidden={false}
         approvalLabel="발송하기"
-        pendingLabel="발송 중..."
+        pendingLabel="발송 중"
         isPending={isSendingReceipt}
         onApprove={() => void handleConfirmReceiptSend()}
       />
@@ -1487,7 +1496,7 @@ export function ClientDetailContent({
         description={`${retryLog?.recipientName?.trim() || "수신자"} 고객에게 같은 메시지로 재발송합니다.`}
         isDescriptionVisuallyHidden={false}
         approvalLabel="재발송"
-        pendingLabel="재발송 중..."
+        pendingLabel="재발송 중"
         isPending={isRetryingMessage}
         onApprove={handleConfirmMessageRetry}
       />
@@ -1541,9 +1550,7 @@ export function ClientDetailContent({
         ) : (
           <InfoCard data-component={`${dataComponent}_tab-panel_message_history-card`} title="발송 내역">
             {isNotificationLogsLoading ? (
-              <div className="detail-empty-state" data-component={`${dataComponent}_tab-panel_message_history-card_loading`} data-slot="detail-empty-state">
-                발송 내역을 불러오는 중입니다.
-              </div>
+              <LoadingState label="발송 내역을 불러오는 중" data-component={`${dataComponent}_tab-panel_message_history-card_loading`} />
             ) : isNotificationLogsError && displayNotificationLogs.length === 0 ? (
               <div className="detail-empty-state" data-component={`${dataComponent}_tab-panel_message_history-card_error`} data-slot="detail-empty-state">
                 <p>발송 내역을 불러오지 못했습니다.</p>

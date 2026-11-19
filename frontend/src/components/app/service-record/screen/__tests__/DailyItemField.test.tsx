@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { fireEvent, render, screen, within } from "@testing-library/react";
-import { DAILY_ITEMS, getDailyItemProblem } from "@babyjamjam/service-record-ui";
+import { DAILY_ITEMS, getDailyItemProblem, getFirstDayPageProblem, hasInvalidTextAnswers, isDailyItemComplete } from "@babyjamjam/service-record-ui";
 
 import { DailyItemField, type DailyItemFieldProps } from "../DailyItemField";
 import { dailyFieldComponent, getDailyItemProblemId } from "../ids";
@@ -31,8 +31,8 @@ function setup(key: string, overrides: Partial<DailyItemFieldProps> = {}) {
 }
 
 /** Keeps the draft in state so a field can be filled and cleared. */
-function Harness({ itemKey }: { itemKey: string }) {
-    const [draft, setDraft] = useState<Record<string, unknown>>({});
+function Harness({ itemKey, initialDraft = {} }: { itemKey: string; initialDraft?: Record<string, unknown> }) {
+    const [draft, setDraft] = useState<Record<string, unknown>>(initialDraft);
     const item = itemOf(itemKey);
     return (
         <DailyItemField
@@ -95,6 +95,59 @@ describe("DailyItemField", () => {
         expect(slotOf(color)).toBeEmptyDOMElement();
         fireEvent.change(color, { target: { value: "녹" } });
         expect(onFieldChange).toHaveBeenCalledWith("stool_color", "녹");
+    });
+
+    it.each(["정상변", "이상변"])("uses the raw 80/81 boundary for shared progression and submission with %s", (stool) => {
+        const item = itemOf("stool");
+        const index = DAILY_ITEMS.indexOf(item);
+        const accepted = { stool, stool_color: "가".repeat(80) };
+        const rejected = { stool, stool_color: "가".repeat(80) + " " };
+        expect(isDailyItemComplete(item, accepted)).toBe(true);
+        expect(getDailyItemProblem(item, accepted, {})).toBeNull();
+        expect(getFirstDayPageProblem([index], accepted, {}, { serviceDateBlocked: false, serviceDateFieldVisible: false })).toBeNull();
+        expect(hasInvalidTextAnswers(accepted)).toBe(false);
+        expect(isDailyItemComplete(item, rejected)).toBe(false);
+        expect(getDailyItemProblem(item, rejected, {})).toEqual({ kind: "stoolColor" });
+        expect(getFirstDayPageProblem([index], rejected, {}, { serviceDateBlocked: false, serviceDateFieldVisible: false })).toEqual({
+            kind: "item", item, problem: { kind: "stoolColor" },
+        });
+        expect(hasInvalidTextAnswers(rejected)).toBe(true);
+    });
+
+    it("accepts a loaded 80-character colour and sets the native input limit", () => {
+        setup("stool", { draft: { stool: "이상변", stool_color: "가".repeat(80) } });
+        const input = screen.getByRole("textbox", { name: "이상변의 색깔과 상태" });
+        expect(input).toHaveValue("가".repeat(80));
+        expect(input).toHaveAttribute("maxlength", "80");
+        expect(input).not.toHaveAttribute("aria-invalid");
+        expect(slotOf(input)).toBeEmptyDOMElement();
+    });
+
+    it("preserves a loaded 81-character colour and clears feedback after shortening it", () => {
+        render(<Harness itemKey="stool" initialDraft={{ stool: "이상변", stool_color: "가".repeat(81) }} />);
+        const input = screen.getByRole("textbox", { name: "이상변의 색깔과 상태" });
+        expect(input).toHaveValue("가".repeat(81));
+        expect(input).toHaveAttribute("aria-invalid", "true");
+        expect(slotOf(input)).toHaveTextContent("80자 이내로 줄여 주세요");
+        expect(slotOf(input)).toHaveAttribute("data-tone", "error");
+        fireEvent.change(input, { target: { value: "가".repeat(80) } });
+        expect(input).toHaveValue("가".repeat(80));
+        expect(input).not.toHaveAttribute("aria-invalid");
+        expect(slotOf(input)).toBeEmptyDOMElement();
+    });
+
+    it("keeps an over-limit colour editable after selecting normal and hides it once cleared", () => {
+        render(<Harness itemKey="stool" initialDraft={{ stool: "이상변", stool_color: "가".repeat(81) }} />);
+        const input = screen.getByRole("textbox", { name: "이상변의 색깔과 상태" });
+        const id = input.id;
+        fireEvent.click(screen.getByRole("button", { name: "정상변" }));
+        expect(screen.getByRole("textbox", { name: "이상변의 색깔과 상태" })).toBe(input);
+        expect(input.id).toBe(id);
+        expect(input).toHaveValue("가".repeat(81));
+        expect(slotOf(input)).toHaveTextContent("80자 이내로 줄여 주세요");
+        fireEvent.change(input, { target: { value: "" } });
+        expect(screen.queryByRole("textbox", { name: "이상변의 색깔과 상태" })).toBeNull();
+        expect(screen.queryByText("80자 이내로 줄여 주세요")).toBeNull();
     });
 
     it("gives every count input the accessible name the shared wizard exposes", () => {

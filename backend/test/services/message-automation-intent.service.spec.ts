@@ -1,6 +1,8 @@
+import { persistClientDateMessageAutomationIntent, persistClientMessageAutomationIntent, persistScheduleMessageAutomationIntent } from "application/services/message-automation-intent-writer";
 import { MessageAutomationIntentService } from "application/services/message-automation-intent.service";
 import {
     getEmployeeAutomationIntentDedupeKey,
+    getClientDateAutomationIntentDedupeKey,
     MESSAGE_AUTOMATION_INTENT_INVALID_REASON,
     MESSAGE_AUTOMATION_INTENT_RETRY_REASON,
     MESSAGE_AUTOMATION_INTENT_RULE_ID,
@@ -9,6 +11,10 @@ import { MessageTriggerTemplateKey } from "domain/constants/message-trigger-cata
 import { createAgentAutomationTaskCommitReference } from "application/agent/agent-automation-storage.schema";
 import { createSchedulerLeaseMock } from "../utils/mocks/scheduler-lease.mock";
 import { isEntityChangeHintsSuppressed } from "infrastructure/database/entity-change-suppression";
+
+jest.mock("infrastructure/observability/service-record-sentry", () => ({
+    captureBackendError: jest.fn(),
+}));
 
 describe("MessageAutomationIntentService", () => {
     const setup = (schedulerLease: ReturnType<typeof createSchedulerLeaseMock> = createSchedulerLeaseMock()) => {
@@ -34,6 +40,7 @@ describe("MessageAutomationIntentService", () => {
             $transaction: jest.fn(),
         };
         const triggerService = {
+            reconcileServiceRecordDateRules: jest.fn().mockResolvedValue(undefined),
             ensureDefaultRulesForBranch: jest.fn().mockResolvedValue(undefined),
             syncClientRulesForClient: jest.fn().mockResolvedValue(undefined),
             syncEmployeeAssignmentRulesForSchedule: jest.fn().mockResolvedValue(undefined),
@@ -1159,4 +1166,113 @@ describe("MessageAutomationIntentService", () => {
             expect(observed).toEqual(["discard:false", "quarantine:false"]);
         });
     });
+    it("consumes independently keyed date candidates without calling the generic cancellation path", async () => {
+        const f = setup();
+        const intentAt = new Date("2026-08-20T01:02:03Z");
+        const dateScope = { startDate: false, endDate: true, scheduleIds: [55] };
+        const dedupeKey = getClientDateAutomationIntentDedupeKey("branch-1", 31, "confirm-1");
+        f.prisma.message_trigger_job.findMany.mockResolvedValue([{ id: "intent-1", branchId: "branch-1", clientId: 31,
+            employeeScheduleId: null, dedupeKey, scheduledFor: intentAt, updatedAt: intentAt,
+            payload: { templateVariables: { intentKind: "client_dates", dateScope: JSON.stringify(dateScope) } } }] as never);
+        expect(await f.service.reconcilePendingIntents()).toBe(1);
+        expect(f.triggerService.reconcileServiceRecordDateRules).toHaveBeenCalledWith("branch-1", 31, dateScope);
+        expect(f.triggerService.syncClientRulesForClient).not.toHaveBeenCalled();
+        expect(f.prisma.message_trigger_job.deleteMany).toHaveBeenCalledWith({ where: expect.objectContaining({
+            id: "intent-1", scheduledFor: intentAt, updatedAt: new Date("2026-08-20T01:02:04Z"),
+        }) });
+    });
+
+    it("releases a processing conflict for retry without deleting the immutable date work", async () => {
+        const f = setup(); const conflict = new Error("processing reservation");
+        f.triggerService.reconcileServiceRecordDateRules.mockRejectedValueOnce(conflict);
+        const params = { branchId: "branch-1", clientId: 31, dedupeKey: getClientDateAutomationIntentDedupeKey("branch-1", 31, "c1"),
+            intentAt: new Date("2026-08-20T01:02:03Z"), dateScope: { startDate: false, endDate: true, scheduleIds: [] } };
+        await expect(f.service.fulfillClientDateIntent(params)).rejects.toBe(conflict);
+        expect(f.prisma.message_trigger_job.deleteMany).not.toHaveBeenCalled();
+        expect(f.prisma.message_trigger_job.updateMany).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({
+            id: "intent-1", scheduledFor: params.intentAt, updatedAt: new Date("2026-08-20T01:02:04Z"),
+        }), data: { nextAttemptAt: expect.any(Date) } }));
+        await expect(f.service.fulfillClientDateIntent(params)).resolves.toBe(true);
+    });
+
+    it.each(["failure", "stale-completion"])("does not alter a newer confirmation, lease or generic task marker after %s", async (outcome) => {
+        const f = setup();
+        type Row = { id: string; dedupeKey: string; scheduledFor: Date; updatedAt: Date; payload: unknown; nextAttemptAt?: Date };
+        const rows = new Map<string, Row>(); let clock = 0;
+        const writer = { message_trigger_rule: f.transaction.message_trigger_rule,
+            message_trigger_job: { upsert: jest.fn(async ({ create, update }: { create: Omit<Row, "id" | "updatedAt">; update: Partial<Row> }) => {
+                const row = rows.get(create.dedupeKey);
+                if (row) { Object.assign(row, update); return row; }
+                const inserted = { ...create, id: `id-${rows.size}`, updatedAt: new Date(++clock) }; rows.set(create.dedupeKey, inserted); return inserted;
+            }) } };
+        const dateScope = { startDate: false, endDate: true, scheduleIds: [] };
+        const intentAt = new Date("2026-08-20T01:02:03Z");
+        const write = (confirmation: string) => persistClientDateMessageAutomationIntent(writer as never, {
+            branchId: "branch-1", clientId: 31, confirmation, dateScope, intentAt,
+        });
+        await write("c1");
+        const firstKey = getClientDateAutomationIntentDedupeKey("branch-1", 31, "c1");
+        f.prisma.$queryRaw.mockImplementation(async (sql: { values: unknown[] }) => {
+            const key = sql.values.find((value) => typeof value === "string" && rows.has(value)) as string;
+            const row = rows.get(key)!; row.updatedAt = new Date(++clock);
+            return [{ id: row.id, scheduled_for: row.scheduledFor, updated_at: row.updatedAt }];
+        });
+        const match = (where: { id: string; scheduledFor: Date; updatedAt: Date }) => [...rows.values()].find((row) =>
+            row.id === where.id && row.scheduledFor.getTime() === where.scheduledFor.getTime() && row.updatedAt.getTime() === where.updatedAt.getTime());
+        f.prisma.message_trigger_job.deleteMany.mockImplementation(async ({ where }) => {
+            const row = match(where); if (!row) return { count: 0 }; rows.delete(row.dedupeKey); return { count: 1 };
+        });
+        f.prisma.message_trigger_job.updateMany.mockImplementation(async ({ where, data }) => {
+            const row = match(where); if (!row) return { count: 0 }; Object.assign(row, data); return { count: 1 };
+        });
+        let resolve: () => void = () => undefined;
+        const pause = new Promise<void>((done) => { resolve = done; });
+        f.triggerService.reconcileServiceRecordDateRules.mockImplementationOnce(async () => { await pause; if (outcome === "failure") throw new Error("write conflict"); });
+        const consuming = f.service.fulfillClientDateIntent({ branchId: "branch-1", clientId: 31, dedupeKey: firstKey, intentAt, dateScope });
+        // The consumer is parked after its claim. A second confirmation and a generic task write coexist.
+        await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
+        await write("c2");
+        await persistClientMessageAutomationIntent(writer as never, { branchId: "branch-1", clientId: 31,
+            includePast: true, suppressGreeting: false, taskOrigin: true, intentAt,
+            taskAutomationReference: createAgentAutomationTaskCommitReference({
+                actionId: "70000000-0000-4000-8000-000000000004", taskId: "70000000-0000-4000-8000-000000000005", taskRevision: 4,
+                authorities: [{ id: "70000000-0000-4000-8000-000000000001", recordDigest: "a".repeat(64), scopeDigest: "b".repeat(64) }], coverages: [],
+            }) });
+        // A second real consumer claims the expired lease while the first owner is still running.
+        let finishNewOwner: () => void = () => undefined;
+        const newOwnerPause = new Promise<void>((done) => { finishNewOwner = done; });
+        f.triggerService.reconcileServiceRecordDateRules.mockImplementationOnce(async () => newOwnerPause);
+        const newOwner = f.service.fulfillClientDateIntent({ branchId: "branch-1", clientId: 31, dedupeKey: firstKey, intentAt, dateScope });
+        await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
+        const before = structuredClone([...rows.values()]);
+        await write("c1"); // Immutable upsert cannot replace that lease or payload.
+        expect([...rows.values()]).toEqual(before);
+        resolve();
+        if (outcome === "failure") await expect(consuming).rejects.toThrow("write conflict");
+        else await expect(consuming).resolves.toBe(false);
+        expect([...rows.values()]).toEqual(before);
+        expect(rows.size).toBe(3);
+        finishNewOwner();
+        expect(await newOwner).toBe(true);
+        expect(rows.has(firstKey)).toBe(false);
+        expect(rows.size).toBe(2);
+    });
+
+    it("keeps date schedule markers independent and retries unresolved automatic link replacement", async () => {
+        const f = setup(); const intentAt = new Date("2026-08-20T01:02:03Z");
+        await persistScheduleMessageAutomationIntent(f.transaction as never, { branchId: "branch-1", clientId: 31, scheduleId: 55,
+            includePast: false, intentAt, confirmation: "c1", refreshServiceRecordLink: true });
+        expect(f.transaction.message_trigger_job.upsert).toHaveBeenCalledWith(expect.objectContaining({ update: {},
+            create: expect.objectContaining({ dedupeKey: expect.stringContaining(":schedule:55:dates:c1") }) }));
+        f.serviceRecordLinkService.scheduleForServiceStart.mockRejectedValueOnce(new Error("link replacement conflict"));
+        const params = { branchId: "branch-1", scheduleId: 55, includePast: false, refreshServiceRecordLink: true,
+            intentKey: "system:message_automation_intent:branch:branch-1:schedule:55:dates:c1", intentAt };
+        await expect(f.service.fulfillScheduleIntent(params)).rejects.toThrow("link replacement conflict");
+        expect(f.prisma.message_trigger_job.deleteMany).not.toHaveBeenCalled();
+        expect(f.prisma.message_trigger_job.updateMany).toHaveBeenCalled();
+        await expect(f.service.fulfillScheduleIntent(params)).resolves.toBe(true);
+        expect(f.triggerService.syncEmployeeAssignmentRulesForSchedule).not.toHaveBeenCalled();
+        expect(f.serviceRecordLinkService.scheduleForServiceStart).toHaveBeenCalledWith(55, { branchId: "branch-1", rescheduleAutomatic: true });
+    });
+
 });

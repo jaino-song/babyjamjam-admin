@@ -990,6 +990,12 @@ export class EformsignService {
         return await docRes.json();
     }
 
+    /** Internal operational identity; credentials never leave this accessor. */
+    getConfiguredContractIdentity(): { companyId: string; creatorId: string } {
+        this.assertConfigured();
+        return { companyId: this.EFORMSIGN_COMPANY_ID, creatorId: this.USER_EMAIL };
+    }
+
     private assertConfigured() {
         if (!this.isConfigured) {
             throw new ServiceUnavailableException(codeOnlyProblemBody("DEPENDENCY_UNAVAILABLE"));

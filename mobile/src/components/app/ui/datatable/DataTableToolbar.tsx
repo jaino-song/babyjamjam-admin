@@ -69,7 +69,6 @@ export function DataTableToolbar({
           <Button
             variant="outline"
             size="icon"
-            className="h-10 w-[100px]"
             onClick={handleSearchIconClick}
             aria-label="search"
           >

@@ -1,3 +1,4 @@
+import { Logger } from "@nestjs/common";
 import {
     ContractAutoFinalizeSchedulerService,
     CONTRACT_AUTO_FINALIZE_CRON,
@@ -7,6 +8,10 @@ import {
 import type { ReviewStageContract } from "domain/repositories/eformsign-doc.repository.interface";
 import { isoDateInKorea } from "domain/utils/business-days";
 import { createSchedulerLeaseMock } from "../utils/mocks/scheduler-lease.mock";
+
+jest.mock("infrastructure/observability/service-record-sentry", () => ({
+    captureBackendError: jest.fn(),
+}));
 
 function contract(overrides: Partial<ReviewStageContract> = {}): ReviewStageContract {
     return {
@@ -33,6 +38,10 @@ describe("ContractAutoFinalizeSchedulerService", () => {
     let notificationService: { sendToBranchUsers: jest.Mock };
     let systemSettingService: { getContractAutoFinalizeConfig: jest.Mock };
     let service: ContractAutoFinalizeSchedulerService;
+
+    afterEach(() => {
+        jest.restoreAllMocks();
+    });
 
     beforeEach(() => {
         configValues = {
@@ -96,6 +105,7 @@ describe("ContractAutoFinalizeSchedulerService", () => {
     });
 
     it("enqueues a due contract with its stored end date prefilled", async () => {
+        const logSpy = jest.spyOn(Logger.prototype, "log").mockImplementation(() => undefined);
         const due = contract({ contractEndDate: isoDateInKorea() });
         repository.findReviewStageContracts.mockResolvedValue([due]);
 
@@ -110,7 +120,12 @@ describe("ContractAutoFinalizeSchedulerService", () => {
             source: "auto_finalize",
             createdByUserId: null,
         });
+        expect(logSpy).toHaveBeenCalledWith(
+            `[Contract Auto Finalize] Enqueued doc-1 (end date ${due.contractEndDate}, request auto_finalize:doc-1:${isoDateInKorea()})`,
+        );
+        expect(logSpy).not.toHaveBeenCalledWith(expect.stringContaining("Reused"));
         expect(repository.recordAutoFinalizeFailure).not.toHaveBeenCalled();
+        expect(notificationService.sendToBranchUsers).not.toHaveBeenCalled();
     });
 
     it("enqueues exactly once per eligible document without calling the browser finalizer", async () => {
@@ -156,24 +171,30 @@ describe("ContractAutoFinalizeSchedulerService", () => {
         expect(notificationService.sendToBranchUsers).not.toHaveBeenCalled();
     });
 
-    it("does not increment attempts when an active staff or auto job already exists", async () => {
-        const due = contract({ documentId: "already-active" });
+    it.each(["processing", "failed"])("reports an existing %s job without enqueuing again or consuming attempts", async (status) => {
+        const logSpy = jest.spyOn(Logger.prototype, "log").mockImplementation(() => undefined);
+        const due = contract({ documentId: "existing-document" });
         repository.findReviewStageContracts.mockResolvedValue([due]);
         documentJobService.enqueueFinalizeDocument.mockResolvedValue({
-            job: { id: "staff-job", status: "processing" },
+            job: { id: "existing-job", status },
             existing: true,
         });
 
         await service.autoFinalizeDueContracts();
 
+        expect(documentJobService.enqueueFinalizeDocument).toHaveBeenCalledTimes(1);
         expect(documentJobService.enqueueFinalizeDocument).toHaveBeenCalledWith({
             branchId: "branch-1",
-            requestKey: `auto_finalize:already-active:${isoDateInKorea()}`,
-            documentId: "already-active",
+            requestKey: `auto_finalize:existing-document:${isoDateInKorea()}`,
+            documentId: "existing-document",
             prefillEndDate: due.contractEndDate,
             source: "auto_finalize",
             createdByUserId: null,
         });
+        expect(logSpy).toHaveBeenCalledWith(
+            `[Contract Auto Finalize] Reused existing job existing-job for existing-document (status ${status})`,
+        );
+        expect(logSpy).not.toHaveBeenCalledWith(expect.stringContaining("Enqueued existing-document"));
         expect(repository.recordAutoFinalizeFailure).not.toHaveBeenCalled();
         expect(notificationService.sendToBranchUsers).not.toHaveBeenCalled();
     });

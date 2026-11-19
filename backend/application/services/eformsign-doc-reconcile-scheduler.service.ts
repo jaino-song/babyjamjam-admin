@@ -5,6 +5,7 @@ import { Cron } from "@nestjs/schedule";
 import { EFORMSIGN_WEBHOOK_EVENT_RETENTION_DAYS } from "domain/constants/eformsign-webhook-outcome.constants";
 import { EformsignWebhookEventWriter } from "./eformsign-webhook-event.service";
 
+import { captureBackendError } from "infrastructure/observability/service-record-sentry";
 import {
     isTransientPrismaConnectivityError,
     summarizePrismaError,
@@ -94,6 +95,14 @@ export class EformsignDocReconcileSchedulerService {
                 );
             }
         } catch (error) {
+            try {
+                captureBackendError(error instanceof Error ? error : new Error("Eformsign doc reconcile scheduler purge ledger failed"), {
+                    handled: true,
+                    operation: "eformsign-doc-reconcile-scheduler:purge-ledger",
+                });
+            } catch {
+                // Reporting must not interrupt background processing.
+            }
             this.logger.warn(
                 `[Eformsign Webhook Ledger] Purge did not complete: ${summarizePrismaError(error)}`,
             );
@@ -143,12 +152,16 @@ export class EformsignDocReconcileSchedulerService {
                 return;
             }
 
-            // A sweep that fails closed — incomplete coverage, a document it could not
-            // write — is telling us this run did not fully reconcile, not that anything
-            // is broken. Tomorrow's run starts from whatever this one managed to land.
-            // But a run that fails every night is drift nobody is watching, and this job
-            // has no other operator signal: Sentry here is filtered to service-records
-            // only, so an error-level log is the loudest thing available.
+            try {
+                captureBackendError(error instanceof Error ? error : new Error("Eformsign doc reconcile scheduler sweep failed"), {
+                    handled: true,
+                    operation: "eformsign-doc-reconcile-scheduler:sweep",
+                });
+            } catch {
+                // Reporting must not interrupt background processing.
+            }
+            // Report incomplete sweeps to Sentry while retaining the log escalation
+            // for consecutive failures. The next sweep resumes from persisted progress.
             this.consecutiveFailures += 1;
 
             if (isTransientPrismaConnectivityError(error)) {

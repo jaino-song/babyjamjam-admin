@@ -1,4 +1,10 @@
-import { hasDisplayValue, type DailyItem, type ServiceRecordNumericErrors } from "../form-definition";
+import {
+    SERVICE_RECORD_STOOL_COLOR_MAX_LENGTH,
+    hasDisplayValue,
+    hasInvalidServiceRecordStoolColor,
+    type DailyItem,
+    type ServiceRecordNumericErrors,
+} from "../form-definition";
 import {
     FIELD_COPY,
     requiredChoiceCopy,
@@ -82,7 +88,11 @@ export function getDailyItemMessages(
     let stoolColorMessage: SlotMessage | null = null;
     if (item.type === "stool") {
         const colorEmpty = !hasDisplayValue(draft[`${item.key}_color`]);
-        stoolColorMessage = requireAnswers && colorEmpty && (had.color || submitted) ? errorMessage(FIELD_COPY.stoolColor) : null;
+        if (!readOnly && hasInvalidServiceRecordStoolColor(draft)) {
+            stoolColorMessage = errorMessage(textLimitCopy(SERVICE_RECORD_STOOL_COLOR_MAX_LENGTH));
+        } else if (requireAnswers && value === "이상변" && colorEmpty && (had.color || submitted)) {
+            stoolColorMessage = errorMessage(FIELD_COPY.stoolColor);
+        }
     }
 
     return { message, invalidCountKeys, stoolColorMessage };

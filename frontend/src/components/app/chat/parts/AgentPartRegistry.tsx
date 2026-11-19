@@ -2,6 +2,7 @@
 
 import type { UIMessage } from "ai";
 import remarkGfm from "remark-gfm";
+import { LoadingState } from "@/components/app/ui/LoadingState";
 import { Button } from "@/components/ui/button";
 import { AgentActionApprovalCard } from "@/components/app/ui/AgentActionApprovalCard";
 import { ChatMarkdown } from "../ChatMarkdown";
@@ -113,7 +114,7 @@ export function AgentPartRegistry({ "data-component": dataComponent, message, ta
                         const serialized = JSON.stringify(toolPart.output, null, 2);
                         return <details key={index} data-component={component("tool-result")} data-slot="tool-result" className="rounded-lg border p-3"><summary data-component={component("tool-result_summary")} className="cursor-pointer text-sm font-medium">{toolName} 결과</summary><pre data-component={component("tool-result_output")} className="mt-2 max-h-64 overflow-auto whitespace-pre-wrap break-words text-xs">{serialized?.slice(0, 4000) ?? "결과 없음"}</pre></details>;
                     }
-                    return <p key={index} data-component={component("tool-progress")} data-slot="tool-progress" className="text-sm text-muted-foreground">{toolName} 처리 중…</p>;
+                    return <p key={index} data-component={component("tool-progress")} data-slot="tool-progress" className="flex items-center gap-2 text-sm text-muted-foreground"><LoadingState data-component={component("tool-progress_loading")} label={`${toolName} 처리 중`} size="sm" inline />{toolName} 처리 중…</p>;
                 }
                 const data = (part as { data?: unknown }).data;
                 if (part.type === "data-activity") {

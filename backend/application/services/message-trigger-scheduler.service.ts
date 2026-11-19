@@ -3,6 +3,7 @@ import { Cron } from "@nestjs/schedule";
 import { MessageTriggerService } from "./message-trigger.service";
 import { SchedulerExecutionGuard } from "./scheduler-execution.guard";
 import { SchedulerLeaseService } from "./scheduler-lease.service";
+import { captureBackendError } from "infrastructure/observability/service-record-sentry";
 import {
     isTransientPrismaConnectivityError,
     summarizePrismaError,
@@ -42,6 +43,14 @@ export class MessageTriggerSchedulerService {
         try {
             await this.triggerService.dispatchDueJobs();
         } catch (error) {
+            try {
+                captureBackendError(error instanceof Error ? error : new Error("Message trigger scheduler tick failed"), {
+                    handled: true,
+                    operation: "message-trigger-scheduler:tick",
+                });
+            } catch {
+                // Reporting must not interrupt background processing.
+            }
             if (isTransientPrismaConnectivityError(error)) {
                 this.executionGuard.enterCooldown(summarizePrismaError(error));
                 return;

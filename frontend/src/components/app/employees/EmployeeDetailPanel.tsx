@@ -266,9 +266,11 @@ function WorkHistoryPanel({
                             data-component="desktop_employees_detail-panel_info-card-4_load-more"
                             className="mt-3 w-full"
                             disabled={query.isFetchingNextPage}
+                            loading={query.isFetchingNextPage}
+                            loadingLabel="불러오는 중"
                             onClick={() => void query.fetchNextPage()}
                         >
-                            {query.isFetchingNextPage ? "불러오는 중..." : "더 보기"}
+                            더 보기
                         </Button>
                     ) : null}
                 </>
@@ -437,6 +439,7 @@ export function EmployeeDetailPanel({
                 )}
             >
                 <DetailTabPanels
+                    insetPanels
                     data-component={`${dataComponent}_tab-panels`}
                     panels={[
                         {

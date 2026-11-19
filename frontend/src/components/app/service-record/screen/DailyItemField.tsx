@@ -2,7 +2,9 @@
 
 import { useState } from "react";
 import {
+    SERVICE_RECORD_STOOL_COLOR_MAX_LENGTH,
     getDailyItemMessages,
+    hasInvalidServiceRecordStoolColor,
     useHadValue,
     type DailyItem,
     type ServiceRecordNumericErrors,
@@ -133,7 +135,7 @@ export function DailyItemField({
                         describedBy={slotId}
                         invalid={hasError}
                     />
-                    {item.type === "stool" && value === STOOL_ABNORMAL_OPTION && (
+                    {item.type === "stool" && (value === STOOL_ABNORMAL_OPTION || (!readOnly && hasInvalidServiceRecordStoolColor(draft))) && (
                         <div data-component={`${dataComponent}_stool-color`} className="mt-3">
                             <ServiceRecordItemLabel
                                 data-component={`${dataComponent}_stool-color-input_label-row`}
@@ -147,8 +149,9 @@ export function DailyItemField({
                                 id={stoolColorInputId(dataComponent)}
                                 data-component={`${dataComponent}_stool-color-input`}
                                 variant="v3"
-                                className="focus-visible:border-v3-primary! aria-[invalid=true]:border-v3-burgundy!"
+                                className="rounded-[13px] focus-visible:border-v3-primary! aria-[invalid=true]:border-v3-burgundy!"
                                 placeholder={STOOL_COLOR_PLACEHOLDER}
+                                maxLength={SERVICE_RECORD_STOOL_COLOR_MAX_LENGTH}
                                 value={(draft[`${item.key}_color`] as string | undefined) ?? ""}
                                 disabled={readOnly} // SRW:294
                                 aria-required={REQUIRE_ANSWERS} // SRW:295
@@ -193,7 +196,7 @@ export function DailyItemField({
                 <Textarea
                     id={textareaInputId(dataComponent, item.key)}
                     data-component={`${dataComponent}_${item.key === "etcService" ? "etc-service" : "notes"}`}
-                    className="focus-visible:border-v3-primary! aria-[invalid=true]:border-v3-burgundy!"
+                    className="rounded-[13px] focus-visible:border-v3-primary! aria-[invalid=true]:border-v3-burgundy!"
                     aria-label={item.label}
                     aria-describedby={slotId}
                     aria-invalid={hasError ? "true" : undefined}

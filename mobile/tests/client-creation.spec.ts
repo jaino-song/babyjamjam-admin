@@ -315,8 +315,8 @@ test.describe("clients/new wizard", () => {
     await expect(dialog.locator('[data-component="employees-form-dialog-submit"]')).toHaveAttribute("data-width", "lg");
     const cancelButtonBox = await dialog.locator('[data-component="employees-form-dialog-cancel"]').boundingBox();
     const submitButtonBox = await dialog.locator('[data-component="employees-form-dialog-submit"]').boundingBox();
-    expect(Math.round(cancelButtonBox?.height ?? 0)).toBe(46);
-    expect(Math.round(submitButtonBox?.height ?? 0)).toBe(46);
+    expect(Math.round(cancelButtonBox?.height ?? 0)).toBe(40);
+    expect(Math.round(submitButtonBox?.height ?? 0)).toBe(40);
 
     const gradeSelect = dialog.locator('[data-component="mobile_employees_form-dialog_card_section-work_field-grade"] select');
     await expect(gradeSelect).toHaveValue("스탠다드");

@@ -160,6 +160,22 @@ describe("AdminFeedbackPage list load failure", () => {
 });
 
 describe("AdminFeedbackPage stats", () => {
+  it("scopes the stats to their page owner", async () => {
+    mockList.mockResolvedValue(listResponse([]));
+    const { container } = renderPage();
+    expect(await screen.findByText("피드백이 없습니다")).toBeInTheDocument();
+    const bar = container.querySelector('[data-component="desktop_admin_page_stats"]');
+    expect(bar).toBeInTheDocument();
+    expect(bar?.parentElement).toHaveAttribute("data-component", "desktop_admin_page");
+    const root = container.querySelector('[data-component="desktop_admin_page"]');
+    expect(root?.getAttribute("data-component")).toMatch(/^(desktop|mobile)_[a-z0-9]+(?:-[a-z0-9]+)*(?:_[a-z0-9]+(?:-[a-z0-9]+)*){1,}$/);
+    const stats = root?.querySelector('[data-component="desktop_admin_page_stats"]');
+    expect(stats).toHaveAttribute("data-component", `${root?.getAttribute("data-component")}_stats`);
+    for (const child of (stats?.querySelectorAll("[data-component]") ?? [])) {
+      expect(child.getAttribute("data-component")).toMatch(/^desktop_admin_page_stats_/);
+    }
+  });
+
   it("shows an em dash, never 0, while the stats failed", async () => {
     mockStats.mockRejectedValue(new Error("network"));
     mockList.mockResolvedValue(listResponse([row]));
@@ -223,7 +239,7 @@ describe("AdminFeedbackPage inline detail", () => {
       fireEvent.click(rowLabel);
       expect(await screen.findByText("피드백 정보")).toBeInTheDocument();
       expect(screen.getByText("대화 내역")).toBeInTheDocument();
-      expect(container.querySelector('[data-component="desktop_admin_detail-panel_info-card-2_loading-messages"]')).toBeInTheDocument();
+      expect(container.querySelector('[data-component="desktop_admin_page_detail-panel_info-card-2_loading-messages"]')).toBeInTheDocument();
       expect(screen.queryByRole("alert")).not.toBeInTheDocument();
       expect(mockDetail).not.toHaveBeenCalled();
     });

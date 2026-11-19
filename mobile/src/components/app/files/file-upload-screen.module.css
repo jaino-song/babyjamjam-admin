@@ -104,17 +104,6 @@
   font-weight: 700;
 }
 
-.visibilityNotice {
-  border: 1px solid hsl(var(--v3-border));
-  border-radius: 14px;
-  background: hsl(var(--v3-primary-light));
-  color: hsl(var(--v3-primary));
-  font-size: 0.72rem;
-  font-weight: 700;
-  line-height: 1.45;
-  padding: 10px 12px;
-}
-
 .dropzone {
   position: relative;
   display: flex;
@@ -125,7 +114,7 @@
   width: 100%;
   padding: 28px 16px;
   border: 2px dashed hsl(var(--v3-border));
-  border-radius: 18px;
+  border-radius: 16px;
   background: white;
   text-align: center;
   cursor: pointer;
@@ -177,17 +166,6 @@
   font-size: 0.92rem;
   font-weight: 700;
   line-height: 1.35;
-}
-
-.dropzoneSub {
-  color: hsl(var(--v3-text-muted));
-  font-size: 0.7rem;
-  line-height: 1.45;
-}
-
-.dropzoneSub b {
-  color: hsl(var(--v3-primary));
-  font-weight: 700;
 }
 
 .filePreview {
@@ -284,7 +262,7 @@
   padding: 12px 14px;
   border-radius: 16px;
   background: white;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+  box-shadow: 0 4px 24px rgba(25, 48, 77, .06);
 }
 
 .formRow {
@@ -299,7 +277,7 @@
   display: block;
   margin-bottom: 6px;
   color: hsl(var(--v3-text-muted));
-  font-size: 0.7rem;
+  font-size: 12px;
   font-weight: 600;
   letter-spacing: 0.04em;
   line-height: 1.2;
@@ -316,23 +294,23 @@
   width: 100%;
   box-sizing: border-box;
   padding: 10px 12px;
-  border: 1px solid hsl(var(--v3-border));
-  border-radius: 10px;
+  border: 1px solid #e7eaef;
+  border-radius: 12px;
   outline: none;
-  background: hsl(var(--v3-dim-white));
+  background: white;
   color: hsl(var(--v3-dark));
   font-family: inherit;
-  font-size: 0.85rem;
+  font-size: 16px;
   line-height: 1.35;
 }
 
 .formInput {
-  min-height: 44px;
+  height: 44px;
 }
 
 .filled {
   background: white;
-  border-color: hsl(var(--v3-border));
+  border-color: #e7eaef;
 }
 
 .formTextarea {
@@ -365,9 +343,10 @@
   align-items: center;
   gap: 8px;
   min-width: 0;
-  padding: 10px 8px;
+  height: 40px;
+  padding: 0 8px;
   border: 1px solid hsl(var(--v3-border));
-  border-radius: 10px;
+  border-radius: 12px;
   background: white;
   color: hsl(var(--v3-text));
   font-family: inherit;
@@ -378,9 +357,9 @@
 }
 
 .categoryChip.selected {
-  border-color: hsl(var(--v3-primary));
-  background: hsl(var(--v3-primary-light));
-  color: hsl(var(--v3-primary));
+  border-color: #004bad;
+  background: #004bad;
+  color: #fff;
 }
 
 .categoryChipIcon {
@@ -413,15 +392,20 @@
   color: hsl(var(--v3-text-muted));
 }
 
+.categoryChip.selected .categoryChipIcon {
+  background: transparent;
+  color: #fff;
+}
+
 .tagInputWrap {
   display: flex;
-  min-height: 42px;
+  min-height: 44px;
   align-items: center;
   flex-wrap: wrap;
   gap: 4px;
   padding: 8px 10px;
   border: 1px solid hsl(var(--v3-border));
-  border-radius: 10px;
+  border-radius: 12px;
   background: white;
 }
 
@@ -439,6 +423,7 @@
 }
 
 .tagChipX {
+  position: relative;
   display: flex;
   width: 16px;
   height: 16px;
@@ -451,6 +436,18 @@
   cursor: pointer;
 }
 
+.tagChipX::after {
+  position: absolute;
+  inset: -14px;
+  content: "";
+}
+
+.filePreviewRemove::after {
+  position: absolute;
+  inset: -6px;
+  content: "";
+}
+
 .tagInput {
   min-width: 60px;
   flex: 1;
@@ -459,7 +456,7 @@
   background: transparent;
   color: hsl(var(--v3-dark));
   font-family: inherit;
-  font-size: 0.82rem;
+  font-size: 16px;
 }
 
 .uploadActions {
@@ -468,38 +465,14 @@
   bottom: 0;
   left: 0;
   z-index: 100;
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 2fr);
   gap: 8px;
   padding: 10px 14px 16px;
   border-top: 1px solid hsl(var(--v3-border));
   background: white;
 }
 
-.uploadBtn {
-  flex: 1;
-  min-height: 44px;
-  padding: 13px;
-  border: 0;
-  border-radius: 14px;
-  font-family: inherit;
-  font-size: 0.88rem;
-  font-weight: 700;
-  line-height: 1.2;
-  cursor: pointer;
-}
-
-.uploadBtn:disabled {
-  cursor: not-allowed;
-  opacity: 0.52;
-}
-
-.secondary {
-  background: hsl(var(--v3-dim-white));
-  color: hsl(var(--v3-text));
-}
-
-.primary {
-  flex: 2;
-  background: hsl(var(--v3-primary));
-  color: white;
+.uploadActions > * {
+  min-width: 0;
 }

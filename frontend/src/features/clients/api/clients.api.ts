@@ -1,4 +1,6 @@
 import { api } from '@/lib/api/client';
+
+import { parseServiceRecordMissingClients } from './service-record-missing';
 import type {
   Client,
   CreateClientDto,
@@ -26,6 +28,11 @@ export interface ClientListSummaryParams {
  * All API calls go through the Next.js /api proxy for CORS safety
  */
 export const clientsApi = {
+  listServiceRecordMissing: async () => {
+    const response = await api.get<unknown>('/clients/service-record-missing');
+    return { ...response, data: parseServiceRecordMissingClients(response.data) };
+  },
+
   /**
    * Fetch paginated clients list
    */

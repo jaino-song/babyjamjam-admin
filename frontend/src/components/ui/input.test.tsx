@@ -15,7 +15,7 @@ describe("Input Component", () => {
     const input = container.querySelector("input");
     expect(input).toHaveClass("h-[calc(38px*var(--glint-ui-scale,1))]");
     expect(input).toHaveClass("min-h-[calc(38px*var(--glint-ui-scale,1))]");
-    expect(input).toHaveClass("rounded-[13px]");
+    expect(input).toHaveClass("rounded-[12px]");
     expect(input).toHaveClass("border-[1.35px]");
     expect(input).toHaveClass("border-input");
     expect(input).toHaveClass("px-[calc(14px*var(--glint-ui-scale,1))]");

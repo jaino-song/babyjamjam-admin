@@ -1,5 +1,8 @@
 "use client";
 
+import * as Sentry from "@sentry/nextjs";
+import { useEffect } from "react";
+
 import { ErrorFallback } from "@/components/app/ui/error-fallback";
 
 interface GlobalErrorProps {
@@ -7,7 +10,11 @@ interface GlobalErrorProps {
   reset: () => void;
 }
 
-export default function GlobalError({ reset }: GlobalErrorProps) {
+export default function GlobalError({ error, reset }: GlobalErrorProps) {
+  useEffect(() => {
+    Sentry.captureException(error);
+  }, [error]);
+
   return (
     <html lang="ko">
       <body className="min-h-screen bg-[radial-gradient(circle_at_top,_hsla(214,100%,34%,0.08),_transparent_55%),linear-gradient(180deg,_hsl(210,100%,99%),_#ffffff)]">

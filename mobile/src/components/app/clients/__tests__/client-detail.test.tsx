@@ -518,7 +518,7 @@ describe("contract void workflow", () => {
     const user = userEvent.setup();
     await user.click(screen.getByRole("button", { name: CONTRACT_VOID_COPY.action }));
     await user.click(screen.getByRole("button", { name: CONTRACT_VOID_COPY.confirm }));
-    const pending = screen.getByRole("button", { name: CONTRACT_VOID_COPY.pending });
+    const pending = screen.getByRole("button", { name: "처리 중" });
     expect(pending).toBeDisabled();
     expect(screen.getByRole("button", { name: CONTRACT_VOID_COPY.cancel })).toBeDisabled();
     await user.click(pending);
@@ -1311,7 +1311,7 @@ describe("ClientDetailContent", () => {
         onRetryNotificationLogs: jest.fn(),
       });
 
-      expect(screen.getByRole("button", { name: "다시 시도" })).toBeDisabled();
+      expect(screen.getByRole("button", { name: "다시 시도 중" })).toBeDisabled();
     });
 
     it("shows no notice over cached logs when the load succeeded", () => {
@@ -1373,7 +1373,7 @@ describe("ClientDetailContent", () => {
         rerenderWith(view, { ...props, isNotificationLogsError: true, isNotificationLogsRetrying: true });
 
         expect(screen.getByText("열린 메시지 본문")).toBeInTheDocument();
-        expect(screen.getByRole("button", { name: "다시 시도" })).toBeDisabled();
+        expect(screen.getByRole("button", { name: "다시 시도 중" })).toBeDisabled();
       });
 
       it("shows no notice over the open detail when the load succeeded", async () => {
@@ -1409,13 +1409,16 @@ describe("ClientDetailContent", () => {
       ["loading", { isNotificationLogsLoading: true }],
       ["error", { isNotificationLogsError: true }],
       ["empty", {}],
-    ] as const)("marks the %s message history state with data-slot", (_name, flags) => {
+    ] as const)("marks the %s message history state with its component slot", (_name, flags) => {
       const { container } = render(
         <ClientDetailContent {...baseProps} activeTab="message" notificationLogs={[]} {...flags} />,
       );
-      const states = slotted(container);
+      const states = _name === "loading"
+        ? screen.getAllByRole("status", { name: "발송 내역을 불러오는 중" })
+        : slotted(container);
       expect(states).toHaveLength(1);
-      expect(states[0]).toHaveAttribute("data-slot", "detail-empty-state");
+      expect(states[0]).toHaveAttribute("data-slot", _name === "loading" ? "loading-state" : "detail-empty-state");
+      if (_name === "loading") expect(slotted(container)).toHaveLength(0);
     });
 
     it("marks the truncation notice and the empty contract card with data-slot", () => {

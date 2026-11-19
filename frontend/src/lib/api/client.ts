@@ -62,6 +62,17 @@ const processQueue = (error: unknown = null) => {
     failedQueue = [];
 };
 
+async function replayRequestWithErrorCapture(config: AxiosRequestConfig) {
+    // Bare axios bypasses the API interceptors. Capture replay failures here
+    // without passing them through session-refresh failure handling.
+    try {
+        return await axios(config);
+    } catch (error) {
+        captureApiError(error);
+        throw error;
+    }
+}
+
 function isTransportFailure(error: AxiosError): boolean {
     // No response means the request never received a server reply (network
     // drop, DNS, CORS, timeout). Compare transport state — never the raw
@@ -236,7 +247,7 @@ api.interceptors.response.use(
                 if (isRefreshing) {
                     return new Promise((resolve, reject) => {
                         failedQueue.push({ resolve, reject });
-                    }).then(() => axios(originalRequest));
+                    }).then(() => replayRequestWithErrorCapture(originalRequest));
                 }
 
                 originalRequest._retry = true;
@@ -251,7 +262,7 @@ api.interceptors.response.use(
                     }
 
                     processQueue();
-                    return axios(originalRequest);
+                    return replayRequestWithErrorCapture(originalRequest);
                 } catch (refreshError) {
                     captureApiError(refreshError);
 
@@ -269,7 +280,7 @@ api.interceptors.response.use(
                             }
 
                             processQueue();
-                            return axios(originalRequest);
+                            return replayRequestWithErrorCapture(originalRequest);
                         } catch (authenticationError) {
                             processQueue(authenticationError);
                             captureApiError(authenticationError);
@@ -299,7 +310,7 @@ api.interceptors.response.use(
             originalRequest._appAuthRetry = true;
             try {
                 await refreshAppAuthSession();
-                return axios(originalRequest);
+                return replayRequestWithErrorCapture(originalRequest);
             } catch (refreshError) {
                 captureApiError(refreshError);
                 if ((refreshError as AxiosError | undefined)?.response?.status === 401) {

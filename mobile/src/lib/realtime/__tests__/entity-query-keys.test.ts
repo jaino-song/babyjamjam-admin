@@ -3,6 +3,7 @@ import { join } from "node:path";
 
 import { QueryClient, type QueryKey } from "@tanstack/react-query";
 
+import { clientKeys } from "@/features/clients/hooks/keys";
 import { messageTriggerKeys } from "@/features/message-triggers/hooks/keys";
 import { clientQueryKeys } from "@/hooks/useClients";
 import { dashboardQueryKeys } from "@/hooks/useDashboardAnalytics";
@@ -60,7 +61,9 @@ describe("ENTITY_QUERY_ROOTS", () => {
       templateQueryKeys.all,
     ]);
     expect(templateQueryKeys.all).toEqual(messageTemplateKeys.all);
-    expect(ENTITY_QUERY_ROOTS["service-record"]).toEqual([serviceRecordQueryKeys.all, employeeQueryKeys.all]);
+    expect(ENTITY_QUERY_ROOTS["service-record"]).toEqual([
+      serviceRecordQueryKeys.all, employeeQueryKeys.all, clientKeys.serviceRecordMissing(),
+    ]);
     expect(ENTITY_QUERY_ROOTS.inquiry).toEqual([consultationInquiryQueryKeys.all]);
     expect(ENTITY_QUERY_ROOTS.call).toEqual([callInboxKeys.all]);
     expect(ENTITY_QUERY_ROOTS.file).toEqual([documentQueryKeys.all, documentCategoryQueryKeys.all]);
@@ -95,6 +98,7 @@ function kindReaches(kind: keyof typeof ENTITY_QUERY_ROOTS, key: QueryKey): bool
 
 describe("kinds reach the keys the screens really use", () => {
   it.each<[string, Parameters<typeof kindReaches>[0], QueryKey]>([
+    ["service-record: missing clients", "service-record", clientKeys.serviceRecordMissing()],
     ["inquiry: consultation inquiry list", "inquiry", consultationInquiryQueryKeys.list({ page: 1 })],
     ["call: call-inbox records", "call", callInboxKeys.records("all", "")],
     ["call: call-inbox drafts", "call", callInboxKeys.drafts("pending")],
@@ -126,6 +130,7 @@ describe("kinds reach the keys the screens really use", () => {
   });
 
   it("does not reach another kind's keys", () => {
+    expect(kindReaches("service-record", clientKeys.list({ page: 1 }))).toBe(false);
     expect(kindReaches("inquiry", callInboxKeys.count())).toBe(false);
     expect(kindReaches("call", consultationInquiryQueryKeys.lists())).toBe(false);
     expect(kindReaches("notification", documentQueryKeys.all)).toBe(false);

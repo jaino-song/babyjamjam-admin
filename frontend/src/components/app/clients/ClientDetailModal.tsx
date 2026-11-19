@@ -154,7 +154,7 @@ export function ClientDetailModal({
                     <Button
                         variant="ghost"
                         size="icon"
-                        className="absolute right-4 top-4 h-8 w-8 rounded-full hover:bg-black/5"
+                        className="absolute right-4 top-4 rounded-full hover:bg-black/5"
                         onClick={onClose}
                     >
                         <X className="h-4 w-4" />

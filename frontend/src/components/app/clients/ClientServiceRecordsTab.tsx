@@ -7,7 +7,7 @@ import {
     getServiceRecordStatusMeta,
     getSignatureStatusMeta,
 } from "@babyjamjam/shared/constants/service-record-display";
-import { ChevronDown, Loader2, RefreshCw } from "lucide-react";
+import { ChevronDown, RefreshCw } from "lucide-react";
 import { normalizeApiError } from "@babyjamjam/shared";
 import { formatDateTimeKo } from "@babyjamjam/shared/utils/date";
 import { getExpectedSessionDateFromRecords } from "@babyjamjam/shared/utils/service-record-schedule";
@@ -482,7 +482,7 @@ function ClientServiceRecordsTabContent({
                     : "기존 링크가 그대로 포함된 메시지를 다시 전송합니다."}
                 isDescriptionVisuallyHidden={false}
                 approvalLabel="메시지 재전송"
-                pendingLabel="메시지 재전송 중..."
+                pendingLabel="메시지 재전송 중"
                 approvalDisabled={isPendingResendSending}
                 isPending={sendLinkMutation.isPending}
                 onApprove={() => void handleResendConfirm()}
@@ -878,9 +878,10 @@ function RevisionHistoryCard({
                     size="sm"
                     onClick={onRefresh}
                     disabled={isRefreshing}
-                    aria-busy={isRefreshing}
+                    loading={isRefreshing}
+                    loadingLabel="조회 중"
                 >
-                    {isRefreshing ? "조회 중" : "새로고침"}
+                    새로고침
                 </Button>
             ) : undefined}
         >
@@ -1011,9 +1012,10 @@ function RevisionDocumentRow({
                     size="sm"
                     onClick={handleRetry}
                     disabled={isRetrying}
-                    aria-busy={isRetrying}
+                    loading={isRetrying}
+                    loadingLabel="재시도 중"
                 >
-                    {isRetrying ? "재시도 중" : "다시 시도"}
+                    다시 시도
                 </Button>
             )}
         </div>
@@ -1113,13 +1115,13 @@ function LinkStatusCard({
                         layout === "mobile" ? "w-full" : !usesResendLayout && "w-[calc(118px*var(--glint-ui-scale,1))]",
                     )}
                     disabled={isPending || isLinkSending}
-                    aria-busy={isPending}
+                    loading={isPending}
+                    loadingLabel={isResend ? "메시지 재전송 중" : "링크 발송 중"}
                     onClick={onSendLink}
                     data-component={isResend
                         ? `${dataComponent}_actions_resend`
                         : `${dataComponent}_actions_send`}
                 >
-                    {isPending && <Loader2 aria-hidden className="animate-spin" />}
                     {isResend ? "메시지 재전송" : layout === "mobile" ? "제공기록지 링크 발송" : "링크 수동 전송"}
                 </Button>
                 {layout === "mobile" && clientId != null && canEditServiceRecord && (
@@ -1285,12 +1287,15 @@ function ServiceSessionsCard({
                 titleTrailing={
                     <div className="ml-auto flex shrink-0 items-center gap-[calc(4px*var(--glint-ui-scale,1))]">
                         {onRefresh ? (
-                            <button
+                            <Button
                                 type="button"
+                                variant="ghost"
+                                size="icon"
                                 data-component={`${dataComponent}_head_refresh`}
-                                className="inline-flex h-[calc(24px*var(--glint-ui-scale,1))] w-[calc(24px*var(--glint-ui-scale,1))] cursor-pointer items-center justify-center rounded-full text-v3-text-muted transition-colors hover:bg-white/70 hover:text-v3-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-v3-primary/30 disabled:cursor-wait disabled:opacity-70"
+                                className="[&_svg]:size-[calc(14px*var(--glint-ui-scale,1))] text-v3-text-muted transition-colors hover:bg-white/70 hover:text-v3-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-v3-primary/30 disabled:cursor-wait disabled:opacity-70"
                                 aria-label={isRefreshing ? "제공기록 새로고침 중" : "제공기록 새로고침"}
-                                aria-busy={isRefreshing}
+                                loading={isRefreshing}
+                                loadingLabel="제공기록 새로고침 중"
                                 disabled={isRefreshing}
                                 onClick={onRefresh}
                             >
@@ -1301,7 +1306,7 @@ function ServiceSessionsCard({
                                         isRefreshing && "service-record-refresh-icon--spinning",
                                     )}
                                 />
-                            </button>
+                            </Button>
                         ) : null}
                         <span className="text-[calc(12px*var(--glint-ui-scale,1))] font-semibold text-v3-text-muted">
                             {isTextRefreshing ? (

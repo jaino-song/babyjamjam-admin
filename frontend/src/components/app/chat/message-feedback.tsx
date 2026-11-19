@@ -72,7 +72,6 @@ export function MessageFeedback({
                                 onClick={handleThumbsUp}
                                 disabled={feedbackGiven !== null || isSubmitting}
                                 className={cn(
-                                    "h-8 w-8",
                                     feedbackGiven === "positive" ? "text-primary" : "text-muted-foreground"
                                 )}
                             >
@@ -98,7 +97,6 @@ export function MessageFeedback({
                                 onClick={handleThumbsDown}
                                 disabled={feedbackGiven !== null || isSubmitting}
                                 className={cn(
-                                    "h-8 w-8",
                                     feedbackGiven === "negative" ? "text-destructive" : "text-muted-foreground"
                                 )}
                             >

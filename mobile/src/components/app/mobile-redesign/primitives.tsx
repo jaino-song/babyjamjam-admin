@@ -158,10 +158,12 @@ export function ListRowsSkeleton({
    */
   variantHeader?: boolean;
 }) {
+  // These display:contents children are flex items in the bounded list scroller.
+  // Preserve their content height instead of compressing the loading rows to fit.
   const rows = Array.from({ length: rowCount }).map((_, index) => (
     <div
       key={`${dataComponent}-skeleton-${index}`}
-      className="list-item"
+      className="list-item shrink-0"
       data-component={`${dataComponent}_row`}
       aria-hidden="true"
       style={{ animationDelay: `${Math.min(index, 4) * 40}ms` }}
@@ -555,6 +557,7 @@ export function MobileSectionNav<TId extends string>({
   onSelect,
   ariaLabel = "페이지 섹션",
   isLoading = false,
+  preserveDisabledActive = false,
 }: {
   "data-component": string;
   /** @internal Zero-DOM wrapper identity; route callers must not override this. */
@@ -563,6 +566,8 @@ export function MobileSectionNav<TId extends string>({
   activeId: TId;
   onSelect: (id: TId) => void;
   ariaLabel?: string;
+  /** Keep the current route highlighted while a temporary approval gate disables navigation. */
+  preserveDisabledActive?: boolean;
   /**
    * True while the owner is still resolving which sections are enabled. The
    * pills keep their real labels' footprint (hidden content) but pulse as
@@ -606,7 +611,7 @@ export function MobileSectionNav<TId extends string>({
           }
 
           const isDisabled = item.disabled === true;
-          const isActive = !isDisabled && item.id === activeId;
+          const isActive = item.id === activeId && (!isDisabled || preserveDisabledActive);
 
           return (
             <button
@@ -616,10 +621,10 @@ export function MobileSectionNav<TId extends string>({
               disabled={isDisabled}
               onClick={isDisabled ? undefined : () => onSelect(item.id)}
               className={`flex h-[calc(28px*var(--glint-ui-scale,1))] items-center gap-[calc(6px*var(--glint-ui-scale,1))] whitespace-nowrap rounded-full border px-[calc(12px*var(--glint-ui-scale,1))] py-0 text-[calc(0.72rem*var(--glint-ui-scale,1))] font-semibold transition-colors duration-200 focus-visible:ring-2 focus-visible:ring-v3-primary focus-visible:ring-offset-2 disabled:pointer-events-none disabled:cursor-default ${
-                isDisabled
-                  ? "border-[hsl(var(--v3-border))] bg-[hsl(var(--v3-dim-white))] text-[hsl(var(--v3-text-muted))] opacity-40"
-                  : isActive
+                isActive
                   ? "border-[hsl(var(--v3-primary))] bg-[hsl(var(--v3-primary))] text-white"
+                  : isDisabled
+                  ? "border-[hsl(var(--v3-border))] bg-[hsl(var(--v3-dim-white))] text-[hsl(var(--v3-text-muted))] opacity-40"
                   : "border-[hsl(var(--v3-border))] bg-[hsl(var(--v3-bg))] text-[hsl(var(--v3-text-muted))]"
               }`}
             >

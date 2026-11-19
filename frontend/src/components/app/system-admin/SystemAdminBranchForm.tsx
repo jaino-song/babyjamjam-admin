@@ -254,8 +254,8 @@ export function SystemAdminBranchForm({
         <Button type="button" variant="outline" disabled={isSubmitting} onClick={onCancel}>
           취소
         </Button>
-        <Button type="submit" variant="default" disabled={isSubmitting}>
-          {isSubmitting ? "저장 중…" : mode === "create" ? "지점 추가" : "변경사항 저장"}
+        <Button type="submit" variant="default" disabled={isSubmitting} loading={isSubmitting} loadingLabel="저장 중">
+          {mode === "create" ? "지점 추가" : "변경사항 저장"}
         </Button>
       </div>
     </form>

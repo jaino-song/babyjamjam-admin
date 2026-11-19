@@ -1,6 +1,18 @@
 import { EformsignDocumentJobReconciliationService } from "application/services/eformsign-document-job-reconciliation.service";
 import { createEformsignWorkerPrincipal } from "application/services/eformsign-credential-boundary.service";
 import { EformsignDocumentJobEntity } from "domain/entities/eformsign-document-job.entity";
+import * as sentryReporting from "infrastructure/observability/service-record-sentry";
+
+const mockSentryCapture = jest.fn((error: unknown) => {
+    void error;
+    return "event-id";
+});
+jest.mock("@sentry/nestjs", () => ({
+    withScope: (callback: (scope: Record<string, jest.Mock>) => unknown) => callback({
+        setLevel: jest.fn(), setTag: jest.fn(), setContext: jest.fn(), setFingerprint: jest.fn(),
+    }),
+    captureException: (error: unknown) => mockSentryCapture(error),
+}));
 
 const TEST_PRINCIPAL = createEformsignWorkerPrincipal("00000000-0000-0000-0000-000000000010");
 
@@ -45,6 +57,74 @@ function job(overrides: Partial<EformsignDocumentJobEntity> = {}): EformsignDocu
 }
 
 describe("EformsignDocumentJobReconciliationService", () => {
+    afterEach(() => jest.restoreAllMocks());
+
+    it.each([
+        ["provider-read", "PROVIDER_STATE_UNAVAILABLE"],
+        ["provider-detail-read", "PROVIDER_DOCUMENT_NOT_FOUND"],
+        ["adoption", "ADOPTION_FAILED"],
+        ["completion-mirror", "COMPLETION_MIRROR_FAILED"],
+    ])("captures the %s cause and keeps its attention transition", async (step, reason) => {
+        mockSentryCapture.mockClear();
+        const error = new Error("provider failure with private payload");
+        const capture = jest.spyOn(sentryReporting, "captureBackendError");
+        const transitioned = job({ status: "requires_attention", lastErrorCode: reason });
+        const repository = {
+            markCompleted: jest.fn(),
+            markRequiresAttention: jest.fn().mockResolvedValue(transitioned),
+        };
+        const service = new EformsignDocumentJobReconciliationService(
+            repository as never,
+            createCredentialBoundary() as never,
+            { execute: step === "provider-read"
+                ? jest.fn().mockRejectedValue(error)
+                : jest.fn().mockResolvedValue([{
+                    id: "doc-1", created_date: Date.now(),
+                    document_name: step === "provider-detail-read" ? "unmatched" : "고객 계약서",
+                }]),
+            } as never,
+            { execute: step === "provider-detail-read"
+                ? jest.fn().mockRejectedValue(error)
+                : jest.fn().mockResolvedValue({ current_status: { status_type: "003" } }),
+            } as never,
+            { execute: step === "adoption"
+                ? jest.fn().mockRejectedValue(error)
+                : jest.fn().mockResolvedValue(undefined),
+            } as never,
+            { syncDocument: jest.fn().mockRejectedValue(error) } as never,
+        );
+        const input = step === "completion-mirror"
+            ? job({ jobType: "finalize_document", documentId: "doc-1" }) : job();
+        await expect(service.reconcile(input, TEST_PRINCIPAL)).resolves.toMatchObject({
+            status: "requires_attention", reason, transitioned,
+        });
+        expect(capture).toHaveBeenCalledWith(error, { handled: true, operation: `document-job-${step}` });
+        expect(mockSentryCapture).toHaveBeenCalledTimes(1);
+        expect(mockSentryCapture.mock.calls[0]?.[0]).toMatchObject({
+            message: "Backend failure",
+            stack: expect.stringContaining(error.stack?.split("\n")[1] ?? "missing source stack"),
+        });
+        expect(repository.markCompleted).not.toHaveBeenCalled();
+    });
+
+    it("still marks provider-state attention when Sentry throws", async () => {
+        const error = new Error("provider unavailable");
+        const capture = jest.spyOn(sentryReporting, "captureBackendError").mockImplementation(() => {
+            throw new Error("Sentry unavailable");
+        });
+        const repository = { markRequiresAttention: jest.fn().mockResolvedValue(null) };
+        const service = new EformsignDocumentJobReconciliationService(
+            repository as never, createCredentialBoundary() as never,
+            { execute: jest.fn().mockRejectedValue(error) } as never,
+            { execute: jest.fn() } as never, { execute: jest.fn() } as never,
+        );
+        await expect(service.reconcile(job(), TEST_PRINCIPAL)).resolves.toMatchObject({
+            status: "requires_attention", reason: "PROVIDER_STATE_UNAVAILABLE",
+        });
+        expect(capture).toHaveBeenCalledWith(error, { handled: true, operation: "document-job-provider-read" });
+        expect(repository.markRequiresAttention).toHaveBeenCalledWith(job().id, job().leaseToken, "PROVIDER_STATE_UNAVAILABLE");
+    });
+
     it("adopts the unique provider creation and completes the job", async () => {
         const repository = {
             markCompleted: jest.fn().mockResolvedValue(null),

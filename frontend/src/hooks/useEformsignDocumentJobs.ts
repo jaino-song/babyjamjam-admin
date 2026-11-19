@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import {
     eformsignApi,
+    type CancelEformsignDocumentJobResponse,
     type CreateEformsignDocumentJobRequest,
     type EformsignDocumentJobList,
     type EformsignDocumentJobSummary,
@@ -168,6 +169,17 @@ export function useEnqueueEformsignDocumentFinalization() {
         onSuccess: async (_response, params) => {
             await invalidateDocumentJobQueries(queryClient, params.documentId);
             await queryClient.invalidateQueries({ queryKey: clientKeys.all });
+        },
+    });
+}
+
+export function useCancelDocumentJob() {
+    const queryClient = useQueryClient();
+
+    return useMutation<CancelEformsignDocumentJobResponse, Error, string>({
+        mutationFn: (jobId) => eformsignApi.cancelDocumentJob(jobId),
+        onSuccess: async () => {
+            await invalidateDocumentJobQueries(queryClient);
         },
     });
 }

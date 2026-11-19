@@ -8,7 +8,7 @@ counts, preview selectors or gallery navigation enter the product.
 
 ## Composition and ownership
 
-- `/chat` uses the actual V3 sidebar, mobile header, bottom navigation and quick actions.
+- `/agent` uses the actual V3 sidebar, mobile header, bottom navigation and quick actions.
   The discovery/compatibility route switch is unchanged. The application owns the only `main`.
 - `ChatWorkspace` is a presentation template with slots. `ListPanel` and `DetailPanel`
   provide white rounded surfaces, shared shadows and typography. Primary-light user
@@ -22,8 +22,12 @@ counts, preview selectors or gallery navigation enter the product.
 - Legacy has only its real current conversation. Its delete button still invokes the
   destructive `clearSession`; it has no fabricated history/search/new-session controls.
   Its three quick actions, wizards, confirmation, feedback and prepend anchoring remain.
-- `AssistantMessage`/`ChatInput` default visuals stay unchanged in widget/fullscreen.
+- `AssistantMessage`/`ChatInput` default visuals stay unchanged in non-workspace.
   Workspace visuals are opt-in. Shared ChatInput now ignores IME Enter/229 in all contexts.
+
+The unused `ChatFullscreen` entry point and its tests have been removed. Its viewport
+hook and message/state helpers were local to that file. `LegacyChatPage` still owns
+the active legacy route and shares `useChatStream`, `AssistantMessage` and `ChatInput`.
 
 ## Responsive and scroll boundaries
 
@@ -65,17 +69,18 @@ No Storybook exists; manifest registration is checked by the existing architectu
 ## Workspace control sizing (C3)
 
 The approved mockup uses a 16px composer font (26px line height), with 44px mobile
-send/suggestion targets. Main measured the live input at 14px/40px on mobile and
+touch targets. Main measured the live input at 14px/40px on mobile and
 11.2px/32px on desktop with Glint 0.8. The workspace and its portal list now mark
 their control scope with `data-chat-workspace-controls`. Scoped CSS keeps native
 input/textarea text at 16px/26px, input minimum height at 44px and design-system
-button targets at least 44px in both axes. Pixel minimums deliberately survive
+text buttons at least 44px in both axes. Icon-only buttons stay 32px visible
+with a 44px touch area provided by their `::after` box. Pixel minimums deliberately survive
 Glint scaling; surrounding admin tokens, spacing and surfaces remain shared.
 This includes real Agent/Legacy controls and drawer actions. Default ChatInput
-widget/fullscreen consumers outside the workspace keep their original styling.
+non-workspace consumers outside the workspace keep their original styling.
 
 Tests apply the actual scoped CSS over the measured scaled baseline and check
-both native input types, send/header/list buttons and default-widget isolation.
+both native input types, send/header/list buttons and default-input isolation.
 Main must recheck real 375×812 and 1280×900 geometry after the larger minimums.
 
 ## Normal conversation typography (C6)
@@ -87,7 +92,7 @@ paragraphs and list items now use 16px/28px at both sizes. Agent styling reaches
 only direct text parts of the message registry. Legacy uses a user-text slot and
 a workspace-only assistant prose wrapper; wizard content never enters that wrapper.
 Markdown heading sizes, code styling, rich proposals/forms/task parts and default
-widget/fullscreen consumers retain their existing styles. No callbacks or transport
+non-workspace consumers retain their existing styles. No callbacks or transport
 behavior change. Tests render both real controllers with actual scoped CSS and
 check body/list sizing plus heading/code/card/widget isolation; real browser computed
 styles and final geometry remain Main's acceptance check.

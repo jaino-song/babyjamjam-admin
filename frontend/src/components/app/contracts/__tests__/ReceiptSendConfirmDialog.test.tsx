@@ -67,7 +67,7 @@ describe("ReceiptSendConfirmDialog", () => {
       />,
     );
 
-    expect(screen.getByRole("button", { name: "발송 예약 중…" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "발송 예약 중" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "취소" })).toBeDisabled();
   });
 

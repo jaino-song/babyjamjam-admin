@@ -16,6 +16,7 @@ import {
   SettingsListRowsSkeleton,
 } from "@/components/app/mobile-redesign/settings/SettingsListCard";
 import { Switch } from "@/components/ui/switch";
+import { LoadingState } from "@/components/app/ui/LoadingState";
 import { QueryErrorState } from "@/components/app/ui/QueryErrorState";
 import {
   useUpdateMessageTriggerRuleBranchActivation,
@@ -268,12 +269,12 @@ export function MessageTriggerList({
           // TriggerRulesManager.tsx:525,564,712).
           const isSystemRule = row.rule.branchId === null;
 
+          const itemBase = sub(`item-${toDataComponentToken(rowKey)}`);
           const countLabel = isLogsLoading
-            ? "발송 건수 집계 중"
+            ? <LoadingState inline size="sm" label="발송 건수 집계 중" data-component={`${itemBase}_copy_subtitle_count-loading`} />
             : isLogsError
               ? "집계 실패"
               : `${monthLabel} ${row.monthlyCount ?? 0}건`;
-          const itemBase = sub(`item-${toDataComponentToken(rowKey)}`);
 
           return (
             <SettingsListItem
@@ -281,7 +282,7 @@ export function MessageTriggerList({
               data-component={itemBase}
               icon={row.icon}
               title={row.title}
-              subtitle={`${countLabel} · ${row.timingLabel} · ${row.channelLabel}`}
+              subtitle={<>{countLabel} · {row.timingLabel} · {row.channelLabel}</>}
               isSelected={selectedId === rowKey}
               onSelect={!canManage
                 ? undefined

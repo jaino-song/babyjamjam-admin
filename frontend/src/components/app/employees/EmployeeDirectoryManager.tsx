@@ -372,7 +372,7 @@ export function EmployeeDirectoryManager({ dataComponent }: { dataComponent: str
     return (
         <div data-component={dataComponent} className="flex min-h-0 flex-1 flex-col gap-4">
             <StatsBar
-                name="employees" showDocumentJobs="whenActive"
+                name={dataComponent} showDocumentJobs="whenActive"
                 isLoading={isLoading}
                 items={[
                     { icon: Users, value: stats.total, label: filterItems[0].label, counter: "명" },
@@ -540,7 +540,7 @@ export function EmployeeDirectoryManager({ dataComponent }: { dataComponent: str
                 title="제공인력을 삭제하시겠어요?"
                 description="삭제한 제공인력은 목록에서 사라져요."
                 approvalLabel="삭제"
-                pendingLabel="삭제 중..."
+                pendingLabel="삭제 중"
                 approvalVariant="destructive"
                 isPending={deleteEmployee.isPending}
                 onApprove={() => void handleDeleteConfirm()}

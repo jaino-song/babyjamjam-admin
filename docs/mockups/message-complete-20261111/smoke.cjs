@@ -1,0 +1,118 @@
+// Node DOM smoke check only; does not run a browser or prove visual fidelity.
+const fs = require('node:fs');
+const path = require('node:path');
+const vm = require('node:vm');
+const assert = require('node:assert/strict');
+const { installed } = require('./installed.cjs');
+const { JSDOM, VirtualConsole } = installed('jsdom');
+const errors = [];
+const virtualConsole = new VirtualConsole();
+virtualConsole.on('jsdomError', error => { if (error.type !== 'css parsing') errors.push(error); });
+const dom = new JSDOM('<!doctype html><html><head></head><body><div id="root"></div></body></html>', {
+  url: 'http://preview.invalid/', runScripts: 'outside-only', pretendToBeVisual: true, virtualConsole,
+});
+const { window } = dom;
+window.matchMedia = query => ({ matches: false, media: query, addEventListener() {}, removeEventListener() {}, addListener() {}, removeListener() {} });
+window.HTMLElement.prototype.scrollIntoView = function () {};
+window.HTMLElement.prototype.hasPointerCapture = () => false;
+window.HTMLElement.prototype.setPointerCapture = function () {};
+window.HTMLElement.prototype.releasePointerCapture = function () {};
+window.fetch = () => { throw new Error('Unexpected network request'); };
+const { document, KeyboardEvent, Event, MouseEvent } = window;
+const tick = () => new Promise(resolve => setTimeout(resolve, 40));
+const byId = id => { const element = document.getElementById(id); assert.ok(element, `missing #${id}`); return element; };
+function changeInput(id, value) {
+  const element = byId(id);
+  const prototype = element instanceof window.HTMLTextAreaElement ? window.HTMLTextAreaElement.prototype : window.HTMLInputElement.prototype;
+  Object.getOwnPropertyDescriptor(prototype, 'value').set.call(element, value);
+  element.dispatchEvent(new Event('input', { bubbles: true }));
+}
+async function select(id, text) {
+  const trigger = byId(id);
+  trigger.focus();
+  trigger.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+  await tick();
+  assert.equal(trigger.getAttribute('aria-expanded'), 'true', `#${id} did not open`);
+  const option = [...document.querySelectorAll('[role="option"]')].find(element => element.textContent === text);
+  assert.ok(option, `missing option ${text}`);
+  option.focus();
+  option.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+  await tick();
+  assert.equal(trigger.getAttribute('aria-expanded'), 'false', `#${id} did not close`);
+}
+async function run() {
+  // Execute only the locally built, reviewed bundle in an isolated Node DOM.
+  new vm.Script(fs.readFileSync(path.join(__dirname, 'dist/preview.js'), 'utf8')).runInContext(dom.getInternalVMContext());
+  await tick();
+  assert.equal(byId('template-select').textContent, '비용 안내');
+  assert.equal(byId('recipient-name').value, '');
+  assert.equal(byId('recipient-name').autocomplete, 'off');
+  assert.equal(byId('recipient-name').type, 'text');
+  assert.equal(byId('price-info-type').textContent, '바우처 유형');
+  assert.equal(byId('price-info-duration').textContent, '서비스 기간');
+  assert.equal(byId('price-info-duration').disabled, true);
+  assert.equal(byId('price-info-bank-account').disabled, false);
+  assert.equal(byId('price-info-bank-account').textContent, '지역');
+  assert.equal(byId('price-info-year').textContent, '2026년');
+  assert.match(byId('body').value, /\{\{name\}\}.*산모님/s);
+  assert.match(byId('body').value, /출퇴근 \{\{weeks\}\}주/);
+  const nav = document.querySelector('[aria-label="메시지 기능 (미리보기)"]');
+  assert.deepEqual([...nav.querySelectorAll('button')].map(element => element.textContent), ['메세지 제작', '전송하기', '발송 기록', '템플릿', '자동 전송', '설정']);
+  assert.equal(nav.querySelector('[aria-pressed="true"]').textContent, '메세지 제작');
+  assert.equal(document.querySelectorAll('input[type="tel"], [data-slot="autocomplete"], [type="submit"]').length, 0);
+  assert.equal(document.querySelectorAll('[data-source-component="V3MobileHeader"], [data-source-component="V3MainContent"], [data-slot="mobile-bottom-nav"]').length, 3);
+  assert.equal(document.querySelector('[data-slot="mobile-bottom-nav-messages"]').textContent, '메세지');
+  changeInput('recipient-name', 'QA-예시산모'); await tick();
+  assert.match(byId('body').value, /QA-예시산모 산모님/);
+  await select('price-info-type', 'A가-1형');
+  assert.equal(byId('price-info-duration').disabled, false);
+  await select('price-info-duration', '10일');
+  await select('price-info-bank-account', 'QA-예시지역 A');
+  assert.match(byId('body').value, /출퇴근 2주 \(평일기준 10일\)/);
+  assert.match(byId('body').value, /QA-예시은행 000-0000-0000/);
+  assert.match(byId('body').value, /예금주: QA-예시업체 \(QA-예금주\)/);
+  const price2026 = byId('body').value;
+  await select('price-info-year', '2027년');
+  assert.notEqual(byId('body').value, price2026);
+  changeInput('body', 'QA-수동 편집 본문'); await tick();
+  assert.equal(byId('body').value, 'QA-수동 편집 본문');
+  let copied = '';
+  document.execCommand = command => { assert.equal(command, 'copy'); copied = byId('body').value; return true; };
+  const copy = [...document.querySelectorAll('button')].find(element => element.textContent === '복사');
+  copy.dispatchEvent(new MouseEvent('click', { bubbles: true })); await tick();
+  assert.equal(copied, 'QA-수동 편집 본문');
+  assert.equal(byId('body-message').textContent, '복사했습니다');
+  document.execCommand = () => false;
+  copy.dispatchEvent(new MouseEvent('click', { bubbles: true })); await tick();
+  assert.equal(byId('body-message').textContent, '본문을 선택해 직접 복사해 주세요');
+  await select('price-info-type', 'A라-2형');
+  assert.equal(byId('price-info-duration').textContent, '서비스 기간');
+  assert.match(byId('body').value, /\{\{duration\}\}/);
+  assert.doesNotMatch(byId('body').value, /수동 편집/);
+  await select('template-select', '첫 인사');
+  assert.equal(document.getElementById('recipient-name'), null);
+  assert.doesNotMatch(byId('body').value, /\{\{name\}\}|032-/);
+  assert.match(byId('body').value, /000-000-0000/);
+  await select('template-select', '서비스 내용');
+  assert.match(byId('body').value, /묵은 빨래, 대청소, 베란다 청소/);
+  await select('template-select', '리마인드');
+  assert.match(byId('body').value, /프리미엄급 관리사님/);
+  await select('template-select', '입금 확인 및 예약 완료 안내');
+  assert.match(byId('body').value, /입금이 확인되어 예약이 완료되었습니다/);
+  await select('template-select', '산모 정보 요청');
+  assert.equal(document.getElementById('recipient-name'), null);
+  assert.match(byId('body').value, /\*모유수유\/분유수유\/혼합수유/);
+  await select('template-select', '계약서 작성 요청');
+  assert.match(byId('body').value, /본인부담금 환급 신청을 위한 영수증 발급/);
+  await select('template-select', '모니터링 설문');
+  assert.match(byId('body').value, /7일 이내로 모니터링 설문을 완료/);
+  await select('template-select', '직접 작성');
+  assert.equal(byId('body').value, '');
+  await select('template-select', '비용 안내');
+  assert.equal(byId('price-info-year').textContent, '2026년');
+  assert.equal(byId('price-info-bank-account').textContent, '지역');
+  assert.equal(byId('recipient-name').value, '');
+  assert.deepEqual(errors, []);
+  process.stdout.write('Node DOM smoke passed: actual React mount, initial state, Radix keyboard open/select/close, dependent values, template reset/text, editing, HTTP copy success/failure, shell/nav and omitted controls\n');
+}
+run().catch(error => { process.stderr.write(`${error.stack}\n`); process.exitCode = 1; }).finally(() => dom.window.close());

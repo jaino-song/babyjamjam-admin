@@ -7,7 +7,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { useQueryClient } from "@tanstack/react-query";
 import { Building2 } from "lucide-react";
 import { AuthPanel } from "@/components/auth/auth-panel";
-import { Spinner } from "@/components/ui/spinner";
+import { LoadingState } from "@/components/app/ui/LoadingState";
 import { Skeleton } from "@/components/ui/skeleton";
 import { SelectableItemFrame } from "@/components/ui/selectable-item";
 import { Button } from "@/components/ui/button";
@@ -15,6 +15,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { FooterNavigation } from "@/components/ui/footer-navigation";
+import { Alert, AlertDescription } from "@/components/ui/alert";
 import { getRoleLabel } from "@/lib/constants/roles";
 import { resetAuthorityState } from "@/lib/auth/authority-state";
 import { getCurrentPushEndpoint } from "@/lib/notifications/push-endpoint";
@@ -37,6 +38,7 @@ export default function SelectBranchPage() {
     const [branches, setBranches] = useState<Branch[]>([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
+    const [selectionError, setSelectionError] = useState<string | null>(null);
     const [selecting, setSelecting] = useState<string | null>(null);
     const [loggingOut, setLoggingOut] = useState(false);
     const [currentPage, setCurrentPage] = useState(1);
@@ -67,6 +69,7 @@ export default function SelectBranchPage() {
     }, [loggingOut, selecting, queryClient, router]);
 
     const handleSelectBranch = useCallback(async (branchId: string): Promise<boolean> => {
+        setSelectionError(null);
         setSelecting(branchId);
 
         try {
@@ -78,7 +81,7 @@ export default function SelectBranchPage() {
 
             if (!result.success) {
                 // Server action already normalizes failures through the problem contract.
-                setError(result.error || "지점 선택에 실패했어요.");
+                setSelectionError(result.error || "지점 선택에 실패했어요.");
                 setSelecting(null);
                 return false;
             }
@@ -89,7 +92,7 @@ export default function SelectBranchPage() {
             console.error("[Select Branch] Error selecting branch:", err);
             // Registered problem message (verified) or locally authored copy.
             const normalized = normalizeApiError(err, { locale: "ko-KR", operation: "mutation" });
-            setError(normalized.verified ? normalized.message : "지점 선택에 실패했어요.");
+            setSelectionError(normalized.verified ? normalized.message : "지점 선택에 실패했어요.");
             setSelecting(null);
             return false;
         }
@@ -107,6 +110,9 @@ export default function SelectBranchPage() {
                     return;
                 }
 
+                setBranches(result.branches || []);
+                setCurrentPage(1);
+
                 // If user has only one branch AND is not an owner, auto-select it
                 // Owners should always see the selection screen to explicitly choose
                 const isOwner = result.branches?.some(org => org.role === 'owner');
@@ -116,8 +122,6 @@ export default function SelectBranchPage() {
                     return;
                 }
 
-                setBranches(result.branches || []);
-                setCurrentPage(1);
             } catch (err) {
                 console.error("[Select Branch] Error fetching branches:", err);
                 // Registered problem message (verified) or locally authored copy.
@@ -147,8 +151,7 @@ export default function SelectBranchPage() {
                 containerClassName="!h-full min-h-0 items-center overflow-hidden py-0 md:py-0"
                 className="min-h-[70vh] gap-5 !p-5 sm:!p-6 [&_[data-component='select-branch-title']]:!text-[1.72rem] md:[&_[data-component='select-branch-title']]:!text-[1.5rem] [&_[data-component='select-branch-subtitle']]:!max-w-[30ch] [&_[data-component='select-branch-subtitle']]:!text-[0.82rem] md:[&_[data-component='select-branch-subtitle']]:!text-[0.76rem]"
                 contentClassName="flex-1 gap-5"
-                title="지점 불러오는 중"
-                subtitle="계정에 연결된 지점을 정리하고 있습니다."
+                title={<LoadingState data-component="desktop_select-branch_title_loading" label="지점 불러오는 중" inline />}
             >
                 <div data-component="desktop_select-branch_loading" className="flex w-full flex-1 flex-col gap-3">
                     {Array.from({ length: 3 }).map((_, index) => (
@@ -230,9 +233,11 @@ export default function SelectBranchPage() {
                         <Button
                             variant="outline"
                             onClick={handleLogout}
+                            loading={loggingOut}
+                            loadingLabel="로그아웃 중"
                             disabled={loggingOut}
                         >
-                            {loggingOut ? "로그아웃 중..." : "로그아웃"}
+                            로그아웃
                         </Button>
                     </div>
                 </div>
@@ -276,6 +281,13 @@ export default function SelectBranchPage() {
             title="지점 선택"
             subtitle="지점을 선택해 주세요."
         >
+            {selectionError && (
+                <Alert data-component="desktop_select-branch_content_selection-error" variant="destructive">
+                    <AlertDescription data-component="desktop_select-branch_content_selection-error_description">
+                        {selectionError}
+                    </AlertDescription>
+                </Alert>
+            )}
             <div data-component="desktop_select-branch_list" className="flex w-full flex-1 flex-col gap-3">
                 {paginatedBranches.map((org) => (
                     <SelectableItemFrame key={org.id} asChild isSelected={false} isInteractive>
@@ -309,9 +321,7 @@ export default function SelectBranchPage() {
                                         </span>
                                     </span>
                                     {selecting === org.id ? (
-                                        <span data-component="desktop_select-branch_list_card-row_spinner" className="flex h-8 w-8 items-center justify-center rounded-full bg-v3-primary/10">
-                                            <Spinner size="sm" className="text-v3-primary" />
-                                        </span>
+                                        <LoadingState data-component="desktop_select-branch_list_card-row_spinner" label="지점 선택 중" size="sm" inline />
                                     ) : (
                                         <Badge
                                             variant={getRoleBadgeVariant(org.role)}

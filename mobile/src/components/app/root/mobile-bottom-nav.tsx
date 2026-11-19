@@ -18,7 +18,7 @@ const NAV_ITEMS: Array<{
 }> = [
   { href: "/dashboard", label: "홈", icon: Home, kind: "normal", slot: "mobile-bottom-nav-dashboard" },
   { href: "/clients", label: "고객", icon: User, kind: "normal", slot: "mobile-bottom-nav-clients" },
-  { href: "/messages/new", label: "메시지", icon: MessageSquareText, kind: "normal", slot: "mobile-bottom-nav-messages" },
+  { href: "/messages", label: "메세지", icon: MessageSquareText, kind: "normal", slot: "mobile-bottom-nav-messages" },
   { href: "/contracts", label: "계약", icon: FileText, kind: "normal", slot: "mobile-bottom-nav-contracts" },
   { href: "/all", label: "전체", icon: Menu, kind: "normal", slot: "mobile-bottom-nav-all" },
 ];
@@ -31,7 +31,7 @@ interface PressedNavItem {
 
 function isNavItemActive(href: string, pathname: string): boolean {
   if (href === "/dashboard") return pathname === "/dashboard";
-  if (href === "/messages/new") return pathname.startsWith("/messages");
+  if (href === "/messages") return pathname.startsWith("/messages");
   if (href === "/all") return pathname === "/all" || pathname.startsWith("/consultations");
   return pathname.startsWith(href);
 }
@@ -84,7 +84,7 @@ export function MobileBottomNav() {
     zIndex: 0,
   };
 
-  if (!pathname || pathname === "/chat") return null;
+  if (!pathname) return null;
 
   if (isLayoutExcluded(pathname)) return null;
 
@@ -94,6 +94,7 @@ export function MobileBottomNav() {
     <nav
       data-component={NAV_BASE}
       data-slot="mobile-bottom-nav"
+      data-variant={safePathname === "/agent" || safePathname === "/admin/feedback" ? "standard" : undefined}
       className={cn(
         isChatRoute
           ? "z-[var(--mobile-z-nav,30)]"

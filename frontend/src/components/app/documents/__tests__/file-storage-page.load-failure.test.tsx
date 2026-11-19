@@ -101,6 +101,20 @@ describe("FileStoragePage query load states", () => {
     expect(container.querySelector('[data-component="files-detail-skeleton"]')).toBeInTheDocument();
   });
 
+  it("scopes the stats to their page owner", async () => {
+    const { container } = await renderPage();
+    const bar = container.querySelector('[data-component="desktop_files_page_stats"]');
+    expect(bar).toBeInTheDocument();
+    expect(bar?.parentElement).toHaveAttribute("data-component", "desktop_files_page");
+    const root = container.querySelector('[data-component="desktop_files_page"]');
+    expect(root?.getAttribute("data-component")).toMatch(/^(desktop|mobile)_[a-z0-9]+(?:-[a-z0-9]+)*(?:_[a-z0-9]+(?:-[a-z0-9]+)*){1,}$/);
+    const stats = root?.querySelector('[data-component="desktop_files_page_stats"]');
+    expect(stats).toHaveAttribute("data-component", `${root?.getAttribute("data-component")}_stats`);
+    for (const child of (stats?.querySelectorAll("[data-component]") ?? [])) {
+      expect(child.getAttribute("data-component")).toMatch(/^desktop_files_page_stats_/);
+    }
+  });
+
   it("shows the existing empty text and real zeros after successful empty loads", async () => {
     const { container } = await renderPage();
     expect(screen.getByText("등록된 문서가 없습니다")).toBeInTheDocument();
@@ -136,7 +150,7 @@ describe("FileStoragePage query load states", () => {
     expect(mockDocuments.refetch).toHaveBeenCalledTimes(1);
     mockDocuments = { ...mockDocuments, isFetching: true, fetchStatus: "fetching" };
     rerender(<FileStoragePage />);
-    expect(screen.getByRole("button", { name: "다시 시도" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "다시 시도 중" })).toBeDisabled();
     expect(statValues(container)[0]).toBe(String(data.length));
   });
 

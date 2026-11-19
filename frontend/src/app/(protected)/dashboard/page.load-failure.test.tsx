@@ -136,7 +136,7 @@ describe("DashboardPage load failure", () => {
     expect(refetch).toHaveBeenCalledTimes(1);
     state = { ...state, isFetching: true };
     rerender(<DashboardPage />);
-    expect(within(screen.getByRole("alert")).getByRole("button", { name: "다시 시도" })).toBeDisabled();
+    expect(within(screen.getByRole("alert")).getByRole("button", { name: "다시 시도 중" })).toBeDisabled();
     expect(screen.getByText("캐시 고객")).toBeVisible();
   });
 

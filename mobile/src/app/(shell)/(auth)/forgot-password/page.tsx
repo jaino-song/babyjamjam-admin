@@ -4,7 +4,8 @@
 import { useState } from "react";
 import Image from "next/image";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { ButtonLoadingContent } from "@/components/ui/button";
+import { AuthInlineLink } from "@/components/auth/auth-inline-link";
 import { Check } from "lucide-react";
 import { normalizeApiError } from "@babyjamjam/shared";
 
@@ -16,7 +17,6 @@ import "@/components/app/mobile-redesign/redesign.css";
 const FORGOT_PASSWORD_BASE = "mobile_auth_forgot-password";
 
 export default function ForgotPasswordPage() {
-  const router = useRouter();
   const [email, setEmail] = useState("");
   const [fieldError, setFieldError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -57,7 +57,7 @@ export default function ForgotPasswordPage() {
 
   if (isSuccess) {
     return (
-      <div className="auth-page" data-component={FORGOT_PASSWORD_BASE} data-slot="auth-forgot-password-page">
+      <div className="auth-screen" data-component={FORGOT_PASSWORD_BASE} data-slot="auth-forgot-password-page">
         <div className="auth-brand" data-component={`${FORGOT_PASSWORD_BASE}_brand`}>
           <div className="auth-logo" data-component={`${FORGOT_PASSWORD_BASE}_brand_logo`}>
             <Image src="/assets/logo.svg" alt="아가잼잼 로고" width={80} height={80} priority />
@@ -95,14 +95,11 @@ export default function ForgotPasswordPage() {
           </div>
 
           <div className="auth-form auth-success-actions" data-component={`${FORGOT_PASSWORD_BASE}_success_actions`}>
-            <button
-              type="button"
-              className="auth-btn secondary"
-              onClick={() => router.push("/login")}
-              data-component={`${FORGOT_PASSWORD_BASE}_success_actions_login-button`}
-            >
-              로그인 페이지로 돌아가기
-            </button>
+            <AuthInlineLink
+              dataComponent={`${FORGOT_PASSWORD_BASE}_success_actions_login-button`}
+              href="/login"
+              linkLabel="로그인 페이지로 돌아가기"
+            />
           </div>
         </div>
       </div>
@@ -110,7 +107,7 @@ export default function ForgotPasswordPage() {
   }
 
   return (
-    <div className="auth-page" data-component={FORGOT_PASSWORD_BASE} data-slot="auth-forgot-password-page">
+    <div className="auth-screen" data-component={FORGOT_PASSWORD_BASE} data-slot="auth-forgot-password-page">
       <div className="auth-brand" data-component={`${FORGOT_PASSWORD_BASE}_brand`}>
         <div className="auth-logo" data-component={`${FORGOT_PASSWORD_BASE}_brand_logo`}>
           <Image src="/assets/logo.svg" alt="아가잼잼 로고" width={80} height={80} priority />
@@ -167,11 +164,13 @@ export default function ForgotPasswordPage() {
 
         <button
           type="submit"
-          className="auth-btn"
+          className={`auth-btn${isLoading ? " relative" : ""}`}
+          aria-busy={isLoading || undefined}
+          data-loading={isLoading ? "" : undefined}
           disabled={isLoading}
           data-component={`${FORGOT_PASSWORD_BASE}_form_submit-button`}
         >
-          {isLoading ? "처리 중…" : "비밀번호 재설정 링크 전송"}
+          <ButtonLoadingContent loading={isLoading} loadingLabel="처리 중">비밀번호 재설정 링크 전송</ButtonLoadingContent>
         </button>
       </form>
 

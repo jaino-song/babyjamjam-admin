@@ -614,7 +614,7 @@ describe("ClientServiceRecordsTab", () => {
                 />,
             );
 
-            expect(within(screen.getByRole("alert")).getByRole("button", { name: "다시 시도" })).toBeDisabled();
+            expect(within(screen.getByRole("alert")).getByRole("button", { name: "다시 시도 중" })).toBeDisabled();
         });
 
         it("keeps the cached overview and adds a notice whose retry refreshes when a refresh failed", () => {
@@ -1071,9 +1071,8 @@ describe("ClientServiceRecordsTab", () => {
 
         fireEvent.click(screen.getByRole("button", { name: "링크 수동 전송" }));
 
-        // The label stays put while sending; only the busy state and spinner change,
-        // so the button keeps its width and position.
-        const sendingButton = screen.getByRole("button", { name: "링크 수동 전송" });
+        // The idle content preserves the width while the accessible name announces sending.
+        const sendingButton = screen.getByRole("button", { name: "링크 발송 중" });
         expect(sendingButton).toBeDisabled();
         expect(sendingButton).toHaveAttribute("aria-busy", "true");
         expect(sendingButton).not.toHaveAttribute("data-width", "lg");
@@ -2048,14 +2047,10 @@ describe("ClientServiceRecordsTab", () => {
                 "text-v3-dark",
             );
         });
-        expect(within(sessionDetail!).getByText("이상없음")).not.toHaveClass(
-            "rounded-[8px]",
-            "bg-v3-dim-white",
-        );
-        expect(within(sessionDetail!).getByText("실시")).not.toHaveClass(
-            "rounded-[8px]",
-            "bg-v3-primary-light",
-        );
+        expect(within(sessionDetail!).getByText("이상없음")).not.toHaveClass("rounded-[8px]");
+        expect(within(sessionDetail!).getByText("이상없음")).not.toHaveClass("bg-v3-dim-white");
+        expect(within(sessionDetail!).getByText("실시")).not.toHaveClass("rounded-[8px]");
+        expect(within(sessionDetail!).getByText("실시")).not.toHaveClass("bg-v3-primary-light");
         expect(sessionDetail).not.toHaveTextContent("✓");
         expect(within(sessionDetail!).getByText("완료")).not.toHaveClass("text-v3-green");
         expect(within(sessionDetail!).getByText("서명함")).not.toHaveClass("text-v3-green");

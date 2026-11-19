@@ -196,13 +196,13 @@ describe("ClientMessageHistoryDetail", () => {
     expect(screen.queryByRole("button", { name: "재발송" })).not.toBeInTheDocument();
   });
 
-  it("keeps the failed-message retry with its old pending label", () => {
+  it("keeps the failed-message retry with its accessible pending label", () => {
     renderDetail(
       { statusTone: "burgundy", statusLabel: "발송 실패", failureReason: "발신번호 인증에 실패했습니다." },
       { canRetry: true, isRetrying: true, onRetry: jest.fn() },
     );
 
-    const button = screen.getByRole("button", { name: "재발송 중..." });
+    const button = screen.getByRole("button", { name: "재발송 중" });
     expect(button).toBeDisabled();
     expect(screen.getByText("실패 사유")).toBeInTheDocument();
   });

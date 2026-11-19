@@ -19,7 +19,7 @@ export function V3MainContent({
 }: V3MainContentProps) {
   const pathname = usePathname();
   const excluded = isLayoutExcluded(pathname);
-  const isChatPage = pathname === "/chat";
+  const isAgentPage = pathname === "/agent";
   const isSelectBranchPage = pathname === "/select-branch";
   const shouldApplyGlintUiScale = !excluded && !isSelectBranchPage;
   const scaledStyle = useGlintUiScaleStyle(shouldApplyGlintUiScale);
@@ -38,7 +38,7 @@ export function V3MainContent({
       data-mode="desktop"
       style={scaledStyle}
       className={cn(
-        isChatPage ? "h-dvh overflow-hidden bg-v3-dim-white max-md:!pb-[calc(96px+env(safe-area-inset-bottom))]" : "h-screen overflow-hidden bg-v3-dim-white",
+        isAgentPage ? "h-dvh overflow-hidden bg-v3-dim-white max-md:!pb-[calc(96px+env(safe-area-inset-bottom))]" : "h-screen overflow-hidden bg-v3-dim-white",
         shouldRenderQuickActions && "md:flex md:flex-row md:items-stretch md:gap-[calc(16px*var(--glint-ui-scale,1))]",
         paddingClassName,
       )}

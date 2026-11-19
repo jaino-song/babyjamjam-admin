@@ -117,15 +117,20 @@ jest.mock("@/components/app/clients/ClientAutocomplete", () => ({
 jest.mock("../../templates/AutoFillMsgCard", () => ({
   AutoFillMsgCard: ({
     message,
+    metaItems,
     variableItems,
   }: {
     message: string;
-    variableItems: Array<{ token: string }>;
+    metaItems: Array<{ label: string; value: React.ReactNode }>;
+    variableItems: Array<{ token: string; value: React.ReactNode }>;
   }) => (
     <div>
       <output data-testid="generated-message">{message}</output>
-      {variableItems.map(({ token }) => (
-        <span key={token}>{token}</span>
+      {metaItems.map(({ label, value }) => (
+        <div key={label} data-testid={`meta-${label}`}>{value}</div>
+      ))}
+      {variableItems.map(({ token, value }) => (
+        <span key={token}>{token}<span data-testid={`variable-${token}`}>{value}</span></span>
       ))}
     </div>
   ),
@@ -215,6 +220,76 @@ describe("ServiceRecordLinkMessageForm", () => {
       },
     } as ReturnType<typeof useSystemTemplate>);
   });
+
+  it.each(["service-feedback-link", "receipt-link"] as const)(
+    "shows inline spinners in link metadata and variables until %s preparation finishes",
+    async (mode) => {
+      let releasePreparation = () => {};
+      const pendingPreparation = new Promise<void>((resolve) => {
+        releasePreparation = resolve;
+      });
+      if (mode === "service-feedback-link") {
+        jest.mocked(serviceRecordsApi.prepareLink).mockImplementationOnce(async () => {
+          await pendingPreparation;
+          return {
+            data: {
+              serviceRecordUrl: "https://mobile.test/service-record/efl_prepared",
+              preparedLinkToken: "efl_prepared",
+              expiresAt: "2026-07-20T00:00:00.000Z",
+            },
+          } as never;
+        });
+      } else {
+        jest.mocked(eformsignApi.prepareReceiptLink).mockImplementationOnce(async () => {
+          await pendingPreparation;
+          return {
+            clientId: 20,
+            clientName: "김산모",
+            recipientPhone: "01012345678",
+            documentId: "doc-receipt-1",
+            receiptUrl: "https://mobile.test/receipt/efr_prepared",
+            expiresAt: "2026-07-20T00:00:00.000Z",
+          };
+        });
+      }
+
+      render(<ServiceRecordLinkMessageForm mode={mode} />);
+      expect(screen.queryByRole("status", { name: "링크 준비 중" })).not.toBeInTheDocument();
+      if (mode === "service-feedback-link") {
+        fireEvent.click(screen.getByRole("combobox", { name: "관리사님 성함" }));
+      }
+      fireEvent.click(screen.getByRole("combobox", { name: "산모님 성함" }));
+
+      const statuses = await screen.findAllByRole("status", { name: "링크 준비 중" });
+      expect(statuses).toHaveLength(2);
+      for (const status of statuses) {
+        expect(status.tagName).toBe("SPAN");
+        expect(status).toHaveClass("inline-flex", "items-center");
+        expect(status).toHaveAttribute("data-slot", "loading-state");
+        expect(status).toHaveAttribute("data-source-component", "LoadingState");
+        expect(status.querySelector('[data-slot="spinner"]')).toHaveAttribute("aria-hidden", "true");
+        expect(status.querySelector('[data-slot="spinner"]')).toHaveClass("h-4", "w-4");
+        expect(status.querySelector(".sr-only")).toHaveTextContent("링크 준비 중");
+      }
+
+      await act(async () => {
+        releasePreparation();
+        await pendingPreparation;
+      });
+
+      await waitFor(() => {
+        expect(screen.queryByRole("status", { name: "링크 준비 중" })).not.toBeInTheDocument();
+      });
+      const isReceipt = mode === "receipt-link";
+      const preparedUrl = isReceipt
+        ? "https://mobile.test/receipt/efr_prepared"
+        : "https://mobile.test/service-record/efl_prepared";
+      expect(screen.getByTestId(`meta-${isReceipt ? "영수증 링크" : "제공기록지 링크"}`))
+        .toHaveTextContent(preparedUrl);
+      expect(screen.getByTestId(`variable-${isReceipt ? "{{receiptUrl}}" : "{{serviceRecordUrl}}"}`))
+        .toHaveTextContent(preparedUrl);
+    },
+  );
 
   it("uses name autocompletes and auto-fills the selected employee phone", async () => {
     const onPreviewMessageChange = jest.fn();

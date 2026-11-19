@@ -237,6 +237,61 @@ describe("useClientDetailController", () => {
     expect(result.current.detailSheetTab).toBe("basic");
   });
 
+  it("defaults to basic again after closing and reopening without initialTab", async () => {
+    const client = makeClient(1);
+    const initialProps: { client: Client | null } = { client };
+    const { result, rerender } = renderHook(
+      ({ client }: { client: Client | null }) => useClientDetailController({
+        client, dataComponent: "mobile_clients_detail-sheet_detail",
+      }),
+      { wrapper: createWrapper(), initialProps },
+    );
+    await waitFor(() => expect(result.current.isDetailRefreshing).toBe(false));
+    act(() => result.current.setDetailSheetTab("serviceRecords"));
+    expect(result.current.detailSheetTab).toBe("serviceRecords");
+    rerender({ client: null });
+    expect(result.current.detailSheetTab).toBe("basic");
+    rerender({ client });
+    expect(result.current.detailSheetTab).toBe("basic");
+    await waitFor(() => expect(result.current.isDetailRefreshing).toBe(false));
+  });
+
+  it("uses initialTab for selected rows and resets, without resetting an unchanged identity", async () => {
+    mockedFetchClient.mockImplementation(async (id) => makeClient(id));
+    const { result, rerender } = renderHook(
+      ({ client, initialTab }: { client: Client | null; initialTab: "basic" | "serviceRecords" }) =>
+        useClientDetailController({ client, initialTab, dataComponent: "mobile_clients_detail-sheet_detail" }),
+      { wrapper: createWrapper(), initialProps: { client: makeClient(1), initialTab: "serviceRecords" } },
+    );
+    expect(result.current.detailSheetTab).toBe("serviceRecords");
+    await waitFor(() => expect(result.current.isDetailRefreshing).toBe(false));
+    act(() => result.current.setDetailSheetTab("contracts"));
+    rerender({ client: makeClient(1), initialTab: "basic" });
+    expect(result.current.detailSheetTab).toBe("contracts");
+    rerender({ client: makeClient(2), initialTab: "serviceRecords" });
+    expect(result.current.detailSheetTab).toBe("serviceRecords");
+    await waitFor(() => expect(result.current.isDetailRefreshing).toBe(false));
+    rerender({ client: null, initialTab: "basic" });
+    expect(result.current.detailSheetTab).toBe("basic");
+    rerender({ client: makeClient(2), initialTab: "serviceRecords" });
+    expect(result.current.detailSheetTab).toBe("serviceRecords");
+    await waitFor(() => expect(result.current.isDetailRefreshing).toBe(false));
+  });
+
+  it("uses initialTab when a URL-selected client arrives from the query", async () => {
+    mockedFetchClient.mockImplementation(() => new Promise<Client>(() => {}));
+    const { result, rerender } = renderHook(
+      () => useClientDetailController({ clientId: 7, initialTab: "serviceRecords", dataComponent: "mobile_clients_detail-sheet_detail" }),
+      { wrapper: createWrapper() },
+    );
+    expect(result.current.detailSheetTab).toBe("serviceRecords");
+    act(() => result.current.setDetailSheetTab("contracts"));
+    mockedUseClient.mockReturnValue({ data: makeClient(7) } as ReturnType<typeof useClient>);
+    rerender();
+    expect(result.current.detailClient?.id).toBe(7);
+    expect(result.current.detailSheetTab).toBe("serviceRecords");
+  });
+
   it("opens basic information for a URL-selected client", async () => {
     const client: Client = {
       ...makeClient(7),

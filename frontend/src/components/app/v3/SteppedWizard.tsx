@@ -4,9 +4,8 @@ import React from "react";
 import { Check } from "lucide-react";
 import { useIsMobile } from "@/hooks/useIsMobile";
 import { SurfaceCard } from "@/components/ui/surface-card";
-import { Spinner } from "@/components/ui/spinner";
-import { SurfaceFrame } from "@/components/ui/surface-frame";
 import { FooterNavigation } from "@/components/ui/footer-navigation";
+import { SurfaceFrame } from "@/components/ui/surface-frame";
 import { cn } from "@/lib/utils";
 import { SteppedWizardStepper } from "./SteppedWizardStepper";
 
@@ -242,28 +241,21 @@ export function SteppedWizard({
             dataComponent="desktop_v3_stepped-wizard_body_actions"
             prevDataComponent="desktop_v3_stepped-wizard_body_prev-btn"
             nextDataComponent={isLastStep ? "desktop_v3_stepped-wizard_body_complete-btn" : "desktop_v3_stepped-wizard_body_next-btn"}
+            className="mt-1 gap-0"
+            stickyOnMobile={isMobile}
             prevVariant="neutral"
             nextVariant="positive"
-            prevSize="sm"
-            nextSize="sm"
             prevWidth="sm"
             nextWidth="sm"
-            prevLabel={prevLabel}
-            nextLabel={isSubmitting ? "" : isLastStep ? completeLabel : nextLabel}
             prevDisabled={isFirstStep}
-            nextDisabled={isNextButtonDisabled}
             prevHidden={isFirstStep}
+            prevLabel={prevLabel}
+            nextLabel={isLastStep ? completeLabel : nextLabel}
+            nextLoading={isSubmitting}
+            nextLoadingLabel="처리 중"
+            nextDisabled={isNextButtonDisabled}
             onPrev={handlePrev}
             onNext={handleNext}
-            nextContent={
-              isSubmitting ? (
-                <Spinner size="sm" />
-              ) : (
-                isLastStep ? completeLabel : nextLabel
-              )
-            }
-            stickyOnMobile={isMobile}
-            className="mt-1 gap-0"
           />
         </div>
       </SurfaceCard>

@@ -35,6 +35,8 @@ export interface TwoButtonModalProps {
   approvalVariant?: ApprovalButtonVariant;
   isDescriptionVisuallyHidden?: boolean;
   size?: ApprovalModalSize;
+  layer?: "default" | "nested";
+  onCloseAutoFocus?: (event: Event) => void;
   "data-component"?: string;
   dataComponent?: string;
   headerDataComponent?: string;
@@ -62,6 +64,8 @@ export function TwoButtonModal({
   approvalVariant = "positive",
   isDescriptionVisuallyHidden = true,
   size = "compact",
+  layer = "default",
+  onCloseAutoFocus,
   "data-component": canonicalDataComponent,
   dataComponent: legacyDataComponent,
   headerDataComponent,
@@ -90,8 +94,11 @@ export function TwoButtonModal({
       <DialogContent
         data-component={dataComponent}
         data-source-component={SOURCE_COMPONENT}
+        onCloseAutoFocus={onCloseAutoFocus}
+        overlayClassName={layer === "nested" ? "z-[1009]" : undefined}
         className={cn(
           "flex flex-col",
+          layer === "nested" && "z-[1010]",
           size === "compact" && "aspect-[5/3] sm:max-w-[300px]",
           size === "detail" && "min-h-0 sm:max-w-[420px]",
         )}
@@ -152,10 +159,12 @@ export function TwoButtonModal({
             className="w-1/2"
             data-component={approvalButtonDataComponent ?? sub("approve")}
             disabled={isPending || approvalDisabled}
+            loading={isPending}
+            loadingLabel={pendingLabel ?? "처리 중"}
             aria-busy={isPending || undefined}
             onClick={onApprove}
           >
-            {isPending ? (pendingLabel ?? approvalLabel) : approvalLabel}
+            {approvalLabel}
           </Button>
         </DialogFooter>
       </DialogContent>

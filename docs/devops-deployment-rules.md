@@ -104,6 +104,44 @@ PR을 `dev`에 열면 아래 워크플로가 돌고, 필수 체크는 GitHub 브
 - preview 백엔드는 프로덕션과 같은 DB를 쓴다(§10 5번, `docs/plans/2026-09-23-preview-cloud-run.md:239`). preview에서 무효화한 계약은 main이 이 릴리스를 배포하기 전까지 프로덕션 앱에서 활성으로 보인다. main이 이 릴리스를 돌리기 전에는 preview에서 계약을 무효화하지 말고, 하게 되면 main 승격을 지체하지 않는다.
 - 두 SQL은 수동 운영자 도구다. `database-patches.yml`에 배선하지 않는다(void 이후 매 패치 런이 실패한다).
 
+#### 3.2.2 계약 authority 전환·앱 롤백 게이트 (2026-11-13 PLAN R4)
+
+이 절은 `eformsign_contract_authority`를 도입하는 후보의 **수동 실행 전 게이트**다. 문서/도구 구현이나 CI 성공은 maintenance, 운영 SQL, 승격·배포, 발송 승인이 아니다. §3.2.1의 voided 롤백 preflight와 기존 릴리스 게이트도 함께 적용한다. 상세 상태/retention 계약은 `docs/adr/ADR-005-durable-eformsign-document-jobs.md`를 확인한다.
+
+**공유 DB와 writer 차단이 먼저다.** preview Cloud Run과 DNS가 선택한 main 런타임이 같은 운영 DB를 사용한다. 패치 전에 다음 실행 기록을 완성하고 ALL-writer quiesce를 시작한다.
+
+- DB identity(시크릿 제외), 후보 source SHA·이미지 digest/Cloud Run revision, 현재 실행 중인 release와 자동 복구할 previous release의 source·digest를 기록한다. Lightsail, LightNode active/passive·standby, 모든 preview 구/신 revision, 별도 API·worker·scheduler, 수동 복구·legacy create·pointer 갱신 경로, lease를 획득하거나 나중에 활성화될 수 있는 런타임을 모두 포함한다.
+- 각 writer의 실제 차단/드레인 수단, 리소스/revision, 적용 시각, 진행 중 요청·작업 0의 근거, 재시작·배포·트래픽 변경 뒤에도 차단이 유지되는 근거를 기록한다. accepting 플래그 하나, preview scheduler OFF, health/readiness, DB shared/direct 선택, route `BLOCKED`/`DEGRADED`는 전체 writer 차단 증거가 아니다.
+- **현재 소스에서 중앙 ALL-writer fence는 입증되지 않았다.** Fallback `stop`은 후속 deploy의 재기동을 막지 않으며 Cloud Run deploy는 새 revision으로 트래픽을 옮긴다. 기존 제어로 위 증거를 완성할 수 없으면 **패치·승격 직전의 최종 실행 게이트에서 STOP**한다. 운영자가 유지보수 방식과 전체 writer 차단을 결정·승인해야 재개할 수 있다. 여기서는 새 스위치/명령, 운영 승인 또는 자동화 변경을 가정하지 않는다.
+
+**차단 → 승인된 스키마 패치 → 검증 → preview 직전 두 보고서 → main 직전 두 보고서 → compatible main health** 순서를 지킨다.
+
+1. ALL-writer 차단을 유지한 상태에서만 §3.1/§3.3의 승인된 멱등 SQL 경로로 스키마를 먼저 적용한다. 원격 `prisma migrate deploy`/`db push`는 금지한다. `database-patches.yml`의 해당 source/ref와 `apply-production` 실제 성공을 기록한다. `target=preview`는 공유 운영 DB를 패치하지 않는다. 두 preflight 파일은 자동 패치 workflow에 추가하지 않는다.
+2. 소스의 세 patch 잡은 기존 선행 패치 뒤 `20261109120000_add_service_record_day_period_mismatch_kept_at` → `20261110120000_raise_service_record_token_expiry_end_plus_8` → `20261111120000_add_eformsign_contract_authority` → `20261111130000_add_eformsign_document_job_progress_detail` 순서다. 이후 기존 verifier 순서도 유지한다: `verify-service-end-notice-suppression.sql` → `verify-employee-client-hardening.sql` → `verify-replacement-schedule-start-date.sql` → `verify-receipt-link-patches.sql`. 날짜만 보고 다른 순서로 재조립하지 않는다.
+3. authority/job generation/progress_detail 컬럼, authority의 scoped NO ACTION FKs·CHECK·unique 제약과 RLS, 필수 SELECT 권한이 실제로 존재하는 schema 증거를 확인한다. `progress_detail` CHECK는 해당 migration에 포함된다. `verify-eformsign-contract-authority.sql`은 fixture를 쓰고 롤백하는 **일회용 owned CI DB 전용** 검증이며 운영 DB에서 실행하지 않는다. 정확한 후보의 fresh PostgreSQL CI에서 전체 migrations → 이 verifier → 실제 SQL-file 테스트 → cleanup 성공을 먼저 확인한다. 배포의 `/health/schema`는 트래픽 전환 후 검사여서 사전 schema 증거를 대신하지 못한다. 스키마/권한 미확인·검증 실패는 STOP이다.
+4. 패치 후 차단이 계속 유지됨을 확인하고 **preview 승격 직전** 아래 두 수동 보고서를 승인된 동일 direct/session DB URL로 실행한다(저장소 루트 기준). URL 값·고객 식별자·payload는 기록하지 않고 실행 source, 시각, 집계, 종료 코드만 기록한다.
+
+   ```sh
+   psql --no-psqlrc --set ON_ERROR_STOP=1 --dbname "$DIRECT_URL" --file backend/prisma/scripts/preflight-eformsign-contract-authority-cutover.sql
+   psql --no-psqlrc --set ON_ERROR_STOP=1 --dbname "$DIRECT_URL" --file backend/prisma/scripts/preflight-app-rollback-contract-authority.sql
+   ```
+
+   두 도구는 `REPEATABLE READ READ ONLY`, `row_security=off`, 안전한 search_path, lock 5초/statement 30초 제한으로 집계만 출력한다. writer를 잠그거나 데이터를 고치지 않는다. 누락 테이블/컬럼·권한/RLS·timeout·알 수 없는 상태는 0건이 아니라 실패다. 거부는 집계 NOTICE 뒤 EXCEPTION/비영 종료 코드이며 성공 verdict가 없어야 한다. 성공은 종료 0과 다음 verdict **정확히 하나**다.
+
+   | 도구/상태 | verdict와 의미 |
+   |---|---|
+   | cutover, legacy와 bound/authority 작업 모두 없음 | `LEGACY_CUTOVER_CLEAR` — 그 snapshot의 legacy blocker 없음 |
+   | cutover, legacy 없음·bound 작업 또는 authority만 있음 | `COMPATIBLE_FORWARD_ONLY_OLD_ROLLBACK_UNSUPPORTED` — 이미 호환성이 입증된 후보로의 forward eligibility만 의미. 첫 main 전환/구 앱 롤백 허가가 아님 |
+   | rollback, authority/미해결 효과/bound nonterminal 모두 없음 | `OLD_APP_ROLLBACK_PREFLIGHT_CLEAR` — 계속 차단된 동안의 구 앱 롤백 사전 조건만 충족 |
+
+   cutover는 unbound staff-contract create의 queued(재시도 포함)/processing/reconciling/requires_attention, payload 또는 active key가 남은 failed, payload가 만료·purge됐어도 같은 scope의 미해결 create/create_draft 효과가 남은 failed를 거부한다. service-record request key와 revision payload는 별도 집계하며 계약 job으로 바꾸지 않는다. 모든 started/uncertain create/create_draft 효과를 durable authority reference의 bound/unbound로 구분하고 unbound 효과는 job 유무와 무관하게 거부한다. 업무 generation 문자열이 authority UUID와 같다고 추측하지 않는다. legacy blocker는 기존 호환 앱/운영자 경로로 해결하고 전체 차단·새 보고서를 다시 확인한다. 자동 완료·재발송·backfill은 하지 않는다.
+5. preview에서는 health/UI/read-only 검증만 수행하고 **main이 검증된 authority-compatible source/artifact로 건강하게 실행될 때까지 모든 계약 writer를 차단**한다. API/legacy/pointer/manual 경로도 포함한다. 새 preview가 만든 authority를 구 main worker·수동 복구·retention이 보게 하지 않는다. preview lease owner는 0이다.
+6. **첫 main 배포 직전에도 ALL-writer quiesce 아래 두 보고서를 모두 새로 실행**한다. preview 때 성공한 결과를 재사용하지 않는다. 사이에 구 main writer가 재개됐다면 다시 전체를 차단하고 새 보고서를 얻는다. 첫 main 배포 실패 시 Lightsail `deploy_environment`, Fallback `deploy_release`/`replace_temporary_active_release`는 현재의 구 릴리스를 자동 복구한다. 이를 끄는 기존 스위치는 없다. 따라서 첫 main 전환은 **모든 phase의 authority 0(닫힌 closed 포함), generation-bound nonterminal job 0, 모든 미해결 create/create_draft 효과 0, legacy report clear**가 필수다. 어느 집계든 blocker가 있거나 보고서가 실패하면 최종 실행 게이트에서 STOP하고 운영자 결정을 기다린다. `roll-forward-only`라는 선언이나 새 후보의 호환성만으로 이 첫 전환 조건을 우회하지 않는다.
+7. 보고서부터 compatible main 배포·health/source·digest 확인까지 ALL-writer 차단을 연속 유지한다. 자동으로 구 앱이 복구되면 차단을 유지하고 재시도 전에 두 보고서를 다시 실행한다. 예외적으로 **기록된 previous release 자체가 이미 authority-compatible source+digest로 검증된 경우에만** compatible previous-artifact 경로를 고려할 수 있다. closed 및 미해결 reference가 있는 terminal history의 retention, unresolved guard와 provider 경로 검증 근거를 기록한다. 근거가 없으면 검증된 롤백 타깃은 없고 roll-forward-only이며, 자동 구 버전 복구가 가능한 첫 배포는 여전히 STOP이다.
+8. writer 재개 전에 기존 `status`, `standby-status`, `lightsail-operations.yml` `status` 경로로 서빙하거나 lease를 잡을 수 있는 **모든** 런타임의 source·digest/revision·역할을 기록한다. DNS가 선택한 active와 lagging standby까지 확인하고 허용된 호환 writer만 재개한다. 활성 production scheduler owner는 정확히 1, preview는 0으로 유지한다. 내부 health, public edge, `/health/schema`, 계약 regression/smoke, 오류율·latency·재시작/연결 상태와 관찰 기간, 안전한 rollback rehearsal 등 기존 게이트는 별도로 충족한다. SQL 성공은 런타임 검증/운영 승인을 대신하지 않는다.
+
+**롤백에는 failover도 포함한다.** 수동·자동 앱 롤백, 구 preview revision으로의 트래픽 복귀, recorded/passive/lagging standby 활성화, temporary-active failover 및 failback은 타깃 source+digest의 authority 호환성이 입증되지 않으면 모두 구 앱 롤백으로 취급한다. 실행 전에 전체 차단·새 rollback preflight와 §3.2.1의 voided 검사를 적용하고, 구 코드가 쓰기를 할 수 있는 동안 차단을 유지한다. authority는 **closed라도 한 행이면** 구 retention의 terminal DELETE가 FK `23503`을 일으킬 수 있다. authority/history 삭제, FK 완화, destructive down migration으로 통과시키지 않는다. 두 보고서가 통과해도 다른 롤백 게이트와 최종 운영 승인은 남는다. 실제 운영 상태·차단 성공·호환 아티팩트·rollback rehearsal은 이 문서 작성으로 검증되지 않았다.
+
 ### 3.3 적용 순서 — 스키마가 코드보다 먼저
 
 - **마이그레이션이 있는 변경은 dev 병합 전에 preview/production DB를 먼저 패치한다.**
@@ -250,7 +288,7 @@ Lightsail(2026-10-31 복귀)에도 같은 펜스 절차를 적용한다 (the sam
 
 1. `dev` CI 전부 green (`enforce` leg 포함). 조회는 §2-4 방식으로.
 2. 신규 migrations ↔ `database-patches.yml` 세 잡 배선 대조 (§3.2-2).
-3. 마이그레이션이 있으면 **먼저** `gh workflow run database-patches.yml --ref dev -f target=<preview|production>` 실행·성공 확인 (§3.3).
+3. 계약 authority 후보는 **패치 전에 §3.2.2의 ALL-writer quiesce·최종 운영 게이트**를 먼저 적용한다. preview/main 직전 두 보고서와 첫 main의 zero-authority 조건을 포함한다. 마이그레이션이 있으면 **먼저** `gh workflow run database-patches.yml --ref dev -f target=<preview|production>` 실행·성공 확인 (§3.3).
 4. 새 env 키가 있으면 `env.tpl` 갱신 + 원격 환경(Lightsail·LightNode 호스트 env 둘 다, preview Cloud Run Secret Manager, Vercel env)에 값 추가. 플래그는 아직 OFF.
 5. 승격 PR은 merge commit (linear history 룰셋).
 6. 배포 완료 확인: 백엔드 `/health/ready` 200 + `deploy Lightsail backend` 잡(장애 중이면 `deploy LightNode fallback backend`)의 tag/digest 일치, `deploy LightNode standby backend`가 같은 tag이거나 superseded(실패 표시라도 `current_tag`/`container_health`를 확인), 프론트 production 배포 sha.

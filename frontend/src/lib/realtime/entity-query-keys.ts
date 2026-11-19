@@ -41,7 +41,7 @@ export const ENTITY_QUERY_KEY_ROOTS: Readonly<Record<RealtimeEntityKind, readonl
         ["eformsign-client-candidate"],
     ],
     message: [["message-triggers"], ["message-templates"], ["data-source"]],
-    "service-record": [["service-records"], ["employees"]],
+    "service-record": [["service-records"], ["employees"], ["clients", "service-record-missing"]],
     inquiry: [["consultation-inquiries"]],
     // The desktop app has no call inbox; the kind is announced for mobile only.
     call: [],

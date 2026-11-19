@@ -122,6 +122,16 @@ describe("service-record answer validation policy", () => {
         expect(() => validateServiceRecordAnswers({ stool_color: "x".repeat(81) })).toThrow(BadRequestException);
     });
 
+    it.each(["정상변", "이상변"])("preserves 80 raw characters and rejects 81 for %s", (stool) => {
+        const answers = { stool, stool_color: "가".repeat(80) };
+        expect(validateServiceRecordAnswers(answers)).toEqual(answers);
+        expect(() => validateServiceRecordAnswers({ stool, stool_color: "가".repeat(81) })).toThrow(BadRequestException);
+        expect(() => validateServiceRecordAnswers({ stool, stool_color: "가".repeat(80) + " " })).toThrow(BadRequestException);
+        expect(validateServiceRecordAnswers({ stool, stool_color: "" })).toEqual({ stool, stool_color: "" });
+        expect(validateServiceRecordAnswers({ stool, stool_color: "😀".repeat(40) })["stool_color"]).toBe("😀".repeat(40));
+        expect(() => validateServiceRecordAnswers({ stool, stool_color: "😀".repeat(40) + "x" })).toThrow(BadRequestException);
+    });
+
     it("carries VALIDATION_FAILED problem bodies on every rejection", () => {
         expect(problemBodyOf(() => validateServiceRecordAnswers(null))).toMatchObject({ code: "VALIDATION_FAILED" });
         expect(problemBodyOf(() => validateServiceRecordAnswers({ ...allAnswers(), branchId: "attacker" })))

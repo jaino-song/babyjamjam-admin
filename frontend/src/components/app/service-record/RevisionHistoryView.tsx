@@ -117,7 +117,7 @@ export function RevisionHistoryView({ "data-component": root, clientId, onBack }
                 <div data-component={child("body_picker")} data-slot="picker" className="flex flex-col gap-2">
                     <span id={labelId} data-component={child("body_picker_label")} className="text-sm font-semibold text-v3-dark">수정 시각</span>
                     <Select value={selected?.key} onValueChange={setChosenKey}>
-                        <SelectTrigger data-component={child("body_picker_trigger")} aria-labelledby={labelId} className="w-full sm:w-72">
+                        <SelectTrigger data-component={child("body_picker_trigger")} aria-labelledby={labelId} className="w-full rounded-[13px] sm:w-72">
                             <SelectValue />
                         </SelectTrigger>
                         <SelectContent>

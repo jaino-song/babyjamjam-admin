@@ -1,0 +1,3 @@
+.adminFeedbackContent [data-slot="stats-grid"] > [data-slot="stat-mini"] {
+  border-radius: 16px;
+}

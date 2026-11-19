@@ -33,11 +33,30 @@ describe("MobileBottomNav", () => {
     expect(screen.getByRole("link", { name: "전체" })).toHaveAttribute("aria-current", "page");
   });
 
-  it("leaves the dedicated agent shell full-screen on the chat route", () => {
-    mockUsePathname.mockReturnValue("/chat");
+  it("shows bottom navigation on the agent route", () => {
+    mockUsePathname.mockReturnValue("/agent");
 
     render(<MobileBottomNav />);
 
+    expect(screen.getByRole("navigation")).toBeInTheDocument();
+    expect(screen.getAllByRole("link")).toHaveLength(5);
+  });
+
+  it.each(["/agent", "/admin/feedback"])("uses the standard nav geometry on %s", (pathname) => {
+    mockUsePathname.mockReturnValue(pathname);
+    render(<MobileBottomNav />);
+    expect(screen.getByRole("navigation")).toHaveAttribute("data-variant", "standard");
+  });
+
+  it.each(["/clients", "/calls", "/contracts", "/consultations", "/all"])("preserves existing nav styling on %s", (pathname) => {
+    mockUsePathname.mockReturnValue(pathname);
+    render(<MobileBottomNav />);
+    expect(screen.getByRole("navigation")).not.toHaveAttribute("data-variant");
+  });
+
+  it("keeps other admin routes excluded from bottom navigation", () => {
+    mockUsePathname.mockReturnValue("/admin/other");
+    render(<MobileBottomNav />);
     expect(screen.queryByRole("navigation")).not.toBeInTheDocument();
   });
 
@@ -79,14 +98,20 @@ describe("MobileBottomNav", () => {
     });
   });
 
-  it("renders 메시지 as an active nav link navigating to /messages/new", () => {
+  it.each(["/messages", "/messages/compose", "/messages/new", "/messages/history"])("keeps the message tab active on %s", pathname => {
+    mockUsePathname.mockReturnValue(pathname);
+    render(<MobileBottomNav />);
+    expect(screen.getByRole("link", { name: "메세지" })).toHaveAttribute("aria-current", "page");
+  });
+
+  it("renders 메세지 as an active nav link navigating to /messages", () => {
     mockUsePathname.mockReturnValue("/messages/new");
 
     render(<MobileBottomNav />);
 
-    const messagesLink = screen.getByRole("link", { name: "메시지" });
+    const messagesLink = screen.getByRole("link", { name: "메세지" });
     expect(messagesLink).toBeInTheDocument();
-    expect(messagesLink).toHaveAttribute("href", "/messages/new");
+    expect(messagesLink).toHaveAttribute("href", "/messages");
     expect(messagesLink).toHaveAttribute("aria-current", "page");
   });
 

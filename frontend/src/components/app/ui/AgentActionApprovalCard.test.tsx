@@ -48,6 +48,15 @@ describe("AgentActionApprovalCard", () => {
         expectedRevision: "revision-1",
     };
 
+    it("preserves the legacy surface on a processed approval card", () => {
+        render(<AgentActionApprovalCard {...baseProps} changes={{ id: 1 }} terminal />);
+
+        const card = screen.getByLabelText("처리된 작업 제안");
+        expect(card).toHaveClass("border", "rounded-lg", "!shadow-sm", "border-border", "bg-card", "text-card-foreground");
+        expect(card).not.toHaveClass("border-0");
+        expect(card).not.toHaveClass("rounded-[16px]");
+    });
+
     it("renders the contact node directly under the summary", () => {
         const { container } = render(
             <AgentActionApprovalCard {...baseProps} changes={{ body: "안내" }} contact={<span data-testid="contact">김하늘 · 010-1234-5678</span>} />,
@@ -141,9 +150,12 @@ describe("AgentActionApprovalCard", () => {
             const withEmpty = render(<AgentActionApprovalCard {...baseProps} changes={{ id: 1 }} preview={undefined} />);
             expect(withEmpty.container.innerHTML).toBe(container.innerHTML);
             // Expected markup captured from the BASE component (d73c8c490), not from this candidate.
-            // Only the locale-formatted expiry text is substituted so the comparison stays deterministic.
+            // Substitute the locale expiry and the explicit override of the retained custom shadow utility only.
+            // Radius, border width and all other legacy markup remain exact.
             const expiry = new Date(baseProps.expiresAt).toLocaleString();
-            const baseMarkup = readFileSync(join(__dirname, "AgentActionApprovalCard.legacy.fixture.html"), "utf-8").replace("{{EXPIRY}}", expiry);
+            const baseMarkup = readFileSync(join(__dirname, "AgentActionApprovalCard.legacy.fixture.html"), "utf-8")
+                .replace("{{EXPIRY}}", expiry)
+                .replace('class="rounded-lg border shadow-sm ', 'class="shadow-v3 rounded-lg border !shadow-sm ');
             expect(container.innerHTML).toBe(baseMarkup);
         });
     });

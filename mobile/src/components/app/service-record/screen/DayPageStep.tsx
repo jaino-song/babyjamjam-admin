@@ -68,7 +68,7 @@ export function DayPageHead({
                 variant="ghost"
                 size="sm"
                 data-component={child("body_day-back")}
-                className="text-sm -ml-3 self-start text-v3-text-muted"
+                className="text-sm -ml-3 self-start rounded-2xl text-v3-text-muted"
                 onClick={onBack}
             >
                 {BACK_LABEL}
@@ -234,7 +234,7 @@ export function DayPageStep({
                 })}
             </div>
             <StickyActionBar data-component={child("body_nav")}>
-                <Button className="text-base" type="button" variant="v3" size="md" onClick={handleNextPage}>
+                <Button className="h-[46px] text-base" type="button" variant="v3" size="md" onClick={handleNextPage}>
                     {editing ? SAVE_SECTION_LABEL : NEXT_LABEL}
                 </Button>
             </StickyActionBar>

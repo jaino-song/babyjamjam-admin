@@ -3,6 +3,7 @@
 import { Dialog as DialogPrimitive } from "radix-ui";
 import type { ReactNode } from "react";
 
+import { ActionRow } from "@/components/ui/action-row";
 import { Button, type ButtonProps } from "@/components/ui/button";
 
 const SOURCE_COMPONENT = "MobileTwoButtonModal";
@@ -15,8 +16,9 @@ interface MobileTwoButtonModalProps {
   cancelLabel: string;
   confirmLabel: string;
   confirmVariant?: ButtonProps["variant"];
-  actionOrder?: "confirm-cancel" | "cancel-confirm";
+  actionOrder?: "cancel-confirm";
   loading?: boolean;
+  loadingLabel?: string;
   confirmDisabled?: boolean;
   children?: ReactNode;
   onOpenChange: (open: boolean) => void;
@@ -34,8 +36,8 @@ export function MobileTwoButtonModal({
   cancelLabel,
   confirmLabel,
   confirmVariant = "destructive",
-  actionOrder = "confirm-cancel",
   loading = false,
+  loadingLabel = "처리 중",
   confirmDisabled = false,
   children,
   onOpenChange,
@@ -49,7 +51,9 @@ export function MobileTwoButtonModal({
       variant={confirmVariant}
       onClick={() => void onConfirm()}
       disabled={loading || confirmDisabled}
-      className="flex-1"
+      loading={loading}
+      loadingLabel={loadingLabel}
+      className="min-w-0 flex-[2_1_0]"
     >
       {confirmLabel}
     </Button>
@@ -60,7 +64,7 @@ export function MobileTwoButtonModal({
       variant="outline"
       onClick={onCancel}
       disabled={loading}
-      className="flex-1"
+      className="min-w-0 flex-1"
     >
       {cancelLabel}
     </Button>
@@ -98,19 +102,10 @@ export function MobileTwoButtonModal({
             </DialogPrimitive.Description>
           </div>
           {children}
-          <div className="mt-2 flex gap-2" data-component={sub("actions")}>
-            {actionOrder === "cancel-confirm" ? (
-              <>
-                {cancelButton}
-                {confirmButton}
-              </>
-            ) : (
-              <>
-                {confirmButton}
-                {cancelButton}
-              </>
-            )}
-          </div>
+          <ActionRow className="mt-2 gap-2" data-component={sub("actions")}>
+            {cancelButton}
+            {confirmButton}
+          </ActionRow>
         </DialogPrimitive.Content>
       </DialogPrimitive.Portal>
     </DialogPrimitive.Root>

@@ -1,9 +1,19 @@
 "use client";
 
+import * as Sentry from "@sentry/nextjs";
+import { useEffect } from "react";
+
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 
-export default function StatsError({ retry }: { retry: () => void }) {
+export default function StatsError({ error, retry }: {
+  error: Error & { digest?: string };
+  retry: () => void;
+}) {
+  useEffect(() => {
+    Sentry.captureException(error);
+  }, [error]);
+
   return (
     <Alert data-component="desktop_stats_error" variant="destructive">
       <AlertTitle data-component="desktop_stats_error_title">

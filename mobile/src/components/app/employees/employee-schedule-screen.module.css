@@ -20,13 +20,26 @@
 .toolbar {
   display: flex;
   min-width: 0;
-  align-items: center;
+  flex-direction: column;
+  align-items: stretch;
   gap: calc(6px * var(--glint-ui-scale, 1));
 }
 
 .toolbar > [data-slot="search-bar"] {
+  width: 100%;
   min-width: 0;
-  flex: 1;
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0 12px;
+}
+
+.toolbar > [data-slot="search-bar"] input {
+  width: 0;
+  min-width: 0;
+}
+
+.toolbar > [data-slot="search-bar"] svg {
+  flex-shrink: 0;
 }
 
 .calendar {

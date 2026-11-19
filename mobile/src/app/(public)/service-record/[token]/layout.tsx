@@ -11,7 +11,7 @@ export default function ServiceRecordTokenLayout({
   return (
     <>
       {children}
-      <Toaster />
+      <Toaster closeSize="compact" />
     </>
   );
 }

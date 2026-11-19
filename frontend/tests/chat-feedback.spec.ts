@@ -127,8 +127,8 @@ test.describe('chat message feedback', () => {
   });
 
   test('should show feedback buttons on assistant messages', async ({ page }) => {
-    // The dashboard chat widget was removed; the chat now lives on its own /chat page.
-    await page.goto('/chat');
+    // The dashboard chat widget was removed; the chat now lives on its own /agent page.
+    await page.goto('/agent');
     await page.waitForLoadState('networkidle');
 
     await expect(page.locator('[data-component="desktop_chat_page_header"]').getByRole('heading', { level: 1, name: '현재 대화', exact: true })).toBeVisible({ timeout: 5000 });
@@ -149,8 +149,8 @@ test.describe('chat message feedback', () => {
       });
     });
 
-    // The dashboard chat widget was removed; the chat now lives on its own /chat page.
-    await page.goto('/chat');
+    // The dashboard chat widget was removed; the chat now lives on its own /agent page.
+    await page.goto('/agent');
     await page.waitForLoadState('networkidle');
 
     await expect(page.getByTestId('thumbs-up')).toBeVisible({ timeout: 5000 });
@@ -163,8 +163,8 @@ test.describe('chat message feedback', () => {
   });
 
   test('should open modal on thumbs down click', async ({ page }) => {
-    // The dashboard chat widget was removed; the chat now lives on its own /chat page.
-    await page.goto('/chat');
+    // The dashboard chat widget was removed; the chat now lives on its own /agent page.
+    await page.goto('/agent');
     await page.waitForLoadState('networkidle');
 
     await expect(page.getByTestId('thumbs-down')).toBeVisible({ timeout: 5000 });
@@ -174,8 +174,8 @@ test.describe('chat message feedback', () => {
   });
 
   test('should have submit button disabled until comment is entered', async ({ page }) => {
-    // The dashboard chat widget was removed; the chat now lives on its own /chat page.
-    await page.goto('/chat');
+    // The dashboard chat widget was removed; the chat now lives on its own /agent page.
+    await page.goto('/agent');
     await page.waitForLoadState('networkidle');
 
     await page.getByTestId('thumbs-down').click();
@@ -200,8 +200,8 @@ test.describe('chat message feedback', () => {
       });
     });
 
-    // The dashboard chat widget was removed; the chat now lives on its own /chat page.
-    await page.goto('/chat');
+    // The dashboard chat widget was removed; the chat now lives on its own /agent page.
+    await page.goto('/agent');
     await page.waitForLoadState('networkidle');
 
     await page.getByTestId('thumbs-down').click();

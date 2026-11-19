@@ -59,6 +59,19 @@ describe("mobile redesign list skeletons", () => {
     expect(metas[0]?.className).toBe("price-row-meta");
   });
 
+  it("keeps two-line call skeletons from shrinking inside a bounded list", () => {
+    const { container } = render(
+      <ListRowsSkeleton data-component="mobile_tests_call-list_skeleton" rowCount={6} rightLines={2} />,
+    );
+
+    const rows = container.querySelectorAll('[data-component="mobile_tests_call-list_skeleton_row"]');
+    expect(rows).toHaveLength(6);
+    rows.forEach((row) => {
+      expect(row).toHaveClass("shrink-0");
+      expect(row.querySelector(".list-right")?.children).toHaveLength(2);
+    });
+  });
+
   it("omits the variant header placeholder while a type filter is active", () => {
     const { container } = render(
       <ListRowsSkeleton data-component="mobile_tests_list-skeletons_filtered" rowCount={1} groupHeader />

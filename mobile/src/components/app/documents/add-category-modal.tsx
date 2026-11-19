@@ -85,8 +85,8 @@ export function AddCategoryModal({
   return (
     <Dialog open={open} onOpenChange={(isOpen: boolean) => !isOpen && handleClose()}>
         <DialogContent data-component={dataComponent} className="sm:max-w-md" showCloseButton={false}>
-        <DialogHeader data-component={`${dataComponent}_header`} className="flex-row justify-between items-center">
-          <DialogTitle>태그 추가</DialogTitle>
+        <DialogHeader data-component={`${dataComponent}_header`} className="grid grid-cols-[32px_minmax(0,1fr)_32px] items-center">
+          <DialogTitle className="col-start-2 min-w-0 break-words text-center">태그 추가</DialogTitle>
           <Button
             variant="ghost"
             size="icon"
@@ -144,9 +144,11 @@ export function AddCategoryModal({
           </Button>
           <Button
             onClick={handleAdd}
+            loading={isLoading}
+            loadingLabel="추가 중"
             disabled={!name.trim() || !selectedColor || isLoading}
           >
-            {isLoading ? "추가 중..." : "추가"}
+            추가
           </Button>
         </DialogFooter>
       </DialogContent>

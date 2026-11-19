@@ -9,7 +9,7 @@ export interface AuthorityState {
     creationIntentId: string | null; draftIntentId: string | null; humanIntentId: string | null;
     phase: AuthorityPhase; claimEpoch: bigint; claimUserId: string | null; claimExpiresAt: Date | null;
 }
-export type AuthorityExpected = Pick<AuthorityState, "branchId" | "clientId" | "generation" | "creationJobId" | "phase" | "claimEpoch"> & { claimUserId?: string | null };
+export type AuthorityExpected = Pick<AuthorityState, "branchId" | "clientId" | "generation" | "creationJobId" | "phase" | "claimEpoch"> & { claimUserId?: string | null; fingerprint?: string };
 export type AuthorityPatch = Partial<Pick<AuthorityState, "phase" | "providerDocumentId" | "creationIntentId" | "draftIntentId" | "humanIntentId" | "claimEpoch" | "claimUserId" | "claimExpiresAt">>;
 export interface AuthorityPointerWrite {
     branchId: string; clientIds: readonly number[];
@@ -129,7 +129,7 @@ const patchColumns = {
     claimUserId: (value: unknown) => Prisma.sql`claim_user_id = ${value}::uuid`,
     claimExpiresAt: (value: unknown) => Prisma.sql`claim_expires_at = ${value}::timestamptz`,
 };
-const expectedKeys = ["branchId", "clientId", "generation", "creationJobId", "phase", "claimEpoch", "claimUserId"];
+const expectedKeys = ["branchId", "clientId", "generation", "creationJobId", "phase", "claimEpoch", "claimUserId", "fingerprint"];
 /** Immutable identity is always part of the CAS; a stale row returns false. */
 export async function compareAndSetAuthority(tx: Prisma.TransactionClient, expected: AuthorityExpected, patch: AuthorityPatch): Promise<boolean> {
     scopeIds(expected.branchId, [expected.clientId]); uuid(expected.generation); uuid(expected.creationJobId);
@@ -138,11 +138,12 @@ export async function compareAndSetAuthority(tx: Prisma.TransactionClient, expec
     if (!keys.length || keys.some(key => !Object.prototype.hasOwnProperty.call(patchColumns, key) || patch[key] === undefined)) throw new AuthorityConflictError();
     const assignments = keys.map(key => patchColumns[key](patch[key]));
     const claimant = expected.claimUserId === undefined ? Prisma.empty : Prisma.sql`AND claim_user_id IS NOT DISTINCT FROM ${expected.claimUserId}::uuid`;
+    const fingerprint = expected.fingerprint === undefined ? Prisma.empty : Prisma.sql`AND fingerprint = ${expected.fingerprint}`;
     const affected = await tx.$executeRaw(Prisma.sql`
         UPDATE eformsign_contract_authority SET ${Prisma.join(assignments)}, updated_at = CURRENT_TIMESTAMP
         WHERE branch_id = ${expected.branchId}::uuid AND client_id = ${expected.clientId}
         AND generation = ${expected.generation}::uuid AND creation_job_id = ${expected.creationJobId}::uuid
-        AND phase = ${expected.phase} AND claim_epoch = ${expected.claimEpoch}::bigint ${claimant}`);
+        AND phase = ${expected.phase} AND claim_epoch = ${expected.claimEpoch}::bigint ${claimant} ${fingerprint}`);
     return affected === 1;
 }
 export async function reserveAuthority(tx: Prisma.TransactionClient, input: AuthorityReservation): Promise<AuthorityState> {
@@ -178,14 +179,14 @@ export async function reserveAuthority(tx: Prisma.TransactionClient, input: Auth
             || previous.contractGeneration !== current.generation || previous.payloadFingerprint !== current.fingerprint
             || previous.jobType !== "create_document" || previous.source !== "staff" || previous.requestKey.startsWith("service-record-")
             || (previous.payload && typeof previous.payload === "object" && Object.prototype.hasOwnProperty.call(previous.payload, "kind"))
-            || previous.documentId || previous.status !== "failed" || previous.lastErrorCode !== "PRE_SEND_RETRY_EXHAUSTED"
+            || previous.documentId || previous.leaseToken || previous.activeKey || previous.status !== "failed" || previous.lastErrorCode !== "PRE_SEND_RETRY_EXHAUSTED"
             || previous.progressStep === SUPERSEDED_PROGRESS_STEP) throw new AuthorityConflictError();
         const unresolved = await tx.eformsign_dispatch_intent.findFirst({ where: { branchId: current.branchId,
             clientId: current.clientId, action: "create", status: { in: ["started", "uncertain"] } }, select: { id: true } });
         if (unresolved) throw new AuthorityConflictError();
         const superseded = await tx.eformsign_document_job.updateMany({ where: { id: previous.id, branchId: current.branchId,
             clientId: current.clientId, contractGeneration: current.generation, payloadFingerprint: current.fingerprint,
-            status: "failed", lastErrorCode: "PRE_SEND_RETRY_EXHAUSTED", progressStep: previous.progressStep, documentId: null },
+            status: "failed", lastErrorCode: "PRE_SEND_RETRY_EXHAUSTED", progressStep: previous.progressStep, documentId: null, leaseToken: null, activeKey: null },
             data: { progressStep: SUPERSEDED_PROGRESS_STEP } });
         if (superseded.count !== 1 || !await compareAndSetAuthority(tx, { branchId: current.branchId, clientId: current.clientId,
             generation: current.generation, creationJobId: current.creationJobId, phase: current.phase,

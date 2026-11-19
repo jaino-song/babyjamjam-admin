@@ -21,7 +21,7 @@ describe("Select Component", () => {
     const trigger = container.querySelector('[data-slot="select-trigger"]');
 
     expect(trigger).toHaveClass("h-[calc(38px*var(--glint-ui-scale,1))]");
-    expect(trigger).toHaveClass("rounded-[13px]");
+    expect(trigger).toHaveClass("rounded-[12px]");
     expect(trigger).toHaveClass("border-[1.35px]");
     expect(trigger).toHaveClass("border-input");
     expect(trigger).toHaveClass("text-[calc(12px*var(--glint-ui-scale,1))]");

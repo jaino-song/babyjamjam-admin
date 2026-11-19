@@ -2,6 +2,7 @@ import { BadRequestException } from "@nestjs/common";
 
 import {
     SERVICE_RECORD_FORM_LAYOUT,
+    SERVICE_RECORD_STOOL_COLOR_MAX_LENGTH,
     type ServiceRecordFieldDescriptor,
 } from "@babyjamjam/shared/constants/service-record-form-layout";
 import { codeOnlyProblemBody, problemBody } from "application/utils/problem-bodies";
@@ -157,7 +158,9 @@ function validateAnswerValue(key: string, value: unknown): unknown {
 
     if (definition.kind === "radio") return assertAllowedOption(value, key, definition.options);
 
-    if (definition.kind === "radioSubKey") return assertString(value, key, MAX_MULTI_VALUE_LENGTH);
+    if (definition.kind === "radioSubKey") {
+        return assertString(value, key, key === "stool_color" ? SERVICE_RECORD_STOOL_COLOR_MAX_LENGTH : MAX_MULTI_VALUE_LENGTH);
+    }
 
     if (definition.kind === "countSubKey") {
         return assertNumeric(value, key, definition.numeric ?? { min: 0, step: 1 });

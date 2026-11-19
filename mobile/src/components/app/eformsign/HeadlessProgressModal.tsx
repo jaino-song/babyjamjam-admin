@@ -48,7 +48,7 @@ export function HeadlessProgressModal({
             data-source-component="HeadlessProgressModal"
         >
             <div className={styles.progressCard} data-component={sub("card")}>
-                <h2 className={styles.progressTitle} data-component={sub("title")}>{title}</h2>
+                <h2 className={cn(styles.progressTitle, "text-center")} data-component={sub("title")} data-slot="progress-title">{title}</h2>
                 {progressSubtitle ? (
                     <p className={styles.progressSub} data-component={sub("subtitle")}>
                         {progressSubtitle}

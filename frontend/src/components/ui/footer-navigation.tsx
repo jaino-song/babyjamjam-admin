@@ -9,6 +9,8 @@ export interface FooterNavigationProps {
   nextContent?: React.ReactNode;
   prevDisabled?: boolean;
   nextDisabled?: boolean;
+  nextLoading?: boolean;
+  nextLoadingLabel?: string;
   prevHidden?: boolean;
   prevLabel?: string;
   nextLabel?: string;
@@ -36,6 +38,8 @@ export function FooterNavigation({
   nextContent,
   prevDisabled = false,
   nextDisabled = false,
+  nextLoading = false,
+  nextLoadingLabel,
   prevHidden = false,
   prevLabel = "이전",
   nextLabel = "다음",
@@ -101,6 +105,8 @@ export function FooterNavigation({
         width={nextWidth}
         onClick={onNext}
         disabled={nextDisabled}
+        loading={nextLoading}
+        loadingLabel={nextLoadingLabel}
         className={cn(nextClassName)}
       >
         {nextContent ?? nextLabel}

@@ -881,6 +881,11 @@ describe("mobile contract form - branch holiday calendar", () => {
 
     expect(endDateInput()).toHaveValue(STORED_END);
     expect(screen.getByText("공휴일 정보를 불러오는 중이에요…")).toBeInTheDocument();
+    const loadingLabel = screen.getByText("공휴일 정보를 불러오는 중이에요…");
+    const loadingNotice = loadingLabel.closest('[role="status"]');
+    expect(loadingNotice).toHaveAttribute("data-source-component", "CalendarLoadNotice");
+    expect(loadingNotice?.querySelector('[data-slot="spinner"]')).toHaveAttribute("aria-hidden", "true");
+    expect(loadingLabel).toHaveClass("sr-only");
 
     mockedCalendarHook.mockReturnValue(calendarResult());
     rerender();

@@ -1,5 +1,6 @@
 import { fireEvent, render, screen, within } from "@testing-library/react";
 
+import { useAuthenticatedFileUrl } from "@/hooks/useAuthenticatedFileUrl";
 import { useDocumentCategories } from "@/hooks/use-document-categories";
 import { useDocuments, type Document } from "@/hooks/use-documents";
 import { FileStorageScreen } from "./file-storage-screen";
@@ -12,7 +13,7 @@ jest.mock("@/hooks/use-document-categories", () => ({
   useDocumentCategories: jest.fn(),
 }));
 jest.mock("@/hooks/useAuthenticatedFileUrl", () => ({
-  useAuthenticatedFileUrl: () => ({ url: null, isLoading: false, error: null }),
+  useAuthenticatedFileUrl: jest.fn(),
 }));
 
 const mockedUseDocuments = jest.mocked(useDocuments);
@@ -108,6 +109,7 @@ function openDetailPane(container: HTMLElement, name: string) {
 
 describe("FileStorageScreen documents load states", () => {
   beforeEach(() => {
+    jest.mocked(useAuthenticatedFileUrl).mockReturnValue({ url: null, loading: false, error: false });
     class ObserverStub {
       observe() {}
       unobserve() {}
@@ -124,6 +126,21 @@ describe("FileStorageScreen documents load states", () => {
 
   afterEach(() => {
     jest.clearAllMocks();
+  });
+
+  it("names the files content wrapper for the shared bottom-nav scroll layout", () => {
+    mockDocuments(success([makeDocument("1")]));
+    const { container } = render(<FileStorageScreen />);
+    expect(container.querySelector('[data-slot="files-content"]')).toHaveClass("shell-content");
+  });
+
+  it("shows the shared spinner while the authenticated file preview loads", () => {
+    jest.mocked(useAuthenticatedFileUrl).mockReturnValue({ url: null, loading: true, error: false });
+    mockDocuments(success([makeDocument("1")]));
+    const { container } = render(<FileStorageScreen />);
+    const pane = openDetailPane(container, "계약서 1.pdf");
+    expect(within(pane).getByRole("status", { name: "파일 불러오는 중" })).toHaveAttribute("data-slot", "spinner");
+    expect(within(pane).queryByText("파일을 불러오는 중입니다.")).not.toBeInTheDocument();
   });
 
   it("shows the loading skeleton and unknown counts while the documents load", () => {
@@ -219,7 +236,7 @@ describe("FileStorageScreen documents load states", () => {
     mockDocuments(success([makeDocument("1")], { isError: true, isFetching: true, status: "error" }));
     render(<FileStorageScreen />);
 
-    expect(screen.getByRole("button", { name: "다시 시도" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "다시 시도 중" })).toBeDisabled();
   });
 
   it("shows the empty text plus the inline notice when a refetch fails over a cached empty list", () => {
@@ -260,7 +277,7 @@ describe("FileStorageScreen documents load states", () => {
     const { container } = render(<FileStorageScreen />);
     const pane = openDetailPane(container, "계약서 1.pdf");
 
-    expect(within(pane).getByRole("button", { name: "다시 시도" })).toBeDisabled();
+    expect(within(pane).getByRole("button", { name: "다시 시도 중" })).toBeDisabled();
   });
 
   it("shows no notice in the open detail after a successful load", () => {

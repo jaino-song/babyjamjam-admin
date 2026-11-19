@@ -1,4 +1,5 @@
 import { Inject, Injectable, Logger, Optional } from "@nestjs/common";
+import { captureBackendError } from "infrastructure/observability/service-record-sentry";
 
 import { EformsignDocumentMirrorService } from "application/services/eformsign-document-mirror.service";
 import { AreaTemplateService } from "application/services/area-template.service";
@@ -79,7 +80,10 @@ export class EformsignDocumentJobReconciliationService {
                     ? this.reconcileCreation(job, accessToken, principal)
                     : this.reconcileFinalization(job, accessToken, principal),
             );
-        } catch {
+        } catch (error) {
+            try {
+                captureBackendError(error, { handled: true, operation: "document-job-provider-read" });
+            } catch { /* Observability must not change job handling. */ }
             this.logger.warn(`Eformsign job ${job.id} reconciliation could not read provider state`);
             return this.requiresAttention(job, "PROVIDER_STATE_UNAVAILABLE");
         }
@@ -127,7 +131,10 @@ export class EformsignDocumentJobReconciliationService {
                     if (customerField?.value?.trim() === customerName) {
                         fieldMatches.push(candidate);
                     }
-                } catch {
+                } catch (error) {
+                    try {
+                        captureBackendError(error, { handled: true, operation: "document-job-provider-detail-read" });
+                    } catch { /* Observability must not change job handling. */ }
                     // A failed detail read is insufficient evidence for adoption.
                 }
             }
@@ -152,7 +159,10 @@ export class EformsignDocumentJobReconciliationService {
                 documentId,
                 clientId: job.clientId,
             }, principal);
-        } catch {
+        } catch (error) {
+            try {
+                captureBackendError(error, { handled: true, operation: "document-job-adoption" });
+            } catch { /* Observability must not change job handling. */ }
             this.logger.warn(`Eformsign job ${job.id} provider document adoption failed`);
             return this.requiresAttention(job, "ADOPTION_FAILED");
         }
@@ -190,7 +200,10 @@ export class EformsignDocumentJobReconciliationService {
                     suppressOutboundAutomation: true,
                     strictCompletionReconciliation: true,
                 });
-            } catch {
+            } catch (error) {
+                try {
+                    captureBackendError(error, { handled: true, operation: "document-job-completion-mirror" });
+                } catch { /* Observability must not change job handling. */ }
                 this.logger.warn(`Eformsign job ${job.id} completion mirror failed`);
                 return this.requiresAttention(job, "COMPLETION_MIRROR_FAILED");
             }

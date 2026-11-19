@@ -116,7 +116,7 @@ describe("CallReviewSheet — NEW_CLIENT PENDING", () => {
     mockUseClientDraft.mockReturnValue({ data: undefined, isLoading: false, isError: true, refetch });
     render(<CallReviewSheet draftId="draft-1" onClose={jest.fn()} />);
     expect(screen.getByRole("alert")).toHaveAttribute("data-size", "inline");
-    expect(screen.queryByText("불러오는 중...")).not.toBeInTheDocument();
+    expect(screen.queryByRole("status", { name: "불러오는 중" })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "다시 시도" }));
     expect(refetch).toHaveBeenCalledTimes(1);
   });
@@ -124,7 +124,7 @@ describe("CallReviewSheet — NEW_CLIENT PENDING", () => {
   it("shows loading without a failure while the request is pending", () => {
     mockUseClientDraft.mockReturnValue({ data: undefined, isLoading: true, isError: false, isFetching: true });
     render(<CallReviewSheet draftId="draft-1" onClose={jest.fn()} />);
-    expect(screen.getByText("불러오는 중...")).toBeInTheDocument();
+    expect(screen.getByRole("status", { name: "불러오는 중" })).toBeInTheDocument();
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 
@@ -140,12 +140,12 @@ describe("CallReviewSheet — NEW_CLIENT PENDING", () => {
     expect(refetch).toHaveBeenCalledTimes(1);
     mockUseClientDraft.mockReturnValue({ data: baseDetail, isError: true, isFetching: true, refetch });
     rerender(<CallReviewSheet draftId="draft-1" onClose={jest.fn()} />);
-    expect(screen.getByRole("button", { name: "다시 시도" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "다시 시도 중" })).toBeDisabled();
     expect(screen.getByRole("textbox", { name: /산모명/i })).toHaveValue("김서연");
     mockUseClientDraft.mockReturnValue({ data: baseDetail, isError: false });
     rerender(<CallReviewSheet draftId="draft-1" onClose={jest.fn()} />);
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
-    expect(screen.queryByText("불러오는 중...")).not.toBeInTheDocument();
+    expect(screen.queryByRole("status", { name: "불러오는 중" })).not.toBeInTheDocument();
   });
 
   it("pre-fills form inputs from proposals and seeds phone from callerPhone", () => {

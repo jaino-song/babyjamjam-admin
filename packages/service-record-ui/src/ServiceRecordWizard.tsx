@@ -11,11 +11,13 @@ import {
     REVIEW_EMPTY_LABEL,
     REVIEW_SECTIONS,
     SERVICE_RECORD_HEADER_KEYS,
+    SERVICE_RECORD_STOOL_COLOR_MAX_LENGTH,
     formatMonthDayKo,
     formatReviewFieldValue,
     formatShortDate,
     getServiceRecordNumericErrors,
     hasDisplayValue,
+    hasInvalidServiceRecordStoolColor,
     type ServiceRecordHeaderValidationKey,
     type ServiceRecordNumericErrors,
 } from "./form-definition";
@@ -271,7 +273,7 @@ function DailyField({
                     describedBy={slotId}
                     labelId={labelId}
                 />
-                {item.type === "stool" && value === "이상변" && (
+                {item.type === "stool" && (value === "이상변" || (!readOnly && hasInvalidServiceRecordStoolColor(draft))) && (
                     <div data-component={`${dataComponent}_stool-color`} data-slot="sub-fld" className="sub-fld">
                         <div data-component={`${dataComponent}_stool-color-input_label-row`} data-slot="lab-row" className="lab-row">
                             <label htmlFor={stoolColorInputId(dataComponent)} data-slot="lab" className="lab">이상변의 색깔과 상태</label>
@@ -290,9 +292,10 @@ function DailyField({
                             id={stoolColorInputId(dataComponent)}
                             data-component={`${dataComponent}_stool-color-input`}
                             placeholder="예: 초록색, 묽은 변"
+                            maxLength={SERVICE_RECORD_STOOL_COLOR_MAX_LENGTH}
                             value={(draft[`${item.key}_color`] as string) ?? ""}
                             disabled={readOnly}
-                            aria-required={requireAnswers}
+                            aria-required={requireAnswers && value === "이상변"}
                             aria-invalid={colorMessage ? "true" : undefined}
                             aria-describedby={colorSlotId}
                             onChange={(event) => onFieldChange(`${item.key}_color`, event.target.value)}

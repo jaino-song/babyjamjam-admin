@@ -33,6 +33,7 @@ import {
   InfoRow,
   type SplitLayoutMode,
 } from "@/components/app/v3";
+import { LoadingState } from "@/components/app/ui/LoadingState";
 import { useActiveBranchId, isBranchContextAligned } from "@/features/system-templates/branch-context";
 import { FormSection } from "@/components/app/ui/form-section";
 import { messagePolicyApi } from "@/services/settings";
@@ -1260,13 +1261,10 @@ export function TriggerRulesManager({
         className="flex h-full min-h-0 flex-1 flex-col"
       >
         {isMessageAutomationPoliciesLoading ? (
-          <InfoCard
-            title="메시지 자동 발송 상태"
-            description="이 지점의 메시지 자동 발송 설정을 불러오는 중이에요."
+          <LoadingState
+            label="이 지점의 메시지 자동 발송 설정을 불러오는 중"
             data-component={component("trigger-dispatch-loading")}
-          >
-            <InfoRow label="상태" value="설정 정보를 불러오는 중이에요." />
-          </InfoCard>
+          />
         ) : !isTriggerDispatchAvailable ? (
           <InfoCard
             title="메시지 자동 발송 상태"
@@ -1467,15 +1465,18 @@ export function TriggerRulesManager({
                     size="sm"
                     width="sm"
                     onClick={handleSave}
+                    loading={isSaving}
+                    loadingLabel="저장 중"
                     disabled={!hasChanges || isSaving || (isGroupEditor && !isGroupMappingValid) || isRuleEditingBlocked || !hasTemplateCatalog || unsupportedRequiredCustomVariables.length > 0 || !isTriggerDispatchAvailable}
                     data-component={component("trigger-rules-save")}
                   >
-                    {isSaving ? "저장 중..." : "저장"}
+                    저장
                   </Button>
                 </>
               )}
             >
               <DetailTabPanels
+                insetPanels
                 activeTab={activeDetailTab}
                 dataComponent={component("trigger-rules-detail-tabpanes")}
                 panelDataComponent={component("template-detail-pane")}
@@ -1659,10 +1660,9 @@ export function TriggerRulesManager({
                             className="md:col-span-2"
                           />
                         ) : isTemplateCatalogLoading ? (
-                          <InfoRow
+                          <LoadingState
                             data-component={component("trigger-rules-template-catalog-loading")}
-                            label="발송 템플릿"
-                            value="템플릿 정보를 불러오는 중이에요."
+                            label="템플릿 정보를 불러오는 중"
                           />
                         ) : (
                           <TitleSelectMolecule
@@ -1691,7 +1691,7 @@ export function TriggerRulesManager({
                           <InfoCard
                             title="추가 발송 조건"
                             description={isClientRegistrationPolicyLoading
-                              ? "고객 자동 등록 설정을 불러오는 중이에요."
+                              ? undefined
                               : isClientRegistrationPolicyError
                                 ? "고객 자동 등록 설정을 불러오지 못했어요. 다시 시도해 주세요."
                                 : clientRegistrationPolicy?.clientAutoRegistration
@@ -1702,10 +1702,9 @@ export function TriggerRulesManager({
                           >
                             <div className="-mt-1">
                               {isClientRegistrationPolicyLoading ? (
-                                <InfoRow
+                                <LoadingState
                                   data-component={component("trigger-rules-client-registration-condition-loading")}
-                                  label="상태"
-                                  value="설정 정보를 불러오는 중이에요."
+                                  label="고객 자동 등록 설정을 불러오는 중"
                                 />
                               ) : isClientRegistrationPolicyError ? (
                                 <>
@@ -1862,7 +1861,7 @@ export function TriggerRulesManager({
           size="detail"
           cancelLabel="취소"
           approvalLabel="확인"
-          pendingLabel="처리 중..."
+          pendingLabel="처리 중"
           isPending={parentActivationMutation.isPending || isParentActivationPending}
           onApprove={() => void handleConfirmParentActivation()}
           dataComponent={component("trigger-rules-parent-activation-modal")}

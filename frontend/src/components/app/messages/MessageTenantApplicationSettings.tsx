@@ -16,6 +16,7 @@ import {
   Send,
   ShieldCheck,
 } from "lucide-react";
+import { LoadingState } from "@/components/app/ui/LoadingState";
 import { useActiveBranchId, isBranchContextAligned } from "@/features/system-templates/branch-context";
 import { FormSection, FormGrid, FormField, FormTextInput, FormSwitchRow, FormChip } from "@/components/app/ui/form-section";
 import { messagePolicyApi, type MessageAutomationPolicyConfiguration, type MessageAutomationPolicyConfigResponse, type MessageAutomationPolicyPreviewResponse } from "@/services/settings";
@@ -23,11 +24,9 @@ import { mergeRuleOrder } from "@babyjamjam/shared/utils/rule-order";
 import {
   AnimatedSlotList,
   AnimatedSlotListItemContent,
-  DetailEmptyState,
   DetailPanel,
   InfoCard,
   InfoRow,
-  ListEmptyState,
   ListPanel,
 } from "@/components/app/v3";
 import { SelectableItemFrame } from "@/components/ui/selectable-item";
@@ -599,13 +598,13 @@ export function MessageTenantApplicationSettings() {
   const footerBase = selectedItem?.kind === "duplicate-send-policy" ? "desktop_messages_sections_split-layout_detail-panel-4_actions" : "desktop_messages_sections_split-layout_detail-panel-2_actions";
   const configFooter = <div data-component={footerBase} className="ml-auto flex gap-3">
     <Button data-component={`${footerBase}_cancel`} type="button" variant="neutral" disabled={!dirty} onClick={() => { setDraft(null); setConfigError(null); setImpact(null); }}>변경 취소</Button>
-    <Button data-component={`${footerBase}_save`} type="button" variant="positive" disabled={!editable || !dirty || errors.length > 0 || saveConfiguration.isPending || (selectedItem?.id === PAST_TRIGGER_POLICY_ID && isTriggerRulesLoadFailed)} onClick={() => {
+    <Button data-component={`${footerBase}_save`} type="button" variant="positive" loading={saveConfiguration.isPending} loadingLabel="저장 중" disabled={!editable || !dirty || errors.length > 0 || saveConfiguration.isPending || (selectedItem?.id === PAST_TRIGGER_POLICY_ID && isTriggerRulesLoadFailed)} onClick={() => {
       if (configuration && activeDraft && branchId && errors.length === 0) saveConfiguration.mutate({ branchId, expectedVersion: activeDraft.expectedVersion, lineage: activeDraft.lineage, configuration: JSON.parse(JSON.stringify(configuration)) as MessageAutomationPolicyConfiguration });
-    }}>{saveConfiguration.isPending ? "저장 중..." : "저장"}</Button>
+    }}>저장</Button>
   </div>;
   const renderConfigFields = (policyId: string) => {
     const base = policyId === DUPLICATE_SEND_POLICY_ITEM_ID ? "desktop_messages_sections_split-layout_detail-panel-4_duplicate-send-policy_form" : `${getAutomationPolicyDataComponent(policyId)}_form`;
-    if (!configuration && !configQuery.isError) return <InfoRow data-component={`${base}_loading`} label="상태" value="설정을 불러오는 중입니다." />;
+    if (!configuration && !configQuery.isError) return <LoadingState data-component={`${base}_loading`} label="설정을 불러오는 중" />;
     if (!configuration || configQuery.isError) return <QueryErrorState dataComponent={`${base}_error`} title="설정을 불러오지 못했습니다" onRetry={() => void configQuery.refetch()} />;
     return <FormSection title="설정" data-component={base}>
       <FormGrid data-component={`${base}_fields`}>
@@ -639,13 +638,6 @@ export function MessageTenantApplicationSettings() {
 
     requestApprovalMutation.mutate();
   };
-  const emptyListMessage = isMessageSettingsListLoading
-    ? "설정 정보를 불러오는 중입니다."
-    : "표시할 설정 항목이 없습니다.";
-  const emptyDetailMessage = isMessageSettingsListLoading
-    ? "설정 정보를 불러오는 중입니다."
-    : "설정 항목을 선택해 주세요.";
-
   if (isMessageSettingsListLoading) {
     return (
       <div
@@ -656,18 +648,14 @@ export function MessageTenantApplicationSettings() {
           title="설정"
           subtitle="메시지에 관련된 설정들을 정할 수 있어요"
         >
-          <ListEmptyState
-            message={emptyListMessage}
-          />
+          <LoadingState label="설정 정보를 불러오는 중" data-component="desktop_messages_sections_split-layout_list-panel_loading" />
         </ListPanel>
 
         <DetailPanel data-component="desktop_messages_sections_split-layout_detail-panel"
           title="설정"
           subtitle="메시지에 관련된 설정들을 정할 수 있어요"
         >
-          <DetailEmptyState
-            message={emptyDetailMessage}
-          />
+          <LoadingState label="설정 정보를 불러오는 중" data-component="desktop_messages_sections_split-layout_detail-panel_loading" />
         </DetailPanel>
       </div>
     );
@@ -827,10 +815,10 @@ export function MessageTenantApplicationSettings() {
                     />
                   ) : null}
                   {isTriggerRulesLoading ? (
-                    <InfoRow
+                    <LoadingState
                       data-component="desktop_messages_sections_settings-past-trigger-policy-order-card_form_loading"
-                      label="상태"
-                      value="자동 전송 루틴을 불러오는 중"
+                      inline
+                      label="자동 전송 루틴을 불러오는 중"
                     />
                   ) : isTriggerRulesLoadFailed ? (
                     <QueryErrorState
@@ -868,7 +856,7 @@ export function MessageTenantApplicationSettings() {
                             type="button"
                             variant="neutral"
                             size="icon"
-                            className="h-9 w-9 shrink-0"
+                            className="shrink-0"
                           >
                             <ArrowUp className="h-4 w-4" />
                           </Button>
@@ -879,7 +867,7 @@ export function MessageTenantApplicationSettings() {
                             type="button"
                             variant="neutral"
                             size="icon"
-                            className="h-9 w-9 shrink-0"
+                            className="shrink-0"
                           >
                             <ArrowDown className="h-4 w-4" />
                           </Button>

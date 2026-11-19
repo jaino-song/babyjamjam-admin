@@ -158,3 +158,16 @@ describe("ContractDocumentJobDetail", () => {
     expect(container.querySelector("[data-component]")).toBeNull();
   });
 });
+
+describe("cancellation capability", () => {
+  it.each([true, false, undefined])("shows cancel only for explicit true (%s)", cancellable => {
+    render(<ContractDocumentJobDetail job={{ ...JOB, cancellable }} data-component={BASE} />);
+    if (cancellable === true) {
+      const cancel = screen.getByRole("button", { name: "취소" });
+      expect(cancel).toHaveAttribute("data-component", `${BASE}_progress_cancel_button`);
+      expect(cancel).toHaveAttribute("data-slot", "job-cancel-action");
+      expect(cancel).toHaveAttribute("data-variant", "outline");
+      expect(cancel.parentElement).toHaveAttribute("data-component", `${BASE}_progress_cancel`);
+    } else expect(screen.queryByRole("button", { name: "취소" })).not.toBeInTheDocument();
+  });
+});

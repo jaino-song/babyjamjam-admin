@@ -55,8 +55,17 @@ describe("WebsiteAdminPage ribbon load", () => {
   it.each([false, true])("renders a first-child jobs-only row only when active: %s", (active) => {
     mockDocumentJobsActive = active;
     const { container, unmount } = renderPage({ data: config });
-    const row = container.querySelector('[data-component="website-admin_stats"]');
+    const row = container.querySelector('[data-component="desktop_website-admin_page_stats"]');
     if (active) {
+      expect(row).toBeInTheDocument();
+      expect(row?.parentElement).toHaveAttribute("data-component", "desktop_website-admin_page");
+      const root = container.querySelector('[data-component="desktop_website-admin_page"]');
+      expect(root?.getAttribute("data-component")).toMatch(/^(desktop|mobile)_[a-z0-9]+(?:-[a-z0-9]+)*(?:_[a-z0-9]+(?:-[a-z0-9]+)*){1,}$/);
+      const stats = root?.querySelector('[data-component="desktop_website-admin_page_stats"]');
+      expect(stats).toHaveAttribute("data-component", `${root?.getAttribute("data-component")}_stats`);
+      for (const child of (stats?.querySelectorAll("[data-component]") ?? [])) {
+        expect(child.getAttribute("data-component")).toMatch(/^desktop_website-admin_page_stats_/);
+      }
       expect(row?.parentElement?.firstElementChild).toBe(row);
       expect(row?.firstElementChild).toBe(screen.getByRole("button", { name: "전자문서 처리중 작업 보기" }));
       expect(row?.children).toHaveLength(1);
@@ -82,7 +91,7 @@ describe("WebsiteAdminPage ribbon load", () => {
     { isLoading: false, isPending: true, isPaused: true, isError: false, isFetching: false, status: "pending", fetchStatus: "paused" },
   ])("shows the existing skeleton rather than defaults: %j", (state) => {
     const { container } = renderPage(state);
-    expect(container.querySelector('[data-component="desktop_website-admin_ribbon_loading-skeleton"]')).toBeInTheDocument();
+    expect(container.querySelector('[data-component="desktop_website-admin_page_ribbon_loading-skeleton"]')).toBeInTheDocument();
     expect(container.querySelector("input")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "저장" })).not.toBeInTheDocument();
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();

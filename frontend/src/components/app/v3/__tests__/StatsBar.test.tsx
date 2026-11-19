@@ -1,14 +1,17 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { Clock3 } from "lucide-react";
 
 import {
   createTestQueryClient,
   JobsTestWrapper,
+  makeJob,
   makeJobList,
   makeSummary,
   setBranchCookie,
 } from "@/features/document-jobs/testing/jobs-test-utils";
 import { eformsignApi } from "@/services/api";
+import { api } from "@/lib/api/client";
+import { eformsignDocumentJobsQueryKeys } from "@/hooks/useEformsignDocumentJobs";
 
 import { StatsBar } from "../StatsBar";
 
@@ -96,6 +99,135 @@ describe("StatsBar document jobs card", () => {
     expect(card).not.toHaveTextContent("실패");
   });
 
+  it.each([390, 1280])("clears branch-A confirmation and detail after a branch switch at %spx", async width => {
+    const originalWidth = window.innerWidth;
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: width });
+    const job = makeJob({ jobId: "branch-a-job", cancellable: true, status: "requires_attention" });
+    jest.spyOn(eformsignApi, "getDocumentJobSummary").mockResolvedValue(makeSummary({ unresolvedJobIds: [job.jobId] }));
+    jest.mocked(eformsignApi.getDocumentJobs).mockResolvedValue(makeJobList({ requiresAttention: [job] }));
+    const post = jest.spyOn(api, "post").mockResolvedValue({ data: {} });
+    const queryClient = createTestQueryClient();
+    try {
+      render(<JobsTestWrapper queryClient={queryClient}>
+        <StatsBar name="desktop_clients_page" items={[]} showDocumentJobs="whenActive" />
+      </JobsTestWrapper>);
+      fireEvent.click(await screen.findByRole("button", { name: "문서 처리 실패 작업 보기" }));
+      fireEvent.click(await screen.findByRole("button", { name: /김하늘.*상세 보기/ }));
+      fireEvent.click(screen.getByRole("button", { name: "취소" }));
+      const confirmation = await screen.findByRole("dialog", { name: "이 작업을 취소할까요?" });
+      const approve = within(confirmation).getByRole("button", { name: "작업 취소" });
+
+      // Keep both branch caches populated so reset cannot rely on a loading gap or missing job.
+      queryClient.setQueryData(eformsignDocumentJobsQueryKeys.summary("branch-b"), makeSummary({ unresolvedJobIds: [job.jobId] }));
+      queryClient.setQueryData(eformsignDocumentJobsQueryKeys.list("branch-b"), makeJobList({ requiresAttention: [job] }));
+      act(() => { setBranchCookie("branch-b"); window.dispatchEvent(new Event("focus")); });
+      await waitFor(() => expect(confirmation).not.toBeInTheDocument());
+      expect(screen.getByRole("dialog", { name: "전자문서 작업" })).toBeInTheDocument();
+      expect(document.querySelector('[data-slot="sliding-detail-panel"]')).toHaveAttribute("data-open", "false");
+      expect(screen.queryByRole("button", { name: "취소" })).not.toBeInTheDocument();
+      fireEvent.click(approve);
+      expect(post).not.toHaveBeenCalled();
+    } finally {
+      queryClient.clear();
+      Object.defineProperty(window, "innerWidth", { configurable: true, value: originalWidth });
+    }
+  });
+
+  it.each([390, 1280])("refuses approval if the branch cookie changed before focus at %spx", async width => {
+    const originalWidth = window.innerWidth;
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: width });
+    const job = makeJob({ jobId: "branch-a-job", cancellable: true, status: "requires_attention" });
+    jest.spyOn(eformsignApi, "getDocumentJobSummary").mockResolvedValue(makeSummary({ unresolvedJobIds: [job.jobId] }));
+    jest.mocked(eformsignApi.getDocumentJobs).mockResolvedValue(makeJobList({ requiresAttention: [job] }));
+    const post = jest.spyOn(api, "post").mockResolvedValue({ data: {} });
+    const queryClient = createTestQueryClient();
+    try {
+      render(<JobsTestWrapper queryClient={queryClient}>
+        <StatsBar name="desktop_clients_page" items={[]} showDocumentJobs="whenActive" />
+      </JobsTestWrapper>);
+      fireEvent.click(await screen.findByRole("button", { name: "문서 처리 실패 작업 보기" }));
+      fireEvent.click(await screen.findByRole("button", { name: /김하늘.*상세 보기/ }));
+      fireEvent.click(screen.getByRole("button", { name: "취소" }));
+      const confirmation = await screen.findByRole("dialog", { name: "이 작업을 취소할까요?" });
+      // No focus/pageshow notification: the approval callback must read the cookie itself.
+      setBranchCookie("branch-b");
+      fireEvent.click(within(confirmation).getByRole("button", { name: "작업 취소" }));
+      await waitFor(() => expect(confirmation).not.toBeInTheDocument());
+      expect(post).not.toHaveBeenCalled();
+    } finally {
+      queryClient.clear();
+      Object.defineProperty(window, "innerWidth", { configurable: true, value: originalWidth });
+    }
+  });
+
+  // Caller ownership is also checked by the real page/manager render suites.
+  it.each([390, 1280])("keeps the empty list open after cancelling the last unresolved job at %spx, then hides the card on close", async width => {
+    const originalWidth = window.innerWidth;
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: width });
+    const base = "desktop_clients_page";
+    const job = makeJob({ cancellable: true, status: "requires_attention" });
+    let cancelled = false;
+    jest.mocked(eformsignApi.getDocumentJobs).mockRestore();
+    const get = jest.spyOn(api, "get").mockImplementation(async url => {
+      if (url === "/eformsign-docs/jobs/summary") {
+        return { data: makeSummary({ unresolvedJobIds: cancelled ? [] : [job.jobId] }) };
+      }
+      if (url === "/eformsign-docs/jobs") {
+        return { data: makeJobList({ requiresAttention: cancelled ? [] : [job] }) };
+      }
+      throw new Error(`Unexpected GET ${url}`);
+    });
+    const post = jest.spyOn(api, "post").mockImplementation(async () => {
+      cancelled = true;
+      return { data: { jobId: job.jobId, outcome: "cancelled" } };
+    });
+
+    try {
+      render(
+        <JobsTestWrapper queryClient={createTestQueryClient()}>
+          <StatsBar name={base} density="responsive-square" items={[]} showDocumentJobs="whenActive" />
+        </JobsTestWrapper>,
+      );
+      const trigger = await screen.findByRole("button", { name: "문서 처리 실패 작업 보기" });
+      fireEvent.click(trigger);
+      fireEvent.click(await screen.findByRole("button", { name: /김하늘.*상세 보기/ }));
+      const cancelButton = screen.getByRole("button", { name: "취소" });
+      const panes = width < 1024 ? "body_panes" : "panes";
+      expect(cancelButton).toHaveAttribute("data-component",
+        `${base}_stats_document-jobs-popover_${panes}_slide_detail-pane_body_scroll_job_progress_cancel_button`);
+      expect(cancelButton.getAttribute("data-component")).toMatch(/^desktop_.*_job_progress_cancel_button$/);
+      fireEvent.click(cancelButton);
+      const confirmation = await screen.findByRole("dialog", { name: "이 작업을 취소할까요?" });
+      expect(post).not.toHaveBeenCalled();
+      // Let the real outside-pointer listeners observe the portalled approval.
+      await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)); });
+      const approve = within(confirmation).getByRole("button", { name: "작업 취소" });
+      fireEvent.pointerDown(approve);
+      fireEvent.mouseDown(approve);
+      fireEvent.click(approve);
+
+      await waitFor(() => expect(post).toHaveBeenCalledWith(`/eformsign-docs/jobs/${job.jobId}/cancel`));
+      await waitFor(() => expect(screen.queryByRole("dialog", { name: "이 작업을 취소할까요?" })).not.toBeInTheDocument());
+      expect(screen.getByRole("dialog", { name: "전자문서 작업" })).toBeInTheDocument();
+      expect(trigger).toBeInTheDocument();
+      expect(trigger).toHaveTextContent("0");
+      expect(screen.getByText("처리중인 전자문서가 없습니다.")).toBeVisible();
+      expect(screen.getByText("확인이 필요한 전자문서가 없습니다.")).toBeVisible();
+      expect(screen.queryByRole("button", { name: /김하늘.*상세 보기/ })).not.toBeInTheDocument();
+      expect(document.querySelector('[data-slot="sliding-detail-panel"]')).toHaveAttribute("data-open", "false");
+      const close = screen.getByRole("button", { name: "전자문서 작업 닫기" });
+      await waitFor(() => expect(close).toHaveFocus());
+      expect(get.mock.calls.filter(([url]) => url === "/eformsign-docs/jobs/summary").length).toBeGreaterThan(1);
+      expect(get.mock.calls.filter(([url]) => url === "/eformsign-docs/jobs").length).toBeGreaterThan(1);
+      fireEvent.click(close);
+      await waitFor(() => expect(screen.queryByRole("dialog", { name: "전자문서 작업" })).not.toBeInTheDocument());
+      expect(trigger).not.toBeInTheDocument();
+      expect(document.querySelector(`[data-component="${base}_stats"]`)).not.toBeInTheDocument();
+    } finally {
+      Object.defineProperty(window, "innerWidth", { configurable: true, value: originalWidth });
+    }
+  });
+
   it("renders nothing when it has no items and the jobs card is hidden", async () => {
     const getSummary = jest.spyOn(eformsignApi, "getDocumentJobSummary").mockResolvedValue(makeSummary());
 
@@ -138,5 +270,25 @@ describe("StatsBar document jobs card", () => {
     expect(screen.queryByText("7")).not.toBeInTheDocument();
     expect(screen.queryByText("9")).not.toBeInTheDocument();
     expect(container.querySelector('[data-component="desktop_chat_stats_stats_item-1"]')).toHaveTextContent("독립 완료");
+  });
+});
+
+describe("StatsBar trailing slot", () => {
+  it("renders trailing after existing mapped items", () => {
+    render(<JobsTestWrapper queryClient={createTestQueryClient()}>
+      <StatsBar name="desktop_clients_page" items={ITEMS} trailing={<span>추가 통계</span>} />
+    </JobsTestWrapper>);
+    const bar = document.querySelector('[data-component="desktop_clients_page_stats"]')!;
+    expect(bar.lastElementChild).toHaveTextContent("추가 통계");
+    expect(bar.children[0]).toHaveAttribute("data-component", "desktop_clients_page_stats_item-0");
+    expect(bar.children[1]).toHaveAttribute("data-component", "desktop_clients_page_stats_item-1");
+  });
+
+  it("preserves the empty-row early return even with a trailing slot", () => {
+    render(<JobsTestWrapper queryClient={createTestQueryClient()}>
+      <StatsBar name="desktop_clients_page" items={[]} trailing={<span>추가 통계</span>} />
+    </JobsTestWrapper>);
+    expect(document.querySelector('[data-component="desktop_clients_page_stats"]')).toBeNull();
+    expect(screen.queryByText("추가 통계")).not.toBeInTheDocument();
   });
 });

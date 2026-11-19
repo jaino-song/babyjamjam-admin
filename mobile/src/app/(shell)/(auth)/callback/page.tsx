@@ -4,7 +4,7 @@
 import { useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { normalizeApiError } from "@babyjamjam/shared";
-import { Spinner } from "@/components/ui/spinner";
+import { LoadingState } from "@/components/app/ui/LoadingState";
 import { exchangeToken } from "./actions";
 import { getSafeCallbackError } from "@/lib/auth/auth-errors";
 import { resetAuthorityState } from "@/lib/auth/authority-state";
@@ -100,8 +100,7 @@ export default function AuthCallbackPage() {
 
     return (
         <div data-component={CALLBACK_BASE} data-slot="auth-callback-page" className="flex min-h-[100dvh] flex-col items-center justify-center gap-4 px-6 text-center">
-            <Spinner size="lg" />
-            <p className="text-foreground">로그인 중...</p>
+            <LoadingState label="로그인 중" size="lg" data-component={`${CALLBACK_BASE}_loading`} />
         </div>
     );
 }

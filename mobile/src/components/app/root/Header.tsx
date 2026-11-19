@@ -98,11 +98,11 @@ export const Header = ({ initialUser }: HeaderProps) => {
             className="shrink-0 transition-transform duration-200 hover:scale-110 active:scale-95"
           >
             {!displayUser && (isLoading || isFetching) ? (
-              <Avatar className="h-10 w-10">
+              <Avatar className="h-8 w-8">
                 <AvatarFallback className="animate-pulse bg-muted" />
               </Avatar>
             ) : displayUser ? (
-              <Avatar className="h-10 w-10">
+              <Avatar className="h-8 w-8">
                 <AvatarImage src={displayUser?.profileImage || ''} alt={displayUser?.name || 'User'} />
                 <AvatarFallback className="bg-primary text-primary-foreground text-sm">{getUserInitials(displayUser?.name)}</AvatarFallback>
               </Avatar>

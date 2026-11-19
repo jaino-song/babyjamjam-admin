@@ -2,6 +2,7 @@ import type { Config } from "jest";
 
 const config: Config = {
     rootDir: "./",
+    cacheDirectory: "<rootDir>/node_modules/.cache/jest",
     roots: ["<rootDir>/"],
     testEnvironment: "node",
     moduleFileExtensions: ["ts", "js", "json"],

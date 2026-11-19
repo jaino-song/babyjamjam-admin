@@ -65,6 +65,40 @@ describe("MessageTriggerEditor", () => {
     mockPreview.mockResolvedValue({ complete: false, count: 0, recipients: [] });
   });
 
+  it("preserves the raw save button's idle classes and centers an accessible spinner while saving", async () => {
+    let resolveSave!: (value: { id: string }) => void;
+    createRule.mockReturnValueOnce(new Promise<{ id: string }>((resolve) => { resolveSave = resolve; }));
+    const onClose = jest.fn();
+    render(<MessageTriggerEditor data-component="mobile_messages_automation_test_editor" rule={null} onClose={onClose} />);
+    fireEvent.change(screen.getByLabelText("규칙 이름"), { target: { value: "QA-저장 테스트" } });
+    const save = screen.getByRole("button", { name: "규칙 저장" });
+    expect(save).toHaveAttribute("type", "submit");
+    expect(save.className).toBe("btn btn-primary min-h-11 flex-1");
+    expect(save).not.toHaveAttribute("aria-busy");
+    expect(save).not.toHaveAttribute("data-loading");
+    fireEvent.click(save);
+    const busy = await screen.findByRole("button", { name: "저장 중" });
+    expect(busy).toBe(save);
+    expect(busy).toBeDisabled();
+    expect(busy).toHaveAttribute("data-component", "mobile_messages_automation_test_editor_form_actions_save");
+    expect(busy).toHaveAttribute("aria-busy", "true");
+    expect(busy).toHaveAttribute("data-loading", "");
+    expect(busy).toHaveClass("relative");
+    const idle = busy.querySelector('[data-slot="button-idle"]');
+    expect(idle).toHaveAttribute("aria-hidden", "true");
+    expect(idle).toHaveClass("contents", "invisible");
+    expect(idle).toHaveTextContent("규칙 저장");
+    expect(busy.querySelector('[data-slot="button-spinner"]')).toHaveClass("absolute", "inset-0", "flex", "items-center", "justify-center");
+    expect(busy.querySelector('[data-slot="spinner"]')).toHaveAttribute("aria-hidden", "true");
+    await act(async () => { resolveSave({ id: "QA-rule" }); });
+    await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));
+    expect(screen.getByRole("button", { name: "규칙 저장" })).toBeEnabled();
+    expect(save.className).toBe("btn btn-primary min-h-11 flex-1");
+    expect(save).not.toHaveAttribute("aria-busy");
+    expect(save).not.toHaveAttribute("data-loading");
+    expect(save.querySelector('[data-slot="button-spinner"]')).toBeNull();
+  });
+
   it("submits the configured branch default without a time edit and keeps it after refetch", async () => {
     const onDirtyChange = jest.fn();
     const { client } = render(<MessageTriggerEditor data-component="mobile_messages_automation_test_editor" rule={null} onDirtyChange={onDirtyChange} onClose={jest.fn()} />, false);

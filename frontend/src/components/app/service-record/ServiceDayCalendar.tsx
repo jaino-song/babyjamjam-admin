@@ -105,7 +105,7 @@ export function ServiceDayCalendar({
                         type="button"
                         variant="neutral"
                         size="icon"
-                        className="h-8 w-8 rounded-[10px]"
+                        className="h-8 w-8 rounded-[10px] after:hidden"
                         data-component={`${dataComponent}_header_nav_previous`}
                         aria-label={t(locale, `${TEXT}.prev-month`)}
                         disabled={!canGoPrevious}
@@ -117,7 +117,7 @@ export function ServiceDayCalendar({
                         type="button"
                         variant="neutral"
                         size="icon"
-                        className="h-8 w-8 rounded-[10px]"
+                        className="h-8 w-8 rounded-[10px] after:hidden"
                         data-component={`${dataComponent}_header_nav_next`}
                         aria-label={t(locale, `${TEXT}.next-month`)}
                         disabled={!canGoNext}

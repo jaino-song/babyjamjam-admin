@@ -61,6 +61,15 @@ export class EformsignDocumentJobManualRecoveryService {
         });
     }
     private async context(state: ContractRecoveryState, credentials: EformsignProviderCredentials, fresh: () => void): Promise<Context> {
+        if (state.verificationOnly) {
+            const saved = state.verificationOnly, identity = this.options.getConfiguredContractIdentity();
+            if (!publicId(saved.templateId) || !publicId(identity.companyId) || !identity.creatorId
+                || (saved.companyId && saved.companyId !== identity.companyId) || (saved.creatorId && saved.creatorId !== identity.creatorId)) unsupported();
+            const config = await this.provider.getTemplateWorkflowConfig(credentials.accessToken, saved.templateId); fresh();
+            const workflow = parseEformsignTemplateWorkflow(config, saved.templateId);
+            if (saved.workflow && sha256CanonicalJson(saved.workflow) !== sha256CanonicalJson(workflow)) unsupported();
+            return { options: {}, ...identity, templateId: saved.templateId, workflow };
+        }
         const data = object(state.payload["contractData"]); if (!data) unsupported("payload_expired");
         const frozen = object(state.payload["contractDraft"]) ?? (state.providerDocumentId || state.creationIntent?.providerDocumentId ? object(state.payload["contractDispatch"]) : null);
         const area = typeof data["area"] === "string" && data["area"] ? await this.templates.findByArea(state.branchId, data["area"]) : null;
@@ -80,21 +89,21 @@ export class EformsignDocumentJobManualRecoveryService {
         if (!publicId(id)) unsupported();
         const doc = await this.provider.getDocument(credentials.accessToken, id); fresh();
         if (!doc || doc.id !== id || doc.template?.id !== context.templateId || doc.creator?.id !== context.creatorId || doc.creator.recipient_type !== "01"
-            || !Number.isFinite(doc.created_date) || !Number.isFinite(doc.updated_date) || doc.current_status?._expired === true) unsupported();
+            || !Number.isFinite(doc.created_date) || !Number.isFinite(doc.updated_date)) unsupported();
         const status = doc.current_status;
         const isDraft = status?.status_type === "001" && status.step_type === "00";
         const confirmed = context.workflow.steps.some(step => step.seq === status?.step_index && step.stepGroup === status.step_group && (
-            (step.type === "participant" && status.status_type === "060" && status.step_type === "05")
-            || (step.type === "reviewer" && status.status_type === "070" && status.step_type === "06")
+            (step.type === "participant" && ["060", "061", "062", "063", "064"].includes(status.status_type) && status.step_type === "05")
+            || (step.type === "reviewer" && ["070", "071", "072", "073", "074"].includes(status.status_type) && status.step_type === "06")
             || (step.type === "complete" && status.status_type === "003" && status.step_type === "01")
         ));
-        if (!isDraft && !confirmed) unsupported();
+        if ((!isDraft && !confirmed) || (isDraft && doc.current_status?._expired === true)) unsupported();
         return { documentId: id, templateId: context.templateId, companyId: context.companyId, creatorId: context.creatorId,
             documentName: doc.document_name ?? null, documentNumber: doc.document_number ?? null, templateName: doc.template.name ?? null,
             creatorName: doc.creator.name ?? null, lastEditorName: doc.last_editor?.name ?? null,
             stepRecipientTypes: [...new Set((status.step_recipients ?? []).map(recipient => recipient.recipient_type))],
             statusType: status.status_type, stepType: status.step_type, stepIndex: status.step_index, stepName: status.step_name,
-            confirmed, createdAt: new Date(doc.created_date), updatedAt: new Date(doc.updated_date),
+            confirmed, expired: status._expired === true, createdAt: new Date(doc.created_date), updatedAt: new Date(doc.updated_date),
             expiresAt: eformsignExpiryDateFromRemainingDays(status.expired_date, Date.now()) };
     }
     async open(jobId: string, principal: EformsignProviderPrincipal) {
@@ -106,6 +115,13 @@ export class EformsignDocumentJobManualRecoveryService {
             const claim = this.claim(state, principal.userId!), response = this.response(state);
             if (["verified", "closed"].includes(state.phase)) return { kind: "verify_only" as const, ...response };
             return this.withCredentials(principal, async credentials => {
+                if (state.verificationOnly) {
+                    const context = await this.context(state, credentials, fresh);
+                    const evidence = await this.evidence(credentials, context, state.verificationOnly.documentId, fresh);
+                    if (!state.providerDocumentId) state = await this.repository.bindDocument(claim, evidence, state.draftIntent?.providerDocumentId ? state.draftIntent.id : undefined);
+                    if (evidence.confirmed) { await this.repository.completeManual(claim, evidence); this.invalidate(state.branchId); }
+                    return { kind: "verify_only" as const, ...response };
+                }
                 if (state.phase === "human_exposed") {
                     let evidence: ContractDocumentEvidence;
                     try {
@@ -150,7 +166,7 @@ export class EformsignDocumentJobManualRecoveryService {
                     }
                 }
                 const evidence = await this.evidence(credentials, context, id, fresh);
-                if ((draftIntentId || (!state.providerDocumentId && state.draftIntent?.providerDocumentId === id)) && evidence.confirmed) unsupported();
+                if (draftIntentId && evidence.confirmed) unsupported();
                 if (!state.providerDocumentId) state = await this.repository.bindDocument(claim, evidence, draftIntentId ?? state.draftIntent?.id);
                 fresh();
                 if (evidence.confirmed) { await this.repository.completeManual(claim, evidence); this.invalidate(state.branchId); return { kind: "verify_only" as const, ...response }; }
@@ -168,7 +184,7 @@ export class EformsignDocumentJobManualRecoveryService {
             const claim = { jobId, branchId: principal.branchId!, userId: principal.userId!, claimEpoch: epoch };
             const state = await this.repository.readClaim(claim); fresh();
             if (["verified", "closed"].includes(state.phase)) return { kind: "verified" as const, jobId, claimEpoch: epoch.toString() };
-            if (!state.providerDocumentId || !["human_exposed", "creation_uncertain"].includes(state.phase)) unsupported("unverified_creation");
+            if (!state.providerDocumentId || !["human_exposed", "creation_uncertain", "document_ready"].includes(state.phase)) unsupported("unverified_creation");
             return this.withCredentials(principal, async credentials => {
                 const context = await this.context(state, credentials, fresh);
                 const evidence = await this.evidence(credentials, context, state.providerDocumentId!, fresh);

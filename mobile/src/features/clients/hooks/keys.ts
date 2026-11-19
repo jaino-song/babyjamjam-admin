@@ -4,6 +4,7 @@
  */
 export const clientKeys = {
   all: ['clients'] as const,
+  serviceRecordMissing: () => [...clientKeys.all, 'service-record-missing'] as const,
   lists: () => [...clientKeys.all, 'list'] as const,
   list: (filters: { page?: number; limit?: number; search?: string }) =>
     [...clientKeys.lists(), filters] as const,

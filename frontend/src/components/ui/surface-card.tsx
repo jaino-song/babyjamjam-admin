@@ -52,7 +52,7 @@ export function SurfaceCard({
       data-component={componentSlots.card}
       sourceComponent={SOURCE_COMPONENT}
       animated={animated}
-      className={className}
+      className={cn("rounded-[16px]", className)}
     >
       <AuthPanelHeader
         title={title}
