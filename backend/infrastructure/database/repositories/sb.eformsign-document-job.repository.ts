@@ -1307,7 +1307,7 @@ export class SbEformsignDocumentJobRepository implements IEformsignDocumentJobRe
 
     async listRecentStaffFailures(since: Date): Promise<EformsignDocumentJobEntity[]> {
         const rows = await this.prisma.$queryRaw<RawJob[]>(Prisma.sql`
-            SELECT j.*, c.name AS client_name FROM "eformsign_document_job" j
+            SELECT j.*, ${cancellableJobSql()} AS cancellable, c.name AS client_name FROM "eformsign_document_job" j
             LEFT JOIN "client" c ON c.id = j.client_id
             WHERE ${contractJobSql("j")}
               AND j.status IN ${RECOVERABLE_STATUSES}

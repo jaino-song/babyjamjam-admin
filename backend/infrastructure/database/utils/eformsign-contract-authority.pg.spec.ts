@@ -549,6 +549,68 @@ async function bounded<T>(promise: Promise<T>, ms: number): Promise<T> {
         expect(await db.eformsign_document_job.findUniqueOrThrow({ where })).toEqual(before);
     });
 
+    describe("CANCEL projection refusing clauses", () => {
+        async function cancellationSnapshot() {
+            const where = { branchId: branches[0]! };
+            return {
+                jobs: await db.eformsign_document_job.findMany({ where, orderBy: { id: "asc" } }),
+                authorities: await db.eformsign_contract_authority.findMany({ where, orderBy: { clientId: "asc" } }),
+                intents: await db.eformsign_dispatch_intent.findMany({ where, orderBy: { id: "asc" } }),
+                clients: await db.client.findMany({ where, orderBy: { id: "asc" } }),
+            };
+        }
+        async function expectRefusedWithoutWrites(s: Awaited<ReturnType<typeof runtime>>, expectedReason: string) {
+            const before = await cancellationSnapshot();
+            expect(await projectedCancellation(s)).toBe(false);
+            expect(await s.jobRepository.cancel(cancelInput(s))).toMatchObject({ kind: "not_cancellable", reason: expectedReason });
+            expect(await cancellationSnapshot()).toEqual(before);
+        }
+
+        it("refuses a discovered human-intent business key without an authority reference", async () => {
+            const s = await exhaustedRuntime();
+            expect(await projectedCancellation(s)).toBe(true);
+            await db.eformsign_dispatch_intent.create({ data: {
+                branchId: branches[0]!, clientId: clients[0]!, action: "manual_process",
+                generation: s.worker.contractGeneration, fingerprint: s.enqueue.payloadFingerprint,
+                businessKey: digest(`contract-human:${s.worker.contractGeneration}`), templateId: workflowPlan.templateId,
+                status: "prepared", attemptCount: 0,
+            } });
+            expect((await read())[0]!.humanIntentId).toBeNull();
+            await expectRefusedWithoutWrites(s, "effect_not_disproved");
+        });
+
+        it("refuses reserved authority with a prepared-zero linked create that was never reconciled", async () => {
+            const s = await runtime(), claimed = await s.recovery.claimCreation(s.input, s.worker, s.effect);
+            // Prepared-zero is no-effect; only the reserved linked-create boundary vetoes it.
+            await db.eformsign_dispatch_intent.update({ where: { id: claimed.intent.id },
+                data: { status: "prepared", attemptCount: 0, startedAt: null } });
+            await db.eformsign_document_job.update({ where: { id: s.worker.jobId }, data: {
+                status: "requires_attention", leaseToken: null, progressStep: "processing",
+                progressDetail: "info-inserted", completedAt: new Date(),
+            } });
+            expect(await projectedCancellation(s)).toBe(true);
+            await db.eformsign_contract_authority.update({
+                where: { branchId_clientId: { branchId: branches[0]!, clientId: clients[0]! } }, data: { phase: "reserved" },
+            });
+            expect((await read())[0]).toMatchObject({ phase: "reserved", creationIntentId: claimed.intent.id });
+            await expectRefusedWithoutWrites(s, "effect_not_disproved");
+        });
+
+        it("refuses a discovered unreleased draft without an authority reference", async () => {
+            const s = await exhaustedRuntime();
+            expect(await projectedCancellation(s)).toBe(true);
+            // Prepared-zero avoids the global uncertain-intent veto; the missing release marker is decisive.
+            await db.eformsign_dispatch_intent.create({ data: {
+                branchId: branches[0]!, clientId: clients[0]!, action: "create_draft",
+                generation: s.worker.contractGeneration, fingerprint: s.enqueue.payloadFingerprint,
+                businessKey: digest(`contract-draft:${s.worker.contractGeneration}`), templateId: workflowPlan.templateId,
+                status: "prepared", attemptCount: 0, startedAt: null,
+            } });
+            expect((await read())[0]!.draftIntentId).toBeNull();
+            await expectRefusedWithoutWrites(s, "effect_not_disproved");
+        });
+    });
+
     it.each([false, true])("P13 replaces pre-send exhaustion with purged payload=%s and removes stale popup entries", async purged => {
         const s = await exhaustedRuntime();
         if (purged) await db.eformsign_document_job.update({ where: { id: s.worker.jobId }, data: { payload: Prisma.DbNull } });

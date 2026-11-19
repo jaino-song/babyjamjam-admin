@@ -1071,6 +1071,17 @@ describe("SbEformsignDocumentJobRepository", () => {
     });
 
     describe("listRecentStaffFailures", () => {
+        it.each([true, false])("projects cancellable=%s for the recovery notification sweep", async cancellable => {
+            queryRaw.mockResolvedValueOnce([row({ status: "requires_attention", cancellable })]);
+
+            const jobs = await repository.listRecentStaffFailures(new Date("2026-10-22T00:00:00.000Z"));
+
+            expect(jobs[0]?.cancellable).toBe(cancellable);
+            const statement = sqlText(queryRaw.mock.calls[0][0]);
+            expect(statement).toContain("AS cancellable");
+            expect(statement).toContain("FROM eformsign_contract_authority a");
+        });
+
         it("selects contract failed and requires_attention rows since the cutoff with the client name", async () => {
             queryRaw.mockResolvedValueOnce([row({ status: "failed", client_name: "김산모" })]);
             const since = new Date("2026-10-22T00:00:00.000Z");
