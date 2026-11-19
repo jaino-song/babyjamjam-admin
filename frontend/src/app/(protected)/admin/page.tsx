@@ -79,9 +79,9 @@ export default function AdminFeedbackPage() {
   };
 
   return (
-    <PageSection name="admin">
+    <PageSection name="desktop_admin">
       <StatsBar
-        name="admin" showDocumentJobs="whenActive"
+        name="desktop_admin" showDocumentJobs="whenActive"
         isLoading={statsLoading}
         items={[
           { icon: MessageSquare, value: statValue(s => s.total), label: '전체', counter: '건' },

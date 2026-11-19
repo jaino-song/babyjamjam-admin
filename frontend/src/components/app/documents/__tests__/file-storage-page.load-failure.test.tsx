@@ -101,6 +101,13 @@ describe("FileStoragePage query load states", () => {
     expect(container.querySelector('[data-component="files-detail-skeleton"]')).toBeInTheDocument();
   });
 
+  it("scopes the stats to their page owner", async () => {
+    const { container } = await renderPage();
+    const bar = container.querySelector('[data-component="desktop_files_stats"]');
+    expect(bar).toBeInTheDocument();
+    expect(bar?.parentElement).toHaveAttribute("data-component", "desktop_files");
+  });
+
   it("shows the existing empty text and real zeros after successful empty loads", async () => {
     const { container } = await renderPage();
     expect(screen.getByText("등록된 문서가 없습니다")).toBeInTheDocument();

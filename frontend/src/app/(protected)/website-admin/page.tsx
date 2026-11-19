@@ -106,8 +106,8 @@ export default function WebsiteAdminPage() {
   };
 
   return (
-    <PageSection name="website-admin">
-      <StatsBar items={[]} showDocumentJobs="whenActive" name="website-admin" />
+    <PageSection name="desktop_website-admin">
+      <StatsBar items={[]} showDocumentJobs="whenActive" name="desktop_website-admin" />
       <SplitLayout data-component="desktop_website-admin_split-layout"
         hasSelection={activeSection !== null}
         onBack={() => setActiveSection(null)}

@@ -160,6 +160,15 @@ describe("AdminFeedbackPage list load failure", () => {
 });
 
 describe("AdminFeedbackPage stats", () => {
+  it("scopes the stats to their page owner", async () => {
+    mockList.mockResolvedValue(listResponse([]));
+    const { container } = renderPage();
+    expect(await screen.findByText("피드백이 없습니다")).toBeInTheDocument();
+    const bar = container.querySelector('[data-component="desktop_admin_stats"]');
+    expect(bar).toBeInTheDocument();
+    expect(bar?.parentElement).toHaveAttribute("data-component", "desktop_admin");
+  });
+
   it("shows an em dash, never 0, while the stats failed", async () => {
     mockStats.mockRejectedValue(new Error("network"));
     mockList.mockResolvedValue(listResponse([row]));

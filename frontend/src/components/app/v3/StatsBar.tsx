@@ -24,7 +24,7 @@ interface StatsBarProps {
   name: string;
   /**
    * Adds the app-wide "전자문서 처리중" card as the first slot. "always" keeps it at 0,
-   * "whenActive" shows it only while there are active jobs or unresolved failures.
+   * "whenActive" shows it while there are active jobs, unresolved failures, or an open jobs list.
    */
   showDocumentJobs?: DocumentJobsStatMode;
   trailing?: React.ReactNode;
