@@ -559,10 +559,10 @@ async function bounded<T>(promise: Promise<T>, ms: number): Promise<T> {
                 clients: await db.client.findMany({ where, orderBy: { id: "asc" } }),
             };
         }
-        async function expectRefusedWithoutWrites(s: Awaited<ReturnType<typeof runtime>>) {
+        async function expectRefusedWithoutWrites(s: Awaited<ReturnType<typeof runtime>>, expectedReason: string) {
             const before = await cancellationSnapshot();
             expect(await projectedCancellation(s)).toBe(false);
-            expect(await s.jobRepository.cancel(cancelInput(s))).toMatchObject({ kind: "not_cancellable" });
+            expect(await s.jobRepository.cancel(cancelInput(s))).toMatchObject({ kind: "not_cancellable", reason: expectedReason });
             expect(await cancellationSnapshot()).toEqual(before);
         }
 
@@ -576,7 +576,7 @@ async function bounded<T>(promise: Promise<T>, ms: number): Promise<T> {
                 status: "prepared", attemptCount: 0,
             } });
             expect((await read())[0]!.humanIntentId).toBeNull();
-            await expectRefusedWithoutWrites(s);
+            await expectRefusedWithoutWrites(s, "effect_not_disproved");
         });
 
         it("refuses reserved authority with a prepared-zero linked create that was never reconciled", async () => {
@@ -593,7 +593,7 @@ async function bounded<T>(promise: Promise<T>, ms: number): Promise<T> {
                 where: { branchId_clientId: { branchId: branches[0]!, clientId: clients[0]! } }, data: { phase: "reserved" },
             });
             expect((await read())[0]).toMatchObject({ phase: "reserved", creationIntentId: claimed.intent.id });
-            await expectRefusedWithoutWrites(s);
+            await expectRefusedWithoutWrites(s, "effect_not_disproved");
         });
 
         it("refuses a discovered unreleased draft without an authority reference", async () => {
@@ -607,7 +607,7 @@ async function bounded<T>(promise: Promise<T>, ms: number): Promise<T> {
                 status: "prepared", attemptCount: 0, startedAt: null,
             } });
             expect((await read())[0]!.draftIntentId).toBeNull();
-            await expectRefusedWithoutWrites(s);
+            await expectRefusedWithoutWrites(s, "effect_not_disproved");
         });
     });
 
