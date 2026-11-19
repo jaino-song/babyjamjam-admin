@@ -213,7 +213,7 @@ function cancellableJobSql(): Prisma.Sql {
               AND NOT EXISTS (
                   SELECT 1 FROM eformsign_dispatch_intent u WHERE u.branch_id = a.branch_id AND u.client_id = a.client_id
                     AND u.action IN ('create', 'create_draft') AND (u.status IN ('started', 'uncertain')
-                        OR (u.status = 'accepted' AND (u.provider_document_id IS NULL OR btrim(u.provider_document_id) = ''))))
+                        OR (u.status = 'accepted' AND (u.provider_document_id IS NULL OR u.provider_document_id !~ '\\S'))))
         )
     ), false)`;
 }

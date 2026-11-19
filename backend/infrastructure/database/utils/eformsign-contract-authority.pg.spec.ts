@@ -566,6 +566,19 @@ async function bounded<T>(promise: Promise<T>, ms: number): Promise<T> {
             expect(await cancellationSnapshot()).toEqual(before);
         }
 
+        it("refuses an accepted create intent with a tab-only provider receipt", async () => {
+            const s = await exhaustedRuntime();
+            expect(await projectedCancellation(s)).toBe(true);
+            // The storage CHECK trims spaces only; a tab receipt can be inserted directly.
+            await db.eformsign_dispatch_intent.create({ data: {
+                branchId: branches[0]!, clientId: clients[0]!, action: "create",
+                generation: "unrelated", fingerprint: "b".repeat(64),
+                businessKey: digest(`cancel-tab-${randomUUID()}`),
+                status: "accepted", attemptCount: 1, providerDocumentId: "\t",
+            } });
+            await expectRefusedWithoutWrites(s, "effect_not_disproved");
+        });
+
         it("refuses a discovered human-intent business key without an authority reference", async () => {
             const s = await exhaustedRuntime();
             expect(await projectedCancellation(s)).toBe(true);
