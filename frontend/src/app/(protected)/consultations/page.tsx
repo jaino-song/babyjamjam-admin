@@ -200,7 +200,7 @@ export default function ConsultationsPage() {
     }, [statsInquiries]);
 
     return (
-        <PageSection name="consultations"><div data-slot="page-scroll-region" className="contents max-md:flex max-md:min-h-0 max-md:flex-1 max-md:flex-col max-md:gap-[calc(24px*var(--glint-ui-scale,1))] max-md:overflow-y-auto">
+        <PageSection name="desktop_consultations"><div data-slot="page-scroll-region" className="contents max-md:flex max-md:min-h-0 max-md:flex-1 max-md:flex-col max-md:gap-[calc(24px*var(--glint-ui-scale,1))] max-md:overflow-y-auto">
             <StatsBar
                 name="desktop_consultations" showDocumentJobs="whenActive"
                 isLoading={isListLoading || isStatsLoading}

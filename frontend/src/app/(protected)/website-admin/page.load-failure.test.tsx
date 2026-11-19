@@ -57,6 +57,8 @@ describe("WebsiteAdminPage ribbon load", () => {
     const { container, unmount } = renderPage({ data: config });
     const row = container.querySelector('[data-component="desktop_website-admin_stats"]');
     if (active) {
+      expect(row).toBeInTheDocument();
+      expect(row?.parentElement).toHaveAttribute("data-component", "desktop_website-admin");
       expect(row?.parentElement?.firstElementChild).toBe(row);
       expect(row?.firstElementChild).toBe(screen.getByRole("button", { name: "전자문서 처리중 작업 보기" }));
       expect(row?.children).toHaveLength(1);

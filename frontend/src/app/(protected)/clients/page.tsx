@@ -719,7 +719,7 @@ export default function ClientsPage() {
     ) : undefined;
 
     return (
-        <PageSection name="clients">
+        <PageSection name="desktop_clients">
             {listSummary.isInitialError ? (
                 <Alert variant="destructive" data-component="desktop_clients_summary_error">
                     <AlertTitle>고객 요약을 불러오지 못했어요</AlertTitle>
@@ -739,9 +739,9 @@ export default function ClientsPage() {
                 </Alert>
             ) : null}
             <StatsBar
-                name="desktop_clients_sections" density="responsive-square" showDocumentJobs="whenActive"
+                name="desktop_clients" density="responsive-square" showDocumentJobs="whenActive"
                 isLoading={isSummaryInitialLoading}
-                trailing={<ServiceRecordMissingStatMini name="desktop_clients_sections" density="responsive-square" onSelectClient={handleSelectServiceRecordMissingClient} />}
+                trailing={<ServiceRecordMissingStatMini name="desktop_clients" density="responsive-square" onSelectClient={handleSelectServiceRecordMissingClient} />}
                 items={[
                     { icon: Calendar, value: stats.thisMonthCount, label: "이번 달 출산 예정", counter: "명" },
                     { icon: CalendarDays, value: stats.nextMonthCount, label: "다음 달 출산 예정", counter: "명", colorIndex: 1 },

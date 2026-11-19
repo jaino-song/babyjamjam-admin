@@ -79,7 +79,7 @@ export default function AdminFeedbackPage() {
   };
 
   return (
-    <PageSection name="admin">
+    <PageSection name="desktop_admin">
       <StatsBar
         name="desktop_admin" showDocumentJobs="whenActive"
         isLoading={statsLoading}

@@ -155,7 +155,7 @@ export function FileStoragePage() {
   };
 
   return (
-    <PageSection name="files">
+    <PageSection name="desktop_files">
       <StatsBar
         name="desktop_files" showDocumentJobs="whenActive"
         items={[

@@ -98,10 +98,11 @@ describe("StatsBar document jobs card", () => {
     expect(card).not.toHaveTextContent("실패");
   });
 
+  // Caller ownership is checked by the six page/manager render suites.
   it.each([390, 1280])("keeps the empty list open after cancelling the last unresolved job at %spx, then hides the card on close", async width => {
     const originalWidth = window.innerWidth;
     Object.defineProperty(window, "innerWidth", { configurable: true, value: width });
-    const base = "desktop_clients_sections";
+    const base = "desktop_clients";
     const job = makeJob({ cancellable: true, status: "requires_attention" });
     let cancelled = false;
     jest.mocked(eformsignApi.getDocumentJobs).mockRestore();
@@ -213,19 +214,19 @@ describe("StatsBar document jobs card", () => {
 describe("StatsBar trailing slot", () => {
   it("renders trailing after existing mapped items", () => {
     render(<JobsTestWrapper queryClient={createTestQueryClient()}>
-      <StatsBar name="desktop_clients_sections" items={ITEMS} trailing={<span>추가 통계</span>} />
+      <StatsBar name="desktop_clients" items={ITEMS} trailing={<span>추가 통계</span>} />
     </JobsTestWrapper>);
-    const bar = document.querySelector('[data-component="desktop_clients_sections_stats"]')!;
+    const bar = document.querySelector('[data-component="desktop_clients_stats"]')!;
     expect(bar.lastElementChild).toHaveTextContent("추가 통계");
-    expect(bar.children[0]).toHaveAttribute("data-component", "desktop_clients_sections_stats_item-0");
-    expect(bar.children[1]).toHaveAttribute("data-component", "desktop_clients_sections_stats_item-1");
+    expect(bar.children[0]).toHaveAttribute("data-component", "desktop_clients_stats_item-0");
+    expect(bar.children[1]).toHaveAttribute("data-component", "desktop_clients_stats_item-1");
   });
 
   it("preserves the empty-row early return even with a trailing slot", () => {
     render(<JobsTestWrapper queryClient={createTestQueryClient()}>
-      <StatsBar name="desktop_clients_sections" items={[]} trailing={<span>추가 통계</span>} />
+      <StatsBar name="desktop_clients" items={[]} trailing={<span>추가 통계</span>} />
     </JobsTestWrapper>);
-    expect(document.querySelector('[data-component="desktop_clients_sections_stats"]')).toBeNull();
+    expect(document.querySelector('[data-component="desktop_clients_stats"]')).toBeNull();
     expect(screen.queryByText("추가 통계")).not.toBeInTheDocument();
   });
 });
