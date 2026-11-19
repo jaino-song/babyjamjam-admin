@@ -34,7 +34,33 @@ describe("document job cancellation", () => {
         const before = structuredClone(f.state);
         expect(await f.repo.cancel(input)).toEqual({ kind: "not_found" }); expect(f.state).toEqual(before);
     });
-    it.each(["lease", "queued", "processing", "reconciling", "completed", "finalize", "service-record", "payload-kind", "live-claim", "legacy", "auto_finalize", "document", "creating", "sent", "detail-creating", "detail-sent", "superseded", "generation", "authority-job", "no-authority", "fingerprint", "pointer", "provider", "human-ref", "hidden-human", "blocked", "verified", "document-ready", "pending-zero", "uncertain", "draft-uncertain", "accepted-empty", "job-cas", "authority-cas"])("refuses %s without partial effects", async defect => {
+    it("rejects a generation mismatch at the cancel binding check", async () => {
+        const f = ready(); f.state.authorities[0].generation = I;
+        const before = structuredClone(f.state);
+        // Retire also rejects this fixture, but with proof_conflict rather than ineligible_job.
+        expect(await f.repo.cancel(input)).toEqual({ kind: "not_cancellable", reason: "ineligible_job" });
+        expect(f.state).toEqual(before);
+        expect(f.events).toEqual([]);
+    });
+    it.each([G, I])("refuses to cancel a different retirable authority job with generation %s", async generation => {
+        const f = ready();
+        const currentJob = { ...structuredClone(f.state.jobs[0]), id: I, contractGeneration: generation,
+            requestKey: "current-request", activeKey: "current-active" };
+        f.state.jobs.push(currentJob);
+        Object.assign(f.state.authorities[0], { creationJobId: currentJob.id, generation });
+        const before = structuredClone(f.state);
+
+        expect(await f.repo.cancel(input)).toEqual({ kind: "not_cancellable", reason: "ineligible_job" });
+        expect(f.state).toEqual(before);
+        expect(f.events).toEqual([]);
+
+        // The authority's actual job can be retired: no downstream veto masks the binding check.
+        expect(await f.repo.cancel({ ...input, jobId: currentJob.id })).toEqual({ kind: "cancelled" });
+        expect(f.state.jobs[0]).toEqual(before.jobs[0]);
+        expect(f.state.jobs[1]).toMatchObject({ id: currentJob.id, progressStep: "cancelled", activeKey: null, payload: null });
+        expect(f.state.authorities[0]).toMatchObject({ phase: "closed", claimUserId: null, claimExpiresAt: null });
+    });
+    it.each(["lease", "queued", "processing", "reconciling", "completed", "finalize", "service-record", "payload-kind", "live-claim", "legacy", "auto_finalize", "document", "creating", "sent", "detail-creating", "detail-sent", "superseded", "no-authority", "fingerprint", "pointer", "provider", "human-ref", "hidden-human", "blocked", "verified", "document-ready", "pending-zero", "uncertain", "draft-uncertain", "accepted-empty", "job-cas", "authority-cas"])("refuses %s without partial effects", async defect => {
         const f = ready(), job = f.state.jobs[0], a = f.state.authorities[0];
         if (defect === "lease") job.leaseToken = I;
         if (["queued", "processing", "reconciling", "completed"].includes(defect)) job.status = defect;
@@ -47,8 +73,6 @@ describe("document job cancellation", () => {
         if (defect === "document") job.documentId = "provider-document";
         if (["creating", "sent", "superseded"].includes(defect)) job.progressStep = defect;
         if (defect.startsWith("detail-")) job.progressDetail = defect.slice(7);
-        if (defect === "generation") a.generation = I;
-        if (defect === "authority-job") a.creationJobId = I;
         if (defect === "no-authority") f.state.authorities = [];
         if (defect === "fingerprint") a.fingerprint = "wrong";
         if (defect === "pointer") f.state.clients[0].eDocId = "drift";
