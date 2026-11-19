@@ -123,3 +123,12 @@ test('uses the further-along detail checkpoint and keeps status precedence', () 
   rerender(<DocumentJobProgressSummary job={{ ...JOB, status: 'reconciling', progressStep: 'dispatch_authorized', progressDetail: 'info-inserted' }} />);
   expect(screen.getByRole('status', { name: '현재 상태 확인 중' })).not.toHaveAttribute('aria-valuenow');
 });
+
+test.each([true, false])("renders cancellation after the primary action, including without an action (%s)", hasAction => {
+  const { container } = render(<DocumentJobProgressSummary job={JOB} data-component={BASE}
+    action={hasAction ? <span>기본 작업</span> : null} secondaryAction={<span>취소</span>} />);
+  const cancel = container.querySelector('[data-slot="progress-cancel"]')!;
+  expect(cancel).toHaveAttribute("data-component", `${BASE}_cancel`);
+  expect(cancel).toHaveTextContent("취소");
+  expect(cancel.previousElementSibling).toHaveAttribute("data-slot", hasAction ? "progress-action" : "progress-hero");
+});

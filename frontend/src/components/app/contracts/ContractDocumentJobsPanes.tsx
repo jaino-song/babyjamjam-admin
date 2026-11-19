@@ -7,7 +7,7 @@ import { PaneHeader } from "@/components/app/v3/PaneHeader";
 import { SlidingDetailPanel } from "@/components/app/v3/SlidingDetailPanel";
 import { Button } from "@/components/ui/button";
 
-import { ContractDocumentJobDetail } from "./ContractDocumentJobDetail";
+import { ContractDocumentJobDetail, type DocumentJobCancelHandler } from "./ContractDocumentJobDetail";
 import { ContractDocumentJobSummary } from "./ContractDocumentJobSummary";
 import { ContractDocumentJobsList, type ContractDocumentJobsSection } from "./ContractDocumentJobsList";
 import type { ContractDocumentJobsData } from "./ContractDocumentJobsPopover";
@@ -29,6 +29,7 @@ interface ContractDocumentJobsPanesProps {
   isLoading: boolean;
   error?: unknown;
   onRetry?: () => void;
+  onCancel?: DocumentJobCancelHandler;
   onRecover?: (jobId: string, trigger: HTMLButtonElement) => void;
   interactionPaused?: boolean;
   inset?: "default" | "compact";
@@ -36,7 +37,7 @@ interface ContractDocumentJobsPanesProps {
   "data-component": string;
 }
 
-export function ContractDocumentJobsPanes({ ref, memory, onRemember, open, onClose, jobs, isLoading, error, onRetry, onRecover, interactionPaused = false, inset = "default", onNaturalHeight, "data-component": base }: ContractDocumentJobsPanesProps): React.ReactElement {
+export function ContractDocumentJobsPanes({ ref, memory, onRemember, open, onClose, jobs, isLoading, error, onRetry, onRecover, onCancel, interactionPaused = false, inset = "default", onNaturalHeight, "data-component": base }: ContractDocumentJobsPanesProps): React.ReactElement {
   const [selectedId, setSelectedId] = React.useState<string | null>(null);
   const [collapsed, setCollapsed] = React.useState<Record<ContractDocumentJobsSection, boolean>>(memory?.collapsed ?? { processing: false, attention: false, recent: true });
   const cachedHeight = React.useRef<number | null>(memory?.naturalHeight ?? null);
@@ -125,7 +126,7 @@ export function ContractDocumentJobsPanes({ ref, memory, onRemember, open, onClo
           <div data-component={`${slide}_detail-pane_body_scroll_summary`} className="mb-4">
             <ContractDocumentJobSummary job={selected} data-component={`${slide}_detail-pane_body_scroll_summary_job`} />
           </div>
-          <ContractDocumentJobDetail job={selected} onDocumentNavigate={close} onRecover={onRecover} data-component={`${slide}_detail-pane_body_scroll_job`} />
+          <ContractDocumentJobDetail job={selected} onDocumentNavigate={close} onRecover={onRecover} onCancel={onCancel} onCancelled={back} data-component={`${slide}_detail-pane_body_scroll_job`} />
         </div> : null} /> : null}
       </div>
   );
