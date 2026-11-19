@@ -8,6 +8,7 @@ import { Popover, PopoverTrigger } from "@/components/ui/popover";
 import { Sheet, SheetContent, SheetDescription, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { documentJobRecoveryPresentation } from "@/features/document-jobs/recovery-presentation";
 import { recoverJobHref } from "@/features/document-jobs/failure-popup-copy";
+import { useActiveBranchId } from "@/features/system-templates/branch-context";
 import { useIsMobile } from "@/hooks/useIsMobile";
 import { cn } from "@/lib/utils";
 import type { EformsignDocumentJobResponse } from "@/services/eformsign";
@@ -104,7 +105,7 @@ export function ContractDocumentJobsPopover({
   const anchorRef = useRef<HTMLButtonElement>(null);
   const recoveryTrigger = useRef<HTMLButtonElement | null>(null);
   const [recoveryJobId, setRecoveryJobId] = useState<string | null>(null);
-  const [cancelRequest, setCancelRequest] = useState<{ jobId: string; onCancelled?: () => void } | null>(null);
+  const [cancelRequest, setCancelRequest] = useState<{ jobId: string; branchId: string | null; onCancelled?: () => void } | null>(null);
   const [cancelOpen, setCancelOpen] = useState(false);
   const restoreCancelFocus = useRef(false);
   const cancelTrigger = useRef<HTMLButtonElement | null>(null);
@@ -121,9 +122,16 @@ export function ContractDocumentJobsPopover({
   // to its content, so a `fixed inset-x-0` child inside it collapses to a sliver; the sheet is a
   // Dialog portal with no such wrapper.
   const isMobile = useIsMobile();
-  const scope = `${pathname}:${isMobile}`;
+  // Use the same identity source as DocumentJobsProvider and its branch-keyed queries.
+  const branchId = useActiveBranchId();
+  const scope = JSON.stringify([pathname, isMobile, branchId]);
   const [recoveryScope, setRecoveryScope] = useState(scope);
-  if (recoveryScope !== scope) { setRecoveryScope(scope); setRecoveryJobId(null); setCancelRequest(null); }
+  if (recoveryScope !== scope) {
+    setRecoveryScope(scope);
+    setRecoveryJobId(null);
+    setCancelRequest(null);
+    setCancelOpen(false);
+  }
 
   useEffect(() => {
     if (cancelRequest !== null || !restoreCancelFocus.current) return;
@@ -152,10 +160,10 @@ export function ContractDocumentJobsPopover({
   const onCancel: DocumentJobCancelHandler = (jobId, trigger, onCancelled) => {
     cancelTrigger.current = trigger;
     cancelSucceeded.current = false;
-    setCancelRequest({ jobId, onCancelled });
+    setCancelRequest({ jobId, branchId, onCancelled });
     setCancelOpen(true);
   };
-  const cancelDialog = cancelRequest ? <ContractDocumentJobCancelDialog key={cancelRequest.jobId} jobId={cancelRequest.jobId} open={cancelOpen} data-component={sub("cancel")}
+  const cancelDialog = cancelRequest ? <ContractDocumentJobCancelDialog key={cancelRequest.jobId} jobId={cancelRequest.jobId} branchId={cancelRequest.branchId} open={cancelOpen} data-component={sub("cancel")}
     onClose={() => setCancelOpen(false)} onCancelled={() => {
       cancelSucceeded.current = true;
       setCancelOpen(false);
@@ -195,7 +203,7 @@ export function ContractDocumentJobsPopover({
             <SheetTitle className="sr-only">전자문서 작업</SheetTitle>
             <SheetDescription className="sr-only">전자문서 처리 현황</SheetDescription>
             <div data-component={sub("body_handle")} data-slot="document-jobs-sheet-handle" aria-hidden="true" className="mx-auto mt-2.5 h-1 w-10 shrink-0 rounded-full bg-v3-border" />
-            <ContractDocumentJobsPanes ref={panes} inset="compact" open={isOpen} jobs={resolvedJobs} isLoading={resolvedLoading} error={resolvedError} onRetry={resolvedRetry}
+            <ContractDocumentJobsPanes key={scope} ref={panes} inset="compact" open={isOpen} jobs={resolvedJobs} isLoading={resolvedLoading} error={resolvedError} onRetry={resolvedRetry}
               onClose={() => handleOpenChange(false)} onRecover={onRecover} onCancel={onCancel} interactionPaused={interactionPaused} data-component={sub("body_panes")} />
           </div>
         </SheetContent>
@@ -210,6 +218,7 @@ export function ContractDocumentJobsPopover({
     <Popover open={isOpen} onOpenChange={handleOpenChange}>
       <PopoverTrigger ref={anchorRef} asChild aria-controls={undefined} data-slot="document-jobs-trigger">{resolvedTrigger}</PopoverTrigger>
       <ContractDocumentJobsModal
+        key={scope}
         open={isOpen}
         onClose={() => handleOpenChange(false)}
         anchorRef={anchorRef}

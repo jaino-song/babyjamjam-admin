@@ -53,7 +53,7 @@ it("mounts the notice only for maternity contracts, between stats and sections",
     const notice = screen.getByTestId("link-confirmations-notice");
     expect(notice.previousElementSibling).toHaveAttribute("data-slot", "contract-stats-bar");
     expect(notice.nextElementSibling).toHaveAttribute("data-slot", "contracts-sections");
-    expect(container.querySelector('[data-component="desktop_contracts_sections"]')).toBeInTheDocument();
+    expect(container.querySelector('[data-component="desktop_contracts_page_sections"]')).toBeInTheDocument();
     fireEvent.click(screen.getAllByRole("button", { name: "제공기록지" })[0]);
     expect(screen.queryByTestId("link-confirmations-notice")).not.toBeInTheDocument();
     fireEvent.click(screen.getAllByRole("button", { name: "산모 계약서" })[0]);

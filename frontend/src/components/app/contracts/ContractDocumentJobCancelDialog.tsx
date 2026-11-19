@@ -4,10 +4,12 @@ import { useQueryClient } from "@tanstack/react-query";
 import { isAxiosError } from "axios";
 
 import { TwoButtonModal } from "@/components/app/ui/TwoButtonModal";
+import { isBranchContextAligned } from "@/features/system-templates/branch-context";
 import { eformsignDocumentJobsQueryKeys, useCancelDocumentJob } from "@/hooks/useEformsignDocumentJobs";
 
 interface ContractDocumentJobCancelDialogProps {
   jobId: string;
+  branchId: string | null;
   open: boolean;
   onClose: () => void;
   onCancelled: () => void;
@@ -20,12 +22,14 @@ function isNotCancellable(error: unknown): boolean {
     && error.response?.status === 409 && error.response.data?.code === "JOB_NOT_CANCELLABLE";
 }
 
-export function ContractDocumentJobCancelDialog({ jobId, open, onClose, onCancelled, onCloseAutoFocus, "data-component": base }: ContractDocumentJobCancelDialogProps): React.ReactElement {
+export function ContractDocumentJobCancelDialog({ jobId, branchId, open, onClose, onCancelled, onCloseAutoFocus, "data-component": base }: ContractDocumentJobCancelDialogProps): React.ReactElement {
   const cancel = useCancelDocumentJob();
   const queryClient = useQueryClient();
   const sub = (suffix: string) => `${base}_${suffix}`;
   const approve = () => {
     if (cancel.isPending) return;
+    // Read the cookie at approval too: another tab may have switched branches before focus fires.
+    if (!isBranchContextAligned(branchId)) { onClose(); return; }
     cancel.mutate(jobId, {
       onSuccess: onCancelled,
       onError: error => {

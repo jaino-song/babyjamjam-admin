@@ -79,9 +79,9 @@ export default function AdminFeedbackPage() {
   };
 
   return (
-    <PageSection name="desktop_admin">
+    <PageSection name="desktop_admin_page">
       <StatsBar
-        name="desktop_admin" showDocumentJobs="whenActive"
+        name="desktop_admin_page" showDocumentJobs="whenActive"
         isLoading={statsLoading}
         items={[
           { icon: MessageSquare, value: statValue(s => s.total), label: '전체', counter: '건' },
@@ -90,8 +90,8 @@ export default function AdminFeedbackPage() {
         ]}
       />
 
-      <SplitLayout data-component="desktop_admin_split-layout">
-        <ListPanel data-component="desktop_admin_split-layout_list-panel"
+      <SplitLayout data-component="desktop_admin_page_split-layout">
+        <ListPanel data-component="desktop_admin_page_split-layout_list-panel"
           title="피드백 목록"
           tabs={filterItems}
           activeTab={filterType}
@@ -102,7 +102,7 @@ export default function AdminFeedbackPage() {
           emptyState={!feedbackLoading && filteredList.length === 0 ? (
             feedbackError && !hasFeedbackData ? (
               <QueryErrorState
-                dataComponent="desktop_admin_split-layout_list-panel_load-error"
+                dataComponent="desktop_admin_page_split-layout_list-panel_load-error"
                 size="panel"
                 className="pointer-events-auto"
                 title="피드백을 불러오지 못했습니다"
@@ -116,7 +116,7 @@ export default function AdminFeedbackPage() {
         >
           {feedbackError && hasFeedbackData ? (
             <QueryErrorState
-              dataComponent="desktop_admin_split-layout_list-panel_load-error"
+              dataComponent="desktop_admin_page_split-layout_list-panel_load-error"
               size="inline"
               title="최신 정보를 불러오지 못했습니다"
               onRetry={() => void refetchFeedback()}
@@ -140,10 +140,10 @@ export default function AdminFeedbackPage() {
                 if (slotLoading) {
                   return (
                     <>
-                      <div data-component="desktop_admin_split-layout_list-panel_admin-list-item-skeleton-icon" className="w-9 h-9 rounded-[10px] shrink-0 bg-v3-dim-white flex items-center justify-center">
+                      <div data-component="desktop_admin_page_split-layout_list-panel_admin-list-item-skeleton-icon" className="w-9 h-9 rounded-[10px] shrink-0 bg-v3-dim-white flex items-center justify-center">
                         <Skeleton className="w-4 h-4 rounded-md bg-white/70" />
                       </div>
-                      <div data-component="desktop_admin_split-layout_list-panel_admin-list-item-skeleton-content" className="flex-1 min-w-0">
+                      <div data-component="desktop_admin_page_split-layout_list-panel_admin-list-item-skeleton-content" className="flex-1 min-w-0">
                         <Skeleton className="h-4 w-24 mb-1.5 bg-v3-dim-white" />
                         <Skeleton className="h-3 w-32 bg-v3-dim-white" />
                       </div>
@@ -154,7 +154,7 @@ export default function AdminFeedbackPage() {
                 if (!feedback) return null;
                 return (
                   <AnimatedSlotListItemContent
-                    dataComponent="desktop_admin_split-layout_list-panel_admin-list-item"
+                    dataComponent="desktop_admin_page_split-layout_list-panel_admin-list-item"
                     icon={feedback.type === 'positive' ? ThumbsUp : ThumbsDown}
                     iconContainerClassName={feedback.type === 'positive' ? 'bg-emerald-50' : 'bg-red-50'}
                     iconClassName={feedback.type === 'positive' ? 'text-emerald-500' : 'text-red-500'}
@@ -206,7 +206,7 @@ function FeedbackDetail({ feedback, formatDate }: { feedback: FeedbackItem; form
   const detailLoading = detailQueryLoading || (detailPaused && !hasDetail);
 
   return (
-    <DetailPanel data-component="desktop_admin_split-layout_detail-panel"
+    <DetailPanel data-component="desktop_admin_page_split-layout_detail-panel"
       title={feedback.type === 'positive' ? '긍정적 피드백' : '부정적 피드백'}
       badges={
         <span className={cn(
@@ -220,8 +220,8 @@ function FeedbackDetail({ feedback, formatDate }: { feedback: FeedbackItem; form
       }
       subtitle={<>작성일: {formatDate(feedback.createdAt)}</>}
     >
-      <div data-component="desktop_admin_split-layout_detail-panel_admin-detail-content" className="space-y-5">
-        <InfoCard data-component="desktop_admin_detail-panel_info-card" title="피드백 정보">
+      <div data-component="desktop_admin_page_split-layout_detail-panel_admin-detail-content" className="space-y-5">
+        <InfoCard data-component="desktop_admin_page_detail-panel_info-card" title="피드백 정보">
           <InfoRow label="유형" value={feedback.type === 'positive' ? '긍정적' : '부정적'} />
           <InfoRow label="사용자" value={feedback.user.name || feedback.user.email || '익명'} />
           <InfoRow label="날짜" value={formatDate(feedback.createdAt)} />
@@ -230,7 +230,7 @@ function FeedbackDetail({ feedback, formatDate }: { feedback: FeedbackItem; form
 
         {detailError && hasDetail ? (
           <QueryErrorState
-            dataComponent="desktop_admin_detail-panel_detail-load-error"
+            dataComponent="desktop_admin_page_detail-panel_detail-load-error"
             size="inline"
             title="최신 정보를 불러오지 못했습니다"
             onRetry={() => void refetchDetail()}
@@ -239,10 +239,10 @@ function FeedbackDetail({ feedback, formatDate }: { feedback: FeedbackItem; form
         ) : null}
 
         {detailLoading ? (
-          <InfoCard data-component="desktop_admin_detail-panel_info-card-2" title="대화 내역">
-            <div data-component="desktop_admin_detail-panel_info-card-2_loading-messages" className="space-y-3">
+          <InfoCard data-component="desktop_admin_page_detail-panel_info-card-2" title="대화 내역">
+            <div data-component="desktop_admin_page_detail-panel_info-card-2_loading-messages" className="space-y-3">
               {[1, 2, 3].map(i => (
-                <div key={i} data-component="desktop_admin_detail-panel_info-card-2_loading-messages_message" className="space-y-2">
+                <div key={i} data-component="desktop_admin_page_detail-panel_info-card-2_loading-messages_message" className="space-y-2">
                   <Skeleton className="h-3 w-20 bg-v3-dim-white" />
                   <Skeleton className="h-12 w-full bg-v3-dim-white rounded-[14px]" />
                 </div>
@@ -251,22 +251,22 @@ function FeedbackDetail({ feedback, formatDate }: { feedback: FeedbackItem; form
           </InfoCard>
         ) : detailError && !hasDetail ? (
           <QueryErrorState
-            dataComponent="desktop_admin_detail-panel_detail-load-error"
+            dataComponent="desktop_admin_page_detail-panel_detail-load-error"
             size="inline"
             title="대화 내역을 불러오지 못했습니다"
             onRetry={() => void refetchDetail()}
             isRetrying={detailFetching}
           />
         ) : detail?.session?.messages && detail.session.messages.length > 0 ? (
-          <InfoCard data-component="desktop_admin_detail-panel_info-card-3" title="대화 내역">
-            <div data-component="desktop_admin_detail-panel_info-card-3_messages" className="space-y-3">
+          <InfoCard data-component="desktop_admin_page_detail-panel_info-card-3" title="대화 내역">
+            <div data-component="desktop_admin_page_detail-panel_info-card-3_messages" className="space-y-3">
               {detail.session.messages.map((message: SessionMessage) => {
                 const isHighlighted = message.id === detail.message.id;
                 const isUser = message.role === 'user';
 
                 return (
                   <div
-                    data-component="desktop_admin_detail-panel_info-card-3_messages_card"
+                    data-component="desktop_admin_page_detail-panel_info-card-3_messages_card"
                     key={message.id}
                     className={cn(
                       'rounded-[14px] p-3 text-[0.8rem]',
@@ -277,7 +277,7 @@ function FeedbackDetail({ feedback, formatDate }: { feedback: FeedbackItem; form
                           : 'bg-v3-dim-white'
                     )}
                   >
-                     <div data-component="desktop_admin_detail-panel_info-card-3_messages_card_meta" className="flex items-center gap-2 mb-1.5">
+                     <div data-component="desktop_admin_page_detail-panel_info-card-3_messages_card_meta" className="flex items-center gap-2 mb-1.5">
                       <span className={cn(
                         'text-[0.7rem] font-semibold',
                         isHighlighted ? 'text-amber-600' : isUser ? 'text-v3-primary' : 'text-v3-text-muted'
@@ -294,7 +294,7 @@ function FeedbackDetail({ feedback, formatDate }: { feedback: FeedbackItem; form
                     {isUser ? (
                       <p className="text-v3-text whitespace-pre-wrap break-words">{message.content}</p>
                     ) : (
-                       <div data-component="desktop_admin_detail-panel_info-card-3_messages_card_content" className="prose prose-sm max-w-none text-v3-text">
+                       <div data-component="desktop_admin_page_detail-panel_info-card-3_messages_card_content" className="prose prose-sm max-w-none text-v3-text">
                         <ReactMarkdown
                           remarkPlugins={[remarkGfm]}
                           components={{
