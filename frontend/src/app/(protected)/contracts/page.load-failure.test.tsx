@@ -120,6 +120,20 @@ beforeEach(() => {
   listState();
 });
 
+it("scopes the real contract stats and document-jobs trigger to a canonical page root", () => {
+  const { container } = renderPage("maternity");
+  const stats = container.querySelector('[data-slot="contract-stats-bar"]');
+  const root = stats?.parentElement;
+  expect(root).toHaveAttribute("data-component", "desktop_contracts_page");
+  expect(root?.getAttribute("data-component")).toMatch(/^(desktop|mobile)_[a-z0-9]+(?:-[a-z0-9]+)*(?:_[a-z0-9]+(?:-[a-z0-9]+)*){1,}$/);
+  expect(stats).toHaveAttribute("data-component", `${root?.getAttribute("data-component")}_stats`);
+  const trigger = screen.getByRole("button", { name: "전자문서 처리중 작업 보기" });
+  expect(trigger).toHaveAttribute("data-component", "desktop_contracts_page_stats_document-jobs-popover_trigger");
+  for (const child of (stats?.querySelectorAll("[data-component]") ?? [])) {
+    expect(child.getAttribute("data-component")).toMatch(/^desktop_contracts_page_stats_/);
+  }
+});
+
 describe.each([
   ["maternity", "계약 문서가 없습니다"],
   ["service-records", "아직 제공기록지가 없습니다"],
@@ -220,13 +234,13 @@ it("keeps an open detail mounted when a cached list refetch fails", async () => 
   const view = renderPage("maternity");
   await act(async () => { fireEvent.click(row()); });
   const detail = view.container.querySelector(
-    '[data-component="desktop_contracts_sections_section-content_maternity-section_split-layout_detail-panel-document"]',
+    '[data-component="desktop_contracts_page_sections_section-content_maternity-section_split-layout_detail-panel-document"]',
   );
   expect(detail).not.toBeNull();
   listState({ documents: [document], isError: true, error: new Error("refresh failed") });
   view.rerenderPage();
   expect(view.container.querySelector(
-    '[data-component="desktop_contracts_sections_section-content_maternity-section_split-layout_detail-panel-document"]',
+    '[data-component="desktop_contracts_page_sections_section-content_maternity-section_split-layout_detail-panel-document"]',
   )).toBe(detail);
   expect(row()).toBeInTheDocument();
   expect(screen.getAllByRole("alert")).toHaveLength(2);

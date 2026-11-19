@@ -11,6 +11,7 @@ import {
 } from "@/features/document-jobs/testing/jobs-test-utils";
 import { eformsignApi } from "@/services/api";
 import { api } from "@/lib/api/client";
+import { eformsignDocumentJobsQueryKeys } from "@/hooks/useEformsignDocumentJobs";
 
 import { StatsBar } from "../StatsBar";
 
@@ -98,11 +99,72 @@ describe("StatsBar document jobs card", () => {
     expect(card).not.toHaveTextContent("실패");
   });
 
-  // Caller ownership is checked by the six page/manager render suites.
+  it.each([390, 1280])("clears branch-A confirmation and detail after a branch switch at %spx", async width => {
+    const originalWidth = window.innerWidth;
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: width });
+    const job = makeJob({ jobId: "branch-a-job", cancellable: true, status: "requires_attention" });
+    jest.spyOn(eformsignApi, "getDocumentJobSummary").mockResolvedValue(makeSummary({ unresolvedJobIds: [job.jobId] }));
+    jest.mocked(eformsignApi.getDocumentJobs).mockResolvedValue(makeJobList({ requiresAttention: [job] }));
+    const post = jest.spyOn(api, "post").mockResolvedValue({ data: {} });
+    const queryClient = createTestQueryClient();
+    try {
+      render(<JobsTestWrapper queryClient={queryClient}>
+        <StatsBar name="desktop_clients_page" items={[]} showDocumentJobs="whenActive" />
+      </JobsTestWrapper>);
+      fireEvent.click(await screen.findByRole("button", { name: "문서 처리 실패 작업 보기" }));
+      fireEvent.click(await screen.findByRole("button", { name: /김하늘.*상세 보기/ }));
+      fireEvent.click(screen.getByRole("button", { name: "취소" }));
+      const confirmation = await screen.findByRole("dialog", { name: "이 작업을 취소할까요?" });
+      const approve = within(confirmation).getByRole("button", { name: "작업 취소" });
+
+      // Keep both branch caches populated so reset cannot rely on a loading gap or missing job.
+      queryClient.setQueryData(eformsignDocumentJobsQueryKeys.summary("branch-b"), makeSummary({ unresolvedJobIds: [job.jobId] }));
+      queryClient.setQueryData(eformsignDocumentJobsQueryKeys.list("branch-b"), makeJobList({ requiresAttention: [job] }));
+      act(() => { setBranchCookie("branch-b"); window.dispatchEvent(new Event("focus")); });
+      await waitFor(() => expect(confirmation).not.toBeInTheDocument());
+      expect(screen.getByRole("dialog", { name: "전자문서 작업" })).toBeInTheDocument();
+      expect(document.querySelector('[data-slot="sliding-detail-panel"]')).toHaveAttribute("data-open", "false");
+      expect(screen.queryByRole("button", { name: "취소" })).not.toBeInTheDocument();
+      fireEvent.click(approve);
+      expect(post).not.toHaveBeenCalled();
+    } finally {
+      queryClient.clear();
+      Object.defineProperty(window, "innerWidth", { configurable: true, value: originalWidth });
+    }
+  });
+
+  it.each([390, 1280])("refuses approval if the branch cookie changed before focus at %spx", async width => {
+    const originalWidth = window.innerWidth;
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: width });
+    const job = makeJob({ jobId: "branch-a-job", cancellable: true, status: "requires_attention" });
+    jest.spyOn(eformsignApi, "getDocumentJobSummary").mockResolvedValue(makeSummary({ unresolvedJobIds: [job.jobId] }));
+    jest.mocked(eformsignApi.getDocumentJobs).mockResolvedValue(makeJobList({ requiresAttention: [job] }));
+    const post = jest.spyOn(api, "post").mockResolvedValue({ data: {} });
+    const queryClient = createTestQueryClient();
+    try {
+      render(<JobsTestWrapper queryClient={queryClient}>
+        <StatsBar name="desktop_clients_page" items={[]} showDocumentJobs="whenActive" />
+      </JobsTestWrapper>);
+      fireEvent.click(await screen.findByRole("button", { name: "문서 처리 실패 작업 보기" }));
+      fireEvent.click(await screen.findByRole("button", { name: /김하늘.*상세 보기/ }));
+      fireEvent.click(screen.getByRole("button", { name: "취소" }));
+      const confirmation = await screen.findByRole("dialog", { name: "이 작업을 취소할까요?" });
+      // No focus/pageshow notification: the approval callback must read the cookie itself.
+      setBranchCookie("branch-b");
+      fireEvent.click(within(confirmation).getByRole("button", { name: "작업 취소" }));
+      await waitFor(() => expect(confirmation).not.toBeInTheDocument());
+      expect(post).not.toHaveBeenCalled();
+    } finally {
+      queryClient.clear();
+      Object.defineProperty(window, "innerWidth", { configurable: true, value: originalWidth });
+    }
+  });
+
+  // Caller ownership is also checked by the real page/manager render suites.
   it.each([390, 1280])("keeps the empty list open after cancelling the last unresolved job at %spx, then hides the card on close", async width => {
     const originalWidth = window.innerWidth;
     Object.defineProperty(window, "innerWidth", { configurable: true, value: width });
-    const base = "desktop_clients";
+    const base = "desktop_clients_page";
     const job = makeJob({ cancellable: true, status: "requires_attention" });
     let cancelled = false;
     jest.mocked(eformsignApi.getDocumentJobs).mockRestore();
@@ -214,19 +276,19 @@ describe("StatsBar document jobs card", () => {
 describe("StatsBar trailing slot", () => {
   it("renders trailing after existing mapped items", () => {
     render(<JobsTestWrapper queryClient={createTestQueryClient()}>
-      <StatsBar name="desktop_clients" items={ITEMS} trailing={<span>추가 통계</span>} />
+      <StatsBar name="desktop_clients_page" items={ITEMS} trailing={<span>추가 통계</span>} />
     </JobsTestWrapper>);
-    const bar = document.querySelector('[data-component="desktop_clients_stats"]')!;
+    const bar = document.querySelector('[data-component="desktop_clients_page_stats"]')!;
     expect(bar.lastElementChild).toHaveTextContent("추가 통계");
-    expect(bar.children[0]).toHaveAttribute("data-component", "desktop_clients_stats_item-0");
-    expect(bar.children[1]).toHaveAttribute("data-component", "desktop_clients_stats_item-1");
+    expect(bar.children[0]).toHaveAttribute("data-component", "desktop_clients_page_stats_item-0");
+    expect(bar.children[1]).toHaveAttribute("data-component", "desktop_clients_page_stats_item-1");
   });
 
   it("preserves the empty-row early return even with a trailing slot", () => {
     render(<JobsTestWrapper queryClient={createTestQueryClient()}>
-      <StatsBar name="desktop_clients" items={[]} trailing={<span>추가 통계</span>} />
+      <StatsBar name="desktop_clients_page" items={[]} trailing={<span>추가 통계</span>} />
     </JobsTestWrapper>);
-    expect(document.querySelector('[data-component="desktop_clients_stats"]')).toBeNull();
+    expect(document.querySelector('[data-component="desktop_clients_page_stats"]')).toBeNull();
     expect(screen.queryByText("추가 통계")).not.toBeInTheDocument();
   });
 });

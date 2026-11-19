@@ -200,9 +200,9 @@ export default function ConsultationsPage() {
     }, [statsInquiries]);
 
     return (
-        <PageSection name="desktop_consultations"><div data-slot="page-scroll-region" className="contents max-md:flex max-md:min-h-0 max-md:flex-1 max-md:flex-col max-md:gap-[calc(24px*var(--glint-ui-scale,1))] max-md:overflow-y-auto">
+        <PageSection name="desktop_consultations_page"><div data-slot="page-scroll-region" className="contents max-md:flex max-md:min-h-0 max-md:flex-1 max-md:flex-col max-md:gap-[calc(24px*var(--glint-ui-scale,1))] max-md:overflow-y-auto">
             <StatsBar
-                name="desktop_consultations" showDocumentJobs="whenActive"
+                name="desktop_consultations_page" showDocumentJobs="whenActive"
                 isLoading={isListLoading || isStatsLoading}
                 items={[
                     { icon: Headset, value: statsUnavailable ? "—" : stats.currentMonthTotal, label: "이번달 전체 상담", counter: "건" },
@@ -212,14 +212,14 @@ export default function ConsultationsPage() {
                 ]}
             />
             <div data-slot="split-area" className="flex min-h-0 flex-1 flex-col max-md:min-h-[calc(100vh-calc(160px*var(--glint-ui-scale,1)))]">
-            <SplitLayout data-component="desktop_consultations_split-layout"
+            <SplitLayout data-component="desktop_consultations_page_split-layout"
                 hasSelection={!!activeInquiry}
                 onBack={() => {
                     setSelectedInquiry(null);
                     setActiveDetailTab("customer");
                 }}
             >
-                <ListPanel data-component="desktop_consultations_split-layout_list-panel"
+                <ListPanel data-component="desktop_consultations_page_split-layout_list-panel"
                     title="상담 문의"
                     tabs={READ_TABS}
                     activeTab={activeReadState}
@@ -234,7 +234,7 @@ export default function ConsultationsPage() {
                     isLoading={isListLoading}
                     emptyState={!isListLoading && visibleInquiries.length === 0 ? (
                         activeListQuery.isError && !hasListData ? <QueryErrorState
-                            dataComponent="desktop_consultations_split-layout_list-panel_load-error"
+                            dataComponent="desktop_consultations_page_split-layout_list-panel_load-error"
                             size="panel"
                             className="pointer-events-auto"
                             onRetry={() => void activeListQuery.refetch()}
@@ -246,7 +246,7 @@ export default function ConsultationsPage() {
                 >
                     {activeListQuery.isError && hasListData ? (
                         <QueryErrorState
-                            dataComponent="desktop_consultations_split-layout_list-panel_load-error"
+                            dataComponent="desktop_consultations_page_split-layout_list-panel_load-error"
                             size="inline"
                             title="최신 정보를 불러오지 못했습니다"
                             onRetry={() => void activeListQuery.refetch()}
@@ -283,7 +283,7 @@ export default function ConsultationsPage() {
                                 return (
                                     <>
                                         <Skeleton className="h-11 w-11 shrink-0 rounded-[14px] bg-v3-dim-white" />
-                                        <div data-component="desktop_consultations_split-layout_list-panel_consultations-list-item-skeleton-content" className="min-w-0 flex-1">
+                                        <div data-component="desktop_consultations_page_split-layout_list-panel_consultations-list-item-skeleton-content" className="min-w-0 flex-1">
                                             <Skeleton className="mb-2 h-4 w-28 bg-v3-dim-white" />
                                             <Skeleton className="h-3 w-44 bg-v3-dim-white" />
                                         </div>
@@ -296,7 +296,7 @@ export default function ConsultationsPage() {
 
                             return (
                                 <AnimatedSlotListItemContent
-                                    dataComponent="desktop_consultations_split-layout_list-panel_consultations-list-item"
+                                    dataComponent="desktop_consultations_page_split-layout_list-panel_consultations-list-item"
                                     icon={Headset}
                                     iconContainerClassName={getConsultationAvatarClassName(item.readAt)}
                                     title={item.motherName}
@@ -319,9 +319,9 @@ export default function ConsultationsPage() {
                 </ListPanel>
 
                 {activeInquiry ? (
-                    <DetailPanel data-component="desktop_consultations_split-layout_detail-panel"
+                    <DetailPanel data-component="desktop_consultations_page_split-layout_detail-panel"
                         avatar={
-                            <div data-component="desktop_consultations_split-layout_detail-panel_consultations-detail-avatar" className={cn("flex h-16 w-16 shrink-0 items-center justify-center rounded-[20px] shadow-lg", getConsultationAvatarClassName(activeInquiry.readAt))}>
+                            <div data-component="desktop_consultations_page_split-layout_detail-panel_consultations-detail-avatar" className={cn("flex h-16 w-16 shrink-0 items-center justify-center rounded-[20px] shadow-lg", getConsultationAvatarClassName(activeInquiry.readAt))}>
                                 <UserRound className="h-7 w-7" />
                             </div>
                         }
@@ -343,14 +343,14 @@ export default function ConsultationsPage() {
                         <DetailTabPanels
                             insetPanels
                             activeTab={activeDetailTab}
-                            dataComponent="desktop_consultations_split-layout_detail-panel_consultations-detail"
-                            panelDataComponent="desktop_consultations_split-layout_detail-panel_consultations-detail-panel"
+                            dataComponent="desktop_consultations_page_split-layout_detail-panel_consultations-detail"
+                            panelDataComponent="desktop_consultations_page_split-layout_detail-panel_consultations-detail-panel"
                             panels={[
                                 {
                                     key: "customer",
                                     children: (
-                                        <div data-component="desktop_consultations_split-layout_detail-panel_consultations-detail-basic-grid" className="grid grid-cols-1 gap-4">
-                                            <InfoCard data-component="desktop_consultations_detail-panel_info-card" title="고객 정보">
+                                        <div data-component="desktop_consultations_page_split-layout_detail-panel_consultations-detail-basic-grid" className="grid grid-cols-1 gap-4">
+                                            <InfoCard data-component="desktop_consultations_page_detail-panel_info-card" title="고객 정보">
                                                 <InfoRow label="이름" value={activeInquiry.motherName} />
                                                 <InfoRow label="연락처" value={activeInquiry.phone} />
                                                 <InfoRow label="주소" value={activeInquiry.address} />
@@ -364,8 +364,8 @@ export default function ConsultationsPage() {
                                 {
                                     key: "inquiry",
                                     children: (
-                                        <div data-component="desktop_consultations_split-layout_detail-panel_consultations-detail-inquiry-grid" className="grid grid-cols-[repeat(3,minmax(0,1fr))] gap-4">
-                                            <InfoCard data-component="desktop_consultations_detail-panel_info-card-2" title="문의 정보" className="min-w-0 content-start">
+                                        <div data-component="desktop_consultations_page_split-layout_detail-panel_consultations-detail-inquiry-grid" className="grid grid-cols-[repeat(3,minmax(0,1fr))] gap-4">
+                                            <InfoCard data-component="desktop_consultations_page_detail-panel_info-card-2" title="문의 정보" className="min-w-0 content-start">
                                                 <InfoRow label="근무 지역" value={getInquiryRegion(activeInquiry.address)} />
                                                 <InfoRow label="추천 경로" value={activeInquiry.referralSource || "-"} />
                                                 <InfoRow label="선호 매니저" value={activeInquiry.preferredCaregiverName || "-"} />
@@ -384,9 +384,9 @@ export default function ConsultationsPage() {
                                                     }
                                                 />
                                                 {previousConsultationDates.length > 0 ? (
-                                                    <div data-component="desktop_consultations_detail-panel_info-card-2_consultations-phone-history" className="flex items-start gap-4 py-2.5 border-b border-v3-border last:border-b-0">
+                                                    <div data-component="desktop_consultations_page_detail-panel_info-card-2_consultations-phone-history" className="flex items-start gap-4 py-2.5 border-b border-v3-border last:border-b-0">
                                                         <span className="shrink-0 text-[0.8rem] text-v3-text-muted">이전 상담</span>
-                                                        <span data-component="desktop_consultations_detail-panel_info-card-2_consultations-phone-history_values" className="ml-auto min-w-0 flex-1 text-[0.8rem] font-semibold text-v3-dark text-right">
+                                                        <span data-component="desktop_consultations_page_detail-panel_info-card-2_consultations-phone-history_values" className="ml-auto min-w-0 flex-1 text-[0.8rem] font-semibold text-v3-dark text-right">
                                                             {previousConsultationDates.map((date) => (
                                                                 <span key={date} className="block">
                                                                     {date}
@@ -397,9 +397,9 @@ export default function ConsultationsPage() {
                                                 ) : null}
                                             </InfoCard>
 
-                                            <SelectedServicesCard inquiry={activeInquiry} className="min-w-0 content-start" />
+                                            <SelectedServicesCard data-component="desktop_consultations_page_split-layout_detail-panel_consultations-detail-inquiry-grid_selected-services-card" inquiry={activeInquiry} className="min-w-0 content-start" />
 
-                                            <InfoCard data-component="desktop_consultations_detail-panel_info-card-3" title="문의 상태" className="min-w-0 content-start">
+                                            <InfoCard data-component="desktop_consultations_page_detail-panel_info-card-3" title="문의 상태" className="min-w-0 content-start">
                                                 <InfoRow
                                                     label="확인 여부"
                                                     value={

@@ -229,7 +229,7 @@ describe("ContractsPage iframe recovery entry", () => {
     expect(screen.queryByTestId("stub-step")).not.toBeInTheDocument();
     await act(async () => finish());
     await waitFor(() => expect(screen.queryByRole("dialog", { name: "전자문서 작업 복구" })).not.toBeInTheDocument());
-    expect(document.querySelector('[data-component^="desktop_contracts_sections_section-content_maternity-section_split-layout_detail-panel-document"]')).toBeInTheDocument();
+    expect(document.querySelector('[data-component^="desktop_contracts_page_sections_section-content_maternity-section_split-layout_detail-panel-document"]')).toBeInTheDocument();
     expect(openRecovery).not.toHaveBeenCalled();
     expect(screen.queryByTestId("stub-step")).not.toBeInTheDocument();
   });
@@ -262,7 +262,7 @@ describe("ContractsPage iframe recovery entry", () => {
 
     await waitFor(() => expect(screen.queryByRole("dialog", { name: "고객 등록" })).not.toBeInTheDocument());
     expect(screen.queryByRole("dialog", { name: "전자문서 결과 확인 필요" })).not.toBeInTheDocument();
-    const detail = document.querySelector<HTMLElement>('[data-component="desktop_contracts_sections_section-content_maternity-section_split-layout_detail-panel-document"]');
+    const detail = document.querySelector<HTMLElement>('[data-component="desktop_contracts_page_sections_section-content_maternity-section_split-layout_detail-panel-document"]');
     expect(detail).toBeInTheDocument();
     if (!detail) throw new Error("Expected the recovered contract detail panel");
     expect(within(detail).getByText(targetDocument.document_name)).toBeVisible();
@@ -307,7 +307,7 @@ describe("ContractsPage iframe recovery entry", () => {
     mockParams = new URLSearchParams("recoverJobId=old-finalize"); renderPage();
     fireEvent.click(await screen.findByRole("button", { name: "계약서 보기" }));
     await waitFor(() => expect(screen.queryByRole("dialog", { name: "전자문서 결과 확인 필요" })).not.toBeInTheDocument());
-    expect(document.querySelector('[data-component^="desktop_contracts_sections_section-content_maternity-section_split-layout_detail-panel-document"]')).toBeInTheDocument();
+    expect(document.querySelector('[data-component^="desktop_contracts_page_sections_section-content_maternity-section_split-layout_detail-panel-document"]')).toBeInTheDocument();
     expect(openRecovery).not.toHaveBeenCalled(); expect(eformsignApi.resolveDocumentJob).not.toHaveBeenCalled();
     expect(screen.queryByTestId("stub-step")).not.toBeInTheDocument();
   });

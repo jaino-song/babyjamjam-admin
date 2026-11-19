@@ -155,17 +155,17 @@ export function FileStoragePage() {
   };
 
   return (
-    <PageSection name="desktop_files">
+    <PageSection name="desktop_files_page">
       <StatsBar
-        name="desktop_files" showDocumentJobs="whenActive"
+        name="desktop_files_page" showDocumentJobs="whenActive"
         items={[
           { icon: FolderOpen, value: stats.total, label: "전체 파일", counter: "건" },
           { icon: Tag, value: stats.categoryCount, label: "카테고리", counter: "개", colorIndex: 1 },
         ]}
       />
 
-      <SplitLayout data-component="desktop_files_split-layout" hasSelection={!!selectedDocument} onBack={() => setSelectedDocId(null)}>
-        <ListPanel data-component="desktop_files_split-layout_list-panel"
+      <SplitLayout data-component="desktop_files_page_split-layout" hasSelection={!!selectedDocument} onBack={() => setSelectedDocId(null)}>
+        <ListPanel data-component="desktop_files_page_split-layout_list-panel"
           title="파일 목록"
           tabs={filterItems}
           activeTab={activeFilter}
@@ -179,13 +179,13 @@ export function FileStoragePage() {
               icon={Upload}
               label="업로드"
               onClick={() => setIsUploadOpen(true)}
-              data-component="desktop_files_split-layout_list-panel_files-upload-btn"
+              data-component="desktop_files_page_split-layout_list-panel_files-upload-btn"
             />
           }
           emptyState={!isDocumentsLoading && filteredDocs.length === 0 ? (
             isError && documentsData === undefined ? (
               <QueryErrorState
-                dataComponent="desktop_files_split-layout_list-panel_load-error"
+                dataComponent="desktop_files_page_split-layout_list-panel_load-error"
                 title="문서를 불러오지 못했습니다"
                 size="panel"
                 className="pointer-events-auto"
@@ -197,7 +197,7 @@ export function FileStoragePage() {
         >
           {isError && documentsData !== undefined ? (
             <QueryErrorState
-              dataComponent="desktop_files_split-layout_list-panel_load-error"
+              dataComponent="desktop_files_page_split-layout_list-panel_load-error"
               title="최신 정보를 불러오지 못했습니다"
               size="inline"
               onRetry={() => void refetch()}
@@ -222,10 +222,10 @@ export function FileStoragePage() {
                 if (slotLoading) {
                   return (
                     <>
-                      <div data-component="desktop_files_split-layout_list-panel_files-list-item-skeleton-icon" className="w-9 h-9 rounded-[10px] shrink-0 bg-v3-dim-white flex items-center justify-center">
+                      <div data-component="desktop_files_page_split-layout_list-panel_files-list-item-skeleton-icon" className="w-9 h-9 rounded-[10px] shrink-0 bg-v3-dim-white flex items-center justify-center">
                         <Skeleton className="w-4 h-4 rounded-md bg-white/70" />
                       </div>
-                      <div data-component="desktop_files_split-layout_list-panel_files-list-item-skeleton-content" className="flex-1 min-w-0">
+                      <div data-component="desktop_files_page_split-layout_list-panel_files-list-item-skeleton-content" className="flex-1 min-w-0">
                         <Skeleton className="h-4 w-24 mb-1.5 bg-v3-dim-white" />
                         <Skeleton className="h-3 w-32 bg-v3-dim-white" />
                       </div>
@@ -236,7 +236,7 @@ export function FileStoragePage() {
                 if (!doc) return null;
                 return (
                   <AnimatedSlotListItemContent
-                    dataComponent="desktop_files_split-layout_list-panel_files-list-item"
+                    dataComponent="desktop_files_page_split-layout_list-panel_files-list-item"
                     icon={getFileIcon(doc)}
                     iconContainerClassName="bg-v3-primary-light"
                     title={doc.name}
@@ -277,12 +277,12 @@ export function FileStoragePage() {
 
       <Dialog open={isUploadOpen} onOpenChange={handleUploadOpenChange}>
         <DialogContent
-          data-component="desktop_files_upload-dialog"
+          data-component="desktop_files_page_upload-dialog"
           showCloseButton={false}
           className="flex max-h-[90vh] w-[min(720px,calc(100vw-1.5rem))] max-w-[720px] flex-col overflow-hidden rounded-[28px] border-none bg-v3-dim-white p-0 shadow-[0_20px_60px_hsla(214,50%,20%,0.15)] gap-0"
         >
           <DialogHeader className="shrink-0 flex-row items-start justify-between border-b border-v3-border bg-white p-6 text-left">
-            <div data-component="desktop_files_upload-dialog_heading" className="flex min-w-0 flex-col items-start gap-2 pr-12">
+            <div data-component="desktop_files_page_upload-dialog_heading" className="flex min-w-0 flex-col items-start gap-2 pr-12">
               <DialogTitle className="flex items-center gap-2 text-[1.35rem] font-bold tracking-[-0.02em] text-v3-dark">
                 <Upload className="h-5 w-5 text-v3-primary" />
                 파일 업로드
@@ -302,9 +302,9 @@ export function FileStoragePage() {
               <X className="h-4 w-4" />
             </Button>
           </DialogHeader>
-          <div data-component="desktop_files_upload-dialog_content" className="min-h-0 flex-1 overflow-y-auto bg-white px-6 py-6">
+          <div data-component="desktop_files_page_upload-dialog_content" className="min-h-0 flex-1 overflow-y-auto bg-white px-6 py-6">
             <DocumentDropzone
-              data-component="desktop_files_upload-dialog_dropzone"
+              data-component="desktop_files_page_upload-dialog_dropzone"
               formId={FILES_UPLOAD_FORM_ID}
               showInlineSubmitButton={false}
               onUploadStateChange={setUploadDropzoneState}
@@ -337,7 +337,7 @@ export function FileStoragePage() {
       </Dialog>
 
       <DocumentPreviewModal
-        data-component="desktop_files_preview-dialog"
+        data-component="desktop_files_page_preview-dialog"
         open={!!previewDoc}
         onClose={() => setPreviewDoc(null)}
         doc={previewDoc}
@@ -361,7 +361,7 @@ export function FileStoragePage() {
         onOpenChange={(open) => {
           if (!open) setDeleteDoc(null);
         }}
-        dataComponent="desktop_files_delete-approval"
+        dataComponent="desktop_files_page_delete-approval"
         title="문서를 삭제하시겠습니까?"
         description="이 작업은 되돌릴 수 없어요."
         approvalLabel="삭제"
@@ -382,10 +382,10 @@ function FileDetail({ document: doc, getCategoryLabel, onPreview, onEdit, onDele
   onDelete: () => void;
 }) {
   return (
-    <DetailPanel data-component="desktop_files_split-layout_detail-panel"
+    <DetailPanel data-component="desktop_files_page_split-layout_detail-panel"
       title={doc.name}
       badges={
-        <div data-component="desktop_files_split-layout_detail-panel_visibility-badges" className="flex flex-wrap items-center gap-2">
+        <div data-component="desktop_files_page_split-layout_detail-panel_visibility-badges" className="flex flex-wrap items-center gap-2">
           <span className="inline-flex items-center rounded-[50px] px-3 py-1 text-[0.65rem] font-semibold bg-v3-primary-light text-v3-primary">
             {getCategoryLabel(doc)}
           </span>
@@ -396,11 +396,11 @@ function FileDetail({ document: doc, getCategoryLabel, onPreview, onEdit, onDele
       }
       subtitle={<>등록일: {formatDate(doc.createdAt)}</>}
       trailing={
-        <div data-component="desktop_files_split-layout_detail-panel_files-detail-actions" className="flex items-center gap-2">
+        <div data-component="desktop_files_page_split-layout_detail-panel_files-detail-actions" className="flex items-center gap-2">
           <Button
             variant="positive"
             size="sm"
-            data-component="desktop_files_split-layout_detail-panel_files-detail-actions_contracts-detail-preview-trigger"
+            data-component="desktop_files_page_split-layout_detail-panel_files-detail-actions_contracts-detail-preview-trigger"
             onClick={onPreview}
           >
             <Eye className="h-4 w-4" />
@@ -414,7 +414,7 @@ function FileDetail({ document: doc, getCategoryLabel, onPreview, onEdit, onDele
                 variant="ghost"
                 size="icon"
                 aria-label="문서 작업 더보기"
-                data-component="desktop_files_split-layout_detail-panel_files-detail-actions_more"
+                data-component="desktop_files_page_split-layout_detail-panel_files-detail-actions_more"
                 className="[&_svg]:size-5"
               >
                 <MoreVertical className="w-5 h-5 text-v3-text-muted" />
@@ -434,8 +434,8 @@ function FileDetail({ document: doc, getCategoryLabel, onPreview, onEdit, onDele
         </div>
       }
     >
-      <div data-component="desktop_files_split-layout_detail-panel_files-detail-content" className="space-y-5">
-        <InfoCard data-component="desktop_files_detail-panel_info-card" title="파일 정보">
+      <div data-component="desktop_files_page_split-layout_detail-panel_files-detail-content" className="space-y-5">
+        <InfoCard data-component="desktop_files_page_detail-panel_info-card" title="파일 정보">
           <InfoRow label="파일명" value={doc.name} />
           <InfoRow label="형식" value={getFileFormatLabel(doc).toUpperCase()} />
           <InfoRow label="카테고리" value={getCategoryLabel(doc)} />
@@ -446,14 +446,14 @@ function FileDetail({ document: doc, getCategoryLabel, onPreview, onEdit, onDele
         </InfoCard>
 
         {doc.description && (
-          <InfoCard data-component="desktop_files_detail-panel_info-card-2" title="설명">
+          <InfoCard data-component="desktop_files_page_detail-panel_info-card-2" title="설명">
             <p className="text-[0.8rem] text-v3-text">{doc.description}</p>
           </InfoCard>
         )}
 
         {doc.tags && doc.tags.length > 0 && (
-          <InfoCard data-component="desktop_files_detail-panel_info-card-3" title="태그">
-            <div data-component="desktop_files_detail-panel_info-card-3_files-detail-tags" className="flex flex-wrap gap-2">
+          <InfoCard data-component="desktop_files_page_detail-panel_info-card-3" title="태그">
+            <div data-component="desktop_files_page_detail-panel_info-card-3_files-detail-tags" className="flex flex-wrap gap-2">
               {doc.tags.map(tag => (
                 <span key={tag} className="inline-flex items-center rounded-[50px] px-3 py-1 text-[0.65rem] font-semibold bg-v3-primary-light text-v3-primary">
                   {tag}

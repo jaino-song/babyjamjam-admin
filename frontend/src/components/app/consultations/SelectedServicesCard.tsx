@@ -6,11 +6,13 @@ import type { ConsultationInquiry } from "@/services/api";
 interface SelectedServicesCardProps {
   inquiry: ConsultationInquiry;
   className?: string;
+  "data-component"?: string;
 }
 
 export function SelectedServicesCard({
   inquiry,
   className,
+  "data-component": dataComponent = "desktop_consultations_page_split-layout_detail-panel_consultations-detail-inquiry-grid_selected-services-card",
 }: SelectedServicesCardProps) {
   const selectedServices = inquiry.selectedServices;
   const hasPlan = Boolean(selectedServices?.plan);
@@ -19,14 +21,14 @@ export function SelectedServicesCard({
 
   if (!hasPlan && !hasAddons) {
     return (
-      <InfoCard data-component="desktop_consultations_detail-panel_info-card" title="서비스 정보" className={className}>
+      <InfoCard data-component={dataComponent} title="서비스 정보" className={className}>
         <InfoRow label="서비스" value="선택 서비스 없음" />
       </InfoCard>
     );
   }
 
   return (
-    <InfoCard data-component="desktop_consultations_detail-panel_info-card-2" title="서비스 정보" className={className}>
+    <InfoCard data-component={dataComponent} title="서비스 정보" className={className}>
       {selectedServices?.plan && (
         <>
           <InfoRow

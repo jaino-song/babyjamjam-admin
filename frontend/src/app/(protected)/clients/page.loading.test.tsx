@@ -94,12 +94,19 @@ it("scopes the stats and trailing missing-record trigger to their page owner", (
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   try {
     const { container } = render(<QueryClientProvider client={queryClient}><ClientsPage /></QueryClientProvider>);
-    const bar = container.querySelector('[data-component="desktop_clients_stats"]');
+    const bar = container.querySelector('[data-component="desktop_clients_page_stats"]');
     expect(bar).toBeInTheDocument();
-    expect(bar?.parentElement).toHaveAttribute("data-component", "desktop_clients");
-    expect(bar?.nextElementSibling).toHaveAttribute("data-component", "desktop_clients_sections");
+    expect(bar?.parentElement).toHaveAttribute("data-component", "desktop_clients_page");
+    const root = container.querySelector('[data-component="desktop_clients_page"]');
+    expect(root?.getAttribute("data-component")).toMatch(/^(desktop|mobile)_[a-z0-9]+(?:-[a-z0-9]+)*(?:_[a-z0-9]+(?:-[a-z0-9]+)*){1,}$/);
+    const stats = root?.querySelector('[data-component="desktop_clients_page_stats"]');
+    expect(stats).toHaveAttribute("data-component", `${root?.getAttribute("data-component")}_stats`);
+    for (const child of (stats?.querySelectorAll("[data-component]") ?? [])) {
+      expect(child.getAttribute("data-component")).toMatch(/^desktop_clients_page_stats_/);
+    }
+    expect(bar?.nextElementSibling).toHaveAttribute("data-component", "desktop_clients_page_sections");
     const trigger = screen.getByRole("button", { name: "제공기록지 미작성 고객 보기" });
-    expect(trigger).toHaveAttribute("data-component", "desktop_clients_stats_service-record-missing_trigger");
+    expect(trigger).toHaveAttribute("data-component", "desktop_clients_page_stats_service-record-missing_trigger");
     expect(bar).toContainElement(trigger);
   } finally {
     mockMissingCount = 0;
