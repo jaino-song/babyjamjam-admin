@@ -831,3 +831,31 @@ test('phone recovery returns focus to the sheet trigger when its source is remov
     expect(screen.getByRole('dialog', { name: '전자문서 작업' })).toBeInTheDocument();
   } finally { Object.defineProperty(window, 'innerWidth', { configurable: true, value: width }); jest.restoreAllMocks(); }
 });
+
+test.each([390, 1280])("requires_attention + manual_send opens ManualDocumentJobRecoveryDialog iframe at %spx", async width => {
+  const originalWidth = window.innerWidth;
+  Object.defineProperty(window, "innerWidth", { configurable: true, value: width });
+  mockPathname = "/contracts"; mockPush.mockClear();
+  const job = { ...RECOVERY_JOB, status: "requires_attention" as const };
+  const open = jest.spyOn(eformsignApi, "openDocumentJobRecovery").mockResolvedValue({ kind: "editable", jobId: job.jobId, claimEpoch: "42", claimExpiresAt: new Date(Date.now() + 60000).toISOString(), document: { companyId: "company-abc", templateId: "template_ABC", documentId: "document012" } });
+  const changed = jest.fn();
+  try {
+    renderOpenPopover({ documentJobs: { active: [], requiresAttention: [job], recent: [] }, onOpenChange: changed });
+    fireEvent.click(screen.getByRole("button", { name: /복구 고객.*상세 보기/ }));
+    fireEvent.click(screen.getByRole("button", { name: "수동 전송" }));
+    const frame = await screen.findByTitle<HTMLIFrameElement>("이폼사인 수동 전송");
+    jest.spyOn(frame.contentWindow!, "postMessage").mockImplementation(() => {});
+    expect(frame).toBeInTheDocument();
+    expect(screen.getByRole("dialog", { name: "전자문서 수동 전송" })).toContainElement(frame);
+    expect(open).toHaveBeenCalledWith(job.jobId);
+    expect(mockPush).not.toHaveBeenCalled();
+    expect(changed).not.toHaveBeenCalledWith(false);
+  } finally { Object.defineProperty(window, "innerWidth", { configurable: true, value: originalWidth }); open.mockRestore(); }
+});
+
+test("requires_attention + verify_result keeps the 결과 확인 popover action", () => {
+  renderOpenPopover({ documentJobs: { active: [], requiresAttention: [{ ...RECOVERY_JOB, status: "requires_attention", recoveryKind: "verify_result" }], recent: [] } });
+  fireEvent.click(screen.getByRole("button", { name: /복구 고객.*상세 보기/ }));
+  expect(screen.getByRole("button", { name: "결과 확인" })).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "수동 전송" })).not.toBeInTheDocument();
+});
