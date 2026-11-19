@@ -2146,8 +2146,8 @@ describe("EformsignDocumentJobWorkerService", () => {
             expect(clientRepository.findById).not.toHaveBeenCalled();
         });
 
-        it("does not re-notify a cancelled contract failure retained in history", async () => {
-            const failed = job({ status: "failed", progressStep: "cancelled", lastErrorCode: "PRE_SEND_RETRY_EXHAUSTED" });
+        it.each([false, true])("does not re-notify a cancelled contract failure with cancellable=%s retained in history", async cancellable => {
+            const failed = job({ status: "failed", progressStep: "cancelled", cancellable, lastErrorCode: "PRE_SEND_RETRY_EXHAUSTED" });
             const { worker, repository, notificationService, clientRepository } = buildWorker({
                 repository: { listRecentStaffFailures: jest.fn().mockResolvedValue([failed]) },
             });
@@ -2267,7 +2267,7 @@ describe("EformsignDocumentJobWorkerService", () => {
                 });
             }
 
-            it("notifies from the entity the reconciliation service transitioned", async () => {
+            it("keeps verify_result for an uncertain transition without a cancellation projection", async () => {
                 const transitioned = job({ status: "requires_attention" });
                 const { worker, reconciliation, notificationService } = reconcilingRun({
                     status: "requires_attention",
@@ -2278,6 +2278,7 @@ describe("EformsignDocumentJobWorkerService", () => {
                 await worker.processDueJobs();
                 await flush();
 
+                expect(transitioned.cancellable).toBeUndefined();
                 expect(reconciliation.reconcile).toHaveBeenCalledTimes(1);
                 expect(notificationService.sendToBranchUsers).toHaveBeenCalledTimes(1);
                 expect(notificationService.sendToBranchUsers).toHaveBeenCalledWith(
@@ -2326,6 +2327,27 @@ describe("EformsignDocumentJobWorkerService", () => {
             });
             afterEach(() => {
                 nowSpy.mockRestore();
+            });
+
+            it.each([true, false])("uses the list recovery copy for requires_attention with cancellable=%s", async cancellable => {
+                const failure = job({ status: "requires_attention", cancellable, clientName: "이산모" });
+                const { worker, repository, notificationService, clientRepository } = buildWorker({
+                    repository: { listRecentStaffFailures: jest.fn().mockResolvedValue([failure]) },
+                });
+
+                await worker.processDueJobs();
+                await flush();
+
+                expect(repository.listRecentStaffFailures).toHaveBeenCalledTimes(1);
+                expect(notificationService.sendToBranchUsers).toHaveBeenCalledTimes(1);
+                expect(notificationService.sendToBranchUsers).toHaveBeenCalledWith(
+                    ...expectedCall(
+                        cancellable ? "계약서 자동 전송 실패 · 이산모" : "전자문서 결과 확인 필요 · 이산모",
+                        cancellable ? "자동 전송에 실패했어요. 눌러서 직접 작성해 주세요." : "전송 여부를 확인하지 못했어요. 눌러서 결과를 확인해 주세요.",
+                        cancellable ? "manual_send" : "verify_result",
+                    ),
+                );
+                expect(clientRepository.findById).not.toHaveBeenCalled();
             });
 
             it("purges and re-notifies once per hour, using the joined client name", async () => {
