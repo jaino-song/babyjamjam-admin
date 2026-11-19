@@ -397,7 +397,7 @@ export default function ConsultationsPage() {
                                                 ) : null}
                                             </InfoCard>
 
-                                            <SelectedServicesCard inquiry={activeInquiry} className="min-w-0 content-start" />
+                                            <SelectedServicesCard data-component="desktop_consultations_page_split-layout_detail-panel_consultations-detail-inquiry-grid_selected-services-card" inquiry={activeInquiry} className="min-w-0 content-start" />
 
                                             <InfoCard data-component="desktop_consultations_page_detail-panel_info-card-3" title="문의 상태" className="min-w-0 content-start">
                                                 <InfoRow

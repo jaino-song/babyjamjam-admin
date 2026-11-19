@@ -33,9 +33,9 @@ import { useFormStore } from "@/stores/form-store";
 import type { Client } from "@/features/clients/types";
 
 const SOURCE_COMPONENT = "MaternityContractDialog";
-const BASE_DATA_COMPONENT = "desktop_clients_maternity-contract-dialog";
 
 export interface MaternityContractDialogProps {
+  "data-component"?: string;
   open: boolean;
   onClose: () => void;
   client: Client;
@@ -43,11 +43,13 @@ export interface MaternityContractDialogProps {
 }
 
 export function MaternityContractDialog({
+  "data-component": dataComponent,
   open,
   onClose,
   client,
   onSuccess,
 }: MaternityContractDialogProps) {
+  const sub = (suffix: string) => dataComponent ? `${dataComponent}_${suffix}` : undefined;
   const [activeStep, setActiveStep] = useState(0);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [hasCreationSession, setHasCreationSession] = useState(false);
@@ -92,7 +94,7 @@ export function MaternityContractDialog({
       }}
     >
       <DialogContent
-        data-component={BASE_DATA_COMPONENT}
+        data-component={dataComponent}
         data-source-component={SOURCE_COMPONENT}
         showCloseButton={false}
         onEscapeKeyDown={(event) => {
@@ -118,7 +120,7 @@ export function MaternityContractDialog({
                 variant="ghost"
                 size="icon"
                 disabled={isBusy}
-                data-component={`${BASE_DATA_COMPONENT}_close`}
+                data-component={sub("close")}
                 className={cn(
                   "shrink-0 border-0 text-v3-text-muted hover:bg-transparent hover:text-v3-dark [&_svg]:size-[calc(20px*var(--glint-ui-scale,1))]",
                   isBusy && "cursor-not-allowed opacity-50",
@@ -148,7 +150,7 @@ export function MaternityContractDialog({
           renderLayout={({ content, footer }) => (
             <>
               <div
-                data-component={`${BASE_DATA_COMPONENT}_content`}
+                data-component={sub("content")}
                 className={cn(APP_DIALOG_BODY_CLASS_NAME, "flex flex-col gap-5 space-y-0")}
               >
                 <SteppedWizardStepper
@@ -160,7 +162,7 @@ export function MaternityContractDialog({
               </div>
 
               <DialogFooter
-                data-component={`${BASE_DATA_COMPONENT}_actions`}
+                data-component={sub("actions")}
                 className={APP_DIALOG_FOOTER_CLASS_NAME}
               >
                 {footer}
