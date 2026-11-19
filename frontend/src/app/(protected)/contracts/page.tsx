@@ -1125,7 +1125,7 @@ export default function ContractsPage() {
           {activeSection === "automations" ? (
             <ContractAutomationsManager dataComponent="desktop_contracts_page_sections_section-content_automations-section" />
           ) : null}
-          {activeSection === "backups" && isOwner ? (<EformsignBackupHistory />) : null}
+          {activeSection === "backups" && isOwner ? (<EformsignBackupHistory data-component="desktop_contracts_page_sections_section-content_backups-section" />) : null}
         </div>
       </div>
 

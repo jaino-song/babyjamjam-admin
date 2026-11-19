@@ -1118,6 +1118,7 @@ export default function ClientsPage() {
 
             {maternityContractClient ? (
                 <MaternityContractDialog
+                    data-component="desktop_clients_page_maternity-contract-dialog"
                     open
                     client={maternityContractClient}
                     onClose={() => {
@@ -1151,6 +1152,7 @@ export default function ClientsPage() {
 
             {serviceRecordScheduleClient ? (
                 <ServiceRecordScheduleDialog
+                    data-component="desktop_clients_page_service-record-schedule-dialog"
                     open
                     onOpenChange={(open) => {
                         if (!open) setServiceRecordScheduleClient(null);
