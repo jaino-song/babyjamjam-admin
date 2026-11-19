@@ -16,7 +16,7 @@ function SpinningLoader({ className }: { className?: string }) {
 export type DocumentJobsStatMode = "always" | "whenActive";
 
 export interface DocumentJobsStatMiniProps {
-  /** "always" keeps the card at 0; "whenActive" shows it only while there is something to see. */
+  /** "always" keeps the card at 0; "whenActive" also keeps it mounted while its list is open. */
   mode: DocumentJobsStatMode;
   density?: StatMiniDensity;
   /** The stats bar's name; data-component values derive from `${name}_stats`. */
@@ -30,9 +30,9 @@ export interface DocumentJobsStatMiniProps {
  * avoid drawing an empty row.
  */
 export function useDocumentJobsStatVisible(mode: DocumentJobsStatMode | undefined): boolean {
-  const { summary, total } = useDocumentJobs();
+  const { summary, total, isPopoverOpen } = useDocumentJobs();
   if (mode === "always") return true;
-  if (mode === "whenActive") return summary !== undefined && total > 0;
+  if (mode === "whenActive") return isPopoverOpen || (summary !== undefined && total > 0);
   return false;
 }
 

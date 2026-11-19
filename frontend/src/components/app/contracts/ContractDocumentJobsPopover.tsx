@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 
 import { Button } from "@/components/ui/button";
@@ -8,10 +8,13 @@ import { Popover, PopoverTrigger } from "@/components/ui/popover";
 import { Sheet, SheetContent, SheetDescription, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { documentJobRecoveryPresentation } from "@/features/document-jobs/recovery-presentation";
 import { recoverJobHref } from "@/features/document-jobs/failure-popup-copy";
+import { useActiveBranchId } from "@/features/system-templates/branch-context";
 import { useIsMobile } from "@/hooks/useIsMobile";
 import { cn } from "@/lib/utils";
 import type { EformsignDocumentJobResponse } from "@/services/eformsign";
 
+import type { DocumentJobCancelHandler } from "./ContractDocumentJobDetail";
+import { ContractDocumentJobCancelDialog } from "./ContractDocumentJobCancelDialog";
 import { ContractDocumentJobsModal } from "./ContractDocumentJobsModal";
 import { ContractDocumentJobsPanes, type ContractDocumentJobsPanesHandle } from "./ContractDocumentJobsPanes";
 import { DocumentJobRecoveryDialog } from "./DocumentJobRecoveryDialog";
@@ -38,6 +41,7 @@ export interface ContractDocumentJob extends Pick<
   clientId?: number | null;
   clientName?: string | null;
   recoveryKind?: "manual_send" | "verify_result" | null;
+  cancellable?: boolean;
   documentId?: string | null;
   progressStep?: string | null;
   progressDetail?: string | null;
@@ -101,6 +105,12 @@ export function ContractDocumentJobsPopover({
   const anchorRef = useRef<HTMLButtonElement>(null);
   const recoveryTrigger = useRef<HTMLButtonElement | null>(null);
   const [recoveryJobId, setRecoveryJobId] = useState<string | null>(null);
+  const [cancelRequest, setCancelRequest] = useState<{ jobId: string; branchId: string | null; onCancelled?: () => void } | null>(null);
+  const [cancelOpen, setCancelOpen] = useState(false);
+  const restoreCancelFocus = useRef(false);
+  const cancelTrigger = useRef<HTMLButtonElement | null>(null);
+  const cancelSucceeded = useRef(false);
+  const interactionPaused = recoveryJobId !== null || cancelRequest !== null;
   const pathname = usePathname(), router = useRouter();
   const isOpen = open ?? internalOpen;
   const resolvedJobs = documentJobs ?? jobs ?? null;
@@ -112,12 +122,26 @@ export function ContractDocumentJobsPopover({
   // to its content, so a `fixed inset-x-0` child inside it collapses to a sliver; the sheet is a
   // Dialog portal with no such wrapper.
   const isMobile = useIsMobile();
-  const scope = `${pathname}:${isMobile}`;
+  // Use the same identity source as DocumentJobsProvider and its branch-keyed queries.
+  const branchId = useActiveBranchId();
+  const scope = JSON.stringify([pathname, isMobile, branchId]);
   const [recoveryScope, setRecoveryScope] = useState(scope);
-  if (recoveryScope !== scope) { setRecoveryScope(scope); setRecoveryJobId(null); }
+  if (recoveryScope !== scope) {
+    setRecoveryScope(scope);
+    setRecoveryJobId(null);
+    setCancelRequest(null);
+    setCancelOpen(false);
+  }
+
+  useEffect(() => {
+    if (cancelRequest !== null || !restoreCancelFocus.current) return;
+    restoreCancelFocus.current = false;
+    const trigger = cancelTrigger.current;
+    (trigger?.isConnected && !trigger.closest("[inert]") ? trigger : anchorRef.current)?.focus({ preventScroll: true });
+  }, [cancelRequest]);
 
   const handleOpenChange = (nextOpen: boolean) => {
-    if (recoveryJobId !== null && !nextOpen) return;
+    if (interactionPaused && !nextOpen) return;
     setInternalOpen(nextOpen);
     onOpenChange?.(nextOpen);
   };
@@ -133,6 +157,24 @@ export function ContractDocumentJobsPopover({
     if (pathname === "/contracts" && documentJobRecoveryPresentation(job) === "iframe") { recoveryTrigger.current = triggerButton; setRecoveryJobId(jobId); }
     else { handleOpenChange(false); router.push(recoverJobHref(jobId)); }
   };
+  const onCancel: DocumentJobCancelHandler = (jobId, trigger, onCancelled) => {
+    cancelTrigger.current = trigger;
+    cancelSucceeded.current = false;
+    setCancelRequest({ jobId, branchId, onCancelled });
+    setCancelOpen(true);
+  };
+  const cancelDialog = cancelRequest ? <ContractDocumentJobCancelDialog key={cancelRequest.jobId} jobId={cancelRequest.jobId} branchId={cancelRequest.branchId} open={cancelOpen} data-component={sub("cancel")}
+    onClose={() => setCancelOpen(false)} onCancelled={() => {
+      cancelSucceeded.current = true;
+      setCancelOpen(false);
+    }} onCloseAutoFocus={event => {
+      event.preventDefault();
+      // Keep panes inert until Radix releases the confirmation's focus trap.
+      // Panes.back() then restores list focus and scroll after removing inert.
+      if (cancelSucceeded.current) cancelRequest.onCancelled?.();
+      else restoreCancelFocus.current = true;
+      setCancelRequest(null);
+    }} /> : null;
   const recoveryDialog = recoveryJobId !== null ? <DocumentJobRecoveryDialog presentation="iframe" jobId={recoveryJobId} data-component={sub("recovery")}
     onClose={() => setRecoveryJobId(null)} onCloseAutoFocus={event => {
       event.preventDefault();
@@ -154,19 +196,20 @@ export function ContractDocumentJobsPopover({
             "!z-[60] max-h-[85dvh] gap-0 overflow-hidden rounded-t-[28px] border-b-0 p-0 pb-[env(safe-area-inset-bottom)]",
             className,
           )}
-          onEscapeKeyDown={event => { if (recoveryJobId !== null) event.preventDefault(); else panes.current?.onEscapeKeyDown(event); }}
-          onInteractOutside={event => { if (recoveryJobId !== null) event.preventDefault(); }}
+          onEscapeKeyDown={event => { if (interactionPaused) event.preventDefault(); else panes.current?.onEscapeKeyDown(event); }}
+          onInteractOutside={event => { if (interactionPaused) event.preventDefault(); }}
         >
           <div data-component={sub("body")} data-slot="document-jobs-mobile-body" className="flex h-[85dvh] min-h-0 flex-col">
             <SheetTitle className="sr-only">전자문서 작업</SheetTitle>
             <SheetDescription className="sr-only">전자문서 처리 현황</SheetDescription>
             <div data-component={sub("body_handle")} data-slot="document-jobs-sheet-handle" aria-hidden="true" className="mx-auto mt-2.5 h-1 w-10 shrink-0 rounded-full bg-v3-border" />
-            <ContractDocumentJobsPanes ref={panes} inset="compact" open={isOpen} jobs={resolvedJobs} isLoading={resolvedLoading} error={resolvedError} onRetry={resolvedRetry}
-              onClose={() => handleOpenChange(false)} onRecover={onRecover} interactionPaused={recoveryJobId !== null} data-component={sub("body_panes")} />
+            <ContractDocumentJobsPanes key={scope} ref={panes} inset="compact" open={isOpen} jobs={resolvedJobs} isLoading={resolvedLoading} error={resolvedError} onRetry={resolvedRetry}
+              onClose={() => handleOpenChange(false)} onRecover={onRecover} onCancel={onCancel} interactionPaused={interactionPaused} data-component={sub("body_panes")} />
           </div>
         </SheetContent>
       </Sheet>
       {recoveryDialog}
+      {cancelDialog}
       </>
     );
   }
@@ -175,6 +218,7 @@ export function ContractDocumentJobsPopover({
     <Popover open={isOpen} onOpenChange={handleOpenChange}>
       <PopoverTrigger ref={anchorRef} asChild aria-controls={undefined} data-slot="document-jobs-trigger">{resolvedTrigger}</PopoverTrigger>
       <ContractDocumentJobsModal
+        key={scope}
         open={isOpen}
         onClose={() => handleOpenChange(false)}
         anchorRef={anchorRef}
@@ -183,9 +227,10 @@ export function ContractDocumentJobsPopover({
         isLoading={resolvedLoading}
         error={resolvedError}
         onRetry={resolvedRetry}
-        interactionPaused={recoveryJobId !== null}
+        interactionPaused={interactionPaused}
         onRecover={onRecover}
-        recoveryDialog={recoveryDialog}
+        onCancel={onCancel}
+        recoveryDialog={<>{recoveryDialog}{cancelDialog}</>}
         data-component={dataComponent}
       />
     </Popover>

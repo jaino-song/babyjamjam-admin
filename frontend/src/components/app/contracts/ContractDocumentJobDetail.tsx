@@ -12,9 +12,13 @@ import { recoverJobHref } from '@/features/document-jobs/failure-popup-copy';
 import type { ContractDocumentJob } from "./ContractDocumentJobsPopover";
 import { DocumentJobProgressSummary } from "./DocumentJobProgressSummary";
 
+export type DocumentJobCancelHandler = (jobId: string, trigger: HTMLButtonElement, onCancelled?: () => void) => void;
+
 interface ContractDocumentJobDetailProps {
   job: ContractDocumentJob;
   onDocumentNavigate?: () => void;
+  onCancel?: DocumentJobCancelHandler;
+  onCancelled?: () => void;
   onRecover?: (jobId: string, trigger: HTMLButtonElement) => void;
   "data-component"?: string;
 }
@@ -33,7 +37,7 @@ function formatTime(value?: string | null): string {
   return `${part("year")}.${part("month")}.${part("day")} ${part("hour")}:${part("minute")}`;
 }
 
-export function ContractDocumentJobDetail({ job, onDocumentNavigate, onRecover, "data-component": base }: ContractDocumentJobDetailProps): React.ReactElement {
+export function ContractDocumentJobDetail({ job, onDocumentNavigate, onRecover, onCancel, onCancelled, "data-component": base }: ContractDocumentJobDetailProps): React.ReactElement {
   const sub = (suffix: string) => base ? `${base}_${suffix}` : undefined;
   const failure = describeJobFailureDetail(job);
   const rows = [
@@ -52,7 +56,10 @@ export function ContractDocumentJobDetail({ job, onDocumentNavigate, onRecover, 
             onClick={event => onRecover(job.jobId, event.currentTarget)}>{failure.actionLabel}</Button>
         : <Button asChild className="w-full" data-component={sub("progress_action_button")} data-slot="job-failure-action">
             <Link href={recoverJobHref(job.jobId)} onClick={onDocumentNavigate}>{failure.actionLabel}</Link>
-          </Button>) : null} />
+          </Button>) : null} secondaryAction={job.cancellable === true ? (
+        <Button type="button" variant="outline" className="w-full" data-component={sub("progress_cancel_button")} data-slot="job-cancel-action"
+          onClick={event => onCancel?.(job.jobId, event.currentTarget, onCancelled)}>취소</Button>
+      ) : null} />
       <Card data-component={sub("info")} data-slot="job-info-card" className="rounded-[18px] border-0 bg-v3-dim-white p-4 shadow-none">
         <h3 data-component={sub("info_title")} data-slot="job-info-title" className="mb-2 text-xs font-semibold leading-[18px] text-v3-text-muted">작업 정보</h3>
         {rows.map(([key, label, value]) => (

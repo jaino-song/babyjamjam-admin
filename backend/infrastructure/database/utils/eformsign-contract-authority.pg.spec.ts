@@ -490,6 +490,165 @@ async function bounded<T>(promise: Promise<T>, ms: number): Promise<T> {
     const nextInput = (s: Awaited<ReturnType<typeof runtime>>) => ({ ...s.enqueue, requestKey: `next-${randomUUID()}`, activeKey: `next-${randomUUID()}` });
     const recoveryIn = (tx: Prisma.TransactionClient, s: Awaited<ReturnType<typeof runtime>>) =>
         new SbEformsignContractRecoveryRepository({ $transaction: (run: (tx: Prisma.TransactionClient) => unknown) => run(tx) } as unknown as PrismaService, s.options);
+    const cancelInput = (s: Awaited<ReturnType<typeof runtime>>) => ({ jobId: s.worker.jobId,
+        branchId: branches[0]!, userId: users[0]!, now: new Date() });
+    async function projectedCancellation(s: Awaited<ReturnType<typeof runtime>>) {
+        const list = await s.jobRepository.listForBranch(branches[0]!, new Date(0));
+        return list.requiresAttention.find(job => job.id === s.worker.jobId)?.cancellable;
+    }
+    it("CANCEL real happy path clears payload/key and claim pair, hides history and admits a fresh request", async () => {
+        const s = await exhaustedRuntime();
+        await db.eformsign_document_job.update({ where: { id: s.worker.jobId }, data: { activeKey: s.enqueue.activeKey } });
+        await db.eformsign_contract_authority.update({ where: { branchId_clientId: { branchId: branches[0]!, clientId: clients[0]! } },
+            data: { claimUserId: users[0]!, claimExpiresAt: new Date(0) } });
+        const before = await db.eformsign_document_job.findUniqueOrThrow({ where: { id: s.worker.jobId } });
+        expect(await projectedCancellation(s)).toBe(true);
+        expect(await s.jobRepository.cancel(cancelInput(s))).toEqual({ kind: "cancelled" });
+        const cancelled = await db.eformsign_document_job.findUniqueOrThrow({ where: { id: s.worker.jobId } });
+        expect(cancelled).toMatchObject({ status: "failed", progressStep: "cancelled", activeKey: null, payload: null,
+            leaseToken: null, heartbeatAt: null, completedAt: before.completedAt, lastErrorCode: before.lastErrorCode, documentId: before.documentId });
+        expect(cancelled.updatedAt.getTime()).toBeGreaterThanOrEqual(before.updatedAt.getTime());
+        expect((await read())[0]).toMatchObject({ phase: "closed", claimUserId: null, claimExpiresAt: null, providerDocumentId: null });
+        expect(await s.jobRepository.cancel(cancelInput(s))).toEqual({ kind: "already_cancelled" });
+        expect(await db.eformsign_document_job.findUniqueOrThrow({ where: { id: s.worker.jobId } })).toEqual(cancelled);
+        const list = await s.jobRepository.listForBranch(branches[0]!, new Date(0)), summary = await s.jobRepository.getSummary(branches[0]!);
+        expect([...list.requiresAttention, ...list.recent].map(job => job.id)).not.toContain(s.worker.jobId);
+        expect(summary.failedCount).toBe(0); expect(summary.unresolvedCount).toBe(0); expect(summary.unresolvedJobIds).not.toContain(s.worker.jobId);
+        expect(await s.jobRepository.enqueue(s.enqueue)).toMatchObject({ existing: true, job: { id: s.worker.jobId, progressStep: "cancelled" } });
+        const next = await s.jobRepository.enqueue({ ...s.enqueue, requestKey: `cancel-next-${randomUUID()}` });
+        expect(next.existing).toBe(false); expect(next.job.contractGeneration).not.toBe(s.worker.contractGeneration);
+        expect(await db.eformsign_document_job.findUniqueOrThrow({ where: { id: s.worker.jobId } })).toEqual(cancelled);
+    });
+    it("CANCEL real reconciled_not_delivered creation projects eligible and cancels", async () => {
+        const s = await runtime(), claimed = await s.recovery.claimCreation(s.input, s.worker, s.effect);
+        await s.recovery.markAutomaticUncertain(s.worker);
+        await db.eformsign_document_job.update({ where: { id: s.worker.jobId }, data: { status: "requires_attention", leaseToken: null,
+            progressStep: "processing", progressDetail: "info-inserted", completedAt: new Date() } });
+        await new SbEformsignDispatchIntentRepository(db as unknown as PrismaService).reconcile({ intentId: claimed.intent.id,
+            branchId: branches[0]!, outcome: "not_delivered", actorUserId: users[0]!, reason: "Synthetic provider confirms no delivery", attemptCount: claimed.intent.attemptCount });
+        expect(await projectedCancellation(s)).toBe(true);
+        expect(await s.jobRepository.cancel(cancelInput(s))).toEqual({ kind: "cancelled" });
+    });
+    it.each(["pointer", "create-uncertain", "draft-uncertain", "creating", "sent", "leased", "live-claim", "legacy", "auto_finalize", "pending-zero"])("CANCEL real %s veto agrees with display proof (live claim is hint-only)", async defect => {
+        const s = await exhaustedRuntime();
+        const where = { id: s.worker.jobId }, scope = { branchId_clientId: { branchId: branches[0]!, clientId: clients[0]! } };
+        if (defect === "pointer") await db.client.update({ where: { id: clients[0]! }, data: { eDocId: documents[0]! } });
+        if (defect === "create-uncertain" || defect === "draft-uncertain") await db.eformsign_dispatch_intent.create({ data: {
+            branchId: branches[0]!, clientId: clients[0]!, businessKey: digest(`cancel-${randomUUID()}`), generation: "synthetic",
+            fingerprint: "a".repeat(64), action: defect === "create-uncertain" ? "create" : "create_draft", status: "uncertain", attemptCount: 1 } });
+        if (defect === "creating" || defect === "sent") await db.eformsign_document_job.update({ where, data: { progressDetail: defect } });
+        if (defect === "leased") await db.eformsign_document_job.update({ where, data: { leaseToken: randomUUID() } });
+        if (defect === "live-claim") await db.eformsign_contract_authority.update({ where: scope, data: { claimUserId: users[0]!, claimExpiresAt: new Date(Date.now() + 60000) } });
+        // An authority FK binds generation; remove it first to represent a genuine legacy job.
+        if (defect === "legacy") { await db.eformsign_contract_authority.delete({ where: scope }); await db.eformsign_document_job.update({ where, data: { contractGeneration: null } }); }
+        if (defect === "auto_finalize") await db.eformsign_document_job.update({ where, data: { source: "auto_finalize", status: "requires_attention" } });
+        if (defect === "pending-zero") await db.eformsign_contract_authority.update({ where: scope, data: { phase: "creation_pending" } });
+        const before = await db.eformsign_document_job.findUniqueOrThrow({ where });
+        expect(await projectedCancellation(s)).toBe(defect === "live-claim");
+        expect(await s.jobRepository.cancel(cancelInput(s))).toMatchObject({ kind: "not_cancellable" });
+        expect(await db.eformsign_document_job.findUniqueOrThrow({ where })).toEqual(before);
+    });
+
+    describe("CANCEL projection refusing clauses", () => {
+        async function cancellationSnapshot() {
+            const where = { branchId: branches[0]! };
+            return {
+                jobs: await db.eformsign_document_job.findMany({ where, orderBy: { id: "asc" } }),
+                authorities: await db.eformsign_contract_authority.findMany({ where, orderBy: { clientId: "asc" } }),
+                intents: await db.eformsign_dispatch_intent.findMany({ where, orderBy: { id: "asc" } }),
+                clients: await db.client.findMany({ where, orderBy: { id: "asc" } }),
+            };
+        }
+        async function expectRefusedWithoutWrites(s: Awaited<ReturnType<typeof runtime>>, expectedReason: string) {
+            const before = await cancellationSnapshot();
+            expect(await projectedCancellation(s)).toBe(false);
+            expect(await s.jobRepository.cancel(cancelInput(s))).toMatchObject({ kind: "not_cancellable", reason: expectedReason });
+            expect(await cancellationSnapshot()).toEqual(before);
+        }
+
+        it("refuses an accepted create intent with a tab-only provider receipt", async () => {
+            const s = await exhaustedRuntime();
+            expect(await projectedCancellation(s)).toBe(true);
+            // The storage CHECK trims spaces only; a tab receipt can be inserted directly.
+            await db.eformsign_dispatch_intent.create({ data: {
+                branchId: branches[0]!, clientId: clients[0]!, action: "create",
+                generation: "unrelated", fingerprint: "b".repeat(64),
+                businessKey: digest(`cancel-tab-${randomUUID()}`),
+                status: "accepted", attemptCount: 1, providerDocumentId: "\t",
+            } });
+            await expectRefusedWithoutWrites(s, "effect_not_disproved");
+        });
+
+        it("allows an accepted create from an unrelated generation with a normal provider receipt", async () => {
+            const s = await exhaustedRuntime();
+            await db.eformsign_dispatch_intent.create({ data: {
+                branchId: branches[0]!, clientId: clients[0]!, action: "create",
+                generation: "unrelated", fingerprint: "b".repeat(64),
+                businessKey: digest(`cancel-accepted-${randomUUID()}`),
+                status: "accepted", attemptCount: 1, providerDocumentId: `prior-accepted-${randomUUID()}`,
+            } });
+            expect(await projectedCancellation(s)).toBe(true);
+            expect(await s.jobRepository.cancel(cancelInput(s))).toEqual({ kind: "cancelled" });
+        });
+
+        it("refuses an accepted create intent with an NBSP-only provider receipt without writes", async () => {
+            const s = await exhaustedRuntime();
+            expect(await projectedCancellation(s)).toBe(true);
+            // The storage CHECK trims spaces only; NBSP reaches the trim-based proof.
+            await db.eformsign_dispatch_intent.create({ data: {
+                branchId: branches[0]!, clientId: clients[0]!, action: "create",
+                generation: "unrelated", fingerprint: "b".repeat(64),
+                businessKey: digest(`cancel-nbsp-${randomUUID()}`),
+                status: "accepted", attemptCount: 1, providerDocumentId: "\u00a0",
+            } });
+            await expectRefusedWithoutWrites(s, "effect_not_disproved");
+        });
+
+        it("refuses a discovered human-intent business key without an authority reference", async () => {
+            const s = await exhaustedRuntime();
+            expect(await projectedCancellation(s)).toBe(true);
+            await db.eformsign_dispatch_intent.create({ data: {
+                branchId: branches[0]!, clientId: clients[0]!, action: "manual_process",
+                generation: s.worker.contractGeneration, fingerprint: s.enqueue.payloadFingerprint,
+                businessKey: digest(`contract-human:${s.worker.contractGeneration}`), templateId: workflowPlan.templateId,
+                status: "prepared", attemptCount: 0,
+            } });
+            expect((await read())[0]!.humanIntentId).toBeNull();
+            await expectRefusedWithoutWrites(s, "effect_not_disproved");
+        });
+
+        it("refuses reserved authority with a prepared-zero linked create that was never reconciled", async () => {
+            const s = await runtime(), claimed = await s.recovery.claimCreation(s.input, s.worker, s.effect);
+            // Prepared-zero is no-effect; only the reserved linked-create boundary vetoes it.
+            await db.eformsign_dispatch_intent.update({ where: { id: claimed.intent.id },
+                data: { status: "prepared", attemptCount: 0, startedAt: null } });
+            await db.eformsign_document_job.update({ where: { id: s.worker.jobId }, data: {
+                status: "requires_attention", leaseToken: null, progressStep: "processing",
+                progressDetail: "info-inserted", completedAt: new Date(),
+            } });
+            expect(await projectedCancellation(s)).toBe(true);
+            await db.eformsign_contract_authority.update({
+                where: { branchId_clientId: { branchId: branches[0]!, clientId: clients[0]! } }, data: { phase: "reserved" },
+            });
+            expect((await read())[0]).toMatchObject({ phase: "reserved", creationIntentId: claimed.intent.id });
+            await expectRefusedWithoutWrites(s, "effect_not_disproved");
+        });
+
+        it("refuses a discovered unreleased draft without an authority reference", async () => {
+            const s = await exhaustedRuntime();
+            expect(await projectedCancellation(s)).toBe(true);
+            // Prepared-zero avoids the global uncertain-intent veto; the missing release marker is decisive.
+            await db.eformsign_dispatch_intent.create({ data: {
+                branchId: branches[0]!, clientId: clients[0]!, action: "create_draft",
+                generation: s.worker.contractGeneration, fingerprint: s.enqueue.payloadFingerprint,
+                businessKey: digest(`contract-draft:${s.worker.contractGeneration}`), templateId: workflowPlan.templateId,
+                status: "prepared", attemptCount: 0, startedAt: null,
+            } });
+            expect((await read())[0]!.draftIntentId).toBeNull();
+            await expectRefusedWithoutWrites(s, "effect_not_disproved");
+        });
+    });
+
     it.each([false, true])("P13 replaces pre-send exhaustion with purged payload=%s and removes stale popup entries", async purged => {
         const s = await exhaustedRuntime();
         if (purged) await db.eformsign_document_job.update({ where: { id: s.worker.jobId }, data: { payload: Prisma.DbNull } });

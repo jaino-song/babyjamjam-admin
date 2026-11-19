@@ -100,6 +100,7 @@ describe("EformsignDocumentJobController (Integration)", () => {
         listForBranch: jest.Mock;
         claimRecovery: jest.Mock;
         resolveManually: jest.Mock;
+        cancel: jest.Mock;
     };
     let supersedeService: { isDocumentVisibleToBranch: jest.Mock } | undefined;
     let dispatchBoundary: { reconcile: jest.Mock; findById?: jest.Mock };
@@ -130,6 +131,7 @@ describe("EformsignDocumentJobController (Integration)", () => {
             listForBranch: jest.fn(),
             claimRecovery: jest.fn(),
             resolveManually: jest.fn(),
+            cancel: jest.fn(),
         };
         dispatchBoundary = {
             reconcile: jest.fn().mockResolvedValue({
@@ -141,6 +143,27 @@ describe("EformsignDocumentJobController (Integration)", () => {
         };
 
         await buildApp();
+    });
+
+    it.each(["cancelled", "already_cancelled"])("cancels idempotently: %s", async kind => {
+        documentJobService.cancel.mockResolvedValue({ kind });
+        const response = await request(app.getHttpServer()).post(`/eformsign-docs/jobs/${JOB_ID}/cancel`).expect(200);
+        expect(response.body).toEqual({ jobId: JOB_ID, outcome: kind });
+        expect(documentJobService.cancel).toHaveBeenCalledWith({ jobId: JOB_ID, branchId: "branch-a", userId: "user-a", now: expect.any(Date) });
+    });
+    it.each([["not_cancellable", 409, "JOB_NOT_CANCELLABLE"], ["not_found", 404, "RESOURCE_NOT_FOUND"]] as const)("rejects %s safely", async (kind, status, code) => {
+        documentJobService.cancel.mockResolvedValue({ kind, reason: "private-proof" });
+        const response = await request(app.getHttpServer()).post(`/eformsign-docs/jobs/${JOB_ID}/cancel`).expect(status);
+        expect(response.body).toMatchObject({ code }); expect(JSON.stringify(response.body)).not.toContain("private-proof");
+    });
+    it("refuses cancellation without dispatch capability", async () => {
+        authRole = "staff";
+        await request(app.getHttpServer()).post(`/eformsign-docs/jobs/${JOB_ID}/cancel`).expect(403);
+        expect(documentJobService.cancel).not.toHaveBeenCalled();
+    });
+    it("validates the cancellation job UUID", async () => {
+        await request(app.getHttpServer()).post("/eformsign-docs/jobs/not-uuid/cancel").expect(400);
+        expect(documentJobService.cancel).not.toHaveBeenCalled();
     });
 
     const buildApp = async (): Promise<void> => {
@@ -540,6 +563,20 @@ describe("EformsignDocumentJobController (Integration)", () => {
     describe("POST /eformsign-docs/jobs/:jobId/recovery", () => {
         const claim = () => request(app.getHttpServer()).post(`/eformsign-docs/jobs/${JOB_ID}/recovery`);
         const originalPayload = { clientId: 42, contractData: validContractData };
+
+        it("never returns a generation-bound manual_send payload through legacy recovery", async () => {
+            documentJobService.claimRecovery.mockResolvedValue({
+                kind: "claimed",
+                job: failedJob({ status: "requires_attention", contractGeneration: "generation", cancellable: true, payload: originalPayload }),
+            });
+
+            const response = await claim();
+
+            expect(response.status).toBe(409);
+            expect(response.body.code).toBe("JOB_NOT_RECOVERABLE");
+            expect(response.body).not.toHaveProperty("payload");
+            expect(JSON.stringify(response.body)).not.toContain("customerContact");
+        });
 
         it("returns the prefill payload and claim expiry for a failed (manual_send) job", async () => {
             documentJobService.claimRecovery.mockResolvedValue({

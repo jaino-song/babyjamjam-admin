@@ -13,6 +13,7 @@ import {
 import {
     EFORMSIGN_DOCUMENT_JOB_REPOSITORY,
     ClaimRecoveryResult,
+    CancelDocumentJobResult,
     EformsignDocumentJobList,
     EformsignDocumentJobSummary,
     AuthorizeEformsignDocumentJobForDispatchInput,
@@ -274,6 +275,11 @@ export class EformsignDocumentJobService {
         terminalLimit?: number,
     ): Promise<EformsignDocumentJobList> {
         return this.repository.listForBranch(branchId, terminalSince, terminalLimit);
+    }
+
+    /** Cancel a generation only when its locked proof rules out provider effects. */
+    async cancel(input: ManualRecoveryInput): Promise<CancelDocumentJobResult> {
+        return this.repository.cancel(input);
     }
 
     /** Take the manual-recovery claim on a failed/requires_attention staff contract job. */

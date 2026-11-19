@@ -347,18 +347,18 @@ describe("ClientsPage deletion conflicts", () => {
     expect(handler).toContain("normalizeApiError");
     expect(handler).toContain('"고객 삭제에 실패했어요. 다시 시도해 주세요."');
     expect(handler).not.toContain("getApiErrorMessage");
-    expect(source).toContain('data-component="desktop_clients_modals_delete-error-notification"');
+    expect(source).toContain('data-component="desktop_clients_page_modals_delete-error-notification"');
   });
 });
 
 describe("ClientsPage visual conventions", () => {
   it("renders overflow client statuses as plain text instead of a badge", () => {
     expect(source).toContain(
-      'data-component="desktop_clients_sections_section-content_list-section_split-layout_list-panel_content_item_status-more"',
+      'data-component="desktop_clients_page_sections_section-content_list-section_split-layout_list-panel_content_item_status-more"',
     );
     expect(source).toContain("+{remainingClientBadges.length}");
     const overflowStatus = source.slice(
-      source.indexOf('data-component="desktop_clients_sections_section-content_list-section_split-layout_list-panel_content_item_status-more"') - 80,
+      source.indexOf('data-component="desktop_clients_page_sections_section-content_list-section_split-layout_list-panel_content_item_status-more"') - 80,
       source.indexOf("+{remainingClientBadges.length}") + 40,
     );
     expect(overflowStatus).toContain("<span");
@@ -373,15 +373,15 @@ describe("ClientsPage visual conventions", () => {
 
   it("uses the destructive dropdown variant for delete", () => {
     const deleteMenuItem = source.slice(
-      source.indexOf('data-component="desktop_clients_sections_section-content_list-section_split-layout_detail-selection_detail-panel_header_menu_delete"'),
-      source.indexOf("</DropdownMenuItem>", source.indexOf('data-component="desktop_clients_sections_section-content_list-section_split-layout_detail-selection_detail-panel_header_menu_delete"')),
+      source.indexOf('data-component="desktop_clients_page_sections_section-content_list-section_split-layout_detail-selection_detail-panel_header_menu_delete"'),
+      source.indexOf("</DropdownMenuItem>", source.indexOf('data-component="desktop_clients_page_sections_section-content_list-section_split-layout_detail-selection_detail-panel_header_menu_delete"')),
     );
 
     expect(deleteMenuItem).toContain('variant="destructive"');
   });
 
   it("opens the read-only service-record editor from the customer menu", () => {
-    const marker = source.indexOf('data-component="desktop_clients_sections_section-content_list-section_split-layout_detail-selection_detail-panel_header_menu_view-service-record"');
+    const marker = source.indexOf('data-component="desktop_clients_page_sections_section-content_list-section_split-layout_detail-selection_detail-panel_header_menu_view-service-record"');
     const menuItem = source.slice(
       source.lastIndexOf("<DropdownMenuItem", marker),
       source.indexOf("</DropdownMenuItem>", marker),
@@ -395,8 +395,8 @@ describe("ClientsPage visual conventions", () => {
   });
 
   it("offers the service-record schedule change right under the viewer, behind the same branch-management gate", () => {
-    const viewMarker = source.indexOf('data-component="desktop_clients_sections_section-content_list-section_split-layout_detail-selection_detail-panel_header_menu_view-service-record"');
-    const scheduleMarker = source.indexOf('data-component="desktop_clients_sections_section-content_list-section_split-layout_detail-selection_detail-panel_header_menu_edit-service-record-schedule"');
+    const viewMarker = source.indexOf('data-component="desktop_clients_page_sections_section-content_list-section_split-layout_detail-selection_detail-panel_header_menu_view-service-record"');
+    const scheduleMarker = source.indexOf('data-component="desktop_clients_page_sections_section-content_list-section_split-layout_detail-selection_detail-panel_header_menu_edit-service-record-schedule"');
     expect(viewMarker).toBeGreaterThan(-1);
     expect(scheduleMarker).toBeGreaterThan(viewMarker);
     // No other item sits between the viewer and the schedule item (only the schedule item's own opening tag does).
@@ -435,7 +435,7 @@ describe("ClientsPage directory and summary contracts", () => {
     expect(source).not.toContain("명 표시");
     expect(source).toContain("const listScopeSubtitle");
     expect(source).toContain("subtitle={listScopeSubtitle}");
-    expect(source).not.toContain('data-component="desktop_clients_sections_section-content_list-section_split-layout_list-panel_scope_count"');
+    expect(source).not.toContain('data-component="desktop_clients_page_sections_section-content_list-section_split-layout_list-panel_scope_count"');
     expect(source).toContain("hasMore={Boolean(directory.hasNextPage && !directory.isNextPageError)}");
     expect(source).toContain("onLoadMore={() => void directory.fetchNextPage()}");
     expect(source).toContain("isFetchingMore={directory.isFetchingNextPage}");
@@ -452,7 +452,7 @@ describe("ClientsPage directory and summary contracts", () => {
     expect(source).not.toContain("다음달 dueDate");
     expect(source).not.toContain("summaryScopeLabel");
     expect(source).not.toContain("현재 검색 범위");
-    expect(source).not.toContain('data-component="desktop_clients_summary_scope"');
+    expect(source).not.toContain('data-component="desktop_clients_page_summary_scope"');
     expect(source).toContain('thisMonthCount: summary?.dueDate.thisMonth ?? "—"');
   });
 
@@ -463,7 +463,7 @@ describe("ClientsPage directory and summary contracts", () => {
     expect(source).toContain("isDirectoryInitialError");
     expect(source).toContain("directory.hasStaleData");
     expect(source).toContain("listSummary.isInitialError");
-    expect(source).not.toContain("desktop_clients_summary_stale");
+    expect(source).not.toContain("desktop_clients_page_summary_stale");
     expect(source).not.toContain("list-panel_cached-data-error_retry");
     expect(source).toContain("directory.isSuccessfulEmpty");
     expect(source).toContain('aria-label="고객 목록 다시 시도"');
@@ -490,7 +490,7 @@ describe("ClientsPage selection and draft transitions", () => {
     expect(source).toContain("onBeforeClose={handleFormPanelBeforeClose}");
     expect(source).toContain("onDirtyChange={handleCreateFormDirtyChange}");
     expect(source).toContain("pendingCreateDiscard");
-    expect(source).toContain('data-component="desktop_clients_modals_create-discard-approval"');
+    expect(source).toContain('data-component="desktop_clients_page_modals_create-discard-approval"');
     expect(source).toContain("onApprove={handleDiscardCreateDraft}");
     expect(source).toContain("setPendingCreateDiscard({ type: \"filter\"");
     expect(source).toContain("setPendingCreateDiscard({ type: \"select\"");
@@ -631,7 +631,7 @@ describe("ClientsPage directory subtitle behavior", () => {
     });
 
     expect(screen.getByTestId("clients-list-subtitle")).toHaveTextContent(/^4명$/);
-    const notice = document.querySelector('[data-component="desktop_clients_sections_section-content_list-section_split-layout_list-panel_cached-data-error"]');
+    const notice = document.querySelector('[data-component="desktop_clients_page_sections_section-content_list-section_split-layout_list-panel_cached-data-error"]');
     expect(notice).toBeInTheDocument();
     expect(notice).toHaveAttribute("role", "status");
     expect(notice).toHaveTextContent("새로 불러오지 못해 최근에 확인된 목록을 표시하고 있어요");

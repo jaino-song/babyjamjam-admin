@@ -42,21 +42,21 @@ const DEFAULT_CONFIG: RibbonConfig = {
 
 function RibbonConfigSkeleton() {
   return (
-    <div data-component="desktop_website-admin_ribbon_loading-skeleton" className="space-y-6">
+    <div data-component="desktop_website-admin_page_ribbon_loading-skeleton" className="space-y-6">
       {Array.from({ length: 4 }).map((_, index) => (
         <div
           key={index}
-          data-component="desktop_website-admin_ribbon_loading-skeleton_row"
+          data-component="desktop_website-admin_page_ribbon_loading-skeleton_row"
           className="flex items-center justify-between gap-6 rounded-xl p-3"
         >
-          <div data-component="desktop_website-admin_ribbon_loading-skeleton_row_copy" className="min-w-0 flex-1 space-y-2">
+          <div data-component="desktop_website-admin_page_ribbon_loading-skeleton_row_copy" className="min-w-0 flex-1 space-y-2">
             <Skeleton className="h-4 w-28 bg-v3-dim-white" />
             <Skeleton className="h-3 w-64 max-w-full bg-v3-dim-white" />
           </div>
           <Skeleton className="h-9 w-16 rounded-full bg-v3-dim-white" />
         </div>
       ))}
-      <div data-component="desktop_website-admin_ribbon_loading-skeleton_actions" className="flex justify-end">
+      <div data-component="desktop_website-admin_page_ribbon_loading-skeleton_actions" className="flex justify-end">
         <Skeleton className="h-10 w-24 rounded-xl bg-v3-dim-white" />
       </div>
     </div>
@@ -106,14 +106,14 @@ export default function WebsiteAdminPage() {
   };
 
   return (
-    <PageSection name="website-admin">
-      <StatsBar items={[]} showDocumentJobs="whenActive" name="website-admin" />
-      <SplitLayout data-component="desktop_website-admin_split-layout"
+    <PageSection name="desktop_website-admin_page">
+      <StatsBar items={[]} showDocumentJobs="whenActive" name="desktop_website-admin_page" />
+      <SplitLayout data-component="desktop_website-admin_page_split-layout"
         hasSelection={activeSection !== null}
         onBack={() => setActiveSection(null)}
         onModeChange={setSplitLayoutMode}
       >
-        <ListPanel data-component="desktop_website-admin_split-layout_list-panel"
+        <ListPanel data-component="desktop_website-admin_page_split-layout_list-panel"
           title="홈페이지 관리"
           subtitle="홈페이지에 노출되는 콘텐츠와 설정을 관리합니다."
           headerPadding="detail"
@@ -133,7 +133,7 @@ export default function WebsiteAdminPage() {
 
               return (
                 <AnimatedSlotListItemContent
-                  dataComponent="desktop_website-admin_split-layout_list-panel_website-admin-list-item"
+                  dataComponent="desktop_website-admin_page_split-layout_list-panel_website-admin-list-item"
                   icon={item.icon}
                   iconContainerClassName="bg-v3-primary-light"
                   iconClassName="text-v3-primary"
@@ -145,19 +145,19 @@ export default function WebsiteAdminPage() {
           />
         </ListPanel>
 
-        <DetailPanel data-component="desktop_website-admin_split-layout_detail-panel"
+        <DetailPanel data-component="desktop_website-admin_page_split-layout_detail-panel"
           title="리본 배너"
           subtitle="홈페이지 상단에 표시되는 알림 리본을 관리합니다."
           compactBackLabel="홈페이지 관리 목록으로 돌아가기"
         >
-          <div data-component="desktop_website-admin_split-layout_detail-panel_website-admin-ribbon">
+          <div data-component="desktop_website-admin_page_split-layout_detail-panel_website-admin-ribbon">
                 {ribbonQuery.isLoading || (ribbonQuery.isPaused && ribbonQuery.data === undefined) ? (
-                  <div data-component="desktop_website-admin_split-layout_detail-panel_website-admin-ribbon_loading">
+                  <div data-component="desktop_website-admin_page_split-layout_detail-panel_website-admin-ribbon_loading">
                     <RibbonConfigSkeleton />
                   </div>
                 ) : ribbonQuery.isError && ribbonQuery.data === undefined ? (
                   <QueryErrorState
-                    dataComponent="desktop_website-admin_split-layout_detail-panel_website-admin-ribbon_load-error"
+                    dataComponent="desktop_website-admin_page_split-layout_detail-panel_website-admin-ribbon_load-error"
                     title="리본 설정을 불러오지 못했습니다"
                     onRetry={() => { void ribbonQuery.refetch(); }}
                     isRetrying={ribbonQuery.isFetching}
@@ -166,7 +166,7 @@ export default function WebsiteAdminPage() {
                   <div className="space-y-6">
                     {ribbonQuery.isError && ribbonQuery.data !== undefined ? (
                       <QueryErrorState
-                        dataComponent="desktop_website-admin_split-layout_detail-panel_website-admin-ribbon_refetch-error"
+                        dataComponent="desktop_website-admin_page_split-layout_detail-panel_website-admin-ribbon_refetch-error"
                         size="inline"
                         title="최신 정보를 불러오지 못했습니다"
                         onRetry={() => { void ribbonQuery.refetch(); }}

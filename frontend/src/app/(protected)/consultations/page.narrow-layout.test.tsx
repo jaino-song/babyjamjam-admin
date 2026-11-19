@@ -30,8 +30,17 @@ describe("ConsultationsPage narrow viewport layout (below md)", () => {
     expect(region).toBeInTheDocument();
     expect(region).toHaveClass("contents", "max-md:flex", "max-md:min-h-0", "max-md:flex-1", "max-md:flex-col", "max-md:overflow-y-auto");
     expect(region.className).not.toContain("[&>[data-slot=split-layout]]");
-    expect(region.parentElement).toHaveAttribute("data-component", "consultations");
-    expect(region.firstElementChild).toBe(container.querySelector('[data-component="consultations_stats"]'));
+    expect(region.parentElement).toHaveAttribute("data-component", "desktop_consultations_page");
+    const root = container.querySelector('[data-component="desktop_consultations_page"]');
+    expect(root?.getAttribute("data-component")).toMatch(/^(desktop|mobile)_[a-z0-9]+(?:-[a-z0-9]+)*(?:_[a-z0-9]+(?:-[a-z0-9]+)*){1,}$/);
+    const stats = root?.querySelector('[data-component="desktop_consultations_page_stats"]');
+    expect(stats).toHaveAttribute("data-component", `${root?.getAttribute("data-component")}_stats`);
+    for (const child of (stats?.querySelectorAll("[data-component]") ?? [])) {
+      expect(child.getAttribute("data-component")).toMatch(/^desktop_consultations_page_stats_/);
+    }
+    const bar = container.querySelector('[data-component="desktop_consultations_page_stats"]');
+    expect(bar).toBeInTheDocument();
+    expect(region.firstElementChild).toBe(bar);
     expect(region.lastElementChild).toBe(splitArea);
 
     // SplitLayout sizes its compact panels from its parent's box width, so that parent
