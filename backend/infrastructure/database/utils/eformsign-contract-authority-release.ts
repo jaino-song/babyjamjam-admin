@@ -3,7 +3,7 @@ import { Prisma } from "@prisma/client";
 import { buildEformsignDispatchBusinessKey } from "application/services/eformsign-dispatch-boundary.service";
 import { ContractRecoveryError } from "domain/repositories/eformsign-contract-recovery.repository.interface";
 import { SUPERSEDED_PROGRESS_STEP } from "domain/entities/eformsign-document-job.entity";
-import { compareAndSetAuthority, type AuthorityState } from "./eformsign-contract-authority";
+import { compareAndSetAuthority, type AuthorityState, type AuthorityPatch } from "./eformsign-contract-authority";
 
 type Job = Prisma.eformsign_document_jobGetPayload<Record<string, never>>;
 type Intent = Prisma.eformsign_dispatch_intentGetPayload<Record<string, never>>;
@@ -55,13 +55,14 @@ export function provenNoEffect(row: Intent): boolean {
         || (row.startedAt === null && row.reconciliationReason === "draft_released_before_open")))
         || (row.status === "reconciled_not_delivered" && row.reconciledOutcome === "not_delivered" && row.reconciledAt !== null && validActor(row.reconciledByUserId)));
 }
-async function close(tx: Prisma.TransactionClient, a: AuthorityState) {
+async function close(tx: Prisma.TransactionClient, a: AuthorityState, extraPatch: Pick<AuthorityPatch, "claimUserId" | "claimExpiresAt"> = {}) {
     if (!await compareAndSetAuthority(tx, { branchId: a.branchId, clientId: a.clientId, generation: a.generation,
-        creationJobId: a.creationJobId, phase: a.phase, claimEpoch: a.claimEpoch, claimUserId: a.claimUserId, fingerprint: a.fingerprint }, { phase: "closed" })) conflict();
+        creationJobId: a.creationJobId, phase: a.phase, claimEpoch: a.claimEpoch, claimUserId: a.claimUserId, fingerprint: a.fingerprint }, { phase: "closed", ...extraPatch })) conflict();
     a.phase = "closed";
 }
 /** Caller holds client -> authority. No nested transaction, provider call, or payload restoration. */
-export async function retireProvenNoEffect(tx: Prisma.TransactionClient, a: AuthorityState, pointer: string | null): Promise<boolean> {
+export async function retireProvenNoEffect(tx: Prisma.TransactionClient, a: AuthorityState, pointer: string | null,
+    progressStep = SUPERSEDED_PROGRESS_STEP, closePatch: Pick<AuthorityPatch, "claimUserId" | "claimExpiresAt"> = {}): Promise<boolean> {
     if (!["reserved", "creation_pending", "creation_uncertain"].includes(a.phase) || a.humanIntentId || a.providerDocumentId || a.priorDocumentId !== pointer
         || (a.claimExpiresAt && a.claimExpiresAt.getTime() > Date.now())) return false;
     const job = await lockedAuthorityJob(tx, a);
@@ -70,7 +71,8 @@ export async function retireProvenNoEffect(tx: Prisma.TransactionClient, a: Auth
     // Discovery is serialized with every draft writer by the caller's client/authority locks.
     // Operator reconciliation only changes state; re-read after locking the sorted union.
     const discovered = await tx.eformsign_dispatch_intent.findUnique({ where: { businessKey: draftKey }, select: { id: true } });
-    const refs = await linkedIntents(tx, a, job, discovered ? [discovered.id] : []);
+    const human = await tx.eformsign_dispatch_intent.findUnique({ where: { businessKey: humanKey }, select: { id: true } });
+    const refs = await linkedIntents(tx, a, job, [...(discovered ? [discovered.id] : []), ...(human ? [human.id] : [])]);
     const draft = await tx.eformsign_dispatch_intent.findUnique({ where: { businessKey: draftKey } });
     if ((draft?.id ?? null) !== (discovered?.id ?? null)) conflict();
     if (draft) {
@@ -98,10 +100,10 @@ export async function retireProvenNoEffect(tx: Prisma.TransactionClient, a: Auth
     if (accepted.some(row => !row.providerDocumentId?.trim())) return false;
     const retired = await tx.eformsign_document_job.updateMany({ where: { id: job.id, branchId: a.branchId, clientId: a.clientId,
         contractGeneration: a.generation, payloadFingerprint: a.fingerprint, status: job.status, leaseToken: null, activeKey: job.activeKey,
-        documentId: null, progressStep: job.progressStep }, data: { status: "failed", progressStep: SUPERSEDED_PROGRESS_STEP,
+        documentId: null, progressStep: job.progressStep }, data: { status: "failed", progressStep,
         activeKey: null, payload: Prisma.DbNull, leaseToken: null, heartbeatAt: null } });
     if (retired.count !== 1) conflict();
-    await close(tx, a); return true;
+    await close(tx, a, closePatch); return true;
 }
 /** Previously atomic verified+completed is the proof; mutable mirror status is only a safety veto. */
 export async function normalizeVerifiedAuthority(tx: Prisma.TransactionClient, a: AuthorityState): Promise<boolean> {
