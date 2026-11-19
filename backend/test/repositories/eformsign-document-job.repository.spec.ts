@@ -1203,9 +1203,32 @@ describe("SbEformsignDocumentJobRepository", () => {
             expect(attention.values).toContain("cancelled"); expect(recent.values).toContain("cancelled");
             expect(attention.text).toContain("a.creation_job_id = j.id");
             expect(attention.text).toContain("a.generation = j.contract_generation");
-            expect(attention.text).toContain("u.provider_document_id IS NULL OR u.provider_document_id !~ '\\S'");
+            expect(attention.text).toContain("u.provider_document_id IS NULL OR u.provider_document_id ~ U&'^[");
             expect(attention.text).toContain("AS cancellable");
             expect(attention.text).not.toContain("claim_expires_at");
+        });
+
+        it("matches the SQL receipt character class to ECMAScript trim whitespace", async () => {
+            queryRaw.mockResolvedValueOnce([]).mockResolvedValueOnce([]).mockResolvedValueOnce([]);
+            await repository.listForBranch(branchId, new Date(0));
+            const statement = queryRaw.mock.calls[1][0] as Prisma.Sql;
+            const pattern = statement.text.match(/u\.provider_document_id ~ U&'([^']+)'/)?.[1];
+            expect(pattern).toBeDefined();
+            // Decode PostgreSQL U& four-digit escapes from the actual Prisma SQL text.
+            const sqlBlank = new RegExp((pattern ?? "").replace(/\\([0-9a-f]{4})/gi,
+                (_, hex: string) => String.fromCodePoint(Number.parseInt(hex, 16))), "u");
+            const trimCodePoints = [
+                0x0009, 0x000a, 0x000b, 0x000c, 0x000d, 0x0020, 0x00a0, 0x1680,
+                0x2000, 0x2001, 0x2002, 0x2003, 0x2004, 0x2005, 0x2006, 0x2007,
+                0x2008, 0x2009, 0x200a, 0x2028, 0x2029, 0x202f, 0x205f, 0x3000, 0xfeff,
+            ];
+            const whitespace = String.fromCodePoint(...trimCodePoints);
+            const receipts = ["", ...trimCodePoints.map(code => String.fromCodePoint(code)), whitespace,
+                "prior-accepted-normal-id", `${whitespace}prior-accepted-normal-id${whitespace}`,
+                "\u0000", "\u0085", "\u180e", "\u200b", "\uffff"];
+            for (const receipt of receipts) {
+                expect({ receipt, blank: sqlBlank.test(receipt) }).toEqual({ receipt, blank: receipt.trim() === "" });
+            }
         });
 
         it("maps rows that carry no client_name column", async () => {

@@ -210,10 +210,11 @@ function cancellableJobSql(): Prisma.Sql {
               AND NOT EXISTS (
                   SELECT 1 FROM eformsign_dispatch_intent h
                   WHERE h.business_key = encode(sha256(convert_to('contract-human:' || a.generation::text, 'UTF8')), 'hex'))
+              -- Enumerate ECMAScript trim characters; avoid locale-dependent regex classes/ranges.
               AND NOT EXISTS (
                   SELECT 1 FROM eformsign_dispatch_intent u WHERE u.branch_id = a.branch_id AND u.client_id = a.client_id
                     AND u.action IN ('create', 'create_draft') AND (u.status IN ('started', 'uncertain')
-                        OR (u.status = 'accepted' AND (u.provider_document_id IS NULL OR u.provider_document_id !~ '\\S'))))
+                        OR (u.status = 'accepted' AND (u.provider_document_id IS NULL OR u.provider_document_id ~ U&'^[\\0009\\000A\\000B\\000C\\000D\\0020\\00A0\\1680\\2000\\2001\\2002\\2003\\2004\\2005\\2006\\2007\\2008\\2009\\200A\\2028\\2029\\202F\\205F\\3000\\FEFF]*$'))))
         )
     ), false)`;
 }
