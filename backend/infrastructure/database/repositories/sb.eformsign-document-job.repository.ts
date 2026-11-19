@@ -302,9 +302,10 @@ export class SbEformsignDocumentJobRepository implements IEformsignDocumentJobRe
         this.assertClaimInput(input);
         try {
             return await this.prisma.$transaction(async tx => {
-                // Peek discovers scope only. Eligibility is evaluated again after the job lock.
+                // A terminal cancellation can replay without client/authority locks; eligibility is checked after locking.
                 const peek = await tx.eformsign_document_job.findUnique({ where: { id: input.jobId } });
                 if (!peek || peek.branchId !== input.branchId) return { kind: "not_found" };
+                if (peek.status === "failed" && peek.progressStep === CANCELLED_PROGRESS_STEP) return { kind: "already_cancelled" };
                 if (!peek.clientId) return { kind: "not_cancellable", reason: "unsupported_job" };
                 const [authority] = await lockAuthorityScope(tx, input.branchId, [peek.clientId]);
                 await tx.$queryRaw(Prisma.sql`SELECT id FROM eformsign_document_job WHERE id = ${input.jobId}::uuid AND branch_id = ${input.branchId}::uuid FOR UPDATE`);

@@ -34,6 +34,35 @@ describe("document job cancellation", () => {
         const before = structuredClone(f.state);
         expect(await f.repo.cancel(input)).toEqual({ kind: "not_found" }); expect(f.state).toEqual(before);
     });
+    it.each(["moved", "deleted"])("returns already_cancelled without locks or writes after the client is %s", async defect => {
+        const f = ready();
+        expect(await f.repo.cancel(input)).toEqual({ kind: "cancelled" });
+        if (defect === "moved") {
+            f.state.clients[0].branchId = G;
+            // The shared raw-query fixture ignores branch_id; model the moved client's empty scope lookup.
+            f.tx.$queryRaw.mockImplementationOnce(async (sql: Prisma.Sql) => { f.sql.push(sql); return []; });
+        }
+        else f.state.clients = [];
+        const before = structuredClone(f.state);
+        f.sql.length = 0; f.events.length = 0;
+
+        expect(await f.repo.cancel(input)).toEqual({ kind: "already_cancelled" });
+        expect(f.state).toEqual(before);
+        expect(f.sql).toEqual([]);
+        expect(f.events).toEqual([]);
+    });
+    it("returns not_found for an already cancelled job in another branch", async () => {
+        const f = ready();
+        expect(await f.repo.cancel(input)).toEqual({ kind: "cancelled" });
+        f.state.jobs[0].branchId = G;
+        const before = structuredClone(f.state);
+        f.sql.length = 0; f.events.length = 0;
+
+        expect(await f.repo.cancel(input)).toEqual({ kind: "not_found" });
+        expect(f.state).toEqual(before);
+        expect(f.sql).toEqual([]);
+        expect(f.events).toEqual([]);
+    });
     it("rejects a generation mismatch at the cancel binding check", async () => {
         const f = ready(); f.state.authorities[0].generation = I;
         const before = structuredClone(f.state);
