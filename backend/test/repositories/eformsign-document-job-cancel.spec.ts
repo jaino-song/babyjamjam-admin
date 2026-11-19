@@ -34,6 +34,22 @@ describe("document job cancellation", () => {
         const before = structuredClone(f.state);
         expect(await f.repo.cancel(input)).toEqual({ kind: "not_found" }); expect(f.state).toEqual(before);
     });
+    it("returns already_cancelled without writes when a concurrent POST cancels after the peek", async () => {
+        const f = ready();
+        const eligiblePeek = structuredClone(f.state.jobs[0]);
+        expect(await f.repo.cancel(input)).toEqual({ kind: "cancelled" });
+        const before = structuredClone(f.state);
+        // The second POST peek predates the first POST's commit; its locked re-read sees that commit.
+        f.tx.eformsign_document_job.findUnique.mockClear();
+        f.tx.eformsign_document_job.findUnique.mockResolvedValueOnce(eligiblePeek);
+        f.sql.length = 0; f.events.length = 0;
+
+        expect(await f.repo.cancel(input)).toEqual({ kind: "already_cancelled" });
+        expect(f.tx.eformsign_document_job.findUnique).toHaveBeenCalledTimes(2);
+        expect(f.sql.some((sql: Prisma.Sql) => sql.text.includes("FROM eformsign_document_job") && sql.text.includes("FOR UPDATE"))).toBe(true);
+        expect(f.state).toEqual(before);
+        expect(f.events).toEqual([]);
+    });
     it.each(["moved", "deleted"])("returns already_cancelled without locks or writes after the client is %s", async defect => {
         const f = ready();
         expect(await f.repo.cancel(input)).toEqual({ kind: "cancelled" });
