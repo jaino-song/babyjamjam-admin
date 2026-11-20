@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { LinkVerificationStep } from "./link-verification-step";
 
 it("validates six digits, retains returned failure and restarts", async () => {
@@ -15,4 +15,29 @@ it("validates six digits, retains returned failure and restarts", async () => {
   expect(await screen.findByText("인증 실패")).toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "정보 다시 입력" }));
   expect(onRestart).toHaveBeenCalledTimes(1);
+});
+
+it("connects the failed check to the invalid input and clears it on a new submit", async () => {
+  let finishVerify: (result: { success: boolean }) => void = () => {};
+  const onVerify = jest.fn()
+    .mockResolvedValueOnce({ success: false, error: "인증 실패" })
+    .mockImplementationOnce(() => new Promise<{ success: boolean }>((resolve) => { finishVerify = resolve; }));
+  render(<LinkVerificationStep data-component="desktop_auth_test_verification" onVerify={onVerify} onRestart={jest.fn()} />);
+  const input = screen.getByLabelText("인증번호");
+  expect(input).toHaveAttribute("aria-invalid", "false");
+  expect(input).not.toHaveAttribute("aria-describedby");
+  fireEvent.change(input, { target: { value: "123456" } });
+  fireEvent.click(screen.getByRole("button", { name: "인증하고 계정 연결" }));
+  const error = await screen.findByRole("alert");
+  expect(error).toHaveTextContent("인증 실패");
+  expect(error.id).not.toBe("");
+  expect(input).toHaveAttribute("aria-invalid", "true");
+  expect(input).toHaveAttribute("aria-describedby", error.id);
+  fireEvent.click(screen.getByRole("button", { name: "인증하고 계정 연결" }));
+  await waitFor(() => expect(onVerify).toHaveBeenCalledTimes(2));
+  expect(input).toBeDisabled();
+  expect(input).toHaveAttribute("aria-invalid", "false");
+  expect(input).not.toHaveAttribute("aria-describedby");
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  await act(async () => { finishVerify({ success: true }); });
 });

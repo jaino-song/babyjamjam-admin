@@ -6,6 +6,28 @@ import { FormField } from "./form-field";
 const SLOT_SELECTOR = '[data-component="desktop_auth_form-field_label-row_trailing"]';
 
 describe("FormField", () => {
+  it("preserves caller description ids without a field message", () => {
+    render(<FormField label="이메일" aria-describedby="email-note email-help" />);
+    expect(screen.getByLabelText("이메일")).toHaveAttribute("aria-describedby", "email-note email-help");
+  });
+
+  it("puts its own message id before caller description ids", () => {
+    render(<FormField label="이메일" error="이메일 오류" aria-describedby="email-note email-help" />);
+    expect(screen.getByLabelText("이메일")).toHaveAttribute("aria-describedby", "이메일-error email-note email-help");
+  });
+
+  it.each([true, "true"] as const)("honours caller aria-invalid %s in the attribute and style", (invalid) => {
+    render(<FormField label="이메일" aria-invalid={invalid} />);
+    expect(screen.getByLabelText("이메일")).toHaveAttribute("aria-invalid", "true");
+    expect(screen.getByLabelText("이메일")).toHaveClass("border-destructive");
+  });
+
+  it("keeps default aria attributes when neither is passed", () => {
+    render(<FormField label="이메일" />);
+    expect(screen.getByLabelText("이메일")).not.toHaveAttribute("aria-describedby");
+    expect(screen.getByLabelText("이메일")).toHaveAttribute("aria-invalid", "false");
+  });
+
   it("renders an error in the label-row slot, never below the input", () => {
     render(
       <FormField

@@ -424,6 +424,9 @@ export function useRegisterPageController() {
         }
       } catch (error) {
         const normalized = normalizeApiError(error, { locale: "ko-KR", operation: "mutation" });
+        if (axios.isAxiosError(error) && error.response?.status === 429) {
+          return { success: false, error: normalized.verified ? normalized.message : "요청이 너무 많아요. 잠시 후 다시 시도해 주세요." };
+        }
         return { success: false, error: normalized.problem?.code === "VALIDATION_FAILED" && normalized.problem.errors?.some((item) => item.pointer === "/code")
           ? "인증번호가 맞지 않거나 만료됐어요. 다시 입력하거나 처음부터 진행해 주세요."
           : "회원가입에 실패했어요." };
