@@ -3582,18 +3582,49 @@ describe("automatic service-record date replacement", () => {
         expect(f.tx.message_log.updateMany).not.toHaveBeenCalled();
     });
 
-    it.each(["release", "original", "binding", "claim", "deadline", "attempts", "duplicate"])("rejects a mismatching quiet association: %s", async (state) => {
+    it.each(["release", "original", "binding", "claim", "deadline", "duplicate"])("rejects a mismatching quiet association: %s", async (state) => {
         const f = quietFixture(); const row = f.rows()[0]!;
         if (state === "release") row["next_attempt_at"] = new Date(f.hold.releaseAt.getTime() - 1);
         if (state === "original") (f.logs()[0]!["variables"] as Record<string, unknown>)["quietHoursOriginalScheduledFor"] = "2027-01-08T03:00:00.000Z";
         if (state === "binding") (row["payload"] as Record<string, unknown>)["existingMessageLogId"] = 99;
         if (state === "claim") row["claim_token"] = "stale-claim";
         if (state === "deadline") row["processing_deadline_at"] = new Date();
-        if (state === "attempts") row["attempts"] = 1;
         if (state === "duplicate") f.logs().push({ ...f.logs()[0], id: 9 });
         const before = structuredClone({ rows: f.rows(), logs: f.logs() });
         expect((await f.run()).kind).toBe("protected");
         expect({ rows: f.rows(), logs: f.logs() }).toEqual(before);
+    });
+
+    it("reschedules a trigger-deferred quiet hold instead of keeping the old date", async () => {
+        const f = quietFixture(); const row = f.rows()[0]!;
+        // A trigger-side DEFER before any provider call bumps the job attempts and backoff.
+        Object.assign(row, { attempts: 2, next_attempt_at: new Date(f.hold.releaseAt.getTime() + 5 * 60_000) });
+        const unrelated = structuredClone({ rows: f.rows().slice(1), logs: f.logs().slice(1) });
+        const result = await f.run();
+        expect(result.kind).toBe("replaced");
+        if (result.kind !== "replaced") throw new Error("Expected refreshed reservation");
+        expect(result.job).toMatchObject({ id: "automatic", status: "pending", attempts: 0, nextAttemptAt: null,
+            scheduledFor: f.replacement.scheduledFor, payload: f.replacement.payload });
+        expect(f.rows()[0]).toMatchObject({ status: "pending", attempts: 0, next_attempt_at: null,
+            scheduled_for: f.replacement.scheduledFor, cancel_reason: null });
+        expect(f.logs()[0]).toMatchObject({ status: "failed", trigger_job_id: null, provider_acceptance_key: null, error_message: reason });
+        expect(await f.repository.readQuietHold(result.job, f.tx as never)).toBeNull();
+        expect({ rows: f.rows().slice(1), logs: f.logs().slice(1) }).toEqual(unrelated);
+    });
+
+    it("keeps a needs_setup reservation operator-only when its dates change", async () => {
+        const f = fixture(); const row = f.rows()[0]!;
+        f.logs().splice(0, 1);
+        Object.assign(row, { status: "needs_setup", cancel_reason: "Sender profile is not configured", attempts: 1 });
+        const unrelated = structuredClone({ rows: f.rows().slice(1), logs: f.logs() });
+        const result = await f.run();
+        expect(result.kind).toBe("replaced");
+        if (result.kind !== "replaced") throw new Error("Expected refreshed reservation");
+        expect(result.job).toMatchObject({ id: "automatic", status: "needs_setup", cancelReason: "Sender profile is not configured",
+            attempts: 1, nextAttemptAt: null, scheduledFor: f.replacement.scheduledFor, payload: f.replacement.payload });
+        expect(f.rows()[0]).toMatchObject({ status: "needs_setup", cancel_reason: "Sender profile is not configured",
+            attempts: 1, next_attempt_at: null, claim_token: null, scheduled_for: f.replacement.scheduledFor });
+        expect({ rows: f.rows().slice(1), logs: f.logs() }).toEqual(unrelated);
     });
 
     it("leaves an equivalent quiet reservation unchanged", async () => {
