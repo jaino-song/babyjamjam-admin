@@ -139,6 +139,7 @@ export function ContractDocumentJobsPopover({
   if (recoveryScope !== scope) {
     setRecoveryScope(scope);
     setRecoveryJobId(null);
+    setRecoveryOpening(opening => opening + 1);
     setCancelRequest(null);
     setCancelOpen(false);
     setRetryRequest(null);

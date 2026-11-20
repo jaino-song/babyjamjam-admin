@@ -198,6 +198,30 @@ test("discards a stale recovery callback from an earlier opening in the same sco
   expect(focus).toHaveBeenCalledTimes(1);
 });
 
+test("discards a stale recovery callback after a route scope round trip", async () => {
+  const view = render(<ContractDocumentJobsPopover open documentJobs={JOBS} data-component={BASE} />);
+  fireEvent.click(screen.getByRole("button", { name: /김하늘.*상세 보기/ }));
+  fireEvent.click(screen.getByRole("button", { name: "수동 전송" }));
+  const a = mockRecoveryDialog.mock.calls.at(-1)![0];
+  act(() => { a.onClose(); });
+
+  mockPathname = "/clients";
+  view.rerender(<ContractDocumentJobsPopover open documentJobs={JOBS} data-component={BASE} />);
+  mockPathname = "/contracts";
+  view.rerender(<ContractDocumentJobsPopover open documentJobs={JOBS} data-component={BASE} />);
+  await act(async () => { await new Promise(resolve => setTimeout(resolve, 20)); });
+
+  const card = screen.getByRole("button", { name: /김하늘.*상세 보기/ });
+  card.focus();
+  expect(card).toHaveFocus();
+  const focus = jest.spyOn(HTMLElement.prototype, "focus");
+  const event = new Event("closeAutoFocus", { cancelable: true });
+  const before = focus.mock.calls.length;
+  act(() => { a.onCloseAutoFocus?.(event); });
+  expect(focus.mock.calls.length).toBe(before);
+  expect(card).toHaveFocus();
+});
+
 test("guards a stale recovery callback during the layout commit of a new route", async () => {
   const focus = jest.spyOn(HTMLElement.prototype, "focus");
   const event = new Event("closeAutoFocus", { cancelable: true });
