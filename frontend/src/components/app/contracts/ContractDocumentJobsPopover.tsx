@@ -146,8 +146,10 @@ export function ContractDocumentJobsPopover({
     if (cancelRequest !== null || !restoreCancelFocus.current) return;
     restoreCancelFocus.current = false;
     const trigger = cancelTrigger.current;
-    (trigger?.isConnected && !trigger.closest("[inert]") ? trigger : anchorRef.current)?.focus({ preventScroll: true });
-  }, [cancelRequest]);
+    if (!isOpen) anchorRef.current?.focus({ preventScroll: true });
+    else if (trigger?.isConnected && !trigger.closest("[inert]")) trigger.focus({ preventScroll: true });
+    else panes.current?.focusCurrentPane();
+  }, [cancelRequest, isOpen]);
 
   useEffect(() => {
     if (retryRequest !== null || !restoreRetryFocus.current) return;
@@ -181,7 +183,8 @@ export function ContractDocumentJobsPopover({
     setCancelRequest({ jobId, branchId, onCancelled });
     setCancelOpen(true);
   };
-  const cancelDialog = cancelRequest ? <ContractDocumentJobCancelDialog key={cancelRequest.jobId} jobId={cancelRequest.jobId} branchId={cancelRequest.branchId} open={cancelOpen} data-component={sub("cancel")}
+  const cancelJobOffered = !resolvedJobs || [...resolvedJobs.active, ...resolvedJobs.requiresAttention, ...resolvedJobs.recent].some(job => job.jobId === cancelRequest?.jobId && job.cancellable === true);
+  const cancelDialog = cancelRequest ? <ContractDocumentJobCancelDialog key={cancelRequest.jobId} jobId={cancelRequest.jobId} isJobOffered={cancelJobOffered} branchId={cancelRequest.branchId} open={cancelOpen} data-component={sub("cancel")}
     onClose={() => setCancelOpen(false)} onCancelled={() => {
       cancelSucceeded.current = true;
       setCancelOpen(false);
