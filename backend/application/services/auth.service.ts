@@ -653,8 +653,30 @@ export class AuthService {
         return pendingSignupToken;
     }
 
-    private async createPendingAccountOnboardingState(userId: string): Promise<string> {
-        const pendingOnboardingToken = this.generateToken();
+    private assertAccountOnboardingTokenVersion(token: string, tokenVersion: number): void {
+        // The full token (including its version) is hash-bound to the flow row.
+        // Legacy unversioned tokens must require a fresh login.
+        if (!token.endsWith(`.${tokenVersion}`)) {
+            throw new UnauthorizedException(codeOnlyProblemBody("AUTH_REQUIRED"));
+        }
+    }
+
+    private async createAccountOnboardingToken(userId: string, exchangeCode?: string): Promise<string> {
+        const user = await this.prisma.user.findUnique({
+            where: { id: userId },
+            select: { tokenVersion: true },
+        });
+        if (!user) {
+            throw new UnauthorizedException(codeOnlyProblemBody("AUTH_REQUIRED"));
+        }
+        if (exchangeCode !== undefined) {
+            this.assertAccountOnboardingTokenVersion(exchangeCode, user.tokenVersion);
+        }
+        return `${this.generateToken()}.${user.tokenVersion}`;
+    }
+
+    private async createPendingAccountOnboardingState(userId: string, exchangeCode?: string): Promise<string> {
+        const pendingOnboardingToken = await this.createAccountOnboardingToken(userId, exchangeCode);
 
         await this.createAuthFlowState({
             kind: "pending_account_onboarding",
@@ -711,7 +733,7 @@ export class AuthService {
     async createPendingAccountOnboardingCode(userId: string): Promise<string> {
         await this.pruneAuthFlowStates();
 
-        const code = this.generateToken();
+        const code = await this.createAccountOnboardingToken(userId);
         await this.createAuthFlowState({
             kind: "pending_account_onboarding_exchange",
             token: code,
@@ -753,7 +775,7 @@ export class AuthService {
                 throw new UnauthorizedException(codeOnlyProblemBody("AUTH_REQUIRED"));
             }
 
-            const pendingAccountOnboardingToken = await this.createPendingAccountOnboardingState(stored.userId);
+            const pendingAccountOnboardingToken = await this.createPendingAccountOnboardingState(stored.userId, code);
 
             return {
                 onboardingRequired: true,
@@ -813,12 +835,14 @@ export class AuthService {
                 phone: true,
                 birthDate: true,
                 role: true,
+                tokenVersion: true,
             },
         });
 
         if (!user) {
             throw new UnauthorizedException(codeOnlyProblemBody("AUTH_REQUIRED"));
         }
+        this.assertAccountOnboardingTokenVersion(token, user.tokenVersion);
 
         // Cross-branch by design: pending-onboarding users have no selected branch yet.
         const userOrgs = this.filterSelectableUserBranches(await runSystemScope(() => this.prisma.user_branch.findMany({
@@ -878,6 +902,7 @@ export class AuthService {
             if (!user) {
                 throw new UnauthorizedException(codeOnlyProblemBody("AUTH_REQUIRED"));
             }
+            this.assertAccountOnboardingTokenVersion(token, user.tokenVersion);
             this.assertUserApproved(user);
 
             const data: { phone?: string; birthDate?: string } = {};
@@ -912,10 +937,20 @@ export class AuthService {
                 data.birthDate = birthDate;
             }
 
-            return {
-                updatedUser: await tx.user.update({ where: { id: user.id }, data }),
-                fieldsWritten: Object.keys(data),
-            };
+            try {
+                return {
+                    updatedUser: await tx.user.update({
+                        where: { id: user.id, tokenVersion: user.tokenVersion },
+                        data,
+                    }),
+                    fieldsWritten: Object.keys(data),
+                };
+            } catch (error) {
+                if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2025") {
+                    throw new UnauthorizedException(codeOnlyProblemBody("AUTH_REQUIRED"));
+                }
+                throw error;
+            }
         });
 
         const result = await this.createLoginResultForUser(updatedUser);

@@ -1,11 +1,13 @@
 import { Logger } from "@nestjs/common";
 import { JwtService } from "@nestjs/jwt";
+import { Prisma } from "@prisma/client";
 import { createHash } from "crypto";
 import { AuthService } from "application/services/auth.service";
 import { AuthSessionService } from "application/services/auth-session.service";
 import { codeOnlyProblemBody, problemBody } from "application/utils/problem-bodies";
 import { EmailPort } from "domain/ports/email.port";
 import { IAuthTokenRepository } from "domain/repositories/auth-token.repository.interface";
+import { AuthTokenEntity } from "domain/entities/auth-token.entity";
 import { PrismaService } from "infrastructure/database/prisma.service";
 
 const account = {
@@ -15,7 +17,7 @@ const account = {
     authProvider: "both", kakaoId: "kakao-1", passwordHash: "hash", emailVerified: true,
     tokenVersion: 2,
 };
-const token = "pending-onboarding-token";
+const token = `pending-onboarding-token.${account.tokenVersion}`;
 const phone = "010-1234-5678";
 const birthDate = "1990-01-01";
 const tokens = { accessToken: "access", refreshToken: "refresh" };
@@ -26,7 +28,8 @@ const flowState = () => ({
 });
 const databaseDouble = () => ({
     user: { findUnique: jest.fn(), findFirst: jest.fn(), update: jest.fn() },
-    auth_flow_state: { findUnique: jest.fn(), updateMany: jest.fn() },
+    auth_flow_state: { findUnique: jest.fn(), updateMany: jest.fn(), create: jest.fn(), deleteMany: jest.fn() },
+    auth_session: { updateMany: jest.fn() },
     user_branch: { findMany: jest.fn(), create: jest.fn(), update: jest.fn() },
 });
 
@@ -36,7 +39,8 @@ describe("AuthService account completion", () => {
     let service: AuthService;
     let stored: ReturnType<typeof flowState>;
     let transactionPromise: Promise<unknown>;
-    let sessions: { issueSession: jest.Mock };
+    let sessions: { issueSession: jest.Mock; revokeAllUserSessions: jest.Mock };
+    let resetTokens: { findByToken: jest.Mock; consumeWithinTx: jest.Mock };
     let log: jest.SpyInstance;
 
     beforeEach(() => {
@@ -64,12 +68,13 @@ describe("AuthService account completion", () => {
             });
             return transactionPromise;
         });
-        sessions = { issueSession: jest.fn().mockResolvedValue(tokens) };
+        sessions = { issueSession: jest.fn().mockResolvedValue(tokens), revokeAllUserSessions: jest.fn() };
+        resetTokens = { findByToken: jest.fn(), consumeWithinTx: jest.fn() };
         service = new AuthService(
             prisma as unknown as PrismaService,
             {} as JwtService,
             {} as EmailPort,
-            {} as IAuthTokenRepository,
+            resetTokens as unknown as IAuthTokenRepository,
             sessions as unknown as AuthSessionService,
         );
         log = jest.spyOn(Logger.prototype, "log").mockImplementation();
@@ -128,6 +133,15 @@ describe("AuthService account completion", () => {
     });
 
     describe("completeAccountOnboarding", () => {
+        it.each([token.replace(/\.2$/, ""), token.replace(/\.2$/, ".1")])("rejects an unversioned or stale token", async (pendingToken) => {
+            await expect(service.completeAccountOnboarding(pendingToken, phone, birthDate)).rejects.toMatchObject({
+                status: 401, response: codeOnlyProblemBody("AUTH_REQUIRED"),
+            });
+            expect(tx.user.update).not.toHaveBeenCalled();
+            expect(sessions.issueSession).not.toHaveBeenCalled();
+            expectTransactionOnlyAccountAccess();
+        });
+
         it("consumes the token and writes only the two profile fields before issuing tokens", async () => {
             await expect(service.completeAccountOnboarding(token, phone, birthDate)).resolves.toEqual({
                 user: account.id, ...tokens, requiresBranchSelection: undefined,
@@ -143,7 +157,7 @@ describe("AuthService account completion", () => {
             expect(tx.user.findFirst).toHaveBeenCalledWith({
                 where: { phone: { in: ["01012345678", phone] }, id: { not: account.id } },
             });
-            expect(tx.user.update).toHaveBeenCalledWith({ where: { id: account.id }, data: { phone, birthDate } });
+            expect(tx.user.update).toHaveBeenCalledWith({ where: { id: account.id, tokenVersion: account.tokenVersion }, data: { phone, birthDate } });
             expectTransactionOnlyAccountAccess();
             const completionLogs = log.mock.calls.map(([message]: [string]) => message)
                 .filter((message: string) => message.includes("auth_account_onboarding_completed"));
@@ -161,7 +175,7 @@ describe("AuthService account completion", () => {
             tx.user.findUnique.mockResolvedValue(user);
             tx.user.update.mockImplementation(async ({ data }) => ({ ...user, ...data }));
             await expect(service.completeAccountOnboarding(token, submitted, birthDate)).resolves.toMatchObject(tokens);
-            expect(tx.user.update).toHaveBeenCalledWith({ where: { id: account.id }, data: { birthDate } });
+            expect(tx.user.update).toHaveBeenCalledWith({ where: { id: account.id, tokenVersion: account.tokenVersion }, data: { birthDate } });
             expect(tx.user.findFirst).not.toHaveBeenCalled();
             expectTransactionOnlyAccountAccess();
         });
@@ -171,14 +185,14 @@ describe("AuthService account completion", () => {
             tx.user.findUnique.mockResolvedValue(user);
             tx.user.update.mockImplementation(async ({ data }) => ({ ...user, ...data }));
             await expect(service.completeAccountOnboarding(token, phone, submitted)).resolves.toMatchObject(tokens);
-            expect(tx.user.update).toHaveBeenCalledWith({ where: { id: account.id }, data: { phone } });
+            expect(tx.user.update).toHaveBeenCalledWith({ where: { id: account.id, tokenVersion: account.tokenVersion }, data: { phone } });
             expectTransactionOnlyAccountAccess();
         });
 
         it("stores a digits-only phone exactly as received", async () => {
             await service.completeAccountOnboarding(token, "01012345678", birthDate);
             expect(tx.user.update).toHaveBeenCalledWith({
-                where: { id: account.id }, data: { phone: "01012345678", birthDate },
+                where: { id: account.id, tokenVersion: account.tokenVersion }, data: { phone: "01012345678", birthDate },
             });
         });
 
@@ -220,7 +234,7 @@ describe("AuthService account completion", () => {
             expect(log).not.toHaveBeenCalled();
             await expect(service.completeAccountOnboarding(token, "010-9999-9999", birthDate)).resolves.toMatchObject(tokens);
             expect(tx.user.update).toHaveBeenCalledWith({
-                where: { id: account.id }, data: { phone: "010-9999-9999", birthDate },
+                where: { id: account.id, tokenVersion: account.tokenVersion }, data: { phone: "010-9999-9999", birthDate },
             });
             expectTransactionOnlyAccountAccess();
         });
@@ -255,6 +269,21 @@ describe("AuthService account completion", () => {
                 status: 401, response: codeOnlyProblemBody("AUTH_REQUIRED"),
             });
             expect(tx.user.findUnique).not.toHaveBeenCalled();
+            expectTransactionOnlyAccountAccess();
+        });
+
+        it("rejects revocation between the account read and profile update", async () => {
+            tx.user.update.mockRejectedValue(new Prisma.PrismaClientKnownRequestError("Version changed", {
+                code: "P2025", clientVersion: "test",
+            }));
+            await expect(service.completeAccountOnboarding(token, phone, birthDate)).rejects.toMatchObject({
+                status: 401, response: codeOnlyProblemBody("AUTH_REQUIRED"),
+            });
+            expect(tx.user.update).toHaveBeenCalledWith({
+                where: { id: account.id, tokenVersion: account.tokenVersion }, data: { phone, birthDate },
+            });
+            expect(stored.consumedAt).toBeNull();
+            expect(sessions.issueSession).not.toHaveBeenCalled();
             expectTransactionOnlyAccountAccess();
         });
 
@@ -294,6 +323,99 @@ describe("AuthService account completion", () => {
             await expect(service.completeAccountOnboarding(token, phone, birthDate)).rejects.toMatchObject({
                 status: 401, response: codeOnlyProblemBody("AUTH_REQUIRED"),
             });
+            expect(sessions.issueSession).not.toHaveBeenCalled();
+        });
+    });
+
+    describe("pending credential revocation (staff-login-linking-u1/F1)", () => {
+        let currentUser: typeof account;
+
+        beforeEach(() => {
+            currentUser = { ...account };
+            prisma.user.findUnique.mockImplementation(async () => ({ ...currentUser }));
+            tx.user.findUnique.mockImplementation(async () => ({ ...currentUser }));
+            const updateUser = async ({ data }: { data: Record<string, unknown> }) => {
+                const { tokenVersion, ...fields } = data;
+                Object.assign(currentUser, fields);
+                if (tokenVersion) currentUser.tokenVersion += 1;
+                return { ...currentUser };
+            };
+            prisma.user.update.mockImplementation(updateUser);
+            tx.user.update.mockImplementation(updateUser);
+            const states = new Map<string, ReturnType<typeof flowState>>();
+            prisma.auth_flow_state.create.mockImplementation(async ({ data }) => {
+                states.set(data.tokenHash, { ...flowState(), ...data });
+            });
+            const findState = async ({ where }: { where: { tokenHash: string } }) => {
+                const state = states.get(where.tokenHash);
+                if (state) stored = state;
+                return state ?? null;
+            };
+            prisma.auth_flow_state.findUnique.mockImplementation(findState);
+            tx.auth_flow_state.findUnique.mockImplementation(findState);
+        });
+
+        async function revoke(method: "logoutAllSessions" | "resetPassword"): Promise<void> {
+            if (method === "logoutAllSessions") {
+                await service.logoutAllSessions(account.id);
+            } else {
+                resetTokens.findByToken.mockResolvedValue(AuthTokenEntity.reconstitute(
+                    "reset-1", account.id, "reset-hash", "password_reset",
+                    new Date(Date.now() + 60_000), new Date(), null,
+                ));
+                resetTokens.consumeWithinTx.mockResolvedValue(true);
+                jest.spyOn(service, "hashPassword").mockResolvedValue("new-password-hash");
+                await service.resetPassword("reset-token", "Password1!");
+            }
+            expect(currentUser.tokenVersion).toBe(account.tokenVersion + 1);
+        }
+
+        it("keeps newly issued credentials unique and allows completion at the issued version", async () => {
+            const pending = await service.startPendingAccountOnboarding(account.id);
+            expect(await service.startPendingAccountOnboarding(account.id)).not.toBe(pending);
+            tx.user.update.mockImplementation(async ({ data }) => ({ ...currentUser, ...data }));
+            await expect(service.completeAccountOnboarding(pending, phone, birthDate)).resolves.toMatchObject(tokens);
+        });
+
+        it.each(["logoutAllSessions", "resetPassword"] as const)("rejects an issued pending token after %s", async (method) => {
+            const pending = await service.startPendingAccountOnboarding(account.id);
+            await revoke(method);
+            tx.user.update.mockClear();
+            await expect(service.completeAccountOnboarding(pending, phone, birthDate)).rejects.toMatchObject({
+                status: 401, response: codeOnlyProblemBody("AUTH_REQUIRED"),
+            });
+            await expect(service.getPendingAccountOnboarding(pending)).rejects.toMatchObject({ status: 401 });
+            expect(tx.user.update).not.toHaveBeenCalled();
+            expect(sessions.issueSession).not.toHaveBeenCalled();
+        });
+
+        it.each(["logoutAllSessions", "resetPassword"] as const)("rejects an outstanding exchange code after %s", async (method) => {
+            const code = await service.createPendingAccountOnboardingCode(account.id);
+            await revoke(method);
+            prisma.auth_flow_state.create.mockClear();
+            await expect(service.exchangeCodeForTokens(code)).rejects.toMatchObject({
+                status: 401, response: codeOnlyProblemBody("AUTH_REQUIRED"),
+            });
+            expect(prisma.auth_flow_state.create).not.toHaveBeenCalled();
+            expect(sessions.issueSession).not.toHaveBeenCalled();
+        });
+
+        it("does not let a caller replace the version on a revoked token", async () => {
+            const pending = await service.startPendingAccountOnboarding(account.id);
+            await revoke("logoutAllSessions");
+            const forged = pending.replace(/\.[^.]+$/, `.${currentUser.tokenVersion}`);
+            await expect(service.completeAccountOnboarding(forged, phone, birthDate)).rejects.toMatchObject({ status: 401 });
+            expect(sessions.issueSession).not.toHaveBeenCalled();
+        });
+
+        it("exchanges a current code and still rejects its pending token after revocation", async () => {
+            const code = await service.createPendingAccountOnboardingCode(account.id);
+            const result = await service.exchangeCodeForTokens(code);
+            expect(result).toMatchObject({ onboardingRequired: true, onboardingRoute: "/onboarding" });
+            if (!("pendingAccountOnboardingToken" in result)) throw new Error("Expected account onboarding token");
+            await revoke("logoutAllSessions");
+            await expect(service.completeAccountOnboarding(result.pendingAccountOnboardingToken, phone, birthDate))
+                .rejects.toMatchObject({ status: 401 });
             expect(sessions.issueSession).not.toHaveBeenCalled();
         });
     });
