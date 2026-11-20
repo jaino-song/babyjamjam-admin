@@ -1,5 +1,6 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { createProblemDetails } from "@babyjamjam/shared";
 
 import { authApi } from "@/services/api";
 
@@ -202,7 +203,27 @@ describe("RegisterPage", () => {
 
       const phoneAgain = await screen.findByLabelText("전화번호");
       expect(screen.queryByLabelText("요청 권한")).not.toBeInTheDocument();
-      expect(slotOf(phoneAgain)).toHaveTextContent("이미 등록된 전화번호");
+      expect(slotOf(phoneAgain).textContent).toBe("이미 등록된 전화번호예요. 다른 전화번호로 다시 시도해 주세요");
+      await waitFor(() => expect(phoneAgain).toHaveFocus());
+    });
+
+    it("shows the same exact duplicate-phone copy for a REQUEST_CONFLICT problem", async () => {
+      const user = userEvent.setup();
+      jest.mocked(authApi.register).mockRejectedValue({
+        response: { status: 409, data: createProblemDetails({ code: "REQUEST_CONFLICT", requestId: "test", errors: [{ pointer: "/phone", code: "INVALID_VALUE", detail: "Invalid value" }] }) },
+      });
+      render(<RegisterPage />);
+      const phone = await fillAccountStep(user);
+
+      await user.type(phone, "01012345678");
+      await user.type(screen.getByLabelText("생년월일"), "19900101");
+      await user.click(screen.getByRole("button", { name: "다음" }));
+      await user.selectOptions(await screen.findByLabelText("요청 권한"), screen.getAllByRole("option")[1]);
+      await user.click(screen.getByRole("button", { name: "회원가입" }));
+
+      const phoneAgain = await screen.findByLabelText("전화번호");
+      expect(screen.queryByLabelText("요청 권한")).not.toBeInTheDocument();
+      expect(slotOf(phoneAgain).textContent).toBe("이미 등록된 전화번호예요. 다른 전화번호로 다시 시도해 주세요");
       await waitFor(() => expect(phoneAgain).toHaveFocus());
     });
   });

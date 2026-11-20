@@ -476,7 +476,14 @@ export default function RegisterPage() {
     }
   };
 
-  if (challenge) return <LinkVerificationStep data-component={`${REGISTER_BASE}_link-verification`}
+  if (challenge) return <div className="auth-screen" data-component={REGISTER_BASE} data-slot="auth-register-page">
+    <div className="auth-brand" data-component={`${REGISTER_BASE}_brand`}>
+      <div className="auth-logo" data-component={`${REGISTER_BASE}_brand_logo`}>
+        <Image src="/assets/logo.svg" alt="아가잼잼 로고" width={80} height={80} priority />
+      </div>
+      <div className="auth-title" data-component={`${REGISTER_BASE}_brand_title`}>회원가입</div>
+    </div>
+    <LinkVerificationStep embedded data-component={`${REGISTER_BASE}_link-verification`}
     onRestart={() => { setChallenge(null); setCurrentStep(1); }} onVerify={async code => {
       try {
         const result = await authApi.verifyRegisterLink(challenge, code);
@@ -494,7 +501,8 @@ export default function RegisterPage() {
         }
       }
       return { success: false, error: REGISTER_FAILURE_COPY };
-    }} />;
+    }} />
+  </div>;
 
   if (isSuccess) {
     return (
@@ -620,8 +628,8 @@ export default function RegisterPage() {
                 disabled={isLoading}
                 {...fieldProps("email", "register-email")}
               />
-              {isEmailDuplicate && <p role="note">이미 등록된 이메일이에요. 카카오로 가입한 계정이라면 계속 진행해 비밀번호 로그인을 추가할 수 있어요.</p>}
             </div>
+            {isEmailDuplicate && <p role="note" data-component={`${REGISTER_ACCOUNT_FORM}_email-field_note`} data-slot="email-note">이미 등록된 이메일이에요. 카카오로 가입한 계정이라면 계속 진행해 비밀번호 로그인을 추가할 수 있어요.</p>}
           </div>
 
           <div className="auth-input-group" data-component={`${REGISTER_ACCOUNT_FORM}_name-field`}>

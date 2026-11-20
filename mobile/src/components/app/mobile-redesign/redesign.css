@@ -3619,7 +3619,8 @@ body:has([data-slot="auth-forgot-password-page"]) main[data-slot="main-content"]
   margin-top: 24px;
 }
 
-[data-slot="auth-forgot-password-page"] .auth-btn.secondary {
+[data-slot="auth-forgot-password-page"] .auth-btn.secondary,
+[data-slot="link-verification-step"] .auth-btn.secondary {
   border: 1px solid hsl(var(--v3-border));
   background: hsl(var(--v3-dim-white));
   color: hsl(var(--v3-text));
@@ -4128,6 +4129,10 @@ body:has([data-slot="auth-register-page"]) main[data-slot="main-content"] {
   border: 1px solid hsl(var(--v3-border));
   background: hsl(var(--v3-dim-white));
   color: hsl(var(--v3-text));
+}
+
+[data-slot="auth-register-page"] [data-slot="link-verification-step"] .auth-btn.secondary {
+  flex: none;
 }
 
 [data-slot="auth-register-page"] .auth-btn.full {

@@ -14,7 +14,13 @@ async function submit() {
   for (const [label, value] of [["이메일", "qa@example.test"], ["이름", "테스트"], ["비밀번호", "Password1!"], ["비밀번호 확인", "Password1!"]]) {
     fireEvent.change(screen.getByLabelText(label), { target: { value } });
   }
-  expect(await screen.findByRole("note")).toHaveTextContent("이미 등록된 이메일이에요. 카카오로 가입한 계정이라면 계속 진행해 비밀번호 로그인을 추가할 수 있어요.");
+  const note = await screen.findByRole("note");
+  expect(note).toHaveAttribute("data-slot", "email-note");
+  expect(note).toHaveAttribute("data-component", "mobile_auth_register_form_email-field_note");
+  const emailWrap = screen.getByLabelText("이메일").closest(".auth-input-wrap");
+  expect(emailWrap).not.toContainElement(note);
+  expect(emailWrap?.nextElementSibling).toBe(note);
+  expect(note).toHaveTextContent("이미 등록된 이메일이에요. 카카오로 가입한 계정이라면 계속 진행해 비밀번호 로그인을 추가할 수 있어요.");
   fireEvent.click(screen.getByRole("button", { name: "다음" }));
   fireEvent.change(await screen.findByLabelText("전화번호"), { target: { value: "01012345678" } });
   fireEvent.change(screen.getByLabelText("생년월일"), { target: { value: "19900101" } });
@@ -91,4 +97,18 @@ it.each([
   expect(await screen.findByText("계정이 연결되었습니다!")).toBeInTheDocument();
   expect(authApi.verifyRegisterLink).toHaveBeenNthCalledWith(2, "challenge", "654321");
   expect(authApi.register).toHaveBeenCalledTimes(1);
+});
+
+
+it("keeps the register frame and brand around the embedded code step", async () => {
+  jest.mocked(authApi.register).mockResolvedValue({ success: true, linkVerificationRequired: true, linkChallengeToken: "challenge" });
+  await submit();
+  const code = await screen.findByLabelText("인증번호");
+  const step = code.closest('[data-slot="link-verification-step"]');
+  const frame = code.closest('[data-slot="auth-register-page"]');
+  expect(frame).toHaveClass("auth-screen");
+  expect(frame).toContainElement(step as HTMLElement);
+  expect(step).not.toHaveClass("auth-page");
+  expect(frame).toContainElement(screen.getByText("회원가입"));
+  expect(screen.queryByText("필수 정보를 단계별로 입력해 주세요.")).not.toBeInTheDocument();
 });

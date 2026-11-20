@@ -201,3 +201,17 @@ it("shows a real /phone validation problem at the phone field", async () => {
   expect(await screen.findByText("이미 등록된 전화번호예요. 다른 전화번호로 다시 시도해 주세요.")).toBeInTheDocument();
   expect(screen.getByLabelText("전화번호")).toHaveAttribute("aria-invalid", "true");
 });
+
+it.each([
+  ["REQUIRED", "전화번호를 입력해 주세요"],
+  ["INVALID_FORMAT", "010-1234-5678로 입력해 주세요"],
+] as const)("shows the /phone %s validation copy without duplicate-phone copy", async (code, copy) => {
+  jest.clearAllMocks();
+  const data = createProblemDetails({ code: "VALIDATION_FAILED", requestId: "test", status: 400, errors: [{ pointer: "/phone", code, detail: "Invalid value" }] });
+  jest.mocked(authApi.register).mockRejectedValue(new AxiosError("failure", undefined, undefined, undefined, { status: 400, data } as never));
+  await fillRegister();
+  const phone = screen.getByLabelText("전화번호");
+  await waitFor(() => expect(document.getElementById(phone.getAttribute("aria-describedby") ?? "")?.textContent).toBe(copy));
+  expect(phone).toHaveAttribute("aria-invalid", "true");
+  expect(screen.queryByText("이미 등록된 전화번호예요. 다른 전화번호로 다시 시도해 주세요.")).not.toBeInTheDocument();
+});
