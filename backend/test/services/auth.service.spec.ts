@@ -168,7 +168,7 @@ describe("AuthService approval and token hardening", () => {
         expect(observedStore).toMatchObject({ origin: "system", systemScope: true });
     });
 
-    it("rejects incomplete approved accounts instead of starting self-service onboarding", async () => {
+    it("starts account-completion onboarding for incomplete approved accounts", async () => {
         jest.spyOn(service, "verifyPassword").mockResolvedValue(true);
         prisma.user.findUnique.mockResolvedValue({
             id: "user-1", email: "a@example.com", name: "A", profileImage: null, phone: null,
@@ -177,15 +177,14 @@ describe("AuthService approval and token hardening", () => {
         });
         prisma.user_branch.findMany.mockResolvedValue([{ branchId: "branch-1", role: "user" }]);
 
-        const rejection = service.validateEmailPassword("a@example.com", "Password1!");
-        await expect(rejection).rejects.toMatchObject({
-            status: 403,
-            response: expect.objectContaining({
-                code: "ACCOUNT_PROFILE_INCOMPLETE",
-                params: {},
-                outcome: "NOT_APPLIED",
-                recovery: { action: "NONE", retry: { mode: "NEVER" } },
-            }),
+        await expect(service.validateEmailPassword("a@example.com", "Password1!")).resolves.toEqual({
+            onboardingRequired: true,
+            onboardingKind: "account_completion",
+            userId: "user-1",
+            prefill: {
+                email: "a@example.com", name: "A", profileImage: undefined, phone: undefined,
+                birthDate: "1990-01-01", branchId: "branch-1", role: "user",
+            },
         });
         expect(sessions.issueSession).not.toHaveBeenCalled();
     });

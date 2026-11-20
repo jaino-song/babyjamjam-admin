@@ -11,6 +11,7 @@ import { codeOnlyProblemBody, problemBody } from "application/utils/problem-bodi
 import { isVisibleStaffBranchSlug } from "domain/constants/branch-routing.constants";
 import { AuthSessionService } from "./auth-session.service";
 import { AuthEmailTokenService } from "./auth-email-token.service";
+import { phoneLookupForms } from "../utils/phone-lookup";
 
 export interface KakaoData {
     kakaoId: string;
@@ -266,12 +267,17 @@ export class AuthService {
             throw new ForbiddenException(codeOnlyProblemBody("NO_ACCESSIBLE_BRANCH"));
         }
 
-        if (!user.phone || !user.birthDate) {
-            throw new ForbiddenException(codeOnlyProblemBody("ACCOUNT_PROFILE_INCOMPLETE"));
-        }
-
         if (!user.role || userOrgs.some((userOrg) => !userOrg.role)) {
             throw new ForbiddenException(codeOnlyProblemBody("NO_ACCESSIBLE_BRANCH"));
+        }
+
+        if (!user.phone || !user.birthDate) {
+            return {
+                onboardingRequired: true,
+                onboardingKind: "account_completion",
+                userId: user.id,
+                prefill: this.getPendingAccountOnboardingProfile(user, userOrgs) ?? {},
+            };
         }
 
         let branchId: string | undefined;
@@ -647,8 +653,30 @@ export class AuthService {
         return pendingSignupToken;
     }
 
-    private async createPendingAccountOnboardingState(userId: string): Promise<string> {
-        const pendingOnboardingToken = this.generateToken();
+    private assertAccountOnboardingTokenVersion(token: string, tokenVersion: number): void {
+        // The full token (including its version) is hash-bound to the flow row.
+        // Legacy unversioned tokens must require a fresh login.
+        if (!token.endsWith(`.${tokenVersion}`)) {
+            throw new UnauthorizedException(codeOnlyProblemBody("AUTH_REQUIRED"));
+        }
+    }
+
+    private async createAccountOnboardingToken(userId: string, exchangeCode?: string): Promise<string> {
+        const user = await this.prisma.user.findUnique({
+            where: { id: userId },
+            select: { tokenVersion: true },
+        });
+        if (!user) {
+            throw new UnauthorizedException(codeOnlyProblemBody("AUTH_REQUIRED"));
+        }
+        if (exchangeCode !== undefined) {
+            this.assertAccountOnboardingTokenVersion(exchangeCode, user.tokenVersion);
+        }
+        return `${this.generateToken()}.${user.tokenVersion}`;
+    }
+
+    private async createPendingAccountOnboardingState(userId: string, exchangeCode?: string): Promise<string> {
+        const pendingOnboardingToken = await this.createAccountOnboardingToken(userId, exchangeCode);
 
         await this.createAuthFlowState({
             kind: "pending_account_onboarding",
@@ -705,7 +733,7 @@ export class AuthService {
     async createPendingAccountOnboardingCode(userId: string): Promise<string> {
         await this.pruneAuthFlowStates();
 
-        const code = this.generateToken();
+        const code = await this.createAccountOnboardingToken(userId);
         await this.createAuthFlowState({
             kind: "pending_account_onboarding_exchange",
             token: code,
@@ -747,7 +775,7 @@ export class AuthService {
                 throw new UnauthorizedException(codeOnlyProblemBody("AUTH_REQUIRED"));
             }
 
-            const pendingAccountOnboardingToken = await this.createPendingAccountOnboardingState(stored.userId);
+            const pendingAccountOnboardingToken = await this.createPendingAccountOnboardingState(stored.userId, code);
 
             return {
                 onboardingRequired: true,
@@ -807,12 +835,14 @@ export class AuthService {
                 phone: true,
                 birthDate: true,
                 role: true,
+                tokenVersion: true,
             },
         });
 
         if (!user) {
             throw new UnauthorizedException(codeOnlyProblemBody("AUTH_REQUIRED"));
         }
+        this.assertAccountOnboardingTokenVersion(token, user.tokenVersion);
 
         // Cross-branch by design: pending-onboarding users have no selected branch yet.
         const userOrgs = this.filterSelectableUserBranches(await runSystemScope(() => this.prisma.user_branch.findMany({
@@ -838,6 +868,101 @@ export class AuthService {
             branchId: userOrgs.length === 1 ? userOrgs[0]?.branchId : undefined,
             role: userOrgs.length === 1 ? userOrgs[0]?.role ?? user.role ?? undefined : user.role ?? undefined,
         };
+    }
+
+    async completeAccountOnboarding(
+        token: string,
+        phone: string | undefined,
+        birthDate: string | undefined,
+    ): Promise<UserValidationResult> {
+        const { updatedUser, fieldsWritten } = await this.prisma.$transaction(async (tx) => {
+            const now = new Date();
+            const stored = await tx.auth_flow_state.findUnique({
+                where: { tokenHash: this.hashToken(token) },
+            });
+            if (
+                !stored
+                || stored.kind !== "pending_account_onboarding"
+                || stored.consumedAt
+                || stored.expiresAt.getTime() <= now.getTime()
+                || !stored.userId
+            ) {
+                throw new UnauthorizedException(codeOnlyProblemBody("AUTH_REQUIRED"));
+            }
+
+            const consumed = await tx.auth_flow_state.updateMany({
+                where: { id: stored.id, consumedAt: null },
+                data: { consumedAt: now },
+            });
+            if (consumed.count !== 1) {
+                throw new UnauthorizedException(codeOnlyProblemBody("AUTH_REQUIRED"));
+            }
+
+            const user = await tx.user.findUnique({ where: { id: stored.userId } });
+            if (!user) {
+                throw new UnauthorizedException(codeOnlyProblemBody("AUTH_REQUIRED"));
+            }
+            this.assertAccountOnboardingTokenVersion(token, user.tokenVersion);
+            this.assertUserApproved(user);
+
+            const data: { phone?: string; birthDate?: string } = {};
+            if (!user.phone) {
+                if (!phone) {
+                    throw new BadRequestException(problemBody("VALIDATION_FAILED", {
+                        pointer: "/phone",
+                        code: "REQUIRED",
+                        detail: "전화번호를 입력해 주세요.",
+                    }));
+                }
+                const phoneOwner = await tx.user.findFirst({
+                    where: { phone: { in: phoneLookupForms(phone) }, id: { not: user.id } },
+                });
+                if (phoneOwner) {
+                    throw new BadRequestException(problemBody("VALIDATION_FAILED", {
+                        pointer: "/phone",
+                        code: "INVALID_VALUE",
+                        detail: "이미 등록된 전화번호예요. 오너에게 문의해 주세요.",
+                    }));
+                }
+                data.phone = phone;
+            }
+            if (!user.birthDate) {
+                if (!birthDate) {
+                    throw new BadRequestException(problemBody("VALIDATION_FAILED", {
+                        pointer: "/birthDate",
+                        code: "REQUIRED",
+                        detail: "생년월일을 입력해 주세요.",
+                    }));
+                }
+                data.birthDate = birthDate;
+            }
+
+            try {
+                return {
+                    updatedUser: await tx.user.update({
+                        where: { id: user.id, tokenVersion: user.tokenVersion },
+                        data,
+                    }),
+                    fieldsWritten: Object.keys(data),
+                };
+            } catch (error) {
+                if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2025") {
+                    throw new UnauthorizedException(codeOnlyProblemBody("AUTH_REQUIRED"));
+                }
+                throw error;
+            }
+        });
+
+        const result = await this.createLoginResultForUser(updatedUser);
+        if ("onboardingRequired" in result) {
+            throw new UnauthorizedException(codeOnlyProblemBody("AUTH_REQUIRED"));
+        }
+        this.logger.log(JSON.stringify({
+            event: "auth_account_onboarding_completed",
+            userId: updatedUser.id,
+            fieldsWritten,
+        }));
+        return result;
     }
 
     async completeKakaoOnboarding(

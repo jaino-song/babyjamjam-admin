@@ -27,6 +27,7 @@ import {
 } from "interface/dto/email-auth.dto";
 import { SelectBranchDto, SwitchBranchDto } from "interface/dto/branch-auth.dto";
 import { CompleteKakaoOnboardingDto } from "interface/dto/kakao-onboarding.dto";
+import { CompleteAccountOnboardingDto } from "interface/dto/account-onboarding.dto";
 import { LogoutDto } from "interface/dto/logout.dto";
 import { getKakaoOAuthConfig } from "infrastructure/auth/kakao-config";
 import {
@@ -35,7 +36,7 @@ import {
     type KakaoCallbackRequest,
 } from "../../infrastructure/auth/kakao-auth.guard";
 import { normalizePhone } from "application/utils/normalize-phone";
-import { codeOnlyProblemBody, problemBody } from "application/utils/problem-bodies";
+import { problemBody } from "application/utils/problem-bodies";
 import { runSystemScope } from "infrastructure/tenant/run-system-scope";
 
 @Controller("auth")
@@ -290,11 +291,20 @@ export class AuthController {
 
     @Post("onboarding/complete")
     @UseGuards(RateLimitGuard)
-    completeAccountOnboarding(): never {
-        // Direct completion is closed: profile + branch assignment require owner
-        // confirmation. Frontend login/onboarding dialogs key on `code`, which the
-        // problem body preserves (403 kept).
-        throw new ForbiddenException(codeOnlyProblemBody("ACCOUNT_PROFILE_INCOMPLETE"));
+    async completeAccountOnboarding(
+        @Headers(AuthController.PENDING_ONBOARDING_TOKEN_HEADER) token: string | undefined,
+        @Body() body: CompleteAccountOnboardingDto,
+    ) {
+        if (!token) {
+            throw new BadRequestException(problemBody("VALIDATION_FAILED", {
+                pointer: "/token",
+                code: "REQUIRED",
+                detail: "온보딩 진행 토큰을 입력해 주세요.",
+                location: "custom",
+            }));
+        }
+        const result = await this.authService.completeAccountOnboarding(token, body.phone, body.birthDate);
+        return { success: true, ...result };
     }
 
     @Post("refresh-token")
