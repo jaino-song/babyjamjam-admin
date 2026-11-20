@@ -4,6 +4,7 @@ import { cookies } from "next/headers";
 import { serverAPIClient } from "@/lib/api/server";
 import { AxiosError } from "axios";
 import { normalizeApiError } from "@babyjamjam/shared";
+import { getFieldMessageText } from "@/lib/forms/field-message-text";
 
 interface CompleteKakaoOnboardingInput {
     phone: string;
@@ -70,7 +71,10 @@ export async function completeKakaoOnboarding(
                 if (issue) return { success: false, field: issue.pointer === "/phone" ? "phone" : "birthDate", error:
                     issue.pointer === "/phone" && issue.code === "INVALID_VALUE"
                     ? "이미 등록된 전화번호예요. 다른 전화번호로 다시 시도해 주세요."
-                    : issue.pointer === "/phone" ? "전화번호 11자리를 입력해 주세요." : "올바른 생년월일을 입력해 주세요." };
+                    : getFieldMessageText("ko", {
+                        tone: "error",
+                        code: issue.code === "REQUIRED" ? "required" : issue.pointer === "/phone" ? "phone-format" : "date-format",
+                    }, issue.pointer === "/phone" ? "전화번호" : "생년월일") };
             }
             return { success: false, error: status === 429 ? (normalized.verified ? normalized.message : "요청이 너무 많아요. 잠시 후 다시 시도해 주세요.") : KAKAO_SIGNUP_FAILURE_COPY };
         }

@@ -5,6 +5,7 @@ import { AxiosError } from "axios";
 import { normalizeApiError } from "@babyjamjam/shared";
 import { serverAPIClient } from "@/lib/api/server";
 import { setAuthSessionCookies } from "@/lib/auth/session-cookies";
+import { getFieldMessageText } from "@/lib/forms/field-message-text";
 
 interface CompletionResult {
   success: boolean;
@@ -44,9 +45,14 @@ export async function completeAccountOnboarding(input: { phone?: string; birthDa
         const field = issue.pointer === "/phone" ? "phone" : "birthDate";
         return { success: false, field, error: field === "phone" && issue.code === "INVALID_VALUE"
           ? "이미 등록된 전화번호예요. 오너에게 문의해 주세요."
-          : field === "phone" ? "전화번호 11자리를 입력해 주세요." : "올바른 생년월일을 입력해 주세요." };
+          : getFieldMessageText("ko", {
+            tone: "error",
+            code: issue.code === "REQUIRED" ? "required" : field === "phone" ? "phone-format" : "date-format",
+          }, field === "phone" ? "전화번호" : "생년월일") };
       }
     }
-    return { success: false, error: "계정 정보를 저장하지 못했습니다." };
+    return { success: false, error: status === 429
+      ? normalized.verified ? normalized.message : "요청이 너무 많아요. 잠시 후 다시 시도해 주세요."
+      : "계정 정보를 저장하지 못했습니다." };
   }
 }
