@@ -7,17 +7,17 @@ import { PaneHeader } from "@/components/app/v3/PaneHeader";
 import { SlidingDetailPanel } from "@/components/app/v3/SlidingDetailPanel";
 import { Button } from "@/components/ui/button";
 
-import { ContractDocumentJobDetail, type DocumentJobCancelHandler } from "./ContractDocumentJobDetail";
+import { ContractDocumentJobDetail, type DocumentJobCancelHandler, type DocumentJobRetryHandler } from "./ContractDocumentJobDetail";
 import { ContractDocumentJobSummary } from "./ContractDocumentJobSummary";
 import { ContractDocumentJobsList, type ContractDocumentJobsSection } from "./ContractDocumentJobsList";
 import type { ContractDocumentJobsData } from "./ContractDocumentJobsPopover";
 
 export interface ContractDocumentJobsPanesHandle {
   onEscapeKeyDown: (event: KeyboardEvent) => void;
+  focusCurrentPane: () => void;
 }
 export interface ContractDocumentJobsPanesMemory {
   collapsed?: Record<ContractDocumentJobsSection, boolean>;
-  naturalHeight?: number;
 }
 interface ContractDocumentJobsPanesProps {
   memory?: ContractDocumentJobsPanesMemory;
@@ -29,20 +29,19 @@ interface ContractDocumentJobsPanesProps {
   isLoading: boolean;
   error?: unknown;
   onRetry?: () => void;
+  onRetryJob?: DocumentJobRetryHandler;
   onCancel?: DocumentJobCancelHandler;
   onRecover?: (jobId: string, trigger: HTMLButtonElement) => void;
   interactionPaused?: boolean;
   inset?: "default" | "compact";
-  onNaturalHeight?: (height: number) => void;
+  height?: "half-viewport";
   "data-component": string;
 }
 
-export function ContractDocumentJobsPanes({ ref, memory, onRemember, open, onClose, jobs, isLoading, error, onRetry, onRecover, onCancel, interactionPaused = false, inset = "default", onNaturalHeight, "data-component": base }: ContractDocumentJobsPanesProps): React.ReactElement {
+export function ContractDocumentJobsPanes({ ref, memory, onRemember, open, onClose, jobs, isLoading, error, onRetry, onRecover, onCancel, onRetryJob, interactionPaused = false, inset = "default", height, "data-component": base }: ContractDocumentJobsPanesProps): React.ReactElement {
   const [selectedId, setSelectedId] = React.useState<string | null>(null);
   const [collapsed, setCollapsed] = React.useState<Record<ContractDocumentJobsSection, boolean>>(memory?.collapsed ?? { processing: false, attention: false, recent: true });
-  const cachedHeight = React.useRef<number | null>(memory?.naturalHeight ?? null);
-  const [headerNode, setHeaderNode] = React.useState<HTMLDivElement | null>(null);
-  const [innerNode, setInnerNode] = React.useState<HTMLDivElement | null>(null);
+  const focusRoot = React.useRef<HTMLDivElement>(null);
   const listScroller = React.useRef<HTMLDivElement>(null);
   const listClose = React.useRef<HTMLButtonElement>(null);
   const clickedCard = React.useRef<HTMLElement | null>(null);
@@ -61,15 +60,6 @@ export function ContractDocumentJobsPanes({ ref, memory, onRemember, open, onClo
     }
   }, [open, selectedId, selected]);
 
-  React.useLayoutEffect(() => {
-    if (!open || isLoading || error || !jobs || !headerNode || !innerNode || cachedHeight.current !== null) return;
-    const height = headerNode.getBoundingClientRect().height + innerNode.scrollHeight;
-    if (height <= 0) return;
-    cachedHeight.current = height;
-    onRemember?.({ naturalHeight: height });
-    onNaturalHeight?.(height);
-  }, [open, isLoading, error, jobs, headerNode, innerNode, onNaturalHeight, onRemember]);
-
   React.useEffect(() => {
     if (!open || selected || interactionPaused || !restorePending.current) return;
     restorePending.current = false;
@@ -87,6 +77,14 @@ export function ContractDocumentJobsPanes({ ref, memory, onRemember, open, onClo
   };
   const back = () => { if (!interactionPaused) { restorePending.current = true; setSelectedId(null); } };
   React.useImperativeHandle(ref, () => ({
+    focusCurrentPane() {
+      if (!open) return;
+      const card = clickedCard.current;
+      const target = selected
+        ? focusRoot.current?.querySelector<HTMLButtonElement>('[data-slot="pane-header-back"]')
+        : card?.isConnected && !card.closest("[inert]") ? card : listClose.current;
+      if (target?.isConnected && !target.closest("[inert]")) target.focus({ preventScroll: true });
+    },
     onEscapeKeyDown(event: KeyboardEvent) {
       if (!event.defaultPrevented && !interactionPaused && selected) { event.preventDefault(); back(); }
     },
@@ -99,12 +97,12 @@ export function ContractDocumentJobsPanes({ ref, memory, onRemember, open, onClo
   );
 
   return (
-      <div data-component={base} data-source-component="ContractDocumentJobsPanes" data-slot="document-jobs-interaction" inert={interactionPaused || undefined} className="flex min-h-0 flex-1 flex-col">
+      <div ref={focusRoot} data-component={base} data-source-component="ContractDocumentJobsPanes" data-slot="document-jobs-interaction" inert={interactionPaused || undefined} className={height === "half-viewport" ? "flex min-h-0 flex-initial flex-col h-[50vh]" : "flex min-h-0 flex-1 flex-col"}>
       {open ? <SlidingDetailPanel data-component={slide} motion="page" headerInset={inset} open={Boolean(selected)} onBack={back} backLabel="목록으로 돌아가기" interactionPaused={interactionPaused}
         list={<>
-          <PaneHeader ref={setHeaderNode} variant="title" title="전자문서 작업" inset={inset} actions={closeButton(`${slide}_list-pane_header_actions_close`, true)} data-component={`${slide}_list-pane_header`} />
+          <PaneHeader variant="title" title="전자문서 작업" inset={inset} actions={closeButton(`${slide}_list-pane_header_actions_close`, true)} data-component={`${slide}_list-pane_header`} />
           <div ref={listScroller} data-component={`${slide}_list-pane_body`} data-slot="document-jobs-list-scroller" className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
-            <div ref={setInnerNode} data-component={`${slide}_list-pane_body_content`} data-slot="document-jobs-natural-content" className={inset === "compact" ? "shrink-0 px-5 pt-2 pb-6" : "shrink-0 px-6 pt-3 pb-6"}>
+            <div data-component={`${slide}_list-pane_body_content`} data-slot="document-jobs-natural-content" className={inset === "compact" ? "shrink-0 px-5 pt-2 pb-6" : "shrink-0 px-6 pt-3 pb-6"}>
               <ContractDocumentJobsList cardVariant="compact" jobs={jobs} isLoading={isLoading} error={error} onRetry={onRetry} collapsed={collapsed}
                 data-component={`${slide}_list-pane_body_content_list`} onToggle={(section) => {
                   const next = { ...collapsed, [section]: !collapsed[section] };
@@ -126,7 +124,7 @@ export function ContractDocumentJobsPanes({ ref, memory, onRemember, open, onClo
           <div data-component={`${slide}_detail-pane_body_scroll_summary`} className="mb-4">
             <ContractDocumentJobSummary job={selected} data-component={`${slide}_detail-pane_body_scroll_summary_job`} />
           </div>
-          <ContractDocumentJobDetail job={selected} onDocumentNavigate={close} onRecover={onRecover} onCancel={onCancel} onCancelled={back} data-component={`${slide}_detail-pane_body_scroll_job`} />
+          <ContractDocumentJobDetail job={selected} onDocumentNavigate={close} onRecover={onRecover} onCancel={onCancel} onRetryJob={onRetryJob} onCancelled={back} data-component={`${slide}_detail-pane_body_scroll_job`} />
         </div> : null} /> : null}
       </div>
   );

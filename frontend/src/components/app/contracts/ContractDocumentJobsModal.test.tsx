@@ -3,12 +3,13 @@ import { act, fireEvent, render, screen, waitFor, within } from "@testing-librar
 import { Dialog } from "radix-ui";
 
 import { ContractDocumentJobsModal } from "./ContractDocumentJobsModal";
+import { ContractDocumentJobsPanes } from "./ContractDocumentJobsPanes";
 import type { ContractDocumentJobsData } from "./ContractDocumentJobsPopover";
 
 const BASE = "desktop_contracts_jobs-modal";
 const A = { jobId: "a", jobType: "create_document", clientName: "예시 A", status: "processing", documentKind: "service_contract", displayOperation: "generate" } as const;
 const JOBS: ContractDocumentJobsData = { active: [A], requiresAttention: [], recent: [] };
-const close = jest.fn(), measuredContent = jest.fn(() => 600), measuredHeader = jest.fn(() => 72);
+const close = jest.fn();
 type Props = Partial<React.ComponentProps<typeof ContractDocumentJobsModal>>;
 function Harness({ open: externalOpen, ...props }: Props) {
   const anchorRef = React.useRef<HTMLButtonElement>(null);
@@ -30,12 +31,7 @@ beforeEach(() => {
   jest.clearAllMocks();
   Object.defineProperty(window, "innerWidth", { configurable: true, value: 1024 });
   Object.defineProperty(window, "innerHeight", { configurable: true, value: 768 });
-  jest.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
-    return { left: 20, top: 40, bottom: 72, height: this.dataset.slot === "pane-header" ? measuredHeader() : 32 } as DOMRect;
-  });
-  jest.spyOn(HTMLElement.prototype, "scrollHeight", "get").mockImplementation(function (this: HTMLElement) {
-    return this.dataset.slot === "document-jobs-natural-content" ? measuredContent() : 0;
-  });
+  jest.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue({ left: 20, top: 40, bottom: 72, height: 32 } as DOMRect);
   jest.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(40);
 });
 afterEach(() => jest.restoreAllMocks());
@@ -43,7 +39,7 @@ afterEach(() => jest.restoreAllMocks());
 // The public owner requires caller context for its nested list loading state.
 void (<ContractDocumentJobsModal data-component="desktop_contracts_tests_jobs-modal" open={false} onClose={() => {}} anchorRef={React.createRef<HTMLButtonElement>()} isLoading={false} />);
 
-it.each([BASE, "desktop_contracts_tests_alternate-jobs"])("keeps selection, cached height and keyboard navigation within caller context (%s)", async (namespace) => {
+it.each([BASE, "desktop_contracts_tests_alternate-jobs"])("keeps selection and keyboard navigation within caller context (%s)", async (namespace) => {
   render(<Harness data-component={namespace} />);
   const dialog = screen.getByRole("dialog", { name: "전자문서 작업" });
   expect(dialog).toHaveAttribute("data-source-component", "AnchoredNotificationModalShell");
@@ -51,7 +47,6 @@ it.each([BASE, "desktop_contracts_tests_alternate-jobs"])("keeps selection, cach
   expect(document.querySelectorAll("[data-slot]").length).toBeGreaterThan(10);
   expect(dialog).toHaveAttribute("data-component", namespace);
   expect(slot("contract-document-jobs-list")).toHaveAttribute("data-component", `${namespace}_panes_slide_list-pane_body_content_list`);
-  expect(dialog).toHaveStyle({ height: "672px" });
   const clicked = card(); clicked.focus(); fireEvent.click(clicked);
   expect(back()).toHaveFocus();
   expect(slot("job-detail-summary")).toBeInTheDocument();
@@ -60,8 +55,6 @@ it.each([BASE, "desktop_contracts_tests_alternate-jobs"])("keeps selection, cach
   expect(slot("contract-document-jobs-list")).toHaveAttribute("data-component", `${namespace}_panes_slide_list-pane_body_content_list`);
   fireEvent.keyDown(back(), { key: "Escape" });
   expect(clicked).toHaveFocus();
-  expect(dialog).toHaveStyle({ height: "672px" });
-  expect(measuredContent).toHaveBeenCalledTimes(1);
   fireEvent.keyDown(closeButton(), { key: "Escape" });
   await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
   expect(close).toHaveBeenCalledTimes(1);
@@ -189,31 +182,39 @@ it("lets a real higher Radix dialog own Escape without backing or closing jobs",
   expect(close).not.toHaveBeenCalled();
 });
 
-it("waits for successful Portal content then caches natural header plus unclamped inner height exactly once", () => {
+it("keeps desktop panes at half the viewport while loading and after jobs load without pinning the shell height", () => {
   const { rerender } = render(<Harness isLoading jobs={null} />);
-  expect(screen.getByRole("dialog")).toHaveStyle({ height: "744px" });
-  expect(measuredContent).not.toHaveBeenCalled();
+  expect(slot("document-jobs-interaction")).toHaveClass("flex min-h-0 flex-initial flex-col h-[50vh]", { exact: true });
+  expect(slot("document-jobs-interaction")).not.toHaveClass("flex-1");
+  expect(screen.getByRole("dialog").style.height).toBe("");
   rerender(<Harness error={new Error("safe failure")} jobs={null} />);
-  expect(measuredContent).not.toHaveBeenCalled();
+  expect(slot("document-jobs-interaction")).toHaveClass("flex-initial", "h-[50vh]");
+  expect(screen.getByRole("dialog").style.height).toBe("");
   rerender(<Harness />);
-  expect(measuredContent).toHaveBeenCalledTimes(1);
-  expect(measuredHeader).toHaveBeenCalledTimes(1);
-  expect(screen.getByRole("dialog")).toHaveStyle({ height: "672px" });
+  expect(slot("document-jobs-interaction")).toHaveClass("flex min-h-0 flex-initial flex-col h-[50vh]", { exact: true });
+  expect(slot("document-jobs-interaction")).not.toHaveClass("flex-1");
+  expect(screen.getByRole("dialog").style.height).toBe("");
   expect(slot("document-jobs-natural-content")).toHaveClass("shrink-0");
   fireEvent.click(screen.getByRole("button", { name: "확인 필요 0건" }));
   fireEvent.click(card()); fireEvent.click(back());
   rerender(<Harness jobs={{ ...JOBS, recent: [{ ...A, jobId: "new", status: "completed" }] }} />);
   act(() => { Object.defineProperty(window, "innerHeight", { value: 300 }); fireEvent(window, new Event("resize")); });
-  expect(screen.getByRole("dialog")).toHaveStyle({ height: "276px" });
+  expect(screen.getByRole("dialog").style.height).toBe("");
   act(() => { Object.defineProperty(window, "innerHeight", { value: 1000 }); fireEvent(window, new Event("resize")); });
-  expect(screen.getByRole("dialog")).toHaveStyle({ height: "672px" });
+  expect(screen.getByRole("dialog").style.height).toBe("");
   fireEvent.click(closeButton()); fireEvent.click(screen.getByText("작업 열기"));
-  expect(screen.getByRole("dialog")).toHaveStyle({ height: "672px" });
-  expect(measuredContent).toHaveBeenCalledTimes(1);
-  expect(measuredHeader).toHaveBeenCalledTimes(1);
+  expect(slot("document-jobs-interaction")).toHaveClass("flex-initial", "h-[50vh]");
+  expect(screen.getByRole("dialog").style.height).toBe("");
 });
 
-it("forwards loading, safe error and retry without caching a failure", () => {
+it("keeps panes flexible without the desktop height prop", () => {
+  render(<ContractDocumentJobsPanes open onClose={close} jobs={JOBS} isLoading={false} data-component="mobile_contracts_jobs-sheet_panes" />);
+  expect(slot("document-jobs-interaction")).toHaveClass("flex min-h-0 flex-1 flex-col", { exact: true });
+  expect(slot("document-jobs-interaction")).not.toHaveClass("flex-initial");
+  expect(slot("document-jobs-interaction")).not.toHaveClass("h-[50vh]");
+});
+
+it("forwards loading, safe error and retry", () => {
   const retry = jest.fn();
   const { rerender } = render(<Harness isLoading />);
   expect(screen.getByRole("status", { name: "전자문서 작업 불러오는 중" })).toBeInTheDocument();
@@ -221,15 +222,11 @@ it("forwards loading, safe error and retry without caching a failure", () => {
   fireEvent.click(screen.getByRole("button", { name: "다시 시도" }));
   expect(retry).toHaveBeenCalledTimes(1);
   expect(screen.queryByText("private error")).not.toBeInTheDocument();
-  expect(measuredContent).not.toHaveBeenCalled();
 });
 
-it("caches a successful empty list once even with StrictMode and delayed Portal refs", () => {
+it("renders a successful empty list with StrictMode and delayed Portal refs", () => {
   render(<React.StrictMode><Harness jobs={{ active: [], requiresAttention: [], recent: [] }} /></React.StrictMode>);
   expect(screen.getByText("처리중인 전자문서가 없습니다.")).toBeInTheDocument();
-  expect(screen.getByRole("dialog")).toHaveStyle({ height: "672px" });
-  expect(measuredContent).toHaveBeenCalledTimes(1);
-  expect(measuredHeader).toHaveBeenCalledTimes(1);
 });
 
 it.each(["pointer", "Enter"])("closes once on %s close-button activation, restores the anchor and reopens at the list", async (activation) => {

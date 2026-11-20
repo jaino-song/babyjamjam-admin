@@ -13,7 +13,8 @@ import { useIsMobile } from "@/hooks/useIsMobile";
 import { cn } from "@/lib/utils";
 import type { EformsignDocumentJobResponse } from "@/services/eformsign";
 
-import type { DocumentJobCancelHandler } from "./ContractDocumentJobDetail";
+import type { DocumentJobCancelHandler, DocumentJobRetryHandler } from "./ContractDocumentJobDetail";
+import { ContractDocumentJobRetryDialog } from "./ContractDocumentJobRetryDialog";
 import { ContractDocumentJobCancelDialog } from "./ContractDocumentJobCancelDialog";
 import { ContractDocumentJobsModal } from "./ContractDocumentJobsModal";
 import { ContractDocumentJobsPanes, type ContractDocumentJobsPanesHandle } from "./ContractDocumentJobsPanes";
@@ -42,6 +43,7 @@ export interface ContractDocumentJob extends Pick<
   clientName?: string | null;
   recoveryKind?: "manual_send" | "verify_result" | null;
   cancellable?: boolean;
+  retryable?: boolean;
   documentId?: string | null;
   progressStep?: string | null;
   progressDetail?: string | null;
@@ -110,7 +112,12 @@ export function ContractDocumentJobsPopover({
   const restoreCancelFocus = useRef(false);
   const cancelTrigger = useRef<HTMLButtonElement | null>(null);
   const cancelSucceeded = useRef(false);
-  const interactionPaused = recoveryJobId !== null || cancelRequest !== null;
+  const [retryRequest, setRetryRequest] = useState<{ jobId: string; branchId: string | null; onRetried?: () => void } | null>(null);
+  const [retryOpen, setRetryOpen] = useState(false);
+  const restoreRetryFocus = useRef(false);
+  const retryTrigger = useRef<HTMLButtonElement | null>(null);
+  const retrySucceeded = useRef(false);
+  const interactionPaused = retryRequest !== null || recoveryJobId !== null || cancelRequest !== null;
   const pathname = usePathname(), router = useRouter();
   const isOpen = open ?? internalOpen;
   const resolvedJobs = documentJobs ?? jobs ?? null;
@@ -131,6 +138,8 @@ export function ContractDocumentJobsPopover({
     setRecoveryJobId(null);
     setCancelRequest(null);
     setCancelOpen(false);
+    setRetryRequest(null);
+    setRetryOpen(false);
   }
 
   useEffect(() => {
@@ -139,6 +148,15 @@ export function ContractDocumentJobsPopover({
     const trigger = cancelTrigger.current;
     (trigger?.isConnected && !trigger.closest("[inert]") ? trigger : anchorRef.current)?.focus({ preventScroll: true });
   }, [cancelRequest]);
+
+  useEffect(() => {
+    if (retryRequest !== null || !restoreRetryFocus.current) return;
+    restoreRetryFocus.current = false;
+    const trigger = retryTrigger.current;
+    if (!isOpen) anchorRef.current?.focus({ preventScroll: true });
+    else if (trigger?.isConnected && !trigger.closest("[inert]")) trigger.focus({ preventScroll: true });
+    else panes.current?.focusCurrentPane();
+  }, [retryRequest, isOpen]);
 
   const handleOpenChange = (nextOpen: boolean) => {
     if (interactionPaused && !nextOpen) return;
@@ -175,6 +193,23 @@ export function ContractDocumentJobsPopover({
       else restoreCancelFocus.current = true;
       setCancelRequest(null);
     }} /> : null;
+  const onRetryJob: DocumentJobRetryHandler = (jobId, trigger, onRetried) => {
+    retryTrigger.current = trigger;
+    retrySucceeded.current = false;
+    setRetryRequest({ jobId, branchId, onRetried });
+    setRetryOpen(true);
+  };
+  const retryJobOffered = !resolvedJobs || resolvedJobs.requiresAttention.some(job => job.jobId === retryRequest?.jobId && job.retryable === true);
+  const retryDialog = retryRequest ? <ContractDocumentJobRetryDialog key={retryRequest.jobId} jobId={retryRequest.jobId} isJobOffered={retryJobOffered} branchId={retryRequest.branchId} open={retryOpen} data-component={sub("retry")}
+    onClose={() => setRetryOpen(false)} onRetried={() => {
+      retrySucceeded.current = true;
+      setRetryOpen(false);
+    }} onCloseAutoFocus={event => {
+      event.preventDefault();
+      if (retrySucceeded.current) retryRequest.onRetried?.();
+      else restoreRetryFocus.current = true;
+      setRetryRequest(null);
+    }} /> : null;
   const recoveryDialog = recoveryJobId !== null ? <DocumentJobRecoveryDialog presentation="iframe" jobId={recoveryJobId} data-component={sub("recovery")}
     onClose={() => setRecoveryJobId(null)} onCloseAutoFocus={event => {
       event.preventDefault();
@@ -204,12 +239,13 @@ export function ContractDocumentJobsPopover({
             <SheetDescription className="sr-only">전자문서 처리 현황</SheetDescription>
             <div data-component={sub("body_handle")} data-slot="document-jobs-sheet-handle" aria-hidden="true" className="mx-auto mt-2.5 h-1 w-10 shrink-0 rounded-full bg-v3-border" />
             <ContractDocumentJobsPanes key={scope} ref={panes} inset="compact" open={isOpen} jobs={resolvedJobs} isLoading={resolvedLoading} error={resolvedError} onRetry={resolvedRetry}
-              onClose={() => handleOpenChange(false)} onRecover={onRecover} onCancel={onCancel} interactionPaused={interactionPaused} data-component={sub("body_panes")} />
+              onClose={() => handleOpenChange(false)} onRecover={onRecover} onCancel={onCancel} onRetryJob={onRetryJob} interactionPaused={interactionPaused} data-component={sub("body_panes")} />
           </div>
         </SheetContent>
       </Sheet>
       {recoveryDialog}
       {cancelDialog}
+      {retryDialog}
       </>
     );
   }
@@ -218,6 +254,7 @@ export function ContractDocumentJobsPopover({
     <Popover open={isOpen} onOpenChange={handleOpenChange}>
       <PopoverTrigger ref={anchorRef} asChild aria-controls={undefined} data-slot="document-jobs-trigger">{resolvedTrigger}</PopoverTrigger>
       <ContractDocumentJobsModal
+        ref={panes}
         key={scope}
         open={isOpen}
         onClose={() => handleOpenChange(false)}
@@ -229,8 +266,8 @@ export function ContractDocumentJobsPopover({
         onRetry={resolvedRetry}
         interactionPaused={interactionPaused}
         onRecover={onRecover}
-        onCancel={onCancel}
-        recoveryDialog={<>{recoveryDialog}{cancelDialog}</>}
+        onCancel={onCancel} onRetryJob={onRetryJob}
+        recoveryDialog={<>{recoveryDialog}{cancelDialog}{retryDialog}</>}
         data-component={dataComponent}
       />
     </Popover>

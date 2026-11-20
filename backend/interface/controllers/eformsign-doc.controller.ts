@@ -745,6 +745,21 @@ export class EformsignDocController {
         return { jobId, outcome: result.kind };
     }
 
+    @Post("jobs/:jobId/retry")
+    @HttpCode(HttpStatus.OK)
+    async retryDocumentJob(
+        @CurrentTenant() tenant: EformsignProviderPrincipal,
+        @Req() request: { user?: { userId?: string } },
+        @Param("jobId", new ParseUUIDPipe()) jobId: string,
+    ): Promise<{ jobId: string; status: string }> {
+        assertEformsignProviderCapability(tenant, "contract.dispatch");
+        this.assertDocumentJobsAccepting();
+        const result = await this.runManualRecovery(tenant, request, input => this.documentJobService.retry(input), jobId);
+        if (result.kind === "not_found") throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
+        if (result.kind === "not_retryable") throw new ConflictException({ code: "JOB_NOT_RETRYABLE" });
+        return { jobId: result.jobId, status: result.status };
+    }
+
     /** Record that staff finished a stuck contract job by hand. Idempotent. */
     @Post("jobs/:jobId/resolve")
     @HttpCode(HttpStatus.OK)
