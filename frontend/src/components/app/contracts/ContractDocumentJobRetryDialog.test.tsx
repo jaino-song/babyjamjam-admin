@@ -1,22 +1,24 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { QueryClientProvider } from "@tanstack/react-query";
+import { onlineManager, QueryClientProvider } from "@tanstack/react-query";
 
 import { createTestQueryClient, setBranchCookie } from "@/features/document-jobs/testing/jobs-test-utils";
 import { api } from "@/lib/api/client";
 
 import { ContractDocumentJobRetryDialog } from "./ContractDocumentJobRetryDialog";
 
-function setup() {
+function setup(isJobOffered = true) {
   const onClose = jest.fn(), onRetried = jest.fn();
-  render(<QueryClientProvider client={createTestQueryClient()}>
-    <ContractDocumentJobRetryDialog jobId="old-job" branchId="branch-a" open onClose={onClose}
-      onRetried={onRetried} onCloseAutoFocus={event => event.preventDefault()} data-component="desktop_contracts_tests_retry" />
-  </QueryClientProvider>);
-  return { onClose, onRetried };
+  const client = createTestQueryClient();
+  const view = (offered: boolean, showDialog = true) => <QueryClientProvider client={client}>
+    {showDialog ? <ContractDocumentJobRetryDialog jobId="old-job" branchId="branch-a" isJobOffered={offered} open onClose={onClose}
+      onRetried={onRetried} onCloseAutoFocus={event => event.preventDefault()} data-component="desktop_contracts_tests_retry" /> : null}
+  </QueryClientProvider>;
+  const result = render(view(isJobOffered));
+  return { onClose, onRetried, rerender: (offered: boolean, showDialog = true) => result.rerender(view(offered, showDialog)) };
 }
 
 beforeEach(() => setBranchCookie("branch-a"));
-afterEach(() => { setBranchCookie(null); jest.restoreAllMocks(); });
+afterEach(() => { onlineManager.setOnline(true); setBranchCookie(null); jest.restoreAllMocks(); });
 
 it("checks branch context again at confirmation and never posts stale tenant work", () => {
   const post = jest.spyOn(api, "post");
@@ -54,4 +56,68 @@ it.each([
   expect(await screen.findByRole("alert")).toHaveTextContent(message);
   expect(onRetried).not.toHaveBeenCalled();
   expect(screen.getByRole("dialog")).not.toHaveTextContent("private upstream detail");
+});
+
+it("submits once for two approvals before React renders pending and keeps success locked", async () => {
+  let finish!: () => void;
+  const post = jest.spyOn(api, "post").mockImplementation(() => new Promise(resolve => {
+    finish = () => resolve({ data: { jobId: "new-job", status: "queued" } });
+  }));
+  const { onRetried } = setup();
+  const approve = screen.getByRole("button", { name: "재시도" });
+  act(() => { fireEvent.click(approve); fireEvent.click(approve); });
+  await waitFor(() => expect(post).toHaveBeenCalledTimes(1));
+  await act(async () => { finish(); });
+  await waitFor(() => expect(onRetried).toHaveBeenCalledTimes(1));
+  await act(async () => { fireEvent.click(screen.getByRole("button", { name: "재시도" })); });
+  expect(post).toHaveBeenCalledTimes(1);
+});
+
+it("allows another approval after a rejected request", async () => {
+  const post = jest.spyOn(api, "post").mockRejectedValue(new Error("offline"));
+  setup();
+  fireEvent.click(screen.getByRole("button", { name: "재시도" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent("작업을 재시도하지 못했어요. 잠시 후 다시 시도해 주세요.");
+  fireEvent.click(screen.getByRole("button", { name: "재시도" }));
+  await waitFor(() => expect(post).toHaveBeenCalledTimes(2));
+  await waitFor(() => expect(screen.getByRole("button", { name: "닫기" })).toBeEnabled());
+});
+
+it("disables approval and explains when the list no longer offers the job", () => {
+  const post = jest.spyOn(api, "post");
+  setup(false);
+  expect(screen.getByRole("alert")).toHaveTextContent("이 작업은 지금 재시도할 수 없어요. 상태를 확인하거나 수동으로 전송해 주세요.");
+  const approve = screen.getByRole("button", { name: "재시도" });
+  expect(approve).toBeDisabled();
+  fireEvent.click(approve);
+  expect(post).not.toHaveBeenCalled();
+});
+
+it("does not flash a list refusal while pending or after success", async () => {
+  let finish!: () => void;
+  jest.spyOn(api, "post").mockImplementation(() => new Promise(resolve => {
+    finish = () => resolve({ data: { jobId: "new-job", status: "queued" } });
+  }));
+  const { onRetried, rerender } = setup();
+  fireEvent.click(screen.getByRole("button", { name: "재시도" }));
+  await waitFor(() => expect(screen.getByRole("button", { name: "처리 중" })).toBeDisabled());
+  rerender(false);
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "처리 중" })).toBeDisabled();
+  await act(async () => { finish(); });
+  await waitFor(() => expect(onRetried).toHaveBeenCalledTimes(1));
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+});
+
+it("fails offline immediately and never resumes after the dialog is removed on the same client", async () => {
+  const post = jest.spyOn(api, "post").mockRejectedValue(new Error("offline"));
+  const { rerender } = setup();
+  onlineManager.setOnline(false);
+  fireEvent.click(screen.getByRole("button", { name: "재시도" }));
+  await waitFor(() => expect(post).toHaveBeenCalledTimes(1));
+  expect(await screen.findByRole("alert")).toHaveTextContent("작업을 재시도하지 못했어요. 잠시 후 다시 시도해 주세요.");
+  expect(screen.getByRole("button", { name: "닫기" })).toBeEnabled();
+  rerender(true, false);
+  await act(async () => { onlineManager.setOnline(true); });
+  expect(post).toHaveBeenCalledTimes(1);
 });

@@ -134,7 +134,7 @@ describe("POST /api/eformsign-docs/jobs/[jobId]/retry", () => {
         expect(JSON.stringify(await response.json())).not.toContain("Forbidden resource detail");
     });
 
-    it("does not forward an unknown code or field from a 4xx body", async () => {
+    it("does not forward an unknown field from a 4xx body", async () => {
         mockPost.mockRejectedValue(upstreamRejection(409, { code: "SOMETHING_ELSE", secret: "shard-8" }));
 
         const response = await call(JOB_ID);

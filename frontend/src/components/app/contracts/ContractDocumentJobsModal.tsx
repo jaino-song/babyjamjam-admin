@@ -9,6 +9,7 @@ import { ContractDocumentJobsPanes, type ContractDocumentJobsPanesMemory, type C
 import type { ContractDocumentJobsData, ContractDocumentJobsSummary } from "./ContractDocumentJobsPopover";
 
 interface ContractDocumentJobsModalProps {
+  ref?: React.Ref<ContractDocumentJobsPanesHandle>;
   open: boolean;
   onClose: () => void;
   anchorRef: React.RefObject<HTMLElement | null>;
@@ -25,10 +26,14 @@ interface ContractDocumentJobsModalProps {
   "data-component": string;
 }
 
-export function ContractDocumentJobsModal({ open, onClose, anchorRef, jobs, isLoading, error, onRetry, onRecover, onCancel, onRetryJob, recoveryDialog, interactionPaused = false, "data-component": base }: ContractDocumentJobsModalProps): React.ReactElement {
+export function ContractDocumentJobsModal({ ref, open, onClose, anchorRef, jobs, isLoading, error, onRetry, onRecover, onCancel, onRetryJob, recoveryDialog, interactionPaused = false, "data-component": base }: ContractDocumentJobsModalProps): React.ReactElement {
   const [memory, setMemory] = React.useState<ContractDocumentJobsPanesMemory>({});
   const remember = React.useCallback((next: ContractDocumentJobsPanesMemory) => setMemory(current => ({ ...current, ...next })), []);
   const panes = React.useRef<ContractDocumentJobsPanesHandle>(null);
+  React.useImperativeHandle(ref, () => ({
+    focusCurrentPane: () => panes.current?.focusCurrentPane(),
+    onEscapeKeyDown: event => panes.current?.onEscapeKeyDown(event),
+  }));
   return <AnchoredNotificationModalShell open={open} onClose={onClose} anchorRef={anchorRef} label="전자문서 작업" data-component={base} interactionPaused={interactionPaused}
     onEscapeKeyDown={event => panes.current?.onEscapeKeyDown(event)}>
     <ContractDocumentJobsPanes memory={memory} onRemember={remember} ref={panes} open={open} jobs={jobs} isLoading={isLoading} error={error} onRetry={onRetry} onRecover={onRecover} onCancel={onCancel} onRetryJob={onRetryJob}
