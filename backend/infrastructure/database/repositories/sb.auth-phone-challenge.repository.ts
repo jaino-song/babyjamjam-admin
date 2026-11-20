@@ -54,7 +54,8 @@ export class SbAuthPhoneChallengeRepository implements IAuthPhoneChallengeReposi
     async invalidate(id: string): Promise<void> {
         await this.prismaService.auth_phone_challenge.updateMany({
             where: { id, consumedAt: null },
-            data: { codeHash: null, consumedAt: new Date() },
+            // 전송 실패도 decoy와 같은 검증 응답과 시도 제한을 유지한다.
+            data: { codeHash: null },
         });
     }
 
