@@ -121,3 +121,12 @@ it("fails offline immediately and never resumes after the dialog is removed on t
   await act(async () => { onlineManager.setOnline(true); });
   expect(post).toHaveBeenCalledTimes(1);
 });
+
+it("names the title, description and buttons by their header and footer owners", () => {
+  setup();
+  const base = "desktop_contracts_tests_retry";
+  expect(screen.getByRole("heading", { name: "이 작업을 재시도할까요?" })).toHaveAttribute("data-component", `${base}_header_title`);
+  expect(screen.getByText("재시도하면 고객에게 계약서 서명 요청이 다시 발송됩니다.")).toHaveAttribute("data-component", `${base}_header_description`);
+  expect(screen.getByRole("button", { name: "닫기" })).toHaveAttribute("data-component", `${base}_footer_cancel`);
+  expect(screen.getByRole("button", { name: "재시도" })).toHaveAttribute("data-component", `${base}_footer_approve`);
+});

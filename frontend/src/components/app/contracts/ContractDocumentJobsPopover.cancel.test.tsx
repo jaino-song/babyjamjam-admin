@@ -123,6 +123,51 @@ describe.each([390, 1280])("document job cancel at %spx", width => {
     expect(onOpenChange).not.toHaveBeenCalledWith(false);
   });
 
+  it.each(["active", "requiresAttention", "recent"] as const)("keeps a cancellable job offered after refreshing into %s", async group => {
+    const { client, getJobs } = setup();
+    const post = jest.spyOn(api, "post").mockResolvedValue({ data: { jobId: JOB_ID, outcome: "cancelled" } });
+    const { dialog } = await openConfirmation();
+    const approve = within(dialog).getByRole("button", { name: "작업 취소" });
+    getJobs.mockResolvedValue(makeJobList({ [group]: [{ ...JOB, cancellable: false }] }));
+    await act(async () => { await client.invalidateQueries({ queryKey: eformsignDocumentJobsQueryKeys.all }); });
+    await waitFor(() => expect(approve).toBeDisabled());
+    expect(within(dialog).getByRole("alert")).toHaveTextContent("이 작업은 지금 취소할 수 없어요. 새로고침 후 다시 확인해 주세요.");
+
+    // Require a rendered state change so stale enabled UI cannot satisfy the assertion.
+    getJobs.mockResolvedValue(makeJobList({ [group]: [JOB] }));
+    await act(async () => { await client.invalidateQueries({ queryKey: eformsignDocumentJobsQueryKeys.all }); });
+    await waitFor(() => expect(approve).toBeEnabled());
+    expect(within(dialog).queryByRole("alert")).not.toBeInTheDocument();
+    fireEvent.click(approve);
+    await waitFor(() => expect(post).toHaveBeenCalledWith(`/eformsign-docs/jobs/${JOB_ID}/cancel`));
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: TITLE })).not.toBeInTheDocument());
+  });
+
+  it.each(["removed", "not cancellable"] as const)("follows a refreshed %s job and restores focus inside the active pane", async state => {
+    const { client, getJobs } = setup();
+    const post = jest.spyOn(api, "post");
+    const outerTrigger = screen.getByRole("button", { name: "전자문서 처리중", hidden: true });
+    const { dialog } = await openConfirmation();
+    getJobs.mockResolvedValue(makeJobList({ requiresAttention: state === "removed" ? [] : [{ ...JOB, cancellable: false }] }));
+    await act(async () => { await client.invalidateQueries({ queryKey: eformsignDocumentJobsQueryKeys.all }); });
+    const approve = within(dialog).getByRole("button", { name: "작업 취소" });
+    await waitFor(() => expect(approve).toBeDisabled());
+    expect(within(dialog).getByRole("alert")).toHaveTextContent("이 작업은 지금 취소할 수 없어요. 새로고침 후 다시 확인해 주세요.");
+    fireEvent.click(approve);
+    expect(post).not.toHaveBeenCalled();
+    fireEvent.click(within(dialog).getByRole("button", { name: "닫기" }));
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: TITLE })).not.toBeInTheDocument());
+    const jobsWindow = width === 390
+      ? document.querySelector('[data-slot="document-jobs-popover"]')!
+      : screen.getByRole("dialog", { name: "전자문서 작업" });
+    const target = screen.getByRole("button", { name: state === "removed" ? "전자문서 작업 닫기" : "목록으로 돌아가기" });
+    await waitFor(() => expect(target).toHaveFocus());
+    expect(jobsWindow).toContainElement(document.activeElement as HTMLElement);
+    expect(document.activeElement?.closest("[inert]")).toBeNull();
+    expect(outerTrigger).not.toHaveFocus();
+    expect(onOpenChange).not.toHaveBeenCalledWith(false);
+  });
+
   it("dismisses the confirmation without cancelling or closing the outer window", async () => {
     setup();
     const post = jest.spyOn(api, "post");
