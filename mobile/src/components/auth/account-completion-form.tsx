@@ -10,6 +10,7 @@ import { completeAccountOnboarding } from "@/app/(shell)/(auth)/onboarding/actio
 import { ButtonLoadingContent } from "@/components/ui/button";
 import { FieldLabelRow, fieldMessageId } from "@/components/app/ui/FieldLabelRow";
 import { useFieldMessages } from "@/hooks/use-field-messages";
+import { resetAuthorityState } from "@/lib/auth/authority-state";
 import { formatKoreanPhoneNumber } from "@/lib/phone";
 import { authErrorSlot } from "@/lib/validations/auth-slot-copy";
 import {
@@ -107,7 +108,9 @@ export function AccountCompletionForm(props: AccountCompletionFormProps) {
       else setServerError(response.error || "계정 정보를 저장하지 못했습니다.");
       return;
     }
-    router.replace(response.requiresBranchSelection ? "/select-branch" : "/dashboard");
+    await resetAuthorityState();
+    // Reload the shell so its server-rendered UserProvider receives the new identity.
+    window.location.replace(response.requiresBranchSelection ? "/select-branch" : "/dashboard");
   };
 
   return (
