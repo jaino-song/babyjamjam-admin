@@ -476,8 +476,8 @@ export class SbEformsignDocumentJobRepository implements IEformsignDocumentJobRe
                 if (active[0].branch_id !== input.branchId) throw new Error("EFORMSIGN_DOCUMENT_JOB_KEY_CONFLICT");
                 return { job: this.toDomain(active[0]), existing: true };
             }
-            // reserveAuthority validates replacement under the same client/authority locks.
-            // A refusal rolls back the new job together with any supersession.
+            // Only retireProvenNoEffect above replaces a previous job.
+            // reserveAuthority refuses a still-open authority; refusal rolls back the new job.
             const unresolved = await tx.eformsign_dispatch_intent.findFirst({ where: { branchId: input.branchId, clientId: input.clientId!, action: "create", status: { in: ["started", "uncertain"] } }, select: { id: true } });
             if (unresolved) throw new ConflictException({ code: "REQUEST_CONFLICT" });
             priorDocumentId = client.eDocId; generation = randomUUID();
