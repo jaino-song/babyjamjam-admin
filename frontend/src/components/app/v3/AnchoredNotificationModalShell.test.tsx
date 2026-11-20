@@ -6,9 +6,9 @@ import { AnchoredNotificationModalShell } from "./AnchoredNotificationModalShell
 const base = "desktop_chrome_sidebar_notifications-modal";
 const close = jest.fn();
 const originalObserver = global.ResizeObserver;
-function Harness({ open = true, preferredHeight, children, onEscapeKeyDown }: { open?: boolean; preferredHeight?: number; children?: React.ReactNode; onEscapeKeyDown?: (event: KeyboardEvent) => void }) {
+function Harness({ open = true, children, onEscapeKeyDown }: { open?: boolean; children?: React.ReactNode; onEscapeKeyDown?: (event: KeyboardEvent) => void }) {
   const anchorRef = React.useRef<HTMLButtonElement>(null);
-  return <><button ref={anchorRef}>Trigger</button><AnchoredNotificationModalShell open={open} onClose={close} anchorRef={anchorRef} label="알림" data-component={base} preferredHeight={preferredHeight} onEscapeKeyDown={onEscapeKeyDown}>
+  return <><button ref={anchorRef}>Trigger</button><AnchoredNotificationModalShell open={open} onClose={close} anchorRef={anchorRef} label="알림" data-component={base} onEscapeKeyDown={onEscapeKeyDown}>
     <header>Caller header</header><button>First</button>{children}<button>Last</button>
   </AnchoredNotificationModalShell></>;
 }
@@ -60,22 +60,23 @@ it.each([{}, { "data-component": "" }])("omits owned namespace attributes for %j
   await waitFor(() => expect(screen.getByText("Optional trigger")).toHaveFocus());
 });
 
-it("caps preferred height, flips/clamps on resize and keeps notifications naturally sized", () => {
-  const { rerender } = render(<Harness preferredHeight={500} />);
-  expect(screen.getByRole("dialog")).toHaveStyle({ height: "500px" });
+it("caps measured panel height and clamps its position on resize", () => {
+  jest.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
+    return { left: 800, top: 40, bottom: 72, height: this.getAttribute("role") === "dialog" ? 500 : 32 } as DOMRect;
+  });
+  render(<Harness />);
+  expect(screen.getByRole("dialog")).toHaveStyle({ top: "84px", left: "612px", maxHeight: "672px" });
   act(() => {
     Object.defineProperty(window, "innerHeight", { value: 220 });
     Object.defineProperty(window, "innerWidth", { value: 320 });
     fireEvent(window, new Event("resize"));
   });
-  expect(screen.getByRole("dialog")).toHaveStyle({ top: "12px", left: "12px", height: "196px", maxHeight: "196px" });
-  rerender(<Harness />);
-  expect(screen.getByRole("dialog").style.height).toBe("");
+  expect(screen.getByRole("dialog")).toHaveStyle({ top: "12px", left: "12px", maxHeight: "196px" });
 });
 
-it("flips above a low anchor when the panel fits above it", () => {
+it("flips above a low anchor when the measured panel fits above it", () => {
   jest.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue({ left: 20, top: 650, bottom: 682, height: 300 } as DOMRect);
-  render(<Harness preferredHeight={300} />);
+  render(<Harness />);
   expect(screen.getByRole("dialog")).toHaveStyle({ top: "338px" });
 });
 
@@ -138,30 +139,19 @@ it("does not steal focus from a higher dialog when externally closed", async () 
   expect(screen.getByText("Higher action")).toHaveFocus();
 });
 
-it("tracks natural-content resizing but never remeasures a preferred-height panel", () => {
+it("observes and remeasures natural-content resizing", () => {
   const observe = jest.fn(), disconnect = jest.fn();
   let resized!: ResizeObserverCallback;
   global.ResizeObserver = jest.fn((callback: ResizeObserverCallback) => {
     resized = callback;
     return { observe, disconnect, unobserve: jest.fn() };
   }) as unknown as typeof ResizeObserver;
-  const { rerender } = render(<Harness />);
+  render(<Harness />);
   const panel = screen.getByRole("dialog");
   expect(observe).toHaveBeenCalledWith(panel);
   jest.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue({ left: 20, top: 650, bottom: 682, height: 300 } as DOMRect);
   act(() => resized([], {} as ResizeObserver));
   expect(panel).toHaveStyle({ top: "338px" });
-  rerender(<Harness preferredHeight={500} />);
-  expect(disconnect).toHaveBeenCalled();
-  const measured = jest.fn();
-  Object.defineProperty(panel, "getBoundingClientRect", { configurable: true, value: measured });
-  fireEvent(window, new Event("resize"));
-  expect(measured).not.toHaveBeenCalled();
-  const anchorMeasured = jest.fn().mockReturnValue({ left: 20, top: 650, bottom: 682, height: 32 });
-  Object.defineProperty(screen.getByText("Trigger"), "getBoundingClientRect", { configurable: true, value: anchorMeasured });
-  rerender(<Harness preferredHeight={500}><p>Updated jobs</p></Harness>);
-  expect(anchorMeasured).not.toHaveBeenCalled();
-  expect(measured).not.toHaveBeenCalled();
 });
 
 it("remeasures natural growth after a content commit even when the capped box cannot resize", () => {

@@ -48,6 +48,8 @@ export function ContractDocumentJobRetryDialog({ jobId, isJobOffered, branchId, 
   return <TwoButtonModal open={open} onOpenChange={open => { if (!open) onClose(); }} data-component={base}
     layer="nested" size="detail" onCloseAutoFocus={onCloseAutoFocus}
     title="이 작업을 재시도할까요?" description="재시도하면 고객에게 계약서 서명 요청이 다시 발송됩니다."
+    titleDataComponent={sub("header_title")} descriptionDataComponent={sub("header_description")}
+    cancelButtonDataComponent={sub("footer_cancel")} approvalButtonDataComponent={sub("footer_approve")}
     isDescriptionVisuallyHidden={false} approvalVariant="positive" approvalLabel="재시도" cancelLabel="닫기"
     onApprove={approve} isPending={retry.isPending} approvalDisabled={noLongerOffered}>
     {retry.isError || noLongerOffered ? <p role="alert" data-component={sub("body_error")} data-slot="job-retry-error" className="mb-4 text-sm text-status-danger-fg">

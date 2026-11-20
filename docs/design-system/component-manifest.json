@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated": "2026-11-17",
+  "updated": "2026-11-21",
   "purpose": "Machine-readable inventory of BabyJamJam design-system components. Agents MUST consult this before any UI work and compose ONLY these components in pages. See docs/design-system/AGENT_UI_RULES.md.",
   "docs": {
     "rules": "docs/design-system/AGENT_UI_RULES.md",
@@ -22,16 +22,6 @@
   },
   "components": {
     "frontend": [
-      {
-        "name": "ContractDocumentJobRetryDialog",
-        "layer": "organism",
-        "import": "@/components/app/contracts/ContractDocumentJobRetryDialog",
-        "file": "frontend/src/components/app/contracts/ContractDocumentJobRetryDialog.tsx",
-        "exports": [
-          "ContractDocumentJobRetryDialog"
-        ],
-        "note": "TwoButtonModal confirmation for an automatic contract retry; verifies branch context and displays JOB_NOT_RETRYABLE conflicts."
-      },
       {
         "name": "Alert",
         "layer": "atom",
@@ -1418,6 +1408,26 @@
         "file": "frontend/src/components/app/contracts/ContractDocumentJobDetail.tsx",
         "exports": ["ContractDocumentJobDetail"],
         "note": "Pure job detail presenter. Props: job: ContractDocumentJob; data-component?: string; onDocumentNavigate?: () => void for existing document Link activation. No fetching or recovery authority."
+      },
+      {
+        "name": "ContractDocumentJobRetryDialog",
+        "layer": "organism",
+        "import": "@/components/app/contracts/ContractDocumentJobRetryDialog",
+        "file": "frontend/src/components/app/contracts/ContractDocumentJobRetryDialog.tsx",
+        "exports": [
+          "ContractDocumentJobRetryDialog"
+        ],
+        "note": "TwoButtonModal confirmation for an automatic contract retry; verifies branch context and displays JOB_NOT_RETRYABLE conflicts."
+      },
+      {
+        "name": "ContractDocumentJobCancelDialog",
+        "layer": "organism",
+        "import": "@/components/app/contracts/ContractDocumentJobCancelDialog",
+        "file": "frontend/src/components/app/contracts/ContractDocumentJobCancelDialog.tsx",
+        "exports": [
+          "ContractDocumentJobCancelDialog"
+        ],
+        "note": "TwoButtonModal confirmation for cancelling a document job; verifies branch context, submits once, follows the latest job list and displays JOB_NOT_CANCELLABLE conflicts."
       },
       {
         "name": "ContractDocumentJobsModal",

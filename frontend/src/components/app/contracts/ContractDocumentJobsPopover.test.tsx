@@ -80,7 +80,7 @@ describe.each([390, 1280])('recovery without an editor at %spx', width => {
   test.each(['503', 'verify_only', 'expired'] as const)('%s restores the blurred CTA once after removing inert', async ending => {
     await expectNoEditorFocus(ending, false);
   });
-  test.each(['503', 'verify_only', 'expired'] as const)('%s focuses the jobs trigger once when the CTA is gone', async ending => {
+  test.each(['503', 'verify_only', 'expired'] as const)('%s focuses the detail back button once when the CTA is gone', async ending => {
     await expectNoEditorFocus(ending, true);
   });
 });
@@ -109,7 +109,7 @@ async function expectNoEditorFocus(ending: '503' | 'verify_only' | 'expired', re
     view.rerender(<ContractDocumentJobsPopover data-component="desktop_contracts_tests_jobs-popover" open documentJobs={{ active: [], requiresAttention: [], recent: [{ ...RECOVERY_JOB, status: 'completed', recoveryKind: null }] }} trigger={<button type="button">전자문서 처리중</button>} />);
     expect(cta.isConnected).toBe(false);
   }
-  const target = removeCta ? screen.getByRole('button', { name: '전자문서 처리중', hidden: true }) : cta;
+  const target = removeCta ? screen.getByRole('dialog', { name: '전자문서 작업', hidden: true }).querySelector<HTMLButtonElement>('[data-slot="pane-header-back"]')! : cta;
   const focus = removeCta ? jest.spyOn(target, 'focus') : ctaFocus;
   focus.mockClear();
   const focusedWhileInert: boolean[] = [];
@@ -120,6 +120,7 @@ async function expectNoEditorFocus(ending: '503' | 'verify_only' | 'expired', re
   await act(async () => { await new Promise(resolve => setTimeout(resolve, 20)); });
   expect(focus).toHaveBeenCalledTimes(1);
   expect(focusedWhileInert).toEqual([false]);
+  if (removeCta) expect(screen.getByRole('button', { name: '전자문서 처리중', hidden: true })).not.toHaveFocus();
   expect(document.querySelector('[data-slot="document-jobs-interaction"]')).not.toHaveAttribute('inert');
   expect(screen.queryByTitle('이폼사인 수동 전송')).not.toBeInTheDocument();
 }
@@ -814,7 +815,7 @@ test('verify_only refetches the job, closes recovery and updates the selected de
   } finally { setBranchCookie(null); jest.restoreAllMocks(); }
 });
 
-test('phone recovery returns focus to the sheet trigger when its source is removed', async () => {
+test('phone recovery keeps focus on the list close button inside the sheet when its source is removed', async () => {
   const width = window.innerWidth;
   Object.defineProperty(window, 'innerWidth', { configurable: true, value: 390 });
   mockPathname = '/contracts';
@@ -827,7 +828,12 @@ test('phone recovery returns focus to the sheet trigger when its source is remov
     jest.spyOn(frame.contentWindow!, 'postMessage').mockImplementation(() => {});
     view.rerender(<ContractDocumentJobsPopover data-component="desktop_contracts_tests_jobs-popover" open documentJobs={{ active: [], requiresAttention: [], recent: [] }} trigger={<button>전자문서 처리중</button>} />);
     fireEvent.click(screen.getByRole('button', { name: 'Close' }));
-    await waitFor(() => expect(document.querySelector('[data-slot="document-jobs-trigger"]')).toHaveFocus());
+    const close = screen.getByRole('button', { name: '전자문서 작업 닫기' });
+    await waitFor(() => expect(close).toHaveFocus());
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 20)); });
+    expect(close).toHaveFocus();
+    expect(screen.getByRole('dialog', { name: '전자문서 작업' })).toContainElement(close);
+    expect(document.querySelector('[data-slot="document-jobs-trigger"]')).not.toHaveFocus();
     expect(screen.getByRole('dialog', { name: '전자문서 작업' })).toBeInTheDocument();
   } finally { Object.defineProperty(window, 'innerWidth', { configurable: true, value: width }); jest.restoreAllMocks(); }
 });

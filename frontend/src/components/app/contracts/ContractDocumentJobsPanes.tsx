@@ -66,7 +66,7 @@ export function ContractDocumentJobsPanes({ ref, memory, onRemember, open, onClo
     if (listScroller.current) listScroller.current.scrollTop = savedScroll.current;
     const card = clickedCard.current;
     const target = card?.isConnected && !card.closest("[inert]") ? card : listClose.current;
-    target?.focus({ preventScroll: true });
+    if (target !== document.activeElement) target?.focus({ preventScroll: true });
   }, [open, selected, selectedId, interactionPaused]);
 
   const close = () => {
@@ -83,7 +83,7 @@ export function ContractDocumentJobsPanes({ ref, memory, onRemember, open, onClo
       const target = selected
         ? focusRoot.current?.querySelector<HTMLButtonElement>('[data-slot="pane-header-back"]')
         : card?.isConnected && !card.closest("[inert]") ? card : listClose.current;
-      if (target?.isConnected && !target.closest("[inert]")) target.focus({ preventScroll: true });
+      if (target?.isConnected && !target.closest("[inert]") && (selected || target !== document.activeElement)) target.focus({ preventScroll: true });
     },
     onEscapeKeyDown(event: KeyboardEvent) {
       if (!event.defaultPrevented && !interactionPaused && selected) { event.preventDefault(); back(); }

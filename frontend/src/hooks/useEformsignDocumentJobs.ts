@@ -178,6 +178,7 @@ export function useCancelDocumentJob() {
     const queryClient = useQueryClient();
 
     return useMutation<CancelEformsignDocumentJobResponse, Error, string>({
+        networkMode: "always",
         mutationFn: (jobId) => eformsignApi.cancelDocumentJob(jobId),
         onSuccess: async () => {
             await invalidateDocumentJobQueries(queryClient);

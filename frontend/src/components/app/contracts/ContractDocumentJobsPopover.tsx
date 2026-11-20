@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 
 import { Button } from "@/components/ui/button";
@@ -107,6 +107,8 @@ export function ContractDocumentJobsPopover({
   const anchorRef = useRef<HTMLButtonElement>(null);
   const recoveryTrigger = useRef<HTMLButtonElement | null>(null);
   const [recoveryJobId, setRecoveryJobId] = useState<string | null>(null);
+  const [recoveryOpening, setRecoveryOpening] = useState(0);
+  const restoreRecoveryFocus = useRef<{ opening: number; scope: string; isOpen: boolean } | null>(null);
   const [cancelRequest, setCancelRequest] = useState<{ jobId: string; branchId: string | null; onCancelled?: () => void } | null>(null);
   const [cancelOpen, setCancelOpen] = useState(false);
   const restoreCancelFocus = useRef(false);
@@ -132,22 +134,49 @@ export function ContractDocumentJobsPopover({
   // Use the same identity source as DocumentJobsProvider and its branch-keyed queries.
   const branchId = useActiveBranchId();
   const scope = JSON.stringify([pathname, isMobile, branchId]);
+  const committedRecovery = useRef<{ jobId: string | null; opening: number; scope: string; isOpen: boolean }>({ jobId: null, opening: recoveryOpening, scope, isOpen });
   const [recoveryScope, setRecoveryScope] = useState(scope);
   if (recoveryScope !== scope) {
     setRecoveryScope(scope);
     setRecoveryJobId(null);
+    setRecoveryOpening(opening => opening + 1);
     setCancelRequest(null);
     setCancelOpen(false);
     setRetryRequest(null);
     setRetryOpen(false);
   }
 
+  const focusAfterRecovery = useCallback(() => {
+    const trigger = recoveryTrigger.current;
+    if (trigger?.isConnected && !trigger.closest("[inert]")) trigger.focus({ preventScroll: true });
+    else if (isOpen) panes.current?.focusCurrentPane();
+    else anchorRef.current?.focus({ preventScroll: true });
+  }, [isOpen]);
+
+  useLayoutEffect(() => {
+    committedRecovery.current = { jobId: recoveryJobId, opening: recoveryOpening, scope, isOpen };
+  }, [recoveryJobId, recoveryOpening, scope, isOpen]);
+
+  useEffect(() => {
+    const pending = restoreRecoveryFocus.current;
+    if (!pending) return;
+    if (pending.opening !== recoveryOpening || pending.scope !== scope || pending.isOpen !== isOpen) {
+      restoreRecoveryFocus.current = null;
+      return;
+    }
+    if (recoveryJobId !== null) return;
+    restoreRecoveryFocus.current = null;
+    focusAfterRecovery();
+  }, [recoveryJobId, recoveryOpening, scope, isOpen, focusAfterRecovery]);
+
   useEffect(() => {
     if (cancelRequest !== null || !restoreCancelFocus.current) return;
     restoreCancelFocus.current = false;
     const trigger = cancelTrigger.current;
-    (trigger?.isConnected && !trigger.closest("[inert]") ? trigger : anchorRef.current)?.focus({ preventScroll: true });
-  }, [cancelRequest]);
+    if (!isOpen) anchorRef.current?.focus({ preventScroll: true });
+    else if (trigger?.isConnected && !trigger.closest("[inert]")) trigger.focus({ preventScroll: true });
+    else panes.current?.focusCurrentPane();
+  }, [cancelRequest, isOpen]);
 
   useEffect(() => {
     if (retryRequest !== null || !restoreRetryFocus.current) return;
@@ -172,7 +201,7 @@ export function ContractDocumentJobsPopover({
 
   const onRecover = (jobId: string, triggerButton: HTMLButtonElement) => {
     const job = [...(resolvedJobs?.active ?? []), ...(resolvedJobs?.requiresAttention ?? []), ...(resolvedJobs?.recent ?? [])].find(job => job.jobId === jobId);
-    if (pathname === "/contracts" && documentJobRecoveryPresentation(job) === "iframe") { recoveryTrigger.current = triggerButton; setRecoveryJobId(jobId); }
+    if (pathname === "/contracts" && documentJobRecoveryPresentation(job) === "iframe") { recoveryTrigger.current = triggerButton; setRecoveryOpening(opening => opening + 1); setRecoveryJobId(jobId); }
     else { handleOpenChange(false); router.push(recoverJobHref(jobId)); }
   };
   const onCancel: DocumentJobCancelHandler = (jobId, trigger, onCancelled) => {
@@ -181,7 +210,8 @@ export function ContractDocumentJobsPopover({
     setCancelRequest({ jobId, branchId, onCancelled });
     setCancelOpen(true);
   };
-  const cancelDialog = cancelRequest ? <ContractDocumentJobCancelDialog key={cancelRequest.jobId} jobId={cancelRequest.jobId} branchId={cancelRequest.branchId} open={cancelOpen} data-component={sub("cancel")}
+  const cancelJobOffered = !resolvedJobs || [...resolvedJobs.active, ...resolvedJobs.requiresAttention, ...resolvedJobs.recent].some(job => job.jobId === cancelRequest?.jobId && job.cancellable === true);
+  const cancelDialog = cancelRequest ? <ContractDocumentJobCancelDialog key={cancelRequest.jobId} jobId={cancelRequest.jobId} isJobOffered={cancelJobOffered} branchId={cancelRequest.branchId} open={cancelOpen} data-component={sub("cancel")}
     onClose={() => setCancelOpen(false)} onCancelled={() => {
       cancelSucceeded.current = true;
       setCancelOpen(false);
@@ -213,8 +243,11 @@ export function ContractDocumentJobsPopover({
   const recoveryDialog = recoveryJobId !== null ? <DocumentJobRecoveryDialog presentation="iframe" jobId={recoveryJobId} data-component={sub("recovery")}
     onClose={() => setRecoveryJobId(null)} onCloseAutoFocus={event => {
       event.preventDefault();
-      const trigger = recoveryTrigger.current;
-      (trigger?.isConnected && !trigger.closest("[inert]") ? trigger : anchorRef.current)?.focus({ preventScroll: true });
+      const committed = committedRecovery.current;
+      if (committed.opening !== recoveryOpening || committed.scope !== scope || committed.isOpen !== isOpen) return;
+      // The no-editor close callback can arrive before React removes inert from the panes.
+      if (committed.jobId !== null) restoreRecoveryFocus.current = { opening: recoveryOpening, scope, isOpen };
+      else focusAfterRecovery();
     }} /> : null;
 
   if (isMobile) {
