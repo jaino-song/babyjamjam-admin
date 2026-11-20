@@ -1208,7 +1208,11 @@ describe("SbEformsignDocumentJobRepository", () => {
             expect(attention.text).toContain("AS retryable");
             const [cancellableSql, afterCancellableSql] = attention.text.split("AS cancellable");
             expect(cancellableSql).not.toContain("claim_expires_at");
-            expect(afterCancellableSql?.split("AS retryable")[0]).toContain("claim_expires_at");
+            expect(cancellableSql).toContain("NOT IN ('creating', 'sent', 'superseded', 'cancelled')");
+            const retryableSql = afterCancellableSql?.split("AS retryable")[0];
+            expect(retryableSql).toContain("claim_expires_at");
+            expect(retryableSql).not.toContain("'creating'");
+            expect(retryableSql).not.toContain("PRE_SEND_RETRY_EXHAUSTED");
             expect((queryRaw.mock.calls[0][0] as Prisma.Sql).text).toContain("false AS retryable");
             expect(recent.text).toContain("false AS retryable");
         });

@@ -75,7 +75,7 @@
         "properties": {
           "retryable": {
             "type": "boolean",
-            "description": "Display hint only in requiresAttention; active and recent return false. Requires retained contractData, matching client and generation-bound authority, no manual claim, and a proven non-delivery or replaceable PRE_SEND_RETRY_EXHAUSTED job. An uncertain send result is never retryable because another request could send a second contract. POST re-proves eligibility under locks and may return 409 JOB_NOT_RETRYABLE.",
+            "description": "Display hint only in requiresAttention; active and recent return false. Requires retained contractData, matching client and generation-bound authority, no manual claim, and strict proof of non-delivery, including an operator-confirmed not-delivered result after the send step; retry never uses the looser pre-send replacement. An uncertain send result is never retryable because another request could send a second contract. POST re-proves eligibility under locks and may return 409 JOB_NOT_RETRYABLE.",
             "readOnly": true
           },
           "cancellable": {

@@ -701,10 +701,13 @@ async function bounded<T>(promise: Promise<T>, ms: number): Promise<T> {
             expect(await snapshot()).toEqual(completed);
         });
 
-        it("retries a reconciled creation job holding the production active key and never retries it twice", async () => {
+        it.each(["processing", "creating", "sent"])("retries a reconciled creation job with the %s marker holding the production active key and never retries it twice", async marker => {
             const s = await reconciledRuntime(), activeKey = `create:${branches[0]}:${clients[0]}`;
-            await db.eformsign_document_job.update({ where: { id: s.worker.jobId }, data: { activeKey } });
+            await db.eformsign_document_job.update({ where: { id: s.worker.jobId }, data: {
+                activeKey, progressStep: marker, progressDetail: marker === "processing" ? "info-inserted" : marker,
+            } });
             expect(await projected(s)).toBe(true);
+            if (marker !== "processing") expect(await projectedCancellation(s)).toBe(false);
             const before = await snapshot();
             expect(before.jobs.find(job => job.id === s.worker.jobId)).toMatchObject({ status: "requires_attention", leaseToken: null, activeKey });
             const result = await s.jobRepository.retry(cancelInput(s));
@@ -721,9 +724,11 @@ async function bounded<T>(promise: Promise<T>, ms: number): Promise<T> {
             expect(await snapshot()).toEqual(after);
         });
 
-        it("refuses an uncertain creation job holding the production active key with every row unchanged", async () => {
+        it.each(["processing", "creating", "sent"])("refuses an uncertain creation job with the %s marker holding the production active key with every row unchanged", async marker => {
             const { s, claimed } = await uncertainRuntime(), activeKey = `create:${branches[0]}:${clients[0]}`;
-            await db.eformsign_document_job.update({ where: { id: s.worker.jobId }, data: { activeKey } });
+            await db.eformsign_document_job.update({ where: { id: s.worker.jobId }, data: {
+                activeKey, progressStep: marker, progressDetail: marker === "processing" ? "info-inserted" : marker,
+            } });
             const before = await snapshot();
             expect(before.jobs.find(job => job.id === s.worker.jobId)).toMatchObject({ status: "requires_attention", leaseToken: null, activeKey });
             expect(before.intents.find(intent => intent.id === claimed.intent.id)).toMatchObject({ status: "uncertain", reconciledOutcome: null });
@@ -731,6 +736,66 @@ async function bounded<T>(promise: Promise<T>, ms: number): Promise<T> {
             expect(await s.jobRepository.retry(cancelInput(s))).toEqual({ kind: "not_retryable" });
             expect(await snapshot()).toEqual(before);
             expect(await db.eformsign_document_job.findUniqueOrThrow({ where: { id: s.worker.jobId } })).toMatchObject({ activeKey });
+        });
+
+        async function expectRetryRefusedWithoutWrites(s: Awaited<ReturnType<typeof runtime>>) {
+            const before = await snapshot();
+            expect(await projected(s)).toBe(false);
+            expect(await s.jobRepository.retry(cancelInput(s))).toEqual({ kind: "not_retryable" });
+            expect(await snapshot()).toEqual(before);
+        }
+
+        it("refuses pre-send exhaustion with an unlinked human intent", async () => {
+            const s = await exhaustedRuntime();
+            expect(await projected(s)).toBe(true);
+            await db.eformsign_dispatch_intent.create({ data: {
+                branchId: branches[0]!, clientId: clients[0]!, action: "manual_process",
+                generation: s.worker.contractGeneration, fingerprint: s.enqueue.payloadFingerprint,
+                businessKey: digest(`contract-human:${s.worker.contractGeneration}`), templateId: workflowPlan.templateId,
+                status: "prepared", attemptCount: 0,
+            } });
+            expect((await read())[0]!.humanIntentId).toBeNull();
+            await expectRetryRefusedWithoutWrites(s);
+        });
+
+        it("refuses pre-send exhaustion with an unlinked unreleased draft intent", async () => {
+            const s = await exhaustedRuntime();
+            expect(await projected(s)).toBe(true);
+            await db.eformsign_dispatch_intent.create({ data: {
+                branchId: branches[0]!, clientId: clients[0]!, action: "create_draft",
+                generation: s.worker.contractGeneration, fingerprint: s.enqueue.payloadFingerprint,
+                businessKey: digest(`contract-draft:${s.worker.contractGeneration}`), templateId: workflowPlan.templateId,
+                status: "prepared", attemptCount: 0, startedAt: null,
+            } });
+            expect((await read())[0]!.draftIntentId).toBeNull();
+            await expectRetryRefusedWithoutWrites(s);
+        });
+
+        it.each(["create", "create_draft"])("refuses pre-send exhaustion with an uncertain %s intent for the customer", async action => {
+            const s = await exhaustedRuntime();
+            expect(await projected(s)).toBe(true);
+            await db.eformsign_dispatch_intent.create({ data: {
+                branchId: branches[0]!, clientId: clients[0]!, action,
+                generation: "unrelated", fingerprint: "b".repeat(64),
+                businessKey: digest(`retry-uncertain-${randomUUID()}`),
+                status: "uncertain", attemptCount: 1, startedAt: new Date(),
+            } });
+            await expectRetryRefusedWithoutWrites(s);
+        });
+
+        it.each([
+            ["create", "\t"], ["create", "\u00a0"], ["create_draft", "\t"], ["create_draft", "\u00a0"],
+        ])("refuses pre-send exhaustion with an accepted %s receipt %j that trims to blank", async (action, receipt) => {
+            const s = await exhaustedRuntime();
+            expect(await projected(s)).toBe(true);
+            // The storage CHECK trims spaces only; these receipts reach the strict proof.
+            await db.eformsign_dispatch_intent.create({ data: {
+                branchId: branches[0]!, clientId: clients[0]!, action,
+                generation: "unrelated", fingerprint: "b".repeat(64),
+                businessKey: digest(`retry-blank-${randomUUID()}`),
+                status: "accepted", attemptCount: 1, providerDocumentId: receipt,
+            } });
+            await expectRetryRefusedWithoutWrites(s);
         });
 
         it.each(["legacy", "started", "uncertain", "manual-claim", "expired-manual-claim", "payload-cleared", "serialized-payload", "missing-contract-data", "client-mismatch",
@@ -771,13 +836,14 @@ async function bounded<T>(promise: Promise<T>, ms: number): Promise<T> {
             expect(await s.jobRepository.retry(cancelInput(s))).toEqual({ kind: "not_retryable" });
             expect(await snapshot()).toEqual(before);
         });
-        it.each(["conflict", "authority", "key", "idempotency", "not-superseded", "unexpected"])("rolls back every enqueue write before handling %s", async failure => {
+        it.each(["conflict", "authority", "key", "idempotency", "existing", "not-superseded", "unexpected"])("rolls back every enqueue write before handling %s", async failure => {
             const s = await exhaustedRuntime(), before = await snapshot();
             const enqueue = s.jobRepository.enqueueInTransaction.bind(s.jobRepository);
             const unexpected = new Error("Synthetic unexpected storage failure");
             const intercepted = jest.spyOn(s.jobRepository, "enqueueInTransaction").mockImplementation(async (tx, input) => {
                 const result = await enqueue(tx, input);
                 expect(result.existing).toBe(false);
+                if (failure === "existing") return { ...result, existing: true };
                 if (failure === "not-superseded") {
                     await tx.eformsign_document_job.update({ where: { id: s.worker.jobId }, data: { progressStep: "preparing" } });
                     return result;
