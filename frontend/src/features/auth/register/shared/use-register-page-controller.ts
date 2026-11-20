@@ -8,6 +8,7 @@ import { normalizeApiError, type NormalizedApiError } from "@babyjamjam/shared";
 import { formatIsoDateInput } from "@babyjamjam/shared/utils/date-input";
 
 import { AUTH_ROUTES } from "@/lib/auth/routes";
+import { getFieldMessageText } from "@/lib/forms/field-message-text";
 import { normalizeKoreanPhoneDigits } from "@/lib/phone";
 import { checkPasswordStrength, getEmailFormatError, registerSchema, sanitizeNameInput, type RegisterFormData } from "@/lib/validations/auth";
 import { authApi } from "@/services/api";
@@ -355,7 +356,8 @@ export function useRegisterPageController() {
       if (isPhoneDuplicateFailure(errorData, normalized)) {
         const issue = normalized.problem?.errors?.find((item) => item.pointer === "/phone");
         const message = normalized.problem?.code === "VALIDATION_FAILED" && issue?.code !== "INVALID_VALUE"
-          ? "전화번호 11자리를 입력해 주세요." : PHONE_DUPLICATE_ERROR;
+          ? getFieldMessageText("ko", { tone: "error", code: issue?.code === "REQUIRED" ? "required" : "phone-format" }, "전화번호")
+          : PHONE_DUPLICATE_ERROR;
         setErrors((prev) => ({ ...prev, phone: message }));
         setCurrentStep(1);
       } else {
