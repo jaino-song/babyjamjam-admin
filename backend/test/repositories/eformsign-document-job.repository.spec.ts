@@ -1206,7 +1206,9 @@ describe("SbEformsignDocumentJobRepository", () => {
             expect(attention.text).toContain("u.provider_document_id IS NULL OR u.provider_document_id ~ U&'^[");
             expect(attention.text).toContain("AS cancellable");
             expect(attention.text).toContain("AS retryable");
-            expect(attention.text).toContain("claim_expires_at");
+            const [cancellableSql, afterCancellableSql] = attention.text.split("AS cancellable");
+            expect(cancellableSql).not.toContain("claim_expires_at");
+            expect(afterCancellableSql?.split("AS retryable")[0]).toContain("claim_expires_at");
             expect((queryRaw.mock.calls[0][0] as Prisma.Sql).text).toContain("false AS retryable");
             expect(recent.text).toContain("false AS retryable");
         });

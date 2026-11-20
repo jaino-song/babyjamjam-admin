@@ -278,11 +278,12 @@ export class EformsignDocumentJobService {
         return this.repository.listForBranch(branchId, terminalSince, terminalLimit);
     }
 
-    /** Cancel a generation only when its locked proof rules out provider effects. */
+    /** Enqueue a new contract-creation job from the failed job's stored contract data only when its locked proof rules out provider effects. */
     async retry(input: ManualRecoveryInput): Promise<RetryDocumentJobResult> {
         return this.repository.retry(input);
     }
 
+    /** Cancel a generation only when its locked proof rules out provider effects. */
     async cancel(input: ManualRecoveryInput): Promise<CancelDocumentJobResult> {
         return this.repository.cancel(input);
     }

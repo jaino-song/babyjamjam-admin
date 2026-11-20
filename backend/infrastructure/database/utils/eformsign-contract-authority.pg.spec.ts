@@ -663,11 +663,15 @@ async function bounded<T>(promise: Promise<T>, ms: number): Promise<T> {
             const list = await s.jobRepository.listForBranch(branches[0]!, new Date(0));
             return [...list.active, ...list.requiresAttention, ...list.recent].find(job => job.id === s.worker.jobId)?.retryable ?? false;
         }
-        async function reconciledRuntime() {
+        async function uncertainRuntime() {
             const s = await runtime(), claimed = await s.recovery.claimCreation(s.input, s.worker, s.effect);
             await s.recovery.markAutomaticUncertain(s.worker);
             await db.eformsign_document_job.update({ where: { id: s.worker.jobId }, data: { status: "requires_attention", leaseToken: null,
                 progressStep: "processing", progressDetail: "info-inserted", completedAt: new Date() } });
+            return { s, claimed };
+        }
+        async function reconciledRuntime() {
+            const { s, claimed } = await uncertainRuntime();
             await new SbEformsignDispatchIntentRepository(db as unknown as PrismaService).reconcile({ intentId: claimed.intent.id,
                 branchId: branches[0]!, outcome: "not_delivered", actorUserId: users[0]!, reason: "Synthetic provider confirms no delivery", attemptCount: claimed.intent.attemptCount });
             return s;
@@ -695,6 +699,38 @@ async function bounded<T>(promise: Promise<T>, ms: number): Promise<T> {
             const completed = await snapshot();
             expect(await s.jobRepository.retry(cancelInput(s))).toEqual({ kind: "not_retryable" });
             expect(await snapshot()).toEqual(completed);
+        });
+
+        it("retries a reconciled creation job holding the production active key and never retries it twice", async () => {
+            const s = await reconciledRuntime(), activeKey = `create:${branches[0]}:${clients[0]}`;
+            await db.eformsign_document_job.update({ where: { id: s.worker.jobId }, data: { activeKey } });
+            expect(await projected(s)).toBe(true);
+            const before = await snapshot();
+            expect(before.jobs.find(job => job.id === s.worker.jobId)).toMatchObject({ status: "requires_attention", leaseToken: null, activeKey });
+            const result = await s.jobRepository.retry(cancelInput(s));
+            expect(result).toMatchObject({ kind: "retried", status: "queued" });
+            if (result.kind !== "retried") throw new Error("Expected new job");
+            const after = await snapshot(), next = after.jobs.find(job => job.id === result.jobId)!;
+            expect(after.jobs).toHaveLength(before.jobs.length + 1);
+            expect(after.jobs.filter(job => !before.jobs.some(previous => previous.id === job.id))).toEqual([next]);
+            expect(next).toMatchObject({ status: "queued", activeKey });
+            expect(after.jobs.find(job => job.id === s.worker.jobId)).toMatchObject({ status: "failed", progressStep: "superseded", activeKey: null });
+            expect(after.authorities[0]).toMatchObject({ creationJobId: next.id, generation: next.contractGeneration, phase: "reserved" });
+            expect(await projected(s)).toBe(false);
+            expect(await s.jobRepository.retry(cancelInput(s))).toEqual({ kind: "not_retryable" });
+            expect(await snapshot()).toEqual(after);
+        });
+
+        it("refuses an uncertain creation job holding the production active key with every row unchanged", async () => {
+            const { s, claimed } = await uncertainRuntime(), activeKey = `create:${branches[0]}:${clients[0]}`;
+            await db.eformsign_document_job.update({ where: { id: s.worker.jobId }, data: { activeKey } });
+            const before = await snapshot();
+            expect(before.jobs.find(job => job.id === s.worker.jobId)).toMatchObject({ status: "requires_attention", leaseToken: null, activeKey });
+            expect(before.intents.find(intent => intent.id === claimed.intent.id)).toMatchObject({ status: "uncertain", reconciledOutcome: null });
+            expect(await projected(s)).toBe(false);
+            expect(await s.jobRepository.retry(cancelInput(s))).toEqual({ kind: "not_retryable" });
+            expect(await snapshot()).toEqual(before);
+            expect(await db.eformsign_document_job.findUniqueOrThrow({ where: { id: s.worker.jobId } })).toMatchObject({ activeKey });
         });
 
         it.each(["legacy", "started", "uncertain", "manual-claim", "expired-manual-claim", "payload-cleared", "serialized-payload", "missing-contract-data", "client-mismatch",
