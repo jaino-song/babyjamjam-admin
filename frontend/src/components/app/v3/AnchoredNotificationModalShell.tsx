@@ -10,7 +10,6 @@ interface AnchoredNotificationModalShellProps {
   label: string;
   "data-component"?: string;
   children: React.ReactNode;
-  preferredHeight?: number;
   onEscapeKeyDown?: (event: KeyboardEvent) => void;
   interactionPaused?: boolean;
 }
@@ -18,7 +17,7 @@ interface AnchoredNotificationModalShellProps {
 /** Shared notification geometry; callers own the complete page header and body. */
 export function AnchoredNotificationModalShell({
   open, onClose, anchorRef, label, "data-component": base, children,
-  preferredHeight, onEscapeKeyDown, interactionPaused = false,
+  onEscapeKeyDown, interactionPaused = false,
 }: AnchoredNotificationModalShellProps) {
   const panelRef = React.useRef<HTMLDivElement | null>(null);
   const [panelNode, setPanelNode] = React.useState<HTMLDivElement | null>(null);
@@ -33,9 +32,9 @@ export function AnchoredNotificationModalShell({
     if (!panel || !anchor) return;
     const rect = anchor.getBoundingClientRect();
     const viewportCap = Math.max(0, window.innerHeight - 24);
-    // Natural notifications grow with their contents; jobs keep their owner's height.
+    // The panel grows with its contents up to the viewport cap.
     panel.style.maxHeight = `${viewportCap}px`;
-    const height = Math.min(preferredHeight ?? panel.getBoundingClientRect().height, viewportCap);
+    const height = Math.min(panel.getBoundingClientRect().height, viewportCap);
     const below = rect.bottom + 12;
     const above = rect.top - 12 - height;
     const candidate = below + height <= window.innerHeight - 12 ? below : above >= 12 ? above : below;
@@ -50,26 +49,26 @@ export function AnchoredNotificationModalShell({
       current.top === next.top && current.left === next.left && current.maxHeight === next.maxHeight
         ? current : next
     ));
-  }, [anchorRef, preferredHeight]);
+  }, [anchorRef]);
 
   // A capped panel can hide content growth from ResizeObserver. Recheck natural
   // layout after React commits; updatePosition keeps equal geometry unchanged.
   React.useLayoutEffect(() => {
-    if (open && preferredHeight === undefined) updatePosition();
+    if (open) updatePosition();
   });
 
   React.useLayoutEffect(() => {
     if (!open) return;
     updatePosition();
     window.addEventListener("resize", updatePosition);
-    const observer = typeof ResizeObserver !== "undefined" && preferredHeight === undefined
+    const observer = typeof ResizeObserver !== "undefined"
       ? new ResizeObserver(updatePosition) : null;
     if (panelNode) observer?.observe(panelNode);
     return () => {
       window.removeEventListener("resize", updatePosition);
       observer?.disconnect();
     };
-  }, [open, panelNode, preferredHeight, updatePosition]);
+  }, [open, panelNode, updatePosition]);
 
   return (
     <DialogPrimitive.Root open={open} onOpenChange={(next) => { if (!next && !interactionPaused) onClose(); }}>
@@ -87,10 +86,7 @@ export function AnchoredNotificationModalShell({
           aria-modal="true"
           aria-describedby={undefined}
           className="fixed z-[1000] w-[25rem] max-w-[calc(100vw-24px)] bg-white rounded-[28px] shadow-v3 flex flex-col overflow-hidden"
-          style={{
-            ...position,
-            height: preferredHeight === undefined ? undefined : Math.min(preferredHeight, position.maxHeight),
-          }}
+          style={position}
           onEscapeKeyDown={event => { if (interactionPaused) event.preventDefault(); else onEscapeKeyDown?.(event); }}
           onInteractOutside={event => { if (interactionPaused) event.preventDefault(); }}
           onCloseAutoFocus={(event) => {
