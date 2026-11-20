@@ -217,7 +217,9 @@ export function ContractDocumentJobsPopover({
     onClose={() => setRecoveryJobId(null)} onCloseAutoFocus={event => {
       event.preventDefault();
       const trigger = recoveryTrigger.current;
-      (trigger?.isConnected && !trigger.closest("[inert]") ? trigger : anchorRef.current)?.focus({ preventScroll: true });
+      if (trigger?.isConnected && !trigger.closest("[inert]")) trigger.focus({ preventScroll: true });
+      else if (isOpen) panes.current?.focusCurrentPane();
+      else anchorRef.current?.focus({ preventScroll: true });
     }} /> : null;
 
   if (isMobile) {
