@@ -88,3 +88,13 @@ it("maps code failures from real problem shape", async () => {
   post.mockRejectedValue(failure(400, "VALIDATION_FAILED", "/code"));
   expect((await verifyKakaoLink("challenge", "123456")).error).toBe("인증번호가 맞지 않거나 만료됐어요. 다시 입력하거나 처음부터 진행해 주세요.");
 });
+
+it.each([
+  ["verified", createProblemDetails({ code: "REQUEST_RATE_LIMITED", requestId: "test-request" }), "잠시 기다린 뒤 요청 상태를 확인해 주세요."],
+  ["empty", {}, "요청이 너무 많아요. 잠시 후 다시 시도해 주세요."],
+] as const)("keeps the pending cookie and returns safe copy for a %s onboarding 429", async (_shape, data, error) => {
+  post.mockRejectedValue(new AxiosError("failure", undefined, undefined, undefined, { status: 429, data } as never));
+  expect(await completeAccountOnboarding({ phone: "010-1234-5678" })).toEqual({ success: false, error });
+  expect(store.delete).not.toHaveBeenCalled();
+  expect(writeLoginSessionCookies).not.toHaveBeenCalled();
+});

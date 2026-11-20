@@ -20,7 +20,7 @@ async function submit() {
   const emailWrap = screen.getByLabelText("이메일").closest(".auth-input-wrap");
   expect(emailWrap).not.toContainElement(note);
   expect(emailWrap?.nextElementSibling).toBe(note);
-  expect(note).toHaveTextContent("이미 등록된 이메일이에요. 카카오로 가입한 계정이라면 계속 진행해 비밀번호 로그인을 추가할 수 있어요.");
+  expect(note.textContent).toBe("이미 등록된 이메일이에요. 카카오로 가입한 계정이라면 계속 진행해 비밀번호 로그인을 추가할 수 있어요.");
   fireEvent.click(screen.getByRole("button", { name: "다음" }));
   fireEvent.change(await screen.findByLabelText("전화번호"), { target: { value: "01012345678" } });
   fireEvent.change(screen.getByLabelText("생년월일"), { target: { value: "19900101" } });
@@ -45,7 +45,10 @@ it("returns existing email plain success to the account form", async () => {
   jest.mocked(authApi.register).mockResolvedValue({ success: true });
   await submit();
   expect(await screen.findByLabelText("이메일")).toHaveValue("qa@example.test");
-  expect(screen.getByText("이미 등록된 이메일입니다. 로그인하거나 비밀번호 찾기를 이용해 주세요")).toBeInTheDocument();
+  const email = screen.getByLabelText("이메일");
+  expect(document.getElementById(email.getAttribute("aria-describedby")!)?.textContent).toBe("이미 등록된 이메일입니다");
+  expect(screen.getByRole("note").textContent).toBe("로그인하거나 비밀번호 찾기를 이용해 주세요.");
+  expect(screen.queryByText(/계속 진행해/)).not.toBeInTheDocument();
   expect(screen.queryByText("회원가입 완료!")).toBeNull();
 });
 it("places the phone problem under the phone field", async () => {
@@ -53,7 +56,7 @@ it("places the phone problem under the phone field", async () => {
   jest.mocked(authApi.register).mockRejectedValue({ response: { status: 400, data: problem } });
   await submit();
   const phone = await screen.findByLabelText("전화번호");
-  await waitFor(() => expect(document.getElementById(phone.getAttribute("aria-describedby")!)).toHaveTextContent("이미 등록된 전화번호예요. 다른 전화번호로 다시 시도해 주세요"));
+  await waitFor(() => expect(document.getElementById(phone.getAttribute("aria-describedby")!)).toHaveTextContent(/^이미 등록된 전화번호예요$/));
 });
 it.each([
   ["verified", createProblemDetails({ code: "REQUEST_RATE_LIMITED", requestId: "test-request" }), "잠시 기다린 뒤 요청 상태를 확인해 주세요."],
@@ -87,6 +90,7 @@ it.each([
 
   const codeInput = screen.getByLabelText("인증번호");
   await waitFor(() => expect(codeInput).toHaveAccessibleDescription(error));
+  expect(screen.getByRole("alert").textContent).toBe(error);
   expect(codeInput).toHaveAttribute("aria-invalid", "true");
   expect(codeInput).toHaveValue("123456");
   expect(screen.queryByText("계정이 연결되었습니다!")).not.toBeInTheDocument();
@@ -111,4 +115,28 @@ it("keeps the register frame and brand around the embedded code step", async () 
   expect(step).not.toHaveClass("auth-page");
   expect(frame).toContainElement(screen.getByText("회원가입"));
   expect(screen.queryByText("필수 정보를 단계별로 입력해 주세요.")).not.toBeInTheDocument();
+});
+
+it("restarts at the phone and birth-date step with typed values retained", async () => {
+  jest.mocked(authApi.register).mockResolvedValue({ success: true, linkVerificationRequired: true, linkChallengeToken: "challenge" });
+  await submit();
+  await screen.findByLabelText("인증번호");
+  fireEvent.click(screen.getByRole("button", { name: "정보 다시 입력" }));
+  expect(screen.getByLabelText("전화번호")).toHaveValue("010-1234-5678");
+  expect(screen.getByLabelText("생년월일")).toHaveValue("1990-01-01");
+  expect(screen.queryByLabelText("이메일")).not.toBeInTheDocument();
+});
+
+it.each([
+  ["verified", 429, createProblemDetails({ code: "REQUEST_RATE_LIMITED", requestId: "test-request" }), "잠시 기다린 뒤 요청 상태를 확인해 주세요."],
+  ["empty", 429, {}, "요청이 너무 많아요. 잠시 후 다시 시도해 주세요."],
+] as const)("shows safe copy for a %s rate-limited code check", async (_shape, status, data, error) => {
+  jest.mocked(authApi.register).mockResolvedValue({ success: true, linkVerificationRequired: true, linkChallengeToken: "challenge" });
+  jest.mocked(authApi.verifyRegisterLink).mockRejectedValue({ response: { status, data } });
+  await submit();
+  fireEvent.change(await screen.findByLabelText("인증번호"), { target: { value: "123456" } });
+  fireEvent.click(screen.getByRole("button", { name: "인증하고 계정 연결" }));
+  expect((await screen.findByRole("alert")).textContent).toBe(error);
+  expect(screen.queryByText("회원가입에 실패했어요.")).not.toBeInTheDocument();
+  expect(screen.getByLabelText("인증번호")).toHaveAccessibleDescription(error);
 });

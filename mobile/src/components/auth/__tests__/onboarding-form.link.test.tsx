@@ -24,7 +24,7 @@ it("opens the challenge, retains values on restart and returns to login after ve
   expect(replace).toHaveBeenCalledWith("/login?authError=ACCOUNT_LINKED");
 });
 it.each([
-  ["phone", "전화번호", "생년월일", "이미 등록된 전화번호예요. 다른 전화번호로 다시 시도해 주세요.", "이미 등록된 전화번호예요. 다른 전화번호로 다시 시도해 주세요"],
+  ["phone", "전화번호", "생년월일", "이미 등록된 전화번호예요. 다른 전화번호로 다시 시도해 주세요.", "이미 등록된 전화번호예요"],
   ["phone", "전화번호", "생년월일", "전화번호 형식이 올바르지 않아요. 010-1234-5678처럼 입력해 주세요.", "010-1234-5678로 입력해 주세요"],
   ["birthDate", "생년월일", "전화번호", "생년월일 형식이 올바르지 않아요. 1990-01-01처럼 입력해 주세요.", "YYYY-MM-DD로 입력해 주세요"],
 ] as const)("renders the %s action failure in the matching field slot: %s", async (field, label, otherLabel, error, slotCopy) => {
