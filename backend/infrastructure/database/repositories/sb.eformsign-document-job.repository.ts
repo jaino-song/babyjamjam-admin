@@ -175,6 +175,14 @@ function contractJobSql(alias = ""): Prisma.Sql {
 
 /** SQL display proof. POST additionally locks, validates linked identities and vetoes live claims. */
 function cancellableJobSql(): Prisma.Sql {
+    return nonDeliveryJobSql(false);
+}
+
+function nonDeliveryJobSql(allowSendMarkers: boolean): Prisma.Sql {
+    const progressProof = allowSendMarkers
+        ? Prisma.sql`AND COALESCE(j.progress_step, '') NOT IN ('superseded', 'cancelled')`
+        : Prisma.sql`AND COALESCE(j.progress_step, '') NOT IN ('creating', 'sent', 'superseded', 'cancelled')
+        AND COALESCE(j.progress_detail, '') NOT IN ('creating', 'sent')`;
     const noEffect = (alias: string) => {
         // Aliases are source-owned identifiers, never request input.
         const i = Prisma.raw(alias);
@@ -187,8 +195,7 @@ function cancellableJobSql(): Prisma.Sql {
     return Prisma.sql`COALESCE((
         ${contractJobSql("j")} AND j.contract_generation IS NOT NULL AND j.job_type = 'create_document'
         AND j.status IN ('failed', 'requires_attention') AND j.lease_token IS NULL AND j.document_id IS NULL
-        AND COALESCE(j.progress_step, '') NOT IN ('creating', 'sent', 'superseded', 'cancelled')
-        AND COALESCE(j.progress_detail, '') NOT IN ('creating', 'sent')
+        ${progressProof}
         AND EXISTS (
             SELECT 1 FROM eformsign_contract_authority a
             JOIN client c ON c.id = a.client_id AND c.branch_id = a.branch_id
@@ -222,7 +229,11 @@ function cancellableJobSql(): Prisma.Sql {
     ), false)`;
 }
 
-/** A job with an uncertain send result is not retryable: another send could create a second contract. */
+/**
+ * A job with an uncertain send result is not retryable: another send could create a second contract.
+ * Once an operator reconciles the send as not delivered, retry is allowed even past the send step.
+ * Retry always requires strict non-delivery proof and never uses the looser pre-send replacement.
+ */
 function retryableJobSql(): Prisma.Sql {
     return Prisma.sql`COALESCE((
         jsonb_typeof(j.payload->'contractData') = 'object' AND j.payload->'clientId' = to_jsonb(j.client_id)
@@ -231,19 +242,7 @@ function retryableJobSql(): Prisma.Sql {
         AND EXISTS (SELECT 1 FROM eformsign_contract_authority a WHERE a.creation_job_id = j.id
             AND a.branch_id = j.branch_id AND a.client_id = j.client_id
             AND (a.claim_expires_at IS NULL OR a.claim_expires_at <= CURRENT_TIMESTAMP))
-        AND (${cancellableJobSql()} OR (
-            ${contractJobSql("j")} AND j.job_type = 'create_document' AND j.contract_generation IS NOT NULL
-            AND j.status = 'failed' AND j.last_error_code = 'PRE_SEND_RETRY_EXHAUSTED'
-            AND j.document_id IS NULL AND j.lease_token IS NULL AND j.active_key IS NULL
-            AND EXISTS (SELECT 1 FROM eformsign_contract_authority a JOIN client c ON c.id = a.client_id AND c.branch_id = a.branch_id
-                WHERE a.branch_id = j.branch_id AND a.client_id = j.client_id AND a.creation_job_id = j.id
-                AND a.generation = j.contract_generation AND a.fingerprint = j.payload_fingerprint AND a.phase = 'reserved'
-                AND a.prior_document_id IS NOT DISTINCT FROM c.e_doc_id
-                AND a.provider_document_id IS NULL AND a.creation_intent_id IS NULL AND a.draft_intent_id IS NULL AND a.human_intent_id IS NULL
-                AND (a.claim_expires_at IS NULL OR a.claim_expires_at <= CURRENT_TIMESTAMP)
-                AND NOT EXISTS (SELECT 1 FROM eformsign_dispatch_intent i WHERE i.branch_id = a.branch_id AND i.client_id = a.client_id
-                    AND i.action = 'create' AND i.status IN ('started', 'uncertain')))
-        ))
+        AND ${nonDeliveryJobSql(true)}
     ), false)`;
 }
 
@@ -357,12 +356,15 @@ export class SbEformsignDocumentJobRepository implements IEformsignDocumentJobRe
                     clientId: job.clientId, contractData,
                     ...(stored["supersedeDocumentId"] ? { supersedeDocumentId: stored["supersedeDocumentId"] } : {}),
                 };
+                const client = await tx.client.findUnique({ where: { id: job.clientId }, select: { eDocId: true } });
+                if (!client || !await retireProvenNoEffect(tx, authority, client.eDocId)) return { kind: "not_retryable" };
+                // The retire has written: every refusal below must throw so the transaction rolls back.
                 const result = await this.enqueueInTransaction(tx, {
                     branchId: input.branchId, clientId: job.clientId, jobType: "create_document", source: "staff",
                     requestKey: randomUUID(), activeKey: `create:${input.branchId}:${job.clientId}`,
                     createdByUserId: input.userId, payload, payloadFingerprint: sha256CanonicalJson(payload),
                 });
-                if (result.existing) return { kind: "not_retryable" };
+                if (result.existing) throw new ConflictException({ code: "REQUEST_CONFLICT" });
                 const old = await tx.eformsign_document_job.findUnique({ where: { id: job.id } });
                 if (old?.progressStep !== SUPERSEDED_PROGRESS_STEP) throw new Error("EFORMSIGN_RETRY_OLD_JOB_NOT_SUPERSEDED");
                 return { kind: "retried", jobId: result.job.id, status: result.job.status };
