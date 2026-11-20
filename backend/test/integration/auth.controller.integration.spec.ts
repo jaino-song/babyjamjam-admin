@@ -1063,6 +1063,15 @@ describe("AuthController (Integration)", () => {
                 expect(response.status).toBe(201);
                 expect(response.body).toEqual({ success: true, user: mockUser.id, ...mockTokens });
             });
+
+            it("allows omission of a stored birth date, leaving requiredness to the service", async () => {
+                authService.completeAccountOnboarding.mockResolvedValue({ user: mockUser.id, ...mockTokens });
+                const response = await request(strictApp.getHttpServer()).post("/auth/onboarding/complete")
+                    .set("x-pending-onboarding-token", "pending-token").send({ phone: body.phone });
+                expect(response.status).toBe(201);
+                expect(response.body).toEqual({ success: true, user: mockUser.id, ...mockTokens });
+                expect(authService.completeAccountOnboarding).toHaveBeenCalledWith("pending-token", body.phone, undefined);
+            });
         });
     });
 
