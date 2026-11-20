@@ -51,6 +51,28 @@ it("retains Kakao pending cookie for a link challenge", async () => {
   expect(await completeKakaoOnboarding({ phone: "010-1234-5678", birthDate: "1990-01-01", role: "user" })).toMatchObject({ linkVerificationRequired: true, linkChallengeToken: "challenge" });
   expect(store.delete).not.toHaveBeenCalled();
 });
+it.each([
+  ["/phone", "INVALID_VALUE", "phone", "이미 등록된 전화번호예요. 다른 전화번호로 다시 시도해 주세요."],
+  ["/phone", "REQUIRED", "phone", "전화번호 형식이 올바르지 않아요. 010-1234-5678처럼 입력해 주세요."],
+  ["/birthDate", "INVALID_VALUE", "birthDate", "생년월일 형식이 올바르지 않아요. 1990-01-01처럼 입력해 주세요."],
+  ["/birthDate", "REQUIRED", "birthDate", "생년월일 형식이 올바르지 않아요. 1990-01-01처럼 입력해 주세요."],
+] as const)("maps Kakao %s %s to its field and authored copy", async (pointer, fieldCode, field, error) => {
+  post.mockRejectedValue(failure(400, "VALIDATION_FAILED", pointer, fieldCode));
+
+  expect(await completeKakaoOnboarding({ phone: "010-1234-5678", birthDate: "1990-01-01", role: "user" }))
+    .toEqual({ success: false, field, error });
+  expect(store.delete).not.toHaveBeenCalled();
+});
+it.each([
+  ["verified", createProblemDetails({ code: "REQUEST_RATE_LIMITED", requestId: "test-request" }), "잠시 기다린 뒤 요청 상태를 확인해 주세요."],
+  ["unverified", { code: "REQUEST_RATE_LIMITED", detail: "Untrusted upstream detail", message: "Untrusted upstream message" }, "요청이 너무 많아요. 잠시 후 다시 시도해 주세요."],
+] as const)("uses safe copy for a %s Kakao 429", async (_shape, data, error) => {
+  post.mockRejectedValue(new AxiosError("failure", undefined, undefined, undefined, { status: 429, data } as never));
+
+  expect(await completeKakaoOnboarding({ phone: "010-1234-5678", birthDate: "1990-01-01", role: "user" }))
+    .toEqual({ success: false, error });
+  expect(store.delete).not.toHaveBeenCalled();
+});
 it("verifies Kakao link and deletes the pending cookie", async () => {
   post.mockResolvedValue({ data: { success: true, linked: true } });
   expect(await verifyKakaoLink("challenge", "123456")).toEqual({ success: true });
