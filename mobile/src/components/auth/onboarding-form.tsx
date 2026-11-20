@@ -7,7 +7,8 @@ import { authBirthDateSchema, authPhoneSchema, REGISTERABLE_ROLE_OPTIONS } from 
 import { formatIsoDateInput } from "@babyjamjam/shared/utils/date-input";
 import { z } from "zod";
 
-import { completeKakaoOnboarding } from "@/app/(shell)/(auth)/kakao/onboarding/actions";
+import { completeKakaoOnboarding, verifyKakaoLink } from "@/app/(shell)/(auth)/kakao/onboarding/actions";
+import { LinkVerificationStep } from "@/components/auth/link-verification-step";
 import { ButtonLoadingContent } from "@/components/ui/button";
 import { FieldLabelRow, fieldMessageId } from "@/components/app/ui/FieldLabelRow";
 import { useFieldMessages } from "@/hooks/use-field-messages";
@@ -70,6 +71,7 @@ export function OnboardingForm(props: OnboardingFormProps) {
   });
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [serverError, setServerError] = useState<string | null>(null);
+  const [challenge, setChallenge] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
 
   const fieldMessages = useFieldMessages<TextField>({
@@ -125,11 +127,24 @@ export function OnboardingForm(props: OnboardingFormProps) {
     if (!response.success) {
       // The server action already returns contract-resolved authored copy;
       // store it verbatim instead of re-adapting the string.
-      setServerError(response.error || "계정 정보를 저장하지 못했습니다.");
+      const field = response.field;
+      if (field) setErrors(current => ({ ...current, [field]: response.error || "" }));
+      else setServerError(response.error || "계정 정보를 저장하지 못했습니다.");
+      return;
+    }
+    if (response.linkVerificationRequired && response.linkChallengeToken) {
+      setChallenge(response.linkChallengeToken);
       return;
     }
     router.replace("/login?authError=PENDING_APPROVAL");
   };
+
+  if (challenge) return <LinkVerificationStep data-component={`${KAKAO_ONBOARDING_BASE}_link-verification`}
+    onRestart={() => setChallenge(null)} onVerify={async code => {
+      const result = await verifyKakaoLink(challenge, code);
+      if (result.success) router.replace("/login?authError=ACCOUNT_LINKED");
+      return result;
+    }} />;
 
   return (
     <div

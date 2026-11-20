@@ -1,0 +1,21 @@
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { completeKakaoOnboarding, verifyKakaoLink } from "@/app/(shell)/(auth)/kakao/onboarding/actions";
+import { OnboardingForm } from "../onboarding-form";
+const replace = jest.fn();
+jest.mock("next/navigation", () => ({ useRouter: () => ({ replace }) }));
+jest.mock("@/app/(shell)/(auth)/kakao/onboarding/actions", () => ({ completeKakaoOnboarding: jest.fn(), verifyKakaoLink: jest.fn() }));
+it("opens the challenge, retains values on restart and returns to login after verification", async () => {
+  jest.mocked(completeKakaoOnboarding).mockResolvedValue({ success: true, linkVerificationRequired: true, linkChallengeToken: "challenge" });
+  jest.mocked(verifyKakaoLink).mockResolvedValue({ success: true });
+  render(<OnboardingForm phone="010-1234-5678" birthDate="1990-01-01" role="user" />);
+  fireEvent.click(screen.getByText("가입 완료"));
+  await screen.findByLabelText("인증번호");
+  fireEvent.click(screen.getByText("정보 다시 입력"));
+  expect(screen.getByLabelText("전화번호")).toHaveValue("010-1234-5678");
+  expect(screen.getByLabelText("생년월일")).toHaveValue("1990-01-01");
+  fireEvent.click(screen.getByText("가입 완료"));
+  fireEvent.change(await screen.findByLabelText("인증번호"), { target: { value: "123456" } });
+  fireEvent.click(screen.getByText("인증하고 계정 연결"));
+  await waitFor(() => expect(verifyKakaoLink).toHaveBeenCalledWith("challenge", "123456"));
+  expect(replace).toHaveBeenCalledWith("/login?authError=ACCOUNT_LINKED");
+});

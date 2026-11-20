@@ -24,7 +24,7 @@ describe("RegisterPage", () => {
   beforeEach(() => {
     mockPush.mockReset();
     mockCheckEmailExists.mockReset();
-    mockCheckEmailExists.mockResolvedValue({ exists: false, linkable: false });
+    mockCheckEmailExists.mockResolvedValue({ exists: false });
   });
 
   it("advances to the profile step when the account fields are valid", async () => {

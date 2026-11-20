@@ -8,6 +8,7 @@ import { CheckCircle, ChevronDown, ChevronLeft, ChevronRight, Link2 } from "luci
 import { normalizeApiError, type NormalizedApiError, REGISTERABLE_ROLE_OPTIONS } from "@babyjamjam/shared";
 import { formatIsoDateInput } from "@babyjamjam/shared/utils/date-input";
 
+import { LinkVerificationStep } from "@/components/auth/link-verification-step";
 import { ActionRow } from "@/components/ui/action-row";
 import { LoadingState } from "@/components/app/ui/LoadingState";
 import { ButtonLoadingContent } from "@/components/ui/button";
@@ -41,8 +42,8 @@ interface AxiosLikeError {
   response?: { data?: RegisterErrorData };
 }
 
-const EMAIL_DUPLICATE_ERROR = "이미 등록된 이메일입니다.";
-const PHONE_DUPLICATE_ERROR = "이미 등록된 전화번호입니다.";
+const EMAIL_DUPLICATE_ERROR = "이미 등록된 이메일입니다. 로그인하거나 비밀번호 찾기를 이용해 주세요.";
+const PHONE_DUPLICATE_ERROR = "이미 등록된 전화번호예요. 다른 전화번호로 다시 시도해 주세요.";
 const REGISTER_FAILURE_COPY = "회원가입에 실패했어요.";
 const REGISTER_NETWORK_FAILURE_COPY = "네트워크 오류가 발생했어요. 다시 시도해 주세요.";
 const REGISTER_TOTAL_STEPS = 3;
@@ -89,7 +90,7 @@ function isPhoneDuplicateFailure(errorData: RegisterErrorData | undefined, norma
   }
   // Problem body: registered conflict code with a /phone pointer.
   return normalized.verified
-    && normalized.problem?.code === "REQUEST_CONFLICT"
+    && (normalized.problem?.code === "REQUEST_CONFLICT" || normalized.problem?.code === "VALIDATION_FAILED")
     && (normalized.problem.errors ?? []).some((problemError) => problemError.pointer === "/phone");
 }
 
@@ -123,7 +124,8 @@ export default function RegisterPage() {
   const [accountsLinked, setAccountsLinked] = useState(false);
   const [isCheckingEmailDuplicate, setIsCheckingEmailDuplicate] = useState(false);
   const [isEmailDuplicate, setIsEmailDuplicate] = useState(false);
-  const [isEmailLinkable, setIsEmailLinkable] = useState(false);
+  const [challenge, setChallenge] = useState<string | null>(null);
+  const [emailVerificationRequired, setEmailVerificationRequired] = useState(true);
   const [emailTouched, setEmailTouched] = useState(false);
   const accountMessages = useFieldMessages<AccountField>({
     values: {
@@ -173,9 +175,7 @@ export default function RegisterPage() {
     ? null
     : isCheckingEmailDuplicate
       ? { text: "확인 중", tone: "pending" }
-      : isEmailLinkable
-        ? { text: "카카오 연결 가능", tone: "ok" }
-        : { text: "이메일 확인됨", tone: "ok" };
+      : { text: "이메일 확인됨", tone: "ok" };
 
   // One slot per field: field errors (zod / server) and the shared resolver's
   // message outrank informational status.
@@ -221,7 +221,6 @@ export default function RegisterPage() {
     if (!normalizedEmail || emailFormatError) {
       setIsCheckingEmailDuplicate(false);
       setIsEmailDuplicate(false);
-      setIsEmailLinkable(false);
       setErrors((prev) => {
         if (prev.email !== EMAIL_DUPLICATE_ERROR) return prev;
         const next = { ...prev };
@@ -236,22 +235,13 @@ export default function RegisterPage() {
       setIsCheckingEmailDuplicate(true);
       void authApi
         .checkEmailExists(normalizedEmail)
-        .then(({ exists, linkable }) => {
+        .then(({ exists }) => {
           if (cancelled) return;
-          const dup = exists && !linkable;
-          setIsEmailDuplicate(dup);
-          setIsEmailLinkable(exists && linkable);
-          setErrors((prev) => {
-            const next = { ...prev };
-            if (dup) next.email = EMAIL_DUPLICATE_ERROR;
-            else if (next.email === EMAIL_DUPLICATE_ERROR) delete next.email;
-            return next;
-          });
+          setIsEmailDuplicate(exists);
         })
         .catch(() => {
           if (cancelled) return;
           setIsEmailDuplicate(false);
-          setIsEmailLinkable(false);
           setErrors((prev) => {
             if (prev.email !== EMAIL_DUPLICATE_ERROR) return prev;
             const next = { ...prev };
@@ -353,11 +343,6 @@ export default function RegisterPage() {
     accountMessages.markSubmitted();
 
     if (isCheckingEmailDuplicate) return;
-    if (isEmailDuplicate) {
-      setErrors((prev) => ({ ...prev, email: EMAIL_DUPLICATE_ERROR }));
-      focusFirstField(["email"]);
-      return;
-    }
 
     const result = registerSchema.safeParse(getCombinedFormData());
     if (!result.success) {
@@ -411,12 +396,6 @@ export default function RegisterPage() {
     profileMessages.markSubmitted();
 
     if (isCheckingEmailDuplicate) return;
-    if (isEmailDuplicate) {
-      setErrors((prev) => ({ ...prev, email: EMAIL_DUPLICATE_ERROR }));
-      setCurrentStep(1);
-      focusFirstField(["email"]);
-      return;
-    }
 
     setErrors((prev) => {
       const next = { ...prev };
@@ -452,8 +431,15 @@ export default function RegisterPage() {
         birthDate: result.data.birthDate,
       });
       if (response.success) {
-        if (response.code === "ACCOUNTS_LINKED") setAccountsLinked(true);
-        setIsSuccess(true);
+        if (response.linkVerificationRequired && response.linkChallengeToken) {
+          setChallenge(response.linkChallengeToken);
+        } else if (isEmailDuplicate) {
+          setErrors(prev => ({ ...prev, email: EMAIL_DUPLICATE_ERROR }));
+          setCurrentStep(1);
+        } else {
+          if (response.code === "ACCOUNTS_LINKED") setAccountsLinked(true);
+          setIsSuccess(true);
+        }
       } else if (response.code === "P2002") {
         // Registered-code discrimination only — the register flow cannot
         // produce another P2002, so no raw-message content check is needed.
@@ -475,19 +461,40 @@ export default function RegisterPage() {
       const normalized = normalizeApiError(err, { locale: "ko-KR", operation: "mutation" });
 
       if (isPhoneDuplicateFailure(errorData, normalized)) {
-        setErrors((prev) => ({ ...prev, phone: PHONE_DUPLICATE_ERROR }));
-        // The phone field lives on the profile step, not the account step.
+        const phoneProblem = normalized.problem?.errors?.find(e => e.pointer === "/phone");
+        setErrors((prev) => ({ ...prev, phone: normalized.problem?.code === "VALIDATION_FAILED" && phoneProblem?.code !== "INVALID_VALUE"
+          ? "전화번호 형식이 올바르지 않아요. 010-1234-5678처럼 입력해 주세요." : PHONE_DUPLICATE_ERROR }));
         setCurrentStep(2);
         setPendingFocus("phone");
       } else {
         // Registered problem message (verified) or locally authored copy —
         // upstream body messages/arrays are never rendered.
-        setServerError(normalized.verified ? normalized.message : REGISTER_NETWORK_FAILURE_COPY);
+        setServerError(normalized.verified ? normalized.message : errorData?.code === "REQUEST_RATE_LIMITED" ? "요청이 너무 많아요. 잠시 후 다시 시도해 주세요." : REGISTER_NETWORK_FAILURE_COPY);
       }
     } finally {
       setIsLoading(false);
     }
   };
+
+  if (challenge) return <LinkVerificationStep data-component={`${REGISTER_BASE}_link-verification`}
+    onRestart={() => { setChallenge(null); setCurrentStep(1); }} onVerify={async code => {
+      try {
+        const result = await authApi.verifyRegisterLink(challenge, code);
+        if (result.success && result.linked) {
+          setAccountsLinked(true);
+          setEmailVerificationRequired(result.emailVerificationRequired !== false);
+          setIsSuccess(true);
+          setChallenge(null);
+          return { success: true };
+        }
+      } catch (error) {
+        const normalized = normalizeApiError(error, { locale: "ko-KR", operation: "mutation" });
+        if (normalized.problem?.code === "VALIDATION_FAILED" && normalized.problem.errors?.some(e => e.pointer === "/code")) {
+          return { success: false, error: "인증번호가 맞지 않거나 만료됐어요. 다시 입력하거나 처음부터 진행해 주세요." };
+        }
+      }
+      return { success: false, error: REGISTER_FAILURE_COPY };
+    }} />;
 
   if (isSuccess) {
     return (
@@ -508,7 +515,7 @@ export default function RegisterPage() {
             <strong>{accountsLinked ? "계정이 연결되었습니다!" : "회원가입 완료!"}</strong>
           </div>
           <div className="status-message" data-component={`${REGISTER_BASE}_success_message`}>
-            {accountsLinked ? (
+            {accountsLinked ? (emailVerificationRequired ? (
               <span>
                 기존 카카오 계정에 비밀번호가 추가되었습니다.
                 <br />
@@ -516,7 +523,7 @@ export default function RegisterPage() {
                 <br />
                 카카오와 이메일 모두로 로그인할 수 있습니다.
               </span>
-            ) : (
+            ) : <span>이제 이메일로도 로그인할 수 있어요.</span>) : (
               <span>
                 인증 이메일이 발송되었습니다.
                 <br />
@@ -613,6 +620,7 @@ export default function RegisterPage() {
                 disabled={isLoading}
                 {...fieldProps("email", "register-email")}
               />
+              {isEmailDuplicate && <p role="note">이미 등록된 이메일이에요. 카카오로 가입한 계정이라면 계속 진행해 비밀번호 로그인을 추가할 수 있어요.</p>}
             </div>
           </div>
 
