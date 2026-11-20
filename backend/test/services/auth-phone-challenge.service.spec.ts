@@ -14,6 +14,8 @@ import {
     AuthPhoneChallengeRow,
     IAuthPhoneChallengeRepository,
 } from "domain/repositories/auth-phone-challenge.repository.interface";
+import { PrismaService } from "infrastructure/database/prisma.service";
+import { SbAuthPhoneChallengeRepository } from "infrastructure/database/repositories/sb.auth-phone-challenge.repository";
 
 const NOW = new Date("2026-11-21T03:00:00Z");
 const PHONE = "01000000000";
@@ -157,6 +159,73 @@ describe("AuthPhoneChallengeService", () => {
         expect(JSON.parse(warn.mock.calls[0]![0])).toMatchObject({ id: stored.id, resultCode: failure === "throws" ? "thrown" : 0 });
         const warnings = JSON.stringify(warn.mock.calls);
         for (const secret of [PHONE, CODE, result.challengeToken, "private provider message"]) expect(warnings).not.toContain(secret);
+    });
+
+    it.each(["throws", "refuses"])("verifies a failed SMS challenge identically to a decoy when the provider %s", async (failure) => {
+        const rows = new Map<string, AuthPhoneChallengeRow>();
+        repository.createWithinLimits.mockImplementation(async (row) => {
+            rows.set(row.id, { ...row });
+            return "created";
+        });
+        repository.findByTokenHash.mockImplementation(async (tokenHash) => {
+            const row = [...rows.values()].find((entry) => entry.tokenHash === tokenHash);
+            return row ? { ...row } : null;
+        });
+        repository.registerAttempt.mockImplementation(async (id, maxAttempts) => {
+            const row = rows.get(id);
+            if (!row || row.consumedAt !== null || row.attemptCount >= maxAttempts) return false;
+            row.attemptCount++;
+            return true;
+        });
+        // Exercise the production invalidation write against an in-memory Prisma double.
+        const prisma = {
+            auth_phone_challenge: {
+                updateMany: jest.fn(async ({ where, data }: {
+                    where: { id: string; consumedAt: null };
+                    data: Partial<AuthPhoneChallengeRow>;
+                }) => {
+                    const row = rows.get(where.id);
+                    if (!row || row.consumedAt !== where.consumedAt) return { count: 0 };
+                    Object.assign(row, data);
+                    return { count: 1 };
+                }),
+            },
+        };
+        const persistedRepository = new SbAuthPhoneChallengeRepository(prisma as unknown as PrismaService);
+        repository.invalidate.mockImplementation((id) => persistedRepository.invalidate(id));
+        const send = deferred<AligoSmsResponse>();
+        sms.sendSms.mockReturnValue(send.promise);
+        jest.spyOn(crypto, "randomInt").mockImplementation(() => 42);
+
+        const real = await service.issue(realParams);
+        const decoy = await service.issue({ ...realParams, targetUserId: null });
+        if (failure === "throws") send.reject(new Error("provider timeout"));
+        else send.resolve({ result_code: 0, message: "refused" });
+        await flushDelivery();
+        expect(repository.invalidate).toHaveBeenCalledTimes(1);
+
+        const compare = jest.spyOn(crypto, "timingSafeEqual");
+        for (let attempt = 0; attempt < PHONE_CHALLENGE_MAX_ATTEMPTS; attempt++) {
+            for (const { challengeToken } of [real, decoy]) {
+                await expect(service.verify({ ...verifyParams, challengeToken }))
+                    .rejects.toMatchObject(refusal("인증번호가 올바르지 않아요."));
+            }
+        }
+        expect(compare).toHaveBeenCalledTimes(2 * PHONE_CHALLENGE_MAX_ATTEMPTS);
+        expect(compare).toHaveBeenCalledWith(expect.any(Buffer), Buffer.alloc(32));
+        for (const { challengeToken } of [real, decoy]) {
+            await expect(service.verify({ ...verifyParams, challengeToken }))
+                .rejects.toMatchObject(refusal("인증번호 입력 횟수를 초과했어요. 처음부터 다시 시도해 주세요."));
+        }
+        expect(compare).toHaveBeenCalledTimes(2 * PHONE_CHALLENGE_MAX_ATTEMPTS);
+        expect(rows.size).toBe(2);
+        for (const row of rows.values()) {
+            expect(row).toMatchObject({ codeHash: null, consumedAt: null, attemptCount: PHONE_CHALLENGE_MAX_ATTEMPTS });
+        }
+        jest.setSystemTime(real.expiresAt);
+        for (const { challengeToken } of [real, decoy]) {
+            await expect(service.verify({ ...verifyParams, challengeToken })).rejects.toMatchObject(refusal(expiredDetail));
+        }
     });
 
     it("contains a synchronous send error and a rejected invalidation without an unhandled rejection", async () => {

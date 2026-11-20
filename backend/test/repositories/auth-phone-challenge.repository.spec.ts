@@ -99,10 +99,10 @@ describe("SbAuthPhoneChallengeRepository", () => {
         expect(prisma.$transaction).not.toHaveBeenCalled();
     });
 
-    it("invalidates only unconsumed rows without deleting their rate-limit evidence", async () => {
+    it("clears only the code hash of unconsumed rows, preserving decoy behavior and rate-limit evidence", async () => {
         await expect(repository.invalidate(row.id)).resolves.toBeUndefined();
         expect(prisma.auth_phone_challenge.updateMany).toHaveBeenCalledWith({
-            where: { id: row.id, consumedAt: null }, data: { codeHash: null, consumedAt: NOW },
+            where: { id: row.id, consumedAt: null }, data: { codeHash: null },
         });
         expect(prisma.auth_phone_challenge.deleteMany).not.toHaveBeenCalled();
         expect(prisma.$transaction).not.toHaveBeenCalled();
