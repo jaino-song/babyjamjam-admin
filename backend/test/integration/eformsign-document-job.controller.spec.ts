@@ -101,6 +101,7 @@ describe("EformsignDocumentJobController (Integration)", () => {
         claimRecovery: jest.Mock;
         resolveManually: jest.Mock;
         cancel: jest.Mock;
+        retry: jest.Mock;
     };
     let supersedeService: { isDocumentVisibleToBranch: jest.Mock } | undefined;
     let dispatchBoundary: { reconcile: jest.Mock; findById?: jest.Mock };
@@ -132,6 +133,7 @@ describe("EformsignDocumentJobController (Integration)", () => {
             claimRecovery: jest.fn(),
             resolveManually: jest.fn(),
             cancel: jest.fn(),
+            retry: jest.fn(),
         };
         dispatchBoundary = {
             reconcile: jest.fn().mockResolvedValue({
@@ -143,6 +145,28 @@ describe("EformsignDocumentJobController (Integration)", () => {
         };
 
         await buildApp();
+    });
+
+    it("retries into the new queued job", async () => {
+        documentJobService.retry.mockResolvedValue({ kind: "retried", jobId: "new-job", status: "queued" });
+        const response = await request(app.getHttpServer()).post(`/eformsign-docs/jobs/${JOB_ID}/retry`).expect(200);
+        expect(response.body).toEqual({ jobId: "new-job", status: "queued" });
+        expect(documentJobService.retry).toHaveBeenCalledWith({ jobId: JOB_ID, branchId: "branch-a", userId: "user-a", now: expect.any(Date) });
+    });
+    it.each([["not_retryable", 409, "JOB_NOT_RETRYABLE"], ["not_found", 404, "RESOURCE_NOT_FOUND"]] as const)("rejects retry %s", async (kind, status, code) => {
+        documentJobService.retry.mockResolvedValue({ kind });
+        const response = await request(app.getHttpServer()).post(`/eformsign-docs/jobs/${JOB_ID}/retry`).expect(status);
+        expect(response.body.code).toBe(code);
+    });
+    it("refuses retry without dispatch capability", async () => {
+        authRole = "staff";
+        await request(app.getHttpServer()).post(`/eformsign-docs/jobs/${JOB_ID}/retry`).expect(403);
+        expect(documentJobService.retry).not.toHaveBeenCalled();
+    });
+    it("checks the accepting gate before retry creates work", async () => {
+        acceptingEnabled = "false";
+        await request(app.getHttpServer()).post(`/eformsign-docs/jobs/${JOB_ID}/retry`).expect(503);
+        expect(documentJobService.retry).not.toHaveBeenCalled();
     });
 
     it.each(["cancelled", "already_cancelled"])("cancels idempotently: %s", async kind => {

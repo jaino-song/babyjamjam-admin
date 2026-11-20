@@ -14,6 +14,7 @@ import {
     EFORMSIGN_DOCUMENT_JOB_REPOSITORY,
     ClaimRecoveryResult,
     CancelDocumentJobResult,
+    RetryDocumentJobResult,
     EformsignDocumentJobList,
     EformsignDocumentJobSummary,
     AuthorizeEformsignDocumentJobForDispatchInput,
@@ -104,7 +105,7 @@ export function parsePrefillAmounts(raw: unknown): StaffCompletionPrefillAmounts
     };
 }
 
-function assertContractDataPhones(contractData: ContractDataDto): void {
+export function assertContractDataPhones(contractData: ContractDataDto): void {
     const fields: Array<[string, unknown, boolean]> = [
         ["customerContact", contractData.customerContact, true],
         ["caretaker1Contact", contractData.caretaker1Contact, true],
@@ -278,6 +279,10 @@ export class EformsignDocumentJobService {
     }
 
     /** Cancel a generation only when its locked proof rules out provider effects. */
+    async retry(input: ManualRecoveryInput): Promise<RetryDocumentJobResult> {
+        return this.repository.retry(input);
+    }
+
     async cancel(input: ManualRecoveryInput): Promise<CancelDocumentJobResult> {
         return this.repository.cancel(input);
     }

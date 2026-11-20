@@ -1,10 +1,11 @@
-import { ConflictException, Injectable } from "@nestjs/common";
+import { BadRequestException, ConflictException, Injectable } from "@nestjs/common";
 import { createHash, randomUUID } from "node:crypto";
 import { Prisma } from "@prisma/client";
 import { toJobErrorCode } from "domain/value-objects/eformsign-job-error-code";
 
 import { isInitialFinalizationJobIdentity, isInitialFinalizationWorkflowScope } from "application/policies/service-record-initial-finalization.policy";
-import { sha256CanonicalJson } from "application/services/eformsign-document-job.service";
+import type { ContractDataDto } from "application/dto/contract.dto";
+import { assertContractDataPhones, sha256CanonicalJson } from "application/services/eformsign-document-job.service";
 import {
     CANCELLED_PROGRESS_STEP,
     DISPATCH_AUTHORIZED_PROGRESS_STEP,
@@ -26,6 +27,7 @@ import {
 import {
     ClaimRecoveryResult,
     CancelDocumentJobResult,
+    RetryDocumentJobResult,
     EformsignDocumentJobList,
     EformsignDocumentJobSummary,
     AuthorizeEformsignDocumentJobForDispatchInput,
@@ -54,6 +56,7 @@ import type {
 
 type RawJob = {
     cancellable?: boolean;
+    retryable?: boolean;
     contract_generation?: string | null;
     id: string; branch_id: string; client_id: number | null; document_id: string | null;
     job_type: string; source: string; status: string; request_key: string; active_key: string | null;
@@ -219,6 +222,31 @@ function cancellableJobSql(): Prisma.Sql {
     ), false)`;
 }
 
+/** A job with an uncertain send result is not retryable: another send could create a second contract. */
+function retryableJobSql(): Prisma.Sql {
+    return Prisma.sql`COALESCE((
+        jsonb_typeof(j.payload->'contractData') = 'object' AND j.payload->'clientId' = to_jsonb(j.client_id)
+        AND COALESCE(j.progress_step, '') !~ '^manual_in_progress:[^:]+:[0-9]{1,15}$'
+        AND COALESCE(j.progress_step, '') NOT IN ('cancelled', 'superseded', 'manual_resolved')
+        AND EXISTS (SELECT 1 FROM eformsign_contract_authority a WHERE a.creation_job_id = j.id
+            AND a.branch_id = j.branch_id AND a.client_id = j.client_id
+            AND (a.claim_expires_at IS NULL OR a.claim_expires_at <= CURRENT_TIMESTAMP))
+        AND (${cancellableJobSql()} OR (
+            ${contractJobSql("j")} AND j.job_type = 'create_document' AND j.contract_generation IS NOT NULL
+            AND j.status = 'failed' AND j.last_error_code = 'PRE_SEND_RETRY_EXHAUSTED'
+            AND j.document_id IS NULL AND j.lease_token IS NULL AND j.active_key IS NULL
+            AND EXISTS (SELECT 1 FROM eformsign_contract_authority a JOIN client c ON c.id = a.client_id AND c.branch_id = a.branch_id
+                WHERE a.branch_id = j.branch_id AND a.client_id = j.client_id AND a.creation_job_id = j.id
+                AND a.generation = j.contract_generation AND a.fingerprint = j.payload_fingerprint AND a.phase = 'reserved'
+                AND a.prior_document_id IS NOT DISTINCT FROM c.e_doc_id
+                AND a.provider_document_id IS NULL AND a.creation_intent_id IS NULL AND a.draft_intent_id IS NULL AND a.human_intent_id IS NULL
+                AND (a.claim_expires_at IS NULL OR a.claim_expires_at <= CURRENT_TIMESTAMP)
+                AND NOT EXISTS (SELECT 1 FROM eformsign_dispatch_intent i WHERE i.branch_id = a.branch_id AND i.client_id = a.client_id
+                    AND i.action = 'create' AND i.status IN ('started', 'uncertain')))
+        ))
+    ), false)`;
+}
+
 /**
  * True when `userId` may take or finish the job: it carries no manual claim, the
  * claim expired, or the claim is this user's. The expiry is cast to bigint only
@@ -297,6 +325,57 @@ function payloadRevisionJob(value: RawJob["payload"]): {
 @Injectable()
 export class SbEformsignDocumentJobRepository implements IEformsignDocumentJobRepository {
     constructor(private readonly prisma: PrismaService) {}
+
+    async retry(input: ManualRecoveryInput): Promise<RetryDocumentJobResult> {
+        if (!UUID_PATTERN.test(input.jobId) || !UUID_PATTERN.test(input.branchId)) return { kind: "not_found" };
+        this.assertClaimInput(input);
+        try {
+            return await this.prisma.$transaction(async (tx): Promise<RetryDocumentJobResult> => {
+                const peek = await tx.eformsign_document_job.findUnique({ where: { id: input.jobId } });
+                if (!peek || peek.branchId !== input.branchId) return { kind: "not_found" };
+                if (!peek.clientId) return { kind: "not_retryable" };
+                const clientId = peek.clientId;
+                const [authority] = await lockAuthorityScope(tx, input.branchId, [clientId]);
+                await tx.$queryRaw(Prisma.sql`SELECT id FROM eformsign_document_job WHERE id = ${input.jobId}::uuid AND branch_id = ${input.branchId}::uuid FOR UPDATE`);
+                const job = await tx.eformsign_document_job.findUnique({ where: { id: input.jobId } });
+                if (!job || job.branchId !== input.branchId) return { kind: "not_found" };
+                if (!job.payload || typeof job.payload !== "object" || Array.isArray(job.payload)) return { kind: "not_retryable" };
+                const stored: EformsignDocumentJobPayload = job.payload;
+                if (job.clientId !== clientId || job.jobType !== "create_document"
+                    || !isContractJob({ ...job, source: job.source as EformsignDocumentJobSource,
+                        jobType: job.jobType as EformsignDocumentJobType, payload: stored })
+                    || !["failed", "requires_attention"].includes(job.status) || job.leaseToken !== null || job.documentId !== null
+                    || [CANCELLED_PROGRESS_STEP, SUPERSEDED_PROGRESS_STEP, MANUAL_RESOLVED_PROGRESS_STEP].includes(job.progressStep ?? "")
+                    || parseManualClaim(job.progressStep) !== null || !job.contractGeneration
+                    || !authority || authority.creationJobId !== job.id || authority.generation !== job.contractGeneration
+                    || authority.fingerprint !== job.payloadFingerprint || authority.phase === "closed"
+                    || !stored || stored["clientId"] !== job.clientId || !stored["contractData"]
+                    || typeof stored["contractData"] !== "object" || Array.isArray(stored["contractData"])) return { kind: "not_retryable" };
+                const contractData = stored["contractData"] as ContractDataDto;
+                assertContractDataPhones(contractData);
+                const payload: EformsignDocumentJobPayload = {
+                    clientId: job.clientId, contractData,
+                    ...(stored["supersedeDocumentId"] ? { supersedeDocumentId: stored["supersedeDocumentId"] } : {}),
+                };
+                const result = await this.enqueueInTransaction(tx, {
+                    branchId: input.branchId, clientId: job.clientId, jobType: "create_document", source: "staff",
+                    requestKey: randomUUID(), activeKey: `create:${input.branchId}:${job.clientId}`,
+                    createdByUserId: input.userId, payload, payloadFingerprint: sha256CanonicalJson(payload),
+                });
+                if (result.existing) return { kind: "not_retryable" };
+                const old = await tx.eformsign_document_job.findUnique({ where: { id: job.id } });
+                if (old?.progressStep !== SUPERSEDED_PROGRESS_STEP) throw new Error("EFORMSIGN_RETRY_OLD_JOB_NOT_SUPERSEDED");
+                return { kind: "retried", jobId: result.job.id, status: result.job.status };
+            }, { timeout: 20000 });
+        } catch (error) {
+            // Refusals must leave the callback as throws so any enqueue writes roll back.
+            if (error instanceof ConflictException || error instanceof AuthorityConflictError || error instanceof ContractRecoveryError
+                || (error instanceof BadRequestException && (error.getResponse() as { code?: string }).code === "VALIDATION_FAILED")
+                || (error instanceof Error && ["EFORMSIGN_DOCUMENT_JOB_KEY_CONFLICT", "EFORMSIGN_DOCUMENT_JOB_IDEMPOTENCY_MISMATCH",
+                    "EFORMSIGN_RETRY_OLD_JOB_NOT_SUPERSEDED"].includes(error.message))) return { kind: "not_retryable" };
+            throw error;
+        }
+    }
 
     async cancel(input: ManualRecoveryInput): Promise<CancelDocumentJobResult> {
         if (!UUID_PATTERN.test(input.jobId) || !UUID_PATTERN.test(input.branchId)) return { kind: "not_found" };
@@ -1194,7 +1273,7 @@ export class SbEformsignDocumentJobRepository implements IEformsignDocumentJobRe
         const contract = contractJobSql("j");
         const [active, requiresAttention, recent] = await Promise.all([
             this.prisma.$queryRaw<RawJob[]>(Prisma.sql`
-                SELECT j.*, false AS cancellable, c.name AS client_name FROM "eformsign_document_job" j
+                SELECT j.*, false AS cancellable, false AS retryable, c.name AS client_name FROM "eformsign_document_job" j
                 LEFT JOIN "client" c ON c.id = j.client_id
                 WHERE j.branch_id = ${branchId}::uuid AND j.status IN ${ACTIVE_STATUSES}
                 ORDER BY j.created_at ASC
@@ -1202,7 +1281,7 @@ export class SbEformsignDocumentJobRepository implements IEformsignDocumentJobRe
             // Current unresolved authority holds remain reachable after the failed-history cutoff.
             // Their contact payload still expires after seven days.
             this.prisma.$queryRaw<RawJob[]>(Prisma.sql`
-                SELECT j.*, ${cancellableJobSql()} AS cancellable, c.name AS client_name FROM "eformsign_document_job" j
+                SELECT j.*, ${cancellableJobSql()} AS cancellable, ${retryableJobSql()} AS retryable, c.name AS client_name FROM "eformsign_document_job" j
                 LEFT JOIN "client" c ON c.id = j.client_id
                 WHERE j.branch_id = ${branchId}::uuid
                   AND j.progress_step IS DISTINCT FROM ${CANCELLED_PROGRESS_STEP}
@@ -1216,7 +1295,7 @@ export class SbEformsignDocumentJobRepository implements IEformsignDocumentJobRe
                 LIMIT 50
             `),
             this.prisma.$queryRaw<RawJob[]>(Prisma.sql`
-                SELECT j.*, false AS cancellable, c.name AS client_name FROM "eformsign_document_job" j
+                SELECT j.*, false AS cancellable, false AS retryable, c.name AS client_name FROM "eformsign_document_job" j
                 LEFT JOIN "client" c ON c.id = j.client_id
                 WHERE j.branch_id = ${branchId}::uuid AND j.status IN ${TERMINAL_STATUSES}
                   AND j.progress_step IS DISTINCT FROM ${CANCELLED_PROGRESS_STEP}
@@ -1440,6 +1519,7 @@ export class SbEformsignDocumentJobRepository implements IEformsignDocumentJobRe
 
     private toDomain = (row: RawJob): EformsignDocumentJobEntity => new EformsignDocumentJobEntity({
         cancellable: row.cancellable === true,
+        retryable: row.retryable === true,
         contractGeneration: row.contract_generation ?? null,
         id: row.id, branchId: row.branch_id, clientId: row.client_id, documentId: row.document_id,
         jobType: row.job_type as EformsignDocumentJobType, source: row.source as EformsignDocumentJobSource,

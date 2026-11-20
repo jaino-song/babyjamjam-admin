@@ -11,6 +11,7 @@ import {
   useEformsignDocumentJobs,
   useEformsignDocumentJobsSummary,
   useCancelDocumentJob,
+  useRetryDocumentJob,
 } from "../useEformsignDocumentJobs";
 
 const DOCUMENT_JOBS_A: EformsignDocumentJobList = {
@@ -212,6 +213,30 @@ describe("useCancelDocumentJob", () => {
     const { result } = renderHook(() => useCancelDocumentJob(), { wrapper: createWrapper(client) });
     await act(async () => { await expect(result.current.mutateAsync("job-a")).rejects.toBe(error); });
     await waitFor(() => expect(result.current.isError).toBe(true));
+    expect(invalidate).not.toHaveBeenCalled();
+  });
+});
+
+describe("useRetryDocumentJob", () => {
+  afterEach(() => jest.restoreAllMocks());
+  it("posts only the job id and invalidates lists, summary and documents", async () => {
+    const { api } = await import("@/lib/api/client");
+    const post = jest.spyOn(api, "post").mockResolvedValue({ data: { jobId: "new-job", status: "queued" } });
+    const client = new QueryClient();
+    const invalidate = jest.spyOn(client, "invalidateQueries");
+    const { result } = renderHook(() => useRetryDocumentJob(), { wrapper: createWrapper(client) });
+    await act(async () => { await result.current.mutateAsync("old-job"); });
+    expect(post).toHaveBeenCalledWith("/eformsign-docs/jobs/old-job/retry");
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: eformsignDocumentJobsQueryKeys.all });
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: ["eformsign-documents"] });
+  });
+  it("preserves refusal without success invalidation", async () => {
+    const error = { response: { status: 409, data: { code: "JOB_NOT_RETRYABLE" } } };
+    jest.spyOn(eformsignApi, "retryDocumentJob").mockRejectedValue(error);
+    const client = new QueryClient();
+    const invalidate = jest.spyOn(client, "invalidateQueries");
+    const { result } = renderHook(() => useRetryDocumentJob(), { wrapper: createWrapper(client) });
+    await act(async () => { await expect(result.current.mutateAsync("old-job")).rejects.toBe(error); });
     expect(invalidate).not.toHaveBeenCalled();
   });
 });

@@ -249,3 +249,9 @@ describe("document job cancellation projection", () => {
         expect(toEformsignDocumentJobResponse(job({ source: "auto_finalize" })).cancellable).toBe(false);
     });
 });
+
+describe("retryable projection", () => {
+    it.each([true, false, undefined])("exposes only explicit retryable true (%s)", retryable => {
+        expect(toEformsignDocumentJobResponse(job({ retryable })).retryable).toBe(retryable === true);
+    });
+});

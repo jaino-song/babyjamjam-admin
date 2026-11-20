@@ -5,6 +5,7 @@ import type { ContractDocumentJob } from "./ContractDocumentJobsPopover";
 interface DocumentJobProgressSummaryProps {
   job: ContractDocumentJob;
   action?: React.ReactNode;
+  retryAction?: React.ReactNode;
   secondaryAction?: React.ReactNode;
   "data-component"?: string;
 }
@@ -36,7 +37,7 @@ function progressView(job: ContractDocumentJob): ProgressView {
   return { state: "unknown", title: "현재 상태 확인 중" };
 }
 
-export function DocumentJobProgressSummary({ job, action, secondaryAction, "data-component": base }: DocumentJobProgressSummaryProps): React.ReactElement {
+export function DocumentJobProgressSummary({ job, action, retryAction, secondaryAction, "data-component": base }: DocumentJobProgressSummaryProps): React.ReactElement {
   const view = progressView(job);
   const sub = (suffix: string) => base ? `${base}_${suffix}` : undefined;
   const circumference = 2 * Math.PI * 40;
@@ -61,6 +62,7 @@ export function DocumentJobProgressSummary({ job, action, secondaryAction, "data
       <h3 data-component={sub("hero_title")} data-slot="progress-title" aria-live="polite" className={`text-[17px] font-bold leading-[1.375] ${view.state === "error" ? "text-status-danger-fg" : "text-v3-dark"}`}>{view.title}</h3>
     </div>
     {action != null ? <div data-component={sub("action")} data-slot="progress-action" className="w-full">{action}</div> : null}
+    {retryAction != null ? <div data-component={sub("retry")} data-slot="progress-retry" className="w-full">{retryAction}</div> : null}
     {secondaryAction != null ? <div data-component={sub("cancel")} data-slot="progress-cancel" className="w-full">{secondaryAction}</div> : null}
   </section>;
 }
