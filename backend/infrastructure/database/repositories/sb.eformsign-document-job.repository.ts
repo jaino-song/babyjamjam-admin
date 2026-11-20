@@ -232,7 +232,7 @@ function nonDeliveryJobSql(allowSendMarkers: boolean): Prisma.Sql {
 /**
  * A job with an uncertain send result is not retryable: another send could create a second contract.
  * Once an operator reconciles the send as not delivered, retry is allowed even past the send step.
- * Retry always requires strict non-delivery proof and never uses the looser pre-send replacement.
+ * Retry always requires the strict non-delivery proof, as contract creation does.
  */
 function retryableJobSql(): Prisma.Sql {
     return Prisma.sql`COALESCE((
