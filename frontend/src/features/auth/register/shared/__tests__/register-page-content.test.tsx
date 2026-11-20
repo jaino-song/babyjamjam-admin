@@ -67,6 +67,44 @@ describe("RegisterPageContent field messages", () => {
     expectNoFieldMessageBelowControl(container);
   });
 
+  it("measures layout height while an ancestor transform shrinks the bounding rectangle", async () => {
+    const offsetHeight = jest.spyOn(HTMLElement.prototype, "offsetHeight", "get").mockReturnValue(465);
+    const boundingRect = jest.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue({
+      x: 0, y: 0, top: 0, left: 0, right: 500, bottom: 441.69, width: 500, height: 441.69, toJSON: () => ({}),
+    });
+    try {
+      const { container } = renderRegister();
+      await waitFor(() => expect(container.querySelector('[data-component="desktop_auth_register_body-viewport"]')).toHaveStyle({ height: "465px" }));
+    } finally {
+      offsetHeight.mockRestore();
+      boundingRect.mockRestore();
+    }
+  });
+
+  it("renders the existing-email note after the input with its own description id and an empty slot", async () => {
+    mockCheckEmailExists.mockResolvedValue({ exists: true });
+    const { container } = renderRegister();
+    const input = screen.getByLabelText("이메일");
+    const group = container.querySelector('[data-component="desktop_auth_register_step-fields_email-group"]');
+    expect(group).toContainElement(input);
+    fireEvent.change(input, { target: { value: "existing@example.com" } });
+    const note = await screen.findByRole("note");
+    expect(note.textContent).toBe("이미 등록된 이메일이에요. 카카오로 가입한 계정이라면 계속 진행해 비밀번호 로그인을 추가할 수 있어요.");
+    expect(note).toHaveAttribute("id", "register-email-note");
+    expect(note).toHaveAttribute("data-component", "desktop_auth_register_step-fields_email-note");
+    expect(note).toHaveAttribute("data-slot", "email-note");
+    expect(note.closest('[data-component="desktop_auth_form-field_label-row"]')).toBeNull();
+    expect(input.compareDocumentPosition(note) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(note).not.toHaveClass("truncate");
+    expect(note).not.toHaveClass("whitespace-nowrap");
+    expect(note).toHaveClass("m-0", "text-v3-text-muted", "text-[calc(12px*var(--glint-ui-scale,1))]");
+    expect(input.getAttribute("aria-describedby")?.split(/\s+/)).toContain(note.id);
+    expect(slotOf(container, "이메일")).toBeNull();
+    expect(group).toContainElement(note);
+    expect(input.parentElement?.nextElementSibling).toBe(note);
+    expect(container.querySelector('[data-component="desktop_auth_register_step-fields_email-group"]')).toBe(group);
+  });
+
   it("replaces the password guidance with the live requirement hint and, once cleared, the required error", () => {
     const { container } = renderRegister();
     const password = screen.getByLabelText("비밀번호", { selector: "input" });
@@ -190,7 +228,52 @@ it("returns an existing email to the first step after plain success", async () =
   jest.mocked(authApi.register).mockResolvedValue({ success: true });
   await fillRegister(true);
   expect(await screen.findByText("이미 등록된 이메일입니다. 로그인하거나 비밀번호 찾기를 이용해 주세요.")).toBeInTheDocument();
+  expect(screen.queryByText("이미 등록된 이메일이에요. 카카오로 가입한 계정이라면 계속 진행해 비밀번호 로그인을 추가할 수 있어요.")).not.toBeInTheDocument();
+  expect(screen.getByLabelText("이메일")).not.toHaveAttribute("aria-describedby", expect.stringContaining("register-email-note"));
   expect(screen.queryByText("회원가입 완료!")).not.toBeInTheDocument();
+});
+
+it.each([
+  {
+    name: "a verified 429 problem",
+    status: 429,
+    data: createProblemDetails({ code: "REQUEST_RATE_LIMITED", requestId: "test", status: 429 }),
+    copy: "잠시 기다린 뒤 요청 상태를 확인해 주세요.",
+  },
+  {
+    name: "a 429 without a problem body",
+    status: 429,
+    data: undefined,
+    copy: "요청이 너무 많아요. 잠시 후 다시 시도해 주세요.",
+  },
+  {
+    name: "a /code validation problem",
+    status: 400,
+    data: createProblemDetails({ code: "VALIDATION_FAILED", requestId: "test", status: 400, errors: [{ pointer: "/code", code: "INVALID_VALUE", detail: "Invalid value" }] }),
+    copy: "인증번호가 맞지 않거나 만료됐어요. 다시 입력하거나 처음부터 진행해 주세요.",
+  },
+])("shows the code-check copy for $name", async ({ status, data, copy }) => {
+  jest.clearAllMocks();
+  jest.mocked(authApi.register).mockResolvedValue({ success: true, linkVerificationRequired: true, linkChallengeToken: "challenge" });
+  jest.mocked(authApi.verifyRegisterLink).mockRejectedValue(new AxiosError("failure", undefined, undefined, undefined, { status, data } as never));
+  await fillRegister(true);
+  fireEvent.change(await screen.findByLabelText("인증번호"), { target: { value: "123456" } });
+  fireEvent.click(screen.getByRole("button", { name: "인증하고 계정 연결" }));
+  expect(await screen.findByText(copy)).toBeInTheDocument();
+  expect(screen.getByRole("alert")).toHaveTextContent(copy);
+  expect(screen.queryByText("회원가입에 실패했어요.")).not.toBeInTheDocument();
+});
+
+it("returns from code verification to the personal fields with their values", async () => {
+  jest.clearAllMocks();
+  jest.mocked(authApi.register).mockResolvedValue({ success: true, linkVerificationRequired: true, linkChallengeToken: "challenge" });
+  await fillRegister(true);
+  await screen.findByLabelText("인증번호");
+  fireEvent.click(screen.getByRole("button", { name: "정보 다시 입력" }));
+  expect(await screen.findByLabelText("전화번호")).toHaveValue("010-1234-5678");
+  expect(screen.getByLabelText("생년월일")).toHaveValue("1990-01-01");
+  expect(screen.queryByLabelText("이메일")).not.toBeInTheDocument();
+  expect(screen.queryByLabelText("인증번호")).not.toBeInTheDocument();
 });
 
 it("shows a real /phone validation problem at the phone field", async () => {

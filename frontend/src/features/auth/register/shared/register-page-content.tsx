@@ -102,7 +102,7 @@ function AnimatedHeight({
       }
 
       frameRef.current = requestAnimationFrame(() => {
-        setHeight(node.getBoundingClientRect().height);
+        setHeight(node.offsetHeight);
         frameRef.current = null;
       });
     };
@@ -263,7 +263,6 @@ function RegisterStepFields({
     email: pickFieldMessage(
       resolveRuleMessage("email", "text"),
       errorMessage(errors.email),
-      existingEmailNote ? { tone: "ok", text: existingEmailNote } : null,
     ),
     name: pickFieldMessage(resolveRuleMessage("name", "text"), errorMessage(errors.name)),
     // Error, then what is still missing while typing, then the static guidance.
@@ -291,6 +290,7 @@ function RegisterStepFields({
       errorMessage(errors.birthDate),
     ),
   };
+  const showExistingEmailNote = Boolean(existingEmailNote) && messages.email?.tone !== "error";
 
   /** Records that the field held a value before handing the change to the controller. */
   const trackChange = (
@@ -305,21 +305,35 @@ function RegisterStepFields({
     <div data-component="desktop_auth_register_step-fields" className="flex flex-col gap-[14px]">
       {currentStep === 0 ? (
         <>
-          <FormField
-            label="이메일"
-            type="email"
-            value={formData.email}
-            onChange={trackChange("email", handleChange("email"))}
-            onFocus={() => fields.onFocus("email")}
-            onBlur={() => {
-              fields.onBlur("email", valueOf("email"));
-              handleEmailBlur();
-            }}
-            message={messages.email}
-            disabled={isLoading}
-            autoComplete="email"
-            data-component="desktop_auth_register_step-fields_email-field"
-          />
+          <div data-component="desktop_auth_register_step-fields_email-group" className="flex flex-col gap-1.5">
+            <FormField
+              label="이메일"
+              type="email"
+              value={formData.email}
+              onChange={trackChange("email", handleChange("email"))}
+              onFocus={() => fields.onFocus("email")}
+              onBlur={() => {
+                fields.onBlur("email", valueOf("email"));
+                handleEmailBlur();
+              }}
+              message={messages.email}
+              disabled={isLoading}
+              autoComplete="email"
+              aria-describedby={showExistingEmailNote ? "register-email-note" : undefined}
+              data-component="desktop_auth_register_step-fields_email-field"
+            />
+            {showExistingEmailNote ? (
+              <p
+                id="register-email-note"
+                role="note"
+                data-component="desktop_auth_register_step-fields_email-note"
+                data-slot="email-note"
+                className="m-0 text-[calc(12px*var(--glint-ui-scale,1))] text-v3-text-muted"
+              >
+                {existingEmailNote}
+              </p>
+            ) : null}
+          </div>
 
           <FormField
             label="이름"

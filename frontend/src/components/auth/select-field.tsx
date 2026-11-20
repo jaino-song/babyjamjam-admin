@@ -70,7 +70,7 @@ export function SelectField({
           </div>
         ) : null}
       </div>
-      <Select value={value} onValueChange={onValueChange} disabled={disabled}>
+      <Select value={value ?? ""} onValueChange={onValueChange} disabled={disabled}>
         <SelectTrigger
           id={fieldId}
           className={cn(
