@@ -11,7 +11,7 @@ import { tenantContextStore } from "infrastructure/tenant/tenant-context.store";
 
 describe("AuthService approval and token hardening", () => {
     const prisma = {
-        user: { findUnique: jest.fn(), findFirst: jest.fn(), create: jest.fn(), update: jest.fn() },
+        user: { findMany: jest.fn().mockResolvedValue([]), findUnique: jest.fn(), findFirst: jest.fn(), create: jest.fn(), update: jest.fn() },
         user_branch: { findMany: jest.fn(), findFirst: jest.fn(), create: jest.fn() },
         branch: { findUnique: jest.fn() },
         auth_token: { create: jest.fn(), deleteMany: jest.fn() },
@@ -37,6 +37,7 @@ describe("AuthService approval and token hardening", () => {
 
     beforeEach(() => {
         jest.clearAllMocks();
+        prisma.user.findMany.mockResolvedValue([]);
         jwt.signAsync.mockResolvedValue("signed");
         sessions.issueSession.mockImplementation(async (user, branch) => ({
             accessToken: await jwt.signAsync({
@@ -55,6 +56,9 @@ describe("AuthService approval and token hardening", () => {
             email,
             tokens,
             sessions as unknown as AuthSessionService,
+            undefined,
+            { issue: jest.fn(), verify: jest.fn(), consume: jest.fn() } as unknown as
+                import("application/services/auth-phone-challenge.service").AuthPhoneChallengeService,
         );
     });
 
@@ -255,9 +259,8 @@ describe("AuthService approval and token hardening", () => {
             expiresAt: new Date(Date.now() + 60_000),
         });
         prisma.auth_flow_state.updateMany.mockResolvedValue({ count: 1 });
-        prisma.user.findFirst
-            .mockResolvedValueOnce(null)
-            .mockResolvedValueOnce({ id: "phone-owner" });
+        prisma.user.findFirst.mockResolvedValueOnce(null);
+        prisma.user.findMany.mockResolvedValue([{ id: "phone-owner", kakaoId: "existing-kakao" }]);
 
         await expect(
             service.completeKakaoOnboarding("onboarding-token", "01012345678", "1990-01-01", "user"),

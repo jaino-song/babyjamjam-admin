@@ -117,7 +117,8 @@ describe("BJJ494 fail-closed configuration", () => {
         const auth = new AuthService({
             user: { findUnique: jest.fn().mockResolvedValue(user) },
             user_branch: { findMany: jest.fn().mockResolvedValue([{ branchId: "qa-branch", role: branchRole, branch: { slug: "bjj494-qa-fixture", isActive: true } }]) },
-        } as never, {} as never, {} as never, {} as never, { issueSession } as never, {} as never);
+        } as never, {} as never, {} as never, {} as never, { issueSession } as never, {} as never,
+        { issue: jest.fn(), verify: jest.fn(), consume: jest.fn() } as never);
         await expect(auth.validateEmailPassword(user.email, FAKE_SECRET)).resolves.toMatchObject({ user: user.id });
         expect(issueSession).toHaveBeenCalledWith(user, { branchId: "qa-branch", branchRole });
     });

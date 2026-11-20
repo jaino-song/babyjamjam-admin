@@ -11,6 +11,7 @@ import { codeOnlyProblemBody, problemBody } from "application/utils/problem-bodi
 import { isVisibleStaffBranchSlug } from "domain/constants/branch-routing.constants";
 import { AuthSessionService } from "./auth-session.service";
 import { AuthEmailTokenService } from "./auth-email-token.service";
+import { AuthPhoneChallengeService } from "./auth-phone-challenge.service";
 import { phoneLookupForms } from "../utils/phone-lookup";
 
 export interface KakaoData {
@@ -115,6 +116,10 @@ export interface RegistrationResult {
     success: boolean;
     message: string;
     userId?: string;
+    linkVerificationRequired?: boolean;
+    linkChallengeToken?: string;
+    linked?: boolean;
+    emailVerificationRequired?: boolean;
     code?: string;
 }
 
@@ -145,6 +150,7 @@ export class AuthService {
         @Inject(AUTH_TOKEN_REPOSITORY) private authTokenRepository: IAuthTokenRepository,
         private readonly authSessionService: AuthSessionService,
         private readonly authEmailTokens: AuthEmailTokenService = new AuthEmailTokenService(),
+        private readonly phoneChallenge: AuthPhoneChallengeService,
     ) {
         const nodeEnv = process.env['NODE_ENV'];
         if (nodeEnv === "production") {
@@ -994,6 +1000,30 @@ export class AuthService {
                 throw new UnauthorizedException(codeOnlyProblemBody("AUTH_REQUIRED"));
             }
 
+            const pendingSignupData: KakaoData = {
+                kakaoId: stored.kakaoId,
+                email: stored.email ?? undefined,
+                name: stored.name ?? undefined,
+                profileImage: stored.profileImage ?? undefined,
+            };
+
+            let existingUser = await tx.user.findFirst({
+                where: { kakaoId: pendingSignupData.kakaoId },
+            });
+
+            const holders = await this.findPhoneHolders(tx, phone);
+            const otherHolders = holders.filter(holder => holder.id !== existingUser?.id);
+            if (otherHolders.length) {
+                if (holders.length !== 1 || otherHolders[0]!.kakaoId || existingUser) {
+                    throw new BadRequestException(problemBody("VALIDATION_FAILED", {
+                        pointer: "/phone",
+                        code: "INVALID_VALUE",
+                        detail: "이미 등록된 전화번호예요. 다른 전화번호로 다시 시도해 주세요.",
+                    }));
+                }
+                return { targetUserId: this.linkTarget(otherHolders[0]!, birthDate), kakaoId: stored.kakaoId };
+            }
+
             const consumeResult = await tx.auth_flow_state.updateMany({
                 where: {
                     id: stored.id,
@@ -1006,30 +1036,6 @@ export class AuthService {
 
             if (consumeResult.count !== 1) {
                 throw new UnauthorizedException(codeOnlyProblemBody("AUTH_REQUIRED"));
-            }
-
-            const pendingSignupData: KakaoData = {
-                kakaoId: stored.kakaoId,
-                email: stored.email ?? undefined,
-                name: stored.name ?? undefined,
-                profileImage: stored.profileImage ?? undefined,
-            };
-
-            let existingUser = await tx.user.findFirst({
-                where: { kakaoId: pendingSignupData.kakaoId },
-            });
-
-            const phoneOwner = await tx.user.findFirst({
-                where: { phone },
-            });
-            if (phoneOwner && phoneOwner.id !== existingUser?.id) {
-                // 등록 코드로 두 원인(전화번호 중복)을 식별해요. 계정 존재 여부를
-                // 탐색할 수 없도록 존재 계정 ID는 본문에 넣지 않아요.
-                throw new BadRequestException(problemBody("VALIDATION_FAILED", {
-                    pointer: "/phone",
-                    code: "INVALID_VALUE",
-                    detail: "이미 등록된 전화번호예요. 다른 전화번호로 다시 시도해 주세요.",
-                }));
             }
 
             if (!existingUser) {
@@ -1067,11 +1073,194 @@ export class AuthService {
             return existingUser.id;
         });
 
+        if (typeof onboardingResult !== "string") {
+            const challenge = await this.phoneChallenge.issue({
+                purpose: "kakao_link",
+                phone: phoneLookupForms(phone)[0]!,
+                ...onboardingResult,
+            });
+            return this.linkVerificationResponse(challenge.challengeToken);
+        }
         return {
             success: true,
             userId: onboardingResult,
             message: "관리자 승인 대기 중입니다. 승인된 후에 로그인할 수 있어요.",
         };
+    }
+
+    private findPhoneHolders(tx: Prisma.TransactionClient, phone: string) {
+        return tx.user.findMany({
+            where: { phone: { in: phoneLookupForms(phone) } },
+            select: {
+                id: true, kakaoId: true, passwordHash: true, birthDate: true, approvalStatus: true, role: true,
+            },
+        });
+    }
+
+    private linkTarget(
+        holder: { id: string; birthDate: string | null; approvalStatus: string; role: string | null },
+        birthDate: string,
+    ): string | null {
+        return holder.birthDate === birthDate && holder.approvalStatus !== "rejected" && holder.role !== "owner"
+            ? holder.id : null;
+    }
+
+    private linkVerificationResponse(challengeToken: string): RegistrationResult {
+        return {
+            success: true,
+            linkVerificationRequired: true,
+            linkChallengeToken: challengeToken,
+            message: "입력하신 정보와 일치하는 기존 계정이 있으면 문자로 인증번호를 보내드려요.",
+        };
+    }
+
+    private linkRefusal() {
+        return new BadRequestException(problemBody("VALIDATION_FAILED", {
+            pointer: "/code",
+            code: "INVALID_VALUE",
+            detail: "계정을 연결할 수 없어요. 처음부터 다시 시도해 주세요.",
+        }));
+    }
+
+    private isLinkUniqueError(error: unknown, field: "kakaoId" | "email"): boolean {
+        if (!(error instanceof Prisma.PrismaClientKnownRequestError) || error.code !== "P2002") return false;
+        const target = error.meta?.['target'];
+        // Some adapters omit the constraint name. Only the account write can
+        // collide on Kakao; email linking can also queue unrelated unique rows.
+        return target === undefined || target === field || (Array.isArray(target)
+            ? target.includes(field) || (field === "kakaoId" && target.includes("kakao_id"))
+            : typeof target === "string" && (field === "kakaoId"
+                ? target === "user_kakaoId_key" || target === "user_kakao_id_key"
+                : target === "user_email_key"));
+    }
+
+    async verifyKakaoLink(
+        pendingSignupToken: string,
+        challengeToken: string,
+        code: string,
+    ): Promise<RegistrationResult> {
+        const stored = await this.getPendingKakaoSignupOrThrow(pendingSignupToken);
+        const row = await this.phoneChallenge.verify({ purpose: "kakao_link", challengeToken, code });
+        if (!row.userId || !stored.kakaoId || row.kakaoId !== stored.kakaoId) {
+            throw this.linkRefusal();
+        }
+        const userId = row.userId;
+        const kakaoId = stored.kakaoId;
+        try {
+            await this.prisma.$transaction(async (tx) => {
+                await this.phoneChallenge.consume(tx, row.id);
+                const consumed = await tx.auth_flow_state.updateMany({
+                    where: {
+                        id: stored.id, kind: "pending_kakao_signup", consumedAt: null, expiresAt: { gt: new Date() },
+                    },
+                    data: { consumedAt: new Date() },
+                });
+                if (consumed.count !== 1) {
+                    throw new UnauthorizedException(codeOnlyProblemBody("AUTH_REQUIRED"));
+                }
+                const user = await tx.user.findUnique({
+                    where: { id: userId },
+                    select: {
+                        id: true, kakaoId: true, phone: true, approvalStatus: true, role: true,
+                        passwordHash: true, profileImage: true,
+                    },
+                });
+                const forms = phoneLookupForms(row.phone);
+                if (!user || user.kakaoId || !user.phone || !forms.includes(user.phone)
+                    || user.approvalStatus === "rejected" || user.role === "owner"
+                    || await tx.user.findFirst({ where: { kakaoId }, select: { id: true } })) {
+                    throw this.linkRefusal();
+                }
+                const updated = await tx.user.updateMany({
+                    where: {
+                        id: user.id, kakaoId: null, phone: { in: forms }, approvalStatus: { not: "rejected" },
+                        OR: [{ role: null }, { role: { not: "owner" } }],
+                    },
+                    data: {
+                        kakaoId,
+                        authProvider: user.passwordHash ? "both" : "kakao",
+                        profileImage: user.profileImage ?? stored.profileImage,
+                    },
+                });
+                if (updated.count !== 1) throw this.linkRefusal();
+            });
+        } catch (error) {
+            if (this.isLinkUniqueError(error, "kakaoId")) throw this.linkRefusal();
+            throw error;
+        }
+        this.logger.log(JSON.stringify({ event: "auth_account_linked", userId: row.userId, method: "kakao" }));
+        return { success: true, linked: true, message: "카카오 계정이 연결됐어요. 카카오로 다시 로그인해 주세요." };
+    }
+
+    async verifyEmailLink(challengeToken: string, code: string): Promise<RegistrationResult> {
+        const row = await this.phoneChallenge.verify({ purpose: "email_link", challengeToken, code });
+        if (!row.userId || !row.email || !row.passwordHash) {
+            throw this.linkRefusal();
+        }
+        const userId = row.userId;
+        const email = row.email;
+        const passwordHash = row.passwordHash;
+        let emailVerificationRequired: boolean;
+        try {
+            emailVerificationRequired = await this.prisma.$transaction(async (tx) => {
+                await this.phoneChallenge.consume(tx, row.id);
+                const user = await tx.user.findUnique({
+                    where: { id: userId },
+                    select: {
+                        id: true, kakaoId: true, passwordHash: true, phone: true, approvalStatus: true,
+                        role: true, email: true, emailVerified: true, name: true,
+                    },
+                });
+                const forms = phoneLookupForms(row.phone);
+                if (!user || !user.kakaoId || user.passwordHash || !user.phone || !forms.includes(user.phone)
+                    || user.approvalStatus === "rejected" || user.role === "owner"
+                    || await tx.user.findFirst({ where: { email, id: { not: user.id } }, select: { id: true } })) {
+                    throw this.linkRefusal();
+                }
+                const needsVerification = !(user.emailVerified && user.email?.toLowerCase() === email.toLowerCase());
+                const updated = await tx.user.updateMany({
+                    where: {
+                        id: user.id, passwordHash: null, kakaoId: { not: null }, phone: { in: forms },
+                        approvalStatus: { not: "rejected" }, OR: [{ role: null }, { role: { not: "owner" } }],
+                    },
+                    data: {
+                        email, passwordHash, authProvider: "both", name: user.name ?? row.name,
+                        ...(needsVerification ? { emailVerified: false, emailVerifiedAt: null } : {}),
+                    },
+                });
+                if (updated.count !== 1) throw this.linkRefusal();
+                if (needsVerification) await this.queueEmailVerification(tx, user.id, email);
+                return needsVerification;
+            });
+        } catch (error) {
+            if (this.isLinkUniqueError(error, "email")) throw this.linkRefusal();
+            throw error;
+        }
+        this.logger.log(JSON.stringify({ event: "auth_account_linked", userId: row.userId, method: "email" }));
+        return {
+            success: true, linked: true, code: "ACCOUNTS_LINKED", emailVerificationRequired,
+            message: emailVerificationRequired ? "계정이 연결됐어요. 인증 이메일을 확인한 뒤 로그인해 주세요."
+                : "계정이 연결됐어요. 이제 이메일로도 로그인할 수 있어요.",
+        };
+    }
+
+    private async queueEmailVerification(tx: Prisma.TransactionClient, userId: string, email: string): Promise<void> {
+        const user = await tx.user.findUnique({ where: { id: userId }, select: { name: true } });
+        const verificationToken = this.authEmailTokens.createToken();
+        await tx.auth_token.deleteMany({ where: { userId, type: "email_verification" } });
+        await tx.auth_token.create({
+            data: {
+                id: verificationToken.tokenId, userId, token: verificationToken.tokenHash,
+                type: "email_verification", expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
+            },
+        });
+        await tx.auth_email_outbox.create({
+            data: {
+                userId, authTokenId: verificationToken.tokenId,
+                kind: "email_verification", recipient: email, name: user?.name ?? null,
+                providerIdempotencyKey: buildAuthEmailProviderIdempotencyKey(verificationToken.tokenId, "email_verification"),
+            },
+        });
     }
 
     async refreshTokens(refreshToken: string): Promise<{ accessToken: string; refreshToken: string }> {
@@ -1239,7 +1428,10 @@ export class AuthService {
             where: { email: email.toLowerCase() },
         });
 
-        if (existingUser) {
+        const holders = await this.findPhoneHolders(this.prisma, phone);
+        const candidate = holders.length === 1 && holders[0]!.kakaoId && !holders[0]!.passwordHash
+            ? holders[0]! : null;
+        if (existingUser && existingUser.id !== candidate?.id) {
             // User already has email account (with or without Kakao)
             // Don't reveal that the email exists - return generic success
             // But still send an email to notify the user
@@ -1248,6 +1440,21 @@ export class AuthService {
                 success: true,
                 message: '인증 이메일이 발송되었습니다. 이메일을 확인해주세요.',
             };
+        }
+
+        if (candidate) {
+            const passwordHash = await this.hashPassword(password);
+            const challenge = await this.phoneChallenge.issue({
+                purpose: "email_link", phone: phoneLookupForms(phone)[0]!,
+                targetUserId: this.linkTarget(candidate, birthDate), email: email.toLowerCase(), passwordHash, name,
+            });
+            return this.linkVerificationResponse(challenge.challengeToken);
+        }
+        if (holders.length) {
+            throw new BadRequestException(problemBody("VALIDATION_FAILED", {
+                pointer: "/phone", code: "INVALID_VALUE",
+                detail: "이미 등록된 전화번호예요. 다른 전화번호로 다시 시도해 주세요.",
+            }));
         }
 
         const passwordHash = await this.hashPassword(password);
@@ -1306,38 +1513,8 @@ export class AuthService {
      * Send a verification email to the user
      */
     async sendVerificationEmail(userId: string, email: string): Promise<void> {
-        const user = await this.prisma.user.findUnique({
-            where: { id: userId },
-            select: { name: true },
-        });
-        const verificationToken = this.authEmailTokens.createToken();
-        const now = new Date();
         await this.prisma.$transaction(async (tx) => {
-            await tx.auth_token.deleteMany({
-                where: { userId, type: "email_verification" },
-            });
-            await tx.auth_token.create({
-                data: {
-                    id: verificationToken.tokenId,
-                    userId,
-                    token: verificationToken.tokenHash,
-                    type: "email_verification",
-                    expiresAt: new Date(now.getTime() + 24 * 60 * 60 * 1000),
-                },
-            });
-            await tx.auth_email_outbox.create({
-                data: {
-                    userId,
-                    authTokenId: verificationToken.tokenId,
-                    kind: "email_verification",
-                    recipient: email,
-                    name: user?.name ?? null,
-                    providerIdempotencyKey: buildAuthEmailProviderIdempotencyKey(
-                        verificationToken.tokenId,
-                        "email_verification",
-                    ),
-                },
-            });
+            await this.queueEmailVerification(tx, userId, email);
         });
         this.logger.log(`Verification email queued for ${email}`);
     }

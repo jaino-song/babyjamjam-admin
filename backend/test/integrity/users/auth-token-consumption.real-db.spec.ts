@@ -207,6 +207,8 @@ describeReal("single-use tokens and flow state orphans (real PostgreSQL)", () =>
                 {} as never,
                 {} as never,
                 {} as never,
+                undefined,
+                { issue: jest.fn(), verify: jest.fn(), consume: jest.fn() } as never,
             );
             await expect(authService.getPendingAccountOnboarding(rawToken)).rejects.toMatchObject({
                 response: { code: "AUTH_REQUIRED" },
@@ -246,6 +248,8 @@ describeReal("single-use tokens and flow state orphans (real PostgreSQL)", () =>
                 {} as never,
                 {} as never,
                 {} as never,
+                undefined,
+                { issue: jest.fn(), verify: jest.fn(), consume: jest.fn() } as never,
             );
 
             // The exchange itself is NOT refused — the mint happens for the deleted

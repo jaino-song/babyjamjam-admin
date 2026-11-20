@@ -76,6 +76,9 @@ describe("AuthService account completion", () => {
             {} as EmailPort,
             resetTokens as unknown as IAuthTokenRepository,
             sessions as unknown as AuthSessionService,
+            undefined,
+            { issue: jest.fn(), verify: jest.fn(), consume: jest.fn() } as unknown as
+                import("application/services/auth-phone-challenge.service").AuthPhoneChallengeService,
         );
         log = jest.spyOn(Logger.prototype, "log").mockImplementation();
     });
