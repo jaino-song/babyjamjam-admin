@@ -153,8 +153,10 @@ export function ContractDocumentJobsPopover({
     if (retryRequest !== null || !restoreRetryFocus.current) return;
     restoreRetryFocus.current = false;
     const trigger = retryTrigger.current;
-    (trigger?.isConnected && !trigger.closest("[inert]") ? trigger : anchorRef.current)?.focus({ preventScroll: true });
-  }, [retryRequest]);
+    if (!isOpen) anchorRef.current?.focus({ preventScroll: true });
+    else if (trigger?.isConnected && !trigger.closest("[inert]")) trigger.focus({ preventScroll: true });
+    else panes.current?.focusCurrentPane();
+  }, [retryRequest, isOpen]);
 
   const handleOpenChange = (nextOpen: boolean) => {
     if (interactionPaused && !nextOpen) return;
@@ -197,7 +199,8 @@ export function ContractDocumentJobsPopover({
     setRetryRequest({ jobId, branchId, onRetried });
     setRetryOpen(true);
   };
-  const retryDialog = retryRequest ? <ContractDocumentJobRetryDialog key={retryRequest.jobId} jobId={retryRequest.jobId} branchId={retryRequest.branchId} open={retryOpen} data-component={sub("retry")}
+  const retryJobOffered = !resolvedJobs || resolvedJobs.requiresAttention.some(job => job.jobId === retryRequest?.jobId && job.retryable === true);
+  const retryDialog = retryRequest ? <ContractDocumentJobRetryDialog key={retryRequest.jobId} jobId={retryRequest.jobId} isJobOffered={retryJobOffered} branchId={retryRequest.branchId} open={retryOpen} data-component={sub("retry")}
     onClose={() => setRetryOpen(false)} onRetried={() => {
       retrySucceeded.current = true;
       setRetryOpen(false);
@@ -251,6 +254,7 @@ export function ContractDocumentJobsPopover({
     <Popover open={isOpen} onOpenChange={handleOpenChange}>
       <PopoverTrigger ref={anchorRef} asChild aria-controls={undefined} data-slot="document-jobs-trigger">{resolvedTrigger}</PopoverTrigger>
       <ContractDocumentJobsModal
+        ref={panes}
         key={scope}
         open={isOpen}
         onClose={() => handleOpenChange(false)}

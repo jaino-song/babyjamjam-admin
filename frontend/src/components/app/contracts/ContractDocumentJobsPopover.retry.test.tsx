@@ -37,6 +37,7 @@ async function openConfirmation() {
   const panes = window.innerWidth < 1024 ? "body_panes" : "panes";
   expect(retry).toHaveAttribute("data-component", `${BASE}_${panes}_slide_detail-pane_body_scroll_job_progress_retry_button`);
   expect(retry).toHaveAttribute("data-slot", "job-retry-action");
+  retry.focus();
   fireEvent.click(retry);
   const dialog = await screen.findByRole("dialog", { name: TITLE });
   expect(dialog).toHaveTextContent("재시도하면 고객에게 계약서 서명 요청이 다시 발송됩니다.");
@@ -120,6 +121,31 @@ describe.each([390, 1280])("document job retry at %spx", width => {
     else expect(getJobs).toHaveBeenCalledTimes(callsBefore);
     expect(dialog).not.toHaveTextContent("private backend body");
     expect(post).toHaveBeenCalledTimes(1);
+    expect(onOpenChange).not.toHaveBeenCalledWith(false);
+  });
+
+  it.each(["removed", "not retryable"] as const)("follows a refreshed %s job and restores focus inside the active pane", async state => {
+    const { client, getJobs } = setup();
+    const post = jest.spyOn(api, "post");
+    const outerTrigger = screen.getByRole("button", { name: "전자문서 처리중", hidden: true });
+    const { dialog } = await openConfirmation();
+    getJobs.mockResolvedValue(makeJobList({ requiresAttention: state === "removed" ? [] : [{ ...JOB, retryable: false }] }));
+    await act(async () => { await client.invalidateQueries({ queryKey: eformsignDocumentJobsQueryKeys.all }); });
+    const approve = within(dialog).getByRole("button", { name: "재시도" });
+    await waitFor(() => expect(approve).toBeDisabled());
+    expect(within(dialog).getByRole("alert")).toHaveTextContent("이 작업은 지금 재시도할 수 없어요. 상태를 확인하거나 수동으로 전송해 주세요.");
+    fireEvent.click(approve);
+    expect(post).not.toHaveBeenCalled();
+    fireEvent.click(within(dialog).getByRole("button", { name: "닫기" }));
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: TITLE })).not.toBeInTheDocument());
+    const jobsWindow = width === 390
+      ? document.querySelector('[data-slot="document-jobs-popover"]')!
+      : screen.getByRole("dialog", { name: "전자문서 작업" });
+    const target = screen.getByRole("button", { name: state === "removed" ? "전자문서 작업 닫기" : "목록으로 돌아가기" });
+    await waitFor(() => expect(target).toHaveFocus());
+    expect(jobsWindow).toContainElement(document.activeElement as HTMLElement);
+    expect(document.activeElement?.closest("[inert]")).toBeNull();
+    expect(outerTrigger).not.toHaveFocus();
     expect(onOpenChange).not.toHaveBeenCalledWith(false);
   });
 
