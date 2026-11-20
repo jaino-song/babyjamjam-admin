@@ -1,7 +1,7 @@
 "use server";
 import { cookies } from "next/headers";
 import axios from "axios";
-import { authBirthDateSchema, authPhoneSchema } from "@babyjamjam/shared";
+import { authBirthDateSchema, authPhoneSchema, normalizeApiError } from "@babyjamjam/shared";
 import { serverAPIClient } from "@/lib/api/server";
 import { writeLoginSessionCookies } from "@/lib/auth/login-session-cookies";
 
@@ -23,6 +23,10 @@ export async function completeAccountOnboarding(input: { phone?: string; birthDa
     if (axios.isAxiosError(error)) {
       const status = error.response?.status;
       const problem = error.response?.data;
+      if (status === 429) {
+        const normalized = normalizeApiError({ response: { status, data: problem } }, { locale: "ko-KR", operation: "mutation" });
+        return { success: false, error: normalized.verified ? normalized.message : "요청이 너무 많아요. 잠시 후 다시 시도해 주세요." };
+      }
       if (status === 401 && problem?.code === "AUTH_REQUIRED") {
         store.delete("pending_account_onboarding");
         return { success: false, error: EXPIRED };

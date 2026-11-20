@@ -203,7 +203,7 @@ describe("RegisterPage", () => {
 
       const phoneAgain = await screen.findByLabelText("전화번호");
       expect(screen.queryByLabelText("요청 권한")).not.toBeInTheDocument();
-      expect(slotOf(phoneAgain).textContent).toBe("이미 등록된 전화번호예요. 다른 전화번호로 다시 시도해 주세요");
+      expect(slotOf(phoneAgain).textContent).toBe("이미 등록된 전화번호예요");
       await waitFor(() => expect(phoneAgain).toHaveFocus());
     });
 
@@ -223,7 +223,7 @@ describe("RegisterPage", () => {
 
       const phoneAgain = await screen.findByLabelText("전화번호");
       expect(screen.queryByLabelText("요청 권한")).not.toBeInTheDocument();
-      expect(slotOf(phoneAgain).textContent).toBe("이미 등록된 전화번호예요. 다른 전화번호로 다시 시도해 주세요");
+      expect(slotOf(phoneAgain).textContent).toBe("이미 등록된 전화번호예요");
       await waitFor(() => expect(phoneAgain).toHaveFocus());
     });
   });

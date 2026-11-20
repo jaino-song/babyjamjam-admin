@@ -484,7 +484,7 @@ export default function RegisterPage() {
       <div className="auth-title" data-component={`${REGISTER_BASE}_brand_title`}>회원가입</div>
     </div>
     <LinkVerificationStep embedded data-component={`${REGISTER_BASE}_link-verification`}
-    onRestart={() => { setChallenge(null); setCurrentStep(1); }} onVerify={async code => {
+    onRestart={() => { setChallenge(null); setCurrentStep(2); }} onVerify={async code => {
       try {
         const result = await authApi.verifyRegisterLink(challenge, code);
         if (result.success && result.linked) {
@@ -496,6 +496,9 @@ export default function RegisterPage() {
         }
       } catch (error) {
         const normalized = normalizeApiError(error, { locale: "ko-KR", operation: "mutation" });
+        if (normalized.status === 429 || normalized.problem?.code === "REQUEST_RATE_LIMITED") {
+          return { success: false, error: normalized.verified ? normalized.message : "요청이 너무 많아요. 잠시 후 다시 시도해 주세요." };
+        }
         if (normalized.problem?.code === "VALIDATION_FAILED" && normalized.problem.errors?.some(e => e.pointer === "/code")) {
           return { success: false, error: "인증번호가 맞지 않거나 만료됐어요. 다시 입력하거나 처음부터 진행해 주세요." };
         }
@@ -629,7 +632,9 @@ export default function RegisterPage() {
                 {...fieldProps("email", "register-email")}
               />
             </div>
-            {isEmailDuplicate && <p role="note" data-component={`${REGISTER_ACCOUNT_FORM}_email-field_note`} data-slot="email-note">이미 등록된 이메일이에요. 카카오로 가입한 계정이라면 계속 진행해 비밀번호 로그인을 추가할 수 있어요.</p>}
+            {isEmailDuplicate && <p role="note" data-component={`${REGISTER_ACCOUNT_FORM}_email-field_note`} data-slot="email-note">{errors.email === EMAIL_DUPLICATE_ERROR
+              ? "로그인하거나 비밀번호 찾기를 이용해 주세요."
+              : "이미 등록된 이메일이에요. 카카오로 가입한 계정이라면 계속 진행해 비밀번호 로그인을 추가할 수 있어요."}</p>}
           </div>
 
           <div className="auth-input-group" data-component={`${REGISTER_ACCOUNT_FORM}_name-field`}>
