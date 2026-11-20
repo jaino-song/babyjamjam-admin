@@ -4131,7 +4131,7 @@ body:has([data-slot="auth-register-page"]) main[data-slot="main-content"] {
   color: hsl(var(--v3-text));
 }
 
-[data-slot="auth-register-page"] [data-slot="link-verification-step"] .auth-btn.secondary {
+[data-slot="auth-register-page"] [data-slot="link-verification-step"] .auth-btn {
   flex: none;
 }
 
