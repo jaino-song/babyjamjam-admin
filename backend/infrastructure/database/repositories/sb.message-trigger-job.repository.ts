@@ -1773,7 +1773,9 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
                     const quietLogs = logs.filter((log) => {
                         const hold = parseMessageQuietHold(log.variables);
                         const variables = log.variables as Record<string, unknown> | null;
-                        return hold && (existing.status === "pending" || reclaimableCancellation) && existing.attempts === 0
+                        // A trigger-side DEFER can land before any provider call, so a deferred
+                        // hold may carry nonzero job attempts. The new date supersedes it like a retry.
+                        return hold && (existing.status === "pending" || reclaimableCancellation)
                             && existing.claim_token === null && existing.processing_deadline_at === null
                             && existing.next_attempt_at !== null && existing.next_attempt_at >= hold.releaseAt
                             && hold.originalScheduledFor.getTime() === new Date(existing.scheduled_for).getTime()
@@ -1787,6 +1789,9 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
                             && !["partial", "uncertain", "delivered", "manual-provider-rejected"].includes(String(variables?.["retrySafety"] ?? ""));
                     });
                     if (quietLogs.length > 1 || logs.some((log) => !log.safe && !quietLogs.includes(log))) return { kind: "protected" };
+                    // Snapshot before the cancel/upsert below rewrite the row.
+                    const setup = existing.status === "needs_setup"
+                        ? { cancelReason: existing.cancel_reason, attempts: existing.attempts } : null;
                     // Both the reservation and its proven retry attempts change in this transaction.
                     const canceled = await transaction.message_trigger_job.updateMany({
                         where: { id: existing.id, branchId: replacement.branchId, employeeScheduleId,
@@ -1815,6 +1820,19 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
                         if (retired.count !== 1) throw new Error("Automatic quiet hold changed while locked");
                     }
                     const job = await this.upsertPendingWithClient(transaction, replacement);
+                    if (setup) {
+                        // needs_setup is operator-only (claimed only through resend). Refresh the
+                        // dates and payload but keep the row out of the automatic claim.
+                        const restored = await transaction.message_trigger_job.updateMany({
+                            where: { id: job.id, branchId: replacement.branchId, dedupeKey: replacement.dedupeKey,
+                                status: "pending", attempts: 0, nextAttemptAt: null, claimToken: null },
+                            data: { status: "needs_setup", cancelReason: setup.cancelReason, attempts: setup.attempts },
+                        });
+                        if (restored.count !== 1) throw new Error("Automatic needs_setup reservation changed while locked");
+                        job.status = "needs_setup";
+                        job.cancelReason = setup.cancelReason;
+                        job.attempts = setup.attempts;
+                    }
                     const retries = logs.filter((log) => !quietLogs.includes(log));
                     if (retries.length) {
                         const superseded = await transaction.message_log.updateMany({
