@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 
 import { Button } from "@/components/ui/button";
@@ -107,7 +107,8 @@ export function ContractDocumentJobsPopover({
   const anchorRef = useRef<HTMLButtonElement>(null);
   const recoveryTrigger = useRef<HTMLButtonElement | null>(null);
   const [recoveryJobId, setRecoveryJobId] = useState<string | null>(null);
-  const restoreRecoveryFocus = useRef(false);
+  const [recoveryOpening, setRecoveryOpening] = useState(0);
+  const restoreRecoveryFocus = useRef<{ opening: number; scope: string; isOpen: boolean } | null>(null);
   const [cancelRequest, setCancelRequest] = useState<{ jobId: string; branchId: string | null; onCancelled?: () => void } | null>(null);
   const [cancelOpen, setCancelOpen] = useState(false);
   const restoreCancelFocus = useRef(false);
@@ -133,7 +134,7 @@ export function ContractDocumentJobsPopover({
   // Use the same identity source as DocumentJobsProvider and its branch-keyed queries.
   const branchId = useActiveBranchId();
   const scope = JSON.stringify([pathname, isMobile, branchId]);
-  const committedRecovery = useRef<{ jobId: string | null; scope: string; isOpen: boolean }>({ jobId: null, scope, isOpen });
+  const committedRecovery = useRef<{ jobId: string | null; opening: number; scope: string; isOpen: boolean }>({ jobId: null, opening: recoveryOpening, scope, isOpen });
   const [recoveryScope, setRecoveryScope] = useState(scope);
   if (recoveryScope !== scope) {
     setRecoveryScope(scope);
@@ -151,17 +152,21 @@ export function ContractDocumentJobsPopover({
     else anchorRef.current?.focus({ preventScroll: true });
   }, [isOpen]);
 
+  useLayoutEffect(() => {
+    committedRecovery.current = { jobId: recoveryJobId, opening: recoveryOpening, scope, isOpen };
+  }, [recoveryJobId, recoveryOpening, scope, isOpen]);
+
   useEffect(() => {
-    const previous = committedRecovery.current;
-    committedRecovery.current = { jobId: recoveryJobId, scope, isOpen };
-    if (previous.scope !== scope || previous.isOpen !== isOpen) {
-      restoreRecoveryFocus.current = false;
+    const pending = restoreRecoveryFocus.current;
+    if (!pending) return;
+    if (pending.opening !== recoveryOpening || pending.scope !== scope || pending.isOpen !== isOpen) {
+      restoreRecoveryFocus.current = null;
       return;
     }
-    if (recoveryJobId !== null || !restoreRecoveryFocus.current) return;
-    restoreRecoveryFocus.current = false;
+    if (recoveryJobId !== null) return;
+    restoreRecoveryFocus.current = null;
     focusAfterRecovery();
-  }, [recoveryJobId, scope, isOpen, focusAfterRecovery]);
+  }, [recoveryJobId, recoveryOpening, scope, isOpen, focusAfterRecovery]);
 
   useEffect(() => {
     if (cancelRequest !== null || !restoreCancelFocus.current) return;
@@ -195,7 +200,7 @@ export function ContractDocumentJobsPopover({
 
   const onRecover = (jobId: string, triggerButton: HTMLButtonElement) => {
     const job = [...(resolvedJobs?.active ?? []), ...(resolvedJobs?.requiresAttention ?? []), ...(resolvedJobs?.recent ?? [])].find(job => job.jobId === jobId);
-    if (pathname === "/contracts" && documentJobRecoveryPresentation(job) === "iframe") { recoveryTrigger.current = triggerButton; setRecoveryJobId(jobId); }
+    if (pathname === "/contracts" && documentJobRecoveryPresentation(job) === "iframe") { recoveryTrigger.current = triggerButton; setRecoveryOpening(opening => opening + 1); setRecoveryJobId(jobId); }
     else { handleOpenChange(false); router.push(recoverJobHref(jobId)); }
   };
   const onCancel: DocumentJobCancelHandler = (jobId, trigger, onCancelled) => {
@@ -238,9 +243,9 @@ export function ContractDocumentJobsPopover({
     onClose={() => setRecoveryJobId(null)} onCloseAutoFocus={event => {
       event.preventDefault();
       const committed = committedRecovery.current;
-      if (committed.scope !== scope || committed.isOpen !== isOpen) return;
+      if (committed.opening !== recoveryOpening || committed.scope !== scope || committed.isOpen !== isOpen) return;
       // The no-editor close callback can arrive before React removes inert from the panes.
-      if (committed.jobId !== null) restoreRecoveryFocus.current = true;
+      if (committed.jobId !== null) restoreRecoveryFocus.current = { opening: recoveryOpening, scope, isOpen };
       else focusAfterRecovery();
     }} /> : null;
 

@@ -168,6 +168,54 @@ describe.each([390, 1280])("document job cancel at %spx", width => {
     expect(onOpenChange).not.toHaveBeenCalledWith(false);
   });
 
+  it("returns focus exactly once to the list after the selected job disappears during confirmation", async () => {
+    const { client, getJobs } = setup();
+    const card = await screen.findByRole("button", { name: /김하늘.*상세 보기/ });
+    const scroller = document.querySelector('[data-slot="document-jobs-list-scroller"]')!;
+    scroller.scrollTop = 67;
+    const { dialog } = await openConfirmation();
+    expect(card.isConnected).toBe(true);
+    scroller.scrollTop = 0;
+    getJobs.mockResolvedValue(makeJobList());
+    await act(async () => { await client.invalidateQueries({ queryKey: eformsignDocumentJobsQueryKeys.all }); });
+    await waitFor(() => expect(within(dialog).getByRole("button", { name: "작업 취소" })).toBeDisabled());
+    const target = within(document.querySelector<HTMLElement>('[data-slot="sliding-detail-list"]')!).getByRole("button", { name: "전자문서 작업 닫기", hidden: true });
+    const focusedWhileInert: boolean[] = [];
+    const nativeFocus = HTMLElement.prototype.focus;
+    const focus = jest.spyOn(HTMLElement.prototype, "focus").mockImplementation(function (this: HTMLElement, options) {
+      focusedWhileInert.push(Boolean(this.closest("[inert]")));
+      nativeFocus.call(this, options);
+    });
+
+    fireEvent.click(within(dialog).getByRole("button", { name: "닫기" }));
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: TITLE })).not.toBeInTheDocument());
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 20)); });
+
+    expect(target).toHaveFocus();
+    expect(focus.mock.contexts.filter(element => element === target)).toHaveLength(1);
+    expect(focusedWhileInert).not.toContain(true);
+    expect(scroller.scrollTop).toBe(67);
+  });
+
+  it("keeps cancellation offered while the list is unresolved and the summary is defined", async () => {
+    const { client, getJobs } = setup();
+    const post = jest.spyOn(api, "post").mockResolvedValue({ data: { jobId: JOB_ID, outcome: "cancelled" } });
+    const { dialog } = await openConfirmation();
+    getJobs.mockReturnValue(new Promise(() => {}));
+    await act(async () => { void client.resetQueries({ queryKey: eformsignDocumentJobsQueryKeys.all }); });
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 20)); });
+
+    expect(client.getQueryData(eformsignDocumentJobsQueryKeys.list("branch-a"))).toBeUndefined();
+    expect(client.getQueryData(eformsignDocumentJobsQueryKeys.summary("branch-a"))).toBeDefined();
+    const approve = within(dialog).getByRole("button", { name: "작업 취소" });
+    expect(approve).toBeEnabled();
+    expect(dialog).not.toHaveTextContent("이 작업은 지금 취소할 수 없어요. 새로고침 후 다시 확인해 주세요.");
+    fireEvent.click(approve);
+    await waitFor(() => expect(post).toHaveBeenCalledWith(`/eformsign-docs/jobs/${JOB_ID}/cancel`));
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 20)); });
+    expect(post).toHaveBeenCalledTimes(1);
+  });
+
   it("dismisses the confirmation without cancelling or closing the outer window", async () => {
     setup();
     const post = jest.spyOn(api, "post");
