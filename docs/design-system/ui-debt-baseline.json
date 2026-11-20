@@ -659,19 +659,19 @@
     },
     "mobile/src/app/(shell)/(auth)/register/page.tsx": {
       "ui-architecture/no-raw-ui-in-pages": [
-        "530:11-535:12|rawUiElement",
-        "600:15-615:17|rawUiElement",
-        "626:13-637:15|rawUiElement",
-        "647:13-658:15|rawUiElement",
-        "668:13-679:15|rawUiElement",
-        "683:13-688:14|rawUiElement",
-        "705:13-718:15|rawUiElement",
-        "728:13-741:15|rawUiElement",
-        "745:13-745:116|rawUiElement",
-        "749:13-749:77|rawUiElement",
-        "767:15-774:16|rawUiElement",
-        "787:13-787:116|rawUiElement",
-        "791:13-799:14|rawUiElement"
+        "537:11-542:12|rawUiElement",
+        "607:15-622:17|rawUiElement",
+        "634:13-645:15|rawUiElement",
+        "655:13-666:15|rawUiElement",
+        "676:13-687:15|rawUiElement",
+        "691:13-696:14|rawUiElement",
+        "713:13-726:15|rawUiElement",
+        "736:13-749:15|rawUiElement",
+        "753:13-753:116|rawUiElement",
+        "757:13-757:77|rawUiElement",
+        "775:15-782:16|rawUiElement",
+        "795:13-795:116|rawUiElement",
+        "799:13-807:14|rawUiElement"
       ]
     },
     "mobile/src/app/(shell)/(auth)/reset-password/page.tsx": {
