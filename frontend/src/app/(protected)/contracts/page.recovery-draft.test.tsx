@@ -123,7 +123,7 @@ const targetDocument: EformsignDocument = {
   recipients: [], detail_template_info: [],
 };
 const DETAIL_SELECTOR =
-  '[data-component^="desktop_contracts_sections_section-content_maternity-section_split-layout_detail-panel-document"]';
+  '[data-component^="desktop_contracts_page_sections_section-content_maternity-section_split-layout_detail-panel-document"]';
 
 function renderPage() {
   const queryClient = new QueryClient({
@@ -146,7 +146,7 @@ const sendButton = () => screen.getByRole("button", { name: /전자문서 발송
 
 const FORM_SELECTOR = '[data-component="desktop_contracts_creation_form"]';
 const SESSION_WRAPPER_SELECTOR =
-  '[data-component="desktop_contracts_sections_section-content_maternity-section_split-layout_creation-session"]';
+  '[data-component="desktop_contracts_page_sections_section-content_maternity-section_split-layout_creation-session"]';
 const dueDateInput = () => document.getElementById("contract-creation-due-date") as HTMLInputElement;
 
 // Types into a component-local field (the due date is held in the form's own state, not the

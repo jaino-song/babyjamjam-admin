@@ -130,7 +130,7 @@ test.describe('Admin Feedback Page', () => {
     await page.goto('/admin');
     await expect(page.getByText('피드백 목록')).toBeVisible({ timeout: 15000 });
     
-    await expect(page.getByText('전체').first()).toBeVisible();
+    await expect(page.getByRole('button', { name: /^전체/ })).toBeVisible();
     await expect(page.getByText('긍정적').first()).toBeVisible();
     await expect(page.getByText('부정적').first()).toBeVisible();
     
@@ -139,9 +139,11 @@ test.describe('Admin Feedback Page', () => {
     const statsCards = page.locator(
       '[data-component^="mobile_admin_feedback_stats_stat-mini-"][data-slot="stat-mini"]'
     );
-    await expect(statsCards.nth(0)).toContainText('15');
-    await expect(statsCards.nth(1)).toContainText('10');
-    await expect(statsCards.nth(2)).toContainText('5');
+    await expect(statsCards).toHaveCount(2);
+    await expect(statsCards.nth(0)).toContainText('긍정적');
+    await expect(statsCards.nth(0)).toContainText('10');
+    await expect(statsCards.nth(1)).toContainText('부정적');
+    await expect(statsCards.nth(1)).toContainText('5');
   });
 
   test('displays feedback list with correct data', async ({ page }) => {

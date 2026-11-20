@@ -10,13 +10,15 @@ export interface ContractRecoveryState {
     jobId: string; branchId: string; clientId: number; generation: string; fingerprint: string;
     payload: EformsignDocumentJobPayload; phase: string; priorDocumentId: string | null; providerDocumentId: string | null;
     claimEpoch: bigint; claimUserId: string | null; claimExpiresAt: Date | null;
+    /** Internal provider-read context only; never returned in a response DTO. Contains no contact payload. */
+    verificationOnly?: { documentId: string; templateId: string; companyId?: string; creatorId?: string; workflow?: unknown };
     creationIntent: EformsignDispatchIntentEntity | null; draftIntent: EformsignDispatchIntentEntity | null;
 }
 export interface ContractDocumentEvidence {
     documentName?: string | null; documentNumber?: string | null; templateName?: string | null;
     creatorName?: string | null; lastEditorName?: string | null; stepRecipientTypes?: string[];
     documentId: string; templateId: string; companyId: string; creatorId: string;
-    statusType: string; stepType: string; stepIndex: string; stepName: string; confirmed: boolean;
+    statusType: string; stepType: string; stepIndex: string; stepName: string; confirmed: boolean; expired?: boolean;
     createdAt: Date; updatedAt: Date; expiresAt: Date;
 }
 export interface ContractDraftDispatch {

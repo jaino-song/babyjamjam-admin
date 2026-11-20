@@ -1,11 +1,9 @@
 "use client";
 
-
 import { useState } from "react";
 import { Bell } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
-import { Spinner } from "@/components/ui/spinner";
 import { api } from "@/lib/api/client";
 
 interface BroadcastResult {
@@ -49,6 +47,8 @@ export function NotificationTestSection() {
           </div>
         </div>
         <Button
+          loading={loading}
+          loadingLabel="전송 중"
           type="button"
           size="md"
           variant="positive"
@@ -56,12 +56,8 @@ export function NotificationTestSection() {
           disabled={loading}
           className="w-full gap-2 sm:w-auto sm:self-start"
         >
-          {loading ? (
-            <Spinner className="h-4 w-4" />
-          ) : (
-            <Bell className="h-4 w-4" aria-hidden="true" />
-          )}
-          {loading ? "전송 중…" : "테스트 알림 보내기"}
+          <Bell className="h-4 w-4" aria-hidden="true" />
+          테스트 알림 보내기
         </Button>
       </div>
 

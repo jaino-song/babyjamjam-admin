@@ -30,6 +30,25 @@ interface ServiceRecordErrorContext {
 }
 
 const reportedErrors = new WeakSet<object>();
+const MIN_OPAQUE_ID_LENGTH = 16;
+// Literal collection operations found in document BFF routes and API callers.
+const DOCUMENT_COLLECTION_ROUTES = new Set([
+  ...["completed", "in-progress", "status-counts", "rejected", "expired", "upload", "capabilities"]
+    .map((route) => `/api/documents/${route}`),
+  ...["completed", "in-progress", "status-counts", "rejected", "expired"]
+    .flatMap((route) => [`/api/eformsign/documents/${route}`, `/eformsign/documents/${route}`]),
+  "/documents/upload", "/documents/capabilities",
+]);
+
+function templateDocumentPath(path: string): string {
+  if (DOCUMENT_COLLECTION_ROUTES.has(path)) return path;
+
+  return path.split("/").map((segment, index, segments) => (
+    segments[index - 1] === "documents" && segment
+      ? ":id"
+      : segment
+  )).join("/");
+}
 
 function isAxiosErrorLike(error: unknown): error is AxiosError {
   return (
@@ -123,6 +142,74 @@ export function captureServiceRecordError(
     Sentry.captureException(capturedError);
   });
   return true;
+}
+
+export function captureApiError(error: unknown): boolean {
+  if (!isAxiosErrorLike(error) || error.code === "ERR_CANCELED") return false;
+  if (reportedErrors.has(error)) return false;
+
+  const status = error.response?.status;
+  if (error.response && (typeof status !== "number" || status < 500)) return false;
+
+  const rawPath = getRequestPath(error.config?.url);
+  const documentPath = templateDocumentPath(rawPath);
+  // Delegate before recording: the service-record capture owns the shared dedupe entry.
+  if (isServiceRecordSentrySignal(documentPath)) return captureServiceRecordError(error);
+  reportedErrors.add(error);
+
+  const method = sanitizeSentryText((error.config?.method ?? "unknown").toUpperCase());
+  // Sanitize the document template; never attach request/response bodies or query strings.
+  const path = (sanitizeSentryUrl(documentPath) ?? "unknown")
+    .split("/")
+    .map((segment) => /^\d+$/.test(segment) || (segment.length >= MIN_OPAQUE_ID_LENGTH && /\d/.test(segment)) ? ":id" : segment)
+    .join("/");
+  const statusLabel = status === undefined ? "network" : String(status);
+  const runtime = typeof window === "undefined" ? "server" : "browser";
+  const capturedError = Object.assign(
+    new Error(`API request failed: ${method} ${path} (${statusLabel})`),
+    { name: "ApiRequestError" },
+  );
+
+  Sentry.withScope((scope) => {
+    scope.setLevel(status !== undefined && status >= 500 ? "error" : "warning");
+    scope.setTag("feature", "api");
+    scope.setTag("app", "mobile");
+    scope.setTag("runtime", runtime);
+    scope.setTag("handled", "true");
+    scope.setTag("status_code", statusLabel);
+    scope.setContext("api", {
+      method,
+      path,
+      status: status ?? null,
+      code: error.code ? sanitizeSentryText(error.code) : null,
+      runtime,
+    });
+    scope.setFingerprint(["api-error", method, path, statusLabel]);
+    Sentry.captureException(capturedError);
+  });
+  return true;
+}
+
+export function captureSessionRefreshNetworkError(error: unknown): boolean {
+  // Fetch network failures are TypeErrors; HTTP refresh outcomes have their own error class.
+  if (!(error instanceof TypeError) || reportedErrors.has(error)) return false;
+  reportedErrors.add(error);
+  // Construct an allowlisted API failure, never forwarding the raw message or stack.
+  return captureApiError({
+    isAxiosError: true,
+    code: "ERR_NETWORK",
+    config: { method: "post", url: "/api/auth/refresh" },
+  });
+}
+
+export async function captureAndFlushApiError(error: unknown): Promise<void> {
+  if (captureApiError(error)) {
+    try {
+      await Sentry.flush(2_000);
+    } catch {
+      // Observability must never replace the original proxy failure.
+    }
+  }
 }
 
 export async function captureAndFlushServiceRecordError(error: unknown): Promise<void> {

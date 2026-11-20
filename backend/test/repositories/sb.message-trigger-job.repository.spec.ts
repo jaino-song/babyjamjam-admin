@@ -11,9 +11,12 @@ import {
 } from "domain/constants/message-automation-policy";
 import { AGENT_AUTOMATION_RECORD_DEDUPE_PREFIX, AGENT_AUTOMATION_RECORD_PAYLOAD_KEY } from "domain/constants/agent-automation-storage";
 import { ordinaryAutomationJobWhere } from "application/utils/message-automation-record-sql";
-import { MESSAGE_AUTOMATION_INTENT_RULE_ID } from "domain/constants/message-automation-intent";
+import { MESSAGE_AUTOMATION_INTENT_RULE_ID, MESSAGE_AUTOMATION_INTENT_RETRY_REASON,
+    getClientDateAutomationIntentDedupeKey, getScheduleAutomationIntentDedupeKey } from "domain/constants/message-automation-intent";
 import {
     SERVICE_RECORD_LINK_RULE_ID,
+    SERVICE_RECORD_LINK_RESCHEDULED_REASON,
+    SERVICE_RECORD_LINK_BRANCH_DISABLED_REASON,
     SERVICE_RECORD_LINK_ENDED_REASON,
     SERVICE_RECORD_LINK_PRE_BOOKING_REASON,
     SERVICE_RECORD_LINK_SCHEDULING_RETRY_REASON,
@@ -28,6 +31,10 @@ import { createHash, randomUUID } from "node:crypto";
 import { describeReal, assertThrowawayTarget, createIntegrityPrisma, closeIntegrityPrisma, IntegrityPrisma } from "../integrity/helpers/real-db";
 import { PrismaService } from "infrastructure/database/prisma.service";
 import { SbMessageTriggerJobRepository, serviceRecordScheduleBlockerSql } from "infrastructure/database/repositories/sb.message-trigger-job.repository";
+import { SbMessageLogRepository } from "infrastructure/database/repositories/sb.message-log.repository";
+import { MessageLogEntity } from "domain/entities/message-log.entity";
+import { buildSmsProviderAcceptanceKey, buildSmsProviderAcceptanceFingerprint } from "application/services/sms-provider-acceptance.service";
+import { messageQuietHoldVariables, parseMessageQuietHold } from "domain/message-policy-evaluator";
 
 describe("serviceRecordScheduleBlockerSql", () => {
     it("allows only the ended-only cancellation alongside existing reclaim reasons", () => {
@@ -221,6 +228,98 @@ describe("SbMessageTriggerJobRepository", () => {
     const createRow = (overrides: Partial<MockMessageTriggerJobRow> = {}): MockMessageTriggerJobRow => ({
         ...baseRow(),
         ...overrides,
+    });
+
+    it("reads outstanding immutable date intents in the caller transaction without filtering leased retry times", async () => {
+        const branchId = "98000000-0000-4000-8000-000000000001";
+        const leased = { dedupeKey: getClientDateAutomationIntentDedupeKey(branchId, 7, "confirmation"),
+            employeeScheduleId: null, payload: { templateVariables: { intentKind: "client_dates" } }, nextAttemptAt: new Date("2099-01-01Z") };
+        const schedule = { ...leased, dedupeKey: `${getScheduleAutomationIntentDedupeKey(branchId, 91)}:dates:confirmation`, employeeScheduleId: 91 };
+        const wrongBinding = { ...schedule, dedupeKey: `${getScheduleAutomationIntentDedupeKey(branchId, 92)}:dates:confirmation` };
+        const pool = { message_trigger_job: { findMany: jest.fn() } };
+        const tx = { message_trigger_job: { findMany: jest.fn<Promise<unknown[]>, [unknown]>().mockResolvedValue([leased, schedule, wrongBinding]) } };
+        const repo = new SbMessageTriggerJobRepository(pool as never);
+        expect(await repo.findOutstandingDateIntents(branchId, 7, tx as never)).toEqual([leased, schedule]);
+        expect(pool.message_trigger_job.findMany).not.toHaveBeenCalled();
+        const query = tx.message_trigger_job.findMany.mock.calls[0]![0] as unknown as { where: Record<string, unknown> };
+        expect(query.where).toMatchObject({ branchId, clientId: 7, ruleId: MESSAGE_AUTOMATION_INTENT_RULE_ID,
+            status: "failed", canceledByUser: false, cancelReason: MESSAGE_AUTOMATION_INTENT_RETRY_REASON });
+        expect(query.where).not.toHaveProperty("nextAttemptAt");
+        expect(query.where).not.toHaveProperty("scheduledFor");
+        expect(query.where["OR"]).toEqual([
+            { dedupeKey: { startsWith: getClientDateAutomationIntentDedupeKey(branchId, 7, "") },
+                payload: { path: ["templateVariables", "intentKind"], equals: "client_dates" } },
+            { payload: { path: ["templateVariables", "refreshServiceRecordLink"], equals: "true" } },
+        ]);
+    });
+
+    it("releases only the exact reversible date-refresh claim and preserves provider/cancellation ownership", async () => {
+        const row = baseRow();
+        const job = MessageTriggerJobEntity.create({ branchId: row.branchId!, ruleId: row.ruleId, clientId: row.clientId,
+            employeeScheduleId: 91, recipientType: MessageTriggerRecipientType.CLIENT, templateKey: MessageTriggerTemplateKey.INFO,
+            recipientPhone: row.recipientPhone, scheduledFor: row.scheduledFor, dedupeKey: row.dedupeKey, payload: row.payload });
+        Object.assign(job, { id: row.id, claimToken: "exact-claim", status: "processing" });
+        const tx = { $queryRaw: jest.fn().mockResolvedValueOnce([{ id: row.id }]).mockResolvedValueOnce([]) };
+        const repo = new SbMessageTriggerJobRepository({} as never);
+        expect(await repo.releaseProcessingForDateRefresh(job, tx as never)).toBe(true);
+        expect(await repo.releaseProcessingForDateRefresh(job, tx as never)).toBe(false);
+        const sql = tx.$queryRaw.mock.calls[0]![0] as Prisma.Sql;
+        expect(sql.sql).toContain("SET status = CASE WHEN job.cancel_reason IS NOT NULL THEN 'needs_setup' ELSE 'pending' END");
+        expect(sql.sql.split("WHERE")[0]).not.toContain("next_attempt_at");
+        for (const clause of ["job.branch_id =", "job.client_id =", "job.rule_id =", "job.dedupe_key =",
+            "job.employee_schedule_id IS NOT DISTINCT FROM", "job.recipient_type =", "job.template_key =",
+            "job.status = 'processing'", "job.claim_token =", "job.canceled_by_user = false", "taskAutomationReference",
+            "log.provider_call_started_at IS NOT NULL", "log.provider_accepted_at IS NOT NULL", "log.aligo_mid IS NOT NULL",
+            "log.status = 'sent'", "'started', 'accepted', 'uncertain', 'reconciled_delivered'", "processing_deadline_at = NULL",
+            "NOT IN ('rejected', 'reconciled_not_delivered')", "'uncertain', 'partial'"]) expect(sql.sql).toContain(clause);
+        expect(sql.values).toEqual(expect.arrayContaining([job.id, job.branchId, job.clientId, job.ruleId, job.dedupeKey,
+            job.employeeScheduleId, job.recipientType, job.templateKey, job.claimToken, MESSAGE_AUTOMATION_INTENT_RULE_ID]));
+        job.claimToken = null;
+        expect(await repo.releaseProcessingForDateRefresh(job, tx as never)).toBe(false);
+        expect(tx.$queryRaw).toHaveBeenCalledTimes(2);
+    });
+
+
+    it.each(["needs_setup", "pending"] as const)("releases a real %s claim using its persisted origin and retains retry timing", async (origin) => {
+        const row = createRow({ status: origin, cancelReason: "QA-existing reason", attempts: 2,
+            nextAttemptAt: new Date("2026-11-25T02:00:00Z") });
+        const retryAt = row.nextAttemptAt;
+        const tx = { $queryRaw: jest.fn(async (sql: Prisma.Sql) => {
+            if (sql.sql.includes("WITH candidate_job AS MATERIALIZED")) {
+                expect(sql.sql).toContain(`job.status = '${origin}'`);
+                row.status = "processing"; row.claimToken = "persisted-token";
+                if (sql.sql.includes("cancel_reason = NULL")) row.cancelReason = null;
+                return [{ id: row.id, claim_token: row.claimToken }];
+            }
+            // Evaluate the generated assignment against the stored row, not the caller's reason.
+            if (row.status !== "processing" || !sql.values.includes(row.claimToken!)) return [];
+            row.status = sql.sql.includes("WHEN job.cancel_reason IS NOT NULL THEN 'needs_setup'") && row.cancelReason !== null
+                ? "needs_setup" : "pending";
+            row.claimToken = null;
+            return [{ id: row.id }];
+        }) };
+        const repo = new SbMessageTriggerJobRepository({} as never);
+        const claim = origin === "needs_setup" ? repo.claimNeedsSetupWithRuleFence.bind(repo) : repo.claimPendingWithRuleFence.bind(repo);
+        const token = await claim(row.id, row.branchId, tx as never);
+        const job = createJob();
+        Object.assign(job, { id: row.id, branchId: row.branchId, clientId: row.clientId, ruleId: row.ruleId,
+            status: "processing", claimToken: token, cancelReason: origin === "needs_setup" ? null : "QA-transient-reason" });
+        // A stale owner cannot change the row; terminal rows also stay unchanged.
+        job.claimToken = "wrong-token";
+        expect(await repo.releaseProcessingForDateRefresh(job, tx as never)).toBe(false);
+        expect(row.status).toBe("processing");
+        job.claimToken = token;
+        expect(await repo.releaseProcessingForDateRefresh(job, tx as never)).toBe(true);
+        expect(row.status).toBe(origin);
+        expect(row.cancelReason).toBe(origin === "needs_setup" ? "QA-existing reason" : null);
+        expect(row.attempts).toBe(2); expect(row.nextAttemptAt).toBe(retryAt);
+        const sql = tx.$queryRaw.mock.calls.at(-1)![0];
+        expect(sql.sql).toContain("WHEN job.cancel_reason IS NOT NULL THEN 'needs_setup'");
+        expect(sql.sql.split("WHERE")[0]).not.toContain("cancel_reason =");
+        expect(sql.sql.split("WHERE")[0]).not.toContain("next_attempt_at");
+        row.status = "sent";
+        expect(await repo.releaseProcessingForDateRefresh(job, tx as never)).toBe(false);
+        expect(row.status).toBe("sent");
     });
 
     const createJob = () =>
@@ -3263,5 +3362,544 @@ describeReal("TIME-1 real PostgreSQL cadence and reclaim fences", () => {
         job.defer("transient", "reclaim");
         expect(await repository.reclaimWithClaimFence(job, snapshot)).toBe(false);
         expect(await handle.raw.message_trigger_job.findUnique({ where: { id: job.id } })).toMatchObject(change);
+    });
+});
+
+describe("automatic service-record date replacement", () => {
+    beforeEach(() => jest.useFakeTimers().setSystemTime(new Date("2027-01-08T00:00:00Z")));
+    afterEach(() => jest.useRealTimers());
+    const branchId = "99000000-0000-4000-8000-000000000001";
+    const key = `${SERVICE_RECORD_LINK_RULE_ID}:schedule:10:primary`;
+    const reason = "Service record link rescheduled";
+    const snake = (name: string) => name.replace(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`);
+    const camelRow = (row: Record<string, unknown>) => Object.fromEntries(Object.entries(row).map(([name, value]) =>
+        [name.replace(/_([a-z])/g, (_, letter: string) => letter.toUpperCase()), value]));
+    function fixture() {
+        const replacement = MessageTriggerJobEntity.create({ branchId, ruleId: SERVICE_RECORD_LINK_RULE_ID, clientId: 20,
+            employeeScheduleId: 10, scheduledFor: new Date("2027-01-10T03:00:00Z"),
+            recipientType: MessageTriggerRecipientType.PRIMARY_EMPLOYEE, recipientPhone: "01000000030",
+            templateKey: MessageTriggerTemplateKey.SERVICE_RECORD_LINK, dedupeKey: key,
+            payload: { memberId: "employee:30", recipientName: "QA-care", recipientPhone: "01000000030",
+                templateVariables: { serviceStartDate: "2027-01-11", serviceEndDate: "2027-01-20" } } });
+        const raw = (id: string, dedupeKey = key) => ({ id, branch_id: branchId, rule_id: SERVICE_RECORD_LINK_RULE_ID,
+            client_id: 20, employee_schedule_id: 10, dedupe_key: dedupeKey, status: "pending", canceled_by_user: false,
+            scheduled_for: new Date("2027-01-09T03:00:00Z"), sent_at: null, canceled_at: null, cancel_reason: null,
+            attempts: 0, next_attempt_at: null, claim_token: null, processing_deadline_at: null,
+            recipient_type: replacement.recipientType, recipient_phone: replacement.recipientPhone, template_key: replacement.templateKey,
+            payload: { ...replacement.payload, templateVariables: { serviceStartDate: "2027-01-10", serviceEndDate: "2027-01-20" } },
+            created_at: new Date("2026-11-01Z"), updated_at: new Date("2026-11-01Z") });
+        let rows: Array<Record<string, unknown>> = [raw("automatic"), raw("manual", `${key}:manual:00000000-0000-4000-8000-000000000030`),
+            { ...raw("other-branch"), branch_id: "other" }, { ...raw("other-schedule"), employee_schedule_id: 11 }];
+        const retry = (id: number, triggerJobId: string | null, logBranch = branchId) => ({ id, branch_id: logBranch,
+            trigger_job_id: triggerJobId, provider: "aligo_sms", template_key: replacement.templateKey,
+            receiver: replacement.recipientPhone, recipient_name: "QA-care", recipient_phone: replacement.recipientPhone,
+            client_id: 20, message_body: "Old service dates", variables: { retrySafety: "provider-rejected" },
+            status: "failed", attempts: 1, last_attempt_at: new Date(), next_retry_at: new Date(),
+            provider_acceptance_key: buildSmsProviderAcceptanceKey("automation", `${logBranch}:${triggerJobId}`),
+            provider_acceptance_fingerprint: buildSmsProviderAcceptanceFingerprint({ message: "Old service dates" }),
+            provider_acceptance_state: "rejected", provider_call_started_at: null, provider_accepted_at: null, aligo_mid: null,
+            created_at: new Date("2026-11-01Z"), updated_at: new Date("2026-11-01Z") });
+        let logs: Array<Record<string, unknown>> = [retry(1, "automatic"), retry(2, "manual"), retry(3, null), retry(4, "automatic", "other")];
+        const statements: Prisma.Sql[] = [];
+        const matches = (row: Record<string, unknown>, where: Record<string, unknown>) => Object.entries(where).every(([name, value]) => {
+            const actual = row[snake(name)];
+            if (value && typeof value === "object" && "in" in value) return (value.in as unknown[]).includes(actual);
+            if (value && typeof value === "object" && "equals" in value) return JSON.stringify(actual) === JSON.stringify(value.equals);
+            return value instanceof Date && actual instanceof Date ? actual.getTime() === value.getTime() : actual === value;
+        });
+        const sqlMatches = (row: Record<string, unknown>, sql: Prisma.Sql) => [...sql.text.matchAll(/\b(branch_id|client_id|rule_id|employee_schedule_id|dedupe_key|trigger_job_id)\s*=\s*\$(\d+)/g)]
+            .every((match) => row[match[1]!] === sql.values[Number(match[2]) - 1]);
+        const tx = {
+            $executeRaw: jest.fn(async (sql: Prisma.Sql) => { statements.push(sql); return 1; }),
+            $queryRaw: jest.fn(async (sql: Prisma.Sql) => {
+                statements.push(sql);
+                if (sql.text.includes('FROM "message_trigger_rule"')) return [{ id: SERVICE_RECORD_LINK_RULE_ID }];
+                if (sql.text.includes('FROM "service_record_token"')) return [{ id: "active-token" }];
+                if (sql.text.includes('UPDATE "message_trigger_job" AS job')) {
+                    // Reflect the bound identity/claim predicates before the ordinary/manual policy expressions.
+                    const guards = sql.text.split("AND job.canceled_by_user")[0]!;
+                    const bindings = [...guards.matchAll(/job\.(\w+)\s+(?:=|IS NOT DISTINCT FROM)\s*\$(\d+)/g)];
+                    const row = rows.find((candidate) => bindings.every(match => candidate[match[1]!] === sql.values[Number(match[2]) - 1])
+                        && candidate["status"] === "processing" && candidate["canceled_by_user"] === false);
+                    if (!row) return [];
+                    // Apply the actual SET list: restoring next_attempt_at = NULL must break the invariant test.
+                    const set = sql.text.split("WHERE")[0]!;
+                    for (const column of set.matchAll(/\b(\w+)\s*=\s*NULL/g)) row[column[1]!] = null;
+                    row["status"] = "pending";
+                    return [{ id: row["id"] }];
+                }
+                if (sql.text.includes('FROM "message_log"')) return logs.filter((row) => sqlMatches(row, sql) && row["provider"] === "aligo_sms")
+                    .map((row) => ({ ...camelRow(row), safe: ["pending", "failed"].includes(String(row["status"]))
+                        && row["next_retry_at"] !== null && row["provider_accepted_at"] === null && row["aligo_mid"] === null
+                        && !["partial", "uncertain", "delivered", "manual-provider-rejected"].includes(String((row["variables"] as Record<string, unknown>)["retrySafety"] ?? ""))
+                        && (["rejected", "reconciled_not_delivered"].includes(String(row["provider_acceptance_state"]))
+                            || (row["provider_acceptance_state"] === "prepared" && row["provider_call_started_at"] === null)
+                            || (row["provider_acceptance_state"] === "legacy" && ["provider-rejected", "reconciled-not-delivered"].includes(String((row["variables"] as Record<string, unknown>)["retrySafety"])))) }));
+                if (sql.text.includes('FROM "message_trigger_job" AS blocker')) {
+                    const excludedId = sql.text.match(/blocker.id <> \$(\d+)/)!;
+                    return rows.filter((row) => sqlMatches(row, sql)
+                        && row["id"] !== sql.values[Number(excludedId[1]) - 1]
+                        && (["pending", "processing", "dispatching", "sent", "needs_setup"].includes(String(row["status"]))
+                            || (row["status"] === "failed" && row["cancel_reason"] !== SERVICE_RECORD_LINK_SCHEDULING_RETRY_REASON)
+                            || (row["status"] === "canceled" && (row["canceled_by_user"] === true || row["cancel_reason"] === null
+                                || ![SERVICE_RECORD_LINK_RESCHEDULED_REASON, SERVICE_RECORD_LINK_ENDED_REASON,
+                                    SERVICE_RECORD_LINK_BRANCH_DISABLED_REASON, SERVICE_RECORD_LINK_PRE_BOOKING_REASON,
+                                    MESSAGE_SENDER_APPROVAL_REQUIRED_CANCEL_REASON].includes(String(row["cancel_reason"]))))));
+                }
+                if (sql.text.includes('SELECT id, status, canceled_by_user')) return rows.filter((row) => sqlMatches(row, sql));
+                if (sql.text.includes('INSERT INTO "message_trigger_job"')) {
+                    const columns = sql.text.match(/INSERT INTO "message_trigger_job"\s*\(([^)]+)\)/)![1]!.split(",").map((column) => column.trim());
+                    const tokens = sql.text.match(/VALUES\s*\(([\s\S]+)\)\s*ON CONFLICT/)![1]!.split(",").map((token) => token.trim());
+                    const data = Object.fromEntries(columns.map((column, index) => {
+                        const token = tokens[index]!; const param = token.match(/^\$(\d+)/);
+                        let value: unknown = param ? sql.values[Number(param[1]) - 1] : token === "'pending'" ? "pending" : token === "0" ? 0 : null;
+                        if (column === "payload" && typeof value === "string") value = JSON.parse(value);
+                        return [column, value];
+                    }));
+                    const row = rows.find((candidate) => candidate["dedupe_key"] === data["dedupe_key"] && candidate["branch_id"] === data["branch_id"])!;
+                    Object.assign(row, data, { updated_at: new Date() }); return [row];
+                }
+                throw new Error(`Unexpected SQL: ${sql.text}`);
+            }),
+            message_trigger_job: { updateMany: jest.fn(async ({ where, data }: { where: Record<string, unknown>; data: Record<string, unknown> }) => {
+                const selected = rows.filter((row) => matches(row, where));
+                selected.forEach((row) => Object.entries(data).forEach(([name, value]) => { row[snake(name)] = value; }));
+                return { count: selected.length };
+            }) },
+            message_log: {
+                findMany: jest.fn(async ({ where }: { where: Record<string, unknown> }) => logs.filter(row => matches(row, where)).map(camelRow)),
+                findUnique: jest.fn(async ({ where }: { where: Record<string, unknown> }) => {
+                    const row = logs.find(row => matches(row, where)); return row ? camelRow(row) : null;
+                }),
+                create: jest.fn(async ({ data }: { data: Record<string, unknown> }) => {
+                    if (logs.some(row => row["provider_acceptance_key"] === data["providerAcceptanceKey"])) throw new Error("duplicate acceptance key");
+                    const row = Object.fromEntries(Object.entries({ ...data, id: logs.length + 1 }).map(([name, value]) => [snake(name), value]));
+                    logs.push(row); return camelRow(row);
+                }),
+                updateMany: jest.fn(async ({ where, data }: { where: Record<string, unknown>; data: Record<string, unknown> }) => {
+                const selected = logs.filter((row) => matches(row, where));
+                selected.forEach((row) => Object.entries(data).forEach(([name, value]) => { row[snake(name)] = value; }));
+                return { count: selected.length };
+            }) },
+        };
+        const prisma = { $transaction: async (work: (transaction: typeof tx) => Promise<unknown>) => {
+            const beforeRows = structuredClone(rows), beforeLogs = structuredClone(logs);
+            try { return await work(tx); } catch (error) { rows = beforeRows; logs = beforeLogs; throw error; }
+        } };
+        const repository = new SbMessageTriggerJobRepository(prisma as never);
+        return { tx, repository, replacement, statements, rows: () => rows, logs: () => logs,
+            logRepository: new SbMessageLogRepository(prisma as never),
+            run: () => repository.replacePendingJobsUnlessInFlight(replacement, reason, { automaticOnly: true, requireActiveLinkToken: "synthetic-active" }) };
+    }
+
+    function quietFixture() {
+        const f = fixture();
+        const hold = { originalScheduledFor: f.rows()[0]!["scheduled_for"] as Date,
+            releaseAt: new Date("2027-01-09T21:00:00.000Z"), policyRevision: "policy-r4.2", reason: "message_quiet_hours:DEFER" };
+        Object.assign(f.rows()[0]!, { next_attempt_at: hold.releaseAt });
+        Object.assign(f.logs()[0]!, { status: "pending", attempts: 0, last_attempt_at: null, next_retry_at: null,
+            provider_acceptance_state: "prepared", variables: { templateVersion: "old-template", ...messageQuietHoldVariables(hold) } });
+        const job = () => f.repository["toDomain"](camelRow(f.rows()[0]!) as never);
+        return { ...f, hold, job };
+    }
+
+    it("retires a real bound DEFER without a retry and frees its job-scoped key for the refreshed fingerprint", async () => {
+        const f = quietFixture();
+        const oldLog = structuredClone(f.logs()[0]!);
+        const unrelated = structuredClone({ rows: f.rows().slice(1), logs: f.logs().slice(1) });
+        expect(await f.repository.readQuietHold(f.job(), f.tx as never)).toEqual(f.hold);
+        const result = await f.run();
+        expect(result.kind).toBe("replaced");
+        if (result.kind !== "replaced") throw new Error("Expected refreshed reservation");
+        expect(result.job.id).toBe("automatic");
+        expect(result.job.scheduledFor).toEqual(f.replacement.scheduledFor);
+        expect(result.job.payload).toEqual(f.replacement.payload);
+        expect(result.job.nextAttemptAt).toBeNull();
+        expect(await f.repository.readQuietHold(result.job, f.tx as never)).toBeNull();
+        expect(f.logs()).toHaveLength(4);
+        expect(f.logs()[0]).toMatchObject({ id: oldLog["id"], status: "failed", error_message: reason,
+            trigger_job_id: null, provider_acceptance_key: null, provider_acceptance_fingerprint: null,
+            message_body: oldLog["message_body"], created_at: oldLog["created_at"], provider_call_started_at: null,
+            variables: { ...(oldLog["variables"] as object), supersededTriggerJobId: "automatic",
+                supersededProviderAcceptanceKey: oldLog["provider_acceptance_key"],
+                supersededProviderAcceptanceFingerprint: oldLog["provider_acceptance_fingerprint"] } });
+        expect({ rows: f.rows().slice(1), logs: f.logs().slice(1) }).toEqual(unrelated);
+        const key = buildSmsProviderAcceptanceKey("automation", `${branchId}:${result.job.id}`);
+        expect(key).toBe(oldLog["provider_acceptance_key"]);
+        const fingerprint = buildSmsProviderAcceptanceFingerprint({ branchId, triggerJobId: result.job.id,
+            message: "Updated service dates", scheduledFor: result.job.scheduledFor.toISOString(), variables: result.job.payload.templateVariables });
+        const fresh = new MessageLogEntity(0, branchId, "aligo_sms", result.job.templateKey, result.job.id,
+            result.job.recipientPhone!, result.job.clientId, "Updated service dates", result.job.payload.templateVariables,
+            "pending", null, null, 0, null, null, new Date(), new Date(), "QA-care", result.job.recipientPhone, key, fingerprint, "prepared");
+        const prepared = await f.logRepository.prepareProviderAttempt(fresh);
+        expect(prepared.id).not.toBe(oldLog["id"]);
+        expect(prepared.providerAcceptanceKey).toBe(key);
+        expect(prepared.providerAcceptanceFingerprint).toBe(fingerprint);
+        expect(prepared.providerAcceptanceFingerprint).not.toBe(oldLog["provider_acceptance_fingerprint"]);
+        expect(prepared.messageBody).toBe("Updated service dates");
+        expect((await f.logRepository.prepareProviderAttempt(fresh)).id).toBe(prepared.id);
+        expect(f.tx.message_log.create).toHaveBeenCalledTimes(1);
+    });
+
+    it("retains automatic-send policy gating before selecting quiet queue rows", async () => {
+        const query = jest.fn().mockResolvedValue([]);
+        const repo = new SbMessageTriggerJobRepository({ $queryRaw: query } as never);
+        expect(await repo.findDueQuietQueueJobs([{ branchId, automaticEnabled: false, retryEnabled: true, intervalMinutes: 1 }],
+            new Date("2027-01-11T21:00:00Z"))).toEqual([]);
+        const sql = query.mock.calls[0]![0] as Prisma.Sql;
+        expect(sql.text).toContain("AND (policy.automatic_enabled OR");
+        expect(sql.values).toEqual(expect.arrayContaining([branchId, false]));
+        expect(sql.text.indexOf("policy.automatic_enabled OR")).toBeLessThan(sql.text.indexOf("LIMIT"));
+    });
+
+    it("can retire a reversible hold under an allowed system cancellation", async () => {
+        const f = quietFixture();
+        Object.assign(f.rows()[0]!, { status: "canceled", cancel_reason: SERVICE_RECORD_LINK_ENDED_REASON });
+        Object.assign(f.rows()[1]!, { status: "canceled", cancel_reason: SERVICE_RECORD_LINK_RESCHEDULED_REASON });
+        expect((await f.run()).kind).toBe("replaced");
+        expect(await f.repository.readQuietHold(f.job(), f.tx as never)).toBeNull();
+        expect(f.logs()[0]).toMatchObject({ trigger_job_id: null, provider_acceptance_key: null, error_message: reason });
+    });
+
+    it.each([
+        { variables: {} },
+        { variables: { quietHoursDisposition: "DEFER" } },
+        { status: "failed" }, { status: "sent" }, { attempts: 1 },
+        { provider_acceptance_state: "uncertain" }, { provider_acceptance_state: "started" },
+        { provider_call_started_at: new Date() }, { provider_accepted_at: new Date() }, { aligo_mid: "accepted-mid" },
+        { provider_acceptance_key: "unowned-key" }, { provider_acceptance_fingerprint: null },
+    ])("protects a non-hold, malformed or irreversible attempt %j", async (override) => {
+        const f = quietFixture(); Object.assign(f.logs()[0]!, override);
+        const before = structuredClone({ rows: f.rows(), logs: f.logs() });
+        expect((await f.run()).kind).toBe("protected");
+        expect({ rows: f.rows(), logs: f.logs() }).toEqual(before);
+        expect(f.tx.message_log.updateMany).not.toHaveBeenCalled();
+    });
+
+    it.each(["partial", "uncertain", "delivered", "manual-provider-rejected"])("protects DEFER marked %s", async (retrySafety) => {
+        const f = quietFixture(); (f.logs()[0]!["variables"] as Record<string, unknown>)["retrySafety"] = retrySafety;
+        expect((await f.run()).kind).toBe("protected");
+        expect(f.tx.message_log.updateMany).not.toHaveBeenCalled();
+    });
+
+    it.each(["release", "original", "binding", "claim", "deadline", "duplicate"])("rejects a mismatching quiet association: %s", async (state) => {
+        const f = quietFixture(); const row = f.rows()[0]!;
+        if (state === "release") row["next_attempt_at"] = new Date(f.hold.releaseAt.getTime() - 1);
+        if (state === "original") (f.logs()[0]!["variables"] as Record<string, unknown>)["quietHoursOriginalScheduledFor"] = "2027-01-08T03:00:00.000Z";
+        if (state === "binding") (row["payload"] as Record<string, unknown>)["existingMessageLogId"] = 99;
+        if (state === "claim") row["claim_token"] = "stale-claim";
+        if (state === "deadline") row["processing_deadline_at"] = new Date();
+        if (state === "duplicate") f.logs().push({ ...f.logs()[0], id: 9 });
+        const before = structuredClone({ rows: f.rows(), logs: f.logs() });
+        expect((await f.run()).kind).toBe("protected");
+        expect({ rows: f.rows(), logs: f.logs() }).toEqual(before);
+    });
+
+    it("reschedules a trigger-deferred quiet hold instead of keeping the old date", async () => {
+        const f = quietFixture(); const row = f.rows()[0]!;
+        // A trigger-side DEFER before any provider call bumps the job attempts and backoff.
+        Object.assign(row, { attempts: 2, next_attempt_at: new Date(f.hold.releaseAt.getTime() + 5 * 60_000) });
+        const unrelated = structuredClone({ rows: f.rows().slice(1), logs: f.logs().slice(1) });
+        const result = await f.run();
+        expect(result.kind).toBe("replaced");
+        if (result.kind !== "replaced") throw new Error("Expected refreshed reservation");
+        expect(result.job).toMatchObject({ id: "automatic", status: "pending", attempts: 0, nextAttemptAt: null,
+            scheduledFor: f.replacement.scheduledFor, payload: f.replacement.payload });
+        expect(f.rows()[0]).toMatchObject({ status: "pending", attempts: 0, next_attempt_at: null,
+            scheduled_for: f.replacement.scheduledFor, cancel_reason: null });
+        expect(f.logs()[0]).toMatchObject({ status: "failed", trigger_job_id: null, provider_acceptance_key: null, error_message: reason });
+        expect(await f.repository.readQuietHold(result.job, f.tx as never)).toBeNull();
+        expect({ rows: f.rows().slice(1), logs: f.logs().slice(1) }).toEqual(unrelated);
+    });
+
+    it("keeps a needs_setup reservation operator-only when its dates change", async () => {
+        const f = fixture(); const row = f.rows()[0]!;
+        f.logs().splice(0, 1);
+        Object.assign(row, { status: "needs_setup", cancel_reason: "Sender profile is not configured", attempts: 1 });
+        const unrelated = structuredClone({ rows: f.rows().slice(1), logs: f.logs() });
+        const result = await f.run();
+        expect(result.kind).toBe("replaced");
+        if (result.kind !== "replaced") throw new Error("Expected refreshed reservation");
+        expect(result.job).toMatchObject({ id: "automatic", status: "needs_setup", cancelReason: "Sender profile is not configured",
+            attempts: 1, nextAttemptAt: null, scheduledFor: f.replacement.scheduledFor, payload: f.replacement.payload });
+        expect(f.rows()[0]).toMatchObject({ status: "needs_setup", cancel_reason: "Sender profile is not configured",
+            attempts: 1, next_attempt_at: null, claim_token: null, scheduled_for: f.replacement.scheduledFor });
+        expect({ rows: f.rows().slice(1), logs: f.logs() }).toEqual(unrelated);
+    });
+
+    it("leaves an equivalent quiet reservation unchanged", async () => {
+        const f = quietFixture();
+        Object.assign(f.replacement, { scheduledFor: f.hold.originalScheduledFor, payload: f.rows()[0]!["payload"] });
+        const before = structuredClone({ rows: f.rows(), logs: f.logs() });
+        expect((await f.run()).kind).toBe("protected");
+        expect({ rows: f.rows(), logs: f.logs() }).toEqual(before);
+    });
+
+    it("does not retire manual, unbound or cross-branch DEFER logs", async () => {
+        const f = quietFixture(); const old = f.logs()[0]!;
+        for (const log of f.logs().slice(1)) Object.assign(log, { status: "pending", next_retry_at: null,
+            variables: structuredClone(old["variables"]), provider_acceptance_state: "prepared" });
+        // No automatic bound log: none of the other holds may lend it their key.
+        old["trigger_job_id"] = null;
+        const before = structuredClone(f.logs());
+        expect((await f.run()).kind).toBe("replaced");
+        expect(f.logs()).toEqual(before);
+        expect(f.tx.message_log.updateMany).not.toHaveBeenCalled();
+    });
+
+    it("rolls back a retired quiet log and the reservation when the subsequent upsert fails", async () => {
+        const f = quietFixture(); const before = structuredClone({ rows: f.rows(), logs: f.logs() });
+        const query = f.tx.$queryRaw.getMockImplementation()!;
+        f.tx.$queryRaw.mockImplementation(async (sql) => {
+            if (sql.text.includes('INSERT INTO "message_trigger_job"')) throw new Error("upsert failed");
+            return query(sql);
+        });
+        await expect(f.run()).rejects.toThrow("upsert failed");
+        expect(f.tx.message_log.updateMany).toHaveBeenCalledTimes(1);
+        expect({ rows: f.rows(), logs: f.logs() }).toEqual(before);
+    });
+
+    it.each(["trigger_job_id", "branch_id", "id", "provider_acceptance_key", "provider_acceptance_fingerprint",
+        "provider_acceptance_state", "provider_call_started_at", "updated_at", "variables"])("CAS cannot retire a changed held log (%s)", async (field) => {
+        const f = quietFixture(); const before = structuredClone({ rows: f.rows(), logs: f.logs() });
+        const update = f.tx.message_log.updateMany.getMockImplementation()!;
+        f.tx.message_log.updateMany.mockImplementationOnce(async (args) => {
+            f.logs()[0]![field] = field === "id" ? 99 : field === "variables" ? {} : field.endsWith("_at") ? new Date() : "changed";
+            return update(args);
+        });
+        await expect(f.run()).rejects.toThrow("Automatic quiet hold changed while locked");
+        expect({ rows: f.rows(), logs: f.logs() }).toEqual(before);
+    });
+
+    it.each(["quiet", "backoff"])("releases a reversible processing claim without clearing its durable %s deadline", async (kind) => {
+        const f = quietFixture();
+        const next = new Date(f.hold.releaseAt.getTime() + (kind === "backoff" ? 300_000 : 0));
+        Object.assign(f.rows()[0]!, { status: "processing", claim_token: "current-claim", processing_deadline_at: new Date(), next_attempt_at: next });
+        const job = f.job();
+        expect(await f.repository.releaseProcessingForDateRefresh(job, f.tx as never)).toBe(true);
+        expect(f.rows()[0]).toMatchObject({ status: "pending", claim_token: null, processing_deadline_at: null, next_attempt_at: next });
+        expect(await f.repository.readQuietHold(f.job(), f.tx as never)).toEqual(f.hold);
+        expect(parseMessageQuietHold(f.logs()[0]!["variables"])).toEqual(f.hold);
+        expect(f.job().nextAttemptAt!.getTime()).toBeGreaterThanOrEqual(f.hold.releaseAt.getTime());
+        expect(await f.repository.releaseProcessingForDateRefresh(job, f.tx as never)).toBe(false);
+    });
+
+    it.each(["claim", "branch", "schedule"])("does not release a stale or mismatching processing claim (%s)", async (state) => {
+        const f = quietFixture();
+        Object.assign(f.rows()[0]!, { status: "processing", claim_token: "current-claim" });
+        const stale = f.job();
+        if (state === "claim") stale.claimToken = "stale-claim";
+        if (state === "branch") stale.branchId = "other";
+        if (state === "schedule") stale.employeeScheduleId = 11;
+        const before = structuredClone({ rows: f.rows(), logs: f.logs() });
+        expect(await f.repository.releaseProcessingForDateRefresh(stale, f.tx as never)).toBe(false);
+        expect({ rows: f.rows(), logs: f.logs() }).toEqual(before);
+    });
+
+    it("moves only the exact automatic job and supersedes only its proven retry, preserving a queued manual send and its log", async () => {
+        const f = fixture(); const beforeRows = structuredClone(f.rows().slice(1)), beforeLogs = structuredClone(f.logs().slice(1));
+        expect((await f.run()).kind).toBe("replaced");
+        expect(f.rows()[0]).toMatchObject({ status: "pending", scheduled_for: f.replacement.scheduledFor, payload: f.replacement.payload });
+        expect(f.logs()[0]).toMatchObject({ status: "failed", error_message: reason, next_retry_at: null });
+        expect(f.rows().slice(1)).toEqual(beforeRows); expect(f.logs().slice(1)).toEqual(beforeLogs);
+        const logRead = f.statements.find((sql) => sql.text.includes('FROM "message_log"'))!;
+        expect(logRead.text).toMatch(/branch_id = \$\d+::uuid AND trigger_job_id = \$\d+/);
+        expect(logRead.text).toContain("provider_acceptance_state IN ('rejected', 'reconciled_not_delivered')");
+        const before = structuredClone({ rows: f.rows(), logs: f.logs() });
+        expect((await f.run()).kind).toBe("protected");
+        expect({ rows: f.rows(), logs: f.logs() }).toEqual(before);
+    });
+
+    it.each(["sent", "canceled", "failed", "user-canceled", "processing", "dispatching", "task", "irreversible-log"])("protects %s without touching manual or unrelated work", async (state) => {
+        const f = fixture(); const row = f.rows()[0]!;
+        if (["sent", "canceled", "failed", "processing", "dispatching"].includes(state)) row["status"] = state;
+        if (state === "user-canceled") row["canceled_by_user"] = true;
+        if (state === "task") (row["payload"] as Record<string, unknown>)["taskAutomationReference"] = { actionId: "reviewed" };
+        if (state === "irreversible-log") f.logs()[0]!["provider_acceptance_state"] = "uncertain";
+        const before = structuredClone({ rows: f.rows(), logs: f.logs() });
+        expect((await f.run()).kind).toBe(["processing", "dispatching"].includes(state) ? "in_flight" : "protected");
+        expect({ rows: f.rows(), logs: f.logs() }).toEqual(before);
+    });
+
+    it.each(["pending", "canceled"])("rolls the %s reservation and log writes back together when supersession fails", async (status) => {
+        const f = fixture();
+        Object.assign(f.rows()[0]!, { status, cancel_reason: status === "canceled" ? SERVICE_RECORD_LINK_ENDED_REASON : null });
+        if (status === "canceled") Object.assign(f.rows()[1]!, { status: "canceled", cancel_reason: SERVICE_RECORD_LINK_RESCHEDULED_REASON });
+        const before = structuredClone({ rows: f.rows(), logs: f.logs() });
+        f.tx.message_log.updateMany.mockRejectedValueOnce(new Error("log write conflict"));
+        await expect(f.run()).rejects.toThrow("log write conflict");
+        expect({ rows: f.rows(), logs: f.logs() }).toEqual(before);
+    });
+
+    it("keeps the link catch-up when an eligible schedule's start moves into the past", async () => {
+        jest.setSystemTime(new Date("2027-01-11T00:00:00Z"));
+        const f = fixture();
+        f.rows()[0]!["scheduled_for"] = new Date("2027-01-12T03:00:00Z");
+        const unrelated = structuredClone({ rows: f.rows().slice(1), logs: f.logs().slice(1) });
+        expect((await f.run()).kind).toBe("replaced");
+        expect(f.rows()[0]).toMatchObject({ status: "pending", scheduled_for: f.replacement.scheduledFor });
+        expect(f.logs()[0]).toMatchObject({ error_message: reason, next_retry_at: null });
+        expect({ rows: f.rows().slice(1), logs: f.logs().slice(1) }).toEqual(unrelated);
+    });
+
+    it.each([
+        SERVICE_RECORD_LINK_RESCHEDULED_REASON,
+        SERVICE_RECORD_LINK_ENDED_REASON,
+        SERVICE_RECORD_LINK_BRANCH_DISABLED_REASON,
+        SERVICE_RECORD_LINK_PRE_BOOKING_REASON,
+        MESSAGE_SENDER_APPROVAL_REQUIRED_CANCEL_REASON,
+    ])("reactivates a system cancellation (%s) even when its time and source are unchanged", async (cancelReason) => {
+        const f = fixture(); const row = f.rows()[0]!;
+        Object.assign(row, { status: "canceled", cancel_reason: cancelReason,
+            scheduled_for: f.replacement.scheduledFor, payload: structuredClone(f.replacement.payload) });
+        // An inactive, system-canceled manual row does not block a fresh automatic reservation.
+        Object.assign(f.rows()[1]!, { status: "canceled", cancel_reason: SERVICE_RECORD_LINK_RESCHEDULED_REASON });
+        // No delivery attempt was made before this system cancellation.
+        f.logs().splice(0, 1);
+        const unrelated = structuredClone({ rows: f.rows().slice(1), logs: f.logs() });
+        expect((await f.run()).kind).toBe("replaced");
+        expect(f.rows()[0]).toMatchObject({ status: "pending", cancel_reason: null, canceled_at: null });
+        expect({ rows: f.rows().slice(1), logs: f.logs() }).toEqual(unrelated);
+        const current = structuredClone({ rows: f.rows(), logs: f.logs() });
+        expect((await f.run()).kind).toBe("protected");
+        expect({ rows: f.rows(), logs: f.logs() }).toEqual(current);
+    });
+
+    it.each([
+        { status: "pending" }, { status: "needs_setup" }, { status: "processing" }, { status: "dispatching" }, { status: "sent" },
+        { status: "failed", cancel_reason: null },
+        { status: "canceled", cancel_reason: null },
+        { status: "canceled", cancel_reason: "Service record access revoked" },
+        { status: "canceled", cancel_reason: SERVICE_RECORD_LINK_RESCHEDULED_REASON, canceled_by_user: true },
+    ])("does not reclaim a system-canceled automatic link when the schedule has a manual blocker %j", async (blocker) => {
+        for (const cancelReason of [SERVICE_RECORD_LINK_RESCHEDULED_REASON, SERVICE_RECORD_LINK_ENDED_REASON,
+            SERVICE_RECORD_LINK_BRANCH_DISABLED_REASON, SERVICE_RECORD_LINK_PRE_BOOKING_REASON,
+            MESSAGE_SENDER_APPROVAL_REQUIRED_CANCEL_REASON]) {
+            const f = fixture();
+            Object.assign(f.rows()[0]!, { status: "canceled", cancel_reason: cancelReason });
+            Object.assign(f.rows()[1]!, blocker);
+            const before = structuredClone({ rows: f.rows(), logs: f.logs() });
+            expect((await f.run()).kind).toBe("protected");
+            expect({ rows: f.rows(), logs: f.logs() }).toEqual(before);
+            expect(f.tx.message_trigger_job.updateMany).not.toHaveBeenCalled();
+            expect(f.tx.message_log.updateMany).not.toHaveBeenCalled();
+            expect(f.statements.some((sql) => sql.text.includes('INSERT INTO "message_trigger_job"'))).toBe(false);
+        }
+    });
+
+    it("reclaims with only nonblocking or unrelated schedule rows under the existing lock fence", async () => {
+        const f = fixture();
+        Object.assign(f.rows()[0]!, { status: "canceled", cancel_reason: SERVICE_RECORD_LINK_ENDED_REASON });
+        Object.assign(f.rows()[1]!, { status: "failed", cancel_reason: SERVICE_RECORD_LINK_SCHEDULING_RETRY_REASON });
+        // Pending rows in another branch, schedule, or rule must remain untouched.
+        f.rows().push({ ...structuredClone(f.rows()[1]!), id: "other-rule", rule_id: "other-rule", status: "sent" });
+        const unrelated = structuredClone({ rows: f.rows().slice(1), logs: f.logs().slice(1) });
+        expect((await f.run()).kind).toBe("replaced");
+        expect(f.rows()[0]).toMatchObject({ status: "pending", cancel_reason: null });
+        expect({ rows: f.rows().slice(1), logs: f.logs().slice(1) }).toEqual(unrelated);
+        const blockerIndex = f.statements.findIndex((sql) => sql.text.includes('FROM "message_trigger_job" AS blocker'));
+        expect(blockerIndex).toBeGreaterThan(f.statements.findIndex((sql) => sql.text.includes('FROM "message_trigger_rule"')));
+        expect(blockerIndex).toBeLessThan(f.statements.findIndex((sql) => sql.text.includes('FROM "message_log"')));
+        const scan = f.statements[blockerIndex]!;
+        expect(scan.text).toMatch(/blocker.branch_id = \$\d+::uuid/);
+        expect(scan.values).toEqual(expect.arrayContaining([branchId, SERVICE_RECORD_LINK_RULE_ID, 10, "automatic"]));
+        expect(scan.text).toContain("ORDER BY blocker.id");
+        expect(scan.text).toContain("FOR UPDATE");
+        expect(scan.text).not.toContain("dedupe_key =");
+        expect(scan.text).not.toContain("client_id =");
+    });
+
+    it.each(["Service record access revoked", "Service record link reset without resend", "SERVICE_RECORD_REVISION_SUPERSEDED"])(
+        "does not replay historical or operator cancellations (%s)", async (cancelReason) => {
+            const f = fixture(); Object.assign(f.rows()[0]!, { status: "canceled", cancel_reason: cancelReason });
+            const before = structuredClone({ rows: f.rows(), logs: f.logs() });
+            expect((await f.run()).kind).toBe("protected");
+            expect({ rows: f.rows(), logs: f.logs() }).toEqual(before);
+        },
+    );
+
+    it.each(["user-canceled", "irreversible-log"])("protects a system cancellation with %s", async (state) => {
+        const f = fixture(); Object.assign(f.rows()[0]!, { status: "canceled", cancel_reason: SERVICE_RECORD_LINK_ENDED_REASON });
+        if (state === "user-canceled") f.rows()[0]!["canceled_by_user"] = true;
+        else f.logs()[0]!["provider_acceptance_state"] = "uncertain";
+        const before = structuredClone({ rows: f.rows(), logs: f.logs() });
+        expect((await f.run()).kind).toBe("protected");
+        expect({ rows: f.rows(), logs: f.logs() }).toEqual(before);
+    });
+});
+
+describe("locked same-occurrence date refresh", () => {
+    const generation = new Date("2026-11-18T00:00:00Z");
+    function fixture() {
+        const old = Object.assign(MessageTriggerJobEntity.create({ branchId: "branch-1", ruleId: "rule-1", clientId: 7,
+            employeeScheduleId: 91, recipientType: MessageTriggerRecipientType.PRIMARY_EMPLOYEE,
+            templateKey: MessageTriggerTemplateKey.CAREGIVER_SERVICE_START_NOTICE, recipientPhone: "01000000011",
+            dedupeKey: "same-occurrence", scheduledFor: generation,
+            payload: { memberId: "7", recipientName: "QA", recipientPhone: "01000000011", templateVariables: { end: "old" } } }),
+        { id: "exact-job", canceledByUser: false, attempts: 2, nextAttemptAt: new Date(generation.getTime() + 600_000) });
+        const fresh = MessageTriggerJobEntity.create({ ...old, branchId: old.branchId!, payload: { ...old.payload, templateVariables: { end: "new" } } });
+        const sqls: Prisma.Sql[] = [];
+        const tx = { $queryRaw: jest.fn(async (sql: Prisma.Sql) => {
+            sqls.push(sql);
+            if (sql.sql.includes('FROM "message_trigger_rule"')) return [{ id: old.ruleId, branch_id: old.branchId, updated_at: generation, jobs_stale: false }];
+            const preserve = sql.sql.includes('UPDATE "message_trigger_job" AS job');
+            const row = { ...old, payload: fresh.payload, attempts: preserve ? old.attempts : 0, nextAttemptAt: preserve ? old.nextAttemptAt : null };
+            return [{ id: row.id, branch_id: row.branchId, rule_id: row.ruleId, status: row.status,
+                scheduled_for: row.scheduledFor, sent_at: null, canceled_at: null, cancel_reason: null,
+                client_id: row.clientId, employee_schedule_id: row.employeeScheduleId, recipient_type: row.recipientType,
+                recipient_phone: row.recipientPhone, template_key: row.templateKey, dedupe_key: row.dedupeKey,
+                payload: row.payload, created_at: row.createdAt, updated_at: row.updatedAt, attempts: row.attempts,
+                next_attempt_at: row.nextAttemptAt, claim_token: null, processing_deadline_at: null }];
+        }) };
+        const repo = new SbMessageTriggerJobRepository({} as never);
+        return { old, fresh, tx, repo, sqls };
+    }
+    it("preserves retry state only with exact pending identity, generation and reviewed-row fences", async () => {
+        const f = fixture();
+        const result = await f.repo.upsertPendingForRuleGeneration(f.fresh, generation, false, false, f.tx as never, f.old);
+        expect(result).toMatchObject({ id: f.old.id, attempts: 2, nextAttemptAt: f.old.nextAttemptAt, payload: f.fresh.payload });
+        const update = f.sqls[1]!;
+        const set = update.sql.split("WHERE")[0]!;
+        for (const field of ["attempts", "next_attempt_at", "scheduled_for", "status", "claim_token"]) expect(set).not.toContain(field);
+        for (const fence of ["job.id =", "job.branch_id =", "job.rule_id =", "job.client_id IS NOT DISTINCT FROM",
+            "job.employee_schedule_id IS NOT DISTINCT FROM", "job.recipient_type =", "job.template_key =", "job.dedupe_key =",
+            "job.scheduled_for =", "job.status = 'pending'", "job.canceled_by_user = false", "job.claim_token IS NULL",
+            "job.processing_deadline_at IS NULL", "job.updated_at =", "job.payload ="]) expect(update.sql).toContain(fence);
+        expect(update.sql).not.toContain("INSERT");
+        expect(update.values).toEqual(expect.arrayContaining([f.old.id, f.old.branchId, f.old.ruleId, f.old.dedupeKey, f.old.scheduledFor, f.old.updatedAt]));
+    });
+    it.each(["key", "time", "rule", "branch", "recipient", "schedule", "client", "template", "canceled", "sent", "processing", "manual", "task", "claim", "deadline", "user"])("refuses %s drift without falling back to ordinary insertion", async drift => {
+        const f = fixture();
+        if (drift === "key") f.fresh.dedupeKey += "new";
+        if (drift === "time") f.fresh.scheduledFor = new Date(generation.getTime() + 1);
+        if (drift === "rule") f.old.ruleId += "old";
+        if (drift === "branch") f.old.branchId += "old";
+        if (drift === "recipient") f.old.recipientType = MessageTriggerRecipientType.CLIENT;
+        if (drift === "schedule") f.old.employeeScheduleId = 92;
+        if (drift === "client") f.old.clientId = 8;
+        if (drift === "template") f.old.templateKey = MessageTriggerTemplateKey.INFO;
+        if (["canceled", "sent", "processing"].includes(drift)) f.old.status = drift as "canceled" | "sent" | "processing";
+        if (drift === "manual") f.old.ruleId = "manual:qa";
+        if (drift === "task") f.old.payload.taskAutomationReference = {} as never;
+        if (drift === "claim") f.old.claimToken = "claim";
+        if (drift === "deadline") f.old.processingDeadlineAt = generation;
+        if (drift === "user") f.old.canceledByUser = true;
+        expect(await f.repo.upsertPendingForRuleGeneration(f.fresh, generation, false, false, f.tx as never, f.old)).toBeNull();
+        expect(f.sqls).toHaveLength(1);
+    });
+    it("rejects a changed generation before refreshing and a lost exact-row CAS without fallback", async () => {
+        const f = fixture();
+        expect(await f.repo.upsertPendingForRuleGeneration(f.fresh, new Date(0), false, false, f.tx as never, f.old)).toBeNull();
+        f.tx.$queryRaw.mockImplementationOnce(async () => [{ id: f.old.ruleId, branch_id: f.old.branchId, updated_at: generation, jobs_stale: false }]);
+        f.tx.$queryRaw.mockImplementationOnce(async () => []);
+        expect(await f.repo.upsertPendingForRuleGeneration(f.fresh, generation, false, false, f.tx as never, f.old)).toBeNull();
+    });
+    it("keeps ordinary upsert retry reset behavior unchanged", async () => {
+        const f = fixture();
+        const result = await f.repo.upsertPendingForRuleGeneration(f.fresh, generation, false, false, f.tx as never);
+        expect(result).toMatchObject({ attempts: 0, nextAttemptAt: null });
+        expect(f.sqls[1]!.sql).toContain('ON CONFLICT ("dedupe_key")');
+        expect(f.sqls[1]!.sql).toContain("attempts = 0");
+        expect(f.sqls[1]!.sql).toContain("next_attempt_at = NULL");
     });
 });

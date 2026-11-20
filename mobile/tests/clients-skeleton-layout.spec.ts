@@ -92,6 +92,13 @@ test.describe("Mobile client list geometry and counts", () => {
         body: JSON.stringify({ data: CLIENTS, total: 123, page: 1, limit: 50, totalPages: 1 }),
       });
     });
+    await page.route("**/api/clients/service-record-missing**", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ count: 0, items: [] }),
+      });
+    });
 
     await page.goto("/clients");
     const search = page.getByRole("textbox", { name: "고객 이름, 매니저 검색" });
@@ -145,6 +152,13 @@ test.describe("Mobile client list geometry and counts", () => {
           limit: 50,
           totalPages: 1,
         }),
+      });
+    });
+    await page.route("**/api/clients/service-record-missing**", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ count: 0, items: [] }),
       });
     });
 

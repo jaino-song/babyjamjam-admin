@@ -14,6 +14,9 @@ jest.mock("@sentry/nextjs", () => ({
 }));
 
 import {
+  captureAndFlushApiError,
+  captureApiError,
+  captureSessionRefreshNetworkError,
   captureAndFlushServiceRecordError,
   captureServiceRecordError,
   captureServiceRecordResponseError,
@@ -156,5 +159,218 @@ describe("getServiceRecordOperation", () => {
   it("labels token-page holiday calendar requests as holidays", () => {
     expect(getServiceRecordOperation("/holidays?year=2026")).toBe("holidays");
     expect(getServiceRecordOperation("/context")).toBe("context");
+  });
+});
+
+
+describe("captureApiError", () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    mockFlush.mockResolvedValue(true);
+  });
+
+  it("preserves the raw service-record revision document retry path", () => {
+    const path = "/api/admin/service-records/revisions/[Filtered]/documents/[Filtered]/retry";
+    const error = createAxiosError({
+      status: 503,
+      method: "post",
+      url: "/api/admin/service-records/revisions/123e4567-e89b-42d3-a456-426614174000/documents/223e4567-e89b-42d3-a456-426614174001/retry",
+    });
+
+    expect(captureApiError(error)).toBe(true);
+    expect(mockCaptureException).toHaveBeenCalledTimes(1);
+    expect(mockCaptureException).toHaveBeenCalledWith(expect.objectContaining({
+      name: "ServiceRecordError",
+      message: `Service-record public-link failed: POST ${path} (503)`,
+    }));
+    expect(mockScope.setLevel).toHaveBeenCalledWith("error");
+    expect(mockScope.setTag.mock.calls).toEqual([
+      ["feature", "service-records"],
+      ["app", "mobile"],
+      ["runtime", "browser"],
+      ["operation", "public-link"],
+      ["handled", "true"],
+      ["status_code", "503"],
+    ]);
+    expect(mockScope.setFingerprint).toHaveBeenCalledWith(["service-record", "public-link", "POST", path, "503"]);
+    expect(mockScope.setContext).toHaveBeenCalledWith("serviceRecord", {
+      method: "POST",
+      path,
+      operation: "public-link",
+      status: 503,
+      code: null,
+      runtime: "browser",
+    });
+  });
+
+  it("captures and deduplicates a 502 with a private-data-free path template", () => {
+    const error = createAxiosError({ status: 502, url: "/api/clients/123?token=private" });
+    expect(captureApiError(error)).toBe(true);
+    expect(captureApiError(error)).toBe(false);
+    expect(mockCaptureException).toHaveBeenCalledTimes(1);
+    expect(mockCaptureException).toHaveBeenCalledWith(expect.objectContaining({
+      name: "ApiRequestError", message: "API request failed: GET /api/clients/:id (502)",
+    }));
+    expect(mockScope.setTag).toHaveBeenCalledWith("feature", "api");
+    expect(mockScope.setTag).toHaveBeenCalledWith("app", "mobile");
+    expect(mockScope.setTag).toHaveBeenCalledWith("runtime", "browser");
+    expect(mockScope.setTag).toHaveBeenCalledWith("handled", "true");
+    expect(mockScope.setTag).toHaveBeenCalledWith("status_code", "502");
+    expect(mockScope.setLevel).toHaveBeenCalledWith("error");
+    expect(mockScope.setFingerprint).toHaveBeenCalledWith(["api-error", "GET", "/api/clients/:id", "502"]);
+    expect(mockScope.setContext).toHaveBeenCalledWith("api", {
+      method: "GET", path: "/api/clients/:id", status: 502, code: null, runtime: "browser",
+    });
+  });
+
+  it("templates opaque document identifiers in both fingerprint and context", () => {
+    captureApiError(createAxiosError({ status: 500, url: "/api/eformsign/documents/a1b2c3d4e5f6a7b8c9d0/supersede" }));
+    expect(mockScope.setFingerprint).toHaveBeenCalledWith(["api-error", "GET", "/api/eformsign/documents/:id/supersede", "500"]);
+    expect(mockScope.setContext).toHaveBeenCalledWith("api", expect.objectContaining({ path: "/api/eformsign/documents/:id/supersede" }));
+  });
+
+  it("captures network failures as warnings", () => {
+    expect(captureApiError(createAxiosError({ code: "ERR_NETWORK" }))).toBe(true);
+    expect(mockScope.setLevel).toHaveBeenCalledWith("warning");
+    expect(mockScope.setTag).toHaveBeenCalledWith("status_code", "network");
+  });
+
+  it("skips expected responses, cancellation, and non-Axios errors", () => {
+    for (const error of [createAxiosError({ status: 404 }), createAxiosError({ code: "ERR_CANCELED" }), new Error("render failed"), null]) {
+      expect(captureApiError(error)).toBe(false);
+    }
+    expect(mockCaptureException).not.toHaveBeenCalled();
+  });
+
+  it("delegates service-record capture before marking the error as reported", () => {
+    const error = createAxiosError({ status: 503, method: "post", url: "/service-record/efl_secret/sessions/1/submit" });
+    expect(captureApiError(error)).toBe(true);
+    expect(captureServiceRecordError(error)).toBe(false);
+    expect(captureApiError(error)).toBe(false);
+    expect(mockCaptureException).toHaveBeenCalledTimes(1);
+    expect(mockCaptureException).toHaveBeenCalledWith(expect.objectContaining({
+      name: "ServiceRecordError",
+      message: "Service-record submit-session failed: POST /service-record/[Filtered]/sessions/[Filtered]/submit (503)",
+    }));
+    expect(mockScope.setFingerprint).toHaveBeenCalledWith(["service-record", "submit-session", "POST", "/service-record/[Filtered]/sessions/[Filtered]/submit", "503"]);
+    expect(mockScope.setTag).toHaveBeenCalledWith("feature", "service-records");
+    expect(mockScope.setContext).toHaveBeenCalledWith("serviceRecord", {
+      operation: "submit-session", method: "POST", path: "/service-record/[Filtered]/sessions/[Filtered]/submit", status: 503, code: null, runtime: "browser",
+    });
+  });
+
+  it("uses the URL sanitizer before templating and never includes request or response bodies", () => {
+    const error = Object.assign(createAxiosError({ status: 500, url: "https://api.example.com/api/receipt/efr_SECRET/image?token=hidden" }), {
+      request: { data: "private body" }, response: { status: 500, data: { name: "private name" } },
+    });
+    captureApiError(error);
+    expect(mockScope.setContext).toHaveBeenCalledWith("api", expect.objectContaining({ path: "/api/receipt/[Filtered]/image" }));
+    const captured = JSON.stringify([mockScope.setContext.mock.calls, mockScope.setTag.mock.calls, mockScope.setFingerprint.mock.calls, mockCaptureException.mock.calls[0][0].message]);
+    expect(captured).not.toMatch(/efr_SECRET|hidden|private body|private name/);
+  });
+
+  it("flushes only captured errors and tolerates flush failures", async () => {
+    mockFlush.mockRejectedValueOnce(new Error("Sentry unavailable"));
+    const error = createAxiosError({ status: 502 });
+    await expect(captureAndFlushApiError(error)).resolves.toBeUndefined();
+    await captureAndFlushApiError(error);
+    await captureAndFlushApiError(createAxiosError({ status: 404 }));
+    expect(mockFlush).toHaveBeenCalledTimes(1);
+    expect(mockFlush).toHaveBeenCalledWith(2_000);
+  });
+});
+
+
+describe("API document path templates and opaque id bounds", () => {
+  beforeEach(() => jest.clearAllMocks());
+
+  it("preserves the real service-record capture output", () => {
+    const path = "/api/service-record/[Filtered]/header";
+    captureApiError(createAxiosError({
+      status: 502, method: "post", url: "/api/service-record/qa-access-token/header",
+    }));
+
+    expect(mockScope.setTag).toHaveBeenCalledWith("feature", "service-records");
+    expect(mockScope.setTag).toHaveBeenCalledWith("operation", "save-header");
+    expect(mockScope.setContext).toHaveBeenCalledWith("serviceRecord", {
+      method: "POST", path, operation: "save-header", status: 502, code: null, runtime: "browser",
+    });
+    expect(mockScope.setFingerprint).toHaveBeenCalledWith(["service-record", "save-header", "POST", path, "502"]);
+    expect(mockCaptureException).toHaveBeenCalledWith(expect.objectContaining({
+      name: "ServiceRecordError", message: `Service-record save-header failed: POST ${path} (502)`,
+    }));
+  });
+
+  it.each(["completed", "status-counts"])("preserves the complete %s collection endpoint", (collection) => {
+    const path = `/api/documents/${collection}`;
+    captureApiError(createAxiosError({ status: 502, url: path }));
+    expect(mockScope.setContext).toHaveBeenCalledWith("api", expect.objectContaining({ path }));
+    expect(mockScope.setFingerprint).toHaveBeenCalledWith(["api-error", "GET", path, "502"]);
+  });
+
+  it.each(["opaque-service-record-secret", "opaque-service_records-secret"])("templates document id %s before feature classification", (id) => {
+    const subroute = "void";
+    const path = `/api/documents/:id/${subroute}`;
+    const error = createAxiosError({ status: 502, url: `/api/documents/${id}/${subroute}` });
+    error.stack = "Error: Request failed\n    at request (api-client.ts:1:1)";
+    captureApiError(error);
+
+    expect(mockScope.setFingerprint).toHaveBeenCalledWith(["api-error", "GET", path, "502"]);
+    expect(mockScope.setContext).toHaveBeenCalledWith("api", expect.objectContaining({ path }));
+    expect(mockScope.setTag).toHaveBeenCalledWith("feature", "api");
+    const captured = mockCaptureException.mock.calls[0][0] as Error;
+    expect(JSON.stringify([
+      mockScope.setContext.mock.calls, mockScope.setTag.mock.calls,
+      mockScope.setFingerprint.mock.calls, captured.message, captured.stack,
+    ])).not.toContain(id);
+  });
+
+  it.each([
+    ["/api/documents/abcdefghijklmnop/void", "/api/documents/:id/void"],
+    ["/api/documents/completed/supersede", "/api/documents/:id/supersede"],
+    ["/api/documents/status-counts/void", "/api/documents/:id/void"],
+    ["/eformsign/documents/completed", "/eformsign/documents/completed"],
+    ["/api/eformsign/documents/status-counts", "/api/eformsign/documents/status-counts"],
+    ["/documents/upload", "/documents/upload"],
+    ["/documents/capabilities", "/documents/capabilities"],
+    ["/other/documents/completed", "/other/documents/:id"],
+    ["/eformsign/documents/letters/download_files", "/eformsign/documents/:id/download_files"],
+    ["/documents/file/download", "/documents/:id/download"],
+    ...["completed", "in-progress", "status-counts", "rejected", "expired", "upload", "capabilities"].map((route) => [`/api/documents/${route}`, `/api/documents/${route}`]),
+    ["/api/clients/123", "/api/clients/:id"],
+    ["/api/eformsign/documents/a1b2c3d4e5f6a7b8c9d0/supersede", "/api/eformsign/documents/:id/supersede"],
+    ["/api/clients/abcdefghijklmn1", "/api/clients/abcdefghijklmn1"],
+    ["/api/clients/abcdefghijklmno1", "/api/clients/:id"],
+  ])("templates %s as %s", (url, path) => {
+    captureApiError(createAxiosError({ status: 500, url }));
+    expect(mockScope.setFingerprint).toHaveBeenCalledWith(["api-error", "GET", path, "500"]);
+    expect(mockScope.setContext).toHaveBeenCalledWith("api", expect.objectContaining({ path }));
+  });
+});
+
+
+describe("captureSessionRefreshNetworkError", () => {
+  beforeEach(() => jest.clearAllMocks());
+
+  it("deduplicates a shared refresh network failure without forwarding its raw details", () => {
+    const failure = new TypeError("https://private.example/refresh?token=private-fixture");
+    expect(captureSessionRefreshNetworkError(failure)).toBe(true);
+    expect(captureSessionRefreshNetworkError(failure)).toBe(false);
+    expect(mockCaptureException).toHaveBeenCalledTimes(1);
+    const captured = mockCaptureException.mock.calls[0][0] as Error;
+    expect(captured).not.toBe(failure);
+    expect(captured.name).toBe("ApiRequestError");
+    expect(captured.message).toBe("API request failed: POST /api/auth/refresh (network)");
+    expect(captured.stack).not.toContain("private-fixture");
+  });
+
+  it("ignores non-network refresh outcomes", () => {
+    const httpFailure = Object.assign(new Error("Application session refresh failed"), {
+      name: "ApplicationSessionRefreshError", status: 401,
+    });
+    for (const failure of [httpFailure, new Error("Unexpected failure"), null]) {
+      expect(captureSessionRefreshNetworkError(failure)).toBe(false);
+    }
+    expect(mockCaptureException).not.toHaveBeenCalled();
   });
 });

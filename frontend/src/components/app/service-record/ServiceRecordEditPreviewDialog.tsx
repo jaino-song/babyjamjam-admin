@@ -197,7 +197,7 @@ export function ServiceRecordEditPreviewDialog({
                     </SheetDescription>
                     <Button type="button" variant="ghost" size="icon" aria-label="닫기" disabled={closeDisabled}
                         data-component={`${dataComponent}_header_close`} onClick={() => onOpenChange(false)}
-                        className="absolute right-[calc(8px*var(--glint-ui-scale,1))] top-[calc(12px*var(--glint-ui-scale,1))] size-[calc(44px*var(--glint-ui-scale,1))] border-0 text-v3-text-muted">
+                        className="absolute right-[calc(8px*var(--glint-ui-scale,1))] top-[calc(12px*var(--glint-ui-scale,1))] size-[calc(44px*var(--glint-ui-scale,1))] border-0 text-v3-text-muted after:hidden">
                         <X data-component={`${dataComponent}_header_close_icon`} aria-hidden="true" />
                     </Button>
                 </SheetHeader>

@@ -5,7 +5,6 @@ import type { ReactNode } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 
 import { Button } from "@/components/ui/button";
-import { Spinner } from "@/components/ui/spinner";
 import { cn } from "@/lib/utils";
 import { MobileDetailStack } from "./detail-sheet";
 import styles from "./mobile-detail-slideup.module.css";
@@ -17,6 +16,7 @@ type MobileDetailSlideUpAction = {
   onClick: () => void;
   disabled?: boolean;
   busy?: boolean;
+  busyLabel?: string;
   dataComponent?: string;
   className?: string;
 };
@@ -114,14 +114,12 @@ export function MobileDetailSlideUp({
                     width="lg"
                     onClick={primaryAction.onClick}
                     disabled={primaryAction.disabled}
+                    loading={primaryAction.busy}
+                    loadingLabel={primaryAction.busyLabel ?? "처리 중"}
                     data-component={primaryAction.dataComponent}
                     className={cn(styles.actionButton, styles.primaryAction, primaryAction.className)}
                   >
-                    {primaryAction.busy ? (
-                      <Spinner className="h-4 w-4" />
-                    ) : (
-                      primaryAction.label
-                    )}
+                    {primaryAction.label}
                   </Button>
                 ) : null}
               </footer>

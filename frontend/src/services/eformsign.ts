@@ -59,13 +59,13 @@ export type EformsignDocumentJobFailureReasonCode =
 
 export interface EformsignDocumentJobSummary {
     activeCount: number;
-    /** 종류와 기간에 관계없이 모든 `requires_attention` 작업 수. */
+    /** 종류와 기간에 관계없이 모든 `requires_attention` 작업 수. 취소된 작업은 제외한다. */
     requiresAttentionCount: number;
-    /** `completed_at`이 최근 7일 이내인 계약 `failed` 작업 수. `superseded`도 포함한다. */
+    /** `completed_at`이 최근 7일 이내인 계약 `failed` 작업 수. `superseded`도 포함하며 취소된 작업은 제외한다. */
     failedCount: number;
     /**
-     * `completed_at`이 최근 7일 이내인 계약 `failed` 작업(`superseded` 제외)과
-     * 기간 제한 없는 모든 계약 `requires_attention` 작업 수.
+     * `completed_at`이 최근 7일 이내인 계약 `failed` 작업(`superseded`, `cancelled` 제외)과
+     * 기간 제한 없는 모든 계약 `requires_attention` 작업 수. 취소된 작업은 제외한다.
      */
     unresolvedCount: number;
     /** Ids of those unresolved jobs, newest first, at most 50. */
@@ -97,6 +97,8 @@ export interface EformsignDocumentJobResponse {
     recoveryKind: EformsignDocumentJobRecoveryKind | null;
     /** Optional only for older servers; absence never proves an unbound create. */
     recoveryPresentation?: "iframe" | "legacy" | null;
+    /** Missing on older servers; only explicit true permits cancellation. */
+    cancellable?: boolean;
     lastErrorCode: string | null;
 }
 
@@ -139,6 +141,12 @@ export interface ClaimEformsignDocumentJobRecoveryResponse {
 export interface ResolveEformsignDocumentJobResponse {
     job: EformsignDocumentJobResponse;
     alreadyResolved: boolean;
+}
+
+/** 200 from POST /eformsign-docs/jobs/:jobId/cancel. */
+export interface CancelEformsignDocumentJobResponse {
+    jobId: string;
+    outcome: "cancelled" | "already_cancelled";
 }
 
 /**
@@ -354,6 +362,12 @@ export const eformsignApi = {
     resolveDocumentJob: async (jobId: string): Promise<ResolveEformsignDocumentJobResponse> => {
         const { data } = await api.post<ResolveEformsignDocumentJobResponse>(
             `/eformsign-docs/jobs/${encodeURIComponent(jobId)}/resolve`,
+        );
+        return data;
+    },
+    cancelDocumentJob: async (jobId: string): Promise<CancelEformsignDocumentJobResponse> => {
+        const { data } = await api.post<CancelEformsignDocumentJobResponse>(
+            `/eformsign-docs/jobs/${encodeURIComponent(jobId)}/cancel`,
         );
         return data;
     },

@@ -3,7 +3,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Spinner } from "@/components/ui/spinner";
+import { LoadingState } from "@/components/app/ui/LoadingState";
 import { resetAuthorityState } from "@/lib/auth/authority-state";
 import { getCurrentPushEndpoint } from "@/lib/notifications/push-endpoint";
 import { logout } from "./actions";
@@ -48,8 +48,7 @@ export default function LogoutPage() {
 
     return (
         <div data-component="desktop_logout_page" className="flex flex-col items-center justify-center h-screen gap-4">
-            <Spinner size="lg" />
-            <p className="text-foreground">로그아웃 중...</p>
+            <LoadingState data-component="desktop_logout_page_loading" label="로그아웃 중" size="lg" />
         </div>
     );
 }

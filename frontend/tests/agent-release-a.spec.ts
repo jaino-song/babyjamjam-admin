@@ -226,7 +226,7 @@ test.describe("Release A flag coexistence", () => {
     test("renders the selected shell, streams a response, and supports branch/session controls", async ({ page }) => {
         test.skip(!runAgentE2E || runAgentRealE2E, "Run with RUN_AGENT_E2E=1 against the authenticated Playwright environment");
         const routes = await setupRoutes(page);
-        await page.goto("/chat");
+        await page.goto("/agent");
 
         if (!shellEnabled) {
             await expect(page.locator('[data-component="desktop_chat_page_header"]').getByRole("heading", { level: 1, name: "새 대화", exact: true })).toBeVisible();
@@ -255,7 +255,7 @@ test.describe("Release A flag coexistence", () => {
         await page.getByRole("button", { name: "지점 바꾸기" }).click();
         await expect(page).toHaveURL(/\/select-branch$/);
 
-        await page.goto("/chat");
+        await page.goto("/agent");
         const restoredInput = page.getByLabel("질문 입력");
         await expect(restoredInput).toHaveValue("");
 
@@ -289,7 +289,7 @@ test.describe("Release A flag coexistence", () => {
 
     test("uses the real Release A backend stream", async ({ page }) => {
         test.skip(!runAgentRealE2E, "Run with RUN_AGENT_REAL_E2E=1 against the real backend");
-        await page.goto("/chat");
+        await page.goto("/agent");
         await expect(page.locator('[data-component="desktop_chat_agent-shell_thread_header"]').getByRole("heading", { level: 1, name: "새 대화", exact: true })).toBeVisible();
 
         const input = page.getByLabel("질문 입력");
@@ -302,7 +302,7 @@ test.describe("Release A flag coexistence", () => {
     test("keeps IME Enter local and restores focus when the mobile sidebar closes", async ({ page }) => {
         test.skip(!runAgentE2E || runAgentRealE2E || !shellEnabled, "Run with RUN_AGENT_E2E=1 and NEXT_PUBLIC_AGENT_SHELL_ENABLED=1");
         const routes = await setupRoutes(page);
-        await page.goto("/chat");
+        await page.goto("/agent");
         await expect(page.locator('[data-component="desktop_chat_agent-shell_thread_header"]').getByRole("heading", { level: 1, name: "새 대화", exact: true })).toBeVisible();
 
         const input = page.getByLabel("질문 입력");
@@ -353,7 +353,7 @@ test.describe("Release A flag coexistence", () => {
     test("shows the latest server draft after a task revision conflict", async ({ page }) => {
         test.skip(!runAgentE2E || runAgentRealE2E || !shellEnabled, "Run with RUN_AGENT_E2E=1 and NEXT_PUBLIC_AGENT_SHELL_ENABLED=1");
         const routes = await setupRoutes(page, { task: true });
-        await page.goto("/chat");
+        await page.goto("/agent");
         await expect(page.locator('[data-component="desktop_chat_agent-shell_thread_header"]').getByRole("heading", { level: 1, name: "새 대화", exact: true })).toBeVisible();
 
         const input = page.getByLabel("질문 입력");

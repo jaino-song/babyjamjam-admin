@@ -1,6 +1,5 @@
 "use client";
 
-
 import { useState } from "react";
 import { useMutation } from "@tanstack/react-query";
 import { Check, Copy } from "lucide-react";
@@ -175,6 +174,8 @@ export function IssueCallIngestTokenDialog({
                 취소
               </Button>
               <Button
+                loading={createMutation.isPending}
+                loadingLabel="발급 중"
                 type="button"
                 variant="positive"
                 data-component={`${DATA_COMPONENT}_form-footer_submit-trigger`}
@@ -182,7 +183,7 @@ export function IssueCallIngestTokenDialog({
                 aria-busy={createMutation.isPending || undefined}
                 onClick={() => createMutation.mutate()}
               >
-                {createMutation.isPending ? "발급 중..." : "발급"}
+                발급
               </Button>
             </DialogFooter>
           </>

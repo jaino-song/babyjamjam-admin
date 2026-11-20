@@ -1,3 +1,4 @@
+export declare const SERVICE_RECORD_STOOL_COLOR_MAX_LENGTH = 80;
 export type ServiceRecordFieldKind = "multi" | "radio" | "counts" | "text" | "check";
 export type ServiceRecordFieldSource = "answers" | "session";
 export interface ServiceRecordCountSubKey {

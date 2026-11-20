@@ -6,6 +6,7 @@ import { toJobErrorCode } from "domain/value-objects/eformsign-job-error-code";
 import { isInitialFinalizationJobIdentity, isInitialFinalizationWorkflowScope } from "application/policies/service-record-initial-finalization.policy";
 import { sha256CanonicalJson } from "application/services/eformsign-document-job.service";
 import {
+    CANCELLED_PROGRESS_STEP,
     DISPATCH_AUTHORIZED_PROGRESS_STEP,
     EformsignDocumentJobEntity,
     EformsignDocumentJobPayload,
@@ -24,6 +25,7 @@ import {
 } from "domain/entities/system-setting.entity";
 import {
     ClaimRecoveryResult,
+    CancelDocumentJobResult,
     EformsignDocumentJobList,
     EformsignDocumentJobSummary,
     AuthorizeEformsignDocumentJobForDispatchInput,
@@ -35,8 +37,10 @@ import {
     DiagnoseInitialFinalizationJobResult,
 } from "domain/repositories/eformsign-document-job.repository.interface";
 import { PrismaService } from "infrastructure/database/prisma.service";
+import { ContractRecoveryError } from "domain/repositories/eformsign-contract-recovery.repository.interface";
 import { withoutEntityChangeHints } from "infrastructure/database/entity-change-suppression";
-import { lockAuthorityScope, reserveAuthority } from "../utils/eformsign-contract-authority";
+import { normalizeVerifiedAuthority, retireProvenNoEffect } from "../utils/eformsign-contract-authority-release";
+import { AuthorityConflictError, lockAuthorityScope, reserveAuthority } from "../utils/eformsign-contract-authority";
 import {
     authorizeServiceRecordDispatch,
     deriveServiceRecordDocumentSyncStatus,
@@ -49,6 +53,7 @@ import type {
 } from "@babyjamjam/shared/types/service-record";
 
 type RawJob = {
+    cancellable?: boolean;
     contract_generation?: string | null;
     id: string; branch_id: string; client_id: number | null; document_id: string | null;
     job_type: string; source: string; status: string; request_key: string; active_key: string | null;
@@ -165,6 +170,55 @@ function contractJobSql(alias = ""): Prisma.Sql {
     );
 }
 
+/** SQL display proof. POST additionally locks, validates linked identities and vetoes live claims. */
+function cancellableJobSql(): Prisma.Sql {
+    const noEffect = (alias: string) => {
+        // Aliases are source-owned identifiers, never request input.
+        const i = Prisma.raw(alias);
+        return Prisma.sql`(${i}.provider_document_id IS NULL AND (
+            (${i}.status = 'prepared' AND (${i}.attempt_count = 0 OR (${i}.started_at IS NULL AND ${i}.reconciliation_reason = 'draft_released_before_open')))
+            OR (${i}.status = 'reconciled_not_delivered' AND ${i}.reconciled_outcome = 'not_delivered'
+                AND ${i}.reconciled_at IS NOT NULL AND ${i}.reconciled_by_user_id::text ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$')
+        ))`;
+    };
+    return Prisma.sql`COALESCE((
+        ${contractJobSql("j")} AND j.contract_generation IS NOT NULL AND j.job_type = 'create_document'
+        AND j.status IN ('failed', 'requires_attention') AND j.lease_token IS NULL AND j.document_id IS NULL
+        AND COALESCE(j.progress_step, '') NOT IN ('creating', 'sent', 'superseded', 'cancelled')
+        AND COALESCE(j.progress_detail, '') NOT IN ('creating', 'sent')
+        AND EXISTS (
+            SELECT 1 FROM eformsign_contract_authority a
+            JOIN client c ON c.id = a.client_id AND c.branch_id = a.branch_id
+            WHERE a.creation_job_id = j.id AND a.branch_id = j.branch_id AND a.client_id = j.client_id
+              AND a.generation = j.contract_generation AND a.fingerprint = j.payload_fingerprint
+              AND a.phase IN ('reserved', 'creation_pending', 'creation_uncertain')
+              AND a.provider_document_id IS NULL AND a.human_intent_id IS NULL
+              AND c.e_doc_id IS NOT DISTINCT FROM a.prior_document_id
+              AND (a.creation_intent_id IS NOT NULL OR a.draft_intent_id IS NOT NULL OR a.phase IN ('reserved', 'creation_uncertain'))
+              AND (a.phase <> 'reserved' OR a.creation_intent_id IS NULL OR EXISTS (
+                  SELECT 1 FROM eformsign_dispatch_intent i WHERE i.id = a.creation_intent_id AND i.status = 'reconciled_not_delivered'))
+              AND NOT EXISTS (
+                  SELECT 1 FROM unnest(ARRAY[a.creation_intent_id, a.draft_intent_id]) ref(id)
+                  LEFT JOIN eformsign_dispatch_intent i ON i.id = ref.id
+                  WHERE ref.id IS NOT NULL AND (i.id IS NULL OR NOT COALESCE(${noEffect("i")}, false)))
+              AND NOT EXISTS (
+                  SELECT 1 FROM eformsign_dispatch_intent d
+                  WHERE d.business_key = encode(sha256(convert_to('contract-draft:' || a.generation::text, 'UTF8')), 'hex')
+                    AND (NOT COALESCE(${noEffect("d")}, false) OR (d.id IS DISTINCT FROM a.draft_intent_id
+                        AND NOT COALESCE((d.status = 'prepared' AND d.started_at IS NULL AND d.provider_document_id IS NULL
+                            AND d.reconciliation_reason = 'draft_released_before_open'), false))))
+              AND NOT EXISTS (
+                  SELECT 1 FROM eformsign_dispatch_intent h
+                  WHERE h.business_key = encode(sha256(convert_to('contract-human:' || a.generation::text, 'UTF8')), 'hex'))
+              -- Enumerate ECMAScript trim characters; avoid locale-dependent regex classes/ranges.
+              AND NOT EXISTS (
+                  SELECT 1 FROM eformsign_dispatch_intent u WHERE u.branch_id = a.branch_id AND u.client_id = a.client_id
+                    AND u.action IN ('create', 'create_draft') AND (u.status IN ('started', 'uncertain')
+                        OR (u.status = 'accepted' AND (u.provider_document_id IS NULL OR u.provider_document_id ~ U&'^[\\0009\\000A\\000B\\000C\\000D\\0020\\00A0\\1680\\2000\\2001\\2002\\2003\\2004\\2005\\2006\\2007\\2008\\2009\\200A\\2028\\2029\\202F\\205F\\3000\\FEFF]*$'))))
+        )
+    ), false)`;
+}
+
 /**
  * True when `userId` may take or finish the job: it carries no manual claim, the
  * claim expired, or the claim is this user's. The expiry is cast to bigint only
@@ -244,6 +298,43 @@ function payloadRevisionJob(value: RawJob["payload"]): {
 export class SbEformsignDocumentJobRepository implements IEformsignDocumentJobRepository {
     constructor(private readonly prisma: PrismaService) {}
 
+    async cancel(input: ManualRecoveryInput): Promise<CancelDocumentJobResult> {
+        if (!UUID_PATTERN.test(input.jobId) || !UUID_PATTERN.test(input.branchId)) return { kind: "not_found" };
+        this.assertClaimInput(input);
+        try {
+            return await this.prisma.$transaction(async tx => {
+                // A terminal cancellation can replay without client/authority locks; eligibility is checked after locking.
+                const peek = await tx.eformsign_document_job.findUnique({ where: { id: input.jobId } });
+                if (!peek || peek.branchId !== input.branchId) return { kind: "not_found" };
+                if (peek.status === "failed" && peek.progressStep === CANCELLED_PROGRESS_STEP) return { kind: "already_cancelled" };
+                if (!peek.clientId) return { kind: "not_cancellable", reason: "unsupported_job" };
+                const [authority] = await lockAuthorityScope(tx, input.branchId, [peek.clientId]);
+                await tx.$queryRaw(Prisma.sql`SELECT id FROM eformsign_document_job WHERE id = ${input.jobId}::uuid AND branch_id = ${input.branchId}::uuid FOR UPDATE`);
+                const job = await tx.eformsign_document_job.findUnique({ where: { id: input.jobId } });
+                if (!job || job.branchId !== input.branchId) return { kind: "not_found" };
+                if (job.status === "failed" && job.progressStep === CANCELLED_PROGRESS_STEP) return { kind: "already_cancelled" };
+                if (!authority || authority.creationJobId !== job.id || authority.generation !== job.contractGeneration
+                    || job.clientId !== peek.clientId || !job.contractGeneration || job.jobType !== "create_document"
+                    || !isContractJob({ ...job, source: job.source as EformsignDocumentJobSource,
+                        jobType: job.jobType as EformsignDocumentJobType, payload: this.parsePayload(job.payload) })
+                    || !["failed", "requires_attention"].includes(job.status) || job.leaseToken !== null
+                    || ["creating", "sent", SUPERSEDED_PROGRESS_STEP, CANCELLED_PROGRESS_STEP].includes(job.progressStep ?? "")
+                    || ["creating", "sent"].includes(job.progressDetail ?? "")) return { kind: "not_cancellable", reason: "ineligible_job" };
+                const client = await tx.client.findUnique({ where: { id: peek.clientId }, select: { branchId: true, eDocId: true } });
+                if (!client || client.branchId !== input.branchId) return { kind: "not_cancellable", reason: "scope_changed" };
+                const retired = await retireProvenNoEffect(tx, authority, client.eDocId, CANCELLED_PROGRESS_STEP,
+                    { claimUserId: null, claimExpiresAt: null });
+                return retired ? { kind: "cancelled" } : { kind: "not_cancellable", reason: "effect_not_disproved" };
+            }, { timeout: 20000 });
+        } catch (error) {
+            // Let the transaction roll back first: a failed authority CAS must undo the job update too.
+            if (error instanceof ContractRecoveryError || error instanceof AuthorityConflictError) {
+                return { kind: "not_cancellable", reason: "proof_conflict" };
+            }
+            throw error;
+        }
+    }
+
     async enqueue(input: EnqueueEformsignDocumentJobInput) {
         return this.prisma.$transaction((tx) => this.enqueueInTransaction(tx, input));
     }
@@ -267,23 +358,47 @@ export class SbEformsignDocumentJobRepository implements IEformsignDocumentJobRe
     ) {
         const contract = input.jobType === "create_document" && input.clientId && isContractJob(input);
         let generation: string | null = null, priorDocumentId: string | null = null;
+        let mutatedAuthority = false;
         if (contract) {
             if (!/^[a-f0-9]{64}$/.test(input.payloadFingerprint)) throw new ConflictException({ code: "REQUEST_CONFLICT" });
-            await lockAuthorityScope(tx, input.branchId, [input.clientId!]);
+            const [authority] = await lockAuthorityScope(tx, input.branchId, [input.clientId!]);
             const replay = await tx.$queryRaw<RawJob[]>(Prisma.sql`SELECT * FROM eformsign_document_job
-                WHERE request_key = ${input.requestKey} OR active_key = ${input.activeKey}
-                ORDER BY CASE WHEN request_key = ${input.requestKey} THEN 0 ELSE 1 END LIMIT 1`);
+                WHERE request_key = ${input.requestKey} LIMIT 1`);
             if (replay[0]) {
                 if (replay[0].branch_id !== input.branchId) throw new Error("EFORMSIGN_DOCUMENT_JOB_KEY_CONFLICT");
-                if (replay[0].request_key === input.requestKey && replay[0].payload_fingerprint !== input.payloadFingerprint) throw new Error("EFORMSIGN_DOCUMENT_JOB_IDEMPOTENCY_MISMATCH");
+                if (replay[0].payload_fingerprint !== input.payloadFingerprint) throw new Error("EFORMSIGN_DOCUMENT_JOB_IDEMPOTENCY_MISMATCH");
                 return { job: this.toDomain(replay[0]), existing: true };
+            }
+            if (authority) {
+                try {
+                    mutatedAuthority = await normalizeVerifiedAuthority(tx, authority);
+                } catch (error) {
+                    if (error instanceof ContractRecoveryError) throw new ConflictException({ code: "REQUEST_CONFLICT" });
+                    throw error;
+                }
+            }
+            const client = await tx.client.findUnique({ where: { id: input.clientId! }, select: { eDocId: true } });
+            if (!client) throw new ConflictException({ code: "REQUEST_CONFLICT" });
+            const active = await tx.$queryRaw<RawJob[]>(Prisma.sql`SELECT * FROM eformsign_document_job WHERE active_key = ${input.activeKey} LIMIT 1`);
+            let retired = false;
+            if (authority && (!active[0] || active[0].id === authority.creationJobId)) {
+                try {
+                    retired = await retireProvenNoEffect(tx, authority, client.eDocId);
+                } catch (error) {
+                    if (error instanceof ContractRecoveryError) throw new ConflictException({ code: "REQUEST_CONFLICT" });
+                    throw error;
+                }
+            }
+            mutatedAuthority = retired || mutatedAuthority;
+            if (active[0] && !retired) {
+                if (mutatedAuthority) throw new ConflictException({ code: "REQUEST_CONFLICT" });
+                if (active[0].branch_id !== input.branchId) throw new Error("EFORMSIGN_DOCUMENT_JOB_KEY_CONFLICT");
+                return { job: this.toDomain(active[0]), existing: true };
             }
             // reserveAuthority validates replacement under the same client/authority locks.
             // A refusal rolls back the new job together with any supersession.
             const unresolved = await tx.eformsign_dispatch_intent.findFirst({ where: { branchId: input.branchId, clientId: input.clientId!, action: "create", status: { in: ["started", "uncertain"] } }, select: { id: true } });
             if (unresolved) throw new ConflictException({ code: "REQUEST_CONFLICT" });
-            const client = await tx.client.findUnique({ where: { id: input.clientId! }, select: { eDocId: true } });
-            if (!client) throw new ConflictException({ code: "REQUEST_CONFLICT" });
             priorDocumentId = client.eDocId; generation = randomUUID();
         }
         const inserted = await tx.$queryRaw<RawJob[]>(Prisma.sql`
@@ -305,6 +420,7 @@ export class SbEformsignDocumentJobRepository implements IEformsignDocumentJobRe
             return { job: this.toDomain(inserted[0]), existing: false };
         }
 
+        if (mutatedAuthority) throw new ConflictException({ code: "REQUEST_CONFLICT" });
         const existing = await tx.$queryRaw<RawJob[]>(Prisma.sql`
                 SELECT * FROM "eformsign_document_job"
                 WHERE request_key = ${input.requestKey} OR active_key = ${input.activeKey}
@@ -1034,10 +1150,12 @@ export class SbEformsignDocumentJobRepository implements IEformsignDocumentJobRe
     }
 
     async getSummary(branchId: string): Promise<EformsignDocumentJobSummary> {
-        const unresolved = Prisma.sql`(
-            (status = 'failed' AND progress_step IS DISTINCT FROM ${SUPERSEDED_PROGRESS_STEP} AND completed_at >= now() - interval '7 days')
+        const unresolved = Prisma.sql`(progress_step IS DISTINCT FROM ${CANCELLED_PROGRESS_STEP} AND (
+            (status = 'failed' AND progress_step IS DISTINCT FROM ${SUPERSEDED_PROGRESS_STEP} AND (completed_at >= now() - interval '7 days'
+                OR EXISTS (SELECT 1 FROM eformsign_contract_authority a WHERE a.creation_job_id = eformsign_document_job.id
+                    AND a.branch_id = eformsign_document_job.branch_id AND a.client_id = eformsign_document_job.client_id AND a.phase <> 'closed')))
             OR status = 'requires_attention'
-        )`;
+        ))`;
         const [rows, unresolvedRows] = await Promise.all([
             this.prisma.$queryRaw<Array<{
                 active_count: number;
@@ -1049,6 +1167,7 @@ export class SbEformsignDocumentJobRepository implements IEformsignDocumentJobRe
                        count(*) FILTER (WHERE status = 'requires_attention')::int AS attention_count,
                        count(*) FILTER (
                            WHERE ${contractJobSql()} AND status = 'failed'
+                             AND progress_step IS DISTINCT FROM ${CANCELLED_PROGRESS_STEP}
                              AND completed_at >= now() - interval '7 days'
                        )::int AS failed_count,
                        count(*) FILTER (WHERE ${contractJobSql()} AND ${unresolved})::int AS unresolved_count
@@ -1075,28 +1194,32 @@ export class SbEformsignDocumentJobRepository implements IEformsignDocumentJobRe
         const contract = contractJobSql("j");
         const [active, requiresAttention, recent] = await Promise.all([
             this.prisma.$queryRaw<RawJob[]>(Prisma.sql`
-                SELECT j.*, c.name AS client_name FROM "eformsign_document_job" j
+                SELECT j.*, false AS cancellable, c.name AS client_name FROM "eformsign_document_job" j
                 LEFT JOIN "client" c ON c.id = j.client_id
                 WHERE j.branch_id = ${branchId}::uuid AND j.status IN ${ACTIVE_STATUSES}
                 ORDER BY j.created_at ASC
             `),
-            // Contract jobs that failed in the last 7 days sit beside requires_attention:
-            // staff can recover both, so they share one list instead of showing in two.
+            // Current unresolved authority holds remain reachable after the failed-history cutoff.
+            // Their contact payload still expires after seven days.
             this.prisma.$queryRaw<RawJob[]>(Prisma.sql`
-                SELECT j.*, c.name AS client_name FROM "eformsign_document_job" j
+                SELECT j.*, ${cancellableJobSql()} AS cancellable, c.name AS client_name FROM "eformsign_document_job" j
                 LEFT JOIN "client" c ON c.id = j.client_id
                 WHERE j.branch_id = ${branchId}::uuid
+                  AND j.progress_step IS DISTINCT FROM ${CANCELLED_PROGRESS_STEP}
                   AND (
                       j.status = 'requires_attention'
-                      OR (j.status = 'failed' AND ${contract} AND j.progress_step IS DISTINCT FROM ${SUPERSEDED_PROGRESS_STEP} AND j.completed_at >= now() - interval '7 days')
+                      OR (j.status = 'failed' AND ${contract} AND j.progress_step IS DISTINCT FROM ${SUPERSEDED_PROGRESS_STEP} AND (j.completed_at >= now() - interval '7 days'
+                          OR EXISTS (SELECT 1 FROM eformsign_contract_authority a WHERE a.creation_job_id = j.id AND a.branch_id = j.branch_id
+                              AND a.client_id = j.client_id AND a.phase <> 'closed')))
                   )
                 ORDER BY j.completed_at DESC NULLS LAST, j.created_at DESC
                 LIMIT 50
             `),
             this.prisma.$queryRaw<RawJob[]>(Prisma.sql`
-                SELECT j.*, c.name AS client_name FROM "eformsign_document_job" j
+                SELECT j.*, false AS cancellable, c.name AS client_name FROM "eformsign_document_job" j
                 LEFT JOIN "client" c ON c.id = j.client_id
                 WHERE j.branch_id = ${branchId}::uuid AND j.status IN ${TERMINAL_STATUSES}
+                  AND j.progress_step IS DISTINCT FROM ${CANCELLED_PROGRESS_STEP}
                   AND j.completed_at >= ${terminalSince}
                   AND (NOT (j.status = 'failed' AND ${contract}) OR j.progress_step = ${SUPERSEDED_PROGRESS_STEP})
                 ORDER BY j.completed_at DESC LIMIT ${limit}
@@ -1185,7 +1308,7 @@ export class SbEformsignDocumentJobRepository implements IEformsignDocumentJobRe
 
     async listRecentStaffFailures(since: Date): Promise<EformsignDocumentJobEntity[]> {
         const rows = await this.prisma.$queryRaw<RawJob[]>(Prisma.sql`
-            SELECT j.*, c.name AS client_name FROM "eformsign_document_job" j
+            SELECT j.*, ${cancellableJobSql()} AS cancellable, c.name AS client_name FROM "eformsign_document_job" j
             LEFT JOIN "client" c ON c.id = j.client_id
             WHERE ${contractJobSql("j")}
               AND j.status IN ${RECOVERABLE_STATUSES}
@@ -1316,6 +1439,7 @@ export class SbEformsignDocumentJobRepository implements IEformsignDocumentJobRe
     }
 
     private toDomain = (row: RawJob): EformsignDocumentJobEntity => new EformsignDocumentJobEntity({
+        cancellable: row.cancellable === true,
         contractGeneration: row.contract_generation ?? null,
         id: row.id, branchId: row.branch_id, clientId: row.client_id, documentId: row.document_id,
         jobType: row.job_type as EformsignDocumentJobType, source: row.source as EformsignDocumentJobSource,

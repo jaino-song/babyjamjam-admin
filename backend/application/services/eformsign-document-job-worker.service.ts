@@ -1,5 +1,6 @@
 import { Inject, Injectable, Logger, Optional } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
+import { captureBackendError, captureDocumentJobFailure } from "infrastructure/observability/service-record-sentry";
 import { toJobErrorCode } from "domain/value-objects/eformsign-job-error-code";
 
 import {
@@ -433,7 +434,10 @@ export class EformsignDocumentJobWorkerService {
 
             const jobs = await this.repository.claimDue(3);
             await Promise.all(jobs.map((job) => this.processClaimedJob(job)));
-        } catch {
+        } catch (error) {
+            try {
+                captureBackendError(error, { handled: true, operation: "document-job-tick" });
+            } catch { /* Observability must not change job handling. */ }
             this.logger.warn("Eformsign document job worker tick failed");
         } finally {
             this.running = false;
@@ -481,7 +485,10 @@ export class EformsignDocumentJobWorkerService {
         let revisionAuthorization: CreateDispatchAuthorizationResult;
         try {
             revisionAuthorization = await this.authorizeRevisionJob(job);
-        } catch {
+        } catch (error) {
+            try {
+                captureBackendError(error, { handled: true, operation: "document-job-authorization" });
+            } catch { /* Observability must not change job handling. */ }
             if (sendEvidence.step) {
                 await this.markAndReconcile(job, sendEvidence.step);
                 return;
@@ -556,7 +563,10 @@ export class EformsignDocumentJobWorkerService {
                 await this.recordAutoFinalizeTerminalOutcome(job, failed, "UNSUPPORTED_JOB_TYPE");
                 this.notifyTransition(failed);
             }
-        } catch {
+        } catch (error) {
+            try {
+                captureBackendError(error, { handled: true, operation: "document-job-execution" });
+            } catch { /* Observability must not change job handling. */ }
             this.logger.warn(`Eformsign document job ${job.id} failed`);
             await this.handleExecutionFailure(job, sendEvidence, latestProgressStep);
         } finally {
@@ -599,7 +609,10 @@ export class EformsignDocumentJobWorkerService {
         let result: ServiceRecordRevisionDocumentCoordinatorProcessResult;
         try {
             result = await this.revisionOperationCoordinator.process(input);
-        } catch {
+        } catch (error) {
+            try {
+                captureBackendError(error, { handled: true, operation: "document-job-revision-coordinator" });
+            } catch { /* Observability must not change job handling. */ }
             const attention = await this.repository.markRequiresAttention(
                 job.id,
                 leaseToken,
@@ -695,7 +708,10 @@ export class EformsignDocumentJobWorkerService {
                 result.documentIds[0],
             );
             this.logger.log({ jobId: job.id, documentCount: result.documentIds.length });
-        } catch {
+        } catch (error) {
+            try {
+                captureBackendError(error, { handled: true, operation: "document-job-revision-render" });
+            } catch { /* Observability must not change job handling. */ }
             // A renderer failure after the durable marker cannot be retried as
             // a new generation. Keep the existing job reconciliation path and
             // immutable payload available for an operator/reconciler.
@@ -764,7 +780,12 @@ export class EformsignDocumentJobWorkerService {
                     if (!this.manualRecovery) throw new Error("RECOVERY_UNAVAILABLE");
                     await this.manualRecovery.completeAutomatic({ jobId: job.id, leaseToken, contractGeneration: job.contractGeneration }, result.documentId, createEformsignWorkerPrincipal(job.branchId));
                     await this.supersedeAfterReissue(job, result.documentId); return;
-                } catch { await this.markAndReconcile(job, "creating"); return; }
+                } catch (error) {
+                    try {
+                        captureBackendError(error, { handled: true, operation: "document-job-complete-automatic" });
+                    } catch { /* Observability must not change job handling. */ }
+                    await this.markAndReconcile(job, "creating"); return;
+                }
             }
             const completed = await this.repository.markCompleted(job.id, leaseToken, result.documentId);
             // Only the holder of the lease may act on the completion; a lost lease
@@ -842,6 +863,9 @@ export class EformsignDocumentJobWorkerService {
                 principal: createEformsignWorkerPrincipal(job.branchId),
             });
         } catch (error) {
+            try {
+                captureBackendError(error, { handled: true, operation: "document-job-supersede" });
+            } catch { /* Observability must not change job handling. */ }
             this.logger.warn(
                 `[Service Stop] could not supersede oldDocumentId=${oldDocumentId} newDocumentId=${newDocumentId}: ${errorClassName(error)}`,
             );
@@ -855,7 +879,11 @@ export class EformsignDocumentJobWorkerService {
                     url: `/contracts?documentId=${encodeURIComponent(oldDocumentId)}`,
                 },
                 { dedupe: { type: CONTRACT_SUPERSEDE_FAILED_NOTIFICATION_TYPE, documentId: oldDocumentId } },
-            ).catch(() => undefined);
+            ).catch((error) => {
+                try {
+                    captureBackendError(error, { handled: true, operation: "document-job-supersede-notify" });
+                } catch { /* Observability must not change job handling. */ }
+            });
         }
     }
 
@@ -1026,7 +1054,12 @@ export class EformsignDocumentJobWorkerService {
                 const result = await this.contractRecovery.recoverBeforeCreation({ jobId: job.id, leaseToken, contractGeneration: job.contractGeneration }, next, code);
                 if (!result) { await this.reconcile(job); return; }
                 if (result === "failed") this.notifyTransition(new EformsignDocumentJobEntity({ ...job, status: "failed", lastErrorCode: "PRE_SEND_RETRY_EXHAUSTED", completedAt: new Date(), leaseToken: null, activeKey: null }));
-            } catch { /* Stale durable scope cannot authorize a retry or transition. */ }
+            } catch (error) {
+                try {
+                    captureBackendError(error, { handled: true, operation: "document-job-pre-send-recovery" });
+                } catch { /* Observability must not change job handling. */ }
+                /* Stale durable scope cannot authorize a retry or transition. */
+            }
             return;
         }
         if (job.attempts <= MAX_PRE_SEND_RETRIES) {
@@ -1082,7 +1115,12 @@ export class EformsignDocumentJobWorkerService {
                     await this.supersedeAfterReissue(job, id); return;
                 }
                 await this.contractRecovery.markAutomaticUncertain(context);
-            } catch { /* The existing STARTED marker remains non-replayable even if persistence fails. */ }
+            } catch (error) {
+                try {
+                    captureBackendError(error, { handled: true, operation: "document-job-reconcile-recovery" });
+                } catch { /* Observability must not change job handling. */ }
+                /* The existing STARTED marker remains non-replayable even if persistence fails. */
+            }
             this.notifyTransition(await this.repository.markRequiresAttention(job.id, job.leaseToken, "RECOVERY_PENDING"));
             return;
         }
@@ -1151,7 +1189,10 @@ export class EformsignDocumentJobWorkerService {
             const persisted = fence
                 ? persistedFenceStep(fence, observed)
                 : observed ?? "processing";
-            void this.repository.updateProgress(jobId, jobLeaseToken, persisted, new Date(), observed).catch(() => {
+            void this.repository.updateProgress(jobId, jobLeaseToken, persisted, new Date(), observed).catch((error) => {
+                try {
+                    captureBackendError(error, { handled: true, operation: "document-job-heartbeat" });
+                } catch { /* Observability must not change job handling. */ }
                 this.logger.warn(`Eformsign document job ${jobId} heartbeat failed`);
             });
         }, HEARTBEAT_INTERVAL_MS);
@@ -1198,7 +1239,12 @@ export class EformsignDocumentJobWorkerService {
         this.lastRetentionSweepAt = now;
         void this.repository
             .deleteExpiredTerminal(new Date(now - TERMINAL_RETENTION_MS))
-            .catch(() => this.logger.warn("Eformsign document job retention sweep failed"));
+            .catch((error) => {
+                try {
+                    captureBackendError(error, { handled: true, operation: "document-job-retention" });
+                } catch { /* Observability must not change job handling. */ }
+                this.logger.warn("Eformsign document job retention sweep failed");
+            });
     }
 
     /**
@@ -1220,6 +1266,9 @@ export class EformsignDocumentJobWorkerService {
             try {
                 await this.repository.purgeExpiredAttentionPayloads(new Date(now));
             } catch (error) {
+                try {
+                    captureBackendError(error, { handled: true, operation: "document-job-payload-purge" });
+                } catch { /* Observability must not change job handling. */ }
                 this.logger.warn(
                     `Eformsign document job attention payload purge failed: ${errorClassName(error)}`,
                 );
@@ -1230,11 +1279,17 @@ export class EformsignDocumentJobWorkerService {
                 );
                 for (const job of failures) await this.notifyStaffFailure(job);
             } catch (error) {
+                try {
+                    captureBackendError(error, { handled: true, operation: "document-job-renotify" });
+                } catch { /* Observability must not change job handling. */ }
                 this.logger.warn(
                     `Eformsign document job failure re-notification failed: ${errorClassName(error)}`,
                 );
             }
         } catch (error) {
+            try {
+                captureBackendError(error, { handled: true, operation: "document-job-recovery-sweep" });
+            } catch { /* Observability must not change job handling. */ }
             this.logger.warn(`Eformsign document job recovery sweep failed: ${errorClassName(error)}`);
         }
     }
@@ -1242,6 +1297,18 @@ export class EformsignDocumentJobWorkerService {
     /** Fire-and-forget: `sendToBranchUsers` also emails and must not stall the tick. */
     private notifyTransition(transitioned: EformsignDocumentJobEntity | null | undefined): void {
         if (!transitioned) return;
+        if (transitioned.status === "failed" || transitioned.status === "requires_attention") {
+            try {
+                captureDocumentJobFailure({
+                    jobId: transitioned.id,
+                    jobType: transitioned.jobType,
+                    status: transitioned.status,
+                    errorCode: transitioned.lastErrorCode,
+                    attempts: transitioned.attempts,
+                    completedAt: transitioned.completedAt,
+                });
+            } catch { /* Observability must not change job handling. */ }
+        }
         void this.notifyStaffFailure(transitioned);
     }
 
@@ -1285,6 +1352,9 @@ export class EformsignDocumentJobWorkerService {
                 { dedupe: { type: EFORMSIGN_DOCUMENT_JOB_FAILED_NOTIFICATION_TYPE, documentId } },
             );
         } catch (error) {
+            try {
+                captureBackendError(error, { handled: true, operation: "document-job-notify" });
+            } catch { /* Observability must not change job handling. */ }
             this.logger.warn(
                 `Eformsign document job ${job.id} failure notification failed: ${errorClassName(error)}`,
             );
@@ -1298,7 +1368,10 @@ export class EformsignDocumentJobWorkerService {
         try {
             const client = await this.clientRepository.findById(job.branchId, job.clientId);
             return client?.name?.trim() || FALLBACK_CLIENT_NAME;
-        } catch {
+        } catch (error) {
+            try {
+                captureBackendError(error, { handled: true, operation: "document-job-client-name" });
+            } catch { /* Observability must not change job handling. */ }
             return FALLBACK_CLIENT_NAME;
         }
     }

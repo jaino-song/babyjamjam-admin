@@ -2,8 +2,10 @@ jest.mock("infrastructure/database/utils/eformsign-contract-authority", () => ({
     ...jest.requireActual("infrastructure/database/utils/eformsign-contract-authority"),
     reserveAuthority: jest.fn().mockResolvedValue(undefined),
 }));
-import { ConflictException } from "@nestjs/common";
 import type { Prisma } from "@prisma/client";
+import { ConflictException, HttpException } from "@nestjs/common";
+import { ContractRecoveryError } from "domain/repositories/eformsign-contract-recovery.repository.interface";
+import { runtimeFixture, B, J, U, F, data, worker, intentInput, workflowPlan } from "../utils/eformsign-contract-recovery.fixture";
 import { PrismaService } from "infrastructure/database/prisma.service";
 import { isEntityChangeHintsSuppressed } from "infrastructure/database/entity-change-suppression";
 import { SbEformsignDocumentJobRepository } from "infrastructure/database/repositories/sb.eformsign-document-job.repository";
@@ -72,6 +74,48 @@ const dispatchContext = {
     formVersion: 3,
 };
 
+describe("enqueue authority refusal HTTP boundary", () => {
+    const input = { branchId: B, clientId: 2, jobType: "create_document" as const, source: "staff" as const,
+        requestKey: "next", activeKey: "next-active", payload: { clientId: 2, contractData: data }, payloadFingerprint: F };
+    async function ready(site: "normalize" | "retire") {
+        const f = runtimeFixture();
+        await f.repository.claimCreation(intentInput, worker, { contractData: data, workflow: workflowPlan });
+        if (site === "normalize") {
+            Object.assign(f.state.intents[0], { status: "accepted", providerDocumentId: "bound-doc" });
+            f.forward(); await f.service.completeAutomatic(worker, "bound-doc", { branchId: B, source: "worker" });
+            Object.assign(f.state.authorities[0], { phase: "verified", claimUserId: U });
+            Object.assign(f.state.intents[0], { status: "uncertain", reconciledAt: null, reconciledByUserId: null, reconciledOutcome: null });
+        } else {
+            f.manual();
+        }
+        return f;
+    }
+    it.each(["normalize", "retire"] as const)("maps only the %s helper refusal to exact 409 REQUEST_CONFLICT and rolls back", async site => {
+        const f = await ready(site);
+        if (site === "normalize") f.state.authorities[0].claimUserId = null;
+        else f.state.intents[0].branchId = J;
+        const before = structuredClone(f.state);
+        const error = await new SbEformsignDocumentJobRepository(f.prisma).enqueue(input).catch((caught: unknown) => caught);
+        expect(error).toBeInstanceOf(ConflictException);
+        expect(error).toBeInstanceOf(HttpException);
+        expect((error as HttpException).getStatus()).toBe(409);
+        expect((error as HttpException).getResponse()).toEqual({ code: "REQUEST_CONFLICT" });
+        expect(f.state).toEqual(before);
+    });
+    it.each(["normalize", "retire"] as const)("does not mask unexpected database/internal errors inside %s", async site => {
+        const f = await ready(site), error = new Error("unexpected database failure"), before = structuredClone(f.state);
+        f.tx.eformsign_document_job.findUnique.mockRejectedValueOnce(error);
+        await expect(new SbEformsignDocumentJobRepository(f.prisma).enqueue(input)).rejects.toBe(error);
+        expect(f.state).toEqual(before);
+    });
+    it("does not translate a ContractRecoveryError from outside the two helper calls", async () => {
+        const f = await ready("retire"), error = new ContractRecoveryError("RECOVERY_UNAVAILABLE"), before = structuredClone(f.state);
+        f.tx.eformsign_dispatch_intent.findFirst.mockResolvedValueOnce(null).mockRejectedValueOnce(error);
+        await expect(new SbEformsignDocumentJobRepository(f.prisma).enqueue(input)).rejects.toBe(error);
+        expect(f.state).toEqual(before);
+    });
+});
+
 describe("SbEformsignDocumentJobRepository", () => {
     let queryRaw: jest.Mock;
     let executeRaw: jest.Mock;
@@ -105,7 +149,7 @@ describe("SbEformsignDocumentJobRepository", () => {
     });
 
     it("returns the inserted job and never exposes the payload in a log path", async () => {
-        queryRaw.mockResolvedValueOnce([{ id: 7, e_doc_id: null }]).mockResolvedValueOnce([]).mockResolvedValueOnce([])
+        queryRaw.mockResolvedValueOnce([{ id: 7, e_doc_id: null }]).mockResolvedValueOnce([]).mockResolvedValueOnce([]).mockResolvedValueOnce([])
             .mockResolvedValueOnce([row({ contract_generation: "33333333-3333-4333-8333-333333333333" })]);
         const result = await repository.enqueue({
             branchId: row().branch_id,
@@ -119,7 +163,7 @@ describe("SbEformsignDocumentJobRepository", () => {
         });
         expect(result.existing).toBe(false);
         expect(result.job.status).toBe("queued");
-        expect(sqlText(queryRaw.mock.calls[3][0])).toContain("ON CONFLICT DO NOTHING");
+        expect(sqlText(queryRaw.mock.calls[4][0])).toContain("ON CONFLICT DO NOTHING");
     });
 
     it("returns the existing request or active job after a matching unique conflict", async () => {
@@ -136,7 +180,7 @@ describe("SbEformsignDocumentJobRepository", () => {
         });
         expect(result.existing).toBe(true);
         expect(sqlText(queryRaw.mock.calls[2][0])).toContain("request_key");
-        expect(sqlText(queryRaw.mock.calls[2][0])).toContain("active_key");
+        expect(sqlText(queryRaw.mock.calls[2][0])).not.toContain("active_key");
     });
 
     it("rejects a reused request key with a different payload fingerprint", async () => {
@@ -865,6 +909,15 @@ describe("SbEformsignDocumentJobRepository", () => {
             expect(values).toContain(branchId);
         });
 
+        it("keeps generation-bound manual_send jobs out of the legacy resend claim path", async () => {
+            queryRaw.mockResolvedValueOnce([]).mockResolvedValueOnce([failedRow({
+                contract_generation: "33333333-3333-4333-8333-333333333333",
+                status: "requires_attention", cancellable: true,
+            })]);
+            await expect(repository.claimRecovery(input)).resolves.toEqual({ kind: "invalid_state", status: "requires_attention" });
+            expect(sqlText(queryRaw.mock.calls[0][0])).toContain("j.contract_generation IS NULL");
+        });
+
         it("reports not_found when the follow-up select finds no staff contract row for that branch", async () => {
             queryRaw.mockResolvedValueOnce([]).mockResolvedValueOnce([]);
             await expect(repository.claimRecovery(input)).resolves.toEqual({ kind: "not_found" });
@@ -1018,6 +1071,17 @@ describe("SbEformsignDocumentJobRepository", () => {
     });
 
     describe("listRecentStaffFailures", () => {
+        it.each([true, false])("projects cancellable=%s for the recovery notification sweep", async cancellable => {
+            queryRaw.mockResolvedValueOnce([row({ status: "requires_attention", cancellable })]);
+
+            const jobs = await repository.listRecentStaffFailures(new Date("2026-10-22T00:00:00.000Z"));
+
+            expect(jobs[0]?.cancellable).toBe(cancellable);
+            const statement = sqlText(queryRaw.mock.calls[0][0]);
+            expect(statement).toContain("AS cancellable");
+            expect(statement).toContain("FROM eformsign_contract_authority a");
+        });
+
         it("selects contract failed and requires_attention rows since the cutoff with the client name", async () => {
             queryRaw.mockResolvedValueOnce([row({ status: "failed", client_name: "김산모" })]);
             const since = new Date("2026-10-22T00:00:00.000Z");
@@ -1056,9 +1120,12 @@ describe("SbEformsignDocumentJobRepository", () => {
             const countsQuery = queryRaw.mock.calls[0][0] as Prisma.Sql;
             const counts = countsQuery.text;
             expect(counts).toContain("count(*) FILTER (WHERE status = 'requires_attention')::int AS attention_count");
-            expect(counts).toMatch(/FILTER \(\s*WHERE \(source = 'staff'[\s\S]*?\) AND status = 'failed'\s+AND completed_at >= now\(\) - interval '7 days'\s*\)::int AS failed_count/);
-            expect(counts).toMatch(/FILTER \(WHERE \(source = 'staff'[\s\S]*?\) AND \(\s*\(status = 'failed' AND progress_step IS DISTINCT FROM \$1 AND completed_at >= now\(\) - interval '7 days'\)\s*OR status = 'requires_attention'\s*\)\)::int AS unresolved_count/);
-            expect(countsQuery.values).toEqual(["superseded", branchId]);
+            expect(counts).toMatch(/FILTER \(\s*WHERE \(source = 'staff'[\s\S]*?\) AND status = 'failed'\s+AND progress_step IS DISTINCT FROM \$\d+\s+AND completed_at >= now\(\) - interval '7 days'\s*\)::int AS failed_count/);
+            expect(counts).toContain("a.creation_job_id = eformsign_document_job.id");
+            expect(counts).toContain("a.branch_id = eformsign_document_job.branch_id");
+            expect(counts).toContain("a.client_id = eformsign_document_job.client_id AND a.phase <> 'closed'");
+            expect(counts).toMatch(/OR status = 'requires_attention'[\s\S]*AS unresolved_count/);
+            expect(countsQuery.values).toEqual(["cancelled", "cancelled", "superseded", branchId]);
             const ids = sqlText(queryRaw.mock.calls[1][0]);
             expect(ids).toContain(CONTRACT_FRAGMENT);
             expect(ids).toContain("ORDER BY completed_at DESC");
@@ -1115,13 +1182,53 @@ describe("SbEformsignDocumentJobRepository", () => {
             const list = await repository.listForBranch(branchId, new Date(0));
             expect(list.requiresAttention).toEqual([]); expect(list.recent[0]?.status).toBe("failed");
             expect(queryRaw.mock.calls[1][0]).toMatchObject({
-                text: expect.stringContaining("j.progress_step IS DISTINCT FROM $2"),
-                values: [branchId, "superseded"],
+                text: expect.stringContaining("j.progress_step IS DISTINCT FROM $3"),
+                values: [branchId, "cancelled", "superseded"],
             });
             expect(queryRaw.mock.calls[2][0]).toMatchObject({
-                text: expect.stringContaining("OR j.progress_step = $3"),
-                values: [branchId, new Date(0), "superseded", 50],
+                text: expect.stringContaining("OR j.progress_step = $4"),
+                values: [branchId, "cancelled", new Date(0), "superseded", 50],
             });
+        });
+
+        it("filters cancelled rows in summary and both history lists and maps the eligibility hint", async () => {
+            queryRaw.mockResolvedValueOnce([{ failed_count: 0, unresolved_count: 0 }]).mockResolvedValueOnce([]);
+            await repository.getSummary(branchId);
+            for (const [query] of queryRaw.mock.calls) expect((query as Prisma.Sql).values).toContain("cancelled");
+            queryRaw.mockReset();
+            queryRaw.mockResolvedValueOnce([]).mockResolvedValueOnce([{ ...row({ status: "requires_attention" }), cancellable: true }]).mockResolvedValueOnce([]);
+            const list = await repository.listForBranch(branchId, new Date(0));
+            expect(list.requiresAttention[0]?.cancellable).toBe(true);
+            const attention = queryRaw.mock.calls[1][0] as Prisma.Sql, recent = queryRaw.mock.calls[2][0] as Prisma.Sql;
+            expect(attention.values).toContain("cancelled"); expect(recent.values).toContain("cancelled");
+            expect(attention.text).toContain("a.creation_job_id = j.id");
+            expect(attention.text).toContain("a.generation = j.contract_generation");
+            expect(attention.text).toContain("u.provider_document_id IS NULL OR u.provider_document_id ~ U&'^[");
+            expect(attention.text).toContain("AS cancellable");
+            expect(attention.text).not.toContain("claim_expires_at");
+        });
+
+        it("matches the SQL receipt character class to ECMAScript trim whitespace", async () => {
+            queryRaw.mockResolvedValueOnce([]).mockResolvedValueOnce([]).mockResolvedValueOnce([]);
+            await repository.listForBranch(branchId, new Date(0));
+            const statement = queryRaw.mock.calls[1][0] as Prisma.Sql;
+            const pattern = statement.text.match(/u\.provider_document_id ~ U&'([^']+)'/)?.[1];
+            expect(pattern).toBeDefined();
+            // Decode PostgreSQL U& four-digit escapes from the actual Prisma SQL text.
+            const sqlBlank = new RegExp((pattern ?? "").replace(/\\([0-9a-f]{4})/gi,
+                (_, hex: string) => String.fromCodePoint(Number.parseInt(hex, 16))), "u");
+            const trimCodePoints = [
+                0x0009, 0x000a, 0x000b, 0x000c, 0x000d, 0x0020, 0x00a0, 0x1680,
+                0x2000, 0x2001, 0x2002, 0x2003, 0x2004, 0x2005, 0x2006, 0x2007,
+                0x2008, 0x2009, 0x200a, 0x2028, 0x2029, 0x202f, 0x205f, 0x3000, 0xfeff,
+            ];
+            const whitespace = String.fromCodePoint(...trimCodePoints);
+            const receipts = ["", ...trimCodePoints.map(code => String.fromCodePoint(code)), whitespace,
+                "prior-accepted-normal-id", `${whitespace}prior-accepted-normal-id${whitespace}`,
+                "\u0000", "\u0085", "\u180e", "\u200b", "\uffff"];
+            for (const receipt of receipts) {
+                expect({ receipt, blank: sqlBlank.test(receipt) }).toEqual({ receipt, blank: receipt.trim() === "" });
+            }
         });
 
         it("maps rows that carry no client_name column", async () => {
@@ -1129,6 +1236,30 @@ describe("SbEformsignDocumentJobRepository", () => {
             const [job] = await repository.recoverStale(new Date());
             expect(job?.clientName).toBeNull();
         });
+    });
+});
+
+describe("PLAN5 enqueue integrity refusals use the existing 409 boundary", () => {
+    const next = { branchId: B, clientId: 2, jobType: "create_document" as const, source: "staff" as const,
+        requestKey: "plan5-next", activeKey: "plan5-next", payload: { clientId: 2, contractData: data }, payloadFingerprint: F };
+    it.each(["released-draft", "zero-ref"])("maps %s integrity refusal and keeps exact request replay first", async path => {
+        const f = runtimeFixture();
+        if (path === "released-draft") {
+            await f.repository.claimCreation(intentInput, worker, { contractData: data, workflow: workflowPlan }); f.manual();
+            const opened = await f.repository.open(J, B, U), claim = { jobId: J, branchId: B, userId: U, claimEpoch: opened.claimEpoch };
+            const draft = await f.repository.beginDraft(claim, "template_ABC", { companyId: "company-abc", creatorId: "service@example.test", workflow: workflowPlan });
+            await f.repository.releaseDraftBeforeOpen(claim, draft.id); f.state.authorities[0].claimExpiresAt = new Date(0);
+            f.state.intents[1].fingerprint = "b".repeat(64);
+        } else {
+            await f.repository.markAutomaticUncertain(worker);
+            Object.assign(f.state.jobs[0], { status: "requires_attention", leaseToken: null, payloadFingerprint: "b".repeat(64) });
+        }
+        const before = structuredClone(f.state), repo = new SbEformsignDocumentJobRepository(f.prisma);
+        const replay = await repo.enqueue({ ...next, requestKey: "request", payloadFingerprint: f.state.jobs[0].payloadFingerprint });
+        expect(replay).toMatchObject({ existing: true, job: { id: J } }); expect(f.state).toEqual(before);
+        const error = await repo.enqueue(next).catch((caught: unknown) => caught);
+        expect(error).toBeInstanceOf(ConflictException); expect((error as ConflictException).getStatus()).toBe(409);
+        expect((error as ConflictException).getResponse()).toEqual({ code: "REQUEST_CONFLICT" }); expect(f.state).toEqual(before);
     });
 });
 

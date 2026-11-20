@@ -72,7 +72,7 @@ describe("ChatWorkspace scoped control sizing", () => {
     });
     afterEach(() => { style.remove(); });
 
-    it.each([375, 1280])("keeps workspace inputs at 16px and controls at least 44px at %ipx without changing widget defaults", (width) => {
+    it.each([375, 1280])("keeps inputs and text buttons at 44px and icons at 32px with 44px touch areas at %ipx without changing widget defaults", (width) => {
         viewport(width);
         const { container } = render(<>
             <Workspace>
@@ -90,22 +90,30 @@ describe("ChatWorkspace scoped control sizing", () => {
             expect(getComputedStyle(input).minHeight).toBe("44px");
         }
         for (const button of within(workspace).getAllByRole("button")) {
-            expect(getComputedStyle(button).minHeight).toBe("44px");
-            expect(getComputedStyle(button).minWidth).toBe("44px");
+            const icon = button.dataset.size === "icon";
+            expect(getComputedStyle(button).minHeight).toBe(icon ? "32px" : "44px");
+            expect(getComputedStyle(button).minWidth).toBe(icon ? "32px" : "44px");
+            if (icon) {
+                expect(button).toHaveClass("h-[calc(32px*var(--glint-ui-scale,1))]", "w-[calc(32px*var(--glint-ui-scale,1))]", "after:h-[calc(44px*var(--glint-ui-scale,1))]", "after:w-[calc(44px*var(--glint-ui-scale,1))]");
+            }
         }
         const widget = screen.getByTestId("widget");
         expect(getComputedStyle(within(widget).getByRole("textbox")).fontSize).toBe("11.2px");
         expect(getComputedStyle(within(widget).getByRole("button")).minHeight).toBe("32px");
     });
 
-    it("applies the same target minimums inside the portal drawer", async () => {
+    it("keeps portal drawer icons at 32px visible with 44px touch areas", async () => {
         viewport(375);
         render(<Workspace />);
         fireEvent.click(screen.getByRole("button", { name: "사이드바 열기" }));
         const drawer = await screen.findByRole("dialog", { name: "대화 목록" });
         for (const button of within(drawer).getAllByRole("button")) {
-            expect(getComputedStyle(button).minHeight).toBe("44px");
-            expect(getComputedStyle(button).minWidth).toBe("44px");
+            const icon = button.dataset.size === "icon";
+            expect(getComputedStyle(button).minHeight).toBe(icon ? "32px" : "44px");
+            expect(getComputedStyle(button).minWidth).toBe(icon ? "32px" : "44px");
+            if (icon) {
+                expect(button).toHaveClass("h-[calc(32px*var(--glint-ui-scale,1))]", "w-[calc(32px*var(--glint-ui-scale,1))]", "after:h-[calc(44px*var(--glint-ui-scale,1))]", "after:w-[calc(44px*var(--glint-ui-scale,1))]");
+            }
         }
     });
 });

@@ -6,6 +6,8 @@ import { useRouter } from "next/navigation";
 import { Building2, Check } from "lucide-react";
 import { normalizeApiError } from "@babyjamjam/shared";
 
+import { LoadingState } from "@/components/app/ui/LoadingState";
+import { ButtonLoadingContent } from "@/components/ui/button";
 import { useInitialUser } from "@/providers/UserProvider";
 import { useLocale } from "@/providers/LocaleProvider";
 import { t } from "@/lib/i18n/translations";
@@ -148,20 +150,7 @@ export default function SelectBranchPage() {
         data-slot="select-branch-page"
         style={{ alignItems: "center", justifyContent: "center" }}
       >
-        <div
-          data-component={`${SELECT_BRANCH_BASE}_loading`}
-          style={{
-            display: "flex",
-            flexDirection: "column",
-            alignItems: "center",
-            gap: 16,
-            color: "hsl(var(--v3-text-muted))",
-            fontSize: "0.86rem",
-          }}
-        >
-          <Building2 size={48} strokeWidth={1.5} />
-          지점 목록을 불러오는 중...
-        </div>
+        <LoadingState label="지점 목록을 불러오는 중" data-component={`${SELECT_BRANCH_BASE}_loading`} />
       </div>
     );
   }
@@ -217,11 +206,13 @@ export default function SelectBranchPage() {
           </button>
           <button
             type="button"
-            className="logout-link"
+            className={`logout-link${loggingOut ? " relative" : ""}`}
             onClick={handleLogout}
             disabled={isPageBusy}
+            aria-busy={loggingOut || undefined}
+            data-loading={loggingOut ? "" : undefined}
           >
-            <span>{loggingOut ? "로그아웃 중…" : "로그아웃"}</span>
+            <ButtonLoadingContent loading={loggingOut} loadingLabel="로그아웃 중"><span>로그아웃</span></ButtonLoadingContent>
           </button>
         </div>
       </div>
@@ -291,23 +282,25 @@ export default function SelectBranchPage() {
       <div className="branch-actions" data-component={`${SELECT_BRANCH_BASE}_actions`}>
         <button
           type="button"
-          className="branch-btn"
+          className={`branch-btn${submitting ? " relative" : ""}`}
+          aria-busy={submitting || undefined}
+          data-loading={submitting ? "" : undefined}
           onClick={() => selectedId && confirmSelectBranch(selectedId)}
           disabled={!selectedId || isPageBusy}
         >
-          {submitting
-            ? "이동 중…"
-            : selectedBranch
-              ? `${selectedBranch.name}으로 이동`
-              : "지점을 선택하세요"}
+          <ButtonLoadingContent loading={submitting} loadingLabel="이동 중">
+            {selectedBranch ? `${selectedBranch.name}으로 이동` : "지점을 선택하세요"}
+          </ButtonLoadingContent>
         </button>
         <button
           type="button"
-          className="logout-link"
+          className={`logout-link${loggingOut ? " relative" : ""}`}
           onClick={handleLogout}
           disabled={isPageBusy}
+          aria-busy={loggingOut || undefined}
+          data-loading={loggingOut ? "" : undefined}
         >
-          <span>{loggingOut ? "로그아웃 중…" : "로그아웃"}</span>
+          <ButtonLoadingContent loading={loggingOut} loadingLabel="로그아웃 중"><span>로그아웃</span></ButtonLoadingContent>
         </button>
       </div>
     </div>

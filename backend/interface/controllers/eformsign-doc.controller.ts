@@ -709,6 +709,11 @@ export class EformsignDocController {
         const result = await this.runManualRecovery(tenant, request, (input) =>
             this.documentJobService.claimRecovery(input), jobId);
         if (result.kind !== "claimed") return this.throwRecoveryRejection(result);
+        // Generation-bound jobs must open the iframe recovery flow, which owns
+        // the authority proof. They must never receive the legacy resend payload.
+        if (result.job.contractGeneration) {
+            throw new ConflictException({ code: "JOB_NOT_RECOVERABLE", status: result.job.status });
+        }
         const claim = parseManualClaim(result.job.progressStep);
         const claimExpiresAt = claim ? new Date(claim.expiresAtMs).toISOString() : null;
         const recoveryKind = classifyRecovery(result.job);
@@ -725,10 +730,22 @@ export class EformsignDocController {
         };
     }
 
-    /**
-     * POST /eformsign-docs/jobs/:jobId/resolve
-     * Record that staff finished a stuck contract job by hand. Idempotent.
-     */
+    /** Cancel only a generation whose locked proof rules out provider effects. */
+    @Post("jobs/:jobId/cancel")
+    @HttpCode(HttpStatus.OK)
+    async cancelDocumentJob(
+        @CurrentTenant() tenant: EformsignProviderPrincipal,
+        @Req() request: { user?: { userId?: string } },
+        @Param("jobId", new ParseUUIDPipe()) jobId: string,
+    ): Promise<{ jobId: string; outcome: "cancelled" | "already_cancelled" }> {
+        assertEformsignProviderCapability(tenant, "contract.dispatch");
+        const result = await this.runManualRecovery(tenant, request, input => this.documentJobService.cancel(input), jobId);
+        if (result.kind === "not_found") throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
+        if (result.kind === "not_cancellable") throw new ConflictException({ code: "JOB_NOT_CANCELLABLE" });
+        return { jobId, outcome: result.kind };
+    }
+
+    /** Record that staff finished a stuck contract job by hand. Idempotent. */
     @Post("jobs/:jobId/resolve")
     @HttpCode(HttpStatus.OK)
     async resolveDocumentJob(

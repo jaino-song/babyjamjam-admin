@@ -15,10 +15,37 @@ const MAX_SANITIZE_DEPTH = 3;
 const reportedErrors = new WeakSet<object>();
 const reportedPrismaErrors = new WeakSet<object>();
 const reportedBackendErrors = new WeakSet<object>();
+const reportedDocumentJobTransitions = new Set<string>();
+const MAX_REPORTED_DOCUMENT_JOB_TRANSITIONS = 1_000;
+const DOCUMENT_JOB_TYPE_PATTERN = /^[a-z][a-z0-9_]{0,63}$/;
+const DOCUMENT_JOB_ERROR_CODE_PATTERN = /^[A-Z][A-Z0-9_]{0,63}$/;
+const BACKEND_OPERATION_PATTERN = /^[a-z0-9][a-z0-9:_-]{0,63}$/;
 
 export const SERVICE_RECORD_FEATURE = "service-records";
 export const DATABASE_FAILOVER_FEATURE = "database-failover";
 export const BACKEND_FEATURE = "backend";
+export const DOCUMENT_JOB_FEATURE = "document-jobs";
+
+export interface DocumentJobFailureContext {
+    jobId: string;
+    jobType: string;
+    status: "failed" | "requires_attention";
+    errorCode: string | null;
+    attempts?: number;
+    completedAt?: Date | null;
+}
+
+function normalizeDocumentJobType(value: unknown): string {
+    return typeof value === "string" && DOCUMENT_JOB_TYPE_PATTERN.test(value) ? value : "unknown";
+}
+
+function normalizeDocumentJobErrorCode(value: unknown): string {
+    return typeof value === "string" && DOCUMENT_JOB_ERROR_CODE_PATTERN.test(value) ? value : "UNKNOWN";
+}
+
+function normalizeDocumentJobStatus(value: unknown): string {
+    return value === "failed" || value === "requires_attention" ? value : "unknown";
+}
 
 type ExceptionValue = NonNullable<NonNullable<Event["exception"]>["values"]>[number];
 type Stacktrace = NonNullable<ExceptionValue["stacktrace"]>;
@@ -121,6 +148,7 @@ const DATABASE_CREDENTIAL_URL_PATTERN =
     /\b(?:postgres(?:ql)?|mysql|mariadb|mongodb(?:\+srv)?|redis):\/\/[^\s"'<>]+/gi;
 const EMAIL_PATTERN = /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi;
 const PHONE_PATTERN = /(?:\+?82[-\s]?)?0?1[016789][-.\s]?\d{3,4}[-.\s]?\d{4}/g;
+const CANONICAL_UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const BEARER_PATTERN = /(bearer\s+)[^\s,;]+/gi;
 const SERVICE_RECORD_TOKEN_PATTERN =
     /(\/(?:api\/)?service-record\/link\/)[^/?#\s]+/gi;
@@ -143,6 +171,8 @@ const SAFE_TAG_KEYS = new Set([
     "environment",
     "feature",
     "operation",
+    "job.status",
+    "job.error_code",
     "job",
     "job_name",
     "job.name",
@@ -217,7 +247,9 @@ function sanitizeUnknown(value: unknown, depth = 0): unknown {
     return Object.fromEntries(
         Object.entries(value).map(([key, nestedValue]) => [
             key,
-            SENSITIVE_FIELD_PATTERN.test(key)
+            key === "jobId" && typeof nestedValue === "string" && CANONICAL_UUID_PATTERN.test(nestedValue)
+                ? nestedValue
+                : SENSITIVE_FIELD_PATTERN.test(key)
                 ? FILTERED_VALUE
                 : URL_FIELD_PATTERN.test(key) && typeof nestedValue === "string"
                 ? sanitizeSentryUrl(nestedValue)
@@ -321,21 +353,36 @@ function sanitizeExceptionValue(
 }
 
 export function sanitizeSentryEvent(event: Event): Event {
-    const databaseFailoverEvent = isDatabaseFailoverEvent(event);
-    const serviceRecordEvent = isServiceRecordEvent(event);
-    const feature = databaseFailoverEvent
+    // The capture helper's own stack matches service-record-sentry; explicit job taxonomy wins.
+    const documentJobEvent = event.tags?.["feature"] === DOCUMENT_JOB_FEATURE;
+    const databaseFailoverEvent = !documentJobEvent && isDatabaseFailoverEvent(event);
+    const serviceRecordEvent = !documentJobEvent && isServiceRecordEvent(event);
+    const feature = documentJobEvent
+        ? DOCUMENT_JOB_FEATURE
+        : databaseFailoverEvent
         ? DATABASE_FAILOVER_FEATURE
         : serviceRecordEvent
         ? SERVICE_RECORD_FEATURE
         : BACKEND_FEATURE;
-    const sanitizedFailureMessage = databaseFailoverEvent
+    const operation = event.tags?.["operation"];
+    const backendFailureMessage = typeof operation === "string" && BACKEND_OPERATION_PATTERN.test(operation)
+        ? `Backend failure (${operation})`
+        : "Backend failure";
+    const sanitizedFailureMessage = documentJobEvent
+        ? `Document job ${normalizeDocumentJobStatus(event.tags?.["job.status"])}: ${normalizeDocumentJobType(operation)} ${normalizeDocumentJobErrorCode(event.tags?.["job.error_code"])}`
+        : databaseFailoverEvent
         ? "Database connectivity failure"
         : serviceRecordEvent
         ? "Service-record backend failure"
-        : "Backend failure";
+        : backendFailureMessage;
     const tags = databaseFailoverEvent
         ? getDatabaseFailoverTags(event)
         : sanitizeSentryTags(event.tags, feature);
+    if (documentJobEvent) {
+        tags["operation"] = normalizeDocumentJobType(operation);
+        tags["job.status"] = normalizeDocumentJobStatus(event.tags?.["job.status"]);
+        tags["job.error_code"] = normalizeDocumentJobErrorCode(event.tags?.["job.error_code"]);
+    }
 
     return {
         ...event,
@@ -426,6 +473,9 @@ function hasServiceRecordStack(event: Event): boolean {
 
 export function isServiceRecordEvent(event: Event): boolean {
     if (event.tags?.["feature"] === SERVICE_RECORD_FEATURE) return true;
+    if (event.tags?.["feature"] === BACKEND_FEATURE
+        && typeof event.tags["operation"] === "string"
+        && event.tags["operation"] !== "http") return false;
     return [
         event.transaction,
         event.request?.url,
@@ -459,6 +509,10 @@ export function filterAndSanitizeSentryEvent(
     event: ErrorEvent,
     hint: EventHint = {},
 ): ErrorEvent | null {
+    // Document-job failures remain actionable even when this helper's stack looks like service-records.
+    if (event.tags?.["feature"] === DOCUMENT_JOB_FEATURE) {
+        return sanitizeSentryEvent(event) as ErrorEvent;
+    }
     if (isHttpAdvisory(event)) {
         hint.attachments = [];
         return sanitizeHttpAdvisory(event) as ErrorEvent;
@@ -529,6 +583,17 @@ function setPublicProblemTags(
     }
 }
 
+function getV8StackLines(sourceError: Error): string[] {
+    if (!sourceError.stack) return [];
+    const header = String(sourceError);
+    const lines = sourceError.stack.split("\n");
+    if (sourceError.stack === header || sourceError.stack.startsWith(`${header}\n`)) {
+        return lines.slice(header.split("\n").length).filter((line) => /^\s+at /.test(line));
+    }
+    const messageLines = new Set(sourceError.message.split("\n"));
+    return lines.filter((line) => /^\s+at /.test(line) && !messageLines.has(line));
+}
+
 export function captureBackendError(
     error: unknown,
     context: BackendErrorContext,
@@ -545,7 +610,7 @@ export function captureBackendError(
     if (sourceError.stack) {
         capturedError.stack = [
             capturedError.toString(),
-            ...sourceError.stack.split("\n").slice(1),
+            ...getV8StackLines(sourceError),
         ].join("\n");
     }
 
@@ -566,6 +631,36 @@ export function captureBackendError(
     });
 }
 
+export function captureDocumentJobFailure(context: DocumentJobFailureContext): string | undefined {
+    const jobType = normalizeDocumentJobType(context.jobType);
+    const errorCode = normalizeDocumentJobErrorCode(context.errorCode);
+    const status = normalizeDocumentJobStatus(context.status);
+    // Requeue resets attempts; only the completion timestamp identifies a new terminal transition.
+    const key = JSON.stringify([context.jobId, status, errorCode, context.completedAt?.getTime() ?? "none"]);
+    if (reportedDocumentJobTransitions.has(key)) return undefined;
+    if (reportedDocumentJobTransitions.size >= MAX_REPORTED_DOCUMENT_JOB_TRANSITIONS) {
+        const oldestKey = reportedDocumentJobTransitions.values().next().value;
+        if (oldestKey !== undefined) reportedDocumentJobTransitions.delete(oldestKey);
+    }
+    reportedDocumentJobTransitions.add(key);
+
+    return Sentry.withScope((scope) => {
+        scope.setLevel("error");
+        scope.setTag("feature", DOCUMENT_JOB_FEATURE);
+        scope.setTag("app", "backend");
+        scope.setTag("runtime", "node");
+        scope.setTag("operation", jobType);
+        scope.setTag("handled", "true");
+        scope.setTag("job.status", status);
+        scope.setTag("job.error_code", errorCode);
+        scope.setContext("job", { jobId: context.jobId, jobType, status, errorCode, attempts: context.attempts });
+        scope.setFingerprint([DOCUMENT_JOB_FEATURE, jobType, status, errorCode]);
+        const error = new Error(`Document job ${status}: ${jobType} ${errorCode}`);
+        error.name = "DocumentJobFailure";
+        return Sentry.captureException(error);
+    });
+}
+
 export function captureServiceRecordError(
     error: unknown,
     context: ServiceRecordErrorContext,
@@ -583,7 +678,7 @@ export function captureServiceRecordError(
     if (sourceError.stack) {
         capturedError.stack = [
             capturedError.toString(),
-            ...sourceError.stack.split("\n").slice(1),
+            ...getV8StackLines(sourceError),
         ].join("\n");
     }
     return Sentry.withScope((scope) => {
@@ -622,7 +717,7 @@ export function capturePrismaError(
     const capturedError = new Error(context.eligible || context.code === "P2024"
         ? "Database connectivity failure" : "Database operation failure");
     if (error instanceof Error && error.stack) {
-        capturedError.stack = [capturedError.toString(), ...error.stack.split("\n").slice(1).map(sanitizeText)].join("\n");
+        capturedError.stack = [capturedError.toString(), ...getV8StackLines(error).map(sanitizeText)].join("\n");
     }
     capturedError.name = "Prisma database error";
 

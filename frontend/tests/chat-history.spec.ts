@@ -152,8 +152,8 @@ test.describe('Chat History Persistence', () => {
     });
 
     test('should load chat history when modal opens', async ({ page }) => {
-        // The dashboard chat widget was removed; the chat is its own /chat page.
-        await page.goto('/chat');
+        // The dashboard chat widget was removed; the chat is its own /agent page.
+        await page.goto('/agent');
         await page.waitForLoadState('networkidle');
         await expect(page.locator('[data-component="desktop_chat_page_header"]').getByRole('heading', { level: 1, name: '현재 대화', exact: true })).toBeVisible({ timeout: 10000 });
 
@@ -177,16 +177,16 @@ test.describe('Chat History Persistence', () => {
             });
         });
 
-        // The dashboard chat widget was removed; the chat is its own /chat page.
-        await page.goto('/chat');
+        // The dashboard chat widget was removed; the chat is its own /agent page.
+        await page.goto('/agent');
         await page.waitForLoadState('networkidle');
         await expect(page.locator('[data-component="desktop_chat_page_header"]').getByRole('heading', { level: 1, name: '새 대화', exact: true })).toBeVisible({ timeout: 10000 });
         await expect(page.getByText('고객 검색, 제공인력 관리, 계약서 발송 등을 도와드립니다.')).toBeVisible();
     });
 
     test('should send message and receive response', async ({ page }) => {
-        // The dashboard chat widget was removed; the chat is its own /chat page.
-        await page.goto('/chat');
+        // The dashboard chat widget was removed; the chat is its own /agent page.
+        await page.goto('/agent');
         await page.waitForLoadState('networkidle');
         await expect(page.locator('[data-component="desktop_chat_page_header"]').getByRole('heading', { level: 1, name: '현재 대화', exact: true })).toBeVisible({ timeout: 10000 });
 
@@ -205,15 +205,15 @@ test.describe('Chat History Persistence', () => {
         await page.goto('/dashboard');
         await page.waitForLoadState('networkidle');
 
-        // The dashboard chat widget was removed; the chat is its own /chat page.
-        await page.goto('/chat');
+        // The dashboard chat widget was removed; the chat is its own /agent page.
+        await page.goto('/agent');
         await page.waitForLoadState('networkidle');
         await expect(page.getByText('안녕하세요').first()).toBeVisible({ timeout: 5000 });
 
         await page.getByTestId('chat-back').click();
         await page.waitForURL('**/dashboard', { timeout: 15000 });
 
-        await page.goto('/chat');
+        await page.goto('/agent');
         await page.waitForLoadState('networkidle');
 
         await expect(page.locator('[data-component="desktop_chat_page_header"]').getByRole('heading', { level: 1, name: '현재 대화', exact: true })).toBeVisible({ timeout: 10000 });
@@ -241,9 +241,9 @@ test.describe('Chat History Persistence', () => {
             });
         });
 
-        // The dashboard chat widget was removed; the chat is its own /chat page.
+        // The dashboard chat widget was removed; the chat is its own /agent page.
         // Do not wait for network idle: the history request is held open on purpose.
-        await page.goto('/chat');
+        await page.goto('/agent');
         await expect(page.locator('[data-component="desktop_chat_page_header"]').getByRole('heading', { level: 1, name: '새 대화', exact: true })).toBeVisible({ timeout: 10000 });
 
         // While the history request is pending the stored conversation is not shown yet.
@@ -255,8 +255,8 @@ test.describe('Chat History Persistence', () => {
     });
 
     test('should clear session when delete button is clicked', async ({ page }) => {
-        // The dashboard chat widget was removed; the chat is its own /chat page.
-        await page.goto('/chat');
+        // The dashboard chat widget was removed; the chat is its own /agent page.
+        await page.goto('/agent');
         await page.waitForLoadState('networkidle');
         await expect(page.getByText('안녕하세요').first()).toBeVisible({ timeout: 5000 });
 
@@ -280,8 +280,8 @@ test.describe('Chat History API Error Handling', () => {
             });
         });
 
-        // The dashboard chat widget was removed; the chat is its own /chat page.
-        await page.goto('/chat');
+        // The dashboard chat widget was removed; the chat is its own /agent page.
+        await page.goto('/agent');
         await page.waitForLoadState('networkidle');
         await expect(page.locator('[data-component="desktop_chat_page_header"]').getByRole('heading', { level: 1, name: '새 대화', exact: true })).toBeVisible({ timeout: 10000 });
     });
@@ -295,8 +295,8 @@ test.describe('Chat History API Error Handling', () => {
             });
         });
 
-        // The dashboard chat widget was removed; the chat is its own /chat page.
-        await page.goto('/chat');
+        // The dashboard chat widget was removed; the chat is its own /agent page.
+        await page.goto('/agent');
         await page.waitForLoadState('networkidle');
         await expect(page.locator('[data-component="desktop_chat_page_header"]').getByRole('heading', { level: 1, name: '새 대화', exact: true })).toBeVisible({ timeout: 10000 });
     });

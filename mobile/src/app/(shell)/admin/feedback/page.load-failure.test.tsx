@@ -37,7 +37,7 @@ it.each(['loading', 'paused'])('shows skeletons rather than empty or zero while 
   stats = { ...list, refetch: statsRefetch };
   const { container } = render(<AdminFeedbackPage />);
   expect(container.querySelector('[data-component$="skeleton-content"]')).toBeInTheDocument();
-  expect(container.querySelectorAll('[data-component="mobile_admin_feedback_stats"] [data-slot="skeleton"]')).toHaveLength(9);
+  expect(container.querySelectorAll('[data-component="mobile_admin_feedback_stats"] [data-slot="skeleton"]')).toHaveLength(6);
   expect(screen.queryByText('피드백이 없습니다')).not.toBeInTheDocument();
   expect(screen.queryByRole('alert')).not.toBeInTheDocument();
   expect(screen.queryByText('0')).not.toBeInTheDocument();
@@ -46,7 +46,7 @@ it.each(['loading', 'paused'])('shows skeletons rather than empty or zero while 
 it('shows real zero and empty only after success, including search empty', () => {
   render(<AdminFeedbackPage />);
   expect(screen.getByText('피드백이 없습니다')).toBeInTheDocument();
-  expect(screen.getAllByText('0')).toHaveLength(3);
+  expect(screen.getAllByText('0')).toHaveLength(2);
   expect(screen.queryByRole('alert')).not.toBeInTheDocument();
   fireEvent.change(screen.getByPlaceholderText('사용자, 코멘트 검색...'), { target: { value: 'missing' } });
   expect(screen.getByText('검색 결과가 없습니다')).toBeInTheDocument();
@@ -57,7 +57,7 @@ it('shows unknown failed stats with their own inline notice and stats-only retry
   stats = { ...stats, data: undefined, isError: true, status: 'error' };
   const { container } = render(<AdminFeedbackPage />);
   const bar = container.querySelector('[data-component="mobile_admin_feedback_stats"]') as HTMLElement;
-  expect(within(bar).getAllByText('—')).toHaveLength(3);
+  expect(within(bar).getAllByText('—')).toHaveLength(2);
   expect(within(bar).queryByText('건')).not.toBeInTheDocument();
   expect(within(bar).queryByText('0')).not.toBeInTheDocument();
   expect(screen.getByText('Cached user')).toBeInTheDocument();
@@ -78,7 +78,7 @@ it('preserves cached stats with a stats-only stale notice and retry state', () =
   stats = { ...stats, data: { total: 7, positive: 7, negative: 0 }, isError: true, status: 'error' };
   const { container, rerender } = render(<AdminFeedbackPage />);
   const bar = container.querySelector('[data-component="mobile_admin_feedback_stats"]') as HTMLElement;
-  expect(within(bar).getAllByText('7')).toHaveLength(2);
+  expect(within(bar).getAllByText('7')).toHaveLength(1);
   expect(within(bar).getByText('0')).toBeInTheDocument();
   expect(screen.getByText('Cached user')).toBeInTheDocument();
   expect(screen.getAllByRole('alert')).toHaveLength(1);
@@ -93,7 +93,7 @@ it('preserves cached stats with a stats-only stale notice and retry state', () =
   expect(refetch).not.toHaveBeenCalled();
   stats = { ...stats, isFetching: true, fetchStatus: 'fetching' };
   rerender(<AdminFeedbackPage />);
-  expect(screen.getByRole('button', { name: '다시 시도' })).toBeDisabled();
+  expect(screen.getByRole('button', { name: '다시 시도 중' })).toBeDisabled();
 });
 
 it.each([false, true])('uses one list alert to retry both failed queries (cached list=%s)', (cached) => {
@@ -113,8 +113,8 @@ it.each([false, true])('disables the list alert while failed cached stats retry 
   stats = { ...stats, data: { total: 7, positive: 7, negative: 0 }, isError: true, status: 'error', isFetching: true, fetchStatus: 'fetching' };
   render(<AdminFeedbackPage />);
   expect(screen.getAllByRole('alert')).toHaveLength(1);
-  expect(screen.getByRole('button', { name: '다시 시도' })).toBeDisabled();
-  expect(screen.getAllByText('7')).toHaveLength(2);
+  expect(screen.getByRole('button', { name: '다시 시도 중' })).toBeDisabled();
+  expect(screen.getAllByText('7')).toHaveLength(1);
 });
 
 it.each([false, true])('does not retry or wait for non-error fetching stats from a list alert (cached list=%s)', (cached) => {
@@ -137,8 +137,8 @@ it.each(['success', 'paused', 'loading'])('does not show a stats alert for loade
   expect(screen.getByText('Cached user')).toBeInTheDocument();
   expect(screen.queryByRole('alert')).not.toBeInTheDocument();
   const bar = container.querySelector('[data-component="mobile_admin_feedback_stats"]') as HTMLElement;
-  if (state === 'success') expect(within(bar).getAllByText('0')).toHaveLength(3);
-  else expect(bar.querySelectorAll('[data-slot="skeleton"]')).toHaveLength(9);
+  if (state === 'success') expect(within(bar).getAllByText('0')).toHaveLength(2);
+  else expect(bar.querySelectorAll('[data-slot="skeleton"]')).toHaveLength(6);
 });
 
 it.each([false, true])('keeps cached list (empty=%s) and one inline retry notice', (isEmpty) => {
@@ -153,7 +153,7 @@ it.each([false, true])('keeps cached list (empty=%s) and one inline retry notice
   expect(statsRefetch).not.toHaveBeenCalled();
   list = { ...list, isFetching: true, fetchStatus: 'fetching' };
   rerender(<AdminFeedbackPage />);
-  expect(screen.getByRole('button', { name: '다시 시도' })).toBeDisabled();
+  expect(screen.getByRole('button', { name: '다시 시도 중' })).toBeDisabled();
 });
 
 it('does not turn a cached paused refetch into loading', () => {
@@ -161,7 +161,7 @@ it('does not turn a cached paused refetch into loading', () => {
   stats = { ...stats, data: { total: 7, positive: 7, negative: 0 }, isPaused: true, fetchStatus: 'paused' };
   render(<AdminFeedbackPage />);
   expect(screen.getByText('Cached user')).toBeInTheDocument();
-  expect(screen.getAllByText('7')).toHaveLength(2);
+  expect(screen.getAllByText('7')).toHaveLength(1);
   expect(screen.queryByRole('alert')).not.toBeInTheDocument();
 });
 
@@ -181,4 +181,16 @@ it('treats each selected tab as its own paused or failed query', () => {
   fireEvent.click(screen.getByRole('button', { name: '전체' }));
   expect(screen.getByText('피드백이 없습니다')).toBeInTheDocument();
   expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+});
+
+it('shows only positive and negative stats without shortcuts and exposes the scroll slot', () => {
+  const { container } = render(<AdminFeedbackPage />);
+  const statsGrid = container.querySelector('[data-slot="stats-grid"]') as HTMLElement;
+  expect(statsGrid.children).toHaveLength(2);
+  expect(within(statsGrid).getByText('긍정적')).toBeInTheDocument();
+  expect(within(statsGrid).getByText('부정적')).toBeInTheDocument();
+  expect(within(statsGrid).queryByText('전체')).not.toBeInTheDocument();
+  expect(screen.queryByRole('link', { name: /AI 어시스턴트|계약 발송|고객|메시지/ })).not.toBeInTheDocument();
+  expect(container.querySelector('[data-component="mobile_admin_feedback_shortcuts"]')).not.toBeInTheDocument();
+  expect(container.querySelector('[data-slot="admin-feedback-content"]')).toContainElement(statsGrid);
 });

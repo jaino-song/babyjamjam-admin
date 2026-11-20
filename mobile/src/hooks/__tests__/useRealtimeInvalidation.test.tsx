@@ -2,6 +2,7 @@ import { act, renderHook } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 
+import { clientKeys } from "@/features/clients/hooks/keys";
 import { openAuthenticatedEventSource } from "@/lib/api/authenticated-fetch";
 import { allEntityQueryRoots, queryRootsForKinds } from "@/lib/realtime/entity-query-keys";
 
@@ -115,6 +116,26 @@ describe("useRealtimeInvalidation", () => {
     expect(mockOpenAuthenticatedEventSource).not.toHaveBeenCalled();
   });
 
+  it("invalidates the missing-clients query on service-record events without invalidating client lists", async () => {
+    // Use the real cache matcher, so a wrong or overly broad root is observable.
+    invalidateSpy.mockRestore();
+    invalidateSpy = jest.spyOn(queryClient, "invalidateQueries");
+    const missingKey = clientKeys.serviceRecordMissing();
+    const listKey = clientKeys.list({ page: 1 });
+    queryClient.setQueryData(missingKey, { count: 1, items: [] });
+    queryClient.setQueryData(listKey, { data: [] });
+
+    renderHook(() => useRealtimeInvalidation(IDENTITY), { wrapper });
+    await flushConnection();
+    act(() => {
+      latest().dispatch("open");
+      latest().dispatch("entity-changed", JSON.stringify({ entities: ["service-record"] }));
+    });
+
+    expect(queryClient.getQueryState(missingKey)?.isInvalidated).toBe(true);
+    expect(queryClient.getQueryState(listKey)?.isInvalidated).toBe(false);
+  });
+
   it("invalidates the roots of the changed kinds now and again after 1500 ms", async () => {
     renderHook(() => useRealtimeInvalidation(IDENTITY), { wrapper });
     await flushConnection();
@@ -157,13 +178,14 @@ describe("useRealtimeInvalidation", () => {
       jest.advanceTimersByTime(1000);
       latest().dispatch("entity-changed", JSON.stringify({ entities: ["service-record"] }));
     });
-    expect(invalidateSpy).toHaveBeenCalledTimes(3);
+    expect(invalidateSpy).toHaveBeenCalledTimes(4);
 
     act(() => {
       jest.advanceTimersByTime(1500);
     });
 
-    expect(invalidatedRoots(invalidateSpy).slice(3).sort()).toEqual([
+    expect(invalidatedRoots(invalidateSpy).slice(4).sort()).toEqual([
+      JSON.stringify(["clients", "service-record-missing"]),
       JSON.stringify(["employees"]),
       JSON.stringify(["service-records"]),
     ]);
@@ -232,17 +254,18 @@ describe("useRealtimeInvalidation", () => {
         jest.advanceTimersByTime(FOLLOW_UP - 100);
         latest().dispatch("entity-changed", JSON.stringify({ entities: ["service-record"] }));
       });
-      expect(invalidateSpy).toHaveBeenCalledTimes(3);
+      expect(invalidateSpy).toHaveBeenCalledTimes(4);
 
       act(() => {
         jest.advanceTimersByTime(99);
       });
-      expect(invalidateSpy).toHaveBeenCalledTimes(3);
+      expect(invalidateSpy).toHaveBeenCalledTimes(4);
 
       act(() => {
         jest.advanceTimersByTime(1);
       });
-      expect(invalidatedRoots(invalidateSpy).slice(3).sort()).toEqual([
+      expect(invalidatedRoots(invalidateSpy).slice(4).sort()).toEqual([
+        JSON.stringify(["clients", "service-record-missing"]),
         JSON.stringify(["employees"]),
         JSON.stringify(["service-records"]),
       ]);
@@ -250,7 +273,7 @@ describe("useRealtimeInvalidation", () => {
       act(() => {
         jest.advanceTimersByTime(FOLLOW_UP * 2);
       });
-      expect(invalidateSpy).toHaveBeenCalledTimes(5);
+      expect(invalidateSpy).toHaveBeenCalledTimes(7);
     });
 
     it("starts a fresh window for an event after the trailing pass fired", async () => {
@@ -269,19 +292,20 @@ describe("useRealtimeInvalidation", () => {
       act(() => {
         latest().dispatch("entity-changed", JSON.stringify({ entities: ["service-record"] }));
       });
-      expect(invalidateSpy).toHaveBeenCalledTimes(4);
+      expect(invalidateSpy).toHaveBeenCalledTimes(5);
 
       act(() => {
         jest.advanceTimersByTime(FOLLOW_UP - 1);
       });
-      expect(invalidateSpy).toHaveBeenCalledTimes(4);
+      expect(invalidateSpy).toHaveBeenCalledTimes(5);
 
       act(() => {
         jest.advanceTimersByTime(1);
       });
       // Only the new window's root: the earlier window's roots are not replayed.
-      expect(invalidatedRoots(invalidateSpy).slice(4)).toEqual([
+      expect(invalidatedRoots(invalidateSpy).slice(5)).toEqual([
         JSON.stringify(["service-records"]), JSON.stringify(["employees"]),
+        JSON.stringify(["clients", "service-record-missing"]),
       ]);
     });
   });

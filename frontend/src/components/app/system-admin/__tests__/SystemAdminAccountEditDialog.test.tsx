@@ -53,7 +53,7 @@ describe("SystemAdminAccountEditDialog", () => {
     expect(screen.getByRole("combobox", { name: /^권한/ })).toBeDisabled();
     expect(screen.getByRole("button", { name: "강남점 지점 선택 해제" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "취소" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "저장 중…" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "저장 중" })).toBeDisabled();
     expect(screen.getByRole("alert")).toHaveTextContent("서버에서 계정 수정을 거절했어요.");
 
     fireEvent.click(screen.getByRole("button", { name: "Close" }));

@@ -41,6 +41,7 @@ import { getErrorMessage } from "@/lib/errors/prisma-error-mapper";
 import { useNavigationPending } from "@/lib/hooks/use-navigation-pending";
 import voucherOptions from "@/components/app/messages/templates/json/voucher.json";
 import { FieldMessageText } from "@/components/app/ui/field-message";
+import { LoadingState } from "@/components/app/ui/LoadingState";
 import { QueryErrorState } from "@/components/app/ui/QueryErrorState";
 import { FormChip, FormField as AppFormField, FormNativeSelect, FormSwitchGroupRow, FormTextInputWithSuffix } from "@/components/app/ui/form-section";
 import { TogglePill } from "@/components/app/ui/toggle-pill";
@@ -660,7 +661,7 @@ export default function NewClientPage() {
                 />
                 {(store.voucherClient ? isPriceLoading : isOutOfPocketPriceLoading) && (
                   <div data-component="desktop_clients-new_service_step_grid_duration-field_duration-select-wrap_duration-loading" className="absolute right-10 top-1/2 -translate-y-1/2">
-                    <div data-component="desktop_clients-new_service_step_grid_duration-field_duration-select-wrap_duration-loading_duration-spinner" className="w-4 h-4 border-2 border-v3-primary/30 border-t-v3-primary rounded-full animate-spin" />
+                    <LoadingState inline size="sm" label="요금 정보를 불러오는 중" data-component="desktop_clients-new_service_step_grid_duration-field_duration-select-wrap_duration-loading_duration-spinner" />
                   </div>
                 )}
               </div>

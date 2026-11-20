@@ -38,7 +38,7 @@ export function MobileOAuthButtons({
         type="button"
         variant="kakao"
         size="lg"
-        className="w-full rounded-2xl"
+        className="w-full rounded-full"
         onClick={kakaoButton.onClick}
         disabled={kakaoButton.disabled}
       >

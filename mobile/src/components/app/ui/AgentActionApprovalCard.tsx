@@ -3,6 +3,7 @@
 import { useEffect, useState, type ReactNode } from "react";
 
 import type { AgentActionPreview } from "@babyjamjam/shared";
+import { ActionRow } from "@/components/ui/action-row";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -174,17 +175,7 @@ export function AgentActionApprovalCard({
                         </Label>
                     </div>
                 )}
-                {!terminal && <div data-component={sub("actions")} data-slot="actions" className="flex flex-wrap gap-2">
-                    <Button
-                        data-component={sub("actions_approve")}
-                        type="button"
-                        size="sm"
-                        className="min-h-11 flex-1"
-                        disabled={approvalDisabled}
-                        onClick={() => onApprove?.(actionId, expectedRevision, acknowledgementToken)}
-                    >
-                        승인하고 실행
-                    </Button>
+                {!terminal && <ActionRow data-component={sub("actions")} data-slot="actions" className="gap-2">
                     <Button
                         data-component={sub("actions_reject")}
                         type="button"
@@ -196,7 +187,17 @@ export function AgentActionApprovalCard({
                     >
                         거절
                     </Button>
-                </div>}
+                    <Button
+                        data-component={sub("actions_approve")}
+                        type="button"
+                        size="sm"
+                        className="min-h-11 flex-[2]"
+                        disabled={approvalDisabled}
+                        onClick={() => onApprove?.(actionId, expectedRevision, acknowledgementToken)}
+                    >
+                        승인하고 실행
+                    </Button>
+                </ActionRow>}
             </CardContent>
         </Card>
     );

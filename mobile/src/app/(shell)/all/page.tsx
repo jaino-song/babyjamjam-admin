@@ -5,6 +5,7 @@ import { normalizeApiError } from "@babyjamjam/shared";
 import {
   BarChart3,
   Bell,
+  Bot,
   Calculator,
   Calendar,
   CalendarDays,
@@ -88,6 +89,7 @@ export default function AllMenuPage() {
 
   const menuGroups = useMemo<MenuGroup[]>(() => {
     return [
+      { title: "메인", rows: [{ label: "에이전트", href: "/agent", icon: Bot, tone: "primary" }] },
       {
         title: "지점 관리",
         rows: [
@@ -146,7 +148,7 @@ export default function AllMenuPage() {
           { label: "가격표", href: "/prices", icon: Calculator, tone: "orange" },
           {
             label: "메시지",
-            href: "/messages/new",
+            href: "/messages",
             icon: MessageSquareText,
             tone: "primary",
             value: isMessageTemplatesValueUnavailable ? undefined : `${messageTemplates.length}건`,
@@ -168,6 +170,9 @@ export default function AllMenuPage() {
       {
         title: "설정",
         rows: [
+          ...(canManageBranchFeatures
+            ? [{ label: "공휴일", href: "/holidays", icon: CalendarDays, tone: "burgundy" as const }]
+            : []),
           {
             label: "알림 설정",
             href: "/notification",
@@ -177,9 +182,6 @@ export default function AllMenuPage() {
             valueLoading: pushNotification.isLoading,
             valueSkeletonWidth: "38px",
           },
-          ...(canManageBranchFeatures
-            ? [{ label: "공휴일", href: "/holidays", icon: CalendarDays, tone: "burgundy" as const }]
-            : []),
           ...(isOwner
             ? [
                 {

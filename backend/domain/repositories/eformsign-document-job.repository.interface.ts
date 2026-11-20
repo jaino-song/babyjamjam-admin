@@ -28,10 +28,10 @@ export interface EformsignDocumentJobSummary {
     activeCount: number;
     /** 종류와 기간에 관계없이 모든 `requires_attention` 작업 수. */
     requiresAttentionCount: number;
-    /** `completed_at`이 최근 7일 이내인 계약 `failed` 작업 수. `superseded`도 포함한다. */
+    /** `completed_at`이 최근 7일 이내인 계약 `failed` 작업 수. `superseded`도 포함하고 `cancelled`는 제외한다. */
     failedCount: number;
     /**
-     * `completed_at`이 최근 7일 이내인 계약 `failed` 작업(`superseded` 제외)과
+     * `completed_at`이 최근 7일 이내인 계약 `failed` 작업(`superseded`·`cancelled` 제외)과
      * 기간 제한 없는 모든 계약 `requires_attention` 작업 수.
      */
     unresolvedCount: number;
@@ -45,6 +45,10 @@ export interface ManualRecoveryInput {
     userId: string;
     now: Date;
 }
+
+export type CancelDocumentJobResult =
+    | { kind: "cancelled" | "already_cancelled" | "not_found" }
+    | { kind: "not_cancellable"; reason: string };
 
 export type ClaimRecoveryResult =
     | { kind: "claimed"; job: EformsignDocumentJobEntity }
@@ -99,6 +103,7 @@ export type DiagnoseInitialFinalizationJobResult =
     };
 
 export interface IEformsignDocumentJobRepository {
+    cancel(input: ManualRecoveryInput): Promise<CancelDocumentJobResult>;
     /** Read-only diagnosis without write-set or row locks. */
     diagnoseInitialFinalizationJob(input: { jobId: string; branchId: string }): Promise<DiagnoseInitialFinalizationJobResult>;
     requeueInitialFinalizationJob(input: { jobId: string; branchId: string }): Promise<RequeueInitialFinalizationJobResult>;

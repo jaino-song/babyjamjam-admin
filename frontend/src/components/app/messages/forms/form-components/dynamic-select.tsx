@@ -1,7 +1,7 @@
 "use client";
 
-import { Loader2 } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
+import { LoadingState } from "@/components/app/ui/LoadingState";
 import { api } from "@/lib/api/client";
 import { getDataSourceById } from "@/lib/template/data-sources";
 import { Label } from "@/components/ui/label";
@@ -75,19 +75,21 @@ export const DynamicSelect = ({
         {label}
         {required && <span className="text-destructive ml-1">*</span>}
       </Label>
-      <Select value={value} onValueChange={onChange} disabled={isLoading} required={required}>
-        <SelectTrigger>
-          {isLoading ? (
-            <div className="flex items-center gap-2">
-              <Loader2 className="h-4 w-4 animate-spin" />
-              <span className="text-muted-foreground">로딩 중...</span>
-            </div>
-          ) : (
-            <SelectValue placeholder="선택하세요" />
-          )}
-        </SelectTrigger>
-        <SelectContent>{renderOptions()}</SelectContent>
-      </Select>
+      <div className="flex items-center gap-2">
+        <Select value={value} onValueChange={onChange} disabled={isLoading} required={required}>
+          <SelectTrigger>
+            {isLoading ? (
+              <SelectValue placeholder="" />
+            ) : (
+              <SelectValue placeholder="선택하세요" />
+            )}
+          </SelectTrigger>
+          <SelectContent>{renderOptions()}</SelectContent>
+        </Select>
+        {isLoading ? (
+          <LoadingState inline size="sm" label={`${label} 선택 항목을 불러오는 중`} data-component="desktop_messages_sections_form-dynamic-select_loading" />
+        ) : null}
+      </div>
     </div>
   );
 };

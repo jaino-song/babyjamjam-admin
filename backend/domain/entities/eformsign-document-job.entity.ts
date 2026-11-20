@@ -20,6 +20,8 @@ export type EformsignDocumentJobPayload = Record<string, unknown>;
 export type { ServiceRecordRevisionGenerationInput } from "@babyjamjam/shared/types/service-record";
 
 export interface EformsignDocumentJobProps {
+    /** Read-only eligibility hint; cancellation rechecks the locked proof. */
+    cancellable?: boolean;
     contractGeneration?: string | null;
     id: string;
     branchId: string;
@@ -56,6 +58,7 @@ export class EformsignDocumentJobEntity implements EformsignDocumentJobProps {
         this.contractGeneration = props.contractGeneration ?? null;
     }
 
+    declare readonly cancellable?: boolean;
     readonly contractGeneration?: string | null;
 
     declare readonly id: string;
@@ -100,6 +103,7 @@ export const MANUAL_RESOLVED_PROGRESS_STEP = "manual_resolved";
 
 /** `progress_step` value of a failed job replaced by a new contract generation. */
 export const SUPERSEDED_PROGRESS_STEP = "superseded";
+export const CANCELLED_PROGRESS_STEP = "cancelled";
 
 const MANUAL_CLAIM_PREFIX = "manual_in_progress";
 export const MANUAL_CLAIM_TTL_MS = 10 * 60_000;
@@ -148,15 +152,16 @@ export type RecoveryClassification = "manual_send" | "verify_result";
 /**
  * What staff may do with a stuck contract job. `failed` is only reached before
  * anything was sent, so a manual send is safe. `requires_attention` can follow a
- * send that may have happened, so staff verify the result instead of resending.
+ * send that may have happened; a positive no-effect projection offers iframe
+ * manual send, otherwise staff verify the result before any further action.
  */
 export function classifyRecovery(
-    job: ContractJobShape & Pick<EformsignDocumentJobProps, "status" | "progressStep">,
+    job: ContractJobShape & Pick<EformsignDocumentJobProps, "status" | "progressStep" | "cancellable">,
 ): RecoveryClassification | null {
-    if (job.progressStep === MANUAL_RESOLVED_PROGRESS_STEP || job.progressStep === SUPERSEDED_PROGRESS_STEP) return null;
+    if (job.progressStep === MANUAL_RESOLVED_PROGRESS_STEP || job.progressStep === SUPERSEDED_PROGRESS_STEP || job.progressStep === CANCELLED_PROGRESS_STEP) return null;
     if (!isContractJob(job)) return null;
     if (job.status === "failed") return "manual_send";
-    if (job.status === "requires_attention") return "verify_result";
+    if (job.status === "requires_attention") return job.cancellable ? "manual_send" : "verify_result";
     return null;
 }
 

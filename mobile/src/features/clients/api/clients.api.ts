@@ -1,4 +1,6 @@
 import { api } from '@/lib/api/client';
+
+import { parseServiceRecordMissingClients } from './service-record-missing';
 import type {
   Client,
   CreateClientDto,
@@ -23,6 +25,11 @@ export const clientsApi = {
     if (params?.search) searchParams.set('search', params.search);
 
     return api.get<PaginatedResponse<Client>>(`/clients?${searchParams.toString()}`);
+  },
+
+  listServiceRecordMissing: async () => {
+    const response = await api.get<unknown>('/clients/service-record-missing');
+    return { ...response, data: parseServiceRecordMissingClients(response.data) };
   },
 
   /**

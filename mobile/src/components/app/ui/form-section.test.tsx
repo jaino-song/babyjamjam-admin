@@ -23,7 +23,7 @@ describe("FormNativeSelect", () => {
 
     const select = screen.getByRole("combobox", { name: "바우처 유형" });
     expect(screen.getByRole("group", { name: "단태아" })).toBeInTheDocument();
-    expect(select).toHaveClass("h-[44px]", "py-0", "border-input");
+    expect(select).toHaveClass("h-[44px]", "py-0", "border-input", "text-base");
 
     fireEvent.change(select, { target: { value: "A-통합-1형" } });
 

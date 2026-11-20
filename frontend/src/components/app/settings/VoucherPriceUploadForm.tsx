@@ -1,6 +1,5 @@
 "use client";
 
-
 import { useState, useCallback } from "react";
 import { normalizeApiError } from "@babyjamjam/shared";
 import { Upload, CheckCircle, RotateCcw } from "lucide-react";
@@ -17,7 +16,6 @@ import {
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { Spinner } from "@/components/ui/spinner";
 import { Label } from "@/components/ui/label";
 
 type Step = "upload" | "preview" | "success";
@@ -229,16 +227,14 @@ export function VoucherPriceUploadForm() {
                 </Alert>
               )}
               <Button
+                loading={bulkUpdateMutation.isPending}
+                loadingLabel="업데이트 중"
                 onClick={handleConfirmUpdate}
                 disabled={bulkUpdateMutation.isPending || parsedData.length === 0}
                 className="gap-2 rounded-full"
               >
-                {bulkUpdateMutation.isPending ? (
-                  <Spinner className="h-4 w-4" />
-                ) : (
-                  <Upload className="h-4 w-4" />
-                )}
-                {bulkUpdateMutation.isPending ? "업데이트 중..." : `${selectedYear}년 요금표 업데이트`}
+                <Upload className="h-4 w-4" />
+                {`${selectedYear}년 요금표 업데이트`}
               </Button>
             </div>
           </div>

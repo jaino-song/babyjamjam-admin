@@ -355,7 +355,7 @@ describe("EmployeesPage list load states", () => {
     setList([employee], true, true);
     render(<EmployeesPage />);
     expect(screen.getByRole("button", { name: employee.name })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "다시 시도" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "다시 시도 중" })).toBeDisabled();
   });
 
   it("keeps the existing loading state before the first result", () => {

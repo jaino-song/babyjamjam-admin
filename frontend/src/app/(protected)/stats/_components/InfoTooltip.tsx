@@ -43,7 +43,7 @@ export function InfoTooltip({
             aria-label={ariaLabel}
             data-component={dataComponent}
             className={cn(
-              "inline-flex items-center justify-center rounded-full text-v3-text-muted hover:text-v3-primary focus:outline-none focus-visible:ring-2 focus-visible:ring-v3-primary/40 transition-colors",
+              "relative after:absolute after:left-1/2 after:top-1/2 after:h-[calc(44px*var(--glint-ui-scale,1))] after:w-[calc(44px*var(--glint-ui-scale,1))] after:-translate-x-1/2 after:-translate-y-1/2 after:content-[''] inline-flex items-center justify-center rounded-full text-v3-text-muted hover:text-v3-primary focus:outline-none focus-visible:ring-2 focus-visible:ring-v3-primary/40 transition-colors",
               className
             )}
           >

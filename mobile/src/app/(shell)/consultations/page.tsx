@@ -3,6 +3,7 @@
 import { useMemo, useState } from "react";
 import { CalendarDays, CircleCheck, CircleHelp, MessageCircle } from "lucide-react";
 
+import { LoadingState } from "@/components/app/ui/LoadingState";
 import { ListCard, ListItemRow, ListLoadMoreSentinel } from "@/components/app/mobile-redesign/primitives";
 import { StatsBar } from "@/components/app/v3";
 import { QueryErrorState } from "@/components/app/ui/QueryErrorState";
@@ -465,17 +466,10 @@ export default function ConsultationsPage() {
                 />
               )}
               {isListLoading ? (
-                <div
-                  style={{
-                    padding: "32px 16px",
-                    textAlign: "center",
-                    fontSize: "0.82rem",
-                    color: "hsl(var(--v3-text-muted))",
-                  }}
+                <LoadingState
+                  label="불러오는 중"
                   data-component="mobile_consultations_detail-sheet_stack_list-page_content_list-card_body_loading"
-                >
-                  불러오는 중...
-                </div>
+                />
               ) : isError && !hasData ? (
                 <QueryErrorState
                   dataComponent="mobile_consultations_detail-sheet_stack_list-page_content_list-card_body_error"

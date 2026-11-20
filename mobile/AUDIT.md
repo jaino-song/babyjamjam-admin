@@ -21,7 +21,7 @@ The through-line is **convention-by-example, not convention-by-enforcement.** Sh
 `PendingClientsTable`, `TodayScheduleList`, `ServiceDistributionChart` imported fabricated data from `@/mocks/dashboard`. They were **superseded by `components/app/mobile-redesign/DashboardRedesign`** and imported nowhere — dead code carrying a mock-data import. Deleted along with the now-orphaned `src/mocks/dashboard.ts`. (No real endpoint exists for pending-clients / today-schedules / monthly-comparison; `useDashboardAnalytics` returns aggregate counts only.)
 
 ### 2. No input validation at server trust boundaries
-`zod` is imported in **1 file** (`src/lib/validations/auth.ts`) and used **only for client-side form validation** (`register`/`login`/`forgot-password`/`reset-password` pages). On the server, **22 / 91 API routes call `request.json()` with no schema validation** and forward the raw body upstream — including the eformsign webhook (`api/eformsign-docs/events`) and `api/ai/chat/stream`. Client-side zod is trivially bypassed; the server boundary is unguarded.
+`zod` is imported in **1 file** (`src/lib/validations/auth.ts`) and used **only for client-side form validation** (`register`/`login`/`forgot-password`/`reset-password` pages). On the server, **22 / 91 API routes call `request.json()` with no schema validation** and forward the raw body upstream — including the eformsign webhook (`api/eformsign-docs/events`). Client-side zod is trivially bypassed; the server boundary is unguarded.
 **Standard:** validate every route body/param/query + every webhook + env with zod `safeParse` at entry.
 
 ### 3. Proxy-layer hardening only ~24% rolled out
@@ -32,7 +32,7 @@ The through-line is **convention-by-example, not convention-by-enforcement.** Sh
 | `backendJsonResponse()` (preserve upstream status) | 22 / 91 | ~69 can collapse 4xx/5xx → 200 |
 | `readJsonObjectBody()` (safe parse) | 17 / 91 | rest throw on bad JSON |
 | shared `getAuthToken` / `getAuthHeaders` | — | 15 routes redefine locally |
-| raw `fetch()` instead of `serverAPIClient` | — | 23 `fetch()` call-sites (`ai/chat/*`) |
+| raw `fetch()` instead of `serverAPIClient` | — | 9 API route files (legacy chat: 1, `ai/chat/stream`; also `ai/agent/[...path]`, `admin/feedback/*`, `eformsign-docs/*`, `notifications/test-broadcast`); scope updated 2026-11-17 for legacy chat removal |
 
 Error-response shape also varies (`.data?.error` vs `.data?.message` vs `axiosError.message`).
 **Standard:** every plain-JSON proxy route = thin wrapper of {`getAuthToken` → `serverAPIClient` + `getAuthHeaders` → `readJsonObjectBody` → `backendJsonResponse` → `errorResponse`}; gold reference: `api/clients/route.ts`, `api/employees/route.ts`. (Streaming/multipart/auth-cookie routes keep their transport but standardize error handling.)

@@ -17,6 +17,10 @@ import { decideReviewItemAction } from "domain/utils/holiday-review";
 import { HolidayCalendarService } from "./holiday-calendar.service";
 import { HOLIDAY_REVIEW_GRACE_MS, HolidayReviewProcessorService } from "./holiday-review-processor.service";
 
+jest.mock("infrastructure/observability/service-record-sentry", () => ({
+    captureBackendError: jest.fn(),
+}));
+
 const BRANCH_A = "aaaaaaaa-1111-4111-8111-111111111111";
 const BRANCH_B = "bbbbbbbb-2222-4222-8222-222222222222";
 const NOW = new Date("2026-10-01T12:00:00.000Z");

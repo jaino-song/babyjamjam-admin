@@ -565,95 +565,6 @@
       "outcome_evidence": "Schedule range/overlap/not-found/conflict/retention rejections now carry registered codes and structured field errors; conflictScheduleId removed (no consumer); service-record overlap path now shows the catalog copy (recorded)."
     },
     {
-      "id": "schedule-change-contract",
-      "status": "migrated",
-      "implementation_task_id": "4c-2",
-      "path": "backend/application/services/schedule-change.service.ts",
-      "symbol": "schedule-change service throws (preview/createRequest/apply/approve/reject)",
-      "spec_ids": [
-        "EM-CAT-01",
-        "EM-CAT-02",
-        "EM-CHANGE-03",
-        "EM-STATE-01",
-        "EM-RETRY-06"
-      ],
-      "public_codes": [
-        "SERVICE_RECORD_PLANNED_DATE_UNAVAILABLE",
-        "INVALID_SCHEDULE_DATE",
-        "ALL_SESSIONS_SUBMITTED",
-        "REQUEST_ALREADY_PENDING",
-        "REQUEST_NOT_PENDING",
-        "SCHEDULE_DATE_NOT_POSTPONED",
-        "REQUEST_STALE",
-        "SCHEDULE_CHANGE_UNCOMPUTABLE",
-        "SERVICE_RECORD_WRITE_TARGET_CHANGED",
-        "RESOURCE_NOT_FOUND"
-      ],
-      "implementation_sha": "83dc3bcdb",
-      "basis_sha": "fa608b1c0",
-      "review_scope": "schedule-change.service.ts payload-only conversion (43 throws). Statuses preserved except 5 SCHEDULE_CHANGE_UNCOMPUTABLE sites (400→409). BFF/UI deferred to 4c-3; write-lock policy untouched.",
-      "test_paths": [
-        "backend/test/unit/schedule-change.service.spec.ts",
-        "backend/test/integration/schedule-change.controller.integration.spec.ts",
-        "backend/test/e2e/service-record-mirror-request-races.e2e.spec.ts"
-      ],
-      "test_evidence": {
-        "suites": 356,
-        "passed": 5058,
-        "result": "backend 356/5058 pass; shared 369 jest + 86 node; mobile 1630; frontend 1550",
-        "checks": [
-          "four typechecks",
-          "UI gates",
-          "vendor determinism",
-          "red-first 18 failed→41/41"
-        ],
-        "audit": "SHIP/MEDIUM at 83dc3bcdb (base fa608b1c0)"
-      },
-      "outcome_evidence": "All schedule-change rejections carry registered codes with factual NOT_APPLIED; computation preconditions now report SCHEDULE_CHANGE_UNCOMPUTABLE instead of raw English; UI dict copy for the new codes lands in 4c-3."
-    },
-    {
-      "id": "schedule-bff-ui-alignment",
-      "status": "migrated",
-      "implementation_task_id": "4c-3",
-      "path": "frontend/src/app/api/schedule-change-requests/**",
-      "symbol": "8 BFF routes + schedule-change-route-utils + UI dictionaries",
-      "spec_ids": [
-        "EM-API-01",
-        "EM-API-04",
-        "EM-VAL-02",
-        "EM-VAL-03",
-        "EM-I18N-01"
-      ],
-      "public_codes": [
-        "SCHEDULE_CHANGE_UNCOMPUTABLE",
-        "REQUEST_NOT_PENDING",
-        "SERVICE_RECORD_PLANNED_DATE_UNAVAILABLE",
-        "REQUEST_STALE"
-      ],
-      "implementation_sha": "4ec3297e8eef86d1826928b734acf66b4a514d82",
-      "basis_sha": "36af62790",
-      "review_scope": "Web 4 routes aligned to shared helpers (401/error/success); mobile 4 routes local 400s → problem helper; per-platform helper modeled on private localValidationResponse (contract duplicated 3x — carried); dicts completed to the 8-code set.",
-      "test_paths": [
-        "frontend/src/app/api/schedule-change-requests/__tests__/decision-routes.test.ts",
-        "frontend/src/app/api/schedule-change-requests/schedules/__tests__/schedule-routes.test.ts",
-        "mobile/src/app/api/schedule-change-requests/__tests__/schedule-change-route-utils.test.ts",
-        "mobile/src/lib/service-records/schedule-change-error.test.ts"
-      ],
-      "test_evidence": {
-        "suites": 488,
-        "passed": 8901,
-        "result": "frontend 238/1580 + mobile 250/1656 + backend 356/5058 + shared 369 jest/86 node pass",
-        "checks": [
-          "three typechecks",
-          "UI gates baseline unchanged",
-          "scripts/ci 31",
-          "red-first web 8F→40/40, mobile 6F→38/38"
-        ],
-        "audit": "SHIP/HIGH at 4ec3297e8 (base 36af62790)"
-      },
-      "outcome_evidence": "Schedule-change problem codes/body/status now reach the browser through every BFF route; local invalid id/date responses are problem+json with path/body pointers; both UI dictionaries cover all 8 codes with catalog-consistent Korean copy."
-    },
-    {
       "id": "contract-guard-codes",
       "status": "migrated",
       "implementation_task_id": "5-1",
@@ -676,9 +587,7 @@
       "review_scope": "Guard 3 causes coded; dispatch reason maps registered codes; web/mobile headless failure copy maps the 3 codes. Envelopes ({ok:false}/{success:false}) and finalize swallow unchanged (5-4 slot).",
       "test_paths": [
         "backend/test/services/contract-client-assignment-guard.service.spec.ts",
-        "backend/test/usecases/eformsign-doc/dispatch-document-headless.usecase.spec.ts",
-        "frontend/src/components/app/contracts/__tests__/ContractCreationForm.test.tsx",
-        "mobile/src/lib/eformsign/headless-progress.test.ts"
+        "backend/test/usecases/eformsign-doc/dispatch-document-headless.usecase.spec.ts"
       ],
       "test_evidence": {
         "suites": 357,
@@ -912,11 +821,9 @@
       "implementation_sha": "3bec2e441",
       "basis_sha": "17e439226",
       "review_scope": "4 consumers adopt outcome-first (UNKNOWN/PARTIALLY_APPLIED) with legacy branches intact; dead useContractCreationFlow chain (8 files) removed; readHeadlessOutcome helpers; UI baseline re-anchored anchors-only.",
-      "test_paths_note": "test_paths[0] originally read frontend/src/components/app/contracts/__tests__/contract-creation.headless.spec.ts, a path that never existed; at 3bec2e441 the spec was frontend/tests/contract-creation.headless.spec.ts. That spec was retired in ci-gate-fixes (2026-10-30) with the headless browser flows; queue-flow coverage is frontend/tests/contract-creation.spec.ts and contract-document-jobs.spec.ts.",
+      "test_paths_note": "test_paths[0] originally pointed into the contracts component test directory, where the headless spec never existed; at 3bec2e441 the spec was in the frontend tests directory. That spec was retired in ci-gate-fixes (2026-10-30) with the headless browser flows; queue-flow coverage is frontend/tests/contract-creation.spec.ts and frontend/tests/contract-document-jobs.spec.ts.",
       "test_paths": [
-        "frontend/tests/contract-creation.headless.spec.ts",
-        "mobile/src/app/(shell)/contracts/new/page.test.ts",
-        "mobile/src/components/app/contracts/contract-operation-guard.test.ts"
+        "mobile/src/app/(shell)/contracts/new/page.test.ts"
       ],
       "test_evidence": {
         "suites": 240,
@@ -955,7 +862,6 @@
       "review_scope": "Additive code/outcome/recovery on creation failures; consumers prefer outcome UNKNOWN; B1 correction updated call-inbox e2e assertions (run locally 22/22).",
       "test_paths": [
         "backend/test/usecases/eformsign-doc/create-and-send-contract.usecase.spec.ts",
-        "backend/test/ai-chat/tool-executor.service.spec.ts",
         "backend/test/e2e/call-inbox-contract-readiness.e2e.spec.ts"
       ],
       "test_evidence": {
@@ -993,11 +899,7 @@
       "implementation_sha": "157bbc29d",
       "basis_sha": "c80fa1d53",
       "review_scope": "7 product files, 49+ throw sites; tool-executor additive code/outcome (legacy keys byte-identical); no new codes; confirmation-mismatch bodies unified (anti-probing, no leak).",
-      "test_paths": [
-        "backend/test/services/agent-session.service.spec.ts",
-        "backend/test/ai-chat/tool-executor.service.spec.ts",
-        "backend/test/services/agent-feedback.service.spec.ts"
-      ],
+      "test_paths": [],
       "test_evidence": {
         "suites": 358,
         "passed": 5115,
@@ -3431,14 +3333,6 @@
       "discovery_task_id": "1.1.01"
     },
     {
-      "path": "backend/application/usecases/eformsign-doc/update-client-contract-status.usecase.ts",
-      "root": "backend/application/",
-      "kind": "runtime",
-      "candidate_count": 3,
-      "review_status": "reviewed",
-      "discovery_task_id": "1.1.01"
-    },
-    {
       "path": "backend/application/usecases/eformsign-doc/update-eformsign-doc-status.usecase.ts",
       "root": "backend/application/",
       "kind": "runtime",
@@ -4248,14 +4142,6 @@
     },
     {
       "path": "backend/application/utils/kst-schedule.ts",
-      "root": "backend/application/",
-      "kind": "runtime",
-      "candidate_count": 0,
-      "review_status": "unverified",
-      "discovery_task_id": "1.1.01"
-    },
-    {
-      "path": "backend/application/utils/mask.ts",
       "root": "backend/application/",
       "kind": "runtime",
       "candidate_count": 0,
@@ -8215,14 +8101,6 @@
       "discovery_task_id": "1.1.07"
     },
     {
-      "path": "backend/test/application/utils/mask.spec.ts",
-      "root": "backend/test/",
-      "kind": "test",
-      "candidate_count": 0,
-      "review_status": "unverified",
-      "discovery_task_id": "1.1.07"
-    },
-    {
       "path": "backend/test/auth-e2e/auth-lifecycle.spec.ts",
       "root": "backend/test/",
       "kind": "test",
@@ -10679,14 +10557,6 @@
       "discovery_task_id": "1.1.07"
     },
     {
-      "path": "backend/test/usecases/eformsign-doc/update-client-contract-status.usecase.spec.ts",
-      "root": "backend/test/",
-      "kind": "test",
-      "candidate_count": 0,
-      "review_status": "unverified",
-      "discovery_task_id": "1.1.07"
-    },
-    {
       "path": "backend/test/usecases/eformsign-doc/update-eformsign-doc-status.usecase.spec.ts",
       "root": "backend/test/",
       "kind": "test",
@@ -11215,14 +11085,6 @@
       "discovery_task_id": "1.1.08"
     },
     {
-      "path": "frontend/src/app/(protected)/admin/agent/page.tsx",
-      "root": "frontend/src/",
-      "kind": "runtime",
-      "candidate_count": 1,
-      "review_status": "reviewed",
-      "discovery_task_id": "1.1.08"
-    },
-    {
       "path": "frontend/src/app/(protected)/admin/feedback/[id]/page.tsx",
       "root": "frontend/src/",
       "kind": "runtime",
@@ -11264,14 +11126,6 @@
     },
     {
       "path": "frontend/src/app/(protected)/all/page.tsx",
-      "root": "frontend/src/",
-      "kind": "runtime",
-      "candidate_count": 0,
-      "review_status": "unverified",
-      "discovery_task_id": "1.1.08"
-    },
-    {
-      "path": "frontend/src/app/(protected)/chat/layout.tsx",
       "root": "frontend/src/",
       "kind": "runtime",
       "candidate_count": 0,
@@ -11754,14 +11608,6 @@
       "path": "frontend/src/app/(protected)/system-admin/page.tsx",
       "root": "frontend/src/",
       "kind": "runtime",
-      "candidate_count": 0,
-      "review_status": "unverified",
-      "discovery_task_id": "1.1.08"
-    },
-    {
-      "path": "frontend/src/app/(protected)/test/page.tsx",
-      "root": "frontend/src/",
-      "kind": "test",
       "candidate_count": 0,
       "review_status": "unverified",
       "discovery_task_id": "1.1.08"
@@ -13527,23 +13373,7 @@
       "discovery_task_id": "1.1.08"
     },
     {
-      "path": "frontend/src/components/app/chat/ChatFullscreen.tsx",
-      "root": "frontend/src/",
-      "kind": "runtime",
-      "candidate_count": 0,
-      "review_status": "unverified",
-      "discovery_task_id": "1.1.08"
-    },
-    {
       "path": "frontend/src/components/app/chat/ChatInput.tsx",
-      "root": "frontend/src/",
-      "kind": "runtime",
-      "candidate_count": 0,
-      "review_status": "unverified",
-      "discovery_task_id": "1.1.08"
-    },
-    {
-      "path": "frontend/src/components/app/chat/ChatWidget.tsx",
       "root": "frontend/src/",
       "kind": "runtime",
       "candidate_count": 0,
@@ -13594,14 +13424,6 @@
       "path": "frontend/src/components/app/chat/MarkdownContent.tsx",
       "root": "frontend/src/",
       "kind": "runtime",
-      "candidate_count": 0,
-      "review_status": "unverified",
-      "discovery_task_id": "1.1.08"
-    },
-    {
-      "path": "frontend/src/components/app/chat/__tests__/ChatFullscreen.shortcuts.test.tsx",
-      "root": "frontend/src/",
-      "kind": "test",
       "candidate_count": 0,
       "review_status": "unverified",
       "discovery_task_id": "1.1.08"
@@ -14023,14 +13845,6 @@
       "discovery_task_id": "1.1.08"
     },
     {
-      "path": "frontend/src/components/app/contracts/StaffCompletionIframeModal.tsx",
-      "root": "frontend/src/",
-      "kind": "runtime",
-      "candidate_count": 4,
-      "review_status": "reviewed",
-      "discovery_task_id": "1.1.08"
-    },
-    {
       "path": "frontend/src/components/app/contracts/__tests__/ContractAutomationsManager.test.tsx",
       "root": "frontend/src/",
       "kind": "test",
@@ -14043,14 +13857,6 @@
       "root": "frontend/src/",
       "kind": "test",
       "candidate_count": 0,
-      "review_status": "unverified",
-      "discovery_task_id": "1.1.08"
-    },
-    {
-      "path": "frontend/src/components/app/contracts/__tests__/ContractCreationForm.iframe-fallback.test.tsx",
-      "root": "frontend/src/",
-      "kind": "test",
-      "candidate_count": 1,
       "review_status": "unverified",
       "discovery_task_id": "1.1.08"
     },
@@ -16863,14 +16669,6 @@
       "discovery_task_id": "1.1.08"
     },
     {
-      "path": "frontend/src/features/system-templates/components/index.ts",
-      "root": "frontend/src/",
-      "kind": "runtime",
-      "candidate_count": 0,
-      "review_status": "unverified",
-      "discovery_task_id": "1.1.08"
-    },
-    {
       "path": "frontend/src/features/system-templates/components/system-template-editor.test.tsx",
       "root": "frontend/src/",
       "kind": "test",
@@ -18391,14 +18189,6 @@
       "discovery_task_id": "1.1.09"
     },
     {
-      "path": "frontend/tests/admin-nav.spec.ts",
-      "root": "frontend/tests/",
-      "kind": "test",
-      "candidate_count": 0,
-      "review_status": "unverified",
-      "discovery_task_id": "1.1.09"
-    },
-    {
       "path": "frontend/tests/admin-service-record-editor.spec.ts",
       "root": "frontend/tests/",
       "kind": "test",
@@ -18527,22 +18317,6 @@
       "discovery_task_id": "1.1.09"
     },
     {
-      "path": "frontend/tests/custom-template-variables.spec.ts",
-      "root": "frontend/tests/",
-      "kind": "test",
-      "candidate_count": 0,
-      "review_status": "unverified",
-      "discovery_task_id": "1.1.09"
-    },
-    {
-      "path": "frontend/tests/dashboard-activities-animation.spec.ts",
-      "root": "frontend/tests/",
-      "kind": "test",
-      "candidate_count": 0,
-      "review_status": "unverified",
-      "discovery_task_id": "1.1.09"
-    },
-    {
       "path": "frontend/tests/employee-autocomplete.spec.ts",
       "root": "frontend/tests/",
       "kind": "test",
@@ -18616,38 +18390,6 @@
     },
     {
       "path": "frontend/tests/staff-finalize.spec.ts",
-      "root": "frontend/tests/",
-      "kind": "test",
-      "candidate_count": 0,
-      "review_status": "unverified",
-      "discovery_task_id": "1.1.09"
-    },
-    {
-      "path": "frontend/tests/system-template-editor.spec.ts",
-      "root": "frontend/tests/",
-      "kind": "test",
-      "candidate_count": 0,
-      "review_status": "unverified",
-      "discovery_task_id": "1.1.09"
-    },
-    {
-      "path": "frontend/tests/system-template-preview.spec.ts",
-      "root": "frontend/tests/",
-      "kind": "test",
-      "candidate_count": 0,
-      "review_status": "unverified",
-      "discovery_task_id": "1.1.09"
-    },
-    {
-      "path": "frontend/tests/system-template-versions.spec.ts",
-      "root": "frontend/tests/",
-      "kind": "test",
-      "candidate_count": 0,
-      "review_status": "unverified",
-      "discovery_task_id": "1.1.09"
-    },
-    {
-      "path": "frontend/tests/system-templates-list.spec.ts",
       "root": "frontend/tests/",
       "kind": "test",
       "candidate_count": 0,
@@ -18975,14 +18717,6 @@
       "discovery_task_id": "1.1.10"
     },
     {
-      "path": "mobile/src/app/(shell)/chat/layout.tsx",
-      "root": "mobile/src/",
-      "kind": "runtime",
-      "candidate_count": 0,
-      "review_status": "unverified",
-      "discovery_task_id": "1.1.10"
-    },
-    {
       "path": "mobile/src/app/(shell)/chat/page.test.tsx",
       "root": "mobile/src/",
       "kind": "test",
@@ -19234,14 +18968,6 @@
       "path": "mobile/src/app/(shell)/dashboard/__tests__/dashboard-due.test.ts",
       "root": "mobile/src/",
       "kind": "test",
-      "candidate_count": 0,
-      "review_status": "unverified",
-      "discovery_task_id": "1.1.10"
-    },
-    {
-      "path": "mobile/src/app/(shell)/dashboard/analytics/page.tsx",
-      "root": "mobile/src/",
-      "kind": "runtime",
       "candidate_count": 0,
       "review_status": "unverified",
       "discovery_task_id": "1.1.10"
@@ -19743,14 +19469,6 @@
       "discovery_task_id": "1.1.10"
     },
     {
-      "path": "mobile/src/app/(shell)/test/page.tsx",
-      "root": "mobile/src/",
-      "kind": "test",
-      "candidate_count": 0,
-      "review_status": "unverified",
-      "discovery_task_id": "1.1.10"
-    },
-    {
       "path": "mobile/src/app/actions/locale.ts",
       "root": "mobile/src/",
       "kind": "runtime",
@@ -19895,59 +19613,11 @@
       "discovery_task_id": "1.1.10"
     },
     {
-      "path": "mobile/src/app/api/ai/chat/__tests__/route.test.ts",
+      "path": "mobile/src/app/api/ai/chat/stream/route.test.ts",
       "root": "mobile/src/",
       "kind": "test",
       "candidate_count": 0,
       "review_status": "unverified",
-      "discovery_task_id": "1.1.10"
-    },
-    {
-      "path": "mobile/src/app/api/ai/chat/confirm/route.test.ts",
-      "root": "mobile/src/",
-      "kind": "test",
-      "candidate_count": 0,
-      "review_status": "unverified",
-      "discovery_task_id": "1.1.10"
-    },
-    {
-      "path": "mobile/src/app/api/ai/chat/confirm/route.ts",
-      "root": "mobile/src/",
-      "kind": "runtime",
-      "candidate_count": 3,
-      "review_status": "reviewed",
-      "discovery_task_id": "1.1.10"
-    },
-    {
-      "path": "mobile/src/app/api/ai/chat/feedback/route.ts",
-      "root": "mobile/src/",
-      "kind": "runtime",
-      "candidate_count": 2,
-      "review_status": "reviewed",
-      "discovery_task_id": "1.1.10"
-    },
-    {
-      "path": "mobile/src/app/api/ai/chat/history/route.ts",
-      "root": "mobile/src/",
-      "kind": "runtime",
-      "candidate_count": 3,
-      "review_status": "reviewed",
-      "discovery_task_id": "1.1.10"
-    },
-    {
-      "path": "mobile/src/app/api/ai/chat/persist/route.ts",
-      "root": "mobile/src/",
-      "kind": "runtime",
-      "candidate_count": 3,
-      "review_status": "reviewed",
-      "discovery_task_id": "1.1.10"
-    },
-    {
-      "path": "mobile/src/app/api/ai/chat/sessions/[id]/route.ts",
-      "root": "mobile/src/",
-      "kind": "runtime",
-      "candidate_count": 6,
-      "review_status": "reviewed",
       "discovery_task_id": "1.1.10"
     },
     {
@@ -21047,14 +20717,6 @@
       "discovery_task_id": "1.1.10"
     },
     {
-      "path": "mobile/src/app/api/service-record/[token]/schedule-change/route.ts",
-      "root": "mobile/src/",
-      "kind": "runtime",
-      "candidate_count": 3,
-      "review_status": "reviewed",
-      "discovery_task_id": "1.1.10"
-    },
-    {
       "path": "mobile/src/app/api/service-record/[token]/sessions/[index]/submit/route.ts",
       "root": "mobile/src/",
       "kind": "runtime",
@@ -21399,22 +21061,6 @@
       "discovery_task_id": "1.1.10"
     },
     {
-      "path": "mobile/src/components/app/chat/AssistantMessage.tsx",
-      "root": "mobile/src/",
-      "kind": "runtime",
-      "candidate_count": 0,
-      "review_status": "unverified",
-      "discovery_task_id": "1.1.10"
-    },
-    {
-      "path": "mobile/src/components/app/chat/ChatFullscreen.tsx",
-      "root": "mobile/src/",
-      "kind": "runtime",
-      "candidate_count": 0,
-      "review_status": "unverified",
-      "discovery_task_id": "1.1.10"
-    },
-    {
       "path": "mobile/src/components/app/chat/ChatInput.tsx",
       "root": "mobile/src/",
       "kind": "runtime",
@@ -21439,63 +21085,7 @@
       "discovery_task_id": "1.1.10"
     },
     {
-      "path": "mobile/src/components/app/chat/ClientRegistrationWizard.tsx",
-      "root": "mobile/src/",
-      "kind": "runtime",
-      "candidate_count": 5,
-      "review_status": "reviewed",
-      "discovery_task_id": "1.1.10"
-    },
-    {
-      "path": "mobile/src/components/app/chat/CodeBlock.tsx",
-      "root": "mobile/src/",
-      "kind": "runtime",
-      "candidate_count": 0,
-      "review_status": "unverified",
-      "discovery_task_id": "1.1.10"
-    },
-    {
-      "path": "mobile/src/components/app/chat/ContractSendWizard.tsx",
-      "root": "mobile/src/",
-      "kind": "runtime",
-      "candidate_count": 0,
-      "review_status": "unverified",
-      "discovery_task_id": "1.1.10"
-    },
-    {
-      "path": "mobile/src/components/app/chat/ContractStatusWizard.tsx",
-      "root": "mobile/src/",
-      "kind": "runtime",
-      "candidate_count": 0,
-      "review_status": "unverified",
-      "discovery_task_id": "1.1.10"
-    },
-    {
-      "path": "mobile/src/components/app/chat/LegacyChatPage.test.tsx",
-      "root": "mobile/src/",
-      "kind": "test",
-      "candidate_count": 0,
-      "review_status": "unverified",
-      "discovery_task_id": "1.1.10"
-    },
-    {
-      "path": "mobile/src/components/app/chat/LegacyChatPage.tsx",
-      "root": "mobile/src/",
-      "kind": "runtime",
-      "candidate_count": 0,
-      "review_status": "unverified",
-      "discovery_task_id": "1.1.10"
-    },
-    {
       "path": "mobile/src/components/app/chat/LegacyTypingIndicator.tsx",
-      "root": "mobile/src/",
-      "kind": "runtime",
-      "candidate_count": 0,
-      "review_status": "unverified",
-      "discovery_task_id": "1.1.10"
-    },
-    {
-      "path": "mobile/src/components/app/chat/MarkdownContent.tsx",
       "root": "mobile/src/",
       "kind": "runtime",
       "candidate_count": 0,
@@ -21512,46 +21102,6 @@
     },
     {
       "path": "mobile/src/components/app/chat/MobileAgentPartRegistry.tsx",
-      "root": "mobile/src/",
-      "kind": "runtime",
-      "candidate_count": 0,
-      "review_status": "unverified",
-      "discovery_task_id": "1.1.10"
-    },
-    {
-      "path": "mobile/src/components/app/chat/__tests__/ChatFullscreen.shortcuts.test.tsx",
-      "root": "mobile/src/",
-      "kind": "test",
-      "candidate_count": 0,
-      "review_status": "unverified",
-      "discovery_task_id": "1.1.10"
-    },
-    {
-      "path": "mobile/src/components/app/chat/__tests__/ClientRegistrationWizard.test.tsx",
-      "root": "mobile/src/",
-      "kind": "test",
-      "candidate_count": 0,
-      "review_status": "unverified",
-      "discovery_task_id": "1.1.10"
-    },
-    {
-      "path": "mobile/src/components/app/chat/feedback-modal.tsx",
-      "root": "mobile/src/",
-      "kind": "runtime",
-      "candidate_count": 0,
-      "review_status": "unverified",
-      "discovery_task_id": "1.1.10"
-    },
-    {
-      "path": "mobile/src/components/app/chat/message-feedback.tsx",
-      "root": "mobile/src/",
-      "kind": "runtime",
-      "candidate_count": 0,
-      "review_status": "unverified",
-      "discovery_task_id": "1.1.10"
-    },
-    {
-      "path": "mobile/src/components/app/chat/tool-indicator.tsx",
       "root": "mobile/src/",
       "kind": "runtime",
       "candidate_count": 0,
@@ -21679,54 +21229,6 @@
       "discovery_task_id": "1.1.10"
     },
     {
-      "path": "mobile/src/components/app/contracts/ContractCreationClientStep.tsx",
-      "root": "mobile/src/",
-      "kind": "runtime",
-      "candidate_count": 0,
-      "review_status": "unverified",
-      "discovery_task_id": "1.1.10"
-    },
-    {
-      "path": "mobile/src/components/app/contracts/ContractCreationEmployeeStep.tsx",
-      "root": "mobile/src/",
-      "kind": "runtime",
-      "candidate_count": 0,
-      "review_status": "unverified",
-      "discovery_task_id": "1.1.10"
-    },
-    {
-      "path": "mobile/src/components/app/contracts/ContractCreationReviewStep.tsx",
-      "root": "mobile/src/",
-      "kind": "runtime",
-      "candidate_count": 0,
-      "review_status": "unverified",
-      "discovery_task_id": "1.1.10"
-    },
-    {
-      "path": "mobile/src/components/app/contracts/ContractCreationScreen.tsx",
-      "root": "mobile/src/",
-      "kind": "runtime",
-      "candidate_count": 0,
-      "review_status": "unverified",
-      "discovery_task_id": "1.1.10"
-    },
-    {
-      "path": "mobile/src/components/app/contracts/ContractCreationSigningModal.tsx",
-      "root": "mobile/src/",
-      "kind": "runtime",
-      "candidate_count": 0,
-      "review_status": "unverified",
-      "discovery_task_id": "1.1.10"
-    },
-    {
-      "path": "mobile/src/components/app/contracts/ContractCreationVoucherStep.tsx",
-      "root": "mobile/src/",
-      "kind": "runtime",
-      "candidate_count": 0,
-      "review_status": "unverified",
-      "discovery_task_id": "1.1.10"
-    },
-    {
       "path": "mobile/src/components/app/contracts/__tests__/contract-pdf-viewer.test.tsx",
       "root": "mobile/src/",
       "kind": "test",
@@ -21748,14 +21250,6 @@
       "kind": "runtime",
       "candidate_count": 1,
       "review_status": "reviewed",
-      "discovery_task_id": "1.1.10"
-    },
-    {
-      "path": "mobile/src/components/app/contracts/index.ts",
-      "root": "mobile/src/",
-      "kind": "runtime",
-      "candidate_count": 0,
-      "review_status": "unverified",
       "discovery_task_id": "1.1.10"
     },
     {
@@ -23535,14 +23029,6 @@
       "discovery_task_id": "1.1.10"
     },
     {
-      "path": "mobile/src/components/ui/stepper.tsx",
-      "root": "mobile/src/",
-      "kind": "runtime",
-      "candidate_count": 0,
-      "review_status": "unverified",
-      "discovery_task_id": "1.1.10"
-    },
-    {
       "path": "mobile/src/components/ui/switch.test.tsx",
       "root": "mobile/src/",
       "kind": "test",
@@ -23911,30 +23397,6 @@
       "discovery_task_id": "1.1.10"
     },
     {
-      "path": "mobile/src/hooks/__tests__/useChatStream.confirmation.test.tsx",
-      "root": "mobile/src/",
-      "kind": "test",
-      "candidate_count": 0,
-      "review_status": "unverified",
-      "discovery_task_id": "1.1.10"
-    },
-    {
-      "path": "mobile/src/hooks/__tests__/useChatStream.intercept.test.tsx",
-      "root": "mobile/src/",
-      "kind": "test",
-      "candidate_count": 0,
-      "review_status": "unverified",
-      "discovery_task_id": "1.1.10"
-    },
-    {
-      "path": "mobile/src/hooks/__tests__/useChatStream.sse.test.tsx",
-      "root": "mobile/src/",
-      "kind": "test",
-      "candidate_count": 0,
-      "review_status": "unverified",
-      "discovery_task_id": "1.1.10"
-    },
-    {
       "path": "mobile/src/hooks/__tests__/useClients.delete-concurrency.test.tsx",
       "root": "mobile/src/",
       "kind": "test",
@@ -24039,14 +23501,6 @@
       "discovery_task_id": "1.1.10"
     },
     {
-      "path": "mobile/src/hooks/contracts/useContractCreationFlow.ts",
-      "root": "mobile/src/",
-      "kind": "runtime",
-      "candidate_count": 7,
-      "review_status": "reviewed",
-      "discovery_task_id": "1.1.10"
-    },
-    {
       "path": "mobile/src/hooks/index.ts",
       "root": "mobile/src/",
       "kind": "runtime",
@@ -24132,14 +23586,6 @@
       "kind": "runtime",
       "candidate_count": 0,
       "review_status": "unverified",
-      "discovery_task_id": "1.1.10"
-    },
-    {
-      "path": "mobile/src/hooks/useChatStream.ts",
-      "root": "mobile/src/",
-      "kind": "runtime",
-      "candidate_count": 37,
-      "review_status": "reviewed",
       "discovery_task_id": "1.1.10"
     },
     {
@@ -24379,14 +23825,6 @@
       "root": "mobile/src/",
       "kind": "runtime",
       "candidate_count": 9,
-      "review_status": "reviewed",
-      "discovery_task_id": "1.1.10"
-    },
-    {
-      "path": "mobile/src/lib/api/feedback.ts",
-      "root": "mobile/src/",
-      "kind": "runtime",
-      "candidate_count": 1,
       "review_status": "reviewed",
       "discovery_task_id": "1.1.10"
     },
@@ -25291,14 +24729,6 @@
       "root": "mobile/tests/",
       "kind": "test",
       "candidate_count": 1,
-      "review_status": "unverified",
-      "discovery_task_id": "1.1.11"
-    },
-    {
-      "path": "mobile/tests/chat-feedback.spec.ts",
-      "root": "mobile/tests/",
-      "kind": "test",
-      "candidate_count": 0,
       "review_status": "unverified",
       "discovery_task_id": "1.1.11"
     },
@@ -30805,7 +30235,7 @@
       "public_codes": [],
       "outcome_evidence": null,
       "consumer_paths": [
-        "CLI scripts/remediate-document-storage-path-duplicates.ts"
+        "CLI backend/scripts/remediate-document-storage-path-duplicates.ts"
       ],
       "test_evidence": [
         "backend/test/services/document-storage-duplicate-remediator.spec.ts"
@@ -38516,52 +37946,6 @@
       "spec_mapping_note": "logs and returns undefined; do not mask failure, structured logging"
     },
     {
-      "id": "owner-7dcf422bb365",
-      "path": "backend/application/usecases/eformsign-doc/update-client-contract-status.usecase.ts",
-      "root": "backend/application/",
-      "classification": "no-direct-error-boundary",
-      "reason": "Deprecated and unreferenced; raw NotFound L43/L52 unreachable.",
-      "seams": [
-        {
-          "line": 1,
-          "kinds": [
-            "raw_http_exception"
-          ]
-        },
-        {
-          "line": 43,
-          "kinds": [
-            "raw_http_exception",
-            "throw_or_reject"
-          ]
-        },
-        {
-          "line": 52,
-          "kinds": [
-            "raw_http_exception",
-            "throw_or_reject"
-          ]
-        }
-      ],
-      "discovery_task_id": "1.1.01",
-      "spec_ids": [
-        "EM-ARCH-01",
-        "EM-CAT-01"
-      ],
-      "public_codes": [],
-      "outcome_evidence": null,
-      "consumer_paths": [
-        "none (dead code)"
-      ],
-      "test_evidence": [
-        "backend/test/usecases/eformsign-doc/update-client-contract-status.usecase.spec.ts"
-      ],
-      "followup_task": null,
-      "review_task": "1.1-batch-b",
-      "spec_mapping_status": "mapped-em-v1",
-      "spec_mapping_note": "deprecated unreferenced raw NotFound; needs registered code if retained"
-    },
-    {
       "id": "owner-a8c5e53dd20c",
       "path": "backend/application/usecases/eformsign-doc/update-eformsign-doc-status.usecase.ts",
       "root": "backend/application/",
@@ -40476,7 +39860,7 @@
       "public_codes": [],
       "outcome_evidence": null,
       "consumer_paths": [
-        "CLI scripts/backfill-eformsign-docs.ts"
+        "CLI backend/scripts/backfill-eformsign-docs.ts"
       ],
       "test_evidence": [
         "backend/test/application/utils/eformsign-backfill-safety.spec.ts"
@@ -50576,39 +49960,6 @@
       "spec_mapping_note": "Server action returns raw strings and axios message with no shared problem code."
     },
     {
-      "id": "owner-8ffaa381edaa",
-      "path": "frontend/src/app/(protected)/admin/agent/page.tsx",
-      "root": "frontend/src/",
-      "classification": "migrated",
-      "reason": "Converted in 6.1f (002e86782, audit SHIP 61fb, merge pending): client error policy — code-based comparisons, authored Korean outcomes (no raw upstream internals), mutation failures surfaced; jest 307/1812, tsc 0, eslint 0e; +2 adjacent-file deviations.",
-      "seams": [
-        {
-          "line": 46,
-          "kinds": [
-            "throw_or_reject"
-          ]
-        }
-      ],
-      "discovery_task_id": "1.1.08",
-      "spec_ids": [
-        "EM-ARCH-05",
-        "EM-CORE-01",
-        "EM-CAT-01",
-        "EM-CHANGE-03",
-        "EM-OBS-04"
-      ],
-      "public_codes": [],
-      "outcome_evidence": null,
-      "consumer_paths": [
-        "어드민 에이전트 진단 화면"
-      ],
-      "test_evidence": [],
-      "followup_task": null,
-      "review_task": "1.1-batch-c",
-      "spec_mapping_status": "mapped-em-v1",
-      "spec_mapping_note": "Local error InfoCard, plain Error thrown, emergency-disable failures silently ignored."
-    },
-    {
       "id": "owner-a8dfacb40536",
       "path": "frontend/src/app/(protected)/chat/page.tsx",
       "root": "frontend/src/",
@@ -52250,9 +51601,7 @@
       ],
       "public_codes": [],
       "outcome_evidence": "Delegates every error response to ai/agent/_proxy.ts; no local error handling.",
-      "consumer_paths": [
-        "frontend/src/app/(protected)/admin/agent/page.tsx (diagnostics actions)"
-      ],
+      "consumer_paths": [],
       "test_evidence": [
         "frontend/src/app/api/ai/agent/__tests__/proxy.test.ts"
       ],
@@ -52283,9 +51632,7 @@
       ],
       "public_codes": [],
       "outcome_evidence": "Delegates every error response to ai/agent/_proxy.ts; no local error handling.",
-      "consumer_paths": [
-        "frontend/src/app/(protected)/admin/agent/page.tsx (diagnostics)"
-      ],
+      "consumer_paths": [],
       "test_evidence": [
         "frontend/src/app/api/ai/agent/__tests__/proxy.test.ts"
       ],
@@ -52316,9 +51663,7 @@
       ],
       "public_codes": [],
       "outcome_evidence": "Delegates every error response to ai/agent/_proxy.ts; no local error handling.",
-      "consumer_paths": [
-        "frontend/src/app/(protected)/admin/agent/page.tsx (emergency disable)"
-      ],
+      "consumer_paths": [],
       "test_evidence": [
         "frontend/src/app/api/ai/agent/__tests__/proxy.test.ts"
       ],
@@ -58651,65 +57996,12 @@
       ],
       "test_evidence": [
         "frontend/src/components/app/contracts/ContractCreationForm.test.tsx",
-        "frontend/src/components/app/contracts/__tests__/ContractCreationForm.iframe-fallback.test.tsx",
         "frontend/src/components/app/contracts/__tests__/ContractCreationForm.initial-client.test.tsx"
       ],
       "followup_task": null,
       "review_task": "1.1-batch-c",
       "spec_mapping_status": "mapped-em-v1",
       "spec_mapping_note": "Extensive legacy getUserErrorMessage/getApiErrorMessage for eformsign and contracts"
-    },
-    {
-      "id": "owner-e67a9ca797bb",
-      "path": "frontend/src/components/app/contracts/StaffCompletionIframeModal.tsx",
-      "root": "frontend/src/",
-      "classification": "migrated",
-      "reason": "Converted in 6.1f (002e86782, audit SHIP 61fb, merge pending): client error policy — code-based comparisons, authored Korean outcomes (no raw upstream internals), mutation failures surfaced; jest 307/1812, tsc 0, eslint 0e; +2 adjacent-file deviations.",
-      "seams": [
-        {
-          "line": 25,
-          "kinds": [
-            "ui_error_handler"
-          ]
-        },
-        {
-          "line": 52,
-          "kinds": [
-            "ui_error_handler"
-          ]
-        },
-        {
-          "line": 74,
-          "kinds": [
-            "ui_error_handler"
-          ]
-        },
-        {
-          "line": 76,
-          "kinds": [
-            "ui_error_handler"
-          ]
-        }
-      ],
-      "discovery_task_id": "1.1.08",
-      "spec_ids": [
-        "EM-CORE-01",
-        "EM-FE-04",
-        "EM-MAP-04",
-        "EM-CHANGE-03"
-      ],
-      "public_codes": [],
-      "outcome_evidence": null,
-      "consumer_paths": [
-        "contracts/page.tsx"
-      ],
-      "test_evidence": [
-        "frontend/src/components/app/contracts/__tests__/ContractCreationForm.iframe-fallback.test.tsx"
-      ],
-      "followup_task": null,
-      "review_task": "1.1-batch-c",
-      "spec_mapping_status": "mapped-em-v1",
-      "spec_mapping_note": "Relays raw eformsign/sdk messages with Korean fallback; no structured contract"
     },
     {
       "id": "owner-b5bd6d63fa41",
@@ -61278,7 +60570,6 @@
       "public_codes": [],
       "outcome_evidence": null,
       "consumer_paths": [
-        "ChatFullscreen.tsx",
         "LegacyChatPage.tsx",
         "AssistantMessage.tsx"
       ],
@@ -61400,8 +60691,7 @@
       "public_codes": [],
       "outcome_evidence": null,
       "consumer_paths": [
-        "ContractCreationForm.tsx",
-        "StaffCompletionIframeModal.tsx"
+        "ContractCreationForm.tsx"
       ],
       "test_evidence": [],
       "followup_task": null,
@@ -62352,7 +61642,7 @@
       "public_codes": [],
       "outcome_evidence": "Privacy sanitization only; no user-facing copy.",
       "consumer_paths": [
-        "frontend/src/sentry.client.config.ts",
+        "frontend/src/instrumentation-client.ts",
         "frontend/src/sentry.server.config.ts",
         "frontend/src/sentry.edge.config.ts",
         "frontend/src/lib/observability/capture-api-error.ts"
@@ -64746,152 +64036,14 @@
       "spec_mapping_note": "Forwards raw Unauthorized 401 and raw Upstream unavailable 502."
     },
     {
-      "id": "owner-9df6fe6ea814",
-      "path": "mobile/src/app/api/ai/chat/confirm/route.ts",
+      "id": "owner-aa33b21bf336",
+      "path": "mobile/src/app/api/ai/chat/stream/route.ts",
       "root": "mobile/src/",
       "classification": "migrated",
       "reason": "Converted in 6h1 (efb566de0, corr fdd2dad1a): raw bodies → mobile problem-responses helpers; check-email false-success 제거; refresh cookie-clearing 유지.",
       "seams": [
         {
-          "line": 18,
-          "kinds": [
-            "http_endpoint"
-          ]
-        },
-        {
-          "line": 40,
-          "kinds": [
-            "catch_boundary"
-          ]
-        },
-        {
-          "line": 49,
-          "kinds": [
-            "catch_boundary"
-          ]
-        }
-      ],
-      "discovery_task_id": "1.1.10",
-      "spec_ids": [
-        "EM-API-01",
-        "EM-API-02",
-        "EM-CAT-01",
-        "EM-VAL-04",
-        "EM-MAP-04"
-      ],
-      "public_codes": [
-        "VALIDATION_FAILED"
-      ],
-      "outcome_evidence": null,
-      "consumer_paths": [
-        "mobile/src/hooks/useChatStream.ts:308"
-      ],
-      "test_evidence": [
-        "mobile/src/app/api/ai/chat/confirm/route.test.ts"
-      ],
-      "followup_task": null,
-      "review_task": "1.1-batch-d",
-      "spec_mapping_status": "mapped-em-v1",
-      "spec_mapping_note": "Shared parseBody but raw 401 and legacy non-catalog UPSTREAM_ERROR response."
-    },
-    {
-      "id": "owner-df00f968a405",
-      "path": "mobile/src/app/api/ai/chat/feedback/route.ts",
-      "root": "mobile/src/",
-      "classification": "migrated",
-      "reason": "Converted in 6h1 (efb566de0, corr fdd2dad1a): raw bodies → mobile problem-responses helpers; check-email false-success 제거; refresh cookie-clearing 유지.",
-      "seams": [
-        {
-          "line": 22,
-          "kinds": [
-            "http_endpoint"
-          ]
-        },
-        {
-          "line": 44,
-          "kinds": [
-            "catch_boundary"
-          ]
-        }
-      ],
-      "discovery_task_id": "1.1.10",
-      "spec_ids": [
-        "EM-API-01",
-        "EM-API-02",
-        "EM-CAT-01",
-        "EM-VAL-04"
-      ],
-      "public_codes": [
-        "VALIDATION_FAILED"
-      ],
-      "outcome_evidence": null,
-      "consumer_paths": [
-        "mobile/src/lib/api/feedback.ts:9",
-        "mobile/src/components/app/chat/ChatFullscreen.tsx:118"
-      ],
-      "test_evidence": [
-        "mobile/src/app/api/ai/chat/__tests__/route.test.ts"
-      ],
-      "followup_task": null,
-      "review_task": "1.1-batch-d",
-      "spec_mapping_status": "mapped-em-v1",
-      "spec_mapping_note": "Shared parseBody but raw 401 and raw English 500 body."
-    },
-    {
-      "id": "owner-f5c080929fb5",
-      "path": "mobile/src/app/api/ai/chat/history/route.ts",
-      "root": "mobile/src/",
-      "classification": "migrated",
-      "reason": "Converted in 6h1 (efb566de0, corr fdd2dad1a): raw bodies → mobile problem-responses helpers; check-email false-success 제거; refresh cookie-clearing 유지.",
-      "seams": [
-        {
-          "line": 44,
-          "kinds": [
-            "http_endpoint"
-          ]
-        },
-        {
-          "line": 86,
-          "kinds": [
-            "catch_boundary"
-          ]
-        },
-        {
-          "line": 91,
-          "kinds": [
-            "catch_boundary"
-          ]
-        }
-      ],
-      "discovery_task_id": "1.1.10",
-      "spec_ids": [
-        "EM-API-01",
-        "EM-API-02",
-        "EM-CAT-01",
-        "EM-MAP-04"
-      ],
-      "public_codes": [],
-      "outcome_evidence": null,
-      "consumer_paths": [
-        "mobile/src/hooks/useChatStream.ts:369"
-      ],
-      "test_evidence": [
-        "mobile/src/app/api/ai/chat/__tests__/route.test.ts"
-      ],
-      "followup_task": null,
-      "review_task": "1.1-batch-d",
-      "spec_mapping_status": "mapped-em-v1",
-      "spec_mapping_note": "Raw 401, raw English param 400, legacy upstreamJsonErrorResponse."
-    },
-    {
-      "id": "owner-368d29aced35",
-      "path": "mobile/src/app/api/ai/chat/persist/route.ts",
-      "root": "mobile/src/",
-      "classification": "migrated",
-      "reason": "Converted in 6h1 (efb566de0, corr fdd2dad1a): raw bodies → mobile problem-responses helpers; check-email false-success 제거; refresh cookie-clearing 유지.",
-      "seams": [
-        {
-          "line": 22,
+          "line": 25,
           "kinds": [
             "http_endpoint"
           ]
@@ -64903,120 +64055,7 @@
           ]
         },
         {
-          "line": 56,
-          "kinds": [
-            "catch_boundary"
-          ]
-        }
-      ],
-      "discovery_task_id": "1.1.10",
-      "spec_ids": [
-        "EM-API-01",
-        "EM-API-02",
-        "EM-CAT-01",
-        "EM-VAL-04",
-        "EM-MAP-04"
-      ],
-      "public_codes": [
-        "VALIDATION_FAILED"
-      ],
-      "outcome_evidence": null,
-      "consumer_paths": [
-        "mobile/src/hooks/useChatStream.ts:233"
-      ],
-      "test_evidence": [
-        "mobile/src/app/api/ai/chat/__tests__/route.test.ts"
-      ],
-      "followup_task": null,
-      "review_task": "1.1-batch-d",
-      "spec_mapping_status": "mapped-em-v1",
-      "spec_mapping_note": "Shared parseBody but raw 401 and legacy upstreamJsonErrorResponse."
-    },
-    {
-      "id": "owner-3506fa97d624",
-      "path": "mobile/src/app/api/ai/chat/sessions/[id]/route.ts",
-      "root": "mobile/src/",
-      "classification": "migrated",
-      "reason": "Converted in 6h1 (efb566de0, corr fdd2dad1a): raw bodies → mobile problem-responses helpers; check-email false-success 제거; refresh cookie-clearing 유지.",
-      "seams": [
-        {
-          "line": 28,
-          "kinds": [
-            "http_endpoint"
-          ]
-        },
-        {
-          "line": 53,
-          "kinds": [
-            "catch_boundary"
-          ]
-        },
-        {
           "line": 58,
-          "kinds": [
-            "catch_boundary"
-          ]
-        },
-        {
-          "line": 67,
-          "kinds": [
-            "http_endpoint"
-          ]
-        },
-        {
-          "line": 92,
-          "kinds": [
-            "catch_boundary"
-          ]
-        },
-        {
-          "line": 101,
-          "kinds": [
-            "catch_boundary"
-          ]
-        }
-      ],
-      "discovery_task_id": "1.1.10",
-      "spec_ids": [
-        "EM-API-01",
-        "EM-API-02",
-        "EM-CAT-01",
-        "EM-MAP-04"
-      ],
-      "public_codes": [],
-      "outcome_evidence": null,
-      "consumer_paths": [
-        "mobile/src/hooks/useChatStream.ts:973"
-      ],
-      "test_evidence": [
-        "mobile/src/app/api/ai/chat/__tests__/route.test.ts"
-      ],
-      "followup_task": null,
-      "review_task": "1.1-batch-d",
-      "spec_mapping_status": "mapped-em-v1",
-      "spec_mapping_note": "Raw 401/session-id 400 and legacy upstreamJsonErrorResponse in GET/DELETE."
-    },
-    {
-      "id": "owner-aa33b21bf336",
-      "path": "mobile/src/app/api/ai/chat/stream/route.ts",
-      "root": "mobile/src/",
-      "classification": "migrated",
-      "reason": "Converted in 6h1 (efb566de0, corr fdd2dad1a): raw bodies → mobile problem-responses helpers; check-email false-success 제거; refresh cookie-clearing 유지.",
-      "seams": [
-        {
-          "line": 20,
-          "kinds": [
-            "http_endpoint"
-          ]
-        },
-        {
-          "line": 45,
-          "kinds": [
-            "catch_boundary"
-          ]
-        },
-        {
-          "line": 56,
           "kinds": [
             "catch_boundary"
           ]
@@ -65033,17 +64072,14 @@
         "VALIDATION_FAILED"
       ],
       "outcome_evidence": null,
-      "consumer_paths": [
-        "mobile/src/hooks/useChatStream.ts:512",
-        "mobile/src/components/app/chat/ChatFullscreen.tsx"
-      ],
+      "consumer_paths": [],
       "test_evidence": [
-        "mobile/src/app/api/ai/chat/__tests__/route.test.ts"
+        "mobile/src/app/api/ai/chat/stream/route.test.ts"
       ],
       "followup_task": null,
       "review_task": "1.1-batch-d",
       "spec_mapping_status": "mapped-em-v1",
-      "spec_mapping_note": "Shared parseBody but raw 401 and legacy upstreamSseErrorResponse on SSE."
+      "spec_mapping_note": "Retained unchanged as a D13 cutover sentinel until legacy removal is authorized; uses shared parseBody and problem-response helpers. Direct route tests cover auth refusal, body validation, successful stream forwarding and sanitized upstream/transport SSE errors."
     },
     {
       "id": "owner-e3a601cb213a",
@@ -65191,8 +64227,7 @@
       "public_codes": [],
       "outcome_evidence": null,
       "consumer_paths": [
-        "mobile/src/services/api.ts:262",
-        "mobile/middleware.ts:202"
+        "mobile/src/services/api.ts:262"
       ],
       "test_evidence": [],
       "followup_task": null,
@@ -66750,7 +65785,6 @@
       "public_codes": [],
       "outcome_evidence": null,
       "consumer_paths": [
-        "mobile/src/hooks/contracts/useContractCreationFlow.ts:889",
         "mobile/src/app/(shell)/contracts/new/page.tsx:892"
       ],
       "test_evidence": [
@@ -69491,49 +68525,6 @@
       "spec_mapping_note": "catch delegates to shared errorResponse; no authored error body"
     },
     {
-      "id": "owner-fb65433f38c2",
-      "path": "mobile/src/app/api/service-record/[token]/schedule-change/route.ts",
-      "root": "mobile/src/",
-      "classification": "no-direct-error-boundary",
-      "reason": "Catch at L14-L16 delegates to shared errorResponse; authors no error body.",
-      "seams": [
-        {
-          "line": 7,
-          "kinds": [
-            "http_endpoint"
-          ]
-        },
-        {
-          "line": 14,
-          "kinds": [
-            "catch_boundary"
-          ]
-        },
-        {
-          "line": 15,
-          "kinds": [
-            "ui_error_handler"
-          ]
-        }
-      ],
-      "discovery_task_id": "1.1.10",
-      "spec_ids": [
-        "EM-API-01",
-        "EM-API-02",
-        "EM-CAT-01"
-      ],
-      "public_codes": [],
-      "outcome_evidence": "Owns no error boundary; upstream failures are shaped by shared errorResponse.",
-      "consumer_paths": [
-        "mobile/src/app/(public)/service-record/[token]/page.tsx:517"
-      ],
-      "test_evidence": [],
-      "followup_task": null,
-      "review_task": "1.1-batch-d",
-      "spec_mapping_status": "mapped-em-v1",
-      "spec_mapping_note": "catch delegates to shared errorResponse; no authored error body"
-    },
-    {
       "id": "owner-b7f90a2639a4",
       "path": "mobile/src/app/api/service-record/[token]/sessions/[index]/submit/route.ts",
       "root": "mobile/src/",
@@ -70442,8 +69433,7 @@
       "public_codes": [],
       "outcome_evidence": null,
       "consumer_paths": [
-        "mobile/src/hooks/useVoucherData.ts",
-        "mobile/src/components/app/chat/ClientRegistrationWizard.tsx"
+        "mobile/src/hooks/useVoucherData.ts"
       ],
       "test_evidence": [
         "mobile/src/app/api/voucher-price-infos/__tests__/route.test.ts"
@@ -70489,8 +69479,7 @@
       "public_codes": [],
       "outcome_evidence": null,
       "consumer_paths": [
-        "mobile/src/hooks/useVoucherData.ts",
-        "mobile/src/components/app/chat/ClientRegistrationWizard.tsx"
+        "mobile/src/hooks/useVoucherData.ts"
       ],
       "test_evidence": [
         "mobile/src/app/api/voucher-price-infos/__tests__/route.test.ts"
@@ -70554,66 +69543,6 @@
       "spec_mapping_note": "Mutation errors swallowed; hardcoded ko toasts need normalizer and single display control."
     },
     {
-      "id": "owner-0d6b52848e4d",
-      "path": "mobile/src/components/app/chat/ClientRegistrationWizard.tsx",
-      "root": "mobile/src/",
-      "classification": "migrated",
-      "reason": "Converted in 6.1g (686583ea3+f6af0485c, audit SHIP 61gb): mobile client error policy — authored Korean copy, code-based comparisons, surfaced mutation failures; jest 186/1208+32/172, tsc 0, eslint 0 (2 justified disables); usePushNotification lint residual declared.",
-      "seams": [
-        {
-          "line": 155,
-          "kinds": [
-            "ui_error_handler"
-          ]
-        },
-        {
-          "line": 165,
-          "kinds": [
-            "ui_error_handler"
-          ]
-        },
-        {
-          "line": 202,
-          "kinds": [
-            "catch_boundary"
-          ]
-        },
-        {
-          "line": 204,
-          "kinds": [
-            "ui_error_handler"
-          ]
-        },
-        {
-          "line": 418,
-          "kinds": [
-            "ui_error_handler"
-          ]
-        }
-      ],
-      "discovery_task_id": "1.1.10",
-      "spec_ids": [
-        "EM-FE-01",
-        "EM-VAL-01",
-        "EM-VAL-02",
-        "EM-VAL-03",
-        "EM-KO-01"
-      ],
-      "public_codes": [],
-      "outcome_evidence": null,
-      "consumer_paths": [
-        "mobile/src/components/app/chat/LegacyChatPage.tsx",
-        "mobile/src/components/app/chat/AssistantMessage.tsx"
-      ],
-      "test_evidence": [
-        "mobile/src/components/app/chat/__tests__/ClientRegistrationWizard.test.tsx"
-      ],
-      "followup_task": null,
-      "review_task": "1.1-batch-d",
-      "spec_mapping_status": "mapped-em-v1",
-      "spec_mapping_note": "Submit/validation via legacy helper; add normalizeApiError and field linking."
-    },
-    {
       "id": "owner-c24010216b94",
       "path": "mobile/src/components/app/clients/ClientAutocomplete.tsx",
       "root": "mobile/src/",
@@ -70637,9 +69566,7 @@
       "outcome_evidence": "Read errors use the shared normalized contract with suppress and refresh handling.",
       "consumer_paths": [
         "mobile/src/app/(shell)/contracts/new/page.tsx",
-        "mobile/src/app/(shell)/messages/new/page.tsx",
-        "mobile/src/components/app/chat/ContractSendWizard.tsx",
-        "mobile/src/components/app/chat/ContractStatusWizard.tsx"
+        "mobile/src/app/(shell)/messages/new/page.tsx"
       ],
       "test_evidence": [
         "mobile/src/components/app/clients/__tests__/ClientAutocomplete.test.tsx"
@@ -72171,76 +71098,6 @@
       "spec_mapping_note": "Toasts local strings via legacy helper and narrows catch to error.message; normalize."
     },
     {
-      "id": "owner-36dcbbc89f0e",
-      "path": "mobile/src/hooks/contracts/useContractCreationFlow.ts",
-      "root": "mobile/src/",
-      "classification": "removed",
-      "reason": "Removed as dead code in 5-4c (3bec2e441): reachable only via an unimported barrel + redirect route; blind iframe fallback hazard eliminated.",
-      "seams": [
-        {
-          "line": 584,
-          "kinds": [
-            "ui_error_handler"
-          ]
-        },
-        {
-          "line": 813,
-          "kinds": [
-            "catch_boundary"
-          ]
-        },
-        {
-          "line": 823,
-          "kinds": [
-            "ui_error_handler"
-          ]
-        },
-        {
-          "line": 854,
-          "kinds": [
-            "throw_or_reject"
-          ]
-        },
-        {
-          "line": 895,
-          "kinds": [
-            "catch_boundary"
-          ]
-        },
-        {
-          "line": 956,
-          "kinds": [
-            "catch_boundary"
-          ]
-        },
-        {
-          "line": 987,
-          "kinds": [
-            "catch_boundary"
-          ]
-        }
-      ],
-      "discovery_task_id": "1.1.10",
-      "spec_ids": [
-        "EM-FE-01",
-        "EM-FE-02",
-        "EM-KO-01",
-        "EM-COPY-03"
-      ],
-      "public_codes": [],
-      "outcome_evidence": null,
-      "consumer_paths": [
-        "mobile/src/app/(shell)/contracts/new/page.tsx"
-      ],
-      "test_evidence": [
-        "mobile/src/hooks/__tests__/useContractClientRegistration.test.tsx"
-      ],
-      "followup_task": null,
-      "review_task": "1.1-batch-d",
-      "spec_mapping_status": "mapped-em-v1",
-      "spec_mapping_note": "showErrorToast wraps legacy helper; raw ko headless failure strings need catalog copy."
-    },
-    {
       "id": "owner-677e67552afd",
       "path": "mobile/src/hooks/use-documents.ts",
       "root": "mobile/src/",
@@ -72462,260 +71319,6 @@
       "spec_mapping_note": "Ad-hoc MobileAgentError codes/messages instead of shared catalog and mapping."
     },
     {
-      "id": "owner-c1cc758a4776",
-      "path": "mobile/src/hooks/useChatStream.ts",
-      "root": "mobile/src/",
-      "classification": "migrated",
-      "reason": "Converted in 6.1g (686583ea3+f6af0485c, audit SHIP 61gb): mobile client error policy — authored Korean copy, code-based comparisons, surfaced mutation failures; jest 186/1208+32/172, tsc 0, eslint 0 (2 justified disables); usePushNotification lint residual declared.",
-      "seams": [
-        {
-          "line": 141,
-          "kinds": [
-            "catch_boundary"
-          ]
-        },
-        {
-          "line": 242,
-          "kinds": [
-            "catch_boundary"
-          ]
-        },
-        {
-          "line": 281,
-          "kinds": [
-            "ui_error_handler"
-          ]
-        },
-        {
-          "line": 290,
-          "kinds": [
-            "ui_error_handler"
-          ]
-        },
-        {
-          "line": 298,
-          "kinds": [
-            "ui_error_handler"
-          ]
-        },
-        {
-          "line": 321,
-          "kinds": [
-            "ui_error_handler"
-          ]
-        },
-        {
-          "line": 331,
-          "kinds": [
-            "catch_boundary"
-          ]
-        },
-        {
-          "line": 342,
-          "kinds": [
-            "catch_boundary"
-          ]
-        },
-        {
-          "line": 344,
-          "kinds": [
-            "ui_error_handler"
-          ]
-        },
-        {
-          "line": 360,
-          "kinds": [
-            "ui_error_handler"
-          ]
-        },
-        {
-          "line": 389,
-          "kinds": [
-            "catch_boundary"
-          ]
-        },
-        {
-          "line": 419,
-          "kinds": [
-            "ui_error_handler"
-          ]
-        },
-        {
-          "line": 444,
-          "kinds": [
-            "ui_error_handler"
-          ]
-        },
-        {
-          "line": 469,
-          "kinds": [
-            "ui_error_handler"
-          ]
-        },
-        {
-          "line": 492,
-          "kinds": [
-            "ui_error_handler"
-          ]
-        },
-        {
-          "line": 526,
-          "kinds": [
-            "throw_or_reject"
-          ]
-        },
-        {
-          "line": 533,
-          "kinds": [
-            "throw_or_reject"
-          ]
-        },
-        {
-          "line": 591,
-          "kinds": [
-            "ui_error_handler"
-          ]
-        },
-        {
-          "line": 601,
-          "kinds": [
-            "ui_error_handler"
-          ]
-        },
-        {
-          "line": 655,
-          "kinds": [
-            "ui_error_handler"
-          ]
-        },
-        {
-          "line": 665,
-          "kinds": [
-            "ui_error_handler"
-          ]
-        },
-        {
-          "line": 681,
-          "kinds": [
-            "catch_boundary"
-          ]
-        },
-        {
-          "line": 722,
-          "kinds": [
-            "ui_error_handler"
-          ]
-        },
-        {
-          "line": 754,
-          "kinds": [
-            "throw_or_reject"
-          ]
-        },
-        {
-          "line": 761,
-          "kinds": [
-            "throw_or_reject"
-          ]
-        },
-        {
-          "line": 819,
-          "kinds": [
-            "ui_error_handler"
-          ]
-        },
-        {
-          "line": 829,
-          "kinds": [
-            "ui_error_handler"
-          ]
-        },
-        {
-          "line": 882,
-          "kinds": [
-            "ui_error_handler"
-          ]
-        },
-        {
-          "line": 892,
-          "kinds": [
-            "ui_error_handler"
-          ]
-        },
-        {
-          "line": 907,
-          "kinds": [
-            "catch_boundary"
-          ]
-        },
-        {
-          "line": 916,
-          "kinds": [
-            "ui_error_handler"
-          ]
-        },
-        {
-          "line": 925,
-          "kinds": [
-            "ui_error_handler"
-          ]
-        },
-        {
-          "line": 937,
-          "kinds": [
-            "ui_error_handler"
-          ]
-        },
-        {
-          "line": 946,
-          "kinds": [
-            "ui_error_handler"
-          ]
-        },
-        {
-          "line": 965,
-          "kinds": [
-            "ui_error_handler"
-          ]
-        },
-        {
-          "line": 976,
-          "kinds": [
-            "catch_boundary"
-          ]
-        },
-        {
-          "line": 985,
-          "kinds": [
-            "ui_error_handler"
-          ]
-        }
-      ],
-      "discovery_task_id": "1.1.10",
-      "spec_ids": [
-        "EM-FE-01",
-        "EM-FE-02",
-        "EM-ASYNC-02",
-        "EM-KO-01",
-        "EM-COPY-04"
-      ],
-      "public_codes": [],
-      "outcome_evidence": null,
-      "consumer_paths": [
-        "mobile/src/components/app/chat/LegacyChatPage.tsx",
-        "mobile/src/components/app/chat/ChatFullscreen.tsx"
-      ],
-      "test_evidence": [
-        "mobile/src/hooks/__tests__/useChatStream.sse.test.tsx",
-        "mobile/src/hooks/__tests__/useChatStream.confirmation.test.tsx",
-        "mobile/src/hooks/__tests__/useChatStream.intercept.test.tsx"
-      ],
-      "followup_task": null,
-      "review_task": "1.1-batch-d",
-      "spec_mapping_status": "mapped-em-v1",
-      "spec_mapping_note": "Pervasive legacy helper plus authored raw chat/retry copy; normalize and separate ack from result."
-    },
-    {
       "id": "owner-41656eee7f1d",
       "path": "mobile/src/hooks/useClients.ts",
       "root": "mobile/src/",
@@ -72788,7 +71391,6 @@
       "public_codes": [],
       "outcome_evidence": "No user-facing error behavior in this file.",
       "consumer_paths": [
-        "mobile/src/app/(shell)/dashboard/analytics/page.tsx",
         "mobile/src/components/app/root/contracts-prefetch-coordinator.tsx"
       ],
       "test_evidence": [],
@@ -72833,7 +71435,8 @@
       "public_codes": [],
       "outcome_evidence": null,
       "consumer_paths": [
-        "mobile/src/hooks/contracts/useContractCreationFlow.ts"
+        "mobile/src/app/(shell)/contracts/new/page.tsx",
+        "mobile/src/app/(shell)/contracts/page.tsx"
       ],
       "test_evidence": [],
       "followup_task": null,
@@ -73012,8 +71615,7 @@
       "outcome_evidence": null,
       "consumer_paths": [
         "mobile/src/components/app/employees/EmployeesTable.tsx",
-        "mobile/src/components/app/employees/EmployeeFormDialog.tsx",
-        "mobile/src/hooks/contracts/useContractCreationFlow.ts"
+        "mobile/src/components/app/employees/EmployeeFormDialog.tsx"
       ],
       "test_evidence": [
         "mobile/src/hooks/__tests__/useEmployeeWorkHistory.test.tsx",
@@ -73233,34 +71835,6 @@
       "spec_mapping_note": "Browser transport rejects raw errors and captures Sentry; normalize and define retry/capture ownership."
     },
     {
-      "id": "owner-f2b98bdcf991",
-      "path": "mobile/src/lib/api/feedback.ts",
-      "root": "mobile/src/",
-      "classification": "migrated",
-      "reason": "Converted in 6.1g (686583ea3+f6af0485c, audit SHIP 61gb): mobile client error policy — authored Korean copy, code-based comparisons, surfaced mutation failures; jest 186/1208+32/172, tsc 0, eslint 0 (2 justified disables); usePushNotification lint residual declared.",
-      "seams": [
-        {
-          "line": 17,
-          "kinds": [
-            "throw_or_reject"
-          ]
-        }
-      ],
-      "discovery_task_id": "1.1.10",
-      "spec_ids": [
-        "EM-FE-01",
-        "EM-CAT-01"
-      ],
-      "public_codes": [],
-      "outcome_evidence": null,
-      "consumer_paths": [],
-      "test_evidence": [],
-      "followup_task": null,
-      "review_task": "1.1-batch-d",
-      "spec_mapping_status": "mapped-em-v1",
-      "spec_mapping_note": "Throws raw English Error outside shared contract; no static runtime consumer found."
-    },
-    {
       "id": "owner-75c141a0a6cf",
       "path": "mobile/src/lib/api/receipt-auth.ts",
       "root": "mobile/src/",
@@ -73296,10 +71870,10 @@
       "public_codes": [],
       "outcome_evidence": null,
       "consumer_paths": [
-        "mobile/src/app/api/receipt/[token]/status route.ts",
-        "mobile/src/app/api/receipt/[token]/verify route.ts",
-        "mobile/src/app/api/receipt/[token]/access route.ts",
-        "mobile/src/app/api/receipt/[token]/image route.ts"
+        "mobile/src/app/api/receipt/[token]/status/route.ts",
+        "mobile/src/app/api/receipt/[token]/verify/route.ts",
+        "mobile/src/app/api/receipt/[token]/access/route.ts",
+        "mobile/src/app/api/receipt/[token]/image/route.ts"
       ],
       "test_evidence": [
         "mobile/src/app/api/__tests__/receipt-routes.test.ts"

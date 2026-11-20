@@ -241,7 +241,7 @@ describe("mobile edit page split employee save after start-date confirmation", (
       expect(mockUpdateClient.mock.calls[1][0].dto).not.toHaveProperty("secondaryEmployeeId");
       expect(mockUpdateClient.mock.calls[2][0]).toEqual({ id: 7, dto: { primaryEmployeeId: 42 } });
       expect(mockPush).not.toHaveBeenCalled();
-      fireEvent.click(screen.getByRole("button", { name: "저장 중...", hidden: true }));
+      fireEvent.click(screen.getByRole("button", { name: "저장 중", hidden: true }));
       expect(mockUpdateClient).toHaveBeenCalledTimes(3);
       await act(async () => finishEmployee({ ...editingClient(), name: "담당 인력 저장 결과" }));
       expect(mockPush).toHaveBeenCalledTimes(1);

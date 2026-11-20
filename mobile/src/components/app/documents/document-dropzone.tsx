@@ -2,8 +2,9 @@
 
 import { useCallback, useState, useEffect } from "react";
 import { useDocumentCategories } from "@/hooks/use-document-categories";
-import { CloudUpload, FileText, X, ImageIcon, File, Loader2 } from "lucide-react";
+import { CloudUpload, FileText, X, ImageIcon, File } from "lucide-react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import { LoadingState } from "@/components/app/ui/LoadingState";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -359,9 +360,7 @@ export function DocumentDropzone({
             {isLoading && (
               <div className="w-full">
                 <div className="flex justify-between mb-2">
-                  <span className="text-sm text-muted-foreground">
-                    업로드 중...
-                  </span>
+                  <LoadingState inline size="sm" label="업로드 중" data-component={`${dataComponent}_upload-progress_loading`} />
                   <span className="text-sm text-muted-foreground">
                     {Math.round(uploadProgress)}%
                   </span>
@@ -372,21 +371,14 @@ export function DocumentDropzone({
 
             <Button
               onClick={handleSubmit}
+              loading={isLoading}
+              loadingLabel="업로드 중"
               disabled={!name || !category || isLoading}
               className="w-full"
               size="lg"
             >
-              {isLoading ? (
-                <>
-                  <Loader2 className="h-5 w-5 animate-spin mr-2" />
-                  업로드 중...
-                </>
-              ) : (
-                <>
-                  <CloudUpload className="h-5 w-5 mr-2" />
-                  문서 업로드
-                </>
-              )}
+              <CloudUpload className="h-5 w-5 mr-2" />
+              문서 업로드
             </Button>
           </div>
         </div>

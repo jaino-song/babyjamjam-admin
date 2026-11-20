@@ -8,9 +8,10 @@ import { getTextByteLength } from "@/lib/message/byte-length";
 interface TemplatePreviewProps {
     content: string;
     variables: TemplateVariable[];
+    isTemplatePreview?: boolean;
 }
 
-export const TemplatePreview = ({ content, variables }: TemplatePreviewProps) => {
+export const TemplatePreview = ({ content, variables, isTemplatePreview = false }: TemplatePreviewProps) => {
     // Variables with a fallback are left out of `values` so renderTemplate's
     // fallback-aware pass fills them in, mirroring real send behavior.
     const values = variables.reduce<Record<string, string>>((acc, v) => {
@@ -39,6 +40,7 @@ export const TemplatePreview = ({ content, variables }: TemplatePreviewProps) =>
         <div data-component="desktop_my-templates_preview">
             <AutoFillMsgCard
                 title="실시간 미리보기"
+                isTemplatePreview={isTemplatePreview}
                 copyButtonText="복사"
                 message={previewMessage}
                 bodyTitle="실시간 미리보기"

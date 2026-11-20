@@ -46,7 +46,7 @@ describe("MobileSectionNav", () => {
     expect(onSelect).toHaveBeenCalledWith("automation");
   });
 
-  it("keeps a disabled active item unpressed and non-interactive", () => {
+  it("keeps a disabled active item pressed and blue while non-interactive", () => {
     const onSelect = jest.fn();
     render(
       <MobileSectionNav
@@ -57,21 +57,22 @@ describe("MobileSectionNav", () => {
           { id: "templates", label: "템플릿", icon: Workflow, disabled: true },
         ]}
         activeId="templates"
+        preserveDisabledActive
         onSelect={onSelect}
       />,
     );
 
     const disabledButton = screen.getByRole("button", { name: "템플릿" });
-    expect(disabledButton).toHaveAttribute("aria-pressed", "false");
+    expect(disabledButton).toHaveAttribute("aria-pressed", "true");
     expect(disabledButton).toBeDisabled();
     expect(disabledButton).toHaveClass(
       "disabled:pointer-events-none",
-      "border-[hsl(var(--v3-border))]",
-      "bg-[hsl(var(--v3-dim-white))]",
-      "text-[hsl(var(--v3-text-muted))]",
-      "opacity-40",
+      "border-[hsl(var(--v3-primary))]",
+      "bg-[hsl(var(--v3-primary))]",
+      "text-white",
     );
 
+    expect(disabledButton).not.toHaveClass("opacity-40");
     fireEvent.click(disabledButton);
     expect(onSelect).not.toHaveBeenCalled();
   });
@@ -112,4 +113,12 @@ describe("MobileSectionNav", () => {
     fireEvent.click(skeletons[0]);
     expect(onSelect).not.toHaveBeenCalled();
   });
+});
+
+it("preserves the default inactive presentation of a role-denied current tab", () => {
+  render(<MobileSectionNav data-component="mobile_tests_section-nav_denied" items={[{ id: "templates", label: "템플릿", icon: Workflow, disabled: true }]} activeId="templates" onSelect={jest.fn()} />);
+  const tab = screen.getByRole("button", { name: "템플릿" });
+  expect(tab).toBeDisabled();
+  expect(tab).toHaveAttribute("aria-pressed", "false");
+  expect(tab).toHaveClass("opacity-40", "bg-[hsl(var(--v3-dim-white))]");
 });

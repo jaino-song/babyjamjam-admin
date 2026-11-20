@@ -1,6 +1,5 @@
 "use client";
 
-
 import { useEffect, useState } from "react";
 import Image from "next/image";
 import Link from "next/link";
@@ -9,6 +8,9 @@ import { CheckCircle, ChevronDown, ChevronLeft, ChevronRight, Link2 } from "luci
 import { normalizeApiError, type NormalizedApiError, REGISTERABLE_ROLE_OPTIONS } from "@babyjamjam/shared";
 import { formatIsoDateInput } from "@babyjamjam/shared/utils/date-input";
 
+import { ActionRow } from "@/components/ui/action-row";
+import { LoadingState } from "@/components/app/ui/LoadingState";
+import { ButtonLoadingContent } from "@/components/ui/button";
 import { FieldLabelRow, fieldMessageId } from "@/components/app/ui/FieldLabelRow";
 import { useFieldMessages } from "@/hooks/use-field-messages";
 import { formatKoreanPhoneNumber } from "@/lib/phone";
@@ -489,7 +491,7 @@ export default function RegisterPage() {
 
   if (isSuccess) {
     return (
-      <div className="auth-page" data-component={REGISTER_BASE} data-slot="auth-register-page">
+      <div className="auth-screen" data-component={REGISTER_BASE} data-slot="auth-register-page">
         <div className="auth-brand" data-component={`${REGISTER_BASE}_brand`}>
           <div className="auth-logo" data-component={`${REGISTER_BASE}_brand_logo`}>
             <Image src="/assets/logo.svg" alt="아가잼잼 로고" width={80} height={80} priority />
@@ -539,7 +541,7 @@ export default function RegisterPage() {
   }
 
   return (
-    <div className="auth-page" data-component={REGISTER_BASE} data-slot="auth-register-page">
+    <div className="auth-screen" data-component={REGISTER_BASE} data-slot="auth-register-page">
       <div className="auth-brand" data-component={`${REGISTER_BASE}_brand`}>
         <div className="auth-logo" data-component={`${REGISTER_BASE}_brand_logo`}>
           <Image src="/assets/logo.svg" alt="아가잼잼 로고" width={80} height={80} priority />
@@ -577,12 +579,23 @@ export default function RegisterPage() {
       {currentStep === 1 && (
         <form className="auth-form auth-step-view active" onSubmit={handleAccountStepNext} data-component={`${REGISTER_ACCOUNT_FORM}`} noValidate>
           <div className="auth-input-group" data-component={`${REGISTER_ACCOUNT_FORM}_email-field`}>
-            <FieldLabelRow
-              data-component={`${REGISTER_ACCOUNT_FORM}_email-field`}
-              htmlFor="register-email"
-              label="이메일"
-              message={slots.email}
-            />
+            <div className="relative" data-component={`${REGISTER_ACCOUNT_FORM}_email-field_label-row`} data-slot="email-label-row">
+              <FieldLabelRow
+                data-component={`${REGISTER_ACCOUNT_FORM}_email-field`}
+                htmlFor="register-email"
+                label="이메일"
+                message={slots.email?.tone === "pending" ? null : slots.email}
+              />
+              {slots.email?.tone === "pending" ? (
+                <LoadingState
+                  inline
+                  size="sm"
+                  label="이메일 확인 중"
+                  className="absolute right-0 top-0"
+                  data-component={`${REGISTER_ACCOUNT_FORM}_email-field_loading`}
+                />
+              ) : null}
+            </div>
             <div className="auth-input-wrap" data-component={`${REGISTER_ACCOUNT_FORM}_email-field_input-wrap`}>
               <input
                 id="register-email"
@@ -728,7 +741,7 @@ export default function RegisterPage() {
             />
           </div>
 
-          <div className="auth-actions" data-component={`${REGISTER_PROFILE_FORM}_actions`}>
+          <ActionRow data-slot="auth-actions" className="auth-actions" data-component={`${REGISTER_PROFILE_FORM}_actions`}>
             <button type="button" className="auth-btn secondary" onClick={handlePreviousStep} disabled={isLoading}>
               <ChevronLeft size={14} strokeWidth={2.5} />
               이전
@@ -737,7 +750,7 @@ export default function RegisterPage() {
               다음
               <ChevronRight size={14} strokeWidth={2.5} />
             </button>
-          </div>
+          </ActionRow>
         </form>
       )}
 
@@ -770,21 +783,23 @@ export default function RegisterPage() {
             </div>
           </div>
 
-          <div className="auth-actions" data-component={`${REGISTER_SUBMIT_FORM}_actions`}>
+          <ActionRow data-slot="auth-actions" className="auth-actions" data-component={`${REGISTER_SUBMIT_FORM}_actions`}>
             <button type="button" className="auth-btn secondary" onClick={handlePreviousStep} disabled={isLoading}>
               <ChevronLeft size={14} strokeWidth={2.5} />
               이전
             </button>
             <button
               type="submit"
-              className="auth-btn"
+              className={`auth-btn${isLoading ? " relative" : ""}`}
+              aria-busy={isLoading || undefined}
+              data-loading={isLoading ? "" : undefined}
               disabled={isLoading || isCheckingEmailDuplicate}
               aria-label={isLoading ? "회원가입 처리 중" : "회원가입"}
               data-component={`${REGISTER_SUBMIT_FORM}_actions_submit-button`}
             >
-              {isLoading ? "처리 중…" : "회원가입"}
+              <ButtonLoadingContent loading={isLoading} loadingLabel="처리 중">회원가입</ButtonLoadingContent>
             </button>
-          </div>
+          </ActionRow>
         </form>
       )}
 

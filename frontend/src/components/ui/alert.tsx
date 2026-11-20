@@ -2,6 +2,7 @@ import * as React from "react";
 import { cva, type VariantProps } from "class-variance-authority";
 import { cn } from "@/lib/utils";
 import { AlertCircle, CheckCircle, Info, AlertTriangle, X } from "lucide-react";
+import { Button } from "@/components/ui/button";
 
 const alertVariants = cva(
   "relative w-full rounded-lg border px-4 py-3 text-sm [&>svg]:absolute [&>svg]:left-4 [&>svg]:top-4 [&>svg]:text-foreground [&>div]:pl-7",
@@ -52,13 +53,16 @@ const Alert = React.forwardRef<HTMLDivElement, AlertProps>(
         <IconComponent className="h-4 w-4" />
         <div className="flex-1">{children}</div>
         {onClose && (
-          <button
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
             onClick={onClose}
-            className="absolute right-2 top-2 rounded-md p-1 opacity-70 ring-offset-background transition-opacity hover:opacity-100 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2"
+            className="absolute right-1 top-1 rounded-md border-0 opacity-70 ring-offset-background transition-opacity hover:opacity-100 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2"
             aria-label="Close alert"
           >
             <X className="h-4 w-4" />
-          </button>
+          </Button>
         )}
       </div>
     );

@@ -226,7 +226,7 @@ describe("CallsPage", () => {
       if (tab === "log") expect(within(screen.getByText("통화 기록", { selector: "button", exact: false })).getByText("1")).toBeInTheDocument();
       setResult(rows, { isError: true, isLoadMoreError: laterPage, isFetching: true, isRefetching: !laterPage, isFetchingNextPage: laterPage });
       rerender(<CallsPage />);
-      expect(screen.getByRole("button", { name: "다시 시도" })).toBeDisabled();
+      expect(screen.getByRole("button", { name: "다시 시도 중" })).toBeDisabled();
       expect(container.querySelector('[data-slot="query-error-state"]')).toBeInTheDocument();
     });
 

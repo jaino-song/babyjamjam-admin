@@ -206,6 +206,88 @@ describe("AgentAutomationDeliveryGateService automatic SERVICE_END_NOTICE dispat
         };
     }
 
+    async function admitPreparedJob() {
+        const job = buildJob(), store = buildStore(job);
+        const database = { message_trigger_job: store.table };
+        const lock = { runExclusive: jest.fn((_branchId: string, work: (tx: unknown) => unknown) => work(database)) };
+        const authority = { checkAutomaticJob: jest.fn().mockResolvedValue({ status: "allowed", seal }) };
+        const gate = new AgentAutomationDeliveryGateService(database as never, lock as never, authority as never);
+        const render: CanonicalAutomationRenderer = jest.fn().mockResolvedValue(snapshot);
+        expect(await gate.authorizePreparation(job, render, async () => ({ kind: "allow" }))).toEqual({ kind: "allow" });
+        expect(await gate.consumePreparation(job)).toBe(true);
+        const preparation: SmsTriggerDeliveryPreparation = { snapshot, serializedSnapshot: JSON.stringify(snapshot) };
+        job.payload.templateVariables[SMS_DELIVERY_SNAPSHOT_VARIABLE] = preparation.serializedSnapshot;
+        store.table.findFirst.mockClear(); authority.checkAutomaticJob.mockClear();
+        return { job, store, gate, authority, preparation, render: jest.mocked(render) };
+    }
+
+    it("proves the stored processing snapshot after locking and holds before canonical refusal without a dispatch permit", async () => {
+        const f = await admitPreparedJob();
+        f.render.mockResolvedValue({ ...snapshot, message: "latest-date-message" });
+        f.authority.checkAutomaticJob.mockResolvedValue({ status: "refused" });
+        const compareAndSet = jest.fn(async (): Promise<AutomationDeliveryFence> => ({ kind: "allow" }));
+        const dateRefresh = {
+            lockClaim: jest.fn(async (): Promise<AutomationDeliveryFence> => {
+                expect(f.store.table.findFirst).not.toHaveBeenCalled();
+                return { kind: "allow" };
+            }),
+            hold: jest.fn(async (): Promise<AutomationDeliveryFence> => {
+                expect(dateRefresh.lockClaim).toHaveBeenCalledTimes(1);
+                expect(f.store.table.findFirst).toHaveBeenCalledWith({ where: {
+                    id: jobId, branchId, claimToken, status: "processing",
+                } });
+                return { kind: "lost" };
+            }),
+        };
+        expect(await f.gate.authorizeDispatch(f.job, f.preparation, f.render, compareAndSet, dateRefresh)).toEqual({ kind: "lost" });
+        expect(dateRefresh.hold).toHaveBeenCalledTimes(1);
+        expect(f.render).not.toHaveBeenCalled(); expect(f.authority.checkAutomaticJob).not.toHaveBeenCalled();
+        expect(compareAndSet).not.toHaveBeenCalled(); expect(f.store.table.updateMany).not.toHaveBeenCalled();
+        await expect(f.gate.consumeDispatch(f.job, f.preparation)).rejects.toThrow();
+    });
+
+    it.each(["claim", "snapshot", "seal", "source"])("does not hold a mismatching %s after acquiring the source/claim locks", async (changed) => {
+        const f = await admitPreparedJob();
+        const compareAndSet = jest.fn(async (): Promise<AutomationDeliveryFence> => ({ kind: "allow" }));
+        const dateRefresh = {
+            lockClaim: async (): Promise<AutomationDeliveryFence> => {
+                if (changed === "claim") f.job.claimToken = "other-claim";
+                if (changed === "snapshot") f.job.payload.templateVariables[SMS_DELIVERY_SNAPSHOT_VARIABLE] = "other-snapshot";
+                if (changed === "seal") f.job.payload.agentAutomationSeal = { version: 2 } as never;
+                if (changed === "source") f.job.payload.recipientName = "QA-changed";
+                return { kind: "allow" };
+            },
+            hold: jest.fn(async (): Promise<AutomationDeliveryFence> => ({ kind: "lost" })),
+        };
+        expect(await f.gate.authorizeDispatch(f.job, f.preparation, f.render, compareAndSet, dateRefresh)).toEqual({ kind: "lost" });
+        expect(dateRefresh.hold).not.toHaveBeenCalled(); expect(compareAndSet).not.toHaveBeenCalled();
+        expect(f.store.table.updateMany).not.toHaveBeenCalled();
+        await expect(f.gate.consumeDispatch(f.job, f.preparation)).rejects.toThrow();
+    });
+
+    it.each(["canonical", "authority", "authority-kind", "unchanged"])("retains final %s enforcement after an allowing date fence", async (changed) => {
+        const f = await admitPreparedJob();
+        if (changed === "canonical") f.render.mockResolvedValue({ ...snapshot, message: "latest-date-message" });
+        if (changed === "authority") f.authority.checkAutomaticJob.mockResolvedValue({ status: "refused" });
+        if (changed === "authority-kind") f.authority.checkAutomaticJob.mockResolvedValue({ status: "legacy" });
+        const compareAndSet = jest.fn(async (): Promise<AutomationDeliveryFence> => { f.store.markDispatching(); return { kind: "allow" }; });
+        const dateRefresh = {
+            lockClaim: async (): Promise<AutomationDeliveryFence> => ({ kind: "allow" }),
+            hold: jest.fn(async (): Promise<AutomationDeliveryFence> => ({ kind: "allow" })),
+        };
+        const result = await f.gate.authorizeDispatch(f.job, f.preparation, f.render, compareAndSet, dateRefresh);
+        expect(dateRefresh.hold).toHaveBeenCalledTimes(1); expect(f.render).toHaveBeenCalled();
+        if (changed === "unchanged") {
+            expect(result).toEqual({ kind: "allow" }); expect(f.store.status).toBe("dispatching");
+            expect(compareAndSet).toHaveBeenCalledTimes(1);
+            await expect(f.gate.consumeDispatch(f.job, f.preparation)).resolves.toBeUndefined();
+        } else {
+            expect(result.kind).toBe("stale"); expect(f.store.status).toBe("canceled");
+            expect(compareAndSet).not.toHaveBeenCalled();
+        }
+        await expect(f.gate.consumeDispatch(f.job, f.preparation)).rejects.toThrow();
+    });
+
     it("allows dispatch after the enricher overwrites templateVariables.receiptUrl and buttonUrl", async () => {
         const job = buildJob();
         const store = buildStore(job);

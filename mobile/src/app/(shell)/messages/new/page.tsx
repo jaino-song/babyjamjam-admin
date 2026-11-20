@@ -11,6 +11,7 @@ import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { X } from "lucide-react";
 
+import { LoadingState } from "@/components/app/ui/LoadingState";
 import { useMessagesPermissionGuard } from "@/app/(shell)/messages/MessagesPermissionGuard";
 import { ClientAutocomplete } from "@/components/app/clients/ClientAutocomplete";
 import { MessageSectionNav } from "@/components/app/mobile-redesign/MessageSectionNav";
@@ -84,8 +85,8 @@ import {
   type SystemTemplateDeliveryMode,
   type SystemTemplateKey,
 } from "@babyjamjam/shared/types/system-template";
-
 import styles from "./page.module.css";
+import templateSelectStyles from "@/components/app/messages/MessageTemplateSelect.module.css";
 
 type SendResponse = SendMessageDeliverySmsResponse;
 
@@ -2177,8 +2178,8 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId, initi
                         avoidCollisions
                       >
                         {templateSelectorSections.map((section, index) => (
-                          <SelectGroup key={`${section.id}-${index}`}>
-                            {section.label ? <SelectLabel>{section.label}</SelectLabel> : null}
+                          <SelectGroup key={`${section.id}-${index}`} data-slot="template-group" className={templateSelectStyles.templateGroup}>
+                            {section.label ? <SelectLabel data-component={`mobile_messages_new_page_screen_form_scroll_list-card_body_form-card_content_template_row_select_content_group-${index}_label`} data-slot="template-group-label" className={templateSelectStyles.templateGroupLabel}>{section.label}</SelectLabel> : null}
                             {section.options.map((option) => (
                               <SelectItem key={option.id} value={option.id} disabled={option.disabled}>
                                 {option.name}
@@ -2286,6 +2287,7 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId, initi
                             type="button"
                             aria-label={`${recipient.name} 수신자 제거`}
                             className={styles.recipientChipX}
+                            data-slot="recipient-chip-x"
                             onClick={() => handleRecipientRemove(recipient.id)}
                           >
                             <X aria-hidden="true" size={10} strokeWidth={3} />
@@ -2409,12 +2411,18 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId, initi
                               ) : (
                                 <SelectValue
                                   placeholder={
-                                    isVoucherPriceInfosLoading
-                                      ? "불러오는 중"
-                                      : "서비스 기간"
+                                    isVoucherPriceInfosLoading ? "" : "서비스 기간"
                                   }
                                 />
                               )}
+                              {isVoucherPriceInfosLoading ? (
+                                <LoadingState
+                                  inline
+                                  size="sm"
+                                  label="서비스 기간을 불러오는 중"
+                                  data-component="mobile_messages_new_page_screen_form_scroll_list-card_body_form-card_content_variables_price-info_row_duration-select_loading"
+                                />
+                              ) : null}
                             </SelectTrigger>
                             <SelectContent className={styles.templateSelectContent}>
                               {voucherPriceInfos.map((voucher) => (
@@ -2454,12 +2462,18 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId, initi
                               ) : (
                                 <SelectValue
                                   placeholder={
-                                    isBankAccountInfosLoading
-                                      ? "불러오는 중"
-                                      : "지역"
+                                    isBankAccountInfosLoading ? "" : "지역"
                                   }
                                 />
                               )}
+                              {isBankAccountInfosLoading ? (
+                                <LoadingState
+                                  inline
+                                  size="sm"
+                                  label="지역을 불러오는 중"
+                                  data-component="mobile_messages_new_page_screen_form_scroll_list-card_body_form-card_content_variables_price-info_row_bank-account-select_loading"
+                                />
+                              ) : null}
                             </SelectTrigger>
                             <SelectContent className={styles.templateSelectContent}>
                               {bankAccountInfos.map((bankAccount) => (

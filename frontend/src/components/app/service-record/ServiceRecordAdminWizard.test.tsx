@@ -794,6 +794,59 @@ describe("per-session administrator editing", () => {
         expect(container).toHaveTextContent("식사 -1회");
     });
 
+    it.each(["정상변", "이상변"])("blocks a changed 81-character stool colour under %s until corrected to 80", async (stool) => {
+        const { container } = open();
+        fireEvent.click(container.querySelectorAll('[data-slot="review"] [data-slot="sec-edit"]')[1]);
+        fireEvent.click(screen.getByRole("button", { name: "이상변" }));
+        const color = screen.getByRole("textbox", { name: "이상변의 색깔과 상태" });
+        fireEvent.change(color, { target: { value: "가".repeat(81) } });
+        fireEvent.click(screen.getByRole("button", { name: stool }));
+        expect(color).toHaveValue("가".repeat(81));
+        expect(screen.getByText("80자 이내로 줄여 주세요")).toBeInTheDocument();
+        fireEvent.click(screen.getByRole("button", { name: "다음" }));
+        const confirm = screen.getByRole("button", { name: "수정 확인" });
+        expect(confirm).toBeDisabled();
+        fireEvent.click(confirm);
+        expect(adminServiceRecordEditApi.startDraft).not.toHaveBeenCalled();
+        expect(adminServiceRecordEditApi.confirmDraft).not.toHaveBeenCalled();
+
+        fireEvent.click(container.querySelectorAll('[data-slot="review"] [data-slot="sec-edit"]')[1]);
+        fireEvent.change(screen.getByRole("textbox", { name: "이상변의 색깔과 상태" }), { target: { value: "가".repeat(80) } });
+        expect(screen.queryByText("80자 이내로 줄여 주세요")).not.toBeInTheDocument();
+        fireEvent.click(screen.getByRole("button", { name: "다음" }));
+        expect(screen.getByRole("button", { name: "수정 확인" })).toBeEnabled();
+        acceptEdit();
+        await startCommit();
+        expect(adminServiceRecordEditApi.startDraft).toHaveBeenCalledWith("42", {
+            sessions: [{ sessionIndex: 1, answers: { ...(stool === "이상변" ? { stool } : {}), stool_color: "가".repeat(80) } }],
+        });
+    });
+
+    it.each(["정상변", "이상변"])("allows other edits with an untouched historic 81-character colour under %s and omits it from answers", async (stool) => {
+        const historicOverview = {
+            ...sessionOverview,
+            record: { ...sessionOverview.record, sessions: (sessionOverview.record?.sessions ?? []).map((session, index) => index === 0
+                ? { ...session, answers: { ...session.answers, stool, stool_color: "가".repeat(81) } }
+                : session) },
+        } as unknown as AdminServiceRecordEditorOverview;
+        const { container } = render(<ServiceRecordAdminWizard clientId="42" overview={historicOverview} initialDraftState={{ ...makeDraftState(), draft: null }} />);
+        fireEvent.click(container.querySelectorAll('[data-slot="day"]')[0]);
+        fireEvent.click(container.querySelectorAll('[data-slot="review"] [data-slot="sec-edit"]')[0]);
+        fireEvent.change(screen.getAllByRole("spinbutton")[0], { target: { value: "4" } });
+        fireEvent.click(screen.getByRole("button", { name: "다음" }));
+        fireEvent.click(container.querySelectorAll('[data-slot="review"] [data-slot="sec-edit"]')[1]);
+        const color = screen.getByRole("textbox", { name: "이상변의 색깔과 상태" });
+        expect(color).toHaveValue("가".repeat(81));
+        expect(color).toHaveAttribute("aria-invalid", "true");
+        fireEvent.click(screen.getByRole("button", { name: "다음" }));
+        expect(screen.getByRole("button", { name: "수정 확인" })).toBeEnabled();
+        acceptEdit();
+        await startCommit();
+        expect(adminServiceRecordEditApi.startDraft).toHaveBeenCalledWith("42", {
+            sessions: [{ sessionIndex: 1, answers: { meals_meal: "4" } }],
+        });
+    });
+
     it("keeps 수정 확인 in this tab: no draft call, back on the overview, 수정 확정 and 수정 취소 appear, no ribbon", async () => {
         const { container } = open();
         editNote(container);
@@ -2369,6 +2422,38 @@ describe("administrator mode never flags a cleared answer", () => {
 
         rerender(<ServiceRecordWizard {...overviewProps} adminMode={false} />);
         expect(container.querySelector('[data-slot="overview-commit"]')).toBeNull();
+    });
+
+    it.each(["정상변", "이상변"])("shares the 80/81 colour limit in compatibility inputs and provider gates with %s", (stool) => {
+        const draft = { ...DEFAULT_DAILY_ANSWERS, temperature_temp: "36.5", breastFeeding_count: "3", formulaFeeding_count: "2", formulaFeeding_ml: "80", stool, stool_color: "가".repeat(81) };
+        const props = wizardProps({ screen: "day", pageIdx: 1, editing: false, draft, clientSignature: "data:image/png;base64,signature" });
+        const { rerender } = render(<ServiceRecordWizard {...props} />);
+        const input = screen.getByRole("textbox", { name: "이상변의 색깔과 상태" });
+        expect(input).toHaveValue("가".repeat(81));
+        expect(input).toHaveAttribute("maxlength", "80");
+        expect(input).toHaveAttribute("aria-required", String(stool === "이상변"));
+        expect(input).toHaveAttribute("aria-invalid", "true");
+        expect(screen.getByText("80자 이내로 줄여 주세요")).toBeInTheDocument();
+        expect(props.onFieldChange).not.toHaveBeenCalled();
+        fireEvent.click(screen.getByRole("button", { name: "다음" }));
+        expect(props.onNextPage).not.toHaveBeenCalled();
+        expect(input).toHaveFocus();
+
+        rerender(<ServiceRecordWizard {...props} pageIdx={3} />);
+        const submit = screen.getByRole("button", { name: "확인" });
+        expect(submit).toBeDisabled();
+        fireEvent.click(submit);
+        expect(props.onOpenSubmitModal).not.toHaveBeenCalled();
+
+        const corrected = { ...draft, stool_color: "가".repeat(80) };
+        rerender(<ServiceRecordWizard {...props} pageIdx={3} draft={corrected} />);
+        expect(screen.getByRole("button", { name: "확인" })).toBeEnabled();
+        fireEvent.click(screen.getByRole("button", { name: "확인" }));
+        expect(props.onOpenSubmitModal).toHaveBeenCalledTimes(1);
+        rerender(<ServiceRecordWizard {...props} draft={corrected} />);
+        expect(screen.queryByText("80자 이내로 줄여 주세요")).not.toBeInTheDocument();
+        fireEvent.click(screen.getByRole("button", { name: "다음" }));
+        expect(props.onNextPage).toHaveBeenCalledTimes(1);
     });
 
     it("leaves the message slot empty when a radio answer is cleared", () => {

@@ -59,12 +59,13 @@ export function CardContainer({
     <div
       data-component={componentSlots.container}
       data-slot={dataSlot}
-      className="flex w-full flex-1 items-center justify-center"
+      data-source-component="CardContainer"
+      className="auth-screen w-full"
     >
       <Card
         data-component={componentSlots.card}
         className={cn(
-          "w-full max-w-[440px] flex-1 rounded-2xl border-none bg-white text-foreground shadow-v3 p-6",
+          "w-full border-0 bg-transparent text-foreground shadow-none p-0",
           "flex flex-col overflow-hidden gap-6",
           !disableAnimation && "animate-scale-in",
           className

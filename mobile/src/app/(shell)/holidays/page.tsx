@@ -5,7 +5,7 @@ import { CalendarDays } from "lucide-react";
 import { HolidayBranchRequired } from "@/components/app/holidays/HolidayBranchRequired";
 import { HolidaySettingsSection } from "@/components/app/holidays/HolidaySettingsSection";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Spinner } from "@/components/ui/spinner";
+import { LoadingState } from "@/components/app/ui/LoadingState";
 import { useGetAuthUser } from "@/hooks/useGetAuthUser";
 import { canManageBranch } from "@/lib/auth/branch-role-policy";
 
@@ -20,9 +20,7 @@ export default function HolidaysPage() {
   // (and its drafts) on every background refresh; only the very first load gates the screen.
   if (authUserQuery.isPending) {
     return (
-      <div data-component={`${HOLIDAYS_PAGE_BASE}_loading`} className="flex flex-1 items-center justify-center">
-        <Spinner data-component={`${HOLIDAYS_PAGE_BASE}_loading_spinner`} />
-      </div>
+      <LoadingState label="권한 확인 중" data-component={`${HOLIDAYS_PAGE_BASE}_loading`} className="flex-1" />
     );
   }
 

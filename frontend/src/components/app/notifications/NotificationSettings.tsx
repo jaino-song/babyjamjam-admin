@@ -1,6 +1,6 @@
 "use client";
 
-
+import { LoadingState } from "@/components/app/ui/LoadingState";
 import { useState } from "react";
 import { Bell, BellOff } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -8,7 +8,6 @@ import { Card } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { Spinner } from "@/components/ui/spinner";
 import { usePushNotification } from "@/hooks/usePushNotification";
 import { PWA_NOTIFICATIONS_ENABLED } from "@/lib/notification-config";
 
@@ -121,7 +120,7 @@ export function NotificationSettings() {
                 </div>
 
                 {loading ? (
-                    <Spinner size="sm" />
+                    <LoadingState inline size="sm" label={actionLoading ? "알림 설정을 변경하는 중" : "알림 설정을 불러오는 중"} data-component="desktop_admin_notification-settings_loading" />
                 ) : (
                     <div className="flex items-center gap-2">
                         <Label htmlFor="notification-switch" className="sr-only">
@@ -174,12 +173,10 @@ export function NotificationSubscribeButton() {
             size="sm"
             onClick={handleClick}
             disabled={isLoading || loading}
+            loading={loading}
+            loadingLabel="알림 설정을 변경하는 중"
         >
-            {loading ? (
-                <Spinner size="sm" className="mr-2" />
-            ) : (
-                <Bell className="h-4 w-4 mr-2" />
-            )}
+            <Bell className="h-4 w-4 mr-2" />
             알림 받기
         </Button>
     );

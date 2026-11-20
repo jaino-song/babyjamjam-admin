@@ -25,6 +25,13 @@
 7. **섹션 페이지와 목록+상세(`SplitLayout`) 화면은 [`docs/ui-rules.md`](../ui-rules.md)의 절차·스캐폴드를 그대로 따른다.**
    §8 레시피의 prop 규칙과 "자주 나는 실수" 목록에 걸리면 리뷰에서 반려된다.
 
+## Loading and icon buttons
+
+- 로딩은 글자 없이 Spinner만 표시한다. 버튼은 `Button loading loadingLabel="처리 중"`을 쓰고 idle children을 유지한다. `loadingLabel`(기본 `"처리 중"`)은 sr-only 안내이며, 로딩 중에는 버튼이 비활성화된다. `asChild`에서는 loading을 무시한다.
+- raw/CSS-module 버튼은 `ButtonLoadingContent`와 로딩 중 `relative`, `disabled`, `aria-busy="true"`, `data-loading=""`를 함께 쓴다. 상세 액션은 idle `label`과 `busy`/`busyLabel`을 전달한다.
+- 페이지·섹션 로딩은 `LoadingState label="불러오는 중" data-component="<호출자의 전체 base>"`를 사용한다. `size`는 Spinner로 전달하고, 행 안에서는 `inline`을 쓴다. 문구는 sr-only로만 남긴다.
+- 아이콘 전용 버튼은 `Button size="icon"`으로 보이는 크기 32px + 터치 영역 44px을 지킨다. raw 버튼도 같은 크기와 `::after` hit area를 적용한다. 서비스기록의 기존 표시를 보존하는 호환 옵션은 유지한다.
+
 ## 금지 목록 (page.tsx 기준, ESLint로 강제)
 
 | 금지 | rule | 대신 |

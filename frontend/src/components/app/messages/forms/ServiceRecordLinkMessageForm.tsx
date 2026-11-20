@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 
+import { LoadingState } from "@/components/app/ui/LoadingState";
 import { ClientAutocomplete } from "@/components/app/clients/ClientAutocomplete";
 import { EmployeeAutocomplete } from "@/components/app/clients/EmployeeAutocomplete";
 import { Button } from "@/components/ui/button";
@@ -276,7 +277,7 @@ export const ServiceRecordLinkMessageForm = ({
       ? "필수 정보 입력 후 생성"
       : preparationErrorKey === selectionKey
         ? "배정 정보를 확인해 주세요."
-        : "링크 준비 중…");
+        : <LoadingState inline size="sm" label="링크 준비 중" data-component="desktop_messages_sections_generated-msg-detail-meta_list_item_loading" />);
   const resolvedReceiptClientName = currentReceiptPreparation?.clientName
     ?? (clientName.trim() || "{{name}}");
   const resolvedReceiptPhone = currentReceiptPreparation?.recipientPhone
@@ -287,7 +288,7 @@ export const ServiceRecordLinkMessageForm = ({
       ? "산모 선택 후 생성"
       : receiptPreparationError?.key === receiptSelectionKey
         ? receiptPreparationError.message
-        : "링크 준비 중…");
+        : <LoadingState inline size="sm" label="링크 준비 중" data-component="desktop_messages_sections_generated-msg-detail-meta_list_item_loading" />);
   const receiptClientDisplayName = currentReceiptPreparation?.clientName ?? (clientName.trim() || "-");
   const receiptPhoneDisplayValue = currentReceiptPreparation?.recipientPhone ?? (clientPhone.trim() || "-");
   const serviceRecordTemplateMessage = systemTemplate?.content
@@ -489,7 +490,7 @@ export const ServiceRecordLinkMessageForm = ({
         { token: "{{name}}", label: "산모님 성함", value: receiptClientDisplayName },
         { token: "{{clientName}}", label: "산모님 성함", value: receiptClientDisplayName },
         { token: "{{phone}}", label: "산모님 전화번호", value: receiptPhoneDisplayValue },
-        { token: "{{receiptUrl}}", label: "영수증 링크", value: receiptLinkDisplayValue },
+        { token: "{{receiptUrl}}", label: "영수증 링크", value: typeof receiptLinkDisplayValue === "string" ? receiptLinkDisplayValue : <LoadingState inline size="sm" label="링크 준비 중" data-component="desktop_messages_sections_generated-msg-detail-variables_body_list_item_value_loading" /> },
       ]}
       handleCopy={handleCopy}
       showSide={showMessageSide}
@@ -517,7 +518,7 @@ export const ServiceRecordLinkMessageForm = ({
           label: "서비스 시작일",
           value: currentPreparation?.serviceStartDate ?? "-",
         },
-        { token: "{{serviceRecordUrl}}", label: "제공기록지 링크", value: serviceRecordLinkDisplayValue },
+        { token: "{{serviceRecordUrl}}", label: "제공기록지 링크", value: typeof serviceRecordLinkDisplayValue === "string" ? serviceRecordLinkDisplayValue : <LoadingState inline size="sm" label="링크 준비 중" data-component="desktop_messages_sections_generated-msg-detail-variables_body_list_item_value_loading" /> },
       ]}
       handleCopy={handleCopy}
       showSide={showMessageSide}

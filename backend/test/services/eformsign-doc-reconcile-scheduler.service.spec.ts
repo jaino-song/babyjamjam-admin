@@ -4,6 +4,10 @@ import { EformsignDocReconcileSchedulerService } from "application/services/efor
 import { EformsignBackfillAlreadyRunningError } from "infrastructure/locking/eformsign-backfill-lock.service";
 import { createSchedulerLeaseMock } from "../utils/mocks/scheduler-lease.mock";
 
+jest.mock("infrastructure/observability/service-record-sentry", () => ({
+    captureBackendError: jest.fn(),
+}));
+
 const REQUIRED_EFORMSIGN_CONFIG = new Set([
     "EFORMSIGN_USER_EMAIL",
     "EFORMSIGN_API_URL",

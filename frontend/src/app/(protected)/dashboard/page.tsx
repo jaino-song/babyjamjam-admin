@@ -35,6 +35,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import Link from "next/link";
 
+import { Button } from "@/components/ui/button";
 import { Block } from "@/components/app/v3/Block";
 
 const DASHBOARD_STAT_KEYS = [
@@ -300,13 +301,16 @@ export default function DashboardPage() {
               trailing={
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
-                    <button
+                    <Button
                       type="button"
+                      variant="ghost"
+                      size="icon"
+                      data-component="desktop_dashboard_client-detail_panel_menu"
+                      className="[&_svg]:size-5"
                       aria-label="고객 상세 메뉴"
-                      className="w-9 h-9 flex items-center justify-center rounded-full hover:bg-v3-dim-white transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-v3-primary focus-visible:ring-offset-2"
                     >
                       <MoreVertical className="w-5 h-5 text-v3-text-muted" aria-hidden="true" />
-                    </button>
+                    </Button>
                   </DropdownMenuTrigger>
                   <DropdownMenuContent align="end" className="min-w-[140px]">
                     <DropdownMenuItem asChild className="gap-2">

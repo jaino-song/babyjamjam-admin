@@ -81,8 +81,8 @@
 .navbarIconButton {
   position: relative;
   display: flex;
-  width: 44px;
-  height: 44px;
+  width: 32px;
+  height: 32px;
   flex-shrink: 0;
   align-items: center;
   justify-content: center;
@@ -91,6 +91,12 @@
   background: transparent;
   color: white;
   cursor: pointer;
+}
+
+.navbarIconButton::after {
+  position: absolute;
+  inset: -6px;
+  content: "";
 }
 
 .wizardContent {
@@ -202,8 +208,9 @@
   margin-bottom: 10px;
   padding: 14px;
   border-radius: 16px;
-  background: white;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+  background: #fff;
+  box-shadow: 0 4px 24px rgba(25, 48, 77, 0.06);
+  border: 0;
 }
 
 .formCardTitle {
@@ -237,8 +244,8 @@
   margin-bottom: 0;
 }
 
-/* One label line tall (1lh of the label's own type), so the field's message
-   slot can never grow the row and shift the input below. */
+/* One 12px label line tall (12px × 1.3), so the message slot cannot grow
+   the row and shift the input below. */
 .formFieldHeader {
   display: flex;
   align-items: center;
@@ -246,7 +253,7 @@
   min-width: 0;
   height: 1lh;
   margin-bottom: 6px;
-  font-size: 0.7rem;
+  font-size: 12px;
   line-height: 1.3;
 }
 
@@ -255,10 +262,10 @@
   align-items: baseline;
   flex-shrink: 0;
   color: hsl(var(--v3-text-muted));
-  font-size: 0.7rem;
+  font-size: 12px;
   font-weight: 700;
   letter-spacing: 0.04em;
-  text-transform: uppercase;
+  text-transform: none;
   white-space: nowrap;
 }
 
@@ -403,7 +410,8 @@
   bottom: 0;
   left: 0;
   z-index: 100;
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 2fr);
   gap: 8px;
   padding: 12px 14px 18px;
   background: white;
@@ -411,24 +419,30 @@
 }
 
 .wizardButton {
-  flex: 1;
-  padding: 14px;
+  flex: 1 1 0;
+  padding: 0 14px;
   border: 0;
-  border-radius: 14px;
+  border-radius: 9999px;
   cursor: pointer;
   font-family: inherit;
   font-size: 0.92rem;
   font-weight: 700;
   line-height: normal;
+  min-width: 0;
+  height: 40px;
+  min-height: 0;
+  box-sizing: border-box;
 }
 
 .secondaryButton {
-  background: hsl(220 20% 97%);
-  color: hsl(var(--v3-text));
+  background: #fff;
+  color: #004bad;
+  border: 2px solid #004bad;
+  box-shadow: none;
 }
 
 .primaryButton {
-  flex: 2;
+  flex: 2 1 0;
   background: hsl(var(--v3-primary));
   color: white;
   box-shadow: 0 4px 14px rgba(20, 50, 100, 0.18);
@@ -447,19 +461,24 @@
 .pageRoot [data-slot="autocomplete-input"] {
   box-sizing: border-box;
   width: 100%;
-  padding: 13px 14px;
+  padding: 0 14px;
   padding-right: 44px;
   border: 1.5px solid hsl(var(--input));
   border-radius: 12px;
   background: white;
   color: hsl(var(--v3-dark));
   font-family: inherit;
-  font-size: 0.9rem;
+  font-size: 16px;
   line-height: normal;
   box-shadow: none;
+  height: 44px;
 }
 
 .pageRoot [data-slot="autocomplete-input"]:focus {
   border-color: hsl(var(--v3-primary));
   box-shadow: none;
+}
+
+.wizardActions > :only-child {
+  grid-column: 1 / -1;
 }

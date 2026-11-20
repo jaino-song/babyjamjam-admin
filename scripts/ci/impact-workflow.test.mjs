@@ -26,6 +26,9 @@ function withStateIntegrityRealDatabaseStep(steps) {
 }
 const needs = job => typeof job.needs === 'string' ? [job.needs] : job.needs ?? [];
 const jobText = (text,id) => text.match(new RegExp(`^  ${id}:\\n[\\s\\S]*?(?=^  [a-zA-Z0-9_-]+:|$(?![\\s\\S]))`,'m'))?.[0];
+function assertBackendChecksRunner(job) {
+  assert.equal(job['runs-on'],'ubuntu-24.04','backend checks require the installed PG16 runner image');
+}
 const apps=['backend','frontend','mobile'];
 // e3929e6b3 made backend `start` run `node dist/main` (no compile), so every job that
 // starts the backend must build it first. Same command as backend-ci.yml and Dockerfile.lightsail.
@@ -38,6 +41,25 @@ function stepsWithoutBackendBuild(job,label) {
   assert.deepEqual(job.steps[start-1],backendBuildStep,`${label}: backend is built immediately before it starts`);
   assert.equal(job.steps.filter(s=>s.name===backendBuildStep.name).length,1,`${label}: exactly one backend build step`);
   return job.steps.filter((_,index)=>index!==start-1);
+}
+// Admit only these two required gates, then keep both pinned whole-step comparisons.
+const authorityPgSteps = [
+  {name:'Eformsign authority PostgreSQL harness self-tests',run:'node --test backend/scripts/run-eformsign-contract-authority-pg.test.mjs'},
+  {name:'Eformsign authority and retention PostgreSQL gate',run:'node backend/scripts/run-eformsign-contract-authority-pg.mjs'},
+];
+function stepsWithoutAuthorityPgGates(steps,label) {
+  const install=steps.findIndex(step=>step.name==='Install dependencies');
+  assert.ok(install>=0,`${label}: dependency install must exist`);
+  const approvedIndexes=authorityPgSteps.map(expected=>{
+    const matches=steps.map((step,index)=>({step,index})).filter(({step})=>step.name===expected.name || step.run===expected.run);
+    assert.equal(matches.length,1,`${label}: exactly one ${expected.name}`);
+    const {step,index}=matches[0];
+    assert.deepEqual(step,expected,`${label}: required authority step must run exactly, without skip or continue-on-error`);
+    assert.ok(index>install,`${label}: authority gates must follow dependency install`);
+    return index;
+  });
+  assert.ok(approvedIndexes[0]<approvedIndexes[1],`${label}: harness self-tests precede real PostgreSQL`);
+  return steps.filter((_,index)=>!approvedIndexes.includes(index));
 }
 // The backend tsc peaks near Node's default ~2 GB heap (OOM in run 41173922396), so the
 // backend 'Type check' step raises it. Asserts that exact env and returns the steps without
@@ -164,6 +186,7 @@ function enabled(job,selected,event='pull_request',operation='ci') {
 }
 for(const app of apps) test(`${app}: parsed executable graph and stable gate`,()=>{
   const file=`${app}-ci.yml`,text=read(file),w=parse(text),j=w.jobs;
+  if(app==='backend') assertBackendChecksRunner(j.checks);
   assert.equal(j.verify.name,expectedNames[app]);assert.equal(j.impact.uses,'./.github/workflows/ci-impact.yml');assert.equal(j.impact.with.component,app);
   assert.deepEqual(needs(j.checks),['impact']);assert.deepEqual(needs(j.verify),['impact','checks']);assert.match(j.verify.if,/always\(\)/);
   assert.equal(w.permissions.contents,'read');assert.equal(w.on.pull_request.paths,undefined);assert.equal(w.on.merge_group?.paths,undefined);
@@ -178,7 +201,7 @@ for(const app of apps) test(`${app}: parsed executable graph and stable gate`,()
     return step;
   });
   const previousSteps = parse(old(file)).jobs.verify.steps;
-  assert.deepEqual(app==='backend'?stepsWithoutTypeCheckHeap(stepsWithoutStandbyContractTests(appSteps,file),file):appSteps,app==='backend'?withStateIntegrityRealDatabaseStep(previousSteps):previousSteps,'preserve all existing application checks');
+  assert.deepEqual(app==='backend'?stepsWithoutTypeCheckHeap(stepsWithoutStandbyContractTests(stepsWithoutAuthorityPgGates(appSteps,file),file),file):appSteps,app==='backend'?withStateIntegrityRealDatabaseStep(previousSteps):previousSteps,'preserve all existing application checks');
   if(app==='backend') {assertOnlyStandbyJobAdded(parse(old(file)).jobs,j,file,['impact','checks']);assert.ok(j.checks.steps.some(step=>step.run==='node --test scripts/ci/impact*.test.mjs'));assert.equal(j.checks.steps[0].with['fetch-depth'],0);}
   const visited=new Set(),active=new Set();
   function visit(id) {assert.ok(j[id],`missing dependency ${id}`);assert.equal(active.has(id),false,`cycle at ${id}`);if(visited.has(id))return;active.add(id);for(const parent of needs(j[id]))visit(parent);active.delete(id);visited.add(id);}
@@ -190,6 +213,17 @@ for(const app of apps) test(`${app}: parsed executable graph and stable gate`,()
     if(app==='mobile') assert.equal(enabled(j.e2e,r.selected),r.selected.mobile);
   }
   if(app==='backend') {assert.equal(enabled(j.impact,{backend:true},'workflow_dispatch','lightnode-status'),false);assert.equal(enabled(j.verify,{backend:true},'workflow_dispatch','lightnode-status'),false);}
+});
+test('backend checks runner pin rejects latest, 26.04, missing and array values',()=>{
+  const text=read('backend-ci.yml'),block=jobText(text,'checks');
+  const runner='    runs-on: ubuntu-24.04\n';
+  assert.equal(block.split(runner).length-1,1,'exactly one backend checks runner mutation target');
+  assertBackendChecksRunner(parse(text).jobs.checks);
+  for(const replacement of ['    runs-on: ubuntu-latest\n','    runs-on: ubuntu-26.04\n','',
+    '    runs-on: [ubuntu-24.04]\n']) {
+    const mutant=parse(text.replace(block,block.replace(runner,replacement)));
+    assert.throws(()=>assertBackendChecksRunner(mutant.jobs.checks),/backend checks require the installed PG16 runner image/);
+  }
 });
 test('backend auth matrix/steps and every operational/deploy block remain byte-identical',()=>{
   const before=old('backend-ci.yml'),current=read('backend-ci.yml'),after=withPreviewConcurrencyAtBase(withApprovedDeployAdditionsAtBase(current,'backend-ci.yml'),'backend-ci.yml');const a=parse(before).jobs,b=parse(after).jobs;
@@ -252,6 +286,7 @@ const correctionBase = 'a05682829ef59dd072d07401b6cdcf058c309085';
 const correctionOld = name => execFileSync('git', ['show', `${correctionBase}:.github/workflows/${name}`], {cwd:root,encoding:'utf8'});
 test('backend installs declared compiler before executing CI impact contracts; operational blocks are unchanged', () => {
   const text = withPreviewConcurrencyAtBase(withApprovedDeployAdditionsAtBase(read('backend-ci.yml'),'backend-ci.yml'),'backend-ci.yml'), workflow = parse(text);
+  assertBackendChecksRunner(workflow.jobs.checks);
   const steps = workflow.jobs.checks.steps;
   const contracts = steps.findIndex(step => step.name === 'CI impact routing contracts');
   const install = steps.findIndex(step => step.name === 'Install dependencies');
@@ -259,7 +294,7 @@ test('backend installs declared compiler before executing CI impact contracts; o
   const before = correctionOld('backend-ci.yml');
   const previous = parse(before);
   assertOnlyStandbyJobAdded(previous.jobs, workflow.jobs, 'backend-ci.yml');
-  assert.deepEqual(stepsWithoutStandbyContractTests(stepsWithoutTypeCheckHeap(steps,'backend-ci.yml'),'backend-ci.yml').filter(s => s.name !== 'CI impact routing contracts'), withStateIntegrityRealDatabaseStep(previous.jobs.checks.steps.filter(s => s.name !== 'CI impact routing contracts')));
+  assert.deepEqual(stepsWithoutStandbyContractTests(stepsWithoutTypeCheckHeap(stepsWithoutAuthorityPgGates(steps,'backend-ci.yml'),'backend-ci.yml'),'backend-ci.yml').filter(s => s.name !== 'CI impact routing contracts'), withStateIntegrityRealDatabaseStep(previous.jobs.checks.steps.filter(s => s.name !== 'CI impact routing contracts')));
   for (const id of Object.keys(previous.jobs).filter(id => id !== 'checks')) {
     assert.equal(jobText(text,id), jobText(before,id), `${id} must be byte-identical to phase base`);
   }
@@ -358,4 +393,26 @@ test('actual reusable output validator refuses missing, malformed and inconsiste
     assert.notEqual(run({}, exports, contents).status, 0, 'invalid/missing artifact must fail');
     assert.equal(existsSync(output), false);
   }
+});
+
+test('authority PostgreSQL gate adapter rejects missing, duplicated, changed or bypassed required steps',()=>{
+  const steps=parse(read('backend-ci.yml')).jobs.checks.steps;
+  stepsWithoutAuthorityPgGates(steps,'backend-ci.yml');
+  for(const expected of authorityPgSteps) {
+    for(const [label,mutate] of [
+      ['missing',copy=>copy.splice(copy.findIndex(step=>step.name===expected.name),1)],
+      ['duplicated',copy=>copy.push(structuredClone(expected))],
+      ['changed command',copy=>{copy.find(step=>step.name===expected.name).run+=' || true';}],
+      ['skipped',copy=>{copy.find(step=>step.name===expected.name).if=false;}],
+      ['continue-on-error',copy=>{copy.find(step=>step.name===expected.name)['continue-on-error']=true;}],
+      ['renamed',copy=>{copy.find(step=>step.name===expected.name).name='bypassed';}],
+      ['foreign env',copy=>{copy.find(step=>step.name===expected.name).env={DATABASE_URL:'foreign'};}],
+    ]) {
+      const copy=structuredClone(steps);mutate(copy);
+      assert.throws(()=>stepsWithoutAuthorityPgGates(copy,'negative control'),`${expected.name}: ${label}`);
+    }
+  }
+  const early=structuredClone(steps),index=early.findIndex(step=>step.name===authorityPgSteps[1].name);
+  early.unshift(early.splice(index,1)[0]);
+  assert.throws(()=>stepsWithoutAuthorityPgGates(early,'negative control'),'real PostgreSQL must follow install');
 });

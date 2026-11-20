@@ -1,0 +1,9 @@
+/* Only static-font plumbing; product styles are imported. */
+@font-face {
+  font-family: "Pretendard Variable";
+  src: url("./dist/assets/Pretendard.woff2") format("woff2");
+  font-weight: 45 920;
+  font-style: normal;
+  font-display: swap;
+}
+:root { --font-pretendard: "Pretendard Variable"; }

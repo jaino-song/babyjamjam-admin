@@ -1,5 +1,7 @@
 "use client";
 
+import { LoadingState } from "@/components/app/ui/LoadingState";
+
 interface ToolIndicatorProps {
     toolName: string | null;
     isExecuting: boolean;
@@ -55,22 +57,8 @@ export function ToolIndicator({ toolName, isExecuting }: ToolIndicatorProps) {
             data-testid="tool-indicator"
             className="flex items-center gap-2 py-2 px-4 bg-muted/50 rounded mb-2"
         >
-            {/* Animated dots */}
-            <div className="flex gap-1">
-                {[0, 1, 2].map((i) => (
-                    <span
-                        key={i}
-                        className="w-1.5 h-1.5 rounded-full bg-primary animate-pulse"
-                        style={{
-                            animationDelay: `${i * 200}ms`,
-                            animationDuration: "1.4s",
-                        }}
-                    />
-                ))}
-            </div>
-            <p className="text-sm text-muted-foreground">
-                {getToolLabel(toolName)}...
-            </p>
+            <LoadingState data-component="desktop_chat_page_tool-indicator_loading" label={getToolLabel(toolName)} size="sm" inline />
+            {toolName && <p className="text-sm text-muted-foreground">{getToolLabel(toolName)}...</p>}
         </div>
     );
 }

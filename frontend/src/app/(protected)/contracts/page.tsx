@@ -718,10 +718,10 @@ export default function ContractsPage() {
   }
 
   return (
-    <PageSection name="contracts">
+    <PageSection name="desktop_contracts_page">
       {/* TODO: 통계 카운트는 아직 제공기록지 문서를 포함한다. 후속 작업에서 통계 엔드포인트를 분리한다. */}
       <ContractStatsBar
-        name="contracts" density="responsive-square"
+        name="desktop_contracts_page" density="responsive-square"
         showDocumentJobs={true} statsError={statsError} statsHasData={statsHasData} isStatsRefreshing={isStatsRefreshing}
         isLoading={isStatsLoading} onRetryStats={isAuthenticated && isStatsBranchContextReady ? () => void statusCountsQuery.refetch() : undefined}
         items={[
@@ -735,12 +735,12 @@ export default function ContractsPage() {
 
       {activeSection === "maternity" && <ContractLinkConfirmationsNotice />}
       <div
-        data-component="desktop_contracts_sections"
+        data-component="desktop_contracts_page_sections"
         data-slot="contracts-sections"
         className="flex flex-1 min-h-0 flex-col gap-[calc(16px*var(--glint-ui-scale,1))] lg:flex-row"
       >
         <SectionNav
-          data-component="desktop_contracts_sections_section-nav"
+          data-component="desktop_contracts_page_sections_section-nav"
           items={NAV_SECTIONS.filter((section) => section.id !== "backups" || isOwner)}
           activeId={activeSection}
           onSelect={(id) => {
@@ -750,22 +750,22 @@ export default function ContractsPage() {
         />
 
         <div
-          data-component="desktop_contracts_sections_section-content"
+          data-component="desktop_contracts_page_sections_section-content"
           className="flex-1 min-w-0 min-h-0 flex flex-col"
         >
           {activeSection === "maternity" ? (
             <section
-              data-component="desktop_contracts_sections_section-content_maternity-section"
+              data-component="desktop_contracts_page_sections_section-content_maternity-section"
               className="flex flex-1 min-h-0 flex-col"
             >
-        <SplitLayout data-component="desktop_contracts_sections_section-content_maternity-section_split-layout"
+        <SplitLayout data-component="desktop_contracts_page_sections_section-content_maternity-section_split-layout"
           hasSelection={!!selectedDocument || isCreating || hasContractCreationSession}
           onBack={() => {
             setSelectedDocId(null);
             setIsCreating(false);
           }}
         >
-          <ListPanel data-component="desktop_contracts_sections_section-content_maternity-section_split-layout_list-panel"
+          <ListPanel data-component="desktop_contracts_page_sections_section-content_maternity-section_split-layout_list-panel"
             title="계약 목록"
             tabs={TAB_ITEMS}
             activeTab={activeTab}
@@ -780,7 +780,7 @@ export default function ContractsPage() {
                 onClick={handleStartContractCreation}
                 icon={Send}
                 label="전자문서 발송"
-                data-component="desktop_contracts_sections_section-content_maternity-section_split-layout_list-panel_header_send-contract"
+                data-component="desktop_contracts_page_sections_section-content_maternity-section_split-layout_list-panel_header_send-contract"
                 className={
                   isCreating || hasContractCreationSession
                     ? "bg-v3-primary text-white hover:bg-v3-primary"
@@ -790,7 +790,7 @@ export default function ContractsPage() {
             }
             emptyState={documents.length === 0 && !isInitialLoading && !isContentLoading ? (
               isDocumentsError ? <QueryErrorState
-                dataComponent="desktop_contracts_sections_section-content_maternity-section_split-layout_list-panel_load-error"
+                dataComponent="desktop_contracts_page_sections_section-content_maternity-section_split-layout_list-panel_load-error"
                 size="panel"
                 className="pointer-events-auto"
                 onRetry={retryDocuments}
@@ -802,7 +802,7 @@ export default function ContractsPage() {
           >
             {isDocumentsError && documents.length > 0 ? (
               <QueryErrorState
-                dataComponent="desktop_contracts_sections_section-content_maternity-section_split-layout_list-panel_load-error"
+                dataComponent="desktop_contracts_page_sections_section-content_maternity-section_split-layout_list-panel_load-error"
                 size="inline"
                 title="최신 정보를 불러오지 못했습니다"
                 onRetry={retryDocuments}
@@ -810,14 +810,14 @@ export default function ContractsPage() {
               />
             ) : null}
             <AnimatedSlotList<EformsignDocument>
-                data-component="desktop_contracts_sections_section-content_maternity-section_split-layout_list-panel_list"
+                data-component="desktop_contracts_page_sections_section-content_maternity-section_split-layout_list-panel_list"
                 items={documents}
                 isLoading={isInitialLoading || isContentLoading}
                 loadingCount={3}
                 className="space-y-2"
                 getItemKey={(doc) => doc.id}
                 itemVariant="card"
-                itemDataComponent="desktop_contracts_sections_section-content_maternity-section_split-layout_list-panel_list_item"
+                itemDataComponent="desktop_contracts_page_sections_section-content_maternity-section_split-layout_list-panel_list_item"
                 getSlotState={({ item, isLoading }) => {
                   const isActive = !isLoading && item && selectedDocument?.id === item.id;
                   return {
@@ -839,7 +839,7 @@ export default function ContractsPage() {
 
                   return (
                     <ContractsListItem
-                      data-component="desktop_contracts_sections_section-content_maternity-section_split-layout_list-panel_item"
+                      data-component="desktop_contracts_page_sections_section-content_maternity-section_split-layout_list-panel_item"
                       document={doc}
                       customerName={customerName}
                       isLoading={isLoading}
@@ -856,7 +856,7 @@ export default function ContractsPage() {
           <>
           {(isCreating || hasOpenCreationDraft || hasContractCreationSession) && (
             <div
-              data-component="desktop_contracts_sections_section-content_maternity-section_split-layout_creation-session"
+              data-component="desktop_contracts_page_sections_section-content_maternity-section_split-layout_creation-session"
               className={isCreating ? "contents" : "hidden"}
             >
                 <ContractCreationForm
@@ -866,12 +866,12 @@ export default function ContractsPage() {
                   activeStep={contractCreationActiveStep}
                   onActiveStepChange={setContractCreationActiveStep}
                   renderLayout={({ content, footer, footerClassName }) => (
-                    <DetailPanel data-component="desktop_contracts_sections_section-content_maternity-section_split-layout_creation-session_detail-panel"
+                    <DetailPanel data-component="desktop_contracts_page_sections_section-content_maternity-section_split-layout_creation-session_detail-panel"
                       title="전자계약서 작성"
                       subtitle="고객에게 전자계약서를 발송합니다" stepperPlacement="below-title"
                       avatar={
                         <div
-                          data-component="desktop_contracts_sections_section-content_maternity-section_split-layout_creation-session_detail-panel_avatar"
+                          data-component="desktop_contracts_page_sections_section-content_maternity-section_split-layout_creation-session_detail-panel_avatar"
                           className="flex h-[calc(48px*var(--glint-ui-scale,1))] w-[calc(48px*var(--glint-ui-scale,1))] shrink-0 items-center justify-center rounded-[16px] bg-v3-primary-light text-v3-primary"
                         >
                           <Send className="h-[calc(20px*var(--glint-ui-scale,1))] w-[calc(20px*var(--glint-ui-scale,1))]" />
@@ -895,7 +895,7 @@ export default function ContractsPage() {
           )}
           {!isCreating && isInitialLoading ? (
             <DetailSkeleton
-              name="desktop_contracts_sections_section-content_maternity-section_split-layout_detail-skeleton"
+              name="desktop_contracts_page_sections_section-content_maternity-section_split-layout_detail-skeleton"
               headerBadge
               headerBanner
               sections={[
@@ -906,7 +906,7 @@ export default function ContractsPage() {
             />
           ) : !isCreating && selectedDocument ? (
             <ContractDetail
-              data-component="desktop_contracts_sections_section-content_maternity-section_split-layout_detail-panel-document"
+              data-component="desktop_contracts_page_sections_section-content_maternity-section_split-layout_detail-panel-document"
               key={selectedDocument.id}
               document={selectedDocument}
               documentClientSummary={documentClientSummaryById.get(selectedDocument.id) ?? null}
@@ -923,14 +923,14 @@ export default function ContractsPage() {
 
           {activeSection === "service-records" ? (
             <section
-              data-component="desktop_contracts_sections_section-content_service-records-section"
+              data-component="desktop_contracts_page_sections_section-content_service-records-section"
               className="flex flex-1 min-h-0 flex-col"
             >
-              <SplitLayout data-component="desktop_contracts_sections_section-content_service-records-section_split-layout"
+              <SplitLayout data-component="desktop_contracts_page_sections_section-content_service-records-section_split-layout"
                 hasSelection={!!selectedServiceRecordDocument}
                 onBack={() => setSelectedServiceRecordDocId(null)}
               >
-                <ListPanel data-component="desktop_contracts_sections_section-content_service-records-section_split-layout_list-panel"
+                <ListPanel data-component="desktop_contracts_page_sections_section-content_service-records-section_split-layout_list-panel"
                   title="제공기록지 목록"
                   tabs={SERVICE_RECORD_TAB_ITEMS}
                   activeTab={serviceRecordActiveTab}
@@ -943,7 +943,7 @@ export default function ContractsPage() {
                   emptyState={
                     serviceRecordDocuments.length === 0 && !isServiceRecordListLoading && !isContentLoading ? (
                       isDocumentsError ? <QueryErrorState
-                        dataComponent="desktop_contracts_sections_section-content_service-records-section_split-layout_list-panel_load-error"
+                        dataComponent="desktop_contracts_page_sections_section-content_service-records-section_split-layout_list-panel_load-error"
                         size="panel"
                         className="pointer-events-auto"
                         onRetry={retryDocuments}
@@ -956,7 +956,7 @@ export default function ContractsPage() {
                 >
                   {isDocumentsError && serviceRecordDocuments.length > 0 ? (
                     <QueryErrorState
-                      dataComponent="desktop_contracts_sections_section-content_service-records-section_split-layout_list-panel_load-error"
+                      dataComponent="desktop_contracts_page_sections_section-content_service-records-section_split-layout_list-panel_load-error"
                       size="inline"
                       title="최신 정보를 불러오지 못했습니다"
                       onRetry={retryDocuments}
@@ -964,14 +964,14 @@ export default function ContractsPage() {
                     />
                   ) : null}
                   <AnimatedSlotList<EformsignDocument>
-                    data-component="desktop_contracts_sections_section-content_service-records-section_split-layout_list-panel_list"
+                    data-component="desktop_contracts_page_sections_section-content_service-records-section_split-layout_list-panel_list"
                     items={serviceRecordDocuments}
                     isLoading={isServiceRecordListLoading || isContentLoading}
                     loadingCount={3}
                     className="space-y-2"
                     getItemKey={(doc) => doc.id}
                     itemVariant="card"
-                    itemDataComponent="desktop_contracts_sections_section-content_service-records-section_split-layout_list-panel_list_item"
+                    itemDataComponent="desktop_contracts_page_sections_section-content_service-records-section_split-layout_list-panel_list_item"
                     getSlotState={({ item, isLoading }) => {
                       const isActive =
                         !isLoading && item && selectedServiceRecordDocument?.id === item.id;
@@ -986,7 +986,7 @@ export default function ContractsPage() {
                     isFetchingMore={isFetchingDocuments}
                     render={({ item: doc, isLoading }) => (
                       <ContractsListItem
-                        data-component="desktop_contracts_sections_section-content_service-records-section_split-layout_list-panel_item"
+                        data-component="desktop_contracts_page_sections_section-content_service-records-section_split-layout_list-panel_item"
                         document={doc}
                         customerName={resolveCustomerName(doc)}
                         subtitle="제공기록지"
@@ -998,7 +998,7 @@ export default function ContractsPage() {
                 </ListPanel>
                 {isServiceRecordListLoading ? (
                   <DetailSkeleton
-                    name="desktop_contracts_sections_section-content_service-records-section_split-layout_detail-skeleton"
+                    name="desktop_contracts_page_sections_section-content_service-records-section_split-layout_detail-skeleton"
                     headerBadge
                     headerBanner
                     sections={[
@@ -1009,7 +1009,7 @@ export default function ContractsPage() {
                   />
                 ) : selectedServiceRecordDocument ? (
                   <ContractDetail
-                    data-component="desktop_contracts_sections_section-content_service-records-section_split-layout_detail-panel-document"
+                    data-component="desktop_contracts_page_sections_section-content_service-records-section_split-layout_detail-panel-document"
                     key={selectedServiceRecordDocument.id}
                     document={selectedServiceRecordDocument}
                     documentClientSummary={documentClientSummaryById.get(selectedServiceRecordDocument.id) ?? null}
@@ -1025,11 +1025,11 @@ export default function ContractsPage() {
 
           {activeSection === "caregiver" ? (
             <section
-              data-component="desktop_contracts_sections_section-content_caregiver-section"
+              data-component="desktop_contracts_page_sections_section-content_caregiver-section"
               className="flex flex-1 min-h-0 flex-col"
             >
-              <SplitLayout data-component="desktop_contracts_sections_section-content_caregiver-section_split-layout" hasSelection={false}>
-                <ListPanel data-component="desktop_contracts_sections_section-content_caregiver-section_split-layout_list-panel"
+              <SplitLayout data-component="desktop_contracts_page_sections_section-content_caregiver-section_split-layout" hasSelection={false}>
+                <ListPanel data-component="desktop_contracts_page_sections_section-content_caregiver-section_split-layout_list-panel"
                   title="제공인력 계약 목록"
                   subtitle="아직 준비중입니다"
                   avatar={
@@ -1041,7 +1041,7 @@ export default function ContractsPage() {
                 >
                   {null}
                 </ListPanel>
-                <DetailPanel data-component="desktop_contracts_sections_section-content_caregiver-section_split-layout_detail-panel"
+                <DetailPanel data-component="desktop_contracts_page_sections_section-content_caregiver-section_split-layout_detail-panel"
                   title="제공인력 계약서"
                   subtitle="아직 준비중입니다"
                   avatar={
@@ -1058,11 +1058,11 @@ export default function ContractsPage() {
 
           {activeSection === "documents" ? (
             <section
-              data-component="desktop_contracts_sections_section-content_documents-section"
+              data-component="desktop_contracts_page_sections_section-content_documents-section"
               className="flex flex-1 min-h-0 flex-col"
             >
-              <SplitLayout data-component="desktop_contracts_sections_section-content_documents-section_split-layout" hasSelection={false}>
-                <ListPanel data-component="desktop_contracts_sections_section-content_documents-section_split-layout_list-panel"
+              <SplitLayout data-component="desktop_contracts_page_sections_section-content_documents-section_split-layout" hasSelection={false}>
+                <ListPanel data-component="desktop_contracts_page_sections_section-content_documents-section_split-layout_list-panel"
                   title="전자문서 목록"
                   subtitle="아직 준비중입니다"
                   avatar={
@@ -1074,7 +1074,7 @@ export default function ContractsPage() {
                 >
                   {null}
                 </ListPanel>
-                <DetailPanel data-component="desktop_contracts_sections_section-content_documents-section_split-layout_detail-panel"
+                <DetailPanel data-component="desktop_contracts_page_sections_section-content_documents-section_split-layout_detail-panel"
                   title="전자문서"
                   subtitle="아직 준비중입니다"
                   avatar={
@@ -1091,11 +1091,11 @@ export default function ContractsPage() {
 
           {activeSection === "notifications" ? (
             <section
-              data-component="desktop_contracts_sections_section-content_notifications-section"
+              data-component="desktop_contracts_page_sections_section-content_notifications-section"
               className="flex flex-1 min-h-0 flex-col"
             >
-              <SplitLayout data-component="desktop_contracts_sections_section-content_notifications-section_split-layout" hasSelection={false}>
-                <ListPanel data-component="desktop_contracts_sections_section-content_notifications-section_split-layout_list-panel"
+              <SplitLayout data-component="desktop_contracts_page_sections_section-content_notifications-section_split-layout" hasSelection={false}>
+                <ListPanel data-component="desktop_contracts_page_sections_section-content_notifications-section_split-layout_list-panel"
                   title="알림 설정"
                   subtitle="아직 준비중입니다"
                   avatar={
@@ -1107,7 +1107,7 @@ export default function ContractsPage() {
                 >
                   {null}
                 </ListPanel>
-                <DetailPanel data-component="desktop_contracts_sections_section-content_notifications-section_split-layout_detail-panel"
+                <DetailPanel data-component="desktop_contracts_page_sections_section-content_notifications-section_split-layout_detail-panel"
                   title="알림 설정"
                   subtitle="아직 준비중입니다"
                   avatar={
@@ -1123,9 +1123,9 @@ export default function ContractsPage() {
           ) : null}
 
           {activeSection === "automations" ? (
-            <ContractAutomationsManager dataComponent="desktop_contracts_sections_section-content_automations-section" />
+            <ContractAutomationsManager dataComponent="desktop_contracts_page_sections_section-content_automations-section" />
           ) : null}
-          {activeSection === "backups" && isOwner ? (<EformsignBackupHistory />) : null}
+          {activeSection === "backups" && isOwner ? (<EformsignBackupHistory data-component="desktop_contracts_page_sections_section-content_backups-section" />) : null}
         </div>
       </div>
 
@@ -1136,11 +1136,11 @@ export default function ContractsPage() {
             setDeleteTargetDocumentId(null);
           }
         }}
-        data-component="desktop_contracts_modals_delete-approval"
+        data-component="desktop_contracts_page_modals_delete-approval"
         title="문서를 삭제하시겠습니까?"
         description="전자문서가 취소되어 수신자가 더 이상 서명할 수 없어요. 복구할 수 없어요."
         approvalLabel="삭제"
-        pendingLabel="삭제 중..."
+        pendingLabel="삭제 중"
         approvalVariant="destructive"
         isPending={deleteDocument.isPending}
         onApprove={() => void handleDeleteConfirm()}
@@ -1148,7 +1148,7 @@ export default function ContractsPage() {
 
       {registerClientDocumentId !== null && (
         <ClientFormDialog
-          data-component="desktop_contracts_modals_register-client"
+          data-component="desktop_contracts_page_modals_register-client"
           open={registerClientOpen}
           onClose={() => setRegisterClientDocumentId(null)}
           prefill={registerClientPrefill}
@@ -1185,7 +1185,7 @@ export default function ContractsPage() {
             setSelectedDocId(documentId);
             setIsCreating(false);
           }}
-          data-component="desktop_contracts_document-job-recovery"
+          data-component="desktop_contracts_page_document-job-recovery"
           onClose={() => setRecoverJobId(null)}
         />
       )}
@@ -2059,6 +2059,7 @@ export function ContractDetail({
         />
       )}
       <DetailTabPanels
+        insetPanels
         activeTab={activeDetailTab}
         data-component={`${dataComponent}_content`}
         data-panel-component={`${dataComponent}_content_panel`}
@@ -2150,7 +2151,7 @@ export function ContractDetail({
         description="제공기록지를 검토 완료 처리합니다."
         cancelLabel="취소"
         approvalLabel="완료"
-        pendingLabel="처리 중..."
+        pendingLabel="처리 중"
         isPending={isFinalizePending}
         onApprove={handleServiceRecordFinalizeApprove}
       />

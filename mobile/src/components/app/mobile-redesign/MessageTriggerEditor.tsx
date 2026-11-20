@@ -12,11 +12,12 @@ import {
 import type { CreateMessageTriggerRuleGroupDto, MessageTriggerRuleGroupView, MessageTriggerRecipientMode, MessageTriggerRecipientType, MessageTriggerTemplateKey, MessageTriggerRuleGroupPreviewResponse } from "@babyjamjam/shared/types/message";
 import { isAxiosError } from "axios";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { ActionRow } from "@/components/ui/action-row";
 import { messageTriggerKeys } from "@/features/message-triggers/hooks/keys";
 import { messageRuleGroupsApi, settingsApi } from "@/services/api";
 import { useGetAuthUser } from "@/hooks/useGetAuthUser";
 import { OptionButtonGroup } from "@/components/app/v3/OptionButtonGroup";
-import { Button } from "@/components/ui/button";
+import { Button, ButtonLoadingContent } from "@/components/ui/button";
 import { BellRing, Trash2 } from "lucide-react";
 
 import { InputField } from "@/components/app/v3/InputField";
@@ -134,6 +135,9 @@ export function MessageTriggerEditor({
   });
   const sendTimeInitialized = useRef(Boolean(rule || group));
   const groupMode = !rule;
+  const hasDeleteAction = Boolean(group || rule && !rule.isDefault);
+  const hasActionPair = Number(Boolean(onCancel)) + Number(hasDeleteAction) === 1;
+  const ActionContainer = hasActionPair ? ActionRow : "div";
   const [expectedGroupVersion, setExpectedGroupVersion] = useState(group?.version ?? null);
   const [form, setForm] = useState<RuleForm>(() => group ? { ...initialForm(null), name: group.name, isActive: group.isActive, eventType: group.eventType, offsetType: group.offsetType, offsetDays: group.offsetDays, sendTime: group.sendTime, targetClientStatus: group.targetClientStatus, retryOnFailure: group.retryOnFailure } : initialForm(rule));
   const [recipientMode, setRecipientMode] = useState<MessageTriggerRecipientMode>(group?.recipientMode ?? rule?.recipientType ?? "CLIENT");
@@ -461,9 +465,9 @@ export function MessageTriggerEditor({
         </div> : null}
         {error ? <p className="text-sm font-semibold text-v3-burgundy" role="alert">{error}</p> : null}
 
-        <div className="flex gap-2" data-component={`${dataComponent}_form_actions`}>
-          {onCancel ? <Button type="button" data-component={`${dataComponent}_form_actions_cancel`} variant="v3-soft" disabled={isPending} onClick={onCancel}>취소</Button> : null}
-          {(group || rule && !rule.isDefault) ? (
+        <ActionContainer className={hasActionPair ? undefined : "flex gap-2"} data-component={`${dataComponent}_form_actions`}>
+          {onCancel ? <Button type="button" data-component={`${dataComponent}_form_actions_cancel`} className={hasActionPair ? "flex-1" : undefined} variant="v3-soft" disabled={isPending} onClick={onCancel}>취소</Button> : null}
+          {hasDeleteAction ? (
             <button
               type="button"
               className="btn btn-secondary min-h-11"
@@ -474,10 +478,17 @@ export function MessageTriggerEditor({
               규칙 삭제
             </button>
           ) : null}
-          <button type="submit" className="btn btn-primary min-h-11 flex-1" disabled={isPending || !validDraft || groupMode && !branchId}>
-            {isPending ? "저장 중…" : "규칙 저장"}
+          <button
+            type="submit"
+            data-component={`${dataComponent}_form_actions_save`}
+            className={`btn btn-primary min-h-11 ${hasActionPair ? "flex-[2]!" : "flex-1"}${isPending ? " relative" : ""}`}
+            disabled={isPending || !validDraft || groupMode && !branchId}
+            aria-busy={isPending ? true : undefined}
+            data-loading={isPending ? "" : undefined}
+          >
+            <ButtonLoadingContent loading={isPending} loadingLabel="저장 중">규칙 저장</ButtonLoadingContent>
           </button>
-        </div>
+        </ActionContainer>
         </fieldset>
       </form>
 
@@ -488,7 +499,7 @@ export function MessageTriggerEditor({
         description="삭제한 규칙은 복구할 수 없어요."
         isDescriptionVisuallyHidden={false}
         approvalLabel="삭제 확인"
-        pendingLabel="삭제 중…"
+        pendingLabel="삭제 중"
         approvalVariant="destructive"
         isPending={groupPending || deleteMutation.isPending}
         onApprove={handleDelete}

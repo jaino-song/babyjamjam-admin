@@ -16,7 +16,7 @@ function SpinningLoader({ className }: { className?: string }) {
 export type DocumentJobsStatMode = "always" | "whenActive";
 
 export interface DocumentJobsStatMiniProps {
-  /** "always" keeps the card at 0; "whenActive" shows it only while there is something to see. */
+  /** "always" keeps the card at 0; "whenActive" also keeps it mounted while its list is open. */
   mode: DocumentJobsStatMode;
   density?: StatMiniDensity;
   /** The stats bar's name; data-component values derive from `${name}_stats`. */
@@ -30,9 +30,9 @@ export interface DocumentJobsStatMiniProps {
  * avoid drawing an empty row.
  */
 export function useDocumentJobsStatVisible(mode: DocumentJobsStatMode | undefined): boolean {
-  const { summary, total } = useDocumentJobs();
+  const { summary, total, isPopoverOpen } = useDocumentJobs();
   if (mode === "always") return true;
-  if (mode === "whenActive") return summary !== undefined && total > 0;
+  if (mode === "whenActive") return isPopoverOpen || (summary !== undefined && total > 0);
   return false;
 }
 
@@ -125,6 +125,8 @@ export function DocumentJobsStatMini({
                 : "처리 중인 전자문서 수를 확인할 수 없어요. 다시 시도해 주세요."}
             </p>
             <Button
+              loading={isSummaryFetching}
+              loadingLabel="다시 시도 중"
               type="button"
               size="sm"
               variant="outline"
@@ -132,9 +134,9 @@ export function DocumentJobsStatMini({
               className="mt-3"
               onClick={refetchSummary}
               disabled={isSummaryFetching}
-              aria-label="전자문서 처리 현황 다시 시도"
+              aria-label={isSummaryFetching ? undefined : "전자문서 처리 현황 다시 시도"}
             >
-              {isSummaryFetching ? "다시 시도 중…" : "다시 시도"}
+              다시 시도
             </Button>
           </AlertDescription>
         </Alert>

@@ -3,6 +3,10 @@ import { CleanupNotificationsUsecase } from "application/usecases/notification/c
 import { IBranchRepository } from "domain/repositories/branch.repository.interface";
 import { createSchedulerLeaseMock } from "../utils/mocks/scheduler-lease.mock";
 
+jest.mock("infrastructure/observability/service-record-sentry", () => ({
+    captureBackendError: jest.fn(),
+}));
+
 describe("NotificationCleanupSchedulerService", () => {
     const createMockCleanupUsecase = () => ({
         execute: jest.fn(),

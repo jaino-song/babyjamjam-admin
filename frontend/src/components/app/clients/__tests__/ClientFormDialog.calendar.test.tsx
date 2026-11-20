@@ -200,12 +200,12 @@ describe("ClientFormDialog — branch business-day calendar", () => {
     await screen.findByText("등록 가능한 번호입니다.");
 
     expect(screen.getByRole("button", { name: "생성" })).toBeDisabled();
-    expect(screen.getByText("공휴일 정보를 불러오는 중이에요…")).toBeInTheDocument();
+    expect(screen.getByRole("status", { name: "공휴일 정보를 불러오는 중이에요" })).toBeInTheDocument();
 
     mockedHook.mockImplementation(() => hookResult());
     rerender(ui(NOV_PREFILL));
     await waitFor(() => expect(screen.getByRole("button", { name: "생성" })).toBeEnabled());
-    expect(screen.queryByText("공휴일 정보를 불러오는 중이에요…")).not.toBeInTheDocument();
+    expect(screen.queryByRole("status", { name: "공휴일 정보를 불러오는 중이에요" })).not.toBeInTheDocument();
   });
 
   it("shows the no-branch notice and keeps submit disabled", async () => {

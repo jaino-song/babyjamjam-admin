@@ -7,6 +7,7 @@ process.env.TZ = "Asia/Seoul";
 
 module.exports = {
     rootDir: "./",
+    cacheDirectory: "<rootDir>/node_modules/.cache/jest",
     testEnvironment: "node",
     transform: {
         "^.+\\.ts$": ["ts-jest", { tsconfig: "tsconfig.test.json" }],

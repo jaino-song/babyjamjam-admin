@@ -180,15 +180,17 @@ export function SidebarNotifications() {
                   title="알림"
                   titleClassName="text-xl"
                 />
-                <button
+                <Button
                   type="button"
+                  variant="ghost"
+                  size="icon"
                   aria-label="알림 닫기"
                   data-component="desktop_chrome_sidebar_notifications-modal_close"
-                  className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-white text-v3-text-muted transition-colors hover:bg-v3-dim-white hover:text-v3-dark"
+                  className="shrink-0 rounded-full bg-white text-v3-text-muted transition-colors hover:bg-v3-dim-white hover:text-v3-dark"
                   onClick={() => setOpen(false)}
                 >
                   <X className="h-4 w-4" />
-                </button>
+                </Button>
               </div>
 
               <div

@@ -1,6 +1,6 @@
 import { ContractRecoveryError } from "domain/repositories/eformsign-contract-recovery.repository.interface";
 import { SbEformsignDocumentJobRepository } from "infrastructure/database/repositories/sb.eformsign-document-job.repository";
-import { runtimeFixture, B, J, G, I, F, data, worker, principal, intentInput, workflowPlan } from "../utils/eformsign-contract-recovery.fixture";
+import { runtimeFixture, B, U, J, G, I, F, data, worker, principal, intentInput, workflowPlan } from "../utils/eformsign-contract-recovery.fixture";
 
 describe("manual recovery connected service with real authority adapter", () => {
     it("saves exactly one verified draft, persists exposure before editable, and returns only public IDs", async () => {
@@ -319,4 +319,77 @@ it("a stale lease cannot transition a no-effect generation", async () => {
 it.each(["started", "uncertain"])("reserved own-ref absence cannot override a legacy %s contract effect", async status => {
     const f = runtimeFixture(); f.state.jobs[0].status = "failed"; f.state.jobs[0].leaseToken = null; f.state.intents[0].status = status;
     await expect(f.service.open(J, principal)).rejects.toMatchObject({ reason: "unverified_creation" }); expect(f.draft.dispatchDraft).not.toHaveBeenCalled();
+});
+
+describe("post-TTL same-document verification without contact payload", () => {
+    async function retained(purged: boolean) {
+        const f = runtimeFixture(); f.manual(); const opened = await f.service.open(J, principal);
+        f.state.jobs[0].completedAt = new Date(Date.now() - 8 * 86400000);
+        if (purged) f.state.jobs[0].payload = null;
+        f.options.generateDocumentOptions.mockClear(); f.draft.dispatchDraft.mockClear();
+        return { f, opened };
+    }
+    it.each([false, true])("day8 human exposure purged=%s remains verify-only and preserves stored customer metadata", async purged => {
+        const { f } = await retained(purged), mirror = f.state.docs.find((row: { documentId: string }) => row.documentId === "bound-doc");
+        Object.assign(mirror, { customerName: "Stored name", customerPhone: "stored-phone", stepRecipientName: "Stored recipient", stepRecipientSms: "stored-sms" });
+        const response = await f.service.open(J, principal); expect(response.kind).toBe("verify_only"); expect(response).not.toHaveProperty("document");
+        expect(f.options.generateDocumentOptions).not.toHaveBeenCalled(); expect(f.draft.dispatchDraft).not.toHaveBeenCalled();
+        expect(await f.service.verify(J, principal, BigInt(response.claimEpoch))).toMatchObject({ kind: "pending" });
+        f.forward();
+        await expect(f.service.verify(J, principal, BigInt(response.claimEpoch))).resolves.toMatchObject({ kind: "verified" });
+        expect(f.state.authorities[0].phase).toBe("closed"); expect(f.state.jobs[0].payload).toBeNull();
+        expect(mirror).toMatchObject({ customerName: "Stored name", customerPhone: "stored-phone", stepRecipientName: "Stored recipient", stepRecipientSms: "stored-sms" });
+        expect(f.options.generateDocumentOptions).not.toHaveBeenCalled(); expect(f.draft.dispatchDraft).not.toHaveBeenCalled();
+        expect(JSON.stringify(response)).not.toMatch(/contractData|creatorId|Stored|customer/);
+        await expect(f.service.open(J, principal)).resolves.toMatchObject({ kind: "verify_only" });
+    });
+    it.each(["060", "061", "062", "063", "064", "070", "071", "072", "073", "074", "003"])("matches workflow and confirms handed-off status %s even after provider expiry", async status => {
+        const { f } = await retained(true);
+        const reviewer = status.startsWith("07"), completed = status === "003";
+        Object.assign(f.remote.current_status, { status_type: status, step_type: completed ? "01" : reviewer ? "06" : "05",
+            step_index: completed ? "4" : reviewer ? "3" : "2", step_group: completed ? 3 : reviewer ? 2 : 1, _expired: true });
+        await expect(f.service.open(J, principal)).resolves.toMatchObject({ kind: "verify_only" });
+        expect(f.state.authorities[0].phase).toBe("closed"); expect(f.state.jobs[0].status).toBe("completed");
+    });
+    it.each(["creator", "template", "step", "group", "draft-expired", "status", "missing", "void", "purge", "foreign", "config", "frozen-config"])("postTTL %s fails closed without restoring payload or sending", async defect => {
+        const { f } = await retained(defect !== "frozen-config"), doc = f.state.docs.find((row: { documentId: string }) => row.documentId === "bound-doc"); f.forward();
+        if (defect === "creator") f.remote.creator.id = "other";
+        if (defect === "template") f.remote.template.id = "other";
+        if (defect === "step") f.remote.current_status.step_type = "06";
+        if (defect === "group") f.remote.current_status.step_group = 7;
+        if (defect === "draft-expired") Object.assign(f.remote.current_status, { status_type: "001", step_type: "00", _expired: true });
+        if (defect === "status") f.remote.current_status.status_type = "080";
+        if (defect === "missing") f.provider.getDocument.mockResolvedValue(null);
+        if (defect === "void") doc.voidedAt = new Date();
+        if (defect === "purge") doc.permanentPurgeRequestedAt = new Date();
+        if (defect === "foreign") doc.clientId = 3;
+        if (["config", "frozen-config"].includes(defect)) f.options.getConfiguredContractIdentity.mockReturnValue({ companyId: "company-abc", creatorId: "new@example.test" });
+        const payload = structuredClone(f.state.jobs[0].payload);
+        await expect(f.service.open(J, principal)).rejects.toThrow();
+        expect(f.state.jobs[0].payload).toEqual(payload); expect(f.state.jobs[0].status).toBe("failed");
+        expect(f.state.clients[0].eDocId).toBe("prior-doc"); expect(f.draft.dispatchDraft).not.toHaveBeenCalled(); expect(f.options.generateDocumentOptions).not.toHaveBeenCalled();
+    });
+    it.each([false, true])("operator-delivered draft closes without human ref, purged=%s", async purged => {
+        const f = runtimeFixture(); f.manual(); const state = await f.repository.open(J, B, U);
+        const claim = { jobId: J, branchId: B, userId: U, claimEpoch: state.claimEpoch };
+        const draft = await f.repository.beginDraft(claim, "template_ABC", { companyId: "company-abc", creatorId: "service@example.test", workflow: workflowPlan });
+        await f.repository.recordDraftCandidate(claim, draft.id, "bound-doc");
+        const evidence = { documentId: "bound-doc", templateId: "template_ABC", companyId: "company-abc", creatorId: "service@example.test", statusType: "001", stepType: "00", stepIndex: "1", stepName: "write", confirmed: false, createdAt: new Date(), updatedAt: new Date(), expiresAt: new Date() };
+        await f.repository.bindDocument(claim, evidence, draft.id);
+        Object.assign(f.state.intents[1], { status: "reconciled_delivered", reconciledOutcome: "delivered", reconciledAt: new Date(), reconciledByUserId: U });
+        if (purged) { f.state.jobs[0].payload = null; f.state.jobs[0].completedAt = new Date(Date.now() - 8 * 86400000); }
+        f.forward(); f.options.generateDocumentOptions.mockClear();
+        await expect(f.service.open(J, principal)).resolves.toMatchObject({ kind: "verify_only" });
+        expect(f.state.authorities[0]).toMatchObject({ phase: "closed", humanIntentId: null }); expect(f.state.intents[0].status).toBe("reconciled_not_delivered");
+        expect(f.draft.dispatchDraft).not.toHaveBeenCalled(); if (purged) expect(f.options.generateDocumentOptions).not.toHaveBeenCalled();
+    });
+});
+
+
+it("completed+closed with all three document pointers NULL never becomes a recovery claim", async () => {
+    const f = runtimeFixture(); Object.assign(f.state.jobs[0], { status: "completed", documentId: null, leaseToken: null, activeKey: null, payload: null });
+    Object.assign(f.state.authorities[0], { phase: "closed", providerDocumentId: null }); f.state.clients[0].eDocId = null;
+    const before = structuredClone(f.state);
+    await expect(f.service.open(J, principal)).rejects.toMatchObject({ code: "RECOVERY_UNSUPPORTED" });
+    expect(f.state).toEqual(before); expect(f.provider.getDocument).not.toHaveBeenCalled(); expect(f.credentials.withCredentials).not.toHaveBeenCalled();
 });

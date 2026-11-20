@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback, useMemo } from "react";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, Save, Loader2 } from "lucide-react";
+import { ArrowLeft, Save } from "lucide-react";
 import { useDebouncedCallback } from "use-debounce";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -151,13 +151,11 @@ export function TemplateForm({ mode, initialData, onSubmit, isPending }: Templat
                                 <Button
                                     size="sm"
                                     onClick={handleSubmit}
+                                    loading={isPending}
+                                    loadingLabel="저장 중"
                                     disabled={isPending || !isValid}
                                 >
-                                    {isPending ? (
-                                        <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                                    ) : (
-                                        <Save className="h-4 w-4 mr-2" />
-                                    )}
+                                    <Save className="h-4 w-4 mr-2" />
                                     저장
                                 </Button>
                             </div>

@@ -30,7 +30,8 @@ export function MessagesPermissionGuard({ children }: { children: ReactNode }) {
   const isSettingsRoute = pathname?.startsWith("/messages/settings") ?? false;
   const isLegacySenderApprovalRoute =
     pathname?.startsWith("/messages/sender-approval") ?? false;
-  const isNewMessageRoute = pathname === "/messages/new";
+  const isImmediateRenderRoute =
+    pathname === "/messages/new" || pathname === "/messages/compose";
   // /messages/history (the merged 발송 예정/발송 기록 screen) is intentionally NOT
   // exempt: it requires the same sending approval as every other message
   // screen. It used to be read-only-exempt back when it only showed past
@@ -45,13 +46,13 @@ export function MessagesPermissionGuard({ children }: { children: ReactNode }) {
     enabled: !isPermissionExemptRoute,
   });
 
-  const needsSenderApproval = Boolean(senderApproval && !senderApproval.isApproved);
+  const needsSenderApproval = !isLoading && senderApproval?.isApproved !== true;
   const isApprovalPending = senderApproval?.approvalStatus === "pending";
   const needsRequestPermission = Boolean(
     senderApproval && !senderApproval.isApproved && !senderApproval.canRequest,
   );
   const shouldShowApprovalModal =
-    !isPermissionExemptRoute && !isNewMessageRoute && needsSenderApproval;
+    !isPermissionExemptRoute && !isImmediateRenderRoute && needsSenderApproval;
   const isPermissionCheckLoading = !isPermissionExemptRoute && isLoading;
 
   const handleApprovalModalCancel = () => {
@@ -67,19 +68,17 @@ export function MessagesPermissionGuard({ children }: { children: ReactNode }) {
     router.push("/messages/settings");
   };
 
-  // /messages/new renders immediately: its section nav and send action show
-  // skeletons until the sender approval resolves, so the full-screen launch
-  // screen only covers the other protected routes. Those still stay hidden
-  // while checking because unapproved users must never see content they
-  // cannot act on.
-  if (isPermissionCheckLoading && !isNewMessageRoute) {
+  // Maker and send render immediately. Their navigation and send action use
+  // the active approval context, while local composition stays available.
+  // Other protected routes retain the full-screen approval check.
+  if (isPermissionCheckLoading && !isImmediateRenderRoute) {
     return <PwaLaunchScreen data-component="mobile_messages_permission-guard_loading" />;
   }
 
   return (
     <MessagesPermissionGuardContext.Provider
       value={{
-        isLoading: !isPermissionExemptRoute && isLoading,
+        isLoading,
         needsSenderApproval,
       }}
     >

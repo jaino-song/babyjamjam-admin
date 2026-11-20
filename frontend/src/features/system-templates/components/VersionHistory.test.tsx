@@ -14,6 +14,9 @@ jest.mock('@tanstack/react-query', () => ({
 
 jest.mock('../hooks', () => ({
   systemTemplateKeys: {
+    global: {
+      versionDetail: jest.fn(() => ['system-templates', 'version-detail']),
+    },
     versionDetail: jest.fn(() => ['system-templates', 'version-detail']),
   },
   useTemplateVersions: jest.fn(),
@@ -70,6 +73,83 @@ describe('VersionHistory', () => {
         versionNumber: 3,
       });
     });
+  });
+
+  it.each([
+    { action: 'rollback', trigger: '이 버전으로 복원', idleLabel: '복원', pendingLabel: '복원 중' },
+    { action: 'reset', trigger: '기본값으로 초기화', idleLabel: '초기화', pendingLabel: '초기화 중' },
+  ])('shows a spinner while $action is pending and restores the idle action', ({ action, trigger, idleLabel, pendingLabel }) => {
+    const mutation = { mutateAsync: action === 'rollback' ? rollbackMutateAsync : resetMutateAsync, isPending: false };
+    jest.mocked(action === 'rollback' ? useRollbackTemplate : useResetTemplate)
+      .mockReturnValue(mutation as never);
+    const { rerender } = render(<VersionHistory templateKey="greeting" />);
+    fireEvent.click(screen.getByRole('button', { name: '버전 기록' }));
+    fireEvent.click(screen.getByRole('button', { name: trigger }));
+    expect(screen.getByRole('button', { name: idleLabel })).toBeEnabled();
+
+    mutation.isPending = true;
+    rerender(<VersionHistory templateKey="greeting" />);
+
+    const busyButton = screen.getByRole('button', { name: pendingLabel });
+    expect(busyButton).toBeDisabled();
+    expect(busyButton).toHaveAttribute('aria-busy', 'true');
+    expect(busyButton).toHaveAttribute('data-loading', '');
+    const idleContent = busyButton.querySelector('[data-slot="button-idle"]');
+    expect(idleContent).toHaveAttribute('aria-hidden', 'true');
+    expect(idleContent).toHaveClass('contents', 'invisible');
+    expect(idleContent).toHaveTextContent(idleLabel);
+    expect(busyButton.querySelector('[data-slot="button-spinner"] [data-slot="spinner"]'))
+      .toHaveAttribute('aria-hidden', 'true');
+    expect(screen.getByText(pendingLabel)).toHaveClass('sr-only');
+    expect(screen.getByRole('button', { name: '취소' })).toBeDisabled();
+    fireEvent.click(busyButton);
+    expect(mutation.mutateAsync).not.toHaveBeenCalled();
+
+    mutation.isPending = false;
+    rerender(<VersionHistory templateKey="greeting" />);
+    const idleButton = screen.getByRole('button', { name: idleLabel });
+    expect(idleButton).toBeEnabled();
+    expect(idleButton).not.toHaveAttribute('aria-busy');
+    expect(idleButton).not.toHaveAttribute('data-loading');
+    expect(idleButton.querySelector('[data-slot="button-spinner"]')).toBeNull();
+  });
+
+  it.each(['history', 'preview'])('renders an accessible spinner without visible loading copy for the %s', (view) => {
+    if (view === 'history') {
+      jest.mocked(useTemplateVersions).mockReturnValue({ data: undefined, isLoading: true } as never);
+    } else {
+      jest.mocked(useQuery).mockReturnValue({ data: undefined, isLoading: true } as never);
+    }
+    render(<VersionHistory templateKey="greeting" />);
+    fireEvent.click(screen.getByRole('button', { name: '버전 기록' }));
+    if (view === 'preview') {
+      fireEvent.click(screen.getByRole('button', { name: '미리보기' }));
+    }
+
+    const label = view === 'history' ? '버전 기록을 불러오는 중' : '버전 미리보기를 불러오는 중';
+    const status = screen.getByRole('status', { name: label });
+    expect(status).toHaveAttribute('data-slot', 'loading-state');
+    expect(status).toHaveAttribute('data-source-component', 'LoadingState');
+    expect(status.querySelector('[data-slot="spinner"]')).toHaveAttribute('aria-hidden', 'true');
+    expect(screen.getByText(label)).toHaveClass('sr-only');
+  });
+
+  it('keeps version icon actions at 32px with a 44px touch area', () => {
+    render(<VersionHistory templateKey="greeting" />);
+    fireEvent.click(screen.getByRole('button', { name: '버전 기록' }));
+
+    for (const name of ['미리보기', '이 버전으로 복원']) {
+      const button = screen.getByRole('button', { name });
+      expect(button).toHaveAttribute('data-size', 'icon');
+      expect(button).toHaveClass(
+        'h-[calc(32px*var(--glint-ui-scale,1))]',
+        'w-[calc(32px*var(--glint-ui-scale,1))]',
+        'relative',
+        'after:absolute',
+        'after:h-[calc(44px*var(--glint-ui-scale,1))]',
+        'after:w-[calc(44px*var(--glint-ui-scale,1))]',
+      );
+    }
   });
 
   it('uses the destructive approval action before resetting to defaults', async () => {

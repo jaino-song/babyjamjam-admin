@@ -44,7 +44,8 @@ jobs:
     needs: impact
     if: needs.impact.outputs.backend == 'true'
     timeout-minutes: 30
-    runs-on: ubuntu-latest
+    # PG16 server binaries are preinstalled on this runner image.
+    runs-on: ubuntu-24.04
 
     # Throwaway Postgres, two uses, two databases: the default `postgres` database is
     # prisma's shadow database for the migrations drift guard below (never seeded), and
@@ -87,6 +88,9 @@ jobs:
 
       - name: CI impact routing contracts
         run: node --test scripts/ci/impact*.test.mjs
+
+      - name: Eformsign authority PostgreSQL harness self-tests
+        run: node --test backend/scripts/run-eformsign-contract-authority-pg.test.mjs
 
       # database-patches.yml re-executes its whole migration block on every push, so a
       # statement that raises on its second run aborts the step and silently stops every
@@ -181,6 +185,9 @@ jobs:
           --testPathIgnorePatterns='<rootDir>/test/services/receipt-pdf-verifier\.service\.spec\.ts'
         env:
           CI: true
+
+      - name: Eformsign authority and retention PostgreSQL gate
+        run: node backend/scripts/run-eformsign-contract-authority-pg.mjs
 
       # Fails when schema.prisma changed without a corresponding migration.
       # Replays prisma/migrations into the throwaway shadow DB and diffs the

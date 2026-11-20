@@ -2,6 +2,10 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { ReceiptLinkCleanupSchedulerService } from "application/services/receipt-link-cleanup-scheduler.service";
 
+jest.mock("infrastructure/observability/service-record-sentry", () => ({
+    captureBackendError: jest.fn(),
+}));
+
 function makeService(holdsLease = true) {
     const tokenService = {
         collectExpired: jest.fn().mockResolvedValue({ ids: ["a", "b"], orphanStoragePaths: ["receipts/x/1/a.png", "receipts/x/2/b.png"] }),

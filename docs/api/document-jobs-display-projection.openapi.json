@@ -10,8 +10,13 @@
     "schemas": {
       "EformsignDocumentJobDisplayProjection": {
         "type": "object",
-        "required": ["documentKind", "displayOperation", "failureReasonCode"],
+        "required": ["documentKind", "displayOperation", "failureReasonCode", "cancellable"],
         "properties": {
+          "cancellable": {
+            "type": "boolean",
+            "description": "Display hint for proven-undelivered generation-bound staff create jobs. Always false for legacy and auto_finalize jobs. POST rechecks locked proof and live claims, so a true hint may still yield 409 JOB_NOT_CANCELLABLE. requires_attention plus cancellable offers manual_send through iframe recovery; cancelled jobs have no recovery action.",
+            "readOnly": true
+          },
           "documentKind": {
             "type": "string",
             "enum": ["service_contract", "service_record", "unknown"],

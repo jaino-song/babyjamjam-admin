@@ -2,7 +2,7 @@
 
 
 import { type CSSProperties, useCallback, useMemo, useState } from "react";
-import { ArrowLeft, FileText, Loader2, Plus, Trash2 } from "lucide-react";
+import { ArrowLeft, FileText, Plus, Trash2 } from "lucide-react";
 import {
   useDeleteMessageTemplate,
   useMessageTemplates,
@@ -263,9 +263,10 @@ function BranchTemplateDetail({
           disabled={!hasChanges || updateMutation.isPending}
           aria-describedby={hasValidationErrors ? validationSummaryId : undefined}
           data-component="desktop_messages_sections_templates-user-detail_templates-user-actions_save"
+          loading={updateMutation.isPending}
+          loadingLabel="저장 중"
         >
-          {updateMutation.isPending && <Loader2 className="h-4 w-4 animate-spin" />}
-          {updateMutation.isPending ? "저장 중..." : "저장"}
+          저장
         </Button>
       </div>
 
@@ -276,7 +277,7 @@ function BranchTemplateDetail({
         description="삭제한 지점 템플릿은 복구할 수 없어요."
         cancelLabel="취소"
         approvalLabel="삭제"
-        pendingLabel="삭제 중..."
+        pendingLabel="삭제 중"
         approvalVariant="destructive"
         isPending={deleteMutation.isPending}
         isDescriptionVisuallyHidden={false}

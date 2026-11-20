@@ -47,7 +47,7 @@ test("rejects a missing mobile root Toaster mount", () => {
   const sourcesWithoutMount = new Map(sources);
   sourcesWithoutMount.set(
     providersPath,
-    sources.get(providersPath).replace(/<Toaster\s*\/>/, ""),
+    sources.get(providersPath).replace(/<Toaster\b[^>]*\/>/, ""),
   );
 
   const errors = validateRootComponentRequirements({
@@ -86,7 +86,7 @@ test("rejects a missing service-record Toaster mount", () => {
   const sourcesWithoutMount = new Map(sources);
   sourcesWithoutMount.set(
     layoutPath,
-    sources.get(layoutPath).replace(/<Toaster\s*\/>/, ""),
+    sources.get(layoutPath).replace(/<Toaster\b[^>]*\/>/, ""),
   );
 
   const errors = validateRootComponentRequirements({

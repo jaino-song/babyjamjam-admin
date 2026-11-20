@@ -2,7 +2,9 @@
 
 import { useState } from "react";
 import {
+    SERVICE_RECORD_STOOL_COLOR_MAX_LENGTH,
     getDailyItemMessages,
+    hasInvalidServiceRecordStoolColor,
     useHadValue,
     type DailyItem,
     type ServiceRecordNumericErrors,
@@ -126,7 +128,7 @@ export function DailyItemField({
                         describedBy={slotId}
                         invalid={hasError}
                     />
-                    {item.type === "stool" && value === STOOL_ABNORMAL_OPTION && (
+                    {item.type === "stool" && (value === STOOL_ABNORMAL_OPTION || hasInvalidServiceRecordStoolColor(draft)) && (
                         <div data-component={`${dataComponent}_stool-color`} className="mt-3">
                             <ServiceRecordItemLabel
                                 data-component={`${dataComponent}_stool-color-input_label-row`}
@@ -141,8 +143,9 @@ export function DailyItemField({
                                 data-component={`${dataComponent}_stool-color-input`}
                                 className="text-lg focus-visible:border-v3-primary! aria-[invalid=true]:border-v3-burgundy!"
                                 placeholder={STOOL_COLOR_PLACEHOLDER}
+                                maxLength={SERVICE_RECORD_STOOL_COLOR_MAX_LENGTH}
                                 value={(draft[`${item.key}_color`] as string | undefined) ?? ""}
-                                aria-required
+                                aria-required={value === STOOL_ABNORMAL_OPTION}
                                 aria-invalid={stoolColorMessage ? "true" : undefined}
                                 aria-describedby={stoolColorSlotId(dataComponent)}
                                 onChange={(event) => onFieldChange(`${item.key}_color`, event.target.value)}

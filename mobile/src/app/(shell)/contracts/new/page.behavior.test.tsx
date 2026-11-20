@@ -153,11 +153,13 @@ jest.mock("@/components/ui/alert", () => {
 jest.mock("@/components/ui/button", () => {
   const React = jest.requireActual("react") as typeof import("react");
   return {
+    ...jest.requireActual<typeof import("@/components/ui/button")>("@/components/ui/button"),
     Button: (props: Record<string, unknown>) => React.createElement("button", props, props.children as ReactNode),
   };
 });
 
 jest.mock("lucide-react", () => ({
+  ...jest.requireActual<typeof import("lucide-react")>("lucide-react"),
   ChevronLeft: () => null,
   X: () => null,
 }));

@@ -1,10 +1,10 @@
 "use client";
 
+import { LoadingState } from "@/components/app/ui/LoadingState";
 import { useId } from "react";
 import { AlertCircle, CheckCircle2, ChevronDown, Clock3, FileText } from "lucide-react";
 import { Alert, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
-import { Spinner } from "@/components/ui/spinner";
 import { AnimatedSlotList } from "@/components/app/v3/AnimatedSlotList";
 import { AnimatedSlotListItemContent } from "@/components/app/v3/AnimatedSlotListItemContent";
 import { StatusBadge } from "@/components/app/ui/status-badge";
@@ -21,7 +21,7 @@ export interface ContractDocumentJobsListProps {
   onToggle: (section: ContractDocumentJobsSection) => void;
   onSelect: (jobId: string, clickedElement: HTMLElement) => void;
   cardVariant?: "full" | "compact";
-  "data-component"?: string;
+  "data-component": string;
 }
 const sections = [
   { key: "processing", field: "active", title: "처리중", icon: Clock3, empty: "처리중인 전자문서가 없습니다." },
@@ -31,14 +31,12 @@ const sections = [
 
 export function ContractDocumentJobsList({ jobs, isLoading, error, onRetry, collapsed, onToggle, onSelect, cardVariant = "full", "data-component": base }: ContractDocumentJobsListProps) {
   const id = useId();
-  const sub = (part: string) => base ? `${base}_${part}` : undefined;
+  const sub = (part: string) => `${base}_${part}`;
   return <div data-component={base} data-slot="contract-document-jobs-list" data-source-component="ContractDocumentJobsList" className="contract-document-jobs-list">
     {error ? <Alert data-component={sub("error")} data-slot="contract-document-jobs-state" className="contract-document-jobs-state">
       <AlertTitle data-component={sub("error_title")}>전자문서 작업을 불러오지 못했습니다.</AlertTitle>
       {onRetry ? <Button type="button" variant="outline" size="sm" data-component={sub("error_retry")} onClick={onRetry}>다시 시도</Button> : null}
-    </Alert> : isLoading ? <div role="status" aria-label="전자문서 작업 불러오는 중" data-component={sub("loading")} data-slot="contract-document-jobs-state" className="contract-document-jobs-state">
-      <Spinner aria-hidden="true" data-component={sub("loading_spinner")} /><span>불러오는 중</span>
-    </div> : sections.map(({ key, field, title, icon: SectionIcon, empty }) => {
+    </Alert> : isLoading ? <LoadingState label="전자문서 작업 불러오는 중" data-component={sub("loading")} /> : sections.map(({ key, field, title, icon: SectionIcon, empty }) => {
       const items = jobs?.[field] ?? [];
       const expanded = !collapsed[key];
       const toggleId = `${id}-${key}-toggle`, contentId = `${id}-${key}-content`;

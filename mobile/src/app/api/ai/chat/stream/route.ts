@@ -12,7 +12,7 @@ import {
 const BACKEND_URL = BACKEND_BASE_URL;
 
 // Mirrors backend ChatStreamDto: `message` is required (@IsNotEmpty @IsString),
-// `sessionId` optional. useChatStream sends sessionId: null for NEW sessions
+// `sessionId` optional. New-session requests can send sessionId: null
 // and class-validator's @IsOptional treats null as absent, so the proxy must
 // accept null too. No message cap: the backend DTO has none.
 const chatStreamSchema = z

@@ -12,7 +12,7 @@ test.describe("Mobile nav: center chat + /all menu", () => {
     // Center chat button.
     const chatLink = nav.getByRole("link", { name: "어시스턴트" });
     await expect(chatLink).toBeVisible();
-    await expect(chatLink).toHaveAttribute("href", "/chat");
+    await expect(chatLink).toHaveAttribute("href", "/agent");
 
     // "전체" button should exist.
     const allLink = nav.getByRole("link", { name: "전체" });
@@ -25,8 +25,8 @@ test.describe("Mobile nav: center chat + /all menu", () => {
     await expect(page.locator('[data-component="desktop_v3_shortcut-grid"]')).toBeVisible();
     await expect(page.locator('[data-component="desktop_all_menu_content_nav"]')).toBeVisible();
 
-    // Navigate to /chat via center button.
+    // Navigate to /agent via center button.
     await nav.getByRole("link", { name: "어시스턴트" }).click();
-    await expect(page).toHaveURL(/\/chat$/);
+    await expect(page).toHaveURL(/\/agent$/);
   });
 });

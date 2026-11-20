@@ -78,6 +78,8 @@ export function HolidaySyncStrip({
         ) : null}
       </div>
       <Button
+        loading={pending}
+        loadingLabel="동기화 중"
         type="button"
         variant="outline"
         size="sm"
@@ -86,7 +88,7 @@ export function HolidaySyncStrip({
         aria-busy={pending || undefined}
         onClick={onSync}
       >
-        {pending ? "동기화 중..." : "지금 동기화"}
+        지금 동기화
       </Button>
     </div>
   );

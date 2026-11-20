@@ -2,6 +2,7 @@
 
 import { ReactNode } from "react";
 import { ShieldAlert } from "lucide-react";
+import { LoadingState } from "@/components/app/ui/LoadingState";
 import { cn } from "@/lib/utils";
 
 interface MessagingFeatureGateProps {
@@ -44,7 +45,7 @@ export function MessagingFeatureGate({
             <div>
               <p className="text-sm font-semibold text-slate-900">관리자 승인이 필요합니다</p>
               <p className="text-xs text-slate-600">
-                {isLoading ? "승인 상태를 확인하는 중입니다." : title}
+                {isLoading ? <LoadingState data-component="mobile_messages_feature-gate_loading" inline label="승인 상태를 확인하는 중" /> : title}
               </p>
             </div>
           </div>

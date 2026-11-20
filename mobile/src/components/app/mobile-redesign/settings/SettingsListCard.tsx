@@ -4,6 +4,8 @@ import type { LucideIcon } from "lucide-react";
 import { ChevronRight } from "lucide-react";
 import type { ReactElement, ReactNode } from "react";
 
+import { Button } from "@/components/ui/button";
+
 import { cn } from "@/lib/utils";
 
 const SETTINGS_LIST_CARD_SOURCE_COMPONENT = "SettingsListCard";
@@ -70,14 +72,16 @@ export function SettingsListCard({
           </span>
         </span>
         {actionLabel && onAction ? (
-          <button
+          <Button
             data-component={sub("header_action")}
             type="button"
-            className="min-h-[calc(36px*var(--glint-ui-scale,1))] shrink-0 cursor-pointer rounded-[calc(10px*var(--glint-ui-scale,1))] bg-v3-primary-light px-[calc(10px*var(--glint-ui-scale,1))] text-[calc(0.68rem*var(--glint-ui-scale,1))] font-bold text-v3-primary outline-none transition-colors active:bg-v3-primary/15 focus-visible:ring-[calc(3px*var(--glint-ui-scale,1))] focus-visible:ring-v3-primary/10"
+            variant="v3-soft"
+            size="default"
+            className="shrink-0"
             onClick={onAction}
           >
             {actionLabel}
-          </button>
+          </Button>
         ) : null}
       </header>
 
