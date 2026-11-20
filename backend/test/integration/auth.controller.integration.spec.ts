@@ -97,6 +97,8 @@ describe("AuthController (Integration)", () => {
         process.env = { ...OLD_ENV };
         jwtUser = { userId: mockUser.id, role: mockUser.role };
         const mockAuthService = {
+            verifyKakaoLink: jest.fn().mockResolvedValue({ success: true, linked: true }),
+            verifyEmailLink: jest.fn().mockResolvedValue({ success: true, linked: true }),
             validateKakaoUser: jest.fn(),
             validateEmailPassword: jest.fn(),
             createAuthCode: jest.fn(),
@@ -1072,6 +1074,52 @@ describe("AuthController (Integration)", () => {
                 expect(response.body).toEqual({ success: true, user: mockUser.id, ...mockTokens });
                 expect(authService.completeAccountOnboarding).toHaveBeenCalledWith("pending-token", body.phone, undefined);
             });
+        });
+    });
+
+    describe("account link verification with production validation", () => {
+        let strictApp: INestApplication;
+        const body = { challengeToken: "a".repeat(64), code: "123456" };
+        beforeEach(async () => {
+            const moduleFixture = await Test.createTestingModule({
+                controllers: [AuthController], providers: [
+                    { provide: AuthService, useValue: authService },
+                    { provide: PrismaService, useValue: prismaService },
+                    { provide: RateLimitGuard, useValue: rateLimitGuard },
+                ],
+            }).overrideGuard(JwtGuard).useValue(mockJwtGuard)
+                .overrideGuard(KakaoAuthGuard).useValue(mockKakaoGuard)
+                .overrideGuard(RateLimitGuard).useValue(rateLimitGuard).compile();
+            strictApp = moduleFixture.createNestApplication();
+            strictApp.useGlobalPipes(new GlobalValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true }));
+            await strictApp.listen(0, "127.0.0.1");
+        });
+        afterEach(async () => { await strictApp.close(); });
+        it.each(["kakao/link/verify", "register/link/verify"])("validates %s and returns default 201", async path => {
+            const response = await request(strictApp.getHttpServer()).post(`/auth/${path}`)
+                .set("x-pending-signup-token", "header-token").send(body);
+            expect(response.status).toBe(201);
+            if (path.startsWith("kakao")) expect(authService.verifyKakaoLink).toHaveBeenCalledWith("header-token", body.challengeToken, body.code);
+            else expect(authService.verifyEmailLink).toHaveBeenCalledWith(body.challengeToken, body.code);
+        });
+        it.each(["kakao/link/verify", "register/link/verify"])("rejects invalid inputs to %s", async path => {
+            for (const invalid of [{ ...body, code: "12345" }, { ...body, code: "1234567" }, { ...body, code: 123456 },
+                { ...body, code: "123456\n" }, { ...body, challengeToken: "a".repeat(64) + "\n" }, { ...body, code: "abcdef" }, { ...body, challengeToken: "A".repeat(64) },
+                { ...body, challengeToken: "a".repeat(63) }, { ...body, extra: "forbidden" }]) {
+                const response = await request(strictApp.getHttpServer()).post(`/auth/${path}`)
+                    .set("x-pending-signup-token", "header-token").send(invalid);
+                expect(response.status).toBe(400);
+            }
+            expect(authService.verifyKakaoLink).not.toHaveBeenCalled();
+            expect(authService.verifyEmailLink).not.toHaveBeenCalled();
+        });
+        it.each(["", "?token=url-token"])("requires Kakao header even with query %s", async query => {
+            const response = await request(strictApp.getHttpServer()).post(`/auth/kakao/link/verify${query}`).send(body);
+            expect(response.status).toBe(400);
+            expect(authService.verifyKakaoLink).not.toHaveBeenCalled();
+        });
+        it.each(["verifyKakaoLink", "verifyEmailLink"] as const)("rate limits %s", method => {
+            expect(Reflect.getMetadata(GUARDS_METADATA, AuthController.prototype[method])).toContain(RateLimitGuard);
         });
     });
 
