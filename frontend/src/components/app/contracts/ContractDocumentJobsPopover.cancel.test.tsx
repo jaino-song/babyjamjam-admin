@@ -127,10 +127,16 @@ describe.each([390, 1280])("document job cancel at %spx", width => {
     const { client, getJobs } = setup();
     const post = jest.spyOn(api, "post").mockResolvedValue({ data: { jobId: JOB_ID, outcome: "cancelled" } });
     const { dialog } = await openConfirmation();
+    const approve = within(dialog).getByRole("button", { name: "작업 취소" });
+    getJobs.mockResolvedValue(makeJobList({ [group]: [{ ...JOB, cancellable: false }] }));
+    await act(async () => { await client.invalidateQueries({ queryKey: eformsignDocumentJobsQueryKeys.all }); });
+    await waitFor(() => expect(approve).toBeDisabled());
+    expect(within(dialog).getByRole("alert")).toHaveTextContent("이 작업은 지금 취소할 수 없어요. 새로고침 후 다시 확인해 주세요.");
+
+    // Require a rendered state change so stale enabled UI cannot satisfy the assertion.
     getJobs.mockResolvedValue(makeJobList({ [group]: [JOB] }));
     await act(async () => { await client.invalidateQueries({ queryKey: eformsignDocumentJobsQueryKeys.all }); });
-    const approve = within(dialog).getByRole("button", { name: "작업 취소" });
-    expect(approve).toBeEnabled();
+    await waitFor(() => expect(approve).toBeEnabled());
     expect(within(dialog).queryByRole("alert")).not.toBeInTheDocument();
     fireEvent.click(approve);
     await waitFor(() => expect(post).toHaveBeenCalledWith(`/eformsign-docs/jobs/${JOB_ID}/cancel`));
