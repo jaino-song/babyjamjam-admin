@@ -43,6 +43,8 @@ describe("LoginAuthErrorModal", () => {
   });
 
   it.each([
+    ["ACCOUNT_LINKED", "계정이 연결됐어요."],
+    ["ONBOARDING_SESSION_EXPIRED", "로그인 세션이 만료됐어요."],
     ["ACCOUNT_REJECTED", "가입이 거부됐어요."],
     ["ACCOUNT_PROFILE_INCOMPLETE", "가입 정보가 누락됐어요."],
     ["OAUTH_CANCELLED", "카카오 로그인이 취소되었습니다."],

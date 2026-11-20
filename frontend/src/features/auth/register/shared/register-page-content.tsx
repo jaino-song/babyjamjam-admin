@@ -10,6 +10,7 @@ import {
 } from "@babyjamjam/shared/utils/field-validation-message";
 
 import { AuthInlineLink } from "@/components/auth/auth-inline-link";
+import { LinkVerificationStep } from "@/components/auth/link-verification-step";
 import { FormField } from "@/components/auth/form-field";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -36,9 +37,6 @@ const REGISTER_CARD_CLASS_NAME = "gap-5 !p-5 sm:!p-6 [&_[data-component='auth-re
 const REGISTER_PRIMARY_BUTTON_CLASS_NAME = "h-10 gap-1.5 px-5 text-[0.72rem] font-bold md:text-[0.77rem]";
 const REGISTER_SECONDARY_BUTTON_CLASS_NAME = "h-10 gap-1.5 px-5 text-[0.72rem] font-semibold md:text-[0.77rem]";
 const REGISTER_SUBTITLE = "필수 정보를 단계별로 입력해 주세요.";
-const PHONE_DUPLICATE_CHECK_FAILED_MESSAGE = "문제가 발생했어요. 새로고침 해주세요.";
-const PHONE_DUPLICATE_AVAILABLE_MESSAGE = "등록 가능한 번호입니다.";
-const PHONE_DUPLICATE_ERROR_MESSAGE = "이미 존재하는 사용자 입니다.";
 const REGISTER_STEP_TRANSITION = {
   duration: 0.18,
   ease: [0.22, 1, 0.36, 1] as const,
@@ -217,18 +215,13 @@ function RegisterStepFields({
   currentStep,
   formData,
   errors,
-  emailLinkableMessage,
+  existingEmailNote,
   isLoading,
   passwordStrength,
   handleChange,
   handleEmailBlur,
   handlePhoneChange,
   handleBirthDateChange,
-  hasPhoneDuplicateCheckFailed,
-  isCheckingPhoneDuplicate,
-  isPhoneCheckReady,
-  isPhoneDuplicate,
-  lastCheckedPhoneDigits,
   fields,
   submitted,
 }: {
@@ -241,36 +234,15 @@ function RegisterStepFields({
   | "currentStep"
   | "formData"
   | "errors"
-  | "emailLinkableMessage"
+  | "existingEmailNote"
   | "isLoading"
   | "passwordStrength"
-  | "hasPhoneDuplicateCheckFailed"
-  | "isCheckingPhoneDuplicate"
-  | "isPhoneCheckReady"
-  | "isPhoneDuplicate"
-  | "lastCheckedPhoneDigits"
   | "handleChange"
   | "handleEmailBlur"
   | "handlePhoneChange"
   | "handleBirthDateChange"
 >) {
   const locale = useLocale();
-  const phoneDigits = (formData.phone ?? "").replace(/\D/g, "");
-  const phoneStatusMessage: FieldMessageView | null =
-    phoneDigits.length === 11
-      ? isPhoneCheckReady
-        ? { tone: "ok", text: PHONE_DUPLICATE_AVAILABLE_MESSAGE }
-        : isCheckingPhoneDuplicate
-          ? { tone: "hint", text: t(locale, "form.validation.phone-checking") }
-          : hasPhoneDuplicateCheckFailed
-            ? { tone: "error", text: PHONE_DUPLICATE_CHECK_FAILED_MESSAGE }
-            : lastCheckedPhoneDigits !== phoneDigits
-              ? { tone: "hint", text: t(locale, "form.validation.phone-checking") }
-              : isPhoneDuplicate
-                ? { tone: "error", text: PHONE_DUPLICATE_ERROR_MESSAGE }
-                : null
-      : null;
-
   const valueOf = (field: RegisterInputField): string => formData[field] ?? "";
 
   /** What the field's own rules say: required, phone and date format. */
@@ -291,7 +263,7 @@ function RegisterStepFields({
     email: pickFieldMessage(
       resolveRuleMessage("email", "text"),
       errorMessage(errors.email),
-      emailLinkableMessage ? { tone: "ok", text: emailLinkableMessage } : null,
+      existingEmailNote ? { tone: "ok", text: existingEmailNote } : null,
     ),
     name: pickFieldMessage(resolveRuleMessage("name", "text"), errorMessage(errors.name)),
     // Error, then what is still missing while typing, then the static guidance.
@@ -310,7 +282,6 @@ function RegisterStepFields({
     phone: pickFieldMessage(
       resolveRuleMessage("phone", "phone"),
       errorMessage(errors.phone),
-      phoneStatusMessage,
     ),
     birthDate: pickFieldMessage(
       resolveRuleMessage("birthDate", "date"),
@@ -482,7 +453,7 @@ export function RegisterPageContent({ variant }: RegisterPageContentProps) {
       subtitle={
         isSuccess
           ? accountsLinked
-            ? "이메일 인증 후 로그인을 진행해 주세요."
+            ? controller.emailVerificationRequired ? "이메일 인증 후 로그인을 진행해 주세요." : "이제 이메일로도 로그인할 수 있어요."
             : "오너 승인 후 로그인할 수 있어요."
           : REGISTER_SUBTITLE
       }
@@ -508,8 +479,7 @@ export function RegisterPageContent({ variant }: RegisterPageContentProps) {
                   <p data-component="desktop_auth_register_body_success-message" className="text-muted-foreground">
                     기존 카카오 계정에 비밀번호가 추가되었습니다.
                     <br />
-                    이메일을 확인하여 계정을 활성화하면
-                    <br />
+                    {controller.emailVerificationRequired && <>이메일을 확인하여 계정을 활성화하면<br /></>}
                     카카오와 이메일 모두로 로그인할 수 있습니다.
                   </p>
                 </>
@@ -538,6 +508,8 @@ export function RegisterPageContent({ variant }: RegisterPageContentProps) {
                 로그인 페이지로 이동
               </Button>
             </>
+          ) : controller.linkChallengeToken ? (
+            <LinkVerificationStep data-component="desktop_auth_register_body_link-verification" onVerify={controller.verifyLink} onRestart={controller.restartLink} />
           ) : (
             <>
               {variant === "desktop" ? (

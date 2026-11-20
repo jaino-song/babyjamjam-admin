@@ -14,6 +14,8 @@ interface CompleteKakaoOnboardingInput {
 interface CompleteKakaoOnboardingSuccessResponse {
     success: boolean;
     message?: string;
+    linkVerificationRequired?: boolean;
+    linkChallengeToken?: string;
 }
 
 const PENDING_KAKAO_SIGNUP_COOKIE = "pending_kakao_signup";
@@ -23,17 +25,9 @@ const PENDING_KAKAO_SIGNUP_TOKEN_HEADER = "x-pending-signup-token";
 // internals are never forwarded to the client flow.
 const KAKAO_SIGNUP_FAILURE_COPY = "카카오 가입을 완료하지 못했습니다. 다시 시도해 주세요.";
 
-function kakaoSignupFailure(status: number, data: unknown): string {
-    const normalized = normalizeApiError(
-        { response: { status, data } },
-        { locale: "ko-KR", operation: "mutation" },
-    );
-    return normalized.verified ? normalized.message : KAKAO_SIGNUP_FAILURE_COPY;
-}
-
 export async function completeKakaoOnboarding(
     input: CompleteKakaoOnboardingInput,
-): Promise<{ success: boolean; error?: string }> {
+): Promise<{ success: boolean; error?: string; field?: "phone" | "birthDate"; linkVerificationRequired?: boolean; linkChallengeToken?: string }> {
     const cookieStore = await cookies();
     const pendingSignupToken = cookieStore.get(PENDING_KAKAO_SIGNUP_COOKIE)?.value;
 
@@ -55,17 +49,9 @@ export async function completeKakaoOnboarding(
             },
         );
 
-        if (response.status >= 400) {
-            if (response.status === 401) {
-                cookieStore.delete(PENDING_KAKAO_SIGNUP_COOKIE);
-            }
-
-            return {
-                success: false,
-                error: kakaoSignupFailure(response.status, response.data),
-            };
+        if (response.data.linkVerificationRequired) {
+            return { success: true, linkVerificationRequired: true, linkChallengeToken: response.data.linkChallengeToken };
         }
-
         cookieStore.delete(PENDING_KAKAO_SIGNUP_COOKIE);
 
         return {
@@ -73,18 +59,43 @@ export async function completeKakaoOnboarding(
         };
     } catch (error) {
         if (error instanceof AxiosError) {
-            return {
-                success: false,
-                error: kakaoSignupFailure(
-                    error.response?.status ?? 500,
-                    error.response?.data,
-                ),
-            };
+            const status = error.response?.status ?? 500;
+            if (status === 401) {
+                cookieStore.delete(PENDING_KAKAO_SIGNUP_COOKIE);
+                return { success: false, error: "카카오 가입 세션이 만료됐어요. 다시 로그인해 주세요." };
+            }
+            const normalized = normalizeApiError(error, { locale: "ko-KR", operation: "mutation" });
+            if (status === 400 && normalized.problem?.code === "VALIDATION_FAILED") {
+                const issue = normalized.problem.errors?.find((item) => item.pointer === "/phone" || item.pointer === "/birthDate");
+                if (issue) return { success: false, field: issue.pointer === "/phone" ? "phone" : "birthDate", error:
+                    issue.pointer === "/phone" && issue.code === "INVALID_VALUE"
+                    ? "이미 등록된 전화번호예요. 다른 전화번호로 다시 시도해 주세요."
+                    : issue.pointer === "/phone" ? "전화번호 11자리를 입력해 주세요." : "올바른 생년월일을 입력해 주세요." };
+            }
+            return { success: false, error: status === 429 ? (normalized.verified ? normalized.message : "요청이 너무 많아요. 잠시 후 다시 시도해 주세요.") : KAKAO_SIGNUP_FAILURE_COPY };
         }
+        return { success: false, error: KAKAO_SIGNUP_FAILURE_COPY };
+    }
+}
 
-        return {
-            success: false,
-            error: KAKAO_SIGNUP_FAILURE_COPY,
-        };
+export async function verifyKakaoLink(challengeToken: string, code: string): Promise<{ success: boolean; error?: string }> {
+    const store = await cookies();
+    const token = store.get(PENDING_KAKAO_SIGNUP_COOKIE)?.value;
+    const expired = "카카오 가입 세션이 만료됐어요. 다시 로그인해 주세요.";
+    if (!token) return { success: false, error: expired };
+    try {
+        await serverAPIClient.post("/auth/kakao/link/verify", { challengeToken, code }, { headers: { [PENDING_KAKAO_SIGNUP_TOKEN_HEADER]: token } });
+        store.delete(PENDING_KAKAO_SIGNUP_COOKIE);
+        return { success: true };
+    } catch (error) {
+        const status = error instanceof AxiosError ? error.response?.status : undefined;
+        if (status === 401) {
+            store.delete(PENDING_KAKAO_SIGNUP_COOKIE);
+            return { success: false, error: expired };
+        }
+        const normalized = normalizeApiError(error, { locale: "ko-KR", operation: "mutation" });
+        return { success: false, error: normalized.problem?.code === "VALIDATION_FAILED" && normalized.problem.errors?.some((item) => item.pointer === "/code")
+            ? "인증번호가 맞지 않거나 만료됐어요. 다시 입력하거나 처음부터 진행해 주세요."
+            : status === 429 ? (normalized.verified ? normalized.message : "요청이 너무 많아요. 잠시 후 다시 시도해 주세요.") : KAKAO_SIGNUP_FAILURE_COPY };
     }
 }
