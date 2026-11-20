@@ -28,7 +28,7 @@ beforeEach(() => {
   mockRecoveryDialog.mockClear();
 });
 
-test.each(["pending", "late"] as const)("scope reset discards a %s recovery focus return", async timing => {
+test.each(["pending", "late"] as const)("scope reset discards a %s recovery focus return before the next recovery closes", async timing => {
   const view = render(<ContractDocumentJobsPopover open documentJobs={JOBS} data-component={BASE} />);
   fireEvent.click(screen.getByRole("button", { name: /김하늘.*상세 보기/ }));
   const cta = screen.getByRole("button", { name: "수동 전송" });
@@ -43,6 +43,7 @@ test.each(["pending", "late"] as const)("scope reset discards a %s recovery focu
   });
   expect(document.querySelector('[data-slot="document-jobs-interaction"]')).not.toHaveAttribute("inert");
   expect(ctaFocus).not.toHaveBeenCalled();
+  const nativeFocus = HTMLElement.prototype.focus;
   const focus = jest.spyOn(HTMLElement.prototype, "focus");
   act(() => {
     if (timing === "late") props.onCloseAutoFocus?.(event);
@@ -53,6 +54,33 @@ test.each(["pending", "late"] as const)("scope reset discards a %s recovery focu
   expect(event.defaultPrevented).toBe(true);
   expect(focus).not.toHaveBeenCalled();
   expect(ctaFocus).not.toHaveBeenCalled();
+
+  mockPathname = "/contracts";
+  view.rerender(<ContractDocumentJobsPopover open documentJobs={JOBS} data-component={BASE} />);
+  fireEvent.click(screen.getByRole("button", { name: /김하늘.*상세 보기/ }));
+  const nextCta = screen.getByRole("button", { name: "수동 전송" });
+  fireEvent.click(nextCta);
+  const nextProps = mockRecoveryDialog.mock.calls.at(-1)![0];
+  expect(document.querySelector('[data-slot="document-jobs-interaction"]')).toHaveAttribute("inert");
+
+  const focusedWhileInert: boolean[] = [];
+  focus.mockClear();
+  focus.mockImplementation(function (this: HTMLElement, options) {
+    focusedWhileInert.push(Boolean(this.closest("[inert]")));
+    nativeFocus.call(this, options);
+  });
+  // Closing first exposes a leaked pending return in the commit, before the new handler runs.
+  const nextEvent = new Event("closeAutoFocus", { cancelable: true });
+  act(() => { nextProps.onClose(); });
+  act(() => { nextProps.onCloseAutoFocus?.(nextEvent); });
+  await act(async () => { await new Promise(resolve => setTimeout(resolve, 20)); });
+
+  expect(nextEvent.defaultPrevented).toBe(true);
+  expect(document.querySelector('[data-slot="document-jobs-interaction"]')).not.toHaveAttribute("inert");
+  expect(nextCta).toHaveFocus();
+  expect(focus.mock.contexts.filter(element => element === nextCta)).toHaveLength(1);
+  expect(focus).toHaveBeenCalledTimes(1);
+  expect(focusedWhileInert).toEqual([false]);
 });
 afterEach(() => {
   jest.restoreAllMocks();
