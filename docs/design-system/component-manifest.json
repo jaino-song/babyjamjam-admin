@@ -1415,7 +1415,7 @@
         "import": "@/components/app/contracts/ContractDocumentJobsModal",
         "file": "frontend/src/components/app/contracts/ContractDocumentJobsModal.tsx",
         "exports": ["ContractDocumentJobsModal"],
-        "note": "Desktop modal owner. Props: open, onClose, anchorRef, summary?, jobs?, isLoading, error?, onRetry?, data-component?. Absent or empty metadata is omitted. Owns selection, collapse, list focus/scroll restoration and preferred height; closes once on document navigation. No fetching or recovery authority."
+        "note": "Desktop modal owner. Props: open, onClose, anchorRef, summary?, jobs?, isLoading, error?, onRetry?, data-component?. Absent or empty metadata is omitted. Owns selection, collapse and list focus/scroll restoration; desktop panes are fixed at half the viewport height. Closes once on document navigation. No fetching or recovery authority."
       },
       {
         "name": "ContractDocumentJobsList",

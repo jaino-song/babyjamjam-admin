@@ -24,21 +24,14 @@ interface ContractDocumentJobsModalProps {
   "data-component": string;
 }
 
-// Explicit height keeps absolute sliding panes out of the shell's natural measurement path.
-const INITIAL_PREFERRED_HEIGHT = Number.MAX_SAFE_INTEGER;
-
 export function ContractDocumentJobsModal({ open, onClose, anchorRef, jobs, isLoading, error, onRetry, onRecover, onCancel, recoveryDialog, interactionPaused = false, "data-component": base }: ContractDocumentJobsModalProps): React.ReactElement {
-  const [preferredHeight, setPreferredHeight] = React.useState(INITIAL_PREFERRED_HEIGHT);
   const [memory, setMemory] = React.useState<ContractDocumentJobsPanesMemory>({});
   const remember = React.useCallback((next: ContractDocumentJobsPanesMemory) => setMemory(current => ({ ...current, ...next })), []);
   const panes = React.useRef<ContractDocumentJobsPanesHandle>(null);
-  const rememberHeight = React.useCallback((height: number) => {
-    setPreferredHeight(current => current === INITIAL_PREFERRED_HEIGHT ? height : current);
-  }, []);
   return <AnchoredNotificationModalShell open={open} onClose={onClose} anchorRef={anchorRef} label="전자문서 작업" data-component={base} interactionPaused={interactionPaused}
-    preferredHeight={preferredHeight} onEscapeKeyDown={event => panes.current?.onEscapeKeyDown(event)}>
+    onEscapeKeyDown={event => panes.current?.onEscapeKeyDown(event)}>
     <ContractDocumentJobsPanes memory={memory} onRemember={remember} ref={panes} open={open} jobs={jobs} isLoading={isLoading} error={error} onRetry={onRetry} onRecover={onRecover} onCancel={onCancel}
-      onClose={onClose} interactionPaused={interactionPaused} onNaturalHeight={rememberHeight} data-component={`${base}_panes`} />
+      onClose={onClose} interactionPaused={interactionPaused} height="half-viewport" data-component={`${base}_panes`} />
     {recoveryDialog}
   </AnchoredNotificationModalShell>;
 }
