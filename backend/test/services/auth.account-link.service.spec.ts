@@ -119,6 +119,8 @@ describe("SMS account linking", () => {
     it("links Kakao with exactly three fields on the distinct transaction", async () => {
         const before = { ...user };
         await expect(service.verifyKakaoLink("pending-token", token, "123456")).resolves.toMatchObject({ linked: true });
+        expect(tx.user.findFirst).toHaveBeenCalledTimes(1);
+        expect(tx.user.findFirst).toHaveBeenCalledWith({ where: { kakaoId: row.kakaoId }, select: { id: true } });
         expect(challenge.verify).toHaveBeenCalledWith({ purpose: "kakao_link", challengeToken: token, code: "123456" });
         expect(challenge.consume).toHaveBeenCalledWith(tx, "challenge");
         expect(tx.auth_flow_state.updateMany).toHaveBeenCalledTimes(1);
@@ -151,6 +153,10 @@ describe("SMS account linking", () => {
         if (reason === "unique") tx.user.updateMany.mockRejectedValue(new Prisma.PrismaClientKnownRequestError("duplicate", { code: "P2002", clientVersion: "test" }));
         const before = { ...user };
         await expect(service.verifyKakaoLink("pending-token", token, "123456")).rejects.toMatchObject(refusal);
+        if (reason === "taken") {
+            expect(tx.user.findFirst).toHaveBeenCalledTimes(1);
+            expect(tx.user.findFirst).toHaveBeenCalledWith({ where: { kakaoId: row.kakaoId }, select: { id: true } });
+        }
         expect(user).toEqual(before);
         expect(challengeConsumed).toBe(false);
         expect(stored.consumedAt).toBeNull();
@@ -207,10 +213,40 @@ describe("SMS account linking", () => {
         expect(tx.auth_token.create).toHaveBeenCalledTimes(1);
         expect(tx.auth_email_outbox.create).toHaveBeenCalledTimes(1);
     });
+    it.each([
+        { method: "kakao", decoy: false },
+        { method: "kakao", decoy: true },
+        { method: "email", decoy: false },
+        { method: "email", decoy: true },
+    ])("normalizes hyphenated phone input before issuing $method challenge (decoy=$decoy)", async ({ method, decoy }) => {
+        user.phone = phone;
+        if (decoy) user.birthDate = "1991-01-01";
+        if (method === "email") { user.kakaoId = "kakao"; user.passwordHash = null; }
+        const lookup = method === "kakao" ? tx.user.findMany : prisma.user.findMany;
+        lookup.mockResolvedValue([user]);
+        const result = method === "kakao"
+            ? await service.completeKakaoOnboarding("pending-token", "010-1234-5678", birthDate, "user")
+            : await service.registerWithEmail("New@example.invalid", "Password1!", "New", "010-1234-5678", birthDate);
+        expect(result).toEqual({ success: true, linkVerificationRequired: true, linkChallengeToken: token,
+            message: "입력하신 정보와 일치하는 기존 계정이 있으면 문자로 인증번호를 보내드려요." });
+        expect(lookup).toHaveBeenCalledWith(expect.objectContaining({ where: { phone: { in: [phone, "010-1234-5678"] } } }));
+        expect(challenge.issue).toHaveBeenCalledTimes(1);
+        expect(challenge.issue).toHaveBeenCalledWith({
+            purpose: method === "kakao" ? "kakao_link" : "email_link", phone, targetUserId: decoy ? null : user.id,
+            ...(method === "kakao" ? { kakaoId: stored.kakaoId }
+                : { email: "new@example.invalid", passwordHash: "new-hash", name: "New" }),
+        });
+        if (method === "email") expect(service.hashPassword).toHaveBeenCalledWith("Password1!");
+        expect(tx.auth_flow_state.updateMany).not.toHaveBeenCalled();
+        expect(tx.user.create).not.toHaveBeenCalled();
+        expect(tx.user.updateMany).not.toHaveBeenCalled();
+    });
     it.each([false, true])("links email (already verified=%s)", async verified => {
         user.kakaoId = "kakao"; user.passwordHash = null; user.emailVerified = verified;
         if (verified) user.email = "NEW@example.invalid";
         const result = await service.verifyEmailLink(token, "123456");
+        expect(tx.user.findFirst).toHaveBeenCalledTimes(1);
+        expect(tx.user.findFirst).toHaveBeenCalledWith({ where: { email: row.email, id: { not: user.id } }, select: { id: true } });
         expect(challenge.verify).toHaveBeenCalledWith({ purpose: "email_link", challengeToken: token, code: "123456" });
         expect(result).toMatchObject({ linked: true, code: "ACCOUNTS_LINKED", emailVerificationRequired: !verified });
         expect(challenge.consume).toHaveBeenCalledWith(tx, "challenge");
@@ -251,6 +287,10 @@ describe("SMS account linking", () => {
         if (reason === "unique") tx.user.updateMany.mockRejectedValue(new Prisma.PrismaClientKnownRequestError("duplicate", { code: "P2002", clientVersion: "test" }));
         const before = { ...user };
         await expect(service.verifyEmailLink(token, "123456")).rejects.toMatchObject(refusal);
+        if (reason === "taken") {
+            expect(tx.user.findFirst).toHaveBeenCalledTimes(1);
+            expect(tx.user.findFirst).toHaveBeenCalledWith({ where: { email: row.email, id: { not: user.id } }, select: { id: true } });
+        }
         expect(user).toEqual(before);
         expect(challengeConsumed).toBe(false);
         expect(log).not.toHaveBeenCalled();
