@@ -649,16 +649,17 @@ async function bounded<T>(promise: Promise<T>, ms: number): Promise<T> {
         });
     });
 
+    async function snapshot() {
+        const where = { branchId: branches[0]! };
+        return {
+            jobs: await db.eformsign_document_job.findMany({ where, orderBy: { id: "asc" } }),
+            authorities: await db.eformsign_contract_authority.findMany({ where, orderBy: { clientId: "asc" } }),
+            intents: await db.eformsign_dispatch_intent.findMany({ where, orderBy: { id: "asc" } }),
+            clients: await db.client.findMany({ where, orderBy: { id: "asc" } }),
+        };
+    }
+
     describe("RETRY locked non-delivery proof and display projection", () => {
-        async function snapshot() {
-            const where = { branchId: branches[0]! };
-            return {
-                jobs: await db.eformsign_document_job.findMany({ where, orderBy: { id: "asc" } }),
-                authorities: await db.eformsign_contract_authority.findMany({ where, orderBy: { clientId: "asc" } }),
-                intents: await db.eformsign_dispatch_intent.findMany({ where, orderBy: { id: "asc" } }),
-                clients: await db.client.findMany({ where, orderBy: { id: "asc" } }),
-            };
-        }
         async function projected(s: Awaited<ReturnType<typeof runtime>>) {
             const list = await s.jobRepository.listForBranch(branches[0]!, new Date(0));
             return [...list.active, ...list.requiresAttention, ...list.recent].find(job => job.id === s.worker.jobId)?.retryable ?? false;
@@ -878,6 +879,70 @@ async function bounded<T>(promise: Promise<T>, ms: number): Promise<T> {
         });
     });
 
+    describe("creation requires the strict pre-send non-delivery proof", () => {
+        async function expectCreationRefusedWithoutWrites(s: Awaited<ReturnType<typeof runtime>>) {
+            const input = nextInput(s), before = await snapshot();
+            const attempt = s.jobRepository.enqueue(input);
+            await expect(attempt).rejects.toBeInstanceOf(ConflictException);
+            await expect(attempt).rejects.toMatchObject({ response: { code: "REQUEST_CONFLICT" }, status: 409 });
+            expect(await db.eformsign_document_job.findUnique({ where: { requestKey: input.requestKey } })).toBeNull();
+            const old = await db.eformsign_document_job.findUniqueOrThrow({ where: { id: s.worker.jobId } });
+            expect(old.progressStep).not.toBe("superseded");
+            expect((await read())[0]).toMatchObject({ generation: s.worker.contractGeneration, phase: "reserved" });
+            expect(await snapshot()).toEqual(before);
+        }
+
+        it("refuses pre-send exhaustion with an unlinked human intent", async () => {
+            const s = await exhaustedRuntime();
+            await db.eformsign_dispatch_intent.create({ data: {
+                branchId: branches[0]!, clientId: clients[0]!, action: "manual_process",
+                generation: s.worker.contractGeneration, fingerprint: s.enqueue.payloadFingerprint,
+                businessKey: digest(`contract-human:${s.worker.contractGeneration}`), templateId: workflowPlan.templateId,
+                status: "prepared", attemptCount: 0,
+            } });
+            expect((await read())[0]!.humanIntentId).toBeNull();
+            await expectCreationRefusedWithoutWrites(s);
+        });
+
+        it("refuses pre-send exhaustion with an unlinked unreleased draft intent", async () => {
+            const s = await exhaustedRuntime();
+            await db.eformsign_dispatch_intent.create({ data: {
+                branchId: branches[0]!, clientId: clients[0]!, action: "create_draft",
+                generation: s.worker.contractGeneration, fingerprint: s.enqueue.payloadFingerprint,
+                businessKey: digest(`contract-draft:${s.worker.contractGeneration}`), templateId: workflowPlan.templateId,
+                status: "prepared", attemptCount: 0, startedAt: null,
+            } });
+            expect((await read())[0]!.draftIntentId).toBeNull();
+            await expectCreationRefusedWithoutWrites(s);
+        });
+
+        it.each(["create", "create_draft"])("refuses pre-send exhaustion with an uncertain %s intent for the customer", async action => {
+            const s = await exhaustedRuntime();
+            // The repository already refuses uncertain create intents; retain that coverage here.
+            await db.eformsign_dispatch_intent.create({ data: {
+                branchId: branches[0]!, clientId: clients[0]!, action,
+                generation: "unrelated", fingerprint: "b".repeat(64),
+                businessKey: digest(`retry-uncertain-${randomUUID()}`),
+                status: "uncertain", attemptCount: 1, startedAt: new Date(),
+            } });
+            await expectCreationRefusedWithoutWrites(s);
+        });
+
+        it.each([
+            ["create", "\t"], ["create", "\u00a0"], ["create_draft", "\t"], ["create_draft", "\u00a0"],
+        ])("refuses pre-send exhaustion with an accepted %s receipt %j that trims to blank", async (action, receipt) => {
+            const s = await exhaustedRuntime();
+            // The storage CHECK trims spaces only; these receipts reach the strict proof.
+            await db.eformsign_dispatch_intent.create({ data: {
+                branchId: branches[0]!, clientId: clients[0]!, action,
+                generation: "unrelated", fingerprint: "b".repeat(64),
+                businessKey: digest(`retry-blank-${randomUUID()}`),
+                status: "accepted", attemptCount: 1, providerDocumentId: receipt,
+            } });
+            await expectCreationRefusedWithoutWrites(s);
+        });
+    });
+
     it.each([false, true])("P13 replaces pre-send exhaustion with purged payload=%s and removes stale popup entries", async purged => {
         const s = await exhaustedRuntime();
         if (purged) await db.eformsign_document_job.update({ where: { id: s.worker.jobId }, data: { payload: Prisma.DbNull } });
@@ -887,6 +952,7 @@ async function bounded<T>(promise: Promise<T>, ms: number): Promise<T> {
         expect(next.job.contractGeneration).not.toBe(s.worker.contractGeneration);
         const old = await db.eformsign_document_job.findUniqueOrThrow({ where: { id: s.worker.jobId } });
         expect(old).toMatchObject({ status: "failed", lastErrorCode: "PRE_SEND_RETRY_EXHAUSTED", progressStep: "superseded" });
+        expect(old.payload).toBeNull();
         expect(classifyRecovery({ ...old, payload: old.payload as Record<string, unknown> | null, source: "staff", jobType: "create_document", status: "failed" })).toBeNull();
         const summary = await s.jobRepository.getSummary(branches[0]!);
         expect(summary.unresolvedCount).toBe(0); expect(summary.unresolvedJobIds).not.toContain(s.worker.jobId);
