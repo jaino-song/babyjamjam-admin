@@ -39,48 +39,16 @@ describe("useRegisterPageController phone duplicate check", () => {
     expect(result.current.stepCount).toBe(2);
   });
 
-  it("checks a complete phone and blocks an existing user number", async () => {
-    mockApiGet.mockResolvedValue({ data: { exists: true } });
+  it("accepts an existing phone without a duplicate request", () => {
     const { result } = renderHook(() => useRegisterPageController());
-
-    act(() => {
-      result.current.handlePhoneChange({
-        target: { value: "010-0000-6621" },
-      } as React.ChangeEvent<HTMLInputElement>);
-    });
-
-    await waitFor(() => {
-      expect(result.current.lastCheckedPhoneDigits).toBe("01000006621");
-    });
-
-    expect(mockApiGet).toHaveBeenCalledWith("/auth/check-phone", {
-      params: { phone: "01000006621" },
-      signal: expect.any(AbortSignal),
-    });
-    expect(result.current.isPhoneDuplicate).toBe(true);
-    expect(result.current.isPhoneCheckReady).toBe(false);
-  });
-
-  it("marks a checked new phone as ready", async () => {
-    mockApiGet.mockResolvedValue({ data: { exists: false } });
-    const { result } = renderHook(() => useRegisterPageController());
-
-    act(() => {
-      result.current.handlePhoneChange({
-        target: { value: "010-1234-5678" },
-      } as React.ChangeEvent<HTMLInputElement>);
-    });
-
-    await waitFor(() => {
-      expect(result.current.isPhoneCheckReady).toBe(true);
-    });
-
-    expect(result.current.isPhoneDuplicate).toBe(false);
+    act(() => result.current.handlePhoneChange({ target: { value: "01000006621" } } as React.ChangeEvent<HTMLInputElement>));
+    expect(result.current.formData.phone).toBe("010-0000-6621");
+    expect(mockApiGet).not.toHaveBeenCalled();
   });
 
   it("submits only applicant identity fields after the second step", async () => {
     mockApiGet.mockResolvedValue({ data: { exists: false } });
-    jest.mocked(authApi.checkEmailExists).mockResolvedValue({ exists: false, linkable: false });
+    jest.mocked(authApi.checkEmailExists).mockResolvedValue({ exists: false });
     jest.mocked(authApi.register).mockResolvedValue({
       success: true,
       message: "인증 이메일이 발송되었습니다.",
@@ -116,9 +84,6 @@ describe("useRegisterPageController phone duplicate check", () => {
       result.current.handleBirthDateChange({
         target: { value: "1990-01-01" },
       } as React.ChangeEvent<HTMLInputElement>);
-    });
-    await waitFor(() => {
-      expect(result.current.isPhoneCheckReady).toBe(true);
     });
 
     await act(async () => {

@@ -4,12 +4,14 @@ import { OnboardingForm } from "./OnboardingForm";
 
 const mockReplace = jest.fn();
 const mockCompleteKakaoOnboarding = jest.fn();
+const mockVerifyKakaoLink = jest.fn();
 
 jest.mock("next/navigation", () => ({
   useRouter: () => ({ replace: mockReplace }),
 }));
 
 jest.mock("./actions", () => ({
+  verifyKakaoLink: (...args: unknown[]) => mockVerifyKakaoLink(...args),
   completeKakaoOnboarding: (...args: unknown[]) => mockCompleteKakaoOnboarding(...args),
 }));
 
@@ -115,4 +117,20 @@ describe("OnboardingForm field messages", () => {
       });
     });
   });
+});
+
+it("opens the link step, retains entered values on restart, and navigates after verification", async () => {
+  mockCompleteKakaoOnboarding.mockResolvedValue({ success: true, linkVerificationRequired: true, linkChallengeToken: "challenge" });
+  mockVerifyKakaoLink.mockResolvedValue({ success: true });
+  renderForm({ phone: "010-1234-5678", birthDate: "1990-01-01", role: "user", returnPath: "/service-record-admin/client-1" });
+  fireEvent.click(screen.getByRole("button", { name: /가입 완료/ }));
+  await screen.findByLabelText("인증번호");
+  fireEvent.click(screen.getByRole("button", { name: "정보 다시 입력" }));
+  expect(screen.getByLabelText("전화번호")).toHaveValue("010-1234-5678");
+  expect(screen.getByLabelText("생년월일")).toHaveValue("1990-01-01");
+  fireEvent.click(screen.getByRole("button", { name: /가입 완료/ }));
+  fireEvent.change(await screen.findByLabelText("인증번호"), { target: { value: "123456" } });
+  fireEvent.click(screen.getByRole("button", { name: "인증하고 계정 연결" }));
+  await waitFor(() => expect(mockVerifyKakaoLink).toHaveBeenCalledWith("challenge", "123456"));
+  expect(mockReplace).toHaveBeenLastCalledWith("/login?authError=ACCOUNT_LINKED&returnTo=%2Fservice-record-admin%2Fclient-1");
 });

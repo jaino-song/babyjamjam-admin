@@ -1,3 +1,5 @@
+import { createProblemDetails } from "@babyjamjam/shared";
+import { AxiosError } from "axios";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 
 import { api } from "@/lib/api/client";
@@ -22,6 +24,7 @@ jest.mock("@/services/api", () => ({
     getBranches: jest.fn(),
     checkEmailExists: jest.fn(),
     register: jest.fn(),
+    verifyRegisterLink: jest.fn(),
   },
 }));
 
@@ -35,7 +38,7 @@ function renderRegister() {
 }
 
 async function goToPersonalStep(container: HTMLElement) {
-  mockCheckEmailExists.mockResolvedValue({ exists: false, linkable: false });
+  mockCheckEmailExists.mockResolvedValue({ exists: false });
   fireEvent.change(screen.getByLabelText("이메일"), { target: { value: "hong@example.com" } });
   fireEvent.change(screen.getByLabelText("이름"), { target: { value: "홍길동" } });
   fireEvent.change(screen.getByLabelText("비밀번호", { selector: "input" }), { target: { value: "Passw0rd!x" } });
@@ -144,24 +147,57 @@ describe("RegisterPageContent field messages", () => {
     expect(screen.getByRole("button", { name: "회원가입" })).toBeDisabled();
   });
 
-  it("reports the phone duplicate-check status in the same slot", async () => {
+  it("accepts phone input without a duplicate-check status", async () => {
     const { container } = renderRegister();
     await goToPersonalStep(container);
-
-    mockApiGet.mockResolvedValue({ data: { exists: false } });
-    fireEvent.change(screen.getByLabelText("전화번호"), { target: { value: "01012345678" } });
-    await waitFor(() => {
-      expect(slotOf(container, "전화번호")).toHaveTextContent("등록 가능한 번호입니다.");
-    });
+    fireEvent.change(screen.getByLabelText("전화번호"), { target: { value: "01000006621" } });
+    expect(slotOf(container, "전화번호")).toBeNull();
     expect(screen.getByLabelText("전화번호")).not.toHaveAttribute("aria-invalid", "true");
-
-    mockApiGet.mockResolvedValue({ data: { exists: true } });
-    await act(async () => {
-      fireEvent.change(screen.getByLabelText("전화번호"), { target: { value: "01000006621" } });
-    });
-    await waitFor(() => {
-      expect(slotOf(container, "전화번호")).toHaveTextContent("이미 존재하는 사용자 입니다.");
-    });
-    expect(screen.getByLabelText("전화번호")).toHaveAttribute("aria-invalid", "true");
+    expect(mockApiGet).not.toHaveBeenCalled();
   });
+});
+
+async function fillRegister(existingEmail = false) {
+  mockCheckEmailExists.mockResolvedValue({ exists: existingEmail });
+  renderRegister();
+  fireEvent.change(screen.getByLabelText("이메일"), { target: { value: "existing@example.com" } });
+  fireEvent.change(screen.getByLabelText("이름"), { target: { value: "홍길동" } });
+  fireEvent.change(screen.getByLabelText("비밀번호", { selector: "input" }), { target: { value: "Passw0rd!x" } });
+  fireEvent.change(screen.getByLabelText("비밀번호 확인"), { target: { value: "Passw0rd!x" } });
+  await waitFor(() => expect(mockCheckEmailExists).toHaveBeenCalledWith("existing@example.com"));
+  if (existingEmail) expect(await screen.findByText("이미 등록된 이메일이에요. 카카오로 가입한 계정이라면 계속 진행해 비밀번호 로그인을 추가할 수 있어요.")).toBeInTheDocument();
+  await waitFor(() => expect(screen.getByRole("button", { name: "다음" })).toBeEnabled());
+  fireEvent.click(screen.getByRole("button", { name: "다음" }));
+  fireEvent.change(await screen.findByLabelText("전화번호"), { target: { value: "01012345678" } });
+  fireEvent.change(screen.getByLabelText("생년월일"), { target: { value: "19900101" } });
+  await act(async () => { fireEvent.click(screen.getByRole("button", { name: "회원가입" })); });
+}
+
+it.each([true, false])("links an existing email with SMS (email verification %s)", async (emailVerificationRequired) => {
+  jest.clearAllMocks();
+  jest.mocked(authApi.register).mockResolvedValue({ success: true, linkVerificationRequired: true, linkChallengeToken: "challenge" });
+  jest.mocked(authApi.verifyRegisterLink).mockResolvedValue({ success: true, code: "ACCOUNTS_LINKED", emailVerificationRequired });
+  await fillRegister(true);
+  fireEvent.change(await screen.findByLabelText("인증번호"), { target: { value: "123456" } });
+  fireEvent.click(screen.getByRole("button", { name: "인증하고 계정 연결" }));
+  expect(await screen.findByText("계정이 연결되었습니다!")).toBeInTheDocument();
+  expect(authApi.verifyRegisterLink).toHaveBeenCalledWith("challenge", "123456");
+  expect(screen.getByText(emailVerificationRequired ? "이메일 인증 후 로그인을 진행해 주세요." : "이제 이메일로도 로그인할 수 있어요.")).toBeInTheDocument();
+});
+
+it("returns an existing email to the first step after plain success", async () => {
+  jest.clearAllMocks();
+  jest.mocked(authApi.register).mockResolvedValue({ success: true });
+  await fillRegister(true);
+  expect(await screen.findByText("이미 등록된 이메일입니다. 로그인하거나 비밀번호 찾기를 이용해 주세요.")).toBeInTheDocument();
+  expect(screen.queryByText("회원가입 완료!")).not.toBeInTheDocument();
+});
+
+it("shows a real /phone validation problem at the phone field", async () => {
+  jest.clearAllMocks();
+  const data = createProblemDetails({ code: "VALIDATION_FAILED", requestId: "test", status: 400, errors: [{ pointer: "/phone", code: "INVALID_VALUE", detail: "Invalid value" }] });
+  jest.mocked(authApi.register).mockRejectedValue(new AxiosError("failure", undefined, undefined, undefined, { status: 400, data } as never));
+  await fillRegister();
+  expect(await screen.findByText("이미 등록된 전화번호예요. 다른 전화번호로 다시 시도해 주세요.")).toBeInTheDocument();
+  expect(screen.getByLabelText("전화번호")).toHaveAttribute("aria-invalid", "true");
 });
