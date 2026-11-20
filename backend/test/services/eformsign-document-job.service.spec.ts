@@ -32,6 +32,7 @@ const validContractData = {
 function buildService() {
     const repository = {
         enqueue: jest.fn(),
+        retry: jest.fn(),
         enqueueInTransaction: jest.fn(),
         authorizeForDispatchInTransaction: jest.fn(),
         getSummary: jest.fn(),
@@ -51,6 +52,15 @@ function buildService() {
 }
 
 describe("EformsignDocumentJobService", () => {
+    it("delegates retries with server-owned actor and scope only", async () => {
+        const { service, repository } = buildService();
+        const input = { branchId, jobId: "old-job", userId: "actor", now: new Date() };
+        repository.retry.mockResolvedValue({ kind: "retried", jobId: "new-job", status: "queued" });
+        await expect(service.retry(input)).resolves.toEqual({ kind: "retried", jobId: "new-job", status: "queued" });
+        expect(repository.retry).toHaveBeenCalledWith(input);
+        expect(repository.enqueue).not.toHaveBeenCalled();
+    });
+
     it("delegates caller-owned transaction enqueues without opening a nested transaction", async () => {
         const { service, repository } = buildService();
         const tx = { marker: "caller-transaction" };

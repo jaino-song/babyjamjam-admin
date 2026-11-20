@@ -23,6 +23,16 @@
   "components": {
     "frontend": [
       {
+        "name": "ContractDocumentJobRetryDialog",
+        "layer": "organism",
+        "import": "@/components/app/contracts/ContractDocumentJobRetryDialog",
+        "file": "frontend/src/components/app/contracts/ContractDocumentJobRetryDialog.tsx",
+        "exports": [
+          "ContractDocumentJobRetryDialog"
+        ],
+        "note": "TwoButtonModal confirmation for an automatic contract retry; verifies branch context and displays JOB_NOT_RETRYABLE conflicts."
+      },
+      {
         "name": "Alert",
         "layer": "atom",
         "import": "@/components/ui/alert",
@@ -1630,7 +1640,7 @@
         "import": "@/components/app/contracts/DocumentJobProgressSummary",
         "file": "frontend/src/components/app/contracts/DocumentJobProgressSummary.tsx",
         "exports": ["DocumentJobProgressSummary"],
-        "note": "Display-only progress. Props: job: ContractDocumentJob; data-component?: string. Only confirmed queue/work-ended values are numeric; no recovery authority or document-delivery claim."
+        "note": "Display-only progress. Props: job: ContractDocumentJob; data-component?: string. Only confirmed queue/work-ended values are numeric; no recovery authority or document-delivery claim. Optional action, retryAction, secondaryAction slots render in that order."
       },
       {
         "name": "DocumentJobFailurePopup",

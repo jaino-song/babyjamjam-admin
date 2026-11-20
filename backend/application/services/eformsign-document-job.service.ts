@@ -14,6 +14,7 @@ import {
     EFORMSIGN_DOCUMENT_JOB_REPOSITORY,
     ClaimRecoveryResult,
     CancelDocumentJobResult,
+    RetryDocumentJobResult,
     EformsignDocumentJobList,
     EformsignDocumentJobSummary,
     AuthorizeEformsignDocumentJobForDispatchInput,
@@ -104,7 +105,7 @@ export function parsePrefillAmounts(raw: unknown): StaffCompletionPrefillAmounts
     };
 }
 
-function assertContractDataPhones(contractData: ContractDataDto): void {
+export function assertContractDataPhones(contractData: ContractDataDto): void {
     const fields: Array<[string, unknown, boolean]> = [
         ["customerContact", contractData.customerContact, true],
         ["caretaker1Contact", contractData.caretaker1Contact, true],
@@ -275,6 +276,11 @@ export class EformsignDocumentJobService {
         terminalLimit?: number,
     ): Promise<EformsignDocumentJobList> {
         return this.repository.listForBranch(branchId, terminalSince, terminalLimit);
+    }
+
+    /** Enqueue a new contract-creation job from the failed job's stored contract data only when its locked proof rules out provider effects. */
+    async retry(input: ManualRecoveryInput): Promise<RetryDocumentJobResult> {
+        return this.repository.retry(input);
     }
 
     /** Cancel a generation only when its locked proof rules out provider effects. */
