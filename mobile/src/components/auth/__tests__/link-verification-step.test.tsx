@@ -15,3 +15,13 @@ it("validates six digits locally, sends digits, retains errors and restarts", as
   fireEvent.click(screen.getByText("정보 다시 입력"));
   expect(restart).toHaveBeenCalledTimes(1);
 });
+
+it.each([false, true])("keeps secondary styling and the correct frame when embedded=%s", embedded => {
+  const { container } = render(<LinkVerificationStep {...(embedded ? { embedded: true } : {})} data-component="mobile_auth_register_link-verification" onVerify={jest.fn()} onRestart={jest.fn()} />);
+  const root = container.firstElementChild;
+  expect(root).toHaveAttribute("data-slot", "link-verification-step");
+  if (embedded) expect(root).not.toHaveClass("auth-page");
+  else expect(root).toHaveClass("auth-page");
+  expect(screen.getByRole("button", { name: "인증하고 계정 연결" })).toHaveClass("auth-btn", { exact: true });
+  expect(screen.getByRole("button", { name: "정보 다시 입력" })).toHaveClass("auth-btn secondary", { exact: true });
+});

@@ -12,7 +12,8 @@ it("opens the challenge, retains values on restart and returns to login after ve
   jest.mocked(verifyKakaoLink).mockResolvedValue({ success: true });
   render(<OnboardingForm phone="010-1234-5678" birthDate="1990-01-01" role="user" />);
   fireEvent.click(screen.getByText("가입 완료"));
-  await screen.findByLabelText("인증번호");
+  const code = await screen.findByLabelText("인증번호");
+  expect(code.closest('[data-slot="link-verification-step"]')).toHaveClass("auth-page");
   fireEvent.click(screen.getByText("정보 다시 입력"));
   expect(screen.getByLabelText("전화번호")).toHaveValue("010-1234-5678");
   expect(screen.getByLabelText("생년월일")).toHaveValue("1990-01-01");
