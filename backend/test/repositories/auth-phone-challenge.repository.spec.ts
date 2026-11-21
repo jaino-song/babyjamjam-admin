@@ -99,20 +99,21 @@ describe("SbAuthPhoneChallengeRepository", () => {
         expect(prisma.$transaction).not.toHaveBeenCalled();
     });
 
-    it("clears only the code hash of unconsumed rows, preserving decoy behavior and rate-limit evidence", async () => {
+    it("clears the code hash and linking data of unconsumed rows, preserving decoy behavior and rate-limit evidence", async () => {
         await expect(repository.invalidate(row.id)).resolves.toBeUndefined();
         expect(prisma.auth_phone_challenge.updateMany).toHaveBeenCalledWith({
-            where: { id: row.id, consumedAt: null }, data: { codeHash: null },
+            where: { id: row.id, consumedAt: null }, data: { codeHash: null, email: null, passwordHash: null, name: null, kakaoId: null },
         });
         expect(prisma.auth_phone_challenge.deleteMany).not.toHaveBeenCalled();
         expect(prisma.$transaction).not.toHaveBeenCalled();
     });
 
-    it.each([0, 1])("consumes only within the supplied transaction (count=%i)", async (count) => {
+    it.each([0, 1])("consumes only unexpired rows within the supplied transaction and clears linking data (count=%i)", async (count) => {
         tx.auth_phone_challenge.updateMany.mockResolvedValue({ count });
         await expect(repository.consumeWithinTx(tx as unknown as Prisma.TransactionClient, row.id)).resolves.toBe(count === 1);
         expect(tx.auth_phone_challenge.updateMany).toHaveBeenCalledWith({
-            where: { id: row.id, consumedAt: null }, data: { consumedAt: NOW },
+            where: { id: row.id, consumedAt: null, expiresAt: { gt: NOW } },
+            data: { consumedAt: NOW, email: null, passwordHash: null, name: null, kakaoId: null },
         });
         expect(prisma.auth_phone_challenge.updateMany).not.toHaveBeenCalled();
         expect(prisma.$transaction).not.toHaveBeenCalled();

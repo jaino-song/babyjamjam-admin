@@ -1,4 +1,4 @@
-import { BadRequestException, Logger } from "@nestjs/common";
+import { BadRequestException, HttpException, Logger } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import { AuthService } from "application/services/auth.service";
 import { AuthPhoneChallengeService } from "application/services/auth-phone-challenge.service";
@@ -116,6 +116,137 @@ describe("SMS account linking", () => {
         expect(tx.auth_flow_state.updateMany).not.toHaveBeenCalled();
         expect(tx.user.create).not.toHaveBeenCalled();
     });
+    it.each(["kakao", "email", "ownEmail"])("counts a pending %s match before returning only PENDING_APPROVAL", async method => {
+        user.approvalStatus = "pending";
+        if (method !== "kakao") { user.kakaoId = "kakao"; user.passwordHash = null; }
+        if (method === "ownEmail") {
+            user.email = "new@example.invalid";
+            prisma.user.findUnique.mockResolvedValue(user);
+        }
+        (method === "kakao" ? tx.user.findMany : prisma.user.findMany).mockResolvedValue([user]);
+        let inTransaction = false;
+        const transaction = prisma.$transaction.getMockImplementation()!;
+        prisma.$transaction.mockImplementation(async callback => {
+            inTransaction = true;
+            try { return await transaction(callback); }
+            finally { inTransaction = false; }
+        });
+        challenge.issue.mockImplementation(async () => {
+            expect(inTransaction).toBe(false);
+            return { challengeToken: token };
+        });
+        const before = { ...user };
+        await expect(method === "kakao" ? startKakao(service) : startEmail(service))
+            .rejects.toMatchObject({ status: 403, response: { code: "PENDING_APPROVAL" } });
+        expect(challenge.issue).toHaveBeenCalledTimes(1);
+        expect(challenge.issue).toHaveBeenCalledWith({
+            purpose: method === "kakao" ? "kakao_link" : "email_link", phone, targetUserId: null,
+        });
+        expect(user).toEqual(before);
+        expect(stored.consumedAt).toBeNull();
+        expect(tx.auth_flow_state.updateMany).not.toHaveBeenCalled();
+        expect(prisma.auth_flow_state.updateMany).not.toHaveBeenCalled();
+        for (const client of [tx, prisma]) {
+            expect(client.user.create).not.toHaveBeenCalled();
+            expect(client.user.update).not.toHaveBeenCalled();
+            expect(client.user.updateMany).not.toHaveBeenCalled();
+            expect(client.auth_token.create).not.toHaveBeenCalled();
+            expect(client.auth_email_outbox.create).not.toHaveBeenCalled();
+        }
+        expect(service.hashPassword).not.toHaveBeenCalled();
+    });
+    it.each(["kakao", "email"])("preserves the phone limit's 429 for a pending %s match", async method => {
+        user.approvalStatus = "pending";
+        if (method === "email") { user.kakaoId = "kakao"; user.passwordHash = null; }
+        (method === "kakao" ? tx.user.findMany : prisma.user.findMany).mockResolvedValue([user]);
+        const limited = new HttpException({ code: "REQUEST_RATE_LIMITED" }, 429);
+        challenge.issue.mockRejectedValue(limited);
+        await expect(method === "kakao" ? startKakao(service) : startEmail(service)).rejects.toBe(limited);
+        expect(challenge.issue).toHaveBeenCalledTimes(1);
+        expect(challenge.issue).toHaveBeenCalledWith({
+            purpose: method === "kakao" ? "kakao_link" : "email_link", phone, targetUserId: null,
+        });
+        expect(stored.consumedAt).toBeNull();
+        expect(tx.user.create).not.toHaveBeenCalled();
+        expect(tx.user.update).not.toHaveBeenCalled();
+        expect(tx.user.updateMany).not.toHaveBeenCalled();
+        expect(tx.auth_email_outbox.create).not.toHaveBeenCalled();
+        expect(service.hashPassword).not.toHaveBeenCalled();
+    });
+    it.each([
+        { method: "kakao", status: "pending" }, { method: "email", status: "pending" },
+        { method: "kakao", status: "suspended" }, { method: "email", status: "suspended" },
+    ])("returns the ordinary decoy for $method with $status (pending has a different birth date)", async ({ method, status }) => {
+        user.approvalStatus = status;
+        if (status === "pending") user.birthDate = "1991-01-01";
+        if (method === "email") { user.kakaoId = "kakao"; user.passwordHash = null; }
+        (method === "kakao" ? tx.user.findMany : prisma.user.findMany).mockResolvedValue([user]);
+        await expect(method === "kakao" ? startKakao(service) : startEmail(service)).resolves.toEqual({
+            success: true, linkVerificationRequired: true, linkChallengeToken: token,
+            message: "입력하신 정보와 일치하는 기존 계정이 있으면 문자로 인증번호를 보내드려요.",
+        });
+        expect(challenge.issue).toHaveBeenCalledWith({
+            purpose: method === "kakao" ? "kakao_link" : "email_link", phone, targetUserId: null,
+            ...(method === "kakao" ? { kakaoId: stored.kakaoId }
+                : { email: "new@example.invalid", passwordHash: "new-hash", name: "New" }),
+        });
+        expect(tx.auth_flow_state.updateMany).not.toHaveBeenCalled();
+        expect(tx.user.create).not.toHaveBeenCalled();
+        expect(tx.user.updateMany).not.toHaveBeenCalled();
+        expect(tx.auth_email_outbox.create).not.toHaveBeenCalled();
+    });
+    it.each(["kakao", "email"])("returns the ordinary decoy for a pending owner with a matching birth date via %s", async method => {
+        user.role = "owner";
+        user.approvalStatus = "pending";
+        if (method === "email") { user.kakaoId = "kakao"; user.passwordHash = null; }
+        (method === "kakao" ? tx.user.findMany : prisma.user.findMany).mockResolvedValue([user]);
+        const before = { ...user };
+        await expect(method === "kakao" ? startKakao(service) : startEmail(service)).resolves.toEqual({
+            success: true, linkVerificationRequired: true, linkChallengeToken: token,
+            message: "입력하신 정보와 일치하는 기존 계정이 있으면 문자로 인증번호를 보내드려요.",
+        });
+        expect(challenge.issue).toHaveBeenCalledTimes(1);
+        expect(challenge.issue).toHaveBeenCalledWith({
+            purpose: method === "kakao" ? "kakao_link" : "email_link", phone, targetUserId: null,
+            ...(method === "kakao" ? { kakaoId: stored.kakaoId }
+                : { email: "new@example.invalid", passwordHash: "new-hash", name: "New" }),
+        });
+        expect(user).toEqual(before);
+        expect(stored.consumedAt).toBeNull();
+        for (const client of [tx, prisma]) {
+            expect(client.auth_flow_state.updateMany).not.toHaveBeenCalled();
+            expect(client.user.create).not.toHaveBeenCalled();
+            expect(client.user.update).not.toHaveBeenCalled();
+            expect(client.user.updateMany).not.toHaveBeenCalled();
+            expect(client.auth_token.create).not.toHaveBeenCalled();
+            expect(client.auth_email_outbox.create).not.toHaveBeenCalled();
+        }
+    });
+    it("keeps another email account's generic success ahead of the pending match", async () => {
+        prisma.user.findUnique.mockResolvedValue({ id: "other" });
+        prisma.user.findMany.mockResolvedValue([{ ...user, approvalStatus: "pending", kakaoId: "kakao", passwordHash: null }]);
+        await expect(startEmail(service)).resolves.toEqual({ success: true, message: "인증 이메일이 발송되었습니다. 이메일을 확인해주세요." });
+        expect(challenge.issue).not.toHaveBeenCalled();
+        expect(service.hashPassword).not.toHaveBeenCalled();
+        expect(prisma.$transaction).not.toHaveBeenCalled();
+        expect(tx.user.create).not.toHaveBeenCalled();
+        expect(tx.auth_email_outbox.create).not.toHaveBeenCalled();
+    });
+    it.each(["kakao", "email"])("refuses a %s target that becomes pending after challenge issue", async method => {
+        if (method === "email") { user.kakaoId = "kakao"; user.passwordHash = null; }
+        (method === "kakao" ? tx.user.findMany : prisma.user.findMany).mockResolvedValue([user]);
+        await (method === "kakao" ? startKakao(service) : startEmail(service));
+        expect(challenge.issue).toHaveBeenCalledWith(expect.objectContaining({ targetUserId: user.id }));
+        user.approvalStatus = "pending";
+        const before = { ...user };
+        await expect(method === "kakao" ? service.verifyKakaoLink("pending-token", token, "123456")
+            : service.verifyEmailLink(token, "123456")).rejects.toMatchObject(refusal);
+        expect(user).toEqual(before);
+        expect(challengeConsumed).toBe(false);
+        expect(stored.consumedAt).toBeNull();
+        expect(tx.user.updateMany).not.toHaveBeenCalled();
+        expect(tx.auth_email_outbox.create).not.toHaveBeenCalled();
+    });
     it("links Kakao with exactly three fields on the distinct transaction", async () => {
         const before = { ...user };
         await expect(service.verifyKakaoLink("pending-token", token, "123456")).resolves.toMatchObject({ linked: true });
@@ -125,7 +256,7 @@ describe("SMS account linking", () => {
         expect(challenge.consume).toHaveBeenCalledWith(tx, "challenge");
         expect(tx.auth_flow_state.updateMany).toHaveBeenCalledTimes(1);
         expect(tx.user.updateMany).toHaveBeenCalledWith({ where: { id: "user", kakaoId: null, phone: { in: [phone, user.phone] },
-            approvalStatus: { not: "rejected" }, OR: [{ role: null }, { role: { not: "owner" } }] },
+            approvalStatus: "approved", OR: [{ role: null }, { role: { not: "owner" } }] },
         data: { kakaoId: "new-kakao", authProvider: "both", profileImage: "image" } });
         expect(prisma.user.updateMany).not.toHaveBeenCalled();
         expect(prisma.auth_flow_state.updateMany).not.toHaveBeenCalled();
@@ -255,7 +386,7 @@ describe("SMS account linking", () => {
             ...(!verified ? { emailVerified: false, emailVerifiedAt: null } : {}) } }));
         expect(tx.user.updateMany).toHaveBeenCalledWith(expect.objectContaining({ where: {
             id: user.id, passwordHash: null, kakaoId: { not: null }, phone: { in: [phone, user.phone] },
-            approvalStatus: { not: "rejected" }, OR: [{ role: null }, { role: { not: "owner" } }],
+            approvalStatus: "approved", OR: [{ role: null }, { role: { not: "owner" } }],
         } }));
         expect(tx.auth_token.deleteMany).toHaveBeenCalledTimes(verified ? 0 : 1);
         expect(tx.auth_token.create).toHaveBeenCalledTimes(verified ? 0 : 1);

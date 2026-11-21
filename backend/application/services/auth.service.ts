@@ -1021,6 +1021,9 @@ export class AuthService {
                         detail: "이미 등록된 전화번호예요. 다른 전화번호로 다시 시도해 주세요.",
                     }));
                 }
+                if (this.isPendingLinkMatch(otherHolders[0]!, birthDate)) {
+                    return { pendingApproval: true } as const;
+                }
                 return { targetUserId: this.linkTarget(otherHolders[0]!, birthDate), kakaoId: stored.kakaoId };
             }
 
@@ -1073,6 +1076,12 @@ export class AuthService {
             return existingUser.id;
         });
 
+        if (typeof onboardingResult !== "string" && "pendingApproval" in onboardingResult) {
+            await this.phoneChallenge.issue({
+                purpose: "kakao_link", phone: phoneLookupForms(phone)[0]!, targetUserId: null,
+            });
+            throw new ForbiddenException(codeOnlyProblemBody("PENDING_APPROVAL"));
+        }
         if (typeof onboardingResult !== "string") {
             const challenge = await this.phoneChallenge.issue({
                 purpose: "kakao_link",
@@ -1101,8 +1110,15 @@ export class AuthService {
         holder: { id: string; birthDate: string | null; approvalStatus: string; role: string | null },
         birthDate: string,
     ): string | null {
-        return holder.birthDate === birthDate && holder.approvalStatus !== "rejected" && holder.role !== "owner"
+        return holder.birthDate === birthDate && holder.approvalStatus === "approved" && holder.role !== "owner"
             ? holder.id : null;
+    }
+
+    private isPendingLinkMatch(
+        holder: { birthDate: string | null; approvalStatus: string; role: string | null },
+        birthDate: string,
+    ): boolean {
+        return holder.birthDate === birthDate && holder.role !== "owner" && holder.approvalStatus === "pending";
     }
 
     private linkVerificationResponse(challengeToken: string): RegistrationResult {
@@ -1167,13 +1183,13 @@ export class AuthService {
                 });
                 const forms = phoneLookupForms(row.phone);
                 if (!user || user.kakaoId || !user.phone || !forms.includes(user.phone)
-                    || user.approvalStatus === "rejected" || user.role === "owner"
+                    || user.approvalStatus !== "approved" || user.role === "owner"
                     || await tx.user.findFirst({ where: { kakaoId }, select: { id: true } })) {
                     throw this.linkRefusal();
                 }
                 const updated = await tx.user.updateMany({
                     where: {
-                        id: user.id, kakaoId: null, phone: { in: forms }, approvalStatus: { not: "rejected" },
+                        id: user.id, kakaoId: null, phone: { in: forms }, approvalStatus: "approved",
                         OR: [{ role: null }, { role: { not: "owner" } }],
                     },
                     data: {
@@ -1213,7 +1229,7 @@ export class AuthService {
                 });
                 const forms = phoneLookupForms(row.phone);
                 if (!user || !user.kakaoId || user.passwordHash || !user.phone || !forms.includes(user.phone)
-                    || user.approvalStatus === "rejected" || user.role === "owner"
+                    || user.approvalStatus !== "approved" || user.role === "owner"
                     || await tx.user.findFirst({ where: { email, id: { not: user.id } }, select: { id: true } })) {
                     throw this.linkRefusal();
                 }
@@ -1221,7 +1237,7 @@ export class AuthService {
                 const updated = await tx.user.updateMany({
                     where: {
                         id: user.id, passwordHash: null, kakaoId: { not: null }, phone: { in: forms },
-                        approvalStatus: { not: "rejected" }, OR: [{ role: null }, { role: { not: "owner" } }],
+                        approvalStatus: "approved", OR: [{ role: null }, { role: { not: "owner" } }],
                     },
                     data: {
                         email, passwordHash, authProvider: "both", name: user.name ?? row.name,
@@ -1442,6 +1458,12 @@ export class AuthService {
             };
         }
 
+        if (candidate && this.isPendingLinkMatch(candidate, birthDate)) {
+            await this.phoneChallenge.issue({
+                purpose: "email_link", phone: phoneLookupForms(phone)[0]!, targetUserId: null,
+            });
+            throw new ForbiddenException(codeOnlyProblemBody("PENDING_APPROVAL"));
+        }
         if (candidate) {
             const passwordHash = await this.hashPassword(password);
             const challenge = await this.phoneChallenge.issue({
