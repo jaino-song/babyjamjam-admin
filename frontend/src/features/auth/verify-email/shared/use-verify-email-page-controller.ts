@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { normalizeApiError } from "@babyjamjam/shared";
+import { summarizeErrorForLog, normalizeApiError } from "@babyjamjam/shared";
 
 import { AUTH_ROUTES } from "@/lib/auth/routes";
 import { authApi } from "@/services/api";
@@ -59,7 +59,7 @@ export function useVerifyEmailPageController() {
           return;
         }
 
-        console.error("Email verification error:", requestError);
+        console.error("Email verification error:", summarizeErrorForLog(requestError));
         setStatus("error");
         setMessage("네트워크 오류가 발생했어요. 다시 시도해 주세요.");
       }
@@ -98,7 +98,7 @@ export function useVerifyEmailPageController() {
           : "재발송에 실패했어요."),
       });
     } catch (requestError) {
-      console.error("Resend verification error:", requestError);
+      console.error("Resend verification error:", summarizeErrorForLog(requestError));
       setResendMessage({
         type: "error",
         text: "네트워크 오류가 발생했어요.",

@@ -20,3 +20,4 @@ export { getSafeApiDisplayMessage, sanitizeApiDisplayMessage } from "./errors/sa
 export * from "./errors/problem-details";
 
 export * from "./errors/problem-presentation";
+export { summarizeErrorForLog, type ErrorLogSummary } from "./errors/error-log-summary";

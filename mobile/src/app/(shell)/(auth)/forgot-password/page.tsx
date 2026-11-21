@@ -7,7 +7,7 @@ import Link from "next/link";
 import { ButtonLoadingContent } from "@/components/ui/button";
 import { AuthInlineLink } from "@/components/auth/auth-inline-link";
 import { Check } from "lucide-react";
-import { normalizeApiError } from "@babyjamjam/shared";
+import { summarizeErrorForLog, normalizeApiError } from "@babyjamjam/shared";
 
 import { authApi } from "@/services/api";
 import { forgotPasswordSchema } from "@/lib/validations/auth";
@@ -46,7 +46,7 @@ export default function ForgotPasswordPage() {
         setError("요청 처리에 실패했어요. 다시 시도해 주세요.");
       }
     } catch (err) {
-      console.error("Forgot password error:", err);
+      console.error("Forgot password error:", summarizeErrorForLog(err));
       // Shared problem contract resolution — upstream internals are never
       // rendered; the normalized message is already safe copy.
       setError(normalizeApiError(err, { locale: "ko-KR", operation: "mutation" }).message);

@@ -11,7 +11,7 @@ import {
     decodeAccessBranchId,
     getRefreshSessionMaxAgeSeconds,
 } from "@/lib/auth/session-policy";
-import { normalizeApiError } from "@babyjamjam/shared";
+import { summarizeErrorForLog, normalizeApiError } from "@babyjamjam/shared";
 
 interface TokenPayload {
     sub: string;
@@ -194,7 +194,7 @@ export async function exchangeToken(code: string): Promise<{
             requiresBranchSelection,
         };
     } catch (error) {
-        console.error("[Server Action] Token Exchange Error:", error);
+        console.error("[Server Action] Token Exchange Error:", summarizeErrorForLog(error));
 
         if (error instanceof AxiosError) {
             const axiosError = error as AxiosError<APIErrorResponse>;

@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { CheckCircle, AlertTriangle } from "lucide-react";
-import { normalizeApiError } from "@babyjamjam/shared";
+import { summarizeErrorForLog, normalizeApiError } from "@babyjamjam/shared";
 import { authApi } from "@/services/api";
 import { AuthInlineLink } from "@/components/auth/auth-inline-link";
 import { AuthCard } from "@/components/auth/auth-card";
@@ -63,7 +63,7 @@ export default function VerifyEmailPage() {
                     setMessage(verifiedOrCopy(response, "이메일 인증에 실패했어요."));
                 }
             } catch (err) {
-                console.error("Email verification error:", err);
+                console.error("Email verification error:", summarizeErrorForLog(err));
                 setStatus("error");
                 setMessage("네트워크 오류가 발생했어요. 다시 시도해 주세요.");
             }
@@ -92,7 +92,7 @@ export default function VerifyEmailPage() {
                     : "재발송에 실패했어요."),
             });
         } catch (err) {
-            console.error("Resend verification error:", err);
+            console.error("Resend verification error:", summarizeErrorForLog(err));
             setResendMessage({
                 type: "error",
                 text: "네트워크 오류가 발생했어요.",

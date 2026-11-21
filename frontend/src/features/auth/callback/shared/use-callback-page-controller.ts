@@ -3,7 +3,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { normalizeApiError } from "@babyjamjam/shared";
+import { summarizeErrorForLog, normalizeApiError } from "@babyjamjam/shared";
 
 import { AUTH_ROUTES } from "@/lib/auth/routes";
 import { resetAuthorityState } from "@/lib/auth/authority-state";
@@ -115,10 +115,10 @@ export function useCallbackPageController() {
           return;
         }
 
-        console.error("[Auth Callback] Token Exchange Error:", requestError);
+        console.error("[Auth Callback] Token Exchange Error:", summarizeErrorForLog(requestError));
         console.error(
           "[Auth Callback] Error message:",
-          requestError instanceof Error ? requestError.message : String(requestError),
+          summarizeErrorForLog(requestError),
         );
         // Shared problem contract resolution — upstream internals are never
         // rendered; the normalized message is already safe copy.

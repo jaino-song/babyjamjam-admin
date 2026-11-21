@@ -1,3 +1,4 @@
+import { summarizeErrorForLog } from "@babyjamjam/shared";
 import { cookies } from "next/headers";
 import { NextRequest, NextResponse } from "next/server";
 import { serverAPIClient } from "@/lib/api/server";
@@ -117,7 +118,7 @@ export async function POST(request: NextRequest) {
             requiresBranchSelection: Boolean(data.requiresBranchSelection || data.requiresOrgSelection),
         }, { status: 200 });
     } catch (error) {
-        console.error("Token Exchange Error:", error);
+        console.error("Token Exchange Error:", summarizeErrorForLog(error));
         console.error("Backend URL:", serverAPIClient.defaults?.baseURL);
         console.error("Environment:", process.env.NODE_ENV);
 

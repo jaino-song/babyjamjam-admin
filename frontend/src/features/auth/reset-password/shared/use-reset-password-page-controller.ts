@@ -3,7 +3,7 @@
 
 import { useRouter, useSearchParams } from "next/navigation";
 import { useState } from "react";
-import { normalizeApiError, getResetPasswordErrorMessage } from "@babyjamjam/shared";
+import { summarizeErrorForLog, normalizeApiError, getResetPasswordErrorMessage } from "@babyjamjam/shared";
 
 import { AUTH_ROUTES } from "@/lib/auth/routes";
 import { checkPasswordStrength, resetPasswordSchema, type ResetPasswordFormData } from "@/lib/validations/auth";
@@ -73,7 +73,7 @@ export function useResetPasswordPageController() {
         setError("비밀번호 재설정에 실패했어요.");
       }
     } catch (requestError) {
-      console.error("Reset password error:", requestError);
+      console.error("Reset password error:", summarizeErrorForLog(requestError));
       const errorData = requestError && typeof requestError === "object" && "response" in requestError
         ? (requestError as { response?: { data?: { code?: unknown } } }).response?.data
         : undefined;

@@ -4,7 +4,7 @@ import { cookies } from "next/headers";
 import { serverAPIClient } from "@/lib/api/server";
 import { AxiosError } from "axios";
 import { clearAuthSessionCookies, setAuthSessionCookies } from "@/lib/auth/session-cookies";
-import { normalizeApiError } from "@babyjamjam/shared";
+import { summarizeErrorForLog, normalizeApiError } from "@babyjamjam/shared";
 
 interface APIErrorResponse {
     statusCode: number;
@@ -148,7 +148,7 @@ export async function exchangeToken(
             requiresBranchSelection: Boolean(data.requiresBranchSelection || data.requiresOrgSelection),
         };
     } catch (error) {
-        console.error("[Server Action] Token Exchange Error:", error);
+        console.error("[Server Action] Token Exchange Error:", summarizeErrorForLog(error));
 
         if (error instanceof AxiosError) {
             const axiosError = error as AxiosError<APIErrorResponse>;
