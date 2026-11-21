@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { createProblemDetails } from "@babyjamjam/shared";
 
@@ -137,6 +137,20 @@ describe("RegisterPage", () => {
         expect(slotOf(screen.getByLabelText("이메일"))).toHaveTextContent("이메일 확인됨");
       });
       expect(document.querySelector(".auth-input-trailing")).toBeNull();
+    });
+
+    it("leaves an unchecked email unconfirmed before its lookup settles", async () => {
+      render(<RegisterPage />);
+      const email = screen.getByLabelText("이메일");
+      fireEvent.change(email, { target: { value: "new.user@example.com" } });
+      expect(slotOf(email)).toBeEmptyDOMElement();
+
+      await waitFor(() => expect(mockCheckEmailExists).toHaveBeenCalledWith("new.user@example.com"));
+      expect(await screen.findByText("이메일 확인됨")).toBeInTheDocument();
+      fireEvent.change(email, { target: { value: "another@example.com" } });
+
+      expect(slotOf(email)).toBeEmptyDOMElement();
+      expect(mockCheckEmailExists).toHaveBeenCalledTimes(1);
     });
 
     it("hints while the phone number is incomplete and errors once it is left", async () => {

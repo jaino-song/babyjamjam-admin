@@ -25,7 +25,7 @@ function kakaoSignupFailure(status: number, data: unknown): { error: string; fie
     if (field?.pointer === "/phone") return { field: "phone", error: field.code === "INVALID_VALUE" ? "이미 등록된 전화번호예요. 다른 전화번호로 다시 시도해 주세요." : "전화번호 형식이 올바르지 않아요. 010-1234-5678처럼 입력해 주세요." };
     if (field?.pointer === "/birthDate") return { field: "birthDate", error: "생년월일 형식이 올바르지 않아요. 1990-01-01처럼 입력해 주세요." };
   }
-  if (status === 429 && problem?.code === "REQUEST_RATE_LIMITED") {
+  if (status === 429) {
     const normalized = normalizeApiError({ response: { status, data } }, { locale: "ko-KR", operation: "mutation" });
     return { error: normalized.verified ? normalized.message : "요청이 너무 많아요. 잠시 후 다시 시도해 주세요." };
   }

@@ -123,7 +123,7 @@ export default function RegisterPage() {
   const [isSuccess, setIsSuccess] = useState(false);
   const [accountsLinked, setAccountsLinked] = useState(false);
   const [isCheckingEmailDuplicate, setIsCheckingEmailDuplicate] = useState(false);
-  const [isEmailDuplicate, setIsEmailDuplicate] = useState(false);
+  const [emailLookup, setEmailLookup] = useState<{ email: string; exists: boolean } | null>(null);
   const [challenge, setChallenge] = useState<string | null>(null);
   const [emailVerificationRequired, setEmailVerificationRequired] = useState(true);
   const [emailTouched, setEmailTouched] = useState(false);
@@ -167,6 +167,8 @@ export default function RegisterPage() {
       ? { text: `${firstUnmetPasswordRule.label} 필요해요`, tone: "muted" }
       : { text: "사용할 수 있는 비밀번호예요", tone: "ok" };
   const normalizedEmail = (formData.email ?? "").trim().toLowerCase();
+  const isCurrentEmailChecked = emailLookup?.email === normalizedEmail;
+  const isEmailDuplicate = isCurrentEmailChecked && emailLookup?.exists === true;
   const emailFormatError = getEmailFormatError(formData.email ?? "");
   const canShowEmailTrailing = Boolean(normalizedEmail) && !emailFormatError;
   const passwordsMatch = Boolean(formData.confirmPassword) && formData.password === formData.confirmPassword;
@@ -175,7 +177,9 @@ export default function RegisterPage() {
     ? null
     : isCheckingEmailDuplicate
       ? { text: "확인 중", tone: "pending" }
-      : { text: "이메일 확인됨", tone: "ok" };
+      : isCurrentEmailChecked && emailLookup?.exists === false
+        ? { text: "이메일 확인됨", tone: "ok" }
+        : null;
 
   // One slot per field: field errors (zod / server) and the shared resolver's
   // message outrank informational status.
@@ -220,7 +224,7 @@ export default function RegisterPage() {
   useEffect(() => {
     if (!normalizedEmail || emailFormatError) {
       setIsCheckingEmailDuplicate(false);
-      setIsEmailDuplicate(false);
+      setEmailLookup(null);
       setErrors((prev) => {
         if (prev.email !== EMAIL_DUPLICATE_ERROR) return prev;
         const next = { ...prev };
@@ -237,11 +241,11 @@ export default function RegisterPage() {
         .checkEmailExists(normalizedEmail)
         .then(({ exists }) => {
           if (cancelled) return;
-          setIsEmailDuplicate(exists);
+          setEmailLookup({ email: normalizedEmail, exists });
         })
         .catch(() => {
           if (cancelled) return;
-          setIsEmailDuplicate(false);
+          setEmailLookup(null);
           setErrors((prev) => {
             if (prev.email !== EMAIL_DUPLICATE_ERROR) return prev;
             const next = { ...prev };
@@ -422,6 +426,19 @@ export default function RegisterPage() {
     }
 
     setIsLoading(true);
+    const submittedEmail = result.data.email.trim().toLowerCase();
+    let submittedEmailExists = false;
+    if (emailLookup?.email === submittedEmail) {
+      submittedEmailExists = emailLookup.exists;
+    } else {
+      try {
+        const { exists } = await authApi.checkEmailExists(submittedEmail);
+        submittedEmailExists = exists;
+        setEmailLookup({ email: submittedEmail, exists });
+      } catch {
+        // Match the debounced lookup's fail-open behavior without treating it as a registration failure.
+      }
+    }
     try {
       const response = await authApi.register({
         email: result.data.email,
@@ -433,7 +450,7 @@ export default function RegisterPage() {
       if (response.success) {
         if (response.linkVerificationRequired && response.linkChallengeToken) {
           setChallenge(response.linkChallengeToken);
-        } else if (isEmailDuplicate) {
+        } else if (submittedEmailExists) {
           setErrors(prev => ({ ...prev, email: EMAIL_DUPLICATE_ERROR }));
           setCurrentStep(1);
         } else {
