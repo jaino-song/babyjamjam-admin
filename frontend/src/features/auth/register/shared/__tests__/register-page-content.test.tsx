@@ -9,8 +9,10 @@ import { expectNoFieldMessageBelowControl } from "@/test-utils/field-message-slo
 
 import { RegisterPageContent } from "../register-page-content";
 
+const mockReplace = jest.fn();
+
 jest.mock("next/navigation", () => ({
-  useRouter: () => ({ push: jest.fn() }),
+  useRouter: () => ({ push: jest.fn(), replace: mockReplace }),
 }));
 
 jest.mock("@/lib/api/client", () => ({
@@ -413,4 +415,26 @@ describe("email lookup identity on resubmission", () => {
     await act(async () => { jest.advanceTimersByTime(250); });
     expect(screen.getByRole("note")).toHaveTextContent(existingNote);
   });
+});
+
+it("navigates a pending registration match to the login notice without errors", async () => {
+  jest.clearAllMocks();
+  jest.mocked(authApi.register).mockRejectedValue(new AxiosError("failure", undefined, undefined, undefined, { status: 403, data: { code: "PENDING_APPROVAL" } } as never));
+  await fillRegister();
+  await waitFor(() => expect(mockReplace).toHaveBeenCalledWith("/login?authError=LINK_PENDING_APPROVAL"));
+  expect(mockReplace).toHaveBeenCalledTimes(1);
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  expect(document.querySelector('[data-slot="field-error-message"]')).toBeNull();
+});
+
+it.each([
+  [403, "ACCESS_DENIED"],
+  [400, "PENDING_APPROVAL"],
+])("keeps the generic failure for HTTP %s with code %s", async (status, code) => {
+  jest.clearAllMocks();
+  jest.mocked(authApi.register).mockRejectedValue(new AxiosError("failure", undefined, undefined, undefined, { status, data: { code } } as never));
+  await fillRegister();
+  expect(await screen.findByRole("alert")).toHaveTextContent("네트워크 오류가 발생했어요. 다시 시도해 주세요.");
+  expect(mockReplace).not.toHaveBeenCalled();
+  expect(document.querySelector('[data-slot="field-error-message"]')).toBeNull();
 });

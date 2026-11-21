@@ -39,3 +39,23 @@ it("uses the safe rate-limit fallback for an unverified problem", async () => {
   jest.mocked(serverAPIClient.post).mockRejectedValue(new AxiosError("failure", undefined, undefined, undefined, { status: 429, data: { detail: "internal" } } as never));
   expect((await completeKakaoOnboarding({ phone: "01012345678", birthDate: "1990-01-01", role: "user" })).error).toBe("요청이 너무 많아요. 잠시 후 다시 시도해 주세요.");
 });
+
+it.each([
+  ["a full problem document", createProblemDetails({ code: "PENDING_APPROVAL", status: 403, requestId: "test" })],
+  ["a plain body", { code: "PENDING_APPROVAL" }],
+])("maps a pending match from %s without deleting the pending cookie", async (_name, data) => {
+  jest.mocked(serverAPIClient.post).mockRejectedValue(new AxiosError("failure", undefined, undefined, undefined, { status: 403, data } as never));
+  expect(await completeKakaoOnboarding({ phone: "01012345678", birthDate: "1990-01-01", role: "user" })).toEqual({ success: false, code: "LINK_PENDING_APPROVAL" });
+  expect(store.delete).not.toHaveBeenCalled();
+});
+
+it("keeps the generic copy for another 403 code", async () => {
+  jest.mocked(serverAPIClient.post).mockRejectedValue(new AxiosError("failure", undefined, undefined, undefined, { status: 403, data: { code: "ACCESS_DENIED", message: "upstream internals" } } as never));
+  expect(await completeKakaoOnboarding({ phone: "01012345678", birthDate: "1990-01-01", role: "user" })).toEqual({ success: false, error: "카카오 가입을 완료하지 못했습니다. 다시 시도해 주세요." });
+  expect(store.delete).not.toHaveBeenCalled();
+});
+
+it("does not map a pending code without HTTP 403", async () => {
+  jest.mocked(serverAPIClient.post).mockRejectedValue(new AxiosError("failure", undefined, undefined, undefined, { status: 400, data: { code: "PENDING_APPROVAL" } } as never));
+  expect(await completeKakaoOnboarding({ phone: "01012345678", birthDate: "1990-01-01", role: "user" })).toEqual({ success: false, error: "카카오 가입을 완료하지 못했습니다. 다시 시도해 주세요." });
+});

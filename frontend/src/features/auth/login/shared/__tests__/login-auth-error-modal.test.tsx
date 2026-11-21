@@ -24,6 +24,16 @@ beforeEach(() => {
 });
 
 describe("LoginAuthErrorModal", () => {
+  it("shows the exact pending-match title and description", () => {
+    authError = "LINK_PENDING_APPROVAL";
+    render(<LoginAuthErrorModal />);
+    const dialog = screen.getByRole("dialog", { name: "승인 대기중 입니다." });
+    expect(dialog).toHaveAccessibleDescription("관계자에게 문의해 주세요.");
+    expect(screen.getByText("관계자에게 문의해 주세요.")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "확인" }));
+    expect(mockReplace).toHaveBeenCalledWith("/login");
+  });
+
   it("shows the pending approval callback as a modal", () => {
     authError = "PENDING_APPROVAL";
     render(<LoginAuthErrorModal />);

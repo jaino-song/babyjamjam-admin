@@ -134,3 +134,17 @@ it("opens the link step, retains entered values on restart, and navigates after 
   await waitFor(() => expect(mockVerifyKakaoLink).toHaveBeenCalledWith("challenge", "123456"));
   expect(mockReplace).toHaveBeenLastCalledWith("/login?authError=ACCOUNT_LINKED&returnTo=%2Fservice-record-admin%2Fclient-1");
 });
+
+it.each([
+  [undefined, "/login?authError=LINK_PENDING_APPROVAL"],
+  ["/service-record-admin/client-1", "/login?authError=LINK_PENDING_APPROVAL&returnTo=%2Fservice-record-admin%2Fclient-1"],
+])("navigates a pending match with return path %s without showing errors", async (returnPath, destination) => {
+  mockReplace.mockReset();
+  mockCompleteKakaoOnboarding.mockResolvedValue({ success: false, code: "LINK_PENDING_APPROVAL" });
+  const { container } = renderForm({ phone: "010-1234-5678", birthDate: "1990-01-01", role: "user", returnPath });
+  fireEvent.click(screen.getByRole("button", { name: /가입 완료/ }));
+  await waitFor(() => expect(mockReplace).toHaveBeenCalledWith(destination));
+  expect(mockReplace).toHaveBeenCalledTimes(1);
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  expect(container.querySelector('[data-slot="field-error-message"]')).toBeNull();
+});

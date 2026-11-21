@@ -368,6 +368,11 @@ export function useRegisterPageController() {
       const errorData = axios.isAxiosError(requestError) ? requestError.response?.data : undefined;
       const normalized = normalizeApiError(requestError, { locale: "ko-KR", operation: "mutation" });
 
+      if (axios.isAxiosError(requestError) && requestError.response?.status === 403 && errorData?.code === "PENDING_APPROVAL") {
+        router.replace("/login?authError=LINK_PENDING_APPROVAL");
+        return;
+      }
+
       if (isPhoneDuplicateFailure(errorData, normalized)) {
         const issue = normalized.problem?.errors?.find((item) => item.pointer === "/phone");
         const message = normalized.problem?.code === "VALIDATION_FAILED" && issue?.code !== "INVALID_VALUE"

@@ -169,6 +169,10 @@ export function OnboardingForm({
 
         startTransition(async () => {
             const response = await completeKakaoOnboarding(result.data);
+            if (response.code) {
+                router.replace(appendSafeReturnPath(`/login?authError=${response.code}`, returnPath));
+                return;
+            }
             if (!response.success) {
                 // The server action already normalizes the failure through the
                 // problem contract; render its copy verbatim.
