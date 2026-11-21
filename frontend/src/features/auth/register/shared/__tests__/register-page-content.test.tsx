@@ -298,3 +298,119 @@ it.each([
   expect(phone).toHaveAttribute("aria-invalid", "true");
   expect(screen.queryByText("이미 등록된 전화번호예요. 다른 전화번호로 다시 시도해 주세요.")).not.toBeInTheDocument();
 });
+
+describe("email lookup identity on resubmission", () => {
+  const duplicateError = "이미 등록된 이메일입니다. 로그인하거나 비밀번호 찾기를 이용해 주세요.";
+  const existingNote = "이미 등록된 이메일이에요. 카카오로 가입한 계정이라면 계속 진행해 비밀번호 로그인을 추가할 수 있어요.";
+  const answerByEmail = (email: string) => Promise.resolve({ exists: email === "existing@example.com" });
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    mockCheckEmailExists.mockReset();
+    // Freeze the 250 ms boundary so clicks cannot race the debounce on slow runners.
+    jest.useFakeTimers();
+    jest.mocked(authApi.register).mockResolvedValue({ success: true });
+  });
+  afterEach(() => {
+    jest.clearAllTimers();
+    jest.useRealTimers();
+  });
+
+  async function returnToDuplicateEmail() {
+    await fillRegister(true);
+    expect(await screen.findByText(duplicateError)).toBeInTheDocument();
+    mockCheckEmailExists.mockImplementation(answerByEmail);
+  }
+
+  function editAndAdvance(email: string) {
+    fireEvent.change(screen.getByLabelText("이메일"), { target: { value: email } });
+    fireEvent.click(screen.getByRole("button", { name: "다음" }));
+    expect(screen.getByLabelText("전화번호")).toHaveValue("010-1234-5678");
+    expect(screen.getByLabelText("생년월일")).toHaveValue("1990-01-01");
+  }
+
+  async function submitAgain() {
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "회원가입" })); });
+  }
+
+  it("uses the new address during the debounce window after an existing address", async () => {
+    await returnToDuplicateEmail();
+    editAndAdvance("new@example.com");
+    expect(mockCheckEmailExists).not.toHaveBeenCalledWith("new@example.com");
+    await submitAgain();
+    expect(mockCheckEmailExists).toHaveBeenCalledWith("new@example.com");
+    const lookupOrder = mockCheckEmailExists.mock.invocationCallOrder;
+    const registerOrder = jest.mocked(authApi.register).mock.invocationCallOrder;
+    expect(lookupOrder[lookupOrder.length - 1]).toBeLessThan(registerOrder[registerOrder.length - 1]);
+    expect(authApi.register).toHaveBeenLastCalledWith(expect.objectContaining({ email: "new@example.com" }));
+    expect(await screen.findByText("회원가입 완료!")).toBeInTheDocument();
+    expect(screen.queryByText(duplicateError)).not.toBeInTheDocument();
+  });
+
+  it("checks the submitted address while its debounced lookup remains pending", async () => {
+    await returnToDuplicateEmail();
+    let resolveLookup!: (result: { exists: boolean }) => void;
+    const pendingLookup = new Promise<{ exists: boolean }>((resolve) => { resolveLookup = resolve; });
+    mockCheckEmailExists.mockImplementationOnce(() => pendingLookup).mockImplementation(answerByEmail);
+    editAndAdvance("new@example.com");
+    await act(async () => { jest.advanceTimersByTime(250); });
+    expect(mockCheckEmailExists.mock.calls.filter(([email]) => email === "new@example.com")).toHaveLength(1);
+    await submitAgain();
+    expect(mockCheckEmailExists.mock.calls.filter(([email]) => email === "new@example.com")).toHaveLength(2);
+    expect(authApi.register).toHaveBeenLastCalledWith(expect.objectContaining({ email: "new@example.com" }));
+    expect(await screen.findByText("회원가입 완료!")).toBeInTheDocument();
+    await act(async () => { resolveLookup({ exists: false }); });
+    expect(screen.queryByText(duplicateError)).not.toBeInTheDocument();
+    expect(screen.getByText("회원가입 완료!")).toBeInTheDocument();
+  });
+
+  it("detects an existing address edited after a settled nonexisting address", async () => {
+    // Keep the completed form available after the initial nonduplicate lookup.
+    jest.mocked(authApi.register).mockResolvedValueOnce({ success: false });
+    await fillRegister(false);
+    expect(await screen.findByRole("alert")).toHaveTextContent("회원가입에 실패했어요.");
+    fireEvent.click(screen.getByRole("button", { name: "이전" }));
+    mockCheckEmailExists.mockImplementation(answerByEmail);
+    fireEvent.change(screen.getByLabelText("이메일"), { target: { value: "new@example.com" } });
+    await act(async () => { jest.advanceTimersByTime(250); });
+    expect(mockCheckEmailExists).toHaveBeenLastCalledWith("new@example.com");
+    editAndAdvance("EXISTING@example.com");
+    await submitAgain();
+    expect(mockCheckEmailExists).toHaveBeenLastCalledWith("existing@example.com");
+    expect(authApi.register).toHaveBeenLastCalledWith(expect.objectContaining({ email: "existing@example.com" }));
+    expect(await screen.findByText(duplicateError)).toBeInTheDocument();
+    expect(screen.getByLabelText("이메일")).toHaveAttribute("aria-invalid", "true");
+    expect(screen.queryByText("회원가입 완료!")).not.toBeInTheDocument();
+  });
+
+  it("allows plain success when the direct lookup rejects", async () => {
+    await returnToDuplicateEmail();
+    mockCheckEmailExists.mockRejectedValueOnce(new Error("lookup unavailable"));
+    editAndAdvance("new@example.com");
+    await submitAgain();
+    expect(mockCheckEmailExists).toHaveBeenLastCalledWith("new@example.com");
+    expect(authApi.register).toHaveBeenLastCalledWith(expect.objectContaining({ email: "new@example.com" }));
+    expect(await screen.findByText("회원가입 완료!")).toBeInTheDocument();
+    expect(screen.queryByText(duplicateError)).not.toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("removes the existing-email note immediately when the address changes", async () => {
+    mockCheckEmailExists.mockResolvedValue({ exists: true });
+    renderRegister();
+    fireEvent.change(screen.getByLabelText("이메일"), { target: { value: "existing@example.com" } });
+    expect(await screen.findByRole("note")).toHaveTextContent(existingNote);
+    mockCheckEmailExists.mockImplementation(answerByEmail);
+    fireEvent.change(screen.getByLabelText("이메일"), { target: { value: "new@example.com" } });
+    expect(mockCheckEmailExists).not.toHaveBeenCalledWith("new@example.com");
+    expect(screen.queryByRole("note")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("이메일")).not.toHaveAttribute("aria-describedby", expect.stringContaining("register-email-note"));
+    await act(async () => { jest.advanceTimersByTime(250); });
+    expect(screen.queryByRole("note")).not.toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("이메일"), { target: { value: "another@example.com" } });
+    mockCheckEmailExists.mockResolvedValue({ exists: true });
+    expect(screen.queryByRole("note")).not.toBeInTheDocument();
+    await act(async () => { jest.advanceTimersByTime(250); });
+    expect(screen.getByRole("note")).toHaveTextContent(existingNote);
+  });
+});

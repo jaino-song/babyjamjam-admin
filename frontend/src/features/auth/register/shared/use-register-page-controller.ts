@@ -102,19 +102,20 @@ export function useRegisterPageController() {
   const [accountsLinked, setAccountsLinked] = useState(false);
   const [currentStep, setCurrentStep] = useState<RegisterStep>(0);
   const [isCheckingEmailDuplicate, setIsCheckingEmailDuplicate] = useState(false);
-  const [isEmailDuplicate, setIsEmailDuplicate] = useState(false);
+  const [emailLookup, setEmailLookup] = useState<{ email: string; exists: boolean } | null>(null);
   const [linkChallengeToken, setLinkChallengeToken] = useState<string | null>(null);
   const [emailVerificationRequired, setEmailVerificationRequired] = useState(true);
   const [emailTouched, setEmailTouched] = useState(false);
 
   const normalizedEmail = (formData.email ?? "").trim().toLowerCase();
+  const isEmailDuplicate = emailLookup?.email === normalizedEmail && emailLookup.exists;
   const phoneDigits = (formData.phone ?? "").replace(/\D/g, "");
   const emailFormatError = getEmailFormatError(formData.email ?? "");
 
   useEffect(() => {
     if (!normalizedEmail || emailFormatError) {
       setIsCheckingEmailDuplicate(false);
-      setIsEmailDuplicate(false);
+      setEmailLookup(null);
 
       setErrors((prev) => {
         if (prev.email !== EMAIL_DUPLICATE_ERROR) {
@@ -134,11 +135,11 @@ export function useRegisterPageController() {
 
       void authApi.checkEmailExists(normalizedEmail)
         .then(({ exists }) => {
-          if (!isCancelled) setIsEmailDuplicate(exists);
+          if (!isCancelled) setEmailLookup({ email: normalizedEmail, exists });
         })
         .catch(() => {
           if (!isCancelled) {
-            setIsEmailDuplicate(false);
+            setEmailLookup(null);
 
             setErrors((prev) => {
               if (prev.email !== EMAIL_DUPLICATE_ERROR) {
@@ -317,6 +318,20 @@ export function useRegisterPageController() {
 
     setIsLoading(true);
 
+    const submittedEmail = result.data.email.trim().toLowerCase();
+    let submittedEmailExists = false;
+    if (emailLookup?.email === submittedEmail) {
+      submittedEmailExists = emailLookup.exists;
+    } else {
+      try {
+        const { exists } = await authApi.checkEmailExists(submittedEmail);
+        submittedEmailExists = exists;
+        setEmailLookup({ email: submittedEmail, exists });
+      } catch {
+        // Match the debounced lookup's fail-open behavior without treating it as a register failure.
+      }
+    }
+
     try {
       const response = await authApi.register({
         email: result.data.email,
@@ -331,7 +346,7 @@ export function useRegisterPageController() {
           setLinkChallengeToken(response.linkChallengeToken);
           return;
         }
-        if (isEmailDuplicate) {
+        if (submittedEmailExists) {
           setErrors((prev) => ({ ...prev, email: EMAIL_DUPLICATE_ERROR }));
           setCurrentStep(0);
           return;
