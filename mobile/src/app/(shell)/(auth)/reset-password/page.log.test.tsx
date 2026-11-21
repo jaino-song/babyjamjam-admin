@@ -18,10 +18,12 @@ it("logs a reset failure without the token, new password or authorization header
   const token = "reset-token-secret";
   const password = "P@ss-reset-secret1";
   const authorization = "Bearer reset-header-secret";
-  const error = new AxiosError("Request failed", "ERR_BAD_REQUEST", {
+  const message = `Request failed for https://example.test/auth/reset-password?token=${token}`;
+  const error = new AxiosError(message, "ERR_BAD_REQUEST", {
     data: JSON.stringify({ token, newPassword: password }),
     headers: new AxiosHeaders({ Authorization: authorization }),
   });
+  expect(error).toBeInstanceOf(Error);
   jest.mocked(authApi.resetPassword).mockRejectedValueOnce(error);
   const log = jest.spyOn(console, "error").mockImplementation(() => undefined);
   render(<ResetPasswordPage />);
@@ -29,7 +31,9 @@ it("logs a reset failure without the token, new password or authorization header
   fireEvent.change(screen.getByLabelText("비밀번호 확인", { selector: "input" }), { target: { value: password } });
   fireEvent.click(screen.getByRole("button", { name: "비밀번호 변경" }));
 
-  await waitFor(() => expect(log).toHaveBeenCalledWith("Reset password error:", expect.any(Object)));
+  await waitFor(() => expect(log).toHaveBeenCalledWith("Reset password error:", {
+    name: "AxiosError", code: "ERR_BAD_REQUEST",
+  }));
   expect(authApi.resetPassword).toHaveBeenCalledWith(token, password);
   await waitFor(() => expect(screen.getByRole("button", { name: "비밀번호 변경" })).toBeEnabled());
   for (const args of log.mock.calls) {
@@ -38,6 +42,7 @@ it("logs a reset failure without the token, new password or authorization header
       expect(printed).not.toContain(token);
       expect(printed).not.toContain(password);
       expect(printed).not.toContain(authorization);
+      expect(printed).not.toContain(message);
     }
   }
 });

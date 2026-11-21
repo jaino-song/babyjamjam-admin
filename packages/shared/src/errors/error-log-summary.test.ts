@@ -31,6 +31,15 @@ describe("summarizeErrorForLog", () => {
     }
   });
 
+  it("uses the Axios summary for an Axios-shaped Error instance, omitting its message", () => {
+    const error = Object.assign(new Error(), axiosShapedError());
+    expect(error).toBeInstanceOf(Error);
+
+    expect(summarizeErrorForLog(error)).toEqual({
+      name: "AxiosError", code: "ERR_BAD_REQUEST", status: 403, problemCode: "PENDING_APPROVAL",
+    });
+  });
+
   it.each([{}, "A".repeat(65), "lower_case", "", "UPPER-WITH-DASH", "CODE\n"])(
     "omits a problem code that is not a short uppercase code: %p", (code) => {
       const error = axiosShapedError();
