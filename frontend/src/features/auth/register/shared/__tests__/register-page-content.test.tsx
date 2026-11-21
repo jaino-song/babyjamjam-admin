@@ -97,7 +97,7 @@ describe("RegisterPageContent field messages", () => {
     expect(input.compareDocumentPosition(note) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(note).not.toHaveClass("truncate");
     expect(note).not.toHaveClass("whitespace-nowrap");
-    expect(note).toHaveClass("m-0", "text-v3-text-muted", "text-[calc(12px*var(--glint-ui-scale,1))]");
+    expect(note).toHaveClass("m-0", "text-muted-foreground", "text-[calc(12px*var(--glint-ui-scale,1))]");
     expect(input.getAttribute("aria-describedby")?.split(/\s+/)).toContain(note.id);
     expect(slotOf(container, "이메일")).toBeNull();
     expect(group).toContainElement(note);

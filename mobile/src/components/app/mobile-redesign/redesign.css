@@ -4006,7 +4006,9 @@ body:has([data-slot="auth-register-page"]) main[data-slot="main-content"] {
   gap: 12px;
 }
 
-[data-slot="auth-register-page"] .auth-input-group {
+[data-slot="auth-register-page"] .auth-input-group,
+[data-slot="auth-kakao-onboarding-page"] .auth-input-group,
+[data-slot="auth-page"] .auth-input-group {
   display: flex;
   flex-direction: column;
   gap: 6px;
@@ -4021,7 +4023,8 @@ body:has([data-slot="auth-register-page"]) main[data-slot="main-content"] {
 }
 
 [data-slot="auth-register-page"] .auth-input-wrap,
-[data-slot="auth-register-page"] .auth-select-wrap {
+[data-slot="auth-register-page"] .auth-select-wrap,
+[data-slot="auth-kakao-onboarding-page"] .auth-select-wrap {
   position: relative;
 }
 
@@ -4071,7 +4074,8 @@ body:has([data-slot="auth-register-page"]) main[data-slot="main-content"] {
   visibility: hidden;
 }
 
-[data-slot="auth-register-page"] .auth-select {
+[data-slot="auth-register-page"] .auth-select,
+[data-slot="auth-kakao-onboarding-page"] .auth-select {
   width: 100%;
   padding: 13px 40px 13px 16px;
   border: 1px solid hsl(var(--v3-border));
@@ -4087,11 +4091,13 @@ body:has([data-slot="auth-register-page"]) main[data-slot="main-content"] {
   cursor: pointer;
 }
 
-[data-slot="auth-register-page"] .auth-select:focus {
+[data-slot="auth-register-page"] .auth-select:focus,
+[data-slot="auth-kakao-onboarding-page"] .auth-select:focus {
   border-color: hsl(var(--v3-primary));
 }
 
-[data-slot="auth-register-page"] .auth-select-chev {
+[data-slot="auth-register-page"] .auth-select-chev,
+[data-slot="auth-kakao-onboarding-page"] .auth-select-chev {
   position: absolute;
   top: 50%;
   right: 14px;

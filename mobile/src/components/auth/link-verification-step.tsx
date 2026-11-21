@@ -7,12 +7,11 @@ import { useLocale } from "@/providers/LocaleProvider";
 import "@/components/app/mobile-redesign/redesign.css";
 
 interface Props {
-  embedded?: boolean;
   onVerify(code: string): Promise<{ success: boolean; error?: string }>;
   onRestart(): void;
   "data-component": string;
 }
-export function LinkVerificationStep({ onVerify, onRestart, embedded = false, "data-component": base }: Props) {
+export function LinkVerificationStep({ onVerify, onRestart, "data-component": base }: Props) {
   const [code, setCode] = useState("");
   const [error, setError] = useState<string>();
   const [loading, setLoading] = useState(false);
@@ -23,14 +22,15 @@ export function LinkVerificationStep({ onVerify, onRestart, embedded = false, "d
   useEffect(() => {
     if (!loading && error) inputRef.current?.focus();
   }, [loading, error]);
-  return <div className={embedded ? undefined : "auth-page"} data-slot="link-verification-step" data-component={base} data-source-component="LinkVerificationStep">
-    <p className="auth-sub" data-slot="auth-sub">입력하신 정보와 일치하는 기존 계정이 있으면 문자로 인증번호를 보내드려요. 5분 안에 입력해 주세요.</p>
+  return <div data-slot="link-verification-step" data-component={base} data-source-component="LinkVerificationStep">
+    <p className="auth-sub mb-3" data-slot="auth-sub">입력하신 정보와 일치하는 기존 계정이 있으면 문자로 인증번호를 보내드려요. 5분 안에 입력해 주세요.</p>
     {error && <div className="auth-server-error mt-3" data-component={`${base}_error`} data-slot="auth-server-error" role="alert" id={errorId}>{error}</div>}
     <form className="auth-form" data-slot="auth-form" onSubmit={async event => {
       event.preventDefault();
       if (loading) return;
       messages.markSubmitted();
       if (!/^\d{6}$/.test(code)) { setError("인증번호 6자리를 입력해 주세요."); return; }
+      setError(undefined);
       setLoading(true);
       try {
         const result = await onVerify(code);
