@@ -125,6 +125,7 @@ export default function RegisterPage() {
   const [isCheckingEmailDuplicate, setIsCheckingEmailDuplicate] = useState(false);
   const [emailLookup, setEmailLookup] = useState<{ email: string; exists: boolean; seq: number } | null>(null);
   const emailLookupRef = useRef<typeof emailLookup>(null);
+  const pendingEmailLookupRef = useRef<{ email: string; settled: Promise<void> } | null>(null);
   const emailRequestSeq = useRef(0);
   const [challenge, setChallenge] = useState<string | null>(null);
   const [emailVerificationRequired, setEmailVerificationRequired] = useState(true);
@@ -238,10 +239,11 @@ export default function RegisterPage() {
     }
 
     let cancelled = false;
+    let pendingLookup: NonNullable<typeof pendingEmailLookupRef.current> | null = null;
     const timer = window.setTimeout(() => {
       setIsCheckingEmailDuplicate(true);
       const seq = ++emailRequestSeq.current;
-      void authApi
+      const settled = authApi
         .checkEmailExists(normalizedEmail)
         .then(({ exists }) => {
           if (cancelled) return;
@@ -265,11 +267,15 @@ export default function RegisterPage() {
         })
         .finally(() => {
           if (!cancelled) setIsCheckingEmailDuplicate(false);
+          if (pendingEmailLookupRef.current === pendingLookup) pendingEmailLookupRef.current = null;
         });
+      pendingLookup = { email: normalizedEmail, settled };
+      pendingEmailLookupRef.current = pendingLookup;
     }, 250);
 
     return () => {
       cancelled = true;
+      if (pendingEmailLookupRef.current === pendingLookup) pendingEmailLookupRef.current = null;
       window.clearTimeout(timer);
       setIsCheckingEmailDuplicate(false);
     };
@@ -454,6 +460,10 @@ export default function RegisterPage() {
       }
     }
     try {
+      // Earlier lookups must finish reading before registration can create this address.
+      while (pendingEmailLookupRef.current?.email === submittedEmail) {
+        await pendingEmailLookupRef.current.settled;
+      }
       const registerSeq = ++emailRequestSeq.current;
       const response = await authApi.register({
         email: result.data.email,
