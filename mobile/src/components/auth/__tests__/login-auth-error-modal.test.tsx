@@ -7,3 +7,9 @@ it.each([["ACCOUNT_LINKED", "계정이 연결됐어요."], ["ONBOARDING_SESSION_
   render(<LoginAuthErrorModal />);
   expect(screen.getByRole("heading", { name: title })).toBeInTheDocument();
 });
+it("renders the pending-match title and description", () => {
+  code = "LINK_PENDING_APPROVAL";
+  render(<LoginAuthErrorModal />);
+  expect(screen.getByRole("heading", { name: "승인 대기중 입니다." })).toBeInTheDocument();
+  expect(screen.getByText("관계자에게 문의해 주세요.")).toBeVisible();
+});

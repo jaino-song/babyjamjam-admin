@@ -1,5 +1,6 @@
 export const AUTH_ERROR_DIALOGS = {
   ACCOUNT_LINKED: { title: "계정이 연결됐어요.", description: "카카오로 다시 로그인해 주세요." },
+  LINK_PENDING_APPROVAL: { title: "승인 대기중 입니다.", description: "관계자에게 문의해 주세요." },
   ONBOARDING_SESSION_EXPIRED: { title: "로그인 세션이 만료됐어요.", description: "다시 로그인해 주세요." },
   ACCOUNT_REJECTED: {
     title: "가입이 거부됐어요.",

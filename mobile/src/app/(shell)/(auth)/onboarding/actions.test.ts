@@ -52,6 +52,33 @@ it("retains Kakao pending cookie for a link challenge", async () => {
   expect(store.delete).not.toHaveBeenCalled();
 });
 it.each([
+  ["problem document", createProblemDetails({ code: "PENDING_APPROVAL", requestId: "test-request" })],
+  ["plain body", { code: "PENDING_APPROVAL" }],
+] as const)("returns the pending-match label and keeps the Kakao cookie for a %s", async (_shape, data) => {
+  post.mockRejectedValue(new AxiosError("failure", undefined, undefined, undefined, { status: 403, data } as never));
+
+  expect(await completeKakaoOnboarding({ phone: "010-1234-5678", birthDate: "1990-01-01", role: "user" }))
+    .toEqual({ success: false, code: "LINK_PENDING_APPROVAL" });
+  expect(store.delete).not.toHaveBeenCalled();
+});
+it.each([
+  [403, "ACCOUNT_REJECTED"],
+  [400, "PENDING_APPROVAL"],
+] as const)("keeps the generic Kakao failure for %s %s", async (status, code) => {
+  post.mockRejectedValue(failure(status, code));
+
+  expect(await completeKakaoOnboarding({ phone: "010-1234-5678", birthDate: "1990-01-01", role: "user" }))
+    .toEqual({ success: false, error: "카카오 가입을 완료하지 못했습니다. 다시 시도해 주세요." });
+  expect(store.delete).not.toHaveBeenCalled();
+});
+it("keeps the generic failure when Kakao link verification is pending", async () => {
+  post.mockRejectedValue(failure(403, "PENDING_APPROVAL"));
+
+  expect(await verifyKakaoLink("challenge", "123456"))
+    .toEqual({ success: false, error: "카카오 가입을 완료하지 못했습니다. 다시 시도해 주세요." });
+  expect(store.delete).not.toHaveBeenCalled();
+});
+it.each([
   ["/phone", "INVALID_VALUE", "phone", "이미 등록된 전화번호예요. 다른 전화번호로 다시 시도해 주세요."],
   ["/phone", "REQUIRED", "phone", "전화번호 형식이 올바르지 않아요. 010-1234-5678처럼 입력해 주세요."],
   ["/birthDate", "INVALID_VALUE", "birthDate", "생년월일 형식이 올바르지 않아요. 1990-01-01처럼 입력해 주세요."],

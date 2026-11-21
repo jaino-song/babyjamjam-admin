@@ -124,6 +124,10 @@ export function OnboardingForm(props: OnboardingFormProps) {
     setIsLoading(true);
     const response = await completeKakaoOnboarding(result.data);
     setIsLoading(false);
+    if (response.code) {
+      router.replace(`/login?authError=${response.code}`);
+      return;
+    }
     if (!response.success) {
       // The server action already returns contract-resolved authored copy;
       // store it verbatim instead of re-adapting the string.
