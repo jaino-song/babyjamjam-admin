@@ -1,5 +1,6 @@
 import { createProblemDetails } from "@babyjamjam/shared";
 import { AxiosError } from "axios";
+import { StrictMode } from "react";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 
 import { api } from "@/lib/api/client";
@@ -35,8 +36,9 @@ const mockCheckEmailExists = authApi.checkEmailExists as jest.MockedFunction<typ
 
 const slotOf = (container: HTMLElement, fieldId: string) => container.querySelector(`#${fieldId}-error`);
 
-function renderRegister() {
-  return render(<RegisterPageContent variant="desktop" />);
+function renderRegister(strictMode = false) {
+  const form = <RegisterPageContent variant="desktop" />;
+  return render(strictMode ? <StrictMode>{form}</StrictMode> : form);
 }
 
 async function goToPersonalStep(container: HTMLElement) {
@@ -197,9 +199,9 @@ describe("RegisterPageContent field messages", () => {
   });
 });
 
-async function fillRegister(existingEmail = false) {
+async function fillRegister(existingEmail = false, strictMode = false) {
   mockCheckEmailExists.mockResolvedValue({ exists: existingEmail });
-  renderRegister();
+  const rendered = renderRegister(strictMode);
   fireEvent.change(screen.getByLabelText("이메일"), { target: { value: "existing@example.com" } });
   fireEvent.change(screen.getByLabelText("이름"), { target: { value: "홍길동" } });
   fireEvent.change(screen.getByLabelText("비밀번호", { selector: "input" }), { target: { value: "Passw0rd!x" } });
@@ -211,6 +213,7 @@ async function fillRegister(existingEmail = false) {
   fireEvent.change(await screen.findByLabelText("전화번호"), { target: { value: "01012345678" } });
   fireEvent.change(screen.getByLabelText("생년월일"), { target: { value: "19900101" } });
   await act(async () => { fireEvent.click(screen.getByRole("button", { name: "회원가입" })); });
+  return rendered;
 }
 
 it.each([true, false])("links an existing email with SMS (email verification %s)", async (emailVerificationRequired) => {
@@ -347,7 +350,7 @@ describe("email lookup identity on resubmission", () => {
 
   async function prepareCompetingLookups() {
     jest.mocked(authApi.register).mockResolvedValueOnce({ success: false });
-    await fillRegister(false);
+    const { unmount } = await fillRegister(false);
     expect(await screen.findByRole("alert")).toHaveTextContent("회원가입에 실패했어요.");
     fireEvent.click(screen.getByRole("button", { name: "이전" }));
     const direct = deferred<{ exists: boolean }>();
@@ -357,7 +360,7 @@ describe("email lookup identity on resubmission", () => {
       .mockImplementationOnce(() => debounced.promise);
     editAndAdvance("race@example.com");
     expect(mockCheckEmailExists).not.toHaveBeenCalledWith("race@example.com");
-    return { direct, debounced };
+    return { direct, debounced, unmount };
   }
 
   function expectDuplicateAccountStep() {
@@ -366,6 +369,93 @@ describe("email lookup identity on resubmission", () => {
     expect(screen.queryByLabelText("전화번호")).not.toBeInTheDocument();
     expect(screen.queryByText("회원가입 완료!")).not.toBeInTheDocument();
   }
+
+  it.each(["rejects", "resolves"] as const)("sends no register request after leaving while the debounced lookup %s", async (settlement) => {
+    const { direct, debounced, unmount } = await prepareCompetingLookups();
+    await submitAgain();
+    await act(async () => { jest.advanceTimersByTime(250); });
+    expect(mockCheckEmailExists.mock.calls.filter(([email]) => email === "race@example.com")).toHaveLength(2);
+    await act(async () => { direct.resolve({ exists: false }); });
+    expect(authApi.register).toHaveBeenCalledTimes(1);
+    unmount();
+    await act(async () => {
+      if (settlement === "rejects") debounced.reject(new Error("timeout"));
+      else debounced.resolve({ exists: false });
+    });
+    expect(authApi.register).toHaveBeenCalledTimes(1);
+    expect(mockReplace).not.toHaveBeenCalled();
+  });
+
+  it("sends no register request after leaving during the direct lookup", async () => {
+    const { direct, unmount } = await prepareCompetingLookups();
+    await submitAgain();
+    expect(mockCheckEmailExists.mock.calls.filter(([email]) => email === "race@example.com")).toHaveLength(1);
+    expect(authApi.register).toHaveBeenCalledTimes(1);
+    unmount();
+    await act(async () => { direct.resolve({ exists: false }); });
+    expect(authApi.register).toHaveBeenCalledTimes(1);
+    expect(mockReplace).not.toHaveBeenCalled();
+  });
+
+  it("does not navigate after leaving while the register request is in flight", async () => {
+    const { direct, unmount } = await prepareCompetingLookups();
+    const registration = deferred<Awaited<ReturnType<typeof authApi.register>>>();
+    jest.mocked(authApi.register).mockImplementationOnce(() => registration.promise);
+    await submitAgain();
+    await act(async () => { direct.resolve({ exists: false }); });
+    expect(authApi.register).toHaveBeenCalledTimes(2);
+    unmount();
+    await act(async () => {
+      registration.reject(new AxiosError("failure", undefined, undefined, undefined, { status: 403, data: { code: "PENDING_APPROVAL" } } as never));
+    });
+    expect(mockReplace).not.toHaveBeenCalled();
+  });
+
+  it("registers a new email and shows success under StrictMode", async () => {
+    await fillRegister(false, true);
+    expect(authApi.register).toHaveBeenCalledTimes(1);
+    expect(screen.getByText("회원가입 완료!")).toBeInTheDocument();
+  });
+
+  it("keeps another address's existing-email note after a stale rejection", async () => {
+    const lookupA = deferred<{ exists: boolean }>();
+    const lookupB = deferred<{ exists: boolean }>();
+    mockCheckEmailExists
+      .mockImplementationOnce(() => lookupA.promise)
+      .mockImplementationOnce(() => lookupB.promise);
+    renderRegister();
+    fireEvent.change(screen.getByLabelText("이메일"), { target: { value: "first@example.com" } });
+    await act(async () => { jest.advanceTimersByTime(250); });
+    fireEvent.change(screen.getByLabelText("이메일"), { target: { value: "second@example.com" } });
+    await act(async () => { jest.advanceTimersByTime(250); });
+    expect(mockCheckEmailExists.mock.calls).toEqual([["first@example.com"], ["second@example.com"]]);
+    await act(async () => { lookupB.resolve({ exists: true }); });
+    expect(screen.getByRole("note")).toHaveTextContent(existingNote);
+    await act(async () => { lookupA.reject(new Error("late")); });
+    expect(screen.getByRole("note")).toHaveTextContent(existingNote);
+  });
+
+  it("keeps another address's checking state after a stale settlement", async () => {
+    const lookupA = deferred<{ exists: boolean }>();
+    const lookupB = deferred<{ exists: boolean }>();
+    mockCheckEmailExists
+      .mockImplementationOnce(() => lookupA.promise)
+      .mockImplementationOnce(() => lookupB.promise);
+    renderRegister();
+    fireEvent.change(screen.getByLabelText("이름"), { target: { value: "홍길동" } });
+    fireEvent.change(screen.getByLabelText("비밀번호", { selector: "input" }), { target: { value: "Passw0rd!x" } });
+    fireEvent.change(screen.getByLabelText("비밀번호 확인"), { target: { value: "Passw0rd!x" } });
+    fireEvent.change(screen.getByLabelText("이메일"), { target: { value: "first@example.com" } });
+    await act(async () => { jest.advanceTimersByTime(250); });
+    fireEvent.change(screen.getByLabelText("이메일"), { target: { value: "second@example.com" } });
+    await act(async () => { jest.advanceTimersByTime(250); });
+    expect(mockCheckEmailExists.mock.calls).toEqual([["first@example.com"], ["second@example.com"]]);
+    expect(screen.getByRole("button", { name: "다음" })).toBeDisabled();
+    await act(async () => { lookupA.resolve({ exists: false }); });
+    expect(screen.getByRole("button", { name: "다음" })).toBeDisabled();
+    await act(async () => { lookupB.resolve({ exists: false }); });
+    expect(screen.getByRole("button", { name: "다음" })).toBeEnabled();
+  });
 
   it("waits for an earlier outstanding lookup before sending register", async () => {
     const { direct, debounced } = await prepareCompetingLookups();
