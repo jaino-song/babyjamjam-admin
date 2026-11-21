@@ -2,7 +2,7 @@
 
 
 import axios from "axios";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { normalizeApiError, type NormalizedApiError } from "@babyjamjam/shared";
 import { formatIsoDateInput } from "@babyjamjam/shared/utils/date-input";
@@ -92,7 +92,7 @@ export function useRegisterPageController() {
   const router = useRouter();
   const isMountedRef = useRef(false);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     isMountedRef.current = true;
     return () => {
       isMountedRef.current = false;
