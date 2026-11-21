@@ -90,6 +90,15 @@ function getConfirmPasswordMismatchError(password?: string, confirmPassword?: st
 
 export function useRegisterPageController() {
   const router = useRouter();
+  const isMountedRef = useRef(false);
+
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
+
   const [formData, setFormData] = useState<Partial<RegisterFormData>>({
     email: "",
     password: "",
@@ -366,6 +375,7 @@ export function useRegisterPageController() {
       while (pendingEmailLookupRef.current?.email === submittedEmail) {
         await pendingEmailLookupRef.current.promise;
       }
+      if (!isMountedRef.current) return;
       const registerSeq = ++emailRequestSeq.current;
       const response = await authApi.register({
         email: result.data.email,
@@ -400,7 +410,7 @@ export function useRegisterPageController() {
         setServerError("회원가입에 실패했어요.");
       }
     } catch (requestError: unknown) {
-
+      if (!isMountedRef.current) return;
       const errorData = axios.isAxiosError(requestError) ? requestError.response?.data : undefined;
       const normalized = normalizeApiError(requestError, { locale: "ko-KR", operation: "mutation" });
 
