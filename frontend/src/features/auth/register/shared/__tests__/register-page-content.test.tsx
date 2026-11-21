@@ -1,6 +1,6 @@
 import { createProblemDetails } from "@babyjamjam/shared";
 import { AxiosError } from "axios";
-import { StrictMode } from "react";
+import { startTransition, StrictMode, useEffect, useLayoutEffect, useState } from "react";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 
 import { api } from "@/lib/api/client";
@@ -319,6 +319,8 @@ describe("email lookup identity on resubmission", () => {
   afterEach(() => {
     jest.clearAllTimers();
     jest.useRealTimers();
+    mockReplace.mockReset();
+    jest.mocked(authApi.register).mockReset();
   });
 
   async function returnToDuplicateEmail() {
@@ -369,6 +371,76 @@ describe("email lookup identity on resubmission", () => {
     expect(screen.queryByLabelText("전화번호")).not.toBeInTheDocument();
     expect(screen.queryByText("회원가입 완료!")).not.toBeInTheDocument();
   }
+
+  it.each(["direct", "403"] as const)("%s answer between the removing commit and passive cleanup does nothing", async (stage) => {
+    // The host effect assigns this before the rendered form can be submitted.
+    let leave!: () => void;
+    const direct = deferred<{ exists: boolean }>();
+    const registration = deferred<Awaited<ReturnType<typeof authApi.register>>>();
+    const observedUnmount = deferred<void>();
+    const routePassive = deferred<void>();
+    const trace: string[] = [];
+    mockCheckEmailExists.mockImplementationOnce(() => direct.promise);
+    jest.mocked(authApi.register).mockImplementationOnce(() => {
+      trace.push("register dispatched");
+      return registration.promise;
+    });
+    mockReplace.mockImplementation(() => { trace.push("navigation"); });
+
+    function Departure() {
+      useLayoutEffect(() => {
+        if (document.querySelector('button[type="submit"]')) throw new Error("register still in DOM");
+        trace.push("register DOM removed");
+        const end = Date.now() + 25;
+        while (Date.now() < end) { /* Occupy this commit's scheduler slice. */ }
+        if (stage === "direct") direct.resolve({ exists: false });
+        else registration.reject(new AxiosError("failure", undefined, undefined, undefined, { status: 403, data: { code: "PENDING_APPROVAL" } } as never));
+        observedUnmount.resolve();
+      }, []);
+      useEffect(() => {
+        trace.push("new route passive effect");
+        routePassive.resolve();
+      }, []);
+      return <main>Different route</main>;
+    }
+
+    function RouteHost() {
+      const [isRegister, setIsRegister] = useState(true);
+      useEffect(() => { leave = () => startTransition(() => setIsRegister(false)); }, []);
+      return isRegister ? <RegisterPageContent variant="desktop" /> : <Departure />;
+    }
+
+    render(<RouteHost />);
+    fireEvent.change(screen.getByLabelText("이메일"), { target: { value: "commit@example.com" } });
+    fireEvent.change(screen.getByLabelText("이름"), { target: { value: "홍길동" } });
+    fireEvent.change(screen.getByLabelText("비밀번호", { selector: "input" }), { target: { value: "Passw0rd!x" } });
+    fireEvent.change(screen.getByLabelText("비밀번호 확인"), { target: { value: "Passw0rd!x" } });
+    fireEvent.click(screen.getByRole("button", { name: "다음" }));
+    fireEvent.change(screen.getByLabelText("전화번호"), { target: { value: "01012345678" } });
+    fireEvent.change(screen.getByLabelText("생년월일"), { target: { value: "19900101" } });
+    await submitAgain();
+    if (stage === "403") {
+      await act(async () => { direct.resolve({ exists: false }); });
+      expect(trace).toEqual(["register dispatched"]);
+      trace.length = 0;
+    } else {
+      expect(trace).toEqual([]);
+    }
+
+    jest.useRealTimers();
+    const testGlobal = globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean };
+    const saved = testGlobal.IS_REACT_ACT_ENVIRONMENT;
+    testGlobal.IS_REACT_ACT_ENVIRONMENT = false;
+    try {
+      leave();
+      await observedUnmount.promise;
+      await routePassive.promise;
+    } finally {
+      testGlobal.IS_REACT_ACT_ENVIRONMENT = saved;
+      jest.useFakeTimers();
+    }
+    expect(trace).toEqual(["register DOM removed", "new route passive effect"]);
+  });
 
   it.each(["rejects", "resolves"] as const)("sends no register request after leaving while the debounced lookup %s", async (settlement) => {
     const { direct, debounced, unmount } = await prepareCompetingLookups();
