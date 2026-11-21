@@ -164,6 +164,32 @@ describe.each([390, 1280])("recovery list focus at %spx", width => {
     expect(card).toHaveFocus();
   });
 
+  test("discards a stale recovery callback after the user closes and reopens the jobs window", async () => {
+    const onOpenChange = jest.fn();
+    render(<ContractDocumentJobsPopover defaultOpen documentJobs={JOBS} data-component={BASE} onOpenChange={onOpenChange} />);
+    fireEvent.click(screen.getByRole("button", { name: /김하늘.*상세 보기/ }));
+    fireEvent.click(screen.getByRole("button", { name: "수동 전송" }));
+    const a = mockRecoveryDialog.mock.calls.at(-1)![0];
+    act(() => { a.onClose(); });
+
+    fireEvent.click(screen.getByRole("button", { name: "전자문서 작업 닫기" }));
+    expect(screen.queryByRole("dialog", { name: "전자문서 작업" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "전자문서 처리중" }));
+    expect(onOpenChange.mock.calls).toEqual([[false], [true]]);
+    expect(screen.getByRole("dialog", { name: "전자문서 작업" })).toBeInTheDocument();
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 20)); });
+
+    const card = screen.getByRole("button", { name: /김하늘.*상세 보기/ });
+    card.focus();
+    expect(card).toHaveFocus();
+    const focus = jest.spyOn(HTMLElement.prototype, "focus");
+    const event = new Event("closeAutoFocus", { cancelable: true });
+    const before = focus.mock.calls.length;
+    act(() => { a.onCloseAutoFocus?.(event); });
+    expect(focus.mock.calls.length).toBe(before);
+    expect(card).toHaveFocus();
+  });
+
   test("returns focus from the latest recovery callback when the jobs window closes with recovery still open", async () => {
     const view = render(<ContractDocumentJobsPopover open documentJobs={JOBS} data-component={BASE} />);
     fireEvent.click(screen.getByRole("button", { name: /김하늘.*상세 보기/ }));
