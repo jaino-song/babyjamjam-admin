@@ -44,6 +44,20 @@ const conversation = [
   { id: "m2", role: "user", content: "후속 질문", timestamp: "2026-10-01T03:00:00.000Z" },
 ] as FeedbackDetail["session"]["messages"];
 
+function expectDetailHierarchy(container: HTMLElement) {
+  const detail = container.querySelector('[data-panel="detail"]');
+  expect(detail).toBeInTheDocument();
+  const nodes = detail!.querySelectorAll("[data-component]");
+  expect(nodes.length).toBeGreaterThan(0);
+  for (const node of nodes) {
+    const name = node.getAttribute("data-component");
+    expect(name).toMatch(/^(desktop|mobile)_[a-z0-9]+(?:-[a-z0-9]+)*(?:_[a-z0-9]+(?:-[a-z0-9]+)*){1,}$/);
+    expect(name).toMatch(/^desktop_admin_page_/);
+    const owner = node.parentElement?.closest("[data-component]");
+    expect(name?.startsWith(`${owner?.getAttribute("data-component")}_`)).toBe(true);
+  }
+}
+
 function statValues(container: HTMLElement) {
   return Array.from(container.querySelectorAll('[data-slot="stat-mini-value"]'), (node) => node.textContent);
 }
@@ -104,6 +118,11 @@ describe("AdminFeedbackPage list load failure", () => {
       const { container } = renderPage();
 
       expect(skeletonCount(container)).toBeGreaterThan(0);
+      const skeleton = container.querySelector('[data-component="desktop_admin_page_split-layout_track_panel_detail-skeleton"]');
+      expect(skeleton).toBeInTheDocument();
+      expect(skeleton?.getAttribute("data-component")).toMatch(/^(desktop|mobile)_[a-z0-9]+(?:-[a-z0-9]+)*(?:_[a-z0-9]+(?:-[a-z0-9]+)*){1,}$/);
+      expect(skeleton?.getAttribute("data-component")).toMatch(/^desktop_admin_page_/);
+      expectDetailHierarchy(container);
       expect(screen.queryByText("피드백이 없습니다")).not.toBeInTheDocument();
       expect(screen.queryByText("검색 결과가 없습니다")).not.toBeInTheDocument();
       expect(screen.queryByRole("alert")).not.toBeInTheDocument();
@@ -119,6 +138,7 @@ describe("AdminFeedbackPage list load failure", () => {
 
     expect(await screen.findByText("피드백이 없습니다")).toBeInTheDocument();
     await waitFor(() => expect(statValues(container)).toEqual(["0", "0", "0"]));
+    expectDetailHierarchy(container);
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 
@@ -214,18 +234,20 @@ describe("AdminFeedbackPage inline detail", () => {
 
   it("keeps the feedback card and shows a retryable alert when the conversation fails to load", async () => {
     mockDetail.mockRejectedValue(new Error("network"));
-    await openDetail();
+    const { container } = await openDetail();
 
     const alert = await screen.findByRole("alert");
     expect(alert).toHaveTextContent("대화 내역을 불러오지 못했습니다");
     expect(screen.getAllByRole("alert")).toHaveLength(1);
     expect(screen.getByText("피드백 정보")).toBeInTheDocument();
+    expectDetailHierarchy(container);
     // The comment shows in the list row and in the feedback card.
     expect(screen.getAllByText("캐시된 코멘트").length).toBeGreaterThan(1);
 
     mockDetail.mockResolvedValue(detailResponse(conversation));
     fireEvent.click(screen.getByRole("button", { name: "다시 시도" }));
     expect(await screen.findByText("질문입니다")).toBeInTheDocument();
+    expectDetailHierarchy(container);
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     expect(mockDetail).toHaveBeenCalledTimes(2);
   });
@@ -239,7 +261,8 @@ describe("AdminFeedbackPage inline detail", () => {
       fireEvent.click(rowLabel);
       expect(await screen.findByText("피드백 정보")).toBeInTheDocument();
       expect(screen.getByText("대화 내역")).toBeInTheDocument();
-      expect(container.querySelector('[data-component="desktop_admin_page_detail-panel_info-card-2_loading-messages"]')).toBeInTheDocument();
+      expect(container.querySelector('[data-component="desktop_admin_page_split-layout_track_panel_detail-panel_main_scroll-content_admin-detail-content_info-card-2_body_loading-messages"]')).toBeInTheDocument();
+      expectDetailHierarchy(container);
       expect(screen.queryByRole("alert")).not.toBeInTheDocument();
       expect(mockDetail).not.toHaveBeenCalled();
     });
@@ -247,18 +270,19 @@ describe("AdminFeedbackPage inline detail", () => {
 
   it("renders nothing for a successful conversation with no messages", async () => {
     mockDetail.mockResolvedValue(detailResponse([]));
-    await openDetail();
+    const { container } = await openDetail();
 
     expect(await screen.findByText("피드백 정보")).toBeInTheDocument();
     await waitFor(() => expect(mockDetail).toHaveBeenCalled());
     await waitFor(() => expect(screen.queryByText("대화 내역")).not.toBeInTheDocument());
+    expectDetailHierarchy(container);
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 
   it("keeps the cached conversation and shows the notice when a refresh fails", async () => {
     mockDetail.mockRejectedValue(new Error("network"));
     mockList.mockResolvedValue(listResponse([row]));
-    renderPage((client) => client.setQueryData(["feedbackDetail", "fb-1"], detailResponse(conversation)));
+    const { container } = renderPage((client) => client.setQueryData(["feedbackDetail", "fb-1"], detailResponse(conversation)));
     fireEvent.click(await screen.findByText("김캐시"));
 
     expect(await screen.findByText("질문입니다")).toBeInTheDocument();
@@ -266,5 +290,17 @@ describe("AdminFeedbackPage inline detail", () => {
     expect(alert).toHaveTextContent("최신 정보를 불러오지 못했습니다");
     expect(screen.getAllByRole("alert")).toHaveLength(1);
     expect(screen.getByText("피드백 정보")).toBeInTheDocument();
+    expectDetailHierarchy(container);
+  });
+
+  it("keeps the full owner path for assistant markdown and message metadata", async () => {
+    mockDetail.mockResolvedValue(detailResponse([
+      ...conversation,
+      { id: "m3", role: "assistant", content: "답변입니다", timestamp: row.createdAt },
+    ]));
+    const { container } = await openDetail();
+
+    expect(await screen.findByText("답변입니다")).toBeInTheDocument();
+    expectDetailHierarchy(container);
   });
 });

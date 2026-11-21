@@ -19,8 +19,8 @@ describe("QueryErrorState", () => {
     render(<QueryErrorState dataComponent={DC} onRetry={jest.fn()} description="잠시 후 다시 시도해 주세요." />);
 
     const root = screen.getByRole("alert");
-    expect(root.querySelector(`[data-component="${DC}_title"][data-slot="title"]`)).not.toBeNull();
-    expect(root.querySelector(`[data-component="${DC}_description"][data-slot="description"]`)).not.toBeNull();
+    expect(root.querySelector(`[data-component="${DC}_text_title"][data-slot="title"]`)).not.toBeNull();
+    expect(root.querySelector(`[data-component="${DC}_text_description"][data-slot="description"]`)).not.toBeNull();
     expect(root.querySelector(`[data-component="${DC}_retry"][data-slot="retry"]`)).not.toBeNull();
   });
 
