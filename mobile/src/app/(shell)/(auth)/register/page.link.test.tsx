@@ -1,5 +1,5 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { StrictMode } from "react";
+import { startTransition, StrictMode, useEffect, useLayoutEffect, useState } from "react";
 import { AxiosError } from "axios";
 import { createProblemDetails } from "@babyjamjam/shared";
 import { authApi } from "@/services/api";
@@ -275,6 +275,74 @@ describe("email lookup arbitration", () => {
     jest.clearAllTimers();
     jest.useRealTimers();
     jest.restoreAllMocks();
+  });
+
+  it.each(["direct", "403"] as const)("%s answer between the removing commit and passive cleanup does nothing", async stage => {
+    view.unmount();
+    let leave!: () => void;
+    const direct = deferred<{ exists: boolean }>();
+    const registration = deferred<Awaited<ReturnType<typeof authApi.register>>>();
+    const observedUnmount = deferred<void>();
+    const routePassive = deferred<void>();
+    const trace: string[] = [];
+    jest.mocked(authApi.checkEmailExists).mockImplementationOnce(() => direct.promise);
+    jest.mocked(authApi.register).mockImplementationOnce(() => {
+      trace.push("register dispatched");
+      return registration.promise;
+    });
+    replace.mockImplementation(() => { trace.push("navigation"); });
+    function Departure() {
+      useLayoutEffect(() => {
+        if (document.querySelector('button[type="submit"]')) throw new Error("register still in DOM");
+        trace.push("register DOM removed");
+        const end = Date.now() + 25;
+        while (Date.now() < end) { /* occupy this commit's scheduler slice */ }
+        if (stage === "direct") direct.resolve({ exists: false });
+        else registration.reject(new AxiosError("failure", undefined, undefined, undefined, {
+          status: 403, data: { code: "PENDING_APPROVAL" },
+        } as never));
+        observedUnmount.resolve();
+      }, []);
+      useEffect(() => {
+        trace.push("new route passive effect");
+        routePassive.resolve();
+      }, []);
+      return <main>Different route</main>;
+    }
+    function RouteHost() {
+      const [isRegister, setIsRegister] = useState(true);
+      useEffect(() => { leave = () => startTransition(() => setIsRegister(false)); }, []);
+      return isRegister ? <RegisterPage /> : <Departure />;
+    }
+    render(<RouteHost />);
+    for (const [label, value] of [["이메일", "qa@example.test"], ["이름", "테스트"], ["비밀번호", "Password1!"], ["비밀번호 확인", "Password1!"]]) {
+      fireEvent.change(screen.getByLabelText(label), { target: { value } });
+    }
+    fireEvent.click(screen.getByRole("button", { name: "다음" }));
+    fireEvent.change(screen.getByLabelText("전화번호"), { target: { value: "01012345678" } });
+    fireEvent.change(screen.getByLabelText("생년월일"), { target: { value: "19900101" } });
+    fireEvent.click(screen.getByRole("button", { name: "다음" }));
+    fireEvent.change(screen.getByLabelText("요청 권한"), { target: { value: "user" } });
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "회원가입" })); });
+    if (stage === "403") {
+      await act(async () => { direct.resolve({ exists: false }); });
+      expect(trace).toEqual(["register dispatched"]);
+      trace.length = 0;
+    } else {
+      expect(trace).toEqual([]);
+    }
+    jest.useRealTimers();
+    const testGlobal = globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean };
+    const saved = testGlobal.IS_REACT_ACT_ENVIRONMENT;
+    testGlobal.IS_REACT_ACT_ENVIRONMENT = false;
+    try {
+      leave();
+      await observedUnmount.promise;
+      await routePassive.promise;
+    } finally {
+      testGlobal.IS_REACT_ACT_ENVIRONMENT = saved;
+    }
+    expect(trace).toEqual(["register DOM removed", "new route passive effect"]);
   });
 
   it.each(["rejects", "resolves"] as const)("sends no register after unmount while the debounced lookup %s", async settlement => {
