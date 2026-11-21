@@ -1,4 +1,5 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { StrictMode } from "react";
 import { AxiosError } from "axios";
 import { createProblemDetails } from "@babyjamjam/shared";
 import { authApi } from "@/services/api";
@@ -249,6 +250,8 @@ it.each([
 
 
 describe("email lookup arbitration", () => {
+  let view: ReturnType<typeof render>;
+
   function deferred<T>() {
     let resolve!: (value: T) => void;
     let reject!: (reason: Error) => void;
@@ -258,7 +261,7 @@ describe("email lookup arbitration", () => {
 
   beforeEach(() => {
     jest.useFakeTimers();
-    render(<RegisterPage />);
+    view = render(<RegisterPage />);
     for (const [label, value] of [["이메일", "qa@example.test"], ["이름", "테스트"], ["비밀번호", "Password1!"], ["비밀번호 확인", "Password1!"]]) {
       fireEvent.change(screen.getByLabelText(label), { target: { value } });
     }
@@ -272,6 +275,95 @@ describe("email lookup arbitration", () => {
     jest.clearAllTimers();
     jest.useRealTimers();
     jest.restoreAllMocks();
+  });
+
+  it.each(["rejects", "resolves"] as const)("sends no register after unmount while the debounced lookup %s", async settlement => {
+    const direct = deferred<{ exists: boolean }>();
+    const debounced = deferred<{ exists: boolean }>();
+    jest.mocked(authApi.checkEmailExists).mockReturnValueOnce(direct.promise).mockReturnValueOnce(debounced.promise);
+    jest.mocked(authApi.register).mockResolvedValue({ success: true });
+    fireEvent.click(screen.getByRole("button", { name: "회원가입" }));
+    await act(async () => { jest.advanceTimersByTime(250); });
+    expect(authApi.checkEmailExists).toHaveBeenCalledTimes(2);
+    await act(async () => { direct.resolve({ exists: false }); });
+    expect(authApi.register).not.toHaveBeenCalled();
+
+    view.unmount();
+    await act(async () => {
+      if (settlement === "rejects") debounced.reject(new Error("timeout"));
+      else debounced.resolve({ exists: false });
+    });
+
+    expect(authApi.register).not.toHaveBeenCalled();
+    expect(replace).not.toHaveBeenCalled();
+  });
+
+  it("sends no register after unmount during the direct lookup", async () => {
+    const direct = deferred<{ exists: boolean }>();
+    jest.mocked(authApi.checkEmailExists).mockReturnValueOnce(direct.promise);
+    jest.mocked(authApi.register).mockResolvedValue({ success: true });
+    fireEvent.click(screen.getByRole("button", { name: "회원가입" }));
+    expect(authApi.checkEmailExists).toHaveBeenCalledTimes(1);
+    expect(authApi.register).not.toHaveBeenCalled();
+
+    view.unmount();
+    await act(async () => { direct.resolve({ exists: false }); });
+
+    expect(authApi.register).not.toHaveBeenCalled();
+    expect(replace).not.toHaveBeenCalled();
+  });
+
+  it("does not navigate after unmount while register is in flight", async () => {
+    const registration = deferred<Awaited<ReturnType<typeof authApi.register>>>();
+    jest.mocked(authApi.checkEmailExists).mockResolvedValueOnce({ exists: false });
+    jest.mocked(authApi.register).mockReturnValueOnce(registration.promise);
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "회원가입" })); });
+    expect(authApi.register).toHaveBeenCalledTimes(1);
+
+    view.unmount();
+    const config = { data: JSON.stringify({ email: "qa@example.test", password: "Password1!", name: "테스트", phone: "01012345678", birthDate: "1990-01-01" }) };
+    const error = new AxiosError("failure", undefined, config as never, undefined, { status: 403, data: { code: "PENDING_APPROVAL" } } as never);
+    await act(async () => { registration.reject(error); });
+
+    expect(replace).not.toHaveBeenCalled();
+  });
+
+  it("keeps another address's existing-email note after a stale rejection", async () => {
+    const lookupA = deferred<{ exists: boolean }>();
+    const lookupB = deferred<{ exists: boolean }>();
+    jest.mocked(authApi.checkEmailExists).mockReturnValueOnce(lookupA.promise).mockReturnValueOnce(lookupB.promise);
+    fireEvent.click(screen.getByRole("button", { name: "이전" }));
+    fireEvent.click(screen.getByRole("button", { name: "이전" }));
+    await act(async () => { jest.advanceTimersByTime(250); });
+    fireEvent.change(screen.getByLabelText("이메일"), { target: { value: "other@example.test" } });
+    await act(async () => { jest.advanceTimersByTime(250); });
+    expect(authApi.checkEmailExists).toHaveBeenNthCalledWith(1, "qa@example.test");
+    expect(authApi.checkEmailExists).toHaveBeenNthCalledWith(2, "other@example.test");
+    await act(async () => { lookupB.resolve({ exists: true }); });
+    expect(screen.getByRole("note")).toHaveTextContent("이미 등록된 이메일이에요.");
+
+    await act(async () => { lookupA.reject(new Error("late")); });
+
+    expect(screen.getByRole("note")).toHaveTextContent("이미 등록된 이메일이에요.");
+  });
+
+  it("keeps another address's checking state after a stale settlement", async () => {
+    const lookupA = deferred<{ exists: boolean }>();
+    const lookupB = deferred<{ exists: boolean }>();
+    jest.mocked(authApi.checkEmailExists).mockReturnValueOnce(lookupA.promise).mockReturnValueOnce(lookupB.promise);
+    fireEvent.click(screen.getByRole("button", { name: "이전" }));
+    fireEvent.click(screen.getByRole("button", { name: "이전" }));
+    await act(async () => { jest.advanceTimersByTime(250); });
+    fireEvent.change(screen.getByLabelText("이메일"), { target: { value: "other@example.test" } });
+    await act(async () => { jest.advanceTimersByTime(250); });
+    expect(authApi.checkEmailExists).toHaveBeenNthCalledWith(1, "qa@example.test");
+    expect(authApi.checkEmailExists).toHaveBeenNthCalledWith(2, "other@example.test");
+    expect(screen.getByRole("button", { name: "다음" })).toBeDisabled();
+
+    await act(async () => { lookupA.resolve({ exists: false }); });
+    expect(screen.getByRole("button", { name: "다음" })).toBeDisabled();
+    await act(async () => { lookupB.resolve({ exists: false }); });
+    expect(screen.getByRole("button", { name: "다음" })).toBeEnabled();
   });
 
   it("waits for an earlier outstanding lookup before sending register", async () => {
@@ -538,5 +630,32 @@ describe("email lookup arbitration", () => {
     expect(leaked).toBe(false);
     if (status === 403) expect(replace).toHaveBeenCalledWith("/login?authError=LINK_PENDING_APPROVAL");
     else expect(screen.getByRole("alert")).toBeInTheDocument();
+  });
+});
+
+describe("mounted register form under StrictMode", () => {
+  beforeEach(() => { jest.useFakeTimers(); });
+  afterEach(() => {
+    jest.clearAllTimers();
+    jest.useRealTimers();
+  });
+
+  it("registers a new address once and shows success under StrictMode", async () => {
+    jest.mocked(authApi.checkEmailExists).mockResolvedValue({ exists: false });
+    jest.mocked(authApi.register).mockResolvedValue({ success: true });
+    render(<StrictMode><RegisterPage /></StrictMode>);
+    for (const [label, value] of [["이메일", "new@example.test"], ["이름", "테스트"], ["비밀번호", "Password1!"], ["비밀번호 확인", "Password1!"]]) {
+      fireEvent.change(screen.getByLabelText(label), { target: { value } });
+    }
+    fireEvent.click(screen.getByRole("button", { name: "다음" }));
+    fireEvent.change(screen.getByLabelText("전화번호"), { target: { value: "01012345678" } });
+    fireEvent.change(screen.getByLabelText("생년월일"), { target: { value: "19900101" } });
+    fireEvent.click(screen.getByRole("button", { name: "다음" }));
+    fireEvent.change(screen.getByLabelText("요청 권한"), { target: { value: "user" } });
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "회원가입" })); });
+
+    expect(authApi.register).toHaveBeenCalledTimes(1);
+    expect(authApi.register).toHaveBeenCalledWith(expect.objectContaining({ email: "new@example.test" }));
+    expect(screen.getByText("회원가입 완료!")).toBeInTheDocument();
   });
 });
