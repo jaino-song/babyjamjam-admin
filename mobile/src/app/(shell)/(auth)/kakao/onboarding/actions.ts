@@ -32,7 +32,7 @@ function kakaoSignupFailure(status: number, data: unknown): { error: string; fie
   return { error: KAKAO_SIGNUP_FAILURE_COPY };
 }
 
-export async function completeKakaoOnboarding(input: OnboardingInput): Promise<{ success: boolean; error?: string; field?: "phone" | "birthDate"; linkVerificationRequired?: boolean; linkChallengeToken?: string }> {
+export async function completeKakaoOnboarding(input: OnboardingInput): Promise<{ success: boolean; code?: "LINK_PENDING_APPROVAL"; error?: string; field?: "phone" | "birthDate"; linkVerificationRequired?: boolean; linkChallengeToken?: string }> {
   const cookieStore = await cookies();
   const pendingToken = cookieStore.get("pending_kakao_signup")?.value;
   if (!pendingToken) return { success: false, error: "카카오 가입 세션이 만료됐어요. 다시 로그인해 주세요." };
@@ -50,6 +50,9 @@ export async function completeKakaoOnboarding(input: OnboardingInput): Promise<{
     if (axios.isAxiosError(error) && error.response?.status === 401) cookieStore.delete("pending_kakao_signup");
     if (!axios.isAxiosError(error)) {
       return { success: false, error: KAKAO_SIGNUP_FAILURE_COPY };
+    }
+    if (error.response?.status === 403 && error.response.data?.code === "PENDING_APPROVAL") {
+      return { success: false, code: "LINK_PENDING_APPROVAL" };
     }
     return {
       success: false,

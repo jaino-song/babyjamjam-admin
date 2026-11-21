@@ -477,6 +477,11 @@ export default function RegisterPage() {
           : undefined;
       const normalized = normalizeApiError(err, { locale: "ko-KR", operation: "mutation" });
 
+      if (normalized.status === 403 && errorData?.code === "PENDING_APPROVAL") {
+        router.replace("/login?authError=LINK_PENDING_APPROVAL");
+        return;
+      }
+
       if (isPhoneDuplicateFailure(errorData, normalized)) {
         const phoneProblem = normalized.problem?.errors?.find(e => e.pointer === "/phone");
         setErrors((prev) => ({ ...prev, phone: normalized.problem?.code === "VALIDATION_FAILED" && phoneProblem?.code !== "INVALID_VALUE"

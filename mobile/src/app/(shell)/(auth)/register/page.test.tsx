@@ -7,9 +7,10 @@ import { authApi } from "@/services/api";
 import RegisterPage from "./page";
 
 const mockPush = jest.fn();
+const mockReplace = jest.fn();
 
 jest.mock("next/navigation", () => ({
-  useRouter: () => ({ push: mockPush }),
+  useRouter: () => ({ push: mockPush, replace: mockReplace }),
 }));
 
 jest.mock("@/services/api", () => ({
@@ -24,6 +25,7 @@ const mockCheckEmailExists = jest.mocked(authApi.checkEmailExists);
 describe("RegisterPage", () => {
   beforeEach(() => {
     mockPush.mockReset();
+    mockReplace.mockReset();
     mockCheckEmailExists.mockReset();
     mockCheckEmailExists.mockResolvedValue({ exists: false });
   });

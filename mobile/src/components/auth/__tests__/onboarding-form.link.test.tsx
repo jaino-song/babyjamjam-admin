@@ -7,6 +7,16 @@ jest.mock("@/app/(shell)/(auth)/kakao/onboarding/actions", () => ({ completeKaka
 beforeEach(() => {
   jest.resetAllMocks();
 });
+it("navigates to the pending-match notice without an alert or field error", async () => {
+  jest.mocked(completeKakaoOnboarding).mockResolvedValue({ success: false, code: "LINK_PENDING_APPROVAL" });
+  render(<OnboardingForm phone="010-1234-5678" birthDate="1990-01-01" role="user" />);
+  fireEvent.click(screen.getByRole("button", { name: "가입 완료" }));
+
+  await waitFor(() => expect(replace).toHaveBeenCalledWith("/login?authError=LINK_PENDING_APPROVAL"));
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  expect(document.querySelector('[aria-invalid="true"]')).toBeNull();
+  expect(screen.queryByLabelText("인증번호")).not.toBeInTheDocument();
+});
 it("opens the challenge, retains values on restart and returns to login after verification", async () => {
   jest.mocked(completeKakaoOnboarding).mockResolvedValue({ success: true, linkVerificationRequired: true, linkChallengeToken: "challenge" });
   jest.mocked(verifyKakaoLink).mockResolvedValue({ success: true });

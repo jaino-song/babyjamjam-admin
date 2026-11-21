@@ -1,8 +1,10 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { AxiosError } from "axios";
 import { createProblemDetails } from "@babyjamjam/shared";
 import { authApi } from "@/services/api";
 import RegisterPage from "./page";
-jest.mock("next/navigation", () => ({ useRouter: () => ({ push: jest.fn() }) }));
+const replace = jest.fn();
+jest.mock("next/navigation", () => ({ useRouter: () => ({ push: jest.fn(), replace }) }));
 jest.mock("@/services/api", () => ({ authApi: { register: jest.fn(), checkEmailExists: jest.fn(), verifyRegisterLink: jest.fn() } }));
 beforeEach(() => {
   jest.resetAllMocks();
@@ -31,6 +33,31 @@ async function submit() {
     fireEvent.click(screen.getByRole("button", { name: "회원가입" }));
   });
 }
+it.each([
+  ["problem document", createProblemDetails({ code: "PENDING_APPROVAL", requestId: "test-request" })],
+  ["plain body", { code: "PENDING_APPROVAL" }],
+] as const)("navigates to the pending-match notice without errors for a %s", async (_shape, data) => {
+  jest.mocked(authApi.register).mockRejectedValue(new AxiosError("failure", undefined, undefined, undefined, { status: 403, data } as never));
+  await submit();
+
+  await waitFor(() => expect(replace).toHaveBeenCalledWith("/login?authError=LINK_PENDING_APPROVAL"));
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  expect(document.querySelector('[aria-invalid="true"]')).toBeNull();
+  expect(screen.queryByLabelText("인증번호")).not.toBeInTheDocument();
+  expect(screen.queryByText("회원가입 완료!")).not.toBeInTheDocument();
+});
+it.each([
+  ["another code", 403, { code: "ACCOUNT_REJECTED" }, "네트워크 오류가 발생했어요. 다시 시도해 주세요."],
+  ["verified other code", 403, createProblemDetails({ code: "ACCOUNT_REJECTED", requestId: "test-request" }), "가입이 거부되었어요. 자세한 내용은 관리자에게 문의해 주세요."],
+  ["another status", 400, { code: "PENDING_APPROVAL" }, "네트워크 오류가 발생했어요. 다시 시도해 주세요."],
+] as const)("preserves the register failure for %s", async (_case, status, data, error) => {
+  jest.mocked(authApi.register).mockRejectedValue(new AxiosError("failure", undefined, undefined, undefined, { status, data } as never));
+  await submit();
+
+  expect(await screen.findByRole("alert")).toHaveTextContent(error);
+  expect(replace).not.toHaveBeenCalled();
+  expect(document.querySelector('[aria-invalid="true"]')).toBeNull();
+});
 it.each([true, false])("links through SMS with emailVerificationRequired=%s", async emailVerificationRequired => {
   jest.mocked(authApi.register).mockResolvedValue({ success: true, linkVerificationRequired: true, linkChallengeToken: "challenge" });
   jest.mocked(authApi.verifyRegisterLink).mockResolvedValue({ success: true, linked: true, code: "ACCOUNTS_LINKED", emailVerificationRequired });
