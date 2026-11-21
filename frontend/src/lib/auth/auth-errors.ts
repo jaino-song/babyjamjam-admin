@@ -25,6 +25,10 @@ export const AUTH_ERROR_DIALOGS = {
     title: "카카오 로그인에 실패했어요.",
     description: "잠시 후 다시 시도해 주세요.",
   },
+  LINK_PENDING_APPROVAL: {
+    title: "승인 대기중 입니다.",
+    description: "관계자에게 문의해 주세요.",
+  },
   PENDING_APPROVAL: {
     title: "관리자 승인 대기 중입니다.",
     description: "관리자의 승인이 완료된 후 로그인할 수 있습니다.",

@@ -28,7 +28,7 @@ const KAKAO_SIGNUP_FAILURE_COPY = "카카오 가입을 완료하지 못했습니
 
 export async function completeKakaoOnboarding(
     input: CompleteKakaoOnboardingInput,
-): Promise<{ success: boolean; error?: string; field?: "phone" | "birthDate"; linkVerificationRequired?: boolean; linkChallengeToken?: string }> {
+): Promise<{ success: boolean; code?: "LINK_PENDING_APPROVAL"; error?: string; field?: "phone" | "birthDate"; linkVerificationRequired?: boolean; linkChallengeToken?: string }> {
     const cookieStore = await cookies();
     const pendingSignupToken = cookieStore.get(PENDING_KAKAO_SIGNUP_COOKIE)?.value;
 
@@ -64,6 +64,11 @@ export async function completeKakaoOnboarding(
             if (status === 401) {
                 cookieStore.delete(PENDING_KAKAO_SIGNUP_COOKIE);
                 return { success: false, error: "카카오 가입 세션이 만료됐어요. 다시 로그인해 주세요." };
+            }
+            if (status === 403 && error.response?.data?.code === "PENDING_APPROVAL") {
+                // Keep the cookie: deleting it would re-render onboarding and
+                // race the form's navigation to the approval notice.
+                return { success: false, code: "LINK_PENDING_APPROVAL" };
             }
             const normalized = normalizeApiError(error, { locale: "ko-KR", operation: "mutation" });
             if (status === 400 && normalized.problem?.code === "VALIDATION_FAILED") {

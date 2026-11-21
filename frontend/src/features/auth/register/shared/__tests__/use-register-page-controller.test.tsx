@@ -8,8 +8,10 @@ import {
   useRegisterPageController,
 } from "../use-register-page-controller";
 
+const mockReplace = jest.fn();
+
 jest.mock("next/navigation", () => ({
-  useRouter: () => ({ push: jest.fn() }),
+  useRouter: () => ({ push: jest.fn(), replace: mockReplace }),
 }));
 
 jest.mock("@/lib/api/client", () => ({
