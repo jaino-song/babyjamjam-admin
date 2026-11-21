@@ -367,6 +367,123 @@ describe("email lookup identity on resubmission", () => {
     expect(screen.queryByText("회원가입 완료!")).not.toBeInTheDocument();
   }
 
+  it("waits for an earlier outstanding lookup before sending register", async () => {
+    const { direct, debounced } = await prepareCompetingLookups();
+    const registration = deferred<Awaited<ReturnType<typeof authApi.register>>>();
+    jest.mocked(authApi.register).mockImplementationOnce(() => registration.promise);
+    await submitAgain();
+    await act(async () => { jest.advanceTimersByTime(250); });
+    expect(mockCheckEmailExists.mock.calls.filter(([email]) => email === "race@example.com")).toHaveLength(2);
+    await act(async () => { direct.resolve({ exists: false }); });
+    expect(authApi.register).toHaveBeenCalledTimes(1);
+    expect(screen.queryByText("회원가입 완료!")).not.toBeInTheDocument();
+    await act(async () => { debounced.resolve({ exists: false }); });
+    expect(authApi.register).toHaveBeenCalledTimes(2);
+    expect(authApi.register).toHaveBeenLastCalledWith(expect.objectContaining({ email: "race@example.com" }));
+    await act(async () => { registration.resolve({ success: true }); });
+    expect(screen.getByText("회원가입 완료!")).toBeInTheDocument();
+    expect(screen.queryByText(duplicateError)).not.toBeInTheDocument();
+  });
+
+  it("does not wait for a cancelled lookup for the submitted address", async () => {
+    const cancelled = deferred<{ exists: boolean }>();
+    const direct = deferred<{ exists: boolean }>();
+    mockCheckEmailExists
+      .mockImplementationOnce(() => cancelled.promise)
+      .mockImplementationOnce(() => direct.promise);
+    renderRegister();
+    fireEvent.change(screen.getByLabelText("이름"), { target: { value: "홍길동" } });
+    fireEvent.change(screen.getByLabelText("비밀번호", { selector: "input" }), { target: { value: "Passw0rd!x" } });
+    fireEvent.change(screen.getByLabelText("비밀번호 확인"), { target: { value: "Passw0rd!x" } });
+    fireEvent.change(screen.getByLabelText("이메일"), { target: { value: "race@example.com" } });
+    await act(async () => { jest.advanceTimersByTime(250); });
+    expect(mockCheckEmailExists).toHaveBeenCalledTimes(1);
+    fireEvent.change(screen.getByLabelText("이메일"), { target: { value: "other@example.com" } });
+    fireEvent.change(screen.getByLabelText("이메일"), { target: { value: "race@example.com" } });
+    fireEvent.click(screen.getByRole("button", { name: "다음" }));
+    fireEvent.change(screen.getByLabelText("전화번호"), { target: { value: "010-1234-5678" } });
+    fireEvent.change(screen.getByLabelText("생년월일"), { target: { value: "1990-01-01" } });
+    await submitAgain();
+    expect(mockCheckEmailExists.mock.calls).toEqual([["race@example.com"], ["race@example.com"]]);
+    await act(async () => { direct.resolve({ exists: false }); });
+    expect(authApi.register).toHaveBeenCalledTimes(1);
+    expect(authApi.register).toHaveBeenCalledWith(expect.objectContaining({ email: "race@example.com" }));
+    expect(screen.getByText("회원가입 완료!")).toBeInTheDocument();
+    expect(screen.queryByText(duplicateError)).not.toBeInTheDocument();
+  });
+
+  it("does not release a newer lookup when a cancelled lookup settles", async () => {
+    const cancelled = deferred<{ exists: boolean }>();
+    const debounced = deferred<{ exists: boolean }>();
+    const direct = deferred<{ exists: boolean }>();
+    mockCheckEmailExists
+      .mockImplementationOnce(() => cancelled.promise)
+      .mockImplementationOnce(() => debounced.promise)
+      .mockImplementationOnce(() => direct.promise);
+    renderRegister();
+    fireEvent.change(screen.getByLabelText("이름"), { target: { value: "홍길동" } });
+    fireEvent.change(screen.getByLabelText("비밀번호", { selector: "input" }), { target: { value: "Passw0rd!x" } });
+    fireEvent.change(screen.getByLabelText("비밀번호 확인"), { target: { value: "Passw0rd!x" } });
+    fireEvent.change(screen.getByLabelText("이메일"), { target: { value: "race@example.com" } });
+    await act(async () => { jest.advanceTimersByTime(250); });
+    expect(mockCheckEmailExists).toHaveBeenCalledTimes(1);
+    fireEvent.change(screen.getByLabelText("이메일"), { target: { value: "other@example.com" } });
+    fireEvent.change(screen.getByLabelText("이메일"), { target: { value: "race@example.com" } });
+    fireEvent.click(screen.getByRole("button", { name: "다음" }));
+    fireEvent.change(screen.getByLabelText("전화번호"), { target: { value: "010-1234-5678" } });
+    fireEvent.change(screen.getByLabelText("생년월일"), { target: { value: "1990-01-01" } });
+    await act(async () => { jest.advanceTimersByTime(250); });
+    expect(mockCheckEmailExists).toHaveBeenCalledTimes(2);
+    await act(async () => { cancelled.resolve({ exists: false }); });
+    await submitAgain();
+    expect(mockCheckEmailExists.mock.calls).toEqual([["race@example.com"], ["race@example.com"], ["race@example.com"]]);
+    await act(async () => { direct.resolve({ exists: false }); });
+    expect(authApi.register).not.toHaveBeenCalled();
+    await act(async () => { debounced.resolve({ exists: false }); });
+    expect(authApi.register).toHaveBeenCalledTimes(1);
+    expect(authApi.register).toHaveBeenCalledWith(expect.objectContaining({ email: "race@example.com" }));
+    expect(screen.getByText("회원가입 완료!")).toBeInTheDocument();
+    expect(screen.queryByText(duplicateError)).not.toBeInTheDocument();
+  });
+
+  it("keeps a recorded nonexisting result when a same-address lookup rejects", async () => {
+    const { direct, debounced } = await prepareCompetingLookups();
+    jest.mocked(authApi.register).mockResolvedValueOnce({ success: false });
+    await submitAgain();
+    await act(async () => { direct.resolve({ exists: false }); });
+    expect(authApi.register).toHaveBeenCalledTimes(2);
+    expect(screen.getByRole("alert")).toHaveTextContent("회원가입에 실패했어요.");
+    await act(async () => { jest.advanceTimersByTime(250); });
+    await act(async () => { debounced.reject(new Error("lookup unavailable")); });
+    await submitAgain();
+    expect(mockCheckEmailExists.mock.calls.filter(([email]) => email === "race@example.com")).toHaveLength(2);
+    expect(authApi.register).toHaveBeenCalledTimes(3);
+    expect(authApi.register).toHaveBeenLastCalledWith(expect.objectContaining({ email: "race@example.com" }));
+  });
+
+  it("records nothing when a cancelled lookup resolves for the current address", async () => {
+    const cancelled = deferred<{ exists: boolean }>();
+    const current = deferred<{ exists: boolean }>();
+    mockCheckEmailExists
+      .mockImplementationOnce(() => cancelled.promise)
+      .mockImplementationOnce(() => current.promise);
+    renderRegister();
+    fireEvent.change(screen.getByLabelText("이메일"), { target: { value: "race@example.com" } });
+    await act(async () => { jest.advanceTimersByTime(250); });
+    fireEvent.change(screen.getByLabelText("이메일"), { target: { value: "other@example.com" } });
+    fireEvent.change(screen.getByLabelText("이메일"), { target: { value: "race@example.com" } });
+    await act(async () => { jest.advanceTimersByTime(250); });
+    expect(mockCheckEmailExists.mock.calls).toEqual([["race@example.com"], ["race@example.com"]]);
+    await act(async () => { cancelled.resolve({ exists: true }); });
+    expect(screen.queryByRole("note")).not.toBeInTheDocument();
+    expect(screen.queryByText(duplicateError)).not.toBeInTheDocument();
+    expect(screen.getByLabelText("이메일")).not.toHaveAttribute("aria-invalid", "true");
+    await act(async () => { current.resolve({ exists: false }); });
+    expect(screen.queryByRole("note")).not.toBeInTheDocument();
+    expect(screen.queryByText(duplicateError)).not.toBeInTheDocument();
+    expect(screen.getByLabelText("이메일")).not.toHaveAttribute("aria-invalid", "true");
+  });
+
   it("keeps a direct duplicate result when the same-address debounced lookup rejects (order A)", async () => {
     const { direct, debounced } = await prepareCompetingLookups();
     await submitAgain();
@@ -410,9 +527,11 @@ describe("email lookup identity on resubmission", () => {
     await act(async () => { jest.advanceTimersByTime(250); });
     expect(authApi.register).toHaveBeenCalledTimes(1);
     await act(async () => { direct.reject(new Error("lookup unavailable")); });
+    expect(authApi.register).toHaveBeenCalledTimes(1);
+    await act(async () => { debounced.resolve({ exists: true }); });
+    expect(authApi.register).toHaveBeenCalledTimes(2);
     const lookupOrder = mockCheckEmailExists.mock.invocationCallOrder;
     expect(lookupOrder[lookupOrder.length - 1]).toBeLessThan(jest.mocked(authApi.register).mock.invocationCallOrder[1]);
-    await act(async () => { debounced.resolve({ exists: true }); });
     await act(async () => { registration.resolve({ success: true }); });
     expectDuplicateAccountStep();
   });
@@ -495,9 +614,11 @@ describe("email lookup identity on resubmission", () => {
     expect(mockCheckEmailExists.mock.calls.filter(([email]) => email === "new@example.com")).toHaveLength(1);
     await submitAgain();
     expect(mockCheckEmailExists.mock.calls.filter(([email]) => email === "new@example.com")).toHaveLength(2);
+    expect(authApi.register).not.toHaveBeenCalledWith(expect.objectContaining({ email: "new@example.com" }));
+    expect(screen.queryByText("회원가입 완료!")).not.toBeInTheDocument();
+    await act(async () => { resolveLookup({ exists: false }); });
     expect(authApi.register).toHaveBeenLastCalledWith(expect.objectContaining({ email: "new@example.com" }));
     expect(await screen.findByText("회원가입 완료!")).toBeInTheDocument();
-    await act(async () => { resolveLookup({ exists: false }); });
     expect(screen.queryByText(duplicateError)).not.toBeInTheDocument();
     expect(screen.getByText("회원가입 완료!")).toBeInTheDocument();
   });

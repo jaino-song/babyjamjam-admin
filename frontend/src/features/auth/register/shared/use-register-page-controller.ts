@@ -21,6 +21,7 @@ const EMAIL_EXISTING_NOTE = "이미 등록된 이메일이에요. 카카오로 �
 const PHONE_DUPLICATE_ERROR = "이미 등록된 전화번호예요. 다른 전화번호로 다시 시도해 주세요.";
 
 type EmailLookup = { email: string; exists: boolean; seq: number };
+type PendingEmailLookup = { email: string; promise: Promise<void> };
 
 type RegisterField = keyof RegisterFormData;
 export type RegisterStep = 0 | 1;
@@ -106,6 +107,7 @@ export function useRegisterPageController() {
   const [isCheckingEmailDuplicate, setIsCheckingEmailDuplicate] = useState(false);
   const [emailLookup, setEmailLookup] = useState<EmailLookup | null>(null);
   const emailLookupRef = useRef<EmailLookup | null>(null);
+  const pendingEmailLookupRef = useRef<PendingEmailLookup | null>(null);
   const emailRequestSeq = useRef(0);
   const [linkChallengeToken, setLinkChallengeToken] = useState<string | null>(null);
   const [emailVerificationRequired, setEmailVerificationRequired] = useState(true);
@@ -135,11 +137,12 @@ export function useRegisterPageController() {
     }
 
     let isCancelled = false;
+    let pendingLookup: PendingEmailLookup | null = null;
     const timeoutId = window.setTimeout(() => {
       setIsCheckingEmailDuplicate(true);
 
       const seq = ++emailRequestSeq.current;
-      void authApi.checkEmailExists(normalizedEmail)
+      const promise = authApi.checkEmailExists(normalizedEmail)
         .then(({ exists }) => {
           if (!isCancelled) {
             // Keep the first confirmed duplicate, including its request order.
@@ -170,11 +173,19 @@ export function useRegisterPageController() {
           if (!isCancelled) {
             setIsCheckingEmailDuplicate(false);
           }
+          if (pendingEmailLookupRef.current === pendingLookup) {
+            pendingEmailLookupRef.current = null;
+          }
         });
+      pendingLookup = { email: normalizedEmail, promise };
+      pendingEmailLookupRef.current = pendingLookup;
     }, 250);
 
     return () => {
       isCancelled = true;
+      if (pendingEmailLookupRef.current === pendingLookup) {
+        pendingEmailLookupRef.current = null;
+      }
       window.clearTimeout(timeoutId);
       setIsCheckingEmailDuplicate(false);
     };
@@ -351,6 +362,10 @@ export function useRegisterPageController() {
     }
 
     try {
+      // Earlier lookups must finish reading before register can create the account.
+      while (pendingEmailLookupRef.current?.email === submittedEmail) {
+        await pendingEmailLookupRef.current.promise;
+      }
       const registerSeq = ++emailRequestSeq.current;
       const response = await authApi.register({
         email: result.data.email,
