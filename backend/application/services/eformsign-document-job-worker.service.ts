@@ -67,6 +67,8 @@ const HEARTBEAT_INTERVAL_MS = 30_000;
 const STALE_CUTOFF_MS = 5 * 60_000;
 const PRE_SEND_RETRY_DELAYS_MS = [60_000, 5 * 60_000, 15 * 60_000] as const;
 const MAX_PRE_SEND_RETRIES = PRE_SEND_RETRY_DELAYS_MS.length;
+const PRE_SEND_RETRY_JITTER_RATIO = 0.2;
+const MIN_PRE_SEND_RETRY_DELAY_MS = 30_000;
 const MAX_CONSECUTIVE_FINALIZE_STEPS = 3;
 const WORKER_ENABLED_ENV = "EFORMSIGN_DOCUMENT_JOBS_WORKER_ENABLED";
 const TERMINAL_RETENTION_MS = 7 * 24 * 60 * 60_000;
@@ -192,6 +194,7 @@ const REVISION_OPERATIONS_REQUEST_PREFIX = "service-record-revision-operations:"
  * rolls out the renderer provider.
  */
 export const SERVICE_RECORD_REVISION_GENERATION = Symbol("SERVICE_RECORD_REVISION_GENERATION");
+export const DOCUMENT_JOB_RETRY_RANDOM = Symbol("DOCUMENT_JOB_RETRY_RANDOM");
 
 export interface ServiceRecordRevisionGenerationPort {
     executeRevision(
@@ -411,6 +414,7 @@ export class EformsignDocumentJobWorkerService {
         private readonly revisionOperationCoordinator?: ServiceRecordRevisionOperationCoordinatorPort,
         @Optional() private readonly manualRecovery?: EformsignDocumentJobManualRecoveryService,
         @Optional() @Inject(EFORMSIGN_CONTRACT_RECOVERY_REPOSITORY) private readonly contractRecovery?: IEformsignContractRecoveryRepository,
+        @Optional() @Inject(DOCUMENT_JOB_RETRY_RANDOM) private readonly retryRandom: () => number = Math.random,
     ) {}
 
     @Interval(WORKER_INTERVAL_MS)
@@ -488,6 +492,15 @@ export class EformsignDocumentJobWorkerService {
         } catch (error) {
             try {
                 captureBackendError(error, { handled: true, operation: "document-job-authorization" });
+            } catch { /* Observability must not change job handling. */ }
+            try {
+                this.logger.warn({
+                    jobId: job.id,
+                    jobType: job.jobType,
+                    errorName: errorClassName(error),
+                    // Arbitrary exception messages can contain SQL, payloads or personal data.
+                    errorMessage: "SERVICE_RECORD_REVISION_AUTHORIZATION_FAILURE",
+                });
             } catch { /* Observability must not change job handling. */ }
             if (sendEvidence.step) {
                 await this.markAndReconcile(job, sendEvidence.step);
@@ -1063,7 +1076,13 @@ export class EformsignDocumentJobWorkerService {
             return;
         }
         if (job.attempts <= MAX_PRE_SEND_RETRIES) {
-            const delayMs = PRE_SEND_RETRY_DELAYS_MS[job.attempts - 1] ?? PRE_SEND_RETRY_DELAYS_MS.at(-1)!;
+            const baseDelayMs = PRE_SEND_RETRY_DELAYS_MS[job.attempts - 1] ?? PRE_SEND_RETRY_DELAYS_MS.at(-1)!;
+            const isRevision = revisionPayload(job.payload) || revisionOperationsPayload(job.payload);
+            const delayMs = isRevision
+                ? Math.max(MIN_PRE_SEND_RETRY_DELAY_MS, Math.round(
+                    baseDelayMs * (1 + PRE_SEND_RETRY_JITTER_RATIO * (2 * this.retryRandom() - 1)),
+                ))
+                : baseDelayMs;
             await this.repository.scheduleRetry(
                 job.id,
                 leaseToken,
