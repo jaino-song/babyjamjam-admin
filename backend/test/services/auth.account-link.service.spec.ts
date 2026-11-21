@@ -195,6 +195,33 @@ describe("SMS account linking", () => {
         expect(tx.user.updateMany).not.toHaveBeenCalled();
         expect(tx.auth_email_outbox.create).not.toHaveBeenCalled();
     });
+    it.each(["kakao", "email"])("returns the ordinary decoy for a pending owner with a matching birth date via %s", async method => {
+        user.role = "owner";
+        user.approvalStatus = "pending";
+        if (method === "email") { user.kakaoId = "kakao"; user.passwordHash = null; }
+        (method === "kakao" ? tx.user.findMany : prisma.user.findMany).mockResolvedValue([user]);
+        const before = { ...user };
+        await expect(method === "kakao" ? startKakao(service) : startEmail(service)).resolves.toEqual({
+            success: true, linkVerificationRequired: true, linkChallengeToken: token,
+            message: "입력하신 정보와 일치하는 기존 계정이 있으면 문자로 인증번호를 보내드려요.",
+        });
+        expect(challenge.issue).toHaveBeenCalledTimes(1);
+        expect(challenge.issue).toHaveBeenCalledWith({
+            purpose: method === "kakao" ? "kakao_link" : "email_link", phone, targetUserId: null,
+            ...(method === "kakao" ? { kakaoId: stored.kakaoId }
+                : { email: "new@example.invalid", passwordHash: "new-hash", name: "New" }),
+        });
+        expect(user).toEqual(before);
+        expect(stored.consumedAt).toBeNull();
+        for (const client of [tx, prisma]) {
+            expect(client.auth_flow_state.updateMany).not.toHaveBeenCalled();
+            expect(client.user.create).not.toHaveBeenCalled();
+            expect(client.user.update).not.toHaveBeenCalled();
+            expect(client.user.updateMany).not.toHaveBeenCalled();
+            expect(client.auth_token.create).not.toHaveBeenCalled();
+            expect(client.auth_email_outbox.create).not.toHaveBeenCalled();
+        }
+    });
     it("keeps another email account's generic success ahead of the pending match", async () => {
         prisma.user.findUnique.mockResolvedValue({ id: "other" });
         prisma.user.findMany.mockResolvedValue([{ ...user, approvalStatus: "pending", kakaoId: "kakao", passwordHash: null }]);
