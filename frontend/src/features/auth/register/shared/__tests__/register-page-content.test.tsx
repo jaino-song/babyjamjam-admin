@@ -335,6 +335,142 @@ describe("email lookup identity on resubmission", () => {
     await act(async () => { fireEvent.click(screen.getByRole("button", { name: "회원가입" })); });
   }
 
+  function deferred<T>() {
+    let resolve!: (value: T) => void;
+    let reject!: (error: Error) => void;
+    const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+      resolve = resolvePromise;
+      reject = rejectPromise;
+    });
+    return { promise, resolve, reject };
+  }
+
+  async function prepareCompetingLookups() {
+    jest.mocked(authApi.register).mockResolvedValueOnce({ success: false });
+    await fillRegister(false);
+    expect(await screen.findByRole("alert")).toHaveTextContent("회원가입에 실패했어요.");
+    fireEvent.click(screen.getByRole("button", { name: "이전" }));
+    const direct = deferred<{ exists: boolean }>();
+    const debounced = deferred<{ exists: boolean }>();
+    mockCheckEmailExists
+      .mockImplementationOnce(() => direct.promise)
+      .mockImplementationOnce(() => debounced.promise);
+    editAndAdvance("race@example.com");
+    expect(mockCheckEmailExists).not.toHaveBeenCalledWith("race@example.com");
+    return { direct, debounced };
+  }
+
+  function expectDuplicateAccountStep() {
+    expect(screen.getByText(duplicateError)).toBeInTheDocument();
+    expect(screen.getByLabelText("이메일")).toHaveAttribute("aria-invalid", "true");
+    expect(screen.queryByLabelText("전화번호")).not.toBeInTheDocument();
+    expect(screen.queryByText("회원가입 완료!")).not.toBeInTheDocument();
+  }
+
+  it("keeps a direct duplicate result when the same-address debounced lookup rejects (order A)", async () => {
+    const { direct, debounced } = await prepareCompetingLookups();
+    await submitAgain();
+    await act(async () => { direct.resolve({ exists: true }); });
+    expectDuplicateAccountStep();
+    await act(async () => { jest.advanceTimersByTime(250); });
+    expect(mockCheckEmailExists.mock.calls.filter(([email]) => email === "race@example.com")).toHaveLength(2);
+    await act(async () => { debounced.reject(new Error("lookup unavailable")); });
+    expectDuplicateAccountStep();
+  });
+
+  it("retains a direct duplicate through a later debounced false and resubmission", async () => {
+    const { direct, debounced } = await prepareCompetingLookups();
+    await submitAgain();
+    await act(async () => { direct.resolve({ exists: true }); });
+    expectDuplicateAccountStep();
+
+    await act(async () => { jest.advanceTimersByTime(250); });
+    expect(mockCheckEmailExists.mock.calls.filter(([email]) => email === "race@example.com")).toHaveLength(2);
+    await act(async () => { debounced.resolve({ exists: false }); });
+    expectDuplicateAccountStep();
+
+    // Clear the field error without changing the lookup's normalized address.
+    editAndAdvance("RACE@example.com");
+    await submitAgain();
+    expect(authApi.register).toHaveBeenCalledTimes(3);
+    expect(authApi.register).toHaveBeenLastCalledWith(expect.objectContaining({ email: "race@example.com" }));
+    expect(mockCheckEmailExists.mock.calls.filter(([email]) => email === "race@example.com")).toHaveLength(2);
+    expectDuplicateAccountStep();
+
+    fireEvent.change(screen.getByLabelText("이메일"), { target: { value: "race@example.com" } });
+    expect(screen.getByRole("note")).toHaveTextContent(existingNote);
+    expect(screen.getByLabelText("이메일")).not.toHaveAttribute("aria-invalid", "true");
+  });
+
+  it("uses a pre-register debounced duplicate after the direct lookup rejects (order B)", async () => {
+    const { direct, debounced } = await prepareCompetingLookups();
+    const registration = deferred<Awaited<ReturnType<typeof authApi.register>>>();
+    jest.mocked(authApi.register).mockImplementationOnce(() => registration.promise);
+    await submitAgain();
+    await act(async () => { jest.advanceTimersByTime(250); });
+    expect(authApi.register).toHaveBeenCalledTimes(1);
+    await act(async () => { direct.reject(new Error("lookup unavailable")); });
+    const lookupOrder = mockCheckEmailExists.mock.invocationCallOrder;
+    expect(lookupOrder[lookupOrder.length - 1]).toBeLessThan(jest.mocked(authApi.register).mock.invocationCallOrder[1]);
+    await act(async () => { debounced.resolve({ exists: true }); });
+    await act(async () => { registration.resolve({ success: true }); });
+    expectDuplicateAccountStep();
+  });
+
+  it("allows success when the duplicate lookup was sent after register", async () => {
+    const { direct, debounced } = await prepareCompetingLookups();
+    const registration = deferred<Awaited<ReturnType<typeof authApi.register>>>();
+    jest.mocked(authApi.register).mockImplementationOnce(() => registration.promise);
+    await submitAgain();
+    await act(async () => { direct.resolve({ exists: false }); });
+    expect(authApi.register).toHaveBeenLastCalledWith(expect.objectContaining({ email: "race@example.com" }));
+    await act(async () => { jest.advanceTimersByTime(250); });
+    const lookupOrder = mockCheckEmailExists.mock.invocationCallOrder;
+    expect(lookupOrder[lookupOrder.length - 1]).toBeGreaterThan(jest.mocked(authApi.register).mock.invocationCallOrder[1]);
+    await act(async () => { debounced.resolve({ exists: true }); });
+    await act(async () => { registration.resolve({ success: true }); });
+    expect(screen.getByText("회원가입 완료!")).toBeInTheDocument();
+    expect(screen.queryByText(duplicateError)).not.toBeInTheDocument();
+  });
+
+  it("retains a debounced duplicate when the direct lookup later reports false", async () => {
+    const { direct, debounced } = await prepareCompetingLookups();
+    await submitAgain();
+    await act(async () => { jest.advanceTimersByTime(250); });
+    await act(async () => { debounced.resolve({ exists: true }); });
+    await act(async () => { direct.resolve({ exists: false }); });
+    expectDuplicateAccountStep();
+    expect(screen.queryByRole("note")).not.toBeInTheDocument();
+    // A case-only edit clears the field error without scheduling another lookup.
+    fireEvent.change(screen.getByLabelText("이메일"), { target: { value: "RACE@example.com" } });
+    expect(screen.getByRole("note")).toHaveTextContent(existingNote);
+    expect(screen.getByLabelText("이메일")).not.toHaveAttribute("aria-invalid", "true");
+  });
+
+  it("allows success when both same-address lookups reject", async () => {
+    const { direct, debounced } = await prepareCompetingLookups();
+    await submitAgain();
+    await act(async () => { jest.advanceTimersByTime(250); });
+    await act(async () => { debounced.reject(new Error("lookup unavailable")); });
+    await act(async () => { direct.reject(new Error("lookup unavailable")); });
+    expect(authApi.register).toHaveBeenLastCalledWith(expect.objectContaining({ email: "race@example.com" }));
+    expect(screen.getByText("회원가입 완료!")).toBeInTheDocument();
+    expect(screen.queryByText(duplicateError)).not.toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("shows no duplicate error or checked status when an unsettled debounced lookup rejects", async () => {
+    mockCheckEmailExists.mockRejectedValue(new Error("lookup unavailable"));
+    const { container } = renderRegister();
+    fireEvent.change(screen.getByLabelText("이메일"), { target: { value: "race@example.com" } });
+    await act(async () => { jest.advanceTimersByTime(250); });
+    expect(mockCheckEmailExists).toHaveBeenCalledWith("race@example.com");
+    expect(screen.queryByText(duplicateError)).not.toBeInTheDocument();
+    expect(screen.queryByRole("note")).not.toBeInTheDocument();
+    expect(slotOf(container, "이메일")).toBeNull();
+    expect(screen.getByLabelText("이메일")).not.toHaveAttribute("aria-invalid", "true");
+  });
+
   it("uses the new address during the debounce window after an existing address", async () => {
     await returnToDuplicateEmail();
     editAndAdvance("new@example.com");
