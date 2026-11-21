@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -123,7 +123,9 @@ export default function RegisterPage() {
   const [isSuccess, setIsSuccess] = useState(false);
   const [accountsLinked, setAccountsLinked] = useState(false);
   const [isCheckingEmailDuplicate, setIsCheckingEmailDuplicate] = useState(false);
-  const [emailLookup, setEmailLookup] = useState<{ email: string; exists: boolean } | null>(null);
+  const [emailLookup, setEmailLookup] = useState<{ email: string; exists: boolean; seq: number } | null>(null);
+  const emailLookupRef = useRef<typeof emailLookup>(null);
+  const emailRequestSeq = useRef(0);
   const [challenge, setChallenge] = useState<string | null>(null);
   const [emailVerificationRequired, setEmailVerificationRequired] = useState(true);
   const [emailTouched, setEmailTouched] = useState(false);
@@ -224,7 +226,8 @@ export default function RegisterPage() {
   useEffect(() => {
     if (!normalizedEmail || emailFormatError) {
       setIsCheckingEmailDuplicate(false);
-      setEmailLookup(null);
+      emailLookupRef.current = null;
+      setEmailLookup(emailLookupRef.current);
       setErrors((prev) => {
         if (prev.email !== EMAIL_DUPLICATE_ERROR) return prev;
         const next = { ...prev };
@@ -237,15 +240,22 @@ export default function RegisterPage() {
     let cancelled = false;
     const timer = window.setTimeout(() => {
       setIsCheckingEmailDuplicate(true);
+      const seq = ++emailRequestSeq.current;
       void authApi
         .checkEmailExists(normalizedEmail)
         .then(({ exists }) => {
           if (cancelled) return;
-          setEmailLookup({ email: normalizedEmail, exists });
+          // Keep the first positive result and its request order for this address.
+          if (emailLookupRef.current?.email !== normalizedEmail || !emailLookupRef.current.exists) {
+            emailLookupRef.current = { email: normalizedEmail, exists, seq };
+          }
+          setEmailLookup(emailLookupRef.current);
         })
         .catch(() => {
           if (cancelled) return;
-          setEmailLookup(null);
+          if (emailLookupRef.current?.email === normalizedEmail) return;
+          emailLookupRef.current = null;
+          setEmailLookup(emailLookupRef.current);
           setErrors((prev) => {
             if (prev.email !== EMAIL_DUPLICATE_ERROR) return prev;
             const next = { ...prev };
@@ -428,18 +438,23 @@ export default function RegisterPage() {
     setIsLoading(true);
     const submittedEmail = result.data.email.trim().toLowerCase();
     let submittedEmailExists = false;
-    if (emailLookup?.email === submittedEmail) {
-      submittedEmailExists = emailLookup.exists;
+    if (emailLookupRef.current?.email === submittedEmail) {
+      submittedEmailExists = emailLookupRef.current.exists;
     } else {
       try {
+        const seq = ++emailRequestSeq.current;
         const { exists } = await authApi.checkEmailExists(submittedEmail);
         submittedEmailExists = exists;
-        setEmailLookup({ email: submittedEmail, exists });
+        if (emailLookupRef.current?.email !== submittedEmail || !emailLookupRef.current.exists) {
+          emailLookupRef.current = { email: submittedEmail, exists, seq };
+        }
+        setEmailLookup(emailLookupRef.current);
       } catch {
         // Match the debounced lookup's fail-open behavior without treating it as a registration failure.
       }
     }
     try {
+      const registerSeq = ++emailRequestSeq.current;
       const response = await authApi.register({
         email: result.data.email,
         password: result.data.password,
@@ -450,7 +465,12 @@ export default function RegisterPage() {
       if (response.success) {
         if (response.linkVerificationRequired && response.linkChallengeToken) {
           setChallenge(response.linkChallengeToken);
-        } else if (submittedEmailExists) {
+        } else if (submittedEmailExists || (
+          emailLookupRef.current?.email === submittedEmail
+          && emailLookupRef.current.exists
+          // A later lookup may see the account this registration just created.
+          && emailLookupRef.current.seq < registerSeq
+        )) {
           setErrors(prev => ({ ...prev, email: EMAIL_DUPLICATE_ERROR }));
           setCurrentStep(1);
         } else {
@@ -470,7 +490,6 @@ export default function RegisterPage() {
         setServerError(REGISTER_FAILURE_COPY);
       }
     } catch (err: unknown) {
-      console.error("Registration error:", err);
       const errorData =
         typeof err === "object" && err !== null && "response" in err
           ? (err as AxiosLikeError).response?.data
