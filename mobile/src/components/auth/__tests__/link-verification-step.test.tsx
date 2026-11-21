@@ -16,12 +16,12 @@ it("validates six digits locally, sends digits, retains errors and restarts", as
   expect(restart).toHaveBeenCalledTimes(1);
 });
 
-it.each([false, true])("keeps secondary styling and the correct frame when embedded=%s", embedded => {
-  const { container } = render(<LinkVerificationStep {...(embedded ? { embedded: true } : {})} data-component="mobile_auth_register_link-verification" onVerify={jest.fn()} onRestart={jest.fn()} />);
+it("keeps secondary styling inside its host frame with space below the explanation", () => {
+  const { container } = render(<LinkVerificationStep data-component="mobile_auth_register_link-verification" onVerify={jest.fn()} onRestart={jest.fn()} />);
   const root = container.firstElementChild;
   expect(root).toHaveAttribute("data-slot", "link-verification-step");
-  if (embedded) expect(root).not.toHaveClass("auth-page");
-  else expect(root).toHaveClass("auth-page");
+  expect(root).not.toHaveClass("auth-page");
+  expect(root?.querySelector("p.auth-sub")).toHaveClass("mb-3");
   expect(screen.getByRole("button", { name: "인증하고 계정 연결" })).toHaveClass("auth-btn", { exact: true });
   expect(screen.getByRole("button", { name: "정보 다시 입력" })).toHaveClass("auth-btn secondary", { exact: true });
 });
@@ -71,4 +71,35 @@ it.each(["missing error", "rejected"])("shows fallback failures in the alert: %s
   fireEvent.change(screen.getByLabelText("인증번호"), { target: { value: "123456" } });
   fireEvent.click(screen.getByRole("button", { name: "인증하고 계정 연결" }));
   expect((await screen.findByRole("alert")).textContent).toBe("인증번호를 확인하지 못했습니다.");
+});
+
+
+it("clears a failed check while retrying the same code and shows the new failure", async () => {
+  let finish!: (result: { success: boolean; error: string }) => void;
+  const verify = jest.fn()
+    .mockResolvedValueOnce({ success: false, error: WRONG_CODE })
+    .mockImplementationOnce(() => new Promise<{ success: boolean; error: string }>(resolve => { finish = resolve; }));
+  render(<LinkVerificationStep data-component="mobile_auth_register_link-verification" onVerify={verify} onRestart={jest.fn()} />);
+  const input = screen.getByLabelText("인증번호");
+  const slotId = input.getAttribute("aria-describedby");
+  fireEvent.change(input, { target: { value: "123456" } });
+  fireEvent.click(screen.getByRole("button", { name: "인증하고 계정 연결" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent(WRONG_CODE);
+  expect(input).toHaveAttribute("aria-invalid", "true");
+  expect(input).toHaveFocus();
+
+  fireEvent.click(screen.getByRole("button", { name: "인증하고 계정 연결" }));
+  expect(verify).toHaveBeenNthCalledWith(2, "123456");
+  expect(input).toBeDisabled();
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  expect(input).not.toHaveAttribute("aria-invalid", "true");
+  expect(input).not.toHaveClass("error");
+  expect(input).toHaveAttribute("aria-describedby", slotId);
+
+  await act(async () => { finish({ success: false, error: "다시 확인해 주세요." }); });
+  expect(screen.getByRole("alert")).toHaveTextContent("다시 확인해 주세요.");
+  expect(input).toHaveAttribute("aria-invalid", "true");
+  expect(input).toHaveClass("error");
+  expect(input).toBeEnabled();
+  expect(input).toHaveFocus();
 });

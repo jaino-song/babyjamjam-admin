@@ -483,7 +483,7 @@ export default function RegisterPage() {
       </div>
       <div className="auth-title" data-component={`${REGISTER_BASE}_brand_title`}>회원가입</div>
     </div>
-    <LinkVerificationStep embedded data-component={`${REGISTER_BASE}_link-verification`}
+    <LinkVerificationStep data-component={`${REGISTER_BASE}_link-verification`}
     onRestart={() => { setChallenge(null); setCurrentStep(2); }} onVerify={async code => {
       try {
         const result = await authApi.verifyRegisterLink(challenge, code);

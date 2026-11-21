@@ -328,7 +328,7 @@ function RegisterStepFields({
                 role="note"
                 data-component="desktop_auth_register_step-fields_email-note"
                 data-slot="email-note"
-                className="m-0 text-[calc(12px*var(--glint-ui-scale,1))] text-v3-text-muted"
+                className="m-0 text-[calc(12px*var(--glint-ui-scale,1))] text-muted-foreground"
               >
                 {existingEmailNote}
               </p>

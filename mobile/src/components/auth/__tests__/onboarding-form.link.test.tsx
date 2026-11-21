@@ -11,9 +11,17 @@ it("opens the challenge, retains values on restart and returns to login after ve
   jest.mocked(completeKakaoOnboarding).mockResolvedValue({ success: true, linkVerificationRequired: true, linkChallengeToken: "challenge" });
   jest.mocked(verifyKakaoLink).mockResolvedValue({ success: true });
   render(<OnboardingForm phone="010-1234-5678" birthDate="1990-01-01" role="user" />);
+  const host = screen.getByText("카카오 가입 마무리").closest('[data-slot="auth-kakao-onboarding-page"]');
+  expect(host).toHaveClass("auth-page");
+  expect(screen.getByText("로그인에 필요한 추가 정보를 입력해 주세요.")).toBeInTheDocument();
   fireEvent.click(screen.getByText("가입 완료"));
   const code = await screen.findByLabelText("인증번호");
-  expect(code.closest('[data-slot="link-verification-step"]')).toHaveClass("auth-page");
+  const step = code.closest<HTMLDivElement>('[data-slot="link-verification-step"]');
+  expect(screen.getByText("카카오 가입 마무리")).toBeInTheDocument();
+  expect(screen.queryByText("로그인에 필요한 추가 정보를 입력해 주세요.")).not.toBeInTheDocument();
+  expect(host).toContainElement(step);
+  expect(host).toHaveClass("auth-page");
+  expect(step).not.toHaveClass("auth-page");
   fireEvent.click(screen.getByText("정보 다시 입력"));
   expect(screen.getByLabelText("전화번호")).toHaveValue("010-1234-5678");
   expect(screen.getByLabelText("생년월일")).toHaveValue("1990-01-01");
