@@ -2,7 +2,7 @@
 
 
 import axios from "axios";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { normalizeApiError, type NormalizedApiError } from "@babyjamjam/shared";
 import { formatIsoDateInput } from "@babyjamjam/shared/utils/date-input";
@@ -19,6 +19,8 @@ const PASSWORD_MISMATCH_ERROR = "비밀번호가 일치하지 않아요.";
 const EMAIL_DUPLICATE_ERROR = "이미 등록된 이메일입니다. 로그인하거나 비밀번호 찾기를 이용해 주세요.";
 const EMAIL_EXISTING_NOTE = "이미 등록된 이메일이에요. 카카오로 가입한 계정이라면 계속 진행해 비밀번호 로그인을 추가할 수 있어요.";
 const PHONE_DUPLICATE_ERROR = "이미 등록된 전화번호예요. 다른 전화번호로 다시 시도해 주세요.";
+
+type EmailLookup = { email: string; exists: boolean; seq: number };
 
 type RegisterField = keyof RegisterFormData;
 export type RegisterStep = 0 | 1;
@@ -102,7 +104,9 @@ export function useRegisterPageController() {
   const [accountsLinked, setAccountsLinked] = useState(false);
   const [currentStep, setCurrentStep] = useState<RegisterStep>(0);
   const [isCheckingEmailDuplicate, setIsCheckingEmailDuplicate] = useState(false);
-  const [emailLookup, setEmailLookup] = useState<{ email: string; exists: boolean } | null>(null);
+  const [emailLookup, setEmailLookup] = useState<EmailLookup | null>(null);
+  const emailLookupRef = useRef<EmailLookup | null>(null);
+  const emailRequestSeq = useRef(0);
   const [linkChallengeToken, setLinkChallengeToken] = useState<string | null>(null);
   const [emailVerificationRequired, setEmailVerificationRequired] = useState(true);
   const [emailTouched, setEmailTouched] = useState(false);
@@ -115,7 +119,8 @@ export function useRegisterPageController() {
   useEffect(() => {
     if (!normalizedEmail || emailFormatError) {
       setIsCheckingEmailDuplicate(false);
-      setEmailLookup(null);
+      emailLookupRef.current = null;
+      setEmailLookup(emailLookupRef.current);
 
       setErrors((prev) => {
         if (prev.email !== EMAIL_DUPLICATE_ERROR) {
@@ -133,13 +138,22 @@ export function useRegisterPageController() {
     const timeoutId = window.setTimeout(() => {
       setIsCheckingEmailDuplicate(true);
 
+      const seq = ++emailRequestSeq.current;
       void authApi.checkEmailExists(normalizedEmail)
         .then(({ exists }) => {
-          if (!isCancelled) setEmailLookup({ email: normalizedEmail, exists });
+          if (!isCancelled) {
+            // Keep the first confirmed duplicate, including its request order.
+            if (emailLookupRef.current?.email !== normalizedEmail || !emailLookupRef.current.exists) {
+              emailLookupRef.current = { email: normalizedEmail, exists, seq };
+            }
+            setEmailLookup(emailLookupRef.current);
+          }
         })
         .catch(() => {
           if (!isCancelled) {
-            setEmailLookup(null);
+            if (emailLookupRef.current?.email === normalizedEmail) return;
+            emailLookupRef.current = null;
+            setEmailLookup(emailLookupRef.current);
 
             setErrors((prev) => {
               if (prev.email !== EMAIL_DUPLICATE_ERROR) {
@@ -320,19 +334,24 @@ export function useRegisterPageController() {
 
     const submittedEmail = result.data.email.trim().toLowerCase();
     let submittedEmailExists = false;
-    if (emailLookup?.email === submittedEmail) {
-      submittedEmailExists = emailLookup.exists;
+    if (emailLookupRef.current?.email === submittedEmail) {
+      submittedEmailExists = emailLookupRef.current.exists;
     } else {
       try {
+        const seq = ++emailRequestSeq.current;
         const { exists } = await authApi.checkEmailExists(submittedEmail);
         submittedEmailExists = exists;
-        setEmailLookup({ email: submittedEmail, exists });
+        if (emailLookupRef.current?.email !== submittedEmail || !emailLookupRef.current.exists) {
+          emailLookupRef.current = { email: submittedEmail, exists, seq };
+        }
+        setEmailLookup(emailLookupRef.current);
       } catch {
         // Match the debounced lookup's fail-open behavior without treating it as a register failure.
       }
     }
 
     try {
+      const registerSeq = ++emailRequestSeq.current;
       const response = await authApi.register({
         email: result.data.email,
         password: result.data.password,
@@ -346,7 +365,9 @@ export function useRegisterPageController() {
           setLinkChallengeToken(response.linkChallengeToken);
           return;
         }
-        if (submittedEmailExists) {
+        const latestLookup = emailLookupRef.current;
+        // A lookup sent after register may see the account this call just created.
+        if (submittedEmailExists || (latestLookup?.email === submittedEmail && latestLookup.exists && latestLookup.seq < registerSeq)) {
           setErrors((prev) => ({ ...prev, email: EMAIL_DUPLICATE_ERROR }));
           setCurrentStep(0);
           return;
