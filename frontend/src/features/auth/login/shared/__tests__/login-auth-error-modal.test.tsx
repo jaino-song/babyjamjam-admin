@@ -24,6 +24,16 @@ beforeEach(() => {
 });
 
 describe("LoginAuthErrorModal", () => {
+  it("shows the exact pending-match title and description", () => {
+    authError = "LINK_PENDING_APPROVAL";
+    render(<LoginAuthErrorModal />);
+    const dialog = screen.getByRole("dialog", { name: "승인 대기중 입니다." });
+    expect(dialog).toHaveAccessibleDescription("관계자에게 문의해 주세요.");
+    expect(screen.getByText("관계자에게 문의해 주세요.")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "확인" }));
+    expect(mockReplace).toHaveBeenCalledWith("/login");
+  });
+
   it("shows the pending approval callback as a modal", () => {
     authError = "PENDING_APPROVAL";
     render(<LoginAuthErrorModal />);
@@ -43,6 +53,8 @@ describe("LoginAuthErrorModal", () => {
   });
 
   it.each([
+    ["ACCOUNT_LINKED", "계정이 연결됐어요."],
+    ["ONBOARDING_SESSION_EXPIRED", "로그인 세션이 만료됐어요."],
     ["ACCOUNT_REJECTED", "가입이 거부됐어요."],
     ["ACCOUNT_PROFILE_INCOMPLETE", "가입 정보가 누락됐어요."],
     ["OAUTH_CANCELLED", "카카오 로그인이 취소되었습니다."],

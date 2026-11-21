@@ -27,6 +27,8 @@ import {
 } from "interface/dto/email-auth.dto";
 import { SelectBranchDto, SwitchBranchDto } from "interface/dto/branch-auth.dto";
 import { CompleteKakaoOnboardingDto } from "interface/dto/kakao-onboarding.dto";
+import { CompleteAccountOnboardingDto } from "interface/dto/account-onboarding.dto";
+import { VerifyAccountLinkDto } from "interface/dto/account-link.dto";
 import { LogoutDto } from "interface/dto/logout.dto";
 import { getKakaoOAuthConfig } from "infrastructure/auth/kakao-config";
 import {
@@ -35,7 +37,7 @@ import {
     type KakaoCallbackRequest,
 } from "../../infrastructure/auth/kakao-auth.guard";
 import { normalizePhone } from "application/utils/normalize-phone";
-import { codeOnlyProblemBody, problemBody } from "application/utils/problem-bodies";
+import { problemBody } from "application/utils/problem-bodies";
 import { runSystemScope } from "infrastructure/tenant/run-system-scope";
 
 @Controller("auth")
@@ -270,6 +272,29 @@ export class AuthController {
         );
     }
 
+    @Post("kakao/link/verify")
+    @UseGuards(RateLimitGuard)
+    async verifyKakaoLink(
+        @Headers(AuthController.PENDING_SIGNUP_TOKEN_HEADER) token: string | undefined,
+        @Body() body: VerifyAccountLinkDto,
+    ) {
+        if (!token) {
+            throw new BadRequestException(problemBody("VALIDATION_FAILED", {
+                pointer: "/token",
+                code: "REQUIRED",
+                detail: "가입 진행 토큰을 입력해 주세요.",
+                location: "custom",
+            }));
+        }
+        return this.authService.verifyKakaoLink(token, body.challengeToken, body.code);
+    }
+
+    @Post("register/link/verify")
+    @UseGuards(RateLimitGuard)
+    async verifyEmailLink(@Body() body: VerifyAccountLinkDto) {
+        return this.authService.verifyEmailLink(body.challengeToken, body.code);
+    }
+
     @Get("onboarding/pending")
     async getPendingAccountOnboarding(
         @Headers(AuthController.PENDING_ONBOARDING_TOKEN_HEADER) headerToken?: string,
@@ -290,11 +315,20 @@ export class AuthController {
 
     @Post("onboarding/complete")
     @UseGuards(RateLimitGuard)
-    completeAccountOnboarding(): never {
-        // Direct completion is closed: profile + branch assignment require owner
-        // confirmation. Frontend login/onboarding dialogs key on `code`, which the
-        // problem body preserves (403 kept).
-        throw new ForbiddenException(codeOnlyProblemBody("ACCOUNT_PROFILE_INCOMPLETE"));
+    async completeAccountOnboarding(
+        @Headers(AuthController.PENDING_ONBOARDING_TOKEN_HEADER) token: string | undefined,
+        @Body() body: CompleteAccountOnboardingDto,
+    ) {
+        if (!token) {
+            throw new BadRequestException(problemBody("VALIDATION_FAILED", {
+                pointer: "/token",
+                code: "REQUIRED",
+                detail: "온보딩 진행 토큰을 입력해 주세요.",
+                location: "custom",
+            }));
+        }
+        const result = await this.authService.completeAccountOnboarding(token, body.phone, body.birthDate);
+        return { success: true, ...result };
     }
 
     @Post("refresh-token")

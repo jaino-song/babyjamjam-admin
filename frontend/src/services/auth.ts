@@ -8,6 +8,9 @@ export interface AuthResponse {
     message?: string;
     code?: string;
     hasKakaoAccount?: boolean;
+    linkVerificationRequired?: boolean;
+    linkChallengeToken?: string;
+    emailVerificationRequired?: boolean;
     errors?: string[];
 }
 
@@ -29,18 +32,22 @@ export const authApi = {
         return data;
     },
 
+    verifyRegisterLink: async (challengeToken: string, code: string): Promise<AuthResponse> => {
+        const { data } = await api.post('/auth/register/link/verify', { challengeToken, code });
+        return data;
+    },
+
     getBranches: async (): Promise<{ id: string; name: string }[]> => {
         const { data } = await api.get('/auth/branches/all');
         return data;
     },
 
-    checkEmailExists: async (email: string): Promise<{ exists: boolean; linkable: boolean }> => {
+    checkEmailExists: async (email: string): Promise<{ exists: boolean }> => {
         const { data } = await api.get('/auth/check-email', {
             params: { email },
         });
         return {
             exists: data?.exists === true,
-            linkable: data?.linkable === true,
         };
     },
 

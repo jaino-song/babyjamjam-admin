@@ -75870,6 +75870,111 @@
       "review_task": "jobs-modal-wave1 integration (claude-reviewer PASS on 87b25eb9b; rows added by Main at integration)",
       "spec_mapping_status": "mapped-em-v1",
       "spec_mapping_note": "Code-only structured body with an existing catalog code; exception class kept for the NestJS status mapping."
+    },
+    {
+      "id": "owner-80b27e5af80c",
+      "path": "backend/application/services/auth-phone-challenge.service.ts",
+      "root": "backend/application/",
+      "classification": "migrated",
+      "reason": "Added by the staff-login-linking plan and discovered by the raw-error intake gate. Public refusals use registered problem helpers with catalog statuses: HttpException(codeOnlyProblemBody(\"REQUEST_RATE_LIMITED\"), 429) at line 79 and refusal() returning BadRequestException(problemBody(\"VALIDATION_FAILED\", ...)) at lines 142-143 (400), thrown at lines 95, 98, 104 and 111. The plain Error at line 45 is an internal normalized-phone invariant guard; both issue callers pass DTO-validated, normalized phone numbers, and mapHttpProblem maps a plain Error to INTERNAL_ERROR 500.",
+      "seams": [
+        {
+          "line": 1,
+          "kinds": [
+            "raw_http_exception"
+          ]
+        },
+        {
+          "line": 45,
+          "kinds": [
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 50,
+          "kinds": [
+            "catch_boundary"
+          ]
+        },
+        {
+          "line": 79,
+          "kinds": [
+            "raw_http_exception",
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 95,
+          "kinds": [
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 98,
+          "kinds": [
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 104,
+          "kinds": [
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 111,
+          "kinds": [
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 125,
+          "kinds": [
+            "catch_boundary"
+          ]
+        },
+        {
+          "line": 131,
+          "kinds": [
+            "catch_boundary"
+          ]
+        },
+        {
+          "line": 142,
+          "kinds": [
+            "raw_http_exception"
+          ]
+        },
+        {
+          "line": 143,
+          "kinds": [
+            "raw_http_exception"
+          ]
+        }
+      ],
+      "discovery_task_id": "staff-login-linking-u7c",
+      "spec_ids": [
+        "EM-CAT-01",
+        "EM-CAT-02",
+        "EM-STATE-01",
+        "EM-ARCH-01"
+      ],
+      "public_codes": [
+        "REQUEST_RATE_LIMITED",
+        "VALIDATION_FAILED"
+      ],
+      "outcome_evidence": "Rate limiting rejects before SMS delivery; verification refusals prevent linking or consumption, while a wrong or exhausted code can persist an attempt count. consume() uses the caller transaction and refuses unsuccessful consumption. Cleanup and delivery failures are contained and logged without provider error text; failed delivery attempts invalidate the challenge.",
+      "consumer_paths": [
+        "HTTP auth.controller (POST auth/kakao/complete-signup and auth/register via AuthService issue callers)",
+        "HTTP auth.controller (POST auth/kakao/link/verify and auth/register/link/verify via AuthService verify/consume callers)"
+      ],
+      "test_evidence": [
+        "backend/test/services/auth-phone-challenge.service.spec.ts"
+      ],
+      "followup_task": null,
+      "review_task": "staff-login-linking-u7c",
+      "spec_mapping_status": "mapped-em-v1",
+      "spec_mapping_note": "Phone challenge guards; registered catalog codes with matching 429/400 statuses, internal invariant mapped to INTERNAL_ERROR 500, and verification/consumption outcome boundaries."
     }
   ]
 }

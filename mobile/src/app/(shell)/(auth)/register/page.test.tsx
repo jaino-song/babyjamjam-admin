@@ -1,14 +1,16 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { createProblemDetails } from "@babyjamjam/shared";
 
 import { authApi } from "@/services/api";
 
 import RegisterPage from "./page";
 
 const mockPush = jest.fn();
+const mockReplace = jest.fn();
 
 jest.mock("next/navigation", () => ({
-  useRouter: () => ({ push: mockPush }),
+  useRouter: () => ({ push: mockPush, replace: mockReplace }),
 }));
 
 jest.mock("@/services/api", () => ({
@@ -23,8 +25,9 @@ const mockCheckEmailExists = jest.mocked(authApi.checkEmailExists);
 describe("RegisterPage", () => {
   beforeEach(() => {
     mockPush.mockReset();
+    mockReplace.mockReset();
     mockCheckEmailExists.mockReset();
-    mockCheckEmailExists.mockResolvedValue({ exists: false, linkable: false });
+    mockCheckEmailExists.mockResolvedValue({ exists: false });
   });
 
   it("advances to the profile step when the account fields are valid", async () => {
@@ -138,6 +141,20 @@ describe("RegisterPage", () => {
       expect(document.querySelector(".auth-input-trailing")).toBeNull();
     });
 
+    it("leaves an unchecked email unconfirmed before its lookup settles", async () => {
+      render(<RegisterPage />);
+      const email = screen.getByLabelText("이메일");
+      fireEvent.change(email, { target: { value: "new.user@example.com" } });
+      expect(slotOf(email)).toBeEmptyDOMElement();
+
+      await waitFor(() => expect(mockCheckEmailExists).toHaveBeenCalledWith("new.user@example.com"));
+      expect(await screen.findByText("이메일 확인됨")).toBeInTheDocument();
+      fireEvent.change(email, { target: { value: "another@example.com" } });
+
+      expect(slotOf(email)).toBeEmptyDOMElement();
+      expect(mockCheckEmailExists).toHaveBeenCalledTimes(1);
+    });
+
     it("hints while the phone number is incomplete and errors once it is left", async () => {
       const user = userEvent.setup();
       render(<RegisterPage />);
@@ -202,7 +219,27 @@ describe("RegisterPage", () => {
 
       const phoneAgain = await screen.findByLabelText("전화번호");
       expect(screen.queryByLabelText("요청 권한")).not.toBeInTheDocument();
-      expect(slotOf(phoneAgain)).toHaveTextContent("이미 등록된 전화번호");
+      expect(slotOf(phoneAgain).textContent).toBe("이미 등록된 전화번호예요");
+      await waitFor(() => expect(phoneAgain).toHaveFocus());
+    });
+
+    it("shows the same exact duplicate-phone copy for a REQUEST_CONFLICT problem", async () => {
+      const user = userEvent.setup();
+      jest.mocked(authApi.register).mockRejectedValue({
+        response: { status: 409, data: createProblemDetails({ code: "REQUEST_CONFLICT", requestId: "test", errors: [{ pointer: "/phone", code: "INVALID_VALUE", detail: "Invalid value" }] }) },
+      });
+      render(<RegisterPage />);
+      const phone = await fillAccountStep(user);
+
+      await user.type(phone, "01012345678");
+      await user.type(screen.getByLabelText("생년월일"), "19900101");
+      await user.click(screen.getByRole("button", { name: "다음" }));
+      await user.selectOptions(await screen.findByLabelText("요청 권한"), screen.getAllByRole("option")[1]);
+      await user.click(screen.getByRole("button", { name: "회원가입" }));
+
+      const phoneAgain = await screen.findByLabelText("전화번호");
+      expect(screen.queryByLabelText("요청 권한")).not.toBeInTheDocument();
+      expect(slotOf(phoneAgain).textContent).toBe("이미 등록된 전화번호예요");
       await waitFor(() => expect(phoneAgain).toHaveFocus());
     });
   });
