@@ -38,7 +38,7 @@ import {
     RequeueInitialFinalizationJobResult,
     DiagnoseInitialFinalizationJobResult,
 } from "domain/repositories/eformsign-document-job.repository.interface";
-import { cancelledDocumentJobSql, initialFinalizationJobSql, initialFinalizationCancellableSql, initialFinalizationRetryCandidateSql } from "../utils/service-record-initial-recovery-sql";
+import { INITIAL_FINALIZATION_CANCELLABLE_STATE_STATUSES, cancelledDocumentJobSql, initialFinalizationJobSql, initialFinalizationCancellableSql, initialFinalizationRetryCandidateSql } from "../utils/service-record-initial-recovery-sql";
 import { PrismaService } from "infrastructure/database/prisma.service";
 import { ContractRecoveryError } from "domain/repositories/eformsign-contract-recovery.repository.interface";
 import { withoutEntityChangeHints } from "infrastructure/database/entity-change-suppression";
@@ -498,6 +498,9 @@ export class SbEformsignDocumentJobRepository implements IEformsignDocumentJobRe
             || state.operation !== "record_snapshot" || !isInitialFinalizationWorkflowScope(state.workflowScope, job.request_key)) {
             return { kind: "not_cancellable", reason: "scope_changed" };
         }
+        if (!INITIAL_FINALIZATION_CANCELLABLE_STATE_STATUSES.includes(state.status)) {
+            return { kind: "not_cancellable", reason: "ineligible_state" };
+        }
         const preDispatch = initialFinalizationJobIneligibility(job) === undefined
             && ["capability_unverified", "pending"].includes(state.status);
         // 취소는 이 INITIAL 세대의 종료다. 전송 가능성이 있으면 증거와 case 활성 키를 보존한다.
@@ -508,6 +511,7 @@ export class SbEformsignDocumentJobRepository implements IEformsignDocumentJobRe
                 : Prisma.sql`status = 'manual_review', step = 'unknown', last_error_code = 'JOB_CANCELLED_AFTER_DISPATCH'`},
                 version = version + 1, updated_at = now()
             WHERE id = ${state.id}::uuid AND generation = ${state.generation} AND version = ${state.version}
+                AND status IN (${Prisma.join(INITIAL_FINALIZATION_CANCELLABLE_STATE_STATUSES)})
         `);
         if (stateUpdated !== 1) throw new ConflictException("SERVICE_RECORD_WRITE_TARGET_CHANGED");
         const jobUpdated = await tx.$executeRaw(Prisma.sql`

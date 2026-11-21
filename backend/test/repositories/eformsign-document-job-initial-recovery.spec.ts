@@ -3,6 +3,8 @@ import { toEformsignDocumentJobResponse } from "interface/dto/eformsign-document
 import { ServiceRecordEditRepository } from "infrastructure/database/repositories/service-record-edit.repository";
 import { SbEformsignDocumentJobRepository } from "infrastructure/database/repositories/sb.eformsign-document-job.repository";
 import { Logger } from "@nestjs/common";
+import { Prisma } from "@prisma/client";
+import { initialFinalizationCancellableSql } from "infrastructure/database/utils/service-record-initial-recovery-sql";
 import { setup, input } from "../utils/service-record-initial-recovery.fixture";
 const { branchId, jobId } = input;
 
@@ -74,6 +76,41 @@ describe("staff INITIAL recovery", () => {
         expect(jobWrite.text).not.toMatch(/(?:payload|active_key|progress_step|progress_detail)\s*=/);
         expect(jobWrite.values).toContain("JOB_CANCELLED_AFTER_DISPATCH");
     });
+    it.each(["completed", "not_required", "unrecognized"])("refuses cancellation without writes for %s revision state", async status => {
+        const f = setup({ progressStep: "sent" }, { status });
+        const beforeJob = structuredClone(f.job), beforeState = structuredClone(f.state);
+        expect(await f.repo.cancel(input)).toMatchObject({ kind: "not_cancellable" });
+        expect(f.tx.$executeRaw).not.toHaveBeenCalled();
+        expect(f.job).toEqual(beforeJob);
+        expect(f.state).toEqual(beforeState);
+    });
+    it("binds listing cancellation to unresolved revision statuses", () => {
+        const sql = initialFinalizationCancellableSql();
+        expect(sql.text).toContain("s.status IN");
+        expect(sql.values).toEqual(expect.arrayContaining(["pending", "processing", "failed", "manual_review"]));
+        expect(sql.values).not.toContain("completed");
+        expect(sql.values).not.toContain("not_required");
+    });
+    it.each(["failed", "manual_review"])("history and admin retry refuse a terminal %s/cancelled state", async status => {
+        const f = setup({}, { status, step: "cancelled" });
+        const read = f.tx.$queryRaw.getMockImplementation()!;
+        f.tx.$queryRaw.mockImplementation(async (sql: Prisma.Sql) => {
+            if (sql.text.includes('FROM "service_record_case"')) return [{ caseId: f.state.serviceRecordCaseId,
+                caseVersion: 1, currentRevisionId: f.state.revisionId, currentUsableRevisionId: null }];
+            if (sql.text.includes('FROM "service_record_revision"')) return [{ id: f.state.revisionId,
+                revisionNumber: 1, confirmedAt: new Date() }];
+            return read(sql);
+        });
+        const repo = new ServiceRecordEditRepository(f.prisma as never);
+        const history = await repo.listRevisionHistory(branchId, f.state.clientId);
+        expect(history?.revisions[0]?.documents[0]).toMatchObject({ status, canRetry: false });
+        const before = structuredClone(f.state);
+        expect(await repo.retryRevisionDocumentState({ branchId, clientId: f.state.clientId,
+            revisionId: f.state.revisionId, stateId: f.state.id, expectedGeneration: f.state.generation,
+        })).toMatchObject({ status, step: "cancelled" });
+        expect(f.tx.$executeRaw).not.toHaveBeenCalled();
+        expect(f.state).toEqual(before);
+    });
     it.each(["preparing", "sent"])("cancel then admin retry cannot requeue %s INITIAL generation", async progressStep => {
         const f = setup({ progressStep });
         expect(await f.repo.cancel(input)).toEqual({ kind: "cancelled" });
@@ -82,7 +119,7 @@ describe("staff INITIAL recovery", () => {
             branchId, clientId: f.state.clientId, revisionId: f.state.revisionId, stateId: f.state.id,
             expectedGeneration: f.state.generation,
         });
-        if (progressStep === "preparing") await expect(result).rejects.toThrow("Revision snapshot retry scope is unavailable");
+        if (progressStep === "preparing") await expect(result).resolves.toMatchObject({ status: "failed", step: "cancelled" });
         else await expect(result).resolves.toMatchObject({ status: "manual_review", step: "unknown" });
         expect(f.job).toEqual(beforeJob); expect(f.state).toEqual(beforeState);
     });
