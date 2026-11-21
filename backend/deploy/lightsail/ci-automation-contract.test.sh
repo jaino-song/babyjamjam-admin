@@ -321,6 +321,62 @@ if PATH="$runtime_probe_root:$PATH" "$EDGE_SCRIPT" >/dev/null 2>&1; then
 fi
 [[ ! -e "$runtime_probe_marker" ]] || fail "repository mutation reached Docker"
 
+# aws:runShellScript executes each runCommand with /bin/sh (dash on Ubuntu), so any
+# inline script outside a quoted heredoc must stay POSIX: bash-only syntax there fails
+# on the host before the first command runs.
+ssm_shell_check_root="$(mktemp -d)"
+trap 'rm -rf "$ssm_shell_check_root"' EXIT
+python3 - "$INFRASTRUCTURE_TEMPLATE" "$ssm_shell_check_root" <<'SSM_SHELL_CHECK' \
+    || fail "SSM runShellScript commands must be POSIX sh outside a quoted heredoc"
+import re, sys
+template, out_dir = sys.argv[1], sys.argv[2]
+lines = open(template).read().split("\n")
+scripts, i = [], 0
+while i < len(lines):
+    if lines[i].strip() == "runCommand:":
+        i += 1
+        while i < len(lines) and lines[i].lstrip().startswith("- "):
+            item = lines[i].lstrip()[2:]
+            indent = len(lines[i]) - len(lines[i].lstrip()) + 2
+            if item == "|":
+                body, i = [], i + 1
+                while i < len(lines) and (lines[i].strip() == "" or len(lines[i]) - len(lines[i].lstrip()) >= indent):
+                    body.append(lines[i][indent:])
+                    i += 1
+                scripts.append("\n".join(body).rstrip() + "\n")
+            else:
+                scripts.append(item.strip("'") + "\n")
+                i += 1
+        continue
+    i += 1
+bad = 0
+for n, script in enumerate(scripts):
+    open(f"{out_dir}/{n}.sh", "w").write(script)
+    outside, tag = [], None
+    for line in script.split("\n"):
+        if tag is not None:
+            if line == tag:
+                tag = None
+            continue
+        match = re.search(r"<<-?'([A-Za-z_][A-Za-z0-9_]*)'", line)
+        if match:
+            tag = match.group(1)
+        outside.append(line)
+    bash_only = (r"\[\[", r"^\s*set\b.*\bpipefail\b", r"^\s*set\s+-[A-Za-z]*E", r"<\(", r"^\s*function\s")
+    for line in outside:
+        for pattern in bash_only:
+            if re.search(pattern, line):
+                print(f"runCommand #{n} uses bash-only syntax outside a quoted heredoc: {line.strip()}", file=sys.stderr)
+                bad = 1
+if not scripts:
+    print("no runCommand scripts found", file=sys.stderr)
+    bad = 1
+sys.exit(bad)
+SSM_SHELL_CHECK
+for ssm_script in "$ssm_shell_check_root"/*.sh; do
+    /bin/sh -n "$ssm_script" || fail "SSM runShellScript command does not parse under /bin/sh: $(basename "$ssm_script")"
+done
+
 migration_line="$(grep -n 'if ! run_release_migrations' "$CI_OPERATOR" | cut -d: -f1)"
 activation_line="$(grep -n 'if run_deploy_script' "$CI_OPERATOR" | cut -d: -f1)"
 [[ -n "$migration_line" && -n "$activation_line" && "$migration_line" -lt "$activation_line" ]] \
