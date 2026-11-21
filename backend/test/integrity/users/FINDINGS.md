@@ -142,7 +142,7 @@ the proof mutations below). The reachable-today invariants must be flipped delib
   when it is missing (670-687, specifically 675-676). No additional onboarding row is minted. The refused
   attempt burns the code because consumption has already committed. The earlier NOT harmful assessment
   (mint succeeded, completion refused one step later) is superseded by this stricter behaviour; the
-  no-access verdict remains REFUTED. The updated real-DB assertions await Backend CI execution.
+  no-access verdict remains REFUTED. The updated real-DB assertions passed in Backend CI on `30a7efa0b` (run 44828575544).
 
 ## Mutation proofs (each added/repaired test was verified to have teeth)
 

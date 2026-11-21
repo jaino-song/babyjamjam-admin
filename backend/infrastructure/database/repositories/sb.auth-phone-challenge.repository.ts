@@ -55,14 +55,15 @@ export class SbAuthPhoneChallengeRepository implements IAuthPhoneChallengeReposi
         await this.prismaService.auth_phone_challenge.updateMany({
             where: { id, consumedAt: null },
             // 전송 실패도 decoy와 같은 검증 응답과 시도 제한을 유지한다.
-            data: { codeHash: null },
+            data: { codeHash: null, email: null, passwordHash: null, name: null, kakaoId: null },
         });
     }
 
     async consumeWithinTx(tx: Prisma.TransactionClient, id: string): Promise<boolean> {
+        const now = new Date();
         const result = await tx.auth_phone_challenge.updateMany({
-            where: { id, consumedAt: null },
-            data: { consumedAt: new Date() },
+            where: { id, consumedAt: null, expiresAt: { gt: now } },
+            data: { consumedAt: now, email: null, passwordHash: null, name: null, kakaoId: null },
         });
         return result.count === 1;
     }

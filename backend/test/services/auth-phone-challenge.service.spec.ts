@@ -124,10 +124,16 @@ describe("AuthPhoneChallengeService", () => {
 
     it("stores a decoy with the same limits and response shape without generating a code or sending", async () => {
         const random = jest.spyOn(crypto, "randomInt");
-        const result = await service.issue({ ...realParams, targetUserId: null });
+        const result = await service.issue({ ...realParams, targetUserId: null,
+            kakaoId: "unused-kakao", email: "unused@example.invalid", passwordHash: "unused-hash", name: "Unused" });
         expect(repository.createWithinLimits).toHaveBeenCalledWith(expect.objectContaining({
             codeHash: null, userId: null, tokenHash: hash(result.challengeToken),
         }), expect.objectContaining({ shortMax: 3, dayMax: 10 }));
+        const stored = repository.createWithinLimits.mock.calls[0]![0];
+        expect(stored.kakaoId).toBeNull();
+        expect(stored.email).toBeNull();
+        expect(stored.passwordHash).toBeNull();
+        expect(stored.name).toBeNull();
         expect(Object.keys(result).sort()).toEqual(["challengeToken", "expiresAt"]);
         expect(random).not.toHaveBeenCalled();
         expect(sms.sendSms).not.toHaveBeenCalled();

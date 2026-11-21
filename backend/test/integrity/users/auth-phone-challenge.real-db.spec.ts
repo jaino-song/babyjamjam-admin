@@ -44,12 +44,12 @@ describeReal("phone challenge limits (real PostgreSQL)", () => {
         return phone;
     }
 
-    function challenge(phone: string, createdAt = new Date()): AuthPhoneChallengeRow {
+    function challenge(phone: string, createdAt = new Date(), overrides: Partial<AuthPhoneChallengeRow> = {}): AuthPhoneChallengeRow {
         return {
             id: randomUUID(), purpose: "kakao_link", tokenHash: sha256Hex(randomUUID()), phone,
             codeHash: sha256Hex(randomUUID()), attemptCount: 0, userId: null, kakaoId: null,
             email: null, passwordHash: null, name: null, createdAt,
-            expiresAt: new Date(Date.now() + 300_000), consumedAt: null,
+            expiresAt: new Date(Date.now() + 300_000), consumedAt: null, ...overrides,
         };
     }
 
@@ -140,7 +140,9 @@ describeReal("phone challenge limits (real PostgreSQL)", () => {
     });
 
     invariant("SI-USER-19", "two concurrent consumptions have one winner and consumed rows refuse reuse", async () => {
-        const row = await handle.raw.auth_phone_challenge.create({ data: challenge(newPhone()) });
+        const row = await handle.raw.auth_phone_challenge.create({ data: challenge(newPhone(), new Date(), {
+            kakaoId: "qa-kakao", email: "qa@example.invalid", passwordHash: "qa-hash", name: "QA-link",
+        }) });
         let pending: Promise<PromiseSettledResult<boolean>[]> | undefined;
         let results: PromiseSettledResult<boolean>[] | undefined;
         try {
@@ -163,13 +165,19 @@ describeReal("phone challenge limits (real PostgreSQL)", () => {
         ]));
         const after = await handle.raw.auth_phone_challenge.findUniqueOrThrow({ where: { id: row.id } });
         expect(after.consumedAt).not.toBeNull();
+        expect(after.kakaoId).toBeNull();
+        expect(after.email).toBeNull();
+        expect(after.passwordHash).toBeNull();
+        expect(after.name).toBeNull();
         await expect(handle.service.$transaction((tx) => repository.consumeWithinTx(tx, row.id))).resolves.toBe(false);
     });
 
     invariant("SI-USER-20", "invalidation clears the code without consumption or removing limit evidence", async () => {
         const phone = newPhone();
         const window = limits();
-        const rows = Array.from({ length: 3 }, () => challenge(phone));
+        const rows = Array.from({ length: 3 }, () => challenge(phone, new Date(), {
+            kakaoId: "qa-kakao", email: "qa@example.invalid", passwordHash: "qa-hash", name: "QA-link",
+        }));
         for (const row of rows) {
             await expect(repository.createWithinLimits(row, window)).resolves.toBe("created");
         }
@@ -178,9 +186,22 @@ describeReal("phone challenge limits (real PostgreSQL)", () => {
         await repository.invalidate(row.id);
         const after = await handle.raw.auth_phone_challenge.findUniqueOrThrow({ where: { id: row.id } });
         expect(after.codeHash).toBeNull();
+        expect(after.kakaoId).toBeNull();
+        expect(after.email).toBeNull();
+        expect(after.passwordHash).toBeNull();
+        expect(after.name).toBeNull();
         expect(after.consumedAt).toBeNull();
         expect(after.createdAt).toEqual(row.createdAt);
         await expect(repository.createWithinLimits(challenge(phone), window)).resolves.toBe("rate_limited");
         expect(await handle.raw.auth_phone_challenge.count({ where: { phone } })).toBe(3);
+    });
+
+    invariant("SI-USER-21", "an expired challenge cannot be consumed", async () => {
+        const row = await handle.raw.auth_phone_challenge.create({ data: challenge(newPhone(), new Date(), {
+            expiresAt: new Date(Date.now() - 60_000),
+        }) });
+        await expect(handle.service.$transaction((tx) => repository.consumeWithinTx(tx, row.id))).resolves.toBe(false);
+        const after = await handle.raw.auth_phone_challenge.findUniqueOrThrow({ where: { id: row.id } });
+        expect(after.consumedAt).toBeNull();
     });
 });

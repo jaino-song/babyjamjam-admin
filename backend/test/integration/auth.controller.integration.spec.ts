@@ -7,7 +7,9 @@ import { PrismaService } from "infrastructure/database/prisma.service";
 import { JwtGuard } from "infrastructure/auth/jwt.guard";
 import { RateLimitGuard } from "infrastructure/auth/rate-limit.guard";
 import { GlobalValidationPipe } from "infrastructure/pipes/global-validation.pipe";
-import { problemBody } from "application/utils/problem-bodies";
+import { HttpAdapterHost } from "@nestjs/core";
+import { ServiceRecordSentryExceptionFilter } from "infrastructure/observability/service-record-sentry-exception.filter";
+import { codeOnlyProblemBody, problemBody } from "application/utils/problem-bodies";
 import { GUARDS_METADATA } from "@nestjs/common/constants";
 import {
     KakaoAuthGuard,
@@ -1123,4 +1125,52 @@ describe("AuthController (Integration)", () => {
         });
     });
 
+});
+
+// Separate app: the shared login tests intentionally observe Nest's unfiltered body.
+describe("AuthController pending account linking with production exception filter", () => {
+    let app: INestApplication;
+    const authService = { completeKakaoOnboarding: jest.fn(), registerWithEmail: jest.fn() };
+    const rateLimitGuard = { canActivate: jest.fn(), resetForKey: jest.fn() };
+
+    beforeEach(async () => {
+        jest.resetAllMocks();
+        rateLimitGuard.canActivate.mockResolvedValue(true);
+        const moduleFixture = await Test.createTestingModule({
+            controllers: [AuthController],
+            providers: [
+                { provide: AuthService, useValue: authService },
+                { provide: PrismaService, useValue: {} },
+                { provide: RateLimitGuard, useValue: rateLimitGuard },
+            ],
+        }).overrideGuard(JwtGuard).useValue({ canActivate: () => true })
+            .overrideGuard(KakaoAuthGuard).useValue({ canActivate: () => true })
+            .overrideGuard(RateLimitGuard).useValue(rateLimitGuard).compile();
+        app = moduleFixture.createNestApplication();
+        app.useGlobalPipes(new GlobalValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true }));
+        app.useGlobalFilters(new ServiceRecordSentryExceptionFilter(app.get(HttpAdapterHost)));
+        await app.listen(0, "127.0.0.1");
+    });
+    afterEach(async () => { await app.close(); });
+
+    it.each(["kakao", "email"])("returns the public PENDING_APPROVAL problem for %s", async method => {
+        const pending = new ForbiddenException(codeOnlyProblemBody("PENDING_APPROVAL"));
+        const body = { phone: "01012345678", birthDate: "1990-01-01" };
+        if (method === "kakao") authService.completeKakaoOnboarding.mockRejectedValue(pending);
+        else authService.registerWithEmail.mockRejectedValue(pending);
+        const response = await request(app.getHttpServer())
+            .post(method === "kakao" ? "/auth/kakao/complete-signup" : "/auth/register")
+            .set("x-pending-signup-token", "pending-token")
+            .send(method === "kakao" ? { ...body, role: "user" }
+                : { ...body, email: "qa@example.invalid", password: "Password1!", name: "QA Link" });
+        expect(response.status).toBe(403);
+        expect(response.headers["content-type"]).toMatch(/^application\/problem\+json(?:;|$)/);
+        expect(response.body.code).toBe("PENDING_APPROVAL");
+        expect(response.body.status).toBe(403);
+        if (method === "kakao") expect(authService.completeKakaoOnboarding)
+            .toHaveBeenCalledWith("pending-token", body.phone, body.birthDate, "user");
+        else expect(authService.registerWithEmail)
+            .toHaveBeenCalledWith("qa@example.invalid", "Password1!", "QA Link", body.phone, body.birthDate);
+        expect(rateLimitGuard.resetForKey).not.toHaveBeenCalled();
+    });
 });
