@@ -127,6 +127,13 @@ export default function RegisterPage() {
   const emailLookupRef = useRef<typeof emailLookup>(null);
   const pendingEmailLookupRef = useRef<{ email: string; settled: Promise<void> } | null>(null);
   const emailRequestSeq = useRef(0);
+  const isMountedRef = useRef(false);
+
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => { isMountedRef.current = false; };
+  }, []);
+
   const [challenge, setChallenge] = useState<string | null>(null);
   const [emailVerificationRequired, setEmailVerificationRequired] = useState(true);
   const [emailTouched, setEmailTouched] = useState(false);
@@ -464,6 +471,7 @@ export default function RegisterPage() {
       while (pendingEmailLookupRef.current?.email === submittedEmail) {
         await pendingEmailLookupRef.current.settled;
       }
+      if (!isMountedRef.current) return;
       const registerSeq = ++emailRequestSeq.current;
       const response = await authApi.register({
         email: result.data.email,
@@ -500,6 +508,7 @@ export default function RegisterPage() {
         setServerError(REGISTER_FAILURE_COPY);
       }
     } catch (err: unknown) {
+      if (!isMountedRef.current) return;
       const errorData =
         typeof err === "object" && err !== null && "response" in err
           ? (err as AxiosLikeError).response?.data
