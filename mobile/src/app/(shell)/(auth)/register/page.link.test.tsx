@@ -292,6 +292,34 @@ describe("email lookup arbitration", () => {
     expect(screen.queryByText("회원가입 완료!")).not.toBeInTheDocument();
   });
 
+  it("keeps the direct duplicate on resubmit after a later debounced false result", async () => {
+    const debounced = deferred<{ exists: boolean }>();
+    jest.mocked(authApi.checkEmailExists)
+      .mockResolvedValueOnce({ exists: true })
+      .mockReturnValueOnce(debounced.promise);
+    jest.mocked(authApi.register).mockResolvedValue({ success: true });
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "회원가입" })); });
+    expect(authApi.checkEmailExists).toHaveBeenCalledTimes(1);
+    expect(authApi.register).toHaveBeenCalledTimes(1);
+    expect(screen.getByLabelText("이메일")).toHaveAccessibleDescription("이미 등록된 이메일입니다");
+
+    await act(async () => { jest.advanceTimersByTime(250); });
+    expect(authApi.checkEmailExists).toHaveBeenCalledTimes(2);
+    expect(authApi.checkEmailExists).toHaveBeenNthCalledWith(1, "qa@example.test");
+    expect(authApi.checkEmailExists).toHaveBeenNthCalledWith(2, "qa@example.test");
+    await act(async () => { debounced.resolve({ exists: false }); });
+    await submitRetainedSteps();
+
+    expect(authApi.register).toHaveBeenCalledTimes(2);
+    expect(authApi.register).toHaveBeenNthCalledWith(1, expect.objectContaining({ email: "qa@example.test" }));
+    expect(authApi.register).toHaveBeenNthCalledWith(2, expect.objectContaining({ email: "qa@example.test" }));
+    expect(authApi.checkEmailExists).toHaveBeenCalledTimes(2);
+    expect(screen.getByLabelText("이메일")).toHaveAccessibleDescription("이미 등록된 이메일입니다");
+    expect(screen.getByRole("note")).toHaveTextContent("로그인하거나 비밀번호 찾기를 이용해 주세요.");
+    expect(screen.queryByText("이메일 확인됨")).not.toBeInTheDocument();
+    expect(screen.queryByText("회원가입 완료!")).not.toBeInTheDocument();
+  });
+
   it("uses a pre-register debounced duplicate when the direct lookup rejects (order B)", async () => {
     const direct = deferred<{ exists: boolean }>();
     const debounced = deferred<{ exists: boolean }>();
