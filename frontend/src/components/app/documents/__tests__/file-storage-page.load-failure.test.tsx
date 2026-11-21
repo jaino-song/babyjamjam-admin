@@ -40,6 +40,20 @@ const document: Document = {
 let mockDocuments = query<Document[]>([]);
 let mockCategories = query<DocumentCategory[]>([]);
 
+function expectDetailHierarchy(container: HTMLElement) {
+  const detail = container.querySelector('[data-panel="detail"]');
+  expect(detail).toBeInTheDocument();
+  const nodes = detail!.querySelectorAll("[data-component]");
+  expect(nodes.length).toBeGreaterThan(0);
+  for (const node of nodes) {
+    const name = node.getAttribute("data-component");
+    expect(name).toMatch(/^(desktop|mobile)_[a-z0-9]+(?:-[a-z0-9]+)*(?:_[a-z0-9]+(?:-[a-z0-9]+)*){1,}$/);
+    expect(name).toMatch(/^desktop_files_page_/);
+    const owner = node.parentElement?.closest("[data-component]");
+    expect(name?.startsWith(`${owner?.getAttribute("data-component")}_`)).toBe(true);
+  }
+}
+
 function statValues(container: HTMLElement) {
   return Array.from(container.querySelectorAll('[data-slot="stat-mini-value"]'), node => node.textContent);
 }
@@ -85,7 +99,8 @@ describe("FileStoragePage query load states", () => {
     rerender(<FileStoragePage />);
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     expectNoEmptyText();
-    expect(container.querySelector('[data-component="files-detail-skeleton"]')).toBeInTheDocument();
+    expect(container.querySelector('[data-component="desktop_files_page_split-layout_track_panel_detail-skeleton"]')).toBeInTheDocument();
+    expectDetailHierarchy(container);
   });
 
   it.each([ ["loading", loading], ["paused", paused] ])("uses list and detail skeletons with unknown stats while %s", async (_name, state) => {
@@ -98,7 +113,11 @@ describe("FileStoragePage query load states", () => {
     const list = container.querySelector('[data-slot="animated-slot-list"]');
     expect(list?.children).toHaveLength(4);
     expect(list?.querySelectorAll('[data-slot="skeleton"]')).toHaveLength(8);
-    expect(container.querySelector('[data-component="files-detail-skeleton"]')).toBeInTheDocument();
+    const skeleton = container.querySelector('[data-component="desktop_files_page_split-layout_track_panel_detail-skeleton"]');
+    expect(skeleton).toBeInTheDocument();
+    expect(skeleton?.getAttribute("data-component")).toMatch(/^(desktop|mobile)_[a-z0-9]+(?:-[a-z0-9]+)*(?:_[a-z0-9]+(?:-[a-z0-9]+)*){1,}$/);
+    expect(skeleton?.getAttribute("data-component")).toMatch(/^desktop_files_page_/);
+    expectDetailHierarchy(container);
   });
 
   it("scopes the stats to their page owner", async () => {
@@ -119,6 +138,7 @@ describe("FileStoragePage query load states", () => {
     const { container } = await renderPage();
     expect(screen.getByText("등록된 문서가 없습니다")).toBeInTheDocument();
     expect(statValues(container)).toEqual(["0", "0"]);
+    expectDetailHierarchy(container);
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 
@@ -160,7 +180,7 @@ describe("FileStoragePage query load states", () => {
     expect(screen.getByText(document.name)).toBeInTheDocument();
     expect(statValues(container)).toEqual(["1", "0"]);
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
-    expect(container.querySelector('[data-component="files-detail-skeleton"]')).not.toBeInTheDocument();
+    expect(container.querySelector('[data-component="desktop_files_page_split-layout_track_panel_detail-skeleton"]')).not.toBeInTheDocument();
   });
 
   it("keeps the existing disabled-query empty presentation, not loading or failure", async () => {
@@ -168,7 +188,7 @@ describe("FileStoragePage query load states", () => {
     const { container } = await renderPage();
     expect(screen.getByText("등록된 문서가 없습니다")).toBeInTheDocument();
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
-    expect(container.querySelector('[data-component="files-detail-skeleton"]')).not.toBeInTheDocument();
+    expect(container.querySelector('[data-component="desktop_files_page_split-layout_track_panel_detail-skeleton"]')).not.toBeInTheDocument();
   });
 
   it.each([ ["failed", failed], ["paused", paused], ["loading", loading] ])("shows unknown categories without gating loaded documents when categories are %s", async (_name, state) => {
@@ -185,5 +205,15 @@ describe("FileStoragePage query load states", () => {
     const { container } = await renderPage();
     expect(statValues(container)).toEqual(["0", "1"]);
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it.each([false, true])("keeps the full selected detail path with canManage=%s", async (canManage) => {
+    mockDocuments = query([{ ...document, canManage, description: "문서 설명", tags: ["안내"] }]);
+    const { container } = await renderPage();
+    fireEvent.click(screen.getByText(document.name));
+
+    expect(screen.getByText("문서 설명")).toBeInTheDocument();
+    expect(screen.getByText("안내")).toBeInTheDocument();
+    expectDetailHierarchy(container);
   });
 });
