@@ -41,3 +41,35 @@ it("connects the failed check to the invalid input and clears it on a new submit
   expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   await act(async () => { finishVerify({ success: true }); });
 });
+
+it.each(["returned", "thrown"])("focuses the code after repeated %s verification failures", async (failure) => {
+  const onVerify = failure === "returned"
+    ? jest.fn().mockResolvedValue({ success: false, error: "인증 실패" })
+    : jest.fn().mockRejectedValue(new Error("verification failed"));
+  render(<LinkVerificationStep data-component="desktop_auth_test_verification" onVerify={onVerify} onRestart={jest.fn()} />);
+  const input = screen.getByLabelText("인증번호");
+  const button = screen.getByRole("button", { name: "인증하고 계정 연결" });
+  fireEvent.change(input, { target: { value: "123456" } });
+  for (let attempt = 1; attempt <= 2; attempt += 1) {
+    button.focus();
+    fireEvent.click(button);
+    await waitFor(() => expect(onVerify).toHaveBeenCalledTimes(attempt));
+    await waitFor(() => expect(document.activeElement).toBe(input));
+    expect(input).toBeEnabled();
+    expect(input).toHaveAttribute("aria-invalid", "true");
+  }
+});
+
+it("focuses the code after each six-digit refusal, including an unchanged error", async () => {
+  const onVerify = jest.fn();
+  render(<LinkVerificationStep data-component="desktop_auth_test_verification" onVerify={onVerify} onRestart={jest.fn()} />);
+  const input = screen.getByLabelText("인증번호");
+  const button = screen.getByRole("button", { name: "인증하고 계정 연결" });
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    button.focus();
+    fireEvent.click(button);
+    await waitFor(() => expect(document.activeElement).toBe(input));
+    expect(input).toHaveAttribute("aria-invalid", "true");
+  }
+  expect(onVerify).not.toHaveBeenCalled();
+});

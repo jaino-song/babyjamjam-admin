@@ -148,7 +148,11 @@ export function AccountCompletionForm({
         setServerError(null);
         fields.setSubmitted(true);
 
-        const result = kakaoOnboardingSchema.pick({ phone: true, birthDate: true }).safeParse(formData);
+        const body = {
+            ...(!phone ? { phone: formData.phone } : {}),
+            ...(!birthDate ? { birthDate: formData.birthDate } : {}),
+        };
+        const result = kakaoOnboardingSchema.pick({ phone: true, birthDate: true }).partial().safeParse(body);
         if (!result.success) {
             const nextErrors: Record<string, string> = {};
             result.error.issues.forEach((issue) => {
