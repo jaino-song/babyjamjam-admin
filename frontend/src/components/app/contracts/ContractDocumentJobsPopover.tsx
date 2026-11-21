@@ -145,6 +145,11 @@ export function ContractDocumentJobsPopover({
     setRetryRequest(null);
     setRetryOpen(false);
   }
+  const [recoveryIsOpen, setRecoveryIsOpen] = useState(isOpen);
+  if (recoveryIsOpen !== isOpen) {
+    setRecoveryIsOpen(isOpen);
+    setRecoveryOpening(opening => opening + 1);
+  }
 
   const focusAfterRecovery = useCallback(() => {
     const trigger = recoveryTrigger.current;
