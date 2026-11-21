@@ -79,6 +79,21 @@ it("verifies Kakao link and deletes the pending cookie", async () => {
   expect(post).toHaveBeenCalledWith("/auth/kakao/link/verify", { challengeToken: "challenge", code: "123456" }, { headers: { "x-pending-signup-token": "pending" } });
   expect(store.delete).toHaveBeenCalledWith("pending_kakao_signup");
 });
+
+describe.each([
+  ["completeKakaoOnboarding", () => completeKakaoOnboarding({ phone: "010-1234-5678", birthDate: "1990-01-01", role: "user" })],
+  ["verifyKakaoLink", () => verifyKakaoLink("challenge", "123456")],
+] as const)("%s body-independent rate limits", (_action, run) => {
+  it.each([
+    ["no body", undefined],
+    ["unrelated code", { code: "SOMETHING_ELSE" }],
+  ] as const)("returns safe copy and keeps the cookie with %s", async (_shape, data) => {
+    post.mockRejectedValue(new AxiosError("failure", undefined, undefined, undefined, { status: 429, data } as never));
+
+    expect(await run()).toEqual({ success: false, error: "요청이 너무 많아요. 잠시 후 다시 시도해 주세요." });
+    expect(store.delete).not.toHaveBeenCalled();
+  });
+});
 it("expires Kakao links on 401", async () => {
   post.mockRejectedValue(failure(401, "AUTH_REQUIRED"));
   expect((await verifyKakaoLink("challenge", "123456")).error).toBe("카카오 가입 세션이 만료됐어요. 다시 로그인해 주세요.");

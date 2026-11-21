@@ -51,6 +51,85 @@ it("returns existing email plain success to the account form", async () => {
   expect(screen.queryByText(/계속 진행해/)).not.toBeInTheDocument();
   expect(screen.queryByText("회원가입 완료!")).toBeNull();
 });
+
+async function submitRetainedSteps() {
+  fireEvent.click(screen.getByRole("button", { name: "다음" }));
+  fireEvent.click(screen.getByRole("button", { name: "다음" }));
+  await act(async () => {
+    fireEvent.click(screen.getByRole("button", { name: "회원가입" }));
+  });
+}
+
+it("registers a new email during the debounce window after an existing email", async () => {
+  jest.mocked(authApi.checkEmailExists).mockImplementation(async email => ({ exists: email === "qa@example.test" }));
+  jest.mocked(authApi.register).mockResolvedValue({ success: true });
+  await submit();
+  expect(screen.getByLabelText("이메일")).toHaveAccessibleDescription("이미 등록된 이메일입니다");
+
+  fireEvent.change(screen.getByLabelText("이메일"), { target: { value: "new@example.test" } });
+  await submitRetainedSteps();
+
+  expect(authApi.checkEmailExists).toHaveBeenCalledWith("new@example.test");
+  expect(authApi.register).toHaveBeenLastCalledWith(expect.objectContaining({ email: "new@example.test" }));
+  expect(await screen.findByText("회원가입 완료!")).toBeInTheDocument();
+  expect(screen.queryByText("이미 등록된 이메일입니다")).not.toBeInTheDocument();
+});
+
+it("returns an existing email to the account form during the debounce window after a new email", async () => {
+  jest.mocked(authApi.checkEmailExists).mockImplementation(async email => ({ exists: email === "existing@example.test" }));
+  jest.mocked(authApi.register).mockResolvedValue({ success: true });
+  render(<RegisterPage />);
+  for (const [label, value] of [["이메일", "qa@example.test"], ["이름", "테스트"], ["비밀번호", "Password1!"], ["비밀번호 확인", "Password1!"]]) {
+    fireEvent.change(screen.getByLabelText(label), { target: { value } });
+  }
+  await waitFor(() => expect(authApi.checkEmailExists).toHaveBeenCalledWith("qa@example.test"));
+  expect(await screen.findByText("이메일 확인됨")).toBeInTheDocument();
+
+  fireEvent.change(screen.getByLabelText("이메일"), { target: { value: "existing@example.test" } });
+  fireEvent.click(screen.getByRole("button", { name: "다음" }));
+  fireEvent.change(screen.getByLabelText("전화번호"), { target: { value: "01012345678" } });
+  fireEvent.change(screen.getByLabelText("생년월일"), { target: { value: "19900101" } });
+  fireEvent.click(screen.getByRole("button", { name: "다음" }));
+  fireEvent.change(screen.getByLabelText("요청 권한"), { target: { value: "user" } });
+  await act(async () => {
+    fireEvent.click(screen.getByRole("button", { name: "회원가입" }));
+  });
+
+  expect(authApi.checkEmailExists).toHaveBeenCalledWith("existing@example.test");
+  expect(authApi.register).toHaveBeenCalledWith(expect.objectContaining({ email: "existing@example.test" }));
+  expect(await screen.findByLabelText("이메일")).toHaveAccessibleDescription("이미 등록된 이메일입니다");
+  expect(screen.getByRole("note").textContent).toBe("로그인하거나 비밀번호 찾기를 이용해 주세요.");
+  expect(screen.queryByText("회원가입 완료!")).not.toBeInTheDocument();
+});
+
+it("continues registration when the direct email lookup rejects", async () => {
+  jest.mocked(authApi.register).mockResolvedValue({ success: true });
+  await submit();
+  let rejectLookup: (error: Error) => void = () => { throw new Error("lookup has not started"); };
+  jest.mocked(authApi.checkEmailExists).mockReturnValue(new Promise((_resolve, reject) => { rejectLookup = reject; }));
+
+  fireEvent.change(screen.getByLabelText("이메일"), { target: { value: "new@example.test" } });
+  await submitRetainedSteps();
+
+  expect(authApi.checkEmailExists).toHaveBeenCalledWith("new@example.test");
+  expect(authApi.register).toHaveBeenCalledTimes(1);
+  expect(screen.getByRole("button", { name: "회원가입 처리 중" })).toBeDisabled();
+  await act(async () => { rejectLookup(new Error("lookup unavailable")); });
+  expect(authApi.register).toHaveBeenLastCalledWith(expect.objectContaining({ email: "new@example.test" }));
+  expect(await screen.findByText("회원가입 완료!")).toBeInTheDocument();
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+});
+
+it("removes the existing-email note as soon as the email is edited", async () => {
+  render(<RegisterPage />);
+  fireEvent.change(screen.getByLabelText("이메일"), { target: { value: "qa@example.test" } });
+  expect(await screen.findByRole("note")).toHaveTextContent("이미 등록된 이메일이에요.");
+
+  fireEvent.change(screen.getByLabelText("이메일"), { target: { value: "new@example.test" } });
+
+  expect(screen.queryByRole("note")).not.toBeInTheDocument();
+  expect(authApi.checkEmailExists).toHaveBeenCalledTimes(1);
+});
 it("places the phone problem under the phone field", async () => {
   const problem = createProblemDetails({ code: "VALIDATION_FAILED", requestId: "test-request", errors: [{ pointer: "/phone", code: "INVALID_VALUE", detail: "Invalid value" }] });
   jest.mocked(authApi.register).mockRejectedValue({ response: { status: 400, data: problem } });
