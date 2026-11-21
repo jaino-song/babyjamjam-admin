@@ -160,7 +160,7 @@ test.describe('Admin Feedback Page', () => {
       });
     });
     await page.getByText('김철수').click();
-    const detail = page.locator('[data-component="desktop_admin_split-layout_detail-panel"]');
+    const detail = page.locator('[data-panel="detail"] [data-slot="detail-panel"]');
     await expect(detail.getByText('부정적 피드백')).toBeVisible();
     await expect(detail.getByText('피드백 정보')).toBeVisible();
     await expect(detail.getByText('답변이 부정확합니다')).toBeVisible();
