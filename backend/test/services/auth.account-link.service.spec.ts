@@ -104,6 +104,18 @@ describe("SMS account linking", () => {
         await expect(startKakao(service)).rejects.toMatchObject({ status: 400, response: { errors: [{ pointer: "/phone" }] } });
         expect(tx.auth_flow_state.updateMany).not.toHaveBeenCalled();
     });
+    it.each(["kakao", "two"])("refuses conflicting pending Kakao holder %s before pending approval", async reason => {
+        user.approvalStatus = "pending";
+        if (reason === "kakao") user.kakaoId = "taken";
+        tx.user.findMany.mockResolvedValue(reason === "two" ? [user, { ...holder(), id: "second" }] : [user]);
+
+        await expect(startKakao(service)).rejects.toMatchObject({
+            status: 400, response: { code: "VALIDATION_FAILED", errors: [{ pointer: "/phone", code: "INVALID_VALUE" }] },
+        });
+        expect(challenge.issue).not.toHaveBeenCalled();
+        expect(tx.auth_flow_state.updateMany).not.toHaveBeenCalled();
+        expect(tx.user.create).not.toHaveBeenCalled();
+    });
     it.each(["match", "birth", "rejected", "owner"])("issues Kakao challenge with identical response: %s", async reason => {
         if (reason === "birth") user.birthDate = "1991-01-01";
         if (reason === "rejected") user.approvalStatus = "rejected";
@@ -154,6 +166,21 @@ describe("SMS account linking", () => {
             expect(client.auth_email_outbox.create).not.toHaveBeenCalled();
         }
         expect(service.hashPassword).not.toHaveBeenCalled();
+    });
+    it.each(["kakao", "email"])("normalizes hyphenated phone input for a pending %s decoy", async method => {
+        user.approvalStatus = "pending";
+        user.phone = phone;
+        if (method === "email") { user.kakaoId = "kakao"; user.passwordHash = null; }
+        (method === "kakao" ? tx.user.findMany : prisma.user.findMany).mockResolvedValue([user]);
+
+        await expect(method === "kakao"
+            ? service.completeKakaoOnboarding("pending-token", "010-1234-5678", birthDate, "user")
+            : service.registerWithEmail("New@example.invalid", "Password1!", "New", "010-1234-5678", birthDate))
+            .rejects.toMatchObject({ status: 403, response: { code: "PENDING_APPROVAL" } });
+        expect(challenge.issue).toHaveBeenCalledTimes(1);
+        expect(challenge.issue).toHaveBeenCalledWith({
+            purpose: method === "kakao" ? "kakao_link" : "email_link", phone: "01012345678", targetUserId: null,
+        });
     });
     it.each(["kakao", "email"])("preserves the phone limit's 429 for a pending %s match", async method => {
         user.approvalStatus = "pending";
@@ -337,6 +364,19 @@ describe("SMS account linking", () => {
         prisma.user.findMany.mockResolvedValue(reason === "two" ? [user, { ...user, id: "second" }] : [user]);
         await expect(startEmail(service)).rejects.toMatchObject({ status: 400, response: { errors: [{ pointer: "/phone", code: "INVALID_VALUE" }] } });
         expect(challenge.issue).not.toHaveBeenCalled();
+    });
+    it.each(["password", "two"])("refuses conflicting pending email holder %s before pending approval", async reason => {
+        user.approvalStatus = "pending";
+        user.kakaoId = "kakao";
+        user.passwordHash = reason === "password" ? "existing-hash" : null;
+        prisma.user.findMany.mockResolvedValue(reason === "two" ? [user, { ...holder(), id: "second" }] : [user]);
+
+        await expect(startEmail(service)).rejects.toMatchObject({
+            status: 400, response: { code: "VALIDATION_FAILED", errors: [{ pointer: "/phone", code: "INVALID_VALUE" }] },
+        });
+        expect(challenge.issue).not.toHaveBeenCalled();
+        expect(prisma.user.create).not.toHaveBeenCalled();
+        expect(tx.user.create).not.toHaveBeenCalled();
     });
     it("creates email account as before when no holder", async () => {
         await expect(startEmail(service)).resolves.toMatchObject({ userId: "created" });
