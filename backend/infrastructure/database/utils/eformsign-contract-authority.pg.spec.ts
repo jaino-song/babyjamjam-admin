@@ -1647,15 +1647,38 @@ async function bounded<T>(promise: Promise<T>, ms: number): Promise<T> {
         expect(await f.repo.cancel(f.input)).toEqual({ kind: "cancelled" });
         expect(await f.readJob()).toMatchObject({ status: "failed", progressStep: "cancelled", payload: f.payload, activeKey: null });
         expect(await f.readState()).toMatchObject({ status: "failed", step: "cancelled", lastErrorCode: f.state.lastErrorCode });
-        await expect(new ServiceRecordEditRepository(db as unknown as PrismaService).retryRevisionDocumentState({
+        const admin = new ServiceRecordEditRepository(db as unknown as PrismaService);
+        expect((await admin.listRevisionHistory(f.input.branchId, f.state.clientId))?.revisions[0]?.documents[0])
+            .toMatchObject({ status: "failed", canRetry: false });
+        expect(await admin.retryRevisionDocumentState({
             branchId: f.input.branchId, clientId: f.state.clientId, revisionId: f.state.revisionId,
             stateId: f.state.id, expectedGeneration: f.state.generation,
-        })).rejects.toThrow("Revision snapshot retry scope is unavailable");
+        })).toMatchObject({ status: "failed", step: "cancelled" });
+        expect(await f.readState()).toMatchObject({ status: "failed", step: "cancelled" });
         await db.eformsign_document_job.update({ where: { id: f.job.id }, data: { completedAt: new Date("2020-01-01") } });
         await f.repo.deleteExpiredTerminal(new Date());
         expect((await f.readJob()).payload).toEqual(f.payload);
         expect(await f.repo.cancel(f.input)).toEqual({ kind: "already_cancelled" });
         expect(await f.repo.retry(f.input)).toEqual({ kind: "not_retryable" });
+    });
+    it.each(["completed", "not_required"])("INITIAL cancel preserves %s state and projects cancellable false", async status => {
+        const f = await initialRuntime("sent");
+        await db.service_record_revision_document_state.update({ where: { id: f.state.id }, data: { status } });
+        const beforeJob = await f.readJob(), beforeState = await f.readState();
+        expect((await f.repo.listForBranch(f.input.branchId, new Date(0))).requiresAttention.find(job => job.id === f.job.id))
+            .toMatchObject({ retryable: false, cancellable: false });
+        expect(await f.repo.cancel(f.input)).toMatchObject({ kind: "not_cancellable" });
+        expect(await f.readJob()).toEqual(beforeJob);
+        expect(await f.readState()).toEqual(beforeState);
+    });
+    it.each(["capability_unverified", "pending", "processing", "unknown", "failed", "manual_review",
+        "waiting_for_completion", "waiting_for_signature"])("INITIAL post-dispatch cancel accepts unresolved %s state in API and listing", async status => {
+        const f = await initialRuntime("sent");
+        await db.service_record_revision_document_state.update({ where: { id: f.state.id }, data: { status } });
+        expect((await f.repo.listForBranch(f.input.branchId, new Date(0))).requiresAttention.find(job => job.id === f.job.id))
+            .toMatchObject({ retryable: false, cancellable: true });
+        expect(await f.repo.cancel(f.input)).toEqual({ kind: "cancelled" });
+        expect(await f.readState()).toMatchObject({ status: "manual_review", step: "unknown" });
     });
     it.each(["queued", "processing", "reconciling", "leased"])("INITIAL %s cannot be cancelled", async status => {
         const f = await initialRuntime("preparing", "PRE_SEND_RETRY_EXHAUSTED", status === "leased" ? "failed" : status);
