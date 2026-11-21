@@ -378,6 +378,30 @@ describe("email lookup identity on resubmission", () => {
     expectDuplicateAccountStep();
   });
 
+  it("retains a direct duplicate through a later debounced false and resubmission", async () => {
+    const { direct, debounced } = await prepareCompetingLookups();
+    await submitAgain();
+    await act(async () => { direct.resolve({ exists: true }); });
+    expectDuplicateAccountStep();
+
+    await act(async () => { jest.advanceTimersByTime(250); });
+    expect(mockCheckEmailExists.mock.calls.filter(([email]) => email === "race@example.com")).toHaveLength(2);
+    await act(async () => { debounced.resolve({ exists: false }); });
+    expectDuplicateAccountStep();
+
+    // Clear the field error without changing the lookup's normalized address.
+    editAndAdvance("RACE@example.com");
+    await submitAgain();
+    expect(authApi.register).toHaveBeenCalledTimes(3);
+    expect(authApi.register).toHaveBeenLastCalledWith(expect.objectContaining({ email: "race@example.com" }));
+    expect(mockCheckEmailExists.mock.calls.filter(([email]) => email === "race@example.com")).toHaveLength(2);
+    expectDuplicateAccountStep();
+
+    fireEvent.change(screen.getByLabelText("이메일"), { target: { value: "race@example.com" } });
+    expect(screen.getByRole("note")).toHaveTextContent(existingNote);
+    expect(screen.getByLabelText("이메일")).not.toHaveAttribute("aria-invalid", "true");
+  });
+
   it("uses a pre-register debounced duplicate after the direct lookup rejects (order B)", async () => {
     const { direct, debounced } = await prepareCompetingLookups();
     const registration = deferred<Awaited<ReturnType<typeof authApi.register>>>();
