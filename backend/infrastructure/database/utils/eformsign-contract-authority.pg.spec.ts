@@ -1865,7 +1865,9 @@ async function bounded<T>(promise: Promise<T>, ms: number): Promise<T> {
         await db.service_record_revision_document_state.update({ where: { id: f.state.id }, data: {
             status: "failed", step: "failed", lastErrorCode: "SERVICE_RECORD_REVISION_DOCUMENT_REJECTED",
         } });
-        await db.service_record_case.update({ where: { id: f.record.id }, data: { status: "FINALIZATION_FAILED", nextAttemptAt: null } });
+        await db.service_record_case.update({ where: { id: f.record.id }, data: {
+            status: "FINALIZATION_FAILED", nextAttemptAt: null, lastError: "SERVICE_RECORD_REVISION_DOCUMENT_REJECTED",
+        } });
         await db.eformsign_document_job.update({ where: { id: f.job.id }, data: {
             activeKey: `service-record-initial-finalization:${f.record.id}`, status: "requires_attention", leaseToken: null,
         } });
@@ -1920,21 +1922,27 @@ async function bounded<T>(promise: Promise<T>, ms: number): Promise<T> {
     function initialFinalizer(f: Awaited<ReturnType<typeof initialChunks>>) {
         const jobs = { findByRequestKeyInTransaction: f.repo.findByRequestKeyInTransaction.bind(f.repo),
             enqueueInTransaction: f.repo.enqueueInTransaction.bind(f.repo) } as unknown as EformsignDocumentJobService;
-        return new ServiceRecordFinalizationService(db as unknown as PrismaService, initialLifecycle(), {} as never,
-            { forBranch: async () => KR_BUILTIN_CALENDAR } as unknown as HolidayCalendarService, jobs,
+        const calendar = { forBranch: async () => KR_BUILTIN_CALENDAR } as unknown as HolidayCalendarService;
+        return new ServiceRecordFinalizationService(db as unknown as PrismaService,
+            new ServiceRecordLifecycleService(db as unknown as PrismaService, calendar), {} as never, calendar, jobs,
             new ServiceRecordEditRepository(db as unknown as PrismaService));
     }
-    async function freezeAfterConfirm(f: Awaited<ReturnType<typeof initialChunks>>) {
+    async function freezeAfterConfirm(f: Awaited<ReturnType<typeof initialChunks>>, revisionId: string) {
         const finalizer = initialFinalizer(f);
-        // This is the scheduler's transactional claim/freeze seam; no provider is called.
-        const claim = () => (finalizer as unknown as { claimFinalizationCase: (caseId: string, branchId: string, date: Date) => Promise<unknown> })
-            .claimFinalizationCase(f.record.id, f.branchId, new Date());
-        await expect(claim()).resolves.toMatchObject({ claimed: false, blockedGeneration: true });
-        await expect(claim()).resolves.toMatchObject({ claimed: false, blockedGeneration: true });
+        const requestKey = `service-record-initial-finalization:${revisionId}`;
+        const referenceDate = new Date();
+        await expect(finalizer.processDueCases(referenceDate)).resolves.toBe(0);
+        const queued = await db.eformsign_document_job.findUniqueOrThrow({ where: { requestKey } });
+        expect(queued).toMatchObject({
+            branchId: f.branchId,
+            status: "queued",
+            activeKey: `service-record-initial-finalization:${f.record.id}`,
+            payload: { generationKind: "INITIAL_FINALIZATION", revisionId },
+        });
+        await expect(finalizer.processDueCases(referenceDate)).resolves.toBe(0);
         const all = await db.eformsign_document_job.findMany({ where: { branchId: f.branchId, source: "auto_finalize", jobType: "create_document" } });
         expect(all).toHaveLength(2);
-        expect(all.filter(job => job.status === "queued")).toHaveLength(1);
-        expect(all.find(job => job.status === "queued")).toMatchObject({ activeKey: `service-record-initial-finalization:${f.record.id}` });
+        expect(all.filter(job => job.status === "queued").map(job => job.id)).toEqual([queued.id]);
     }
     it.each(["pre-deploy", "completed-job"])("U2 confirm after reject creates a second INITIAL on a new revision (%s)", async shape => {
         const f = await terminalInitial();
@@ -1945,7 +1953,7 @@ async function bounded<T>(promise: Promise<T>, ms: number): Promise<T> {
         const revision = await confirmInitial(f);
         expect(revision.id).not.toBe(f.revisionId);
         expect(await f.readJob()).toMatchObject({ status: shape === "completed-job" ? "completed" : "failed", activeKey: null });
-        await freezeAfterConfirm(f);
+        await freezeAfterConfirm(f, revision.id);
     });
     it.each(["070", "003"])("U2 live/completed sibling %s blocks confirm with its independent reason", async statusType => {
         const f = await terminalInitial();
@@ -1954,6 +1962,7 @@ async function bounded<T>(promise: Promise<T>, ms: number): Promise<T> {
         expect(await readinessOf(f)).toMatchObject({ ready: false, reason });
         await expect(confirmInitial(f)).rejects.toMatchObject({ lastErrorCode: reason });
         expect(await f.readJob()).toMatchObject({ activeKey: `service-record-initial-finalization:${f.record.id}`, status: "requires_attention" });
+        expect(await f.readCase()).toMatchObject({ currentRevisionId: f.revisionId, nextAttemptAt: null });
     });
     it.each(["completed", "processing"])("U2 gen1 failed + gen2 %s judges only gen2 and keeps gen1 as history", async status => {
         const f = await terminalInitial();
@@ -1999,15 +2008,16 @@ async function bounded<T>(promise: Promise<T>, ms: number): Promise<T> {
         await f.purge(1); await f.purge(2);
         expect(await readinessOf(f)).toMatchObject({ ready: true });
         await completeInitialSource(f);
-        await confirmInitial(f);
+        const revision = await confirmInitial(f);
         expect(await f.readJob()).toMatchObject({ status: "failed", activeKey: null, lastErrorCode: "JOB_CANCELLED_AFTER_DISPATCH" });
-        await freezeAfterConfirm(f);
+        await freezeAfterConfirm(f, revision.id);
     });
     it("U2 all siblings rejected unblocks and lazy release is idempotent", async () => {
         const f = await terminalInitial();
         expect(await readinessOf(f)).toMatchObject({ ready: true });
         await confirmPredicate(f); await confirmPredicate(f);
         expect(await f.readJob()).toMatchObject({ status: "failed", activeKey: null });
+        expect(await f.readCase()).toMatchObject({ currentRevisionId: f.revisionId, nextAttemptAt: null });
     });
     it.each(["JOB_CANCELLED_AFTER_DISPATCH", "SERVICE_RECORD_REVISION_CAPABILITY_UNVERIFIED"])("U2 non-terminal %s still blocks", async lastErrorCode => {
         const f = await terminalInitial();

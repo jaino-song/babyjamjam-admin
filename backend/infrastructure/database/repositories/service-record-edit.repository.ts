@@ -1650,6 +1650,13 @@ function operationRevisionDispatchContext(
     };
 }
 
+export async function assertNoBlockingRevisionDocumentStates(
+    tx: Prisma.TransactionClient,
+    input: { branchId: string; clientId: number; serviceRecordCaseId: string },
+): Promise<void> {
+    await checkRevisionDocumentStatesForConfirm(tx, input);
+}
+
 /**
  * A new confirmation may proceed only after the current revision's external
  * operation markers have reached a terminal outcome.  The partial record
@@ -1662,13 +1669,14 @@ function operationRevisionDispatchContext(
  * were unavailable at confirm time (see SERVICE_RECORD_BORN_STUCK_ERROR_CODES).
  * It has no provider job and no target document, so it cannot duplicate a
  * send; blocking on it would make the record uneditable forever.
+ * Returns whether a terminal INITIAL was ready after lazy key release.
  */
-export async function assertNoBlockingRevisionDocumentStates(
+async function checkRevisionDocumentStatesForConfirm(
     tx: Prisma.TransactionClient,
     input: { branchId: string; clientId: number; serviceRecordCaseId: string },
-): Promise<void> {
+): Promise<boolean> {
     const transaction = tx as OptionalQueryTransaction;
-    if (typeof transaction.$queryRaw !== "function") return;
+    if (typeof transaction.$queryRaw !== "function") return false;
     const rows = await transaction.$queryRaw<BlockingRevisionDocumentStateRow[]>(Prisma.sql`
         SELECT
             state.id,
@@ -1703,12 +1711,16 @@ export async function assertNoBlockingRevisionDocumentStates(
         ORDER BY state.created_at ASC, state.id ASC
         FOR UPDATE OF state
     `);
+    let terminalInitialReady = false;
     for (const blocking of rows) {
         let reason = blocking.lastErrorCode;
         if (blocking.operation === "record_snapshot"
             && isInitialFinalizationWorkflowScope(blocking.workflowScope, initialFinalizationRequestKey(blocking.revisionId))) {
             const readiness = await releaseTerminalInitialFinalizationKey(tx, input.serviceRecordCaseId, blocking.revisionId);
-            if (readiness.ready) continue;
+            if (readiness.ready) {
+                terminalInitialReady = true;
+                continue;
+            }
             reason = readiness.reason;
         }
         const detail = reason ?? `${blocking.operation}:${blocking.step}`;
@@ -1717,6 +1729,7 @@ export async function assertNoBlockingRevisionDocumentStates(
             blocking.operation, blocking.status, reason,
         );
     }
+    return terminalInitialReady;
 }
 
 /**
@@ -3506,7 +3519,7 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
             { caseId: discovered.serviceRecordCaseId },
         );
         if (!discoveredSource) throw new ServiceRecordEditNotFoundError();
-        await this.lockConfirmTargets(tx, input.branchId, discoveredSource, input.draftId);
+        const terminalInitialReady = await this.lockConfirmTargets(tx, input.branchId, discoveredSource, input.draftId);
 
         // The parent/case/employee locks serialize all cooperating writers.
         // Re-read every business row after those locks and reject a writer
@@ -3661,6 +3674,11 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
                     babyWeight: plan.header.babyWeight,
                     ...(plan.finalizationDueAt ? { finalizationDueAt: new Date(plan.finalizationDueAt) } : {}),
                     ...(revision ? { currentRevisionId: revision.id } : {}),
+                    // Terminal INITIAL failures have no retry time. Make the new revision due
+                    // for the scheduler in the same write that installs it.
+                    ...(revision && terminalInitialReady && source.caseLifecycle.status === "FINALIZATION_FAILED"
+                        ? { nextAttemptAt: now }
+                        : {}),
                     version: { increment: 1 },
                 },
                 select: { version: true },
@@ -3974,7 +3992,7 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
         branchId: string,
         source: ServiceRecordEditSource,
         draftId: string,
-    ): Promise<void> {
+    ): Promise<boolean> {
         // Common order: client -> sorted employees -> case -> sorted child
         // schedules/assignments/days/docs -> draft -> revision/jobs.
         await lockRowsByBranchAndIds(tx, "client", "client", branchId, [source.client.id], false);
@@ -4001,7 +4019,7 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
         // Operation state is a document child and must be locked before jobs
         // in the common order. Only the current revision blocks a new
         // confirmation; retained partial record history is explicitly safe.
-        await assertNoBlockingRevisionDocumentStates(tx, {
+        const terminalInitialReady = await checkRevisionDocumentStatesForConfirm(tx, {
             branchId,
             clientId: source.client.id,
             serviceRecordCaseId: source.caseId,
@@ -4032,6 +4050,7 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
                 select: { id: true },
             });
         }
+        return terminalInitialReady;
     }
 
     private async invalidateSupersededJobs(
