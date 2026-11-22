@@ -1,5 +1,6 @@
 "use client";
 
+import { summarizeErrorForLog } from "@babyjamjam/shared";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api/client";
 import {
@@ -127,7 +128,7 @@ export function useUploadDocument() {
             await queryClient.invalidateQueries({ queryKey: documentQueryKeys.all });
         },
         onError: (error) => {
-            console.error("[useUploadDocument] onError called:", error);
+            console.error("[useUploadDocument] onError called:", summarizeErrorForLog(error));
         },
     });
 }
@@ -150,7 +151,7 @@ export function useUpdateDocument() {
             ]);
         },
         onError: (error) => {
-            console.error("[useUpdateDocument] onError called:", error);
+            console.error("[useUpdateDocument] onError called:", summarizeErrorForLog(error));
         },
     });
 }
@@ -170,7 +171,7 @@ export function useDeleteDocument() {
              await queryClient.invalidateQueries({ queryKey: documentQueryKeys.all });
          },
          onError: (error) => {
-             console.error("[useDeleteDocument] onError called:", error);
+             console.error("[useDeleteDocument] onError called:", summarizeErrorForLog(error));
          },
      });
 }

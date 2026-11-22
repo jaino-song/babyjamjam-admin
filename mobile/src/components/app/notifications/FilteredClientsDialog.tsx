@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { X } from "lucide-react";
-import { normalizeApiError } from "@babyjamjam/shared";
+import { summarizeErrorForLog, normalizeApiError } from "@babyjamjam/shared";
 import { getClientDocumentStatusMeta } from "@babyjamjam/shared/constants/client-document-status";
 import type { StatusBadgeVariant } from "@babyjamjam/shared/tokens/status-badge";
 import { Button } from "@/components/ui/button";
@@ -127,7 +127,7 @@ export function FilteredClientsDialog({
                 onClose();
             }
         } catch (err) {
-            console.error("Failed to delete client:", err);
+            console.error("Failed to delete client:", summarizeErrorForLog(err));
             // The mutation outcome is surfaced through the dialog's destructive
             // alert instead of being silently swallowed.
             setDeleteFailureMessage(
