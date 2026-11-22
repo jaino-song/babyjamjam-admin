@@ -22,7 +22,7 @@ const FALLBACK_COPY: FailurePopupCopy = {
  * copy so the popup is never blank while its details load.
  */
 export function describeFailurePopup(
-  job: Pick<EformsignDocumentJobResponse, "jobType" | "recoveryKind" | "clientName" | "documentKind" | "failureReasonCode"> & Partial<Pick<EformsignDocumentJobResponse, "retryable" | "progressStep">> | undefined,
+  job: Pick<EformsignDocumentJobResponse, "jobType" | "recoveryKind" | "clientName" | "documentKind" | "failureReasonCode"> & Partial<Pick<EformsignDocumentJobResponse, "retryable" | "cancellable" | "progressStep" | "progressDetail">> | undefined,
 ): FailurePopupCopy {
   if (!job) return FALLBACK_COPY;
   const who = `${job.clientName?.trim() || "고객"} 님`;
@@ -81,7 +81,7 @@ export function recoverJobHref(jobId: string): string {
   return `/contracts?recoverJobId=${encodeURIComponent(jobId)}`;
 }
 
-type FailureDetailJob = Partial<Pick<EformsignDocumentJobResponse, "documentKind" | "source" | "recoveryKind" | "retryable" | "progressStep" | "progressDetail" | "lastErrorCode">> & {
+type FailureDetailJob = Partial<Pick<EformsignDocumentJobResponse, "documentKind" | "source" | "recoveryKind" | "retryable" | "cancellable" | "progressStep" | "progressDetail" | "lastErrorCode">> & {
   status: string;
   failureReasonCode?: string | null;
 };
@@ -141,34 +141,48 @@ const SERVICE_RECORD_STAGE_COPY: Record<FailureStage, string> = {
   "전송 결과 확인": "제공기록지 전송 결과를 확인하지 못했어요.",
 };
 
-function describeServiceRecordFailure(job: Pick<FailureDetailJob, "failureReasonCode" | "retryable" | "progressStep">): JobFailureDetailCopy {
+function describeServiceRecordFailure(job: Pick<FailureDetailJob, "failureReasonCode" | "retryable" | "cancellable" | "progressStep" | "progressDetail">): JobFailureDetailCopy {
+  const mayExist = serviceRecordMayExist(job);
+  const canCancel = job.cancellable === true;
   const code = job.failureReasonCode;
   const stage = code && Object.prototype.hasOwnProperty.call(CODE_STAGE, code) ? CODE_STAGE[code] : null;
   let reason = stage ? SERVICE_RECORD_STAGE_COPY[stage] : "제공기록지를 생성하지 못했어요.";
-  if (code === "SERVICE_RECORD_INITIAL_FINALIZATION_STATE_NOT_READY") {
+  if (mayExist || code === "SERVICE_RECORD_REVISION_MANUAL_REVIEW_REQUIRED") {
+    reason = "제공기록지가 이미 생성되었을 수 있어요. 처리 결과를 확인해 주세요.";
+  } else if (code === "SERVICE_RECORD_INITIAL_FINALIZATION_STATE_NOT_READY") {
     reason = "제공기록지를 생성할 수 있는 서비스 상태가 아니에요.";
   } else if (code === "SERVICE_RECORD_INITIAL_FINALIZATION_SCOPE_CHANGED") {
     reason = "제공기록지 생성 대상이나 서비스 일정이 변경됐어요.";
   }
 
+  if (mayExist) {
+    return { reason, nextAction: canCancel
+      ? "이폼사인에서 제공기록지의 문서 상태를 확인한 뒤 전자문서 작업 목록에서 취소해 주세요."
+      : "이폼사인에서 제공기록지의 문서 상태를 확인하고 관리자에게 문의해 주세요." };
+  }
+
   if (job.retryable === true) {
-    let nextAction: string = SERVICE_RECORD_RECOVERY_COPY.nextAction;
+    let nextAction: string = canCancel ? SERVICE_RECORD_RECOVERY_COPY.nextAction : "전자문서 작업 목록에서 재시도해 주세요.";
     if (code === "SERVICE_RECORD_INITIAL_FINALIZATION_STATE_NOT_READY") {
-      nextAction = "서비스 상태를 확인한 뒤 전자문서 작업 목록에서 재시도하거나 취소해 주세요.";
+      nextAction = canCancel
+        ? "서비스 상태를 확인한 뒤 전자문서 작업 목록에서 재시도하거나 취소해 주세요."
+        : "서비스 상태를 확인한 뒤 전자문서 작업 목록에서 재시도해 주세요.";
     } else if (code === "SERVICE_RECORD_INITIAL_FINALIZATION_SCOPE_CHANGED") {
-      nextAction = "제공기록지 대상과 일정을 확인한 뒤 전자문서 작업 목록에서 재시도하거나 취소해 주세요.";
+      nextAction = canCancel
+        ? "제공기록지 대상과 일정을 확인한 뒤 전자문서 작업 목록에서 재시도하거나 취소해 주세요."
+        : "제공기록지 대상과 일정을 확인한 뒤 전자문서 작업 목록에서 재시도해 주세요.";
     }
     return { reason, nextAction };
   }
-  if (serviceRecordMayExist(job.progressStep)) {
-    return { reason, nextAction: "이폼사인에서 제공기록지의 문서 상태를 확인한 뒤 전자문서 작업 목록에서 취소해 주세요." };
-  }
-
-  let nextAction = "전자문서 작업 목록에서 취소하거나 관리자에게 문의해 주세요.";
+  let nextAction = canCancel ? "전자문서 작업 목록에서 취소하거나 관리자에게 문의해 주세요." : "관리자에게 문의해 주세요.";
   if (code === "SERVICE_RECORD_INITIAL_FINALIZATION_STATE_NOT_READY") {
-    nextAction = "서비스 상태를 확인한 뒤 전자문서 작업 목록에서 취소하거나 관리자에게 문의해 주세요.";
+    nextAction = canCancel
+      ? "서비스 상태를 확인한 뒤 전자문서 작업 목록에서 취소하거나 관리자에게 문의해 주세요."
+      : "서비스 상태를 확인한 뒤 관리자에게 문의해 주세요.";
   } else if (code === "SERVICE_RECORD_INITIAL_FINALIZATION_SCOPE_CHANGED") {
-    nextAction = "제공기록지 대상과 일정을 확인한 뒤 전자문서 작업 목록에서 취소하거나 관리자에게 문의해 주세요.";
+    nextAction = canCancel
+      ? "제공기록지 대상과 일정을 확인한 뒤 전자문서 작업 목록에서 취소하거나 관리자에게 문의해 주세요."
+      : "제공기록지 대상과 일정을 확인한 뒤 관리자에게 문의해 주세요.";
   } else if (code === "JOB_TARGET_NOT_OWNED_BY_BRANCH") {
     nextAction = "작업을 만든 지점의 관리자에게 확인을 요청해 주세요.";
   } else if (code === "RECOVERY_PAYLOAD_EXPIRED") {

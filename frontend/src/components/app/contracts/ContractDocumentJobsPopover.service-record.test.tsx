@@ -54,6 +54,22 @@ describe.each([390, 1280])("service-record jobs at %spx", width => {
     expect(dialog).not.toHaveTextContent(/계약서|수동 전송/);
   });
 
+  it.each(["retry", "cancel"])("passes preparing+creating evidence from detail to the %s dialog", action => {
+    const evidenceJob = { ...JOB, progressStep: "preparing", progressDetail: "creating", retryable: action === "retry" };
+    const client = createTestQueryClient();
+    const view = (offered: boolean) => <QueryClientProvider client={client}><ContractDocumentJobsPopover defaultOpen documentJobs={makeJobList({ requiresAttention: offered ? [evidenceJob] : [] })} data-component={BASE} /></QueryClientProvider>;
+    const { rerender } = render(view(true));
+    fireEvent.click(screen.getByRole("button", { name: /김하늘.*상세 보기/ }));
+    expect(screen.getByText(WARNING)).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: action === "retry" ? "재시도" : "취소" }));
+    const title = action === "retry" ? "제공기록지 생성을 재시도할까요?" : "제공기록지 작업을 취소할까요?";
+    const dialog = screen.getByRole("dialog", { name: title });
+    expect(dialog).toHaveTextContent(WARNING);
+    expect(dialog).not.toHaveTextContent("아직 보낸 문서는 없어요.");
+    rerender(view(false));
+    expect(screen.getByRole("dialog", { name: title })).toHaveTextContent(WARNING);
+  });
+
   it.each(["retry", "cancel"])("retains service-record %s copy when polling removes the offered job", action => {
     const client = createTestQueryClient();
     const view = (offered: boolean) => <QueryClientProvider client={client}><ContractDocumentJobsPopover defaultOpen documentJobs={makeJobList({ requiresAttention: offered ? [JOB] : [] })} data-component={BASE} /></QueryClientProvider>;
@@ -95,5 +111,17 @@ it.each([undefined, "queued", "failed", "client-started"])("does not infer dispa
 
 it("leaves contract detail warnings unchanged even with dispatch evidence", () => {
   render(<ContractDocumentJobDetail job={{ ...JOB, documentKind: "service_contract", progressStep: "sent", retryable: false }} data-component={`${BASE}_detail`} />);
+  expect(screen.queryByText(WARNING)).not.toBeInTheDocument();
+});
+
+it.each(["client-started", "info-inserted", "creating", "sent"])("warns for progressDetail %s while preparing regardless of retryable", progressDetail => {
+  const { rerender } = render(<ContractDocumentJobDetail job={{ ...JOB, progressStep: "preparing", progressDetail }} data-component={`${BASE}_detail`} />);
+  expect(screen.getByText(WARNING)).toHaveAttribute("data-component", `${BASE}_detail_dispatch-warning`);
+  rerender(<ContractDocumentJobDetail job={{ ...JOB, progressStep: "preparing", progressDetail, retryable: false }} data-component={`${BASE}_detail`} />);
+  expect(screen.getByText(WARNING)).toBeVisible();
+});
+
+it.each([null, "preparing", "unknown"])("does not infer dispatch from unrelated progressDetail %s", progressDetail => {
+  render(<ContractDocumentJobDetail job={{ ...JOB, progressStep: "preparing", progressDetail, retryable: false }} data-component={`${BASE}_detail`} />);
   expect(screen.queryByText(WARNING)).not.toBeInTheDocument();
 });

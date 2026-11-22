@@ -10,7 +10,7 @@ import { isBranchContextAligned } from "@/features/system-templates/branch-conte
 import { eformsignDocumentJobsQueryKeys, useCancelDocumentJob } from "@/hooks/useEformsignDocumentJobs";
 import type { EformsignDocumentJobResponse } from "@/services/eformsign";
 
-interface ContractDocumentJobCancelDialogProps extends Partial<Pick<EformsignDocumentJobResponse, "documentKind" | "progressStep">> {
+interface ContractDocumentJobCancelDialogProps extends Partial<Pick<EformsignDocumentJobResponse, "documentKind" | "progressStep" | "progressDetail">> {
   jobId: string;
   isJobOffered: boolean;
   branchId: string | null;
@@ -26,14 +26,14 @@ function isNotCancellable(error: unknown): boolean {
     && error.response?.status === 409 && error.response.data?.code === "JOB_NOT_CANCELLABLE";
 }
 
-export function ContractDocumentJobCancelDialog({ jobId, documentKind, progressStep, isJobOffered, branchId, open, onClose, onCancelled, onCloseAutoFocus, "data-component": base }: ContractDocumentJobCancelDialogProps): React.ReactElement {
+export function ContractDocumentJobCancelDialog({ jobId, documentKind, progressStep, progressDetail, isJobOffered, branchId, open, onClose, onCancelled, onCloseAutoFocus, "data-component": base }: ContractDocumentJobCancelDialogProps): React.ReactElement {
   const cancel = useCancelDocumentJob();
   const queryClient = useQueryClient();
   const submissionLocked = useRef(false);
   const noLongerOffered = !isJobOffered && !cancel.isPending && !cancel.isSuccess;
   const isServiceRecord = documentKind === "service_record";
   const description = isServiceRecord
-    ? `${SERVICE_RECORD_RECOVERY_COPY.cancelDescription} ${serviceRecordMayExist(progressStep) ? SERVICE_RECORD_RECOVERY_COPY.afterDispatch : SERVICE_RECORD_RECOVERY_COPY.beforeDispatch}`
+    ? `${SERVICE_RECORD_RECOVERY_COPY.cancelDescription} ${serviceRecordMayExist({ progressStep, progressDetail }) ? SERVICE_RECORD_RECOVERY_COPY.afterDispatch : SERVICE_RECORD_RECOVERY_COPY.beforeDispatch}`
     : "취소하면 이 고객의 전자문서 작업이 닫히고 새로 요청할 수 있어요. 아직 보낸 문서는 없어요.";
   const errorCopy = noLongerOffered || isNotCancellable(cancel.error)
     ? (isServiceRecord ? SERVICE_RECORD_RECOVERY_COPY.cancelUnavailable : "이 작업은 지금 취소할 수 없어요. 새로고침 후 다시 확인해 주세요.")
