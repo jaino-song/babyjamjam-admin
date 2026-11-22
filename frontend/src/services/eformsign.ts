@@ -99,6 +99,7 @@ export interface EformsignDocumentJobResponse {
     recoveryPresentation?: "iframe" | "legacy" | null;
     /** Missing on older servers; only explicit true permits cancellation. */
     cancellable?: boolean;
+    retryable?: boolean;
     lastErrorCode: string | null;
 }
 
@@ -141,6 +142,11 @@ export interface ClaimEformsignDocumentJobRecoveryResponse {
 export interface ResolveEformsignDocumentJobResponse {
     job: EformsignDocumentJobResponse;
     alreadyResolved: boolean;
+}
+
+export interface RetryEformsignDocumentJobResponse {
+    jobId: string;
+    status: EformsignDocumentJobStatus;
 }
 
 /** 200 from POST /eformsign-docs/jobs/:jobId/cancel. */
@@ -362,6 +368,12 @@ export const eformsignApi = {
     resolveDocumentJob: async (jobId: string): Promise<ResolveEformsignDocumentJobResponse> => {
         const { data } = await api.post<ResolveEformsignDocumentJobResponse>(
             `/eformsign-docs/jobs/${encodeURIComponent(jobId)}/resolve`,
+        );
+        return data;
+    },
+    retryDocumentJob: async (jobId: string): Promise<RetryEformsignDocumentJobResponse> => {
+        const { data } = await api.post<RetryEformsignDocumentJobResponse>(
+            `/eformsign-docs/jobs/${encodeURIComponent(jobId)}/retry`,
         );
         return data;
     },

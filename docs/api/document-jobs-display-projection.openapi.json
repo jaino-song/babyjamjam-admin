@@ -5,13 +5,79 @@
     "version": "1.0.0",
     "description": "The additive display response fields and safe recovery routing discriminator are documented here; this is not the complete document jobs API. Older servers may omit this projection. Recovery authority remains server-owned; recoveryKind classifies actions and recoveryPresentation selects a compatible dialog."
   },
-  "paths": {},
+  "paths": {
+    "/eformsign-docs/jobs/{jobId}/retry": {
+      "post": {
+        "summary": "Retry a proven-undelivered automatic contract send once",
+        "description": "Uses stored data after client/authority/job locks; no request body or caller-supplied contract data. Success queues a new job and supersedes the old one atomically. Requires contract.dispatch and the document jobs accepting gate.",
+        "parameters": [
+          {
+            "name": "jobId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "A new queued job; the previous job is superseded.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "jobId",
+                    "status"
+                  ],
+                  "properties": {
+                    "jobId": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "queued"
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "RESOURCE_NOT_FOUND: unknown or another branch"
+          },
+          "409": {
+            "description": "JOB_NOT_RETRYABLE: no new job or partial writes are committed"
+          },
+          "401": {
+            "description": "AUTH_REQUIRED"
+          },
+          "403": {
+            "description": "Requires contract.dispatch"
+          },
+          "503": {
+            "description": "Document jobs are not accepting new work"
+          }
+        }
+      }
+    }
+  },
   "components": {
     "schemas": {
       "EformsignDocumentJobDisplayProjection": {
         "type": "object",
-        "required": ["documentKind", "displayOperation", "failureReasonCode", "cancellable"],
+        "required": ["documentKind", "displayOperation", "failureReasonCode", "cancellable", "retryable"],
         "properties": {
+          "retryable": {
+            "type": "boolean",
+            "description": "Display hint only in requiresAttention; active and recent return false. Requires retained contractData, matching client and generation-bound authority, no manual claim, and strict proof of non-delivery, including an operator-confirmed not-delivered result after the send step; retry never uses the looser pre-send replacement. An uncertain send result is never retryable because another request could send a second contract. POST re-proves eligibility under locks and may return 409 JOB_NOT_RETRYABLE.",
+            "readOnly": true
+          },
           "cancellable": {
             "type": "boolean",
             "description": "Display hint for proven-undelivered generation-bound staff create jobs. Always false for legacy and auto_finalize jobs. POST rechecks locked proof and live claims, so a true hint may still yield 409 JOB_NOT_CANCELLABLE. requires_attention plus cancellable offers manual_send through iframe recovery; cancelled jobs have no recovery action.",

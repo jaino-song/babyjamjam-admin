@@ -171,3 +171,20 @@ describe("cancellation capability", () => {
     } else expect(screen.queryByRole("button", { name: "취소" })).not.toBeInTheDocument();
   });
 });
+
+describe("retry capability", () => {
+  it.each([true, false, undefined])("shows retry only for explicit true (%s)", retryable => {
+    const onRetryJob = jest.fn();
+    render(<ContractDocumentJobDetail job={{ ...JOB, status: "failed", recoveryKind: "manual_send", cancellable: true, retryable }}
+      onRetryJob={onRetryJob} data-component={BASE} />);
+    if (retryable) {
+      const retry = screen.getByRole("button", { name: "재시도" });
+      expect(retry).toHaveAttribute("data-component", `${BASE}_progress_retry_button`);
+      expect(retry).toHaveAttribute("data-slot", "job-retry-action");
+      expect(retry).toHaveAttribute("data-variant", "outline");
+      const actions = screen.getAllByRole("button").map(button => button.textContent);
+      expect(actions).toEqual(["재시도", "취소"]);
+      expect(screen.getByRole("link", { name: "수동 전송" }).compareDocumentPosition(retry) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    } else expect(screen.queryByRole("button", { name: "재시도" })).not.toBeInTheDocument();
+  });
+});

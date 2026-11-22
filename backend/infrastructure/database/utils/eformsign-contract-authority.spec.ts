@@ -173,6 +173,28 @@ describe("eformsign contract authority primitives (SQL mock, no concurrency proo
         const h = harness([client], [{ ...authority(phase), generation: FG, creation_job_id: FJ }], [job]);
         await expect(reserveAuthority(h.tx, reservation)).rejects.toBeInstanceOf(AuthorityConflictError); expect(h.writes()).toHaveLength(0);
     });
+    it("T16 refuses an open reserved authority even after pre-send retry exhaustion without linked intents", async () => {
+        const previousAuthority = { ...authority(), generation: FG, creation_job_id: FJ, fingerprint: "b".repeat(64), provider_document_id: null };
+        const h = harness([client], [previousAuthority], [job], [], 1, [authority()]);
+        const updateMany = jest.fn().mockResolvedValue({ count: 1 });
+        const tx = {
+            ...h.tx,
+            eformsign_document_job: {
+                findUnique: jest.fn().mockResolvedValue({
+                    id: previousAuthority.creation_job_id, branchId: previousAuthority.branch_id, clientId: previousAuthority.client_id,
+                    contractGeneration: previousAuthority.generation, payloadFingerprint: previousAuthority.fingerprint,
+                    jobType: "create_document", source: "staff", requestKey: "previous-contract-request",
+                    status: "failed", lastErrorCode: "PRE_SEND_RETRY_EXHAUSTED", progressStep: "failed",
+                    payload: null, documentId: null, leaseToken: null, activeKey: null,
+                }),
+                updateMany,
+            },
+            eformsign_dispatch_intent: { findFirst: jest.fn().mockResolvedValue(null) },
+        } as unknown as Prisma.TransactionClient;
+        await expect(reserveAuthority(tx, reservation)).rejects.toBeInstanceOf(AuthorityConflictError);
+        expect(h.writes()).toHaveLength(0);
+        expect(updateMany).not.toHaveBeenCalled();
+    });
     it("T16 same job/generation with different fingerprint conflicts", async () => {
         const h = harness([client], [{ ...authority(), fingerprint: "b".repeat(64) }], [job]);
         await expect(reserveAuthority(h.tx, reservation)).rejects.toBeInstanceOf(AuthorityConflictError); expect(h.writes()).toHaveLength(0);
