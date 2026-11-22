@@ -1,7 +1,10 @@
 import { Logger } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 
-import { EformsignDocumentJobWorkerService } from "application/services/eformsign-document-job-worker.service";
+import {
+    EformsignDocumentJobWorkerService,
+    jitterPreSendRetryDelay,
+} from "application/services/eformsign-document-job-worker.service";
 import { EformsignDocumentJobEntity } from "domain/entities/eformsign-document-job.entity";
 import { captureBackendError } from "infrastructure/observability/service-record-sentry";
 import { createSchedulerLeaseMock } from "../utils/mocks/scheduler-lease.mock";
@@ -88,7 +91,6 @@ describe("document-job worker hardening", () => {
             expect(repository.scheduleRetry).toHaveBeenCalledWith(
                 claimed.id, claimed.leaseToken, new Date(now.getTime() + delay), authorizationFailure,
             );
-            expect(delay).toBeGreaterThanOrEqual(30_000);
             expect(repository.markFailed).not.toHaveBeenCalled();
             expect(random).toHaveBeenCalledTimes(1);
         }
@@ -99,6 +101,14 @@ describe("document-job worker hardening", () => {
         expect(repository.markFailed).toHaveBeenCalledWith(claimed.id, claimed.leaseToken, "PRE_SEND_RETRY_EXHAUSTED");
         expect(repository.scheduleRetry).not.toHaveBeenCalled();
         expect(random).not.toHaveBeenCalled();
+    });
+
+    it.each([
+        [0, 30_000],
+        [0.5, 30_000],
+        [1, 36_000],
+    ])("clamps a 30 s base delay with random %s to %s ms", (randomValue, expectedDelayMs) => {
+        expect(jitterPreSendRetryDelay(30_000, randomValue)).toBe(expectedDelayMs);
     });
 
     it("also jitters revision operation authorization retries", async () => {

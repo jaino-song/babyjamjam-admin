@@ -78,6 +78,12 @@ const RECOVERY_RENOTIFY_WINDOW_MS = 24 * 60 * 60_000;
 const FALLBACK_CLIENT_NAME = "고객";
 const REVISION_DISPATCH_ERROR_CODE_PATTERN = /^[A-Z0-9][A-Z0-9_:-]{0,79}$/;
 
+export function jitterPreSendRetryDelay(baseDelayMs: number, randomValue: number): number {
+    return Math.max(MIN_PRE_SEND_RETRY_DELAY_MS, Math.round(
+        baseDelayMs * (1 + PRE_SEND_RETRY_JITTER_RATIO * (2 * randomValue - 1)),
+    ));
+}
+
 function revisionDispatchErrorCode(reason: unknown): string {
     return typeof reason === "string" && REVISION_DISPATCH_ERROR_CODE_PATTERN.test(reason)
         ? reason : "SERVICE_RECORD_REVISION_DISPATCH_NOT_AUTHORIZED";
@@ -1079,9 +1085,7 @@ export class EformsignDocumentJobWorkerService {
             const baseDelayMs = PRE_SEND_RETRY_DELAYS_MS[job.attempts - 1] ?? PRE_SEND_RETRY_DELAYS_MS.at(-1)!;
             const isRevision = revisionPayload(job.payload) || revisionOperationsPayload(job.payload);
             const delayMs = isRevision
-                ? Math.max(MIN_PRE_SEND_RETRY_DELAY_MS, Math.round(
-                    baseDelayMs * (1 + PRE_SEND_RETRY_JITTER_RATIO * (2 * this.retryRandom() - 1)),
-                ))
+                ? jitterPreSendRetryDelay(baseDelayMs, this.retryRandom())
                 : baseDelayMs;
             await this.repository.scheduleRetry(
                 job.id,
