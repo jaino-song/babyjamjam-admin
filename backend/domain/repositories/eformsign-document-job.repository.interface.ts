@@ -46,6 +46,11 @@ export interface ManualRecoveryInput {
     now: Date;
 }
 
+export type RetryDocumentJobResult =
+    | { kind: "retried"; jobId: string; status: EformsignDocumentJobStatus }
+    | { kind: "not_found" }
+    | { kind: "not_retryable" };
+
 export type CancelDocumentJobResult =
     | { kind: "cancelled" | "already_cancelled" | "not_found" }
     | { kind: "not_cancellable"; reason: string };
@@ -103,6 +108,7 @@ export type DiagnoseInitialFinalizationJobResult =
     };
 
 export interface IEformsignDocumentJobRepository {
+    retry(input: ManualRecoveryInput): Promise<RetryDocumentJobResult>;
     cancel(input: ManualRecoveryInput): Promise<CancelDocumentJobResult>;
     /** Read-only diagnosis without write-set or row locks. */
     diagnoseInitialFinalizationJob(input: { jobId: string; branchId: string }): Promise<DiagnoseInitialFinalizationJobResult>;

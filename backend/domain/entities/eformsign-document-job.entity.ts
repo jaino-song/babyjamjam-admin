@@ -22,6 +22,7 @@ export type { ServiceRecordRevisionGenerationInput } from "@babyjamjam/shared/ty
 export interface EformsignDocumentJobProps {
     /** Read-only eligibility hint; cancellation rechecks the locked proof. */
     cancellable?: boolean;
+    retryable?: boolean;
     contractGeneration?: string | null;
     id: string;
     branchId: string;
@@ -59,6 +60,7 @@ export class EformsignDocumentJobEntity implements EformsignDocumentJobProps {
     }
 
     declare readonly cancellable?: boolean;
+    declare readonly retryable?: boolean;
     readonly contractGeneration?: string | null;
 
     declare readonly id: string;
