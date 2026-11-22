@@ -10,7 +10,7 @@ import {
     getServiceRecordFinalizationDueAt,
     getServiceRecordTokenExpiresAt,
 } from "domain/constants/service-record-link-message";
-import { EFORMSIGN_COMPLETED_STATUS_CODES } from "domain/constants/eformsign-doc-status.constants";
+import { EFORMSIGN_COMPLETED_STATUS_CODES, EFORMSIGN_REJECTED_STATUS_CODES } from "domain/constants/eformsign-doc-status.constants";
 import { EFORMSIGN_DOCUMENT_KIND } from "domain/entities/eformsign-doc.entity";
 import { getEffectiveClientServiceStatus } from "domain/repositories/client.repository.interface";
 import { UnsupportedKoreanHolidayYearError, type KrBusinessDayCalendar } from "domain/utils/business-days";
@@ -1033,17 +1033,19 @@ export class ServiceRecordLifecycleService {
     }
 
     async failInitialServiceRecordSnapshotInTransaction(
-        params: { branchId: string; documentId: string; statusType: string; isVoided: boolean },
+        params: { branchId: string; documentId: string },
         tx: Prisma.TransactionClient,
     ): Promise<boolean> {
         const trigger = await tx.eformsign_doc.findFirst({
             where: {
                 branchId: params.branchId, documentId: params.documentId,
                 documentKind: EFORMSIGN_DOCUMENT_KIND.SERVICE_RECORD_SNAPSHOT,
+                permanentPurgeRequestedAt: null,
             },
-            select: { serviceRecordCaseId: true, revisionId: true, snapshotVersion: true },
+            select: { serviceRecordCaseId: true, revisionId: true, snapshotVersion: true, statusType: true, voidedAt: true },
         });
         if (!trigger?.serviceRecordCaseId || !trigger.revisionId || trigger.snapshotVersion === null) return false;
+        if (trigger.voidedAt === null && !EFORMSIGN_REJECTED_STATUS_CODES.has(trigger.statusType)) return false;
         const revisionId = trigger.revisionId;
 
         // Lock in the same order as completion: case, state, then snapshot chunks/documents.
@@ -1096,11 +1098,13 @@ export class ServiceRecordLifecycleService {
               AND doc.service_record_case_id = chunk.service_record_case_id AND doc.revision_id = chunk.revision_id
               AND doc.snapshot_version = chunk.snapshot_version AND doc.snapshot_chunk_index = chunk.chunk_index
               AND doc.document_kind = ${EFORMSIGN_DOCUMENT_KIND.SERVICE_RECORD_SNAPSHOT}
-              AND doc.status_type = ${params.statusType}
+              AND doc.status_type = ${trigger.statusType}
             FOR UPDATE OF chunk, doc
         `);
         const document = documents[0];
-        if (documents.length !== 1 || !document || (params.isVoided && document.voidedAt === null)) return false;
+        if (documents.length !== 1 || !document
+            || (trigger.voidedAt !== null && document.voidedAt === null)
+            || (document.voidedAt === null && !EFORMSIGN_REJECTED_STATUS_CODES.has(document.statusType))) return false;
         const errorCode = document.voidedAt !== null
             ? "SERVICE_RECORD_REVISION_DOCUMENT_VOIDED"
             : "SERVICE_RECORD_REVISION_DOCUMENT_REJECTED";

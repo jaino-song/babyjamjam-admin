@@ -1072,13 +1072,10 @@ export class EformsignWebhookService {
     private async failInitialServiceRecordSnapshot(branchId: string, documentId: string): Promise<void> {
         const lifecycle = this.serviceRecordLifecycle;
         if (!this.prisma || !lifecycle) return;
-        // Read the persisted projection, including on equal-timestamp replays and stale deliveries.
-        const document = await this.eformsignDocRepository.findByDocumentId(branchId, documentId);
-        if (!document || document.documentKind !== EFORMSIGN_DOCUMENT_KIND.SERVICE_RECORD_SNAPSHOT
-            || (!document.isVoided && !REJECTED_STATUS_CODES.has(document.statusType))) return;
+        // The lifecycle reads a narrow persisted projection, so legacy entity mapping
+        // failures cannot break unrelated webhooks or prevent INITIAL failure repair.
         const changed = await this.prisma.$transaction((tx) => lifecycle.failInitialServiceRecordSnapshotInTransaction({
-            branchId, documentId: document.documentId, statusType: document.statusType,
-            isVoided: document.isVoided === true,
+            branchId, documentId,
         }, tx));
         if (changed) {
             await this.bumpDocumentSnapshotVersion(branchId);
