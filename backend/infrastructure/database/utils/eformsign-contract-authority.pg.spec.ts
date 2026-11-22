@@ -1659,7 +1659,7 @@ async function bounded<T>(promise: Promise<T>, ms: number): Promise<T> {
         const readCase = () => db.service_record_case.findUniqueOrThrow({ where: { id: f.record.id } });
         return { ...f, revisionId, branchId, purge, readCase };
     }
-    it.each(["purgeContent", "markDeleted"] as const)("U1 %s clears a revision-linked snapshot's revision and satisfies the revision scope CHECK", async writer => {
+    it.each(["purgeContent", "markDeleted"] as const)("U1 %s satisfies the revision scope CHECK and only purge clears snapshot linkage", async writer => {
         const f = await initialChunks();
         const documentId = documents[0]!;
         expect(await db.eformsign_doc.findUniqueOrThrow({ where: { documentId } })).toMatchObject({
@@ -1671,8 +1671,9 @@ async function bounded<T>(promise: Promise<T>, ms: number): Promise<T> {
         await expect(mirror[writer]([documentId], new Date())).resolves.toBeUndefined();
 
         expect(await db.eformsign_doc.findUniqueOrThrow({ where: { documentId } })).toMatchObject({
-            statusType: "049", revisionId: null, branchId: f.branchId,
-            ...(writer === "purgeContent" ? { serviceRecordCaseId: null } : {}),
+            statusType: "049", branchId: f.branchId,
+            ...(writer === "purgeContent" ? { revisionId: null, serviceRecordCaseId: null }
+                : { revisionId: f.revisionId, serviceRecordCaseId: f.record.id }),
         });
         expect(await db.$queryRaw<Array<{ valid: boolean }>>`
             SELECT revision_id IS NULL OR (branch_id IS NOT NULL AND service_record_case_id IS NOT NULL) AS valid
@@ -1681,6 +1682,32 @@ async function bounded<T>(promise: Promise<T>, ms: number): Promise<T> {
         expect(await db.service_record_snapshot_chunk.findUniqueOrThrow({ where: { id: chunk.id } })).toEqual(chunk);
         expect(await initialLifecycle().healInitialSnapshotTerminalOutcomes({ branchId: f.branchId })).toBe(1);
         expect(await f.readState()).toMatchObject({ status: "failed", lastErrorCode: "SERVICE_RECORD_INITIAL_DELETED_STATUS_UNKNOWN" });
+    });
+    it("U1 vendor-deleted INITIAL chunk blocks ready sibling completion before terminal evaluation", async () => {
+        const f = await initialChunks();
+        const deletedDocumentId = documents[0]!, siblingDocumentId = documents[1]!;
+        const syncedAt = new Date();
+        const sibling = await db.eformsign_doc.update({ where: { documentId: siblingDocumentId }, data: {
+            statusType: "003", detailPayload: {}, detailSourceUpdatedDate: syncedAt,
+            detailSyncedAt: syncedAt, syncStatus: "ready",
+        } });
+        const content = Buffer.from("synthetic snapshot PDF");
+        await db.eformsign_doc_file.createMany({ data: ["document", "audit_trail"].map(fileType => ({
+            eformsignDocId: sibling.id, fileType, content, contentType: "application/pdf",
+            byteSize: content.length, sha256: digest(content.toString()), sourceUpdatedDate: syncedAt, syncedAt,
+        })) });
+        await new SbEformsignDocumentMirrorRepository(db as unknown as PrismaService)
+            .markDeleted([deletedDocumentId], syncedAt);
+        const stateBeforeCompletion = await f.readState(), caseBeforeCompletion = await f.readCase();
+
+        expect(await initialLifecycle().completeServiceRecordSnapshotIfReady({
+            branchId: f.branchId, documentId: siblingDocumentId,
+        })).toBe(false);
+        expect(await f.readState()).toEqual(stateBeforeCompletion);
+        expect(await f.readCase()).toEqual(caseBeforeCompletion);
+        expect(await initialLifecycle().healInitialSnapshotTerminalOutcomes({ branchId: f.branchId })).toBe(1);
+        expect(await f.readState()).toMatchObject({ status: "failed", lastErrorCode: "SERVICE_RECORD_INITIAL_DELETED_STATUS_UNKNOWN" });
+        expect(await f.readCase()).toMatchObject({ status: "FINALIZATION_FAILED", currentUsableRevisionId: null });
     });
     it("U1 staff purge of an in-progress INITIAL chunk fails state/case after commit and repeated evaluation is a no-op", async () => {
         const f = await initialChunks();
