@@ -507,7 +507,7 @@ export class SbEformsignDocumentJobRepository implements IEformsignDocumentJobRe
         const stateUpdated = await tx.$executeRaw(Prisma.sql`
             UPDATE "service_record_revision_document_state"
             SET ${preDispatch
-                ? Prisma.sql`status = 'failed', step = 'cancelled'`
+                ? Prisma.sql`status = 'failed', step = 'unknown'`
                 : Prisma.sql`status = 'manual_review', step = 'unknown', last_error_code = 'JOB_CANCELLED_AFTER_DISPATCH'`},
                 version = version + 1, updated_at = now()
             WHERE id = ${state.id}::uuid AND generation = ${state.generation} AND version = ${state.version}
@@ -1041,23 +1041,26 @@ export class SbEformsignDocumentJobRepository implements IEformsignDocumentJobRe
     ): Promise<RequeueInitialFinalizationJobResult> {
         const initial = await this.readDispatchJob(tx, input.jobId, false);
         const context = initial ? payloadContext(initial.payload) : null;
-        if (!initial || !context || initial.branch_id !== input.branchId
-            || context.branchId !== input.branchId || initial.client_id !== context.clientId
+        if (!initial || initial.branch_id !== input.branchId) return { kind: "not_found" };
+        if (!context || context.branchId !== input.branchId || initial.client_id !== context.clientId
             || !isValidServiceRecordDispatchContext(context)) {
-            return { kind: "not_found" };
+            return { kind: "not_requeueable", reason: "SERVICE_RECORD_INITIAL_FINALIZATION_SCOPE_CHANGED" };
         }
         await lockServiceRecordWriteSet(tx, {
             branchId: input.branchId, clientId: context.clientId, caseId: context.serviceRecordCaseId,
         });
         const job = await this.readDispatchJob(tx, input.jobId, true);
-        if (!job || job.branch_id !== input.branchId || job.client_id !== context.clientId) return { kind: "not_found" };
+        if (!job || job.branch_id !== input.branchId) return { kind: "not_found" };
+        if (job.client_id !== context.clientId) return { kind: "not_requeueable", reason: "SERVICE_RECORD_INITIAL_FINALIZATION_SCOPE_CHANGED" };
         const jobReason = initialFinalizationJobIneligibility(job);
         if (jobReason !== undefined) {
             return { kind: "not_requeueable", reason: jobReason };
         }
         const observed = payloadContext(job.payload);
         if (!observed || observed.branchId !== input.branchId || observed.clientId !== job.client_id
-            || observed.serviceRecordCaseId !== context.serviceRecordCaseId || !isValidServiceRecordDispatchContext(observed)) return { kind: "not_found" };
+            || observed.serviceRecordCaseId !== context.serviceRecordCaseId || !isValidServiceRecordDispatchContext(observed)) {
+            return { kind: "not_requeueable", reason: "SERVICE_RECORD_INITIAL_FINALIZATION_SCOPE_CHANGED" };
+        }
         const verified = await this.verifyInitialFinalizationDispatch(tx, job, observed);
         if (verified.kind !== "allow") return { kind: "not_requeueable", reason: verified.reason };
         if (!initialRetryRowEligible(job)) return { kind: "not_requeueable", reason: "SERVICE_RECORD_INITIAL_FINALIZATION_JOB_NOT_STOPPED" };

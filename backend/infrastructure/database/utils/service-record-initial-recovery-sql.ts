@@ -1,9 +1,8 @@
 import { Prisma } from "@prisma/client";
 
-/** Completed/not-required generations cannot be retired by cancelling a stale failed job. */
+/** INITIAL starts capability_unverified/pending and dispatch authorization advances it to processing. */
 export const INITIAL_FINALIZATION_CANCELLABLE_STATE_STATUSES: readonly string[] = [
-    "capability_unverified", "pending", "processing", "unknown", "failed", "manual_review",
-    "waiting_for_completion", "waiting_for_signature",
+    "capability_unverified", "pending", "processing",
 ];
 
 /** SQL twin of isInitialFinalizationJobIdentity. Aliases are source-owned, never request input. */
@@ -47,7 +46,7 @@ export function initialFinalizationCancellableSql(): Prisma.Sql {
         AND EXISTS (SELECT 1 FROM service_record_revision_document_state s
             WHERE to_jsonb(s.id::text) = j.payload->'documentStateId'
               AND s.branch_id = j.branch_id AND s.client_id = j.client_id
-              AND s.status IN (${Prisma.join(INITIAL_FINALIZATION_CANCELLABLE_STATE_STATUSES)})
+              AND s.status IN ('capability_unverified', 'pending', 'processing')
               AND to_jsonb(s.service_record_case_id::text) = j.payload->'context'->'serviceRecordCaseId'
               AND to_jsonb(s.revision_id::text) = j.payload->'revisionId'
               AND to_jsonb(s.generation) = j.payload->'generation'

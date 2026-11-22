@@ -4,7 +4,7 @@ import { ServiceRecordEditRepository } from "infrastructure/database/repositorie
 import { SbEformsignDocumentJobRepository } from "infrastructure/database/repositories/sb.eformsign-document-job.repository";
 import { Logger } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
-import { initialFinalizationCancellableSql } from "infrastructure/database/utils/service-record-initial-recovery-sql";
+import { INITIAL_FINALIZATION_CANCELLABLE_STATE_STATUSES, initialFinalizationCancellableSql } from "infrastructure/database/utils/service-record-initial-recovery-sql";
 import { setup, input } from "../utils/service-record-initial-recovery.fixture";
 const { branchId, jobId } = input;
 
@@ -41,6 +41,13 @@ describe("staff INITIAL recovery", () => {
         expect(await f.repo.cancel(input)).toEqual({ kind: "not_found" });
         expect(f.queries).toEqual([]);
     });
+    it("refuses a branch-owned INITIAL job with malformed context as not_retryable", async () => {
+        const f = setup();
+        f.job.payload.context = { ...f.job.payload.context, formVersion: 0 };
+        expect(await f.repo.retry(input)).toEqual({ kind: "not_retryable" });
+        expect(f.tx.$executeRaw).not.toHaveBeenCalled();
+        expect(f.queries.some(q => q.text.includes("FOR UPDATE"))).toBe(false);
+    });
     it.each(["queued", "processing", "reconciling"])("refuses cancel for %s", async status => {
         const f = setup({ status });
         expect(await f.repo.cancel(input)).toMatchObject({ kind: "not_cancellable" });
@@ -76,7 +83,8 @@ describe("staff INITIAL recovery", () => {
         expect(jobWrite.text).not.toMatch(/(?:payload|active_key|progress_step|progress_detail)\s*=/);
         expect(jobWrite.values).toContain("JOB_CANCELLED_AFTER_DISPATCH");
     });
-    it.each(["completed", "not_required", "unrecognized"])("refuses cancellation without writes for %s revision state", async status => {
+    it.each(["completed", "not_required", "superseded", "failed", "manual_review", "unknown",
+        "waiting_for_completion", "waiting_for_signature", "unrecognized"])("refuses cancellation without writes for %s revision state", async status => {
         const f = setup({ progressStep: "sent" }, { status });
         const beforeJob = structuredClone(f.job), beforeState = structuredClone(f.state);
         expect(await f.repo.cancel(input)).toMatchObject({ kind: "not_cancellable" });
@@ -86,13 +94,20 @@ describe("staff INITIAL recovery", () => {
     });
     it("binds listing cancellation to unresolved revision statuses", () => {
         const sql = initialFinalizationCancellableSql();
-        expect(sql.text).toContain("s.status IN");
-        expect(sql.values).toEqual(expect.arrayContaining(["pending", "processing", "failed", "manual_review"]));
-        expect(sql.values).not.toContain("completed");
-        expect(sql.values).not.toContain("not_required");
+        expect(sql.text).toContain("s.status IN ('capability_unverified', 'pending', 'processing')");
+        expect(INITIAL_FINALIZATION_CANCELLABLE_STATE_STATUSES).toEqual(["capability_unverified", "pending", "processing"]);
+        expect(sql.values).toEqual([]);
     });
-    it.each(["failed", "manual_review"])("history and admin retry refuse a terminal %s/cancelled state", async status => {
-        const f = setup({}, { status, step: "cancelled" });
+    it.each(["generation", "revisionId"])("preserves a later state with changed %s", async field => {
+        const f = setup({ progressStep: "sent" }, { status: "processing", [field]: jobId });
+        const before = structuredClone(f.state);
+        expect(await f.repo.cancel(input)).toMatchObject({ kind: "not_cancellable" });
+        expect(f.tx.$executeRaw).not.toHaveBeenCalled();
+        expect(f.state).toEqual(before);
+    });
+    it.each(["pending", "capability_unverified"])("history and admin retry refuse a cancelled %s generation", async status => {
+        const f = setup({}, { status });
+        expect(await f.repo.cancel(input)).toEqual({ kind: "cancelled" });
         const read = f.tx.$queryRaw.getMockImplementation()!;
         f.tx.$queryRaw.mockImplementation(async (sql: Prisma.Sql) => {
             if (sql.text.includes('FROM "service_record_case"')) return [{ caseId: f.state.serviceRecordCaseId,
@@ -103,11 +118,13 @@ describe("staff INITIAL recovery", () => {
         });
         const repo = new ServiceRecordEditRepository(f.prisma as never);
         const history = await repo.listRevisionHistory(branchId, f.state.clientId);
-        expect(history?.revisions[0]?.documents[0]).toMatchObject({ status, canRetry: false });
+        expect(history?.revisions[0]?.documents[0]).toMatchObject({ status: "failed", canRetry: false });
+        expect(f.state).toMatchObject({ status: "failed", step: "unknown" });
         const before = structuredClone(f.state);
+        f.tx.$executeRaw.mockClear();
         expect(await repo.retryRevisionDocumentState({ branchId, clientId: f.state.clientId,
             revisionId: f.state.revisionId, stateId: f.state.id, expectedGeneration: f.state.generation,
-        })).toMatchObject({ status, step: "cancelled" });
+        })).toMatchObject({ status: "failed", step: "unknown" });
         expect(f.tx.$executeRaw).not.toHaveBeenCalled();
         expect(f.state).toEqual(before);
     });
@@ -119,7 +136,7 @@ describe("staff INITIAL recovery", () => {
             branchId, clientId: f.state.clientId, revisionId: f.state.revisionId, stateId: f.state.id,
             expectedGeneration: f.state.generation,
         });
-        if (progressStep === "preparing") await expect(result).resolves.toMatchObject({ status: "failed", step: "cancelled" });
+        if (progressStep === "preparing") await expect(result).resolves.toMatchObject({ status: "failed", step: "unknown" });
         else await expect(result).resolves.toMatchObject({ status: "manual_review", step: "unknown" });
         expect(f.job).toEqual(beforeJob); expect(f.state).toEqual(beforeState);
     });

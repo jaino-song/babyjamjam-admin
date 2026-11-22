@@ -52,7 +52,7 @@ export function setup(overrides: Record<string, unknown> = {}, stateOverrides: R
             if (sql.text.includes('UPDATE "service_record_revision_document_state"')) {
                 if (sql.text.includes("status = 'pending'")) Object.assign(state, { status: "pending", step: "requeued" });
                 else if (sql.text.includes("manual_review")) Object.assign(state, { status: "manual_review", step: "unknown", lastErrorCode: "JOB_CANCELLED_AFTER_DISPATCH" });
-                else Object.assign(state, { status: "failed", step: "cancelled" });
+                else Object.assign(state, { status: "failed", step: sql.text.includes("step = 'unknown'") ? "unknown" : "cancelled" });
             }
             if (sql.text.includes('UPDATE "eformsign_document_job"')) {
                 job.status = "failed";
