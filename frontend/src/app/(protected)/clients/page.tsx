@@ -5,7 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useDebounce } from "use-debounce";
-import { normalizeApiError } from "@babyjamjam/shared";
+import { summarizeErrorForLog, normalizeApiError } from "@babyjamjam/shared";
 import {
     Workflow,
     Users,
@@ -548,7 +548,7 @@ export default function ClientsPage() {
                 currentClient?.id === clientId ? null : currentClient
             ));
         } catch (err) {
-            console.error("Failed to delete client:", err);
+            console.error("Failed to delete client:", summarizeErrorForLog(err));
             // Registered problem message (verified) or locally authored copy —
             // upstream body messages are never rendered.
             const normalized = normalizeApiError(err, { locale: "ko-KR", operation: "mutation" });

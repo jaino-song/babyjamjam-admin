@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useCallback } from "react";
-import { normalizeApiError } from "@babyjamjam/shared";
+import { summarizeErrorForLog, normalizeApiError } from "@babyjamjam/shared";
 import { Upload, CheckCircle, RotateCcw } from "lucide-react";
 
 import { ContentPaper } from "@/components/app/root/content-paper";
@@ -62,7 +62,7 @@ export function VoucherPriceUploadForm() {
         setWarnings(result.warnings ?? []);
         setCurrentStep("preview");
       } catch (error) {
-        console.error("Image parsing failed:", error);
+        console.error("Image parsing failed:", summarizeErrorForLog(error));
       }
     },
     [parseImageMutation],
@@ -95,7 +95,7 @@ export function VoucherPriceUploadForm() {
       setUpdateResult(result);
       setCurrentStep("success");
     } catch (error) {
-      console.error("Bulk update failed:", error);
+      console.error("Bulk update failed:", summarizeErrorForLog(error));
     }
   }, [bulkUpdateMutation, parsedData, selectedYear]);
 
