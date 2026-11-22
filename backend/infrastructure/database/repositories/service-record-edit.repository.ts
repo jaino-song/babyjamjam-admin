@@ -2616,7 +2616,10 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
                         generation: state.generation,
                         status: state.status,
                         documentVersion: state.documentVersion,
-                        canRetry: canRetryRevisionDocumentState(state),
+                        canRetry: canRetryRevisionDocumentState(state)
+                            && !(state.operation === "record_snapshot"
+                                && isInitialFinalizationWorkflowScope(state.workflowScope, initialFinalizationRequestKey(state.revisionId))
+                                && revisionSnapshotRetryJobScope(state) === null),
                         reasonCode: state.lastErrorCode,
                     })),
             })),
