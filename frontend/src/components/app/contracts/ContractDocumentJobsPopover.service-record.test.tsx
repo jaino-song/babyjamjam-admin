@@ -41,6 +41,19 @@ describe.each([390, 1280])("service-record jobs at %spx", width => {
     expect(dialog).not.toHaveTextContent(/계약서|수동|private detail/);
   });
 
+  it.each(["queued", "client-started", "dispatch_authorized", "creating", "sent", "reconciling"])("passes %s to retry and warns only with dispatch evidence", progressStep => {
+    render(<QueryClientProvider client={createTestQueryClient()}><ContractDocumentJobsPopover defaultOpen documentJobs={makeJobList({ requiresAttention: [{ ...JOB, progressStep }] })} data-component={BASE} /></QueryClientProvider>);
+    fireEvent.click(screen.getByRole("button", { name: /김하늘.*상세 보기/ }));
+    fireEvent.click(screen.getByRole("button", { name: "재시도" }));
+    const dialog = screen.getByRole("dialog", { name: "제공기록지 생성을 재시도할까요?" });
+    const description = within(dialog).getByText(/재시도하면 서버에서 제공기록지를 다시 생성합니다\./);
+    const afterDispatch = ["dispatch_authorized", "creating", "sent", "reconciling"].includes(progressStep);
+    expect(description.textContent).toBe(`재시도하면 서버에서 제공기록지를 다시 생성합니다.${afterDispatch ? ` ${WARNING}` : ""}`);
+    expect(description).toBeVisible();
+    expect(description).toHaveAttribute("data-component", `${BASE}_retry_header_description`);
+    expect(dialog).not.toHaveTextContent(/계약서|수동 전송/);
+  });
+
   it.each(["retry", "cancel"])("retains service-record %s copy when polling removes the offered job", action => {
     const client = createTestQueryClient();
     const view = (offered: boolean) => <QueryClientProvider client={client}><ContractDocumentJobsPopover defaultOpen documentJobs={makeJobList({ requiresAttention: offered ? [JOB] : [] })} data-component={BASE} /></QueryClientProvider>;
