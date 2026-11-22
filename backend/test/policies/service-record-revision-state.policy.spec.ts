@@ -46,20 +46,32 @@ describe("service-record revision dispatch state policy", () => {
         expect(isRevisionDocumentDispatchAllowed(malformed)).toBe(false);
     });
 
-    it.each([
-        null, 1, "context", [],
-        ...Object.entries({
-            branchId: 1,
-            serviceRecordCaseId: {},
-            clientId: "101",
-            revisionId: [],
-            revisionNumber: "2",
-            businessFingerprint: { toString: null },
-            plannedSessionCount: "2",
-            documentSyncStatus: {},
-            formVersion: "3",
-        }).map(([field, value]) => ({ ...context(), [field]: value })),
-    ])("refuses wrong-typed dispatch context %# without throwing", malformed => {
+    it.each([null, 1, "context", []])("refuses non-object dispatch context %# without throwing", malformed => {
+        expect(isValidServiceRecordDispatchContext(malformed)).toBe(false);
+    });
+
+    it.each(Object.entries({
+        branchId: 1,
+        serviceRecordCaseId: {},
+        clientId: "101",
+        revisionId: [],
+        revisionNumber: "2",
+        businessFingerprint: { toString: null },
+        plannedSessionCount: "2",
+        plannedSessionDates: {},
+        documentSyncStatus: {},
+        lifecycleStatus: 7,
+        formVersion: "3",
+    } satisfies Record<keyof ServiceRecordRevisionDispatchContext, unknown>))(
+        "refuses a wrong-typed %s in an otherwise valid dispatch context",
+        (field, value) => {
+            const malformed = { ...context(), [field]: value };
+            expect(isValidServiceRecordDispatchContext(malformed)).toBe(false);
+        },
+    );
+
+    it.each([undefined, null, ""])("refuses missing or empty lifecycle status %p", lifecycleStatus => {
+        const malformed = { ...context(), lifecycleStatus };
         expect(isValidServiceRecordDispatchContext(malformed)).toBe(false);
     });
 

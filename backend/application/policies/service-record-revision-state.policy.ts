@@ -131,7 +131,7 @@ export function isValidServiceRecordDispatchContext(
 ): context is ServiceRecordRevisionDispatchContext {
     if (!isRecord(context)) return false;
     const { branchId, serviceRecordCaseId, clientId, revisionId, revisionNumber,
-        businessFingerprint, formVersion, documentSyncStatus, plannedSessionDates, plannedSessionCount } = context;
+        businessFingerprint, formVersion, documentSyncStatus, lifecycleStatus, plannedSessionDates, plannedSessionCount } = context;
     if (typeof branchId !== "string" || !branchId
         || typeof serviceRecordCaseId !== "string" || !serviceRecordCaseId
         || typeof clientId !== "number" || !Number.isInteger(clientId) || clientId < 1) {
@@ -144,6 +144,7 @@ export function isValidServiceRecordDispatchContext(
     }
     if (typeof businessFingerprint !== "string" || !FINGERPRINT_PATTERN.test(businessFingerprint)) return false;
     if (typeof formVersion !== "number" || !Number.isInteger(formVersion) || formVersion < 1) return false;
+    if (typeof lifecycleStatus !== "string" || !lifecycleStatus) return false;
     if (!SERVICE_RECORD_REVISION_DOCUMENT_SYNC_STATUSES.some(status => status === documentSyncStatus)) return false;
     return isValidPlannedDates(plannedSessionDates, plannedSessionCount);
 }
