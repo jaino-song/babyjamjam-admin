@@ -1,6 +1,7 @@
 "use client";
 
 
+import { summarizeErrorForLog } from "@babyjamjam/shared";
 import { useState, useCallback, useRef } from "react";
 import { refreshAppAuthSession } from "@/lib/api/client";
 import { safeStorageGetItem, safeStorageRemoveItem, safeStorageSetItem } from "@/lib/safe-storage";
@@ -112,7 +113,7 @@ function logChatStreamError(context: string, error: unknown): void {
         return;
     }
 
-    console.error(`[chat] ${context}:`, error);
+    console.error(`[chat] ${context}:`, summarizeErrorForLog(error));
 }
 
 async function requestChatStream(init: RequestInit): Promise<Response> {
@@ -346,7 +347,7 @@ export function useChatStream(): UseChatStreamReturn {
                 }),
             });
         } catch (err) {
-            console.error("[chat] failed to persist message:", err);
+            console.error("[chat] failed to persist message:", summarizeErrorForLog(err));
         }
     }, [sessionId]);
 
@@ -494,7 +495,7 @@ export function useChatStream(): UseChatStreamReturn {
             setHasMoreHistory(data.hasMore);
             setTotalMessages(data.total);
         } catch (err) {
-            console.error("error loading history:", err);
+            console.error("error loading history:", summarizeErrorForLog(err));
             setHasMoreHistory(false);
         } finally {
             isLoadingRef.current = false;
@@ -1083,7 +1084,7 @@ export function useChatStream(): UseChatStreamReturn {
                     method: "DELETE",
                 });
             } catch (e) {
-                console.error("Failed to delete session:", e);
+                console.error("Failed to delete session:", summarizeErrorForLog(e));
             }
         }
     }, [sessionId]);

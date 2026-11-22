@@ -1,5 +1,6 @@
 "use client";
 
+import { summarizeErrorForLog } from "@babyjamjam/shared";
 import { LoadingState } from "@/components/app/ui/LoadingState";
 import {
   Fragment,
@@ -541,7 +542,7 @@ export function SharedDocumentPreviewDialog({
         printWindow.print();
       } catch (error) {
         cleanupPrintFrame();
-        console.error("Failed to print preview", error);
+        console.error("Failed to print preview", summarizeErrorForLog(error));
       }
     }, { once: true });
     window.document.body.appendChild(iframe);

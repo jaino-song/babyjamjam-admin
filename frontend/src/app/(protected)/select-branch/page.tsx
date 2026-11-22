@@ -2,7 +2,7 @@
 
 
 import { useCallback, useEffect, useState } from "react";
-import { normalizeApiError } from "@babyjamjam/shared";
+import { summarizeErrorForLog, normalizeApiError } from "@babyjamjam/shared";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useQueryClient } from "@tanstack/react-query";
 import { Building2 } from "lucide-react";
@@ -60,7 +60,7 @@ export default function SelectBranchPage() {
 
             router.replace("/login");
         } catch (err) {
-            console.error("[Select Branch] Error logging out:", err);
+            console.error("[Select Branch] Error logging out:", summarizeErrorForLog(err));
             // Registered problem message (verified) or locally authored copy.
             const normalized = normalizeApiError(err, { locale: "ko-KR", operation: "mutation" });
             setError(normalized.verified ? normalized.message : "로그아웃에 실패했어요.");
@@ -89,7 +89,7 @@ export default function SelectBranchPage() {
             router.replace(returnPath || "/dashboard");
             return true;
         } catch (err) {
-            console.error("[Select Branch] Error selecting branch:", err);
+            console.error("[Select Branch] Error selecting branch:", summarizeErrorForLog(err));
             // Registered problem message (verified) or locally authored copy.
             const normalized = normalizeApiError(err, { locale: "ko-KR", operation: "mutation" });
             setSelectionError(normalized.verified ? normalized.message : "지점 선택에 실패했어요.");
@@ -123,7 +123,7 @@ export default function SelectBranchPage() {
                 }
 
             } catch (err) {
-                console.error("[Select Branch] Error fetching branches:", err);
+                console.error("[Select Branch] Error fetching branches:", summarizeErrorForLog(err));
                 // Registered problem message (verified) or locally authored copy.
             const normalized = normalizeApiError(err, { locale: "ko-KR", operation: "mutation" });
             setError(normalized.verified ? normalized.message : "지점 목록을 불러오는데 실패했어요.");
