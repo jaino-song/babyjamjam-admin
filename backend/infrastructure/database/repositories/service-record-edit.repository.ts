@@ -3259,7 +3259,8 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
                 || !row.documentId
                 || !row.storedDocumentId
                 || row.documentId !== row.storedDocumentId
-                || row.documentRevisionId !== input.revisionId
+                || (row.documentRevisionId !== input.revisionId
+                    && !(row.documentStatusType === "049" && row.documentRevisionId === null))
                 || row.documentBranchId !== input.branchId
                 || (!tombstone && (row.documentClientId !== input.clientId
                     || row.documentCaseId !== input.serviceRecordCaseId

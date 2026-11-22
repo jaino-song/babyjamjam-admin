@@ -2796,6 +2796,11 @@ describe("INITIAL chunk terminal outcome", () => {
         expect(sql).toContain("status = 'FINALIZATION_FAILED'");
         expect(sql).toContain("next_attempt_at = NULL");
         expect(sql).toContain("current_usable_revision_id = NULL");
+        const documentSql = f.tx.$queryRaw.mock.calls[4]![0].strings.join("");
+        expect(documentSql).toContain("chunk.revision_id = ");
+        expect(documentSql).toContain("doc.branch_id = chunk.branch_id");
+        expect(documentSql).toContain("doc.revision_id = chunk.revision_id");
+        expect(documentSql).toContain("doc.status_type = '049' AND doc.revision_id IS NULL");
     });
     it.each(["dispatch_authorized", "creating"])("defers a purged in-progress chunk while the state step is %s", async step => {
         const f = setup({ step });

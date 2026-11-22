@@ -1659,6 +1659,29 @@ async function bounded<T>(promise: Promise<T>, ms: number): Promise<T> {
         const readCase = () => db.service_record_case.findUniqueOrThrow({ where: { id: f.record.id } });
         return { ...f, revisionId, branchId, purge, readCase };
     }
+    it.each(["purgeContent", "markDeleted"] as const)("U1 %s clears a revision-linked snapshot's revision and satisfies the revision scope CHECK", async writer => {
+        const f = await initialChunks();
+        const documentId = documents[0]!;
+        expect(await db.eformsign_doc.findUniqueOrThrow({ where: { documentId } })).toMatchObject({
+            revisionId: f.revisionId, serviceRecordCaseId: f.record.id, branchId: f.branchId,
+        });
+        const chunk = await db.service_record_snapshot_chunk.findFirstOrThrow({ where: { eformsignDocumentId: documentId } });
+        const mirror = new SbEformsignDocumentMirrorRepository(db as unknown as PrismaService);
+
+        await expect(mirror[writer]([documentId], new Date())).resolves.toBeUndefined();
+
+        expect(await db.eformsign_doc.findUniqueOrThrow({ where: { documentId } })).toMatchObject({
+            statusType: "049", revisionId: null, branchId: f.branchId,
+            ...(writer === "purgeContent" ? { serviceRecordCaseId: null } : {}),
+        });
+        expect(await db.$queryRaw<Array<{ valid: boolean }>>`
+            SELECT revision_id IS NULL OR (branch_id IS NOT NULL AND service_record_case_id IS NOT NULL) AS valid
+            FROM eformsign_doc WHERE document_id = ${documentId}
+        `).toEqual([{ valid: true }]);
+        expect(await db.service_record_snapshot_chunk.findUniqueOrThrow({ where: { id: chunk.id } })).toEqual(chunk);
+        expect(await initialLifecycle().healInitialSnapshotTerminalOutcomes({ branchId: f.branchId })).toBe(1);
+        expect(await f.readState()).toMatchObject({ status: "failed", lastErrorCode: "SERVICE_RECORD_INITIAL_DELETED_STATUS_UNKNOWN" });
+    });
     it("U1 staff purge of an in-progress INITIAL chunk fails state/case after commit and repeated evaluation is a no-op", async () => {
         const f = await initialChunks();
         expect(await f.purge(1)).toBe(true);
@@ -1666,7 +1689,7 @@ async function bounded<T>(promise: Promise<T>, ms: number): Promise<T> {
         expect(await f.readCase()).toMatchObject({ status: "FINALIZATION_FAILED", nextAttemptAt: null, currentUsableRevisionId: null });
         const tombstone = await db.eformsign_doc.findUniqueOrThrow({ where: { documentId: documents[0]! } });
         expect(tombstone).toMatchObject({ statusType: "049", clientId: null, documentKind: null, serviceRecordCaseId: null,
-            snapshotVersion: null, snapshotChunkIndex: null, revisionId: f.revisionId });
+            snapshotVersion: null, snapshotChunkIndex: null, revisionId: null });
         const state = await f.readState(), record = await f.readCase();
         expect(await initialLifecycle().evaluateInitialSnapshotTerminalOutcome({ branchId: f.branchId, documentId: documents[0]!,
             deletedDocuments: [{ documentId: documents[0]!, statusType: "070" }] })).toBe(false);

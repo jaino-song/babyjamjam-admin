@@ -428,9 +428,9 @@ describe("INITIAL documents-created boundary", () => {
         expect(f.executeRaw).not.toHaveBeenCalled();
         expect(evaluate).toHaveBeenCalledWith({ branchId, documentId: "revision-doc-1" }, f.tx);
     });
-    it("accepts only a fully scrubbed same-branch/revision tombstone and evaluates it after promotion in the same transaction", async () => {
+    it.each([revisionId, null])("accepts a fully scrubbed tombstone with document revision %s through its chunk and evaluates it after promotion", async documentRevisionId => {
         const f = transactionHarness(initialRows({ chunks: [{ ...validChunk(), documentStatusType: "049", documentClientId: null,
-            documentCaseId: null, documentKind: null, documentSnapshotVersion: null, documentSnapshotChunkIndex: null }] }));
+            documentRevisionId, documentCaseId: null, documentKind: null, documentSnapshotVersion: null, documentSnapshotChunkIndex: null }] }));
         evaluate.mockImplementation(async (_params, tx) => {
             expect(tx).toBe(f.tx);
             expect(f.executeRaw).toHaveBeenCalledTimes(3);
@@ -448,6 +448,11 @@ describe("INITIAL documents-created boundary", () => {
         expect(caseLock).toBeLessThan(stateLock);
         expect(stateLock).toBeLessThan(docLock);
     });
+    it("accepts a deletion marker with cleared document revision while retaining its chunk scope", async () => {
+        const f = transactionHarness(initialRows({ chunks: [{ ...validChunk(), documentStatusType: "049", documentRevisionId: null }] }));
+        await expect(new ServiceRecordEditRepository(f.prisma as never).recordInitialFinalizationDocumentsCreated(promotionInput())).resolves.toBe(true);
+        expect(evaluate).toHaveBeenCalledWith({ branchId, documentId: "revision-doc-1" }, f.tx);
+    });
     it("evaluates every chunk document rather than only the first", async () => {
         const f = transactionHarness(initialRows({ chunks: [1, 2].map(index => ({ ...validChunk(), chunkIndex: index, chunkCount: 2,
             documentId: `revision-doc-${index}`, storedDocumentId: `revision-doc-${index}`, documentSnapshotChunkIndex: index })) }));
@@ -463,6 +468,8 @@ describe("INITIAL documents-created boundary", () => {
         { chunks: [{ ...validChunk(), documentClientId: 999 }] },
         { chunks: [{ ...validChunk(), documentStatusType: "049", documentBranchId: "other-branch" }] },
         { chunks: [{ ...validChunk(), documentStatusType: "049", documentRevisionId: "other-revision" }] },
+        { chunks: [{ ...validChunk(), documentStatusType: "070", documentRevisionId: null }] },
+        { chunks: [{ ...validChunk(), documentStatusType: "049", documentRevisionId: null, revisionId: "other-revision" }] },
     ])("refuses invalid creation scope before writes %#", async (options) => {
         const f = transactionHarness(initialRows(options));
         const repo = new ServiceRecordEditRepository(f.prisma as never);

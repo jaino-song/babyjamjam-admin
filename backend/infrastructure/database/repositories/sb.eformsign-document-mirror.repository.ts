@@ -474,6 +474,7 @@ implements IEformsignDocumentMirrorRepository {
                     where: { id: row.id },
                     data: {
                         statusType: "049",
+                        revisionId: null,
                         statusDetail: "삭제",
                         updatedDate: deletedAt,
                         expired: false,
@@ -701,6 +702,8 @@ implements IEformsignDocumentMirrorRepository {
                     documentKind: null,
                     employeeScheduleId: null,
                     serviceRecordCaseId: null,
+                    // The revision scope CHECK requires a case for any retained revision.
+                    revisionId: null,
                     snapshotVersion: null,
                     snapshotChunkIndex: null,
                     detailPayload: Prisma.DbNull,

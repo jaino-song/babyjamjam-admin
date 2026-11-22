@@ -408,6 +408,23 @@ describe("SbEformsignDocumentMirrorRepository", () => {
         )).resolves.toBe(true);
     });
 
+    it("clears revision linkage when marking a revision-linked document deleted", async () => {
+        const prisma = {
+            $queryRaw: jest.fn().mockResolvedValue([{ id: 11, detailPayload: null }]),
+            eformsign_doc: { update: jest.fn().mockResolvedValue({}) },
+        };
+        const repository = new SbEformsignDocumentMirrorRepository({
+            ...prisma, $transaction: transactionMock(prisma),
+        } as never);
+
+        await repository.markDeleted(["doc-1"], syncedAt);
+
+        expect(prisma.eformsign_doc.update).toHaveBeenCalledWith({
+            where: { id: 11 },
+            data: expect.objectContaining({ statusType: "049", revisionId: null }),
+        });
+    });
+
     it("purges files, mirrored PII, and client/service-record associations while retaining an authorization tombstone", async () => {
         const prisma = {
             eformsign_doc: {
@@ -530,6 +547,7 @@ describe("SbEformsignDocumentMirrorRepository", () => {
                 documentKind: null,
                 employeeScheduleId: null,
                 serviceRecordCaseId: null,
+                revisionId: null,
                 snapshotVersion: null,
                 snapshotChunkIndex: null,
                 detailPayload: Prisma.DbNull,

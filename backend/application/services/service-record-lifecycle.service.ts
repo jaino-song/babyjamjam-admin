@@ -1051,7 +1051,7 @@ export class ServiceRecordLifecycleService {
         params: InitialSnapshotTerminalOutcomeInput,
         tx: Prisma.TransactionClient,
     ): Promise<boolean> {
-        // Tombstones retain the chunk FK and revision_id, but lose their display linkage.
+        // The chunk retains its document FK, revision and version after the document is scrubbed.
         const scopes = await tx.$queryRaw<Array<{ caseId: string; revisionId: string; snapshotVersion: number }>>(Prisma.sql`
             SELECT service_record_case_id AS "caseId", revision_id AS "revisionId", snapshot_version AS "snapshotVersion"
             FROM service_record_snapshot_chunk
@@ -1104,7 +1104,9 @@ export class ServiceRecordLifecycleService {
             JOIN eformsign_doc AS doc ON doc.document_id = chunk.document_id
             WHERE chunk.branch_id = ${params.branchId}::uuid AND chunk.service_record_case_id = ${owner.id}::uuid
               AND chunk.revision_id = ${scope.revisionId}::uuid AND chunk.snapshot_version = ${scope.snapshotVersion}
-              AND doc.branch_id = chunk.branch_id AND doc.revision_id = chunk.revision_id
+              AND doc.branch_id = chunk.branch_id
+              AND (doc.revision_id = chunk.revision_id
+                   OR (doc.status_type = '049' AND doc.revision_id IS NULL))
             ORDER BY doc.id
             FOR UPDATE OF doc
         `);
