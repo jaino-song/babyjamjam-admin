@@ -1,5 +1,6 @@
 "use client";
 
+import { summarizeErrorForLog } from "@babyjamjam/shared";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Document as PdfDocument, Page } from "react-pdf";
 
@@ -336,7 +337,7 @@ export function ContractPdfViewer({
         // user-visible copy stays locally authored (renderPdfError) and the
         // failure is logged for observability — upstream internals are never
         // rendered.
-        console.error("[ContractPdfViewer] preview load failed", error);
+        console.error("[ContractPdfViewer] preview load failed", summarizeErrorForLog(error));
         setValidatedFileUrl(null);
         setPreviewStatus("error");
       }
@@ -698,7 +699,7 @@ export function ContractPdfViewer({
         ) {
           return;
         }
-        console.error("[ContractPdfViewer] fallback download failed", error);
+        console.error("[ContractPdfViewer] fallback download failed", summarizeErrorForLog(error));
         setPreviewStatus("error");
       })
       .finally(() => {

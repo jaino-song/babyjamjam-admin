@@ -5,7 +5,7 @@ import {
     EMPLOYEE_STATUS_LABELS,
     OPEN_TO_NEXT_WORK_LABELS,
 } from "@babyjamjam/shared/constants/employee-status";
-import { normalizeApiError } from "@babyjamjam/shared";
+import { summarizeErrorForLog, normalizeApiError } from "@babyjamjam/shared";
 import { formatKoreanPhoneNumber } from "@/lib/phone";
 import {
     Users,
@@ -273,7 +273,7 @@ export function EmployeeDirectoryManager({ dataComponent }: { dataComponent: str
 
             setDeleteTargetEmployeeId(null);
         } catch (err) {
-            console.error("Failed to delete employee:", err);
+            console.error("Failed to delete employee:", summarizeErrorForLog(err));
             setDeleteTargetEmployeeId(null);
             setDeleteErrorMessage(normalizeApiError(err, {
                 locale: locale === "en" ? "en-US" : "ko-KR",

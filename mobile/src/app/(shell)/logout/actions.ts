@@ -2,7 +2,7 @@
 
 import { cookies } from "next/headers";
 import { serverAPIClient } from "@/lib/api/server";
-import { normalizeApiError } from "@babyjamjam/shared";
+import { summarizeErrorForLog, normalizeApiError } from "@babyjamjam/shared";
 
 export async function logout(pushEndpoint?: string): Promise<{ success: boolean; error?: string }> {
   let serverLogoutError: string | undefined;
@@ -50,7 +50,7 @@ export async function logout(pushEndpoint?: string): Promise<{ success: boolean;
       ? { success: false, error: serverLogoutError }
       : { success: true };
   } catch (error) {
-    console.error("[Logout] Error:", error);
+    console.error("[Logout] Error:", summarizeErrorForLog(error));
     return { success: false, error: "로그아웃 중 오류가 발생했어요." };
   }
 }

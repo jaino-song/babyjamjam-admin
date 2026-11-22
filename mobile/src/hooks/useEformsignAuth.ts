@@ -1,5 +1,6 @@
 "use client";
 
+import { summarizeErrorForLog } from "@babyjamjam/shared";
 import { useState, useEffect, useCallback } from "react";
 import { eformsignApi } from "@/services/api";
 import { safeStorageGetItem, safeStorageRemoveItem, safeStorageSetItem } from "@/lib/safe-storage";
@@ -59,7 +60,7 @@ export function useEformsignAuth(
       
       setIsAuthenticated(true);
     } catch (err) {
-      console.error("[useEformsignAuth] Authentication failed:", err);
+      console.error("[useEformsignAuth] Authentication failed:", summarizeErrorForLog(err));
       safeStorageRemoveItem("session", "eformsign_auth_time");
       // Locally authored Error only — the raw upstream error (axios body,
       // vendor message) is never stored in user-facing state.
@@ -96,7 +97,7 @@ export function useEformsignAuth(
 
         await authenticate();
       } catch (err) {
-        console.error("[useEformsignAuth] Auth state validation failed:", err);
+        console.error("[useEformsignAuth] Auth state validation failed:", summarizeErrorForLog(err));
         safeStorageRemoveItem("session", "eformsign_auth_time");
         // Locally authored Error only — the raw upstream error is never
         // stored in user-facing state.

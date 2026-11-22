@@ -143,7 +143,7 @@ self.addEventListener('push', (event) => {
     try {
         payload = event.data.json();
     } catch (e) {
-        console.error('[SW] Failed to parse push payload:', e);
+        console.error('[SW] Failed to parse push payload:', e && e.name);
         payload = {
             title: '새 알림',
             body: event.data.text(),

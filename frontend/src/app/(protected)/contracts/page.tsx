@@ -122,7 +122,7 @@ import {
   extractReRequestEvents,
 } from "@/lib/eformsign/document-details";
 import { resolveDocumentCustomerName } from "@/lib/eformsign/display-name";
-import { normalizeApiError } from "@babyjamjam/shared";
+import { summarizeErrorForLog, normalizeApiError } from "@babyjamjam/shared";
 import { describeReceiptLinkError } from "@/lib/receipt-link";
 import { formatIsoDateInput } from "@/lib/date/format-iso-input";
 import { useAllVoucherPriceInfos } from "@/hooks/useVoucherData";
@@ -694,7 +694,7 @@ export default function ContractsPage() {
         description: "선택한 문서를 목록에서 지웠어요",
       });
     } catch (deleteError) {
-      console.error("Failed to delete contract document:", deleteError);
+      console.error("Failed to delete contract document:", summarizeErrorForLog(deleteError));
       // Registered problem message (verified) or locally authored copy —
       // upstream internals are never rendered.
       const normalized = normalizeApiError(deleteError, { locale: "ko-KR", operation: "mutation" });
