@@ -109,12 +109,12 @@ export function ContractDocumentJobsPopover({
   const [recoveryJobId, setRecoveryJobId] = useState<string | null>(null);
   const [recoveryOpening, setRecoveryOpening] = useState(0);
   const restoreRecoveryFocus = useRef<{ opening: number; scope: string; isOpen: boolean } | null>(null);
-  const [cancelRequest, setCancelRequest] = useState<{ jobId: string; branchId: string | null; onCancelled?: () => void } | null>(null);
+  const [cancelRequest, setCancelRequest] = useState<{ jobId: string; branchId: string | null; job?: ContractDocumentJob; onCancelled?: () => void } | null>(null);
   const [cancelOpen, setCancelOpen] = useState(false);
   const restoreCancelFocus = useRef(false);
   const cancelTrigger = useRef<HTMLButtonElement | null>(null);
   const cancelSucceeded = useRef(false);
-  const [retryRequest, setRetryRequest] = useState<{ jobId: string; branchId: string | null; onRetried?: () => void } | null>(null);
+  const [retryRequest, setRetryRequest] = useState<{ jobId: string; branchId: string | null; job?: ContractDocumentJob; onRetried?: () => void } | null>(null);
   const [retryOpen, setRetryOpen] = useState(false);
   const restoreRetryFocus = useRef(false);
   const retryTrigger = useRef<HTMLButtonElement | null>(null);
@@ -204,19 +204,21 @@ export function ContractDocumentJobsPopover({
     </Button>
   );
 
+  const findJob = (jobId?: string) => [...(resolvedJobs?.active ?? []), ...(resolvedJobs?.requiresAttention ?? []), ...(resolvedJobs?.recent ?? [])].find(job => job.jobId === jobId);
   const onRecover = (jobId: string, triggerButton: HTMLButtonElement) => {
-    const job = [...(resolvedJobs?.active ?? []), ...(resolvedJobs?.requiresAttention ?? []), ...(resolvedJobs?.recent ?? [])].find(job => job.jobId === jobId);
+    const job = findJob(jobId);
     if (pathname === "/contracts" && documentJobRecoveryPresentation(job) === "iframe") { recoveryTrigger.current = triggerButton; setRecoveryOpening(opening => opening + 1); setRecoveryJobId(jobId); }
     else { handleOpenChange(false); router.push(recoverJobHref(jobId)); }
   };
   const onCancel: DocumentJobCancelHandler = (jobId, trigger, onCancelled) => {
     cancelTrigger.current = trigger;
     cancelSucceeded.current = false;
-    setCancelRequest({ jobId, branchId, onCancelled });
+    setCancelRequest({ jobId, branchId, job: findJob(jobId), onCancelled });
     setCancelOpen(true);
   };
   const cancelJobOffered = !resolvedJobs || [...resolvedJobs.active, ...resolvedJobs.requiresAttention, ...resolvedJobs.recent].some(job => job.jobId === cancelRequest?.jobId && job.cancellable === true);
-  const cancelDialog = cancelRequest ? <ContractDocumentJobCancelDialog key={cancelRequest.jobId} jobId={cancelRequest.jobId} isJobOffered={cancelJobOffered} branchId={cancelRequest.branchId} open={cancelOpen} data-component={sub("cancel")}
+  const cancelJob = findJob(cancelRequest?.jobId) ?? cancelRequest?.job;
+  const cancelDialog = cancelRequest ? <ContractDocumentJobCancelDialog key={cancelRequest.jobId} jobId={cancelRequest.jobId} documentKind={cancelJob?.documentKind} progressStep={cancelJob?.progressStep} progressDetail={cancelJob?.progressDetail} isJobOffered={cancelJobOffered} branchId={cancelRequest.branchId} open={cancelOpen} data-component={sub("cancel")}
     onClose={() => setCancelOpen(false)} onCancelled={() => {
       cancelSucceeded.current = true;
       setCancelOpen(false);
@@ -231,11 +233,12 @@ export function ContractDocumentJobsPopover({
   const onRetryJob: DocumentJobRetryHandler = (jobId, trigger, onRetried) => {
     retryTrigger.current = trigger;
     retrySucceeded.current = false;
-    setRetryRequest({ jobId, branchId, onRetried });
+    setRetryRequest({ jobId, branchId, job: findJob(jobId), onRetried });
     setRetryOpen(true);
   };
   const retryJobOffered = !resolvedJobs || resolvedJobs.requiresAttention.some(job => job.jobId === retryRequest?.jobId && job.retryable === true);
-  const retryDialog = retryRequest ? <ContractDocumentJobRetryDialog key={retryRequest.jobId} jobId={retryRequest.jobId} isJobOffered={retryJobOffered} branchId={retryRequest.branchId} open={retryOpen} data-component={sub("retry")}
+  const retryJob = findJob(retryRequest?.jobId) ?? retryRequest?.job;
+  const retryDialog = retryRequest ? <ContractDocumentJobRetryDialog key={retryRequest.jobId} jobId={retryRequest.jobId} documentKind={retryJob?.documentKind} progressStep={retryJob?.progressStep} progressDetail={retryJob?.progressDetail} isJobOffered={retryJobOffered} branchId={retryRequest.branchId} open={retryOpen} data-component={sub("retry")}
     onClose={() => setRetryOpen(false)} onRetried={() => {
       retrySucceeded.current = true;
       setRetryOpen(false);

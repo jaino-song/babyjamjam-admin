@@ -18,6 +18,7 @@ import { EformsignDocController } from "interface/controllers/eformsign-doc.cont
 import type { EformsignDocumentJobEntity } from "domain/entities/eformsign-document-job.entity";
 import { EformsignDispatchBoundaryService } from "application/services/eformsign-dispatch-boundary.service";
 import { ContractSupersedeService } from "application/services/contract-supersede.service";
+import { setup as initialRecoveryFixture, input as initialRecoveryInput } from "../utils/service-record-initial-recovery.fixture";
 
 const validContractData = {
     customerName: "산모",
@@ -89,6 +90,7 @@ const failedJob = (overrides: Partial<EformsignDocumentJobEntity> = {}) =>
 
 let authRole = "admin";
 let authUserId: string | undefined = "user-a";
+let authBranchId = "branch-a";
 let acceptingEnabled = "true";
 
 describe("EformsignDocumentJobController (Integration)", () => {
@@ -109,10 +111,10 @@ describe("EformsignDocumentJobController (Integration)", () => {
     const authGuard = {
         canActivate: (context: ExecutionContext) => {
             const req = context.switchToHttp().getRequest();
-            req.user = { userId: authUserId, branchId: "branch-a", role: authRole, branchRole: authRole };
+            req.user = { userId: authUserId, branchId: authBranchId, role: authRole, branchRole: authRole };
             req.tenant = {
                 userId: authUserId,
-                branchId: "branch-a",
+                branchId: authBranchId,
                 globalRole: authRole,
                 branchRole: authRole,
             };
@@ -123,6 +125,7 @@ describe("EformsignDocumentJobController (Integration)", () => {
     beforeEach(async () => {
         authRole = "admin";
         authUserId = "user-a";
+        authBranchId = "branch-a";
         acceptingEnabled = "true";
         supersedeService = { isDocumentVisibleToBranch: jest.fn().mockResolvedValue(true) };
         documentJobService = {
@@ -145,6 +148,21 @@ describe("EformsignDocumentJobController (Integration)", () => {
         };
 
         await buildApp();
+    });
+
+    it.each(["retry", "cancel"] as const)("POST %s refuses malformed stored INITIAL dates with 409", async action => {
+        const f = initialRecoveryFixture();
+        f.job.payload.context = { ...f.job.payload.context, plannedSessionDates: [null] } as never;
+        authBranchId = initialRecoveryInput.branchId;
+        documentJobService[action].mockImplementation(input => f.repo[action](input));
+
+        const response = await request(app.getHttpServer())
+            .post(`/eformsign-docs/jobs/${initialRecoveryInput.jobId}/${action}`);
+
+        expect(response.status).toBe(409);
+        expect(response.body).toEqual({ code: action === "retry" ? "JOB_NOT_RETRYABLE" : "JOB_NOT_CANCELLABLE" });
+        expect(f.tx.$executeRaw).not.toHaveBeenCalled();
+        expect(f.job.status).toBe("failed");
     });
 
     it("retries into the new queued job", async () => {

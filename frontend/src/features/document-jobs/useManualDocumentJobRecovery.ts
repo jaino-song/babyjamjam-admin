@@ -9,6 +9,7 @@ import { createRecoveryBridgeClose, createRecoveryBridgeInit, createRecoveryBrid
 import { matchesManualRecoveryClaim, openManualRecoveryResponseSchema, verifyManualRecoveryResponseSchema, type OpenManualRecoveryResponse } from '@/lib/eformsign/manual-recovery-contract';
 
 import { useDocumentJobs } from './DocumentJobsProvider';
+import { DOCUMENT_JOB_MANUAL_RECOVERY_UNSUPPORTED } from './service-record-recovery-copy';
 
 const COPY = {
   sent: '전자문서를 전송했어요',
@@ -23,7 +24,7 @@ function openFailure(error: unknown): string {
   if (status === 503) return COPY.uncertain;
   if (status === 401) return '로그인이 필요해요. 다시 로그인한 뒤 작업을 열어 주세요.';
   if (status === 403) return '이 작업은 관리자 권한이 필요해요. 지점 관리자에게 요청해 주세요.';
-  if (code === 'RECOVERY_UNSUPPORTED') return '이전 방식으로 생성됐거나 수동 화면을 지원하지 않는 작업이에요. 관리자에게 확인해 주세요.';
+  if (code === 'RECOVERY_UNSUPPORTED') return DOCUMENT_JOB_MANUAL_RECOVERY_UNSUPPORTED;
   if (status === 410) return '복구 내용을 보관하는 기간이 지났어요. 관리자에게 확인해 주세요.';
   if (status === 409) return '다른 곳에서 처리 중이거나 작업 상태가 바뀌었어요. 목록에서 다시 확인해 주세요.';
   return '작업을 불러오지 못했어요. 창을 닫고 잠시 후 다시 열어 주세요.';

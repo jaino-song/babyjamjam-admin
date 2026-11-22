@@ -49,13 +49,17 @@ export type EformsignDocumentJobStatus =
 export type EformsignDocumentJobRecoveryKind = "manual_send" | "verify_result";
 export type EformsignDocumentJobDocumentKind = "service_contract" | "service_record" | "unknown";
 export type EformsignDocumentJobDisplayOperation = "generate" | "review" | "unknown";
-export type EformsignDocumentJobFailureReasonCode =
-    | "PROVIDER_STATE_UNAVAILABLE"
-    | "PRE_SEND_RETRY_EXHAUSTED"
-    | "SERVICE_RECORD_REVISION_CAPABILITY_UNVERIFIED"
-    | "SERVICE_RECORD_REVISION_MANUAL_REVIEW_REQUIRED"
-    | "JOB_TARGET_NOT_OWNED_BY_BRANCH"
-    | "RECOVERY_PAYLOAD_EXPIRED";
+export const EFORMSIGN_DOCUMENT_JOB_FAILURE_REASON_CODES = [
+    "PROVIDER_STATE_UNAVAILABLE",
+    "PRE_SEND_RETRY_EXHAUSTED",
+    "SERVICE_RECORD_REVISION_CAPABILITY_UNVERIFIED",
+    "SERVICE_RECORD_REVISION_MANUAL_REVIEW_REQUIRED",
+    "SERVICE_RECORD_INITIAL_FINALIZATION_STATE_NOT_READY",
+    "SERVICE_RECORD_INITIAL_FINALIZATION_SCOPE_CHANGED",
+    "JOB_TARGET_NOT_OWNED_BY_BRANCH",
+    "RECOVERY_PAYLOAD_EXPIRED",
+] as const;
+export type EformsignDocumentJobFailureReasonCode = (typeof EFORMSIGN_DOCUMENT_JOB_FAILURE_REASON_CODES)[number];
 
 export interface EformsignDocumentJobSummary {
     activeCount: number;

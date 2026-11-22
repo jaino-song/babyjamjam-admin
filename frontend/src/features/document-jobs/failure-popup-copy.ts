@@ -1,7 +1,8 @@
 import type { EformsignDocumentJobResponse } from "@/services/api";
-import type { EformsignDocumentJobRecoveryKind } from "@/services/eformsign";
+import type { EformsignDocumentJobFailureReasonCode, EformsignDocumentJobRecoveryKind } from "@/services/eformsign";
 
 import { documentJobPipelineStep } from "./progress-step";
+import { SERVICE_RECORD_RECOVERY_COPY, serviceRecordMayExist } from "./service-record-recovery-copy";
 
 export interface FailurePopupCopy {
   title: string;
@@ -21,10 +22,19 @@ const FALLBACK_COPY: FailurePopupCopy = {
  * copy so the popup is never blank while its details load.
  */
 export function describeFailurePopup(
-  job: Pick<EformsignDocumentJobResponse, "jobType" | "recoveryKind" | "clientName"> | undefined,
+  job: Pick<EformsignDocumentJobResponse, "jobType" | "recoveryKind" | "clientName" | "documentKind" | "failureReasonCode"> & Partial<Pick<EformsignDocumentJobResponse, "retryable" | "cancellable" | "progressStep" | "progressDetail">> | undefined,
 ): FailurePopupCopy {
   if (!job) return FALLBACK_COPY;
   const who = `${job.clientName?.trim() || "고객"} 님`;
+
+  if (job.documentKind === "service_record") {
+    const failure = describeServiceRecordFailure(job);
+    return {
+      title: "제공기록지 생성 실패",
+      description: `${who} · ${failure.reason} ${failure.nextAction}`,
+      actionLabel: "확인하기",
+    };
+  }
 
   if (job.recoveryKind === "verify_result") {
     return {
@@ -71,7 +81,7 @@ export function recoverJobHref(jobId: string): string {
   return `/contracts?recoverJobId=${encodeURIComponent(jobId)}`;
 }
 
-type FailureDetailJob = Partial<Pick<EformsignDocumentJobResponse, "source" | "recoveryKind" | "progressStep" | "progressDetail" | "lastErrorCode">> & {
+type FailureDetailJob = Partial<Pick<EformsignDocumentJobResponse, "documentKind" | "source" | "recoveryKind" | "retryable" | "cancellable" | "progressStep" | "progressDetail" | "lastErrorCode">> & {
   status: string;
   failureReasonCode?: string | null;
 };
@@ -90,6 +100,7 @@ const STAGE_COPY: Record<FailureStage, string> = {
   "전송 결과 확인": "전송 결과를 확인하지 못했어요.",
 };
 const CODE_STAGE: Record<string, FailureStage> = {
+  PRE_SEND_RETRY_EXHAUSTED: "처리 대기",
   JOB_TARGET_NOT_OWNED_BY_BRANCH: "처리 대기",
   MISSING_JOB_PAYLOAD: "처리 대기",
   INVALID_FINALIZE_JOB_PAYLOAD: "처리 대기",
@@ -100,6 +111,8 @@ const CODE_STAGE: Record<string, FailureStage> = {
   RECOVERY_PAYLOAD_EXPIRED: "처리 대기",
   SERVICE_RECORD_REVISION_CAPABILITY_UNVERIFIED: "처리 대기",
   SERVICE_RECORD_REVISION_MANUAL_REVIEW_REQUIRED: "처리 대기",
+  SERVICE_RECORD_INITIAL_FINALIZATION_STATE_NOT_READY: "처리 대기",
+  SERVICE_RECORD_INITIAL_FINALIZATION_SCOPE_CHANGED: "처리 대기",
   INVALID_CREATE_JOB_PAYLOAD: "전송 준비",
   template_workflow_config_unavailable: "전송 준비",
   template_workflow_config_invalid: "전송 준비",
@@ -119,7 +132,66 @@ const CODE_STAGE: Record<string, FailureStage> = {
   ADOPTION_FAILED: "전송 결과 확인",
   RECOVERY_PENDING: "전송 결과 확인",
   COMPLETION_MIRROR_FAILED: "전송 결과 확인",
+} satisfies Record<string, FailureStage> & Record<EformsignDocumentJobFailureReasonCode, FailureStage>;
+const SERVICE_RECORD_STAGE_COPY: Record<FailureStage, string> = {
+  "처리 대기": "제공기록지 작업을 시작하지 못했어요.",
+  "전송 준비": "제공기록지 전송을 준비하지 못했어요.",
+  "문서 작성": "이폼사인에서 제공기록지를 작성하지 못했어요.",
+  "전송": "이폼사인에 제공기록지를 전송하지 못했어요.",
+  "전송 결과 확인": "제공기록지 전송 결과를 확인하지 못했어요.",
 };
+
+function describeServiceRecordFailure(job: Pick<FailureDetailJob, "failureReasonCode" | "retryable" | "cancellable" | "progressStep" | "progressDetail">): JobFailureDetailCopy {
+  const mayExist = serviceRecordMayExist(job);
+  const canCancel = job.cancellable === true;
+  const code = job.failureReasonCode;
+  const stage = code && Object.prototype.hasOwnProperty.call(CODE_STAGE, code) ? CODE_STAGE[code] : null;
+  let reason = stage ? SERVICE_RECORD_STAGE_COPY[stage] : "제공기록지를 생성하지 못했어요.";
+  if (mayExist || code === "SERVICE_RECORD_REVISION_MANUAL_REVIEW_REQUIRED") {
+    reason = "제공기록지가 이미 생성되었을 수 있어요. 처리 결과를 확인해 주세요.";
+  } else if (code === "SERVICE_RECORD_INITIAL_FINALIZATION_STATE_NOT_READY") {
+    reason = "제공기록지를 생성할 수 있는 서비스 상태가 아니에요.";
+  } else if (code === "SERVICE_RECORD_INITIAL_FINALIZATION_SCOPE_CHANGED") {
+    reason = "제공기록지 생성 대상이나 서비스 일정이 변경됐어요.";
+  }
+
+  if (mayExist) {
+    return { reason, nextAction: canCancel
+      ? "이폼사인에서 제공기록지의 문서 상태를 확인한 뒤 전자문서 작업 목록에서 취소해 주세요."
+      : "이폼사인에서 제공기록지의 문서 상태를 확인하고 관리자에게 문의해 주세요." };
+  }
+
+  if (job.retryable === true) {
+    let nextAction: string = canCancel ? SERVICE_RECORD_RECOVERY_COPY.nextAction : "전자문서 작업 목록에서 재시도해 주세요.";
+    if (code === "SERVICE_RECORD_INITIAL_FINALIZATION_STATE_NOT_READY") {
+      nextAction = canCancel
+        ? "서비스 상태를 확인한 뒤 전자문서 작업 목록에서 재시도하거나 취소해 주세요."
+        : "서비스 상태를 확인한 뒤 전자문서 작업 목록에서 재시도해 주세요.";
+    } else if (code === "SERVICE_RECORD_INITIAL_FINALIZATION_SCOPE_CHANGED") {
+      nextAction = canCancel
+        ? "제공기록지 대상과 일정을 확인한 뒤 전자문서 작업 목록에서 재시도하거나 취소해 주세요."
+        : "제공기록지 대상과 일정을 확인한 뒤 전자문서 작업 목록에서 재시도해 주세요.";
+    }
+    return { reason, nextAction };
+  }
+  let nextAction = canCancel ? "전자문서 작업 목록에서 취소하거나 관리자에게 문의해 주세요." : "관리자에게 문의해 주세요.";
+  if (code === "SERVICE_RECORD_INITIAL_FINALIZATION_STATE_NOT_READY") {
+    nextAction = canCancel
+      ? "서비스 상태를 확인한 뒤 전자문서 작업 목록에서 취소하거나 관리자에게 문의해 주세요."
+      : "서비스 상태를 확인한 뒤 관리자에게 문의해 주세요.";
+  } else if (code === "SERVICE_RECORD_INITIAL_FINALIZATION_SCOPE_CHANGED") {
+    nextAction = canCancel
+      ? "제공기록지 대상과 일정을 확인한 뒤 전자문서 작업 목록에서 취소하거나 관리자에게 문의해 주세요."
+      : "제공기록지 대상과 일정을 확인한 뒤 관리자에게 문의해 주세요.";
+  } else if (code === "JOB_TARGET_NOT_OWNED_BY_BRANCH") {
+    nextAction = "작업을 만든 지점의 관리자에게 확인을 요청해 주세요.";
+  } else if (code === "RECOVERY_PAYLOAD_EXPIRED") {
+    nextAction = "원래 제공기록지와 처리 결과를 확인하고 관리자에게 다시 진행할 방법을 문의해 주세요.";
+  } else if (code === "SERVICE_RECORD_REVISION_CAPABILITY_UNVERIFIED" || code === "SERVICE_RECORD_REVISION_MANUAL_REVIEW_REQUIRED") {
+    nextAction = "제공기록지의 내용과 처리 결과를 확인하고 관리자에게 문의해 주세요.";
+  }
+  return { reason, nextAction };
+}
 function stageFromStep(step?: string | null): FailureStage {
   if (step === "dispatch_authorized") return "전송 준비";
   if (step === "client-started" || step === "info-inserted") return "문서 작성";
@@ -129,7 +201,9 @@ function stageFromStep(step?: string | null): FailureStage {
 }
 function describeFailureReason(job: FailureDetailJob): string {
   const code = job.lastErrorCode ?? job.failureReasonCode;
-  const stage = code && Object.prototype.hasOwnProperty.call(CODE_STAGE, code)
+  // Legacy contract errors retain their detailed checkpoint; projected failure reasons use CODE_STAGE.
+  const isLegacyRetryError = job.lastErrorCode === "PRE_SEND_RETRY_EXHAUSTED";
+  const stage = !isLegacyRetryError && code && Object.prototype.hasOwnProperty.call(CODE_STAGE, code)
     ? CODE_STAGE[code] : stageFromStep(documentJobPipelineStep(job) ?? job.progressStep);
   return STAGE_COPY[stage];
 }
@@ -142,6 +216,7 @@ export function describeJobFailureDetail(job: FailureDetailJob): JobFailureDetai
     };
   }
   if (job.status !== "failed" && job.status !== "requires_attention") return null;
+  if (job.documentKind === "service_record") return describeServiceRecordFailure(job);
   const code = job.failureReasonCode;
   const reason = describeFailureReason(job);
   const actionKind = isRecoverableJob(job) ? job.recoveryKind ?? undefined : undefined;

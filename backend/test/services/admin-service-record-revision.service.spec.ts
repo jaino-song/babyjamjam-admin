@@ -7,8 +7,11 @@ import { PrismaService } from "infrastructure/database/prisma.service";
 import { createHolidayCalendarStub } from "../utils/holiday-calendar.stub";
 
 function createPrisma() {
+    const tx = { $queryRaw: jest.fn() };
     return {
         client: { findFirst: jest.fn() },
+        tx,
+        $transaction: jest.fn(async (run: (transaction: typeof tx) => Promise<unknown>) => run(tx)),
     };
 }
 
@@ -216,9 +219,12 @@ describe("AdminServiceRecordService revision status", () => {
         const findRevisionDocumentStateForBranch = jest.fn().mockResolvedValue({
             id: "state-1",
             clientId: 42,
+            serviceRecordCaseId: "case-1",
             generation: "generation-1",
         });
-        const retryRevisionDocumentState = jest.fn().mockResolvedValue({
+        prisma.tx.$queryRaw.mockResolvedValueOnce([{ id: "case-1" }])
+            .mockResolvedValueOnce([{ status: "failed", version: 3 }]);
+        const retryRevisionDocumentStateInTransaction = jest.fn().mockResolvedValue({
             id: "state-1",
             operation: "record_snapshot",
             generation: "generation-1",
@@ -229,7 +235,7 @@ describe("AdminServiceRecordService revision status", () => {
 
         const result = await createService(prisma, {
             findRevisionDocumentStateForBranch,
-            retryRevisionDocumentState,
+            retryRevisionDocumentStateInTransaction,
         }).retryRevisionDocument(
             "branch-1",
             "revision-1",
@@ -252,7 +258,7 @@ describe("AdminServiceRecordService revision status", () => {
             "revision-1",
             "state-1",
         );
-        expect(retryRevisionDocumentState).toHaveBeenCalledWith({
+        expect(retryRevisionDocumentStateInTransaction).toHaveBeenCalledWith({ tx: prisma.tx }, {
             branchId: "branch-1",
             clientId: 42,
             revisionId: "revision-1",
@@ -261,15 +267,103 @@ describe("AdminServiceRecordService revision status", () => {
         });
     });
 
+    it.each(["completed", "processing", "failed", "manual_review"])("refuses an unchanged %s row with REQUEST_CONFLICT", async (status) => {
+        const prisma = createPrisma();
+        const state = { id: "state-1", clientId: 42, generation: "generation-1", status, version: 3 };
+        prisma.tx.$queryRaw.mockResolvedValueOnce([{ id: "case-1" }]).mockResolvedValueOnce([state]);
+        const retryRevisionDocumentStateInTransaction = jest.fn().mockResolvedValue({ ...state });
+        await expect(createService(prisma, {
+            findRevisionDocumentStateForBranch: jest.fn().mockResolvedValue(state),
+            retryRevisionDocumentStateInTransaction,
+        }).retryRevisionDocument("branch-1", "revision-1", "state-1", "generation-1", "admin-1"))
+            .rejects.toMatchObject({ status: 409, response: { code: "REQUEST_CONFLICT" } });
+    });
+
+    it.each(["completed", "processing", "failed", "manual_review"])(
+        "returns 409 when a concurrent version bump leaves a %s retry unexecuted",
+        async (status) => {
+            const prisma = createPrisma();
+            const state = {
+                id: "state-1", clientId: 42, serviceRecordCaseId: "case-1", generation: "generation-1",
+                operation: "record_snapshot", status, version: 3,
+            };
+            const concurrentState = { ...state, version: 4 };
+            prisma.tx.$queryRaw.mockResolvedValueOnce([{ id: state.serviceRecordCaseId }])
+                .mockResolvedValueOnce([concurrentState]);
+            const noOpRetry = jest.fn().mockResolvedValue(concurrentState);
+
+            await expect(createService(prisma, {
+                findRevisionDocumentStateForBranch: jest.fn().mockResolvedValue(state),
+                retryRevisionDocumentStateInTransaction: noOpRetry,
+            }).retryRevisionDocument("branch-1", "revision-1", "state-1", "generation-1", "admin-1"))
+                .rejects.toMatchObject({ status: 409, response: { code: "REQUEST_CONFLICT" } });
+            expect(noOpRetry).toHaveBeenCalledWith({ tx: prisma.tx }, expect.objectContaining({
+                branchId: "branch-1", clientId: 42, revisionId: "revision-1", stateId: "state-1",
+                expectedGeneration: "generation-1",
+            }));
+            const [caseQuery, stateQuery] = prisma.tx.$queryRaw.mock.calls.map(([query]) => query);
+            expect(caseQuery.sql).toContain('FROM "service_record_case"');
+            expect(stateQuery.sql).toContain('FROM "service_record_revision_document_state"');
+            expect(caseQuery.sql).toContain("FOR UPDATE");
+            expect(stateQuery.sql).toContain("FOR UPDATE");
+            expect(caseQuery.values).toEqual(["case-1", "branch-1", 42]);
+            expect(stateQuery.values).toEqual(["state-1", "branch-1", 42, "case-1", "revision-1", "generation-1"]);
+        },
+    );
+
+    it("accepts a retry whose version advanced while the status stayed the same", async () => {
+        const prisma = createPrisma();
+        const state = {
+            id: "state-1", clientId: 42, generation: "generation-1", status: "pending", version: 3,
+            operation: "record_snapshot", documentVersion: 3,
+        };
+        prisma.tx.$queryRaw.mockResolvedValueOnce([{ id: "case-1" }]).mockResolvedValueOnce([state]);
+        await expect(createService(prisma, {
+            findRevisionDocumentStateForBranch: jest.fn().mockResolvedValue(state),
+            retryRevisionDocumentStateInTransaction: jest.fn().mockResolvedValue({ ...state, version: 4 }),
+        }).retryRevisionDocument("branch-1", "revision-1", "state-1", "generation-1", "admin-1"))
+            .resolves.toMatchObject({ id: "state-1", status: "pending" });
+    });
+
+    it("accepts an executed retry after a concurrent version bump", async () => {
+        const prisma = createPrisma();
+        const state = {
+            id: "state-1", clientId: 42, serviceRecordCaseId: "case-1", generation: "generation-1",
+            status: "failed", version: 3, operation: "record_snapshot", documentVersion: 3,
+        };
+        prisma.tx.$queryRaw.mockResolvedValueOnce([{ id: "case-1" }])
+            .mockResolvedValueOnce([{ ...state, version: 4 }]);
+        await expect(createService(prisma, {
+            findRevisionDocumentStateForBranch: jest.fn().mockResolvedValue(state),
+            retryRevisionDocumentStateInTransaction: jest.fn().mockResolvedValue({ ...state, status: "pending", version: 5 }),
+        }).retryRevisionDocument("branch-1", "revision-1", "state-1", "generation-1", "admin-1"))
+            .resolves.toMatchObject({ id: "state-1", status: "pending" });
+    });
+
+    it.each(["case", "state"])("returns 409 when the %s disappears before the transaction locks it", async (missing) => {
+        const prisma = createPrisma();
+        prisma.tx.$queryRaw.mockResolvedValueOnce(missing === "case" ? [] : [{ id: "case-1" }])
+            .mockResolvedValueOnce([]);
+        const retryRevisionDocumentStateInTransaction = jest.fn();
+        await expect(createService(prisma, {
+            findRevisionDocumentStateForBranch: jest.fn().mockResolvedValue({
+                clientId: 42, serviceRecordCaseId: "case-1", generation: "generation-1",
+            }),
+            retryRevisionDocumentStateInTransaction,
+        }).retryRevisionDocument("branch-1", "revision-1", "state-1", "generation-1", "admin-1"))
+            .rejects.toMatchObject({ status: 409, response: { code: "REQUEST_CONFLICT" } });
+        expect(retryRevisionDocumentStateInTransaction).not.toHaveBeenCalled();
+    });
+
     it("returns not found when the branch-scoped document state is absent", async () => {
         const prisma = createPrisma();
         const findRevisionDocumentStateForBranch = jest.fn().mockResolvedValue(null);
-        const retryRevisionDocumentState = jest.fn();
+        const retryRevisionDocumentStateInTransaction = jest.fn();
 
         await expect(
             createService(prisma, {
                 findRevisionDocumentStateForBranch,
-                retryRevisionDocumentState,
+                retryRevisionDocumentStateInTransaction,
             }).retryRevisionDocument(
                 "branch-1",
                 "revision-1",
@@ -278,7 +372,7 @@ describe("AdminServiceRecordService revision status", () => {
                 "admin-1",
             ),
         ).rejects.toBeInstanceOf(NotFoundException);
-        expect(retryRevisionDocumentState).not.toHaveBeenCalled();
+        expect(retryRevisionDocumentStateInTransaction).not.toHaveBeenCalled();
     });
 
     it("returns a conflict for a stale generation before retry CAS", async () => {
@@ -288,12 +382,12 @@ describe("AdminServiceRecordService revision status", () => {
             clientId: 42,
             generation: "generation-current",
         });
-        const retryRevisionDocumentState = jest.fn();
+        const retryRevisionDocumentStateInTransaction = jest.fn();
 
         await expect(
             createService(prisma, {
                 findRevisionDocumentStateForBranch,
-                retryRevisionDocumentState,
+                retryRevisionDocumentStateInTransaction,
             }).retryRevisionDocument(
                 "branch-1",
                 "revision-1",
@@ -302,6 +396,6 @@ describe("AdminServiceRecordService revision status", () => {
                 "admin-1",
             ),
         ).rejects.toEqual(expect.any(ConflictException));
-        expect(retryRevisionDocumentState).not.toHaveBeenCalled();
+        expect(retryRevisionDocumentStateInTransaction).not.toHaveBeenCalled();
     });
 });
