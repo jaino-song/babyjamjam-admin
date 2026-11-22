@@ -61,7 +61,7 @@ function source() {
             duration: 15,
             startDate: date,
             endDate: date,
-            serviceStatus: "in_progress",
+            serviceStatus: "active",
         },
         assignments: [{
             id: "00000000-0000-4000-8000-000000000040",
@@ -258,6 +258,7 @@ describe("ServiceRecordFinalizationService revised generation", () => {
             },
         };
         const tx = {
+            eformsign_document_job: { findMany: jest.fn().mockResolvedValue([]) },
             service_record_revision: {
                 findUnique: jest.fn().mockResolvedValue(revision),
             },
@@ -371,7 +372,8 @@ describe("ServiceRecordFinalizationService revised generation", () => {
                 source: unknown,
                 calendar: KrBusinessDayCalendar,
             ) => Promise<void>;
-        }).freezeInitialFinalizationGeneration({ service_record_revision: { findUnique: jest.fn() } }, source(), calendar);
+        }).freezeInitialFinalizationGeneration({ eformsign_document_job: { findMany: jest.fn().mockResolvedValue([]) },
+            service_record_revision: { findUnique: jest.fn() } }, source(), calendar);
 
         await expect(freeze(branchCalendar)).rejects.toMatchObject({
             response: { code: "SERVICE_RECORD_REVISION_SOURCE_UNAVAILABLE" },
@@ -379,18 +381,26 @@ describe("ServiceRecordFinalizationService revised generation", () => {
         expect(jobService.enqueueInTransaction).not.toHaveBeenCalled();
     });
 
-    it("refuses an older job when the revision already has a newer INITIAL state", async () => {
+    it("rejects an invalid existing job before reading a newer INITIAL state", async () => {
         const jobService = { findByRequestKeyInTransaction: jest.fn().mockResolvedValue({ payload: { generation: "gen1" } }),
             enqueueInTransaction: jest.fn() };
         const findFirst = jest.fn().mockResolvedValue({ generation: "gen2", workflowScope: {
             generationKind: "INITIAL_FINALIZATION", requestKey: `service-record-initial-finalization:${revisionId}`,
         } });
         const service = buildService(jobService);
+        const findMany = jest.fn().mockResolvedValue([{
+            requestKey: `service-record-initial-finalization:${revisionId}`, payload: { generation: "gen1" },
+        }]);
         await expect((service as unknown as { freezeInitialFinalizationGeneration: (tx: unknown, source: unknown,
             calendar: KrBusinessDayCalendar) => Promise<void> }).freezeInitialFinalizationGeneration({
+            eformsign_document_job: { findMany },
             service_record_revision_document_state: { findFirst },
         }, source(), KR_BUILTIN_CALENDAR)).rejects.toMatchObject({ response: { code: "SERVICE_RECORD_REVISION_GENERATION_SCOPE_CHANGED" } });
-        expect(findFirst).toHaveBeenCalledWith(expect.objectContaining({ orderBy: [{ createdAt: "desc" }, { id: "desc" }] }));
+        expect(findMany).toHaveBeenCalledWith({ where: { branchId, clientId, jobType: "create_document", source: "auto_finalize",
+            AND: [{ payload: { path: ["revisionId"], equals: revisionId } },
+                { payload: { path: ["generationKind"], equals: "INITIAL_FINALIZATION" } }] } });
+        expect(findFirst).not.toHaveBeenCalled();
+        expect(jobService.findByRequestKeyInTransaction).not.toHaveBeenCalled();
         expect(jobService.enqueueInTransaction).not.toHaveBeenCalled();
     });
 
@@ -429,6 +439,8 @@ describe("ServiceRecordFinalizationService revised generation", () => {
             enqueueInTransaction: jest.fn(),
         };
         const service = buildService(jobService);
+        const findMany = jest.fn().mockResolvedValue([existing]);
+        const findFirst = jest.fn();
 
         await (service as unknown as {
             freezeInitialFinalizationGeneration: (
@@ -436,8 +448,12 @@ describe("ServiceRecordFinalizationService revised generation", () => {
                 source: unknown,
                 calendar: KrBusinessDayCalendar,
             ) => Promise<void>;
-        }).freezeInitialFinalizationGeneration({}, source(), KR_BUILTIN_CALENDAR);
+        }).freezeInitialFinalizationGeneration({ eformsign_document_job: { findMany },
+            service_record_revision_document_state: { findFirst } }, source(), KR_BUILTIN_CALENDAR);
 
+        expect(findMany).toHaveBeenCalledTimes(1);
+        expect(findFirst).not.toHaveBeenCalled();
+        expect(jobService.findByRequestKeyInTransaction).not.toHaveBeenCalled();
         expect(jobService.enqueueInTransaction).not.toHaveBeenCalled();
     });
 });
@@ -522,6 +538,7 @@ describe("ServiceRecordFinalizationService backfilled sessions", () => {
             enqueueInTransaction: jest.fn().mockResolvedValue({ existing: false, job: { requestKey: "unused" } }),
         };
         const tx = {
+            eformsign_document_job: { findMany: jest.fn().mockResolvedValue([]) },
             service_record_revision: {
                 findUnique: jest.fn().mockResolvedValue({
                     id: revisionId,
@@ -665,7 +682,9 @@ describe("cancelled INITIAL generation scheduler replay", () => {
             findUnique: jest.fn(async (args: { select: Record<string, unknown> }) => "branch" in args.select
                 ? { ...record, branch: { name: record.branchName } } : record),
         };
-        const tx = { ...f.tx, service_record_case: caseDelegate };
+        const findMany = jest.fn(async () => [f.job]);
+        const tx = { ...f.tx, service_record_case: caseDelegate,
+            eformsign_document_job: { ...f.tx.eformsign_document_job, findMany } };
         const prisma = { service_record_case: caseDelegate,
             $transaction: jest.fn(async (callback: (client: typeof tx) => Promise<unknown>) => callback(tx)) };
         const jobs = { findByRequestKeyInTransaction: jest.fn(async () => f.job), enqueueInTransaction: jest.fn() };
@@ -674,9 +693,17 @@ describe("cancelled INITIAL generation scheduler replay", () => {
         const lifecycle = { recompute: jest.fn() }, snapshot = { executeCase: jest.fn() };
         const service = new ServiceRecordFinalizationService(prisma as never, lifecycle as never, snapshot as never,
             createHolidayCalendarStub(), jobs as never, edit as never);
+        const claims = jest.spyOn(service as unknown as {
+            claimFinalizationCase: (...args: unknown[]) => Promise<unknown>;
+        }, "claimFinalizationCase");
         await expect(service.processDueCases(new Date("2026-09-30"))).resolves.toBe(0);
         await expect(service.processDueCases(new Date("2026-09-30"))).resolves.toBe(0);
-        expect(jobs.findByRequestKeyInTransaction).toHaveBeenCalledTimes(2);
+        expect(claims).toHaveBeenCalledTimes(2);
+        for (const result of claims.mock.results) {
+            await expect(result.value).resolves.toMatchObject({ claimed: false, blockedGeneration: true });
+        }
+        expect(findMany).toHaveBeenCalledTimes(2);
+        expect(jobs.findByRequestKeyInTransaction).not.toHaveBeenCalled();
         expect(jobs.enqueueInTransaction).not.toHaveBeenCalled();
         expect(edit.allocateServiceRecordRevisionDocumentVersionInTransaction).not.toHaveBeenCalled();
         expect(snapshot.executeCase).not.toHaveBeenCalled();

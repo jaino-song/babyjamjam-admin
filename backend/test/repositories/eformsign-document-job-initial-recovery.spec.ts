@@ -127,6 +127,34 @@ describe("staff INITIAL recovery", () => {
         expect(f.tx.$executeRaw).not.toHaveBeenCalled();
         expect(f.state).toEqual(before);
     });
+    it.each(["generation", "revisionId"])("keeps a job with changed state %s in requiresAttention without recovery actions", async field => {
+        const f = setup({ progressStep: "sent" }, { status: "processing", [field]: jobId });
+        const beforeJob = structuredClone(f.job), beforeState = structuredClone(f.state);
+        let attentionQuery: Prisma.Sql | undefined;
+        const query = jest.fn(async (sql: Prisma.Sql) => {
+            if (sql.text.includes("AS cancellable") && !sql.text.includes("false AS cancellable")) {
+                attentionQuery = sql;
+                return [{ ...f.raw(), cancellable: false, retryable: false }];
+            }
+            return [];
+        });
+        const repo = new SbEformsignDocumentJobRepository({ ...f.prisma, $queryRaw: query } as never);
+
+        const list = await repo.listForBranch(branchId, new Date(0));
+
+        expect(list.requiresAttention.find(job => job.id === jobId)).toMatchObject({ retryable: false, cancellable: false });
+        // The historical exclusion must prove the state's original identity before
+        // checking its owner/newest generation. A moved state is still reportable.
+        const historicalExclusion = attentionQuery!.text.split("AND NOT ").at(-1)!;
+        expect(historicalExclusion).toContain("to_jsonb(s.revision_id::text) = j.payload->'revisionId'");
+        expect(historicalExclusion).toContain("to_jsonb(s.service_record_case_id::text) = j.payload->'context'->'serviceRecordCaseId'");
+        expect(historicalExclusion).toContain("to_jsonb(s.generation) = j.payload->'generation'");
+        expect(await f.repo.cancel(input)).toMatchObject({ kind: "not_cancellable" });
+        expect(await f.repo.retry(input)).toEqual({ kind: "not_retryable" });
+        expect(f.tx.$executeRaw).not.toHaveBeenCalled();
+        expect(f.job).toEqual(beforeJob);
+        expect(f.state).toEqual(beforeState);
+    });
     it.each(["pending", "capability_unverified"])("history and admin retry refuse a cancelled %s generation", async status => {
         const f = setup({}, { status });
         expect(await f.repo.cancel(input)).toEqual({ kind: "cancelled" });

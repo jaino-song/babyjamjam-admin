@@ -934,7 +934,7 @@ export class ServiceRecordFinalizationService {
             throw new ConflictException({ code: "SERVICE_RECORD_REVISION_GENERATION_UNAVAILABLE" });
         }
 
-        if (regeneratedFromGeneration === undefined && tx.eformsign_document_job?.findMany) {
+        if (regeneratedFromGeneration === undefined) {
             const jobs = await tx.eformsign_document_job.findMany({
                 where: { branchId: source.branchId, clientId: source.clientId, jobType: "create_document", source: "auto_finalize",
                     AND: [{ payload: { path: ["revisionId"], equals: revisionId } },

@@ -91,6 +91,8 @@ export function historicalInitialFinalizationJobSql(alias = "eformsign_document_
             AND owner_case.branch_id = s.branch_id AND owner_case.client_id = s.client_id
         WHERE s.branch_id = ${c("branch_id")} AND s.client_id = ${c("client_id")}
           AND s.id::text = lower(${c("payload")}->>'documentStateId')
+          AND to_jsonb(s.revision_id::text) = ${c("payload")}->'revisionId'
+          AND to_jsonb(s.service_record_case_id::text) = ${c("payload")}->'context'->'serviceRecordCaseId'
           AND to_jsonb(s.generation) = ${c("payload")}->'generation'
           AND s.operation = 'record_snapshot' AND s.workflow_scope->>'generationKind' = 'INITIAL_FINALIZATION'
           AND (owner_case.current_revision_id IS DISTINCT FROM s.revision_id OR NOT ${newestInitialFinalizationStateSql("s")})

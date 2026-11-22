@@ -1917,7 +1917,7 @@ async function bounded<T>(promise: Promise<T>, ms: number): Promise<T> {
         await db.service_record_case.update({ where: { id: f.record.id }, data: { requiredSessionCount: 1, plannedSessions,
             startDate: serviceDate, endDate: serviceDate, momName: "Synthetic", momBirth: "900101", babyName: "Synthetic",
             babyBirth: "260101", deliveryType: "synthetic", babyWeight: "3.2" } });
-        await db.client.update({ where: { id: f.state.clientId }, data: { startDate: serviceDate, endDate: serviceDate, serviceStatus: "in_progress" } });
+        await db.client.update({ where: { id: f.state.clientId }, data: { startDate: serviceDate, endDate: serviceDate, serviceStatus: "active" } });
         await db.service_record_day.create({ data: { branchId: f.branchId, serviceRecordCaseId: f.record.id, scheduleId: schedule.id,
             caseSessionIndex: 1, sessionIndex: 1, employeeId: employee.id, employeeNameSnapshot: employee.name, serviceDate,
             formVersion: 3, answers: { checked: true }, paymentConfirmed: true, momApproval: "approved", clientSignature: "synthetic",
@@ -2040,12 +2040,27 @@ async function bounded<T>(promise: Promise<T>, ms: number): Promise<T> {
         expect(await db.eformsign_document_job.count({ where: { branchId: f.branchId, source: "auto_finalize" } })).toBe(2);
         expect(await db.service_record_revision_document_state.count({ where: { revisionId: f.revisionId } })).toBe(2);
     });
-    it("U3b scheduler tick after regeneration creates no job and does not throw", async () => {
+    it("U3b scheduler claim after regeneration validates each key and leaves jobs/state/case unchanged", async () => {
         const f = await regenerationReady(), finalizer = initialFinalizer(f);
         await finalizer.regenerateInitialFinalization(f.branchId, f.request);
-        await expect(finalizer.processDueCases(new Date())).resolves.toBe(0);
-        await expect(finalizer.processDueCases(new Date())).resolves.toBe(0);
-        expect(await db.eformsign_document_job.count({ where: { branchId: f.branchId, source: "auto_finalize" } })).toBe(2);
+        const read = async () => ({
+            jobs: await db.eformsign_document_job.findMany({ where: { branchId: f.branchId, source: "auto_finalize" }, orderBy: { id: "asc" } }),
+            states: await db.service_record_revision_document_state.findMany({ where: { revisionId: f.revisionId }, orderBy: { id: "asc" } }),
+            record: await f.readCase(),
+        });
+        const before = await read();
+        expect(before.jobs).toHaveLength(2);
+        // Invoke the real claim directly: FINALIZATION_FAILED/NULL is not a due
+        // candidate, and processDueCases catches claim errors instead of throwing.
+        const scheduler = finalizer as unknown as {
+            claimFinalizationCase: (id: string, branchId: string, reference: Date) => Promise<unknown>;
+        };
+        for (let attempt = 0; attempt < 2; attempt++) {
+            await expect(scheduler.claimFinalizationCase(f.record.id, f.branchId, new Date())).resolves.toEqual({
+                claimed: false, attempts: before.record.finalizationAttempts, blockedGeneration: true,
+            });
+            expect(await read()).toEqual(before);
+        }
     });
     it.each(["stale-revision", "not-newest", "active-key-collision"])("U3b %s returns 409 and rolls back", async kind => {
         const f = await regenerationReady();
