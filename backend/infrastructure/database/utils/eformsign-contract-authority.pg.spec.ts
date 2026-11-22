@@ -55,6 +55,17 @@ async function bounded<T>(promise: Promise<T>, ms: number): Promise<T> {
     let db: PrismaClient, a: PrismaClient, b: PrismaClient;
     let branches: string[], users: string[], clients: number[], documents: string[], jobs: AuthorityReservation[], employees: number[];
     let beforeCounts: unknown;
+    // Match test/integrity/helpers/tracker.ts: append-only revisions pin their case
+    // and branch until the owned runner drops its throwaway cluster. Keep exact IDs
+    // across tests so counts exclude only these fixtures, never an entire table.
+    const retained = { branches: new Set<string>(), cases: new Set<string>(), revisions: new Set<string>() };
+    function retainRevision(revision: { id: string; branchId: string; serviceRecordCaseId: string }) {
+        retained.revisions.add(revision.id);
+        retained.cases.add(revision.serviceRecordCaseId);
+        retained.branches.add(revision.branchId);
+    }
+    const excludingRetained = (ids: Set<string>) => ids.size
+        ? Prisma.sql`WHERE id::text NOT IN (${Prisma.join([...ids])})` : Prisma.empty;
     const transaction = <T>(connection: PrismaClient, callback: (tx: Prisma.TransactionClient) => Promise<T>) =>
         connection.$transaction(async (tx) => {
             await tx.$executeRaw`SET LOCAL lock_timeout = '8s'`;
@@ -62,11 +73,14 @@ async function bounded<T>(promise: Promise<T>, ms: number): Promise<T> {
             return callback(tx);
         }, { maxWait: 5000, timeout: 15000 });
     const counts = () => db.$queryRaw`SELECT jsonb_build_object(
-        'branches',(SELECT count(*) FROM branch),'users',(SELECT count(*) FROM "user"),
+        'branches',(SELECT count(*) FROM branch ${excludingRetained(retained.branches)}),'users',(SELECT count(*) FROM "user"),
         'clients',(SELECT count(*) FROM client),'documents',(SELECT count(*) FROM eformsign_doc),
         'jobs',(SELECT count(*) FROM eformsign_document_job),'intents',(SELECT count(*) FROM eformsign_dispatch_intent),
         'employees',(SELECT count(*) FROM employee),'schedules',(SELECT count(*) FROM employee_schedule),
-        'authorities',(SELECT count(*) FROM eformsign_contract_authority)) AS counts`;
+        'authorities',(SELECT count(*) FROM eformsign_contract_authority),
+        'cases',(SELECT count(*) FROM service_record_case ${excludingRetained(retained.cases)}),
+        'revisions',(SELECT count(*) FROM service_record_revision ${excludingRetained(retained.revisions)}),
+        'revisionDocumentStates',(SELECT count(*) FROM service_record_revision_document_state)) AS counts`;
     const read = (client = clients[0]!, branch = branches[0]!) => transaction(db, (tx) => lockAuthorityScope(tx, branch, [client]));
     const reserve = (job = jobs[0]!) => transaction(db, (tx) => reserveAuthority(tx, job));
     const expected = (state: AuthorityState): AuthorityExpected => ({ branchId: state.branchId, clientId: state.clientId,
@@ -170,7 +184,8 @@ async function bounded<T>(promise: Promise<T>, ms: number): Promise<T> {
         }
     });
     afterEach(async () => {
-        // Transactions really commit; remove every fixture explicitly in FK order, including partial setup.
+        // Transactions really commit; remove mutable fixtures in FK order, including
+        // partial setup. Revisions and only their pinned parents survive cluster-wide.
         try {
             await db.eformsign_contract_authority.deleteMany({ where: { branchId: { in: branches } } });
             await db.eformsign_document_job.deleteMany({ where: { branchId: { in: branches } } });
@@ -179,13 +194,11 @@ async function bounded<T>(promise: Promise<T>, ms: number): Promise<T> {
             await db.eformsign_doc.deleteMany({ where: { documentId: { in: documents } } });
             await db.employee_schedule.deleteMany({ where: { branchId: { in: branches } } });
             await db.service_record_revision_document_state.deleteMany({ where: { branchId: { in: branches } } });
-            await db.service_record_case.updateMany({ where: { branchId: { in: branches } }, data: { currentRevisionId: null, currentUsableRevisionId: null } });
-            await db.service_record_revision.deleteMany({ where: { branchId: { in: branches } } });
-            await db.service_record_case.deleteMany({ where: { branchId: { in: branches } } });
+            await db.service_record_case.deleteMany({ where: { branchId: { in: branches }, id: { notIn: [...retained.cases] } } });
             await db.client.deleteMany({ where: { branchId: { in: branches } } });
             await db.employee.deleteMany({ where: { id: { in: employees } } });
             await db.user.deleteMany({ where: { id: { in: users } } });
-            await db.branch.deleteMany({ where: { id: { in: branches } } });
+            await db.branch.deleteMany({ where: { id: { in: branches, notIn: [...retained.branches] } } });
             expect(await counts()).toEqual(beforeCounts);
         } finally { await Promise.all([a.$disconnect(), b.$disconnect()]); }
     });
@@ -1579,6 +1592,7 @@ async function bounded<T>(promise: Promise<T>, ms: number): Promise<T> {
         const record = await db.service_record_case.create({ data: { branchId, clientId, status: "READY_TO_FINALIZE", formVersion: 3 } });
         const revision = await db.service_record_revision.create({ data: { branchId, serviceRecordCaseId: record.id,
             revisionNumber: 1, confirmedByUserId: users[0]!, payload: {}, plannedSessions: [], provenance: {}, formVersionAtConfirm: 3 } });
+        retainRevision(revision);
         await db.service_record_case.update({ where: { id: record.id }, data: { currentRevisionId: revision.id } });
         const requestKey = `service-record-initial-finalization:${revision.id}`, generation = randomUUID();
         const immutablePayload = { frozen: true }, fingerprint = sha256CanonicalJson(immutablePayload);
@@ -1697,6 +1711,7 @@ async function bounded<T>(promise: Promise<T>, ms: number): Promise<T> {
             const revision = await db.service_record_revision.create({ data: { branchId: f.input.branchId,
                 serviceRecordCaseId: f.record.id, revisionNumber: 2, confirmedByUserId: users[0]!,
                 payload: {}, plannedSessions: [], provenance: {}, formVersionAtConfirm: 3 } });
+            retainRevision(revision);
             await db.service_record_revision_document_state.update({ where: { id: f.state.id }, data: { revisionId: revision.id } });
         }
         const beforeJob = await f.readJob(), beforeState = await f.readState();
