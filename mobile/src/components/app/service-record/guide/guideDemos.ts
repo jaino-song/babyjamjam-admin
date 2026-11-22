@@ -7,6 +7,7 @@
  * waits, which unwinds the running script — nothing fires after a slide change, a close or an unmount.
  * Only static strings are written with `innerHTML`; typed text and labels go through `textContent`.
  */
+import { summarizeErrorForLog } from "@babyjamjam/shared";
 import styles from "./ServiceRecordGuide.module.css";
 
 export type DemoName = "basics" | "grid" | "form" | "sign" | "edit";
@@ -552,7 +553,7 @@ async function play(name: DemoName, ctx: DemoCtx, fill: HTMLElement) {
             loopMs[name] = performance.now() - t0;
         }
     } catch (error) {
-        if (!(error instanceof DemoStop)) console.error(error);
+        if (!(error instanceof DemoStop)) console.error(summarizeErrorForLog(error));
     }
 }
 
