@@ -895,7 +895,7 @@ export class SbEformsignDocumentJobRepository implements IEformsignDocumentJobRe
                     ...input,
                     expectedContext: expected,
                 });
-            });
+            }, { timeout: 20000 });
         } catch (error) {
             if (error instanceof ConflictException) {
                 return { kind: "lost", reason: "SERVICE_RECORD_WRITE_TARGET_CHANGED" } as const;
