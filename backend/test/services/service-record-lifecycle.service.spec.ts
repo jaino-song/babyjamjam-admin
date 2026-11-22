@@ -2797,6 +2797,11 @@ describe("INITIAL chunk terminal outcome", () => {
         expect(sql).toContain("next_attempt_at = NULL");
         expect(sql).toContain("current_usable_revision_id = NULL");
     });
+    it.each(["dispatch_authorized", "creating"])("defers a purged in-progress chunk while the state step is %s", async step => {
+        const f = setup({ step });
+        await expect(evaluate(f, "070")).resolves.toBe(false);
+        expect(f.tx.$executeRaw).not.toHaveBeenCalled();
+    });
     it("keeps a fully completed state completed even when a completed chunk is deleted", async () => {
         const f = setup({ status: "completed", step: "completed" });
         await expect(evaluate(f, "003")).resolves.toBe(false);
