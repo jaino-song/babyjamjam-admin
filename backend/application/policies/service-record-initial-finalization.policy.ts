@@ -1,5 +1,9 @@
 export const INITIAL_FINALIZATION_REQUEST_PREFIX = "service-record-initial-finalization:";
 
+// 완료 이력이 유실된 삭제는 재생성 허용 코드에 포함하지 않는다.
+export const SERVICE_RECORD_INITIAL_COMPLETED_DOCUMENT_DELETED = "SERVICE_RECORD_INITIAL_COMPLETED_DOCUMENT_DELETED";
+export const SERVICE_RECORD_INITIAL_DELETED_STATUS_UNKNOWN = "SERVICE_RECORD_INITIAL_DELETED_STATUS_UNKNOWN";
+
 export function initialFinalizationRequestKey(revisionId: string): string {
     return `${INITIAL_FINALIZATION_REQUEST_PREFIX}${revisionId}`;
 }

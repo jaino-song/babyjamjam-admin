@@ -7,6 +7,7 @@ import { EformsignDocService } from "application/services/eformsign-doc.service"
 import { EformsignService } from "application/services/eformsign.service";
 import { GetContractClientCandidateUsecase } from "application/usecases/eformsign-doc/get-contract-client-candidate.usecase";
 import { PrismaService } from "infrastructure/database/prisma.service";
+import { ServiceRecordLifecycleService } from "application/services/service-record-lifecycle.service";
 import { JwtGuard } from "infrastructure/auth/jwt.guard";
 import { TenantGuard } from "infrastructure/tenant";
 import { EformsignController } from "interface/controllers/eformsign.controller";
@@ -98,6 +99,8 @@ describe("EformsignController (Integration)", () => {
     };
 
     const shadowCompareService = { compareInBackground: jest.fn() };
+    const chunkFindMany = jest.fn();
+    const initialLifecycle = { evaluateInitialSnapshotTerminalOutcome: jest.fn() };
     const mirrorListService = { buildList: jest.fn(), buildDetailDisplayFields: jest.fn() };
     const documentMirrorService = {
         getStoredDetail: jest.fn(),
@@ -124,6 +127,8 @@ describe("EformsignController (Integration)", () => {
     };
 
     beforeEach(async () => {
+        chunkFindMany.mockReset().mockResolvedValue([]);
+        initialLifecycle.evaluateInitialSnapshotTerminalOutcome.mockReset().mockResolvedValue(false);
         missingVoidActor = false;
         voidRepository.findVoidCandidate.mockReset();
         voidRepository.markVoided.mockReset().mockResolvedValue(true);
@@ -148,6 +153,7 @@ describe("EformsignController (Integration)", () => {
         const moduleFixture: TestingModule = await Test.createTestingModule({
             controllers: [EformsignController],
             providers: [
+                { provide: ServiceRecordLifecycleService, useValue: initialLifecycle },
                 VoidContractDocumentUsecase,
                 ContractSupersedeService,
                 { provide: CONTRACT_SUPERSEDE_REPOSITORY, useClass: PrismaContractSupersedeRepository },
@@ -194,6 +200,7 @@ describe("EformsignController (Integration)", () => {
                         branch: { findUnique: jest.fn() },
                         client: { findFirst: jest.fn() },
                         eformsign_doc: { findUnique: jest.fn() },
+                        service_record_snapshot_chunk: { findMany: chunkFindMany },
                     },
                 },
                 {
@@ -461,6 +468,7 @@ describe("EformsignController (Integration)", () => {
     });
 
     it("retains permanent-purge intent when vendor success is followed by a local purge failure", async () => {
+        chunkFindMany.mockResolvedValue([{ eformsignDocumentId: "doc-1", eformsignDoc: { statusType: "070" } }]);
         eformsignDocService.findAll.mockResolvedValue([{ documentId: "doc-1" }] as never);
         eformsignService.cancelDocuments.mockResolvedValue({
             result: { success_result: ["doc-1"], fail_result: [] },
@@ -476,6 +484,42 @@ describe("EformsignController (Integration)", () => {
         expect(response.status).toBe(500);
         expect(documentMirrorService.requestPermanentPurge).toHaveBeenCalledWith(["doc-1"]);
         expect(documentMirrorService.clearPermanentPurgeRequest).not.toHaveBeenCalled();
+        expect(initialLifecycle.evaluateInitialSnapshotTerminalOutcome).not.toHaveBeenCalled();
+    });
+
+    it("captures each chunk's completed/live status before purge and evaluates only purged owned chunks after commit", async () => {
+        const statuses = [{ eformsignDocumentId: "completed-doc", eformsignDoc: { statusType: "003" } },
+            { eformsignDocumentId: "live-doc", eformsignDoc: { statusType: "070" } },
+            { eformsignDocumentId: "retry-doc", eformsignDoc: { statusType: "070" } }];
+        eformsignDocService.findAll.mockResolvedValue(statuses.map(row => ({ documentId: row.eformsignDocumentId })) as never);
+        chunkFindMany.mockResolvedValue(statuses);
+        eformsignService.cancelDocuments.mockResolvedValue({ result: { success_result: ["live-doc"], fail_result: [] } });
+        documentMirrorService.findTerminalDocumentIds.mockResolvedValue(["completed-doc"]);
+        let committed = false;
+        documentMirrorService.purgeDocuments.mockImplementation(async () => {
+            expect(initialLifecycle.evaluateInitialSnapshotTerminalOutcome).not.toHaveBeenCalled();
+            committed = true;
+        });
+        initialLifecycle.evaluateInitialSnapshotTerminalOutcome.mockImplementation(async () => {
+            expect(committed).toBe(true);
+            return true;
+        });
+        const response = await request(app.getHttpServer()).delete("/api/documents")
+            .send({ document_ids: ["completed-doc", "live-doc", "retry-doc"] });
+        expect(response.status).toBe(200);
+        expect(chunkFindMany).toHaveBeenCalledWith(expect.objectContaining({ where: {
+            branchId: "branch-1", eformsignDocumentId: { in: ["completed-doc", "live-doc", "retry-doc"] },
+        } }));
+        expect(initialLifecycle.evaluateInitialSnapshotTerminalOutcome.mock.calls.map(([input]) => input)).toEqual([
+            { branchId: "branch-1", documentId: "completed-doc", deletedDocuments: [
+                { documentId: "completed-doc", statusType: "003" }, { documentId: "live-doc", statusType: "070" },
+            ] },
+            { branchId: "branch-1", documentId: "live-doc", deletedDocuments: [
+                { documentId: "completed-doc", statusType: "003" }, { documentId: "live-doc", statusType: "070" },
+            ] },
+        ]);
+        expect(chunkFindMany.mock.invocationCallOrder[0]!).toBeLessThan(eformsignService.cancelDocuments.mock.invocationCallOrder[0]!);
+        expect(documentMirrorService.requestPermanentPurge.mock.invocationCallOrder[0]!).toBeLessThan(chunkFindMany.mock.invocationCallOrder[0]!);
     });
 
     it("clears generation-fenced definitive failures before a mixed-response local purge failure", async () => {
@@ -1739,6 +1783,7 @@ describe("EformsignController (Integration)", () => {
             const fixture = await Test.createTestingModule({
                 controllers: [EformsignController],
                 providers: [
+                    { provide: ServiceRecordLifecycleService, useValue: initialLifecycle },
                     VoidContractDocumentUsecase,
                     ContractSupersedeService,
                     { provide: CONTRACT_SUPERSEDE_REPOSITORY, useClass: PrismaContractSupersedeRepository },

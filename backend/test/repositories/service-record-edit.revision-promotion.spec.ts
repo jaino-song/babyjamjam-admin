@@ -1,4 +1,5 @@
 import { sha256CanonicalJson } from "application/services/eformsign-document-job.service";
+import { ServiceRecordLifecycleService } from "application/services/service-record-lifecycle.service";
 import { assertNoBlockingRevisionDocumentStates, ServiceRecordEditRepository } from "infrastructure/database/repositories/service-record-edit.repository";
 import type {
     AllocateServiceRecordRevisionDocumentVersionInput,
@@ -398,6 +399,9 @@ describe("ServiceRecordEditRepository revision snapshot version/promotion seams"
 });
 
 describe("INITIAL documents-created boundary", () => {
+    let evaluate: jest.SpiedFunction<typeof ServiceRecordLifecycleService.evaluateInitialSnapshotTerminalOutcomeInTransaction>;
+    beforeEach(() => { evaluate = jest.spyOn(ServiceRecordLifecycleService, "evaluateInitialSnapshotTerminalOutcomeInTransaction").mockResolvedValue(false); });
+    afterEach(() => { evaluate.mockRestore(); });
     const scope = { generationKind: "INITIAL_FINALIZATION", requestKey: `service-record-initial-finalization:${revisionId}` };
     function initialRows(options: { state?: Record<string, unknown>; owner?: Record<string, unknown>; chunks?: unknown[] } = {}) {
         return [...promotionRows([]).slice(0, 10),
@@ -422,12 +426,43 @@ describe("INITIAL documents-created boundary", () => {
         const repo = new ServiceRecordEditRepository(f.prisma as never);
         await expect(repo.recordInitialFinalizationDocumentsCreated(promotionInput())).resolves.toBe(true);
         expect(f.executeRaw).not.toHaveBeenCalled();
+        expect(evaluate).toHaveBeenCalledWith({ branchId, documentId: "revision-doc-1" }, f.tx);
+    });
+    it("accepts only a fully scrubbed same-branch/revision tombstone and evaluates it after promotion in the same transaction", async () => {
+        const f = transactionHarness(initialRows({ chunks: [{ ...validChunk(), documentStatusType: "049", documentClientId: null,
+            documentCaseId: null, documentKind: null, documentSnapshotVersion: null, documentSnapshotChunkIndex: null }] }));
+        evaluate.mockImplementation(async (_params, tx) => {
+            expect(tx).toBe(f.tx);
+            expect(f.executeRaw).toHaveBeenCalledTimes(3);
+            return true;
+        });
+        await expect(new ServiceRecordEditRepository(f.prisma as never).recordInitialFinalizationDocumentsCreated(promotionInput())).resolves.toBe(true);
+        expect(evaluate).toHaveBeenCalledWith({ branchId, documentId: "revision-doc-1" }, f.tx);
+        const locks = f.queryRaw.mock.calls.map(([query]) => sqlText(query));
+        const caseLock = locks.findIndex(query => /FROM "?service_record_case"?\s/.test(query) && query.includes("FOR UPDATE"));
+        const stateLock = locks.findIndex(query => /FROM "?service_record_revision_document_state"?\s/.test(query) && query.includes("FOR UPDATE"));
+        const docLock = locks.findIndex(query => /FROM "?eformsign_doc"?\s/.test(query) && query.includes("FOR UPDATE"));
+        expect(caseLock).toBeGreaterThanOrEqual(0);
+        expect(stateLock).toBeGreaterThanOrEqual(0);
+        expect(docLock).toBeGreaterThanOrEqual(0);
+        expect(caseLock).toBeLessThan(stateLock);
+        expect(stateLock).toBeLessThan(docLock);
+    });
+    it("evaluates every chunk document rather than only the first", async () => {
+        const f = transactionHarness(initialRows({ chunks: [1, 2].map(index => ({ ...validChunk(), chunkIndex: index, chunkCount: 2,
+            documentId: `revision-doc-${index}`, storedDocumentId: `revision-doc-${index}`, documentSnapshotChunkIndex: index })) }));
+        await expect(new ServiceRecordEditRepository(f.prisma as never).recordInitialFinalizationDocumentsCreated(
+            promotionInput({ chunkCount: 2, documentIds: ["revision-doc-1", "revision-doc-2"] }),
+        )).resolves.toBe(true);
+        expect(evaluate.mock.calls.map(([params]) => params.documentId)).toEqual(["revision-doc-1", "revision-doc-2"]);
     });
     it.each([
         { state: { status: "capability_unverified", step: "capability_unverified" } },
         { state: { workflowScope: { ...scope, generationKind: "REVISION_SNAPSHOT" } } },
         { chunks: [] }, { owner: { status: "COMPLETED" } },
         { chunks: [{ ...validChunk(), documentClientId: 999 }] },
+        { chunks: [{ ...validChunk(), documentStatusType: "049", documentBranchId: "other-branch" }] },
+        { chunks: [{ ...validChunk(), documentStatusType: "049", documentRevisionId: "other-revision" }] },
     ])("refuses invalid creation scope before writes %#", async (options) => {
         const f = transactionHarness(initialRows(options));
         const repo = new ServiceRecordEditRepository(f.prisma as never);

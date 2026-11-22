@@ -1,6 +1,7 @@
 import { Inject, Injectable, Logger, Optional } from "@nestjs/common";
 
 import { EformsignDocumentMirrorService } from "application/services/eformsign-document-mirror.service";
+import { ServiceRecordLifecycleService } from "application/services/service-record-lifecycle.service";
 import { UNASSIGNED_TERMINAL_STATUS_CODES } from "domain/constants/eformsign-doc-status.constants";
 import { EformsignService } from "application/services/eformsign.service";
 import { sanitizeEformsignErrorMessage } from "application/utils/eformsign-error-message";
@@ -136,6 +137,8 @@ export class BackfillEformsignDocsUsecase {
         private readonly documentMirrorService?: EformsignDocumentMirrorService,
         @Optional()
         private readonly eformsignService?: EformsignService,
+        @Optional()
+        private readonly serviceRecordLifecycle?: ServiceRecordLifecycleService,
     ) {}
 
     async execute(
@@ -302,6 +305,13 @@ export class BackfillEformsignDocsUsecase {
                 options,
                 summary,
             );
+            this.assertCanContinue(options, summary);
+            await this.serviceRecordLifecycle?.healInitialSnapshotTerminalOutcomes({
+                branchId: principal.source === "worker" && principal.branchId?.startsWith("__system__:")
+                    ? undefined : principal.branchId,
+                shouldContinue: options.shouldContinue,
+            });
+            this.assertCanContinue(options, summary);
 
                     options.onProgress?.({
                         phase: "completed",

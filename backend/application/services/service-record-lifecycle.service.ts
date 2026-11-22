@@ -5,6 +5,8 @@ import { Prisma } from "@prisma/client";
 import {
     initialFinalizationRequestKey,
     isInitialFinalizationWorkflowScope,
+    SERVICE_RECORD_INITIAL_COMPLETED_DOCUMENT_DELETED,
+    SERVICE_RECORD_INITIAL_DELETED_STATUS_UNKNOWN,
 } from "application/policies/service-record-initial-finalization.policy";
 import {
     getServiceRecordFinalizationDueAt,
@@ -23,6 +25,7 @@ import {
     lockServiceRecordWriteSet,
 } from "application/policies/service-record-write-lock.policy";
 import { HolidayCalendarService } from "application/services/holiday-calendar.service";
+import { normalizeEformsignStatusCode } from "domain/utils/eformsign-status-code";
 
 export const SERVICE_RECORD_CASE_STATUS = {
     WAITING_FOR_DETAILS: "WAITING_FOR_DETAILS",
@@ -50,6 +53,12 @@ export const IMMUTABLE_FINALIZATION_STATUSES = new Set<string>([
 ]);
 
 type DbClient = Prisma.TransactionClient | PrismaService;
+type InitialSnapshotTerminalOutcomeInput = {
+    branchId: string;
+    documentId: string;
+    /** Captured by the staff delete controller before purge; never inferred from a tombstone. */
+    deletedDocuments?: ReadonlyArray<{ documentId: string; statusType: string }>;
+};
 type ServiceRecordCaseRecord = Prisma.service_record_caseGetPayload<Prisma.service_record_caseDefaultArgs>;
 
 type LockedServiceRecordSnapshot = {
@@ -1030,6 +1039,142 @@ export class ServiceRecordLifecycleService {
         return params.currentDocument.revisionId === null
             && params.currentDocument.serviceRecordCaseId === null
             && params.caseId === null;
+    }
+
+    async evaluateInitialSnapshotTerminalOutcome(params: InitialSnapshotTerminalOutcomeInput): Promise<boolean> {
+        return this.prisma.$transaction(tx =>
+            ServiceRecordLifecycleService.evaluateInitialSnapshotTerminalOutcomeInTransaction(params, tx));
+    }
+
+    /** The caller must hold case before state/chunk/doc locks. This method never opens a nested transaction. */
+    static async evaluateInitialSnapshotTerminalOutcomeInTransaction(
+        params: InitialSnapshotTerminalOutcomeInput,
+        tx: Prisma.TransactionClient,
+    ): Promise<boolean> {
+        // Tombstones retain the chunk FK and revision_id, but lose their display linkage.
+        const scopes = await tx.$queryRaw<Array<{ caseId: string; revisionId: string; snapshotVersion: number }>>(Prisma.sql`
+            SELECT service_record_case_id AS "caseId", revision_id AS "revisionId", snapshot_version AS "snapshotVersion"
+            FROM service_record_snapshot_chunk
+            WHERE branch_id = ${params.branchId}::uuid AND document_id = ${params.documentId}
+              AND revision_id IS NOT NULL
+        `);
+        const scope = scopes[0];
+        if (scopes.length !== 1 || !scope) return false;
+        const cases = await tx.$queryRaw<LockedServiceRecordCaseRevisionState[]>(Prisma.sql`
+            SELECT id, client_id AS "clientId", version, current_revision_id AS "currentRevisionId",
+                current_usable_revision_id AS "currentUsableRevisionId",
+                current_usable_document_version AS "currentUsableDocumentVersion"
+            FROM service_record_case
+            WHERE id = ${scope.caseId}::uuid AND branch_id = ${params.branchId}::uuid
+              AND current_revision_id = ${scope.revisionId}::uuid
+              AND status IN ('READY_TO_FINALIZE', 'FINALIZING', 'DOCUMENTS_CREATED', 'FINALIZATION_FAILED', 'COMPLETED')
+            FOR UPDATE
+        `);
+        const owner = cases[0];
+        if (!owner || owner.currentRevisionId !== scope.revisionId) return false;
+        const states = await tx.$queryRaw<Array<{
+            id: string; generation: string; version: number; workflowScope: Prisma.JsonValue;
+            status: string; step: string; lastErrorCode: string | null;
+        }>>(Prisma.sql`
+            SELECT id, generation, version, workflow_scope AS "workflowScope", status, step, last_error_code AS "lastErrorCode"
+            FROM service_record_revision_document_state
+            WHERE branch_id = ${params.branchId}::uuid AND client_id = ${owner.clientId}
+              AND service_record_case_id = ${owner.id}::uuid AND revision_id = ${scope.revisionId}::uuid
+              AND document_version = ${scope.snapshotVersion} AND operation = 'record_snapshot'
+            FOR UPDATE
+        `);
+        const eligible = states.filter(state => isInitialFinalizationWorkflowScope(
+            state.workflowScope, initialFinalizationRequestKey(scope.revisionId),
+        ));
+        if (eligible.length !== 1) return false;
+        const state = eligible[0]!;
+        // 삭제로 이미 완료된 기록 전체를 되돌리지 않는다.
+        if (state.status === "completed") return false;
+        const chunks = await tx.$queryRaw<Array<{ documentId: string | null; chunkIndex: number; chunkCount: number }>>(Prisma.sql`
+            SELECT document_id AS "documentId", chunk_index AS "chunkIndex", chunk_count AS "chunkCount"
+            FROM service_record_snapshot_chunk
+            WHERE branch_id = ${params.branchId}::uuid AND service_record_case_id = ${owner.id}::uuid
+              AND revision_id = ${scope.revisionId}::uuid AND snapshot_version = ${scope.snapshotVersion}
+            ORDER BY chunk_index, id FOR UPDATE
+        `);
+        if (!chunks.some(chunk => chunk.documentId === params.documentId)) return false;
+        const documents = await tx.$queryRaw<Array<{ documentId: string; statusType: string; voidedAt: Date | null }>>(Prisma.sql`
+            SELECT doc.document_id AS "documentId", doc.status_type AS "statusType", doc.voided_at AS "voidedAt"
+            FROM service_record_snapshot_chunk AS chunk
+            JOIN eformsign_doc AS doc ON doc.document_id = chunk.document_id
+            WHERE chunk.branch_id = ${params.branchId}::uuid AND chunk.service_record_case_id = ${owner.id}::uuid
+              AND chunk.revision_id = ${scope.revisionId}::uuid AND chunk.snapshot_version = ${scope.snapshotVersion}
+              AND doc.branch_id = chunk.branch_id AND doc.revision_id = chunk.revision_id
+            ORDER BY doc.id
+            FOR UPDATE OF doc
+        `);
+        const document = documents.find(doc => doc.documentId === params.documentId);
+        if (!document) return false;
+        const deleted = document.statusType === "049";
+        if (!deleted && document.voidedAt === null && !EFORMSIGN_REJECTED_STATUS_CODES.has(document.statusType)) return false;
+        const capturedStatuses = new Map(params.deletedDocuments?.map(doc => [doc.documentId, normalizeEformsignStatusCode(doc.statusType)]));
+        const completedDeletion = documents.some(doc => doc.statusType === "049"
+            && EFORMSIGN_COMPLETED_STATUS_CODES.has(capturedStatuses.get(doc.documentId) ?? ""));
+        // N9-1: 완료 chunk 삭제 증거는 미연결 chunk나 이전 부재 판정보다 우선한다.
+        if (state.lastErrorCode === SERVICE_RECORD_INITIAL_COMPLETED_DOCUMENT_DELETED) return false;
+        if (!completedDeletion) {
+            if (state.status === "manual_review") {
+                const indexes = new Set(chunks.map(chunk => chunk.chunkIndex));
+                const allLinked = chunks.length > 0 && indexes.size === chunks.length
+                    && chunks.every(chunk => chunk.documentId !== null && chunk.chunkCount === chunks.length
+                        && chunk.chunkIndex >= 1 && chunk.chunkIndex <= chunks.length);
+                if (state.lastErrorCode !== "JOB_CANCELLED_AFTER_DISPATCH" || !allLinked) return false;
+            } else if (state.status !== "processing") return false;
+        } else if (!["processing", "manual_review", "failed"].includes(state.status)) return false;
+        // Sweep ordering must not turn an unknown deleted sibling into a ready provider-failure code.
+        const unknownDeletion = documents.some(doc => doc.statusType === "049"
+            && (!capturedStatuses.has(doc.documentId) || capturedStatuses.get(doc.documentId) === "049"));
+        const errorCode = completedDeletion ? SERVICE_RECORD_INITIAL_COMPLETED_DOCUMENT_DELETED
+            : unknownDeletion ? SERVICE_RECORD_INITIAL_DELETED_STATUS_UNKNOWN
+            : !deleted && document.voidedAt !== null ? "SERVICE_RECORD_REVISION_DOCUMENT_VOIDED"
+            : "SERVICE_RECORD_REVISION_DOCUMENT_REJECTED";
+        const changed = await tx.$executeRaw(Prisma.sql`
+            UPDATE service_record_revision_document_state
+            SET status = 'failed', step = 'failed', last_error_code = ${errorCode}, next_attempt_at = NULL,
+                version = version + 1, updated_at = now()
+            WHERE id = ${state.id}::uuid AND generation = ${state.generation} AND version = ${state.version}
+        `);
+        if (changed !== 1) throw new ConflictException(codeOnlyProblemBody("SERVICE_RECORD_WRITE_TARGET_CHANGED"));
+        const caseChanged = await tx.$executeRaw(Prisma.sql`
+            UPDATE service_record_case
+            SET status = 'FINALIZATION_FAILED', last_error = ${errorCode}, documents_completed_at = NULL,
+                current_usable_revision_id = NULL, current_usable_document_version = NULL, next_attempt_at = NULL,
+                version = version + 1, updated_at = now()
+            WHERE id = ${owner.id}::uuid AND branch_id = ${params.branchId}::uuid
+              AND current_revision_id = ${scope.revisionId}::uuid AND version = ${owner.version}
+              AND status IN ('READY_TO_FINALIZE', 'FINALIZING', 'DOCUMENTS_CREATED', 'FINALIZATION_FAILED', 'COMPLETED')
+        `);
+        if (caseChanged !== 1) throw new ConflictException(codeOnlyProblemBody("SERVICE_RECORD_WRITE_TARGET_CHANGED"));
+        return true;
+    }
+
+    async healInitialSnapshotTerminalOutcomes(options: { branchId?: string; shouldContinue?: () => boolean } = {}): Promise<number> {
+        const candidates = await this.prisma.$queryRaw<Array<{ branchId: string; documentId: string }>>(Prisma.sql`
+            SELECT DISTINCT chunk.branch_id AS "branchId", chunk.document_id AS "documentId"
+            FROM service_record_snapshot_chunk AS chunk
+            JOIN eformsign_doc AS doc ON doc.document_id = chunk.document_id AND doc.branch_id = chunk.branch_id
+            JOIN service_record_revision_document_state AS state
+              ON state.service_record_case_id = chunk.service_record_case_id AND state.branch_id = chunk.branch_id
+              AND state.revision_id = chunk.revision_id AND state.document_version = chunk.snapshot_version
+            JOIN service_record_case AS owner ON owner.id = chunk.service_record_case_id
+              AND owner.current_revision_id = chunk.revision_id
+            WHERE state.operation = 'record_snapshot' AND state.status IN ('processing', 'manual_review')
+              AND state.workflow_scope->>'generationKind' = 'INITIAL_FINALIZATION'
+              AND (doc.status_type IN (${Prisma.join([...EFORMSIGN_REJECTED_STATUS_CODES])}) OR doc.voided_at IS NOT NULL)
+              ${options.branchId ? Prisma.sql`AND chunk.branch_id = ${options.branchId}::uuid` : Prisma.empty}
+            ORDER BY "branchId", "documentId"
+        `);
+        let healed = 0;
+        for (const candidate of candidates) {
+            if (options.shouldContinue && !options.shouldContinue()) break;
+            if (await this.evaluateInitialSnapshotTerminalOutcome(candidate)) healed += 1;
+        }
+        return healed;
     }
 
     async failInitialServiceRecordSnapshotInTransaction(

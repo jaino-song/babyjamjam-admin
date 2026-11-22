@@ -53,6 +53,23 @@ describe("BackfillEformsignDocsUsecase", () => {
         jest.clearAllMocks();
     });
 
+    it.each(["__system__:reconciliation", "branch-1"])("heals retained INITIAL tombstones after the sweep with scope %s", async branchId => {
+        const client = {
+            getInProgressDocumentsPage: jest.fn().mockResolvedValue({ documents: [], total_rows: 0 }),
+            getCompletedDocumentsPage: jest.fn().mockResolvedValue({ documents: [], total_rows: 0 }),
+            getRejectedDocumentsPage: jest.fn().mockResolvedValue({ documents: [], total_rows: 0 }),
+        };
+        const lifecycle = { healInitialSnapshotTerminalOutcomes: jest.fn().mockResolvedValue(1) };
+        const shouldContinue = jest.fn().mockReturnValue(true);
+        const usecase = new BackfillEformsignDocsUsecase(client as never, createBoundary() as never, {} as never,
+            {} as never, undefined, undefined, lifecycle as never);
+        await expect(usecase.execute({ shouldContinue }, { branchId, source: "worker" })).resolves.toMatchObject({ failed: 0 });
+        expect(lifecycle.healInitialSnapshotTerminalOutcomes).toHaveBeenCalledWith({
+            branchId: branchId.startsWith("__system__:") ? undefined : branchId, shouldContinue,
+        });
+        expect(client.getRejectedDocumentsPage.mock.invocationCallOrder[0]!).toBeLessThan(lifecycle.healInitialSnapshotTerminalOutcomes.mock.invocationCallOrder[0]!);
+    });
+
     it("purges a requested document only after the post-scan verification confirms vendor 404", async () => {
         const client = {
             getAccessToken: jest.fn().mockResolvedValue({ oauth_token: { access_token: accessToken } }),

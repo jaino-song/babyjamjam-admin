@@ -2748,6 +2748,149 @@ describe("ServiceRecordLifecycleService client service days", () => {
     });
 });
 
+describe("INITIAL chunk terminal outcome", () => {
+    const revisionId = "44444444-4444-4444-8444-444444444444";
+    function setup(options: {
+        status?: string; step?: string; error?: string | null; documentStatus?: string;
+        voidedAt?: Date | null; unlinked?: boolean; cas?: number; scope?: unknown; siblingTombstone?: boolean;
+    } = {}) {
+        const state = {
+            id: "state-1", generation: "generation-1", version: 2,
+            workflowScope: options.scope ?? { generationKind: "INITIAL_FINALIZATION", requestKey: `service-record-initial-finalization:${revisionId}` },
+            status: options.status ?? "processing", step: options.step ?? "documents_created", lastErrorCode: options.error ?? null,
+        };
+        const tx = {
+            $queryRaw: jest.fn()
+                .mockResolvedValueOnce([{ caseId: rawQueryCaseId, revisionId, snapshotVersion: 3 }])
+                .mockResolvedValueOnce([{ id: rawQueryCaseId, clientId: 7, version: 4, currentRevisionId: revisionId }])
+                .mockResolvedValueOnce([state])
+                .mockResolvedValueOnce([
+                    { documentId: rawQueryDocumentId, chunkIndex: 1, chunkCount: 2 },
+                    { documentId: options.unlinked ? null : "sibling", chunkIndex: 2, chunkCount: 2 },
+                ])
+                .mockResolvedValueOnce([{ documentId: rawQueryDocumentId, statusType: options.documentStatus ?? "049", voidedAt: options.voidedAt ?? null },
+                    ...(options.siblingTombstone ? [{ documentId: "sibling", statusType: "049", voidedAt: null }] : [])]),
+            $executeRaw: jest.fn().mockImplementation(async (query: { strings: string[]; values: unknown[] }) => {
+                if (options.cas === 0) return 0;
+                if (query.strings.join("").includes("UPDATE service_record_revision_document_state")) {
+                    state.status = "failed";
+                    state.lastErrorCode = query.values[0] as string;
+                }
+                return 1;
+            }),
+        };
+        const prisma = { $transaction: jest.fn((callback: (client: typeof tx) => Promise<unknown>) => callback(tx)) };
+        return { tx, prisma, state, service: new ServiceRecordLifecycleService(prisma as never, createHolidayCalendarStub()) };
+    }
+    const evaluate = (f: ReturnType<typeof setup>, deletedStatusBeforePurge?: string) => f.service.evaluateInitialSnapshotTerminalOutcome({
+        branchId: rawQueryBranchId, documentId: rawQueryDocumentId,
+        deletedDocuments: deletedStatusBeforePurge === undefined ? undefined : [{ documentId: rawQueryDocumentId, statusType: deletedStatusBeforePurge }],
+    });
+    const codes = (f: ReturnType<typeof setup>) => f.tx.$executeRaw.mock.calls.map(([query]) => query.values[0]);
+
+    it("fails an in-progress chunk after purge using captured status and clears case readiness", async () => {
+        const f = setup();
+        await expect(evaluate(f, "070")).resolves.toBe(true);
+        expect(codes(f)).toEqual(["SERVICE_RECORD_REVISION_DOCUMENT_REJECTED", "SERVICE_RECORD_REVISION_DOCUMENT_REJECTED"]);
+        const sql = f.tx.$executeRaw.mock.calls[1]![0].strings.join("");
+        expect(sql).toContain("status = 'FINALIZATION_FAILED'");
+        expect(sql).toContain("next_attempt_at = NULL");
+        expect(sql).toContain("current_usable_revision_id = NULL");
+    });
+    it("keeps a fully completed state completed even when a completed chunk is deleted", async () => {
+        const f = setup({ status: "completed", step: "completed" });
+        await expect(evaluate(f, "003")).resolves.toBe(false);
+        expect(f.tx.$executeRaw).not.toHaveBeenCalled();
+    });
+    it.each(["processing", "manual_review", "failed"])("prioritizes captured completed deletion over %s, including missing chunks and absence proof", async status => {
+        const f = setup({ status, error: status === "failed" ? "SERVICE_RECORD_INITIAL_PARTIAL_DISPATCH" : "JOB_CANCELLED_AFTER_DISPATCH", unlinked: true });
+        await expect(evaluate(f, "003")).resolves.toBe(true);
+        expect(codes(f)[0]).toBe("SERVICE_RECORD_INITIAL_COMPLETED_DOCUMENT_DELETED");
+    });
+    it("keeps completed-deletion evidence when another in-progress sibling is deleted", async () => {
+        const f = setup({ status: "failed", error: "SERVICE_RECORD_INITIAL_COMPLETED_DOCUMENT_DELETED" });
+        await expect(evaluate(f, "070")).resolves.toBe(false);
+        expect(f.tx.$executeRaw).not.toHaveBeenCalled();
+    });
+    it("fails a post-dispatch cancellation only when every chunk is linked", async () => {
+        const f = setup({ status: "manual_review", error: "JOB_CANCELLED_AFTER_DISPATCH" });
+        await expect(evaluate(f, "070")).resolves.toBe(true);
+        expect(codes(f)[0]).toBe("SERVICE_RECORD_REVISION_DOCUMENT_REJECTED");
+    });
+    it.each([{ unlinked: true, error: "JOB_CANCELLED_AFTER_DISPATCH" }, { error: "OTHER" }])("leaves unresolved manual review for U4 %#", async options => {
+        const f = setup({ status: "manual_review", ...options });
+        await expect(evaluate(f, "070")).resolves.toBe(false);
+        expect(f.tx.$executeRaw).not.toHaveBeenCalled();
+    });
+    it("heals an uncaptured tombstone conservatively", async () => {
+        const f = setup();
+        await expect(evaluate(f)).resolves.toBe(true);
+        expect(codes(f)[0]).toBe("SERVICE_RECORD_INITIAL_DELETED_STATUS_UNKNOWN");
+    });
+    it("does not mark an unknown deleted sibling ready when a rejection is evaluated first", async () => {
+        const f = setup({ documentStatus: "031", siblingTombstone: true });
+        await expect(evaluate(f)).resolves.toBe(true);
+        expect(codes(f)[0]).toBe("SERVICE_RECORD_INITIAL_DELETED_STATUS_UNKNOWN");
+    });
+    it.each(["070", "003"])("uses all captured batch deletion statuses when the sibling was %s", async statusType => {
+        const f = setup({ siblingTombstone: true });
+        await expect(f.service.evaluateInitialSnapshotTerminalOutcome({ branchId: rawQueryBranchId, documentId: rawQueryDocumentId,
+            deletedDocuments: [{ documentId: rawQueryDocumentId, statusType: "070" }, { documentId: "sibling", statusType }],
+        })).resolves.toBe(true);
+        expect(codes(f)[0]).toBe(statusType === "003" ? "SERVICE_RECORD_INITIAL_COMPLETED_DOCUMENT_DELETED" : "SERVICE_RECORD_REVISION_DOCUMENT_REJECTED");
+    });
+    it.each([
+        { documentStatus: "031", expected: "SERVICE_RECORD_REVISION_DOCUMENT_REJECTED" },
+        { documentStatus: "070", voidedAt: new Date(), expected: "SERVICE_RECORD_REVISION_DOCUMENT_VOIDED" },
+    ])("evaluates provider rejection/void independently of purge intent %#", async ({ expected, ...options }) => {
+        const f = setup(options);
+        await expect(evaluate(f)).resolves.toBe(true);
+        expect(codes(f)[0]).toBe(expected);
+    });
+    it("ignores live or completed provider documents and non-INITIAL scopes", async () => {
+        for (const options of [{ documentStatus: "070" }, { documentStatus: "003" }, { scope: { generationKind: "REVISION_SNAPSHOT" } }]) {
+            const f = setup(options);
+            await expect(evaluate(f)).resolves.toBe(false);
+            expect(f.tx.$executeRaw).not.toHaveBeenCalled();
+        }
+    });
+    it("does not rewrite a failed state when evaluated again", async () => {
+        const f = setup();
+        await expect(evaluate(f, "070")).resolves.toBe(true);
+        f.tx.$queryRaw.mockResolvedValueOnce([{ caseId: rawQueryCaseId, revisionId, snapshotVersion: 3 }])
+            .mockResolvedValueOnce([{ id: rawQueryCaseId, clientId: 7, version: 5, currentRevisionId: revisionId }])
+            .mockResolvedValueOnce([f.state])
+            .mockResolvedValueOnce([{ documentId: rawQueryDocumentId, chunkIndex: 1, chunkCount: 1 }])
+            .mockResolvedValueOnce([{ documentId: rawQueryDocumentId, statusType: "049", voidedAt: null }]);
+        await expect(evaluate(f, "070")).resolves.toBe(false);
+        expect(f.tx.$executeRaw).toHaveBeenCalledTimes(2);
+    });
+    it("throws on CAS loss and locks case, state, chunk then document", async () => {
+        const f = setup({ cas: 0 });
+        await expect(evaluate(f, "070")).rejects.toBeInstanceOf(ConflictException);
+        const locks = f.tx.$queryRaw.mock.calls.map(([q]) => (q as { strings: string[] }).strings.join(" "));
+        expect(locks[0]).not.toContain("FOR UPDATE");
+        expect(locks[1]).toContain("FROM service_record_case");
+        expect(locks[2]).toContain("FROM service_record_revision_document_state");
+        expect(locks[3]).toContain("FROM service_record_snapshot_chunk");
+        expect(locks[4]).toContain("FOR UPDATE OF doc");
+    });
+    it("sweeps terminal/tombstoned INITIAL candidates without inventing pre-delete status and respects its lease", async () => {
+        const prisma = { $queryRaw: jest.fn().mockResolvedValue([
+            { branchId: rawQueryBranchId, documentId: "old-tombstone" },
+            { branchId: rawQueryBranchId, documentId: "other-terminal" },
+        ]) };
+        const service = new ServiceRecordLifecycleService(prisma as never, createHolidayCalendarStub());
+        const evaluate = jest.spyOn(service, "evaluateInitialSnapshotTerminalOutcome").mockResolvedValue(true);
+        const shouldContinue = jest.fn().mockReturnValueOnce(true).mockReturnValueOnce(false);
+        await expect(service.healInitialSnapshotTerminalOutcomes({ branchId: rawQueryBranchId, shouldContinue })).resolves.toBe(1);
+        expect(evaluate.mock.calls).toEqual([[{ branchId: rawQueryBranchId, documentId: "old-tombstone" }]]);
+        const query = prisma.$queryRaw.mock.calls[0]![0] as { strings: string[] };
+        expect(query.strings.join(" ")).toContain("state.status IN ('processing', 'manual_review')");
+        expect(query.strings.join(" ")).toContain("owner.current_revision_id = chunk.revision_id");
+    });
+});
+
 describe("INITIAL completion-only pointer promotion", () => {
     const revisionId = "44444444-4444-4444-8444-444444444444";
     function setup(options: { state?: Record<string, unknown>; noState?: boolean; snapshotStatus?: string; pointerCas?: number; stateCas?: number } = {}) {

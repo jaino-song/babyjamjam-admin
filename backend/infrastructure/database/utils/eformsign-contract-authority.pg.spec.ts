@@ -1,4 +1,7 @@
 import { ServiceRecordEditRepository } from "infrastructure/database/repositories/service-record-edit.repository";
+import { ServiceRecordLifecycleService } from "application/services/service-record-lifecycle.service";
+import type { HolidayCalendarService } from "application/services/holiday-calendar.service";
+import { SbEformsignDocumentMirrorRepository } from "../repositories/sb.eformsign-document-mirror.repository";
 import { isInitialFinalizationJobIdentity } from "application/policies/service-record-initial-finalization.policy";
 import { sha256CanonicalJson } from "application/services/eformsign-document-job.service";
 import { initialFinalizationJobSql, initialFinalizationRetryCandidateSql } from "./service-record-initial-recovery-sql";
@@ -191,6 +194,7 @@ async function bounded<T>(promise: Promise<T>, ms: number): Promise<T> {
             await db.eformsign_document_job.deleteMany({ where: { branchId: { in: branches } } });
             await db.eformsign_dispatch_intent.deleteMany({ where: { branchId: { in: branches } } });
             await db.client.updateMany({ where: { branchId: { in: branches } }, data: { eDocId: null } });
+            await db.service_record_snapshot_chunk.deleteMany({ where: { branchId: { in: branches } } });
             await db.eformsign_doc.deleteMany({ where: { documentId: { in: documents } } });
             await db.employee_schedule.deleteMany({ where: { branchId: { in: branches } } });
             await db.service_record_revision_document_state.deleteMany({ where: { branchId: { in: branches } } });
@@ -1617,6 +1621,184 @@ async function bounded<T>(promise: Promise<T>, ms: number): Promise<T> {
         const readState = () => db.service_record_revision_document_state.findUniqueOrThrow({ where: { id: state.id } });
         return { repo, input, job, state, payload, readJob, readState, record };
     }
+    function initialLifecycle(connection: PrismaClient = db) {
+        // Terminal evaluation never reads a business-day calendar.
+        return new ServiceRecordLifecycleService(connection as unknown as PrismaService, {} as HolidayCalendarService);
+    }
+    async function initialChunks(options: { unlinked?: boolean; completed?: boolean; dispatchAuthorized?: boolean } = {}) {
+        const f = await initialRuntime("sent");
+        const revisionId = f.payload.revisionId, branchId = f.input.branchId;
+        await db.service_record_case.update({ where: { id: f.record.id }, data: {
+            status: options.completed ? "COMPLETED" : options.dispatchAuthorized ? "READY_TO_FINALIZE" : "DOCUMENTS_CREATED",
+            ...(options.completed ? { currentUsableRevisionId: revisionId, currentUsableDocumentVersion: 3, documentsCompletedAt: new Date() } : {}),
+        } });
+        await db.service_record_revision_document_state.update({ where: { id: f.state.id }, data: {
+            status: options.completed ? "completed" : "processing", step: options.completed ? "completed" : options.dispatchAuthorized ? "dispatch_authorized" : "documents_created",
+            lastErrorCode: null,
+        } });
+        for (const index of [1, 2]) {
+            const documentId = documents[index - 1]!;
+            const linked = index === 1 || !options.unlinked;
+            if (linked) await db.eformsign_doc.update({ where: { documentId }, data: { branchId, clientId: clients[0]!,
+                serviceRecordCaseId: f.record.id, revisionId, snapshotVersion: 3, snapshotChunkIndex: index,
+                documentKind: "service_record_snapshot", statusType: options.completed ? "003" : "070" } });
+            await db.service_record_snapshot_chunk.create({ data: { branchId, serviceRecordCaseId: f.record.id, revisionId,
+                snapshotVersion: 3, chunkIndex: index, chunkCount: 2, firstSessionIndex: index, lastSessionIndex: index,
+                employeeNameSnapshot: "Synthetic PG provider", sourceHash: f.state.inputFingerprint,
+                status: linked ? "CREATED" : "PENDING", eformsignDocumentId: linked ? documentId : null } });
+        }
+        const purge = async (index: number, evaluate = true) => {
+            const documentId = documents[index - 1]!;
+            const before = await db.eformsign_doc.findUniqueOrThrow({ where: { documentId }, select: { statusType: true } });
+            const mirror = new SbEformsignDocumentMirrorRepository(db as unknown as PrismaService);
+            await mirror.requestPermanentPurge([documentId]);
+            await mirror.purgeContent([documentId], new Date());
+            return evaluate ? initialLifecycle().evaluateInitialSnapshotTerminalOutcome({ branchId, documentId,
+                deletedDocuments: [{ documentId, statusType: before.statusType }] }) : false;
+        };
+        const readCase = () => db.service_record_case.findUniqueOrThrow({ where: { id: f.record.id } });
+        return { ...f, revisionId, branchId, purge, readCase };
+    }
+    it("U1 staff purge of an in-progress INITIAL chunk fails state/case after commit and repeated evaluation is a no-op", async () => {
+        const f = await initialChunks();
+        expect(await f.purge(1)).toBe(true);
+        expect(await f.readState()).toMatchObject({ status: "failed", lastErrorCode: "SERVICE_RECORD_REVISION_DOCUMENT_REJECTED" });
+        expect(await f.readCase()).toMatchObject({ status: "FINALIZATION_FAILED", nextAttemptAt: null, currentUsableRevisionId: null });
+        const tombstone = await db.eformsign_doc.findUniqueOrThrow({ where: { documentId: documents[0]! } });
+        expect(tombstone).toMatchObject({ statusType: "049", clientId: null, documentKind: null, serviceRecordCaseId: null,
+            snapshotVersion: null, snapshotChunkIndex: null, revisionId: f.revisionId });
+        const state = await f.readState(), record = await f.readCase();
+        expect(await initialLifecycle().evaluateInitialSnapshotTerminalOutcome({ branchId: f.branchId, documentId: documents[0]!,
+            deletedDocuments: [{ documentId: documents[0]!, statusType: "070" }] })).toBe(false);
+        expect(await f.readState()).toEqual(state);
+        expect(await f.readCase()).toEqual(record);
+    });
+    it("U1 deleting a chunk of an already-completed record preserves completed state/case and usable pointer", async () => {
+        const f = await initialChunks({ completed: true });
+        expect(await f.purge(1)).toBe(false);
+        expect(await f.readState()).toMatchObject({ status: "completed", step: "completed" });
+        expect(await f.readCase()).toMatchObject({ status: "COMPLETED", currentUsableRevisionId: f.revisionId, currentUsableDocumentVersion: 3 });
+    });
+    it("U1 completed chunk deletion preserves non-ready evidence after deleting the other live sibling", async () => {
+        const f = await initialChunks();
+        await db.eformsign_doc.update({ where: { documentId: documents[0]! }, data: { statusType: "003" } });
+        expect(await f.purge(1)).toBe(true);
+        expect(await f.readState()).toMatchObject({ status: "failed", lastErrorCode: "SERVICE_RECORD_INITIAL_COMPLETED_DOCUMENT_DELETED" });
+        expect(await f.purge(2)).toBe(false);
+        expect(await f.readState()).toMatchObject({ lastErrorCode: "SERVICE_RECORD_INITIAL_COMPLETED_DOCUMENT_DELETED" });
+        expect(await f.readCase()).toMatchObject({ lastError: "SERVICE_RECORD_INITIAL_COMPLETED_DOCUMENT_DELETED" });
+    });
+    it.each([false, true])("U1 post-dispatch cancel then staff deletion respects unlinked chunk=%s", async unlinked => {
+        const f = await initialChunks({ unlinked });
+        // Exercise the real post-dispatch cancellation boundary, including the retained key.
+        await db.service_record_revision_document_state.update({ where: { id: f.state.id }, data: { step: "dispatch_authorized" } });
+        await db.service_record_case.update({ where: { id: f.record.id }, data: { status: "READY_TO_FINALIZE" } });
+        expect(await f.repo.cancel(f.input)).toMatchObject({ kind: "cancelled" });
+        expect(await f.readState()).toMatchObject({ status: "manual_review", lastErrorCode: "JOB_CANCELLED_AFTER_DISPATCH" });
+        expect(await f.purge(1)).toBe(!unlinked);
+        expect(await f.readState()).toMatchObject(unlinked
+            ? { status: "manual_review", lastErrorCode: "JOB_CANCELLED_AFTER_DISPATCH" }
+            : { status: "failed", lastErrorCode: "SERVICE_RECORD_REVISION_DOCUMENT_REJECTED" });
+    });
+    it.each(["manual_review", "failed"])("U1 captured completed deletion takes precedence over %s with an unlinked chunk", async status => {
+        const f = await initialChunks({ unlinked: true });
+        await db.service_record_revision_document_state.update({ where: { id: f.state.id }, data: { status,
+            step: status === "failed" ? "failed" : "manual_review",
+            lastErrorCode: status === "failed" ? "SERVICE_RECORD_INITIAL_PARTIAL_DISPATCH" : "JOB_CANCELLED_AFTER_DISPATCH" } });
+        await db.service_record_case.update({ where: { id: f.record.id }, data: { status: "FINALIZATION_FAILED" } });
+        await db.eformsign_doc.update({ where: { documentId: documents[0]! }, data: { statusType: "003" } });
+        expect(await f.purge(1)).toBe(true);
+        expect(await f.readState()).toMatchObject({ status: "failed", lastErrorCode: "SERVICE_RECORD_INITIAL_COMPLETED_DOCUMENT_DELETED" });
+    });
+    it("U1 sweep heals a pre-existing purged row with unknown status conservatively and idempotently", async () => {
+        const f = await initialChunks();
+        await f.purge(1, false);
+        expect(await initialLifecycle().healInitialSnapshotTerminalOutcomes({ branchId: f.branchId })).toBe(1);
+        expect(await f.readState()).toMatchObject({ status: "failed", lastErrorCode: "SERVICE_RECORD_INITIAL_DELETED_STATUS_UNKNOWN" });
+        expect(await f.readCase()).toMatchObject({ status: "FINALIZATION_FAILED", lastError: "SERVICE_RECORD_INITIAL_DELETED_STATUS_UNKNOWN" });
+        expect(await initialLifecycle().healInitialSnapshotTerminalOutcomes({ branchId: f.branchId })).toBe(0);
+    });
+    it("U1 sweep keeps unknown sibling evidence regardless of which terminal document sorts first", async () => {
+        const f = await initialChunks();
+        await f.purge(2, false);
+        await db.eformsign_doc.update({ where: { documentId: documents[0]! }, data: { statusType: "031" } });
+        // Evaluate the non-deleted sibling first, deliberately bypassing the sweep's ordering.
+        expect(await initialLifecycle().evaluateInitialSnapshotTerminalOutcome({ branchId: f.branchId, documentId: documents[0]! })).toBe(true);
+        expect(await f.readState()).toMatchObject({ lastErrorCode: "SERVICE_RECORD_INITIAL_DELETED_STATUS_UNKNOWN" });
+    });
+    it("U1 terminal failure ignores purge intent while completion still refuses a pending purge", async () => {
+        const f = await initialChunks();
+        await new SbEformsignDocumentMirrorRepository(db as unknown as PrismaService).requestPermanentPurge([documents[0]!]);
+        await db.eformsign_doc.updateMany({ where: { documentId: { in: documents.slice(0, 2) } }, data: { statusType: "003" } });
+        expect(await initialLifecycle().completeServiceRecordSnapshotIfReady({ branchId: f.branchId, documentId: documents[0]! })).toBe(false);
+        await db.eformsign_doc.update({ where: { documentId: documents[0]! }, data: { statusType: "031" } });
+        expect(await initialLifecycle().evaluateInitialSnapshotTerminalOutcome({ branchId: f.branchId, documentId: documents[0]! })).toBe(true);
+        expect(await f.readState()).toMatchObject({ status: "failed", lastErrorCode: "SERVICE_RECORD_REVISION_DOCUMENT_REJECTED" });
+        expect((await db.eformsign_doc.findUniqueOrThrow({ where: { documentId: documents[0]! } })).permanentPurgeRequestedAt).not.toBeNull();
+    });
+    it.each(["070", "003"])("U1 batch purge uses both captured statuses when the second chunk was %s", async statusType => {
+        const f = await initialChunks();
+        await db.eformsign_doc.update({ where: { documentId: documents[1]! }, data: { statusType } });
+        await f.purge(1, false);
+        await f.purge(2, false);
+        expect(await initialLifecycle().evaluateInitialSnapshotTerminalOutcome({ branchId: f.branchId, documentId: documents[0]!,
+            deletedDocuments: [{ documentId: documents[0]!, statusType: "070" }, { documentId: documents[1]!, statusType }],
+        })).toBe(true);
+        expect(await f.readState()).toMatchObject({ lastErrorCode: statusType === "003"
+            ? "SERVICE_RECORD_INITIAL_COMPLETED_DOCUMENT_DELETED" : "SERVICE_RECORD_REVISION_DOCUMENT_REJECTED" });
+    });
+    it("U1 evaluator rejects a wrong branch or a chunk from a non-current revision", async () => {
+        const f = await initialChunks();
+        await f.purge(1, false);
+        expect(await initialLifecycle().evaluateInitialSnapshotTerminalOutcome({ branchId: branches[1]!, documentId: documents[0]! })).toBe(false);
+        await db.service_record_case.update({ where: { id: f.record.id }, data: { currentRevisionId: null } });
+        expect(await initialLifecycle().evaluateInitialSnapshotTerminalOutcome({ branchId: f.branchId, documentId: documents[0]! })).toBe(false);
+        expect(await f.readState()).toMatchObject({ status: "processing" });
+    });
+    it("U1 a chunk purged before documents_created is caught within promotion's transaction", async () => {
+        const f = await initialChunks({ dispatchAuthorized: true });
+        await f.purge(2, false);
+        const repo = new ServiceRecordEditRepository(db as unknown as PrismaService);
+        expect(await repo.recordInitialFinalizationDocumentsCreated({ branchId: f.branchId, clientId: clients[0]!,
+            serviceRecordCaseId: f.record.id, revisionId: f.revisionId, revisionNumber: 1, documentStateId: f.state.id,
+            generation: f.state.generation, documentVersion: 3, chunkCount: 2, documentIds: documents.slice(0, 2) })).toBe(true);
+        expect(await f.readState()).toMatchObject({ status: "failed", lastErrorCode: "SERVICE_RECORD_INITIAL_DELETED_STATUS_UNKNOWN" });
+        expect(await f.readCase()).toMatchObject({ status: "FINALIZATION_FAILED" });
+    });
+    it("U1 concurrent webhook transition and staff purge/evaluation finish without 40P01 or lock inversion", async () => {
+        const f = await initialChunks();
+        await db.eformsign_doc.update({ where: { documentId: documents[1]! }, data: { statusType: "031" } });
+        const held = deferred<void>(), release = deferred<void>(), purged = deferred<void>();
+        const webhook = transaction(a, async tx => {
+            await tx.$queryRaw`SELECT id FROM service_record_case WHERE id = ${f.record.id}::uuid FOR UPDATE`;
+            held.resolve();
+            await bounded(release.promise, 9000);
+            return initialLifecycle(a).failInitialServiceRecordSnapshotInTransaction({ branchId: f.branchId, documentId: documents[1]! }, tx);
+        });
+        void webhook.catch(() => undefined);
+        let deletion: Promise<boolean> | undefined;
+        try {
+            await bounded(held.promise, 5000);
+            deletion = (async () => {
+                const mirror = new SbEformsignDocumentMirrorRepository(b as unknown as PrismaService);
+                await mirror.requestPermanentPurge([documents[0]!]);
+                await mirror.purgeContent([documents[0]!], new Date());
+                purged.resolve();
+                return initialLifecycle(b).evaluateInitialSnapshotTerminalOutcome({ branchId: f.branchId,
+                    documentId: documents[0]!, deletedDocuments: [{ documentId: documents[0]!, statusType: "070" }] });
+            })();
+            void deletion.catch(() => undefined);
+            // Purge must commit even while webhook owns the case lock; evaluation waits afterwards.
+            await bounded(purged.promise, 5000);
+        } finally {
+            release.resolve();
+            await Promise.allSettled([webhook, ...(deletion ? [deletion] : [])]);
+        }
+        const results = await Promise.allSettled([webhook, deletion!]);
+        expect(results.map(result => result.status)).toEqual(["fulfilled", "fulfilled"]);
+        expect(await f.readState()).toMatchObject({ status: "failed", lastErrorCode: "SERVICE_RECORD_REVISION_DOCUMENT_REJECTED" });
+    });
+
     it("keeps an older actionable INITIAL job reachable behind 51 newer report-only INITIAL jobs", async () => {
         const f = await initialRuntime();
         await db.eformsign_document_job.update({ where: { id: f.job.id }, data: {

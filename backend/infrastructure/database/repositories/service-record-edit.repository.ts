@@ -3,6 +3,7 @@ import { Prisma } from "@prisma/client";
 import { randomUUID } from "node:crypto";
 
 import { initialFinalizationRequestKey, isInitialFinalizationWorkflowScope } from "application/policies/service-record-initial-finalization.policy";
+import { ServiceRecordLifecycleService } from "application/services/service-record-lifecycle.service";
 
 import {
     ServiceRecordEditConflictError,
@@ -1166,6 +1167,7 @@ async function lockRevisionDocumentTargets(
         documentStateId: string;
         generation: string;
     },
+    initial = false,
 ): Promise<void> {
     const transaction = tx as OptionalQueryTransaction;
     if (typeof transaction.$queryRaw !== "function") return;
@@ -1192,6 +1194,9 @@ async function lockRevisionDocumentTargets(
     )].sort((left, right) => left - right);
     await lockRowsByBranchAndIds(tx, "employee", "employee", input.branchId, employeeIds, false);
     await lockRowsByBranchAndIds(tx, "service_record_case", "service_record_case", input.branchId, [input.serviceRecordCaseId], true);
+    if (initial) {
+        await lockRowsByBranchAndIds(tx, "service_record_revision_document_state", "service_record_revision_document_state", input.branchId, [input.documentStateId], true);
+    }
     const scheduleIds = [...new Set(
         discovered
             .map((row) => row.scheduleId)
@@ -1203,7 +1208,9 @@ async function lockRevisionDocumentTargets(
     await lockCaseChildren(tx, input.branchId, input.serviceRecordCaseId, "eformsign_doc", "eformsign_doc", "service_record_case_id");
     await lockCaseChildren(tx, input.branchId, input.serviceRecordCaseId, "service_record_snapshot_chunk", "service_record_snapshot_chunk", "service_record_case_id");
     await lockCaseChildren(tx, input.branchId, input.serviceRecordCaseId, "service_record_revision", "service_record_revision", "service_record_case_id");
-    await lockRowsByBranchAndIds(tx, "service_record_revision_document_state", "service_record_revision_document_state", input.branchId, [input.documentStateId], true);
+    if (!initial) {
+        await lockRowsByBranchAndIds(tx, "service_record_revision_document_state", "service_record_revision_document_state", input.branchId, [input.documentStateId], true);
+    }
     await transaction.$queryRaw(Prisma.sql`
         SELECT job.id
         FROM "eformsign_document_job" AS job
@@ -3213,7 +3220,7 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
         input: PromoteServiceRecordRevisionSnapshotInput,
     ): Promise<boolean> {
         assertRevisionPromotionInput(input);
-        await lockRevisionDocumentTargets(context.tx, input);
+        await lockRevisionDocumentTargets(context.tx, input, true);
         const ownerCase = await selectRevisionGenerationCase(context.tx, input);
         if (!ownerCase || ownerCase.currentRevisionId !== input.revisionId
             || !["READY_TO_FINALIZE", "FINALIZATION_FAILED", "FINALIZING", "DOCUMENTS_CREATED"].includes(ownerCase.status)) {
@@ -3237,6 +3244,9 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
         const persistedIds = new Set<string>();
         const indexes = new Set<number>();
         for (const row of rows) {
+            const tombstone = row.documentStatusType === "049" && row.documentClientId === null
+                && row.documentCaseId === null && row.documentKind === null
+                && row.documentSnapshotVersion === null && row.documentSnapshotChunkIndex === null;
             if (
                 row.revisionId !== input.revisionId
                 || row.snapshotVersion !== input.documentVersion
@@ -3251,11 +3261,11 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
                 || row.documentId !== row.storedDocumentId
                 || row.documentRevisionId !== input.revisionId
                 || row.documentBranchId !== input.branchId
-                || row.documentClientId !== input.clientId
-                || row.documentCaseId !== input.serviceRecordCaseId
-                || row.documentKind !== "service_record_snapshot"
-                || row.documentSnapshotVersion !== input.documentVersion
-                || row.documentSnapshotChunkIndex !== row.chunkIndex
+                || (!tombstone && (row.documentClientId !== input.clientId
+                    || row.documentCaseId !== input.serviceRecordCaseId
+                    || row.documentKind !== "service_record_snapshot"
+                    || row.documentSnapshotVersion !== input.documentVersion
+                    || row.documentSnapshotChunkIndex !== row.chunkIndex))
             ) return false;
             indexes.add(row.chunkIndex);
             persistedIds.add(row.documentId);
@@ -3266,7 +3276,12 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
             return false;
         }
 
-        if (replay) return true;
+        if (replay) {
+            for (const documentId of persistedIds) {
+                await ServiceRecordLifecycleService.evaluateInitialSnapshotTerminalOutcomeInTransaction({ branchId: input.branchId, documentId }, context.tx);
+            }
+            return true;
+        }
         const stateUpdated = await rawStateExecute(context.tx, Prisma.sql`
             UPDATE "service_record_revision_document_state"
             SET status = 'processing', step = 'documents_created', last_error_code = NULL,
@@ -3288,6 +3303,9 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
             UPDATE "service_record_token" SET active = false, revoked_at = now()
             WHERE service_record_case_id = ${input.serviceRecordCaseId}::uuid AND active = true
         `);
+        for (const documentId of persistedIds) {
+            await ServiceRecordLifecycleService.evaluateInitialSnapshotTerminalOutcomeInTransaction({ branchId: input.branchId, documentId }, context.tx);
+        }
         return true;
     }
 

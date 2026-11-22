@@ -1,5 +1,6 @@
 import { BadRequestException, Controller, Post, Get, Head, Delete, Body, Query, Param, HttpCode, HttpException, HttpStatus, UseGuards, Res, ServiceUnavailableException, GoneException, ForbiddenException, ConflictException, NotFoundException, InternalServerErrorException } from "@nestjs/common";
 import { VoidContractDocumentUsecase } from "application/usecases/eformsign-doc/void-contract-document.usecase";
+import { ServiceRecordLifecycleService } from "application/services/service-record-lifecycle.service";
 import { isDefinitiveVendorRefusal, successfulDeletedDocumentIds } from "application/utils/eformsign-cancel-result";
 import { EformsignService } from "../../application/services/eformsign.service";
 import { EformsignDocService } from "../../application/services/eformsign-doc.service";
@@ -248,6 +249,7 @@ export class EformsignController {
         private readonly holidayCalendar: HolidayCalendarService,
         private readonly voidContractDocumentUsecase: VoidContractDocumentUsecase,
         private readonly contractSupersedeService: ContractSupersedeService,
+        private readonly serviceRecordLifecycle: ServiceRecordLifecycleService,
     ) { }
 
     /**
@@ -734,11 +736,29 @@ export class EformsignController {
             if (allowedDocuments.length !== requestedDocumentIds.length) {
                 throw new ForbiddenException(codeOnlyProblemBody("ACCESS_DENIED"));
             }
-            // Persist before the vendor call: a timeout after eformsign accepted the
-            // cancellation must not leave local PII without a durable retry record.
+            // Persist before the vendor call; the intent also fences mirror status writers.
             permanentPurgeRequests = await this.documentMirrorService.requestPermanentPurge(
                 requestedDocumentIds,
             );
+            // Capture after the intent freezes status, before purge removes document metadata.
+            const chunkDocuments = await this.prisma.service_record_snapshot_chunk.findMany({
+                where: { branchId: tenant.branchId ?? "", eformsignDocumentId: { in: requestedDocumentIds } },
+                select: { eformsignDocumentId: true, eformsignDoc: { select: { statusType: true } } },
+            });
+            const purgeAndEvaluate = async (documentIds: string[]): Promise<void> => {
+                await this.documentMirrorService.purgeDocuments(documentIds);
+                const deletedDocuments = chunkDocuments.flatMap(chunk =>
+                    chunk.eformsignDocumentId && chunk.eformsignDoc && documentIds.includes(chunk.eformsignDocumentId)
+                        ? [{ documentId: chunk.eformsignDocumentId, statusType: chunk.eformsignDoc.statusType }] : []);
+                // Standalone transactions start only AFTER purge's client/doc locks are released.
+                for (const chunk of chunkDocuments) {
+                    if (!chunk.eformsignDocumentId || !documentIds.includes(chunk.eformsignDocumentId)) continue;
+                    await this.serviceRecordLifecycle.evaluateInitialSnapshotTerminalOutcome({
+                        branchId: tenant.branchId ?? "", documentId: chunk.eformsignDocumentId,
+                        deletedDocuments,
+                    });
+                }
+            };
             // Cancel, not delete. Cancelling expires the recipient's signing link — the whole
             // point, since deletions are usually mis-sends — while leaving the document and its
             // audit trail at eformsign.
@@ -790,7 +810,7 @@ export class EformsignController {
                     cleanupErrors.push(error);
                 }
                 try {
-                    await this.documentMirrorService.purgeDocuments(purgeableDocumentIds);
+                    await purgeAndEvaluate(purgeableDocumentIds);
                 } catch (error) {
                     cleanupErrors.push(error);
                 }
@@ -802,7 +822,7 @@ export class EformsignController {
                     );
                 }
             } else {
-                await this.documentMirrorService.purgeDocuments(purgeableDocumentIds);
+                await purgeAndEvaluate(purgeableDocumentIds);
                 // Preserve the previous empty-clear call after a successful purge,
                 // while ensuring it cannot run after a failed local purge.
                 await this.documentMirrorService.clearPermanentPurgeRequest([]);
