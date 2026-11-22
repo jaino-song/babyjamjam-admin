@@ -806,7 +806,7 @@ function nullableDateSql(value: Date | null | undefined): Prisma.Sql {
 
 function canRetryRevisionDocumentState(row: Pick<RevisionDocumentStateRow, "status" | "step">): boolean {
     return (row.status === "failed" || row.status === "manual_review")
-        && !["creating", "sent", "reconciling", "unknown", "cancelled"].includes(row.step);
+        && !["creating", "sent", "reconciling", "unknown"].includes(row.step);
 }
 
 type RevisionSnapshotRetryJobScope = {
@@ -3000,7 +3000,7 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
               AND generation = ${input.expectedGeneration}
               AND version = ${current.version}
               AND status IN ('failed', 'manual_review')
-              AND step NOT IN ('creating', 'sent', 'reconciling', 'unknown', 'cancelled')
+              AND step NOT IN ('creating', 'sent', 'reconciling', 'unknown')
             RETURNING ${revisionDocumentStateColumns}
         `);
         const row = updated[0];

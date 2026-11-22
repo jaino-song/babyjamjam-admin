@@ -461,7 +461,14 @@ export class ServiceRecordFinalizationService {
 
         let finalizedCount = 0;
         for (const candidate of candidates) {
-            const claim = await this.claimFinalizationCase(candidate.id, candidate.branchId, referenceDate);
+            let claim: Awaited<ReturnType<ServiceRecordFinalizationService["claimFinalizationCase"]>>;
+            try {
+                claim = await this.claimFinalizationCase(candidate.id, candidate.branchId, referenceDate);
+            } catch (error) {
+                this.logger.error({ message: "Service record finalization claim failed", caseId: candidate.id });
+                captureServiceRecordError(error, { operation: "auto-finalize", handled: true, caseId: candidate.id });
+                continue;
+            }
             if (!claim.claimed) continue;
 
             // Last look before the outbound call: the client can be deleted

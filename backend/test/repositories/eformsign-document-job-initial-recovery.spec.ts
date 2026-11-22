@@ -142,12 +142,14 @@ describe("staff INITIAL recovery", () => {
     });
     it.each(["SERVICE_RECORD_REVISION_CAPABILITY_UNVERIFIED", "PRE_SEND_RETRY_EXHAUSTED"])("listing uses verifier-backed retry flags for %s and no flags on other buckets", async lastErrorCode => {
         const f = setup({ lastErrorCode });
-        const query = jest.fn().mockResolvedValueOnce([{ ...f.raw(), status: "queued", cancellable: false, retryable: false }])
+        const query = jest.fn().mockImplementation(f.tx.$queryRaw).mockResolvedValueOnce([{ ...f.raw(), status: "queued", cancellable: false, retryable: false }])
             .mockResolvedValueOnce([{ ...f.raw(), cancellable: true, retryable: false }])
             .mockResolvedValueOnce([{ ...f.raw(), status: "completed", cancellable: false, retryable: false }]);
         const repo = new SbEformsignDocumentJobRepository({ ...f.prisma, $queryRaw: query } as never);
         const listed = await repo.listForBranch(branchId, new Date(0));
         expect(listed.requiresAttention[0]).toMatchObject({ retryable: true, cancellable: true });
+        expect(f.prisma.$transaction).not.toHaveBeenCalled();
+        expect(f.queries.every(sql => !sql.text.includes("FOR UPDATE"))).toBe(true);
         expect(toEformsignDocumentJobResponse(listed.requiresAttention[0]!)).toMatchObject({
             retryable: true, cancellable: true, recoveryKind: null, recoveryPresentation: null, lastErrorCode: null,
         });
@@ -156,6 +158,42 @@ describe("staff INITIAL recovery", () => {
         f.state.status = "processing";
         query.mockResolvedValueOnce([]).mockResolvedValueOnce([{ ...f.raw(), cancellable: true, retryable: false }]).mockResolvedValueOnce([]);
         expect((await repo.listForBranch(branchId, new Date(0))).requiresAttention[0]).toMatchObject({ retryable: false, cancellable: true });
+    });
+    it("treats preparing with processing state as post-dispatch cancellation", async () => {
+        const f = setup({ progressStep: "preparing" }, { status: "processing" });
+        const before = structuredClone(f.job);
+        expect(await f.repo.cancel(input)).toEqual({ kind: "cancelled" });
+        expect(f.job).toEqual({ ...before, status: "failed", lastErrorCode: "JOB_CANCELLED_AFTER_DISPATCH" });
+        expect(f.state).toMatchObject({ status: "manual_review", step: "unknown", lastErrorCode: "JOB_CANCELLED_AFTER_DISPATCH" });
+        expect(f.job.activeKey).toBe(before.activeKey);
+    });
+    it.each(["invalid", "branch", "client"])("listing refuses flags for %s INITIAL context without opening a transaction", async variant => {
+        const f = setup();
+        const context = { ...f.job.payload.context, ...(variant === "invalid" ? { formVersion: 0 }
+            : variant === "branch" ? { branchId: jobId } : { clientId: 8 }) };
+        const query = jest.fn().mockResolvedValueOnce([])
+            .mockResolvedValueOnce([{ ...f.raw(), payload: { ...f.job.payload, context }, cancellable: true, retryable: true }])
+            .mockResolvedValueOnce([]);
+        const repo = new SbEformsignDocumentJobRepository({ ...f.prisma, $queryRaw: query } as never);
+        expect((await repo.listForBranch(branchId, new Date(0))).requiresAttention[0])
+            .toMatchObject({ retryable: false, cancellable: false });
+        expect(query).toHaveBeenCalledTimes(3);
+        expect(f.prisma.$transaction).not.toHaveBeenCalled();
+    });
+    it("summary counts only context-valid actionable INITIAL rows and merges contract ids in time order", async () => {
+        const f = setup();
+        const initial = { ...f.raw(), completed_at: new Date("2026-01-02"), created_at: new Date("2026-01-01") };
+        const query = jest.fn().mockResolvedValueOnce([{ active_count: 0, attention_count: 4, failed_count: 1, unresolved_count: 1 }])
+            .mockResolvedValueOnce([{ id: "contract", completed_at: new Date("2026-01-01"), created_at: new Date("2026-01-01") }])
+            .mockResolvedValueOnce([initial, { ...initial, id: "invalid", payload: { ...f.job.payload,
+                context: { ...f.job.payload.context, formVersion: 0 } } }]);
+        const repo = new SbEformsignDocumentJobRepository({ ...f.prisma, $queryRaw: query } as never);
+        expect(await repo.getSummary(branchId)).toMatchObject({ requiresAttentionCount: 4, unresolvedCount: 2, unresolvedJobIds: [jobId, "contract"] });
+        const initialSql = query.mock.calls[2]![0] as Prisma.Sql;
+        expect(initialSql.text).toContain(initialFinalizationCancellableSql().text);
+        expect(initialSql.values).toContain(branchId);
+        expect(initialSql.text).not.toContain("LIMIT");
+        expect(f.prisma.$transaction).not.toHaveBeenCalled();
     });
     it("rolls back state requeue when the job CAS loses", async () => {
         const f = setup(), beforeState = structuredClone(f.state);

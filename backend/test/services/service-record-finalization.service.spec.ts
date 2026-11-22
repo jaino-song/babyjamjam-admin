@@ -1,3 +1,4 @@
+import { Logger } from "@nestjs/common";
 import { ServiceRecordFinalizationService } from "application/services/service-record-finalization.service";
 import {
     SERVICE_RECORD_CASE_STATUS,
@@ -80,6 +81,28 @@ function setup(options: {
 describe("ServiceRecordFinalizationService", () => {
     beforeEach(() => {
         mockCaptureServiceRecordError.mockClear();
+    });
+    it("continues the batch after a claim freeze fails without changing that case outcome", async () => {
+        const { service, prisma, snapshot } = setup();
+        const candidates = ["case-1", "case-2"].map(id => ({ id, branchId: "branch-1", finalizationAttempts: 0,
+            status: SERVICE_RECORD_CASE_STATUS.READY_TO_FINALIZE, nextAttemptAt: null, finalizationStartedAt: null, lastError: null }));
+        prisma.service_record_case.findMany.mockReset().mockResolvedValueOnce([]).mockResolvedValueOnce([]).mockResolvedValueOnce(candidates);
+        const update = prisma.service_record_case.updateMany.getMockImplementation()!;
+        const error = new Error("GENERATION_SCOPE_CHANGED: sensitive provider detail");
+        prisma.service_record_case.updateMany.mockImplementation(args => {
+            if (args.where.id === "case-1" && args.where.OR) return Promise.reject(error);
+            return update(args);
+        });
+        const log = jest.spyOn(Logger.prototype, "error").mockImplementation(() => undefined);
+        try {
+            await expect(service.processDueCases()).resolves.toBe(1);
+            expect(snapshot.executeCase).toHaveBeenCalledTimes(1);
+            expect(snapshot.executeCase).toHaveBeenCalledWith("branch-1", "case-2", workerPrincipal);
+            expect(prisma.service_record_case.updateMany.mock.calls.filter(([args]) => args.where.id === "case-1")).toHaveLength(1);
+            expect(prisma.service_record_token.updateMany).toHaveBeenCalledTimes(1);
+            expect(mockCaptureServiceRecordError).toHaveBeenCalledWith(error, { operation: "auto-finalize", handled: true, caseId: "case-1" });
+            expect(log).toHaveBeenCalledWith({ message: "Service record finalization claim failed", caseId: "case-1" });
+        } finally { log.mockRestore(); }
     });
     it("claims a ready case once, creates every chunk, and revokes remaining links", async () => {
         const { service, prisma, snapshot } = setup();

@@ -1595,7 +1595,7 @@ async function bounded<T>(promise: Promise<T>, ms: number): Promise<T> {
                 plannedSessionDates: [{ sessionIndex: 1, serviceDate: "2026-09-01" }],
                 documentSyncStatus: "capability_unverified", lifecycleStatus: "READY_TO_FINALIZE", formVersion: 3 } };
         const job = await db.eformsign_document_job.create({ data: { branchId, clientId, source: "auto_finalize", jobType: "create_document",
-            requestKey, payload, payloadFingerprint: fingerprint, status, progressStep: step, progressDetail: "retained send evidence",
+            requestKey, payload, payloadFingerprint: fingerprint, status, progressStep: step, progressDetail: ["dispatch_authorized", "creating", "sent"].includes(step) ? "creating" : null,
             lastErrorCode: code, activeKey: `service-record-initial:${record.id}`, completedAt: new Date() } });
         const repo = new SbEformsignDocumentJobRepository(db as unknown as PrismaService);
         const input = { branchId, jobId: job.id, userId: users[0]!, now: new Date() };
@@ -1661,7 +1661,7 @@ async function bounded<T>(promise: Promise<T>, ms: number): Promise<T> {
         expect(await f.repo.cancel(f.input)).toEqual({ kind: "already_cancelled" });
         expect(await f.repo.retry(f.input)).toEqual({ kind: "not_retryable" });
     });
-    it.each(["completed", "not_required", "superseded", "failed", "manual_review", "unknown",
+    it.each(["completed", "not_required", "failed", "manual_review", "unknown",
         "waiting_for_completion", "waiting_for_signature"])("INITIAL cancel preserves %s state and projects cancellable false", async status => {
         const f = await initialRuntime("sent");
         await db.service_record_revision_document_state.update({ where: { id: f.state.id }, data: { status } });
@@ -1671,6 +1671,7 @@ async function bounded<T>(promise: Promise<T>, ms: number): Promise<T> {
         expect(await f.repo.cancel(f.input)).toMatchObject({ kind: "not_cancellable" });
         expect(await f.readJob()).toEqual(beforeJob);
         expect(await f.readState()).toEqual(beforeState);
+        expect(await f.repo.getSummary(f.input.branchId)).toMatchObject({ requiresAttentionCount: 1, unresolvedCount: 0, unresolvedJobIds: [] });
     });
     it.each(["capability_unverified", "pending", "processing"])("INITIAL post-dispatch cancel accepts unresolved %s state in API and listing", async status => {
         const f = await initialRuntime("sent");
@@ -1678,6 +1679,14 @@ async function bounded<T>(promise: Promise<T>, ms: number): Promise<T> {
         expect((await f.repo.listForBranch(f.input.branchId, new Date(0))).requiresAttention.find(job => job.id === f.job.id))
             .toMatchObject({ retryable: false, cancellable: true });
         expect(await f.repo.cancel(f.input)).toEqual({ kind: "cancelled" });
+        expect(await f.readState()).toMatchObject({ status: "manual_review", step: "unknown" });
+    });
+    it("INITIAL preparing with processing state preserves evidence and active key on cancel", async () => {
+        const f = await initialRuntime();
+        await db.service_record_revision_document_state.update({ where: { id: f.state.id }, data: { status: "processing" } });
+        expect(await f.repo.cancel(f.input)).toEqual({ kind: "cancelled" });
+        expect(await f.readJob()).toMatchObject({ progressStep: "preparing", progressDetail: null,
+            payload: f.payload, activeKey: f.job.activeKey, lastErrorCode: "JOB_CANCELLED_AFTER_DISPATCH" });
         expect(await f.readState()).toMatchObject({ status: "manual_review", step: "unknown" });
     });
     it.each(["generation", "revisionId"])("INITIAL cancel preserves a later state with changed %s and projects cancellable false", async field => {
@@ -1697,14 +1706,19 @@ async function bounded<T>(promise: Promise<T>, ms: number): Promise<T> {
         expect(await f.readJob()).toEqual(beforeJob);
         expect(await f.readState()).toEqual(beforeState);
     });
-    it("INITIAL retry refuses malformed branch-owned context as not_retryable", async () => {
+    it.each(["invalid", "branch", "client"])("INITIAL %s context refuses retry and listing flags and popup counts", async variant => {
         const f = await initialRuntime();
+        const context = { ...f.payload.context, ...(variant === "invalid" ? { formVersion: 0 }
+            : variant === "branch" ? { branchId: branches[1]! } : { clientId: clients[1]! }) };
         await db.eformsign_document_job.update({ where: { id: f.job.id },
-            data: { payload: { ...f.payload, context: { ...f.payload.context, formVersion: 0 } } } });
+            data: { payload: { ...f.payload, context } } });
         const beforeJob = await f.readJob();
         expect(await f.repo.retry(f.input)).toEqual({ kind: "not_retryable" });
         expect(await f.readJob()).toEqual(beforeJob);
         expect(await f.readState()).toEqual(f.state);
+        expect((await f.repo.listForBranch(f.input.branchId, new Date(0))).requiresAttention.find(job => job.id === f.job.id))
+            .toMatchObject({ retryable: false, cancellable: false });
+        expect(await f.repo.getSummary(f.input.branchId)).toMatchObject({ requiresAttentionCount: 1, unresolvedCount: 0, unresolvedJobIds: [] });
     });
     it.each(["queued", "processing", "reconciling", "leased"])("INITIAL %s cannot be cancelled", async status => {
         const f = await initialRuntime("preparing", "PRE_SEND_RETRY_EXHAUSTED", status === "leased" ? "failed" : status);
@@ -1752,6 +1766,12 @@ async function bounded<T>(promise: Promise<T>, ms: number): Promise<T> {
         expect(await f.repo.getSummary(f.input.branchId)).toMatchObject({ requiresAttentionCount: 1, unresolvedCount: 1, unresolvedJobIds: [f.job.id] });
         await db.service_record_revision_document_state.update({ where: { id: f.state.id }, data: { status: "processing" } });
         expect((await f.repo.listForBranch(f.input.branchId, new Date(0))).requiresAttention.find(job => job.id === f.job.id)).toMatchObject({ retryable: false, cancellable: true });
+        expect(await f.repo.getSummary(f.input.branchId)).toMatchObject({ unresolvedCount: 1, unresolvedJobIds: [f.job.id] });
+        await db.service_record_revision_document_state.update({ where: { id: f.state.id }, data: { status: "manual_review" } });
+        await db.eformsign_document_job.update({ where: { id: f.job.id }, data: { status: "requires_attention" } });
+        expect((await f.repo.listForBranch(f.input.branchId, new Date(0))).requiresAttention.find(job => job.id === f.job.id))
+            .toMatchObject({ retryable: false, cancellable: false });
+        expect(await f.repo.getSummary(f.input.branchId)).toMatchObject({ requiresAttentionCount: 1, unresolvedCount: 0, unresolvedJobIds: [] });
     });
     it("INITIAL retry waits on the client before locking the job or revision state", async () => {
         const f = await initialRuntime(), ready = deferred<void>(), release = deferred<void>();

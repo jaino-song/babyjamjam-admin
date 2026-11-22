@@ -122,7 +122,7 @@ describe("SbEformsignDocumentJobRepository", () => {
     let repository: SbEformsignDocumentJobRepository;
 
     beforeEach(() => {
-        queryRaw = jest.fn();
+        queryRaw = jest.fn().mockResolvedValue([]);
         executeRaw = jest.fn();
         const prisma = {
             $queryRaw: queryRaw,
@@ -1171,7 +1171,8 @@ describe("SbEformsignDocumentJobRepository", () => {
             queryRaw.mockResolvedValueOnce([{ unresolved_count: 0 }]).mockResolvedValueOnce([]);
             const summary = await repository.getSummary(branchId);
             expect(summary.unresolvedCount).toBe(0); expect(summary.unresolvedJobIds).toEqual([]);
-            for (const [query] of queryRaw.mock.calls) {
+            // The first two queries cover contract popup counts/ids; the third is INITIAL-only.
+            for (const [query] of queryRaw.mock.calls.slice(0, 2)) {
                 const statement = query as Prisma.Sql;
                 const marker = statement.text.match(/status = 'failed' AND progress_step IS DISTINCT FROM \$(\d+)/);
                 expect(marker).not.toBeNull();

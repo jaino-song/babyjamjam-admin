@@ -295,6 +295,12 @@ function payloadContext(value: RawJob["payload"]): ServiceRecordRevisionDispatch
     return context as ServiceRecordRevisionDispatchContext;
 }
 
+function initialRecoveryContext(job: Pick<RawJob, "payload" | "branch_id" | "client_id">): ServiceRecordRevisionDispatchContext | null {
+    const context = payloadContext(job.payload);
+    return context && isValidServiceRecordDispatchContext(context)
+        && context.branchId === job.branch_id && context.clientId === job.client_id ? context : null;
+}
+
 function payloadRevisionJob(value: RawJob["payload"]): {
     revisionId: string | null;
     payloadFingerprint: string | null;
@@ -905,7 +911,7 @@ export class SbEformsignDocumentJobRepository implements IEformsignDocumentJobRe
     }
 
     private async verifyInitialFinalizationDispatch(
-        tx: Prisma.TransactionClient,
+        tx: Pick<Prisma.TransactionClient, "$queryRaw">,
         job: DispatchJobSnapshot,
         expected: ServiceRecordRevisionDispatchContext,
         options: { lock: boolean } = { lock: true },
@@ -1359,9 +1365,9 @@ export class SbEformsignDocumentJobRepository implements IEformsignDocumentJobRe
                 OR EXISTS (SELECT 1 FROM eformsign_contract_authority a WHERE a.creation_job_id = eformsign_document_job.id
                     AND a.branch_id = eformsign_document_job.branch_id AND a.client_id = eformsign_document_job.client_id AND a.phase <> 'closed')))
             OR status = 'requires_attention'
-            OR (${initialFinalizationJobSql()} AND status = 'failed')
         ))`;
-        const [rows, unresolvedRows] = await Promise.all([
+        type SummaryJob = Pick<RawJob, "id" | "completed_at" | "created_at">;
+        const [rows, unresolvedRows, initialRows] = await Promise.all([
             this.prisma.$queryRaw<Array<{
                 active_count: number;
                 attention_count: number;
@@ -1376,22 +1382,35 @@ export class SbEformsignDocumentJobRepository implements IEformsignDocumentJobRe
                              AND progress_step IS DISTINCT FROM ${CANCELLED_PROGRESS_STEP}
                              AND completed_at >= now() - interval '7 days'
                        )::int AS failed_count,
-                       count(*) FILTER (WHERE (${contractJobSql()} OR ${initialFinalizationJobSql()}) AND ${unresolved})::int AS unresolved_count
+                       count(*) FILTER (WHERE ${contractJobSql()} AND ${unresolved})::int AS unresolved_count
                 FROM "eformsign_document_job" WHERE branch_id = ${branchId}::uuid
             `),
-            this.prisma.$queryRaw<Array<{ id: string }>>(Prisma.sql`
-                SELECT id FROM "eformsign_document_job"
-                WHERE branch_id = ${branchId}::uuid AND (${contractJobSql()} OR ${initialFinalizationJobSql()}) AND ${unresolved}
+            this.prisma.$queryRaw<SummaryJob[]>(Prisma.sql`
+                SELECT id, completed_at, created_at FROM "eformsign_document_job"
+                WHERE branch_id = ${branchId}::uuid AND ${contractJobSql()} AND ${unresolved}
                 ORDER BY completed_at DESC NULLS LAST, created_at DESC
                 LIMIT 50
             `),
+            // Retryable INITIAL rows also satisfy cancellation's state binding. Keep the
+            // same SQL proof and TS context validation as the listing, without read locks.
+            this.prisma.$queryRaw<Array<SummaryJob & Pick<RawJob, "payload" | "branch_id" | "client_id">>>(Prisma.sql`
+                SELECT j.id, j.completed_at, j.created_at, j.payload, j.branch_id, j.client_id
+                FROM "eformsign_document_job" j
+                WHERE j.branch_id = ${branchId}::uuid AND ${initialFinalizationCancellableSql()}
+            `),
         ]);
+        const actionableInitial = initialRows.filter(row => initialRecoveryContext(row) !== null);
+        const time = (value: RawJob["completed_at"]) => value === null ? Number.NEGATIVE_INFINITY : new Date(value).getTime();
+        const unresolvedJobs = [...unresolvedRows, ...actionableInitial].sort((left, right) => {
+            const completed = time(right.completed_at) - time(left.completed_at);
+            return completed || time(right.created_at) - time(left.created_at);
+        });
         return {
             activeCount: Number(rows[0]?.active_count ?? 0),
             requiresAttentionCount: Number(rows[0]?.attention_count ?? 0),
             failedCount: Number(rows[0]?.failed_count ?? 0),
-            unresolvedCount: Number(rows[0]?.unresolved_count ?? 0),
-            unresolvedJobIds: unresolvedRows.map((row) => row.id),
+            unresolvedCount: Number(rows[0]?.unresolved_count ?? 0) + actionableInitial.length,
+            unresolvedJobIds: unresolvedJobs.slice(0, 50).map((row) => row.id),
         };
     }
 
@@ -1436,21 +1455,16 @@ export class SbEformsignDocumentJobRepository implements IEformsignDocumentJobRe
             jobType: row.job_type, source: row.source, documentId: row.document_id,
             requestKey: row.request_key, payload: this.parsePayload(row.payload),
         }));
-        if (initialRows.length > 0) {
-            await this.prisma.$transaction(async tx => {
-                for (const row of initialRows) {
-                    row.retryable = false;
-                    const context = payloadContext(row.payload);
-                    if (!context || !isValidServiceRecordDispatchContext(context)
-                        || context.branchId !== row.branch_id || context.clientId !== row.client_id) {
-                        row.cancellable = false;
-                        continue;
-                    }
-                    if (!initialRetryRowEligible(row)) continue;
-                    const verified = await this.verifyInitialFinalizationDispatch(tx, row, context, { lock: false });
-                    row.retryable = verified.kind === "allow";
-                }
-            }, { timeout: 20000 });
+        for (const row of initialRows) {
+            row.retryable = false;
+            const context = initialRecoveryContext(row);
+            if (!context) {
+                row.cancellable = false;
+                continue;
+            }
+            if (!initialRetryRowEligible(row)) continue;
+            const verified = await this.verifyInitialFinalizationDispatch(this.prisma, row, context, { lock: false });
+            row.retryable = verified.kind === "allow";
         }
         return { active: active.map(this.toDomain), requiresAttention: requiresAttention.map(this.toDomain), recent: recent.map(this.toDomain) };
     }
