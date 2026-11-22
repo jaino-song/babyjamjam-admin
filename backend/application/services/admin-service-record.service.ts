@@ -383,18 +383,41 @@ export class AdminServiceRecordService {
         }
 
         void actorUserId;
-        const result = await repository.retryRevisionDocumentState({
-            branchId,
-            clientId: state.clientId,
-            revisionId: normalizedRevisionId,
-            stateId: normalizedDocumentStateId,
-            expectedGeneration: normalizedGeneration,
+        const result = await this.prisma.$transaction(async (tx) => {
+            // Follow the shared retry's case-before-state lock order.
+            const ownerCases = await tx.$queryRaw<Array<{ id: string }>>(Prisma.sql`
+                SELECT id FROM "service_record_case"
+                WHERE id = ${state.serviceRecordCaseId}::uuid
+                  AND branch_id = ${branchId}::uuid
+                  AND client_id = ${state.clientId}
+                FOR UPDATE
+            `);
+            if (!ownerCases[0]) throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
+            const currentStates = await tx.$queryRaw<Array<{ status: string; version: number }>>(Prisma.sql`
+                SELECT status, version FROM "service_record_revision_document_state"
+                WHERE id = ${normalizedDocumentStateId}::uuid
+                  AND branch_id = ${branchId}::uuid
+                  AND client_id = ${state.clientId}
+                  AND service_record_case_id = ${state.serviceRecordCaseId}::uuid
+                  AND revision_id = ${normalizedRevisionId}::uuid
+                  AND generation = ${normalizedGeneration}
+                FOR UPDATE
+            `);
+            const current = currentStates[0];
+            if (!current) throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
+            const retried = await repository.retryRevisionDocumentStateInTransaction({ tx }, {
+                branchId,
+                clientId: state.clientId,
+                revisionId: normalizedRevisionId,
+                stateId: normalizedDocumentStateId,
+                expectedGeneration: normalizedGeneration,
+            });
+            if (retried === null || (retried.status === current.status && retried.version === current.version)) {
+                // 잠근 현재 행과 같으면 이번 재시도가 실행되지 않은 요청 충돌이에요.
+                throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
+            }
+            return retried;
         });
-        if (result === null) throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
-        if (result.status === state.status && result.version === state.version) {
-            // 같은 세대라도 실행되지 않은 재시도는 성공 응답 대신 요청 충돌로 알려요.
-            throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
-        }
         return normalizeRevisionDocumentSummaryResult(result);
     }
 
