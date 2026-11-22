@@ -1,3 +1,4 @@
+import { ServiceRecordFinalizationService } from "./service-record-finalization.service";
 import {
     ConflictException,
     ForbiddenException,
@@ -134,6 +135,7 @@ export class AdminServiceRecordService {
         @Inject(SERVICE_RECORD_EDIT_REPOSITORY)
         private readonly editRepository?: IServiceRecordEditRepository,
         @Optional() private readonly periodMismatchService?: ServiceRecordPeriodMismatchService,
+        @Optional() private readonly finalizationService?: ServiceRecordFinalizationService,
     ) {}
 
     async keepPeriodMismatch(branchId: string, clientId: number, sessionIndexes: number[]): Promise<{ keptSessionIndexes: number[] }> {
@@ -378,8 +380,13 @@ export class AdminServiceRecordService {
         }
         if (state.operation === "record_snapshot"
             && isInitialFinalizationWorkflowScopeForRevision(state.workflowScope, normalizedRevisionId)) {
-            // INITIAL은 관리자 revision 재시도의 staff job scope가 없어 재발급할 수 없어요.
-            throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
+            if (!this.finalizationService) throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
+            const regenerated = await this.finalizationService.regenerateInitialFinalization(branchId, {
+                revisionId: normalizedRevisionId, documentStateId: normalizedDocumentStateId,
+                expectedGeneration: normalizedGeneration,
+            });
+            return { ...normalizeRevisionDocumentSummaryResult(regenerated.state), canRetry: false };
+
         }
 
         void actorUserId;

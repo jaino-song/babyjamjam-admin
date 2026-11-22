@@ -106,15 +106,16 @@ export type InitialRegenerationReadiness =
     | { ready: true; state: InitialRegenerationState }
     | { ready: false; reason: string; state: InitialRegenerationState | null };
 
-/** Caller owns the common client/case locks. Never takes client locks after case/state locks. */
+/** Writers own common client/case locks. Display projections may opt into advisory reads without locks. */
 export async function initialRegenerationReadiness(
     tx: Prisma.TransactionClient, caseId: string, revisionId: string,
+    options: { lock?: boolean } = {},
 ): Promise<InitialRegenerationReadiness> {
     const [owner] = await tx.$queryRaw<Array<{ id: string; branchId: string; clientId: number }>>(Prisma.sql`
         SELECT id, branch_id AS "branchId", client_id AS "clientId"
         FROM "service_record_case"
         WHERE id = ${caseId}::uuid AND current_revision_id = ${revisionId}::uuid
-        FOR UPDATE
+        ${options.lock === false ? Prisma.empty : Prisma.sql`FOR UPDATE`}
     `);
     if (!owner) return { ready: false, reason: "SERVICE_RECORD_INITIAL_REVISION_CHANGED", state: null };
     const [state] = await tx.$queryRaw<InitialRegenerationState[]>(Prisma.sql`
@@ -125,7 +126,7 @@ export async function initialRegenerationReadiness(
         WHERE state.branch_id = ${owner.branchId}::uuid AND state.client_id = ${owner.clientId}
           AND state.service_record_case_id = ${caseId}::uuid AND state.revision_id = ${revisionId}::uuid
           AND ${initialFinalizationStateSql("state")}
-        ORDER BY state.created_at DESC, state.id DESC LIMIT 1 FOR UPDATE
+        ORDER BY state.created_at DESC, state.id DESC LIMIT 1 ${options.lock === false ? Prisma.empty : Prisma.sql`FOR UPDATE`}
     `);
     const blocked = (reason: string): InitialRegenerationReadiness => ({ ready: false, reason, state: state ?? null });
     if (!state) return blocked("SERVICE_RECORD_INITIAL_STATE_NOT_FOUND");
@@ -142,7 +143,7 @@ export async function initialRegenerationReadiness(
         FROM "service_record_snapshot_chunk"
         WHERE branch_id = ${owner.branchId}::uuid AND service_record_case_id = ${caseId}::uuid
           AND revision_id = ${revisionId}::uuid AND snapshot_version = ${state.documentVersion}
-        ORDER BY chunk_index, id FOR UPDATE
+        ORDER BY chunk_index, id ${options.lock === false ? Prisma.empty : Prisma.sql`FOR UPDATE`}
     `);
     const documents = await tx.$queryRaw<Array<{
         documentId: string; statusType: string; voidedAt: Date | null; permanentPurgeRequestedAt: Date | null;
@@ -155,7 +156,7 @@ export async function initialRegenerationReadiness(
             WHERE branch_id = ${owner.branchId}::uuid AND service_record_case_id = ${caseId}::uuid
               AND revision_id = ${revisionId}::uuid AND snapshot_version = ${state.documentVersion}
         )
-        ORDER BY doc.id FOR UPDATE
+        ORDER BY doc.id ${options.lock === false ? Prisma.empty : Prisma.sql`FOR UPDATE`}
     `);
     if (documents.some(doc => EFORMSIGN_COMPLETED_STATUS_CODES.has(normalizeEformsignStatusCode(doc.statusType)))) {
         return blocked("SERVICE_RECORD_INITIAL_SIBLING_COMPLETED");
@@ -178,7 +179,7 @@ export async function initialRegenerationReadiness(
           AND ((payload->>'generationKind' = 'INITIAL_FINALIZATION'
               AND payload->'context'->>'serviceRecordCaseId' = ${caseId})
               OR active_key = ${`${INITIAL_FINALIZATION_REQUEST_PREFIX}${caseId}`})
-        ORDER BY id FOR UPDATE
+        ORDER BY id ${options.lock === false ? Prisma.empty : Prisma.sql`FOR UPDATE`}
     `);
     if (jobs.some(job => ["queued", "processing", "reconciling"].includes(job.status) || job.leaseToken !== null)) {
         return blocked("SERVICE_RECORD_INITIAL_JOB_IN_PROGRESS");

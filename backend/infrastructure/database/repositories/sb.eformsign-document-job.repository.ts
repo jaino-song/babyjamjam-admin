@@ -1,3 +1,4 @@
+import { initialRegenerationProjections } from "application/policies/service-record-initial-regeneration-projection.policy";
 import { BadRequestException, ConflictException, Injectable, Logger } from "@nestjs/common";
 import { createHash, randomUUID } from "node:crypto";
 import { Prisma } from "@prisma/client";
@@ -1379,6 +1380,10 @@ export class SbEformsignDocumentJobRepository implements IEformsignDocumentJobRe
         return rows.map((row) => this.toDomain(row));
     }
 
+    private async regenerationProjections(branchId: string) {
+        return initialRegenerationProjections(this.prisma, branchId);
+    }
+
     async getSummary(branchId: string): Promise<EformsignDocumentJobSummary> {
         const [rows, actionable] = await Promise.all([
             this.prisma.$queryRaw<Array<{
@@ -1401,6 +1406,7 @@ export class SbEformsignDocumentJobRepository implements IEformsignDocumentJobRe
             this.findActionableJobs(branchId),
         ]);
         return {
+            initialRegenerations: await this.regenerationProjections(branchId),
             activeCount: Number(rows[0]?.active_count ?? 0),
             requiresAttentionCount: Number(rows[0]?.attention_count ?? 0),
             failedCount: Number(rows[0]?.failed_count ?? 0),
@@ -1495,7 +1501,8 @@ export class SbEformsignDocumentJobRepository implements IEformsignDocumentJobRe
             const verified = await this.verifyInitialFinalizationDispatch(this.prisma, row, context, { lock: false });
             row.retryable = verified.kind === "allow";
         }
-        return { active: active.map(this.toDomain), requiresAttention: requiresAttention.map(this.toDomain), recent: recent.map(this.toDomain) };
+        return { initialRegenerations: await this.regenerationProjections(branchId),
+            active: active.map(this.toDomain), requiresAttention: requiresAttention.map(this.toDomain), recent: recent.map(this.toDomain) };
     }
 
     async deleteExpiredTerminal(cutoff: Date) {

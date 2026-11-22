@@ -652,6 +652,7 @@ describe("SbEformsignDocumentJobRepository", () => {
             .mockResolvedValueOnce([{ active_count: 2, attention_count: 1, failed_count: 0, unresolved_count: 0 }])
             .mockResolvedValueOnce([]);
         await expect(repository.getSummary(row().branch_id)).resolves.toEqual({
+            initialRegenerations: [],
             activeCount: 2,
             requiresAttentionCount: 1,
             failedCount: 0,
@@ -660,11 +661,11 @@ describe("SbEformsignDocumentJobRepository", () => {
         });
         expect(queryRaw.mock.calls.every((call) => sqlText(call[0]).includes("branch_id = "))).toBe(true);
 
-        queryRaw.mockReset();
+        queryRaw.mockReset().mockResolvedValue([]);
         queryRaw.mockResolvedValueOnce([]).mockResolvedValueOnce([]).mockResolvedValueOnce([]);
         queryRaw.mockResolvedValueOnce([]).mockResolvedValueOnce([]);
         await repository.listForBranch(row().branch_id, new Date(), 100);
-        expect(queryRaw).toHaveBeenCalledTimes(5);
+        expect(queryRaw).toHaveBeenCalledTimes(6);
         expect(queryRaw.mock.calls.every((call) => sqlText(call[0]).includes("branch_id = "))).toBe(true);
     });
 
@@ -1111,6 +1112,7 @@ describe("SbEformsignDocumentJobRepository", () => {
                 .mockResolvedValueOnce([{ id: "job-newest", completed_at: new Date("2026-11-03") }, { id: "job-middle", completed_at: new Date("2026-11-02") }, { id: "job-oldest", completed_at: new Date("2026-11-01") }]);
 
             await expect(repository.getSummary(branchId)).resolves.toEqual({
+                initialRegenerations: [],
                 activeCount: 1,
                 requiresAttentionCount: 4,
                 failedCount: 2,
@@ -1168,7 +1170,7 @@ describe("SbEformsignDocumentJobRepository", () => {
             expect(recent).toContain(`NOT (j.status = 'failed' AND (${CONTRACT_FRAGMENT_J} OR`);
             expect(recent).toContain("j.completed_at >= ");
             expect((queryRaw.mock.calls[4][0] as { values: unknown[] }).values).toContain(terminalSince);
-            expect(queryRaw.mock.calls.slice(2).every((call) => sqlText(call[0]).includes("LEFT JOIN \"client\" c ON c.id = j.client_id"))).toBe(true);
+            expect(queryRaw.mock.calls.slice(2, 5).every((call) => sqlText(call[0]).includes("LEFT JOIN \"client\" c ON c.id = j.client_id"))).toBe(true);
         });
 
         it("excludes superseded failures from popup counts and ids, retaining their recent history", async () => {
@@ -1182,7 +1184,7 @@ describe("SbEformsignDocumentJobRepository", () => {
                 expect(marker).not.toBeNull();
                 expect(statement.values[Number(marker?.[1]) - 1]).toBe("superseded");
             }
-            queryRaw.mockReset();
+            queryRaw.mockReset().mockResolvedValue([]);
             queryRaw.mockResolvedValueOnce([]).mockResolvedValueOnce([]).mockResolvedValueOnce([]).mockResolvedValueOnce([]).mockResolvedValueOnce([
                 row({ id: "superseded", status: "failed", progress_step: "superseded", last_error_code: "PRE_SEND_RETRY_EXHAUSTED" }),
             ]);
@@ -1201,8 +1203,8 @@ describe("SbEformsignDocumentJobRepository", () => {
         it("filters cancelled rows in summary and both history lists and maps the eligibility hint", async () => {
             queryRaw.mockResolvedValueOnce([{ failed_count: 0, unresolved_count: 0 }]).mockResolvedValueOnce([]);
             await repository.getSummary(branchId);
-            for (const [query] of queryRaw.mock.calls) expect((query as Prisma.Sql).text).toContain("JOB_CANCELLED_AFTER_DISPATCH");
-            queryRaw.mockReset();
+            for (const [query] of queryRaw.mock.calls.slice(0, 3)) expect((query as Prisma.Sql).text).toContain("JOB_CANCELLED_AFTER_DISPATCH");
+            queryRaw.mockReset().mockResolvedValue([]);
             queryRaw.mockResolvedValueOnce([]).mockResolvedValueOnce([]).mockResolvedValueOnce([]).mockResolvedValueOnce([{ ...row({ status: "requires_attention" }), cancellable: true }]).mockResolvedValueOnce([]);
             const list = await repository.listForBranch(branchId, new Date(0));
             expect(list.requiresAttention[0]?.cancellable).toBe(true);

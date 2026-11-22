@@ -17,7 +17,6 @@ import { ServiceRecordLinkService } from "application/services/service-record-li
 import { ServiceRecordGuard } from "infrastructure/auth/service-record.guard";
 import { ServiceRecordEditAgentCapabilitiesProvider } from "application/usecases/service-record/service-record-edit-agent-capabilities.provider";
 import { ServiceRecordLifecycleService } from "application/services/service-record-lifecycle.service";
-import { ServiceRecordFinalizationService } from "application/services/service-record-finalization.service";
 import { ServiceRecordFinalizationSchedulerService } from "application/services/service-record-finalization-scheduler.service";
 import { ServiceRecordLinkReconciliationService } from "application/services/service-record-link-reconciliation.service";
 import { MessageAutomationIntentService } from "application/services/message-automation-intent.service";
@@ -46,7 +45,6 @@ import { HolidayModule } from "./holiday.module";
         ServiceRecordTokenService,
         ServiceRecordLinkService,
         ServiceRecordLifecycleService,
-        ServiceRecordFinalizationService,
         ServiceRecordFinalizationSchedulerService,
         ServiceRecordLinkReconciliationService,
         MessageAutomationIntentService,

@@ -619,6 +619,7 @@ export interface IServiceRecordEditRepository {
         branchId: string,
         revisionId: string,
         stateId: string,
+        context?: ServiceRecordEditTransactionContext,
     ): Promise<ServiceRecordRevisionDocumentState | null>;
     /** Create a generation-bound operation state. The unique operation/generation constraints are authoritative. */
     createRevisionDocumentState(

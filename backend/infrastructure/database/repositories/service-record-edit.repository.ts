@@ -5,6 +5,7 @@ import { randomUUID } from "node:crypto";
 import {
     INITIAL_FINALIZATION_REQUEST_PREFIX,
     initialFinalizationStateSql,
+    initialRegenerationReadiness,
     isInitialFinalizationWorkflowScopeForRevision,
     newestInitialFinalizationStateSql,
     releaseTerminalInitialFinalizationKey,
@@ -2638,6 +2639,14 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
             documentsByRevision.set(state.revisionId, existing);
         }
 
+        let readyInitialStateId: string | null = null;
+        if (ownerCase.currentRevisionId && states.some(state => state.revisionId === ownerCase.currentRevisionId
+            && state.operation === "record_snapshot" && state.status === "failed"
+            && isInitialFinalizationWorkflowScopeForRevision(state.workflowScope, state.revisionId))) {
+            const readiness = await initialRegenerationReadiness(tx, ownerCase.caseId, ownerCase.currentRevisionId, { lock: false });
+            if (readiness.ready) readyInitialStateId = readiness.state.id;
+        }
+
         return {
             caseId: ownerCase.caseId,
             caseVersion: ownerCase.caseVersion,
@@ -2656,10 +2665,9 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
                         generation: state.generation,
                         status: state.status,
                         documentVersion: state.documentVersion,
-                        canRetry: canRetryRevisionDocumentState(state)
-                            && !(state.operation === "record_snapshot"
-                                && isInitialFinalizationWorkflowScopeForRevision(state.workflowScope, state.revisionId)
-                                && revisionSnapshotRetryJobScope(state) === null),
+                        canRetry: state.operation === "record_snapshot"
+                            && isInitialFinalizationWorkflowScopeForRevision(state.workflowScope, state.revisionId)
+                            ? state.id === readyInitialStateId : canRetryRevisionDocumentState(state),
                         reasonCode: state.lastErrorCode,
                     })),
             })),
@@ -2696,11 +2704,12 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
         branchId: string,
         revisionId: string,
         stateId: string,
+        context?: ServiceRecordEditTransactionContext,
     ): Promise<ServiceRecordRevisionDocumentState | null> {
         assertUuid(branchId, "branch");
         assertUuid(revisionId, "revision");
         assertUuid(stateId, "state");
-        const rows = await selectRevisionDocumentStateForBranch(this.prisma, {
+        const rows = await selectRevisionDocumentStateForBranch(context?.tx ?? this.prisma, {
             branchId,
             revisionId,
             stateId,

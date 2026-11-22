@@ -1,3 +1,5 @@
+import { ServiceRecordFinalizationService } from "application/services/service-record-finalization.service";
+import { RegenerateInitialDocumentJobDto } from "interface/dto/eformsign-document-job.dto";
 import {
     BadRequestException,
     Body,
@@ -107,6 +109,7 @@ export class EformsignDocController {
         @Optional() private readonly dispatchBoundary?: EformsignDispatchBoundaryService,
         @Optional() private readonly contractSupersedeService?: ContractSupersedeService,
         @Optional() private readonly manualRecovery?: EformsignDocumentJobManualRecoveryService,
+        @Optional() private readonly finalizationService?: ServiceRecordFinalizationService,
     ) {}
 
     /**
@@ -624,6 +627,7 @@ export class EformsignDocController {
     ): Promise<EformsignDocumentJobSummaryResponseDto> {
         const summary = await this.documentJobService.getSummary(tenant.branchId ?? "");
         return {
+            initialRegenerations: summary.initialRegenerations ?? [],
             activeCount: summary.activeCount,
             requiresAttentionCount: summary.requiresAttentionCount,
             failedCount: summary.failedCount,
@@ -648,6 +652,7 @@ export class EformsignDocController {
             50,
         );
         return {
+            initialRegenerations: result.initialRegenerations ?? [],
             active: result.active.map(toEformsignDocumentJobResponse),
             requiresAttention: result.requiresAttention.map(toEformsignDocumentJobResponse),
             recent: result.recent.map(toEformsignDocumentJobResponse),
@@ -728,6 +733,22 @@ export class EformsignDocController {
             payload: recoveryKind === "manual_send" ? result.job.payload : null,
             claimExpiresAt,
         };
+    }
+
+    @Post("jobs/regenerate-initial")
+    @HttpCode(HttpStatus.OK)
+    async regenerateInitialDocumentJob(
+        @CurrentTenant() tenant: EformsignProviderPrincipal,
+        @Req() request: { user?: { userId?: string } },
+        @Body() body: RegenerateInitialDocumentJobDto,
+    ): Promise<{ stateId: string; revisionId: string; generation: string; jobId: string; status: string }> {
+        assertEformsignProviderCapability(tenant, "contract.dispatch");
+        this.assertDocumentJobsAccepting();
+        if (!(tenant.userId ?? request.user?.userId)) throw new UnauthorizedException(codeOnlyProblemBody("AUTH_REQUIRED"));
+        if (!this.finalizationService) throw new ConflictException({ code: "SERVICE_RECORD_REVISION_GENERATION_UNAVAILABLE" });
+        const result = await this.finalizationService.regenerateInitialFinalization(tenant.branchId ?? "", body);
+        return { stateId: result.state.id, revisionId: result.state.revisionId, generation: result.state.generation,
+            jobId: result.jobId, status: result.status };
     }
 
     /** Cancel only a generation whose locked proof rules out provider effects. */

@@ -193,19 +193,19 @@ describe("staff INITIAL recovery", () => {
         const f = setup();
         const context = { ...f.job.payload.context, ...(variant === "invalid" ? { formVersion: 0 }
             : variant === "branch" ? { branchId: jobId } : { clientId: 8 }) };
-        const query = jest.fn().mockResolvedValueOnce([]).mockResolvedValueOnce([]).mockResolvedValueOnce([])
+        const query = jest.fn().mockResolvedValue([]).mockResolvedValueOnce([]).mockResolvedValueOnce([]).mockResolvedValueOnce([])
             .mockResolvedValueOnce([{ ...f.raw(), payload: { ...f.job.payload, context }, cancellable: true, retryable: true }])
             .mockResolvedValueOnce([]);
         const repo = new SbEformsignDocumentJobRepository({ ...f.prisma, $queryRaw: query } as never);
         expect((await repo.listForBranch(branchId, new Date(0))).requiresAttention[0])
             .toMatchObject({ retryable: false, cancellable: false });
-        expect(query).toHaveBeenCalledTimes(5);
+        expect(query).toHaveBeenCalledTimes(6);
         expect(f.prisma.$transaction).not.toHaveBeenCalled();
     });
     it("summary counts only context-valid actionable INITIAL rows and merges contract ids in time order", async () => {
         const f = setup();
         const initial = { ...f.raw(), completed_at: new Date("2026-01-02"), created_at: new Date("2026-01-01") };
-        const query = jest.fn().mockResolvedValueOnce([{ active_count: 0, attention_count: 4, failed_count: 1, unresolved_count: 1 }])
+        const query = jest.fn().mockResolvedValue([]).mockResolvedValueOnce([{ active_count: 0, attention_count: 4, failed_count: 1, unresolved_count: 1 }])
             .mockResolvedValueOnce([{ id: "contract", completed_at: new Date("2026-01-01"), created_at: new Date("2026-01-01") }])
             .mockResolvedValueOnce([initial, { ...initial, id: "invalid", payload: { ...f.job.payload,
                 context: { ...f.job.payload.context, formVersion: 0 } } }]);

@@ -1,3 +1,5 @@
+import { CreateAndSendServiceRecordSnapshotUsecase } from "application/usecases/eformsign-doc/create-and-send-service-record-snapshot.usecase";
+import type { ServiceRecordRevisionDispatchContext } from "@babyjamjam/shared/types/service-record";
 import { ServiceRecordFinalizationService } from "application/services/service-record-finalization.service";
 import type { EformsignDocumentJobService } from "application/services/eformsign-document-job.service";
 import { KR_BUILTIN_CALENDAR } from "domain/utils/business-days";
@@ -1598,11 +1600,11 @@ async function bounded<T>(promise: Promise<T>, ms: number): Promise<T> {
         return Promise.allSettled([pa, pb!]);
     }
 
-    async function initialRuntime(step = "preparing", code = "PRE_SEND_RETRY_EXHAUSTED", status = "failed") {
+    async function initialRuntime(step = "preparing", code = "PRE_SEND_RETRY_EXHAUSTED", status = "failed", revisionPayload: Prisma.InputJsonObject = {}) {
         const branchId = branches[0]!, clientId = clients[0]!;
         const record = await db.service_record_case.create({ data: { branchId, clientId, status: "READY_TO_FINALIZE", formVersion: 3 } });
         const revision = await db.service_record_revision.create({ data: { branchId, serviceRecordCaseId: record.id,
-            revisionNumber: 1, confirmedByUserId: users[0]!, payload: {}, plannedSessions: [], provenance: {}, formVersionAtConfirm: 3 } });
+            revisionNumber: 1, confirmedByUserId: users[0]!, payload: revisionPayload, plannedSessions: [], provenance: {}, formVersionAtConfirm: 3 } });
         retainRevision(revision);
         await db.service_record_case.update({ where: { id: record.id }, data: { currentRevisionId: revision.id } });
         const requestKey = `service-record-initial-finalization:${revision.id}`, generation = randomUUID();
@@ -1632,8 +1634,9 @@ async function bounded<T>(promise: Promise<T>, ms: number): Promise<T> {
         // Terminal evaluation never reads a business-day calendar.
         return new ServiceRecordLifecycleService(connection as unknown as PrismaService, {} as HolidayCalendarService);
     }
-    async function initialChunks(options: { unlinked?: boolean; completed?: boolean; dispatchAuthorized?: boolean } = {}) {
-        const f = await initialRuntime("sent");
+    async function initialChunks(options: { unlinked?: boolean; completed?: boolean; dispatchAuthorized?: boolean; regenerationSource?: boolean } = {}) {
+        const f = await initialRuntime("sent", "PRE_SEND_RETRY_EXHAUSTED", "failed", options.regenerationSource
+            ? { plannedSessions: [{ sessionIndex: 1, originalDate: "2026-09-01" }] } : {});
         const revisionId = f.payload.revisionId, branchId = f.input.branchId;
         await db.service_record_case.update({ where: { id: f.record.id }, data: {
             status: options.completed ? "COMPLETED" : options.dispatchAuthorized ? "READY_TO_FINALIZE" : "DOCUMENTS_CREATED",
@@ -1859,8 +1862,8 @@ async function bounded<T>(promise: Promise<T>, ms: number): Promise<T> {
         expect(await f.readState()).toMatchObject({ status: "failed", lastErrorCode: "SERVICE_RECORD_REVISION_DOCUMENT_REJECTED" });
     });
 
-    async function terminalInitial() {
-        const f = await initialChunks();
+    async function terminalInitial(regenerationSource = false) {
+        const f = await initialChunks({ regenerationSource });
         await db.eformsign_doc.updateMany({ where: { documentId: { in: documents.slice(0, 2) } }, data: { statusType: "011" } });
         await db.service_record_revision_document_state.update({ where: { id: f.state.id }, data: {
             status: "failed", step: "failed", lastErrorCode: "SERVICE_RECORD_REVISION_DOCUMENT_REJECTED",
@@ -1919,13 +1922,13 @@ async function bounded<T>(promise: Promise<T>, ms: number): Promise<T> {
             formVersion: 3, answers: { checked: true }, paymentConfirmed: true, momApproval: "approved", clientSignature: "synthetic",
             clientSignedAt: serviceDate, submittedAt: serviceDate, locked: true } });
     }
-    function initialFinalizer(f: Awaited<ReturnType<typeof initialChunks>>) {
+    function initialFinalizer(f: Awaited<ReturnType<typeof initialChunks>>, connection = db) {
         const jobs = { findByRequestKeyInTransaction: f.repo.findByRequestKeyInTransaction.bind(f.repo),
             enqueueInTransaction: f.repo.enqueueInTransaction.bind(f.repo) } as unknown as EformsignDocumentJobService;
         const calendar = { forBranch: async () => KR_BUILTIN_CALENDAR } as unknown as HolidayCalendarService;
-        return new ServiceRecordFinalizationService(db as unknown as PrismaService,
-            new ServiceRecordLifecycleService(db as unknown as PrismaService, calendar), {} as never, calendar, jobs,
-            new ServiceRecordEditRepository(db as unknown as PrismaService));
+        return new ServiceRecordFinalizationService(connection as unknown as PrismaService,
+            new ServiceRecordLifecycleService(connection as unknown as PrismaService, calendar), {} as never, calendar, jobs,
+            new ServiceRecordEditRepository(connection as unknown as PrismaService));
     }
     async function freezeAfterConfirm(f: Awaited<ReturnType<typeof initialChunks>>, revisionId: string) {
         const finalizer = initialFinalizer(f);
@@ -1944,6 +1947,124 @@ async function bounded<T>(promise: Promise<T>, ms: number): Promise<T> {
         expect(all).toHaveLength(2);
         expect(all.filter(job => job.status === "queued").map(job => job.id)).toEqual([queued.id]);
     }
+    async function regenerationReady() {
+        const f = await terminalInitial(true);
+        await completeInitialSource(f);
+        return { ...f, request: { revisionId: f.revisionId, documentStateId: f.state.id, expectedGeneration: f.state.generation } };
+    }
+    it("U3b gen2 dispatch -> documents_created promotion -> completion reaches DOCUMENTS_CREATED and COMPLETED", async () => {
+        const f = await regenerationReady(), finalizer = initialFinalizer(f);
+        // Main production dead end: the INITIAL job completed and now has document_id.
+        await db.eformsign_document_job.update({ where: { id: f.job.id }, data: {
+            status: "completed", documentId: documents[0]!, activeKey: null,
+        } });
+        const beforeList = await f.repo.listForBranch(f.branchId, new Date(0));
+        const beforeSummary = await f.repo.getSummary(f.branchId);
+        const projection = { stateId: f.state.id, revisionId: f.revisionId, generation: f.state.generation,
+            clientId: f.state.clientId, ready: true, reasonCode: null };
+        expect(beforeList.initialRegenerations).toEqual([projection]);
+        expect(beforeSummary.initialRegenerations).toEqual(beforeList.initialRegenerations);
+        const history = await new ServiceRecordEditRepository(db as unknown as PrismaService).listRevisionHistory(f.branchId, f.state.clientId);
+        expect(history?.revisions[0]?.documents.find(state => state.id === f.state.id)?.canRetry).toBe(true);
+        const result = await finalizer.regenerateInitialFinalization(f.branchId, f.request);
+        expect(result.state.documentVersion).toBe(4);
+        expect(await f.readCase()).toMatchObject({ status: "FINALIZATION_FAILED", nextAttemptAt: null });
+        const title = CreateAndSendServiceRecordSnapshotUsecase.prototype as unknown as {
+            revisionDocumentName: (name: string, caseId: string, revision: number, version: number, index: number, count: number) => string;
+        };
+        const gen1Title = title.revisionDocumentName("Synthetic", f.record.id, 1, 3, 1, 1);
+        const gen2Title = title.revisionDocumentName("Synthetic", f.record.id, 1, 4, 1, 1);
+        expect(gen2Title).not.toBe(gen1Title);
+        expect(gen2Title).toContain(`-r1-v4]`);
+        await db.eformsign_document_job.update({ where: { id: result.jobId }, data: { nextAttemptAt: new Date(0) } });
+        const claimed = (await f.repo.claimDue(1)).find(job => job.id === result.jobId)!;
+        expect(claimed?.leaseToken).toEqual(expect.any(String));
+        expect(await f.repo.authorizeForDispatch({ jobId: result.jobId, leaseToken: claimed.leaseToken!,
+            expectedContext: claimed.payload!["context"] as ServiceRecordRevisionDispatchContext })).toMatchObject({ kind: "allow" });
+        const documentId = documents[2]!, version = new Date("2026-09-01T00:00:00Z");
+        const doc = await db.eformsign_doc.update({ where: { documentId }, data: {
+            branchId: f.branchId, clientId: f.state.clientId, serviceRecordCaseId: f.record.id, revisionId: f.revisionId,
+            documentKind: "service_record_snapshot", snapshotVersion: 4, snapshotChunkIndex: 1, statusType: "070",
+            permanentPurgeRequestedAt: null, voidedAt: null,
+        } });
+        await db.service_record_snapshot_chunk.create({ data: { branchId: f.branchId, serviceRecordCaseId: f.record.id,
+            revisionId: f.revisionId, snapshotVersion: 4, chunkIndex: 1, chunkCount: 1, firstSessionIndex: 1, lastSessionIndex: 1,
+            employeeNameSnapshot: "Synthetic PG provider", sourceHash: result.state.inputFingerprint,
+            status: "CREATED", eformsignDocumentId: documentId } });
+        expect(await new ServiceRecordEditRepository(db as unknown as PrismaService).recordInitialFinalizationDocumentsCreated({
+            branchId: f.branchId, clientId: f.state.clientId, serviceRecordCaseId: f.record.id,
+            revisionId: f.revisionId, revisionNumber: 1, documentStateId: result.state.id, generation: result.state.generation,
+            documentVersion: 4, chunkCount: 1, documentIds: [documentId],
+        })).toBe(true);
+        expect(await f.readCase()).toMatchObject({ status: "DOCUMENTS_CREATED" });
+        expect(await f.repo.markCompleted(result.jobId, claimed.leaseToken!, documentId)).toMatchObject({ status: "completed" });
+        await db.eformsign_doc.update({ where: { documentId }, data: { statusType: "003", syncStatus: "ready",
+            detailPayload: { id: documentId }, detailSourceUpdatedDate: version, detailSyncedAt: version } });
+        for (const fileType of ["document", "audit_trail"]) await db.eformsign_doc_file.create({ data: {
+            eformsignDocId: doc.id, fileType, content: Buffer.from("synthetic"), contentType: "application/pdf",
+            byteSize: 9, sha256: digest("synthetic"), sourceUpdatedDate: version,
+        } });
+        expect(await initialLifecycle().completeServiceRecordSnapshotIfReady({ branchId: f.branchId, documentId })).toBe(true);
+        expect(await f.readCase()).toMatchObject({ status: "COMPLETED", currentUsableRevisionId: f.revisionId, currentUsableDocumentVersion: 4 });
+        expect(await db.service_record_revision_document_state.findUniqueOrThrow({ where: { id: result.state.id } })).toMatchObject({ status: "completed" });
+        expect(await f.readState()).toMatchObject({ status: "failed" });
+    });
+    it("U3b concurrent regeneration and double replay create exactly one new generation/job", async () => {
+        const f = await regenerationReady();
+        const [first, second] = await Promise.all([
+            initialFinalizer(f, a).regenerateInitialFinalization(f.branchId, f.request),
+            initialFinalizer(f, b).regenerateInitialFinalization(f.branchId, f.request),
+        ]);
+        expect(second.jobId).toBe(first.jobId); expect(second.state.id).toBe(first.state.id);
+        const finalizer = initialFinalizer(f);
+        expect((await finalizer.regenerateInitialFinalization(f.branchId, f.request)).jobId).toBe(first.jobId);
+        expect((await finalizer.regenerateInitialFinalization(f.branchId, f.request)).jobId).toBe(first.jobId);
+        expect(await db.eformsign_document_job.count({ where: { branchId: f.branchId, source: "auto_finalize" } })).toBe(2);
+        expect(await db.service_record_revision_document_state.count({ where: { revisionId: f.revisionId } })).toBe(2);
+    });
+    it("U3b scheduler tick after regeneration creates no job and does not throw", async () => {
+        const f = await regenerationReady(), finalizer = initialFinalizer(f);
+        await finalizer.regenerateInitialFinalization(f.branchId, f.request);
+        await expect(finalizer.processDueCases(new Date())).resolves.toBe(0);
+        await expect(finalizer.processDueCases(new Date())).resolves.toBe(0);
+        expect(await db.eformsign_document_job.count({ where: { branchId: f.branchId, source: "auto_finalize" } })).toBe(2);
+    });
+    it.each(["stale-revision", "not-newest", "active-key-collision"])("U3b %s returns 409 and rolls back", async kind => {
+        const f = await regenerationReady();
+        if (kind === "stale-revision") await db.service_record_case.update({ where: { id: f.record.id }, data: { currentRevisionId: null } });
+        if (kind === "not-newest") await db.service_record_revision_document_state.create({ data: {
+            branchId: f.branchId, clientId: f.state.clientId, serviceRecordCaseId: f.record.id, revisionId: f.revisionId,
+            operation: "record_snapshot", generation: randomUUID(), immutableInput: {}, inputFingerprint: "a".repeat(64),
+            documentVersion: 4, status: "completed", workflowScope: f.state.workflowScope ?? {},
+        } });
+        if (kind === "active-key-collision") {
+            await db.eformsign_document_job.update({ where: { id: f.job.id }, data: { activeKey: null } });
+            await db.eformsign_document_job.create({ data: { branchId: f.branchId, clientId: f.state.clientId, jobType: "create_document",
+                source: "staff", requestKey: randomUUID(), activeKey: `service-record-initial-finalization:${f.record.id}`, status: "failed" } });
+        }
+        const before = { state: await f.readState(), job: await f.readJob(), record: await f.readCase(),
+            states: await db.service_record_revision_document_state.count({ where: { revisionId: f.revisionId } }),
+            jobs: await db.eformsign_document_job.count({ where: { branchId: f.branchId } }) };
+        const code = kind === "stale-revision" ? "SERVICE_RECORD_INITIAL_REVISION_CHANGED"
+            : kind === "not-newest" ? "SERVICE_RECORD_INITIAL_GENERATION_CHANGED" : "SERVICE_RECORD_INITIAL_ACTIVE_KEY_CONFLICT";
+        await expect(initialFinalizer(f).regenerateInitialFinalization(f.branchId, f.request)).rejects.toMatchObject({ status: 409, response: { code } });
+        expect({ state: await f.readState(), job: await f.readJob(), record: await f.readCase(),
+            states: await db.service_record_revision_document_state.count({ where: { revisionId: f.revisionId } }),
+            jobs: await db.eformsign_document_job.count({ where: { branchId: f.branchId } }) }).toEqual(before);
+    });
+    it.each([["070", "SERVICE_RECORD_INITIAL_SIBLING_IN_PROGRESS"], ["003", "SERVICE_RECORD_INITIAL_SIBLING_COMPLETED"]])(
+        "U3b sibling %s blocks regeneration and list/summary/admin projections", async (statusType, code) => {
+            const f = await regenerationReady();
+            await db.eformsign_doc.update({ where: { documentId: documents[1]! }, data: { statusType } });
+            await expect(initialFinalizer(f).regenerateInitialFinalization(f.branchId, f.request)).rejects.toMatchObject({ status: 409, response: { code } });
+            const list = await f.repo.listForBranch(f.branchId, new Date(0)), summary = await f.repo.getSummary(f.branchId);
+            expect(list.initialRegenerations).toEqual([{ stateId: f.state.id, revisionId: f.revisionId, generation: f.state.generation,
+                clientId: f.state.clientId, ready: false, reasonCode: code }]);
+            expect(summary.initialRegenerations).toEqual(list.initialRegenerations);
+            const history = await new ServiceRecordEditRepository(db as unknown as PrismaService).listRevisionHistory(f.branchId, f.state.clientId);
+            expect(history?.revisions[0]?.documents.find(state => state.id === f.state.id)?.canRetry).toBe(false);
+        });
+
     it.each(["pre-deploy", "completed-job"])("U2 confirm after reject creates a second INITIAL on a new revision (%s)", async shape => {
         const f = await terminalInitial();
         await completeInitialSource(f);

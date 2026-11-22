@@ -1,3 +1,4 @@
+import { ServiceRecordFinalizationService } from "application/services/service-record-finalization.service";
 import { Module } from "@nestjs/common";
 import { EformsignDocumentJobManualRecoveryService } from "application/services/eformsign-document-job-manual-recovery.service";
 import { SbEformsignContractRecoveryRepository } from "infrastructure/database/repositories/sb.eformsign-contract-recovery.repository";
@@ -192,6 +193,7 @@ import { HolidayModule } from "./holiday.module";
         ContractAutoFinalizeSchedulerService,
         EformsignDocumentMirrorService,
         ServiceRecordLifecycleService,
+        ServiceRecordFinalizationService,
         EformsignMirrorReadinessService,
         EformsignAgentCapabilitiesProvider,
         ContractExternalAgentCapabilitiesProvider,
@@ -300,6 +302,7 @@ import { HolidayModule } from "./holiday.module";
         },
     ],
     exports: [
+        ServiceRecordFinalizationService,
         VoidContractDocumentUsecase,
         EformsignDocService,
         EformsignCredentialBoundary,
