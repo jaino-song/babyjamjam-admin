@@ -5,7 +5,7 @@ import { Suspense, useEffect, useState } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { normalizeApiError } from "@babyjamjam/shared";
+import { summarizeErrorForLog, normalizeApiError } from "@babyjamjam/shared";
 
 import { ButtonLoadingContent } from "@/components/ui/button";
 import { loginSchema, type LoginFormData } from "@/lib/validations/auth";
@@ -122,7 +122,7 @@ const LoginPage = () => {
         }
       }
     } catch (err) {
-      console.error("Login error:", err);
+      console.error("Login error:", summarizeErrorForLog(err));
       // Shared problem contract resolution — upstream internals are never
       // rendered; the normalized message is already safe copy.
       setServerError(normalizeApiError(err, { locale: "ko-KR", operation: "mutation" }).message);

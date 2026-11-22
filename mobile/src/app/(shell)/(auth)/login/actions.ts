@@ -6,7 +6,7 @@ import { writeLoginSessionCookies } from "@/lib/auth/login-session-cookies";
 
 import { serverAPIClient } from "@/lib/api/server";
 import { getServerRuntimeConfig } from "@/lib/env";
-import { normalizeApiError, type NormalizedApiError } from "@babyjamjam/shared";
+import { summarizeErrorForLog, normalizeApiError, type NormalizedApiError } from "@babyjamjam/shared";
 
 interface APIErrorResponse {
     statusCode: number;
@@ -138,7 +138,7 @@ export async function loginWithEmail(email: string, password: string, autoLogin 
         // Use requiresBranchSelection from backend response
         return { success: true, requiresBranchSelection: data.requiresBranchSelection || false };
     } catch (error) {
-        console.error("[Server Action] Email Login Error:", error);
+        console.error("[Server Action] Email Login Error:", summarizeErrorForLog(error));
 
         if (error instanceof AxiosError) {
             const axiosError = error as AxiosError<APIErrorResponse>;

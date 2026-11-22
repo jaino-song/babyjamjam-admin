@@ -4,7 +4,7 @@ import { cookies } from "next/headers";
 import { serverAPIClient } from "@/lib/api/server";
 import axios, { AxiosError } from "axios";
 import { clearAuthSessionCookies, setAuthSessionCookies } from "@/lib/auth/session-cookies";
-import { normalizeApiError, type NormalizedApiError } from "@babyjamjam/shared";
+import { summarizeErrorForLog, normalizeApiError, type NormalizedApiError } from "@babyjamjam/shared";
 
 interface APIErrorResponse {
     statusCode: number;
@@ -152,7 +152,7 @@ export async function loginWithEmail(email: string, password: string, autoLogin 
             ),
         };
     } catch (error) {
-        console.error("[Server Action] Email Login Error:", error);
+        console.error("[Server Action] Email Login Error:", summarizeErrorForLog(error));
 
         if (axios.isAxiosError<APIErrorResponse>(error)) {
             const axiosError = error;

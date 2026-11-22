@@ -3,7 +3,7 @@
 
 import { useRouter } from "next/navigation";
 import { useState } from "react";
-import { normalizeApiError } from "@babyjamjam/shared";
+import { summarizeErrorForLog, normalizeApiError } from "@babyjamjam/shared";
 
 import { AUTH_ROUTES } from "@/lib/auth/routes";
 import { forgotPasswordSchema } from "@/lib/validations/auth";
@@ -47,7 +47,7 @@ export function useForgotPasswordPageController() {
         setError("요청 처리에 실패했어요. 다시 시도해 주세요.");
       }
     } catch (requestError) {
-      console.error("Forgot password error:", requestError);
+      console.error("Forgot password error:", summarizeErrorForLog(requestError));
       // Shared problem contract resolution — upstream internals are never
       // rendered; the normalized message is already safe copy.
       setError(normalizeApiError(requestError, { locale: "ko-KR", operation: "mutation" }).message);
