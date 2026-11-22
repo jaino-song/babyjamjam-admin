@@ -6,6 +6,7 @@ import { Logger } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import { INITIAL_FINALIZATION_CANCELLABLE_STATE_STATUSES, initialFinalizationCancellableSql } from "infrastructure/database/utils/service-record-initial-recovery-sql";
 import { setup, input } from "../utils/service-record-initial-recovery.fixture";
+import * as dispatchPolicy from "application/policies/service-record-revision-state.policy";
 const { branchId, jobId } = input;
 
 describe("staff INITIAL recovery", () => {
@@ -45,6 +46,14 @@ describe("staff INITIAL recovery", () => {
         const f = setup();
         f.job.payload.context = { ...f.job.payload.context, formVersion: 0 };
         expect(await f.repo.retry(input)).toEqual({ kind: "not_retryable" });
+        expect(f.tx.$executeRaw).not.toHaveBeenCalled();
+        expect(f.queries.some(q => q.text.includes("FOR UPDATE"))).toBe(false);
+    });
+    it("refuses retry and cancel for null planned date entries without writes", async () => {
+        const f = setup();
+        f.job.payload.context = { ...f.job.payload.context, plannedSessionDates: [null] } as never;
+        expect(await f.repo.retry(input)).toEqual({ kind: "not_retryable" });
+        expect(await f.repo.cancel(input)).toMatchObject({ kind: "not_cancellable" });
         expect(f.tx.$executeRaw).not.toHaveBeenCalled();
         expect(f.queries.some(q => q.text.includes("FOR UPDATE"))).toBe(false);
     });
@@ -207,6 +216,45 @@ describe("staff INITIAL recovery", () => {
         expect(initialSql.values).toContain(branchId);
         expect(initialSql.text).not.toContain("LIMIT");
         expect(f.prisma.$transaction).not.toHaveBeenCalled();
+    });
+    it.each(["malformed JSON", "validator exception"])("keeps an older INITIAL row report-only for %s while returning valid list and summary rows", async failure => {
+        const f = setup({ progressStep: "sent" });
+        const valid = [100, 101].map(id => ({ ...f.raw(),
+            id: `00000000-0000-4000-8000-${String(id).padStart(12, "0")}`,
+            completed_at: new Date("2026-02-01"), created_at: new Date("2026-02-01"),
+            cancellable: true, retryable: false }));
+        const invalid = { ...f.raw(), id: "00000000-0000-4000-8000-000000000099",
+            completed_at: new Date("2026-01-01"), created_at: new Date("2026-01-01"),
+            payload: { ...f.job.payload, context: { ...f.job.payload.context, plannedSessionDates: [null] } },
+            cancellable: true, retryable: true };
+        const validate = dispatchPolicy.isValidServiceRecordDispatchContext;
+        const spy = jest.spyOn(dispatchPolicy, "isValidServiceRecordDispatchContext").mockImplementation(context => {
+            if (failure === "validator exception" && context === invalid.payload.context) throw new Error("validation failed");
+            return validate(context);
+        });
+        let attentionQuery: Prisma.Sql | undefined;
+        const query = jest.fn(async (sql: Prisma.Sql) => {
+            if (sql.text.includes("AS active_count")) return [{ unresolved_count: 0 }];
+            if (sql.text.includes("SELECT id, completed_at")) return [];
+            if (sql.text.includes("SELECT j.id, j.completed_at")) return [invalid, ...valid];
+            if (sql.text.includes("AS cancellable") && !sql.text.includes("false AS cancellable")) {
+                attentionQuery = sql;
+                return [...valid, invalid];
+            }
+            return [];
+        });
+        const repo = new SbEformsignDocumentJobRepository({ ...f.prisma, $queryRaw: query } as never);
+        try {
+            expect(await repo.getSummary(branchId)).toMatchObject({ unresolvedCount: 2, unresolvedJobIds: valid.map(row => row.id) });
+            const list = await repo.listForBranch(branchId, new Date(0));
+            expect(list.requiresAttention.map(row => row.id)).toEqual([...valid.map(row => row.id), invalid.id]);
+            expect(list.requiresAttention.slice(0, 2).every(row => row.cancellable)).toBe(true);
+            expect(list.requiresAttention[2]).toMatchObject({ id: invalid.id, cancellable: false, retryable: false });
+            expect(attentionQuery?.values).toEqual([branchId, "superseded", ...valid.map(row => row.id), 50]);
+            expect(f.prisma.$transaction).not.toHaveBeenCalled();
+        } finally {
+            spy.mockRestore();
+        }
     });
     it.each([1, 51])("reserves the list's first slots for the same capped popup ids with %s actionable INITIAL rows", async count => {
         const f = setup({ progressStep: "sent" });

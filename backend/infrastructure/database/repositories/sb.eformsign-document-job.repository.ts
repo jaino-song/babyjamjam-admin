@@ -310,9 +310,14 @@ function payloadContext(value: RawJob["payload"]): ServiceRecordRevisionDispatch
 }
 
 function initialRecoveryContext(job: Pick<RawJob, "payload" | "branch_id" | "client_id">): ServiceRecordRevisionDispatchContext | null {
-    const context = payloadContext(job.payload);
-    return context && isValidServiceRecordDispatchContext(context)
-        && context.branchId === job.branch_id && context.clientId === job.client_id ? context : null;
+    try {
+        const context = payloadContext(job.payload);
+        return context && isValidServiceRecordDispatchContext(context)
+            && context.branchId === job.branch_id && context.clientId === job.client_id ? context : null;
+    } catch {
+        // A corrupt row stays report-only even if context validation unexpectedly throws.
+        return null;
+    }
 }
 
 function payloadRevisionJob(value: RawJob["payload"]): {

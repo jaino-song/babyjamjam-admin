@@ -30,6 +30,39 @@ function context(overrides: Partial<ServiceRecordRevisionDispatchContext> = {}):
 }
 
 describe("service-record revision dispatch state policy", () => {
+    it.each([
+        [null],
+        [1],
+        [{ sessionIndex: 1, serviceDate: 5 }],
+        [{ sessionIndex: 1, serviceDate: { toString: null } }],
+        [{ sessionIndex: "1", serviceDate: "2026-09-07" }],
+        null,
+        { sessionIndex: 1, serviceDate: "2026-09-07" },
+        "2026-09-07",
+    ].map(plannedSessionDates => ({ plannedSessionDates })))("refuses untrusted planned dates $plannedSessionDates without throwing", ({ plannedSessionDates }) => {
+        const malformed = { ...context(), plannedSessionCount: 1, plannedSessionDates } as unknown as ServiceRecordRevisionDispatchContext;
+        expect(isValidServiceRecordDispatchContext(malformed)).toBe(false);
+        expect(authorizeServiceRecordDispatch(malformed, context())).toEqual({ kind: "lost", reason: "invalid_dispatch_context" });
+        expect(isRevisionDocumentDispatchAllowed(malformed)).toBe(false);
+    });
+
+    it.each([
+        null, 1, "context", [],
+        ...Object.entries({
+            branchId: 1,
+            serviceRecordCaseId: {},
+            clientId: "101",
+            revisionId: [],
+            revisionNumber: "2",
+            businessFingerprint: { toString: null },
+            plannedSessionCount: "2",
+            documentSyncStatus: {},
+            formVersion: "3",
+        }).map(([field, value]) => ({ ...context(), [field]: value })),
+    ])("refuses wrong-typed dispatch context %# without throwing", malformed => {
+        expect(isValidServiceRecordDispatchContext(malformed)).toBe(false);
+    });
+
     it("allows an unchanged complete context and ignores lifecycle-only bumps", () => {
         const expected = context({ lifecycleStatus: "IN_PROGRESS" });
         const observed = context({ lifecycleStatus: "COMPLETED" });
