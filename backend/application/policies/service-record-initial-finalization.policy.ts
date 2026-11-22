@@ -4,6 +4,9 @@ import { EFORMSIGN_COMPLETED_STATUS_CODES, EFORMSIGN_REJECTED_STATUS_CODES } fro
 import { normalizeEformsignStatusCode } from "domain/utils/eformsign-status-code";
 
 export const INITIAL_FINALIZATION_REQUEST_PREFIX = "service-record-initial-finalization:";
+const INITIAL_FINALIZATION_REQUEST_KEY_MAX_LENGTH = 255;
+const INITIAL_FINALIZATION_GENERATION_PATTERN =
+    /^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$/;
 
 // 완료 이력이 유실된 삭제는 재생성 허용 코드에 포함하지 않는다.
 export const SERVICE_RECORD_INITIAL_COMPLETED_DOCUMENT_DELETED = "SERVICE_RECORD_INITIAL_COMPLETED_DOCUMENT_DELETED";
@@ -11,6 +14,25 @@ export const SERVICE_RECORD_INITIAL_DELETED_STATUS_UNKNOWN = "SERVICE_RECORD_INI
 
 export function initialFinalizationRequestKey(revisionId: string): string {
     return `${INITIAL_FINALIZATION_REQUEST_PREFIX}${revisionId}`;
+}
+
+export function initialFinalizationGenerationRequestKey(revisionId: string, generation: string): string {
+    const key = `${initialFinalizationRequestKey(revisionId)}:${generation}`;
+    if (!isInitialFinalizationRequestKeyFor(revisionId, key)) {
+        throw new RangeError("Invalid INITIAL finalization generation request key");
+    }
+    return key;
+}
+
+export function isInitialFinalizationRequestKeyFor(revisionId: string, key: unknown): key is string {
+    if (!revisionId || typeof key !== "string") return false;
+    const legacyKey = initialFinalizationRequestKey(revisionId);
+    if (key === legacyKey) return true;
+
+    const generationPrefix = `${legacyKey}:`;
+    return key.startsWith(generationPrefix)
+        && INITIAL_FINALIZATION_GENERATION_PATTERN.test(key.slice(generationPrefix.length))
+        && [...key].length <= INITIAL_FINALIZATION_REQUEST_KEY_MAX_LENGTH;
 }
 
 function record(value: unknown): Record<string, unknown> | null {
@@ -31,13 +53,19 @@ export function isInitialFinalizationJobIdentity(job: {
         && payload["generationKind"] === "INITIAL_FINALIZATION"
         && typeof revisionId === "string" && revisionId.length > 0
         && context?.["revisionId"] === revisionId
-        && job.requestKey === initialFinalizationRequestKey(revisionId)
+        && isInitialFinalizationRequestKeyFor(revisionId, job.requestKey)
         && payload["snapshotReference"] === job.requestKey;
 }
 
 export function isInitialFinalizationWorkflowScope(scope: unknown, requestKey: string): boolean {
     const value = record(scope);
     return value?.["generationKind"] === "INITIAL_FINALIZATION" && value["requestKey"] === requestKey;
+}
+
+export function isInitialFinalizationWorkflowScopeForRevision(scope: unknown, revisionId: string): boolean {
+    const value = record(scope);
+    return value?.["generationKind"] === "INITIAL_FINALIZATION"
+        && isInitialFinalizationRequestKeyFor(revisionId, value["requestKey"]);
 }
 
 export const INITIAL_ABSENCE_PROOF_CODES: ReadonlySet<string> = new Set([

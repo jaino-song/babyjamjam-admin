@@ -7,11 +7,29 @@ export const INITIAL_FINALIZATION_CANCELLABLE_STATE_STATUSES: readonly string[] 
     "capability_unverified", "pending", "processing",
 ];
 
+/** SQL twin of isInitialFinalizationRequestKeyFor; both inputs are SQL expressions of type text. */
+export function initialFinalizationRequestKeyForSql(revisionId: Prisma.Sql, key: Prisma.Sql): Prisma.Sql {
+    const legacyKey = Prisma.sql`('service-record-initial-finalization:' || ${revisionId})`;
+    const generationPrefix = Prisma.sql`(${legacyKey} || ':')`;
+    return Prisma.sql`COALESCE((char_length(${revisionId}) > 0 AND (
+        ${key} = ${legacyKey} OR (
+            starts_with(${key}, ${generationPrefix})
+            AND substring(${key} FROM char_length(${generationPrefix}) + 1)
+                ~ '^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$'
+            AND char_length(${key}) <= 255
+        )
+    )), false)`;
+}
+
+/** The supersession fence includes jobs with redacted payloads and only a key-family marker. */
+export const initialFinalizationSupersessionMarkerSql =
+    Prisma.sql`COALESCE(job.request_key, '') LIKE 'service-record-initial-finalization:%'`;
+
 /** SQL twin of isInitialFinalizationJobIdentity. Aliases are source-owned, never request input. */
 export function initialFinalizationJobSql(alias = ""): Prisma.Sql {
-    const c = (name: string) => alias ? `${alias}.${name}` : name;
+    const c = (name: string) => Prisma.raw(alias ? `${alias}.${name}` : name);
     const p = c("payload");
-    return Prisma.raw(`COALESCE((${c("job_type")} = 'create_document'
+    return Prisma.sql`COALESCE((${c("job_type")} = 'create_document'
         AND ${c("source")} = 'auto_finalize' AND ${c("document_id")} IS NULL
         AND jsonb_typeof(${p}) = 'object'
         AND ${p}->>'kind' = 'service_record_revision'
@@ -19,8 +37,8 @@ export function initialFinalizationJobSql(alias = ""): Prisma.Sql {
         AND jsonb_typeof(${p}->'revisionId') = 'string' AND length(${p}->>'revisionId') > 0
         AND jsonb_typeof(${p}->'context') = 'object'
         AND ${p}->'context'->'revisionId' = ${p}->'revisionId'
-        AND ${c("request_key")} = 'service-record-initial-finalization:' || (${p}->>'revisionId')
-        AND ${p}->'snapshotReference' = to_jsonb(${c("request_key")})), false)`);
+        AND ${initialFinalizationRequestKeyForSql(Prisma.sql`(${p}->>'revisionId')`, c("request_key"))}
+        AND ${p}->'snapshotReference' = to_jsonb(${c("request_key")})), false)`;
 }
 
 /** Contract cancellation uses the step; INITIAL cancellation also preserves post-send step evidence. */

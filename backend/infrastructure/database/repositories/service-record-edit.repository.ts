@@ -2,7 +2,13 @@ import { Injectable } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import { randomUUID } from "node:crypto";
 
-import { initialFinalizationRequestKey, initialFinalizationStateSql, newestInitialFinalizationStateSql, releaseTerminalInitialFinalizationKey, isInitialFinalizationWorkflowScope } from "application/policies/service-record-initial-finalization.policy";
+import {
+    INITIAL_FINALIZATION_REQUEST_PREFIX,
+    initialFinalizationStateSql,
+    isInitialFinalizationWorkflowScopeForRevision,
+    newestInitialFinalizationStateSql,
+    releaseTerminalInitialFinalizationKey,
+} from "application/policies/service-record-initial-finalization.policy";
 import { ServiceRecordLifecycleService } from "application/services/service-record-lifecycle.service";
 
 import {
@@ -50,6 +56,7 @@ import {
 } from "domain/repositories/service-record-edit.repository.interface";
 import { DISPATCH_AUTHORIZED_PROGRESS_STEP } from "domain/entities/eformsign-document-job.entity";
 import { PrismaService } from "infrastructure/database/prisma.service";
+import { initialFinalizationSupersessionMarkerSql } from "infrastructure/database/utils/service-record-initial-recovery-sql";
 import { sha256CanonicalJson } from "application/services/eformsign-document-job.service";
 import { selectCurrentContractDocument } from "application/utils/current-contract-document";
 import {
@@ -1495,7 +1502,7 @@ function isServiceRecordRevisionGenerationPayload(value: unknown, requestKey?: u
     if (excludedRequestKey) return false;
     if (normalizedRequestKey !== null && (
         normalizedRequestKey.startsWith("service-record-revision:")
-        || normalizedRequestKey.startsWith("service-record-initial-finalization:")
+        || normalizedRequestKey.startsWith(INITIAL_FINALIZATION_REQUEST_PREFIX)
     )) {
         return true;
     }
@@ -1526,7 +1533,7 @@ function documentJobSupersessionPredicate(
                 AND (
                     job.payload->>'kind' = 'service_record_revision'
                     OR COALESCE(job.request_key, '') LIKE 'service-record-revision:%'
-                    OR COALESCE(job.request_key, '') LIKE 'service-record-initial-finalization:%'
+                    OR ${initialFinalizationSupersessionMarkerSql}
                 )
             )
         `;
@@ -1715,7 +1722,7 @@ async function checkRevisionDocumentStatesForConfirm(
     for (const blocking of rows) {
         let reason = blocking.lastErrorCode;
         if (blocking.operation === "record_snapshot"
-            && isInitialFinalizationWorkflowScope(blocking.workflowScope, initialFinalizationRequestKey(blocking.revisionId))) {
+            && isInitialFinalizationWorkflowScopeForRevision(blocking.workflowScope, blocking.revisionId)) {
             const readiness = await releaseTerminalInitialFinalizationKey(tx, input.serviceRecordCaseId, blocking.revisionId);
             if (readiness.ready) {
                 terminalInitialReady = true;
@@ -2651,7 +2658,7 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
                         documentVersion: state.documentVersion,
                         canRetry: canRetryRevisionDocumentState(state)
                             && !(state.operation === "record_snapshot"
-                                && isInitialFinalizationWorkflowScope(state.workflowScope, initialFinalizationRequestKey(state.revisionId))
+                                && isInitialFinalizationWorkflowScopeForRevision(state.workflowScope, state.revisionId)
                                 && revisionSnapshotRetryJobScope(state) === null),
                         reasonCode: state.lastErrorCode,
                     })),
@@ -3260,7 +3267,7 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
         if (!state || state.operation !== "record_snapshot") return false;
         const current = toRevisionDocumentState(state);
         if (current.documentVersion !== input.documentVersion
-            || !isInitialFinalizationWorkflowScope(current.workflowScope, initialFinalizationRequestKey(input.revisionId))) return false;
+            || !isInitialFinalizationWorkflowScopeForRevision(current.workflowScope, input.revisionId)) return false;
         const replay = current.status === "processing" && current.step === "documents_created"
             && ownerCase.status === "DOCUMENTS_CREATED";
         if (!replay && (current.status !== "processing" || current.step !== "dispatch_authorized"

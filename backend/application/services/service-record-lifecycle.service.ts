@@ -3,10 +3,9 @@ import { ConflictException, Injectable, Logger, NotFoundException } from "@nestj
 import { Prisma } from "@prisma/client";
 
 import {
-    initialFinalizationRequestKey,
     initialFinalizationStateSql,
     newestInitialFinalizationStateSql,
-    isInitialFinalizationWorkflowScope,
+    isInitialFinalizationWorkflowScopeForRevision,
     SERVICE_RECORD_INITIAL_COMPLETED_DOCUMENT_DELETED,
     SERVICE_RECORD_INITIAL_DELETED_STATUS_UNKNOWN,
 } from "application/policies/service-record-initial-finalization.policy";
@@ -1086,8 +1085,8 @@ export class ServiceRecordLifecycleService {
               AND ${newestInitialFinalizationStateSql("state")}
             FOR UPDATE
         `);
-        const eligible = states.filter(state => isInitialFinalizationWorkflowScope(
-            state.workflowScope, initialFinalizationRequestKey(scope.revisionId),
+        const eligible = states.filter(state => isInitialFinalizationWorkflowScopeForRevision(
+            state.workflowScope, scope.revisionId,
         ));
         if (eligible.length !== 1) return false;
         const state = eligible[0]!;
@@ -1234,7 +1233,7 @@ export class ServiceRecordLifecycleService {
         const eligible = states.filter((state) =>
             ((state.status === "processing" && state.step === "documents_created")
                 || (state.status === "completed" && state.step === "completed"))
-            && isInitialFinalizationWorkflowScope(state.workflowScope, initialFinalizationRequestKey(revisionId)));
+            && isInitialFinalizationWorkflowScopeForRevision(state.workflowScope, revisionId));
         if (eligible.length !== 1) return false;
         const state = eligible[0];
         if (!state) return false;
@@ -1368,7 +1367,7 @@ export class ServiceRecordLifecycleService {
                 `);
                 const matching = states.filter((state) => state.status === "processing"
                     && state.step === "documents_created"
-                    && isInitialFinalizationWorkflowScope(state.workflowScope, initialFinalizationRequestKey(triggerRevisionId)));
+                    && isInitialFinalizationWorkflowScopeForRevision(state.workflowScope, triggerRevisionId));
                 if (matching.length !== 1) return false;
                 initialState = matching[0]!;
             }

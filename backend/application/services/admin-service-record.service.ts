@@ -10,7 +10,7 @@ import {
 import { message_log, message_trigger_job, Prisma } from "@prisma/client";
 import { PrismaService } from "infrastructure/database/prisma.service";
 import { codeOnlyProblemBody } from "application/utils/problem-bodies";
-import { initialFinalizationRequestKey, isInitialFinalizationWorkflowScope } from "application/policies/service-record-initial-finalization.policy";
+import { isInitialFinalizationWorkflowScopeForRevision } from "application/policies/service-record-initial-finalization.policy";
 import {
     SERVICE_RECORD_LINK_BRANCH_DISABLED_REASON,
     SERVICE_RECORD_LINK_RULE_ID,
@@ -377,7 +377,7 @@ export class AdminServiceRecordService {
             throw new ConflictException(codeOnlyProblemBody("SERVICE_RECORD_WRITE_TARGET_CHANGED"));
         }
         if (state.operation === "record_snapshot"
-            && isInitialFinalizationWorkflowScope(state.workflowScope, initialFinalizationRequestKey(normalizedRevisionId))) {
+            && isInitialFinalizationWorkflowScopeForRevision(state.workflowScope, normalizedRevisionId)) {
             // INITIAL은 관리자 revision 재시도의 staff job scope가 없어 재발급할 수 없어요.
             throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
         }

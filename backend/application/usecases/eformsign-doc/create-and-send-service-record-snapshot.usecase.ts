@@ -11,7 +11,7 @@ import { Prisma } from "@prisma/client";
 import { createHash } from "crypto";
 
 import {
-    initialFinalizationRequestKey,
+    isInitialFinalizationRequestKeyFor,
     isInitialFinalizationWorkflowScope,
 } from "application/policies/service-record-initial-finalization.policy";
 import { EFORMSIGN_CLIENT_REPOSITORY, IEformsignClientRepository } from "domain/repositories/eformsign.client.interface";
@@ -597,7 +597,7 @@ export class CreateAndSendServiceRecordSnapshotUsecase {
             throw new ConflictException({ code: "SERVICE_RECORD_REVISION_GENERATION_INVALID" });
         }
         if (input.generationKind === "INITIAL_FINALIZATION"
-            && input.snapshotReference !== initialFinalizationRequestKey(input.revisionId!)) {
+            && !isInitialFinalizationRequestKeyFor(input.revisionId!, input.snapshotReference)) {
             throw new ConflictException({ code: "SERVICE_RECORD_REVISION_GENERATION_INVALID" });
         }
         if (input.documentSyncStatus === "capability_unverified") {

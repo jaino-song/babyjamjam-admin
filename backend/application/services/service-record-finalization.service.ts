@@ -5,6 +5,7 @@ import { randomUUID } from "node:crypto";
 import {
     INITIAL_FINALIZATION_REQUEST_PREFIX,
     initialFinalizationRequestKey,
+    isInitialFinalizationRequestKeyFor,
 } from "application/policies/service-record-initial-finalization.policy";
 import { CreateAndSendServiceRecordSnapshotUsecase } from "application/usecases/eformsign-doc/create-and-send-service-record-snapshot.usecase";
 import { PrismaService } from "infrastructure/database/prisma.service";
@@ -874,8 +875,10 @@ export class ServiceRecordFinalizationService {
         });
         const scope = newest?.workflowScope;
         const newestRequestKey = scope && typeof scope === "object" && !Array.isArray(scope) ? scope["requestKey"] : null;
-        const requestKey = typeof newestRequestKey === "string" ? newestRequestKey : initialFinalizationRequestKey(revisionId);
-        const existing = await this.documentJobService.findByRequestKeyInTransaction(tx, requestKey);
+        const requestKey = initialFinalizationRequestKey(revisionId);
+        const existingRequestKey = isInitialFinalizationRequestKeyFor(revisionId, newestRequestKey)
+            ? newestRequestKey : requestKey;
+        const existing = await this.documentJobService.findByRequestKeyInTransaction(tx, existingRequestKey);
         if (existing) {
             if (newest && existing.payload?.["generation"] !== newest.generation) {
                 throw new ConflictException({ code: "SERVICE_RECORD_REVISION_GENERATION_SCOPE_CHANGED" });
@@ -897,14 +900,14 @@ export class ServiceRecordFinalizationService {
                     revisionId,
                     existingGeneration,
                     existingImmutablePayload as Record<string, unknown>,
-                    requestKey,
+                    existingRequestKey,
                     existingDocumentVersion,
                 );
                 if (existingState && existingState.documentVersion !== existingDocumentVersion) {
                     throw new ConflictException({ code: "SERVICE_RECORD_REVISION_GENERATION_SCOPE_CHANGED" });
                 }
             }
-            this.assertFrozenGenerationJob(existing, source, revisionId, requestKey);
+            this.assertFrozenGenerationJob(existing, source, revisionId, existingRequestKey);
             return;
         }
 
