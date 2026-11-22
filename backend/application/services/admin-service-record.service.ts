@@ -10,6 +10,7 @@ import {
 import { message_log, message_trigger_job, Prisma } from "@prisma/client";
 import { PrismaService } from "infrastructure/database/prisma.service";
 import { codeOnlyProblemBody } from "application/utils/problem-bodies";
+import { initialFinalizationRequestKey, isInitialFinalizationWorkflowScope } from "application/policies/service-record-initial-finalization.policy";
 import {
     SERVICE_RECORD_LINK_BRANCH_DISABLED_REASON,
     SERVICE_RECORD_LINK_RULE_ID,
@@ -375,6 +376,11 @@ export class AdminServiceRecordService {
             // 세대 불일치는 대상 문서 상태가 요청 도중 바뀐 원인이므로 등록된 코드를 재사용해요(EM-CAT-02).
             throw new ConflictException(codeOnlyProblemBody("SERVICE_RECORD_WRITE_TARGET_CHANGED"));
         }
+        if (state.operation === "record_snapshot"
+            && isInitialFinalizationWorkflowScope(state.workflowScope, initialFinalizationRequestKey(normalizedRevisionId))) {
+            // INITIAL은 관리자 revision 재시도의 staff job scope가 없어 재발급할 수 없어요.
+            throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
+        }
 
         void actorUserId;
         const result = await repository.retryRevisionDocumentState({
@@ -385,6 +391,10 @@ export class AdminServiceRecordService {
             expectedGeneration: normalizedGeneration,
         });
         if (result === null) throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
+        if (result.status === state.status && result.version === state.version) {
+            // 같은 세대라도 실행되지 않은 재시도는 성공 응답 대신 요청 충돌로 알려요.
+            throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
+        }
         return normalizeRevisionDocumentSummaryResult(result);
     }
 

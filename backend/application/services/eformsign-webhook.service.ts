@@ -577,7 +577,7 @@ export class EformsignWebhookService {
 
         // Handle document events (status changes)
         if (event_type === EVENT_TYPES.DOCUMENT && document) {
-            return this.handleDocumentEvent(
+            const result = await this.handleDocumentEvent(
                 resolvedBranchId,
                 document,
                 trace,
@@ -585,6 +585,8 @@ export class EformsignWebhookService {
                 context.deferCompletionEvent,
                 context.deferCompletionEffects,
             );
+            await this.failInitialServiceRecordSnapshot(resolvedBranchId, document.id);
+            return result;
         }
 
         // Handle document_action events (open, view actions)
@@ -596,12 +598,13 @@ export class EformsignWebhookService {
                 trace,
                 context.mirroredDocument,
             );
+            await this.failInitialServiceRecordSnapshot(resolvedBranchId, document.id);
             return;
         }
 
         // Handle PDF ready events - also update status since it contains document_status
         if (event_type === EVENT_TYPES.READY_DOCUMENT_PDF && ready_document_pdf) {
-            return this.handleReadyDocumentPdfEvent(
+            const result = await this.handleReadyDocumentPdfEvent(
                 resolvedBranchId,
                 ready_document_pdf,
                 trace,
@@ -609,6 +612,8 @@ export class EformsignWebhookService {
                 context.deferCompletionEvent,
                 context.deferCompletionEffects,
             );
+            await this.failInitialServiceRecordSnapshot(resolvedBranchId, ready_document_pdf.document_id);
+            return result;
         }
 
         this.logger.warn(`Unknown webhook event type: ${event_type}`);
@@ -1062,6 +1067,23 @@ export class EformsignWebhookService {
         }
         // The row the status write just re-read: the void state notifyReviewRequiredIfNeeded needs.
         return { isVoided: updated.isVoided === true };
+    }
+
+    private async failInitialServiceRecordSnapshot(branchId: string, documentId: string): Promise<void> {
+        const lifecycle = this.serviceRecordLifecycle;
+        if (!this.prisma || !lifecycle) return;
+        // Read the persisted projection, including on equal-timestamp replays and stale deliveries.
+        const document = await this.eformsignDocRepository.findByDocumentId(branchId, documentId);
+        if (!document || document.documentKind !== EFORMSIGN_DOCUMENT_KIND.SERVICE_RECORD_SNAPSHOT
+            || (!document.isVoided && !REJECTED_STATUS_CODES.has(document.statusType))) return;
+        const changed = await this.prisma.$transaction((tx) => lifecycle.failInitialServiceRecordSnapshotInTransaction({
+            branchId, documentId: document.documentId, statusType: document.statusType,
+            isVoided: document.isVoided === true,
+        }, tx));
+        if (changed) {
+            await this.bumpDocumentSnapshotVersion(branchId);
+            this.eventBus.emit({ branchId, documentId, reason: "mirror:changed" });
+        }
     }
 
     private async bumpDocumentSnapshotVersion(branchId: string): Promise<void> {

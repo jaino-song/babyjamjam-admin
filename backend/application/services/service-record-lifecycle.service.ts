@@ -1032,6 +1032,98 @@ export class ServiceRecordLifecycleService {
             && params.caseId === null;
     }
 
+    async failInitialServiceRecordSnapshotInTransaction(
+        params: { branchId: string; documentId: string; statusType: string; isVoided: boolean },
+        tx: Prisma.TransactionClient,
+    ): Promise<boolean> {
+        const trigger = await tx.eformsign_doc.findFirst({
+            where: {
+                branchId: params.branchId, documentId: params.documentId,
+                documentKind: EFORMSIGN_DOCUMENT_KIND.SERVICE_RECORD_SNAPSHOT,
+            },
+            select: { serviceRecordCaseId: true, revisionId: true, snapshotVersion: true },
+        });
+        if (!trigger?.serviceRecordCaseId || !trigger.revisionId || trigger.snapshotVersion === null) return false;
+        const revisionId = trigger.revisionId;
+
+        // Lock in the same order as completion: case, state, then snapshot chunks/documents.
+        const cases = await tx.$queryRaw<LockedServiceRecordCaseRevisionState[]>(Prisma.sql`
+            SELECT id, client_id AS "clientId", version, current_revision_id AS "currentRevisionId",
+                current_usable_revision_id AS "currentUsableRevisionId",
+                current_usable_document_version AS "currentUsableDocumentVersion"
+            FROM service_record_case
+            WHERE id = ${trigger.serviceRecordCaseId}::uuid AND branch_id = ${params.branchId}::uuid
+              AND current_revision_id = ${trigger.revisionId}::uuid
+              AND status IN ('DOCUMENTS_CREATED', 'COMPLETED')
+            FOR UPDATE
+        `);
+        const owner = cases[0];
+        if (!owner || owner.currentRevisionId !== trigger.revisionId
+            || (owner.currentUsableRevisionId !== null
+                && (owner.currentUsableRevisionId !== trigger.revisionId
+                    || owner.currentUsableDocumentVersion !== trigger.snapshotVersion))) return false;
+
+        const states = await tx.$queryRaw<Array<{
+            id: string; generation: string; version: number; workflowScope: Prisma.JsonValue;
+            status: string; step: string;
+        }>>(Prisma.sql`
+            SELECT id, generation, version, workflow_scope AS "workflowScope", status, step
+            FROM service_record_revision_document_state
+            WHERE branch_id = ${params.branchId}::uuid AND client_id = ${owner.clientId}
+              AND service_record_case_id = ${owner.id}::uuid AND revision_id = ${trigger.revisionId}::uuid
+              AND document_version = ${trigger.snapshotVersion} AND operation = 'record_snapshot'
+            FOR UPDATE
+        `);
+        const eligible = states.filter((state) =>
+            ((state.status === "processing" && state.step === "documents_created")
+                || (state.status === "completed" && state.step === "completed"))
+            && isInitialFinalizationWorkflowScope(state.workflowScope, initialFinalizationRequestKey(revisionId)));
+        if (eligible.length !== 1) return false;
+        const state = eligible[0];
+        if (!state) return false;
+
+        // INITIAL stores document IDs on its persisted chunks, not target_document_id.
+        const documents = await tx.$queryRaw<Array<{ statusType: string; voidedAt: Date | null }>>(Prisma.sql`
+            SELECT doc.status_type AS "statusType", doc.voided_at AS "voidedAt"
+            FROM service_record_snapshot_chunk AS chunk
+            JOIN eformsign_doc AS doc ON doc.document_id = chunk.document_id
+            WHERE chunk.branch_id = ${params.branchId}::uuid
+              AND chunk.service_record_case_id = ${owner.id}::uuid
+              AND chunk.revision_id = ${trigger.revisionId}::uuid
+              AND chunk.snapshot_version = ${trigger.snapshotVersion} AND chunk.status = 'CREATED'
+              AND chunk.document_id = ${params.documentId}
+              AND doc.branch_id = ${params.branchId}::uuid AND doc.client_id = ${owner.clientId}
+              AND doc.service_record_case_id = chunk.service_record_case_id AND doc.revision_id = chunk.revision_id
+              AND doc.snapshot_version = chunk.snapshot_version AND doc.snapshot_chunk_index = chunk.chunk_index
+              AND doc.document_kind = ${EFORMSIGN_DOCUMENT_KIND.SERVICE_RECORD_SNAPSHOT}
+              AND doc.status_type = ${params.statusType}
+            FOR UPDATE OF chunk, doc
+        `);
+        const document = documents[0];
+        if (documents.length !== 1 || !document || (params.isVoided && document.voidedAt === null)) return false;
+        const errorCode = document.voidedAt !== null
+            ? "SERVICE_RECORD_REVISION_DOCUMENT_VOIDED"
+            : "SERVICE_RECORD_REVISION_DOCUMENT_REJECTED";
+        const changed = await tx.$executeRaw(Prisma.sql`
+            UPDATE service_record_revision_document_state
+            SET status = 'failed', step = 'failed', last_error_code = ${errorCode}, next_attempt_at = NULL,
+                version = version + 1, updated_at = now()
+            WHERE id = ${state.id}::uuid AND generation = ${state.generation} AND version = ${state.version}
+        `);
+        if (changed !== 1) throw new ConflictException(codeOnlyProblemBody("SERVICE_RECORD_WRITE_TARGET_CHANGED"));
+        const caseChanged = await tx.$executeRaw(Prisma.sql`
+            UPDATE service_record_case
+            SET status = 'FINALIZATION_FAILED', last_error = ${errorCode}, documents_completed_at = NULL,
+                current_usable_revision_id = NULL, current_usable_document_version = NULL, next_attempt_at = NULL,
+                version = version + 1, updated_at = now()
+            WHERE id = ${owner.id}::uuid AND branch_id = ${params.branchId}::uuid
+              AND current_revision_id = ${trigger.revisionId}::uuid AND version = ${owner.version}
+              AND status IN ('DOCUMENTS_CREATED', 'COMPLETED')
+        `);
+        if (caseChanged !== 1) throw new ConflictException(codeOnlyProblemBody("SERVICE_RECORD_WRITE_TARGET_CHANGED"));
+        return true;
+    }
+
     async completeServiceRecordSnapshotIfReady(params: {
         branchId: string;
         documentId: string;

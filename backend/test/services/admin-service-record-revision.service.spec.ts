@@ -261,6 +261,28 @@ describe("AdminServiceRecordService revision status", () => {
         });
     });
 
+    it.each(["completed", "processing", "failed", "manual_review"])("refuses an unchanged %s row with REQUEST_CONFLICT", async (status) => {
+        const state = { id: "state-1", clientId: 42, generation: "generation-1", status, version: 3 };
+        const retryRevisionDocumentState = jest.fn().mockResolvedValue({ ...state });
+        await expect(createService(createPrisma(), {
+            findRevisionDocumentStateForBranch: jest.fn().mockResolvedValue(state),
+            retryRevisionDocumentState,
+        }).retryRevisionDocument("branch-1", "revision-1", "state-1", "generation-1", "admin-1"))
+            .rejects.toMatchObject({ status: 409, response: { code: "REQUEST_CONFLICT" } });
+    });
+
+    it("accepts a retry whose version advanced while the status stayed the same", async () => {
+        const state = {
+            id: "state-1", clientId: 42, generation: "generation-1", status: "pending", version: 3,
+            operation: "record_snapshot", documentVersion: 3,
+        };
+        await expect(createService(createPrisma(), {
+            findRevisionDocumentStateForBranch: jest.fn().mockResolvedValue(state),
+            retryRevisionDocumentState: jest.fn().mockResolvedValue({ ...state, version: 4 }),
+        }).retryRevisionDocument("branch-1", "revision-1", "state-1", "generation-1", "admin-1"))
+            .resolves.toMatchObject({ id: "state-1", status: "pending" });
+    });
+
     it("returns not found when the branch-scoped document state is absent", async () => {
         const prisma = createPrisma();
         const findRevisionDocumentStateForBranch = jest.fn().mockResolvedValue(null);
