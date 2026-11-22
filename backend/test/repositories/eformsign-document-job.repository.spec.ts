@@ -48,7 +48,7 @@ const row = (overrides: Record<string, unknown> = {}) => ({
     auto_finalize_outcome_recorded_at: null,
     started_at: null,
     completed_at: null,
-    last_error_code: null,
+    last_error_code: null as string | null,
     created_by_user_id: null,
     created_at: new Date("2026-08-13T00:00:00Z"),
     updated_at: new Date("2026-08-13T00:00:00Z"),
@@ -1119,13 +1119,15 @@ describe("SbEformsignDocumentJobRepository", () => {
 
             const countsQuery = queryRaw.mock.calls[0][0] as Prisma.Sql;
             const counts = countsQuery.text;
-            expect(counts).toContain("count(*) FILTER (WHERE status = 'requires_attention')::int AS attention_count");
+            expect(counts).toContain("::int AS attention_count");
+            expect(counts).toContain("JOB_CANCELLED_AFTER_DISPATCH");
+            expect(counts).toContain("generationKind");
             expect(counts).toMatch(/FILTER \(\s*WHERE \(source = 'staff'[\s\S]*?\) AND status = 'failed'\s+AND progress_step IS DISTINCT FROM \$\d+\s+AND completed_at >= now\(\) - interval '7 days'\s*\)::int AS failed_count/);
             expect(counts).toContain("a.creation_job_id = eformsign_document_job.id");
             expect(counts).toContain("a.branch_id = eformsign_document_job.branch_id");
             expect(counts).toContain("a.client_id = eformsign_document_job.client_id AND a.phase <> 'closed'");
             expect(counts).toMatch(/OR status = 'requires_attention'[\s\S]*AS unresolved_count/);
-            expect(countsQuery.values).toEqual(["cancelled", "cancelled", "superseded", branchId]);
+            expect(countsQuery.values).toEqual(["cancelled", "superseded", branchId]);
             const ids = sqlText(queryRaw.mock.calls[1][0]);
             expect(ids).toContain(CONTRACT_FRAGMENT);
             expect(ids).toContain("ORDER BY completed_at DESC");
@@ -1159,7 +1161,7 @@ describe("SbEformsignDocumentJobRepository", () => {
             expect((queryRaw.mock.calls[1][0] as { values: unknown[] }).values).not.toContain(terminalSince);
 
             const recent = sqlText(queryRaw.mock.calls[2][0]);
-            expect(recent).toContain(`NOT (j.status = 'failed' AND ${CONTRACT_FRAGMENT_J})`);
+            expect(recent).toContain(`NOT (j.status = 'failed' AND (${CONTRACT_FRAGMENT_J} OR`);
             expect(recent).toContain("j.completed_at >= ");
             expect((queryRaw.mock.calls[2][0] as { values: unknown[] }).values).toContain(terminalSince);
             expect(queryRaw.mock.calls.every((call) => sqlText(call[0]).includes("LEFT JOIN \"client\" c ON c.id = j.client_id"))).toBe(true);
@@ -1182,25 +1184,25 @@ describe("SbEformsignDocumentJobRepository", () => {
             const list = await repository.listForBranch(branchId, new Date(0));
             expect(list.requiresAttention).toEqual([]); expect(list.recent[0]?.status).toBe("failed");
             expect(queryRaw.mock.calls[1][0]).toMatchObject({
-                text: expect.stringContaining("j.progress_step IS DISTINCT FROM $3"),
-                values: [branchId, "cancelled", "superseded"],
+                text: expect.stringContaining("j.progress_step IS DISTINCT FROM $2"),
+                values: [branchId, "superseded"],
             });
             expect(queryRaw.mock.calls[2][0]).toMatchObject({
-                text: expect.stringContaining("OR j.progress_step = $4"),
-                values: [branchId, "cancelled", new Date(0), "superseded", 50],
+                text: expect.stringContaining("OR j.progress_step = $3"),
+                values: [branchId, new Date(0), "superseded", 50],
             });
         });
 
         it("filters cancelled rows in summary and both history lists and maps the eligibility hint", async () => {
             queryRaw.mockResolvedValueOnce([{ failed_count: 0, unresolved_count: 0 }]).mockResolvedValueOnce([]);
             await repository.getSummary(branchId);
-            for (const [query] of queryRaw.mock.calls) expect((query as Prisma.Sql).values).toContain("cancelled");
+            for (const [query] of queryRaw.mock.calls) expect((query as Prisma.Sql).text).toContain("JOB_CANCELLED_AFTER_DISPATCH");
             queryRaw.mockReset();
             queryRaw.mockResolvedValueOnce([]).mockResolvedValueOnce([{ ...row({ status: "requires_attention" }), cancellable: true }]).mockResolvedValueOnce([]);
             const list = await repository.listForBranch(branchId, new Date(0));
             expect(list.requiresAttention[0]?.cancellable).toBe(true);
             const attention = queryRaw.mock.calls[1][0] as Prisma.Sql, recent = queryRaw.mock.calls[2][0] as Prisma.Sql;
-            expect(attention.values).toContain("cancelled"); expect(recent.values).toContain("cancelled");
+            expect(attention.text).toContain("JOB_CANCELLED_AFTER_DISPATCH"); expect(recent.text).toContain("JOB_CANCELLED_AFTER_DISPATCH");
             expect(attention.text).toContain("a.creation_job_id = j.id");
             expect(attention.text).toContain("a.generation = j.contract_generation");
             expect(attention.text).toContain("u.provider_document_id IS NULL OR u.provider_document_id ~ U&'^[");
@@ -1287,6 +1289,8 @@ describe("stored INITIAL finalization authorization and requeue", () => {
             payload: { kind: "service_record_revision", generationKind: "INITIAL_FINALIZATION", revisionId,
                 context, documentStateId: stateId, generation: "generation-1", documentVersion: 3,
                 snapshotReference: requestKey, immutablePayload, payloadFingerprint: fingerprint }, ...options.job });
+        if (["failed", "requires_attention"].includes(stored.status)) stored.lease_token = null;
+        stored.last_error_code = "SERVICE_RECORD_REVISION_CAPABILITY_UNVERIFIED";
         const state = { id: stateId, branchId: dispatchBranchId, clientId: 7, serviceRecordCaseId: dispatchCaseId,
             revisionId, operation: "record_snapshot", generation: "generation-1", documentVersion: 3,
             inputFingerprint: fingerprint, workflowScope: { generationKind: "INITIAL_FINALIZATION", requestKey },
