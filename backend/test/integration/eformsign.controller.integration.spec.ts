@@ -1,5 +1,6 @@
 import { PdfPageRasterizerService, PdfPageOutOfRangeError } from "infrastructure/pdf/pdf-page-rasterizer.service";
-import { ConflictException, ExecutionContext, INestApplication, ValidationPipe } from "@nestjs/common";
+import { ConflictException, ExecutionContext, INestApplication, Logger, ValidationPipe } from "@nestjs/common";
+import * as serviceRecordSentry from "infrastructure/observability/service-record-sentry";
 import { ConfigService } from "@nestjs/config";
 import { Test, TestingModule } from "@nestjs/testing";
 import { AreaTemplateService } from "application/services/area-template.service";
@@ -304,6 +305,7 @@ describe("EformsignController (Integration)", () => {
     });
 
     afterEach(async () => {
+        jest.restoreAllMocks();
         await app.close();
     });
 
@@ -520,6 +522,35 @@ describe("EformsignController (Integration)", () => {
         ]);
         expect(chunkFindMany.mock.invocationCallOrder[0]!).toBeLessThan(eformsignService.cancelDocuments.mock.invocationCallOrder[0]!);
         expect(documentMirrorService.requestPermanentPurge.mock.invocationCallOrder[0]!).toBeLessThan(chunkFindMany.mock.invocationCallOrder[0]!);
+    });
+
+    it.each([false, true])("returns delete success and evaluates chunk 2 when chunk 1 evaluation fails (capture throws: %s)", async captureThrows => {
+        const evaluationError = new Error("sensitive provider response");
+        const capture = jest.spyOn(serviceRecordSentry, "captureServiceRecordError").mockImplementation(() => {
+            if (captureThrows) throw new Error("reporting unavailable");
+            return undefined;
+        });
+        const log = jest.spyOn(Logger.prototype, "error").mockImplementation(() => undefined);
+        const documentIds = ["chunk-1", "chunk-2"];
+        chunkFindMany.mockResolvedValue(documentIds.map(eformsignDocumentId => ({
+            eformsignDocumentId, eformsignDoc: { statusType: "070" },
+        })));
+        eformsignDocService.findAll.mockResolvedValue(documentIds.map(documentId => ({ documentId })) as never);
+        const result = { result: { success_result: documentIds, fail_result: [] } };
+        eformsignService.cancelDocuments.mockResolvedValue(result);
+        initialLifecycle.evaluateInitialSnapshotTerminalOutcome.mockRejectedValueOnce(evaluationError).mockResolvedValueOnce(true);
+
+        const response = await request(app.getHttpServer()).delete("/api/documents")
+            .send({ document_ids: documentIds });
+
+        expect(response.status).toBe(200);
+        expect(response.body).toEqual({ ...result, unresolved_document_ids: [] });
+        expect(initialLifecycle.evaluateInitialSnapshotTerminalOutcome.mock.calls.map(([input]) => input.documentId)).toEqual(documentIds);
+        expect(documentMirrorService.purgeDocuments.mock.invocationCallOrder[0]!).toBeLessThan(
+            initialLifecycle.evaluateInitialSnapshotTerminalOutcome.mock.invocationCallOrder[0]!,
+        );
+        expect(capture).toHaveBeenCalledWith(evaluationError, { operation: "auto-finalize", handled: true });
+        expect(log).toHaveBeenCalledWith({ message: "INITIAL snapshot post-purge evaluation failed", documentId: "chunk-1" });
     });
 
     it("clears generation-fenced definitive failures before a mixed-response local purge failure", async () => {

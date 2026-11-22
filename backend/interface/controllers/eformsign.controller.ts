@@ -1,4 +1,5 @@
-import { BadRequestException, Controller, Post, Get, Head, Delete, Body, Query, Param, HttpCode, HttpException, HttpStatus, UseGuards, Res, ServiceUnavailableException, GoneException, ForbiddenException, ConflictException, NotFoundException, InternalServerErrorException } from "@nestjs/common";
+import { BadRequestException, Controller, Post, Get, Head, Delete, Body, Query, Param, HttpCode, HttpException, HttpStatus, UseGuards, Res, ServiceUnavailableException, GoneException, ForbiddenException, ConflictException, NotFoundException, InternalServerErrorException, Logger } from "@nestjs/common";
+import { captureServiceRecordError } from "infrastructure/observability/service-record-sentry";
 import { VoidContractDocumentUsecase } from "application/usecases/eformsign-doc/void-contract-document.usecase";
 import { ServiceRecordLifecycleService } from "application/services/service-record-lifecycle.service";
 import { isDefinitiveVendorRefusal, successfulDeletedDocumentIds } from "application/utils/eformsign-cancel-result";
@@ -231,6 +232,7 @@ function toStatusSignal(doc: unknown, calendar: KrBusinessDayCalendar): Eformsig
 @Controller("api")
 @UseGuards(JwtGuard, TenantGuard)
 export class EformsignController {
+    private readonly logger = new Logger(EformsignController.name);
     private readonly missingDocumentFileSyncs = new Map<string, Promise<void>>();
 
     constructor(
@@ -753,10 +755,23 @@ export class EformsignController {
                 // Standalone transactions start only AFTER purge's client/doc locks are released.
                 for (const chunk of chunkDocuments) {
                     if (!chunk.eformsignDocumentId || !documentIds.includes(chunk.eformsignDocumentId)) continue;
-                    await this.serviceRecordLifecycle.evaluateInitialSnapshotTerminalOutcome({
-                        branchId: tenant.branchId ?? "", documentId: chunk.eformsignDocumentId,
-                        deletedDocuments,
-                    });
+                    try {
+                        await this.serviceRecordLifecycle.evaluateInitialSnapshotTerminalOutcome({
+                            branchId: tenant.branchId ?? "", documentId: chunk.eformsignDocumentId,
+                            deletedDocuments,
+                        });
+                    } catch (error) {
+                        this.logger.error({
+                            message: "INITIAL snapshot post-purge evaluation failed",
+                            documentId: chunk.eformsignDocumentId,
+                        });
+                        try {
+                            captureServiceRecordError(error, { operation: "auto-finalize", handled: true });
+                        } catch {
+                            // Reporting must not interrupt the remaining evaluations or the delete response.
+                        }
+                        // 남은 비종결 INITIAL 상태는 6시간 sweep에서 tombstone을 통해 다시 평가한다.
+                    }
                 }
             };
             // Cancel, not delete. Cancelling expires the recipient's signing link — the whole

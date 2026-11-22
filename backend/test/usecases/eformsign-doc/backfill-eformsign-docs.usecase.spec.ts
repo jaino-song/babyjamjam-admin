@@ -7,6 +7,8 @@ import { EformsignDocStaleUpdateError } from "domain/repositories/eformsign-doc.
 import { EformsignApiDocumentResponse } from "domain/repositories/eformsign.client.interface";
 import { EformsignApiError } from "infrastructure/api/eformsign-api.error";
 import { normalizeEformsignDocumentResponse } from "infrastructure/api/eformsign-response.normalizer";
+import { Logger } from "@nestjs/common";
+import * as serviceRecordSentry from "infrastructure/observability/service-record-sentry";
 
 const TEST_PRINCIPAL = { branchId: "__system__:backfill-test", source: "worker" as const };
 const createBoundary = () => ({
@@ -51,6 +53,7 @@ describe("BackfillEformsignDocsUsecase", () => {
 
     afterEach(() => {
         jest.clearAllMocks();
+        jest.restoreAllMocks();
     });
 
     it.each(["__system__:reconciliation", "branch-1"])("heals retained INITIAL tombstones after the sweep with scope %s", async branchId => {
@@ -68,6 +71,57 @@ describe("BackfillEformsignDocsUsecase", () => {
             branchId: branchId.startsWith("__system__:") ? undefined : branchId, shouldContinue,
         });
         expect(client.getRejectedDocumentsPage.mock.invocationCallOrder[0]!).toBeLessThan(lifecycle.healInitialSnapshotTerminalOutcomes.mock.invocationCallOrder[0]!);
+    });
+
+    it.each([false, true])("runs the local heal after a failed vendor scan and preserves scan failure (heal fails: %s)", async healFails => {
+        const scanError = new Error("vendor unavailable");
+        const healError = new Error("sensitive local failure");
+        const client = {
+            getInProgressDocumentsPage: jest.fn().mockRejectedValue(scanError),
+            getCompletedDocumentsPage: jest.fn().mockResolvedValue({ documents: [], total_rows: 0 }),
+            getRejectedDocumentsPage: jest.fn().mockResolvedValue({ documents: [], total_rows: 0 }),
+        };
+        const lifecycle = { healInitialSnapshotTerminalOutcomes: healFails
+            ? jest.fn().mockRejectedValue(healError) : jest.fn().mockResolvedValue(1) };
+        const capture = jest.spyOn(serviceRecordSentry, "captureServiceRecordError").mockReturnValue(undefined);
+        const log = jest.spyOn(Logger.prototype, "warn").mockImplementation(() => undefined);
+        const onProgress = jest.fn();
+        const usecase = new BackfillEformsignDocsUsecase(client as never, createBoundary() as never, {} as never,
+            {} as never, undefined, undefined, lifecycle as never);
+
+        await expect(usecase.execute({ onProgress }, TEST_PRINCIPAL)).rejects.toMatchObject({
+            message: "Eformsign document backfill failed for types=01",
+            summary: { byDocumentType: { "01": { status: "failed" }, "03": { status: "completed" }, "04": { status: "completed" } } },
+        });
+        expect(lifecycle.healInitialSnapshotTerminalOutcomes).toHaveBeenCalledTimes(1);
+        expect(lifecycle.healInitialSnapshotTerminalOutcomes).toHaveBeenCalledWith({ branchId: undefined, shouldContinue: undefined });
+        expect(onProgress).toHaveBeenLastCalledWith(expect.objectContaining({ phase: "failed" }));
+        if (healFails) {
+            expect(capture).toHaveBeenCalledWith(healError, { operation: "auto-finalize", handled: true });
+            expect(log).toHaveBeenCalledWith({ message: "INITIAL snapshot sweep heal failed", branchId: undefined });
+        }
+    });
+
+    it("preserves a successful sweep when the local heal and error capture fail", async () => {
+        const client = {
+            getInProgressDocumentsPage: jest.fn().mockResolvedValue({ documents: [], total_rows: 0 }),
+            getCompletedDocumentsPage: jest.fn().mockResolvedValue({ documents: [], total_rows: 0 }),
+            getRejectedDocumentsPage: jest.fn().mockResolvedValue({ documents: [], total_rows: 0 }),
+        };
+        const healError = new Error("sensitive local failure");
+        const lifecycle = { healInitialSnapshotTerminalOutcomes: jest.fn().mockRejectedValue(healError) };
+        const capture = jest.spyOn(serviceRecordSentry, "captureServiceRecordError").mockImplementation(() => { throw new Error("reporting unavailable"); });
+        const log = jest.spyOn(Logger.prototype, "warn").mockImplementation(() => undefined);
+        const onProgress = jest.fn();
+        const usecase = new BackfillEformsignDocsUsecase(client as never, createBoundary() as never, {} as never,
+            {} as never, undefined, undefined, lifecycle as never);
+
+        await expect(usecase.execute({ onProgress }, { branchId: "branch-1", source: "worker" })).resolves.toMatchObject({
+            failed: 0, byDocumentType: { "01": { status: "completed" }, "03": { status: "completed" }, "04": { status: "completed" } },
+        });
+        expect(capture).toHaveBeenCalledWith(healError, { operation: "auto-finalize", handled: true });
+        expect(log).toHaveBeenCalledWith({ message: "INITIAL snapshot sweep heal failed", branchId: "branch-1" });
+        expect(onProgress).toHaveBeenLastCalledWith(expect.objectContaining({ phase: "completed" }));
     });
 
     it("purges a requested document only after the post-scan verification confirms vendor 404", async () => {

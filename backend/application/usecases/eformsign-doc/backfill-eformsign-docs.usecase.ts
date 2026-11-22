@@ -2,6 +2,7 @@ import { Inject, Injectable, Logger, Optional } from "@nestjs/common";
 
 import { EformsignDocumentMirrorService } from "application/services/eformsign-document-mirror.service";
 import { ServiceRecordLifecycleService } from "application/services/service-record-lifecycle.service";
+import { captureServiceRecordError } from "infrastructure/observability/service-record-sentry";
 import { UNASSIGNED_TERMINAL_STATUS_CODES } from "domain/constants/eformsign-doc-status.constants";
 import { EformsignService } from "application/services/eformsign.service";
 import { sanitizeEformsignErrorMessage } from "application/utils/eformsign-error-message";
@@ -285,33 +286,46 @@ export class BackfillEformsignDocsUsecase {
                 }
             }
 
-            if (scanFailures.length > 0) {
-                const failedTypes = scans
-                    .filter(({ documentType }) =>
-                        summary.byDocumentType[documentType].status === "failed")
-                    .map(({ documentType }) => documentType)
-                    .join(",");
-                throw new BackfillEformsignDocsError(
-                    `Eformsign document backfill failed for types=${failedTypes}`,
-                    summary,
-                    scanFailures,
-                );
-            }
+            try {
+                if (scanFailures.length > 0) {
+                    const failedTypes = scans
+                        .filter(({ documentType }) =>
+                            summary.byDocumentType[documentType].status === "failed")
+                        .map(({ documentType }) => documentType)
+                        .join(",");
+                    throw new BackfillEformsignDocsError(
+                        `Eformsign document backfill failed for types=${failedTypes}`,
+                        summary,
+                        scanFailures,
+                    );
+                }
 
-            await this.verifyLocallyActiveDocumentsMissingFromVendorLists(
-                mirroredUpdatedDates,
-                () => accessToken,
-                refreshAccessToken,
-                options,
-                summary,
-            );
-            this.assertCanContinue(options, summary);
-            await this.serviceRecordLifecycle?.healInitialSnapshotTerminalOutcomes({
-                branchId: principal.source === "worker" && principal.branchId?.startsWith("__system__:")
-                    ? undefined : principal.branchId,
-                shouldContinue: options.shouldContinue,
-            });
-            this.assertCanContinue(options, summary);
+                await this.verifyLocallyActiveDocumentsMissingFromVendorLists(
+                    mirroredUpdatedDates,
+                    () => accessToken,
+                    refreshAccessToken,
+                    options,
+                    summary,
+                );
+            } finally {
+                this.assertCanContinue(options, summary);
+                const branchId = principal.source === "worker" && principal.branchId?.startsWith("__system__:")
+                    ? undefined : principal.branchId;
+                try {
+                    await this.serviceRecordLifecycle?.healInitialSnapshotTerminalOutcomes({
+                        branchId,
+                        shouldContinue: options.shouldContinue,
+                    });
+                } catch (error) {
+                    this.logger.warn({ message: "INITIAL snapshot sweep heal failed", branchId });
+                    try {
+                        captureServiceRecordError(error, { operation: "auto-finalize", handled: true });
+                    } catch {
+                        // Reporting must not change the vendor scan outcome.
+                    }
+                }
+                this.assertCanContinue(options, summary);
+            }
 
                     options.onProgress?.({
                         phase: "completed",
