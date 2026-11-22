@@ -474,7 +474,8 @@ implements IEformsignDocumentMirrorRepository {
                     where: { id: row.id },
                     data: {
                         statusType: "049",
-                        revisionId: null,
+                        // Keep deleted snapshots in revision readiness checks so a
+                        // completed sibling cannot hide this terminal chunk.
                         statusDetail: "삭제",
                         updatedDate: deletedAt,
                         expired: false,

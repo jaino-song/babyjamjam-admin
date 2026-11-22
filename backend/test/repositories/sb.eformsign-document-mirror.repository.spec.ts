@@ -408,10 +408,16 @@ describe("SbEformsignDocumentMirrorRepository", () => {
         )).resolves.toBe(true);
     });
 
-    it("clears revision linkage when marking a revision-linked document deleted", async () => {
+    it("preserves revision linkage when marking a document deleted so it still blocks snapshot completion", async () => {
+        const document = {
+            id: 11, detailPayload: null, revisionId: "revision-1",
+            branchId: "branch-1", serviceRecordCaseId: "case-1",
+            snapshotVersion: 3, snapshotChunkIndex: 1, statusType: "070",
+        };
         const prisma = {
-            $queryRaw: jest.fn().mockResolvedValue([{ id: 11, detailPayload: null }]),
-            eformsign_doc: { update: jest.fn().mockResolvedValue({}) },
+            $queryRaw: jest.fn().mockResolvedValue([document]),
+            eformsign_doc: { update: jest.fn().mockImplementation(({ data }) =>
+                Promise.resolve(Object.assign(document, data))) },
         };
         const repository = new SbEformsignDocumentMirrorRepository({
             ...prisma, $transaction: transactionMock(prisma),
@@ -421,7 +427,11 @@ describe("SbEformsignDocumentMirrorRepository", () => {
 
         expect(prisma.eformsign_doc.update).toHaveBeenCalledWith({
             where: { id: 11 },
-            data: expect.objectContaining({ statusType: "049", revisionId: null }),
+            data: expect.objectContaining({ statusType: "049" }),
+        });
+        expect(document).toMatchObject({
+            statusType: "049", revisionId: "revision-1", branchId: "branch-1",
+            serviceRecordCaseId: "case-1", snapshotVersion: 3, snapshotChunkIndex: 1,
         });
     });
 
