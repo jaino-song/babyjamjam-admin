@@ -218,7 +218,7 @@ export function ContractDocumentJobsPopover({
   };
   const cancelJobOffered = !resolvedJobs || [...resolvedJobs.active, ...resolvedJobs.requiresAttention, ...resolvedJobs.recent].some(job => job.jobId === cancelRequest?.jobId && job.cancellable === true);
   const cancelJob = findJob(cancelRequest?.jobId) ?? cancelRequest?.job;
-  const cancelDialog = cancelRequest ? <ContractDocumentJobCancelDialog key={cancelRequest.jobId} jobId={cancelRequest.jobId} documentKind={cancelJob?.documentKind} progressStep={cancelJob?.progressStep} isJobOffered={cancelJobOffered} branchId={cancelRequest.branchId} open={cancelOpen} data-component={sub("cancel")}
+  const cancelDialog = cancelRequest ? <ContractDocumentJobCancelDialog key={cancelRequest.jobId} jobId={cancelRequest.jobId} documentKind={cancelJob?.documentKind} progressStep={cancelJob?.progressStep} progressDetail={cancelJob?.progressDetail} isJobOffered={cancelJobOffered} branchId={cancelRequest.branchId} open={cancelOpen} data-component={sub("cancel")}
     onClose={() => setCancelOpen(false)} onCancelled={() => {
       cancelSucceeded.current = true;
       setCancelOpen(false);
@@ -238,7 +238,7 @@ export function ContractDocumentJobsPopover({
   };
   const retryJobOffered = !resolvedJobs || resolvedJobs.requiresAttention.some(job => job.jobId === retryRequest?.jobId && job.retryable === true);
   const retryJob = findJob(retryRequest?.jobId) ?? retryRequest?.job;
-  const retryDialog = retryRequest ? <ContractDocumentJobRetryDialog key={retryRequest.jobId} jobId={retryRequest.jobId} documentKind={retryJob?.documentKind} progressStep={retryJob?.progressStep} isJobOffered={retryJobOffered} branchId={retryRequest.branchId} open={retryOpen} data-component={sub("retry")}
+  const retryDialog = retryRequest ? <ContractDocumentJobRetryDialog key={retryRequest.jobId} jobId={retryRequest.jobId} documentKind={retryJob?.documentKind} progressStep={retryJob?.progressStep} progressDetail={retryJob?.progressDetail} isJobOffered={retryJobOffered} branchId={retryRequest.branchId} open={retryOpen} data-component={sub("retry")}
     onClose={() => setRetryOpen(false)} onRetried={() => {
       retrySucceeded.current = true;
       setRetryOpen(false);

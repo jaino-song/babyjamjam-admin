@@ -67,7 +67,7 @@ export function ContractDocumentJobDetail({ job, onDocumentNavigate, onRecover, 
         <Button type="button" variant="outline" className="w-full" data-component={sub("progress_cancel_button")} data-slot="job-cancel-action"
           onClick={event => onCancel?.(job.jobId, event.currentTarget, onCancelled)}>취소</Button>
       ) : null} />
-      {job.documentKind === "service_record" && serviceRecordMayExist(job.progressStep) ? (
+      {job.documentKind === "service_record" && serviceRecordMayExist(job) ? (
         <p data-component={sub("dispatch-warning")} data-slot="job-dispatch-warning" className="text-sm text-v3-text-muted">
           {SERVICE_RECORD_RECOVERY_COPY.afterDispatch}
         </p>

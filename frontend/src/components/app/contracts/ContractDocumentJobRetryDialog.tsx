@@ -10,7 +10,7 @@ import { isBranchContextAligned } from "@/features/system-templates/branch-conte
 import { eformsignDocumentJobsQueryKeys, useRetryDocumentJob } from "@/hooks/useEformsignDocumentJobs";
 import type { EformsignDocumentJobResponse } from "@/services/eformsign";
 
-interface ContractDocumentJobRetryDialogProps extends Partial<Pick<EformsignDocumentJobResponse, "documentKind" | "progressStep">> {
+interface ContractDocumentJobRetryDialogProps extends Partial<Pick<EformsignDocumentJobResponse, "documentKind" | "progressStep" | "progressDetail">> {
   jobId: string;
   isJobOffered: boolean;
   branchId: string | null;
@@ -26,14 +26,14 @@ function isNotRetryable(error: unknown): boolean {
     && error.response?.status === 409 && error.response.data?.code === "JOB_NOT_RETRYABLE";
 }
 
-export function ContractDocumentJobRetryDialog({ jobId, documentKind, progressStep, isJobOffered, branchId, open, onClose, onRetried, onCloseAutoFocus, "data-component": base }: ContractDocumentJobRetryDialogProps): React.ReactElement {
+export function ContractDocumentJobRetryDialog({ jobId, documentKind, progressStep, progressDetail, isJobOffered, branchId, open, onClose, onRetried, onCloseAutoFocus, "data-component": base }: ContractDocumentJobRetryDialogProps): React.ReactElement {
   const retry = useRetryDocumentJob();
   const queryClient = useQueryClient();
   const submissionLocked = useRef(false);
   const noLongerOffered = !isJobOffered && !retry.isPending && !retry.isSuccess;
   const isServiceRecord = documentKind === "service_record";
   const description = isServiceRecord
-    ? [SERVICE_RECORD_RECOVERY_COPY.retryDescription, ...(serviceRecordMayExist(progressStep) ? [SERVICE_RECORD_RECOVERY_COPY.afterDispatch] : [])].join(" ")
+    ? [SERVICE_RECORD_RECOVERY_COPY.retryDescription, ...(serviceRecordMayExist({ progressStep, progressDetail }) ? [SERVICE_RECORD_RECOVERY_COPY.afterDispatch] : [])].join(" ")
     : "재시도하면 고객에게 계약서 서명 요청이 다시 발송됩니다.";
   const errorCopy = noLongerOffered || isNotRetryable(retry.error)
     ? (isServiceRecord ? SERVICE_RECORD_RECOVERY_COPY.retryUnavailable : "이 작업은 지금 재시도할 수 없어요. 상태를 확인하거나 수동으로 전송해 주세요.")

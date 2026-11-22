@@ -1,3 +1,5 @@
+import type { EformsignDocumentJobResponse } from "@/services/eformsign";
+
 export const DOCUMENT_JOB_MANUAL_RECOVERY_UNSUPPORTED = "이 작업은 수동 전송 화면을 지원하지 않아요. 전자문서 작업 목록에서 재시도하거나 취소해 주세요.";
 
 export const SERVICE_RECORD_RECOVERY_COPY = {
@@ -16,7 +18,9 @@ export const SERVICE_RECORD_RECOVERY_COPY = {
 } as const;
 
 /** Dispatch evidence is independent of whether the backend currently permits a retry. */
-export function serviceRecordMayExist(progressStep?: string | null): boolean {
+export function serviceRecordMayExist({ progressStep, progressDetail }: Partial<Pick<EformsignDocumentJobResponse, "progressStep" | "progressDetail">>): boolean {
   return progressStep === "dispatch_authorized" || progressStep === "creating"
-    || progressStep === "sent" || progressStep === "reconciling";
+    || progressStep === "sent" || progressStep === "reconciling"
+    || progressDetail === "client-started" || progressDetail === "info-inserted"
+    || progressDetail === "creating" || progressDetail === "sent";
 }
