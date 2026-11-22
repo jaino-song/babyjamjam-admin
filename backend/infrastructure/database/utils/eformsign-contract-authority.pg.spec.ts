@@ -1649,9 +1649,9 @@ async function bounded<T>(promise: Promise<T>, ms: number): Promise<T> {
         }
         const purge = async (index: number, evaluate = true) => {
             const documentId = documents[index - 1]!;
-            const before = await db.eformsign_doc.findUniqueOrThrow({ where: { documentId }, select: { statusType: true } });
             const mirror = new SbEformsignDocumentMirrorRepository(db as unknown as PrismaService);
             await mirror.requestPermanentPurge([documentId]);
+            const before = await db.eformsign_doc.findUniqueOrThrow({ where: { documentId }, select: { statusType: true } });
             await mirror.purgeContent([documentId], new Date());
             return evaluate ? initialLifecycle().evaluateInitialSnapshotTerminalOutcome({ branchId, documentId,
                 deletedDocuments: [{ documentId, statusType: before.statusType }] }) : false;
@@ -1755,9 +1755,12 @@ async function bounded<T>(promise: Promise<T>, ms: number): Promise<T> {
         expect(await initialLifecycle().evaluateInitialSnapshotTerminalOutcome({ branchId: f.branchId, documentId: documents[0]! })).toBe(false);
         expect(await f.readState()).toMatchObject({ status: "processing" });
     });
-    it("U1 a chunk purged before documents_created is caught within promotion's transaction", async () => {
+    it("U1 post-commit staff deletion before documents_created is caught within promotion's transaction", async () => {
         const f = await initialChunks({ dispatchAuthorized: true });
-        await f.purge(2, false);
+        const stateBeforePurge = await f.readState(), caseBeforePurge = await f.readCase();
+        expect(await f.purge(2)).toBe(false);
+        expect(await f.readState()).toEqual(stateBeforePurge);
+        expect(await f.readCase()).toEqual(caseBeforePurge);
         const repo = new ServiceRecordEditRepository(db as unknown as PrismaService);
         expect(await repo.recordInitialFinalizationDocumentsCreated({ branchId: f.branchId, clientId: clients[0]!,
             serviceRecordCaseId: f.record.id, revisionId: f.revisionId, revisionNumber: 1, documentStateId: f.state.id,

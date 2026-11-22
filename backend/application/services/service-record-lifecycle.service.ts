@@ -1124,7 +1124,10 @@ export class ServiceRecordLifecycleService {
                     && chunks.every(chunk => chunk.documentId !== null && chunk.chunkCount === chunks.length
                         && chunk.chunkIndex >= 1 && chunk.chunkIndex <= chunks.length);
                 if (state.lastErrorCode !== "JOB_CANCELLED_AFTER_DISPATCH" || !allLinked) return false;
-            } else if (state.status !== "processing") return false;
+            } else if (state.status !== "processing" || state.step !== "documents_created") {
+                // 발송 중 삭제된 chunk는 documents_created 전환 트랜잭션에서 다시 평가한다.
+                return false;
+            }
         } else if (!["processing", "manual_review", "failed"].includes(state.status)) return false;
         // Sweep ordering must not turn an unknown deleted sibling into a ready provider-failure code.
         const unknownDeletion = documents.some(doc => doc.statusType === "049"
