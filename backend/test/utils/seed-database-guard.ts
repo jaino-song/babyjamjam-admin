@@ -29,7 +29,7 @@ function assertLocalDatabaseUrl(rawUrl: string, variable: string, label: string)
 
     const hostname = parsed.hostname.toLowerCase();
     if (!LOCAL_DATABASE_HOSTS.has(hostname)) {
-        throw new Error(`Refusing ${label}: ${variable} host "${hostname}" is not a local database (allowed: localhost, 127.0.0.1, ::1)`);
+        throw new Error(`Refusing ${label}: ${variable} host is not a local database (allowed: localhost, 127.0.0.1, ::1)`);
     }
 }
 

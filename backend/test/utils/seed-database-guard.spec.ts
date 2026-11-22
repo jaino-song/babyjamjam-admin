@@ -41,11 +41,11 @@ describe("resolveLocalSeedDatabaseUrl", () => {
     });
 
     it.each([
-        [REMOTE_URL, 'host "abc.pooler.supabase.com" is not a local database'],
-        ["postgresql://postgres@db.example.invalid:5432/x", 'host "db.example.invalid" is not a local database'],
-        ["postgresql://postgres@127.0.0.2:5432/x", 'host "127.0.0.2" is not a local database'],
-        ["postgresql://postgres@0.0.0.0:5432/x", 'host "0.0.0.0" is not a local database'],
-        ["postgresql://postgres@postgres:5432/x", 'host "postgres" is not a local database'],
+        [REMOTE_URL, "host is not a local database"],
+        ["postgresql://postgres@db.example.invalid:5432/x", "host is not a local database"],
+        ["postgresql://postgres@127.0.0.2:5432/x", "host is not a local database"],
+        ["postgresql://postgres@0.0.0.0:5432/x", "host is not a local database"],
+        ["postgresql://postgres@postgres:5432/x", "host is not a local database"],
         ["https://localhost/x", "protocol is not postgresql"],
         ["not a URL", "is not a valid postgres URL"],
         ["postgresql://postgres@::1:5432/x", "is not a valid postgres URL"],
@@ -67,7 +67,7 @@ describe("resolveLocalSeedDatabaseUrl", () => {
     it("uses the supplied label and reports the allowed hosts", () => {
         expect(() => resolveLocalSeedDatabaseUrl({
             env: { DATABASE_URL: REMOTE_URL }, envFilePath, label: "auth-e2e seed",
-        })).toThrow('Refusing auth-e2e seed: DATABASE_URL host "abc.pooler.supabase.com" is not a local database (allowed: localhost, 127.0.0.1, ::1)');
+        })).toThrow(new Error('Refusing auth-e2e seed: DATABASE_URL host is not a local database (allowed: localhost, 127.0.0.1, ::1)'));
     });
 
     it.each([
@@ -85,7 +85,7 @@ describe("resolveLocalSeedDatabaseUrl", () => {
     it("refuses a remote DATABASE_URL from the env file", () => {
         writeFileSync(envFilePath, `DATABASE_URL="${REMOTE_URL}"\n`);
         expect(() => resolveLocalSeedDatabaseUrl({ env: {}, envFilePath }))
-            .toThrow('DATABASE_URL host "abc.pooler.supabase.com"');
+            .toThrow("DATABASE_URL host is not a local database");
     });
 
     it("accepts quoted loopback URLs and comments from the env file without mutating the environment", () => {
@@ -115,7 +115,7 @@ describe("resolveLocalSeedDatabaseUrl", () => {
         writeFileSync(envFilePath, `DATABASE_URL=${REMOTE_URL}\nDIRECT_URL=${REMOTE_URL}\n`);
         expect(() => resolveLocalSeedDatabaseUrl({
             env: { DATABASE_URL: LOCAL_URL }, envFilePath,
-        })).toThrow('DIRECT_URL host "abc.pooler.supabase.com"');
+        })).toThrow("DIRECT_URL host is not a local database");
     });
 
     it("ignores an empty DIRECT_URL in the file", () => {
@@ -126,13 +126,16 @@ describe("resolveLocalSeedDatabaseUrl", () => {
     });
 
     it.each([
-        "postgresql://u:s3cret-pw@abc.pooler.supabase.com:6543/postgres?pgbouncer=true",
-        "postgresql://u:s3cret-pw@abc.pooler.supabase.com:badport/x",
-        REMOTE_URL,
-        "https://seed-user:s3cret-pw@localhost/x?private-query=true",
-        "postgresql://seed-user:s3cret-pw@localhost/x?host=evil.example",
-        "postgresql://seed-user:s3cret-pw@localhost/x?HOSTADDR=10.0.0.1",
-    ])("does not expose credentials in inspected errors for %s", (unsafeUrl) => {
+        ["postgresql://u:s3cret-pw@abc.pooler.supabase.com:6543/postgres?pgbouncer=true", "host is not a local database (allowed: localhost, 127.0.0.1, ::1)"],
+        ["postgresql://u:s3cret-pw@abc.pooler.supabase.com:badport/x", "is not a valid postgres URL"],
+        [REMOTE_URL, "host is not a local database (allowed: localhost, 127.0.0.1, ::1)"],
+        ["https://seed-user:s3cret-pw@localhost/x?private-query=true", "protocol is not postgresql"],
+        ["postgresql://seed-user:s3cret-pw@localhost/x?host=evil.example", "sets the host in its query string"],
+        ["postgresql://seed-user:s3cret-pw@localhost/x?HOSTADDR=10.0.0.1", "sets the host in its query string"],
+        ["postgresql://alice/x:pw@db.example.com/x", "host is not a local database (allowed: localhost, 127.0.0.1, ::1)"],
+        ["postgresql://alice?x:pw@db.example.com/x", "host is not a local database (allowed: localhost, 127.0.0.1, ::1)"],
+        ["postgresql://al:ice@pw-fragment/x@db.example.com:5432/x", "host is not a local database (allowed: localhost, 127.0.0.1, ::1)"],
+    ])("does not expose credentials in inspected errors for %s", (unsafeUrl, reason) => {
         for (const variable of ["DATABASE_URL", "DIRECT_URL"]) {
             let caught: unknown;
             try {
@@ -144,6 +147,7 @@ describe("resolveLocalSeedDatabaseUrl", () => {
             }
             expect(caught).toBeInstanceOf(Error);
             if (!(caught instanceof Error)) throw new Error("Expected a refusal");
+            expect(caught.message).toBe(`Refusing seed: ${variable} ${reason}`);
             const inspected = inspect(caught);
             expect(inspected).not.toContain("s3cret-pw");
             expect(inspected).not.toContain("seed-user");
@@ -154,6 +158,12 @@ describe("resolveLocalSeedDatabaseUrl", () => {
             expect(inspected).not.toContain("HOSTADDR=10.0.0.1");
             expect(inspected).not.toContain(unsafeUrl);
             expect(inspected).not.toContain(":6543");
+            expect(inspected).not.toContain("alice");
+            expect(inspected).not.toContain("pw-fragment");
+            expect(inspected).not.toContain("al:ice");
+            expect(inspected).not.toContain("x:pw");
+            expect(inspected).not.toContain("db.example.com");
+            expect(inspected).not.toContain("abc.pooler.supabase.com");
             expect(Reflect.get(caught, "cause")).toBeUndefined();
             expect(Object.keys(caught)).toEqual([]);
         }
