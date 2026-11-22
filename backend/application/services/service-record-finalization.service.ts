@@ -866,9 +866,20 @@ export class ServiceRecordFinalizationService {
             throw new ConflictException({ code: "SERVICE_RECORD_REVISION_GENERATION_UNAVAILABLE" });
         }
 
-        const requestKey = initialFinalizationRequestKey(revisionId);
+        const newest = await tx.service_record_revision_document_state?.findFirst?.({
+            where: { branchId: source.branchId, clientId: source.clientId, serviceRecordCaseId: source.id,
+                revisionId, operation: "record_snapshot", workflowScope: { path: ["generationKind"], equals: "INITIAL_FINALIZATION" } },
+            orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+            select: { generation: true, workflowScope: true },
+        });
+        const scope = newest?.workflowScope;
+        const newestRequestKey = scope && typeof scope === "object" && !Array.isArray(scope) ? scope["requestKey"] : null;
+        const requestKey = typeof newestRequestKey === "string" ? newestRequestKey : initialFinalizationRequestKey(revisionId);
         const existing = await this.documentJobService.findByRequestKeyInTransaction(tx, requestKey);
         if (existing) {
+            if (newest && existing.payload?.["generation"] !== newest.generation) {
+                throw new ConflictException({ code: "SERVICE_RECORD_REVISION_GENERATION_SCOPE_CHANGED" });
+            }
             const existingPayload = existing.payload;
             const existingGeneration = existingPayload?.["generation"];
             const existingImmutablePayload = existingPayload?.["immutablePayload"];

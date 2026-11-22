@@ -1361,6 +1361,9 @@ describe("ServiceRecordLifecycleService", () => {
         expect(caseLockQuery.strings.join(" ")).toContain("current_usable_revision_id");
         expect(caseLockQuery.strings.join(" ")).toContain("current_usable_document_version");
         expect(caseLockQuery.strings.join(" ")).not.toContain("form_version");
+        const snapshotLockQuery = transactionClient.$queryRaw.mock.calls[1]![0] as unknown as { text: string };
+        expect(snapshotLockQuery.text).toContain("newest_state.document_version IS DISTINCT FROM");
+        expect(snapshotLockQuery.text).toContain("newer_initial.created_at");
         expect(transactionClient.service_record_case.updateMany).toHaveBeenCalledWith(
             expect.objectContaining({
                 where: expect.objectContaining({
@@ -2752,7 +2755,7 @@ describe("INITIAL chunk terminal outcome", () => {
     const revisionId = "44444444-4444-4444-8444-444444444444";
     function setup(options: {
         status?: string; step?: string; error?: string | null; documentStatus?: string;
-        voidedAt?: Date | null; unlinked?: boolean; cas?: number; scope?: unknown; siblingTombstone?: boolean;
+        voidedAt?: Date | null; unlinked?: boolean; cas?: number; scope?: unknown; siblingTombstone?: boolean; superseded?: boolean;
     } = {}) {
         const state = {
             id: "state-1", generation: "generation-1", version: 2,
@@ -2763,7 +2766,7 @@ describe("INITIAL chunk terminal outcome", () => {
             $queryRaw: jest.fn()
                 .mockResolvedValueOnce([{ caseId: rawQueryCaseId, revisionId, snapshotVersion: 3 }])
                 .mockResolvedValueOnce([{ id: rawQueryCaseId, clientId: 7, version: 4, currentRevisionId: revisionId }])
-                .mockResolvedValueOnce([state])
+                .mockResolvedValueOnce(options.superseded ? [] : [state])
                 .mockResolvedValueOnce([
                     { documentId: rawQueryDocumentId, chunkIndex: 1, chunkCount: 2 },
                     { documentId: options.unlinked ? null : "sibling", chunkIndex: 2, chunkCount: 2 },
@@ -2788,6 +2791,13 @@ describe("INITIAL chunk terminal outcome", () => {
     });
     const codes = (f: ReturnType<typeof setup>) => f.tx.$executeRaw.mock.calls.map(([query]) => query.values[0]);
 
+    it("leaves a superseded INITIAL version untouched", async () => {
+        const f = setup({ superseded: true });
+        await expect(evaluate(f, "070")).resolves.toBe(false);
+        const query = f.tx.$queryRaw.mock.calls[2]![0] as unknown as { text: string };
+        expect(query.text).toContain("newer_initial.created_at");
+        expect(f.tx.$executeRaw).not.toHaveBeenCalled();
+    });
     it("fails an in-progress chunk after purge using captured status and clears case readiness", async () => {
         const f = setup();
         await expect(evaluate(f, "070")).resolves.toBe(true);

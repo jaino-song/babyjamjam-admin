@@ -4,6 +4,8 @@ import { Prisma } from "@prisma/client";
 
 import {
     initialFinalizationRequestKey,
+    initialFinalizationStateSql,
+    newestInitialFinalizationStateSql,
     isInitialFinalizationWorkflowScope,
     SERVICE_RECORD_INITIAL_COMPLETED_DOCUMENT_DELETED,
     SERVICE_RECORD_INITIAL_DELETED_STATUS_UNKNOWN,
@@ -1077,10 +1079,11 @@ export class ServiceRecordLifecycleService {
             status: string; step: string; lastErrorCode: string | null;
         }>>(Prisma.sql`
             SELECT id, generation, version, workflow_scope AS "workflowScope", status, step, last_error_code AS "lastErrorCode"
-            FROM service_record_revision_document_state
+            FROM service_record_revision_document_state AS state
             WHERE branch_id = ${params.branchId}::uuid AND client_id = ${owner.clientId}
               AND service_record_case_id = ${owner.id}::uuid AND revision_id = ${scope.revisionId}::uuid
               AND document_version = ${scope.snapshotVersion} AND operation = 'record_snapshot'
+              AND ${newestInitialFinalizationStateSql("state")}
             FOR UPDATE
         `);
         const eligible = states.filter(state => isInitialFinalizationWorkflowScope(
@@ -1170,6 +1173,7 @@ export class ServiceRecordLifecycleService {
               AND owner.current_revision_id = chunk.revision_id
             WHERE state.operation = 'record_snapshot' AND state.status IN ('processing', 'manual_review')
               AND state.workflow_scope->>'generationKind' = 'INITIAL_FINALIZATION'
+              AND ${newestInitialFinalizationStateSql("state")}
               AND (doc.status_type IN (${Prisma.join([...EFORMSIGN_REJECTED_STATUS_CODES])}) OR doc.voided_at IS NOT NULL)
               ${options.branchId ? Prisma.sql`AND chunk.branch_id = ${options.branchId}::uuid` : Prisma.empty}
             ORDER BY "branchId", "documentId"
@@ -1220,10 +1224,11 @@ export class ServiceRecordLifecycleService {
             status: string; step: string;
         }>>(Prisma.sql`
             SELECT id, generation, version, workflow_scope AS "workflowScope", status, step
-            FROM service_record_revision_document_state
+            FROM service_record_revision_document_state AS state
             WHERE branch_id = ${params.branchId}::uuid AND client_id = ${owner.clientId}
               AND service_record_case_id = ${owner.id}::uuid AND revision_id = ${trigger.revisionId}::uuid
               AND document_version = ${trigger.snapshotVersion} AND operation = 'record_snapshot'
+              AND ${newestInitialFinalizationStateSql("state")}
             FOR UPDATE
         `);
         const eligible = states.filter((state) =>
@@ -1351,13 +1356,14 @@ export class ServiceRecordLifecycleService {
                     status: string; step: string;
                 }>>(Prisma.sql`
                     SELECT id, generation, version, workflow_scope AS "workflowScope", status, step
-                    FROM service_record_revision_document_state
+                    FROM service_record_revision_document_state AS state
                     WHERE branch_id = ${params.branchId}::uuid
                       AND client_id = ${lockedCase.clientId}
                       AND service_record_case_id = ${trigger.serviceRecordCaseId}::uuid
                       AND revision_id = ${triggerRevisionId}::uuid
                       AND document_version = ${triggerSnapshotVersion}
                       AND operation = 'record_snapshot'
+                      AND ${newestInitialFinalizationStateSql("state")}
                     FOR UPDATE
                 `);
                 const matching = states.filter((state) => state.status === "processing"
@@ -1402,6 +1408,15 @@ export class ServiceRecordLifecycleService {
             WHERE branch_id = ${params.branchId}::uuid
               AND service_record_case_id = ${trigger.serviceRecordCaseId}::uuid
               AND document_kind = ${EFORMSIGN_DOCUMENT_KIND.SERVICE_RECORD_SNAPSHOT}
+              ${trigger.revisionId ? Prisma.sql`AND NOT EXISTS (
+                  SELECT 1 FROM service_record_revision_document_state AS newest_state
+                  WHERE newest_state.branch_id = ${params.branchId}::uuid
+                    AND newest_state.service_record_case_id = ${trigger.serviceRecordCaseId}::uuid
+                    AND newest_state.revision_id = ${trigger.revisionId ?? null}::uuid
+                    AND ${initialFinalizationStateSql("newest_state")}
+                    AND ${newestInitialFinalizationStateSql("newest_state")}
+                    AND newest_state.document_version IS DISTINCT FROM ${trigger.snapshotVersion ?? null}::int
+              )` : Prisma.empty}
             ORDER BY id ASC
             FOR UPDATE
         `);

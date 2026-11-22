@@ -286,6 +286,7 @@ export class BackfillEformsignDocsUsecase {
                 }
             }
 
+            let scanFailed = false;
             try {
                 if (scanFailures.length > 0) {
                     const failedTypes = scans
@@ -307,24 +308,32 @@ export class BackfillEformsignDocsUsecase {
                     options,
                     summary,
                 );
+            } catch (error) {
+                scanFailed = true;
+                throw error;
             } finally {
-                this.assertCanContinue(options, summary);
-                const branchId = principal.source === "worker" && principal.branchId?.startsWith("__system__:")
-                    ? undefined : principal.branchId;
+                // Preserve a propagating scan/verification error if the lease expires during healing.
                 try {
-                    await this.serviceRecordLifecycle?.healInitialSnapshotTerminalOutcomes({
-                        branchId,
-                        shouldContinue: options.shouldContinue,
-                    });
-                } catch (error) {
-                    this.logger.warn({ message: "INITIAL snapshot sweep heal failed", branchId });
+                    this.assertCanContinue(options, summary);
+                    const branchId = principal.source === "worker" && principal.branchId?.startsWith("__system__:")
+                        ? undefined : principal.branchId;
                     try {
-                        captureServiceRecordError(error, { operation: "auto-finalize", handled: true });
-                    } catch {
-                        // Reporting must not change the vendor scan outcome.
+                        await this.serviceRecordLifecycle?.healInitialSnapshotTerminalOutcomes({
+                            branchId,
+                            shouldContinue: options.shouldContinue,
+                        });
+                    } catch (error) {
+                        this.logger.warn({ message: "INITIAL snapshot sweep heal failed", branchId });
+                        try {
+                            captureServiceRecordError(error, { operation: "auto-finalize", handled: true });
+                        } catch {
+                            // Reporting must not change the vendor scan outcome.
+                        }
                     }
+                    this.assertCanContinue(options, summary);
+                } catch (error) {
+                    if (!scanFailed) throw error;
                 }
-                this.assertCanContinue(options, summary);
             }
 
                     options.onProgress?.({

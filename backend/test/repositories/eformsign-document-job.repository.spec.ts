@@ -1288,7 +1288,7 @@ describe("stored INITIAL finalization authorization and requeue", () => {
         "application/services/eformsign-document-job.service").sha256CanonicalJson(immutablePayload);
     const context = { ...dispatchContext, revisionId, revisionNumber: 1, businessFingerprint: fingerprint,
         documentSyncStatus: "capability_unverified" as const, lifecycleStatus: "READY_TO_FINALIZE" };
-    function setup(options: { job?: Record<string, unknown>; state?: Record<string, unknown>; owner?: Record<string, unknown>; stateCas?: number; jobCas?: boolean } = {}) {
+    function setup(options: { job?: Record<string, unknown>; state?: Record<string, unknown>; owner?: Record<string, unknown>; stateCas?: number; jobCas?: boolean; superseded?: boolean } = {}) {
         const stored = row({ id: dispatchJobId, branch_id: dispatchBranchId, status: "processing", progress_step: "preparing",
             lease_token: dispatchLeaseToken, source: "auto_finalize", request_key: requestKey, payload_fingerprint: fingerprint,
             payload: { kind: "service_record_revision", generationKind: "INITIAL_FINALIZATION", revisionId,
@@ -1309,7 +1309,7 @@ describe("stored INITIAL finalization authorization and requeue", () => {
                 return options.jobCas === false ? [] : [row({ ...stored, status: "queued", attempts: 0 })];
             }
             if (sql.includes('FROM "eformsign_document_job"')) return [stored];
-            if (sql.includes('FROM "service_record_revision_document_state"')) return [state];
+            if (sql.includes('FROM "service_record_revision_document_state"')) return options.superseded ? [] : [state];
             if (sql.includes('FROM "service_record_case" AS record')) return [owner];
             if (sql.includes('FROM "client"')) return [{ id: 7 }];
             if (sql.includes('FROM "service_record_case"')) return [{ id: dispatchCaseId }];
@@ -1321,6 +1321,12 @@ describe("stored INITIAL finalization authorization and requeue", () => {
         return { repository: new SbEformsignDocumentJobRepository(prisma as never), stored, state, statements, queryRaw, executeRaw, tx, prisma };
     }
     const authorize = (f: ReturnType<typeof setup>) => f.repository.authorizeForDispatch({ jobId: dispatchJobId, leaseToken: dispatchLeaseToken, expectedContext: context });
+    it("refuses dispatch/requeue when a newer INITIAL generation supersedes the payload state", async () => {
+        const f = setup({ superseded: true });
+        await expect(authorize(f)).resolves.toMatchObject({ kind: "stale", reason: "SERVICE_RECORD_INITIAL_FINALIZATION_SCOPE_CHANGED" });
+        expect(f.statements.find(sql => sql.includes('FROM "service_record_revision_document_state"'))).toContain("newer_initial.created_at");
+        expect(f.executeRaw).not.toHaveBeenCalled();
+    });
     it.each([dispatchBranchId, "other-branch"])("refuses non-INITIAL revision operations before ownership checks or locks for branch %s", async (branchId) => {
         const f = setup({ job: {
             source: "staff", request_key: `service-record-revision-operations:${revisionId}`,

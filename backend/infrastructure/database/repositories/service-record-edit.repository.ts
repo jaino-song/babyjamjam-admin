@@ -2,7 +2,7 @@ import { Injectable } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import { randomUUID } from "node:crypto";
 
-import { initialFinalizationRequestKey, isInitialFinalizationWorkflowScope } from "application/policies/service-record-initial-finalization.policy";
+import { initialFinalizationRequestKey, initialFinalizationStateSql, newestInitialFinalizationStateSql, releaseTerminalInitialFinalizationKey, isInitialFinalizationWorkflowScope } from "application/policies/service-record-initial-finalization.policy";
 import { ServiceRecordLifecycleService } from "application/services/service-record-lifecycle.service";
 
 import {
@@ -1576,6 +1576,8 @@ function eformsignDocumentJobOwnershipPredicate(
 
 type BlockingRevisionDocumentStateRow = {
     id: string;
+    revisionId: string;
+    workflowScope: Prisma.JsonValue;
     operation: string;
     status: string;
     step: string;
@@ -1670,6 +1672,8 @@ export async function assertNoBlockingRevisionDocumentStates(
     const rows = await transaction.$queryRaw<BlockingRevisionDocumentStateRow[]>(Prisma.sql`
         SELECT
             state.id,
+            state.revision_id AS "revisionId",
+            state.workflow_scope AS "workflowScope",
             state.operation,
             state.status,
             state.step,
@@ -1683,27 +1687,36 @@ export async function assertNoBlockingRevisionDocumentStates(
         WHERE owner_case.branch_id = ${input.branchId}::uuid
           AND owner_case.client_id = ${input.clientId}
           AND owner_case.id = ${input.serviceRecordCaseId}::uuid
+          AND (NOT ${initialFinalizationStateSql("state")} OR ${newestInitialFinalizationStateSql("state")})
           AND NOT (
-                state.status IN ('not_required', 'completed')
-                OR (state.operation = 'record_snapshot' AND state.status = 'waiting_for_completion')
-                OR (
-                    state.status = 'manual_review'
-                    AND COALESCE(state.last_error_code IN (${Prisma.join([...SERVICE_RECORD_BORN_STUCK_ERROR_CODES])}), FALSE)
-                    AND state.target_document_id IS NULL
-                )
+                state.status = 'completed'
+                OR (NOT ${initialFinalizationStateSql("state")} AND (
+                    state.status = 'not_required'
+                    OR (state.operation = 'record_snapshot' AND state.status = 'waiting_for_completion')
+                    OR (
+                        state.status = 'manual_review'
+                        AND COALESCE(state.last_error_code IN (${Prisma.join([...SERVICE_RECORD_BORN_STUCK_ERROR_CODES])}), FALSE)
+                        AND state.target_document_id IS NULL
+                    )
+                ))
           )
         ORDER BY state.created_at ASC, state.id ASC
         FOR UPDATE OF state
     `);
-    const blocking = rows[0];
-    if (!blocking) return;
-    const detail = blocking.lastErrorCode ?? `${blocking.operation}:${blocking.step}`;
-    throw new ServiceRecordRevisionOperationUnresolvedError(
-        `A revision document operation is unresolved (${blocking.operation}:${blocking.status}:${detail})`,
-        blocking.operation,
-        blocking.status,
-        blocking.lastErrorCode,
-    );
+    for (const blocking of rows) {
+        let reason = blocking.lastErrorCode;
+        if (blocking.operation === "record_snapshot"
+            && isInitialFinalizationWorkflowScope(blocking.workflowScope, initialFinalizationRequestKey(blocking.revisionId))) {
+            const readiness = await releaseTerminalInitialFinalizationKey(tx, input.serviceRecordCaseId, blocking.revisionId);
+            if (readiness.ready) continue;
+            reason = readiness.reason;
+        }
+        const detail = reason ?? `${blocking.operation}:${blocking.step}`;
+        throw new ServiceRecordRevisionOperationUnresolvedError(
+            `A revision document operation is unresolved (${blocking.operation}:${blocking.status}:${detail})`,
+            blocking.operation, blocking.status, reason,
+        );
+    }
 }
 
 /**
@@ -3260,7 +3273,7 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
                 || !row.storedDocumentId
                 || row.documentId !== row.storedDocumentId
                 || (row.documentRevisionId !== input.revisionId
-                    && !(row.documentStatusType === "049" && row.documentRevisionId === null))
+                    && !(tombstone && row.documentRevisionId === null))
                 || row.documentBranchId !== input.branchId
                 || (!tombstone && (row.documentClientId !== input.clientId
                     || row.documentCaseId !== input.serviceRecordCaseId

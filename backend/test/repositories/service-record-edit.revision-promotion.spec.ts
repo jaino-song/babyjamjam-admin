@@ -448,10 +448,11 @@ describe("INITIAL documents-created boundary", () => {
         expect(caseLock).toBeLessThan(stateLock);
         expect(stateLock).toBeLessThan(docLock);
     });
-    it("accepts a deletion marker with cleared document revision while retaining its chunk scope", async () => {
+    it("refuses an unscrubbed deletion marker with a cleared document revision", async () => {
         const f = transactionHarness(initialRows({ chunks: [{ ...validChunk(), documentStatusType: "049", documentRevisionId: null }] }));
-        await expect(new ServiceRecordEditRepository(f.prisma as never).recordInitialFinalizationDocumentsCreated(promotionInput())).resolves.toBe(true);
-        expect(evaluate).toHaveBeenCalledWith({ branchId, documentId: "revision-doc-1" }, f.tx);
+        await expect(new ServiceRecordEditRepository(f.prisma as never).recordInitialFinalizationDocumentsCreated(promotionInput())).resolves.toBe(false);
+        expect(f.executeRaw).not.toHaveBeenCalled();
+        expect(evaluate).not.toHaveBeenCalled();
     });
     it("evaluates every chunk document rather than only the first", async () => {
         const f = transactionHarness(initialRows({ chunks: [1, 2].map(index => ({ ...validChunk(), chunkIndex: index, chunkCount: 2,
@@ -487,13 +488,16 @@ describe("INITIAL documents-created boundary", () => {
         const state = stateRow({ workflowScope: scope, status: "processing", step: "documents_created" });
         const tx = { $queryRaw: jest.fn(async (query: unknown) => {
             const sql = sqlText(query);
-            expect(sql).toContain("state.status IN ('not_required', 'completed')");
+            if (sql.includes('FROM "service_record_case"')) return [{ id: caseId, branchId, clientId }];
+            if (sql.includes("LIMIT 1")) return [state];
+            expect(sql).toContain("state.status = 'completed'");
             expect(sql).not.toContain("'processing'");
             return state.status === "completed" ? [] : [state];
         }) };
         const input = { branchId, clientId, serviceRecordCaseId: caseId };
         await expect(assertNoBlockingRevisionDocumentStates(tx as never, input)).rejects.toMatchObject({
             code: "SERVICE_RECORD_REVISION_OPERATION_UNRESOLVED", status: "processing", operation: "record_snapshot",
+            lastErrorCode: "SERVICE_RECORD_INITIAL_STATE_NOT_READY",
         });
         state.status = "completed"; state.step = "completed";
         await expect(assertNoBlockingRevisionDocumentStates(tx as never, input)).resolves.toBeUndefined();

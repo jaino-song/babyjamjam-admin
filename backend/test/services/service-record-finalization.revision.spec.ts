@@ -378,6 +378,21 @@ describe("ServiceRecordFinalizationService revised generation", () => {
         expect(jobService.enqueueInTransaction).not.toHaveBeenCalled();
     });
 
+    it("refuses an older job when the revision already has a newer INITIAL state", async () => {
+        const jobService = { findByRequestKeyInTransaction: jest.fn().mockResolvedValue({ payload: { generation: "gen1" } }),
+            enqueueInTransaction: jest.fn() };
+        const findFirst = jest.fn().mockResolvedValue({ generation: "gen2", workflowScope: {
+            generationKind: "INITIAL_FINALIZATION", requestKey: `service-record-initial-finalization:${revisionId}`,
+        } });
+        const service = buildService(jobService);
+        await expect((service as unknown as { freezeInitialFinalizationGeneration: (tx: unknown, source: unknown,
+            calendar: KrBusinessDayCalendar) => Promise<void> }).freezeInitialFinalizationGeneration({
+            service_record_revision_document_state: { findFirst },
+        }, source(), KR_BUILTIN_CALENDAR)).rejects.toMatchObject({ response: { code: "SERVICE_RECORD_REVISION_GENERATION_SCOPE_CHANGED" } });
+        expect(findFirst).toHaveBeenCalledWith(expect.objectContaining({ orderBy: [{ createdAt: "desc" }, { id: "desc" }] }));
+        expect(jobService.enqueueInTransaction).not.toHaveBeenCalled();
+    });
+
     it("reuses an existing request payload without rebuilding it", async () => {
         const immutablePayload = { caseId };
         const frozenFingerprint = sha256CanonicalJson(immutablePayload);

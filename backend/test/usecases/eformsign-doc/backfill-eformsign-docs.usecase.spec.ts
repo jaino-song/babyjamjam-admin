@@ -102,6 +102,24 @@ describe("BackfillEformsignDocsUsecase", () => {
         }
     });
 
+    it("keeps the scan failure cause when the lease expires during the heal", async () => {
+        const scanError = new Error("vendor unavailable");
+        let leaseHeld = true;
+        const client = {
+            getInProgressDocumentsPage: jest.fn().mockRejectedValue(scanError),
+            getCompletedDocumentsPage: jest.fn().mockResolvedValue({ documents: [], total_rows: 0 }),
+            getRejectedDocumentsPage: jest.fn(async () => {
+                return { documents: [], total_rows: 0 };
+            }),
+        };
+        const lifecycle = { healInitialSnapshotTerminalOutcomes: jest.fn(async () => { leaseHeld = false; }) };
+        const usecase = new BackfillEformsignDocsUsecase(client as never, createBoundary() as never, {} as never,
+            {} as never, undefined, undefined, lifecycle as never);
+        const error = await usecase.execute({ shouldContinue: () => leaseHeld }, TEST_PRINCIPAL).catch((caught: unknown) => caught);
+        expect(error).toMatchObject({ message: "Eformsign document backfill failed for types=01",
+            cause: [expect.objectContaining({ cause: scanError })] });
+    });
+
     it("preserves a successful sweep when the local heal and error capture fail", async () => {
         const client = {
             getInProgressDocumentsPage: jest.fn().mockResolvedValue({ documents: [], total_rows: 0 }),
