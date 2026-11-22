@@ -1617,6 +1617,40 @@ async function bounded<T>(promise: Promise<T>, ms: number): Promise<T> {
         const readState = () => db.service_record_revision_document_state.findUniqueOrThrow({ where: { id: state.id } });
         return { repo, input, job, state, payload, readJob, readState, record };
     }
+    it("keeps an older actionable INITIAL job reachable behind 51 newer report-only INITIAL jobs", async () => {
+        const f = await initialRuntime();
+        await db.eformsign_document_job.update({ where: { id: f.job.id }, data: {
+            completedAt: new Date("2026-01-01"), createdAt: new Date("2026-01-01"),
+        } });
+        await db.eformsign_document_job.createMany({ data: Array.from({ length: 51 }, () => {
+            const revisionId = randomUUID(), requestKey = `service-record-initial-finalization:${revisionId}`;
+            return { branchId: f.input.branchId, clientId: clients[0]!, source: "auto_finalize", jobType: "create_document",
+                requestKey, payloadFingerprint: f.job.payloadFingerprint,
+                payload: { ...f.payload, revisionId, snapshotReference: requestKey,
+                    context: { ...f.payload.context, revisionId }, documentStateId: randomUUID() },
+                status: "failed", progressStep: "sent", completedAt: new Date("2026-02-01"), createdAt: new Date("2026-02-01") };
+        }) });
+        const summary = await f.repo.getSummary(f.input.branchId);
+        const list = await f.repo.listForBranch(f.input.branchId, new Date(0));
+        expect(summary).toMatchObject({ requiresAttentionCount: 52, unresolvedCount: 1, unresolvedJobIds: [f.job.id] });
+        expect(list.requiresAttention).toHaveLength(50);
+        expect(list.requiresAttention[0]).toMatchObject({ id: f.job.id, retryable: true, cancellable: true });
+        expect(summary.unresolvedJobIds.every(id => list.requiresAttention.some(job => job.id === id))).toBe(true);
+        expect(list.requiresAttention.slice(1).every(job => !job.retryable && !job.cancellable)).toBe(true);
+    });
+    it("matches uppercase documentStateId in SQL listing/summary and the UUID retry verifier", async () => {
+        const f = await initialRuntime();
+        // Use alphabetic digits deterministically; randomly generated UUIDs need not contain any.
+        const id = "abcdefab-abcd-4abc-8abc-abcdefabcdef";
+        await db.service_record_revision_document_state.update({ where: { id: f.state.id }, data: { id } });
+        await db.eformsign_document_job.update({ where: { id: f.job.id }, data: { payload: {
+            ...f.payload, documentStateId: id.toUpperCase(),
+        } } });
+        expect(await f.repo.getSummary(f.input.branchId)).toMatchObject({ unresolvedCount: 1, unresolvedJobIds: [f.job.id] });
+        expect((await f.repo.listForBranch(f.input.branchId, new Date(0))).requiresAttention[0])
+            .toMatchObject({ id: f.job.id, retryable: true, cancellable: true });
+        expect(await f.repo.retry(f.input)).toMatchObject({ kind: "retried" });
+    });
     it.each(["SERVICE_RECORD_REVISION_CAPABILITY_UNVERIFIED", "PRE_SEND_RETRY_EXHAUSTED"])("INITIAL %s retry is CAS protected and branch scoped", async code => {
         const f = await initialRuntime("preparing", code, "requires_attention");
         expect(await f.repo.retry({ ...f.input, branchId: branches[1]! })).toEqual({ kind: "not_found" });

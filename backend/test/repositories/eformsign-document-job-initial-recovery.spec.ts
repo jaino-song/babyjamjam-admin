@@ -98,6 +98,19 @@ describe("staff INITIAL recovery", () => {
         expect(INITIAL_FINALIZATION_CANCELLABLE_STATE_STATUSES).toEqual(["capability_unverified", "pending", "processing"]);
         expect(sql.values).toEqual([]);
     });
+    it("matches the UUID state lookup's case-insensitivity without casting malformed JSON", async () => {
+        const stateId = "abcdefab-abcd-4abc-8abc-abcdefabcdef";
+        const f = setup({}, { id: stateId });
+        f.job.payload.documentStateId = stateId.toUpperCase();
+        expect(await f.repo.retry(input)).toMatchObject({ kind: "retried" });
+        expect(f.queries.find(sql => sql.text.includes('FROM "service_record_revision_document_state"'))?.values)
+            .toContain(stateId.toUpperCase());
+        const sql = initialFinalizationCancellableSql();
+        expect(sql.text).toContain("lower(j.payload->>'documentStateId') = s.id::text");
+        expect(sql.text).not.toContain("(j.payload->>'documentStateId')::uuid");
+        expect(sql.text).toContain("to_jsonb(s.revision_id::text) = j.payload->'revisionId'");
+        expect(sql.text).toContain("to_jsonb(s.service_record_case_id::text) = j.payload->'context'->'serviceRecordCaseId'");
+    });
     it.each(["generation", "revisionId"])("preserves a later state with changed %s", async field => {
         const f = setup({ progressStep: "sent" }, { status: "processing", [field]: jobId });
         const before = structuredClone(f.state);
@@ -142,7 +155,7 @@ describe("staff INITIAL recovery", () => {
     });
     it.each(["SERVICE_RECORD_REVISION_CAPABILITY_UNVERIFIED", "PRE_SEND_RETRY_EXHAUSTED"])("listing uses verifier-backed retry flags for %s and no flags on other buckets", async lastErrorCode => {
         const f = setup({ lastErrorCode });
-        const query = jest.fn().mockImplementation(f.tx.$queryRaw).mockResolvedValueOnce([{ ...f.raw(), status: "queued", cancellable: false, retryable: false }])
+        const query = jest.fn().mockImplementation(f.tx.$queryRaw).mockResolvedValueOnce([]).mockResolvedValueOnce([f.raw()]).mockResolvedValueOnce([{ ...f.raw(), status: "queued", cancellable: false, retryable: false }])
             .mockResolvedValueOnce([{ ...f.raw(), cancellable: true, retryable: false }])
             .mockResolvedValueOnce([{ ...f.raw(), status: "completed", cancellable: false, retryable: false }]);
         const repo = new SbEformsignDocumentJobRepository({ ...f.prisma, $queryRaw: query } as never);
@@ -156,7 +169,7 @@ describe("staff INITIAL recovery", () => {
         expect(listed.active[0]).toMatchObject({ retryable: false, cancellable: false });
         expect(listed.recent[0]).toMatchObject({ retryable: false, cancellable: false });
         f.state.status = "processing";
-        query.mockResolvedValueOnce([]).mockResolvedValueOnce([{ ...f.raw(), cancellable: true, retryable: false }]).mockResolvedValueOnce([]);
+        query.mockResolvedValueOnce([]).mockResolvedValueOnce([f.raw()]).mockResolvedValueOnce([]).mockResolvedValueOnce([{ ...f.raw(), cancellable: true, retryable: false }]).mockResolvedValueOnce([]);
         expect((await repo.listForBranch(branchId, new Date(0))).requiresAttention[0]).toMatchObject({ retryable: false, cancellable: true });
     });
     it("treats preparing with processing state as post-dispatch cancellation", async () => {
@@ -171,13 +184,13 @@ describe("staff INITIAL recovery", () => {
         const f = setup();
         const context = { ...f.job.payload.context, ...(variant === "invalid" ? { formVersion: 0 }
             : variant === "branch" ? { branchId: jobId } : { clientId: 8 }) };
-        const query = jest.fn().mockResolvedValueOnce([])
+        const query = jest.fn().mockResolvedValueOnce([]).mockResolvedValueOnce([]).mockResolvedValueOnce([])
             .mockResolvedValueOnce([{ ...f.raw(), payload: { ...f.job.payload, context }, cancellable: true, retryable: true }])
             .mockResolvedValueOnce([]);
         const repo = new SbEformsignDocumentJobRepository({ ...f.prisma, $queryRaw: query } as never);
         expect((await repo.listForBranch(branchId, new Date(0))).requiresAttention[0])
             .toMatchObject({ retryable: false, cancellable: false });
-        expect(query).toHaveBeenCalledTimes(3);
+        expect(query).toHaveBeenCalledTimes(5);
         expect(f.prisma.$transaction).not.toHaveBeenCalled();
     });
     it("summary counts only context-valid actionable INITIAL rows and merges contract ids in time order", async () => {
@@ -194,6 +207,45 @@ describe("staff INITIAL recovery", () => {
         expect(initialSql.values).toContain(branchId);
         expect(initialSql.text).not.toContain("LIMIT");
         expect(f.prisma.$transaction).not.toHaveBeenCalled();
+    });
+    it.each([1, 51])("reserves the list's first slots for the same capped popup ids with %s actionable INITIAL rows", async count => {
+        const f = setup({ progressStep: "sent" });
+        const old = new Date("2026-01-01");
+        const initial = Array.from({ length: count }, (_, index) => ({ ...f.raw(),
+            id: `00000000-0000-4000-8000-${String(index + 100).padStart(12, "0")}`,
+            completed_at: old, created_at: old, cancellable: true, retryable: false }));
+        const invalid = { ...initial[0], id: "00000000-0000-4000-8000-000000000099",
+            payload: { ...f.job.payload, context: { ...f.job.payload.context, formVersion: 0 } } };
+        const reportOnly = Array.from({ length: 51 }, (_, index) => ({ ...f.raw(),
+            id: `00000000-0000-4000-8000-${String(index + 200).padStart(12, "0")}`,
+            completed_at: new Date("2026-02-01"), created_at: new Date("2026-02-01"),
+            payload: invalid.payload, cancellable: false, retryable: false }));
+        const contract = { ...f.raw(), id: "00000000-0000-4000-8000-000000000090",
+            source: "staff", request_key: "contract-recovery", payload: null, completed_at: old, created_at: old, cancellable: true };
+        const expectedIds = [contract.id, ...initial.map(row => row.id)].slice(0, 50);
+        let attentionQuery: Prisma.Sql | undefined;
+        const query = jest.fn(async (sql: Prisma.Sql) => {
+            if (sql.text.includes("AS active_count")) return [{ unresolved_count: 1 }];
+            if (sql.text.includes("SELECT id, completed_at")) return [contract];
+            if (sql.text.includes("SELECT j.id, j.completed_at")) return [...initial, invalid];
+            if (sql.text.includes("AS cancellable") && !sql.text.includes("false AS cancellable")) {
+                attentionQuery = sql;
+                return [...[contract, ...initial].filter(row => expectedIds.includes(row.id)), ...reportOnly].slice(0, 50);
+            }
+            return [];
+        });
+        const repo = new SbEformsignDocumentJobRepository({ ...f.prisma, $queryRaw: query } as never);
+        const summary = await repo.getSummary(branchId);
+        const list = await repo.listForBranch(branchId, new Date(0), 1);
+        expect(summary).toMatchObject({ unresolvedCount: count + 1, unresolvedJobIds: expectedIds });
+        expect(list.requiresAttention).toHaveLength(50);
+        expect(list.requiresAttention.slice(0, expectedIds.length).map(row => row.id)).toEqual(expectedIds);
+        expect(attentionQuery?.text).toMatch(/ORDER BY array_position\(ARRAY\[[\s\S]+?\], j\.id\) ASC NULLS LAST,\s+j\.completed_at DESC NULLS LAST, j\.created_at DESC, j\.id ASC/);
+        expect(attentionQuery?.values).toEqual([branchId, "superseded", ...expectedIds, 50]);
+        // No context-invalid INITIAL row can consume one of the reserved slots.
+        expect(attentionQuery?.values).not.toContain(invalid.id);
+        expect(query.mock.calls.filter(([sql]) => sql.text.includes("SELECT id, completed_at"))
+            .every(([sql]) => sql.values.at(-1) === 50)).toBe(true);
     });
     it("rolls back state requeue when the job CAS loses", async () => {
         const f = setup(), beforeState = structuredClone(f.state);

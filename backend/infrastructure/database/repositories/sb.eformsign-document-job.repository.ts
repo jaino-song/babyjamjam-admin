@@ -162,6 +162,8 @@ function payloadDocumentId(value: Prisma.JsonValue | string | null): string | nu
 const ACTIVE_STATUSES = Prisma.sql`('queued', 'processing', 'reconciling')`;
 const TERMINAL_STATUSES = Prisma.sql`('completed', 'failed')`;
 const RECOVERABLE_STATUSES = Prisma.sql`('failed', 'requires_attention')`;
+const ATTENTION_JOB_LIMIT = 50;
+type SummaryJob = Pick<RawJob, "id" | "completed_at" | "created_at">;
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 // Failed staff jobs are deleted and attention payloads purged this long after completed_at.
 const RECOVERY_RETENTION_MS = 7 * 24 * 60 * 60_000;
@@ -183,6 +185,18 @@ function contractJobSql(alias = ""): Prisma.Sql {
         + ` AND ${column("request_key")} NOT LIKE 'service-record-%'`
         + ` AND (${column("payload")} IS NULL OR NOT (${column("payload")} ? 'kind')))`,
     );
+}
+
+function unresolvedJobSql(alias = ""): Prisma.Sql {
+    const c = (name: string) => Prisma.raw(alias ? `${alias}.${name}` : name);
+    const table = Prisma.raw(alias || "eformsign_document_job");
+    return Prisma.sql`(NOT ${cancelledDocumentJobSql(alias)} AND (
+        (${c("status")} = 'failed' AND ${c("progress_step")} IS DISTINCT FROM ${SUPERSEDED_PROGRESS_STEP}
+            AND (${c("completed_at")} >= now() - interval '7 days'
+                OR EXISTS (SELECT 1 FROM eformsign_contract_authority a WHERE a.creation_job_id = ${table}.id
+                    AND a.branch_id = ${table}.branch_id AND a.client_id = ${table}.client_id AND a.phase <> 'closed')))
+        OR ${c("status")} = 'requires_attention'
+    ))`;
 }
 
 /** SQL display proof. POST additionally locks, validates linked identities and vetoes live claims. */
@@ -1360,14 +1374,7 @@ export class SbEformsignDocumentJobRepository implements IEformsignDocumentJobRe
     }
 
     async getSummary(branchId: string): Promise<EformsignDocumentJobSummary> {
-        const unresolved = Prisma.sql`(NOT ${cancelledDocumentJobSql()} AND (
-            (status = 'failed' AND progress_step IS DISTINCT FROM ${SUPERSEDED_PROGRESS_STEP} AND (completed_at >= now() - interval '7 days'
-                OR EXISTS (SELECT 1 FROM eformsign_contract_authority a WHERE a.creation_job_id = eformsign_document_job.id
-                    AND a.branch_id = eformsign_document_job.branch_id AND a.client_id = eformsign_document_job.client_id AND a.phase <> 'closed')))
-            OR status = 'requires_attention'
-        ))`;
-        type SummaryJob = Pick<RawJob, "id" | "completed_at" | "created_at">;
-        const [rows, unresolvedRows, initialRows] = await Promise.all([
+        const [rows, actionable] = await Promise.all([
             this.prisma.$queryRaw<Array<{
                 active_count: number;
                 attention_count: number;
@@ -1382,14 +1389,28 @@ export class SbEformsignDocumentJobRepository implements IEformsignDocumentJobRe
                              AND progress_step IS DISTINCT FROM ${CANCELLED_PROGRESS_STEP}
                              AND completed_at >= now() - interval '7 days'
                        )::int AS failed_count,
-                       count(*) FILTER (WHERE ${contractJobSql()} AND ${unresolved})::int AS unresolved_count
+                       count(*) FILTER (WHERE ${contractJobSql()} AND ${unresolvedJobSql()})::int AS unresolved_count
                 FROM "eformsign_document_job" WHERE branch_id = ${branchId}::uuid
             `),
+            this.findActionableJobs(branchId),
+        ]);
+        return {
+            activeCount: Number(rows[0]?.active_count ?? 0),
+            requiresAttentionCount: Number(rows[0]?.attention_count ?? 0),
+            failedCount: Number(rows[0]?.failed_count ?? 0),
+            unresolvedCount: Number(rows[0]?.unresolved_count ?? 0) + actionable.initialCount,
+            unresolvedJobIds: actionable.ids,
+        };
+    }
+
+    /** Shared popup/list selection: SQL state binding plus the same TS context proof. */
+    private async findActionableJobs(branchId: string) {
+        const [unresolvedRows, initialRows] = await Promise.all([
             this.prisma.$queryRaw<SummaryJob[]>(Prisma.sql`
                 SELECT id, completed_at, created_at FROM "eformsign_document_job"
-                WHERE branch_id = ${branchId}::uuid AND ${contractJobSql()} AND ${unresolved}
-                ORDER BY completed_at DESC NULLS LAST, created_at DESC
-                LIMIT 50
+                WHERE branch_id = ${branchId}::uuid AND ${contractJobSql()} AND ${unresolvedJobSql()}
+                ORDER BY completed_at DESC NULLS LAST, created_at DESC, id ASC
+                LIMIT ${ATTENTION_JOB_LIMIT}
             `),
             // Retryable INITIAL rows also satisfy cancellation's state binding. Keep the
             // same SQL proof and TS context validation as the listing, without read locks.
@@ -1401,22 +1422,22 @@ export class SbEformsignDocumentJobRepository implements IEformsignDocumentJobRe
         ]);
         const actionableInitial = initialRows.filter(row => initialRecoveryContext(row) !== null);
         const time = (value: RawJob["completed_at"]) => value === null ? Number.NEGATIVE_INFINITY : new Date(value).getTime();
-        const unresolvedJobs = [...unresolvedRows, ...actionableInitial].sort((left, right) => {
+        const jobs = [...unresolvedRows, ...actionableInitial].sort((left, right) => {
             const completed = time(right.completed_at) - time(left.completed_at);
-            return completed || time(right.created_at) - time(left.created_at);
+            const created = time(right.created_at) - time(left.created_at);
+            return completed || created || (left.id < right.id ? -1 : left.id > right.id ? 1 : 0);
         });
-        return {
-            activeCount: Number(rows[0]?.active_count ?? 0),
-            requiresAttentionCount: Number(rows[0]?.attention_count ?? 0),
-            failedCount: Number(rows[0]?.failed_count ?? 0),
-            unresolvedCount: Number(rows[0]?.unresolved_count ?? 0) + actionableInitial.length,
-            unresolvedJobIds: unresolvedJobs.slice(0, 50).map((row) => row.id),
-        };
+        return { ids: jobs.slice(0, ATTENTION_JOB_LIMIT).map(row => row.id), initialCount: actionableInitial.length };
     }
 
     async listForBranch(branchId: string, terminalSince: Date, terminalLimit = 50): Promise<EformsignDocumentJobList> {
         const limit = Math.max(1, Math.min(terminalLimit, 50));
         const contract = contractJobSql("j");
+        const actionable = await this.findActionableJobs(branchId);
+        // Preserve the popup's exact order, including timestamp ties after JS date decoding.
+        const attentionOrder = actionable.ids.length
+            ? Prisma.sql`array_position(ARRAY[${Prisma.join(actionable.ids.map(id => Prisma.sql`${id}::uuid`))}], j.id)`
+            : Prisma.sql`NULL::int`;
         const [active, requiresAttention, recent] = await Promise.all([
             this.prisma.$queryRaw<RawJob[]>(Prisma.sql`
                 SELECT j.*, false AS cancellable, false AS retryable, c.name AS client_name FROM "eformsign_document_job" j
@@ -1438,8 +1459,9 @@ export class SbEformsignDocumentJobRepository implements IEformsignDocumentJobRe
                           OR EXISTS (SELECT 1 FROM eformsign_contract_authority a WHERE a.creation_job_id = j.id AND a.branch_id = j.branch_id
                               AND a.client_id = j.client_id AND a.phase <> 'closed')))
                   )
-                ORDER BY j.completed_at DESC NULLS LAST, j.created_at DESC
-                LIMIT 50
+                ORDER BY ${attentionOrder} ASC NULLS LAST,
+                    j.completed_at DESC NULLS LAST, j.created_at DESC, j.id ASC
+                LIMIT ${ATTENTION_JOB_LIMIT}
             `),
             this.prisma.$queryRaw<RawJob[]>(Prisma.sql`
                 SELECT j.*, false AS cancellable, false AS retryable, c.name AS client_name FROM "eformsign_document_job" j

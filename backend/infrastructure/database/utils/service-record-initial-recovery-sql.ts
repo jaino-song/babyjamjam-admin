@@ -38,13 +38,16 @@ export function initialFinalizationRetryCandidateSql(alias = ""): Prisma.Sql {
         AND ${c("last_error_code")} IN ('SERVICE_RECORD_REVISION_CAPABILITY_UNVERIFIED', 'PRE_SEND_RETRY_EXHAUSTED'))`;
 }
 
-/** SQL display binding for INITIAL cancel; POST repeats this under the common owning locks. */
+/** SQL display binding for INITIAL cancel; POST repeats this under the common owning locks.
+ * documentStateId is looked up as a UUID by POST; normalize its text without casting untrusted JSON.
+ * Case/revision/generation remain exact text bindings, matching their TS comparisons.
+ */
 export function initialFinalizationCancellableSql(): Prisma.Sql {
     return Prisma.sql`(${initialFinalizationJobSql("j")}
         AND j.status IN ('failed', 'requires_attention') AND j.lease_token IS NULL
         AND NOT ${cancelledDocumentJobSql("j")}
         AND EXISTS (SELECT 1 FROM service_record_revision_document_state s
-            WHERE to_jsonb(s.id::text) = j.payload->'documentStateId'
+            WHERE lower(j.payload->>'documentStateId') = s.id::text
               AND s.branch_id = j.branch_id AND s.client_id = j.client_id
               AND s.status IN ('capability_unverified', 'pending', 'processing')
               AND to_jsonb(s.service_record_case_id::text) = j.payload->'context'->'serviceRecordCaseId'

@@ -461,69 +461,74 @@ export class ServiceRecordFinalizationService {
 
         let finalizedCount = 0;
         for (const candidate of candidates) {
-            let claim: Awaited<ReturnType<ServiceRecordFinalizationService["claimFinalizationCase"]>>;
             try {
-                claim = await this.claimFinalizationCase(candidate.id, candidate.branchId, referenceDate);
-            } catch (error) {
-                this.logger.error({ message: "Service record finalization claim failed", caseId: candidate.id });
-                captureServiceRecordError(error, { operation: "auto-finalize", handled: true, caseId: candidate.id });
-                continue;
-            }
-            if (!claim.claimed) continue;
-
-            // Last look before the outbound call: the client can be deleted
-            // between the claim and the send. Give the claim back untouched so
-            // the case is neither failed (which would retry into a send) nor
-            // left in FINALIZING.
-            if (await this.isClientTombstoned(candidate.id)) {
-                await this.releaseClaim(candidate);
-                continue;
-            }
-
-            try {
-                const result = await this.createSnapshotUsecase.executeCase(
-                    candidate.branchId,
-                    candidate.id,
-                    createEformsignWorkerPrincipal(candidate.branchId),
-                );
-                if (result.chunkCount < 1 || result.documentIds.length !== result.chunkCount) {
-                    throw new Error("Snapshot finalization returned an incomplete document set");
+                let claim: Awaited<ReturnType<ServiceRecordFinalizationService["claimFinalizationCase"]>>;
+                try {
+                    claim = await this.claimFinalizationCase(candidate.id, candidate.branchId, referenceDate);
+                } catch (error) {
+                    this.logger.error({ message: "Service record finalization claim failed", caseId: candidate.id });
+                    captureServiceRecordError(error, { operation: "auto-finalize", handled: true, caseId: candidate.id });
+                    continue;
                 }
-                await this.prisma.$transaction(async (tx) => {
-                    const updated = await tx.service_record_case.updateMany({
-                        where: {
-                            id: candidate.id,
-                            status: SERVICE_RECORD_CASE_STATUS.FINALIZING,
-                        },
-                        data: {
-                            status: SERVICE_RECORD_CASE_STATUS.DOCUMENTS_CREATED,
-                            finalizedAt: new Date(),
-                            nextAttemptAt: null,
-                            lastError: null,
-                            version: { increment: 1 },
-                        },
-                    });
-                    if (updated.count !== 1) {
-                        throw new Error("Service record finalization claim was lost");
+                if (!claim.claimed) continue;
+
+                // Last look before the outbound call: the client can be deleted
+                // between the claim and the send. Give the claim back untouched so
+                // the case is neither failed (which would retry into a send) nor
+                // left in FINALIZING.
+                if (await this.isClientTombstoned(candidate.id)) {
+                    await this.releaseClaim(candidate);
+                    continue;
+                }
+
+                try {
+                    const result = await this.createSnapshotUsecase.executeCase(
+                        candidate.branchId,
+                        candidate.id,
+                        createEformsignWorkerPrincipal(candidate.branchId),
+                    );
+                    if (result.chunkCount < 1 || result.documentIds.length !== result.chunkCount) {
+                        throw new Error("Snapshot finalization returned an incomplete document set");
                     }
-                    await tx.service_record_token.updateMany({
-                        where: {
-                            serviceRecordCaseId: candidate.id,
-                            active: true,
-                        },
-                        data: { active: false, revokedAt: new Date() },
+                    await this.prisma.$transaction(async (tx) => {
+                        const updated = await tx.service_record_case.updateMany({
+                            where: {
+                                id: candidate.id,
+                                status: SERVICE_RECORD_CASE_STATUS.FINALIZING,
+                            },
+                            data: {
+                                status: SERVICE_RECORD_CASE_STATUS.DOCUMENTS_CREATED,
+                                finalizedAt: new Date(),
+                                nextAttemptAt: null,
+                                lastError: null,
+                                version: { increment: 1 },
+                            },
+                        });
+                        if (updated.count !== 1) {
+                            throw new Error("Service record finalization claim was lost");
+                        }
+                        await tx.service_record_token.updateMany({
+                            where: {
+                                serviceRecordCaseId: candidate.id,
+                                active: true,
+                            },
+                            data: { active: false, revokedAt: new Date() },
+                        });
                     });
-                });
-                finalizedCount += 1;
-                this.logger.log(
-                    `Service record finalized: case=${candidate.id}, documents=${result.documentIds.join(",")}`,
-                );
+                    finalizedCount += 1;
+                    this.logger.log(
+                        `Service record finalized: case=${candidate.id}, documents=${result.documentIds.join(",")}`,
+                    );
+                } catch (error) {
+                    await this.recordFailure(
+                        candidate.id,
+                        claim.attempts,
+                        error,
+                    );
+                }
             } catch (error) {
-                await this.recordFailure(
-                    candidate.id,
-                    claim.attempts,
-                    error,
-                );
+                this.logger.error({ message: "Service record finalization candidate failed", caseId: candidate.id });
+                captureServiceRecordError(error, { operation: "auto-finalize", handled: true, caseId: candidate.id });
             }
         }
 
