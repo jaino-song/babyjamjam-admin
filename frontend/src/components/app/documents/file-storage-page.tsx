@@ -254,7 +254,7 @@ export function FileStoragePage() {
 
         {isDocumentsLoading ? (
           <DetailSkeleton
-            name="files-detail-skeleton"
+            name="desktop_files_page_split-layout_track_panel_detail-skeleton"
             headerActions={3}
             sections={[
               { titleWidth: "w-16", rows: ["w-1/2", "w-2/3", "w-1/3", "w-1/2", "w-1/2"] },
@@ -271,7 +271,7 @@ export function FileStoragePage() {
             onDelete={() => setDeleteDoc(selectedDocument)}
           />
         ) : (
-          <EmptyState icon={FolderOpen} message="파일을 선택하면 상세 정보가 표시됩니다" />
+          <EmptyState data-component="desktop_files_page_split-layout_track_panel_detail-panel" icon={FolderOpen} message="파일을 선택하면 상세 정보가 표시됩니다" />
         )}
       </SplitLayout>
 
@@ -382,10 +382,10 @@ function FileDetail({ document: doc, getCategoryLabel, onPreview, onEdit, onDele
   onDelete: () => void;
 }) {
   return (
-    <DetailPanel data-component="desktop_files_page_split-layout_detail-panel"
+    <DetailPanel data-component="desktop_files_page_split-layout_track_panel_detail-panel"
       title={doc.name}
       badges={
-        <div data-component="desktop_files_page_split-layout_detail-panel_visibility-badges" className="flex flex-wrap items-center gap-2">
+        <div data-component="desktop_files_page_split-layout_track_panel_detail-panel_header_title-group_title-row_visibility-badges" className="flex flex-wrap items-center gap-2">
           <span className="inline-flex items-center rounded-[50px] px-3 py-1 text-[0.65rem] font-semibold bg-v3-primary-light text-v3-primary">
             {getCategoryLabel(doc)}
           </span>
@@ -396,11 +396,11 @@ function FileDetail({ document: doc, getCategoryLabel, onPreview, onEdit, onDele
       }
       subtitle={<>등록일: {formatDate(doc.createdAt)}</>}
       trailing={
-        <div data-component="desktop_files_page_split-layout_detail-panel_files-detail-actions" className="flex items-center gap-2">
+        <div data-component="desktop_files_page_split-layout_track_panel_detail-panel_header_files-detail-actions" className="flex items-center gap-2">
           <Button
             variant="positive"
             size="sm"
-            data-component="desktop_files_page_split-layout_detail-panel_files-detail-actions_contracts-detail-preview-trigger"
+            data-component="desktop_files_page_split-layout_track_panel_detail-panel_header_files-detail-actions_contracts-detail-preview-trigger"
             onClick={onPreview}
           >
             <Eye className="h-4 w-4" />
@@ -414,7 +414,7 @@ function FileDetail({ document: doc, getCategoryLabel, onPreview, onEdit, onDele
                 variant="ghost"
                 size="icon"
                 aria-label="문서 작업 더보기"
-                data-component="desktop_files_page_split-layout_detail-panel_files-detail-actions_more"
+                data-component="desktop_files_page_split-layout_track_panel_detail-panel_header_files-detail-actions_more"
                 className="[&_svg]:size-5"
               >
                 <MoreVertical className="w-5 h-5 text-v3-text-muted" />
@@ -434,26 +434,26 @@ function FileDetail({ document: doc, getCategoryLabel, onPreview, onEdit, onDele
         </div>
       }
     >
-      <div data-component="desktop_files_page_split-layout_detail-panel_files-detail-content" className="space-y-5">
-        <InfoCard data-component="desktop_files_page_detail-panel_info-card" title="파일 정보">
-          <InfoRow label="파일명" value={doc.name} />
-          <InfoRow label="형식" value={getFileFormatLabel(doc).toUpperCase()} />
-          <InfoRow label="카테고리" value={getCategoryLabel(doc)} />
-          <InfoRow label="등록일" value={formatDate(doc.createdAt)} />
-          <InfoRow label="수정일" value={formatDate(doc.updatedAt)} />
-          <InfoRow label="공개 범위" value={doc.visibilityScope === "all_branches" ? "모든 지점" : "현재 지점"} />
-          <InfoRow label="관리 권한" value={doc.canManage ? "수정·삭제 가능" : "열람만 가능"} />
+      <div data-component="desktop_files_page_split-layout_track_panel_detail-panel_main_scroll-content_files-detail-content" className="space-y-5">
+        <InfoCard data-component="desktop_files_page_split-layout_track_panel_detail-panel_main_scroll-content_files-detail-content_info-card" title="파일 정보">
+          <InfoRow data-component="desktop_files_page_split-layout_track_panel_detail-panel_main_scroll-content_files-detail-content_info-card_body_row" label="파일명" value={doc.name} />
+          <InfoRow data-component="desktop_files_page_split-layout_track_panel_detail-panel_main_scroll-content_files-detail-content_info-card_body_row" label="형식" value={getFileFormatLabel(doc).toUpperCase()} />
+          <InfoRow data-component="desktop_files_page_split-layout_track_panel_detail-panel_main_scroll-content_files-detail-content_info-card_body_row" label="카테고리" value={getCategoryLabel(doc)} />
+          <InfoRow data-component="desktop_files_page_split-layout_track_panel_detail-panel_main_scroll-content_files-detail-content_info-card_body_row" label="등록일" value={formatDate(doc.createdAt)} />
+          <InfoRow data-component="desktop_files_page_split-layout_track_panel_detail-panel_main_scroll-content_files-detail-content_info-card_body_row" label="수정일" value={formatDate(doc.updatedAt)} />
+          <InfoRow data-component="desktop_files_page_split-layout_track_panel_detail-panel_main_scroll-content_files-detail-content_info-card_body_row" label="공개 범위" value={doc.visibilityScope === "all_branches" ? "모든 지점" : "현재 지점"} />
+          <InfoRow data-component="desktop_files_page_split-layout_track_panel_detail-panel_main_scroll-content_files-detail-content_info-card_body_row" label="관리 권한" value={doc.canManage ? "수정·삭제 가능" : "열람만 가능"} />
         </InfoCard>
 
         {doc.description && (
-          <InfoCard data-component="desktop_files_page_detail-panel_info-card-2" title="설명">
+          <InfoCard data-component="desktop_files_page_split-layout_track_panel_detail-panel_main_scroll-content_files-detail-content_info-card-2" title="설명">
             <p className="text-[0.8rem] text-v3-text">{doc.description}</p>
           </InfoCard>
         )}
 
         {doc.tags && doc.tags.length > 0 && (
-          <InfoCard data-component="desktop_files_page_detail-panel_info-card-3" title="태그">
-            <div data-component="desktop_files_page_detail-panel_info-card-3_files-detail-tags" className="flex flex-wrap gap-2">
+          <InfoCard data-component="desktop_files_page_split-layout_track_panel_detail-panel_main_scroll-content_files-detail-content_info-card-3" title="태그">
+            <div data-component="desktop_files_page_split-layout_track_panel_detail-panel_main_scroll-content_files-detail-content_info-card-3_body_files-detail-tags" className="flex flex-wrap gap-2">
               {doc.tags.map(tag => (
                 <span key={tag} className="inline-flex items-center rounded-[50px] px-3 py-1 text-[0.65rem] font-semibold bg-v3-primary-light text-v3-primary">
                   {tag}

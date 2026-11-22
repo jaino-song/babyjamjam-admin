@@ -173,7 +173,7 @@ export default function AdminFeedbackPage() {
 
         {feedbackLoading ? (
           <DetailSkeleton
-            name="admin-detail-skeleton"
+            name="desktop_admin_page_split-layout_track_panel_detail-skeleton"
             headerActions={0}
             sections={[
               { titleWidth: 'w-16', rows: ['w-1/2', 'w-2/3', 'w-1/3', 'w-1/2'] },
@@ -183,7 +183,7 @@ export default function AdminFeedbackPage() {
         ) : selectedFeedback ? (
           <FeedbackDetail feedback={selectedFeedback} formatDate={formatDate} />
         ) : (
-          <EmptyState icon={MessageSquare} message="피드백을 선택하면 상세 정보가 표시됩니다" />
+          <EmptyState data-component="desktop_admin_page_split-layout_track_panel_detail-panel" icon={MessageSquare} message="피드백을 선택하면 상세 정보가 표시됩니다" />
         )}
       </SplitLayout>
     </PageSection>
@@ -206,7 +206,7 @@ function FeedbackDetail({ feedback, formatDate }: { feedback: FeedbackItem; form
   const detailLoading = detailQueryLoading || (detailPaused && !hasDetail);
 
   return (
-    <DetailPanel data-component="desktop_admin_page_split-layout_detail-panel"
+    <DetailPanel data-component="desktop_admin_page_split-layout_track_panel_detail-panel"
       title={feedback.type === 'positive' ? '긍정적 피드백' : '부정적 피드백'}
       badges={
         <span className={cn(
@@ -220,17 +220,17 @@ function FeedbackDetail({ feedback, formatDate }: { feedback: FeedbackItem; form
       }
       subtitle={<>작성일: {formatDate(feedback.createdAt)}</>}
     >
-      <div data-component="desktop_admin_page_split-layout_detail-panel_admin-detail-content" className="space-y-5">
-        <InfoCard data-component="desktop_admin_page_detail-panel_info-card" title="피드백 정보">
-          <InfoRow label="유형" value={feedback.type === 'positive' ? '긍정적' : '부정적'} />
-          <InfoRow label="사용자" value={feedback.user.name || feedback.user.email || '익명'} />
-          <InfoRow label="날짜" value={formatDate(feedback.createdAt)} />
-          <InfoRow label="코멘트" value={feedback.comment || '-'} />
+      <div data-component="desktop_admin_page_split-layout_track_panel_detail-panel_main_scroll-content_admin-detail-content" className="space-y-5">
+        <InfoCard data-component="desktop_admin_page_split-layout_track_panel_detail-panel_main_scroll-content_admin-detail-content_info-card" title="피드백 정보">
+          <InfoRow data-component="desktop_admin_page_split-layout_track_panel_detail-panel_main_scroll-content_admin-detail-content_info-card_body_row" label="유형" value={feedback.type === 'positive' ? '긍정적' : '부정적'} />
+          <InfoRow data-component="desktop_admin_page_split-layout_track_panel_detail-panel_main_scroll-content_admin-detail-content_info-card_body_row" label="사용자" value={feedback.user.name || feedback.user.email || '익명'} />
+          <InfoRow data-component="desktop_admin_page_split-layout_track_panel_detail-panel_main_scroll-content_admin-detail-content_info-card_body_row" label="날짜" value={formatDate(feedback.createdAt)} />
+          <InfoRow data-component="desktop_admin_page_split-layout_track_panel_detail-panel_main_scroll-content_admin-detail-content_info-card_body_row" label="코멘트" value={feedback.comment || '-'} />
         </InfoCard>
 
         {detailError && hasDetail ? (
           <QueryErrorState
-            dataComponent="desktop_admin_page_detail-panel_detail-load-error"
+            dataComponent="desktop_admin_page_split-layout_track_panel_detail-panel_main_scroll-content_admin-detail-content_detail-load-error"
             size="inline"
             title="최신 정보를 불러오지 못했습니다"
             onRetry={() => void refetchDetail()}
@@ -239,10 +239,10 @@ function FeedbackDetail({ feedback, formatDate }: { feedback: FeedbackItem; form
         ) : null}
 
         {detailLoading ? (
-          <InfoCard data-component="desktop_admin_page_detail-panel_info-card-2" title="대화 내역">
-            <div data-component="desktop_admin_page_detail-panel_info-card-2_loading-messages" className="space-y-3">
+          <InfoCard data-component="desktop_admin_page_split-layout_track_panel_detail-panel_main_scroll-content_admin-detail-content_info-card-2" title="대화 내역">
+            <div data-component="desktop_admin_page_split-layout_track_panel_detail-panel_main_scroll-content_admin-detail-content_info-card-2_body_loading-messages" className="space-y-3">
               {[1, 2, 3].map(i => (
-                <div key={i} data-component="desktop_admin_page_detail-panel_info-card-2_loading-messages_message" className="space-y-2">
+                <div key={i} data-component="desktop_admin_page_split-layout_track_panel_detail-panel_main_scroll-content_admin-detail-content_info-card-2_body_loading-messages_message" className="space-y-2">
                   <Skeleton className="h-3 w-20 bg-v3-dim-white" />
                   <Skeleton className="h-12 w-full bg-v3-dim-white rounded-[14px]" />
                 </div>
@@ -251,22 +251,22 @@ function FeedbackDetail({ feedback, formatDate }: { feedback: FeedbackItem; form
           </InfoCard>
         ) : detailError && !hasDetail ? (
           <QueryErrorState
-            dataComponent="desktop_admin_page_detail-panel_detail-load-error"
+            dataComponent="desktop_admin_page_split-layout_track_panel_detail-panel_main_scroll-content_admin-detail-content_detail-load-error"
             size="inline"
             title="대화 내역을 불러오지 못했습니다"
             onRetry={() => void refetchDetail()}
             isRetrying={detailFetching}
           />
         ) : detail?.session?.messages && detail.session.messages.length > 0 ? (
-          <InfoCard data-component="desktop_admin_page_detail-panel_info-card-3" title="대화 내역">
-            <div data-component="desktop_admin_page_detail-panel_info-card-3_messages" className="space-y-3">
+          <InfoCard data-component="desktop_admin_page_split-layout_track_panel_detail-panel_main_scroll-content_admin-detail-content_info-card-3" title="대화 내역">
+            <div data-component="desktop_admin_page_split-layout_track_panel_detail-panel_main_scroll-content_admin-detail-content_info-card-3_body_messages" className="space-y-3">
               {detail.session.messages.map((message: SessionMessage) => {
                 const isHighlighted = message.id === detail.message.id;
                 const isUser = message.role === 'user';
 
                 return (
                   <div
-                    data-component="desktop_admin_page_detail-panel_info-card-3_messages_card"
+                    data-component="desktop_admin_page_split-layout_track_panel_detail-panel_main_scroll-content_admin-detail-content_info-card-3_body_messages_card"
                     key={message.id}
                     className={cn(
                       'rounded-[14px] p-3 text-[0.8rem]',
@@ -277,7 +277,7 @@ function FeedbackDetail({ feedback, formatDate }: { feedback: FeedbackItem; form
                           : 'bg-v3-dim-white'
                     )}
                   >
-                     <div data-component="desktop_admin_page_detail-panel_info-card-3_messages_card_meta" className="flex items-center gap-2 mb-1.5">
+                     <div data-component="desktop_admin_page_split-layout_track_panel_detail-panel_main_scroll-content_admin-detail-content_info-card-3_body_messages_card_meta" className="flex items-center gap-2 mb-1.5">
                       <span className={cn(
                         'text-[0.7rem] font-semibold',
                         isHighlighted ? 'text-amber-600' : isUser ? 'text-v3-primary' : 'text-v3-text-muted'
@@ -294,7 +294,7 @@ function FeedbackDetail({ feedback, formatDate }: { feedback: FeedbackItem; form
                     {isUser ? (
                       <p className="text-v3-text whitespace-pre-wrap break-words">{message.content}</p>
                     ) : (
-                       <div data-component="desktop_admin_page_detail-panel_info-card-3_messages_card_content" className="prose prose-sm max-w-none text-v3-text">
+                       <div data-component="desktop_admin_page_split-layout_track_panel_detail-panel_main_scroll-content_admin-detail-content_info-card-3_body_messages_card_content" className="prose prose-sm max-w-none text-v3-text">
                         <ReactMarkdown
                           remarkPlugins={[remarkGfm]}
                           components={{
