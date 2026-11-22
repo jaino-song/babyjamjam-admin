@@ -1,5 +1,6 @@
 import { CreateAndSendServiceRecordSnapshotUsecase } from "application/usecases/eformsign-doc/create-and-send-service-record-snapshot.usecase";
-import type { ServiceRecordRevisionDispatchContext } from "@babyjamjam/shared/types/service-record";
+import type { ServiceRecordRevisionDispatchContext, ServiceRecordRevisionGenerationInput } from "@babyjamjam/shared/types/service-record";
+import { createEformsignWorkerPrincipal } from "application/services/eformsign-credential-boundary.service";
 import { ServiceRecordFinalizationService } from "application/services/service-record-finalization.service";
 import type { EformsignDocumentJobService } from "application/services/eformsign-document-job.service";
 import { KR_BUILTIN_CALENDAR } from "domain/utils/business-days";
@@ -1972,8 +1973,8 @@ async function bounded<T>(promise: Promise<T>, ms: number): Promise<T> {
         const title = CreateAndSendServiceRecordSnapshotUsecase.prototype as unknown as {
             revisionDocumentName: (name: string, caseId: string, revision: number, version: number, index: number, count: number) => string;
         };
-        const gen1Title = title.revisionDocumentName("Synthetic", f.record.id, 1, 3, 1, 1);
-        const gen2Title = title.revisionDocumentName("Synthetic", f.record.id, 1, 4, 1, 1);
+        const gen1Title = title.revisionDocumentName("Synthetic authority PG", f.record.id, 1, 3, 1, 1);
+        const gen2Title = title.revisionDocumentName("Synthetic authority PG", f.record.id, 1, 4, 1, 1);
         expect(gen2Title).not.toBe(gen1Title);
         expect(gen2Title).toContain(`-r1-v4]`);
         await db.eformsign_document_job.update({ where: { id: result.jobId }, data: { nextAttemptAt: new Date(0) } });
@@ -1981,21 +1982,38 @@ async function bounded<T>(promise: Promise<T>, ms: number): Promise<T> {
         expect(claimed?.leaseToken).toEqual(expect.any(String));
         expect(await f.repo.authorizeForDispatch({ jobId: result.jobId, leaseToken: claimed.leaseToken!,
             expectedContext: claimed.payload!["context"] as ServiceRecordRevisionDispatchContext })).toMatchObject({ kind: "allow" });
-        const documentId = documents[2]!, version = new Date("2026-09-01T00:00:00Z");
-        const doc = await db.eformsign_doc.update({ where: { documentId }, data: {
-            branchId: f.branchId, clientId: f.state.clientId, serviceRecordCaseId: f.record.id, revisionId: f.revisionId,
-            documentKind: "service_record_snapshot", snapshotVersion: 4, snapshotChunkIndex: 1, statusType: "070",
-            permanentPurgeRequestedAt: null, voidedAt: null,
-        } });
-        await db.service_record_snapshot_chunk.create({ data: { branchId: f.branchId, serviceRecordCaseId: f.record.id,
-            revisionId: f.revisionId, snapshotVersion: 4, chunkIndex: 1, chunkCount: 1, firstSessionIndex: 1, lastSessionIndex: 1,
-            employeeNameSnapshot: "Synthetic PG provider", sourceHash: result.state.inputFingerprint,
-            status: "CREATED", eformsignDocumentId: documentId } });
-        expect(await new ServiceRecordEditRepository(db as unknown as PrismaService).recordInitialFinalizationDocumentsCreated({
-            branchId: f.branchId, clientId: f.state.clientId, serviceRecordCaseId: f.record.id,
-            revisionId: f.revisionId, revisionNumber: 1, documentStateId: result.state.id, generation: result.state.generation,
-            documentVersion: 4, chunkCount: 1, documentIds: [documentId],
-        })).toBe(true);
+        const documentId = randomUUID(), version = new Date("2026-09-01T00:00:00Z");
+        documents.push(documentId);
+        const provider = {
+            getTemplateReviewer: jest.fn().mockResolvedValue({ name: "Synthetic reviewer", id: "reviewer@example.com" }),
+            createDocument: jest.fn().mockResolvedValue({ documentId, status: "pending" }),
+            findDocumentsByTitle: jest.fn().mockResolvedValue([]),
+        };
+        const credentials = { withCredentials: jest.fn(async (_principal: unknown, _capability: unknown,
+            operation: (value: { accessToken: string; refreshToken: string }) => Promise<unknown>) =>
+            operation({ accessToken: "synthetic", refreshToken: "synthetic" })) };
+        const renderer = new CreateAndSendServiceRecordSnapshotUsecase(provider as never,
+            db as unknown as PrismaService, credentials as never,
+            { get: (key: string) => key === "EFORMSIGN_SERVICE_RECORD_TEMPLATE_ID" ? "synthetic-template" : undefined } as never,
+            new ServiceRecordEditRepository(db as unknown as PrismaService));
+        // Consume the claimed frozen envelope, with the worker's post-authorization sync status.
+        const { context, ...generationInput } = claimed.payload as unknown as
+            Omit<ServiceRecordRevisionGenerationInput, keyof ServiceRecordRevisionDispatchContext>
+            & { context: ServiceRecordRevisionDispatchContext };
+        expect(generationInput.snapshotReference).toBe(`service-record-initial-finalization:${f.revisionId}:${result.state.generation}`);
+        expect(claimed.requestKey).toBe(generationInput.snapshotReference);
+        expect(await renderer.executeRevision({ ...context, ...generationInput, documentSyncStatus: "pending" },
+            createEformsignWorkerPrincipal(f.branchId))).toEqual({ documentIds: [documentId], documentVersion: 4, chunkCount: 1 });
+        expect(provider.createDocument).toHaveBeenCalledTimes(1);
+        expect(provider.createDocument).toHaveBeenCalledWith("synthetic", expect.objectContaining({
+            documentName: gen2Title, idempotencyKey: `service-record-revision:${result.state.generation}:v4:c1`,
+        }));
+        const doc = await db.eformsign_doc.findUniqueOrThrow({ where: { documentId } });
+        expect(doc).toMatchObject({ revisionId: f.revisionId, snapshotVersion: 4, statusType: "070" });
+        expect(await db.service_record_snapshot_chunk.findMany({ where: { revisionId: f.revisionId, snapshotVersion: 4 } }))
+            .toEqual([expect.objectContaining({ status: "CREATED", eformsignDocumentId: documentId })]);
+        expect(await db.service_record_revision_document_state.findUniqueOrThrow({ where: { id: result.state.id } }))
+            .toMatchObject({ status: "processing", step: "documents_created" });
         expect(await f.readCase()).toMatchObject({ status: "DOCUMENTS_CREATED" });
         expect(await f.repo.markCompleted(result.jobId, claimed.leaseToken!, documentId)).toMatchObject({ status: "completed" });
         await db.eformsign_doc.update({ where: { documentId }, data: { statusType: "003", syncStatus: "ready",
