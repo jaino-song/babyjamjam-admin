@@ -11,6 +11,7 @@ const { O_RDONLY, O_DIRECTORY, O_NOFOLLOW, O_NONBLOCK, O_NOATIME } = fs.constant
 const directoryFlags = O_RDONLY | O_DIRECTORY | O_NOFOLLOW;
 const fileFlags = O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_NOATIME;
 const statOptions = { bigint: true };
+const temporaryParents = ['/tmp', '/var/tmp'];
 const uid = BigInt(process.getuid?.() ?? 0);
 const application = dirname(fileURLToPath(import.meta.url));
 const mode = (info) => Number(info.mode & 0o7777n);
@@ -110,15 +111,8 @@ function checkScope(target, home, protectedPaths) {
 // Each path component below / is reached from a retained no-follow directory FD.
 const ref = (entry) => `/proc/self/fd/${entry.fd}`;
 
-function safeDirectory(path, info) {
-    if (!info?.isDirectory() || (info.uid !== uid && info.uid !== 0n)) refuse('unsafe_directory');
-    // Standard sticky temporary parents protect their named children from other users.
-    if (['/tmp', '/var/tmp'].includes(path) && info.uid === 0n && mode(info) === 0o1777) return;
-    if (mode(info) & 0o7022) refuse('unsafe_directory');
-}
-
 function unchanged(before, after) {
-    return after && sameInode(before, after) && before.uid === after.uid && before.mode === after.mode
+    return after && sameInode(before, after) && before.uid === after.uid && before.gid === after.gid && before.mode === after.mode
         && (!before.isFile() || (before.nlink === after.nlink && before.size === after.size
             && before.mtimeNs === after.mtimeNs && before.ctimeNs === after.ctimeNs));
 }
@@ -129,9 +123,23 @@ function main(report) {
     }
     const options = args();
     const home = absolute(homedir());
+    const operator = userInfo();
+    const knownHome = home === operator.homedir || temporaryParents.includes(dirname(home));
+    const primaryGid = BigInt(operator.gid);
     const lock = absolute(timerLockDirectory());
     const entries = new Map();
     const fds = [];
+    const safeDirectory = (path, info, ancestor) => {
+        if (!info?.isDirectory() || (info.uid !== uid && info.uid !== 0n)) refuse('unsafe_directory');
+        const permissions = mode(info);
+        // Standard sticky temporary parents protect their named children from other users.
+        if (temporaryParents.includes(path) && info.uid === 0n && permissions === 0o1777) return;
+        if (!(permissions & 0o7022)) return;
+        // HOME must already have passed the strict walk and be owned by the operator.
+        if (ancestor && permissions === 0o775 && info.uid === uid && info.gid === primaryGid
+            && knownHome && path !== home && within(home, path) && entries.get(home)?.info?.uid === uid) return;
+        refuse('unsafe_directory');
+    };
     const inspect = (path, name, validate, flags, optional = false) => {
         const info = lstat(name);
         if (!info && !optional) refuse('missing_required_entry');
@@ -145,17 +153,17 @@ function main(report) {
         entries.set(path, entry);
         return entry;
     };
-    const directory = (path, optional = false) => {
+    const directory = (path, optional = false, ancestor = false) => {
         if (entries.has(path)) {
             const entry = entries.get(path);
-            if (entry.info) safeDirectory(path, entry.info);
+            if (entry.info) safeDirectory(path, entry.info, ancestor);
             else if (!optional) refuse('missing_required_entry');
             return entry;
         }
-        const parent = path === '/' ? null : directory(dirname(path), optional);
+        const parent = path === '/' ? null : directory(dirname(path), optional, true);
         if (parent && !parent.info) return parent;
         return inspect(path, parent ? ref(parent) + '/' + path.split('/').at(-1) : '/',
-            (info) => safeDirectory(path, info), directoryFlags, optional);
+            (info) => safeDirectory(path, info, ancestor), directoryFlags, optional);
     };
     const child = (parent, name, flags, validate, optional = false) => inspect(
         resolve(parent.path, name), ref(parent) + '/' + name, validate, flags, optional);

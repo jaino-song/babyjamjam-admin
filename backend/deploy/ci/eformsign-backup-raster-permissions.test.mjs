@@ -2,7 +2,8 @@ import assert from 'node:assert/strict';
 import { execFile, spawn } from 'node:child_process';
 import { once } from 'node:events';
 import * as fs from 'node:fs/promises';
-import { basename, join } from 'node:path';
+import { userInfo } from 'node:os';
+import { basename, dirname, join } from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
@@ -24,17 +25,27 @@ import promises from 'node:fs/promises';
 import { syncBuiltinESMExports } from 'node:module';
 const { readFileSync, realpathSync, openSync } = fs;
 const { readFile, open } = promises;
-function token(path) {
+function observeRead(path) {
     const name = typeof path === 'number' ? realpathSync('/proc/self/fd/' + path) : String(path);
-    if (name === process.env.PERMISSION_TOKEN || name.endsWith('/token-sentinel')) {
+    if (name === process.env.PERMISSION_TOKEN || name.endsWith('/token-sentinel') || name.endsWith('/token')) {
         fs.appendFileSync(process.env.PERMISSION_TRACE, 'token\n');
         throw Error('unexpected token access');
     }
+    if (name.endsWith('.pdf')) {
+        fs.appendFileSync(process.env.PERMISSION_TRACE, 'pdf\n');
+        throw Error('unexpected PDF access');
+    }
 }
-fs.readFileSync = (path, ...args) => { token(path); return readFileSync(path, ...args); };
-fs.openSync = (path, ...args) => { token(path); return openSync(path, ...args); };
-promises.readFile = (path, ...args) => { token(path); return readFile(path, ...args); };
-promises.open = (path, ...args) => { token(path); return open(path, ...args); };
+fs.readFileSync = (path, ...args) => { observeRead(path); return readFileSync(path, ...args); };
+fs.openSync = (path, ...args) => { observeRead(path); return openSync(path, ...args); };
+promises.readFile = (path, ...args) => { observeRead(path); return readFile(path, ...args); };
+promises.open = (path, ...args) => { observeRead(path); return open(path, ...args); };
+if (process.env.PERMISSION_READ_ONLY) {
+    fs.chmodSync = fs.fchmodSync = () => {
+        fs.appendFileSync(process.env.PERMISSION_TRACE, 'chmod\n');
+        throw Error('unexpected permission write');
+    };
+}
 globalThis.fetch = () => {
     fs.appendFileSync(process.env.PERMISSION_TRACE, 'api\n');
     throw Error('unexpected API access');
@@ -66,13 +77,17 @@ fs.fchmodSync = (...args) => {
 syncBuiltinESMExports();
 `;
 
-const wrongOwner = String.raw`
+const wrongIdentity = String.raw`
 import fs from 'node:fs';
 import { syncBuiltinESMExports } from 'node:module';
 const { lstatSync } = fs;
+const leaf = process.env.PERMISSION_STAT_LEAF ?? 'state.json';
 fs.lstatSync = (path, ...args) => {
     const info = lstatSync(path, ...args);
-    if (String(path).endsWith('/state.json')) info.uid = 0n;
+    if (String(path).endsWith('/' + leaf)) {
+        if (process.env.PERMISSION_STAT_FIELD === 'gid') info.gid += 1n;
+        else info.uid = 0n;
+    }
     return info;
 };
 syncBuiltinESMExports();
@@ -86,7 +101,7 @@ async function write(path, bytes, mode) {
 async function snapshot(path) {
     const info = await fs.lstat(path, { bigint: true });
     const base = { mode: Number(info.mode & 0o7777n), dev: info.dev, ino: info.ino,
-        uid: info.uid, mtime: info.mtimeNs };
+        uid: info.uid, gid: info.gid, mtime: info.mtimeNs };
     if (info.isSymbolicLink()) return { ...base, link: await fs.readlink(path) };
     if (info.isFile()) return { ...base, bytes: Uint8Array.from(await fs.readFile(path)) };
     if (!info.isDirectory()) return base;
@@ -101,7 +116,7 @@ async function present(path) {
     });
 }
 
-async function fixture(t, { shared = false, stateData = stateBytes } = {}) {
+async function fixture(t, { productionLayout = false, shared = productionLayout, stateData = stateBytes } = {}) {
     const home = await fs.mkdtemp('/tmp/eformsign-permission-test-');
     t.after(() => fs.rm(home, { recursive: true, force: true }));
     const lockAncestor = join(home, '.local');
@@ -109,24 +124,36 @@ async function fixture(t, { shared = false, stateData = stateBytes } = {}) {
     const stateDir = shared ? lockDir : join(home, 'dedicated-state');
     const lock = join(lockDir, 'run.lock');
     const state = join(stateDir, 'state.json');
-    const archive = join(home, 'public');
-    const originals = join(home, 'private');
-    const token = join(home, 'token-sentinel');
-    const settings = join(home, 'settings.json');
+    const archive = join(home, productionLayout ? 'eformsign-archive' : 'public');
+    const originals = productionLayout ? archive + '.originals' : join(home, 'private');
+    const config = productionLayout ? join(home, '.config') : home;
+    const settingsDir = productionLayout ? join(config, 'eformsign-backup') : home;
+    const token = join(settingsDir, productionLayout ? 'token' : 'token-sentinel');
+    const settings = join(settingsDir, 'settings.json');
     const neighbor = join(home, 'other-file');
     const trace = join(home, 'access-trace');
     const rclone = join(home, 'mock-rclone');
     const preload = join(home, 'observe.mjs');
-    for (const dir of new Set([lockDir, stateDir, archive, originals])) await fs.mkdir(dir, { recursive: true, mode: 0o755 });
+    for (const dir of new Set([lockDir, stateDir, archive])) await fs.mkdir(dir, { recursive: true, mode: 0o755 });
     for (const dir of new Set([lockDir, stateDir, archive])) await fs.chmod(dir, 0o755);
-    await fs.chmod(originals, 0o700);
+    if (productionLayout) {
+        await fs.chmod(home, 0o750);
+        for (const dir of [lockAncestor, dirname(lockDir)]) await fs.chmod(dir, 0o775);
+        for (const dir of [config, settingsDir]) {
+            await fs.mkdir(dir, { mode: 0o700 });
+            await fs.chmod(dir, 0o700);
+        }
+    } else {
+        await fs.mkdir(originals, { mode: 0o700 });
+        await fs.chmod(originals, 0o700);
+        await write(join(originals, 'private.pdf'), 'private sentinel\n', 0o600);
+    }
     await write(lock, 'keep lock bytes\n', 0o644);
     if (stateData !== null) await write(state, stateData, 0o664);
-    await write(token, fakeToken, 0o644);
+    await write(token, fakeToken, productionLayout ? 0o600 : 0o644);
     await write(neighbor, 'keep neighbor bytes\n', 0o644);
     if (stateData !== null) await write(join(stateDir, 'ignored.txt'), 'keep state sibling\n', 0o644);
     await write(join(archive, 'visible.pdf'), 'public sentinel\n', 0o644);
-    await write(join(originals, 'private.pdf'), 'private sentinel\n', 0o600);
     await write(preload, observe, 0o600);
     await write(rclone, '#!/bin/sh\nprintf "rclone\\n" >> "$PERMISSION_TRACE"\nexit 9\n', 0o700);
     const configure = (extra = {}) => write(settings, JSON.stringify({
@@ -138,15 +165,106 @@ async function fixture(t, { shared = false, stateData = stateBytes } = {}) {
         const cli = ['--import', preload, ...(extraPreload ? ['--import', extraPreload] : []),
             worker ?? utility, '--settings', settings, ...(worker ? ['--raster-archive'] : []), ...(apply ? ['--apply'] : [])];
         const result = await exec(process.execPath, cli, { timeout: 10000, env: {
-            PATH: process.env.PATH, HOME: home, PERMISSION_TOKEN: token, PERMISSION_TRACE: trace, ...env,
+            PATH: process.env.PATH, HOME: home, PERMISSION_TOKEN: token, PERMISSION_TRACE: trace,
+            ...(!apply || code !== 0 ? { PERMISSION_READ_ONLY: '1' } : {}), ...env,
         } }).catch((error) => error);
+        assert.equal(await present(trace), false, 'preflight attempted token, PDF, API or rclone access or an unexpected chmod');
         assert.equal(result.code ?? 0, code, result.stdout + result.stderr);
         assert.equal(result.stderr, '');
         assert.ok(!result.stdout.includes(home) && !result.stdout.includes(fakeToken.trim()));
-        assert.equal(await present(trace), false, 'preflight attempted a token, API or rclone operation');
         return JSON.parse(result.stdout);
     };
-    return { home, lockAncestor, lockDir, stateDir, lock, state, archive, originals, settings, token, configure, run };
+    return { home, lockAncestor, lockDir, stateDir, lock, state, archive, originals, config, settingsDir, settings, token, configure, run };
+}
+
+test('accepts owner-bound 0775 home ancestors and tightens only the combined state and lock metadata', async (t) => {
+    const f = await fixture(t, { productionLayout: true });
+    const before = await snapshot(f.home);
+    const local = before.entries['.local'];
+    const state = local.entries.state;
+    const legacyRoot = state.entries['eformsign-backup'];
+    const config = before.entries['.config'];
+    const settings = config.entries['eformsign-backup'];
+    const operator = userInfo();
+    for (const [entry, expectedMode] of [
+        [before, 0o750], [local, 0o775], [state, 0o775], [legacyRoot, 0o755],
+        [legacyRoot.entries['run.lock'], 0o644], [legacyRoot.entries['state.json'], 0o664],
+        [config, 0o700], [settings, 0o700], [settings.entries['settings.json'], 0o600],
+        [settings.entries.token, 0o600], [before.entries['eformsign-archive'], 0o755],
+    ]) {
+        assert.equal(entry.mode, expectedMode);
+        assert.equal(entry.uid, BigInt(operator.uid));
+        assert.equal(entry.gid, BigInt(operator.gid));
+    }
+    assert.equal(await present(f.originals), false);
+
+    const expected = { status: 'ready', directories: 1, files: 2, needsChanges: 3, changed: 0 };
+    try {
+        assert.deepEqual(await f.run(), expected);
+    } finally {
+        assert.deepEqual(await snapshot(f.home), before);
+    }
+
+    assert.deepEqual(await f.run({ apply: true }), { ...expected, changed: 3 });
+    const tightened = structuredClone(before);
+    const root = tightened.entries['.local'].entries.state.entries['eformsign-backup'];
+    root.mode = 0o700;
+    root.entries['run.lock'].mode = 0o600;
+    root.entries['state.json'].mode = 0o600;
+    assert.deepEqual(await snapshot(f.home), tightened);
+    for (const apply of [false, true]) {
+        assert.deepEqual(await f.run({ apply }), { ...expected, needsChanges: 0 });
+        assert.deepEqual(await snapshot(f.home), tightened);
+    }
+});
+
+for (const [name, setup] of [
+    ['0775 combined state and lock root', (f) => fs.chmod(f.stateDir, 0o775)],
+    ['0777 combined state and lock root', (f) => fs.chmod(f.stateDir, 0o777)],
+    ['0770 HOME', (f) => fs.chmod(f.home, 0o770)],
+    ['0775 settings directory', (f) => fs.chmod(f.settingsDir, 0o775)],
+    ['0775 public root', (f) => fs.chmod(f.archive, 0o775)],
+    ['0775 private originals root', async (f) => {
+        await fs.mkdir(f.originals);
+        await fs.chmod(f.originals, 0o775);
+        await write(join(f.originals, 'private.pdf'), 'private sentinel\n', 0o600);
+    }],
+    ['cached 0775 settings ancestor used as public root', async (f) => {
+        await fs.chmod(f.config, 0o775);
+        await f.configure({ archiveDir: f.config, originalArchiveDir: f.originals });
+    }],
+    ['cached 0775 settings ancestor used as token parent', async (f) => {
+        await fs.chmod(f.config, 0o775);
+        const tokenFile = join(f.config, 'token');
+        await write(tokenFile, fakeToken, 0o600);
+        await f.configure({ tokenFile });
+    }],
+    ['uncached 0775 token parent', async (f) => {
+        const tokenParent = join(f.config, 'tok');
+        await fs.mkdir(tokenParent);
+        await fs.chmod(tokenParent, 0o775);
+        const tokenFile = join(tokenParent, 'token');
+        await write(tokenFile, fakeToken, 0o600);
+        await f.configure({ tokenFile });
+    }],
+    ...['uid', 'gid'].map((field) => [`0775 ancestor with mismatched ${field}`, async (f) => {
+        const extraPreload = join(f.home, 'wrong-identity.mjs');
+        await write(extraPreload, wrongIdentity, 0o600);
+        return { extraPreload, env: { PERMISSION_STAT_LEAF: '.local', PERMISSION_STAT_FIELD: field } };
+    }]),
+]) {
+    test('refuses ' + name + ' without changing the production-layout fixture', async (t) => {
+        const f = await fixture(t, { productionLayout: true });
+        const options = await setup(f);
+        const before = await snapshot(f.home);
+        for (const apply of [false, true]) {
+            const result = await f.run({ ...options, apply, code: 1 });
+            assert.equal(result.status, 'refused');
+            assert.equal(result.reason, 'unsafe_directory');
+            assert.equal(result.changed, 0);
+            assert.deepEqual(await snapshot(f.home), before);
+        }
+    });
 }
 
 test('separate and shared legacy roots tighten in place, keep bytes and are idempotent', async (t) => {
@@ -323,7 +441,7 @@ for (const [directory, reason] of [
 test('rejects a foreign-owned state inode using a preload confined to the child', async (t) => {
     const f = await fixture(t);
     const extraPreload = join(f.home, 'wrong-owner.mjs');
-    await write(extraPreload, wrongOwner, 0o600);
+    await write(extraPreload, wrongIdentity, 0o600);
     const before = await snapshot(f.home);
     const result = await f.run({ apply: true, code: 1, extraPreload });
     assert.equal(result.reason, 'unsafe_metadata_file');
