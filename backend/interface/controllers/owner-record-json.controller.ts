@@ -5,6 +5,7 @@ import {
     Controller,
     ExecutionContext,
     HttpCode,
+    Inject,
     Injectable,
     Param,
     Post,
@@ -13,7 +14,7 @@ import {
     UnauthorizedException,
     UseGuards,
 } from "@nestjs/common";
-import { JwtService } from "@nestjs/jwt";
+import type { JwtService } from "@nestjs/jwt";
 import type { Request } from "express";
 import { AdminServiceRecordEditService } from "application/services/admin-service-record-edit.service";
 import { codeOnlyProblemBody } from "application/utils/problem-bodies";
@@ -24,6 +25,7 @@ import { AdminServiceRecordNoQueryPipe } from "interface/controllers/admin-servi
 import { parseOwnerRecordJsonRequest, parseOwnerRecordJsonTarget } from "interface/dto/owner-record-json.dto";
 
 const bearerJwt = /^Bearer ([A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+)$/i;
+export const OWNER_RECORD_JSON_JWT_DECODER = Symbol("OWNER_RECORD_JSON_JWT_DECODER");
 
 @Injectable()
 export class OwnerRecordJsonBearerGuard implements CanActivate {
@@ -41,7 +43,8 @@ export class OwnerRecordJsonBearerGuard implements CanActivate {
 export class OwnerRecordJsonController {
     constructor(
         private readonly editor: AdminServiceRecordEditService,
-        private readonly jwt: JwtService,
+        @Inject(OWNER_RECORD_JSON_JWT_DECODER)
+        private readonly jwtDecoder: Pick<JwtService, "decode">,
     ) {}
 
     @Post("clients/:clientId/cases/:caseId/owner-json")
@@ -60,7 +63,7 @@ export class OwnerRecordJsonController {
         // JwtGuard has already verified this exact bearer token. Read its
         // version claim so the repository can detect revocation while waiting.
         const token = request.headers.authorization?.match(bearerJwt)?.[1];
-        const claims = token && this.jwt.decode<{ tokenVersion?: number }>(token);
+        const claims = token && this.jwtDecoder.decode<{ tokenVersion?: number }>(token);
         if (!claims || typeof claims.tokenVersion !== "number" || !Number.isSafeInteger(claims.tokenVersion)) {
             throw new UnauthorizedException(codeOnlyProblemBody("AUTH_REQUIRED"));
         }
