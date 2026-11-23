@@ -26,7 +26,14 @@ const { MOCK_DRIVE, MOCK_COMMANDS, MOCK_CONTROL } = process.env;
 const control = JSON.parse(fs.readFileSync(MOCK_CONTROL, 'utf8'));
 const args = process.argv.slice(2);
 const op = args[0];
-const operands = args.includes('--') ? args.slice(args.indexOf('--') + 1) : args.slice(2);
+const separator = args.indexOf('--');
+const operands = separator >= 0 ? args.slice(separator + 1) : args.slice(2);
+const flags = args.slice(1, separator);
+if (op === 'listremotes' && flags.includes('--long')) {
+    console.log('drive: local');
+    process.exit(0);
+}
+if (op !== 'copy' && !flags.includes('--drive-skip-shortcuts=true')) process.exit(9);
 fs.appendFileSync(MOCK_COMMANDS, JSON.stringify(args) + '\\n');
 const relative = (remote) => remote.slice(remote.indexOf(':') + 1);
 const target = (remote) => join(MOCK_DRIVE, relative(remote));
@@ -41,6 +48,10 @@ if (op === 'copy') {
     if (control.failCopy) fail();
     fs.cpSync(operands[0], target(operands[1]), { recursive: true });
 } else if (op === 'lsjson') {
+    if (flags.includes('--stat')) {
+        console.log(JSON.stringify({ IsDir: true }));
+        process.exit(0);
+    }
     const p = target(operands[0]);
     const items = fs.readdirSync(p, { withFileTypes: true }).flatMap((entry) => {
         const path = join(relative(operands[0]), entry.name);

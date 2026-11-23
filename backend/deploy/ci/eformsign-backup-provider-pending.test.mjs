@@ -24,7 +24,14 @@ const { dirname, join } = require('node:path');
 const { FIXTURE_DRIVE, FIXTURE_INTERRUPT, FIXTURE_COMMANDS } = process.env;
 const args = process.argv.slice(2);
 const [op] = args;
-const operands = args.slice(args.includes('--') ? args.indexOf('--') + 1 : 2);
+const separator = args.indexOf('--');
+const operands = args.slice(separator >= 0 ? separator + 1 : 2);
+const flags = args.slice(1, separator);
+if (op === 'listremotes' && flags.includes('--long')) {
+    console.log('drive: local');
+    process.exit(0);
+}
+if (op !== 'copy' && !flags.includes('--drive-skip-shortcuts=true')) process.exit(9);
 const remote = (value) => join(FIXTURE_DRIVE, value.slice(value.indexOf(':') + 1));
 fs.appendFileSync(FIXTURE_COMMANDS, JSON.stringify([op, ...operands]) + '\\n');
 switch (op) {
@@ -32,6 +39,10 @@ switch (op) {
         fs.cpSync(operands[0], remote(operands[1]), { recursive: true });
         break;
     case 'lsjson': {
+        if (flags.includes('--stat')) {
+            console.log(JSON.stringify({ IsDir: true }));
+            break;
+        }
         const dir = remote(operands[0]);
         const entries = fs.readdirSync(dir, { withFileTypes: true });
         console.log(JSON.stringify(entries.map((entry) => ({

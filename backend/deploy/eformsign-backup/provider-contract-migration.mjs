@@ -143,73 +143,59 @@ function localFiles(archive, finalPath) {
     return { inspect, verify };
 }
 
-function driveFiles(settings, timeout, lockFd) {
+async function driveFiles(settings, timeout, lockFd) {
     const parts = /^([^/:]+:)(.*)$/.exec(settings.rcloneRemote ?? '');
     if (!parts) refuse('drive_remote_required');
     const [, root, configuredPath] = parts;
-    const prefix = configuredPath.replace(/^\/+|\/+$/g, '').split('/').filter(Boolean);
-    if (prefix.some((part) => part === '.' || part === '..' || part.includes('\\'))) refuse('invalid_drive_root');
-    const exact = (path) => root + [...prefix, path].join('/');
-    // Inherit the lock while subprocesses are active, including if Node is interrupted.
-    const start = (args) => spawn(settings.rcloneBin, args, {
-        stdio: ['ignore', 'pipe', 'ignore', lockFd], timeout,
-    });
-    const stream = async (args, receive) => {
-        const child = start(args);
+    const prefix = configuredPath.split('/').filter(Boolean).join('/');
+    const reasons = {
+        ambiguous_path: 'duplicate_drive_path',
+        remote_output_size: 'drive_listing_too_large',
+        unsafe_path: 'invalid_drive_root',
+        unsafe_remote_directory: 'drive_path_type_conflict',
+        unsafe_remote_file: 'drive_path_type_conflict',
+        unsafe_remote_listing: 'invalid_drive_listing',
+        remote_identity_changed: 'drive_identity_changed',
+        remote_root_changed: 'drive_identity_changed',
+        remote_shortcut_ambiguity: 'drive_shortcut_ambiguity',
+        remote_destination_exists: 'drive_target_exists',
+    };
+    const checked = async (action) => {
         try {
-            await Promise.all([
-                exitCode(child).then((code) => { if (code !== 0) refuse('drive_command_failed'); }),
-                (async () => { for await (const chunk of child.stdout) receive(chunk); })(),
-            ]);
-        } catch { refuse('drive_command_failed'); }
-    };
-    const rclone = async (args) => {
-        const chunks = [];
-        let bytes = 0;
-        await stream(args, (chunk) => {
-            bytes += chunk.length;
-            if (bytes > 16 * 1024 * 1024) refuse('drive_listing_too_large');
-            chunks.push(chunk);
-        });
-        return Buffer.concat(chunks).toString('utf8');
-    };
-
-    async function lookup(path) {
-        const segments = [...prefix, ...path.split('/')];
-        let parent = root;
-        for (const [index, segment] of segments.entries()) {
-            const rows = JSON.parse(await rclone(['lsjson', '--', parent]));
-            if (!Array.isArray(rows)) refuse('invalid_drive_listing');
-            const matches = rows.filter((row) => row.Name === segment);
-            if (matches.length > 1) refuse('duplicate_drive_path');
-            if (matches.length === 0) return null;
-            const directory = index < segments.length - 1;
-            if (matches[0].IsDir !== directory) refuse('drive_path_type_conflict');
-            if (!directory) return matches[0];
-            parent += (index === 0 ? '' : '/') + segment;
+            return await action();
+        } catch (error) {
+            if (error.migrationReason) throw error;
+            const reason = error.code?.replace(/^raster_archive_/, '');
+            refuse(reasons[reason] ?? 'drive_command_failed');
         }
-    }
-
-    async function verify(path, file, known) {
-        const info = await lookup(path);
-        if (!info) return null;
-        if (known && (info.ID ?? null) !== known.id) refuse('drive_identity_changed');
-        const hash = createHash('sha256');
-        let bytes = 0;
-        await stream(['cat', '--', exact(path)], (chunk) => {
-            hash.update(chunk);
-            bytes += chunk.length;
-        });
-        if (bytes !== file.bytes || hash.digest('hex') !== file.hash) refuse('drive_checksum_mismatch');
-        const checked = await lookup(path);
-        if (!checked || checked.ID !== info.ID) refuse('drive_identity_changed');
-        return { id: info.ID ?? null };
-    }
+    };
+    const { remoteTransport } = await import('./raster-mirror-remote.mjs');
+    const remote = await checked(() => remoteTransport({ ...settings, rcloneRemote: root + prefix }, lockFd, timeout));
+    const inspect = (path) => checked(() => remote.lookup(path));
 
     return {
-        lookup, verify,
-        copy: (from, to) => rclone(['copyto', '--immutable', '--ignore-existing', '--', from, exact(to)]),
-        remove: (path) => rclone(['deletefile', '--', exact(path)]),
+        inspect,
+        lookup: async (path) => (await inspect(path)).entry,
+        verify: (path, file, known, before) => checked(async () => {
+            const observed = before ?? await remote.lookup(path);
+            const { entry } = observed;
+            if (!entry) return null;
+            if (known && entry.id !== known.id) refuse('drive_identity_changed');
+            if (entry.size !== undefined && entry.size !== file.bytes) refuse('drive_checksum_mismatch');
+            return remote.readVerified(path, observed, async (stream) => {
+                const hash = createHash('sha256');
+                let bytes = 0;
+                for await (const chunk of stream) {
+                    bytes += chunk.length;
+                    if (bytes > file.bytes) refuse('drive_checksum_mismatch');
+                    hash.update(chunk);
+                }
+                if (bytes !== file.bytes || hash.digest('hex') !== file.hash) refuse('drive_checksum_mismatch');
+                return { id: entry.id };
+            });
+        }),
+        copy: (from, to) => checked(() => remote.upload(to, from)),
+        remove: (path) => checked(() => remote.delete(path)),
     };
 }
 
@@ -342,8 +328,9 @@ export async function migrateProviderContracts(context) {
     }
     if (moves.length === 0) { log({ migration: settings.action, pairs: 0, skipped }); return; }
 
-    const drive = mirror ? null : driveFiles(settings, timeout, lockFd);
+    const drive = mirror ? null : await driveFiles(settings, timeout, lockFd);
     const sides = (file) => reverse ? [file.new, file.old, file.reverse] : [file.old, file.new, file.forward];
+    const driveChecks = [];
     for (const move of moves) {
         validateMove(move);
         const entry = state.units[move.key];
@@ -375,15 +362,24 @@ export async function migrateProviderContracts(context) {
                 await verifyOwnedTarget(archive, local, journal, file, target, progress, reverse);
             } else if (published || progress.localReady) refuse('missing_local_target');
 
-            if (!drive) continue;
-            const sourceIdentity = await drive.verify(source, file, progress.source);
-            if (!sourceIdentity && !(published && progress.removeDrive)) refuse('missing_drive_source');
-            if (sourceIdentity) progress.source = sourceIdentity;
-            if (await drive.lookup(target)) {
-                if (!progress.upload) refuse('drive_target_exists');
-                await drive.verify(target, file, progress.destination);
-            } else if (published || progress.destination) refuse('missing_drive_target');
+            if (drive) driveChecks.push({ source, target, file, progress, published });
         }
+    }
+    // Establish custody on both sides of the entire batch before reading any
+    // remote bytes or advancing the local migration journal.
+    for (const check of driveChecks) {
+        const { source, target, progress, published } = check;
+        check.beforeSource = await drive.inspect(source);
+        check.beforeTarget = await drive.inspect(target);
+        if (!check.beforeSource.entry && !(published && progress.removeDrive)) refuse('missing_drive_source');
+        if (check.beforeTarget.entry) {
+            if (!progress.upload) refuse('drive_target_exists');
+        } else if (published || progress.destination) refuse('missing_drive_target');
+    }
+    for (const { source, target, file, progress, beforeSource, beforeTarget } of driveChecks) {
+        const sourceIdentity = await drive.verify(source, file, progress.source, beforeSource);
+        if (sourceIdentity) progress.source = sourceIdentity;
+        await drive.verify(target, file, progress.destination, beforeTarget);
     }
     if (dryRun) {
         if (mirror) {
