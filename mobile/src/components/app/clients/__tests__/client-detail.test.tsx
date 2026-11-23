@@ -286,10 +286,16 @@ jest.mock("@/hooks/use-toast", () => ({
 }));
 
 jest.mock("@/hooks/use-send-client-receipt", () => ({
-  useSendClientReceipt: () => ({
-    isSending: false,
-    sendReceipt: jest.fn(),
-  }),
+  useSendClientReceipt: () => {
+    const [open, setOpen] = useState(false);
+    return {
+      open: () => setOpen(true),
+      dialog: open ? {
+        date: "", canSubmit: false, error: null, isPending: false,
+        editDate: jest.fn(), submit: jest.fn(), dismiss: () => setOpen(false),
+      } : null,
+    };
+  },
 }));
 
 jest.mock("@/components/app/mobile-redesign/detail-sheet", () => ({
@@ -910,15 +916,17 @@ describe("ClientDetailContent", () => {
     expect(screen.getByText("010-2770-0718")).toBeInTheDocument();
   });
 
-  it("confirms the exact receipt-send copy from the customer overflow menu", async () => {
+  it("opens the receipt-date field from the customer overflow menu before a contract exists", async () => {
     const user = userEvent.setup();
     renderDetail();
 
     await user.click(screen.getByRole("button", { name: "고객 옵션" }));
     await user.click(screen.getByRole("menuitem", { name: /본인부담금 영수증 발송/ }));
 
-    expect(screen.getByRole("dialog", { name: "본인부담금 영수증 전송" })).toBeInTheDocument();
-    expect(screen.getByText("고객 산모님께 본인부담금 영수증 안내 메시지를 보낼까요?")).toBeInTheDocument();
+    const dialog = screen.getByRole("dialog", { name: "본인부담금 영수증 발송" });
+    expect(within(dialog).getByRole("textbox", { name: "본인부담금 납부일" })).toHaveValue("");
+    expect(within(dialog).getByRole("button", { name: "취소" })).toBeEnabled();
+    expect(within(dialog).getByRole("button", { name: "전송" })).toBeDisabled();
   });
 
   it("should show employee phone rows with a dash when phone numbers are missing", () => {

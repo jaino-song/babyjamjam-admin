@@ -10,13 +10,12 @@ import { ClientDetailContent } from "../client-detail";
 
 const mockMutateAsync = jest.fn();
 const mockSendLink = jest.fn();
-const mockSendReceipt = jest.fn();
 const mockCreateClient = jest.fn();
 const mockUpdateClient = jest.fn();
 const mockCreateEmployee = jest.fn();
 const mockUpdateEmployee = jest.fn();
 const mockEmptyData: never[] = [];
-let mockIsSendingReceipt = false;
+let mockReceiptDetail: Client | undefined;
 let mockClientPending = false;
 let mockEmployeePending = false;
 let mockPriceLoading = false;
@@ -37,7 +36,10 @@ jest.mock("@/hooks/useEmployees", () => ({
   employeeQueryKeys: { all: ["employees"] },
 }));
 
-jest.mock("@tanstack/react-query", () => ({ useQueryClient: () => ({ refetchQueries: jest.fn() }) }));
+jest.mock("@tanstack/react-query", () => ({
+  useQueryClient: () => ({ refetchQueries: jest.fn() }),
+  useQuery: () => ({ data: mockReceiptDetail }),
+}));
 jest.mock("@/providers/LocaleProvider", () => ({ useLocale: () => "ko" }));
 jest.mock("@/hooks/useVoucherData", () => ({
   useVoucherPriceInfos: () => ({ data: mockEmptyData, isLoading: mockPriceLoading }),
@@ -71,6 +73,7 @@ jest.mock("@/hooks/useServiceRecords", () => ({
 
 jest.mock("@/hooks/useClients", () => ({
   fetchClient: jest.fn(),
+  clientQueryKeys: { detail: (id: number) => ["clients", "detail", id] },
   useCreateClient: () => ({ mutateAsync: mockCreateClient, isPending: mockClientPending }),
   useUpdateClient: () => ({ mutateAsync: mockUpdateClient, isPending: mockClientPending }),
 }));
@@ -78,10 +81,6 @@ jest.mock("@/hooks/useClients", () => ({
 jest.mock("@/hooks/use-toast", () => ({
   toast: jest.fn(),
   useToast: () => ({ toast: jest.fn() }),
-}));
-
-jest.mock("@/hooks/use-send-client-receipt", () => ({
-  useSendClientReceipt: () => ({ isSending: mockIsSendingReceipt, sendReceipt: mockSendReceipt }),
 }));
 
 jest.mock("../client-service-records", () => ({ ClientServiceRecords: () => null }));
@@ -142,7 +141,7 @@ function expectBusy(label: string, idleLabel: string) {
 beforeEach(() => {
   jest.clearAllMocks();
   mockIsPending = false;
-  mockIsSendingReceipt = false;
+  mockReceiptDetail = undefined;
   mockClientPending = false;
   mockEmployeePending = false;
   mockPriceLoading = false;
@@ -177,27 +176,34 @@ it("uses the shared icon size for client options", () => {
   expect(button).toHaveClass("h-8", "w-8", "relative", "after:-inset-1.5");
 });
 
-it("hides the receipt menu label behind a spinner and blocks another confirmation while sending", async () => {
-  mockIsSendingReceipt = true;
-  renderDetail();
-  const user = userEvent.setup();
-  await user.click(screen.getByRole("button", { name: "고객 옵션" }));
-  const item = screen.getByRole("menuitem", { name: "영수증 발송 중" });
-  expect(item).toHaveAttribute("aria-disabled", "true");
-  expect(item).toHaveAttribute("aria-busy", "true");
-  expect(item).toHaveAttribute("data-loading", "");
-  expect(item).toHaveClass("relative");
-  const idle = item.querySelector('[data-slot="button-idle"]');
-  expect(idle).toHaveAttribute("aria-hidden", "true");
-  expect(idle).toHaveClass("contents", "invisible");
-  expect(idle).toHaveTextContent("본인부담금 영수증 발송");
-  expect(item.querySelector('[data-slot="button-spinner"] [data-slot="spinner"]')).toHaveAttribute("aria-hidden", "true");
-  expect(within(item).getByText("영수증 발송 중")).toHaveClass("sr-only");
-  // Radix blocks pointer input with CSS; jsdom does not apply Tailwind rules.
-  expect(item).toHaveAttribute("data-disabled");
-  fireEvent.keyDown(item, { key: "Enter" });
-  expect(screen.queryByRole("dialog", { name: "본인부담금 영수증 전송" })).not.toBeInTheDocument();
-  expect(mockSendReceipt).not.toHaveBeenCalled();
+it.each(["취소", "Escape"])("opens an editable receipt date and dismisses with %s without a request", async (dismiss) => {
+  const originalFetch = globalThis.fetch;
+  const fetch = jest.fn();
+  globalThis.fetch = fetch;
+  document.cookie = "selected_branch_id=qa-branch; path=/";
+  mockReceiptDetail = { ...baseClient, copaymentReceivedDate: "2026-11-20" };
+
+  try {
+    renderDetail();
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "고객 옵션" }));
+    await user.click(screen.getByRole("menuitem", { name: "본인부담금 영수증 발송" }));
+    const dialog = screen.getByRole("dialog", { name: "본인부담금 영수증 발송" });
+    const date = within(dialog).getByRole("textbox", { name: "본인부담금 납부일" });
+    expect(date).toHaveValue("2026-11-20");
+    fireEvent.change(date, { target: { value: "2026-11-21" } });
+    expect(date).toHaveValue("2026-11-21");
+    expect(within(dialog).getByRole("button", { name: "전송" })).toBeEnabled();
+    expect(fetch).not.toHaveBeenCalled();
+
+    if (dismiss === "Escape") await user.keyboard("{Escape}");
+    else await user.click(within(dialog).getByRole("button", { name: dismiss }));
+    expect(dialog).not.toBeInTheDocument();
+    expect(fetch).not.toHaveBeenCalled();
+  } finally {
+    globalThis.fetch = originalFetch;
+    document.cookie = "selected_branch_id=; max-age=0; path=/";
+  }
 });
 
 it.each([false, true])("uses a named submit spinner in the client form (edit: %s)", async (editing) => {
