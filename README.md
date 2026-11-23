@@ -332,6 +332,8 @@ pnpm --filter ./backend db:seed:e2e
 pnpm --filter ./backend db:seed:auth-e2e
 ```
 
+The e2e seeds refuse any database whose host is not localhost, 127.0.0.1 or ::1.
+
 Use `db:migrate:deploy` only for controlled deployment environments. Do not use it as a substitute
 for reviewing migration content.
 

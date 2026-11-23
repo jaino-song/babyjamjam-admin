@@ -1,8 +1,11 @@
 import { PrismaClient } from "@prisma/client";
 
 import { normalizePhone } from "../../domain/utils/normalize-phone";
+import { resolveLocalSeedDatabaseUrl } from "../utils/seed-database-guard";
 
-const prisma = new PrismaClient();
+const prisma = new PrismaClient({
+    datasources: { db: { url: resolveLocalSeedDatabaseUrl({ label: "e2e seed" }) } },
+});
 
 const BRANCH_ID = "33dbe950-1574-4951-b7b4-92d97ab29512";
 const USER_ID = "ac5f25d7-f8cc-4c68-82a5-db6dc2968c5f";
