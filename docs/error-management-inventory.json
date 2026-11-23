@@ -75990,33 +75990,33 @@
           ]
         },
         {
-          "line": 13,
+          "line": 14,
           "kinds": [
             "raw_http_exception"
           ]
         },
         {
-          "line": 33,
+          "line": 35,
           "kinds": [
             "raw_http_exception",
             "throw_or_reject"
           ]
         },
         {
-          "line": 47,
+          "line": 50,
           "kinds": [
             "http_endpoint"
           ]
         },
         {
-          "line": 58,
+          "line": 61,
           "kinds": [
             "raw_http_exception",
             "throw_or_reject"
           ]
         },
         {
-          "line": 65,
+          "line": 68,
           "kinds": [
             "raw_http_exception",
             "throw_or_reject"

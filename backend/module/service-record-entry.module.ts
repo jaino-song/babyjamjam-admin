@@ -7,7 +7,7 @@ import { SystemTemplateModule } from "module/system-template.module";
 import { SystemSettingModule } from "module/system-setting.module";
 import { EformsignDocModule } from "module/eformsign-doc.module";
 import { AdminServiceRecordController } from "interface/controllers/admin-service-record.controller";
-import { OwnerRecordJsonBearerGuard, OwnerRecordJsonController } from "interface/controllers/owner-record-json.controller";
+import { OWNER_RECORD_JSON_JWT_DECODER, OwnerRecordJsonBearerGuard, OwnerRecordJsonController } from "interface/controllers/owner-record-json.controller";
 import { ServiceRecordEntryController } from "interface/controllers/service-record-entry.controller";
 import { ServiceRecordPeriodMismatchService } from "application/services/service-record-period-mismatch.service";
 import { AdminServiceRecordService } from "application/services/admin-service-record.service";
@@ -59,7 +59,14 @@ import { HolidayModule } from "./holiday.module";
         BranchManagerGuard,
         OwnerGuard,
         OwnerRecordJsonBearerGuard,
-        JwtService,
+        {
+            provide: OWNER_RECORD_JSON_JWT_DECODER,
+            // Keep this decoder out of application-wide JwtService lookups.
+            useFactory: (): Pick<JwtService, "decode"> => {
+                const jwt = new JwtService();
+                return { decode: jwt.decode.bind(jwt) };
+            },
+        },
         ServiceRecordGuard,
         ServiceRecordEditAgentCapabilitiesProvider,
         { provide: SERVICE_RECORD_EDIT_REPOSITORY, useClass: ServiceRecordEditRepository },

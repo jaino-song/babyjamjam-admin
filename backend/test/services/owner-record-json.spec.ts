@@ -1,6 +1,6 @@
 import { BadRequestException, ConflictException, ForbiddenException, NotFoundException, UnauthorizedException, type ExecutionContext } from "@nestjs/common";
-import { GUARDS_METADATA } from "@nestjs/common/constants";
-import { JwtService } from "@nestjs/jwt";
+import { GUARDS_METADATA, MODULE_METADATA } from "@nestjs/common/constants";
+import { JwtModule, JwtService } from "@nestjs/jwt";
 import type { Prisma } from "@prisma/client";
 import type { Request } from "express";
 import { randomUUID } from "node:crypto";
@@ -15,6 +15,7 @@ import { ServiceRecordEditRepository } from "infrastructure/database/repositorie
 import { TenantContext, TenantGuard } from "infrastructure/tenant";
 import { OwnerRecordJsonBearerGuard, OwnerRecordJsonController } from "interface/controllers/owner-record-json.controller";
 import { parseOwnerRecordJsonRequest, parseOwnerRecordJsonTarget, type OwnerRecordJsonRequest } from "interface/dto/owner-record-json.dto";
+import { ServiceRecordEntryModule } from "module/service-record-entry.module";
 
 const BRANCH = "11111111-1111-4111-8111-111111111111";
 const OTHER_BRANCH = "12121212-1212-4212-8212-121212121212";
@@ -281,6 +282,27 @@ function harness() {
 }
 
 describe("owner record JSON contract", () => {
+    it("keeps the application JWT signer free from duplicate registrations", () => {
+        const providers: unknown[] = Reflect.getMetadata(MODULE_METADATA.PROVIDERS, ServiceRecordEntryModule);
+        const imports: unknown[] = Reflect.getMetadata(MODULE_METADATA.IMPORTS, ServiceRecordEntryModule);
+
+        const registersJwtService = providers.some((provider) =>
+            provider === JwtService || (
+                typeof provider === "object" && provider !== null &&
+                "provide" in provider && provider.provide === JwtService
+            ),
+        );
+        const importsJwtModule = imports.some((imported) =>
+            imported === JwtModule || (
+                typeof imported === "object" && imported !== null &&
+                "module" in imported && imported.module === JwtModule
+            ),
+        );
+
+        expect(registersJwtService).toBe(false);
+        expect(importsJwtModule).toBe(false);
+    });
+
     const valid = {
         expectedCaseVersion: 0, expectedSourceFingerprint: "a".repeat(64), idempotencyKey: KEY, operations: [edit(), fill()],
     };
