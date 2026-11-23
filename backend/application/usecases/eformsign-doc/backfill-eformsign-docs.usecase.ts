@@ -1,3 +1,4 @@
+import { INITIAL_PROVIDER_RECOVERY, type IInitialProviderRecovery } from "domain/repositories/service-record-initial-provider-recovery.interface";
 import { Inject, Injectable, Logger, Optional } from "@nestjs/common";
 
 import { EformsignDocumentMirrorService } from "application/services/eformsign-document-mirror.service";
@@ -140,6 +141,8 @@ export class BackfillEformsignDocsUsecase {
         private readonly eformsignService?: EformsignService,
         @Optional()
         private readonly serviceRecordLifecycle?: ServiceRecordLifecycleService,
+        @Optional() @Inject(INITIAL_PROVIDER_RECOVERY)
+        private readonly initialProviderRecovery?: IInitialProviderRecovery,
     ) {}
 
     async execute(
@@ -329,6 +332,12 @@ export class BackfillEformsignDocsUsecase {
                         } catch {
                             // Reporting must not change the vendor scan outcome.
                         }
+                    }
+                    this.assertCanContinue(options, summary);
+                    try {
+                        await this.initialProviderRecovery?.reconcile({ branchId, shouldContinue: options.shouldContinue });
+                    } catch {
+                        this.logger.warn({ message: "INITIAL provider recovery sweep failed", branchId });
                     }
                     this.assertCanContinue(options, summary);
                 } catch (error) {

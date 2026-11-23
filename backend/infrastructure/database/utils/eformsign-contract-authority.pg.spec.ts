@@ -1,3 +1,6 @@
+import { ServiceRecordInitialProviderRecoveryService } from "infrastructure/eformsign/service-record-initial-provider-recovery.service";
+import { initialProviderRecoveryInput, providerDocumentPage } from "../../../test/utils/service-record-initial-provider-recovery.fixture";
+import { normalizeEformsignDocumentResponse } from "infrastructure/api/eformsign-response.normalizer";
 import { CreateAndSendServiceRecordSnapshotUsecase } from "application/usecases/eformsign-doc/create-and-send-service-record-snapshot.usecase";
 import type { ServiceRecordRevisionDispatchContext, ServiceRecordRevisionGenerationInput } from "@babyjamjam/shared/types/service-record";
 import { createEformsignWorkerPrincipal } from "application/services/eformsign-credential-boundary.service";
@@ -1863,6 +1866,190 @@ async function bounded<T>(promise: Promise<T>, ms: number): Promise<T> {
         expect(await f.readState()).toMatchObject({ status: "failed", lastErrorCode: "SERVICE_RECORD_REVISION_DOCUMENT_REJECTED" });
     });
 
+    async function cancelledProviderRuntime(linked = true) {
+        const f = await initialChunks({ unlinked: true });
+        await completeInitialSource(f);
+        const assignment = await db.service_record_assignment.findFirstOrThrow({ where: { serviceRecordCaseId: f.record.id } });
+        const input = initialProviderRecoveryInput({ branchId: f.branchId, clientId: f.state.clientId, caseId: f.record.id,
+            revisionId: f.revisionId, stateId: f.state.id, generation: f.state.generation });
+        // Use real FK targets created in this owned PG cluster, never guessed ids.
+        const immutable = input.immutablePayload as { sessions: Array<{ scheduleId: number; employeeId: number }> };
+        for (const session of immutable.sessions) { session.scheduleId = assignment.scheduleId!; session.employeeId = assignment.employeeId!; }
+        input.payloadFingerprint = sha256CanonicalJson(input.immutablePayload);
+        input.businessFingerprint = input.payloadFingerprint;
+        const settledAt = new Date(Date.now() - 11 * 60 * 1000);
+        await db.service_record_case.update({ where: { id: f.record.id }, data: { status: "READY_TO_FINALIZE" } });
+        await db.service_record_revision_document_state.update({ where: { id: f.state.id }, data: {
+            status: "processing", step: "dispatch_authorized", lastErrorCode: null,
+            immutableInput: input.immutablePayload as Prisma.InputJsonObject, inputFingerprint: input.payloadFingerprint,
+        } });
+        await db.service_record_snapshot_chunk.updateMany({ where: { serviceRecordCaseId: f.record.id }, data: { sourceHash: input.payloadFingerprint } });
+        if (!linked) await db.service_record_snapshot_chunk.updateMany({ where: { serviceRecordCaseId: f.record.id, chunkIndex: 1 },
+            data: { status: "CREATE_REQUESTED", eformsignDocumentId: null } });
+        await db.eformsign_document_job.update({ where: { id: f.job.id }, data: { status: "failed", leaseToken: null,
+            activeKey: `service-record-initial-finalization:${f.record.id}`, lastErrorCode: "PRE_SEND_RETRY_EXHAUSTED",
+            payloadFingerprint: input.payloadFingerprint,
+            payload: { ...input, kind: "service_record_revision", context: { ...input } } as unknown as Prisma.InputJsonObject,
+        } });
+        // Exercise production's raw now() cancellation, then age only its timestamps.
+        // Force nonzero microseconds so this regression never depends on clock luck.
+        expect(await f.repo.cancel(f.input)).toEqual({ kind: "cancelled" });
+        expect(await f.readJob()).toMatchObject({ status: "failed", lastErrorCode: "JOB_CANCELLED_AFTER_DISPATCH",
+            activeKey: `service-record-initial-finalization:${f.record.id}`, documentId: null });
+        await db.$executeRaw`UPDATE service_record_revision_document_state
+            SET updated_at = date_trunc('milliseconds', updated_at - interval '11 minutes') + interval '321 microseconds'
+            WHERE id = ${f.state.id}::uuid`;
+        await db.$executeRaw`UPDATE eformsign_document_job
+            SET updated_at = date_trunc('milliseconds', updated_at - interval '11 minutes') + interval '321 microseconds'
+            WHERE id = ${f.job.id}::uuid`;
+        const [precision] = await db.$queryRaw<Array<{ submillisecond: boolean }>>`SELECT
+            updated_at <> date_trunc('milliseconds', updated_at) AS submillisecond
+            FROM eformsign_document_job WHERE id = ${f.job.id}::uuid`;
+        expect(precision?.submillisecond).toBe(true);
+        const remote = (index: number) => normalizeEformsignDocumentResponse({ id: documents[index - 1]!,
+            created_date: settledAt.getTime(), updated_date: Date.now(), template: { id: "synthetic-template" },
+            document_name: `QA-frozen-customer (${index}/2) [SR-${f.record.id.slice(0, 8)}-r1-v3]`, creator: { name: "synthetic" },
+            current_status: { status_type: "070", step_type: "06", step_index: "2" } });
+        const listed = [remote(1), remote(2)];
+        // The scheduled backfill mirrors this document before recovery can link it.
+        await db.eformsign_doc.update({ where: { documentId: documents[1]! }, data: {
+            branchId: null, statusType: "070", updatedDate: new Date(listed[1]!.updated_date),
+        } });
+        const emptyPage = async (_token: string, limit: number, skip: number) => providerDocumentPage([], limit, skip);
+        const client = {
+            getInProgressDocumentsPage: async (_token: string, limit: number, skip: number) => providerDocumentPage(listed, limit, skip),
+            getCompletedDocumentsPage: emptyPage,
+            getRejectedDocumentsPage: emptyPage,
+            getDocument: async (_token: string, id: string) => listed.find(doc => doc.id === id)!,
+        };
+        const credentials = { withCredentials: async (_principal: unknown, _capability: unknown,
+            callback: (credentials: { accessToken: string }) => Promise<unknown>) => callback({ accessToken: "synthetic" }) };
+        const snapshots = new CreateAndSendServiceRecordSnapshotUsecase(client as never, db as unknown as PrismaService, credentials as never, {} as never);
+        const recovery = new ServiceRecordInitialProviderRecoveryService(db as unknown as PrismaService, client as never,
+            credentials as never, snapshots, new ServiceRecordEditRepository(db as unknown as PrismaService));
+        const run = () => recovery.reconcile({ branchId: f.branchId });
+        const read = async () => ({ state: await f.readState(), record: await f.readCase(), job: await f.readJob(),
+            chunks: await db.service_record_snapshot_chunk.findMany({ where: { serviceRecordCaseId: f.record.id }, orderBy: { chunkIndex: "asc" } }),
+            docs: await db.eformsign_doc.findMany({ where: { documentId: { in: documents.slice(0, 2) } }, orderBy: { documentId: "asc" } }) });
+        return { ...f, run, read, listed, snapshots, client };
+    }
+    it.each([false, true])("U4 real post-dispatch cancellation with sub-ms precision recovers all matched (first already linked: %s)", async linked => {
+        const f = await cancelledProviderRuntime(linked);
+        await db.client.update({ where: { id: f.state.clientId }, data: { name: "QA-renamed-after-dispatch" } });
+        expect(await f.run()).toBe(1);
+        expect(await f.readState()).toMatchObject({ status: "processing", step: "documents_created" });
+        expect(await f.readCase()).toMatchObject({ status: "DOCUMENTS_CREATED", currentUsableRevisionId: null });
+        expect(await f.readJob()).toMatchObject({ status: "completed", activeKey: null, documentId: documents[0] });
+        expect(await db.eformsign_doc.findUniqueOrThrow({ where: { documentId: documents[1]! } })).toMatchObject({
+            serviceRecordCaseId: f.record.id, revisionId: f.revisionId, snapshotVersion: 3, snapshotChunkIndex: 2, customerName: "QA-mom",
+        });
+        const before = await f.read(); expect(await f.run()).toBe(0); expect(await f.read()).toEqual(before);
+    });
+    it("U4 filters 105 older ineligible cancellations before selecting the newer recoverable job", async () => {
+        const f = await cancelledProviderRuntime();
+        const job = await f.readJob();
+        const historical = Array.from({ length: 105 }, (_, index) => {
+            const requestKey = `service-record-initial-finalization:${f.revisionId}:${randomUUID()}`;
+            return { branchId: f.branchId, clientId: job.clientId, requestKey, jobType: "create_document", source: "auto_finalize",
+                status: "failed", progressStep: "sent", progressDetail: "sent", lastErrorCode: "JOB_CANCELLED_AFTER_DISPATCH",
+                updatedAt: new Date(job.updatedAt.getTime() - 120000 - index), payloadFingerprint: job.payloadFingerprint,
+                payload: { ...job.payload as Prisma.InputJsonObject, snapshotReference: requestKey } };
+        });
+        await db.eformsign_document_job.createMany({ data: historical });
+        const lookup = jest.spyOn(f.client, "getInProgressDocumentsPage");
+        expect(await f.run()).toBe(1);
+        expect(lookup).toHaveBeenCalledTimes(1);
+        expect(await f.readJob()).toMatchObject({ status: "completed", activeKey: null });
+        expect(await db.eformsign_document_job.count({ where: { requestKey: { in: historical.map(row => row.requestKey) },
+            status: "failed", activeKey: null } })).toBe(historical.length);
+    });
+    it.each(["non-INITIAL", "released key", "newer generation", "moved revision", "no chunks"])("U4 excludes %s before provider lookup", async reason => {
+        const f = await cancelledProviderRuntime();
+        if (reason === "non-INITIAL") await db.$executeRaw`UPDATE eformsign_document_job
+            SET payload = payload || '{"generationKind":"REVISION_SNAPSHOT"}'::jsonb WHERE id = ${f.job.id}::uuid`;
+        if (reason === "released key") await db.$executeRaw`UPDATE eformsign_document_job
+            SET active_key = NULL WHERE id = ${f.job.id}::uuid`;
+        if (reason === "newer generation") await db.service_record_revision_document_state.create({ data: {
+            branchId: f.branchId, clientId: f.state.clientId, serviceRecordCaseId: f.record.id, revisionId: f.revisionId,
+            operation: "record_snapshot", generation: randomUUID(), immutableInput: {}, inputFingerprint: "a".repeat(64),
+            documentVersion: 4, status: "completed", workflowScope: f.state.workflowScope ?? {},
+            createdAt: new Date(Date.now() + 1000),
+        } });
+        if (reason === "moved revision") await db.service_record_case.update({ where: { id: f.record.id }, data: { currentRevisionId: null } });
+        if (reason === "no chunks") await db.service_record_snapshot_chunk.deleteMany({ where: { serviceRecordCaseId: f.record.id } });
+        const lookup = jest.spyOn(f.client, "getInProgressDocumentsPage");
+        expect(await f.run()).toBe(0);
+        expect(lookup).not.toHaveBeenCalled();
+    });
+    it.each(["timestamp", "lease", "progress", "payload", "attempts"])("U4 job %s changed during provider lookup prevents all recovery writes", async change => {
+        const f = await cancelledProviderRuntime();
+        let afterChange: Awaited<ReturnType<typeof f.read>> | undefined;
+        const getDocument = f.client.getDocument;
+        jest.spyOn(f.client, "getDocument").mockImplementationOnce(async (token, id) => {
+            // Keep submillisecond precision, and isolate each job predicate from
+            // the independent state/chunk guards. Never mutate a fixture CHECK.
+            if (change === "timestamp") await db.$executeRaw`UPDATE eformsign_document_job
+                SET updated_at = updated_at + interval '1 millisecond' WHERE id = ${f.job.id}::uuid`;
+            if (change === "lease") await db.$executeRaw`UPDATE eformsign_document_job
+                SET lease_token = ${randomUUID()}::uuid WHERE id = ${f.job.id}::uuid`;
+            if (change === "progress") await db.$executeRaw`UPDATE eformsign_document_job
+                SET progress_step = 'creating' WHERE id = ${f.job.id}::uuid`;
+            if (change === "payload") await db.$executeRaw`UPDATE eformsign_document_job
+                SET payload = payload || '{"qaConcurrentChange":true}'::jsonb WHERE id = ${f.job.id}::uuid`;
+            if (change === "attempts") await db.$executeRaw`UPDATE eformsign_document_job
+                SET attempts = attempts + 1 WHERE id = ${f.job.id}::uuid`;
+            afterChange = await f.read();
+            return getDocument(token, id);
+        });
+        expect(await f.run()).toBe(0);
+        expect(afterChange).toBeDefined();
+        expect(await f.read()).toEqual(afterChange);
+    });
+    it.each(["none", "partial", "ambiguous"])("U4 %s evidence cannot prove absence: transaction/key unchanged and regenerate stays blocked", async evidence => {
+        const f = await cancelledProviderRuntime(false);
+        if (evidence === "none") f.listed.splice(0);
+        else if (evidence === "partial") f.listed.splice(1);
+        else f.listed.push({ ...f.listed[1]!, id: "synthetic-duplicate" });
+        const before = await f.read();
+        expect(await f.run()).toBe(0); expect(await f.read()).toEqual(before);
+        await expect(initialFinalizer(f).regenerateInitialFinalization(f.branchId, {
+            revisionId: f.revisionId, documentStateId: f.state.id, expectedGeneration: f.state.generation,
+        })).rejects.toMatchObject({ status: 409 });
+        expect(await f.read()).toEqual(before);
+    });
+    it("U4 a failed second link rolls back the first link and job completion in real PG", async () => {
+        const f = await cancelledProviderRuntime(false), before = await f.read();
+        const persist = f.snapshots.persistCancelledInitialRemoteDocument.bind(f.snapshots);
+        let firstLink: string | null | undefined;
+        jest.spyOn(f.snapshots, "persistCancelledInitialRemoteDocument").mockImplementation(async (...args) => {
+            if (args[3] === 2) throw new Error("synthetic second link failure");
+            await persist(...args);
+            const chunk = await args[0].service_record_snapshot_chunk.findUniqueOrThrow({ where: { id: args[2] } });
+            firstLink = chunk.eformsignDocumentId;
+        });
+        expect(await f.run()).toBe(0);
+        expect(firstLink).toBe(documents[0]);
+        expect(await f.read()).toEqual(before);
+    });
+    it("U4 N9-1 completed chunk deleted before provider recovery stays COMPLETED_DOCUMENT_DELETED and not ready", async () => {
+        const f = await cancelledProviderRuntime();
+        await db.eformsign_doc.update({ where: { documentId: documents[0]! }, data: { statusType: "003" } });
+        expect(await f.purge(1)).toBe(true);
+        const before = await f.read(); expect(await f.run()).toBe(0); expect(await f.read()).toEqual(before);
+        expect(await f.readState()).toMatchObject({ status: "failed", lastErrorCode: "SERVICE_RECORD_INITIAL_COMPLETED_DOCUMENT_DELETED" });
+        expect(await readinessOf(f)).toMatchObject({ ready: false });
+    });
+    it("U4 R3-1 delete before lookup with an unproven sibling stays manual_review; later linking preserves unknown-deletion safety", async () => {
+        const f = await cancelledProviderRuntime();
+        expect(await f.purge(1)).toBe(false);
+        const second = f.listed.pop()!;
+        const before = await f.read(); expect(await f.run()).toBe(0); expect(await f.read()).toEqual(before);
+        f.listed.push(second);
+        expect(await f.run()).toBe(1);
+        expect(await f.readState()).toMatchObject({ status: "failed", lastErrorCode: "SERVICE_RECORD_INITIAL_DELETED_STATUS_UNKNOWN" });
+        expect(await readinessOf(f)).toMatchObject({ ready: false });
+    });
+
     async function terminalInitial(regenerationSource = false) {
         const f = await initialChunks({ regenerationSource });
         await db.eformsign_doc.updateMany({ where: { documentId: { in: documents.slice(0, 2) } }, data: { statusType: "011" } });
@@ -2043,6 +2230,9 @@ async function bounded<T>(promise: Promise<T>, ms: number): Promise<T> {
     it("U3b scheduler claim after regeneration validates each key and leaves jobs/state/case unchanged", async () => {
         const f = await regenerationReady(), finalizer = initialFinalizer(f);
         await finalizer.regenerateInitialFinalization(f.branchId, f.request);
+        // Complete source and a nonzero counter distinguish freeze from the
+        // incomplete-source short circuit, which always returns attempts: 0.
+        await db.service_record_case.update({ where: { id: f.record.id }, data: { finalizationAttempts: 7 } });
         const read = async () => ({
             jobs: await db.eformsign_document_job.findMany({ where: { branchId: f.branchId, source: "auto_finalize" }, orderBy: { id: "asc" } }),
             states: await db.service_record_revision_document_state.findMany({ where: { revisionId: f.revisionId }, orderBy: { id: "asc" } }),

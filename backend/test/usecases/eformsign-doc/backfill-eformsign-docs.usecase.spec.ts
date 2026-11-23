@@ -63,13 +63,18 @@ describe("BackfillEformsignDocsUsecase", () => {
             getRejectedDocumentsPage: jest.fn().mockResolvedValue({ documents: [], total_rows: 0 }),
         };
         const lifecycle = { healInitialSnapshotTerminalOutcomes: jest.fn().mockResolvedValue(1) };
+        const recovery = { reconcile: jest.fn().mockResolvedValue(1) };
         const shouldContinue = jest.fn().mockReturnValue(true);
         const usecase = new BackfillEformsignDocsUsecase(client as never, createBoundary() as never, {} as never,
-            {} as never, undefined, undefined, lifecycle as never);
+            {} as never, undefined, undefined, lifecycle as never, recovery as never);
         await expect(usecase.execute({ shouldContinue }, { branchId, source: "worker" })).resolves.toMatchObject({ failed: 0 });
         expect(lifecycle.healInitialSnapshotTerminalOutcomes).toHaveBeenCalledWith({
             branchId: branchId.startsWith("__system__:") ? undefined : branchId, shouldContinue,
         });
+        expect(recovery.reconcile).toHaveBeenCalledWith({
+            branchId: branchId.startsWith("__system__:") ? undefined : branchId, shouldContinue,
+        });
+        expect(lifecycle.healInitialSnapshotTerminalOutcomes.mock.invocationCallOrder[0]!).toBeLessThan(recovery.reconcile.mock.invocationCallOrder[0]!);
         expect(client.getRejectedDocumentsPage.mock.invocationCallOrder[0]!).toBeLessThan(lifecycle.healInitialSnapshotTerminalOutcomes.mock.invocationCallOrder[0]!);
     });
 

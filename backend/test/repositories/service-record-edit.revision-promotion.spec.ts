@@ -409,6 +409,27 @@ describe("INITIAL documents-created boundary", () => {
             [stateRow({ workflowScope: scope, status: "processing", step: "dispatch_authorized", ...options.state })],
             options.chunks ?? [{ ...validChunk(), documentStatusType: "070" }]];
     }
+    it.each(["READY_TO_FINALIZE", "FINALIZATION_FAILED"])("recovers a post-dispatch cancellation from %s using the existing promotion", async status => {
+        // Caller already holds case -> state -> chunk/doc; only the three proof reads remain.
+        const f = transactionHarness(initialRows({ state: { status: "manual_review", step: "manual_review", lastErrorCode: "JOB_CANCELLED_AFTER_DISPATCH" },
+            owner: { status } }).slice(10));
+        await expect(new ServiceRecordEditRepository(f.prisma as never).recordInitialFinalizationDocumentsCreatedInTransaction(
+            { tx: f.tx as never }, promotionInput(), "cancelled_after_dispatch")).resolves.toBe(true);
+        expect(f.queryRaw).toHaveBeenCalledTimes(3);
+        expect(f.executeRaw.mock.calls.map(([sql]) => sqlText(sql)).join(" ")).toContain("status = 'DOCUMENTS_CREATED'");
+    });
+    it.each([
+        { state: { status: "manual_review", lastErrorCode: "OTHER_CODE" } },
+        { state: { status: "failed", lastErrorCode: "SERVICE_RECORD_INITIAL_COMPLETED_DOCUMENT_DELETED" } },
+        { state: { status: "processing", step: "dispatch_authorized" } },
+        { state: { status: "manual_review", lastErrorCode: "JOB_CANCELLED_AFTER_DISPATCH" }, owner: { status: "DOCUMENTS_CREATED" } },
+        { state: { status: "manual_review", lastErrorCode: "JOB_CANCELLED_AFTER_DISPATCH" }, chunks: [] },
+    ])("cancelled recovery rejects a changed precondition without writes %#", async options => {
+        const f = transactionHarness(initialRows(options).slice(10));
+        await expect(new ServiceRecordEditRepository(f.prisma as never).recordInitialFinalizationDocumentsCreatedInTransaction(
+            { tx: f.tx as never }, promotionInput(), "cancelled_after_dispatch")).resolves.toBe(false);
+        expect(f.executeRaw).not.toHaveBeenCalled();
+    });
     it("accepts review-requested documents, keeps pointer null, records creation and revokes tokens", async () => {
         const f = transactionHarness(initialRows());
         const repo = new ServiceRecordEditRepository(f.prisma as never);

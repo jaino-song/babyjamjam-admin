@@ -400,6 +400,8 @@ describe("ServiceRecordStartDateChangeService", () => {
             momName: "Mom", momBirth: "900101", babyName: "Baby", babyBirth: "261201", deliveryType: "natural", babyWeight: "3.2",
         };
         const tx = {
+            // This isolated tx has no persisted job storage.
+            eformsign_document_job: { findMany: jest.fn().mockResolvedValue([]) },
             service_record_case: {
                 findUnique: jest.fn(async (args: { select?: { branch?: unknown } }) => args.select?.branch ? { ...source, branch: { name: "Branch" } } : source),
                 updateMany: jest.fn(),
@@ -412,7 +414,7 @@ describe("ServiceRecordStartDateChangeService", () => {
         const snapshot = { executeCase: jest.fn() };
         const jobs = {
             findByRequestKeyInTransaction: jest.fn().mockResolvedValue(null),
-            enqueueInTransaction: jest.fn().mockResolvedValue({ existing: false }),
+            enqueueInTransaction: jest.fn().mockResolvedValue({ existing: false, job: { id: "frozen-job", status: "queued" } }),
         };
         const editRepository = {
             createRevisionDocumentStateInTransaction: jest.fn().mockResolvedValue({ id: "state-1", documentVersion: 3 }),

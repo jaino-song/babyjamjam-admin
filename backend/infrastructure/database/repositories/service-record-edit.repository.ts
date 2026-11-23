@@ -3260,9 +3260,12 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
     async recordInitialFinalizationDocumentsCreatedInTransaction(
         context: ServiceRecordEditTransactionContext,
         input: PromoteServiceRecordRevisionSnapshotInput,
+        precondition?: "cancelled_after_dispatch",
     ): Promise<boolean> {
         assertRevisionPromotionInput(input);
-        await lockRevisionDocumentTargets(context.tx, input, true);
+        // Recovery already owns case -> state -> chunk/doc locks. Do not acquire
+        // client/employee locks here, which would invert the lifecycle lock order.
+        if (!precondition) await lockRevisionDocumentTargets(context.tx, input, true);
         const ownerCase = await selectRevisionGenerationCase(context.tx, input);
         if (!ownerCase || ownerCase.currentRevisionId !== input.revisionId
             || !["READY_TO_FINALIZE", "FINALIZATION_FAILED", "FINALIZING", "DOCUMENTS_CREATED"].includes(ownerCase.status)) {
@@ -3279,7 +3282,10 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
             || !isInitialFinalizationWorkflowScopeForRevision(current.workflowScope, input.revisionId)) return false;
         const replay = current.status === "processing" && current.step === "documents_created"
             && ownerCase.status === "DOCUMENTS_CREATED";
-        if (!replay && (current.status !== "processing" || current.step !== "dispatch_authorized"
+        if (precondition === "cancelled_after_dispatch") {
+            if (current.status !== "manual_review" || current.lastErrorCode !== "JOB_CANCELLED_AFTER_DISPATCH"
+                || !["READY_TO_FINALIZE", "FINALIZATION_FAILED"].includes(ownerCase.status)) return false;
+        } else if (!replay && (current.status !== "processing" || current.step !== "dispatch_authorized"
             || ownerCase.status === "DOCUMENTS_CREATED")) return false;
         const rows = await selectRevisionSnapshotChunks(context.tx, input);
         if (rows.length !== input.chunkCount) return false;

@@ -1,3 +1,5 @@
+import { INITIAL_PROVIDER_RECOVERY } from "domain/repositories/service-record-initial-provider-recovery.interface";
+import { ServiceRecordInitialProviderRecoveryService } from "infrastructure/eformsign/service-record-initial-provider-recovery.service";
 import { ServiceRecordFinalizationService } from "application/services/service-record-finalization.service";
 import { Module } from "@nestjs/common";
 import { EformsignDocumentJobManualRecoveryService } from "application/services/eformsign-document-job-manual-recovery.service";
@@ -162,6 +164,7 @@ import { HolidayModule } from "./holiday.module";
         CreateAndSendContractUsecase,
         // Use case - Service record snapshot (BJJ-247)
         CreateAndSendServiceRecordSnapshotUsecase,
+        { provide: INITIAL_PROVIDER_RECOVERY, useClass: ServiceRecordInitialProviderRecoveryService },
         // Use cases - Headless dispatch (BJJ-90)
         DispatchDocumentHeadlessUsecase,
         FinalizeDocumentHeadlessUsecase,

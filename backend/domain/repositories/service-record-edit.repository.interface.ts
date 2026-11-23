@@ -662,6 +662,7 @@ export interface IServiceRecordEditRepository {
     recordInitialFinalizationDocumentsCreatedInTransaction(
         context: ServiceRecordEditTransactionContext,
         input: PromoteServiceRecordRevisionSnapshotInput,
+        precondition?: "cancelled_after_dispatch",
     ): Promise<boolean>;
     /** Promote a complete chunk/document set and advance usable pointers atomically. */
     promoteServiceRecordRevisionSnapshot(

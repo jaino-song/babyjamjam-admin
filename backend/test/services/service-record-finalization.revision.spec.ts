@@ -404,6 +404,29 @@ describe("ServiceRecordFinalizationService revised generation", () => {
         expect(jobService.enqueueInTransaction).not.toHaveBeenCalled();
     });
 
+    it("refuses a valid fallback job from a generation older than the newest INITIAL state", async () => {
+        const requestKey = `service-record-initial-finalization:${revisionId}`;
+        const immutablePayload = { caseId }, fingerprint = sha256CanonicalJson(immutablePayload);
+        const existing = { requestKey, branchId, clientId, jobType: "create_document", payloadFingerprint: fingerprint,
+            payload: { kind: "service_record_revision", generationKind: "INITIAL_FINALIZATION", generation: "gen1",
+                revisionId, completeness: "complete", manualReviewRequired: true, documentVersion: 3,
+                immutablePayload, payloadFingerprint: fingerprint, snapshotReference: requestKey,
+                context: { branchId, clientId, serviceRecordCaseId: caseId, revisionId, businessFingerprint: fingerprint } } };
+        const jobs = { findByRequestKeyInTransaction: jest.fn().mockResolvedValue(existing), enqueueInTransaction: jest.fn() };
+        const findFirst = jest.fn().mockResolvedValue({ generation: "gen2", workflowScope: {
+            generationKind: "INITIAL_FINALIZATION", requestKey,
+        } });
+        // No enumerated job: exercise the fallback request lookup and its generation fence.
+        const tx = { eformsign_document_job: { findMany: jest.fn().mockResolvedValue([]) },
+            service_record_revision_document_state: { findFirst } };
+        await expect((buildService(jobs) as unknown as { freezeInitialFinalizationGeneration: (tx: unknown, source: unknown,
+            calendar: KrBusinessDayCalendar) => Promise<void> }).freezeInitialFinalizationGeneration(tx, source(), KR_BUILTIN_CALENDAR))
+            .rejects.toMatchObject({ response: { code: "SERVICE_RECORD_REVISION_GENERATION_SCOPE_CHANGED" } });
+        expect(findFirst).toHaveBeenCalledTimes(1);
+        expect(jobs.findByRequestKeyInTransaction).toHaveBeenCalledWith(tx, requestKey);
+        expect(jobs.enqueueInTransaction).not.toHaveBeenCalled();
+    });
+
     it("reuses an existing request payload without rebuilding it", async () => {
         const immutablePayload = { caseId };
         const frozenFingerprint = sha256CanonicalJson(immutablePayload);
