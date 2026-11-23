@@ -4578,12 +4578,6 @@ export class MessageTriggerService {
                 const attempt = await this.jobRepository.fenceServiceRecordLinkAttempt(transaction, job, new Date(), "processing");
                 if (attempt.kind !== "allow") return attempt;
             }
-            const serviceEndNoticeFence = await this.fenceServiceEndNoticeBeforeProviderSend(
-                job,
-                transaction,
-            );
-            if (serviceEndNoticeFence.kind === "lost") return serviceEndNoticeFence;
-
             // Revised service-record messages carry a server-derived context.
             // Acquire the same client-owned lock set before the job row and
             // compare that context after the lock. This keeps a confirm that

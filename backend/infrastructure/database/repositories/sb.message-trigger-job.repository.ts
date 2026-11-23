@@ -1,3 +1,5 @@
+import { OCCURRENCE_ALREADY_ACCEPTED, SMS_OCCURRENCE_HOLD_FIELD } from "domain/entities/message-occurrence";
+import { hasAcceptedJobOccurrence } from "./message-occurrence-ledger";
 import { fenceRecordLinkAttempt } from "./record-link-recovery.repository";
 import { isManualMessageTriggerJob } from "domain/constants/message-trigger-job-ownership";
 import { agentBindingHash } from "domain/repositories/agent-linked-action.types";
@@ -2146,8 +2148,15 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
         const ordinaryConflict = ordinaryAutomationJobSql({ ruleId: Prisma.sql`"message_trigger_job"."rule_id"`,
             dedupeKey: Prisma.sql`"message_trigger_job"."dedupe_key"`, payload: Prisma.sql`"message_trigger_job"."payload"` });
         const terminalCancellation = senderApprovalCancellationSql(Prisma.sql`"message_trigger_job"."status"`, Prisma.sql`"message_trigger_job"."cancel_reason"`);
-        const conflictAction = preserveExisting
-            ? Prisma.sql`DO NOTHING`
+        const accepted = job.status === "pending" && await this.hasAcceptedOccurrence(job, client);
+        const conflictAction = accepted
+            ? Prisma.sql`DO UPDATE SET status = 'canceled', canceled_at = EXCLUDED.canceled_at,
+                cancel_reason = EXCLUDED.cancel_reason, next_attempt_at = NULL,
+                updated_at = date_trunc('milliseconds', clock_timestamp())
+              WHERE ${ordinaryConflict} AND "message_trigger_job"."status" = 'pending'
+                AND "message_trigger_job"."claim_token" IS NULL`
+            : preserveExisting
+                ? Prisma.sql`DO NOTHING`
             : Prisma.sql`DO UPDATE SET
                 status = 'pending',
                 scheduled_for = EXCLUDED.scheduled_for,
@@ -2236,6 +2245,12 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
         }
 
         return this.toDomain(existing);
+    }
+
+    async hasAcceptedOccurrence(job: MessageTriggerJobEntity, transaction?: Prisma.TransactionClient): Promise<boolean> {
+        const tx = transaction ?? this.prisma;
+        if (!tx.message_occurrence_claim) return false;
+        return hasAcceptedJobOccurrence(tx, { ...job, payload: job.payload as unknown as Prisma.JsonValue });
     }
 
     private async findPermissionDeniedPredecessor(

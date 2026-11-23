@@ -203,9 +203,24 @@ export async function hasRecordLinkAcceptance(
                     { triggerJob: { is: {
                         branchId: schedule.branchId, clientId: schedule.clientId,
                         employeeScheduleId: schedule.id, templateKey: MessageTriggerTemplateKey.SERVICE_RECORD_LINK,
+                        AND: [
+                            { payload: { path: ["employeeId"], equals: schedule.primaryEmployeeId } },
+                            { OR: [
+                                { payload: { path: ["scheduleIncarnationId"], equals: schedule.incarnationId } },
+                                { payload: { path: ["scheduleIncarnationId"], equals: Prisma.AnyNull } },
+                            ] },
+                        ],
                     } } },
-                    { clientId: schedule.clientId, variables: { path: ["scheduleId"], equals: String(schedule.id) } },
-                    { clientId: schedule.clientId, variables: { path: ["scheduleId"], equals: schedule.id } },
+                    { triggerJobId: null, clientId: schedule.clientId, AND: [
+                        { OR: [
+                            { variables: { path: ["scheduleId"], equals: String(schedule.id) } },
+                            { variables: { path: ["scheduleId"], equals: schedule.id } },
+                        ] },
+                        { OR: [
+                            { variables: { path: ["employeeId"], equals: String(schedule.primaryEmployeeId) } },
+                            { variables: { path: ["employeeId"], equals: schedule.primaryEmployeeId } },
+                        ] },
+                    ] },
                 ] },
                 { OR: [
                     { providerAcceptanceState: { in: ["accepted", "reconciled_delivered", "started", "uncertain"] } },
@@ -233,11 +248,14 @@ export async function findRecordLinkTerminalSibling(
     return predecessor?.cancelReason ?? null;
 }
 
-export function matchesRecordLinkOccurrence(payload: Prisma.JsonValue, schedule: RecordLinkAssignment): boolean {
+export function matchesRecordLinkOccurrence(
+    payload: Prisma.JsonValue, schedule: RecordLinkAssignment, requireObservation = true,
+): boolean {
     if (!payload || typeof payload !== "object" || Array.isArray(payload)) return false;
     return payload["employeeId"] === schedule.primaryEmployeeId
-        && (payload["scheduleId"] === undefined || payload["scheduleId"] === schedule.id)
-        && (payload["scheduleIncarnationId"] === undefined || payload["scheduleIncarnationId"] === schedule.incarnationId);
+        && (payload["scheduleId"] === schedule.id || (!requireObservation && payload["scheduleId"] === undefined))
+        && (payload["scheduleIncarnationId"] === schedule.incarnationId
+            || (!requireObservation && payload["scheduleIncarnationId"] === undefined));
 }
 
 type RecordLinkAttempt = Pick<import("domain/entities/message-trigger-job.entity").MessageTriggerJobEntity,
@@ -315,10 +333,12 @@ export async function fenceRecordLinkAttempt(
                 OR: [{ providerCallStartedAt: { not: null } }, { providerAcceptanceState: { not: "prepared" } }] },
             select: { id: true },
         });
-        if (row.attempts > 0 || log || row.cancelReason || row.recoveryReason || !matchesRecordLinkOccurrence(row.payload, schedule)) {
+        const payload = row.payload;
+        if (row.attempts > 0 || log || row.cancelReason || row.recoveryReason || !matchesRecordLinkOccurrence(payload, schedule, false)) {
             return cancel(SERVICE_RECORD_LINK_PRE_BOOKING_REASON);
         }
         return cancel(SERVICE_RECORD_LINK_PRE_BOOKING_REASON, {
+            payload: { ...(payload as Prisma.JsonObject), scheduleId: schedule.id, scheduleIncarnationId: schedule.incarnationId },
             recoveryReason: RECORD_LINK_RECOVERY_REASON,
             recoveryEpoch: await readRecordLinkEpoch(tx, job.branchId),
             firstBlockedAt: now,

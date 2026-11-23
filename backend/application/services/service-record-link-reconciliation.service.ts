@@ -51,28 +51,36 @@ export class ServiceRecordLinkReconciliationService {
         if (!runToken) return;
 
         try {
-            const recovered = await this.linkService.sweepRecovery?.() ?? 0;
-            const repairedCount = recovered + await this.reconcileMissingJobs();
+            const recovered = await this.runRepairOperation("sweepRecovery", () => this.linkService.sweepRecovery());
+            const reconciled = await this.runRepairOperation("reconcileMissingJobs", () => this.reconcileMissingJobs());
+            const repairedCount = recovered + reconciled;
             if (repairedCount > 0) {
                 this.logger.log(
                     `[Service Record Link Repair] Recreated ${repairedCount} missing message jobs`,
                 );
             }
+        } finally {
+            this.executionGuard.finish(runToken);
+        }
+    }
+
+    private async runRepairOperation(operation: string, repair: () => Promise<number>): Promise<number> {
+        try {
+            return await repair();
         } catch (error) {
             captureServiceRecordError(error, {
                 operation: "link-schedule",
                 handled: true,
             });
             if (isTransientPrismaConnectivityError(error)) {
-                this.executionGuard.enterCooldown(summarizePrismaError(error));
-                return;
+                this.executionGuard.enterCooldown(`${operation}: ${summarizePrismaError(error)}`);
+            } else {
+                this.logger.error(
+                    `[Service Record Link Repair] ${operation} failed`,
+                    error instanceof Error ? error.stack : String(error),
+                );
             }
-            this.logger.error(
-                "[Service Record Link Repair] Run failed",
-                error instanceof Error ? error.stack : String(error),
-            );
-        } finally {
-            this.executionGuard.finish(runToken);
+            return 0;
         }
     }
 

@@ -1,4 +1,6 @@
-CREATE TABLE message_occurrence_claim (
+BEGIN;
+
+CREATE TABLE IF NOT EXISTS message_occurrence_claim (
     branch_id uuid NOT NULL REFERENCES branch(id),
     occurrence_key char(64) NOT NULL,
     template_key text NOT NULL,
@@ -18,7 +20,7 @@ CREATE TABLE message_occurrence_claim (
     PRIMARY KEY (branch_id, occurrence_key)
 );
 
-CREATE TABLE message_occurrence_manual_attempt (
+CREATE TABLE IF NOT EXISTS message_occurrence_manual_attempt (
     branch_id uuid NOT NULL,
     occurrence_key char(64) NOT NULL,
     log_id integer NOT NULL REFERENCES message_log(id) ON DELETE RESTRICT,
@@ -30,11 +32,13 @@ CREATE TABLE message_occurrence_manual_attempt (
         REFERENCES message_occurrence_claim(branch_id, occurrence_key) ON DELETE RESTRICT
 );
 
-CREATE INDEX message_occurrence_manual_attempt_log_idx ON message_occurrence_manual_attempt(log_id);
-CREATE INDEX message_occurrence_claim_holder_idx ON message_occurrence_claim(holder_log_id);
-CREATE INDEX message_occurrence_claim_accepted_idx ON message_occurrence_claim(accepted_log_id);
-CREATE INDEX message_log_occurrence_history_idx ON message_log(branch_id, client_id, template_key)
+CREATE INDEX IF NOT EXISTS message_occurrence_manual_attempt_log_idx ON message_occurrence_manual_attempt(log_id);
+CREATE INDEX IF NOT EXISTS message_occurrence_claim_holder_idx ON message_occurrence_claim(holder_log_id);
+CREATE INDEX IF NOT EXISTS message_occurrence_claim_accepted_idx ON message_occurrence_claim(accepted_log_id);
+CREATE INDEX IF NOT EXISTS message_log_occurrence_history_idx ON message_log(branch_id, client_id, template_key)
     WHERE provider = 'aligo_sms' AND client_id IS NOT NULL;
 
 ALTER TABLE message_occurrence_claim ENABLE ROW LEVEL SECURITY;
 ALTER TABLE message_occurrence_manual_attempt ENABLE ROW LEVEL SECURITY;
+
+COMMIT;
