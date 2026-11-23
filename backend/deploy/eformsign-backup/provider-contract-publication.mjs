@@ -6,10 +6,12 @@ import { isDeepStrictEqual } from 'node:util';
 import { matchesProviderPair, pairedPaths, providerFolder, syncDirectory, writeJson } from './provider-contract-paths.mjs';
 
 const prefix = '.provider-publication-';
+const validStageName = (name) => typeof name === 'string' && /^\.provider-publication-[a-zA-Z0-9]{6}$/.test(name);
 const identity = ({ dev, ino, birthtimeNs }) => ({ dev: String(dev), ino: String(ino), birthtimeNs: String(birthtimeNs) });
 const validIdentity = (id) => typeof id?.dev === 'string' && /^\d+$/.test(id.dev)
     && typeof id.ino === 'string' && /^\d+$/.test(id.ino)
     && typeof id.birthtimeNs === 'string' && /^\d+$/.test(id.birthtimeNs);
+const validPreparedIdentity = (id) => validIdentity(id) && /[1-9]/.test(id.birthtimeNs);
 const sameInode = (stat, id) => isDeepStrictEqual(identity(stat), id);
 const refuse = (reason) => { throw new Error(`provider_publication_${reason}`); };
 const stat = (path) => fs.lstat(path, { bigint: true }).catch((error) => {
@@ -17,6 +19,33 @@ const stat = (path) => fs.lstat(path, { bigint: true }).catch((error) => {
     throw error;
 });
 const privateToWorker = (stat) => stat.uid === BigInt(process.getuid()) && (stat.mode & 0o077n) === 0n;
+const directoryFlags = constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW;
+// Linux directory handles keep child operations anchored to the verified directory.
+const directoryFdPath = (handle) => `/proc/self/fd/${handle.fd}`;
+const stagePath = (directory) => join(directory, 'payload.stage');
+
+async function readPrivateJson(path, reason) {
+    const info = await stat(path);
+    if (!info) return null;
+    if (!info.isFile() || !privateToWorker(info)) refuse(reason);
+    const handle = await fs.open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+    try {
+        const opened = await handle.stat({ bigint: true });
+        if (!opened.isFile() || !privateToWorker(opened) || !sameInode(opened, identity(info))) refuse(reason);
+        return { value: JSON.parse(await handle.readFile('utf8')), inode: identity(opened) };
+    } finally { await handle.close(); }
+}
+
+function validatePrepared(receipt, archive, archiveInfo) {
+    if (receipt?.version !== 1 || receipt.archive !== archive || !validPreparedIdentity(receipt.archiveInode)
+        || !sameInode(archiveInfo, receipt.archiveInode)
+        || !Array.isArray(receipt.stages) || receipt.stages.length < 1 || receipt.stages.length > 2
+        || receipt.stages.some((file) => !validStageName(file?.stage?.name)
+            || !validPreparedIdentity(file.stage.inode) || !validPreparedIdentity(file.inode))
+        || new Set(receipt.stages.map((file) => file.stage.name)).size !== receipt.stages.length) {
+        refuse('invalid_prepared_stages');
+    }
+}
 
 async function verify(path, file, createdAt) {
     const info = await stat(path);
@@ -55,7 +84,7 @@ function validate(intent, archive) {
             : typeof file?.fileId !== 'string' || !file.fileId || typeof file.sha256 !== 'string'
                 || !/^[a-f\d]{64}$/i.test(file.sha256) || !Number.isSafeInteger(file.byteSize) || file.byteSize < 0
                 || intent.next.files[paths[index]] !== file.byteSize || !validIdentity(file.inode)
-                || typeof file.stage?.name !== 'string' || !/^\.provider-publication-[a-zA-Z0-9]{6}$/.test(file.stage.name)
+                || !validStageName(file.stage?.name)
                 || !validIdentity(file.stage.inode))
         || (intent.files[1] && intent.files[0].stage.name === intent.files[1].stage.name)
         || intent.next.fingerprint !== intent.files.map((file) => file?.sha256 ?? '').join(':')) refuse('invalid_intent');
@@ -63,14 +92,10 @@ function validate(intent, archive) {
 }
 
 export function providerPublication({ archive, statePath, state, saveState, prepare, fetchInto }) {
-    const journalPath = join(dirname(statePath), 'provider-contract-publication.json');
+    const stateDir = dirname(statePath);
+    const journalPath = join(stateDir, 'provider-contract-publication.json');
+    const preparedPath = join(stateDir, 'provider-contract-prepared-stages.json');
     let pending = false;
-
-    async function newStage() {
-        const directory = await fs.mkdtemp(join(archive, prefix));
-        await syncDirectory(archive);
-        return { name: basename(directory), inode: identity(await stat(directory)) };
-    }
 
     async function checkStage(stage) {
         const path = join(archive, stage.name);
@@ -80,7 +105,62 @@ export function providerPublication({ archive, statePath, state, saveState, prep
         return path;
     }
 
-    const stagePath = (directory) => join(directory, 'payload.stage');
+    async function removePreparedStage(archiveHandle, { stage, inode }) {
+        const location = join(directoryFdPath(archiveHandle), stage.name);
+        const info = await stat(location);
+        if (!info) return;
+        if (!info.isDirectory() || !privateToWorker(info) || !sameInode(info, stage.inode)) refuse('unsafe_staging_directory');
+        const directory = await fs.open(location, directoryFlags);
+        try {
+            const opened = await directory.stat({ bigint: true });
+            if (!privateToWorker(opened) || !sameInode(opened, stage.inode)) refuse('unsafe_staging_directory');
+            const path = stagePath(directoryFdPath(directory));
+            const payload = await stat(path);
+            if (payload) {
+                if (!payload.isFile() || !privateToWorker(payload) || payload.nlink !== 1n || !sameInode(payload, inode)) {
+                    refuse('prepared_payload_collision');
+                }
+                await fs.unlink(path);
+            }
+            await directory.sync();
+            const current = await stat(location);
+            if (!current?.isDirectory() || !privateToWorker(current) || !sameInode(current, stage.inode)) {
+                refuse('unsafe_staging_directory');
+            }
+            try { await fs.rmdir(location); }
+            catch (error) {
+                if (error.code === 'ENOTEMPTY' || error.code === 'EEXIST') refuse('prepared_directory_not_empty');
+                throw error;
+            }
+        } finally { await directory.close(); }
+    }
+
+    async function reconcilePrepared(intent) {
+        const receipt = await readPrivateJson(preparedPath, 'unsafe_prepared_stages');
+        if (!receipt) return;
+        const archiveHandle = await fs.open(archive, directoryFlags);
+        try {
+            validatePrepared(receipt.value, archive, await archiveHandle.stat({ bigint: true }));
+            const abandoned = receipt.value.stages.filter(({ stage, inode }) => {
+                const referenced = intent?.files.find((file) => file?.stage.name === stage.name);
+                if (!referenced) return true;
+                if (!isDeepStrictEqual(referenced.stage.inode, stage.inode)
+                    || !isDeepStrictEqual(referenced.inode, inode)) refuse('prepared_journal_collision');
+                return false;
+            });
+            for (const file of abandoned) await removePreparedStage(archiveHandle, file);
+            // An earlier worker may have exited after rmdir or after renaming the journal.
+            await archiveHandle.sync();
+            if (intent) await syncDirectory(stateDir);
+            const current = await stat(preparedPath);
+            if (!current?.isFile() || !privateToWorker(current) || !sameInode(current, receipt.inode)) {
+                refuse('unsafe_prepared_stages');
+            }
+            await fs.unlink(preparedPath);
+            await syncDirectory(stateDir);
+        } finally { await archiveHandle.close(); }
+    }
+
     async function removeStage(directory, file, createdAt) {
         const path = stagePath(directory);
         if (await verify(path, file, createdAt)) await fs.unlink(path);
@@ -90,31 +170,44 @@ export function providerPublication({ archive, statePath, state, saveState, prep
     }
 
     async function stageFile(file, createdAt) {
-        const stage = await newStage();
-        const directory = await checkStage(stage);
-        const path = stagePath(directory);
-        let inode;
+        const wasPending = pending;
+        pending = true;
+        const archiveHandle = await fs.open(archive, directoryFlags);
         try {
-            const handle = await fs.open(path, 'wx', 0o600);
+            const archiveInfo = await archiveHandle.stat({ bigint: true });
+            const receipt = await readPrivateJson(preparedPath, 'unsafe_prepared_stages');
+            if (receipt) validatePrepared(receipt.value, archive, archiveInfo);
+            const stages = receipt?.value.stages ?? [];
+            const path = await fs.mkdtemp(join(directoryFdPath(archiveHandle), prefix));
+            const directory = await fs.open(path, directoryFlags);
             try {
-                inode = identity(await handle.stat({ bigint: true }));
-                await fetchInto(file, handle);
-                const time = new Date(createdAt);
-                await handle.utimes(time, time);
-                await handle.sync();
-            } finally { await handle.close(); }
-            await syncDirectory(directory);
-            return { fileId: file.fileId, sha256: file.sha256, byteSize: file.byteSize, stage, inode };
-        } catch (error) {
-            // A failed download was created exclusively here and has not been journaled.
-            if (await checkStage(stage)) {
-                const info = await stat(path);
-                if (info && inode && sameInode(info, inode)) await fs.unlink(path);
-                await fs.rmdir(directory);
-                await syncDirectory(archive);
-            }
-            throw error;
-        }
+                const info = await directory.stat({ bigint: true });
+                if (!privateToWorker(info)) refuse('unsafe_staging_directory');
+                const stage = { name: basename(path), inode: identity(info) };
+                const handle = await fs.open(stagePath(directoryFdPath(directory)), 'wx', 0o600);
+                try {
+                    const payload = await handle.stat({ bigint: true });
+                    if (!payload.isFile() || !privateToWorker(payload) || payload.nlink !== 1n || payload.size !== 0n) {
+                        refuse('prepared_payload_collision');
+                    }
+                    const inode = identity(payload);
+                    // Make the empty allocation and its ownership durable before writing any PDF bytes.
+                    await handle.sync();
+                    await directory.sync();
+                    await archiveHandle.sync();
+                    const prepared = { version: 1, archive, archiveInode: identity(archiveInfo), stages: [...stages, { stage, inode }] };
+                    validatePrepared(prepared, archive, archiveInfo);
+                    await writeJson(preparedPath, prepared);
+                    // Ordinary download failures can use the durable receipt to clean up and continue.
+                    pending = wasPending;
+                    await fetchInto(file, handle);
+                    const time = new Date(createdAt);
+                    await handle.utimes(time, time);
+                    await handle.sync();
+                    return { fileId: file.fileId, sha256: file.sha256, byteSize: file.byteSize, stage, inode };
+                } finally { await handle.close(); }
+            } finally { await directory.close(); }
+        } finally { await archiveHandle.close(); }
     }
 
     async function cleanup(intent) {
@@ -126,6 +219,7 @@ export function providerPublication({ archive, statePath, state, saveState, prep
 
     async function finish(intent) {
         const paths = validate(intent, archive);
+        await reconcilePrepared(intent);
         const active = state.units[intent.key];
         const historical = state.units[intent.history];
         const committed = isDeepStrictEqual(active, intent.next) && isDeepStrictEqual(historical, intent.before);
@@ -156,17 +250,21 @@ export function providerPublication({ archive, statePath, state, saveState, prep
             // may now show a different version or no document at all.
             let file;
             try { file = await stageFile(artifact.file, intent.createdAt); }
-            catch { refuse('staged_file_unavailable'); }
+            catch {
+                await reconcilePrepared(intent);
+                refuse('staged_file_unavailable');
+            }
             const temp = stagePath(await checkStage(file.stage));
             if (!await verify(temp, file, intent.createdAt)) refuse('staged_file_unavailable');
             intent.files[artifact.index] = file;
             await writeJson(journalPath, intent);
+            await reconcilePrepared(intent);
             artifact.file = file;
             artifact.temp = temp;
         }
 
         // A previous process may have renamed the journal and exited before syncing its directory.
-        await syncDirectory(dirname(statePath));
+        await syncDirectory(stateDir);
         let saved = 0;
         for (const artifact of artifacts) {
             if (!artifact.published) {
@@ -184,7 +282,7 @@ export function providerPublication({ archive, statePath, state, saveState, prep
         await cleanup(intent);
         await syncDirectory(archive);
         await fs.unlink(journalPath);
-        await syncDirectory(dirname(statePath));
+        await syncDirectory(stateDir);
         pending = false;
         return saved;
     }
@@ -192,17 +290,13 @@ export function providerPublication({ archive, statePath, state, saveState, prep
     return {
         get pending() { return pending; },
         async resume() {
-            const info = await stat(journalPath);
-            if (!info) return 0;
-            pending = true;
-            if (!info.isFile() || !privateToWorker(info)) refuse('unsafe_intent');
-            const handle = await fs.open(journalPath, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
-            let intent;
-            try {
-                if (!sameInode(await handle.stat({ bigint: true }), identity(info))) refuse('unsafe_intent');
-                intent = JSON.parse(await handle.readFile('utf8'));
-            } finally { await handle.close(); }
-            return finish(intent);
+            const journal = await readPrivateJson(journalPath, 'unsafe_intent');
+            if (journal) {
+                pending = true;
+                return finish(journal.value);
+            }
+            await reconcilePrepared(null);
+            return 0;
         },
         async publish({ key, before, history, next, inputs, createdAt }) {
             const intent = { version: 1, archive, key, before, history, next, createdAt, files: [] };
@@ -210,12 +304,16 @@ export function providerPublication({ archive, statePath, state, saveState, prep
                 for (const file of inputs) {
                     intent.files.push(file ? await stageFile(file, createdAt) : null);
                 }
-                validate(intent, archive);
             } catch (error) {
-                await cleanup(intent);
+                if (!pending) {
+                    pending = true;
+                    await reconcilePrepared(null);
+                    pending = false;
+                }
                 throw error;
             }
             pending = true;
+            validate(intent, archive);
             await writeJson(journalPath, intent);
             return finish(intent);
         },
