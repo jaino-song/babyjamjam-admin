@@ -1051,6 +1051,34 @@ test('immutable first preflight and proven empty cancellation preserve or reatta
     assert.deepEqual(await readJson(record), legacy);
 });
 
+test('proven unpublished rollback refuses preparing guards without a v2 fresh origin', async (t) => {
+    const guards = [
+        ['v1 guard', { version: 1 }],
+        ['v2 existing guard', { version: 2, origin: 'existing', proofDigest: null }],
+    ];
+    for (const [name, fields] of guards) {
+        await t.test(name, async (t) => {
+            const f = await fixture(t);
+            const legacy = { version: 1, id: '00000000-0000-0000-0000-000000000001', phase: 'applied', moves: [],
+                archive: f.publicRoot, remote: 'mock:backup' };
+            await put(f.journal, JSON.stringify(legacy));
+            await stand(f, ['--apply'], 1, { fail: 'prepare' });
+            const { binding, predecessor } = await readJson(f.guard);
+            await put(f.guard, JSON.stringify({ ...fields, phase: 'preparing', binding, predecessor }));
+            await absent(fixtureManifest(f));
+            await absent(f.originals);
+            await absent(f.journal);
+            const before = await tree(f);
+
+            const result = await stand(f, ['--rollback'], 1);
+            assert.deepEqual(result.log, [{ rasterArchive: 'rollback', reason: 'raster_cutover_manifest_required', exitCode: 1 }]);
+            assert.deepEqual(names(result), ['inspect']);
+            assert.deepEqual(await tree(f), before);
+            assert.deepEqual(await f.raw(), []);
+        });
+    }
+});
+
 test('pre-manifest capture and older ambiguous guards retain evidence until verified recovery', async (t) => {
     const f = await fixture(t);
     await f.seed(f.publicRoot, oldPair);
