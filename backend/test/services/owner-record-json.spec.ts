@@ -390,6 +390,19 @@ describe("owner record JSON confirmation", () => {
         await expect(h.editor.confirmOwnerRecordJson(principal, target, req)).resolves.toMatchObject({ caseVersion: 8 });
     });
 
+    it.each(["FINALIZED", "COMPLETED", "CANCELLED"])("rejects a mixed edit and fill for a %s case", async (status) => {
+        const h = harness();
+        h.db.cases[0]!.status = status;
+        const req = await h.request([edit(), fill()]);
+        const before = structuredClone(h.db);
+
+        await expect(h.editor.confirmOwnerRecordJson(principal, target, req)).rejects.toBeInstanceOf(ConflictException);
+        expect(h.db).toEqual(before);
+        expect(h.dayWrite).not.toHaveBeenCalled();
+        expect(h.dayInsert).not.toHaveBeenCalled();
+        expect(h.emit).not.toHaveBeenCalled();
+    });
+
     it.each([
         [{ ...principal, branchId: OTHER_BRANCH }, target],
         [principal, { ...target, clientId: CLIENT + 1 }],
