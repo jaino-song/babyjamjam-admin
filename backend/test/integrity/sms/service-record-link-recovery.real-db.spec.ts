@@ -235,9 +235,13 @@ describeReal("service-record-link recovery through customer writes (PostgreSQL)"
         })() : await create();
         if (mode === "off" || mode === "new-epoch") await toggle(false);
         if (mode === "new-epoch") await toggle(true);
-        if (mode === "completed") jest.setSystemTime(new Date("2026-12-16T04:00:00Z"));
+        const missedHook = mode === "completed" ? jest.spyOn(link, "recheckClientRecovery").mockResolvedValue(undefined) : undefined;
+        if (missedHook) jest.setSystemTime(new Date("2026-12-16T04:00:00Z"));
         await clients.confirmBooking(branchId, client.id);
-        if (mode === "completed") {
+        if (missedHook) {
+            missedHook.mockRestore();
+            expect(await db.raw.message_trigger_job.findFirst({ where: { employeeScheduleId: schedule.id } }))
+                .toMatchObject({ recoveryState: "ineligible_terminal", recoveryTransitionStatus: "completed" });
             await clients.update(branchId, client.id, { endDate: "2026-12-30" });
         } else jest.setSystemTime(due);
         expect(await link.sweepRecovery()).toBe(0);
@@ -284,22 +288,31 @@ describeReal("service-record-link recovery through customer writes (PostgreSQL)"
         expect(await acceptedFor(branchId)).toHaveLength(1);
     });
 
-    it("makes denied sender terminal at a real due attempt while pre-booking, even after approval", async () => {
+    it.each(["direct dispatch", "dispatch tick"])("makes denied sender terminal at a real due attempt via %s, even after approval", async entry => {
         const { branchId, create, clients, toggle, link, trigger } = await fixture();
         await toggle(true);
         const { client, schedule } = await create("waiting");
         const job = await db.raw.message_trigger_job.findFirstOrThrow({ where: { employeeScheduleId: schedule.id } });
         await clients.update(branchId, client.id, { startDate: null });
         await db.raw.branch.update({ where: { id: branchId }, data: { smsSenderApprovalStatus: "pending" } });
+        if (entry === "dispatch tick") {
+            jest.spyOn(trigger.service["messageSenderApprovalService"], "getApprovedBranchIds").mockResolvedValue(new Set());
+            jest.setSystemTime(new Date(due.getTime() - 1));
+            await trigger.service.dispatchDueJobs();
+            expect(await db.raw.message_trigger_job.findUnique({ where: { id: job.id } }))
+                .toMatchObject({ status: "pending", recoveryReason: null, scheduledFor: due });
+        }
         jest.setSystemTime(due);
-        await deliver(trigger, job.id, branchId);
+        if (entry === "dispatch tick") await trigger.service.dispatchDueJobs();
+        else await deliver(trigger, job.id, branchId);
         expect(await db.raw.message_trigger_job.findUnique({ where: { id: job.id } })).toMatchObject({
-            status: "canceled", cancelReason: MESSAGE_SENDER_APPROVAL_REQUIRED_CANCEL_REASON, recoveryReason: null,
+            status: "canceled", cancelReason: MESSAGE_SENDER_APPROVAL_REQUIRED_CANCEL_REASON, recoveryReason: null, recoveryEpoch: null,
         });
         await db.raw.branch.update({ where: { id: branchId }, data: { smsSenderApprovalStatus: "approved" } });
         await clients.update(branchId, client.id, { startDate: dates.startDate });
         expect(await link.sweepRecovery()).toBe(0);
         expect(await link.scheduleForServiceStart(schedule.id)).toBe(false);
+        expect(trigger.delivery.providerCalls).toHaveLength(0);
         expect(await db.raw.message_log.count({ where: { branchId } })).toBe(0);
     });
 
