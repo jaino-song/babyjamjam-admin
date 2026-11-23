@@ -1,11 +1,11 @@
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { QueryClientProvider } from "@tanstack/react-query";
 
 import {
   INITIAL_DOCUMENT_RECOVERY_COPY as copy,
 } from "@/features/document-jobs/service-record-recovery-copy";
 import { createTestQueryClient, makeJobList, makeSummary, setBranchCookie } from "@/features/document-jobs/testing/jobs-test-utils";
-import { useEformsignDocumentJobs } from "@/hooks/useEformsignDocumentJobs";
+import { eformsignDocumentJobsQueryKeys, useEformsignDocumentJobs } from "@/hooks/useEformsignDocumentJobs";
 import { api } from "@/lib/api/client";
 import { INITIAL_DOCUMENT_STATE_CODES as state } from "@/lib/eformsign/initial-document-recovery-contract";
 import { eformsignApi } from "@/services/eformsign";
@@ -32,8 +32,9 @@ function LiveJobs() {
 function setup(data: ReturnType<typeof makeJobList>) {
   const fetchJobs = jest.spyOn(eformsignApi, "getDocumentJobs").mockResolvedValue(data);
   jest.spyOn(eformsignApi, "getDocumentJobSummary").mockResolvedValue(makeSummary());
-  render(<QueryClientProvider client={createTestQueryClient()}><LiveJobs /></QueryClientProvider>);
-  return fetchJobs;
+  const queryClient = createTestQueryClient();
+  render(<QueryClientProvider client={queryClient}><LiveJobs /></QueryClientProvider>);
+  return { fetchJobs, queryClient };
 }
 
 async function openDetail() {
@@ -76,7 +77,7 @@ it.each([
 });
 
 it("asks for approval before regenerating and refreshes the jobs afterwards", async () => {
-  const fetchJobs = setup(makeJobList({ initialRegenerations: [ready] }));
+  const { fetchJobs } = setup(makeJobList({ initialRegenerations: [ready] }));
   const post = jest.spyOn(api, "post").mockImplementation(async () => {
     fetchJobs.mockResolvedValue(makeJobList());
     return { data: {} };
@@ -105,12 +106,41 @@ it.each([
 });
 
 it.each([
+  {
+    label: copy.regenerateLabel,
+    title: copy.regenerateTitle,
+    initial: makeJobList({ initialRegenerations: [ready] }),
+    next: makeJobList({ initialRegenerations: [{ ...ready, ready: false, reasonCode: state.siblingCompleted }] }),
+  },
+  {
+    label: copy.confirmLabel,
+    title: copy.confirmTitle,
+    initial: makeJobList({ noProviderDocumentConfirmable: [confirmation] }),
+    next: makeJobList({ noProviderDocumentConfirmable: [{ ...confirmation, generation: "generation-2" }] }),
+  },
+])("blocks $label when the refreshed jobs list invalidates the open dialog", async ({ label, title, initial, next }) => {
+  const { fetchJobs, queryClient } = setup(initial);
+  const post = jest.spyOn(api, "post").mockResolvedValue({ data: {} });
+  await openDetail();
+  const { dialog, approve: button } = await approve(label, title);
+  expect(button).toBeEnabled();
+
+  fetchJobs.mockResolvedValue(next);
+  await act(() => queryClient.invalidateQueries({ queryKey: eformsignDocumentJobsQueryKeys.list("branch-a") }));
+
+  expect(await within(dialog).findByRole("alert")).toHaveTextContent(copy.unavailable);
+  expect(button).toBeDisabled();
+  fireEvent.click(button);
+  expect(post).not.toHaveBeenCalled();
+});
+
+it.each([
   [null, null],
   [state.siblingInProgress, "일부 문서가 아직 진행 중이에요."],
   [state.siblingCompleted, "일부 문서가 이미 완료됨 · 관리자 문의"],
   [state.deletedStatusUnknown, "삭제된 문서의 완료 여부를 확인할 수 없음 · 관리자 문의"],
 ])("uses new readiness %s following the provider check", async (reasonCode, message) => {
-  const fetchJobs = setup(makeJobList({ noProviderDocumentConfirmable: [confirmation] }));
+  const { fetchJobs } = setup(makeJobList({ noProviderDocumentConfirmable: [confirmation] }));
   const post = jest.spyOn(api, "post").mockImplementation(async () => {
     fetchJobs.mockResolvedValue(makeJobList({ initialRegenerations: [{ ...ready, ready: !reasonCode, reasonCode }] }));
     return { data: {} };
@@ -160,7 +190,7 @@ it("keeps the phone sheet open and prevents duplicate confirmation submissions w
   const originalWidth = window.innerWidth;
   Object.defineProperty(window, "innerWidth", { configurable: true, value: 390 });
   try {
-    const fetchJobs = setup(makeJobList({ noProviderDocumentConfirmable: [confirmation] }));
+    const { fetchJobs } = setup(makeJobList({ noProviderDocumentConfirmable: [confirmation] }));
     let finish = () => {};
     const post = jest.spyOn(api, "post").mockImplementation(() => new Promise(resolve => {
       finish = () => {

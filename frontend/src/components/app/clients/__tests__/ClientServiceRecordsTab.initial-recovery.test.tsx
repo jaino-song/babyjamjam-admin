@@ -1,8 +1,9 @@
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { QueryClientProvider } from "@tanstack/react-query";
 
 import { INITIAL_DOCUMENT_RECOVERY_COPY as copy } from "@/features/document-jobs/service-record-recovery-copy";
 import { createTestQueryClient, makeSummary, setBranchCookie } from "@/features/document-jobs/testing/jobs-test-utils";
+import { serviceRecordKeys } from "@/features/service-records/hooks/keys";
 import { useClientServiceRecordRevisionHistory } from "@/features/service-records/hooks/use-service-records";
 import type { ServiceRecordRevisionDocumentSummary } from "@/features/service-records/types";
 import { api } from "@/lib/api/client";
@@ -49,8 +50,9 @@ function LiveTab() {
 
 function setup(override: Partial<ServiceRecordRevisionDocumentSummary> = {}) {
   const get = jest.spyOn(api, "get").mockResolvedValue({ data: history({ ...document, ...override }) });
-  render(<QueryClientProvider client={createTestQueryClient()}><LiveTab /></QueryClientProvider>);
-  return get;
+  const queryClient = createTestQueryClient();
+  render(<QueryClientProvider client={queryClient}><LiveTab /></QueryClientProvider>);
+  return { get, queryClient };
 }
 
 beforeEach(() => { mockSummary = undefined; setBranchCookie("branch-a"); });
@@ -88,8 +90,61 @@ it.each([state.rejected, state.voided, state.noProviderDocument, state.partialDi
   },
 );
 
+it.each([
+  [state.siblingInProgress, "일부 문서가 아직 진행 중이에요."],
+  [state.siblingCompleted, "일부 문서가 이미 완료됨 · 관리자 문의"],
+  [state.completedDocumentDeleted, "일부 문서가 이미 완료됨 · 관리자 문의"],
+  [state.deletedStatusUnknown, "삭제된 문서의 완료 여부를 확인할 수 없음 · 관리자 문의"],
+  [state.jobInProgress, "문서 생성 작업이 아직 진행 중이에요."],
+])("renders the admin retry 409 reason %s in the regeneration dialog", async (reason, message) => {
+  setup({ canRetry: true });
+  const post = jest.spyOn(api, "post").mockRejectedValue({
+    isAxiosError: true,
+    response: { status: 409, data: { code: "REQUEST_CONFLICT", reason } },
+  });
+
+  fireEvent.click(await screen.findByRole("button", { name: copy.regenerateLabel }));
+  const dialog = await screen.findByRole("dialog", { name: copy.regenerateTitle });
+  fireEvent.click(within(dialog).getByRole("button", { name: copy.regenerateLabel }));
+
+  expect(await within(dialog).findByRole("alert")).toHaveTextContent(message);
+  expect(post).toHaveBeenCalledWith(`${path}/retry`, { expectedGeneration: generation });
+});
+
+it.each([
+  {
+    label: copy.regenerateLabel,
+    title: copy.regenerateTitle,
+    initial: { ...document, canRetry: true },
+    next: document,
+  },
+  {
+    label: copy.confirmLabel,
+    title: copy.confirmTitle,
+    initial: { ...document, noProviderDocumentConfirmable: confirmation },
+    next: { ...document, generation: "generation-2",
+      noProviderDocumentConfirmable: { ...confirmation, generation: "generation-2" } },
+  },
+])("blocks $label when refreshed revision history invalidates the open dialog", async ({ label, title, initial, next }) => {
+  const { get, queryClient } = setup(initial);
+  const post = jest.spyOn(api, "post").mockResolvedValue({ data: document });
+
+  fireEvent.click(await screen.findByRole("button", { name: label }));
+  const dialog = await screen.findByRole("dialog", { name: title });
+  const approve = within(dialog).getByRole("button", { name: label });
+  expect(approve).toBeEnabled();
+
+  get.mockResolvedValue({ data: history(next) });
+  await act(() => queryClient.invalidateQueries({ queryKey: serviceRecordKeys.revisionHistory(42) }));
+
+  expect(await within(dialog).findByRole("alert")).toHaveTextContent(copy.unavailable);
+  expect(approve).toBeDisabled();
+  fireEvent.click(approve);
+  expect(post).not.toHaveBeenCalled();
+});
+
 it("preserves a matched confirmation projection and re-reads canRetry after confirmation", async () => {
-  const get = setup({ status: "manual_review", reasonCode: null, noProviderDocumentConfirmable: confirmation });
+  const { get } = setup({ status: "manual_review", reasonCode: null, noProviderDocumentConfirmable: confirmation });
   const post = jest.spyOn(api, "post").mockImplementation(async () => {
     get.mockResolvedValue({ data: history({ ...document, canRetry: true }) });
     return { data: {} };
