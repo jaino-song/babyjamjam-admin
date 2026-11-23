@@ -4,6 +4,7 @@ import { randomUUID } from "node:crypto";
 
 import {
     INITIAL_FINALIZATION_REQUEST_PREFIX,
+    INITIAL_PROVIDER_FAILURE_CODES,
     initialFinalizationRequestKey,
     initialFinalizationGenerationRequestKey,
     releaseTerminalInitialFinalizationKey,
@@ -905,7 +906,12 @@ export class ServiceRecordFinalizationService {
                 throw initialFinalizationConflict("SERVICE_RECORD_INITIAL_GENERATION_CHANGED");
             }
             const readiness = await releaseTerminalInitialFinalizationKey(tx, source.id, input.revisionId);
-            if (!readiness.ready) throw initialFinalizationConflict(readiness.reason);
+            if (!readiness.ready) {
+                const reason = readiness.reason === readiness.state?.lastErrorCode
+                    && !INITIAL_PROVIDER_FAILURE_CODES.has(readiness.reason)
+                    ? "SERVICE_RECORD_INITIAL_STATE_NOT_READY" : readiness.reason;
+                throw initialFinalizationConflict(reason);
+            }
             const result = await this.freezeInitialFinalizationGeneration(tx, source, calendar, input.expectedGeneration);
             if (!result) throw initialFinalizationConflict("SERVICE_RECORD_REVISION_GENERATION_UNAVAILABLE");
             const changed = await tx.service_record_case.updateMany({

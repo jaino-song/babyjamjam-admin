@@ -83,7 +83,10 @@ it("asks for approval before regenerating and refreshes the jobs afterwards", as
     return { data: {} };
   });
   await openDetail();
+  expect(screen.getByRole("button", { name: copy.regenerateLabel }).closest('[data-slot="initial-document-detail"]'))
+    .toHaveAttribute("data-source-component", "InitialDocumentJobDetail");
   const { dialog, approve: button } = await approve(copy.regenerateLabel, copy.regenerateTitle);
+  expect(dialog).toHaveAttribute("data-source-component", "InitialDocumentRecoveryDialog");
   expect(dialog).toHaveTextContent(copy.regenerateDescription);
   expect(post).not.toHaveBeenCalled();
   fireEvent.click(button);
@@ -96,6 +99,9 @@ it.each([
   [state.siblingInProgress, "일부 문서가 아직 진행 중이에요."],
   [state.siblingCompleted, "일부 문서가 이미 완료됨 · 관리자 문의"],
   [state.deletedStatusUnknown, "삭제된 문서의 완료 여부를 확인할 수 없음 · 관리자 문의"],
+  ["SERVICE_RECORD_INITIAL_ACTIVE_KEY_CONFLICT", "같은 제공기록지의 문서 작업이 이미 등록됐어요."],
+  ["SERVICE_RECORD_INITIAL_REVISION_CHANGED", "확정된 제공기록지가 바뀌었어요."],
+  ["SERVICE_RECORD_INITIAL_GENERATION_CHANGED", "대상 문서가 바뀌었어요."],
 ])("renders the regenerate 409 reason %s inside the confirmation", async (reason, message) => {
   setup(makeJobList({ initialRegenerations: [ready] }));
   jest.spyOn(api, "post").mockRejectedValue(conflict(reason));

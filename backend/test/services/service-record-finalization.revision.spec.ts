@@ -725,7 +725,7 @@ it("releases a pre-deploy INITIAL after rejection and freezes one INITIAL for th
                 { documentId: "doc-2", chunkIndex: 2, chunkCount: 2 },
             ];
             if (text.includes('FROM "eformsign_doc" AS doc')) return ["doc-1", "doc-2"].map(documentId => ({
-                documentId, statusType: "011", voidedAt: null, permanentPurgeRequestedAt: null,
+                documentId, statusType: "011", voided: false, purgePending: false, tombstoneEvaluated: false,
             }));
             if (text.includes('SELECT status, lease_token')) return [oldJob];
             if (text.includes('FROM "client"')) return [{ id: clientId }];
@@ -869,7 +869,7 @@ describe("U3b INITIAL state regeneration", () => {
                 context: { branchId, clientId, serviceRecordCaseId: caseId, revisionId, businessFingerprint: oldFingerprint },
                 immutablePayload: oldInput, payloadFingerprint: oldFingerprint, completeness: "complete", manualReviewRequired: true,
                 documentVersion: 3, snapshotReference: `service-record-initial-finalization:${revisionId}`, documentStateId: stateId } }];
-        const documents = [{ documentId: "old-document", statusType: "049", permanentPurgeRequestedAt: null, voidedAt: null }];
+        const documents = [{ documentId: "old-document", statusType: "049", purgePending: false, voided: false, tombstoneEvaluated: true }];
         const tx = {
             service_record_case: {
                 findUnique: jest.fn(async () => ({ ...record, branch: { name: record.branchName } })),
@@ -991,6 +991,14 @@ describe("U3b INITIAL state regeneration", () => {
         f.states.push({ ...f.states[0], id: "newest", generation: "other" });
         await expect(f.service.regenerateInitialFinalization(branchId, request)).rejects.toMatchObject({ status: 409,
             response: { code: "SERVICE_RECORD_INITIAL_GENERATION_CHANGED" } });
+        expect(f.queue.enqueueInTransaction).not.toHaveBeenCalled();
+    });
+    it("returns the stable regeneration conflict for an internal state failure", async () => {
+        const f = regenerationHarness();
+        Object.assign(f.states[0]!, { status: "manual_review", lastErrorCode: "JOB_CANCELLED_AFTER_DISPATCH" });
+        await expect(f.service.regenerateInitialFinalization(branchId, request)).rejects.toMatchObject({
+            status: 409, response: { code: "SERVICE_RECORD_INITIAL_STATE_NOT_READY" },
+        });
         expect(f.queue.enqueueInTransaction).not.toHaveBeenCalled();
     });
     it.each([["070", "SERVICE_RECORD_INITIAL_SIBLING_IN_PROGRESS"], ["003", "SERVICE_RECORD_INITIAL_SIBLING_COMPLETED"]])(

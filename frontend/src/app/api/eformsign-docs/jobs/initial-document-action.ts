@@ -36,6 +36,7 @@ const confirmationResultSchema = z.object({
   reasonCode: z.enum([
     INITIAL_DOCUMENT_STATE_CODES.noProviderDocument,
     INITIAL_DOCUMENT_STATE_CODES.partialDispatch,
+    INITIAL_DOCUMENT_STATE_CODES.completedDocumentDeleted,
     INITIAL_DOCUMENT_STATE_CODES.deletedStatusUnknown,
   ]),
 });

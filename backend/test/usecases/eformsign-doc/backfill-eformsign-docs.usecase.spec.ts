@@ -178,6 +178,54 @@ describe("BackfillEformsignDocsUsecase", () => {
         expect(mirrorService.markDocumentsDeleted).not.toHaveBeenCalled();
     });
 
+    it.each([
+        { vendorStatus: "003", absentAt: null, captured: "003", cancelSucceeded: false },
+        { vendorStatus: "060", absentAt: null, captured: "060", cancelSucceeded: true },
+        { vendorStatus: "060", absentAt: "detail", captured: undefined, cancelSucceeded: false },
+        { vendorStatus: "060", absentAt: "cancel", captured: undefined, cancelSucceeded: false },
+    ])("evaluates deferred INITIAL purge after commit ($vendorStatus, absent at $absentAt)", async ({
+        vendorStatus, absentAt, captured, cancelSucceeded,
+    }) => {
+        const documentId = "pending-chunk";
+        const missing = new EformsignApiError("missing", 404);
+        const emptyPage = jest.fn().mockResolvedValue({ documents: [], total_rows: 0 });
+        const client = {
+            getInProgressDocumentsPage: emptyPage, getCompletedDocumentsPage: emptyPage, getRejectedDocumentsPage: emptyPage,
+            getDocument: absentAt === "detail" ? jest.fn().mockRejectedValue(missing)
+                : jest.fn().mockResolvedValue(createRemoteDocument(documentId, vendorStatus)),
+        };
+        let purged = false;
+        const mirror = {
+            findActiveDocumentIds: jest.fn().mockResolvedValue([]),
+            findPermanentPurgeRequestedDocumentIds: jest.fn().mockResolvedValue([documentId]),
+            syncDocumentWithToken: jest.fn().mockResolvedValue({ status: "synced" }),
+            requestPermanentPurge: jest.fn().mockResolvedValue([{ documentId, generation: new Date() }]),
+            purgeDocuments: jest.fn(async () => { purged = true; }),
+            findTerminalDocumentIds: jest.fn().mockResolvedValue([]),
+        };
+        const lifecycle = {
+            findSnapshotChunkBranchForDocument: jest.fn(async () => {
+                expect(purged).toBe(false);
+                return "chunk-branch";
+            }),
+            evaluateInitialSnapshotTerminalOutcome: jest.fn(async () => { expect(purged).toBe(true); }),
+            healInitialSnapshotTerminalOutcomes: jest.fn(),
+        };
+        const eformsign = { cancelDocuments: absentAt === "cancel" ? jest.fn().mockRejectedValue(missing)
+            : jest.fn().mockResolvedValue({ result: cancelSucceeded ? { success_result: [documentId] }
+                : { fail_result: [{ document_id: documentId, code: "4000031" }] } }) };
+        const usecase = new BackfillEformsignDocsUsecase(client as never, createBoundary() as never, {} as never,
+            {} as never, mirror as never, eformsign as never, lifecycle as never);
+
+        await expect(usecase.execute({}, TEST_PRINCIPAL)).resolves.toMatchObject({ failed: 0 });
+        expect(lifecycle.findSnapshotChunkBranchForDocument).toHaveBeenCalledWith(documentId);
+        expect(mirror.purgeDocuments).toHaveBeenCalledTimes(1);
+        expect(lifecycle.evaluateInitialSnapshotTerminalOutcome).toHaveBeenCalledWith({
+            documentId, branchId: "chunk-branch",
+            deletedDocuments: captured === undefined ? undefined : [{ documentId, statusType: captured }],
+        });
+    });
+
     it("keeps an ordinary vendor-absent document as a recoverable tombstone", async () => {
         const client = {
             getAccessToken: jest.fn().mockResolvedValue({ oauth_token: { access_token: accessToken } }),

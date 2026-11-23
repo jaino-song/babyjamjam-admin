@@ -32,7 +32,7 @@ interface InitialDocumentDetailProps {
 export function InitialDocumentJobDetail({ regeneration, confirmation, clientName, onInitialAction, "data-component": base }: InitialDocumentDetailProps) {
   const reason = initialRegenerationBlockedCopy(regeneration?.reasonCode);
   const state = initialDocumentStateLabel(regeneration?.reasonCode);
-  return <Card data-component={base} data-slot="initial-document-detail" data-source-component="InitialDocumentJobDetail" className="gap-3 p-4">
+  return <Card data-component={base} data-slot="initial-document-detail" sourceComponent="InitialDocumentJobDetail" className="gap-3 p-4">
     {clientName && <InfoRow label="고객" value={clientName} data-component={`${base}_client`} />}
     {confirmation && <InfoRow label="이폼사인 접미사" value={confirmation.suffix} data-component={`${base}_suffix`} />}
     {state && <p data-component={`${base}_state`} data-slot="initial-document-state">{state}</p>}

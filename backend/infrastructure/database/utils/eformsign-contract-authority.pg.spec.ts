@@ -3,6 +3,8 @@ import { SERVICE_RECORD_INITIAL_NO_DOC_REASONS as NO_DOC_REASON } from "domain/c
 import { ServiceRecordInitialProviderRecoveryService } from "infrastructure/eformsign/service-record-initial-provider-recovery.service";
 import { initialProviderRecoveryInput, providerDocumentPage } from "../../../test/utils/service-record-initial-provider-recovery.fixture";
 import { normalizeEformsignDocumentResponse } from "infrastructure/api/eformsign-response.normalizer";
+import { EformsignApiError } from "infrastructure/api/eformsign-api.error";
+import { BackfillEformsignDocsUsecase } from "application/usecases/eformsign-doc/backfill-eformsign-docs.usecase";
 import { CreateAndSendServiceRecordSnapshotUsecase } from "application/usecases/eformsign-doc/create-and-send-service-record-snapshot.usecase";
 import type { ServiceRecordRevisionDispatchContext, ServiceRecordRevisionGenerationInput } from "@babyjamjam/shared/types/service-record";
 import { createEformsignWorkerPrincipal } from "application/services/eformsign-credential-boundary.service";
@@ -2078,6 +2080,62 @@ async function bounded<T>(promise: Promise<T>, ms: number): Promise<T> {
     }
     const readinessOf = (f: Awaited<ReturnType<typeof initialChunks>>) => transaction(db, tx =>
         initialRegenerationReadiness(tx, f.record.id, f.revisionId));
+
+    it.each([
+        ["003", "SERVICE_RECORD_INITIAL_COMPLETED_DOCUMENT_DELETED", "SERVICE_RECORD_INITIAL_SIBLING_COMPLETED"],
+        ["absent", "SERVICE_RECORD_INITIAL_DELETED_STATUS_UNKNOWN", "SERVICE_RECORD_INITIAL_DELETED_STATUS_UNKNOWN"],
+        ["070", "SERVICE_RECORD_REVISION_DOCUMENT_REJECTED", null],
+    ])("U7 evaluates a deferred staff purge when the vendor reports %s", async (vendorStatus, stateCode, reason) => {
+        const f = await initialChunks();
+        const documentId = documents[0]!;
+        const mirrorRepository = new SbEformsignDocumentMirrorRepository(db as unknown as PrismaService);
+        await f.purge(2);
+        expect(await readinessOf(f)).toMatchObject({ ready: false, reason: "SERVICE_RECORD_INITIAL_SIBLING_IN_PROGRESS" });
+        await mirrorRepository.requestPermanentPurge([documentId]);
+
+        const credentials = { withCredentials: async (_principal: unknown, _capability: unknown,
+            run: (value: { accessToken: string }) => Promise<unknown>) => run({ accessToken: "synthetic" }) };
+        const list = async () => providerDocumentPage([], 100, 0);
+        const vendor = {
+            getInProgressDocumentsPage: list, getCompletedDocumentsPage: list, getRejectedDocumentsPage: list,
+            getDocument: async () => {
+                if (vendorStatus === "absent") throw new EformsignApiError("missing", 404);
+                return { id: documentId, updated_date: 1, current_status: { status_type: vendorStatus } };
+            },
+        };
+        const mirror = {
+            findActiveDocumentIds: async () => [],
+            findPermanentPurgeRequestedDocumentIds: async () => [documentId],
+            syncDocumentWithToken: async () => undefined,
+            requestPermanentPurge: (ids: string[]) => mirrorRepository.requestPermanentPurge(ids),
+            purgeDocuments: async (ids: string[]) => {
+                await mirrorRepository.purgeContent(ids, new Date());
+                expect(await readinessOf(f)).toMatchObject({ ready: false, reason: "SERVICE_RECORD_INITIAL_DELETED_STATUS_UNKNOWN" });
+            },
+        };
+        const eformsign = { cancelDocuments: async () => ({ result: vendorStatus === "070" ? { success_result: [documentId] }
+            : { fail_result: [{ document_id: documentId, code: "4000031" }] } }) };
+        const sweep = new BackfillEformsignDocsUsecase(vendor as never, credentials as never, {} as never, {} as never,
+            mirror as never, eformsign as never, initialLifecycle());
+        await expect(sweep.execute({}, createEformsignWorkerPrincipal(f.branchId))).resolves.toMatchObject({ failed: 0 });
+        expect(await f.readState()).toMatchObject({ status: "failed", lastErrorCode: stateCode });
+        expect(await readinessOf(f)).toMatchObject(reason === null ? { ready: true } : { ready: false, reason });
+        expect((await f.repo.getSummary(f.branchId)).initialRegenerations).toEqual([
+            expect.objectContaining({ stateId: f.state.id, ready: reason === null, reasonCode: reason }),
+        ]);
+    });
+
+    it("U7 heals a failed INITIAL whose sibling purge committed without an evaluator record", async () => {
+        const f = await initialChunks();
+        await f.purge(2);
+        await f.purge(1, false);
+        await db.eformsign_doc.update({ where: { documentId: documents[0]! }, data: { statusType: " Doc_Delete " } });
+        expect(await f.readState()).toMatchObject({ lastErrorCode: "SERVICE_RECORD_REVISION_DOCUMENT_REJECTED" });
+        expect(await initialLifecycle().healInitialSnapshotTerminalOutcomes({ branchId: f.branchId })).toBe(1);
+        expect(await f.readState()).toMatchObject({ lastErrorCode: "SERVICE_RECORD_INITIAL_DELETED_STATUS_UNKNOWN" });
+        expect(await initialLifecycle().healInitialSnapshotTerminalOutcomes({ branchId: f.branchId })).toBe(0);
+    });
+
     const confirmPredicate = (f: Awaited<ReturnType<typeof initialChunks>>) => transaction(db, async tx => {
         await tx.$queryRaw`SELECT id FROM service_record_case WHERE id = ${f.record.id}::uuid FOR UPDATE`;
         await assertNoBlockingRevisionDocumentStates(tx, { branchId: f.branchId, clientId: f.state.clientId, serviceRecordCaseId: f.record.id });

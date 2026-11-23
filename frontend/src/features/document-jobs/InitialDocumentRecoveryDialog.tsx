@@ -14,7 +14,7 @@ import { eformsignApi } from "@/services/eformsign";
 
 import {
   INITIAL_DOCUMENT_RECOVERY_COPY as copy,
-  initialRegenerationBlockedCopy,
+  initialRegenerationConflictCopy,
   noProviderDocumentConflictCopy,
 } from "./service-record-recovery-copy";
 
@@ -60,7 +60,7 @@ export function InitialDocumentRecoveryDialog({
   const status = response?.status;
   const reason = response?.data?.reason;
   const conflictCopy = status === 409
-    ? (confirmation ? noProviderDocumentConflictCopy(reason) : initialRegenerationBlockedCopy(reason))
+    ? (confirmation ? noProviderDocumentConflictCopy(reason) : initialRegenerationConflictCopy(reason))
     : null;
   const rejected = status !== undefined && status >= 400 && status < 500;
   const error = mutation.isError
@@ -82,6 +82,7 @@ export function InitialDocumentRecoveryDialog({
     onOpenChange={next => { if (!next) onClose(); }}
     onCloseAutoFocus={onCloseAutoFocus}
     data-component={base}
+    sourceComponent="InitialDocumentRecoveryDialog"
     layer="nested"
     size="detail"
     title={confirmation ? copy.confirmTitle : copy.regenerateTitle}

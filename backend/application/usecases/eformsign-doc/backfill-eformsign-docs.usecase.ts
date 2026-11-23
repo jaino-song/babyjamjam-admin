@@ -21,6 +21,7 @@ import {
 import {
     isEformsignDocumentAbsentError,
 } from "infrastructure/api/eformsign-api.error";
+import { normalizeEformsignStatusCode } from "domain/utils/eformsign-status-code";
 
 import { MirrorUnassignedEformsignDocUsecase } from "./mirror-unassigned-eformsign-doc.usecase";
 import {
@@ -752,11 +753,27 @@ export class BackfillEformsignDocsUsecase {
                     );
                 }
                 if (hasPermanentPurgeIntent) {
-                    await this.documentMirrorService.purgeDocuments([documentId]);
+                    await this.finishPermanentPurge(this.documentMirrorService, documentId);
                 } else {
                     await this.documentMirrorService.markDocumentsDeleted([documentId]);
                 }
             }
+        }
+    }
+
+    private async finishPermanentPurge(
+        mirror: EformsignDocumentMirrorService, documentId: string, vendorStatusType?: string,
+    ): Promise<void> {
+        const lifecycle = this.serviceRecordLifecycle;
+        const branchId = await lifecycle?.findSnapshotChunkBranchForDocument(documentId);
+        await mirror.purgeDocuments([documentId]);
+        // Never acquire lifecycle case locks while holding the purge transaction's client/doc locks.
+        if (lifecycle && branchId) {
+            await lifecycle.evaluateInitialSnapshotTerminalOutcome({
+                branchId,
+                documentId,
+                deletedDocuments: vendorStatusType === undefined ? undefined : [{ documentId, statusType: vendorStatusType }],
+            });
         }
     }
 
@@ -805,7 +822,7 @@ export class BackfillEformsignDocsUsecase {
             }
         } catch (error) {
             if (isEformsignDocumentAbsentError(error)) {
-                await documentMirrorService.purgeDocuments([documentId]);
+                await this.finishPermanentPurge(documentMirrorService, documentId);
                 return;
             }
             if (isDefinitivePermanentDeleteHttpFailure(error)) {
@@ -816,7 +833,7 @@ export class BackfillEformsignDocsUsecase {
 
         const successfulIds = successfulPermanentDeleteDocumentIds(result);
         if (successfulIds.includes(documentId)) {
-            await documentMirrorService.purgeDocuments([documentId]);
+            await this.finishPermanentPurge(documentMirrorService, documentId, vendorStatusType);
             return;
         }
 
@@ -830,9 +847,8 @@ export class BackfillEformsignDocsUsecase {
         // claimCompletionStatus, updateDocument), so the local row stays frozen at its
         // pre-delete status for as long as the intent survives — which is exactly the
         // situation this branch exists to end.
-        if (vendorStatusType !== undefined
-            && UNASSIGNED_TERMINAL_STATUS_CODES.has(vendorStatusType)) {
-            await documentMirrorService.purgeDocuments([documentId]);
+        if (UNASSIGNED_TERMINAL_STATUS_CODES.has(normalizeEformsignStatusCode(vendorStatusType))) {
+            await this.finishPermanentPurge(documentMirrorService, documentId, vendorStatusType);
             return;
         }
 

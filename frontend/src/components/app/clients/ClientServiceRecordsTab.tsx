@@ -1019,7 +1019,9 @@ function RevisionDocumentRow({
     const statusMeta = REVISION_DOCUMENT_STATUS_META[document.status];
     const reasonLabel = getRevisionDocumentReasonLabel(document.reasonCode);
     const target = { stateId: document.id, revisionId, generation: document.generation };
-    const readiness = initialRegenerationBlockedCopy(document.reasonCode) ?? initialRegenerationBlockedCopy(regeneration?.reasonCode);
+    const readiness = initialRegenerationBlockedCopy(document.regenerationBlockedReason)
+        ?? initialRegenerationBlockedCopy(regeneration?.reasonCode)
+        ?? initialRegenerationBlockedCopy(document.reasonCode);
     const documentKey = `${revisionId}:${document.id}`;
     const isRetrying = retryingDocumentKey === documentKey;
     const retryable = document.canRetry && document.generation !== "unknown" && Boolean(onRetry);

@@ -201,6 +201,13 @@ it("uses the exact projected readiness for a partially dispatched state", async 
   expect(screen.queryByRole("button", { name: copy.regenerateLabel })).not.toBeInTheDocument();
 });
 
+it("renders 관리자 문의 from revision history if the jobs summary is unavailable", async () => {
+  setup({ reasonCode: state.partialDispatch, regenerationBlockedReason: state.siblingCompleted });
+  expect(await screen.findByText("일부 문서가 이미 완료됨 · 관리자 문의"))
+    .toHaveAttribute("data-slot", "initial-document-readiness");
+  expect(screen.queryByRole("button", { name: copy.regenerateLabel })).not.toBeInTheDocument();
+});
+
 it("ignores a confirm projection for a different revision", async () => {
   setup({ noProviderDocumentConfirmable: { ...confirmation, revisionId: confirmation.stateId } });
   await screen.findByText("이폼사인에 보낸 문서가 없음을 확인했어요.");

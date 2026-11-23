@@ -10,7 +10,7 @@ import {
 } from "@nestjs/common";
 import { message_log, message_trigger_job, Prisma } from "@prisma/client";
 import { PrismaService } from "infrastructure/database/prisma.service";
-import { codeOnlyProblemBody } from "application/utils/problem-bodies";
+import { codeOnlyProblemBody, codeOnlyProblemException } from "application/utils/problem-bodies";
 import { isInitialFinalizationWorkflowScopeForRevision } from "application/policies/service-record-initial-finalization.policy";
 import {
     SERVICE_RECORD_LINK_BRANCH_DISABLED_REASON,
@@ -380,7 +380,9 @@ export class AdminServiceRecordService {
         }
         if (state.operation === "record_snapshot"
             && isInitialFinalizationWorkflowScopeForRevision(state.workflowScope, normalizedRevisionId)) {
-            if (!this.finalizationService) throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
+            if (!this.finalizationService) {
+                throw codeOnlyProblemException("REQUEST_CONFLICT", { reason: "SERVICE_RECORD_REVISION_GENERATION_UNAVAILABLE" });
+            }
             const regenerated = await this.finalizationService.regenerateInitialFinalization(branchId, {
                 revisionId: normalizedRevisionId, documentStateId: normalizedDocumentStateId,
                 expectedGeneration: normalizedGeneration,
@@ -1015,6 +1017,7 @@ function normalizeRevisionDocumentSummary(value: unknown): ServiceRecordRevision
         "lastErrorCode",
         "last_error_code",
     ]));
+    const regenerationBlockedReason = normalizeReasonCode(readField(row, ["regenerationBlockedReason", "regeneration_blocked_reason"]));
     const projection = asObject(row["noProviderDocumentConfirmable"]);
     const revisionId = readStringField(projection ?? {}, ["revisionId"]);
     const suffix = readStringField(projection ?? {}, ["suffix"]);
@@ -1030,6 +1033,7 @@ function normalizeRevisionDocumentSummary(value: unknown): ServiceRecordRevision
         documentVersion: readPositiveIntegerField(row, ["documentVersion", "document_version"]),
         canRetry: directCanRetry === true,
         reasonCode,
+        ...(regenerationBlockedReason ? { regenerationBlockedReason } : {}),
         ...(noProviderDocumentConfirmable ? { noProviderDocumentConfirmable } : {}),
     };
 }

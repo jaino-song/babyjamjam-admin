@@ -76,7 +76,8 @@ function fixture() {
             documentId: data.document_id, chunkIndex: data.chunk_index, chunkCount: data.chunk_count,
         }));
         if (statement.includes('doc.status_type AS "statusType"')) return documents.map(({ data }) => ({
-            documentId: data.document_id, statusType: data.status_type, voidedAt: data.voided_at, permanentPurgeRequestedAt: null,
+            documentId: data.document_id, statusType: data.status_type, voided: data.voided_at !== null,
+            purgePending: false, tombstoneEvaluated: false,
         }));
         if (statement.includes('FROM "eformsign_document_job"')) return [job, ...(flags.busySibling ? [{ status: "processing", leaseToken: null }] : [])];
         return [];

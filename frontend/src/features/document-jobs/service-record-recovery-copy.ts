@@ -1,7 +1,9 @@
 import {
   INITIAL_DOCUMENT_STATE_CODES,
   initialNoProviderDocumentReasonSchema,
+  initialRegenerationConflictSchema,
   type InitialNoProviderDocumentReason,
+  type InitialRegenerationConflict,
 } from "@/lib/eformsign/initial-document-recovery-contract";
 import type { EformsignDocumentJobResponse } from "@/services/eformsign";
 
@@ -60,20 +62,43 @@ export function noProviderDocumentConflictCopy(reason: unknown): string | null {
   return parsed.success ? NO_PROVIDER_DOCUMENT_CONFLICT_COPY[parsed.data] : null;
 }
 
+const COMPLETED_DOCUMENT_COPY = "일부 문서가 이미 완료됨 · 관리자 문의";
+const REGENERATION_BLOCKED_COPY = {
+  [INITIAL_DOCUMENT_STATE_CODES.siblingInProgress]: "일부 문서가 아직 진행 중이에요. 이폼사인에서 진행 중인 문서를 확인해 주세요.",
+  [INITIAL_DOCUMENT_STATE_CODES.siblingCompleted]: COMPLETED_DOCUMENT_COPY,
+  [INITIAL_DOCUMENT_STATE_CODES.completedDocumentDeleted]: COMPLETED_DOCUMENT_COPY,
+  [INITIAL_DOCUMENT_STATE_CODES.deletedStatusUnknown]: "삭제된 문서의 완료 여부를 확인할 수 없음 · 관리자 문의",
+  [INITIAL_DOCUMENT_STATE_CODES.jobInProgress]: "문서 생성 작업이 아직 진행 중이에요. 처리 후 상태를 다시 확인해 주세요.",
+} satisfies Partial<Record<InitialRegenerationConflict, string>>;
+
 export function initialRegenerationBlockedCopy(reason: unknown): string | null {
-  switch (reason) {
-    case INITIAL_DOCUMENT_STATE_CODES.siblingInProgress:
-      return "일부 문서가 아직 진행 중이에요. 이폼사인에서 진행 중인 문서를 확인해 주세요.";
-    case INITIAL_DOCUMENT_STATE_CODES.siblingCompleted:
-    case INITIAL_DOCUMENT_STATE_CODES.completedDocumentDeleted:
-      return "일부 문서가 이미 완료됨 · 관리자 문의";
-    case INITIAL_DOCUMENT_STATE_CODES.deletedStatusUnknown:
-      return "삭제된 문서의 완료 여부를 확인할 수 없음 · 관리자 문의";
-    case INITIAL_DOCUMENT_STATE_CODES.jobInProgress:
-      return "문서 생성 작업이 아직 진행 중이에요. 처리 후 상태를 다시 확인해 주세요.";
-    default:
-      return null;
-  }
+  const parsed = initialRegenerationConflictSchema.safeParse(reason);
+  const copy: Partial<Record<InitialRegenerationConflict, string>> = REGENERATION_BLOCKED_COPY;
+  return parsed.success ? copy[parsed.data] ?? null : null;
+}
+
+const REGENERATION_STALE_COPY = "대상 문서가 바뀌었어요. 목록에서 최신 문서 상태를 확인해 주세요.";
+const REGENERATION_STATE_COPY = "현재 문서는 재생성할 수 없어요. 최신 문서 상태를 확인해 주세요.";
+const REGENERATION_CONFLICT_COPY: Record<InitialRegenerationConflict, string> = {
+  ...REGENERATION_BLOCKED_COPY,
+  SERVICE_RECORD_INITIAL_STATE_NOT_FOUND: "재생성할 문서 상태를 찾을 수 없어요. 목록을 다시 열어 주세요.",
+  SERVICE_RECORD_INITIAL_STATE_NOT_READY: REGENERATION_STATE_COPY,
+  SERVICE_RECORD_INITIAL_REVISION_CHANGED: "확정된 제공기록지가 바뀌었어요. 최신 기록의 문서 상태를 확인해 주세요.",
+  SERVICE_RECORD_INITIAL_GENERATION_CHANGED: REGENERATION_STALE_COPY,
+  SERVICE_RECORD_WRITE_TARGET_CHANGED: REGENERATION_STALE_COPY,
+  SERVICE_RECORD_INITIAL_ACTIVE_KEY_CONFLICT: "같은 제공기록지의 문서 작업이 이미 등록됐어요. 작업 목록에서 처리 상태를 확인해 주세요.",
+  SERVICE_RECORD_REVISION_SOURCE_UNAVAILABLE: "제공기록지의 확정 정보를 확인할 수 없어요. 기록을 확인하거나 관리자에게 문의해 주세요.",
+  SERVICE_RECORD_REVISION_GENERATION_SCOPE_CHANGED: REGENERATION_STALE_COPY,
+  SERVICE_RECORD_REVISION_GENERATION_UNAVAILABLE: "지금 제공기록지 문서를 생성할 수 없어요. 잠시 후 다시 시도해 주세요.",
+  [INITIAL_DOCUMENT_STATE_CODES.noProviderDocument]: REGENERATION_STATE_COPY,
+  [INITIAL_DOCUMENT_STATE_CODES.partialDispatch]: REGENERATION_STATE_COPY,
+  [INITIAL_DOCUMENT_STATE_CODES.rejected]: REGENERATION_STATE_COPY,
+  [INITIAL_DOCUMENT_STATE_CODES.voided]: REGENERATION_STATE_COPY,
+};
+
+export function initialRegenerationConflictCopy(reason: unknown): string | null {
+  const parsed = initialRegenerationConflictSchema.safeParse(reason);
+  return parsed.success ? REGENERATION_CONFLICT_COPY[parsed.data] : null;
 }
 
 /** 재생성 가능한 INITIAL 상태에서만 사용하는 종료 사유. */

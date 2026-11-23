@@ -117,6 +117,7 @@ export function normalizeServiceRecordRevisionDocumentSummary(
     const id = requiredString(value.id, "document.id");
     const generation = requiredString(value.generation, "document.generation");
     const projection = initialNoProviderDocumentProjectionSchema.safeParse(value.noProviderDocumentConfirmable);
+    const regenerationBlockedReason = normalizeReasonCode(value.regenerationBlockedReason);
     return {
         id,
         operation: normalizeOperation(value.operation),
@@ -125,6 +126,7 @@ export function normalizeServiceRecordRevisionDocumentSummary(
         documentVersion: positiveIntegerOrNull(value.documentVersion, "document.documentVersion"),
         canRetry: value.canRetry === true,
         reasonCode: normalizeReasonCode(value.reasonCode),
+        ...(regenerationBlockedReason ? { regenerationBlockedReason } : {}),
         ...(projection.success && projection.data.stateId === id && projection.data.generation === generation
             ? { noProviderDocumentConfirmable: projection.data } : {}),
     };

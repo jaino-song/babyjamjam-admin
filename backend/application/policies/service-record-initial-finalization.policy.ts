@@ -1,7 +1,7 @@
 import { Prisma } from "@prisma/client";
 
 import { EFORMSIGN_COMPLETED_STATUS_CODES, EFORMSIGN_REJECTED_STATUS_CODES } from "domain/constants/eformsign-doc-status.constants";
-import { normalizeEformsignStatusCode } from "domain/utils/eformsign-status-code";
+import { eformsignStatusStorageValues, normalizeEformsignStatusCode } from "domain/utils/eformsign-status-code";
 
 export const INITIAL_FINALIZATION_REQUEST_PREFIX = "service-record-initial-finalization:";
 const INITIAL_FINALIZATION_REQUEST_KEY_MAX_LENGTH = 255;
@@ -83,6 +83,30 @@ export const INITIAL_PROVIDER_FAILURE_CODES: ReadonlySet<string> = new Set([
     SERVICE_RECORD_INITIAL_COMPLETED_DOCUMENT_DELETED, SERVICE_RECORD_INITIAL_DELETED_STATUS_UNKNOWN,
 ]);
 
+export const EFORMSIGN_TOMBSTONE_STATUS = "049";
+export const EFORMSIGN_TOMBSTONE_STATUSES: ReadonlySet<string> = new Set([EFORMSIGN_TOMBSTONE_STATUS]);
+export const INITIAL_RUNNING_JOB_STATUSES: readonly string[] = ["queued", "processing", "reconciling"];
+
+/** The whitespace list is the ECMAScript trim set used by normalizeEformsignStatusCode. */
+export function eformsignStatusMatchesSql(status: Prisma.Sql, codes: ReadonlySet<string>): Prisma.Sql {
+    return Prisma.sql`lower(btrim(${status}, ${" \t\n\r\f\v\u00a0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a\u2028\u2029\u202f\u205f\u3000\ufeff"})) IN
+        (${Prisma.join(eformsignStatusStorageValues(codes))})`;
+}
+
+// The chunk survives a scrubbed document. Bind the evaluator record to this exact tombstone,
+// so a write for one chunk (or for an earlier purge of the same chunk) cannot clear another.
+export const initialTombstoneEvaluationRecordSql =
+    Prisma.sql`'INITIAL_TOMBSTONE_EVALUATED:' || EXTRACT(EPOCH FROM doc.updated_date)::text`;
+export const initialTombstoneEvaluatedSql =
+    Prisma.sql`COALESCE(chunk.last_error = ${initialTombstoneEvaluationRecordSql}, false)`;
+
+export function initialJobForCaseSql(caseId: Prisma.Sql): Prisma.Sql {
+    return Prisma.sql`job.job_type = 'create_document' AND job.source = 'auto_finalize'
+        AND ((job.payload->>'generationKind' = 'INITIAL_FINALIZATION'
+            AND job.payload->'context'->>'serviceRecordCaseId' = ${caseId})
+            OR job.active_key = ${INITIAL_FINALIZATION_REQUEST_PREFIX} || ${caseId})`;
+}
+
 /** Source-owned aliases only. History is ordered by creation, with a stable tie-breaker. */
 export function initialFinalizationStateSql(alias: string): Prisma.Sql {
     return Prisma.raw(`COALESCE((${alias}.operation = 'record_snapshot'
@@ -101,13 +125,56 @@ export function newestInitialFinalizationStateSql(alias: string): Prisma.Sql {
     )`;
 }
 
-type InitialRegenerationState = {
+export type InitialRegenerationState = {
     id: string; branchId: string; clientId: number; revisionId: string; generation: string;
     documentVersion: number | null; status: string; lastErrorCode: string | null;
 };
 export type InitialRegenerationReadiness =
     | { ready: true; state: InitialRegenerationState }
     | { ready: false; reason: string; state: InitialRegenerationState | null };
+
+export type InitialRegenerationChunk = { documentId: string | null; chunkIndex: number; chunkCount: number };
+export type InitialRegenerationDocument = {
+    documentId: string; statusType: string; voided: boolean; purgePending: boolean; tombstoneEvaluated: boolean;
+};
+
+export function initialRegenerationStateBlocker(state: InitialRegenerationState): string | null {
+    if (state.lastErrorCode === SERVICE_RECORD_INITIAL_COMPLETED_DOCUMENT_DELETED) {
+        return "SERVICE_RECORD_INITIAL_SIBLING_COMPLETED";
+    }
+    if (state.status !== "failed" || !INITIAL_TERMINAL_PROVIDER_FAILURE_CODES.has(state.lastErrorCode ?? "")) {
+        return state.lastErrorCode ?? "SERVICE_RECORD_INITIAL_STATE_NOT_READY";
+    }
+    return state.documentVersion === null ? "SERVICE_RECORD_INITIAL_SIBLING_IN_PROGRESS" : null;
+}
+
+export function initialRegenerationChunkBlocker(
+    state: InitialRegenerationState,
+    chunks: InitialRegenerationChunk[],
+    documents: InitialRegenerationDocument[],
+): string | null {
+    const byId = new Map(documents.map(doc => [doc.documentId, {
+        ...doc, statusType: normalizeEformsignStatusCode(doc.statusType),
+    }]));
+    const normalized = [...byId.values()];
+    if (normalized.some(doc => EFORMSIGN_COMPLETED_STATUS_CODES.has(doc.statusType))) {
+        return "SERVICE_RECORD_INITIAL_SIBLING_COMPLETED";
+    }
+    if (normalized.some(doc => doc.statusType === EFORMSIGN_TOMBSTONE_STATUS && !doc.tombstoneEvaluated)) {
+        return SERVICE_RECORD_INITIAL_DELETED_STATUS_UNKNOWN;
+    }
+    if ((chunks.length === 0 && state.lastErrorCode !== SERVICE_RECORD_INITIAL_NO_PROVIDER_DOCUMENT)
+        || chunks.some((chunk, index) => chunk.chunkCount !== chunks.length || chunk.chunkIndex !== index + 1)) {
+        return "SERVICE_RECORD_INITIAL_SIBLING_IN_PROGRESS";
+    }
+    const absentProved = INITIAL_ABSENCE_PROOF_CODES.has(state.lastErrorCode ?? "");
+    if (chunks.some(chunk => {
+        if (chunk.documentId === null) return !absentProved;
+        const doc = byId.get(chunk.documentId);
+        return !doc || doc.purgePending || (!doc.voided && !EFORMSIGN_REJECTED_STATUS_CODES.has(doc.statusType));
+    })) return "SERVICE_RECORD_INITIAL_SIBLING_IN_PROGRESS";
+    return null;
+}
 
 /** Writers own common client/case locks. Display projections may opt into advisory reads without locks. */
 export async function initialRegenerationReadiness(
@@ -133,58 +200,33 @@ export async function initialRegenerationReadiness(
     `);
     const blocked = (reason: string): InitialRegenerationReadiness => ({ ready: false, reason, state: state ?? null });
     if (!state) return blocked("SERVICE_RECORD_INITIAL_STATE_NOT_FOUND");
-    if (state.lastErrorCode === SERVICE_RECORD_INITIAL_COMPLETED_DOCUMENT_DELETED) {
-        return blocked("SERVICE_RECORD_INITIAL_SIBLING_COMPLETED");
-    }
-    if (state.status !== "failed" || !INITIAL_TERMINAL_PROVIDER_FAILURE_CODES.has(state.lastErrorCode ?? "")) {
-        return blocked(state.lastErrorCode ?? "SERVICE_RECORD_INITIAL_STATE_NOT_READY");
-    }
-    const absentProved = INITIAL_ABSENCE_PROOF_CODES.has(state.lastErrorCode ?? "");
-    if (state.documentVersion === null) return blocked("SERVICE_RECORD_INITIAL_SIBLING_IN_PROGRESS");
-    const chunks = await tx.$queryRaw<Array<{ documentId: string | null; chunkIndex: number; chunkCount: number }>>(Prisma.sql`
+    const stateBlocker = initialRegenerationStateBlocker(state);
+    if (stateBlocker) return blocked(stateBlocker);
+    const chunks = await tx.$queryRaw<InitialRegenerationChunk[]>(Prisma.sql`
         SELECT document_id AS "documentId", chunk_index AS "chunkIndex", chunk_count AS "chunkCount"
         FROM "service_record_snapshot_chunk"
         WHERE branch_id = ${owner.branchId}::uuid AND service_record_case_id = ${caseId}::uuid
           AND revision_id = ${revisionId}::uuid AND snapshot_version = ${state.documentVersion}
         ORDER BY chunk_index, id ${options.lock === false ? Prisma.empty : Prisma.sql`FOR UPDATE`}
     `);
-    const documents = await tx.$queryRaw<Array<{
-        documentId: string; statusType: string; voidedAt: Date | null; permanentPurgeRequestedAt: Date | null;
-    }>>(Prisma.sql`
-        SELECT doc.document_id AS "documentId", doc.status_type AS "statusType", doc.voided_at AS "voidedAt",
-            doc.permanent_purge_requested_at AS "permanentPurgeRequestedAt"
+    const documents = await tx.$queryRaw<InitialRegenerationDocument[]>(Prisma.sql`
+        SELECT doc.document_id AS "documentId", doc.status_type AS "statusType", doc.voided_at IS NOT NULL AS "voided",
+            doc.permanent_purge_requested_at IS NOT NULL AS "purgePending", ${initialTombstoneEvaluatedSql} AS "tombstoneEvaluated"
         FROM "eformsign_doc" AS doc
-        WHERE doc.branch_id = ${owner.branchId}::uuid AND doc.document_id IN (
-            SELECT document_id FROM service_record_snapshot_chunk
-            WHERE branch_id = ${owner.branchId}::uuid AND service_record_case_id = ${caseId}::uuid
-              AND revision_id = ${revisionId}::uuid AND snapshot_version = ${state.documentVersion}
-        )
-        ORDER BY doc.id ${options.lock === false ? Prisma.empty : Prisma.sql`FOR UPDATE`}
+        JOIN service_record_snapshot_chunk AS chunk ON chunk.document_id = doc.document_id AND chunk.branch_id = doc.branch_id
+        WHERE chunk.branch_id = ${owner.branchId}::uuid AND chunk.service_record_case_id = ${caseId}::uuid
+          AND chunk.revision_id = ${revisionId}::uuid AND chunk.snapshot_version = ${state.documentVersion}
+        ORDER BY doc.id ${options.lock === false ? Prisma.empty : Prisma.sql`FOR UPDATE OF doc`}
     `);
-    if (documents.some(doc => EFORMSIGN_COMPLETED_STATUS_CODES.has(normalizeEformsignStatusCode(doc.statusType)))) {
-        return blocked("SERVICE_RECORD_INITIAL_SIBLING_COMPLETED");
-    }
-    if ((chunks.length === 0 && state.lastErrorCode !== SERVICE_RECORD_INITIAL_NO_PROVIDER_DOCUMENT)
-        || chunks.some((chunk, index) => chunk.chunkCount !== chunks.length || chunk.chunkIndex !== index + 1)) {
-        return blocked("SERVICE_RECORD_INITIAL_SIBLING_IN_PROGRESS");
-    }
-    const byId = new Map(documents.map(doc => [doc.documentId, doc]));
-    if (chunks.some(chunk => {
-        if (chunk.documentId === null) return !absentProved;
-        const doc = byId.get(chunk.documentId);
-        return !doc || doc.permanentPurgeRequestedAt !== null
-            || (doc.voidedAt === null && !EFORMSIGN_REJECTED_STATUS_CODES.has(normalizeEformsignStatusCode(doc.statusType)));
-    })) return blocked("SERVICE_RECORD_INITIAL_SIBLING_IN_PROGRESS");
+    const chunkBlocker = initialRegenerationChunkBlocker(state, chunks, documents);
+    if (chunkBlocker) return blocked(chunkBlocker);
     const jobs = await tx.$queryRaw<Array<{ status: string; leaseToken: string | null }>>(Prisma.sql`
-        SELECT status, lease_token AS "leaseToken" FROM "eformsign_document_job"
+        SELECT status, lease_token AS "leaseToken" FROM "eformsign_document_job" AS job
         WHERE branch_id = ${owner.branchId}::uuid AND client_id = ${owner.clientId}
-          AND job_type = 'create_document' AND source = 'auto_finalize'
-          AND ((payload->>'generationKind' = 'INITIAL_FINALIZATION'
-              AND payload->'context'->>'serviceRecordCaseId' = ${caseId})
-              OR active_key = ${`${INITIAL_FINALIZATION_REQUEST_PREFIX}${caseId}`})
+          AND ${initialJobForCaseSql(Prisma.sql`${caseId}::text`)}
         ORDER BY id ${options.lock === false ? Prisma.empty : Prisma.sql`FOR UPDATE`}
     `);
-    if (jobs.some(job => ["queued", "processing", "reconciling"].includes(job.status) || job.leaseToken !== null)) {
+    if (jobs.some(job => INITIAL_RUNNING_JOB_STATUSES.includes(job.status) || job.leaseToken !== null)) {
         return blocked("SERVICE_RECORD_INITIAL_JOB_IN_PROGRESS");
     }
     return { ready: true, state };

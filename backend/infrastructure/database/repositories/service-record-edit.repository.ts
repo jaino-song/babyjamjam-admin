@@ -6,6 +6,7 @@ import {
     INITIAL_FINALIZATION_REQUEST_PREFIX,
     initialFinalizationStateSql,
     initialRegenerationReadiness,
+    type InitialRegenerationReadiness,
     isInitialFinalizationWorkflowScopeForRevision,
     newestInitialFinalizationStateSql,
     releaseTerminalInitialFinalizationKey,
@@ -2665,13 +2666,13 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
             documentsByRevision.set(state.revisionId, existing);
         }
 
-        let readyInitialStateId: string | null = null;
+        let initialReadiness: InitialRegenerationReadiness | undefined;
         if (ownerCase.currentRevisionId && states.some(state => state.revisionId === ownerCase.currentRevisionId
             && state.operation === "record_snapshot" && state.status === "failed"
             && isInitialFinalizationWorkflowScopeForRevision(state.workflowScope, state.revisionId))) {
-            const readiness = await initialRegenerationReadiness(tx, ownerCase.caseId, ownerCase.currentRevisionId, { lock: false });
-            if (readiness.ready) readyInitialStateId = readiness.state.id;
+            initialReadiness = await initialRegenerationReadiness(tx, ownerCase.caseId, ownerCase.currentRevisionId, { lock: false });
         }
+        const readyInitialStateId = initialReadiness?.ready ? initialReadiness.state.id : null;
 
         const confirmable = ownerCase.currentRevisionId && states.some(state => state.status === "manual_review")
             ? await noProviderDocumentConfirmable(tx, branchId, ownerCase.caseId) : [];
@@ -2698,6 +2699,8 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
                             && isInitialFinalizationWorkflowScopeForRevision(state.workflowScope, state.revisionId)
                             ? state.id === readyInitialStateId : canRetryRevisionDocumentState(state),
                         reasonCode: state.lastErrorCode,
+                        ...(state.status === "failed" && initialReadiness?.ready === false && initialReadiness.state?.id === state.id
+                            ? { regenerationBlockedReason: initialReadiness.reason } : {}),
                         ...(attestableByState.has(state.id) ? { noProviderDocumentConfirmable: attestableByState.get(state.id) } : {}),
                     })),
             })),

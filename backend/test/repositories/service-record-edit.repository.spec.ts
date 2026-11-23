@@ -2267,7 +2267,8 @@ describe("assertNoBlockingRevisionDocumentStates", () => {
             .mockResolvedValueOnce([{ id: caseId, branchId, clientId: 126 }])
             .mockResolvedValueOnce([{ ...initial, branchId, clientId: 126, generation: "gen2", documentVersion: 2 }])
             .mockResolvedValueOnce([{ documentId: "doc", chunkIndex: 1, chunkCount: 1 }])
-            .mockResolvedValueOnce([{ documentId: "doc", statusType: ready ? "049" : "070", voidedAt: null, permanentPurgeRequestedAt: null }])
+            .mockResolvedValueOnce([{ documentId: "doc", statusType: ready ? "049" : "070",
+                voided: false, purgePending: false, tombstoneEvaluated: ready }])
             .mockResolvedValueOnce([]), $executeRaw: jest.fn().mockResolvedValue(1) };
         if (ready) {
             await expect(assertNoBlockingRevisionDocumentStates(tx as never, input)).resolves.toBeUndefined();

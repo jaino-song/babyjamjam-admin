@@ -2789,7 +2789,8 @@ describe("INITIAL chunk terminal outcome", () => {
         branchId: rawQueryBranchId, documentId: rawQueryDocumentId,
         deletedDocuments: deletedStatusBeforePurge === undefined ? undefined : [{ documentId: rawQueryDocumentId, statusType: deletedStatusBeforePurge }],
     });
-    const codes = (f: ReturnType<typeof setup>) => f.tx.$executeRaw.mock.calls.map(([query]) => query.values[0]);
+    const codes = (f: ReturnType<typeof setup>) => f.tx.$executeRaw.mock.calls.flatMap(([query]) =>
+        query.strings.join("").includes("INITIAL_TOMBSTONE_EVALUATED:") ? [] : [query.values[0]]);
 
     it("leaves a superseded INITIAL version untouched", async () => {
         const f = setup({ superseded: true });
@@ -2810,7 +2811,8 @@ describe("INITIAL chunk terminal outcome", () => {
         expect(documentSql).toContain("chunk.revision_id = ");
         expect(documentSql).toContain("doc.branch_id = chunk.branch_id");
         expect(documentSql).toContain("doc.revision_id = chunk.revision_id");
-        expect(documentSql).toContain("doc.status_type = '049' AND doc.revision_id IS NULL");
+        expect(documentSql).toContain("doc.revision_id IS NULL AND lower(btrim(doc.status_type");
+        expect(f.tx.$executeRaw.mock.calls[2]![0].strings.join("")).toContain("INITIAL_TOMBSTONE_EVALUATED:");
     });
     it.each(["dispatch_authorized", "creating"])("defers a purged in-progress chunk while the state step is %s", async step => {
         const f = setup({ step });
@@ -2847,6 +2849,20 @@ describe("INITIAL chunk terminal outcome", () => {
         await expect(evaluate(f)).resolves.toBe(true);
         expect(codes(f)[0]).toBe("SERVICE_RECORD_INITIAL_DELETED_STATUS_UNKNOWN");
     });
+    it.each([
+        { statusBeforePurge: "003", expectedCode: "SERVICE_RECORD_INITIAL_COMPLETED_DOCUMENT_DELETED" },
+        { statusBeforePurge: undefined, expectedCode: "SERVICE_RECORD_INITIAL_DELETED_STATUS_UNKNOWN" },
+        { statusBeforePurge: "070", expectedCode: "SERVICE_RECORD_REVISION_DOCUMENT_REJECTED" },
+    ])("evaluates a deferred purge of a failed INITIAL with vendor status $statusBeforePurge", async ({ statusBeforePurge, expectedCode }) => {
+        const originalCode = "SERVICE_RECORD_REVISION_DOCUMENT_REJECTED";
+        const f = setup({ status: "failed", error: originalCode, documentStatus: " Doc_Delete " });
+        await expect(evaluate(f, statusBeforePurge)).resolves.toBe(true);
+        expect(f.state.lastErrorCode).toBe(expectedCode);
+        if (expectedCode === originalCode) {
+            expect(f.tx.$executeRaw).toHaveBeenCalledTimes(1);
+            expect(f.tx.$executeRaw.mock.calls[0]![0].strings.join("")).toContain("INITIAL_TOMBSTONE_EVALUATED:");
+        }
+    });
     it("does not mark an unknown deleted sibling ready when a rejection is evaluated first", async () => {
         const f = setup({ documentStatus: "031", siblingTombstone: true });
         await expect(evaluate(f)).resolves.toBe(true);
@@ -2861,6 +2877,8 @@ describe("INITIAL chunk terminal outcome", () => {
     });
     it.each([
         { documentStatus: "031", expected: "SERVICE_RECORD_REVISION_DOCUMENT_REJECTED" },
+        { documentStatus: " DOC_REJECT_OUTSIDER ", expected: "SERVICE_RECORD_REVISION_DOCUMENT_REJECTED" },
+        { documentStatus: "31", expected: "SERVICE_RECORD_REVISION_DOCUMENT_REJECTED" },
         { documentStatus: "070", voidedAt: new Date(), expected: "SERVICE_RECORD_REVISION_DOCUMENT_VOIDED" },
     ])("evaluates provider rejection/void independently of purge intent %#", async ({ expected, ...options }) => {
         const f = setup(options);
@@ -2881,9 +2899,9 @@ describe("INITIAL chunk terminal outcome", () => {
             .mockResolvedValueOnce([{ id: rawQueryCaseId, clientId: 7, version: 5, currentRevisionId: revisionId }])
             .mockResolvedValueOnce([f.state])
             .mockResolvedValueOnce([{ documentId: rawQueryDocumentId, chunkIndex: 1, chunkCount: 1 }])
-            .mockResolvedValueOnce([{ documentId: rawQueryDocumentId, statusType: "049", voidedAt: null }]);
+            .mockResolvedValueOnce([{ documentId: rawQueryDocumentId, statusType: "049", voidedAt: null, tombstoneEvaluated: true }]);
         await expect(evaluate(f, "070")).resolves.toBe(false);
-        expect(f.tx.$executeRaw).toHaveBeenCalledTimes(2);
+        expect(f.tx.$executeRaw).toHaveBeenCalledTimes(3);
     });
     it("throws on CAS loss and locks case, state, chunk then document", async () => {
         const f = setup({ cas: 0 });
@@ -2905,8 +2923,11 @@ describe("INITIAL chunk terminal outcome", () => {
         const shouldContinue = jest.fn().mockReturnValueOnce(true).mockReturnValueOnce(false);
         await expect(service.healInitialSnapshotTerminalOutcomes({ branchId: rawQueryBranchId, shouldContinue })).resolves.toBe(1);
         expect(evaluate.mock.calls).toEqual([[{ branchId: rawQueryBranchId, documentId: "old-tombstone" }]]);
-        const query = prisma.$queryRaw.mock.calls[0]![0] as { strings: string[] };
+        const query = prisma.$queryRaw.mock.calls[0]![0] as { strings: string[]; values: unknown[] };
         expect(query.strings.join(" ")).toContain("state.status IN ('processing', 'manual_review')");
+        expect(query.strings.join(" ")).toContain("state.status = 'failed' AND state.last_error_code IN");
+        expect(query.strings.join(" ")).toContain("chunk.last_error = 'INITIAL_TOMBSTONE_EVALUATED:'");
+        expect(query.values).toEqual(expect.arrayContaining(["049", "49", "doc_delete", "doc_reject_outsider"]));
         expect(query.strings.join(" ")).toContain("owner.current_revision_id = chunk.revision_id");
     });
 });

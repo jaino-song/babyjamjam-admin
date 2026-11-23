@@ -196,6 +196,25 @@ describe("AdminServiceRecordService revision status", () => {
         expect(listRevisionHistory).toHaveBeenCalledWith("branch-1", 42);
     });
 
+    it("preserves the computed regeneration blocker in a partial-dispatch history response", async () => {
+        const prisma = createPrisma();
+        prisma.client.findFirst.mockResolvedValue({ id: 42 });
+        const document = {
+            id: "state-2", operation: "record_snapshot", generation: "generation-2", status: "failed",
+            documentVersion: 3, canRetry: false, reasonCode: "SERVICE_RECORD_INITIAL_PARTIAL_DISPATCH",
+            regenerationBlockedReason: "SERVICE_RECORD_INITIAL_SIBLING_COMPLETED",
+        };
+        const listRevisionHistory = jest.fn().mockResolvedValue({
+            caseId: "case-1", caseVersion: 8, currentRevisionId: "revision-2", currentUsableRevisionId: null,
+            revisions: [{
+                id: "revision-2", revisionNumber: 2, confirmedAt: "2026-09-08T01:02:03.000Z", isCurrent: true,
+                documents: [document],
+            }],
+        });
+        const result = await createService(prisma, { listRevisionHistory }).getRevisionHistory("branch-1", 42);
+        expect(result.revisions[0]?.documents).toEqual([document]);
+    });
+
     it("rejects a foreign client before consulting revision state", async () => {
         const prisma = createPrisma();
         prisma.client.findFirst.mockResolvedValue(null);

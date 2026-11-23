@@ -615,6 +615,7 @@ export interface IServiceRecordEditRepository {
     /** Append an immutable revision, allocating the next case-local number under a row lock. */
     appendRevision(input: AppendServiceRecordRevisionInput): Promise<ServiceRecordRevision>;
     /** Read branch/client-scoped revision history and safe operation summaries. */
+    /** Includes the advisory regeneration blocker for the current INITIAL generation. */
     listRevisionHistory(branchId: string, clientId: number): Promise<ServiceRecordRevisionHistoryResponse | null>;
     /** Read immutable content only inside the owning branch and client. */
     findRevisionForChanges(branchId: string, clientId: number, revisionId: string): Promise<

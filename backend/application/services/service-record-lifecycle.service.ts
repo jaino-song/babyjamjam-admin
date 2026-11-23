@@ -3,7 +3,13 @@ import { ConflictException, Injectable, Logger, NotFoundException } from "@nestj
 import { Prisma } from "@prisma/client";
 
 import {
+    EFORMSIGN_TOMBSTONE_STATUS,
+    EFORMSIGN_TOMBSTONE_STATUSES,
+    INITIAL_TERMINAL_PROVIDER_FAILURE_CODES,
+    eformsignStatusMatchesSql,
     initialFinalizationStateSql,
+    initialTombstoneEvaluatedSql,
+    initialTombstoneEvaluationRecordSql,
     newestInitialFinalizationStateSql,
     isInitialFinalizationWorkflowScopeForRevision,
     SERVICE_RECORD_INITIAL_COMPLETED_DOCUMENT_DELETED,
@@ -13,7 +19,12 @@ import {
     getServiceRecordFinalizationDueAt,
     getServiceRecordTokenExpiresAt,
 } from "domain/constants/service-record-link-message";
-import { EFORMSIGN_COMPLETED_STATUS_CODES, EFORMSIGN_REJECTED_STATUS_CODES } from "domain/constants/eformsign-doc-status.constants";
+import {
+    EFORMSIGN_COMPLETED_STATUS_CODES,
+    EFORMSIGN_IN_PROGRESS_STATUS_CODES,
+    EFORMSIGN_REJECTED_STATUS_CODES,
+    EFORMSIGN_REVOKE_REQUESTED_STATUS_CODES,
+} from "domain/constants/eformsign-doc-status.constants";
 import { EFORMSIGN_DOCUMENT_KIND } from "domain/entities/eformsign-doc.entity";
 import { getEffectiveClientServiceStatus } from "domain/repositories/client.repository.interface";
 import { UnsupportedKoreanHolidayYearError, type KrBusinessDayCalendar } from "domain/utils/business-days";
@@ -57,7 +68,7 @@ type DbClient = Prisma.TransactionClient | PrismaService;
 type InitialSnapshotTerminalOutcomeInput = {
     branchId: string;
     documentId: string;
-    /** Captured by the staff delete controller before purge; never inferred from a tombstone. */
+    /** Captured before purge by staff delete or its vendor retry. */
     deletedDocuments?: ReadonlyArray<{ documentId: string; statusType: string }>;
 };
 type ServiceRecordCaseRecord = Prisma.service_record_caseGetPayload<Prisma.service_record_caseDefaultArgs>;
@@ -1042,6 +1053,14 @@ export class ServiceRecordLifecycleService {
             && params.caseId === null;
     }
 
+    async findSnapshotChunkBranchForDocument(documentId: string): Promise<string | null> {
+        const chunk = await this.prisma.service_record_snapshot_chunk.findUnique({
+            where: { eformsignDocumentId: documentId },
+            select: { branchId: true },
+        });
+        return chunk?.branchId ?? null;
+    }
+
     async evaluateInitialSnapshotTerminalOutcome(params: InitialSnapshotTerminalOutcomeInput): Promise<boolean> {
         return this.prisma.$transaction(tx =>
             ServiceRecordLifecycleService.evaluateInitialSnapshotTerminalOutcomeInTransaction(params, tx));
@@ -1100,29 +1119,46 @@ export class ServiceRecordLifecycleService {
             ORDER BY chunk_index, id FOR UPDATE
         `);
         if (!chunks.some(chunk => chunk.documentId === params.documentId)) return false;
-        const documents = await tx.$queryRaw<Array<{ documentId: string; statusType: string; voidedAt: Date | null }>>(Prisma.sql`
-            SELECT doc.document_id AS "documentId", doc.status_type AS "statusType", doc.voided_at AS "voidedAt"
+        const documents = await tx.$queryRaw<Array<{
+            documentId: string; statusType: string; voidedAt: Date | null; tombstoneEvaluated: boolean;
+        }>>(Prisma.sql`
+            SELECT doc.document_id AS "documentId", doc.status_type AS "statusType", doc.voided_at AS "voidedAt",
+                ${initialTombstoneEvaluatedSql} AS "tombstoneEvaluated"
             FROM service_record_snapshot_chunk AS chunk
             JOIN eformsign_doc AS doc ON doc.document_id = chunk.document_id
             WHERE chunk.branch_id = ${params.branchId}::uuid AND chunk.service_record_case_id = ${owner.id}::uuid
               AND chunk.revision_id = ${scope.revisionId}::uuid AND chunk.snapshot_version = ${scope.snapshotVersion}
               AND doc.branch_id = chunk.branch_id
               AND (doc.revision_id = chunk.revision_id
-                   OR (doc.status_type = '049' AND doc.revision_id IS NULL))
+                   OR (doc.revision_id IS NULL AND ${eformsignStatusMatchesSql(Prisma.sql`doc.status_type`, EFORMSIGN_TOMBSTONE_STATUSES)}))
             ORDER BY doc.id
             FOR UPDATE OF doc
         `);
         const document = documents.find(doc => doc.documentId === params.documentId);
         if (!document) return false;
-        const deleted = document.statusType === "049";
-        if (!deleted && document.voidedAt === null && !EFORMSIGN_REJECTED_STATUS_CODES.has(document.statusType)) return false;
+        const statusType = normalizeEformsignStatusCode(document.statusType);
+        const deleted = statusType === EFORMSIGN_TOMBSTONE_STATUS;
+        if (!deleted && document.voidedAt === null && !EFORMSIGN_REJECTED_STATUS_CODES.has(statusType)) return false;
         const capturedStatuses = new Map(params.deletedDocuments?.map(doc => [doc.documentId, normalizeEformsignStatusCode(doc.statusType)]));
-        const completedDeletion = documents.some(doc => doc.statusType === "049"
-            && EFORMSIGN_COMPLETED_STATUS_CODES.has(capturedStatuses.get(doc.documentId) ?? ""));
+        const tombstones = documents.filter(doc => normalizeEformsignStatusCode(doc.statusType) === EFORMSIGN_TOMBSTONE_STATUS);
+        const completedDeletion = tombstones.some(doc =>
+            EFORMSIGN_COMPLETED_STATUS_CODES.has(capturedStatuses.get(doc.documentId) ?? ""));
+        const safelyCaptured = tombstones.filter(doc => {
+            const code = capturedStatuses.get(doc.documentId);
+            return code !== undefined && code !== EFORMSIGN_TOMBSTONE_STATUS
+                && !EFORMSIGN_COMPLETED_STATUS_CODES.has(code)
+                && (EFORMSIGN_REJECTED_STATUS_CODES.has(code) || EFORMSIGN_IN_PROGRESS_STATUS_CODES.has(code)
+                    || EFORMSIGN_REVOKE_REQUESTED_STATUS_CODES.has(code) || code === "090");
+        });
+        const unknownDeletion = (doc: typeof document) => !doc.tombstoneEvaluated
+            && !safelyCaptured.some(captured => captured.documentId === doc.documentId);
         // N9-1: 완료 chunk 삭제 증거는 미연결 chunk나 이전 부재 판정보다 우선한다.
         if (state.lastErrorCode === SERVICE_RECORD_INITIAL_COMPLETED_DOCUMENT_DELETED) return false;
+        const wasFailed = state.status === "failed";
         if (!completedDeletion) {
-            if (state.status === "manual_review") {
+            if (wasFailed) {
+                if (!deleted || !INITIAL_TERMINAL_PROVIDER_FAILURE_CODES.has(state.lastErrorCode ?? "")) return false;
+            } else if (state.status === "manual_review") {
                 const indexes = new Set(chunks.map(chunk => chunk.chunkIndex));
                 const allLinked = chunks.length > 0 && indexes.size === chunks.length
                     && chunks.every(chunk => chunk.documentId !== null && chunk.chunkCount === chunks.length
@@ -1134,12 +1170,26 @@ export class ServiceRecordLifecycleService {
             }
         } else if (!["processing", "manual_review", "failed"].includes(state.status)) return false;
         // Sweep ordering must not turn an unknown deleted sibling into a ready provider-failure code.
-        const unknownDeletion = documents.some(doc => doc.statusType === "049"
-            && (!capturedStatuses.has(doc.documentId) || capturedStatuses.get(doc.documentId) === "049"));
         const errorCode = completedDeletion ? SERVICE_RECORD_INITIAL_COMPLETED_DOCUMENT_DELETED
-            : unknownDeletion ? SERVICE_RECORD_INITIAL_DELETED_STATUS_UNKNOWN
+            : (wasFailed ? unknownDeletion(document) : tombstones.some(unknownDeletion))
+                ? SERVICE_RECORD_INITIAL_DELETED_STATUS_UNKNOWN
+            : wasFailed ? state.lastErrorCode
             : !deleted && document.voidedAt !== null ? "SERVICE_RECORD_REVISION_DOCUMENT_VOIDED"
             : "SERVICE_RECORD_REVISION_DOCUMENT_REJECTED";
+        const recordEvaluatedTombstones = async (): Promise<number> => {
+            const newlyEvaluated = safelyCaptured.filter(doc => !doc.tombstoneEvaluated);
+            if (newlyEvaluated.length === 0) return 0;
+            return tx.$executeRaw(Prisma.sql`
+                UPDATE service_record_snapshot_chunk AS chunk
+                SET last_error = ${initialTombstoneEvaluationRecordSql}, updated_at = now()
+                FROM eformsign_doc AS doc
+                WHERE chunk.branch_id = ${params.branchId}::uuid AND chunk.service_record_case_id = ${owner.id}::uuid
+                  AND chunk.revision_id = ${scope.revisionId}::uuid AND chunk.snapshot_version = ${scope.snapshotVersion}
+                  AND doc.branch_id = chunk.branch_id AND doc.document_id = chunk.document_id
+                  AND doc.document_id IN (${Prisma.join(newlyEvaluated.map(doc => doc.documentId))})
+            `);
+        };
+        if (wasFailed && errorCode === state.lastErrorCode) return (await recordEvaluatedTombstones()) > 0;
         const changed = await tx.$executeRaw(Prisma.sql`
             UPDATE service_record_revision_document_state
             SET status = 'failed', step = 'failed', last_error_code = ${errorCode}, next_attempt_at = NULL,
@@ -1157,6 +1207,7 @@ export class ServiceRecordLifecycleService {
               AND status IN ('READY_TO_FINALIZE', 'FINALIZING', 'DOCUMENTS_CREATED', 'FINALIZATION_FAILED', 'COMPLETED')
         `);
         if (caseChanged !== 1) throw new ConflictException(codeOnlyProblemBody("SERVICE_RECORD_WRITE_TARGET_CHANGED"));
+        if (INITIAL_TERMINAL_PROVIDER_FAILURE_CODES.has(errorCode ?? "")) await recordEvaluatedTombstones();
         return true;
     }
 
@@ -1170,10 +1221,16 @@ export class ServiceRecordLifecycleService {
               AND state.revision_id = chunk.revision_id AND state.document_version = chunk.snapshot_version
             JOIN service_record_case AS owner ON owner.id = chunk.service_record_case_id
               AND owner.current_revision_id = chunk.revision_id
-            WHERE state.operation = 'record_snapshot' AND state.status IN ('processing', 'manual_review')
+            WHERE state.operation = 'record_snapshot'
               AND state.workflow_scope->>'generationKind' = 'INITIAL_FINALIZATION'
               AND ${newestInitialFinalizationStateSql("state")}
-              AND (doc.status_type IN (${Prisma.join([...EFORMSIGN_REJECTED_STATUS_CODES])}) OR doc.voided_at IS NOT NULL)
+              AND (
+                (state.status IN ('processing', 'manual_review') AND
+                  (${eformsignStatusMatchesSql(Prisma.sql`doc.status_type`, EFORMSIGN_REJECTED_STATUS_CODES)} OR doc.voided_at IS NOT NULL))
+                OR (state.status = 'failed' AND state.last_error_code IN (${Prisma.join([...INITIAL_TERMINAL_PROVIDER_FAILURE_CODES])})
+                  AND ${eformsignStatusMatchesSql(Prisma.sql`doc.status_type`, EFORMSIGN_TOMBSTONE_STATUSES)}
+                  AND NOT ${initialTombstoneEvaluatedSql})
+              )
               ${options.branchId ? Prisma.sql`AND chunk.branch_id = ${options.branchId}::uuid` : Prisma.empty}
             ORDER BY "branchId", "documentId"
         `);

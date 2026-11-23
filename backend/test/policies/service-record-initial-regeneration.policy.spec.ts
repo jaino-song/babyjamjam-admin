@@ -6,7 +6,7 @@ import {
 
 const state = { id: "state", branchId: "branch", clientId: 7, revisionId: "revision", generation: "gen2",
     documentVersion: 2, status: "failed", lastErrorCode: "SERVICE_RECORD_REVISION_DOCUMENT_REJECTED" };
-const terminal = { documentId: "doc", statusType: "049", voidedAt: null, permanentPurgeRequestedAt: null };
+const terminal = { documentId: "doc", statusType: "049", voided: false, purgePending: false, tombstoneEvaluated: true };
 function fixture(overrides = {}, chunks: Record<string, unknown>[] = [terminal], jobs: Record<string, unknown>[] = []) {
     const queries: Prisma.Sql[] = [];
     const tx = {
@@ -39,11 +39,18 @@ describe("INITIAL regeneration readiness", () => {
     it.each([
         [{ documentId: null }, "SERVICE_RECORD_INITIAL_SIBLING_IN_PROGRESS"],
         [{ ...terminal, statusType: "070" }, "SERVICE_RECORD_INITIAL_SIBLING_IN_PROGRESS"],
-        [{ ...terminal, permanentPurgeRequestedAt: new Date() }, "SERVICE_RECORD_INITIAL_SIBLING_IN_PROGRESS"],
+        [{ ...terminal, purgePending: true }, "SERVICE_RECORD_INITIAL_SIBLING_IN_PROGRESS"],
         [{ ...terminal, statusType: "003" }, "SERVICE_RECORD_INITIAL_SIBLING_COMPLETED"],
     ])("blocks unsafe sibling %#", async (chunk, reason) => {
         const f = fixture({}, [terminal, chunk as Record<string, unknown>]);
         expect(await initialRegenerationReadiness(f.tx as never, "case", "revision")).toMatchObject({ ready: false, reason });
+    });
+    it("blocks regeneration immediately after purge even before the evaluator or sweep runs", async () => {
+        const f = fixture({}, [{ ...terminal, statusType: " DOC_DELETE ", tombstoneEvaluated: false }]);
+        expect(await releaseTerminalInitialFinalizationKey(f.tx as never, "case", "revision")).toMatchObject({
+            ready: false, reason: "SERVICE_RECORD_INITIAL_DELETED_STATUS_UNKNOWN",
+        });
+        expect(f.tx.$executeRaw).not.toHaveBeenCalled();
     });
     it("prioritizes a completed sibling over an in-progress sibling", async () => {
         const f = fixture({}, [{ ...terminal, statusType: "070" }, { ...terminal, statusType: "003" }]);
