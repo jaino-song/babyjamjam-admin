@@ -6,6 +6,7 @@ import type { MessageTriggerRecipientType } from "domain/constants/message-trigg
 import type { ClientHistoryScope, MessageHistoryPageQuery } from "domain/repositories/message-log.repository.interface";
 
 export interface MessageTriggerJobCancellationScope {
+    preserveReceiptRecoveryChild?: boolean;
     clientId?: number;
     employeeScheduleId?: number;
     scheduledBefore?: Date;
@@ -158,6 +159,9 @@ export interface IMessageTriggerJobRepository {
      */
     claimNeedsSetupWithRuleFence(id: string, branchId: string | null, transaction?: Prisma.TransactionClient, processingDeadlineAt?: Date): Promise<string | null>;
     findDueDispatchBranchIds(now: Date): Promise<string[]>;
+    fenceOrdinaryReceiptPending?(transaction: Prisma.TransactionClient, job: MessageTriggerJobEntity, now: Date): Promise<boolean>;
+    findReceiptRecoveryCandidates?(now: Date, client?: { branchId: string; clientId: number }): Promise<Array<{ id: string; branchId: string }>>;
+    cancelDueReceiptJobsForDeniedSender?(branchId: string, now: Date, transaction: Prisma.TransactionClient, jobId?: string): Promise<void>;
     findDueRecordLinkJobsForSenderCheck?(branchIds: string[], now: Date): Promise<MessageTriggerJobEntity[]>;
     fenceServiceRecordLinkAttempt?(
         transaction: Prisma.TransactionClient, job: MessageTriggerJobEntity, now: Date,

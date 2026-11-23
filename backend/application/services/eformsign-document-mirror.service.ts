@@ -1,3 +1,4 @@
+import { MessageTriggerService } from "./message-trigger.service";
 import { createHash } from "node:crypto";
 
 import { Inject, Injectable, Logger, Optional } from "@nestjs/common";
@@ -151,6 +152,7 @@ export class EformsignDocumentMirrorService {
         private readonly completedMirrorReconciler?: ReconcileCompletedMirroredEformsignDocUsecase,
         @Optional()
         private readonly docsEventBus?: EformsignDocsEventBus,
+        @Optional() private readonly messageTriggers?: MessageTriggerService,
     ) {}
 
     async getStoredDetail(documentId: string): Promise<EformsignApiDocumentResponse | null> {
@@ -335,6 +337,14 @@ export class EformsignDocumentMirrorService {
         );
         if (options.publishChangeReason && this.docsEventBus) {
             await this.publishDocumentChange(documentId, options.publishChangeReason);
+        }
+        if (!options.suppressOutboundAutomation && this.messageTriggers) {
+            const state = await this.mirrorRepository.findState(documentId).catch(() => null);
+            if (state?.branchId) {
+                await this.messageTriggers.wakeReceiptRecoveryForDocument(state.branchId, documentId).catch(error => {
+                    this.logger.warn(`Receipt recovery wake failed for ${documentId}: ${sanitizeEformsignErrorMessage(error)}`);
+                });
+            }
         }
         return result;
     }

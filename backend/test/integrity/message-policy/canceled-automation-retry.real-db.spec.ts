@@ -64,7 +64,7 @@ describeReal("canceled automation retry settings (real PostgreSQL)", () => {
                 { id: deletedGroupMember, branchId: branchA, groupId: deletedGroup },
                 { id: foreignGroupMember, branchId: branchB, groupId: foreignGroup },
             ].map((row) => ({
-                name: row.id, eventType: "SERVICE_END", offsetType: "SAME_DAY", recipientType: "CLIENT", templateKey: "INFO",
+                name: row.id, eventType: "SERVICE_END", offsetType: "SAME_DAY", recipientType: "CLIENT", templateKey: "SERVICE_END_NOTICE",
                 jobsStale: true, retryOnFailure: false, ...row,
             })),
         });

@@ -1,3 +1,4 @@
+import { AUTOMATION_CONSENT_CANCEL_REASON } from "domain/constants/message-automation-policy";
 import { Inject, Injectable } from "@nestjs/common";
 import type { Prisma } from "@prisma/client";
 import { AGENT_AUTOMATION_JOB_SEAL_PAYLOAD_KEY } from "domain/constants/agent-automation-storage";
@@ -17,7 +18,6 @@ type Fence = (transaction: Prisma.TransactionClient) => Promise<AutomationDelive
 type Binding = { id: string; branchId: string; claimToken: string; concreteDigest: string; sealDigest: string };
 type Admission = { binding: Binding; authority: "allowed" | "legacy" };
 type FinalAdmission = Admission & { job: MessageTriggerJobEntity; serializedSnapshot: string; snapshotDigest: string };
-const REFUSAL = "문자 동의 또는 발송 대상 확인이 필요합니다";
 
 /**
  * One singleton owns both capabilities. Only its branch-locked transactions can
@@ -44,7 +44,7 @@ export class AgentAutomationDeliveryGateService {
         if (authority.status === "allowed") {
             job.payload = { ...job.payload, agentAutomationSeal: authority.seal };
         } else {
-            job.cancel(REFUSAL);
+            job.cancel(AUTOMATION_CONSENT_CANCEL_REASON);
         }
         const updated = await transaction.message_trigger_job.updateMany({ where: { id: job.id, branchId: job.branchId,
             status: "pending", claimToken: null }, data: { status: job.status, cancelReason: job.cancelReason,
@@ -178,8 +178,8 @@ export class AgentAutomationDeliveryGateService {
 
     private async cancelProcessing(transaction: Prisma.TransactionClient, job: MessageTriggerJobEntity): Promise<AutomationDeliveryFence> {
         const result = await transaction.message_trigger_job.updateMany({ where: { id: job.id, branchId: job.branchId,
-            status: "processing", claimToken: job.claimToken }, data: { status: "canceled", cancelReason: REFUSAL,
+            status: "processing", claimToken: job.claimToken }, data: { status: "canceled", cancelReason: AUTOMATION_CONSENT_CANCEL_REASON,
             canceledAt: new Date(), claimToken: null } });
-        return result.count === 1 ? { kind: "stale", reason: REFUSAL } : { kind: "lost" };
+        return result.count === 1 ? { kind: "stale", reason: AUTOMATION_CONSENT_CANCEL_REASON } : { kind: "lost" };
     }
 }

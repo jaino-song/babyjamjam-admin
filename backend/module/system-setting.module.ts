@@ -55,6 +55,7 @@ import { CanceledAutomationRetrySettingsController } from "interface/controllers
         CanceledAutomationRetrySettingsService,
     ],
     exports: [
+        CanceledAutomationRetrySettingsService,
         MESSAGE_AUTOMATION_DATABASE,
         GetSettingUsecase,
         UpdateSettingUsecase,

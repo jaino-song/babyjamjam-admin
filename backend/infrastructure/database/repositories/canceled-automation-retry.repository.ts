@@ -50,8 +50,8 @@ export class CanceledAutomationRetryRepository implements ICanceledAutomationRet
         private readonly database: MessageAutomationDatabase,
     ) {}
 
-    list(branchId: string): Promise<CanceledRetryRule[]> {
-        return this.database.message_trigger_rule.findMany(ruleQuery(branchId));
+    list(branchId: string, transaction?: Prisma.TransactionClient): Promise<CanceledRetryRule[]> {
+        return (transaction ?? this.database).message_trigger_rule.findMany(ruleQuery(branchId));
     }
 
     async lockRule(branchId: string, id: string, transaction: Prisma.TransactionClient): Promise<CanceledRetryRule | null> {

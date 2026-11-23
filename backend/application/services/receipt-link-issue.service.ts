@@ -1,9 +1,13 @@
+import { Prisma } from "@prisma/client";
+import type { ReceiptRecoveryProof } from "domain/constants/receipt-job-recovery";
+import { isCancellableUnsignedContract } from "domain/utils/eformsign-customer-signature";
 import { Inject, Injectable, Logger } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { createHash, randomUUID } from "node:crypto";
 import { ClientEntity } from "domain/entities/client.entity";
 import {
     EFORMSIGN_COMPLETED_STATUS_CODES,
+    EFORMSIGN_IN_PROGRESS_STATUS_CODES,
     TERMINAL_STATUS_CODES,
     isReviewerRejectedStatus,
 } from "domain/constants/eformsign-doc-status.constants";
@@ -27,7 +31,7 @@ import { configuredServiceRecordTemplateIds } from "application/utils/eformsign-
 import { sanitizeEformsignErrorMessage } from "application/utils/eformsign-error-message";
 import { EformsignDocumentMirrorService } from "./eformsign-document-mirror.service";
 import { normalizeBirthdayInput, ReceiptLinkSource, ReceiptLinkTokenService } from "./receipt-link-token.service";
-import { SmsTriggerDeliverySkipError } from "./sms-trigger-payload-enricher.registry";
+import { SmsTriggerDeliverySkipError, type ReceiptReadiness } from "./sms-trigger-payload-enricher.registry";
 
 export const RECEIPT_PAGE_NUMBER = 7;
 export const RECEIPT_IMAGE_WIDTH = 1240;
@@ -63,8 +67,8 @@ export function receiptLinkUnusableError(): SmsTriggerDeliverySkipError {
 }
 
 export class ReceiptLinkSkipError extends SmsTriggerDeliverySkipError {
-    constructor(readonly skipReason: ReceiptLinkSkipReason) {
-        super(skipReason, RECEIPT_LINK_SKIP_MESSAGES[skipReason]);
+    constructor(readonly skipReason: ReceiptLinkSkipReason, recoveryProof?: ReceiptRecoveryProof) {
+        super(skipReason, RECEIPT_LINK_SKIP_MESSAGES[skipReason], recoveryProof);
         this.name = "ReceiptLinkSkipError";
     }
 }
@@ -80,9 +84,18 @@ export interface ReceiptLinkPreflight {
     client: { id: number; name: string; phone: string | null; birthday: string };
     doc: { id: number; documentId: string };
     pdf: Buffer;
+    generation?: ReceiptDocumentGeneration;
+}
+
+export interface ReceiptDocumentGeneration {
+    documentId: number;
+    sourceUpdatedDate: Date;
+    sha256: string;
 }
 
 export interface IssueReceiptLinkParams {
+    observeRecovery?: boolean;
+    onPrepared?: (generation: ReceiptDocumentGeneration) => void;
     branchId: string;
     clientId: number;
     source: ReceiptLinkSource;
@@ -118,12 +131,16 @@ interface PreparedReceiptLink {
     png: Buffer;
     storagePath: string;
     contentSha256: string;
+    generation?: ReceiptDocumentGeneration;
 }
 
 @Injectable()
 export class ReceiptLinkIssueService {
     private readonly logger = new Logger(ReceiptLinkIssueService.name);
-    private readonly inFlightJobIssuances = new Map<string, Promise<IssuedReceiptLink>>();
+    private readonly inFlightJobIssuances = new Map<string, Promise<{
+        link: IssuedReceiptLink;
+        generation?: ReceiptDocumentGeneration;
+    }>>();
 
     constructor(
         @Inject(CLIENT_REPOSITORY) private readonly clientRepository: IClientRepository,
@@ -138,7 +155,7 @@ export class ReceiptLinkIssueService {
     ) {}
 
     /** Steps 1-4 of the pipeline: voucher, birthday, contract document, mirrored PDF. No rendering. */
-    async preflight(params: { branchId: string; clientId: number; eformsignDocId?: number }): Promise<ReceiptLinkPreflight> {
+    async preflight(params: { branchId: string; clientId: number; eformsignDocId?: number; observeRecovery?: boolean }): Promise<ReceiptLinkPreflight> {
         const client = await this.clientRepository.findById(params.branchId, params.clientId);
         if (!client) throw new ReceiptLinkSkipError("no_contract_document");
         if (!client.voucherClient) throw new ReceiptLinkSkipError("not_voucher_client");
@@ -146,31 +163,58 @@ export class ReceiptLinkIssueService {
         // 8자리(YYYYMMDD)는 전체를 보존하고, 기존 6자리(YYMMDD)는 세기를 추론하지 않는다.
         // issue()와 같은 정규화로 사용할 수 없는 생년월일은 발급 전에 건너뛴다.
         const birthday = normalizeBirthdayInput(client.birthday ?? "");
-        if (!birthday) throw new ReceiptLinkSkipError("missing_birthday");
+        if (!birthday) {
+            const facts = params.observeRecovery ? await this.readRecoveryContract(client.id, params.branchId).catch(() => null) : null;
+            const proof = facts && facts.kind !== "invalid"
+                ? { reason: "missing_birthday" as const, documentId: facts.kind === "absent" ? null : facts.doc.id }
+                : undefined;
+            throw new ReceiptLinkSkipError("missing_birthday", proof);
+        }
 
-        const doc = params.eformsignDocId !== undefined
-            ? await this.findExplicitContractDocument(params.branchId, params.eformsignDocId, client.id)
-            : await this.findContractDocument(client);
-        if (!doc) throw new ReceiptLinkSkipError("no_contract_document");
+        const facts = params.observeRecovery ? await this.readRecoveryContract(client.id, params.branchId).catch(() => null) : null;
+        let doc: ContractDocumentRef | null;
+        if (params.observeRecovery) {
+            if (!facts || facts.kind === "invalid") {
+                throw new ReceiptLinkSkipError(facts?.skipReason ?? "contract_not_signed");
+            }
+            if (facts.kind === "absent") {
+                throw new ReceiptLinkSkipError("no_contract_document", { reason: "missing_current_contract", documentId: null });
+            }
+            if (facts.kind === "unsigned") {
+                throw new ReceiptLinkSkipError("contract_not_signed", { reason: "live_unsigned_contract", documentId: facts.doc.id });
+            }
+            doc = { id: facts.doc.id, documentId: facts.doc.documentId };
+        } else {
+            doc = params.eformsignDocId !== undefined
+                ? await this.findExplicitContractDocument(params.branchId, params.eformsignDocId, client.id)
+                : await this.findContractDocument(client);
+            if (!doc) throw new ReceiptLinkSkipError("no_contract_document");
+            await this.assertContractSigned(doc.documentId);
+        }
 
-        // The receipt link may only be minted once the customer has finished
-        // signing: from the provider-review step onward, or any completed
-        // status. Fail closed when the mirror cannot prove either.
-        await this.assertContractSigned(doc.documentId);
-
-        // Load (and if needed re-sync) the contract PDF. findFile itself fences
-        // superseded generations, so a partial/ready mirror whose current-version
-        // document file is unreadable still fails closed here. The sync-ready
-        // gate is re-run at the delivery boundary (prepare()/assertDocumentSyncReady).
-        const pdf = await this.loadContractPdf(params.branchId, doc);
-        if (!pdf) throw new ReceiptLinkSkipError("pdf_unavailable");
+        let file: EformsignStoredDocumentFile | null;
+        try {
+            file = await this.loadContractPdf(params.branchId, doc);
+        } catch (error) {
+            if (!params.observeRecovery) throw error;
+            throw new ReceiptLinkSkipError("pdf_unavailable");
+        }
+        if (!file?.content) {
+            throw new ReceiptLinkSkipError("pdf_unavailable", params.observeRecovery
+                ? await this.observePendingPdf(client.id, params.branchId, doc).catch(() => undefined) : undefined);
+        }
 
         // A re-sync may have refreshed the mirror to a terminal status while
         // still returning a readable PDF. Recheck before the preflight can
         // authorize rendering and publication.
         await this.assertContractSigned(doc.documentId);
 
-        return { client: { id: client.id, name: client.name, phone: client.phone, birthday }, doc, pdf };
+        return { client: { id: client.id, name: client.name, phone: client.phone, birthday }, doc,
+            pdf: Buffer.from(file.content),
+            ...(params.observeRecovery && file.sourceUpdatedDate ? {
+                generation: { documentId: doc.id, sourceUpdatedDate: file.sourceUpdatedDate, sha256: file.sha256 },
+            } : {}),
+        };
     }
 
     /** Fail closed: a mirror state the caller cannot read must never pass the signing gate. */
@@ -197,20 +241,79 @@ export class ReceiptLinkIssueService {
      * `contract_not_signed`.
      */
     private async assertContractSigned(documentId: string): Promise<void> {
-        const state = await this.resolveMirrorState(documentId);
-        const currentStatus = state?.detailPayload?.current_status ?? null;
+        if (!hasReceiptSignature(await this.resolveMirrorState(documentId))) throw new ReceiptLinkSkipError("contract_not_signed");
+    }
+
+    private async readRecoveryContract(clientId: number, branchId: string, transaction?: Prisma.TransactionClient) {
+        const rows = transaction ? await transaction.eformsign_doc.findMany({
+            where: { clientId, serviceRecordCaseId: null, OR: [{ documentKind: "contract" }, { documentKind: null }] },
+            orderBy: [{ createdDate: "desc" }, { id: "desc" }],
+            select: { id: true, documentId: true, branchId: true, documentKind: true, serviceRecordCaseId: true,
+                templateId: true, statusType: true, expired: true, voidedAt: true, permanentPurgeRequestedAt: true,
+                createdDate: true, stepType: true, stepName: true },
+        }) : await this.eformsignDocRepository.findContractCandidatesByClientId(clientId);
+        const doc = selectCurrentContractDocument(rows, configuredServiceRecordTemplateIds(this.configService));
+        if (!doc) return { kind: "absent" as const };
+        if (doc.voidedAt) return { kind: "invalid" as const, skipReason: "contract_voided" as const };
+        if (doc.permanentPurgeRequestedAt) return { kind: "invalid" as const, skipReason: "no_contract_document" as const };
+        if (("branchId" in doc && doc.branchId !== branchId) || ("expired" in doc && doc.expired)) {
+            return { kind: "invalid" as const };
+        }
+        if (!transaction) {
+            const local = await this.eformsignDocRepository.findById(branchId, doc.id);
+            if (!local || local.clientId !== clientId || local.documentId !== doc.documentId || local.expired || local.isVoided) {
+                return { kind: "invalid" as const };
+            }
+        }
+        const state = await this.resolveMirrorState(doc.documentId);
+        if (!state || state.branchId !== branchId || state.permanentPurgeRequestedAt) return { kind: "invalid" as const };
+        const currentStatus = state.detailPayload?.current_status;
         const statusType = normalizeEformsignStatusCode(currentStatus?.status_type);
-        if (EFORMSIGN_COMPLETED_STATUS_CODES.has(statusType)) return;
-        // 071 (reviewer rejection, 계약-04): the review stage only exists after the customer signed
-        // and the signature stays valid, so the receipt link may be issued. Allowed explicitly
-        // rather than by falling through to the step check below.
-        if (isReviewerRejectedStatus(statusType)) return;
-        // Terminal-but-not-completed here means rejected/revoked/deleted/expired.
-        if (TERMINAL_STATUS_CODES.has(statusType)) throw new ReceiptLinkSkipError("contract_not_signed");
-        const signedOrLater = isProviderReviewWorkflowStep(
-            currentStatus ? { stepType: currentStatus.step_type, stepName: currentStatus.step_name } : null,
-        );
-        if (!signedOrLater) throw new ReceiptLinkSkipError("contract_not_signed");
+        const projected = normalizeEformsignStatusCode(doc.statusType);
+        if (!knownLiveStatus(projected) || !knownLiveStatus(statusType)) return { kind: "invalid" as const };
+
+        if (hasReceiptSignature(state)) return { kind: "signed" as const, doc, state };
+        if (isCancellableUnsignedContract({ statusType, stepType: currentStatus?.step_type ?? null, stepName: currentStatus?.step_name ?? null })) {
+            return { kind: "unsigned" as const, doc, state };
+        }
+        return { kind: "invalid" as const };
+    }
+
+    private async observePendingPdf(clientId: number, branchId: string, expected: ContractDocumentRef): Promise<ReceiptRecoveryProof | undefined> {
+        const facts = await this.readRecoveryContract(clientId, branchId);
+        if (facts.kind !== "signed" || facts.doc.id !== expected.id || !isSyncingGeneration(facts.state)) return;
+        if (await this.mirrorRepository.findFile(facts.doc.documentId, "document")) return;
+        // A successful local read of the absence must still describe this generation.
+        const current = await this.resolveMirrorState(facts.doc.documentId);
+        if (!current || !isSyncingGeneration(current)
+            || current.detailSourceUpdatedDate!.getTime() !== facts.state.detailSourceUpdatedDate!.getTime()
+            || current.detailSyncedAt!.getTime() !== facts.state.detailSyncedAt!.getTime()) return;
+        return { reason: "current_contract_pdf_pending", documentId: facts.doc.id };
+    }
+
+    /** Read only committed local evidence. The caller holds the branch and client locks. */
+    async checkRecovery(branchId: string, clientId: number, documentId: number | null,
+        transaction: Prisma.TransactionClient, generation?: ReceiptDocumentGeneration): Promise<ReceiptReadiness> {
+        const client = await transaction.client.findFirst({ where: { id: clientId, branchId, deletedAt: null },
+            select: { voucherClient: true, birthday: true } });
+        if (!client?.voucherClient) return { kind: "terminal" };
+        // Include non-candidates as their next committed version could become current.
+        await transaction.$queryRaw(Prisma.sql`SELECT id FROM eformsign_doc WHERE client_id = ${clientId} ORDER BY id FOR UPDATE`);
+        const facts = await this.readRecoveryContract(clientId, branchId, transaction);
+        if (facts.kind === "invalid") return { kind: "terminal" };
+        if (facts.kind === "absent") return { kind: documentId === null && !generation ? "waiting" : "terminal" };
+        if ((documentId !== null && facts.doc.id !== documentId) || (generation && facts.doc.id !== generation.documentId)) return { kind: "terminal" };
+        if (facts.kind === "unsigned" || !normalizeBirthdayInput(client.birthday ?? "")) return { kind: generation ? "terminal" : "waiting" };
+        let file;
+        try {
+            file = await this.mirrorRepository.findFile(facts.doc.documentId, "document");
+        } catch {
+            return { kind: "terminal" };
+        }
+        if (!file?.content) return { kind: !generation && isSyncingGeneration(facts.state) ? "waiting" : "terminal" };
+        if (generation && (file.sourceUpdatedDate?.getTime() !== generation.sourceUpdatedDate.getTime()
+            || file.sha256 !== generation.sha256)) return { kind: "terminal" };
+        return { kind: "ready", documentId: facts.doc.id };
     }
 
     /**
@@ -235,6 +338,7 @@ export class ReceiptLinkIssueService {
                    */
                   expectedEformsignDocId?: number;
               },
+        recoveryTarget?: { branchId: string; clientId: number; document: ContractDocumentRef },
     ): Promise<void> {
         try {
             let documentId: string | null = typeof target === "string" ? target : null;
@@ -262,7 +366,9 @@ export class ReceiptLinkIssueService {
             if (!documentId) throw new ReceiptLinkSkipError("no_contract_document");
             const file: EformsignStoredDocumentFile | null =
                 await this.mirrorRepository.findFile(documentId, "document");
-            if (!file) throw new ReceiptLinkSkipError("pdf_unavailable");
+            if (!file) throw new ReceiptLinkSkipError("pdf_unavailable", recoveryTarget
+                ? await this.observePendingPdf(recoveryTarget.clientId, recoveryTarget.branchId, recoveryTarget.document).catch(() => undefined)
+                : undefined);
             await this.assertContractSigned(documentId);
         } catch (error) {
             // SmsTriggerDeliverySkipError covers ReceiptLinkSkipError and the staged-link
@@ -277,16 +383,20 @@ export class ReceiptLinkIssueService {
         const jobId = params.jobId;
         if (!jobId) {
             const prepared = await this.prepare(params);
-            return this.mint(params, prepared);
+            const link = await this.mint(params, prepared);
+            if (prepared.generation) params.onPrepared?.(prepared.generation);
+            return link;
         }
 
-        const inFlight = this.inFlightJobIssuances.get(jobId);
-        if (inFlight) return inFlight;
-
-        const issuance = this.issueForJob({ ...params, jobId });
-        this.inFlightJobIssuances.set(jobId, issuance);
+        let issuance = this.inFlightJobIssuances.get(jobId);
+        if (!issuance) {
+            issuance = this.issueForJob(params);
+            this.inFlightJobIssuances.set(jobId, issuance);
+        }
         try {
-            return await issuance;
+            const { link, generation } = await issuance;
+            if (generation) params.onPrepared?.(generation);
+            return link;
         } finally {
             if (this.inFlightJobIssuances.get(jobId) === issuance) {
                 this.inFlightJobIssuances.delete(jobId);
@@ -294,16 +404,18 @@ export class ReceiptLinkIssueService {
         }
     }
 
-    private async issueForJob(params: IssueReceiptLinkParams & { jobId: string }): Promise<IssuedReceiptLink> {
+    private async issueForJob(params: IssueReceiptLinkParams) {
         // Every dispatch refreshes the same contract token and expiry, including stale retries.
         // No job may replace or revoke a link already delivered by another job.
-        return this.mint(params, await this.prepare(params));
+        const prepared = await this.prepare(params);
+        return { link: await this.mint(params, prepared), generation: prepared.generation };
     }
 
     private async prepare(params: IssueReceiptLinkParams): Promise<PreparedReceiptLink> {
-        const { client, doc, pdf } = await this.preflight(params);
-        await this.assertDocumentSyncReady(doc.documentId);
-
+        const { client, doc, pdf, generation } = await this.preflight(params);
+        await this.assertDocumentSyncReady(doc.documentId, params.observeRecovery ? {
+            branchId: params.branchId, clientId: params.clientId, document: doc,
+        } : undefined);
         let png: Buffer;
         try {
             png = await this.rasterizer.renderPageToPng(pdf, RECEIPT_PAGE_NUMBER, { width: RECEIPT_IMAGE_WIDTH });
@@ -323,7 +435,7 @@ export class ReceiptLinkIssueService {
             throw new ReceiptLinkSkipError("upload_failed");
         }
 
-        return { client, doc, png, storagePath, contentSha256 };
+        return { client, doc, png, storagePath, contentSha256, generation };
     }
 
     private async mint(
@@ -398,7 +510,7 @@ export class ReceiptLinkIssueService {
         return { id: doc.id, documentId: doc.documentId };
     }
 
-    private async loadContractPdf(branchId: string, doc: ContractDocumentRef): Promise<Buffer | null> {
+    private async loadContractPdf(branchId: string, doc: ContractDocumentRef): Promise<EformsignStoredDocumentFile | null> {
         const stored = await this.findStoredPdf(doc.documentId);
         if (stored) return stored;
 
@@ -422,10 +534,27 @@ export class ReceiptLinkIssueService {
         return this.findStoredPdf(doc.documentId);
     }
 
-    private async findStoredPdf(documentId: string): Promise<Buffer | null> {
-        const file = await this.mirrorRepository.findFile(documentId, "document");
-        return file?.content ? Buffer.from(file.content) : null;
+    private async findStoredPdf(documentId: string): Promise<EformsignStoredDocumentFile | null> {
+        return this.mirrorRepository.findFile(documentId, "document");
     }
+}
+
+function hasReceiptSignature(state: EformsignDocumentMirrorState | null): boolean {
+    const current = state?.detailPayload?.current_status;
+    const statusType = normalizeEformsignStatusCode(current?.status_type);
+    // 071 explicitly retains the customer's signature after reviewer rejection.
+    if (EFORMSIGN_COMPLETED_STATUS_CODES.has(statusType) || isReviewerRejectedStatus(statusType)) return true;
+    if (TERMINAL_STATUS_CODES.has(statusType)) return false;
+    return isProviderReviewWorkflowStep(current ? { stepType: current.step_type, stepName: current.step_name } : null);
+}
+
+function knownLiveStatus(status: string): boolean {
+    return EFORMSIGN_COMPLETED_STATUS_CODES.has(status) || EFORMSIGN_IN_PROGRESS_STATUS_CODES.has(status);
+}
+
+function isSyncingGeneration(state: EformsignDocumentMirrorState): boolean {
+    return state.syncStatus === "syncing" && state.syncError === null && state.permanentPurgeRequestedAt === null
+        && state.detailSourceUpdatedDate !== null && state.detailSyncedAt !== null;
 }
 
 function describe(error: unknown): string {

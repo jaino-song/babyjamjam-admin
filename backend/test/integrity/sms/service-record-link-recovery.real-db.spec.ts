@@ -100,6 +100,8 @@ describeReal("service-record-link recovery through customer writes (PostgreSQL)"
         jest.useRealTimers();
         jest.restoreAllMocks();
         for (const branchId of branchIds) {
+            await db.raw.message_occurrence_manual_attempt.deleteMany({ where: { branchId } });
+            await db.raw.message_occurrence_claim.deleteMany({ where: { branchId } });
             await db.raw.message_log.deleteMany({ where: { branchId } });
             await db.raw.message_trigger_job.deleteMany({ where: { branchId, originalJobId: { not: null } } });
             await db.raw.message_trigger_job.deleteMany({ where: { branchId } });

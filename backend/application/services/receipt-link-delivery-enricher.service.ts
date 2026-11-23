@@ -1,3 +1,6 @@
+import type { Prisma } from "@prisma/client";
+import { isManualMessageTriggerJob, isManualMessageTriggerRule } from "domain/constants/message-trigger-job-ownership";
+import { SMS_DELIVERY_SNAPSHOT_VARIABLE } from "domain/constants/sms-delivery-snapshot";
 import { Inject, Injectable, OnModuleInit, Optional } from "@nestjs/common";
 import { MessageTriggerTemplateKey } from "domain/constants/message-trigger-catalog";
 import { MessageTriggerJobEntity } from "domain/entities/message-trigger-job.entity";
@@ -9,12 +12,14 @@ import {
 } from "domain/ports/file-storage.port";
 import {
     ReceiptLinkIssueService,
+    type ReceiptDocumentGeneration,
     ReceiptLinkSkipError,
     receiptLinkUnusableError,
 } from "./receipt-link-issue.service";
 import { ReceiptLinkTokenService } from "./receipt-link-token.service";
 import {
     SmsTriggerPayloadEnricher,
+    type ReceiptReadiness,
     SmsTriggerPayloadEnricherRegistry,
 } from "./sms-trigger-payload-enricher.registry";
 
@@ -28,6 +33,8 @@ export { MANUAL_DEDUPE_MARKER } from "domain/constants/service-end-notice-messag
 /** Refreshes the contract receipt link at delivery time to a new 30-day expiry counted from this send. */
 @Injectable()
 export class ReceiptLinkDeliveryEnricher implements SmsTriggerPayloadEnricher, OnModuleInit {
+    private readonly prepared = new WeakMap<MessageTriggerJobEntity, ReceiptDocumentGeneration>();
+
     constructor(
         private readonly registry: SmsTriggerPayloadEnricherRegistry,
         private readonly issueService: ReceiptLinkIssueService,
@@ -48,7 +55,11 @@ export class ReceiptLinkDeliveryEnricher implements SmsTriggerPayloadEnricher, O
         }
         const existingUrl = job.payload.templateVariables?.[SERVICE_END_NOTICE_RECEIPT_URL_TEMPLATE_VARIABLE];
         const receiptEformsignDocId = job.payload.receiptEformsignDocId;
+        const observeRecovery = !isManualMessageTriggerJob(job)
+            && !isManualMessageTriggerRule({ id: job.ruleId, templateKey: job.templateKey })
+            && typeof receiptEformsignDocId !== "number";
         const issued = await this.issueService.issue({
+            ...(observeRecovery ? { observeRecovery, onPrepared: (generation: ReceiptDocumentGeneration) => this.prepared.set(job, generation) } : {}),
             branchId: job.branchId,
             clientId: job.clientId,
             source: job.dedupeKey.includes(MANUAL_DEDUPE_MARKER) ? "manual" : "auto_trigger",
@@ -59,6 +70,31 @@ export class ReceiptLinkDeliveryEnricher implements SmsTriggerPayloadEnricher, O
         });
         job.payload.templateVariables[SERVICE_END_NOTICE_RECEIPT_URL_TEMPLATE_VARIABLE] = issued.url;
         job.payload[SERVICE_END_NOTICE_BUTTON_URL_PAYLOAD_KEY] = issued.url;
+    }
+
+    receiptSnapshotProof(job: MessageTriggerJobEntity) {
+        const generation = this.prepared.get(job);
+        return generation ? { ...generation, sourceUpdatedDate: generation.sourceUpdatedDate.toISOString() } : undefined;
+    }
+
+    private readPersistedGeneration(job: MessageTriggerJobEntity): ReceiptDocumentGeneration | undefined {
+        try {
+            const { receiptGeneration } = JSON.parse(job.payload.templateVariables[SMS_DELIVERY_SNAPSHOT_VARIABLE] ?? "{}");
+            if (!receiptGeneration || !Number.isSafeInteger(receiptGeneration.documentId)
+                || typeof receiptGeneration.sourceUpdatedDate !== "string" || !/^[a-f0-9]{64}$/.test(receiptGeneration.sha256)) return;
+            const sourceUpdatedDate = new Date(receiptGeneration.sourceUpdatedDate);
+            if (!Number.isFinite(sourceUpdatedDate.getTime())) return;
+            return { documentId: receiptGeneration.documentId, sourceUpdatedDate, sha256: receiptGeneration.sha256 };
+        } catch {
+            return undefined;
+        }
+    }
+
+    async checkRecovery(branchId: string, clientId: number, documentId: number | null,
+        transaction: Prisma.TransactionClient, preparedJob?: MessageTriggerJobEntity): Promise<ReceiptReadiness> {
+        const generation = preparedJob && (this.prepared.get(preparedJob) ?? this.readPersistedGeneration(preparedJob));
+        if (preparedJob && !generation) return { kind: "terminal" };
+        return this.issueService.checkRecovery(branchId, clientId, documentId, transaction, generation);
     }
 
     async validateStagedSnapshot(job: MessageTriggerJobEntity): Promise<void> {
