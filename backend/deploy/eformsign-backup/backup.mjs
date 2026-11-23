@@ -3,14 +3,17 @@ import * as fs from 'node:fs/promises';
 import { createHash, randomUUID } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { resolve, relative, dirname, isAbsolute } from 'node:path';
+import { migrateProviderContracts, readMigration, withTimerLock } from './provider-contract-migration.mjs';
+import { pairPaths, providerBase, providerFolder, matchesProviderPair, sanitize, syncDirectory, writeJson } from './provider-contract-paths.mjs';
 
 let token = '';
-const cleanReason = (error) => String(error.message ?? error).split(token || '\0').join('[redacted]').slice(0, 500);
+const cleanReason = (error) => error instanceof SyntaxError ? 'JSON 형식 오류'
+    : error?.path ? '보관 파일 작업 실패'
+        : String(error?.message ?? error).split(token || '\0').join('[redacted]').slice(0, 500);
 const log = (value) => console.log(JSON.stringify(value).split(token || '\0').join('[redacted]'));
 const execute = (bin, args) => new Promise((done, reject) => {
     execFile(bin, args, (error) => error ? reject(new Error(`프로세스 실패 (${error.code})`)) : done());
 });
-const sanitize = (value) => String(value).replace(/[/\\:*?"<>|\u0000-\u001f\u007f]/g, '_').replace(/^[ .]+|[ .]+$/g, '');
 const compare = (a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt) || (a.docId < b.docId ? -1 : a.docId > b.docId ? 1 : 0);
 const types = ['document', 'audit_trail'];
 const tempPath = (path) => `${path}.${randomUUID()}.tmp`;
@@ -19,12 +22,17 @@ async function settingsAndArgs() {
     const args = process.argv.slice(2);
     let settingsPath;
     let limit = Infinity;
-    for (let i = 0; i < args.length; i += 2) {
-        if (args[i] === '--settings' && !settingsPath && args[i + 1]) settingsPath = args[i + 1];
-        else if (args[i] === '--limit' && limit === Infinity && /^[1-9]\d*$/.test(args[i + 1])) limit = Number(args[i + 1]);
-        else throw new Error('사용법: backup.mjs --settings <path> [--limit N]');
+    let migration = false;
+    let action = 'dry-run';
+    for (let i = 0; i < args.length; i += 1) {
+        if (args[i] === '--settings' && !settingsPath && args[i + 1]) settingsPath = args[++i];
+        else if (args[i] === '--limit' && limit === Infinity && /^[1-9]\d*$/.test(args[i + 1])) limit = Number(args[++i]);
+        else if (args[i] === '--migrate-provider-contracts' && !migration) migration = true;
+        else if (['--apply', '--rollback'].includes(args[i]) && action === 'dry-run') action = args[i].slice(2);
+        else throw new Error('사용법: backup.mjs --settings <path> [--limit N | --migrate-provider-contracts [--apply | --rollback]]');
     }
-    if (!settingsPath || (limit !== Infinity && !Number.isSafeInteger(limit))) throw new Error('설정 경로 또는 limit 오류');
+    if (!settingsPath || (limit !== Infinity && (!Number.isSafeInteger(limit) || migration))
+        || (!migration && action !== 'dry-run')) throw new Error('설정 경로 또는 실행 모드 오류');
     const settings = JSON.parse(await fs.readFile(settingsPath, 'utf8'));
     const required = ['apiBaseUrl', 'tokenFile', 'archiveDir', 'stateDir'];
     const allowed = [...required, 'rcloneRemote', 'rcloneBin', 'qpdfBin'];
@@ -35,13 +43,25 @@ async function settingsAndArgs() {
     const url = new URL(settings.apiBaseUrl);
     const loopback = ['127.0.0.1', 'localhost', '[::1]'].includes(url.hostname);
     if ((!loopback && url.protocol !== 'https:') || !['http:', 'https:'].includes(url.protocol) || url.username || url.password) throw new Error('API URL은 HTTPS 또는 로컬 HTTP여야 합니다');
-    token = (await fs.readFile(settings.tokenFile, 'utf8')).trim();
-    if (!token) throw new Error('토큰 파일이 비어 있습니다');
-    return { rcloneBin: 'rclone', qpdfBin: 'qpdf', ...settings, limit };
+    return { rcloneBin: 'rclone', qpdfBin: 'qpdf', ...settings, limit, migration, action };
 }
 
 async function main() {
     const settings = await settingsAndArgs();
+    if (settings.migration) {
+        try { return await withTimerLock((lockFd) => run(settings, lockFd)); }
+        catch (error) {
+            log({ migration: settings.action, reason: error.migrationReason ?? 'migration_failed', exitCode: 1 });
+            process.exitCode = 1;
+            return;
+        }
+    }
+    await run(settings);
+}
+
+async function run(settings, lockFd) {
+    token = (await fs.readFile(settings.tokenFile, 'utf8')).trim();
+    if (!token) throw new Error('토큰 파일이 비어 있습니다');
     const report = {
         startedAt: new Date().toISOString(),
         finishedAt: '',
@@ -64,9 +84,14 @@ async function main() {
         report.failedFiles += 1;
         log({ docId, reason });
     };
-    await fs.mkdir(settings.archiveDir, { recursive: true });
-    await fs.mkdir(settings.stateDir, { recursive: true });
-    const archive = await fs.realpath(settings.archiveDir);
+    if (!settings.migration) {
+        await fs.mkdir(settings.archiveDir, { recursive: true });
+        await fs.mkdir(settings.stateDir, { recursive: true });
+    }
+    const archive = await fs.realpath(settings.archiveDir).catch((error) => {
+        if (settings.migration && error.code === 'ENOENT') return resolve(settings.archiveDir);
+        throw error;
+    });
     const inside = (path) => {
         const rel = relative(archive, path);
         if (!rel || rel === '..' || rel.startsWith('../') || isAbsolute(rel)) throw new Error('보관 경로 이탈');
@@ -126,24 +151,31 @@ async function main() {
         return migrated;
     };
     const state = { version: 2, units: loaded.version === 1 ? migrate(loaded.units) : loaded.units };
-    const saveState = async () => {
-        const tmp = tempPath(statePath);
-        try { await fs.writeFile(tmp, JSON.stringify(state, null, 2)); await fs.rename(tmp, statePath); }
-        finally { await fs.rm(tmp, { force: true }); }
-    };
+    const saveState = () => writeJson(statePath, state);
     const reserved = new Set();
     for (const unit of Object.values(state.units)) {
         if (!unit || typeof unit.fingerprint !== 'string' || typeof unit.completed !== 'boolean') throw new Error('state.json 파일 정보 오류');
         for (const path of Object.keys(validFiles(unit.files, true))) reserved.add(path);
+        if (unit.reservedPaths !== undefined) {
+            if (!Array.isArray(unit.reservedPaths) || unit.reservedPaths.some((path) => typeof path !== 'string' || !finalPath(path))) {
+                throw new Error('state.json 예약 경로 오류');
+            }
+            for (const path of unit.reservedPaths) reserved.add(path);
+        }
     }
-    await saveState();
+    const migration = await readMigration(settings.stateDir);
+    if (!settings.migration) {
+        if (['applying', 'rollingBack'].includes(migration?.phase)) throw new Error('제공인력 계약서 이동 재시도 필요');
+        await saveState();
+    }
 
     // Gather pages before naming: API cursor order differs from createdAt order.
     const docs = [];
     let listingComplete = false;
     let listingFailed = false;
-    try {
+    const gather = async () => {
         let cursor = null;
+        const seen = new Set();
         do {
             const query = new URLSearchParams({ limit: '200' });
             if (cursor !== null) query.set('cursor', String(cursor));
@@ -152,11 +184,24 @@ async function main() {
             const page = await response.json();
             docs.push(...page.items.slice(0, settings.limit - docs.length));
             cursor = page.nextCursor;
+            if (cursor !== null && seen.has(cursor)) throw new Error('목록 커서 반복');
+            seen.add(cursor);
         } while (cursor !== null && docs.length < settings.limit);
         listingComplete = cursor === null;
-    } catch (error) { listingFailed = true; log({ reason: cleanReason(error) }); }
+    };
+    if (settings.action !== 'rollback') {
+        try { await gather(); }
+        catch (error) {
+            listingFailed = true;
+            if (!settings.migration) log({ reason: cleanReason(error) });
+        }
+    }
     report.totalDocs = docs.length;
     docs.sort(compare);
+    if (settings.migration) {
+        return migrateProviderContracts({ settings, archive, statePath, state, reserved, saveState, migration, docs,
+            listingComplete, finalPath, timeout, lockFd, log });
+    }
 
     const units = [];
     const groups = new Map();
@@ -168,10 +213,16 @@ async function main() {
             (review ? audits.length > 1 : audits.length !== 1)) { failure(doc.docId, '필수 파일 없음'); continue; }
         const inputs = [documents[0], audits[0] ?? null];
         const chunk = doc.kind === 'service_record' && doc.serviceRecordChunk?.chunkCount > 1 ? doc.serviceRecordChunk : null;
-        const folder = doc.kind === 'contract' ? '서비스계약서' : doc.kind === 'service_record' ? '제공기록지' : '기타';
-        const base = doc.kind === 'other'
+        const desiredProviderBase = providerBase(doc);
+        const entry = state.units[`doc:${doc.docId}`];
+        const previousProviderBase = typeof entry?.providerBase === 'string' && matchesProviderPair(entry.files, entry.providerBase)
+            ? entry.providerBase : null;
+        const contractBase = desiredProviderBase ?? (doc.kind === 'other' ? previousProviderBase : null);
+        const folder = contractBase ? providerFolder
+            : doc.kind === 'contract' ? '서비스계약서' : doc.kind === 'service_record' ? '제공기록지' : '기타';
+        const base = contractBase ?? (doc.kind === 'other'
             ? sanitize(doc.title || '문서명미상') || '문서명미상'
-            : `${folder}_${sanitize(doc.customerName || '고객미상')}_${sanitize(doc.serviceStartDate || '시작일미상')}`;
+            : `${folder}_${sanitize(doc.customerName || '고객미상')}_${sanitize(doc.serviceStartDate || '시작일미상')}`);
         const unit = {
             ...doc,
             key: `doc:${doc.docId}`,
@@ -181,6 +232,8 @@ async function main() {
             folder: chunk ? `${folder}/원본` : folder,
             base: chunk ? `${base}_${chunk.chunkIndex + 1}장` : base,
             baseName: base,
+            providerBase: contractBase,
+            desiredProviderBase,
         };
         units.push(unit);
         if (chunk) {
@@ -209,11 +262,12 @@ async function main() {
         // Completed content is never overwritten: changed content takes a fresh pair of paths (the old
         // entry is archived under another key when the new files are recorded). Review-stage content
         // is rewritten in place.
-        unit.fork = entry !== null && entry.completed && entry.fingerprint !== unit.fingerprint;
+        unit.reallocate = entry !== null && !entry.completed && unit.desiredProviderBase
+            && !matchesProviderPair(entry.files, unit.desiredProviderBase);
+        unit.fork = entry !== null && (unit.reallocate || entry.completed && entry.fingerprint !== unit.fingerprint);
         if (entry !== null && !unit.fork) { unit.files = { ...entry.files }; return; }
         for (let n = 1; ; n += 1) {
-            const name = `${unit.base}${n === 1 ? '' : ` (${n})`}.pdf`;
-            const paths = [`${unit.folder}/${name}`, `${unit.folder}/감사추적/[감사추적]_${name}`];
+            const paths = pairPaths(unit.folder, unit.base, n);
             if (reserved.has(paths[0]) || reserved.has(paths[1]) || await size(paths[0]) !== null || await size(paths[1]) !== null) continue;
             // Expected sizes for a new document unit; null = nothing to write there yet (the audit trail of a
             // document still in review, a merged output not built yet). The audit path stays reserved either way.
@@ -235,13 +289,14 @@ async function main() {
             if (response.status !== 200) { await response.body?.cancel(); throw new Error(`파일 HTTP ${response.status}`); }
             const hash = createHash('sha256');
             let bytes = 0;
-            const handle = await fs.open(tmp, 'wx');
+            const handle = await fs.open(tmp, 'wx', 0o600);
             try {
                 for await (const chunk of response.body) {
                     hash.update(chunk);
                     bytes += chunk.length;
                     await handle.writeFile(chunk);
                 }
+                if (path.startsWith(`${providerFolder}/`)) await handle.sync();
             } finally { await handle.close(); }
             if (bytes !== file.byteSize || hash.digest('hex') !== file.sha256.toLowerCase()) throw new Error('파일 크기 또는 sha256 불일치');
             await fs.utimes(tmp, new Date(createdAt), new Date(createdAt));
@@ -271,14 +326,25 @@ async function main() {
         const old = state.units[unit.key];
         // Recording to the same paths can only tighten the flag; a fork is a new entry with its own flag.
         const completed = isCompleted(unit) || (!unit.fork && old?.completed === true);
+        let archived;
         if (unit.fork) {
-            let archived = `${unit.key}@${old.fingerprint}`;
+            archived = `${unit.key}@${old.fingerprint}`;
             for (let n = 2; Object.hasOwn(state.units, archived); n += 1) archived = `${unit.key}@${old.fingerprint}@${n}`;
             state.units[archived] = old;
-            unit.fork = false;
         }
-        state.units[unit.key] = { files: unit.files, fingerprint: unit.fingerprint, completed };
-        await saveState();
+        const provider = unit.providerBase && matchesProviderPair(unit.files, unit.providerBase)
+            ? { providerBase: unit.providerBase } : {};
+        state.units[unit.key] = { ...old, files: unit.files, fingerprint: unit.fingerprint, completed, ...provider };
+        try { await saveState(); }
+        catch (error) {
+            if (!error.statePublished) {
+                if (archived) delete state.units[archived];
+                if (old) state.units[unit.key] = old;
+                else delete state.units[unit.key];
+            }
+            throw error;
+        }
+        unit.fork = false;
     };
     // Same content, now reported as completed: tighten the stored flag (never loosen it).
     const tighten = async (unit) => {
@@ -309,15 +375,20 @@ async function main() {
                         if (need[i]) temps.push({ i, ...await fetchTemp(unit.inputs[i], paths[i], unit.createdAt) });
                     }
                     for (const { i, tmp, final } of temps) {
-                        await fs.rename(tmp, final);
+                        if (unit.fork) await fs.link(tmp, final);
+                        else await fs.rename(tmp, final);
                         renamed.push(final);
                         unit.files[paths[i]] = unit.inputs[i].byteSize;
                         report.savedFiles += 1;
                     }
-                    changed = true;
+                    if (unit.reallocate) {
+                        for (const { final } of temps) await syncDirectory(dirname(final));
+                        await record(unit);
+                    }
+                    changed = !unit.reallocate;
                 } catch (error) {
                     // A fork writes only fresh, never-recorded paths: undo them so the next run retries cleanly.
-                    if (unit.fork) {
+                    if (unit.fork && !error.statePublished) {
                         await Promise.all(renamed.map((final) => fs.rm(final, { force: true })));
                         report.savedFiles -= renamed.length;
                     }
