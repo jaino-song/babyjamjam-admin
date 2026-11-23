@@ -6,9 +6,43 @@ Node.js 20 이상에서 매일 한국 시간 03시에 검토 단계(제공인력
 
 `archiveDir`과 Google Drive에는 이미지 전용 PDF를 게시합니다. 전자서명이 포함된 문서와 감사추적은 받은 바이트 그대로 비공개 원본 보관소에 남습니다. 서명 검증과 증빙에는 이 원본을 사용합니다. 공개 PDF는 열람용이며, 병합 PDF는 비공개 청크로 만든 별도 출력입니다.
 
-1. 업그레이드할 때는 `systemctl --user stop eformsign-backup.timer`로 타이머를 멈춥니다. 실행 중인 백업이 끝나면 `systemctl --user stop eformsign-backup.service`를 실행하고 수동 작업도 모두 끝났는지 확인합니다. 이전 모듈과 service 파일을 보관합니다. 새 설치와 업그레이드 모두 같은 릴리스의 저장소 루트에서 모든 모듈을 실행 계정의 비공개 설치 경로에 복사합니다. 새 설치에서만 `install -d -m 700 ~/eformsign-backup`으로 경로를 만듭니다. 업그레이드 전에는 기존 설치 경로가 본인 소유 `0700` 일반 디렉터리인지 확인합니다. `eformsign-backup.service`와 `eformsign-backup.timer`는 `~/.config/systemd/user/`에 둡니다.
+1. 업그레이드할 때는 `systemctl --user stop eformsign-backup.timer`로 타이머를 멈춥니다. 실행 중인 백업이 끝나면 `systemctl --user stop eformsign-backup.service`를 실행하고 수동 작업도 모두 끝났는지 확인합니다. 이전 모듈과 service 파일을 보관합니다. **새 설치 전용**으로 `mkdir -m 700 -- "$HOME/eformsign-backup"`을 실행해 새 설치 경로를 만듭니다.
+
+   **기존 설치가 `0755`인 경우** 설치 디렉터리가 이 백업 전용이고 설정·토큰·상태·잠금·공개 및 비공개 아카이브가 모두 그 밖에 있는지 확인합니다. 타이머와 서비스가 정지된 상태에서 실행 계정으로 아래 명령을 실행합니다. 기존 디렉터리를 새 `0700` 보관 디렉터리 아래로 옮기고 원래 위치에 새 `0700` 디렉터리를 만듭니다.
 
    ```sh
+   (
+     set -eu
+     export LC_ALL=C
+     umask 077
+     uid=$(id -u)
+     test "$uid" -ne 0
+     test "$(realpath -e -- "$HOME")" = "$HOME"
+     test "$(stat -c %u -- "$HOME")" = "$uid"
+     parent="$HOME"
+     while :; do
+       owner=$(stat -c %u -- "$parent")
+       mode=$(stat -c %a -- "$parent")
+       test "$owner" = "$uid" || test "$owner" = 0
+       test "$((0$mode & 07022))" -eq 0
+       test "$parent" != / || break
+       parent=$(dirname -- "$parent")
+     done
+     install_dir="$HOME/eformsign-backup"
+     test "$(stat -c '%u:%a:%F' -- "$install_dir")" = "$uid:755:directory"
+     previous=$(mktemp -d -- "$HOME/.eformsign-backup-previous.XXXXXXXX")
+     printf '%s\n' "$previous/install"
+     mv -T -- "$install_dir" "$previous/install"
+     mkdir -m 700 -- "$install_dir"
+   )
+   ```
+
+   출력된 경로를 기록합니다. 5단계에서 레거시 복구가 필요하면 이 경로의 `backup.mjs`와 이전 설정을 사용합니다. 전체 롤백을 완료한 뒤에는 보관한 이전 모듈을 현재 `0700` 설치 디렉터리에 복원합니다. 경로·소유자·권한 점검 또는 명령이 실패하면 전환을 멈추고 기존 경로와 보관 경로를 오프라인에서 확인합니다.
+
+   새 설치와 업그레이드 모두 같은 릴리스의 저장소 루트에서 모든 모듈을 복사합니다. 설치 디렉터리가 실행 계정 소유의 `0700` 일반 디렉터리로 확인된 경우에만 복사합니다. `eformsign-backup.service`와 `eformsign-backup.timer`는 `~/.config/systemd/user/`에 둡니다.
+
+   ```sh
+   test "$(LC_ALL=C stat -c '%u:%a:%F' -- "$HOME/eformsign-backup")" = "$(id -u):700:directory" &&
    install -m 600 backend/deploy/eformsign-backup/*.mjs ~/eformsign-backup/
    ```
 
