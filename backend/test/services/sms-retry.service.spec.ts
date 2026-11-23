@@ -7,7 +7,7 @@ import { MessageRetrySchedulerService } from "application/services/message-retry
 import { SmsCarrierCheckService } from "application/services/sms-carrier-check.service";
 import { MessageAutomationIntentService } from "application/services/message-automation-intent.service";
 import { defaultMessageAutomationPolicy } from "domain/entities/system-setting.entity";
-import { publicMessageVariables, type MessageQuietHoursDecision, type MessageQuietHold } from "domain/message-policy-evaluator";
+import { messageQuietHoldVariables, publicMessageVariables, type MessageQuietHoursDecision, type MessageQuietHold } from "domain/message-policy-evaluator";
 import { createLegacyAutomationDeliveryGate } from "../fixtures/legacy-automation-delivery-gate";
 import { ConflictException, ForbiddenException, Logger, NotFoundException } from "@nestjs/common";
 import { AligoService } from "application/services/aligo.service";
@@ -125,6 +125,22 @@ describe("SmsRetryService", () => {
         jest.clearAllMocks();
     });
 
+    it("returns the original retry without side effects when the scheduler lease is already lost", async () => {
+        const source = createSmsRetryLog();
+        source.nextRetryAt = new Date(Date.now());
+        const before = structuredClone(source);
+        logRepository.startRetryAttempt.mockResolvedValueOnce({ kind: "lost" });
+
+        const result = await service.retry(source, "automatic", () => false);
+
+        expect(logRepository.startRetryAttempt).not.toHaveBeenCalled();
+        expect(result).toBe(source);
+        expect(source).toEqual(before);
+        expect(messageSenderApprovalService.ensureApproved).not.toHaveBeenCalled();
+        expect(logRepository.update).not.toHaveBeenCalled();
+        expect(aligoService.sendSms).not.toHaveBeenCalled();
+    });
+
     it("copies original mixed batch bindings unchanged into a manual retry attempt", async () => {
         const source = createSmsRetryLog("manual_sms");
         source.clientId = null;
@@ -215,6 +231,66 @@ describe("SmsRetryService", () => {
         expect(aligoService.sendSms).not.toHaveBeenCalled();
         expect(logRepository.update).not.toHaveBeenCalled();
     });
+
+    it.each([["retained", true], ["lost", false]] as const)(
+        "checks a due quiet retry with the scheduler lease %s during the final recipient read", async (_state, leaseAfterRead) => {
+            const source = createSmsRetryLog("manual_sms");
+            source.providerAcceptanceState = "rejected";
+            const releaseAt = new Date("2026-11-03T23:00:00.000Z");
+            nowSpy.mockReturnValue(releaseAt.getTime());
+            const hold = messageQuietHoldVariables({
+                releaseAt,
+                originalScheduledFor: new Date("2026-11-03T12:00:00.000Z"),
+                policyRevision: "private-revision",
+                reason: "message_quiet_hours:DEFER",
+            });
+            const retry = Object.assign(createSmsRetryLog("manual_sms", 78), {
+                status: "pending",
+                nextRetryAt: releaseAt,
+                providerAcceptanceKey: "quiet-retry-key",
+                providerAcceptanceFingerprint: "quiet-retry-fingerprint",
+                providerAcceptanceState: "prepared",
+                variables: { ...source.variables, ...hold, retryOfLogId: String(source.id),
+                    retryInvocation: "manual", retrySenderIdentity: "private-sender", retrySafety: "quiet-deferred" },
+            });
+            let leaseHeld = true;
+            const owner = { phone: source.receiver };
+            const findOwner = jest.fn().mockResolvedValueOnce(owner).mockImplementationOnce(async () => {
+                leaseHeld = leaseAfterRead;
+                return owner;
+            });
+            const transaction = {
+                client: { findFirst: findOwner },
+                system_setting: { findUnique: jest.fn().mockResolvedValue({ value: "false" }) },
+            };
+            const beginProviderCall = jest.fn(acceptance.beginProviderCall);
+            logRepository.findByIdInBranch.mockImplementation(async (_branch: string, id: number) => id === source.id ? source : retry);
+            aligoService.sendSms.mockResolvedValue({ request: { receiver: source.receiver },
+                response: { result_code: 1, message: "success", msg_id: 123, success_cnt: 1, error_cnt: 0 } });
+            Object.assign(service, {
+                acceptanceService: { beginProviderCall },
+                quietHours: { runAdmission: async (_branch: string, _receiver: string,
+                    work: (decision: MessageQuietHoursDecision, tx: typeof transaction) => Promise<unknown>) =>
+                    work({ action: "ALLOW", reevaluateAt: null }, transaction) },
+                defaultSender: { read: () => ({ availability: "available", identityDigest: "private-sender" }) },
+            });
+
+            const result = await service.retry(retry, "automatic", () => leaseHeld);
+
+            expect(findOwner).toHaveBeenCalledTimes(2);
+            expect(logRepository.startRetryAttempt).not.toHaveBeenCalled();
+            expect(beginProviderCall).toHaveBeenCalledTimes(leaseAfterRead ? 1 : 0);
+            expect(aligoService.sendSms).toHaveBeenCalledTimes(leaseAfterRead ? 1 : 0);
+            if (leaseAfterRead) {
+                expect(result).toMatchObject({ id: retry.id, status: "sent", providerAcceptanceState: "accepted", attempts: 2 });
+            } else {
+                expect(result).toMatchObject({ id: retry.id, status: "pending", providerAcceptanceState: "prepared",
+                    providerCallStartedAt: null, attempts: 1, nextRetryAt: releaseAt });
+                expect(logRepository.update).not.toHaveBeenCalled();
+                expect(logRepository.transitionQuietRetry).not.toHaveBeenCalled();
+            }
+        },
+    );
 
     it.each([undefined, "invalid-json", "null", JSON.stringify({ version: 2, recipients: [] })])(
         "rejects a quiet batch with missing/malformed provenance before creating any retry (%s)", async snapshot => {
