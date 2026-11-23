@@ -775,9 +775,14 @@ export class BackfillEformsignDocsUsecase {
                     documentId,
                     deletedDocuments: vendorStatusType === undefined ? undefined : [{ documentId, statusType: vendorStatusType }],
                 });
-            } catch {
+            } catch (error) {
                 // The heal sweep re-evaluates INITIAL states from their retained tombstones.
                 this.logger.error({ message: "INITIAL snapshot post-purge evaluation failed", documentId });
+                try {
+                    captureServiceRecordError(error, { operation: "auto-finalize", handled: true });
+                } catch {
+                    // Reporting must not interrupt the remaining purges.
+                }
             }
         }
     }

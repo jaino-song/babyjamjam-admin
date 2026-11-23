@@ -226,7 +226,12 @@ describe("BackfillEformsignDocsUsecase", () => {
         });
     });
 
-    it("continues deferred purges after an INITIAL evaluation fails and logs only the document ID", async () => {
+    it.each([false, true])("reports INITIAL evaluation failures and continues deferred purges (capture throws: %s)", async captureThrows => {
+        const evaluationError = new Error("sensitive evaluator failure");
+        const capture = jest.spyOn(serviceRecordSentry, "captureServiceRecordError").mockImplementation(() => {
+            if (captureThrows) throw new Error("reporting unavailable");
+            return undefined;
+        });
         const documentIds = ["first-chunk", "second-chunk"];
         const emptyPage = jest.fn().mockResolvedValue({ documents: [], total_rows: 0 });
         const client = {
@@ -248,7 +253,7 @@ describe("BackfillEformsignDocsUsecase", () => {
             findSnapshotChunkBranchForDocument: jest.fn().mockResolvedValue("chunk-branch"),
             evaluateInitialSnapshotTerminalOutcome: jest.fn(async ({ documentId }: { documentId: string }) => {
                 events.push(`evaluated:${documentId}`);
-                if (documentId === "first-chunk") throw new Error("sensitive evaluator failure");
+                if (documentId === "first-chunk") throw evaluationError;
             }),
             healInitialSnapshotTerminalOutcomes: jest.fn(),
         };
@@ -260,6 +265,7 @@ describe("BackfillEformsignDocsUsecase", () => {
         expect(events).toEqual([
             "purged:first-chunk", "evaluated:first-chunk", "purged:second-chunk", "evaluated:second-chunk",
         ]);
+        expect(capture.mock.calls).toEqual([[evaluationError, { operation: "auto-finalize", handled: true }]]);
         expect(log.mock.calls).toEqual([[{
             message: "INITIAL snapshot post-purge evaluation failed",
             documentId: "first-chunk",
