@@ -26,7 +26,7 @@ const request = { documentStateId: target.stateId, revisionId: target.revisionId
 function LiveJobs() {
   const query = useEformsignDocumentJobs({ isPopoverOpen: true });
   return <ContractDocumentJobsPopover defaultOpen documentJobs={query.data} isLoading={query.isLoading}
-    summary={query.summary} data-component="desktop_contracts_test_jobs" />;
+    jobsError={query.error} summary={query.summary} data-component="desktop_contracts_test_jobs" />;
 }
 
 function setup(data: ReturnType<typeof makeJobList>) {
@@ -128,6 +128,35 @@ it.each([
   fetchJobs.mockResolvedValue(next);
   await act(() => queryClient.invalidateQueries({ queryKey: eformsignDocumentJobsQueryKeys.list("branch-a") }));
 
+  expect(await within(dialog).findByRole("alert")).toHaveTextContent(copy.unavailable);
+  expect(button).toBeDisabled();
+  fireEvent.click(button);
+  expect(post).not.toHaveBeenCalled();
+});
+
+it.each([
+  {
+    label: copy.regenerateLabel,
+    title: copy.regenerateTitle,
+    initial: makeJobList({ initialRegenerations: [ready] }),
+  },
+  {
+    label: copy.confirmLabel,
+    title: copy.confirmTitle,
+    initial: makeJobList({ noProviderDocumentConfirmable: [confirmation] }),
+  },
+])("blocks $label in the open dialog when refreshing the jobs list fails", async ({ label, title, initial }) => {
+  const { fetchJobs, queryClient } = setup(initial);
+  const post = jest.spyOn(api, "post").mockResolvedValue({ data: {} });
+  await openDetail();
+  const { dialog, approve: button } = await approve(label, title);
+  expect(button).toBeEnabled();
+
+  const queryKey = eformsignDocumentJobsQueryKeys.list("branch-a");
+  fetchJobs.mockRejectedValue(new Error("Jobs list refresh failed"));
+  await act(() => queryClient.invalidateQueries({ queryKey }));
+
+  expect(queryClient.getQueryData(queryKey)).toEqual(initial);
   expect(await within(dialog).findByRole("alert")).toHaveTextContent(copy.unavailable);
   expect(button).toBeDisabled();
   fireEvent.click(button);
