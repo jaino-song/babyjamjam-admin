@@ -352,6 +352,13 @@ export interface ServiceRecordRevisionDocumentSummary {
     documentVersion: number | null;
     canRetry: boolean;
     reasonCode: string | null;
+    noProviderDocumentConfirmable?: {
+        stateId: string;
+        revisionId: string;
+        generation: string;
+        suffix: string;
+        unlinkedChunkOrdinals: string[];
+    };
 }
 
 export interface ServiceRecordRevisionHistoryEntry {

@@ -6,14 +6,16 @@ import { usePathname, useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverTrigger } from "@/components/ui/popover";
 import { Sheet, SheetContent, SheetDescription, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
+import { InitialDocumentRecoveryDialog } from "@/features/document-jobs/InitialDocumentRecoveryDialog";
 import { documentJobRecoveryPresentation } from "@/features/document-jobs/recovery-presentation";
 import { recoverJobHref } from "@/features/document-jobs/failure-popup-copy";
 import { useActiveBranchId } from "@/features/system-templates/branch-context";
 import { useIsMobile } from "@/hooks/useIsMobile";
 import { cn } from "@/lib/utils";
-import type { EformsignDocumentJobResponse } from "@/services/eformsign";
+import { matchesInitialDocument, type InitialDocumentAction } from "@/lib/eformsign/initial-document-recovery-contract";
+import type { EformsignDocumentJobResponse, InitialDocumentRecoveryProjections } from "@/services/eformsign";
 
-import type { DocumentJobCancelHandler, DocumentJobRetryHandler } from "./ContractDocumentJobDetail";
+import type { DocumentJobCancelHandler, DocumentJobRetryHandler, InitialDocumentActionHandler } from "./ContractDocumentJobDetail";
 import { ContractDocumentJobRetryDialog } from "./ContractDocumentJobRetryDialog";
 import { ContractDocumentJobCancelDialog } from "./ContractDocumentJobCancelDialog";
 import { ContractDocumentJobsModal } from "./ContractDocumentJobsModal";
@@ -56,12 +58,12 @@ export interface ContractDocumentJob extends Pick<
   updatedAt?: string;
 }
 
-export interface ContractDocumentJobsSummary {
+export interface ContractDocumentJobsSummary extends InitialDocumentRecoveryProjections {
   activeCount: number;
   requiresAttentionCount: number;
 }
 
-export interface ContractDocumentJobsData {
+export interface ContractDocumentJobsData extends InitialDocumentRecoveryProjections {
   active: readonly ContractDocumentJob[];
   requiresAttention: readonly ContractDocumentJob[];
   recent: readonly ContractDocumentJob[];
@@ -119,7 +121,11 @@ export function ContractDocumentJobsPopover({
   const restoreRetryFocus = useRef(false);
   const retryTrigger = useRef<HTMLButtonElement | null>(null);
   const retrySucceeded = useRef(false);
-  const interactionPaused = retryRequest !== null || recoveryJobId !== null || cancelRequest !== null;
+  const [initialAction, setInitialAction] = useState<InitialDocumentAction | null>(null);
+  const [initialActionOpen, setInitialActionOpen] = useState(false);
+  const initialActionTrigger = useRef<HTMLButtonElement | null>(null);
+  const restoreInitialActionFocus = useRef(false);
+  const interactionPaused = initialAction !== null || retryRequest !== null || recoveryJobId !== null || cancelRequest !== null;
   const pathname = usePathname(), router = useRouter();
   const isOpen = open ?? internalOpen;
   const resolvedJobs = documentJobs ?? jobs ?? null;
@@ -144,6 +150,8 @@ export function ContractDocumentJobsPopover({
     setCancelOpen(false);
     setRetryRequest(null);
     setRetryOpen(false);
+    setInitialAction(null);
+    setInitialActionOpen(false);
   }
   const [recoveryIsOpen, setRecoveryIsOpen] = useState(isOpen);
   if (recoveryIsOpen !== isOpen) {
@@ -191,6 +199,34 @@ export function ContractDocumentJobsPopover({
     else if (trigger?.isConnected && !trigger.closest("[inert]")) trigger.focus({ preventScroll: true });
     else panes.current?.focusCurrentPane();
   }, [retryRequest, isOpen]);
+
+  useEffect(() => {
+    if (initialAction !== null || !restoreInitialActionFocus.current) return;
+    restoreInitialActionFocus.current = false;
+    const trigger = initialActionTrigger.current;
+    if (!isOpen) anchorRef.current?.focus({ preventScroll: true });
+    else if (trigger?.isConnected && !trigger.closest("[inert]")) trigger.focus({ preventScroll: true });
+    else panes.current?.focusCurrentPane();
+  }, [initialAction, isOpen]);
+
+  const onInitialAction: InitialDocumentActionHandler = (action, trigger) => {
+    initialActionTrigger.current = trigger;
+    setInitialAction(action);
+    setInitialActionOpen(true);
+  };
+  const projections = resolvedJobs ?? _summary;
+  const isInitialActionOffered = initialAction?.kind === "regenerate"
+    ? projections?.initialRegenerations?.some(item => item.ready && matchesInitialDocument(item, initialAction.target))
+    : initialAction && projections?.noProviderDocumentConfirmable?.some(item => matchesInitialDocument(item, initialAction.target));
+  const initialActionDialog = initialAction ? <InitialDocumentRecoveryDialog
+    action={initialAction} audience="staff" branchId={branchId} open={initialActionOpen}
+    isOffered={Boolean(isInitialActionOffered && !resolvedError)} data-component={sub("initial-document-action")}
+    onClose={() => setInitialActionOpen(false)} onCloseAutoFocus={event => {
+      event.preventDefault();
+      restoreInitialActionFocus.current = true;
+      setInitialAction(null);
+    }}
+  /> : null;
 
   const handleOpenChange = (nextOpen: boolean) => {
     if (interactionPaused && !nextOpen) return;
@@ -279,14 +315,15 @@ export function ContractDocumentJobsPopover({
             <SheetTitle className="sr-only">전자문서 작업</SheetTitle>
             <SheetDescription className="sr-only">전자문서 처리 현황</SheetDescription>
             <div data-component={sub("body_handle")} data-slot="document-jobs-sheet-handle" aria-hidden="true" className="mx-auto mt-2.5 h-1 w-10 shrink-0 rounded-full bg-v3-border" />
-            <ContractDocumentJobsPanes key={scope} ref={panes} inset="compact" open={isOpen} jobs={resolvedJobs} isLoading={resolvedLoading} error={resolvedError} onRetry={resolvedRetry}
-              onClose={() => handleOpenChange(false)} onRecover={onRecover} onCancel={onCancel} onRetryJob={onRetryJob} interactionPaused={interactionPaused} data-component={sub("body_panes")} />
+            <ContractDocumentJobsPanes key={scope} ref={panes} inset="compact" open={isOpen} jobs={resolvedJobs} recoveryProjections={projections} isLoading={resolvedLoading} error={resolvedError} onRetry={resolvedRetry}
+              onClose={() => handleOpenChange(false)} onRecover={onRecover} onCancel={onCancel} onRetryJob={onRetryJob} onInitialAction={onInitialAction} interactionPaused={interactionPaused} data-component={sub("body_panes")} />
           </div>
         </SheetContent>
       </Sheet>
       {recoveryDialog}
       {cancelDialog}
       {retryDialog}
+      {initialActionDialog}
       </>
     );
   }
@@ -307,8 +344,8 @@ export function ContractDocumentJobsPopover({
         onRetry={resolvedRetry}
         interactionPaused={interactionPaused}
         onRecover={onRecover}
-        onCancel={onCancel} onRetryJob={onRetryJob}
-        recoveryDialog={<>{recoveryDialog}{cancelDialog}{retryDialog}</>}
+        onCancel={onCancel} onRetryJob={onRetryJob} onInitialAction={onInitialAction}
+        recoveryDialog={<>{recoveryDialog}{cancelDialog}{retryDialog}{initialActionDialog}</>}
         data-component={dataComponent}
       />
     </Popover>
