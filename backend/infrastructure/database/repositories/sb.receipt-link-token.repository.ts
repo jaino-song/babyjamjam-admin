@@ -6,36 +6,30 @@ import { runSystemScope } from "infrastructure/tenant/run-system-scope";
 import { selectCurrentContractDocument } from "application/utils/current-contract-document";
 import { EFORMSIGN_DOCUMENT_KIND } from "domain/entities/eformsign-doc.entity";
 import {
+    ContractReceiptLinkTokenRecord,
     CreateReceiptLinkTokenData,
     RefreshReceiptClientFields,
     ExpiredReceiptLinkToken,
     IReceiptLinkTokenRepository,
     IReceiptLinkTokenIssuanceRepository,
+    InsertStandaloneReceiptLinkTokenData,
+    RECEIPT_LINK_KIND,
     ReceiptLinkTokenRecord,
     PromoteReceiptLinkRevisionArtifactInput,
     ReceiptLinkRevisionArtifactPromotionResult,
     ReserveVerificationAttemptResult,
+    StandaloneReceiptLinkTokenRecord,
     UpdateReceiptLinkTokenData,
 } from "domain/repositories/receipt-link-token.repository.interface";
 
-const INCLUDE_NAMES = { branch: { select: { name: true } }, client: { select: { name: true } } } as const;
+const INCLUDE_RECEIPT_OWNER = {
+    branch: { select: { name: true } },
+    client: { select: { name: true, branchId: true, deletedAt: true } },
+} as const;
 const JOB_ISSUANCE_LOCK_NAMESPACE = "babyjamjam:receipt-link-job-issuance:v1";
 const RECEIPT_REVISION_PROMOTION_LOCK_NAMESPACE = "babyjamjam:receipt-link-revision-promotion:v1";
 
-interface RawRow {
-    id: string;
-    eformsignDocId: number;
-    accessTokenHash: string | null;
-    expectedBirthdayHash: string;
-    verifiedAt: Date | null;
-    failedAttempts: number;
-    lockedAt: Date | null;
-    expiresAt: Date;
-    active: boolean;
-    storagePath: string;
-    branch?: { name: string } | null;
-    client?: { name: string } | null;
-}
+type RawRow = Prisma.receipt_link_tokenGetPayload<{ include: typeof INCLUDE_RECEIPT_OWNER }>;
 
 interface RevisionProtectionLookup {
     branchId: string | null;
@@ -119,10 +113,9 @@ class ReceiptPromotionRollback extends Error {
     }
 }
 
-function toRecord(row: RawRow): ReceiptLinkTokenRecord {
+function toCommonFields(row: RawRow) {
     return {
         id: row.id,
-        eformsignDocId: row.eformsignDocId,
         accessTokenHash: row.accessTokenHash,
         expectedBirthdayHash: row.expectedBirthdayHash,
         verifiedAt: row.verifiedAt,
@@ -132,8 +125,44 @@ function toRecord(row: RawRow): ReceiptLinkTokenRecord {
         active: row.active,
         storagePath: row.storagePath,
         branchName: row.branch?.name ?? null,
+    };
+}
+
+function toContractRecord(row: RawRow): ContractReceiptLinkTokenRecord {
+    if (row.kind !== RECEIPT_LINK_KIND.CONTRACT || row.eformsignDocId === null) {
+        throw new Error("Invalid contract receipt token");
+    }
+    return {
+        ...toCommonFields(row),
+        kind: RECEIPT_LINK_KIND.CONTRACT,
+        eformsignDocId: row.eformsignDocId,
         clientName: row.client?.name ?? null,
     };
+}
+
+function toStandaloneRecord(row: RawRow): StandaloneReceiptLinkTokenRecord {
+    if (row.eformsignDocId !== null || !row.frozenClientName?.trim()) {
+        throw new Error("Invalid standalone receipt token");
+    }
+    return {
+        ...toCommonFields(row),
+        kind: RECEIPT_LINK_KIND.STANDALONE,
+        eformsignDocId: null,
+        clientName: row.frozenClientName,
+        clientAvailable: row.clientId !== null
+            && row.client?.branchId === row.branchId
+            && row.client.deletedAt === null,
+        revokedAt: row.revokedAt,
+    };
+}
+
+function toRecord(row: RawRow): ReceiptLinkTokenRecord {
+    return row.kind === RECEIPT_LINK_KIND.STANDALONE ? toStandaloneRecord(row) : toContractRecord(row);
+}
+
+function isStandaloneStoragePath(path: string, branchId: string): boolean {
+    const prefix = `receipts/${branchId}/standalone/`;
+    return path.startsWith(prefix) && path.endsWith(".png") && validUuid(path.slice(prefix.length, -4));
 }
 
 /**
@@ -151,7 +180,7 @@ function toRecord(row: RawRow): ReceiptLinkTokenRecord {
  * auditedly bypassing tenant isolation for a query that is legitimately
  * cross-branch by design. The other methods (`createOrRefreshContractLink`,
  * `findExpired`, `deleteByIds`, `existsByStoragePath`,
- * `findStoragePathsInUse`, `findActiveByJobId`) run under scheduler/delivery
+ * `findStoragePathsInUse`, `findActiveByJobId`, `insertStandaloneLink`) run under scheduler/delivery
  * context (no HTTP-origin ALS store, or an already-branch-scoped write from
  * `ReceiptLinkIssueService`) and stay unwrapped.
  */
@@ -213,7 +242,7 @@ export class SbReceiptLinkTokenRepository implements IReceiptLinkTokenRepository
             }
             const transactionRepository: IReceiptLinkTokenIssuanceRepository = {
                 createOrRefreshContractLink: async (data, _now, refreshClient) =>
-                    toRecord(await this.createOrRefreshContractLinkWithClient(tx, data, refreshClient)),
+                    toContractRecord(await this.createOrRefreshContractLinkWithClient(tx, data, refreshClient)),
                 findActiveByJobId: (lockedJobId) => this.findActiveByJobIdWithClient(tx, lockedJobId),
             };
             return operation(!acquired, transactionRepository);
@@ -225,12 +254,13 @@ export class SbReceiptLinkTokenRepository implements IReceiptLinkTokenRepository
         return runSystemScope(async () => {
             const row = await this.prisma.receipt_link_token.findUnique({
                 where: { linkTokenHash },
-                include: INCLUDE_NAMES,
+                include: INCLUDE_RECEIPT_OWNER,
             });
             if (!row) return null;
+            if (row.kind === RECEIPT_LINK_KIND.STANDALONE) return toStandaloneRecord(row);
             const revisionProtection = await this.hasConfirmedRevisionAtOrAfterToken(row);
             if (revisionProtection === true || revisionProtection === null) {
-                return toRecord(row);
+                return toContractRecord(row);
             }
             // The stored expiry is authoritative (issuedAt + 30 days); nothing to
             // reconcile from the client's endDate. Only restore URLs revoked by
@@ -238,17 +268,51 @@ export class SbReceiptLinkTokenRepository implements IReceiptLinkTokenRepository
             const restoreLegacyLink = !row.active && row.revokedAt !== null;
             if (restoreLegacyLink) {
                 const data = { active: true, revokedAt: null, accessTokenHash: null, verifiedAt: null };
-                await this.prisma.receipt_link_token.update({ where: { id: row.id }, data });
+                await this.prisma.receipt_link_token.update({
+                    where: { id: row.id, kind: RECEIPT_LINK_KIND.CONTRACT },
+                    data,
+                });
                 Object.assign(row, data);
             }
-            return toRecord(row);
+            return toContractRecord(row);
         });
     }
 
-    async createOrRefreshContractLink(data: CreateReceiptLinkTokenData, now: Date, refreshClient?: RefreshReceiptClientFields): Promise<ReceiptLinkTokenRecord> {
+    async insertStandaloneLink(data: InsertStandaloneReceiptLinkTokenData): Promise<{ id: string; expiresAt: Date }> {
+        if (!validUuid(data.branchId) || !validUuid(data.jobId)
+            || !Number.isSafeInteger(data.clientId) || data.clientId <= 0
+            || !validSha(data.linkTokenHash) || !validSha(data.expectedBirthdayHash)
+            || !validSha(data.contentSha256) || !data.frozenClientName.trim()
+            || !Number.isSafeInteger(data.byteSize) || data.byteSize <= 0
+            || !Number.isFinite(data.createdAt.getTime()) || !Number.isFinite(data.expiresAt.getTime())
+            || data.expiresAt <= data.createdAt || !isStandaloneStoragePath(data.storagePath, data.branchId)) {
+            throw new Error("Invalid standalone receipt token data");
+        }
+        return this.prisma.receipt_link_token.create({
+            data: {
+                kind: RECEIPT_LINK_KIND.STANDALONE,
+                branch: { connect: { id: data.branchId } },
+                client: { connect: { id: data.clientId, branchId: data.branchId, deletedAt: null } },
+                jobId: data.jobId,
+                linkTokenHash: data.linkTokenHash.toLowerCase(),
+                expectedBirthdayHash: data.expectedBirthdayHash,
+                frozenClientName: data.frozenClientName,
+                storagePath: data.storagePath,
+                contentSha256: data.contentSha256,
+                byteSize: data.byteSize,
+                createdBy: data.createdBy,
+                createdAt: data.createdAt,
+                expiresAt: data.expiresAt,
+                source: "manual",
+            },
+            select: { id: true, expiresAt: true },
+        });
+    }
+
+    async createOrRefreshContractLink(data: CreateReceiptLinkTokenData, now: Date, refreshClient?: RefreshReceiptClientFields): Promise<ContractReceiptLinkTokenRecord> {
         void now;
         const row = await this.prisma.$transaction((tx) => this.createOrRefreshContractLinkWithClient(tx, data, refreshClient));
-        return toRecord(row);
+        return toContractRecord(row);
     }
 
     private async createOrRefreshContractLinkWithClient(
@@ -273,11 +337,11 @@ export class SbReceiptLinkTokenRepository implements IReceiptLinkTokenRepository
         }
         // Older URLs remain usable. Refresh their lifetime without clearing challenge state.
         await client.receipt_link_token.updateMany({
-            where: { clientId: data.clientId, branchId: data.branchId },
+            where: { kind: RECEIPT_LINK_KIND.CONTRACT, clientId: data.clientId, branchId: data.branchId },
             data: { expiresAt: data.expiresAt, expectedBirthdayHash: data.expectedBirthdayHash },
         });
         const previous = await client.receipt_link_token.findUnique({
-            where: { linkTokenHash: data.linkTokenHash, branchId: data.branchId },
+            where: { linkTokenHash: data.linkTokenHash, branchId: data.branchId, kind: RECEIPT_LINK_KIND.CONTRACT },
         });
         if (previous && previous.storagePath !== data.storagePath) {
             // Retain an unreachable, inactive snapshot reference for the existing expiry
@@ -296,7 +360,7 @@ export class SbReceiptLinkTokenRepository implements IReceiptLinkTokenRepository
             });
         }
         return client.receipt_link_token.upsert({
-            where: { linkTokenHash: data.linkTokenHash, branchId: data.branchId },
+            where: { linkTokenHash: data.linkTokenHash, branchId: data.branchId, kind: RECEIPT_LINK_KIND.CONTRACT },
             create: data,
             update: {
                 expiresAt: data.expiresAt,
@@ -306,7 +370,7 @@ export class SbReceiptLinkTokenRepository implements IReceiptLinkTokenRepository
                 contentSha256: data.contentSha256,
                 byteSize: data.byteSize,
             },
-            include: INCLUDE_NAMES,
+            include: INCLUDE_RECEIPT_OWNER,
         });
     }
 
@@ -318,7 +382,7 @@ export class SbReceiptLinkTokenRepository implements IReceiptLinkTokenRepository
             const row = await this.prisma.receipt_link_token.update({
                 where: { id },
                 data,
-                include: INCLUDE_NAMES,
+                include: INCLUDE_RECEIPT_OWNER,
             });
             return toRecord(row);
         });
@@ -347,6 +411,18 @@ export class SbReceiptLinkTokenRepository implements IReceiptLinkTokenRepository
                     SELECT id, locked_at, failed_attempts, expected_birthday_hash
                     FROM receipt_link_token
                     WHERE id = ${id}::uuid AND active AND expires_at > ${now}::timestamptz
+                      AND (
+                        kind = ${RECEIPT_LINK_KIND.CONTRACT}
+                        OR (
+                          kind = ${RECEIPT_LINK_KIND.STANDALONE} AND revoked_at IS NULL
+                          AND EXISTS (
+                            SELECT 1 FROM client
+                            WHERE client.id = receipt_link_token.client_id
+                              AND client.branch_id = receipt_link_token.branch_id
+                              AND client.deleted_at IS NULL
+                          )
+                        )
+                      )
                     FOR UPDATE
                 )
                 UPDATE receipt_link_token t
@@ -407,13 +483,13 @@ export class SbReceiptLinkTokenRepository implements IReceiptLinkTokenRepository
     async findExpired(cutoff: Date): Promise<ExpiredReceiptLinkToken[]> {
         const rows = await this.prisma.receipt_link_token.findMany({
             where: this.expiredWhere(cutoff),
-            include: INCLUDE_NAMES,
+            select: { id: true, storagePath: true, expiresAt: true },
             take: 1000,
         });
         const expired: ExpiredReceiptLinkToken[] = [];
         for (const row of rows) {
             // The row's persisted expiry is authoritative; no endDate re-derivation.
-            if (row.expiresAt < cutoff) expired.push({ id: row.id, storagePath: row.storagePath, eformsignDocId: row.eformsignDocId });
+            if (row.expiresAt < cutoff) expired.push({ id: row.id, storagePath: row.storagePath });
         }
         return expired;
     }
@@ -445,7 +521,7 @@ export class SbReceiptLinkTokenRepository implements IReceiptLinkTokenRepository
         return rows.map((row) => row.storagePath);
     }
 
-    async findActiveByJobId(jobId: string): Promise<ReceiptLinkTokenRecord | null> {
+    async findActiveByJobId(jobId: string): Promise<ContractReceiptLinkTokenRecord | null> {
         return this.findActiveByJobIdWithClient(this.prisma, jobId);
     }
 
@@ -658,6 +734,7 @@ export class SbReceiptLinkTokenRepository implements IReceiptLinkTokenRepository
                     expires_at AS "expiresAt"
                 FROM receipt_link_token
                 WHERE id IN (${Prisma.join(input.tokenIds.map((id) => Prisma.sql`${id}::uuid`))})
+                  AND kind = ${RECEIPT_LINK_KIND.CONTRACT}
                 ORDER BY id
                 FOR UPDATE
             `);
@@ -674,6 +751,7 @@ export class SbReceiptLinkTokenRepository implements IReceiptLinkTokenRepository
             const updatedTokens = await tx.receipt_link_token.updateMany({
                 where: {
                     id: { in: input.tokenIds },
+                    kind: RECEIPT_LINK_KIND.CONTRACT,
                     branchId: input.branchId,
                     clientId: input.clientId,
                     eformsignDocId: input.eformsignDocId,
@@ -735,12 +813,12 @@ export class SbReceiptLinkTokenRepository implements IReceiptLinkTokenRepository
     private async findActiveByJobIdWithClient(
         client: Pick<PrismaService, "receipt_link_token"> | Prisma.TransactionClient,
         jobId: string,
-    ): Promise<ReceiptLinkTokenRecord | null> {
+    ): Promise<ContractReceiptLinkTokenRecord | null> {
         const row = await client.receipt_link_token.findFirst({
-            where: { jobId, active: true },
+            where: { jobId, active: true, kind: RECEIPT_LINK_KIND.CONTRACT },
             orderBy: { createdAt: "desc" },
-            include: INCLUDE_NAMES,
+            include: INCLUDE_RECEIPT_OWNER,
         });
-        return row ? toRecord(row) : null;
+        return row ? toContractRecord(row) : null;
     }
 }

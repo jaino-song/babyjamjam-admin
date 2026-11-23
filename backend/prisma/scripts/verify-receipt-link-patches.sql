@@ -1,8 +1,7 @@
--- Guard for 20260904000000_add_receipt_link_token and
--- 20260904000100_contract_auto_finalize_grace_days_7.
+-- Guard for the receipt-link token and contract auto-finalize grace-days patches.
 --
 -- Asserts that the receipt_link_token table exists with its unique hash
--- indexes, its three foreign keys and its two CHECK constraints, and that no
+-- indexes, foreign keys, and CHECK constraints, and that no
 -- branch auto-finalize setting written before 2026-09-04 00:00 KST still
 -- carries a graceDays other than 7 (rows the patch rewrote carry a newer
 -- updated_at; rows with operator edits made after 2026-09-04 00:00 KST are
@@ -18,6 +17,36 @@ DECLARE
 BEGIN
     IF to_regclass('public.receipt_link_token') IS NULL THEN
         RAISE EXCEPTION 'receipt_link_token table is missing';
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_attribute
+        JOIN pg_attrdef ON adrelid = attrelid AND adnum = attnum
+        WHERE attrelid = 'public.receipt_link_token'::regclass
+          AND attname = 'kind' AND NOT attisdropped AND attnotnull
+          AND atttypid = 'text'::regtype
+          AND pg_get_expr(adbin, adrelid) = '''contract''::text'
+    ) OR NOT EXISTS (
+        SELECT 1 FROM pg_attribute
+        WHERE attrelid = 'public.receipt_link_token'::regclass
+          AND attname = 'frozen_client_name' AND NOT attisdropped AND NOT attnotnull
+          AND atttypid = 'text'::regtype
+    ) OR NOT EXISTS (
+        SELECT 1 FROM pg_attribute
+        WHERE attrelid = 'public.receipt_link_token'::regclass
+          AND attname = 'eformsign_doc_id' AND NOT attisdropped AND NOT attnotnull
+          AND atttypid = 'integer'::regtype
+    ) THEN
+        RAISE EXCEPTION 'receipt_link_token standalone columns are missing or invalid';
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'receipt_link_token_kind_check'
+          AND conrelid = 'public.receipt_link_token'::regclass
+          AND contype = 'c' AND convalidated
+    ) THEN
+        RAISE EXCEPTION 'receipt_link_token kind constraint is missing or unvalidated';
     END IF;
 
     FOREACH _missing IN ARRAY ARRAY[

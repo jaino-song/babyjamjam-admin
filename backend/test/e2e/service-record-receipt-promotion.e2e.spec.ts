@@ -232,7 +232,7 @@ function receiptTokenIdentity(token: {
     expiresAt: Date;
     active: boolean;
     revokedAt: Date | null;
-    eformsignDocId: number;
+    eformsignDocId: number | null;
 }) {
     return {
         linkTokenHash: token.linkTokenHash,

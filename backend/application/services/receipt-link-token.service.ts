@@ -5,6 +5,7 @@ import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypt
 import {
     IReceiptLinkTokenRepository,
     IReceiptLinkTokenIssuanceRepository,
+    RECEIPT_LINK_KIND,
     RECEIPT_LINK_MAX_FAILED_ATTEMPTS,
     RECEIPT_LINK_TOKEN_REPOSITORY,
     ReceiptLinkTokenRecord,
@@ -39,18 +40,21 @@ export interface IssuedReceiptLinkToken {
 
 export type ReceiptLinkUnusableReason = "not_found" | "expired" | "revoked";
 
+type ReceiptLinkUsableStatus = {
+    ok: true;
+    state: "pending" | "verified";
+    branchName: string;
+    storagePath: string;
+    expiresAt: string;
+    remainingAttempts: number;
+    lockedUntil: string | null;
+};
+
 export type ReceiptLinkStatus =
-    | {
-          ok: true;
-          state: "pending" | "verified";
-          branchName: string;
-          storagePath: string;
-          /** The contract document (eformsign_doc.id) this link was issued for. */
-          eformsignDocId: number;
-          expiresAt: string;
-          remainingAttempts: number;
-          lockedUntil: string | null;
-      }
+    | (ReceiptLinkUsableStatus & (
+        | { kind: typeof RECEIPT_LINK_KIND.CONTRACT; eformsignDocId: number }
+        | { kind: typeof RECEIPT_LINK_KIND.STANDALONE; eformsignDocId: null }
+    ))
     | { ok: false; reason: ReceiptLinkUnusableReason };
 
 export type VerifyReceiptBirthdayResult =
@@ -170,6 +174,10 @@ export class ReceiptLinkTokenService {
 
     private unusableReason(row: ReceiptLinkTokenRecord | null, now: Date): ReceiptLinkUnusableReason | null {
         if (!row) return "not_found";
+        if (row.kind === RECEIPT_LINK_KIND.STANDALONE) {
+            if (!row.clientAvailable) return "not_found";
+            if (row.revokedAt !== null) return "revoked";
+        }
         if (!row.active) return "revoked";
         if (row.expiresAt.getTime() <= now.getTime()) return "expired";
         return null;
@@ -188,16 +196,18 @@ export class ReceiptLinkTokenService {
 
         const lockedUntil = this.lockedUntil(row, now);
         const failed = lockedUntil || !row.lockedAt ? row.failedAttempts : 0;
-        return {
+        const status: ReceiptLinkUsableStatus = {
             ok: true,
             state: row.verifiedAt ? "verified" : "pending",
             branchName: row.branchName ?? "",
             storagePath: row.storagePath,
-            eformsignDocId: row.eformsignDocId,
             expiresAt: row.expiresAt.toISOString(),
             remainingAttempts: lockedUntil ? 0 : Math.max(0, RECEIPT_LINK_MAX_FAILED_ATTEMPTS - failed),
             lockedUntil: lockedUntil ? lockedUntil.toISOString() : null,
         };
+        return row.kind === RECEIPT_LINK_KIND.STANDALONE
+            ? { ...status, kind: row.kind, eformsignDocId: null }
+            : { ...status, kind: RECEIPT_LINK_KIND.CONTRACT, eformsignDocId: row.eformsignDocId };
     }
 
     async verifyBirthday(linkToken: string, rawInput: string, now: Date): Promise<VerifyReceiptBirthdayResult> {
@@ -233,7 +243,8 @@ export class ReceiptLinkTokenService {
 
         // 기존 링크와 6자리 생년월일 고객만 뒤 6자리 해시로 호환한다. 두 비교는 같은 예약을 사용한다.
         const matchesBirthday = timingSafeEqualHex(this.hashBirthday(normalized), reservation.expectedBirthdayHash)
-            || timingSafeEqualHex(this.hashBirthday(normalized.slice(2)), reservation.expectedBirthdayHash);
+            || (row.kind === RECEIPT_LINK_KIND.CONTRACT
+                && timingSafeEqualHex(this.hashBirthday(normalized.slice(2)), reservation.expectedBirthdayHash));
         if (!matchesBirthday) {
             // This reservation's own write just tipped the counter to the limit — report locked
             // rather than a remainingAttempts count of 0 that implies another guess is possible.
@@ -252,12 +263,17 @@ export class ReceiptLinkTokenService {
         }
 
         const accessToken = `efra_${randomBytes(32).toString("base64url")}`;
-        await this.repository.update(row.id, {
+        const verified = await this.repository.update(row.id, {
             accessTokenHash: sha256(accessToken),
             verifiedAt: now,
             failedAttempts: 0,
             lockedAt: null,
         });
+        if (row.kind === RECEIPT_LINK_KIND.STANDALONE) {
+            // Recheck the owner and revocation state returned by the verification write.
+            const unusableAfterWrite = this.unusableReason(verified, now);
+            if (unusableAfterWrite) return { ok: false, reason: unusableAfterWrite };
+        }
         return { ok: true, accessToken, clientName: row.clientName ?? DEFAULT_CLIENT_NAME };
     }
 
