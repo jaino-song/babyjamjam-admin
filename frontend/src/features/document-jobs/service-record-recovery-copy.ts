@@ -39,6 +39,7 @@ export const INITIAL_DOCUMENT_RECOVERY_COPY = {
   confirmDescription: "먼저 이폼사인 콘솔의 진행중, 완료, 반려/취소 목록에서 아래 접미사를 검색해 주세요. 확인을 누르면 서버가 이폼사인을 다시 조회한 뒤 결과를 반영합니다.",
   confirmEmptyOrdinals: "저장된 문서 조각 없음",
   unavailable: "문서 상태가 변경됐어요. 최신 상태를 확인해 주세요.",
+  notApplied: "요청이 적용되지 않았어요. 문서의 최신 상태를 확인해 주세요.",
   failed: "처리 결과를 확인하지 못했어요. 문서의 최신 상태를 먼저 확인해 주세요.",
 } as const;
 

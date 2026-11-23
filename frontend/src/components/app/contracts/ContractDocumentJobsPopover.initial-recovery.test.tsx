@@ -105,6 +105,35 @@ it.each([
   expect(await within(dialog).findByRole("alert")).toHaveTextContent(message);
 });
 
+describe.each([
+  {
+    label: copy.regenerateLabel,
+    title: copy.regenerateTitle,
+    initial: makeJobList({ initialRegenerations: [ready] }),
+  },
+  {
+    label: copy.confirmLabel,
+    title: copy.confirmTitle,
+    initial: makeJobList({ noProviderDocumentConfirmable: [confirmation] }),
+  },
+])("$label error fallback", ({ label, title, initial }) => {
+  it.each([
+    ["an unknown 409 reason", conflict("UNRECOGNIZED_RECOVERY_REASON"), "요청이 적용되지 않았어요."],
+    ["a 409 without a reason", { isAxiosError: true, response: { status: 409 } }, "요청이 적용되지 않았어요."],
+    ["a 403 rejection", { isAxiosError: true, response: { status: 403 } }, "요청이 적용되지 않았어요."],
+    ["a network error", { isAxiosError: true, code: "ERR_NETWORK" }, copy.failed],
+    ["a client timeout", { isAxiosError: true, code: "ECONNABORTED" }, copy.failed],
+    ["a 504 timeout", { isAxiosError: true, response: { status: 504 } }, copy.failed],
+  ])("renders the matching alert for %s", async (_scenario, error, message) => {
+    setup(initial);
+    jest.spyOn(api, "post").mockRejectedValue(error);
+    await openDetail();
+    const { dialog, approve: button } = await approve(label, title);
+    fireEvent.click(button);
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent(message);
+  });
+});
+
 it.each([
   {
     label: copy.regenerateLabel,

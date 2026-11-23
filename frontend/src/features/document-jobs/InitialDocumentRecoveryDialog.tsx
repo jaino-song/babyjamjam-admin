@@ -56,11 +56,15 @@ export function InitialDocumentRecoveryDialog({
     onSuccess: refresh,
     onError: () => { void refresh(); },
   });
-  const conflict = isAxiosError<{ reason?: unknown }>(mutation.error) && mutation.error.response?.status === 409
-    ? mutation.error.response.data?.reason : undefined;
+  const response = isAxiosError<{ reason?: unknown }>(mutation.error) ? mutation.error.response : undefined;
+  const status = response?.status;
+  const reason = response?.data?.reason;
+  const conflictCopy = status === 409
+    ? (confirmation ? noProviderDocumentConflictCopy(reason) : initialRegenerationBlockedCopy(reason))
+    : null;
+  const rejected = status !== undefined && status >= 400 && status < 500;
   const error = mutation.isError
-    ? (confirmation ? noProviderDocumentConflictCopy(conflict) : initialRegenerationBlockedCopy(conflict))
-      ?? (conflict !== undefined ? copy.unavailable : copy.failed)
+    ? conflictCopy ?? (rejected ? copy.notApplied : copy.failed)
     : !isOffered && !mutation.isPending && !mutation.isSuccess ? copy.unavailable : null;
   const approve = () => {
     if (!isBranchContextAligned(branchId)) { onClose(); return; }
