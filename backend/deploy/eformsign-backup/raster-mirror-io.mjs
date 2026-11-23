@@ -11,13 +11,17 @@ const readFlags = constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLO
 const uid = BigInt(process.getuid());
 const utf8 = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true });
 const badSegment = /[\\:\x00-\x1f\x7f]|\p{Cs}/u;
+const mirrorCodes = new WeakMap();
 
 export class MirrorError extends Error {
     constructor(reason) {
         super('raster_archive_' + reason);
         this.code = this.message;
+        mirrorCodes.set(this, this.code);
     }
 }
+
+export const mirrorErrorCode = (error) => mirrorCodes.get(error);
 
 export function refuse(reason) {
     throw new MirrorError(reason);
@@ -198,7 +202,7 @@ export async function inspectFile(path, { output, privateFile = false, allowLoos
     try {
         const opened = await handle.stat({ bigint: true });
         checkFile(opened);
-        if (!same(identity(before), identity(opened))) refuse('file_changed');
+        if (!same(identity(before), identity(opened)) || before.ctimeNs !== opened.ctimeNs) refuse('file_changed');
         if (privateFile) {
             checkPrivate(opened, 0o600, !allowLoose && !tighten, covered);
             if (tighten && (opened.mode & 0o7777n) !== 0o600n) await handle.chmod(0o600);
@@ -207,7 +211,8 @@ export async function inspectFile(path, { output, privateFile = false, allowLoos
         const after = await handle.stat({ bigint: true });
         const current = await stat(path);
         if (opened.size !== BigInt(bytes.size) || opened.size !== after.size || opened.mtimeNs !== after.mtimeNs
-            || current?.ctimeNs !== after.ctimeNs || !same(identity(after), identity(current))) {
+            || (!tighten && opened.ctimeNs !== after.ctimeNs) || current?.ctimeNs !== after.ctimeNs
+            || !current?.isFile() || current.nlink !== 1n || !same(identity(after), identity(current))) {
             refuse('file_changed');
         }
         if (sync) await handle.sync();
@@ -263,8 +268,18 @@ export async function readJson(path) {
     const handle = await fs.open(path, readFlags);
     try {
         const opened = await handle.stat({ bigint: true });
-        if (!same(identity(before), identity(opened)) || opened.size !== before.size) refuse('state_changed');
-        return JSON.parse(await handle.readFile('utf8'));
+        if (!same(identity(before), identity(opened)) || opened.ctimeNs !== before.ctimeNs) refuse('state_changed');
+        const contents = Buffer.alloc(Number(opened.size));
+        let offset = 0;
+        while (offset < contents.length) {
+            const { bytesRead } = await handle.read(contents, offset, contents.length - offset, offset);
+            if (!bytesRead) refuse('state_changed');
+            offset += bytesRead;
+        }
+        const current = await stat(path);
+        if (!current?.isFile() || current.nlink !== 1n || !same(identity(opened), identity(current))
+            || current.ctimeNs !== opened.ctimeNs || current.size !== opened.size) refuse('state_changed');
+        return JSON.parse(utf8.decode(contents));
     } finally {
         await handle.close();
     }
@@ -296,7 +311,7 @@ export async function saveJson(path, value, { scratch = dirname(path), parentHan
         renamed = true;
         if (parentHandle) await parentHandle.sync();
         else await syncDir(parent);
-        if (scratch !== parent) await syncDir(scratch);
+        if (scratch !== parent && (!parentHandle || scratch !== fdPath(parentHandle))) await syncDir(scratch);
     } finally {
         if (!renamed) await fs.unlink(staged.path).catch((error) => { if (error.code !== 'ENOENT') throw error; });
     }
