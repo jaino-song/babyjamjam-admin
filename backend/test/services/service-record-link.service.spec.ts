@@ -97,6 +97,7 @@ describe("ServiceRecordLinkService", () => {
         )),
     });
     const createJobRepository = () => ({
+        hasAcceptedOccurrence: jest.fn().mockResolvedValue(false),
         cancelPendingByRuleAndEmployeeSchedule: jest.fn().mockResolvedValue({ canceledJobIds: [], inFlightJobIds: [] }),
         cancelPendingUnderScheduleFence: jest.fn().mockImplementation(async (
             _ruleId: string,

@@ -32,7 +32,7 @@ import { MessageTriggerJobEntity } from "domain/entities/message-trigger-job.ent
 import { KR_BUILTIN_CALENDAR } from "domain/utils/business-days";
 import { CanceledAutomationRetryRepository } from "infrastructure/database/repositories/canceled-automation-retry.repository";
 import { occurrenceVariables, storedOccurrence } from "infrastructure/database/repositories/message-occurrence-ledger";
-import { RECORD_LINK_RECOVERY_REFUSED } from "infrastructure/database/repositories/record-link-recovery.repository";
+import { hasRecordLinkAcceptance, readRecordLinkAssignment, RECORD_LINK_RECOVERY_REFUSED } from "infrastructure/database/repositories/record-link-recovery.repository";
 import { SbClientRepository } from "infrastructure/database/repositories/sb.client.repository";
 import { SbMessageLogRepository } from "infrastructure/database/repositories/sb.message-log.repository";
 import { SbMessageTriggerRuleBranchOverrideRepository } from "infrastructure/database/repositories/sb.message-trigger-rule-branch-override.repository";
@@ -214,8 +214,11 @@ describeReal("service-record-link recovery through customer writes (PostgreSQL)"
             expect(await link.sweepRecovery()).toBe(0);
             jest.setSystemTime(due);
         }
+        const acceptance = jest.spyOn(trigger.jobRepository, "hasAcceptedOccurrence");
         await Promise.all([link.recheckClientRecovery(branchId, client.id),
             newLinkWorker().recheckClientRecovery(branchId, client.id), newLinkWorker().sweepRecovery()]);
+        expect(acceptance).toHaveBeenCalledTimes(1);
+        await expect(acceptance.mock.results[0]?.value).resolves.toBe(false);
         const successor = await db.raw.message_trigger_job.findUniqueOrThrow({ where: { originalJobId: original.id } });
         expect(successor).toMatchObject({ dedupeKey: `record-retry:${original.id}`, recipientPhone: employee.phone, scheduledFor: new Date() });
         const secondWorker = wireMessageTriggerService(db, branchId, RecordingRecordLinkDelivery);
@@ -643,7 +646,7 @@ describeReal("service-record-link recovery through customer writes (PostgreSQL)"
         expect(trigger.delivery.providerCalls).toHaveLength(0);
     });
 
-    it("blocks a legacy canceled occurrence under an alternate ordinary key", async () => {
+    it("blocks an alternate ordinary record-link key when a legacy terminal sibling exists", async () => {
         const { branchId, create, clients, trigger, toggle } = await fixture();
         await toggle(true);
         const { client, schedule } = await create();
@@ -724,14 +727,54 @@ describeReal("service-record-link recovery through customer writes (PostgreSQL)"
         expect(await acceptedFor(branchId)).toHaveLength(0);
     });
 
-    it.each(["linked history", "ledger only"])("counts accepted manual sends from %s and still permits an explicit resend", async proof => {
+    it("reads accepted legacy manual job history with an absent incarnation directly from the repository", async () => {
+        const { branchId, create, employee, link } = await fixture();
+        const { client, schedule } = await create("waiting");
+        const otherBranch = await createBranch(db.raw, tracker);
+        const otherEmployee = await createEmployee(db.raw, tracker, { branchId });
+        const assignment = await db.service.$transaction(tx => readRecordLinkAssignment(tx, branchId, schedule.id));
+        if (!assignment) throw new Error("Expected the persisted record-link assignment");
+        const hasAcceptance = (candidate = assignment) => db.service.$transaction(tx => hasRecordLinkAcceptance(tx, candidate));
+        expect(await hasAcceptance()).toBe(false);
+
+        const manual = await link.sendNow(schedule.id);
+        const job = await db.raw.message_trigger_job.update({ where: { id: manual.jobId }, data: { status: "sent", sentAt: new Date() } });
+        expect(job.payload).toMatchObject({ employeeId: employee.id });
+        expect(job.payload).not.toHaveProperty("scheduleIncarnationId");
+        await db.raw.message_log.create({ data: {
+            branchId, clientId: client.id, triggerJobId: job.id, provider: "aligo_sms",
+            receiver: employee.phone!, messageBody: "제공기록지 링크", templateKey: SERVICE_RECORD_LINK_SMS_LOG_TEMPLATE_KEY,
+            status: "sent", providerAcceptanceState: "accepted", providerAcceptedAt: new Date(),
+        } });
+        expect(await db.raw.message_occurrence_claim.count({ where: { branchId } })).toBe(0);
+        expect(await db.raw.message_occurrence_manual_attempt.count({ where: { branchId } })).toBe(0);
+        expect(await hasAcceptance()).toBe(true);
+        expect(await hasAcceptance({ ...assignment, branchId: otherBranch.id })).toBe(false);
+
+        const setIdentity = (employeeId: number, scheduleIncarnationId: string | null) => db.raw.message_trigger_job.update({
+            where: { id: job.id }, data: { payload: { employeeId, scheduleIncarnationId } },
+        });
+        await setIdentity(employee.id, randomUUID());
+        expect(await hasAcceptance()).toBe(false);
+        await setIdentity(otherEmployee.id, schedule.incarnationId);
+        expect(await hasAcceptance()).toBe(false);
+        await setIdentity(employee.id, schedule.incarnationId);
+        expect(await hasAcceptance()).toBe(true);
+        await setIdentity(employee.id, null);
+        expect(await hasAcceptance()).toBe(true);
+    });
+
+    it.each([
+        { history: "linked message history", detached: false },
+        { history: "the common ledger after detaching the manual job", detached: true },
+    ])("refuses recovery from $history and still admits an explicit repeat", async ({ detached }) => {
         const { branchId, create, clients, toggle, link, trigger } = await fixture();
         await toggle(true);
         const { client, schedule } = await create();
         await clients.confirmBooking(branchId, client.id);
         const manual = await link.sendNow(schedule.id);
         await deliver(trigger, manual.jobId, branchId);
-        if (proof === "ledger only") {
+        if (detached) {
             const [accepted] = await acceptedFor(branchId);
             if (!accepted) throw new Error("Expected the manual provider acceptance");
             const occurrence = storedOccurrence(accepted);
@@ -742,14 +785,19 @@ describeReal("service-record-link recovery through customer writes (PostgreSQL)"
             await db.raw.message_trigger_job.delete({ where: { id: manual.jobId } });
         }
         jest.setSystemTime(due);
+        const acceptance = jest.spyOn(trigger.jobRepository, "hasAcceptedOccurrence");
         expect(await link.sweepRecovery()).toBe(0);
+        expect(acceptance).toHaveBeenCalledTimes(detached ? 1 : 0);
+        if (detached) await expect(acceptance.mock.results[0]?.value).resolves.toBe(true);
         const original = await db.raw.message_trigger_job.findFirstOrThrow({ where: { employeeScheduleId: schedule.id, status: "canceled" } });
         expect(original).toMatchObject({ recoveryState: "ineligible_terminal", scheduledFor: due });
         expect(await db.raw.message_trigger_job.count({ where: { originalJobId: original.id } })).toBe(0);
         expect(trigger.delivery.providerCalls).toHaveLength(1);
         expect(await acceptedFor(branchId)).toHaveLength(1);
         const resend = await link.sendNow(schedule.id);
+        expect(resend.jobId).not.toBe(manual.jobId);
         await deliver(trigger, resend.jobId, branchId);
+        expect(trigger.delivery.providerCalls.map(call => call.jobId)).toEqual([manual.jobId, resend.jobId]);
         expect(await acceptedFor(branchId)).toHaveLength(2);
     });
 });

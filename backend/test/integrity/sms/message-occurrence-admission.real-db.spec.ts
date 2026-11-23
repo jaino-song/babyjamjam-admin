@@ -6,10 +6,17 @@ import { MessageQuietHoursService } from "application/services/message-quiet-hou
 import { MessageAutomationBranchLockService } from "application/services/message-automation-branch-lock.service";
 import { MessageAutomationActivationService } from "application/services/message-automation-activation.service";
 import { AgentAutomationDeliveryGateService } from "application/services/agent-automation-delivery-gate.service";
+import { AgentAutomationJobAuthorityService } from "application/services/agent-automation-job-authority.service";
+import { AgentAutomationAuthorityService } from "application/agent/agent-automation-authority.service";
+import { AgentAutomationRecordStoreService } from "application/agent/agent-automation-record-store.service";
+import { AligoDefaultSenderPolicyService } from "application/services/aligo-default-sender-policy.service";
+import { ClientAutomationSourceReader } from "application/services/client-automation-source.reader";
+import { MessageSenderApprovalService } from "application/services/message-sender-approval.service";
 import { SmsAutomationSafeguardService } from "application/services/sms-automation-safeguard.service";
 import { MessageTriggerDeliveryService } from "application/services/message-trigger-delivery.service";
 import { MessageTriggerService } from "application/services/message-trigger.service";
 import { describeClientMessageEffect } from "application/services/client-message-effect-recipe";
+import { buildClientMessageRecipe } from "application/services/message-trigger-recipes";
 import { SmsTriggerDeliveryService } from "application/services/sms-trigger-delivery.service";
 import { defaultMessageAutomationPolicy } from "domain/entities/system-setting.entity";
 import type { SendSmsMessageDto } from "interface/dto/message-delivery.dto";
@@ -36,6 +43,7 @@ import { MessageLogMapper } from "infrastructure/database/mapper/message-log.map
 import { manualTemplateVariables } from "infrastructure/database/repositories/message-occurrence-ledger";
 import { SbMessageLogRepository } from "infrastructure/database/repositories/sb.message-log.repository";
 import { SbMessageTriggerJobRepository } from "infrastructure/database/repositories/sb.message-trigger-job.repository";
+import { SbMessageTriggerRuleBranchOverrideRepository } from "infrastructure/database/repositories/sb.message-trigger-rule-branch-override.repository";
 import { SbMessageTriggerRuleRepository } from "infrastructure/database/repositories/sb.message-trigger-rule.repository";
 import { RECORD_LINK_RECOVERY_REASON } from "infrastructure/database/repositories/record-link-recovery.repository";
 import { createBranch, createClient, createEmployee, createEmployeeSchedule, createEformsignDoc, createMessageLog, createMessageTriggerJob, createMessageTriggerRule } from "../helpers/factories";
@@ -46,7 +54,7 @@ import { noopApprovalStub, waitUntilBlocked, withDeadline } from "./sms-wiring.l
 type Result = "accepted" | "rejected" | "uncertain";
 const { CLIENT, PRIMARY_EMPLOYEE, SECONDARY_EMPLOYEE } = MessageTriggerRecipientType;
 const { SERVICE_START, SERVICE_END } = MessageTriggerEventType;
-const { PRICE_INFO, SERVICE_END_NOTICE, SERVICE_RECORD_LINK, CAREGIVER_SERVICE_START_NOTICE } = MessageTriggerTemplateKey;
+const { PRICE_INFO, SERVICE_INFO, SERVICE_END_NOTICE, SERVICE_RECORD_LINK, CAREGIVER_SERVICE_START_NOTICE } = MessageTriggerTemplateKey;
 
 describeReal("message occurrence provider admission (PostgreSQL)", () => {
     let db: IntegrityPrisma;
@@ -130,21 +138,27 @@ describeReal("message occurrence provider admission (PostgreSQL)", () => {
         return new MessageRetrySchedulerService(logs, retry, { holdsLease: () => true } as never, settings as never);
     }
 
-    function worker(configuration = defaultMessageAutomationPolicy()) {
+    function worker(configuration = defaultMessageAutomationPolicy(), usePersistedAuthority = false) {
         const lock = new MessageAutomationBranchLockService(db.service);
         const jobs = new SbMessageTriggerJobRepository(db.service);
         const rules = new SbMessageTriggerRuleRepository(db.service);
         const settings = { getMessageAutomationPolicyConfig: async () => ({ configuration, version: "occurrence-test" }) };
         const activation = new MessageAutomationActivationService(db.service, lock, {} as never);
-        const gate = new AgentAutomationDeliveryGateService(db.service, lock,
-            { checkAutomaticJob: async () => ({ status: "legacy" }) } as never);
+        const senderApproval = new MessageSenderApprovalService(db.service);
+        const authority = usePersistedAuthority
+            ? new AgentAutomationJobAuthorityService(new AgentAutomationAuthorityService(new AgentAutomationRecordStoreService(lock)),
+                new ClientAutomationSourceReader(db.service, rules, new SbMessageTriggerRuleBranchOverrideRepository(db.service),
+                    senderApproval, undefined, activation), new AligoDefaultSenderPolicyService(providerMock() as never))
+            : { checkAutomaticJob: async () => ({ status: "legacy" }) } as never;
+        const gate = new AgentAutomationDeliveryGateService(db.service, lock, authority);
         const templates = { getByKeyForBranch: async () => ({ id: "fixture", content: "비용 안내", updatedAt: new Date(0) }) };
         const delivery = new SmsTriggerDeliveryService(providerMock() as never, templates as never, logs, boundary, undefined, gate, rules,
             settings as never, undefined, new MessageQuietHoursService(settings as never, logs, lock), jobs);
-        const core = new MessageTriggerService(db.service, new MessageTriggerDeliveryService(delivery), noopApprovalStub() as never,
+        const core = new MessageTriggerService(db.service, new MessageTriggerDeliveryService(delivery),
+            usePersistedAuthority ? senderApproval : noopApprovalStub() as never,
             rules, jobs, logs, templates as never, {} as never, settings as never, undefined,
             activation, lock, undefined, gate, undefined, new SmsAutomationSafeguardService(db.service, activation));
-        return { delivery, dispatch: (id: string, expectedBranchId = branchId) => core.dispatchPendingJobNow(id, { expectedBranchId }) };
+        return { delivery, jobs, rules, dispatch: (id: string, expectedBranchId = branchId) => core.dispatchPendingJobNow(id, { expectedBranchId }) };
     }
 
     function scheduledPriceInfo(at: Date) {
@@ -264,6 +278,54 @@ describeReal("message occurrence provider admission (PostgreSQL)", () => {
         await controller.sendSms({ branchId }, { ...composeRequest(other), templateRef: { kind: "branch", id: branchTemplate.id } });
         expect(await attempt(await prepared(await job(rule, other), { messageBody: request.message }))).toBe("accepted");
         expect(send).toHaveBeenCalledTimes(4);
+    });
+
+    it.each([true, false])("checks manual acceptance at provider admission for a pending ordinary CLIENT job (accepted=%s)", async accepted => {
+        const at = new Date("2026-11-23T04:00:00Z");
+        jest.useFakeTimers({ now: at, doNotFake: ["nextTick", "setTimeout", "clearTimeout", "setImmediate", "clearImmediate"] });
+        try {
+            await db.raw.branch.update({ where: { id: branchId }, data: { smsSenderApprovalStatus: "approved" } });
+            customer = await db.raw.client.update({ where: { id: customer.id }, data: {
+                startDate: at, endDate: new Date("2026-12-15"), bookingConfirmedAt: at,
+                serviceStatus: "active", smsAutomationEnabled: true,
+            } });
+            const policy = defaultMessageAutomationPolicy();
+            policy.quietHours.enabled = false;
+            const { jobs, rules, dispatch } = worker(policy, true);
+            const source = await createMessageTriggerRule(db.raw, tracker, { branchId, templateKey: SERVICE_INFO });
+            const activeRule = await rules.findByIdIncludingGlobal(branchId, source.id);
+            const recipe = activeRule && buildClientMessageRecipe(activeRule, { ...customer, name: customer.name! }, at);
+            if (!recipe) throw new Error("Expected a canonical client job recipe");
+            // Materialize before the operator send so this exercises dispatch admission of an already-pending job.
+            const pending = await jobs.create(MessageTriggerJobEntity.create(recipe));
+            tracker.track("message_trigger_job", pending.id);
+            expect(pending).toMatchObject({ status: "pending", recipientType: CLIENT, templateKey: SERVICE_INFO, employeeScheduleId: null });
+            expect(await db.raw.message_trigger_job.count({ where: { branchId, templateKey: SERVICE_RECORD_LINK } })).toBe(0);
+
+            if (accepted) {
+                const sender = new MessageSenderApprovalService(db.service);
+                await expect(compose(() => sender.ensureApproved(branchId)).sendSms({ branchId }, {
+                    ...composeRequest(), templateRef: { kind: "system", key: SERVICE_INFO },
+                })).resolves.toMatchObject({ result: { successCount: 1 } });
+                expect(send).toHaveBeenCalledTimes(1);
+                expect(await db.raw.message_occurrence_claim.findFirst({ where: { branchId, state: "accepted" } }))
+                    .toMatchObject({ acceptedVia: "manual" });
+                send.mockClear();
+            }
+
+            await dispatch(pending.id);
+            expect(send).toHaveBeenCalledTimes(accepted ? 0 : 1);
+            expect(await providerStartsFor([pending.id])).toBe(accepted ? 0 : 1);
+            expect(await db.raw.message_trigger_job.findUniqueOrThrow({ where: { id: pending.id } })).toMatchObject(
+                accepted ? { status: "canceled", cancelReason: OCCURRENCE_ALREADY_ACCEPTED } : { status: "sent" },
+            );
+            expect(await db.raw.message_log.findFirstOrThrow({ where: { branchId, triggerJobId: pending.id } })).toMatchObject(
+                accepted ? { providerAcceptanceState: "prepared", errorMessage: OCCURRENCE_ALREADY_ACCEPTED }
+                    : { providerAcceptanceState: "accepted" },
+            );
+        } finally {
+            jest.useRealTimers();
+        }
     });
 
     it.each(["manual", "automatic"] as const)("T4 serializes behind the %s winner on a second PostgreSQL connection", async winner => {

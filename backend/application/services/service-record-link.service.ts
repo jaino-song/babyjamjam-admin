@@ -286,7 +286,7 @@ export class ServiceRecordLinkService {
                 });
                 if (!token) return false;
                 const { original, schedule } = current;
-                if (await this.jobRepository.hasAcceptedOccurrence?.(pendingJob, tx)) {
+                if (await this.jobRepository.hasAcceptedOccurrence(pendingJob, tx)) {
                     await tx.message_trigger_job.update({
                         where: { id: original.id, branchId: candidate.branch_id },
                         data: { recoveryState: "ineligible_terminal", nextCheckAt: null },
