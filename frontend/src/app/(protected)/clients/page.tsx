@@ -289,6 +289,17 @@ export default function ClientsPage() {
     const [tabRequest, setTabRequest] = useState<{ clientId: number; tab: ClientDetailTabKey; nonce: number } | null>(null);
     const tabRequestNonce = useRef(0);
     const [detailModalOpen, setDetailModalOpen] = useState(false);
+    const [previousClientIdParam, setPreviousClientIdParam] = useState(clientIdParam);
+
+    // Resolve a new URL selection before committing the detail panel and its receipt action.
+    if (previousClientIdParam !== clientIdParam) {
+        setPreviousClientIdParam(clientIdParam);
+        setTabRequest(request => request?.clientId === Number(clientIdParam) ? request : null);
+        if (clientIdParam) {
+            setSelectedClient(null);
+            setUrlSelectionSuppressed(false);
+        }
+    }
 
     const [debouncedSearchQuery] = useDebounce(searchQuery.trim(), 300);
     const isSearchSettled = searchQuery.trim() === debouncedSearchQuery;
@@ -302,7 +313,6 @@ export default function ClientsPage() {
     const deleteClient = useDeleteClient();
     const previousBranchIdRef = useRef<string | null | undefined>(undefined);
     const createdClientSelectionRef = useRef<Client | null>(null);
-    const previousClientIdParamRef = useRef(clientIdParam);
 
     const effectiveClientIdParam = urlSelectionSuppressed ? null : clientIdParam;
     const effectiveOpenClientForm = urlSelectionSuppressed ? false : shouldOpenClientFormFromUrl;
@@ -360,7 +370,6 @@ export default function ClientsPage() {
     const panelFormClient = null;
     const shouldShowClientFormPanel = isCreatingClient || effectiveOpenClientForm;
     const receiptClientId = activeSection === "list" && !shouldShowClientFormPanel
-        && (!clientIdParam || previousClientIdParamRef.current === clientIdParam)
         ? activeSelectedClient?.id ?? null
         : null;
     const receipt = useSendClientReceipt(
@@ -394,18 +403,6 @@ export default function ClientsPage() {
             setUrlSelectionSuppressed(false);
         }
     }, [clientIdParam, shouldOpenClientFormFromUrl, urlSelectionSuppressed]);
-    useEffect(() => {
-        // A new ?id= (e.g. from a notification) outranks a stale row selection.
-        if (previousClientIdParamRef.current === clientIdParam) {
-            return;
-        }
-        previousClientIdParamRef.current = clientIdParam;
-        setTabRequest(request => request?.clientId === Number(clientIdParam) ? request : null);
-        if (clientIdParam) {
-            setSelectedClient(null);
-            setUrlSelectionSuppressed(false);
-        }
-    }, [clientIdParam]);
     useEffect(() => {
         const previousBranchId = previousBranchIdRef.current;
         if (previousBranchId !== undefined && previousBranchId !== null && previousBranchId !== activeBranchId) {
