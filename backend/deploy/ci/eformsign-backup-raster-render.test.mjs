@@ -521,6 +521,32 @@ rasterTest('validates image-only output before publication and cleans up rejecte
     });
 });
 
+// At 300 DPI, these fixtures reach one capacity limit each while staying below the other two.
+for (const [boundary, pageCount, box] of [
+    ['500 pages', 500, '0 0 24 24'],
+    ['100,000,000 pixels per page', 1, '0 0 2400 2400'],
+    ['2,000,000,000 total pixels', 40, '0 0 2400 1200'],
+]) {
+    rasterTest(`source preflight allows exactly ${boundary}`, async (t) => {
+        const dir = await temp(t);
+        const sourcePath = join(dir, 'source.pdf');
+        const outputPath = join(dir, 'unpublished.pdf');
+        const marker = join(dir, 'gs-started');
+        await writeFile(sourcePath, simpleSource(Array(pageCount).fill(box)));
+        const gsBin = await shim(dir, 'failing-gs', `
+            import { appendFileSync } from 'node:fs';
+            appendFileSync(${JSON.stringify(marker)}, 'started\\n');
+            process.exit(7);
+        `);
+
+        await assert.rejects(renderRasterPdf({ sourcePath, outputPath, gsBin }), {
+            code: 'RASTER_RENDER_FAILED', message: 'RASTER_RENDER_FAILED',
+        }, 'the source must pass preflight and reach the failing Ghostscript shim');
+        assert.equal(await readFile(marker, 'utf8'), 'started\n', 'Ghostscript must run exactly once');
+        await assert.rejects(lstat(outputPath), { code: 'ENOENT' });
+    });
+}
+
 rasterTest('pixel, page-count and input file bounds reject before starting Ghostscript', async (t) => {
     const dir = await temp(t);
     const sourcePath = join(dir, 'source.pdf');
