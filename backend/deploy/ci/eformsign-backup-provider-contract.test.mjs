@@ -334,6 +334,51 @@ test('resumes after an uploaded file or deleted legacy Drive path was not acknow
     assert.deepEqual(Object.keys((await f.state()).units['doc:a'].files), providerPair());
 });
 
+test('resume refuses a byte-identical local target without journal ownership', async (t) => {
+    const f = await fixture(t);
+    const current = await f.legacy();
+    const apply = [...migrationArgs, '--apply'];
+    const [destination] = providerPair();
+    const target = f.filePath(destination);
+    const stateBefore = await fs.readFile(f.statePath);
+
+    await f.controls({ failAfterCopy: `backup/${destination}` });
+    const [interrupted] = await f.run(apply, 1);
+    assert.equal(interrupted.reason, 'drive_command_failed');
+    const journalPath = join(f.journalDir, 'journal.json');
+    const journalBefore = await fs.readFile(journalPath);
+    const journal = JSON.parse(journalBefore);
+    assert.equal(journal.phase, 'applying');
+    const [file] = journal.moves[0].files;
+    assert.equal(file.new, destination);
+    const staged = await fs.stat(target);
+    assert.deepEqual(file.forward.localReady, { dev: staged.dev, ino: staged.ino });
+    await f.expectFile(destination, current.files[0]);
+    assert.deepEqual(await fs.readFile(f.statePath), stateBefore);
+
+    const bytes = await fs.readFile(target);
+    const replacement = `${target}.replacement`;
+    // Create a separate inode before replacing the journal-owned directory entry.
+    await fs.copyFile(target, replacement);
+    await fs.rename(replacement, target);
+    const unrelated = await fs.stat(target);
+    assert.notEqual(unrelated.ino, staged.ino);
+    assert.equal(unrelated.size, staged.size);
+    assert.deepEqual(await fs.readFile(target), bytes);
+
+    await f.controls({});
+    const [refusal] = await f.run(apply, 1);
+    assert.equal(refusal.reason, 'local_target_collision');
+    assert.deepEqual(await fs.readFile(f.statePath), stateBefore);
+    assert.deepEqual(await fs.readFile(journalPath), journalBefore);
+    await f.expectPair(legacyPair, current);
+    await f.expectPair(legacyPair, current, true);
+    assert.deepEqual(await fs.readFile(target), bytes);
+    const after = await fs.stat(target);
+    assert.equal(after.ino, unrelated.ino);
+    assert.equal(after.ctimeMs, unrelated.ctimeMs);
+});
+
 test('skips mismatched, unlisted, historical, incomplete, review and unrelated allocations', async (t) => {
     const f = await fixture(t);
     const unrelated = { ...f.doc('x'), kind: 'contract' };
