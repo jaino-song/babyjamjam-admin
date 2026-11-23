@@ -990,7 +990,7 @@ function rewrites(entries) {
     return entries.filter(({ args }) => args.some((arg) => arg.startsWith('--update-from-json=')));
 }
 
-rasterTest('normalizes a Noble 200x100-point raster alongside an exact page', async (t) => {
+async function checkNobleNormalization(t, { callerOwned = false } = {}) {
     const fixture = await nobleFixture(t);
     const { dir, sourcePath, outputPath, mockPath, gsLog, qpdfLog, gsBin, pages } = fixture;
     const patchCapture = join(dir, 'observed-patch.json');
@@ -1001,7 +1001,25 @@ rasterTest('normalizes a Noble 200x100-point raster alongside an exact page', as
     `);
     const raw = await pdfJson(mockPath);
     assert.equal(await readPaint(mockPath, raw.pages[0]), '199 0 0 100 0 0 cm /Im1 Do');
-    await renderRasterPdf({ sourcePath, outputPath, gsBin, qpdfBin });
+    const options = { sourcePath, outputPath, gsBin, qpdfBin };
+    if (callerOwned) {
+        const outputHandle = await open(outputPath, 'wx+', 0o600);
+        try {
+            const owned = await outputHandle.stat({ bigint: true });
+            await renderRasterPdf({ ...options, outputHandle });
+            const published = await outputHandle.stat({ bigint: true });
+            assert.ok(published.isFile());
+            assert.deepEqual(inode(published), inode(owned));
+            assert.equal(published.nlink, 1n);
+            assert.ok(published.size > 0n);
+            assert.equal((await assertOwnedPath(outputPath, owned)).size, published.size);
+            assert.deepEqual(await outputHandle.readFile(), await readFile(outputPath));
+        } finally {
+            await outputHandle.close();
+        }
+    } else {
+        await renderRasterPdf(options);
+    }
     await exec('qpdf', ['--check', outputPath]);
     assert.equal(rewrites(await toolLog(qpdfLog)).length, 1);
     const repair = JSON.parse(await readFile(patchCapture, 'utf8'));
@@ -1034,7 +1052,12 @@ rasterTest('normalizes a Noble 200x100-point raster alongside an exact page', as
     await assertClean(dir, gsLog, [
         'source.pdf', 'result.pdf', 'noble.pdf', 'gs.log', 'qpdf.log', 'mock-gs', 'record-qpdf', 'observed-patch.json',
     ]);
-});
+}
+
+rasterTest('normalizes a Noble 200x100-point raster alongside an exact page', (t) => checkNobleNormalization(t));
+
+rasterTest('publishes a normalized Noble raster on the caller-owned file descriptor', (t) =>
+    checkNobleNormalization(t, { callerOwned: true }));
 
 rasterTest('publishes a real Ghostscript derivative and bypasses rewriting when its matrix is exact', async (t) => {
     const dir = await temp(t);
