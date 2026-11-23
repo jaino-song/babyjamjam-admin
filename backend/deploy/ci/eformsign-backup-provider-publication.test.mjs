@@ -607,10 +607,10 @@ for (const interrupt of ['partial stage write', 'before ownership removal']) {
     });
 }
 
-async function expectRecoveryRefusal(f, reason) {
+async function expectRecoveryRefusal(f, reason, { unavailable } = {}) {
     const state = await f.stateBytes();
     const copies = await f.copies();
-    const result = await f.run(f.current, { code: 1 });
+    const result = await f.run(f.current, { unavailable, code: 1 });
     assert.equal(result[0].reason, `provider_publication_${reason}`);
     assert.deepEqual(await f.stateBytes(), state);
     assert.deepEqual(await f.copies(), copies);
@@ -623,6 +623,38 @@ async function expectRecoveryRefusal(f, reason) {
         for (const path of providerPair()) await assert.rejects(fs.lstat(join(root, path)), { code: 'ENOENT' });
     }
 }
+
+test('a failed resume download performs immediate replacement cleanup', async (t) => {
+    const f = await forkFixture(t);
+    const state = await f.stateBytes();
+    await f.run(f.current, { interrupt: 'before first link', code: 137 });
+    const journal = await f.journalBytes();
+    const intent = JSON.parse(journal);
+    const [first, second] = intent.files;
+    const missing = join(f.archive, first.stage.name, 'payload.stage');
+    const surviving = join(f.archive, second.stage.name, 'payload.stage');
+    assert.equal(await f.stagedSource(), missing);
+    const stages = await stagedPayloads(f.archive);
+    assert.ok(stages.includes(missing) && stages.includes(surviving));
+    const { dev, ino } = await fs.lstat(surviving, { bigint: true });
+    await assert.rejects(fs.lstat(f.ownershipPath), { code: 'ENOENT' });
+    await fs.unlink(missing);
+
+    await expectRecoveryRefusal(f, 'staged_file_unavailable', { unavailable: [first.fileId] });
+    await assert.rejects(fs.lstat(f.ownershipPath), { code: 'ENOENT' }, 'replacement receipt survived the failed run');
+    assert.deepEqual((await stagedPayloads(f.archive)).sort(), stages.filter((path) => path !== missing).sort());
+    assert.deepEqual(await f.journalBytes(), journal);
+    assert.deepEqual(await f.stateBytes(), state);
+    const after = await fs.lstat(surviving, { bigint: true });
+    assert.equal(after.dev, dev);
+    assert.equal(after.ino, ino);
+    assert.equal(await fs.readFile(surviving, 'utf8'), second.fileId);
+
+    const result = await f.run(f.current);
+    assert.equal(result.at(-1).status, 'success');
+    await assertReplayUsesJournalInodes(f, intent, [1]);
+    await assertStablePublication(f);
+});
 
 test('an ordinary download failure discards both prepared stages and preserves partial-run behavior', async (t) => {
     const f = await forkFixture(t);
@@ -637,6 +669,39 @@ test('an ordinary download failure discards both prepared stages and preserves p
     await expectArchive(f, [f.entries[0]]);
     await f.run(f.current);
     await assertStablePublication(f);
+});
+
+test('abandoned stage recovery refuses an additional hardlink without removing either link', async (t) => {
+    const f = await forkFixture(t);
+    const state = await f.stateBytes();
+    await f.run(f.current, { interrupt: 'after stage 1', code: 137 });
+    await assert.rejects(f.journalBytes(), { code: 'ENOENT' });
+    const receipt = await fs.readFile(f.ownershipPath);
+    const [prepared] = JSON.parse(receipt).stages;
+    const path = join(f.archive, prepared.stage.name, 'payload.stage');
+    const original = await fs.readFile(path);
+    assert.equal(original.toString(), f.current.files[0].fileId);
+    const external = join(dirname(f.archive), 'additional-hardlink');
+    await fs.link(path, external);
+    const { dev, ino, nlink } = await fs.lstat(path, { bigint: true });
+    const linked = await fs.lstat(external, { bigint: true });
+    assert.equal(linked.dev, dev);
+    assert.equal(linked.ino, ino);
+    assert.ok(nlink > 1n);
+
+    await expectRecoveryRefusal(f, 'prepared_payload_collision');
+    await assert.rejects(f.journalBytes(), { code: 'ENOENT' });
+    assert.deepEqual(await fs.readFile(f.ownershipPath), receipt);
+    assert.deepEqual(await f.stateBytes(), state);
+    for (const link of [path, external]) {
+        const after = await fs.lstat(link, { bigint: true });
+        assert.equal(after.dev, dev);
+        assert.equal(after.ino, ino);
+        assert.equal(after.nlink, nlink);
+        assert.deepEqual(await fs.readFile(link), original);
+    }
+    assert.equal(await fs.readFile(join(f.archive, sentinel), 'utf8'), 'previous scratch');
+    await assert.rejects(fs.lstat(join(f.drive, sentinel)), { code: 'ENOENT' });
 });
 
 for (const collision of ['same-byte payload', 'payload symlink', 'replaced directory', 'directory symlink', 'foreign directory entry']) {
