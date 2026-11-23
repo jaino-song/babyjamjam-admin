@@ -2235,12 +2235,18 @@ export class MessageTriggerService {
         await this.sweepReceiptRecovery(new Date(), { branchId, clientId });
     }
 
-    async wakeReceiptRecoveryForDocument(branchId: string, documentId: string): Promise<void> {
+    async wakeReceiptRecoveryForDocument(branchId: string | null, documentId: string): Promise<void> {
         if (!this.receiptRetrySettings || !this.smsDelivery) return;
-        const doc = await this.prisma.eformsign_doc.findFirst({
-            where: { branchId, documentId }, select: { clientId: true },
+        const doc = await this.prisma.eformsign_doc.findUnique({
+            where: { documentId },
+            select: { branchId: true, client: { select: { id: true, branchId: true, deletedAt: true, voucherClient: true } } },
         });
-        if (doc?.clientId != null) await this.wakeReceiptRecovery(branchId, doc.clientId);
+        if (!doc) return;
+        const client = doc.client;
+        if (!client?.branchId || client.deletedAt || !client.voucherClient
+            || (branchId !== null && branchId !== client.branchId)
+            || (doc.branchId !== null && doc.branchId !== client.branchId)) return;
+        await this.wakeReceiptRecovery(client.branchId, client.id);
     }
 
     async sweepReceiptRecovery(now = new Date(), client?: { branchId: string; clientId: number }): Promise<void> {
@@ -4343,6 +4349,7 @@ export class MessageTriggerService {
             && job.clientId !== null && job.employeeScheduleId === null && !isReservedAutomationJob(job)
             && job.templateKey === MessageTriggerTemplateKey.SERVICE_END_NOTICE
             && job.recipientType === MessageTriggerRecipientType.CLIENT
+            && typeof job.payload.receiptEformsignDocId !== "number"
             && !isManualMessageTriggerRule({ id: job.ruleId, templateKey: job.templateKey });
         const receiptChild = job.dedupeKey.startsWith(RECEIPT_RECOVERY_PREFIX);
         if (receiptChild && (!automaticReceipt || resend)) return false;

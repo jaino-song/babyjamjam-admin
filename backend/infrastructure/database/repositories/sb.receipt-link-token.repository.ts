@@ -249,6 +249,19 @@ export class SbReceiptLinkTokenRepository implements IReceiptLinkTokenRepository
         });
     }
 
+    async findActiveContractForDelivery(
+        { branchId, clientId, linkTokenHash, now }: { branchId: string; clientId: number; linkTokenHash: string; now: Date },
+        transaction?: Prisma.TransactionClient,
+    ) {
+        return (transaction ?? this.prisma).receipt_link_token.findUnique({
+            where: {
+                linkTokenHash, branchId, clientId, kind: RECEIPT_LINK_KIND.CONTRACT,
+                active: true, revokedAt: null, expiresAt: { gt: now },
+            },
+            select: { eformsignDocId: true, storagePath: true },
+        });
+    }
+
     // Cross-branch by design: see the class comment above.
     async findByLinkTokenHash(linkTokenHash: string): Promise<ReceiptLinkTokenRecord | null> {
         return runSystemScope(async () => {

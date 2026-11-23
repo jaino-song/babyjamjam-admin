@@ -1,4 +1,6 @@
+import { BadRequestException } from "@nestjs/common";
 import { SmsRetryService } from "application/services/sms-retry.service";
+import { SMS_DELIVERY_SNAPSHOT_VARIABLE } from "domain/constants/sms-delivery-snapshot";
 import { protectedReceiptOriginalSql } from "infrastructure/database/repositories/receipt-job-recovery.repository";
 import { AGENT_AUTOMATION_JOB_SEAL_PAYLOAD_KEY } from "domain/constants/agent-automation-storage";
 import { AUTOMATION_CONSENT_CANCEL_REASON } from "domain/constants/message-automation-policy";
@@ -7,8 +9,9 @@ import { MirrorUnassignedEformsignDocUsecase } from "application/usecases/eforms
 import { manualTemplateVariables } from "infrastructure/database/repositories/message-occurrence-ledger";
 import { MessageLogMapper } from "infrastructure/database/mapper/message-log.mapper";
 import { ConfigService } from "@nestjs/config";
-import { Prisma, type message_trigger_job } from "@prisma/client";
-import { execFileSync } from "node:child_process";
+import { Prisma, PrismaClient, type message_trigger_job } from "@prisma/client";
+import { spawnSync } from "node:child_process";
+import { readdirSync, readFileSync } from "node:fs";
 import { createHash, randomUUID } from "node:crypto";
 import { resolve } from "node:path";
 
@@ -32,7 +35,7 @@ import { MessageTriggerDeliveryService } from "application/services/message-trig
 import { buildMessageRecipeDedupeKey } from "application/services/message-trigger-recipes";
 import { MessageTriggerService } from "application/services/message-trigger.service";
 import { ReceiptLinkDeliveryEnricher } from "application/services/receipt-link-delivery-enricher.service";
-import { ReceiptLinkIssueService } from "application/services/receipt-link-issue.service";
+import { RECEIPT_LINK_SKIP_MESSAGES, ReceiptLinkIssueService } from "application/services/receipt-link-issue.service";
 import { ReceiptLinkTokenService } from "application/services/receipt-link-token.service";
 import { SmsAutomationSafeguardService } from "application/services/sms-automation-safeguard.service";
 import { SmsProviderAcceptanceService } from "application/services/sms-provider-acceptance.service";
@@ -79,7 +82,7 @@ describeReal("automatic receipt eligibility recovery on PostgreSQL", () => {
     let independent: IntegrityPrisma;
     let tracker: RowTracker;
     let branchId: string;
-    const sendSms = jest.fn(async (request: { receiver: string }) => ({
+    const sendSms = jest.fn(async (request: { receiver: string; message?: string }) => ({
         request: { ...request, msgType: "LMS", testModeYn: "N" },
         response: { result_code: 1, success_cnt: 1, error_cnt: 0, message: "accepted", msg_id: 42 },
     }));
@@ -127,7 +130,8 @@ describeReal("automatic receipt eligibility recovery on PostgreSQL", () => {
         const rules = new SbMessageTriggerRuleRepository(database);
         const overrides = new SbMessageTriggerRuleBranchOverrideRepository(database);
         const settingRepo = new SbSystemSettingRepository(database);
-        const settings = new SystemSettingService(new GetSettingUsecase(settingRepo), new UpdateSettingUsecase(settingRepo));
+        const settings = new SystemSettingService(new GetSettingUsecase(settingRepo), new UpdateSettingUsecase(settingRepo),
+            undefined, activation, rules, jobs, logs, lock);
         const templates = { getByKeyForBranch: async (_branchId: string, key: SystemTemplateKey) => ({
             id: key, content: SYSTEM_TEMPLATE_REGISTRY[key].defaultContent, updatedAt: new Date(0),
         }) };
@@ -136,13 +140,14 @@ describeReal("automatic receipt eligibility recovery on PostgreSQL", () => {
         const clientRepo = new SbClientRepository(database, config);
         const docRepo = new SbEformsignDocRepository(database);
         const mirror = new SbEformsignDocumentMirrorRepository(database);
-        const tokens = new ReceiptLinkTokenService(new SbReceiptLinkTokenRepository(database), config);
+        const tokenRepo = new SbReceiptLinkTokenRepository(database);
+        const tokens = new ReceiptLinkTokenService(tokenRepo, config);
         const storage = { upload: jest.fn(async () => {}), createSignedUrl: jest.fn(async () => "https://example.test/file") };
-        const vendor = { syncDocument: jest.fn(async () => { throw new Error("synthetic vendor read failure"); }) };
+        const vendor = { syncDocument: jest.fn(async (): Promise<void> => { throw new Error("synthetic vendor read failure"); }) };
         const issue = new ReceiptLinkIssueService(clientRepo, docRepo, mirror, vendor as never, config,
             { renderPageToPng: async () => Buffer.from("synthetic PNG") } as never, tokens, storage as never);
         const registry = new SmsTriggerPayloadEnricherRegistry();
-        const enricher = new ReceiptLinkDeliveryEnricher(registry, issue, tokens, storage as never);
+        const enricher = new ReceiptLinkDeliveryEnricher(registry, issue, tokens, storage as never, tokenRepo);
         enricher.onModuleInit();
         const sources = new ClientAutomationSourceReader(database, rules, overrides, approval, settings, activation);
         const sender = new AligoDefaultSenderPolicyService({ getDefaultSenderPolicy: () => ({ availability: "unavailable" }) } as never);
@@ -165,7 +170,7 @@ describeReal("automatic receipt eligibility recovery on PostgreSQL", () => {
             new UpdateClientUsecase(clientRepo, calendar), new DeleteClientUsecase(clientRepo), database, clientRepo, settings,
             { invalidate: async () => {} } as never, intents, calendar, trigger,
             undefined, undefined, config, undefined, undefined, undefined, lock);
-        return { retry, trigger, clients, delivery, issue, vendor, mirror, acceptance, lock, docRepo, transport, settings, intents, jobs };
+        return { retry, trigger, clients, delivery, issue, vendor, mirror, acceptance, lock, docRepo, transport, settings, intents, jobs, storage };
     }
 
     async function fixture(birthday: string | null = "19940510") {
@@ -251,14 +256,44 @@ describeReal("automatic receipt eligibility recovery on PostgreSQL", () => {
         expect((await outcomes(original, { children: 1, accepted: 1, calls: 1 }))?.id).toBe(child.id);
     }
 
-    it.each(receiptReasons)("captures %s and recovers once after committed evidence", async reason => {
+    const noRecovery = { canceledAt: null, firstBlockedAt: null, recoveryReason: null,
+        recoveryEpoch: null, recoveryState: null, nextCheckAt: null };
+    const noDelivery = { children: 0, accepted: 0, calls: 0 };
+    const terminal = { status: "canceled", attempts: 0, canceledAt: originalDue, firstBlockedAt: originalDue,
+        recoveryReason: "receipt_recovery_not_proven", recoveryState: "ineligible_terminal", recoveryEpoch: null, nextCheckAt: null };
+    const skip = (reason: keyof typeof RECEIPT_LINK_SKIP_MESSAGES) => `메시지 발송 건너뜀: ${RECEIPT_LINK_SKIP_MESSAGES[reason]}`;
+    const paired = <T>(cases: readonly T[]) => [false, true].flatMap(enabled => cases.map(testCase => [enabled, testCase] as const));
+
+    it.each(paired([...receiptReasons, "pdf disappears at boundary"] as const))(
+        "toggle %s captures %s and only continuous ON recovers after committed evidence", async (enabled, scenario) => {
+        const atBoundary = scenario === "pdf disappears at boundary";
+        const reason = atBoundary ? "current_contract_pdf_pending" : scenario;
         const f = await fixture(reason === "missing_birthday" ? null : undefined);
         let document = reason === "missing_current_contract" ? null : await makeContract(f.client.id);
-        if (document) await syncGeneration(document, reason === "live_unsigned_contract" ? "unsigned" : "signed", reason === "missing_birthday");
-        await f.retry.update(branchId, f.rule.id, true);
+        if (document) await syncGeneration(document, reason === "live_unsigned_contract" ? "unsigned" : "signed",
+            reason === "missing_birthday" || atBoundary, atBoundary ? "syncing" : undefined);
+        if (atBoundary && document) {
+            const { id: eformsignDocId, documentId } = document;
+            const actualRead = f.mirror.findFile.bind(f.mirror);
+            jest.spyOn(f.mirror, "findFile").mockImplementationOnce(actualRead).mockImplementationOnce(async () => {
+                await independent.raw.eformsign_doc_file.deleteMany({ where: { eformsignDocId } });
+                return actualRead(documentId, "document");
+            });
+        }
+        const setting = await f.retry.update(branchId, f.rule.id, enabled);
         const original = await firstAttempt(f);
-        expect(original).toMatchObject({ status: "canceled", recoveryReason: reason, recoveryState: "eligible", firstBlockedAt: originalDue });
-        expect(sendSms).not.toHaveBeenCalled();
+        const skipCode = {
+            live_unsigned_contract: "contract_not_signed", missing_birthday: "missing_birthday",
+            missing_current_contract: "no_contract_document", current_contract_pdf_pending: "pdf_unavailable",
+        } as const;
+        expect(original).toMatchObject({
+            status: "canceled", attempts: 0, recoveryReason: reason, cancelReason: skip(skipCode[reason]),
+            firstBlockedAt: originalDue, canceledAt: originalDue, recoveryState: enabled ? "eligible" : "ineligible_terminal",
+            recoveryEpoch: enabled ? new Date(setting.enabledAt!) : null,
+            nextCheckAt: enabled ? new Date(originalDue.getTime() + 60_000) : null,
+        });
+        await outcomes(original, noDelivery);
+        if (!enabled) await f.retry.update(branchId, f.rule.id, true);
         jest.setSystemTime(nineDaysLater);
         if (reason === "missing_birthday") {
             await f.clients.update(branchId, f.client.id, { birthday: "19940510" });
@@ -267,10 +302,51 @@ describeReal("automatic receipt eligibility recovery on PostgreSQL", () => {
             await syncGeneration(document, "signed", true);
         }
         const secondWorker = worker(independent);
-        await Promise.all([
-            f.trigger.sweepReceiptRecovery(), secondWorker.trigger.sweepReceiptRecovery(),
-            secondWorker.trigger.wakeReceiptRecovery(branchId, f.client.id),
-        ]);
+        if (enabled && reason === "live_unsigned_contract") {
+            const read = f.mirror.findFile.bind(f.mirror);
+            let resume!: () => void;
+            let haveLock!: () => void;
+            let bothSelected!: () => void;
+            const release = new Promise<void>(resolve => { resume = resolve; });
+            const locked = new Promise<void>(resolve => { haveLock = resolve; });
+            const selected = new Promise<void>(resolve => { bothSelected = resolve; });
+            jest.spyOn(f.mirror, "findFile").mockImplementationOnce(async (...args) => {
+                haveLock();
+                await release;
+                return read(...args);
+            });
+            const select = secondWorker.jobs.findReceiptRecoveryCandidates.bind(secondWorker.jobs);
+            let competingReads = 0;
+            jest.spyOn(secondWorker.jobs, "findReceiptRecoveryCandidates").mockImplementation(async (...args) => {
+                const result = await select(...args);
+                expect(result).toContainEqual({ id: original.id, branchId });
+                if (++competingReads === 2) bothSelected();
+                return result;
+            });
+            const sweeper = f.trigger.sweepReceiptRecovery();
+            let competitors: Promise<unknown> | undefined;
+            try {
+                await Promise.race([locked, sweeper.then(() => { throw new Error("Sweep finished before admission barrier"); })]);
+                competitors = Promise.all([
+                    secondWorker.trigger.sweepReceiptRecovery(), secondWorker.trigger.wakeReceiptRecovery(branchId, f.client.id),
+                ]);
+                await Promise.race([selected, competitors.then(() => { throw new Error("Competitors finished before selecting the parent"); })]);
+            } finally {
+                resume();
+                await Promise.all([sweeper, competitors]);
+                jest.restoreAllMocks();
+            }
+        } else {
+            await Promise.all([
+                f.trigger.sweepReceiptRecovery(), secondWorker.trigger.sweepReceiptRecovery(),
+                secondWorker.trigger.wakeReceiptRecovery(branchId, f.client.id),
+            ]);
+        }
+        if (!enabled) {
+            await Promise.all([f.trigger.dispatchDueJobs(), secondWorker.trigger.dispatchDueJobs()]);
+            await outcomes(original, noDelivery);
+            return;
+        }
         const child = await db.raw.message_trigger_job.findUniqueOrThrow({ where: { originalJobId: original.id } });
         expect(child).toMatchObject({ scheduledFor: nineDaysLater, createdAt: nineDaysLater, recoveryEpoch: original.recoveryEpoch });
         await Promise.all([f.trigger.dispatchDueJobs(), secondWorker.trigger.dispatchDueJobs()]);
@@ -431,11 +507,26 @@ describeReal("automatic receipt eligibility recovery on PostgreSQL", () => {
         const pause = state === "processing" ? pauseAfterPreparation(f) : null;
         const inflight = pause && f.trigger.dispatchPendingJobNow(child.id, { expectedBranchId: branchId });
         try {
-            if (pause) await pause.prepared;
+            if (pause) {
+                await pause.prepared;
+                expect(await independent.raw.message_trigger_job.findUnique({ where: { id: child.id } })).toMatchObject({
+                    status: "processing", claimToken: expect.any(String), originalJobId: original.id,
+                });
+                expect(editor.trigger["ruleTargetVersion"](await editor.trigger.getRule(branchId, rule.id))).toBe(version);
+            }
             const mutation = editor.trigger.updateRuleApprovedTarget(branchId, f.rule.id, { sendTime: "16:00" }, version, snapshot);
             if (pause) {
-                await expect(mutation).rejects.toThrow();
-                expect(await db.raw.message_trigger_rule.findUnique({ where: { id: rule.id } })).toMatchObject({ sendTime: "10:00" });
+                const error = await mutation.catch((cause: unknown) => cause);
+                expect(error).toBeInstanceOf(BadRequestException);
+                expect((error as BadRequestException).getStatus()).toBe(400);
+                expect((error as BadRequestException).getResponse()).toMatchObject({
+                    code: "VALIDATION_FAILED", outcome: "NOT_APPLIED",
+                    errors: [{ pointer: "/targetVersion", code: "INVALID_VALUE", location: "body",
+                        detail: "Automation rule changed after approval" }],
+                });
+                const retainedRule = await editor.trigger.getRule(branchId, rule.id);
+                expect(retainedRule.sendTime).toBe("10:00");
+                expect(editor.trigger["ruleTargetVersion"](retainedRule)).toBe(version);
             } else {
                 await mutation;
                 expect(await db.raw.message_trigger_job.findUnique({ where: { id: child.id } })).toMatchObject({
@@ -543,26 +634,115 @@ describeReal("automatic receipt eligibility recovery on PostgreSQL", () => {
         },
     );
 
-    it.each(["partial", "failed", "unreadable"] as const)("never enrolls a %s PDF result", async state => {
+    it.each(paired(["initial", "post-refresh"] as const))("toggle %s propagates the %s preflight file read error", async (enabled, site) => {
         const f = await fixture();
         const document = await makeContract(f.client.id);
-        await syncGeneration(document, "signed", false, state === "unreadable" ? "syncing" : state);
-        if (state === "unreadable") jest.spyOn(f.mirror, "findFile").mockRejectedValueOnce(new Error("local read failed"));
-        if (state === "partial") await db.raw.eformsign_doc.update({ where: { id: document.id }, data: { syncError: "Files not ready: document" } });
-        await f.retry.update(branchId, f.rule.id, true);
+        await syncGeneration(document, "signed", false);
+        await f.retry.update(branchId, f.rule.id, enabled);
+        const read = jest.spyOn(f.mirror, "findFile");
+        if (site === "post-refresh") {
+            read.mockResolvedValueOnce(null);
+            f.vendor.syncDocument.mockImplementationOnce(async () => { await syncGeneration(document, "signed", true); });
+        }
+        read.mockRejectedValueOnce(new Error("local read failed"));
         const original = await firstAttempt(f);
-        expect(original).toMatchObject({ recoveryState: "ineligible_terminal", recoveryEpoch: null });
-        jest.setSystemTime(nineDaysLater);
-        await syncGeneration(document, "signed", true);
-        await f.trigger.dispatchDueJobs();
-        await outcomes(original, { children: 0, accepted: 0, calls: 0 });
+        expect(read).toHaveBeenCalledTimes(site === "initial" ? 1 : 2);
+        expect(f.vendor.syncDocument).toHaveBeenCalledTimes(site === "initial" ? 0 : 1);
+        expect(original).toMatchObject({ ...noRecovery, status: "failed", attempts: 0, cancelReason: "local read failed" });
+        expect(await db.raw.message_trigger_job.count({ where: { originalJobId: original.id } })).toBe(0);
+        expect(await db.raw.message_occurrence_claim.count({ where: { branchId, state: "accepted" } })).toBe(0);
+        expect(sendSms).not.toHaveBeenCalled();
     });
 
-    it("uses a committed syncing generation seen while the real mirror waits for its PDF", async () => {
+    it.each(paired(["boundary error", "partial", "failed", "pending", "unidentified", "proof error"] as const))(
+        "toggle %s protects a %s PDF refusal without enrolling it", async (enabled, site) => {
+            const f = await fixture();
+            const document = await makeContract(f.client.id);
+            const readable = site === "boundary error";
+            const syncStatus = site === "unidentified" || site === "proof error" ? "syncing" : site;
+            await syncGeneration(document, "signed", readable, readable ? "ready" : syncStatus);
+            if (site === "partial") await db.raw.eformsign_doc.update({ where: { id: document.id }, data: { syncError: "Files not ready: document" } });
+            if (site === "unidentified") await db.raw.eformsign_doc.update({ where: { id: document.id }, data: { detailSyncedAt: null } });
+            if (readable || site === "proof error") {
+                const actualRead = f.mirror.findFile.bind(f.mirror);
+                jest.spyOn(f.mirror, "findFile").mockImplementationOnce(actualRead)
+                    .mockRejectedValueOnce(new Error("local read failed"));
+            }
+            await f.retry.update(branchId, f.rule.id, enabled);
+            const original = await firstAttempt(f);
+            expect(original).toMatchObject({ ...terminal, cancelReason: skip("pdf_unavailable") });
+            await outcomes(original, noDelivery);
+            advance(originalDue, 2);
+            await syncGeneration(document, "signed", true);
+            await f.trigger.wakeReceiptRecovery(branchId, f.client.id);
+            await f.trigger.dispatchDueJobs();
+            await outcomes(original, noDelivery);
+        },
+    );
+
+    it.each(paired(["072", "070", "071", "legacy branch"] as const))("toggle %s sends an ordinary signed %s receipt", async (enabled, status) => {
         const f = await fixture();
         const document = await makeContract(f.client.id);
+        await syncGeneration(document, "signed", true);
+        if (status === "legacy branch") {
+            await db.raw.eformsign_doc.update({ where: { id: document.id }, data: { branchId: null } });
+        } else {
+            await db.raw.eformsign_doc.update({ where: { id: document.id }, data: {
+                // A stale projection is not a stricter signature gate than the live detail.
+                statusType: status === "070" ? "998" : status,
+                detailPayload: mirrorDetail({ documentId: document.documentId, statusType: status, updatedDate: beforeDue,
+                    stepType: status === "070" ? "06" : "05", stepName: status === "070" ? "제공기관 확인" : "고객 서명" }) as unknown as Prisma.InputJsonObject,
+            } });
+        }
+        await f.retry.update(branchId, f.rule.id, enabled);
+        const original = await firstAttempt(f);
+        await expectOrdinarySent(original);
+    });
+
+    async function expectOrdinarySent(original: message_trigger_job) {
+        expect(original).toMatchObject({ ...noRecovery, status: "sent", attempts: 0, cancelReason: null });
+        expect(await db.raw.message_trigger_job.count({ where: { originalJobId: original.id } })).toBe(0);
+        expect(await db.raw.message_occurrence_claim.count({ where: { branchId, state: "accepted", slot: { not: null } } })).toBe(1);
+        expect(sendSms).toHaveBeenCalledTimes(1);
+    }
+
+    it.each(["throws", "returns terminal absence"] as const)("rechecks a due eligible original when the admission file read %s", async fault => {
+        const f = await fixture();
+        const { original, document } = await eligibleUnsignedReceipt(f);
+        advance(originalDue, 1);
+        const now = new Date();
+        await syncGeneration(document, "signed", true);
+        const read = jest.spyOn(f.mirror, "findFile");
+        if (fault === "throws") read.mockRejectedValueOnce(new Error("local read failed"));
+        else read.mockResolvedValueOnce(null);
+        await f.trigger.sweepReceiptRecovery(now);
+        expect(await getOriginal(f.rule.id)).toMatchObject({
+            status: "canceled", attempts: original.attempts, cancelReason: original.cancelReason, canceledAt: original.canceledAt,
+            scheduledFor: original.scheduledFor, recoveryReason: original.recoveryReason, firstBlockedAt: original.firstBlockedAt,
+            recoveryEpoch: original.recoveryEpoch, recoveryState: fault === "throws" ? "eligible" : "ineligible_terminal",
+            nextCheckAt: fault === "throws" ? new Date(now.getTime() + 60_000) : null,
+        });
+        await outcomes(original, noDelivery);
+        advance(now, 1);
+        await f.trigger.dispatchDueJobs();
+        await outcomes(original, fault === "throws" ? { children: 1, accepted: 1, calls: 1 } : noDelivery);
+    });
+
+    it.each(["committed syncing PDF", "legacy null branch signing"] as const)(
+        "wakes recovery after real mirror sync of %s before the due sweep", async scenario => {
+        const f = await fixture();
+        const document = await makeContract(f.client.id);
+        const legacy = scenario === "legacy null branch signing";
         await f.retry.update(branchId, f.rule.id, true);
-        const detail = mirrorDetail({ documentId: document.documentId, statusType: "070", updatedDate: beforeDue });
+        let original: message_trigger_job;
+        if (legacy) {
+            await db.raw.eformsign_doc.update({ where: { id: document.id }, data: { branchId: null } });
+            await syncGeneration(document, "unsigned", false);
+            original = await firstAttempt(f);
+            expect(original).toMatchObject({ recoveryReason: "live_unsigned_contract", recoveryState: "eligible" });
+        }
+        const sourceUpdatedDate = legacy ? originalDue : beforeDue;
+        const detail = mirrorDetail({ documentId: document.documentId, statusType: "070", updatedDate: sourceUpdatedDate });
         let enteredDownload!: () => void;
         let finishDownload!: () => void;
         const downloading = new Promise<void>(resolve => { enteredDownload = resolve; });
@@ -580,26 +760,192 @@ describeReal("automatic receipt eligibility recovery on PostgreSQL", () => {
                     return { status: 200, body: pdf, contentType: "application/pdf", contentDisposition: null };
                 },
             } as never, undefined, undefined, undefined, f.trigger);
-        const syncing = mirrorService.syncDocument(document.documentId, { branchId, source: "worker" }, { skipClientReconciliation: true });
-        let original: message_trigger_job;
+        const principal = { branchId, source: "worker" } as const;
+        const syncOptions = { skipClientReconciliation: true, skipBranchOwnedProjection: legacy };
+        const syncing = mirrorService.syncDocument(document.documentId, principal,
+            { ...syncOptions, suppressOutboundAutomation: legacy });
         try {
             await Promise.race([downloading, syncing.then(() => { throw new Error("Mirror completed before its document download"); })]);
             expect(await f.mirror.findState(document.documentId)).toMatchObject({
                 syncStatus: "syncing", syncError: null, permanentPurgeRequestedAt: null,
-                detailSourceUpdatedDate: beforeDue, detailSyncedAt: beforeDue,
+                detailSourceUpdatedDate: sourceUpdatedDate, detailSyncedAt: sourceUpdatedDate, branchId: legacy ? null : branchId,
             });
             expect(await f.mirror.findFile(document.documentId, "document")).toBeNull();
-            original = await firstAttempt(f);
-            expect(f.vendor.syncDocument).toHaveBeenCalledTimes(1);
-            expect(original).toMatchObject({ recoveryReason: "current_contract_pdf_pending", recoveryState: "eligible" });
+            if (!legacy) {
+                original = await firstAttempt(f);
+                expect(f.vendor.syncDocument).toHaveBeenCalledTimes(1);
+                expect(original).toMatchObject({ recoveryReason: "current_contract_pdf_pending", recoveryState: "eligible" });
+            }
             expect(await f.mirror.findFile(document.documentId, "document")).toBeNull();
         } finally {
             finishDownload();
             await syncing;
         }
-        await f.trigger.dispatchPendingJobNow((await db.raw.message_trigger_job.findUniqueOrThrow({ where: { originalJobId: original.id } })).id,
-            { expectedBranchId: branchId });
-        await outcomes(original, { children: 1, accepted: 1, calls: 1 });
+        if (legacy) {
+            await outcomes(original!, noDelivery);
+            await mirrorService.syncDocument(document.documentId, principal, syncOptions);
+        }
+        const admitted = await db.raw.message_trigger_job.findUniqueOrThrow({ where: { originalJobId: original!.id } });
+        expect(admitted.createdAt.getTime()).toBeLessThan(original!.nextCheckAt!.getTime());
+        await f.trigger.dispatchPendingJobNow(admitted.id, { expectedBranchId: branchId });
+        await outcomes(original!, { children: 1, accepted: 1, calls: 1 });
+    });
+
+    it.each(paired(["foreign selection", "foreign mirror branch", "different mirror id", "terminal stale review", "void", "purge"] as const))(
+        "toggle %s protects the current contract with %s even with an older signed contract", async (enabled, scenario) => {
+            const terminalWithNoBirthday = scenario === "terminal stale review";
+            const f = await fixture(terminalWithNoBirthday ? null : undefined);
+            await syncGeneration(await makeContract(f.client.id), "signed", true);
+            const current = await makeContract(f.client.id);
+            await syncGeneration(current, "signed", true);
+            const foreign = (await createBranch(db.raw, tracker)).id;
+            let refusal: keyof typeof RECEIPT_LINK_SKIP_MESSAGES = "contract_not_signed";
+            if (scenario === "foreign selection") {
+                await db.raw.eformsign_doc.update({ where: { id: current.id }, data: { branchId: foreign } });
+            } else if (scenario === "foreign mirror branch" || scenario === "different mirror id") {
+                const read = f.mirror.findState.bind(f.mirror);
+                jest.spyOn(f.mirror, "findState").mockImplementationOnce(async documentId => {
+                    const result = await read(documentId);
+                    expect(documentId).toBe(current.documentId);
+                    if (!result) return result;
+                    return scenario === "foreign mirror branch" ? { ...result, branchId: foreign } : { ...result, documentId: "different-id" };
+                });
+            } else if (scenario === "terminal stale review") {
+                await db.raw.eformsign_doc.update({ where: { id: current.id }, data: {
+                    statusType: "090", detailPayload: mirrorDetail({ documentId: current.documentId, statusType: "090",
+                        updatedDate: beforeDue, stepType: "06", stepName: "제공기관 확인" }) as unknown as Prisma.InputJsonObject,
+                } });
+            } else {
+                refusal = scenario === "void" ? "contract_voided" : "no_contract_document";
+                await db.raw.eformsign_doc.update({ where: { id: current.id },
+                    data: scenario === "void" ? { voidedAt: beforeDue } : { permanentPurgeRequestedAt: beforeDue } });
+            }
+            await f.retry.update(branchId, f.rule.id, enabled);
+            const original = await firstAttempt(f);
+            expect(original).toMatchObject({ ...terminal, cancelReason: skip(refusal) });
+            await outcomes(original, noDelivery);
+            advance(originalDue, 2);
+            await db.raw.eformsign_doc.update({ where: { id: current.id }, data: { branchId, voidedAt: null, permanentPurgeRequestedAt: null } });
+            await syncGeneration(current, "signed", true);
+            if (terminalWithNoBirthday) await f.clients.update(branchId, f.client.id, { birthday: "19940510" });
+            await f.trigger.wakeReceiptRecovery(branchId, f.client.id);
+            await f.trigger.dispatchDueJobs();
+            await outcomes(original, noDelivery);
+        },
+    );
+
+    async function configureQuietHold(f: Awaited<ReturnType<typeof fixture>>, start = "09:30", end = "10:30") {
+        const { version, configuration } = await f.settings.getMessageAutomationPolicyConfig(branchId);
+        await f.settings.setMessageAutomationPolicyConfig(branchId, version, {
+            ...configuration,
+            quietHours: { ...configuration.quietHours, enabled: true, action: "DEFER", start, end, recipientGroups: ["CLIENT"] },
+        });
+    }
+
+    async function stripStagedGeneration(job: message_trigger_job, malformed = false) {
+        const payload = job.payload as { templateVariables: Record<string, string> };
+        const snapshot = JSON.parse(payload.templateVariables[SMS_DELIVERY_SNAPSHOT_VARIABLE]!);
+        expect(snapshot.receiptGeneration).toMatchObject({ documentId: expect.any(Number), sha256: pdfDigest });
+        if (malformed) snapshot.receiptGeneration = null;
+        else delete snapshot.receiptGeneration;
+        await db.raw.message_trigger_job.update({ where: { id: job.id }, data: {
+            payload: { ...payload, templateVariables: {
+                ...payload.templateVariables, [SMS_DELIVERY_SNAPSHOT_VARIABLE]: JSON.stringify(snapshot),
+            } },
+        } });
+    }
+
+    it.each(paired(["ready", "expired at validation", "expires before provider", "malformed generation", "foreign token", "revoked token", "replaced contract", "unreadable at provider"] as const))(
+        "toggle %s releases a pre-upgrade quiet hold with %s", async (enabled, site) => {
+            const f = await fixture();
+            const document = await makeContract(f.client.id);
+            await syncGeneration(document, "signed", true);
+            await configureQuietHold(f);
+            await f.retry.update(branchId, f.rule.id, enabled);
+            const original = await firstAttempt(f);
+            const release = new Date("2026-11-24T01:30:00.000Z");
+            expect(original).toMatchObject({ ...noRecovery, status: "pending", attempts: 0, nextAttemptAt: release });
+            const log = await db.raw.message_log.findFirstOrThrow({ where: { branchId, triggerJobId: original.id } });
+            expect(log).toMatchObject({ providerAcceptanceState: "prepared", providerCallStartedAt: null,
+                variables: expect.objectContaining({ quietHoursDisposition: "DEFER", quietHoursReleaseAt: release.toISOString() }) });
+            const token = await db.raw.receipt_link_token.findFirstOrThrow({ where: { branchId, eformsignDocId: document.id, active: true } });
+            expect(token).toMatchObject({ kind: "contract", clientId: f.client.id });
+            await stripStagedGeneration(original, site === "malformed generation");
+            jest.setSystemTime(release);
+            if (site === "expired at validation" || site === "expires before provider") {
+                await independent.raw.receipt_link_token.update({ where: { id: token.id }, data: {
+                    expiresAt: new Date(release.getTime() + (site === "expired at validation" ? -1 : 1)),
+                } });
+            } else if (site === "foreign token") {
+                await independent.raw.receipt_link_token.update({ where: { id: token.id }, data: { branchId: (await createBranch(db.raw, tracker)).id } });
+            } else if (site === "revoked token") {
+                await independent.raw.receipt_link_token.update({ where: { id: token.id }, data: { active: false, revokedAt: release } });
+            } else if (site === "replaced contract") {
+                await syncGeneration(await makeContract(f.client.id), "signed", true);
+            }
+
+            const fresh = worker(independent);
+            try {
+                if (site === "expires before provider" || site === "unreadable at provider") {
+                    const pause = pauseAfterPreparation(fresh);
+                    const sending = fresh.trigger.dispatchDueJobs();
+                    try {
+                        await Promise.race([pause.prepared, sending.then(() => { throw new Error("Release finished without preparation"); })]);
+                        if (site === "expires before provider") jest.setSystemTime(new Date(release.getTime() + 1));
+                        else jest.spyOn(fresh.mirror, "findFile").mockRejectedValueOnce(new Error("local read failed"));
+                    } finally {
+                        pause.resume();
+                        await sending;
+                    }
+                } else {
+                    await fresh.trigger.dispatchDueJobs();
+                }
+                const after = await getOriginal(f.rule.id);
+                expect(fresh.storage.upload).not.toHaveBeenCalled();
+                expect(f.storage.upload).toHaveBeenCalledTimes(1);
+                if (site === "ready") {
+                    await expectOrdinarySent(after);
+                    expect(sendSms.mock.calls[0]?.[0].message).toBe(log.messageBody);
+                    expect(await db.raw.receipt_link_token.findUnique({ where: { id: token.id } })).toEqual(token);
+                    await fresh.trigger.dispatchDueJobs();
+                    expect(sendSms).toHaveBeenCalledTimes(1);
+                } else {
+                    if (site === "expired at validation" || site === "replaced contract" || site === "foreign token" || site === "revoked token") {
+                        expect(after).toMatchObject({ ...terminal, canceledAt: release, firstBlockedAt: release,
+                            cancelReason: "메시지 발송 건너뜀: 승인된 영수증 링크가 만료되었거나 취소되어 재시도하지 않았습니다" });
+                    } else {
+                        expect(after).toMatchObject({ ...noRecovery, canceledAt: new Date(), status: "canceled", attempts: 0,
+                            cancelReason: "receipt_recovery_not_proven" });
+                    }
+                    await outcomes(after, noDelivery);
+                    if (site === "revoked token") {
+                        expect(await db.raw.receipt_link_token.findUnique({ where: { id: token.id } }))
+                            .toMatchObject({ active: false, revokedAt: release });
+                    }
+                }
+            } finally {
+                if (site === "foreign token") {
+                    await independent.raw.receipt_link_token.update({ where: { id: token.id }, data: { branchId } });
+                }
+            }
+        },
+    );
+
+    it("refuses the ordinary legacy fallback for a quiet-held recovered child", async () => {
+        const { f, original, child } = await admittedChild();
+        await configureQuietHold(f, "14:30", "15:30");
+        advance(child.scheduledFor, 1);
+        await f.trigger.dispatchDueJobs();
+        const held = await db.raw.message_trigger_job.findUniqueOrThrow({ where: { id: child.id } });
+        const release = new Date("2026-11-24T06:30:00.000Z");
+        expect(held).toMatchObject({ status: "pending", nextAttemptAt: release });
+        await stripStagedGeneration(held);
+        jest.setSystemTime(release);
+        await worker(independent).trigger.dispatchDueJobs();
+        expect(await db.raw.message_trigger_job.findUniqueOrThrow({ where: { id: child.id } })).toMatchObject({
+            status: "canceled", cancelReason: "receipt_recovery_not_proven",
+        });
+        await outcomes(original, { children: 1, accepted: 0, calls: 0 });
     });
 
     it("moves waiting parents behind a ready parent after a missed wake", async () => {
@@ -1117,69 +1463,170 @@ describeReal("automatic receipt eligibility recovery on PostgreSQL", () => {
         expect(await db.raw.message_occurrence_claim.count({ where: { branchId, slot: { not: null }, state: "accepted" } })).toBe(1);
     });
 
-    it("replays both patches and checks disjoint parent, child and ordinary constraints", async () => {
-        const paths = [
-            "migrations/20261124000000_add_record_link_job_recovery/migration.sql",
-            "scripts/verify-record-link-job-recovery.sql",
-            "migrations/20261124010000_add_receipt_job_recovery/migration.sql",
-            "scripts/verify-receipt-job-recovery.sql",
-        ];
-        const runPatches = () => {
-            for (const path of paths) {
-                execFileSync("psql", ["--no-psqlrc", "--set=ON_ERROR_STOP=1", "--quiet", process.env["DATABASE_URL"]!,
-                    "--file", resolve("prisma", path)], { stdio: "pipe" });
-            }
+    it("upgrades populated record-link rows, verifies both CHECK arms and replays occurrence RLS", async () => {
+        const url = new URL(process.env["DATABASE_URL"]!); // Guarded by createIntegrityPrisma in beforeAll.
+        const databaseName = `receipt_upgrade_throwaway_${randomUUID().replaceAll("-", "")}`;
+        const command = (database: URL, args: string[], input?: string) => spawnSync(
+            "psql", ["-X", "-v", "ON_ERROR_STOP=1", "-q", database.href, ...args],
+            { input, encoding: "utf8" },
+        );
+        const succeeded = (result: ReturnType<typeof command>) => {
+            if (result.status !== 0) throw new Error(result.stderr || result.error?.message || "psql failed");
         };
-        runPatches();
-        const f = await fixture();
-        const document = await makeContract(f.client.id);
-        await syncGeneration(document, "unsigned", false);
-        await f.retry.update(branchId, f.rule.id, true);
-        const original = await firstAttempt(f);
-        await syncGeneration(document, "signed", true);
-        await f.trigger.wakeReceiptRecovery(branchId, f.client.id);
-        const child = await db.raw.message_trigger_job.findUniqueOrThrow({ where: { originalJobId: original.id } });
+        succeeded(command(url, ["-c", `CREATE DATABASE ${databaseName}`]));
+        const upgradeUrl = new URL(url);
+        upgradeUrl.pathname = "/" + databaseName;
+        const upgrade = new PrismaClient({ datasourceUrl: upgradeUrl.href });
+        const oldName = "20261124000000_add_record_link_job_recovery";
+        const newName = "20261124010000_add_receipt_job_recovery";
+        const occurrenceName = "20261123010000_add_message_occurrence_claim";
+        const migration = (name: string) => resolve("prisma/migrations", name, "migration.sql");
+        const verifier = (name: string) => resolve("prisma/scripts", `verify-${name}.sql`);
+        const apply = (...paths: string[]) => succeeded(command(upgradeUrl, paths.flatMap(path => ["-f", path])));
+        const newVerifier = verifier("receipt-job-recovery");
+        const oldVerifier = verifier("record-link-job-recovery");
+        const checkName = "ck_message_trigger_job_record_link_recovery";
+        const upgradeTracker = new RowTracker();
 
-        const recordRule = "system:service_record_link";
-        await db.raw.message_trigger_rule.upsert({ where: { id: recordRule }, update: {},
-            create: { id: recordRule, name: "기록지", eventType: "SERVICE_START", offsetType: "SAME_DAY",
-                templateKey: "SERVICE_RECORD_LINK", recipientType: "PRIMARY_EMPLOYEE" } });
-        const recordIdentity = { branchId, ruleId: recordRule, templateKey: "SERVICE_RECORD_LINK",
-            recipientType: "PRIMARY_EMPLOYEE", scheduledFor: originalDue, recoveryReason: "record_link_pre_booking",
-            recoveryEpoch: original.recoveryEpoch };
-        const recordParent = await db.raw.message_trigger_job.create({ data: { ...recordIdentity, dedupeKey: randomUUID(),
-            status: "canceled", firstBlockedAt: originalDue, recoveryState: "admitted", recoveryTransitionStatus: "active" } });
-        const recordChild = await db.raw.message_trigger_job.create({ data: { ...recordIdentity,
-            originalJobId: recordParent.id, dedupeKey: `record-retry:${recordParent.id}` } });
-        runPatches();
-        expect(await db.raw.message_trigger_job.findUnique({ where: { id: original.id } }))
-            .toMatchObject({ status: "canceled", scheduledFor: original.scheduledFor, canceledAt: original.canceledAt });
-        expect(await db.raw.message_trigger_job.findUnique({ where: { id: recordParent.id } })).toEqual(recordParent);
-        expect(await db.raw.message_trigger_job.findUnique({ where: { id: recordChild.id } })).toEqual(recordChild);
-        expect(await db.raw.message_trigger_job.findUnique({ where: { originalJobId: original.id } })).toEqual(child);
-        await db.raw.$transaction(async tx => {
-            async function refuses(statement: Prisma.Sql, code: string) {
-                await tx.$executeRaw`SAVEPOINT malformed`;
-                try {
-                    await expect(tx.$executeRaw(statement)).rejects.toMatchObject({ meta: { code } });
-                } finally {
-                    await tx.$executeRaw`ROLLBACK TO SAVEPOINT malformed`;
-                    await tx.$executeRaw`RELEASE SAVEPOINT malformed`;
-                }
+        try {
+            const prefix = readdirSync(resolve("prisma/migrations"), { withFileTypes: true })
+                .filter(entry => entry.isDirectory() && entry.name <= oldName)
+                .map(entry => entry.name).sort();
+            expect(prefix.at(-1)).toBe(oldName);
+            apply(...prefix.map(migration), oldVerifier);
+
+            const branch = await createBranch(upgrade, upgradeTracker);
+            const client = await createClient(upgrade, upgradeTracker, { branchId: branch.id });
+            const receiptRule = await createMessageTriggerRule(upgrade, upgradeTracker, { branchId: branch.id,
+                templateKey: "SERVICE_END_NOTICE", recipientType: "CLIENT", eventType: "SERVICE_END" });
+            const recordRule = await upgrade.message_trigger_rule.upsert({ where: { id: "system:service_record_link" }, update: {},
+                create: { id: "system:service_record_link", name: "기록지", eventType: "SERVICE_START", offsetType: "SAME_DAY",
+                    templateKey: "SERVICE_RECORD_LINK", recipientType: "PRIMARY_EMPLOYEE" } });
+            const ordinary = { branchId: branch.id, ruleId: receiptRule.id, clientId: client.id,
+                recipientType: "CLIENT", templateKey: "SERVICE_END_NOTICE", scheduledFor: originalDue };
+            const record = { branchId: branch.id, ruleId: recordRule.id, templateKey: "SERVICE_RECORD_LINK",
+                recipientType: "PRIMARY_EMPLOYEE", scheduledFor: originalDue, recoveryReason: "record_link_pre_booking", recoveryEpoch: beforeDue };
+            const receipt = { ...ordinary, recoveryReason: "live_unsigned_contract", recoveryEpoch: beforeDue };
+            const create = (data: Prisma.message_trigger_jobUncheckedCreateInput) => upgrade.message_trigger_job.create({ data });
+            const original = await create({ ...ordinary, dedupeKey: "ordinary" });
+            const recordParent = await create({ ...record, dedupeKey: "record-parent", status: "canceled",
+                firstBlockedAt: originalDue, recoveryState: "admitted", recoveryTransitionStatus: "active" });
+            const recordChild = await create({ ...record, originalJobId: recordParent.id, dedupeKey: `record-retry:${recordParent.id}` });
+            const receiptParentData = { ...receipt, id: randomUUID(), dedupeKey: "receipt-parent", status: "canceled",
+                canceledAt: originalDue, firstBlockedAt: originalDue, recoveryState: "admitted" };
+
+            await upgrade.$transaction(async tx => {
+                await refusesSql(tx, Prisma.sql`INSERT INTO message_trigger_job (id, branch_id, client_id, rule_id, recipient_type,
+                    template_key, dedupe_key, status, scheduled_for, updated_at, canceled_at, first_blocked_at, recovery_reason,
+                    recovery_epoch, recovery_state) VALUES (${receiptParentData.id}, ${branch.id}::uuid, ${client.id},
+                    ${receiptRule.id}, 'CLIENT', 'SERVICE_END_NOTICE', 'receipt-parent', 'canceled', ${originalDue},
+                    ${originalDue}, ${originalDue}, ${originalDue}, 'live_unsigned_contract', ${beforeDue}, 'admitted')`,
+                    "23514", checkName);
+            });
+            const rows = () => upgrade.message_trigger_job.findMany({ where: { branchId: branch.id }, orderBy: { id: "asc" } });
+            const before = await rows();
+            expect(before).toHaveLength(3);
+            expect(before).toEqual(expect.arrayContaining([original, recordParent, recordChild]));
+
+            apply(migration(newName), newVerifier);
+            expect(await rows()).toEqual(before);
+            const receiptParent = await create(receiptParentData);
+            const receiptChild = await create({ ...receipt, originalJobId: receiptParent.id, dedupeKey: `receipt-retry:${receiptParent.id}` });
+            const upgraded = await rows();
+            expect(upgraded).toHaveLength(5);
+            apply(migration(oldName), oldVerifier, migration(newName), newVerifier);
+            expect(await rows()).toEqual(upgraded);
+            const structure = () => upgrade.$queryRaw<Array<{ conname: string; convalidated: boolean; definition: string }>>(Prisma.sql`
+                SELECT conname, convalidated, pg_get_constraintdef(oid, false) AS definition
+                FROM pg_constraint WHERE conrelid = 'public.message_trigger_job'::regclass
+                  AND conname IN (${checkName}, 'message_trigger_job_original_job_id_fkey')`);
+            expect(await structure()).toEqual(expect.arrayContaining([
+                expect.objectContaining({ conname: checkName, convalidated: true }),
+                { conname: "message_trigger_job_original_job_id_fkey", convalidated: true,
+                    definition: "FOREIGN KEY (original_job_id) REFERENCES message_trigger_job(id)" },
+            ]));
+            expect(await upgrade.$queryRaw`SELECT indisunique, indisvalid, pg_get_indexdef(indexrelid, 1, false) AS column
+                FROM pg_index WHERE indexrelid = 'public.uq_message_trigger_job_original_job_id'::regclass
+                AND indrelid = 'public.message_trigger_job'::regclass AND indnkeyatts = 1`)
+                .toEqual([{ indisunique: true, indisvalid: true, column: "original_job_id" }]);
+
+            await upgrade.$transaction(async tx => {
+                await refusesSql(tx, Prisma.sql`UPDATE message_trigger_job SET first_blocked_at = now() WHERE id = ${receiptChild.id}`, "23514", checkName);
+                await refusesSql(tx, Prisma.sql`UPDATE message_trigger_job SET recovery_epoch = NULL WHERE id = ${receiptChild.id}`, "23514", checkName);
+                await refusesSql(tx, Prisma.sql`UPDATE message_trigger_job SET status = 'pending' WHERE id = ${receiptParent.id}`, "23514", checkName);
+                await refusesSql(tx, Prisma.sql`UPDATE message_trigger_job SET recovery_reason = 'record_link_pre_booking' WHERE id = ${receiptChild.id}`, "23514", checkName);
+                await refusesSql(tx, Prisma.sql`UPDATE message_trigger_job SET recovery_transition_status = NULL WHERE id = ${recordParent.id}`, "23514", checkName);
+                await refusesSql(tx, Prisma.sql`UPDATE message_trigger_job SET first_blocked_at = now() WHERE id = ${recordChild.id}`, "23514", checkName);
+                await refusesSql(tx, Prisma.sql`UPDATE message_trigger_job SET dedupe_key = 'receipt-retry:ordinary' WHERE id = ${original.id}`, "23514", checkName);
+                // A second child with a distinct, CHECK-valid key isolates the original-job unique index.
+                await refusesSql(tx, Prisma.sql`INSERT INTO message_trigger_job (branch_id, rule_id, recipient_type, template_key,
+                    scheduled_for, updated_at, original_job_id, recovery_epoch, recovery_reason, dedupe_key)
+                    VALUES (${branch.id}::uuid, ${recordRule.id}, 'PRIMARY_EMPLOYEE', 'SERVICE_RECORD_LINK', now(), now(),
+                        ${receiptParent.id}, ${beforeDue}, 'record_link_pre_booking', ${`record-retry:${receiptParent.id}`})`,
+                    "23505", "Key (original_job_id)=");
+                const missing = randomUUID();
+                await refusesSql(tx, Prisma.sql`UPDATE message_trigger_job SET original_job_id = ${missing}, dedupe_key = ${`receipt-retry:${missing}`}
+                    WHERE id = ${receiptChild.id}`, "23503", "message_trigger_job_original_job_id_fkey");
+            });
+
+            const approvedPatch = readFileSync(migration(newName), "utf8");
+            for (const predicate of [" AND recipient_type = 'PRIMARY_EMPLOYEE'", "recipient_type = 'CLIENT' AND "]) {
+                const mutant = approvedPatch.replace(predicate, "");
+                expect(mutant).not.toBe(approvedPatch);
+                succeeded(command(upgradeUrl, ["-f", "-"], mutant));
+                expect(await structure()).toEqual(expect.arrayContaining([expect.objectContaining({ conname: checkName, convalidated: true })]));
+                const result = command(upgradeUrl, ["-f", newVerifier]);
+                expect(result.status).toBe(3);
+                expect(result.stderr).toContain("ERROR:  Receipt recovery CHECK definition mismatch");
+                apply(migration(newName), newVerifier);
             }
-            await refuses(Prisma.sql`UPDATE message_trigger_job SET first_blocked_at = now() WHERE id = ${child.id}`, "23514");
-            await refuses(Prisma.sql`UPDATE message_trigger_job SET recovery_epoch = NULL WHERE id = ${child.id}`, "23514");
-            await refuses(Prisma.sql`UPDATE message_trigger_job SET scheduled_for = now(), status = 'pending' WHERE id = ${original.id}`, "23514");
-            await refuses(Prisma.sql`UPDATE message_trigger_job SET recovery_reason = 'record_link_pre_booking' WHERE id = ${child.id}`, "23514");
-            await refuses(Prisma.sql`UPDATE message_trigger_job SET recovery_transition_status = NULL WHERE id = ${recordParent.id}`, "23514");
-            await refuses(Prisma.sql`UPDATE message_trigger_job SET first_blocked_at = now() WHERE id = ${recordChild.id}`, "23514");
-            await refuses(Prisma.sql`INSERT INTO message_trigger_job (branch_id, rule_id, recipient_type, template_key,
-                scheduled_for, updated_at, original_job_id, recovery_epoch, recovery_reason, dedupe_key)
-                VALUES (${branchId}::uuid, ${recordRule}, 'PRIMARY_EMPLOYEE', 'SERVICE_RECORD_LINK', now(), now(),
-                    ${original.id}, ${original.recoveryEpoch}, 'record_link_pre_booking', ${`record-retry:${original.id}`})`, "23505");
-            const missing = randomUUID();
-            await refuses(Prisma.sql`UPDATE message_trigger_job SET original_job_id = ${missing}, dedupe_key = ${`receipt-retry:${missing}`}
-                WHERE id = ${child.id}`, "23503");
-        });
-    });
+            expect(await rows()).toEqual(upgraded);
+
+            const occurrenceVerifier = verifier("message-occurrence-claim");
+            apply(migration(occurrenceName), occurrenceVerifier, migration(occurrenceName), occurrenceVerifier);
+            const acceptedLog = await createMessageLog(upgrade, upgradeTracker, { branchId: branch.id });
+            const otherLog = await createMessageLog(upgrade, upgradeTracker, { branchId: branch.id });
+            const claim = { branchId: branch.id, occurrenceKey: "a".repeat(64), templateKey: "SERVICE_END_NOTICE",
+                lifecycleId: client.id, recipientKind: "client", recipientId: client.id };
+            await upgrade.message_occurrence_claim.create({ data: claim });
+            await upgrade.message_occurrence_manual_attempt.create({ data: { branchId: branch.id,
+                occurrenceKey: claim.occurrenceKey, logId: acceptedLog.id, state: "accepted" } });
+            await upgrade.$transaction(async tx => {
+                // The role and its grants are transactional and removed when this savepoint rolls back.
+                const reader = `occurrence_reader_${randomUUID().replaceAll("-", "")}`;
+                await tx.$executeRaw`SAVEPOINT ledger_role`;
+                try {
+                    await tx.$executeRawUnsafe(`CREATE ROLE ${reader} NOSUPERUSER NOBYPASSRLS`);
+                    await tx.$executeRawUnsafe(`GRANT USAGE ON SCHEMA public TO ${reader}`);
+                    await tx.$executeRawUnsafe(`GRANT SELECT, INSERT ON message_occurrence_claim, message_occurrence_manual_attempt TO ${reader}`);
+                    await tx.$executeRawUnsafe(`SET LOCAL ROLE ${reader}`);
+                    expect(await tx.message_occurrence_claim.count()).toBe(0);
+                    expect(await tx.message_occurrence_manual_attempt.count()).toBe(0);
+                    await refusesSql(tx, Prisma.sql`INSERT INTO message_occurrence_claim
+                        (branch_id, occurrence_key, template_key, lifecycle_id, recipient_kind, recipient_id)
+                        VALUES (${branch.id}::uuid, ${"b".repeat(64)}, 'SERVICE_END_NOTICE', ${client.id}, 'client', ${client.id})`,
+                        "42501", "row-level security policy");
+                    await refusesSql(tx, Prisma.sql`INSERT INTO message_occurrence_manual_attempt (branch_id, occurrence_key, log_id, state)
+                        VALUES (${branch.id}::uuid, ${claim.occurrenceKey}, ${otherLog.id}, 'accepted')`, "42501", "row-level security policy");
+                } finally {
+                    await tx.$executeRaw`ROLLBACK TO SAVEPOINT ledger_role`;
+                }
+                expect(await tx.message_occurrence_claim.count({ where: { branchId: branch.id } })).toBe(1);
+                expect(await tx.message_occurrence_manual_attempt.count({ where: { branchId: branch.id } })).toBe(1);
+            });
+        } finally {
+            await upgrade.$disconnect();
+            succeeded(command(url, ["-c", `DROP DATABASE ${databaseName}`]));
+        }
+    }, 60_000);
+
+    async function refusesSql(tx: Prisma.TransactionClient, statement: Prisma.Sql, code: string, message: string) {
+        await tx.$executeRaw`SAVEPOINT invalid_statement`;
+        try {
+            await expect(tx.$executeRaw(statement)).rejects.toMatchObject({ meta: { code, message: expect.stringContaining(message) } });
+        } finally {
+            await tx.$executeRaw`ROLLBACK TO SAVEPOINT invalid_statement`;
+            await tx.$executeRaw`RELEASE SAVEPOINT invalid_statement`;
+        }
+    }
 });

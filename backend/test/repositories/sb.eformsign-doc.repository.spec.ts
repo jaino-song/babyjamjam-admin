@@ -455,7 +455,8 @@ describe("SbEformsignDocRepository", () => {
         });
 
         it("reads the same row set as the client summary: no branch, purge or sync-state filter", async () => {
-            const rows = [{ id: 3, documentId: "doc-3", permanentPurgeRequestedAt: new Date("2026-07-01T00:00:00Z") }];
+            const rows = [{ id: 3, documentId: "doc-3", branchId: null, clientId: 55, expired: false,
+                permanentPurgeRequestedAt: new Date("2026-07-01T00:00:00Z") }];
             eformsignDocModel.findMany.mockResolvedValueOnce(rows);
 
             const result = await repository.findContractCandidatesByClientId(55);
@@ -479,6 +480,9 @@ describe("SbEformsignDocRepository", () => {
                 select: {
                     id: true,
                     documentId: true,
+                    branchId: true,
+                    clientId: true,
+                    expired: true,
                     documentKind: true,
                     serviceRecordCaseId: true,
                     templateId: true,

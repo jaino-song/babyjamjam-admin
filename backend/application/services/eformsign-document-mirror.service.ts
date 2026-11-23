@@ -340,7 +340,7 @@ export class EformsignDocumentMirrorService {
         }
         if (!options.suppressOutboundAutomation && this.messageTriggers) {
             const state = await this.mirrorRepository.findState(documentId).catch(() => null);
-            if (state?.branchId) {
+            if (state?.documentId === documentId) {
                 await this.messageTriggers.wakeReceiptRecoveryForDocument(state.branchId, documentId).catch(error => {
                     this.logger.warn(`Receipt recovery wake failed for ${documentId}: ${sanitizeEformsignErrorMessage(error)}`);
                 });
