@@ -1,6 +1,7 @@
 import { spawn } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { constants } from 'node:fs';
-import { link, lstat, mkdtemp, open, readFile, readdir, realpath, rm } from 'node:fs/promises';
+import { link, lstat, mkdtemp, open, readFile, readdir, realpath, rm, writeFile } from 'node:fs/promises';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 
 const PIXELS_PER_POINT = 300 / 72;
@@ -27,7 +28,7 @@ function requireRaster(condition, code) {
 
 function runTool(bin, args, {
     scratch, failure, timeout = TOOL_TIMEOUT_MS, collect = false,
-    stdoutLimit = MAX_DIAGNOSTIC_BYTES, overflow = 'RASTER_LIMIT', watchRender = false,
+    stdoutLimit = MAX_DIAGNOSTIC_BYTES, overflow = 'RASTER_LIMIT', outputFile, hash,
 }) {
     return new Promise((done, reject) => {
         const child = spawn(bin.includes('/') ? resolve(bin) : bin, args, {
@@ -55,7 +56,7 @@ function runTool(bin, args, {
         }
 
         const timer = setTimeout(() => stop('RASTER_TIMEOUT'), timeout);
-        const watcher = watchRender ? setInterval(async () => {
+        const watcher = outputFile ? setInterval(async () => {
             if (inspecting || stopping) return;
             inspecting = true;
             try {
@@ -67,7 +68,7 @@ function runTool(bin, args, {
                     if (!entry) continue; // Ghostscript may remove a spill file between calls.
                     scratchBytes += entry.size;
                     if (scratchBytes > MAX_SCRATCH_BYTES ||
-                        (name === 'rendered.pdf' && entry.size > MAX_PDF_BYTES)) {
+                        (name === outputFile && entry.size > MAX_PDF_BYTES)) {
                         stop('RASTER_LIMIT');
                         break;
                     }
@@ -82,7 +83,10 @@ function runTool(bin, args, {
         child.stdout.on('data', (chunk) => {
             stdoutBytes += chunk.length;
             if (stdoutBytes > stdoutLimit) stop(overflow);
-            else if (collect && !stopping) chunks.push(chunk);
+            else if (!stopping) {
+                if (collect) chunks.push(chunk);
+                hash?.update(chunk);
+            }
         });
         child.stderr.on('data', (chunk) => {
             stderrBytes += chunk.length;
@@ -112,6 +116,19 @@ function samePdfSnapshot(a, b) {
     return sameInode(a, b) && a.size === b.size && a.mtimeNs === b.mtimeNs && a.ctimeNs === b.ctimeNs;
 }
 
+async function rasterSnapshot(path) {
+    const invalid = 'RASTER_INVALID_OUTPUT';
+    const snapshot = await lstat(path, { bigint: true }).catch(() => { throw new RasterError(invalid); });
+    requireRaster(snapshot.isFile() && snapshot.nlink === 1n && snapshot.size > 0n, invalid);
+    requireRaster(snapshot.size <= BigInt(MAX_PDF_BYTES), 'RASTER_LIMIT');
+    return snapshot;
+}
+
+function requireSameRasterSnapshot(expected, current) {
+    requireRaster(current.isFile() && current.nlink === 1n && samePdfSnapshot(expected, current),
+        'RASTER_INVALID_OUTPUT');
+}
+
 async function copyPdfBytes(source, target, before, invalid) {
     // A concurrent append cannot extend this copy beyond the size checked by the caller.
     const size = Number(before.size);
@@ -131,10 +148,11 @@ async function copyPdfBytes(source, target, before, invalid) {
     requireRaster(samePdfSnapshot(before, await source.stat({ bigint: true })), invalid);
 }
 
-async function copyPdf(sourcePath, targetPath, invalid, { durable = false, preflight } = {}) {
+async function copyPdf(sourcePath, targetPath, invalid, { durable = false, preflight, verified } = {}) {
     const source = await openPdf(sourcePath, invalid);
     try {
         const before = await source.stat({ bigint: true });
+        if (verified) requireSameRasterSnapshot(verified, before);
         // Node does not export the FileHandle class. Use the one returned by open().
         const checked = preflight && await preflight(source.constructor, before);
         requireRaster(before.isFile() && before.size > 0n, invalid);
@@ -264,11 +282,12 @@ function hasOnlyKeys(value, allowed) {
     return isDictionary(value) && Object.keys(value).every((key) => allowed.includes(key));
 }
 
-async function verifyOutput(bin, path, scratch, sizes) {
+async function verifyOutput(bin, path, scratch, sizes, { repairs, expectedPages } = {}) {
     const failure = 'RASTER_INVALID_OUTPUT';
     const { pages, objects } = await inspectPdf(bin, path, scratch, failure);
     requireRaster(pages.length === sizes.length, failure);
     const used = new Set();
+    const pageSignatures = [];
 
     function take(ref) {
         requireRaster(isReference(ref) && !used.has(ref), failure);
@@ -350,27 +369,62 @@ async function verifyOutput(bin, path, scratch, sizes) {
         const contents = page['/Contents'];
         stream(contents, []);
         const { stdout } = await showStream(contents, { collect: true, stdoutLimit: 256 });
-        const matrix = /^\s*(\d+(?:\.\d+)?)\s+0\s+0\s+(\d+(?:\.\d+)?)\s+0\s+0\s+cm\s+(\/Im\d+)\s+Do\s*$/
-            .exec(stdout.toString('latin1'));
-        requireRaster(matrix && matrix[3] === name && Number(matrix[1]) === media[2] &&
-            Number(matrix[2]) === media[3], failure);
+        // Ghostscript paints the one image directly using plain PDF whitespace.
+        const paint = stdout.toString('latin1').split(/[\t\n\f\r ]+/).filter(Boolean);
+        const [paintWidth, skewX, skewY, paintHeight, x, y, transform, imageName, draw] = paint;
+        const dimension = /^\d+(?:\.\d+)?$/;
+        requireRaster(paint.length === 9 && [paintWidth, paintHeight].every((token) => dimension.test(token)) &&
+            [skewX, skewY, x, y].every((token) => token === '0') &&
+            transform === 'cm' && imageName === name && draw === 'Do', failure);
+        if (Number(paintWidth) !== media[2] || Number(paintHeight) !== media[3]) {
+            // Ghostscript 10.02.1 truncates the positive scales while retaining the fractional MediaBox.
+            const canonicalInteger = /^[1-9]\d*$/;
+            requireRaster(repairs && [paintWidth, paintHeight].every((token) => canonicalInteger.test(token)) &&
+                Number(paintWidth) === Math.floor(media[2]) && Number(paintHeight) === Math.floor(media[3]), failure);
+            // The verified pixel limits keep the positive point dimensions in decimal notation.
+            const bytes = Buffer.from(`${media[2]} 0 0 ${media[3]} 0 0 cm ${name} Do\n`);
+            repairs[`obj:${contents}`] = { stream: { dict: {}, data: bytes.toString('base64') } };
+        }
 
         const expectedBytes = width * height * 3;
-        const { stdoutBytes } = await showStream(imageRef, { stdoutLimit: expectedBytes });
+        const hash = createHash('sha256');
+        const { stdoutBytes } = await showStream(imageRef, { stdoutLimit: expectedBytes, hash });
         requireRaster(stdoutBytes === expectedBytes, failure);
+        const signature = [name, media[2], media[3], width, height, hash.digest('hex')];
+        if (expectedPages) {
+            requireRaster(signature.every((value, field) => value === expectedPages[index][field]), failure);
+        }
+        pageSignatures.push(signature);
     }
 
     requireRaster(used.size === Object.keys(objects).length - 1, failure);
+    return pageSignatures;
 }
 
-async function assertOutputAbsent(path) {
+async function normalizeOutput(bin, rendered, snapshot, scratch, repairs) {
+    const failure = 'RASTER_INVALID_OUTPUT';
+    const patch = join(scratch, 'patch.json');
+    const normalized = join(scratch, 'normalized.pdf');
+    const json = JSON.stringify({ qpdf: [{ jsonversion: 2 }, repairs] });
+    requireRaster(Buffer.byteLength(json) <= MAX_JSON_BYTES, 'RASTER_LIMIT');
+    await writeFile(patch, json, { flag: 'wx', mode: 0o600 });
+    await assertOutputAbsent(normalized, failure);
+    requireSameRasterSnapshot(snapshot, await rasterSnapshot(rendered));
+    await runTool(bin, ['--suppress-recovery', `--update-from-json=${patch}`, rendered, normalized], {
+        scratch, failure, outputFile: 'normalized.pdf',
+    });
+    requireSameRasterSnapshot(snapshot, await rasterSnapshot(rendered));
+    return normalized;
+}
+
+async function assertOutputAbsent(path, failure = 'RASTER_OUTPUT_EXISTS') {
     try {
         await lstat(path);
     } catch (error) {
         if (error.code === 'ENOENT') return;
         throw error;
     }
-    throw new RasterError('RASTER_OUTPUT_EXISTS');
+    throw new RasterError(failure);
 }
 
 async function publishExclusive(staging, outputPath) {
@@ -415,11 +469,11 @@ async function ownedOutputStats({ path, handle, FileHandle, source, expected }, 
 
 async function writeOwnedOutput(rendered, result, output) {
     const invalid = 'RASTER_INVALID_OUTPUT';
+    await ownedOutputStats(output);
     const raster = await openPdf(rendered, invalid);
     try {
         const before = await raster.stat({ bigint: true });
-        requireRaster(samePdfSnapshot(before, result), invalid);
-        await ownedOutputStats(output);
+        requireSameRasterSnapshot(result, before);
         await copyPdfBytes(raster, output.handle, before, invalid);
         await output.handle.sync();
     } finally {
@@ -470,18 +524,24 @@ export async function renderRasterPdf(options) {
             '-dPrinted=false', '-dShowAnnots=true', '-sDEVICE=pdfimage24', '-sCompression=Flate',
             '-r300', `-sOutputFile=${rendered}`, '-f', source,
         ], {
-            scratch, failure: 'RASTER_RENDER_FAILED', watchRender: true,
+            scratch, failure: 'RASTER_RENDER_FAILED', outputFile: 'rendered.pdf',
             timeout: Math.min(600_000, 30_000 + 5_000 * sizes.length),
         });
 
-        const result = await lstat(rendered, { bigint: true }).catch(() => { throw new RasterError('RASTER_INVALID_OUTPUT'); });
-        requireRaster(result.isFile() && result.nlink === 1n && result.size > 0n, 'RASTER_INVALID_OUTPUT');
-        requireRaster(result.size <= BigInt(MAX_PDF_BYTES), 'RASTER_LIMIT');
-        await checkPdfEnvelope(rendered, 'RASTER_INVALID_OUTPUT');
-        await verifyOutput(qpdfBin, rendered, scratch, sizes);
+        let final = rendered;
+        let result = await rasterSnapshot(rendered);
+        await checkPdfEnvelope(final, 'RASTER_INVALID_OUTPUT');
+        const repairs = {};
+        const expectedPages = await verifyOutput(qpdfBin, final, scratch, sizes, { repairs });
+        if (Object.keys(repairs).length > 0) {
+            final = await normalizeOutput(qpdfBin, rendered, result, scratch, repairs);
+            result = await rasterSnapshot(final);
+            await checkPdfEnvelope(final, 'RASTER_INVALID_OUTPUT');
+            await verifyOutput(qpdfBin, final, scratch, sizes, { expectedPages });
+        }
 
         if (ownedOutput) {
-            await writeOwnedOutput(rendered, result, ownedOutput);
+            await writeOwnedOutput(final, result, ownedOutput);
             await rm(scratch, { recursive: true, force: true });
             scratch = undefined;
             await ownedOutputStats(ownedOutput, result.size);
@@ -492,7 +552,7 @@ export async function renderRasterPdf(options) {
         // into the requested name. Sync the directory before reporting success.
         destinationScratch = await mkdtemp(join(outputDirectory, '.bjj-raster-'));
         const staging = join(destinationScratch, 'rendered.pdf');
-        await copyPdf(rendered, staging, 'RASTER_INVALID_OUTPUT', { durable: true });
+        await copyPdf(final, staging, 'RASTER_INVALID_OUTPUT', { durable: true, verified: result });
         await rm(scratch, { recursive: true, force: true });
         scratch = undefined;
         const directory = await open(outputDirectory, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
