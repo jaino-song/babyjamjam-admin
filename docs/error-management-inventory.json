@@ -75975,6 +75975,367 @@
       "review_task": "staff-login-linking-u7c",
       "spec_mapping_status": "mapped-em-v1",
       "spec_mapping_note": "Phone challenge guards; registered catalog codes with matching 429/400 statuses, internal invariant mapped to INTERNAL_ERROR 500, and verification/consumption outcome boundaries."
+    },
+    {
+      "id": "owner-4e0d7c12b44b",
+      "path": "backend/application/services/canceled-automation-retry-settings.service.ts",
+      "root": "backend/application/",
+      "classification": "migrated",
+      "reason": "CanceledAutomationRetrySettingsService.update uses codeOnlyProblemBody with registered catalog codes. The branch-scoped rule or group lookup returns RESOURCE_NOT_FOUND (404) when no real routine is visible (L110). An ineligible routine returns REQUEST_CONFLICT (409, L114).",
+      "seams": [
+        {
+          "line": 3,
+          "kinds": [
+            "raw_http_exception"
+          ]
+        },
+        {
+          "line": 110,
+          "kinds": [
+            "raw_http_exception",
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 114,
+          "kinds": [
+            "raw_http_exception",
+            "throw_or_reject"
+          ]
+        }
+      ],
+      "discovery_task_id": "copayment-error-inventory-20261123",
+      "spec_ids": [
+        "EM-CAT-01",
+        "EM-API-01",
+        "EM-STATE-01",
+        "EM-SEC-03"
+      ],
+      "public_codes": [
+        "RESOURCE_NOT_FOUND",
+        "REQUEST_CONFLICT"
+      ],
+      "outcome_evidence": "Both refusals occur inside the branch lock before updateEpoch. The service tests assert 404 for a group without visible rules and 409 for the unsupported employee group, with no epoch write in either case.",
+      "consumer_paths": [
+        "backend/interface/controllers/canceled-automation-retry-settings.controller.ts (CanceledAutomationRetrySettingsController.update)"
+      ],
+      "test_evidence": [
+        "backend/test/services/canceled-automation-retry-settings.service.spec.ts"
+      ],
+      "followup_task": null,
+      "review_task": null,
+      "spec_mapping_status": "mapped-em-v1",
+      "spec_mapping_note": "Registered Problem Details codes and statuses for branch-scoped routine lookup and eligibility refusals."
+    },
+    {
+      "id": "owner-ae105a1243e1",
+      "path": "backend/application/services/standalone-receipt-issue.service.ts",
+      "root": "backend/application/",
+      "classification": "approved-exception",
+      "reason": "Boundary-specific compatibility per docs/error-management.md (호환성 경계) and the standalone-issuance.md dispatch plan (sections 2 and 3). The standalone receipt admission contract uses fixed, code-only bodies for MISSING_RECEIPT_FIELDS (400, L42), INVALID_RECEIVED_DATE (400, L100) and REQUEST_ID_CONFLICT (409, L145 and L152). These three status/code pairs are explicitly recognized by readStandaloneReceiptRefusal in both app routes and use the unregistered 4xx compatibility path in mapHttpProblem. ACCESS_DENIED (403, L106) and RESOURCE_NOT_FOUND (404, L107) use codeOnlyProblemBody and are registered in the shared catalog.",
+      "seams": [
+        {
+          "line": 2,
+          "kinds": [
+            "raw_http_exception"
+          ]
+        },
+        {
+          "line": 42,
+          "kinds": [
+            "raw_http_exception"
+          ]
+        },
+        {
+          "line": 47,
+          "kinds": [
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 65,
+          "kinds": [
+            "catch_boundary"
+          ]
+        },
+        {
+          "line": 66,
+          "kinds": [
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 100,
+          "kinds": [
+            "raw_http_exception",
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 103,
+          "kinds": [
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 106,
+          "kinds": [
+            "raw_http_exception"
+          ]
+        },
+        {
+          "line": 107,
+          "kinds": [
+            "raw_http_exception"
+          ]
+        },
+        {
+          "line": 113,
+          "kinds": [
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 115,
+          "kinds": [
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 121,
+          "kinds": [
+            "catch_boundary"
+          ]
+        },
+        {
+          "line": 122,
+          "kinds": [
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 124,
+          "kinds": [
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 133,
+          "kinds": [
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 139,
+          "kinds": [
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 145,
+          "kinds": [
+            "raw_http_exception",
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 152,
+          "kinds": [
+            "raw_http_exception",
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 155,
+          "kinds": [
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 160,
+          "kinds": [
+            "throw_or_reject"
+          ]
+        }
+      ],
+      "discovery_task_id": "copayment-error-inventory-20261123",
+      "spec_ids": [
+        "EM-API-01",
+        "EM-API-04",
+        "EM-API-05",
+        "EM-CAT-03",
+        "EM-STATE-01",
+        "EM-SEC-03",
+        "EM-CHANGE-01"
+      ],
+      "public_codes": [
+        "MISSING_RECEIPT_FIELDS",
+        "INVALID_RECEIVED_DATE",
+        "ACCESS_DENIED",
+        "RESOURCE_NOT_FOUND",
+        "REQUEST_ID_CONFLICT"
+      ],
+      "outcome_evidence": "An invalid date rejects before template lookup or transaction entry. Input and snapshot refusals precede job insertion. The template-unavailable error is handled as catalog ACCESS_DENIED if a replay binding is absent. Unexpected loader errors are rethrown to the HTTP error boundary. The real-DB tests check matching replay returns the same job, changed date or accessible client returns 409 without rewriting the client dates, and a foreign client returns 404. Both route tests assert the three boundary-specific status/code pairs are preserved and upstream diagnostics are excluded from the transport-failure response.",
+      "consumer_paths": [
+        "backend/interface/controllers/receipt-link-admin.controller.ts (ReceiptLinkAdminController.standalone, POST /receipt-links/standalone)",
+        "frontend/src/app/api/receipt-links/standalone/route.ts",
+        "mobile/src/app/api/receipt-links/standalone/route.ts",
+        "packages/shared/src/client/standalone-receipt.ts (readStandaloneReceiptRefusal)"
+      ],
+      "test_evidence": [
+        "backend/test/services/standalone-receipt-issue.service.spec.ts",
+        "backend/test/prisma/standalone-receipt-issue.real-db.spec.ts",
+        "frontend/src/app/api/receipt-links/standalone/route.test.ts",
+        "mobile/src/app/api/receipt-links/standalone/route.test.ts"
+      ],
+      "followup_task": null,
+      "review_task": null,
+      "spec_mapping_status": "mapped-em-v1",
+      "spec_mapping_note": "The compatibility exception covers only MISSING_RECEIPT_FIELDS, INVALID_RECEIVED_DATE and REQUEST_ID_CONFLICT. ACCESS_DENIED and RESOURCE_NOT_FOUND use the shared catalog. Provider and storage diagnostics are outside the exception."
+    },
+    {
+      "id": "owner-950efdfe40d2",
+      "path": "backend/application/utils/contract-copayment-date.ts",
+      "root": "backend/application/",
+      "classification": "migrated",
+      "reason": "parseContractCopaymentReceivedDate preserves an omitted date and rejects a supplied date that fails calendar validation or disagrees with the contract payment year, month or day. The refusal uses problemBody with catalog VALIDATION_FAILED (400, L21), the body pointer /contractData/copaymentReceivedDate and the field code INVALID_VALUE.",
+      "seams": [
+        {
+          "line": 1,
+          "kinds": [
+            "raw_http_exception"
+          ]
+        },
+        {
+          "line": 21,
+          "kinds": [
+            "raw_http_exception",
+            "throw_or_reject"
+          ]
+        }
+      ],
+      "discovery_task_id": "copayment-error-inventory-20261123",
+      "spec_ids": [
+        "EM-CAT-01",
+        "EM-VAL-03",
+        "EM-STATE-01"
+      ],
+      "public_codes": [
+        "VALIDATION_FAILED"
+      ],
+      "outcome_evidence": "The two entry points reject malformed or inconsistent dates before opening a write transaction. The repository regression asserts BadRequestException, zero transaction calls and preservation of the existing client date in both paths.",
+      "consumer_paths": [
+        "backend/application/services/eformsign-document-job.service.ts (EformsignDocumentJobService.enqueueCreateDocument)",
+        "backend/application/usecases/eformsign-doc/dispatch-document-headless.usecase.ts (DispatchDocumentHeadlessUsecase.execute)"
+      ],
+      "test_evidence": [
+        "backend/test/repositories/contract-copayment-date.spec.ts"
+      ],
+      "followup_task": null,
+      "review_task": null,
+      "spec_mapping_status": "mapped-em-v1",
+      "spec_mapping_note": "Registered validation problem with a request-body JSON Pointer and fixed field detail."
+    },
+    {
+      "id": "owner-910b90c6bc9e",
+      "path": "backend/infrastructure/database/utils/save-contract-copayment-date.ts",
+      "root": "backend/infrastructure/",
+      "classification": "migrated",
+      "reason": "saveContractCopaymentDate updates the non-deleted client selected by client ID and branch ID inside the caller's acceptance transaction. A write count other than one throws ConflictException(codeOnlyProblemBody(\"REQUEST_CONFLICT\")) (409, L17).",
+      "seams": [
+        {
+          "line": 1,
+          "kinds": [
+            "raw_http_exception"
+          ]
+        },
+        {
+          "line": 17,
+          "kinds": [
+            "raw_http_exception",
+            "throw_or_reject"
+          ]
+        }
+      ],
+      "discovery_task_id": "copayment-error-inventory-20261123",
+      "spec_ids": [
+        "EM-CAT-01",
+        "EM-STATE-01",
+        "EM-SEC-02"
+      ],
+      "public_codes": [
+        "REQUEST_CONFLICT"
+      ],
+      "outcome_evidence": "A zero-row update raises ConflictException. The repository regression asserts rollback of the fresh desktop job and authority and the fresh mobile intent, with the previous client date preserved in both paths.",
+      "consumer_paths": [
+        "backend/infrastructure/database/repositories/sb.eformsign-document-job.repository.ts (SbEformsignDocumentJobRepository.enqueueInTransaction)",
+        "backend/infrastructure/database/repositories/sb.eformsign-contract-recovery.repository.ts (SbEformsignContractRecoveryRepository.claimLegacyCreation via startIntent)"
+      ],
+      "test_evidence": [
+        "backend/test/repositories/contract-copayment-date.spec.ts"
+      ],
+      "followup_task": null,
+      "review_task": null,
+      "spec_mapping_status": "mapped-em-v1",
+      "spec_mapping_note": "Registered conflict problem at the transactional, branch-scoped client date write."
+    },
+    {
+      "id": "owner-2c5968ac249f",
+      "path": "backend/interface/controllers/canceled-automation-retry-settings.controller.ts",
+      "root": "backend/interface/",
+      "classification": "approved-exception",
+      "reason": "requireMatchingBranch uses the existing BRANCH_CONTEXT_CHANGED compatibility convention from system-setting.controller.ts and message-trigger-rule-group.controller.ts, documented in docs/error-management.md (호환성 경계 and Task 9.1). This local 409 (L49–L52) covers a missing or mismatched expectedBranchId or a missing tenant branch. Its fixed code and Korean refresh message expose no branch identifiers or internal diagnostics.",
+      "seams": [
+        {
+          "line": 1,
+          "kinds": [
+            "raw_http_exception"
+          ]
+        },
+        {
+          "line": 19,
+          "kinds": [
+            "http_endpoint"
+          ]
+        },
+        {
+          "line": 33,
+          "kinds": [
+            "http_endpoint"
+          ]
+        },
+        {
+          "line": 49,
+          "kinds": [
+            "raw_http_exception",
+            "throw_or_reject"
+          ]
+        }
+      ],
+      "discovery_task_id": "copayment-error-inventory-20261123",
+      "spec_ids": [
+        "EM-API-01",
+        "EM-API-05",
+        "EM-CAT-03",
+        "EM-STATE-01",
+        "EM-CHANGE-01"
+      ],
+      "public_codes": [
+        "BRANCH_CONTEXT_CHANGED"
+      ],
+      "outcome_evidence": "The backend HTTP test asserts 409 for stale GET and PUT fences and an absent PUT fence, the local code for stale PUT, and zero settings service calls. The frontend route test asserts that PUT preserves the upstream 409 status.",
+      "consumer_paths": [
+        "frontend/src/app/api/settings/message-automation-policies/canceled-retry/route.ts (GET)",
+        "frontend/src/app/api/settings/message-automation-policies/canceled-retry/[id]/route.ts (PUT)"
+      ],
+      "test_evidence": [
+        "backend/test/integration/canceled-automation-retry-settings.controller.integration.spec.ts",
+        "frontend/src/app/api/settings/message-automation-policies/canceled-retry/route.test.ts"
+      ],
+      "followup_task": "Existing Task 9.1 gap-report/catalog decision for BRANCH_CONTEXT_CHANGED.",
+      "review_task": null,
+      "spec_mapping_status": "mapped-em-v1",
+      "spec_mapping_note": "The compatibility exception covers the pre-service BRANCH_CONTEXT_CHANGED 409 only. The fence refusal uses the local code/message body."
     }
   ]
 }
