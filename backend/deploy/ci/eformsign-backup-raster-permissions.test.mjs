@@ -80,16 +80,28 @@ syncBuiltinESMExports();
 const wrongIdentity = String.raw`
 import fs from 'node:fs';
 import { syncBuiltinESMExports } from 'node:module';
-const { lstatSync } = fs;
+const { fstatSync, lstatSync } = fs;
 const leaf = process.env.PERMISSION_STAT_LEAF ?? 'state.json';
+const home = process.env.PERMISSION_STAT_HOME === '1' ? lstatSync(process.env.HOME, { bigint: true }) : null;
+const isHome = (info) => info.dev === home.dev && info.ino === home.ino;
 fs.lstatSync = (path, ...args) => {
     const info = lstatSync(path, ...args);
-    if (String(path).endsWith('/' + leaf)) {
+    if (home) {
+        if (isHome(info)) info.uid = 0n;
+    } else if (String(path).endsWith('/' + leaf)) {
         if (process.env.PERMISSION_STAT_FIELD === 'gid') info.gid += 1n;
         else info.uid = 0n;
     }
     return info;
 };
+if (home) {
+    // Model one consistent HOME inode across the path and descriptor checks.
+    fs.fstatSync = (...args) => {
+        const info = fstatSync(...args);
+        if (isHome(info)) info.uid = 0n;
+        return info;
+    };
+}
 syncBuiltinESMExports();
 `;
 
@@ -116,9 +128,10 @@ async function present(path) {
     });
 }
 
-async function fixture(t, { productionLayout = false, shared = productionLayout, stateData = stateBytes } = {}) {
-    const home = await fs.mkdtemp('/tmp/eformsign-permission-test-');
-    t.after(() => fs.rm(home, { recursive: true, force: true }));
+async function fixture(t, { productionLayout = false, shared = productionLayout, stateData = stateBytes, nestedHome = false } = {}) {
+    const root = await fs.mkdtemp('/tmp/eformsign-permission-test-');
+    t.after(() => fs.rm(root, { recursive: true, force: true }));
+    const home = nestedHome ? join(root, 'home') : root;
     const lockAncestor = join(home, '.local');
     const lockDir = join(lockAncestor, 'state/eformsign-backup');
     const stateDir = shared ? lockDir : join(home, 'dedicated-state');
@@ -174,7 +187,7 @@ async function fixture(t, { productionLayout = false, shared = productionLayout,
         assert.ok(!result.stdout.includes(home) && !result.stdout.includes(fakeToken.trim()));
         return JSON.parse(result.stdout);
     };
-    return { home, lockAncestor, lockDir, stateDir, lock, state, archive, originals, config, settingsDir, settings, token, configure, run };
+    return { root, home, lockAncestor, lockDir, stateDir, lock, state, archive, originals, config, settingsDir, settings, token, configure, run };
 }
 
 test('accepts owner-bound 0775 home ancestors and tightens only the combined state and lock metadata', async (t) => {
@@ -218,10 +231,35 @@ test('accepts owner-bound 0775 home ancestors and tightens only the combined sta
     }
 });
 
+async function assertUnsafeDirectory(f, options) {
+    const before = await snapshot(f.root);
+    for (const apply of [false, true]) {
+        try {
+            const result = await f.run({ ...options, apply, code: 1 });
+            assert.equal(result.status, 'refused');
+            assert.equal(result.reason, 'unsafe_directory');
+            assert.equal(result.changed, 0);
+        } finally {
+            assert.deepEqual(await snapshot(f.root), before);
+        }
+    }
+}
+
+test('refuses 0775 ancestors below HOME nested inside a temporary fixture', async (t) => {
+    const f = await fixture(t, { productionLayout: true, nestedHome: true });
+    await assertUnsafeDirectory(f);
+});
+
 for (const [name, setup] of [
     ['0775 combined state and lock root', (f) => fs.chmod(f.stateDir, 0o775)],
     ['0777 combined state and lock root', (f) => fs.chmod(f.stateDir, 0o777)],
     ['0770 HOME', (f) => fs.chmod(f.home, 0o770)],
+    ['0775 HOME', (f) => fs.chmod(f.home, 0o775)],
+    ['0775 ancestors below a root-owned 0750 HOME', async (f) => {
+        const extraPreload = join(f.home, 'wrong-home-owner.mjs');
+        await write(extraPreload, wrongIdentity, 0o600);
+        return { extraPreload, env: { PERMISSION_STAT_HOME: '1' } };
+    }],
     ['0775 settings directory', (f) => fs.chmod(f.settingsDir, 0o775)],
     ['0775 public root', (f) => fs.chmod(f.archive, 0o775)],
     ['0775 private originals root', async (f) => {
@@ -255,15 +293,7 @@ for (const [name, setup] of [
 ]) {
     test('refuses ' + name + ' without changing the production-layout fixture', async (t) => {
         const f = await fixture(t, { productionLayout: true });
-        const options = await setup(f);
-        const before = await snapshot(f.home);
-        for (const apply of [false, true]) {
-            const result = await f.run({ ...options, apply, code: 1 });
-            assert.equal(result.status, 'refused');
-            assert.equal(result.reason, 'unsafe_directory');
-            assert.equal(result.changed, 0);
-            assert.deepEqual(await snapshot(f.home), before);
-        }
+        await assertUnsafeDirectory(f, await setup(f));
     });
 }
 
