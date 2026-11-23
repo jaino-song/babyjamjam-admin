@@ -1,3 +1,7 @@
+import {
+    admitOccurrence, occurrenceVariables, resolveLogOccurrence, settleOccurrence, storedOccurrence, transferReleasedOccurrenceHolder,
+} from "./message-occurrence-ledger";
+import { OCCURRENCE_ALREADY_ACCEPTED, occurrenceLevels, SMS_OCCURRENCE_HOLD_FIELD } from "domain/entities/message-occurrence";
 import { parseMessageQuietHold, messageQuietHoldVariables, type MessageQuietHold, type MessagePolicyPreviewCandidate } from "domain/message-policy-evaluator";
 import type { MessagePolicyRecipientGroup } from "domain/entities/system-setting.entity";
 import { Injectable, Logger } from "@nestjs/common";
@@ -27,7 +31,6 @@ import {
     SERVICE_RECORD_LINK_SMS_LOG_TEMPLATE_KEY,
 } from "domain/constants/service-record-link-message";
 import {
-    SERVICE_END_NOTICE_ALREADY_SENT_CANCEL_REASON,
     SERVICE_END_NOTICE_SMS_LOG_TEMPLATE_KEY,
 } from "domain/constants/service-end-notice-message";
 
@@ -66,13 +69,15 @@ export class SbMessageLogRepository implements IMessageLogRepository {
             || current.attempts !== log.attempts || !current.providerAcceptanceKey || !current.providerAcceptanceFingerprint
             || variables["retryOfLogId"] !== log.variables["retryOfLogId"]
             || (variables["quietHoursDisposition"] === "DEFER" && !parseMessageQuietHold(variables))) throw new Error("Quiet retry acceptance changed");
+        const quietVariables = { ...variables };
+        delete quietVariables[SMS_OCCURRENCE_HOLD_FIELD];
         const changed = await transaction.message_log.updateMany({ where: { id: current.id, branchId: current.branchId,
             triggerJobId: current.triggerJobId, providerAcceptanceKey: current.providerAcceptanceKey,
             providerAcceptanceFingerprint: current.providerAcceptanceFingerprint, providerAcceptanceState: "prepared", providerCallStartedAt: null,
             updatedAt: current.updatedAt, variables: { equals: current.variables as Prisma.InputJsonValue }, attempts: current.attempts },
             data: { status: cancel ? "failed" : "pending", nextRetryAt: cancel ? null : hold.releaseAt,
                 errorMessage: cancel ? reason ?? "message_quiet_hours:CANCEL" : null,
-                variables: { ...current.variables as Prisma.InputJsonObject, ...messageQuietHoldVariables(hold), quietHoursDisposition: cancel ? "CANCEL" : "DEFER",
+                variables: { ...quietVariables, ...messageQuietHoldVariables(hold), quietHoursDisposition: cancel ? "CANCEL" : "DEFER",
                     // This CAS proves the provider has never started. A quiet
                     // wait is safe to resume, unlike an uncertain submission.
                     ...(!cancel ? { retrySafety: "quiet-deferred" } : {}),
@@ -205,20 +210,25 @@ export class SbMessageLogRepository implements IMessageLogRepository {
     }
 
     async update(log: MessageLogEntity, transaction?: Prisma.TransactionClient): Promise<MessageLogEntity> {
+        const target = storedOccurrence(log);
         const run = async (client: Prisma.TransactionClient): Promise<MessageLogEntity> => {
             const row = await client.message_log.update({
-                where: { id: log.id, ...this.branchWhereFragment(log) },
+                where: {
+                    id: log.id, ...this.branchWhereFragment(log),
+                    ...(target ? { providerAcceptanceState: { in: ["started", "uncertain", log.providerAcceptanceState] } } : {}),
+                },
                 data: MessageLogMapper.toPrismaUpdate(log),
             });
             if (this.isDeliveredServiceEndNotice(log)) {
                 await this.stampServiceEndNoticeSent(client, log);
             }
+            await settleOccurrence(client, row);
             return MessageLogMapper.toDomain(row);
         };
         // With a caller-owned transaction the commit is not ours to observe, so the
         // scheduled flag stays set (a rollback must not lose the schedule).
         if (transaction) return run(transaction);
-        const persisted = this.isDeliveredServiceEndNotice(log)
+        const persisted = this.isDeliveredServiceEndNotice(log) || target
             ? await this.prisma.$transaction(run)
             : await run(this.prisma);
         log.markCarrierCheckPersisted();
@@ -288,33 +298,54 @@ export class SbMessageLogRepository implements IMessageLogRepository {
         }
     }
 
-    async claimProviderAttempt(log: MessageLogEntity, transaction?: Prisma.TransactionClient): Promise<MessageLogEntity | null> {
-        if (!log.providerAcceptanceKey || !log.providerAcceptanceFingerprint) {
+    async claimProviderAttempt(log: MessageLogEntity, transaction?: Prisma.TransactionClient): Promise<MessageLogEntity | "accepted" | "held" | null> {
+        const { providerAcceptanceKey, providerAcceptanceFingerprint } = log;
+        if (!providerAcceptanceKey || !providerAcceptanceFingerprint) {
             throw new Error("SMS provider acceptance key and fingerprint are required before dispatch");
         }
-
-        const branchWhere = this.branchWhereFragment(log);
-        const client = transaction ?? this.prisma;
-
-        const claimed = await client.message_log.updateMany({
-            where: {
+        const run = async (client: Prisma.TransactionClient) => {
+            const where = {
                 id: log.id,
-                ...branchWhere,
-                providerAcceptanceKey: log.providerAcceptanceKey,
-                providerAcceptanceFingerprint: log.providerAcceptanceFingerprint,
-                providerAcceptanceState: "prepared",
-            },
-            data: {
-                providerAcceptanceState: "started",
-                providerCallStartedAt: new Date(Date.now()),
-            },
-        });
-        if (claimed.count !== 1) return null;
+                ...this.branchWhereFragment(log),
+                providerAcceptanceKey,
+                providerAcceptanceFingerprint,
+            };
+            const claimed = await client.message_log.updateMany({
+                where: { ...where, providerAcceptanceState: "prepared" },
+                data: { providerAcceptanceState: "started", providerCallStartedAt: new Date(Date.now()) },
+            });
+            if (claimed.count !== 1) return null;
 
-        const row = await client.message_log.findUnique({
-            where: { id: log.id, ...branchWhere },
-        });
-        return row ? MessageLogMapper.toDomain(row) : null;
+            const row = await client.message_log.findUnique({ where });
+            if (!row) throw new Error("Claimed SMS log was not found");
+            const target = await resolveLogOccurrence(client, row);
+            const started = MessageLogMapper.toDomain(row);
+            const hadHold = SMS_OCCURRENCE_HOLD_FIELD in started.variables;
+            delete started.variables[SMS_OCCURRENCE_HOLD_FIELD];
+            if (!target) {
+                if (!hadHold) return started;
+                return MessageLogMapper.toDomain(await client.message_log.update({ where, data: { variables: started.variables } }));
+            }
+            const admission = await admitOccurrence(client, row.id, target, row.templateKey);
+            if (admission !== "admitted") {
+                if (admission === "held") {
+                    started.variables[SMS_OCCURRENCE_HOLD_FIELD] = occurrenceLevels(target.occurrence).at(-1)!.occurrenceKey;
+                }
+                await client.message_log.update({
+                    where,
+                    data: {
+                        providerAcceptanceState: "prepared", providerCallStartedAt: null,
+                        variables: started.variables,
+                        ...(admission === "accepted" ? { status: "failed", errorMessage: OCCURRENCE_ALREADY_ACCEPTED, nextRetryAt: null } : {}),
+                    },
+                });
+                return admission;
+            }
+            started.variables = { ...started.variables, ...occurrenceVariables(target) };
+            const persisted = await client.message_log.update({ where, data: { variables: started.variables } });
+            return MessageLogMapper.toDomain(persisted);
+        };
+        return transaction ? run(transaction) : this.prisma.$transaction(run);
     }
 
     async reconcileProviderAttempt(
@@ -367,6 +398,7 @@ export class SbMessageLogRepository implements IMessageLogRepository {
             const updated = await transaction.message_log.findUnique({
                 where: { id: log.id, ...branchWhere },
             });
+            if (updated) await settleOccurrence(transaction, updated);
             return updated ? MessageLogMapper.toDomain(updated) : null;
         });
     }
@@ -417,6 +449,7 @@ export class SbMessageLogRepository implements IMessageLogRepository {
             });
             if (claimed.count !== 1) return null;
             const row = await transaction.message_log.findUnique({ where: { id: log.id, ...branchWhere } });
+            if (row && expectedState === "started") await settleOccurrence(transaction, row);
             return row ? MessageLogMapper.toDomain(row) : null;
         });
     }
@@ -496,49 +529,6 @@ export class SbMessageLogRepository implements IMessageLogRepository {
                 ) return { kind: "lost" };
             }
             const claimedAt = new Date(Date.now());
-            if (
-                invocation === "automatic"
-                && sourceLog.templateKey === SERVICE_END_NOTICE_SMS_LOG_TEMPLATE_KEY
-                && sourceLog.branchId !== null
-                && sourceLog.clientId !== null
-            ) {
-                const clients = await transaction.$queryRaw<Array<{
-                    service_end_notice_sent_at: Date | null;
-                }>>(Prisma.sql`
-                    SELECT service_end_notice_sent_at
-                    FROM "client"
-                    WHERE id = ${sourceLog.clientId}
-                      AND branch_id = ${sourceLog.branchId}::uuid
-                    FOR UPDATE
-                `);
-                const client = clients[0];
-                if (!client) return { kind: "lost" };
-                if (client.service_end_notice_sent_at !== null) {
-                    const suppressed = await transaction.message_log.updateMany({
-                        where: {
-                            id: sourceLog.id,
-                            branchId: sourceLog.branchId,
-                            status: sourceLog.status,
-                            nextRetryAt: sourceLog.nextRetryAt,
-                            updatedAt: sourceLog.updatedAt,
-                        },
-                        data: {
-                            status: "failed",
-                            errorMessage: SERVICE_END_NOTICE_ALREADY_SENT_CANCEL_REASON,
-                            nextRetryAt: null,
-                            updatedAt: claimedAt,
-                        },
-                    });
-                    if (suppressed.count !== 1) return { kind: "lost" };
-
-                    sourceLog.status = "failed";
-                    sourceLog.errorMessage = SERVICE_END_NOTICE_ALREADY_SENT_CANCEL_REASON;
-                    sourceLog.nextRetryAt = null;
-                    sourceLog.updatedAt = claimedAt;
-                    return { kind: "suppressed", log: sourceLog };
-                }
-            }
-
             const claimed = await transaction.message_log.updateMany({
                 where: {
                     id: sourceLog.id,
@@ -557,9 +547,19 @@ export class SbMessageLogRepository implements IMessageLogRepository {
                 return { kind: "lost" };
             }
 
+            // The child inherits the exact source identity. Changing the
+            // invocation to manual changes attribution, never the scope.
+            const target = storedOccurrence(sourceLog);
+            retryLog.variables = {
+                ...retryLog.variables, retryInvocation: invocation,
+                ...(target ? occurrenceVariables({ ...target, manual: target.manual || invocation === "manual" }) : {}),
+            };
             const row = await transaction.message_log.create({
                 data: MessageLogMapper.toPrismaCreate(retryLog),
             });
+            if (target && invocation === "automatic") {
+                await transferReleasedOccurrenceHolder(transaction, target, sourceLog.id, row.id);
+            }
             return { kind: "started", log: MessageLogMapper.toDomain(row) };
         };
         return transaction ? run(transaction) : this.prisma.$transaction(run);

@@ -1,3 +1,4 @@
+import { SystemTemplateModule } from "./system-template.module";
 import { MessageModule } from "./message.module";
 import { Module } from "@nestjs/common";
 import { AligoModule } from "./aligo.module";
@@ -6,7 +7,7 @@ import { MessageDeliveryController } from "interface/controllers/message-deliver
 import { BranchManagerGuard } from "infrastructure/auth/branch-manager.guard";
 
 @Module({
-    imports: [AligoModule, SystemSettingModule, MessageModule],
+    imports: [AligoModule, SystemSettingModule, MessageModule, SystemTemplateModule],
     controllers: [MessageDeliveryController],
     providers: [BranchManagerGuard],
 })

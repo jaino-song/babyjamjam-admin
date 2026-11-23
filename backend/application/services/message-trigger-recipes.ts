@@ -132,13 +132,6 @@ export function buildClientMessageRecipe(
 ): MessageTriggerJobRecipe | null {
     if (rule.recipientType !== MessageTriggerRecipientType.CLIENT) return null;
     if (!client.phone) return null;
-    if (
-        rule.templateKey === MessageTriggerTemplateKey.SERVICE_END_NOTICE
-        && client.serviceEndNoticeSentAt !== null
-    ) {
-        return null;
-    }
-
     const anchorDate = getClientAnchorDate(rule.eventType, client);
     if (!anchorDate) return null;
 

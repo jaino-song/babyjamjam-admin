@@ -604,7 +604,12 @@ export interface MessageDeliverySmsDuplicateCheckResponse {
 
 export type MessageDeliverySmsDuplicateCheckRequest = SendMessageDeliverySmsRequest;
 
+export type MessageDeliverySmsTemplateRef =
+  | { kind: "system"; key: SystemTemplateKey }
+  | { kind: "branch"; id: string };
+
 export interface SendMessageDeliverySmsRequest {
+  templateRef?: MessageDeliverySmsTemplateRef;
   receiver: string;
   message: string;
   title?: string;

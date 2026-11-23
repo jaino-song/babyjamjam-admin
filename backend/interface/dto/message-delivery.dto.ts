@@ -1,3 +1,4 @@
+import type { SmsTemplateReference } from "domain/entities/message-occurrence";
 import { Type } from "class-transformer";
 import {
     ArrayUnique,
@@ -9,6 +10,7 @@ import {
     IsInt,
     IsIn,
     IsNotEmpty,
+    IsObject,
     IsOptional,
     IsString,
     Matches,
@@ -38,6 +40,10 @@ export class SmsDuplicateDecisionDto {
 }
 
 export class SendSmsMessageDto {
+    @ValidateIf((_dto, value) => value !== undefined)
+    @IsObject()
+    templateRef?: SmsTemplateReference;
+
     @IsOptional()
     @ValidateNested()
     @Type(() => SmsDuplicateDecisionDto)

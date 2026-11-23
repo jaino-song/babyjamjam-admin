@@ -21,6 +21,7 @@ import {
     getServiceRecordLinkScheduledFor,
     getServiceRecordTokenExpiresAt,
     getServiceRecordServiceEndedAt,
+    serviceRecordAutomaticJobKey,
 } from "domain/constants/service-record-link-message";
 import {
     MessageTriggerEventType,
@@ -625,7 +626,13 @@ export class ServiceRecordLinkService {
         );
 
         const scheduledFor = options.scheduledFor ?? getServiceRecordLinkScheduledFor(schedule.startDate);
-        const automaticDedupeKey = this.buildDedupeKey(scheduleId, false);
+        const originalKey = serviceRecordAutomaticJobKey(scheduleId);
+        const original = !options.isManualSend
+            ? await this.prisma.message_trigger_job.findUnique({ where: { dedupeKey: originalKey, branchId: schedule.branchId } }) : null;
+        const originalEmployeeId = (original?.payload as { employeeId?: unknown } | null)?.employeeId;
+        const replacedRecipient = original?.clientId === schedule.clientId && original.employeeScheduleId === scheduleId
+            && typeof originalEmployeeId === "number" && Number.isSafeInteger(originalEmployeeId) && originalEmployeeId !== employee.id;
+        const automaticDedupeKey = replacedRecipient ? serviceRecordAutomaticJobKey(scheduleId, employee.id) : originalKey;
         let automaticSchedulingClaim: AutomaticSchedulingClaim | null = null;
         const automaticReplacement = !options.recovery && options.rescheduleAutomatic
             ? await this.prisma.message_trigger_job.findUnique({ where: { dedupeKey: automaticDedupeKey, branchId: schedule.branchId } }) : null;
@@ -785,7 +792,7 @@ export class ServiceRecordLinkService {
                 recipientPhone: resolvedRecipientPhone,
                 templateKey: MessageTriggerTemplateKey.SERVICE_RECORD_LINK,
                 dedupeKey: options.isManualSend
-                    ? this.buildDedupeKey(scheduleId, true)
+                    ? `${originalKey}:manual:${randomUUID()}`
                     : automaticDedupeKey,
                 payload: {
                     clientId: schedule.clientId,
@@ -1006,11 +1013,14 @@ export class ServiceRecordLinkService {
                 SELECT 1
                 FROM "message_trigger_job" AS blocker
                 WHERE blocker."employee_schedule_id" = ${params.scheduleId}
+                  AND blocker.branch_id = ${params.branchId}::uuid
                   AND blocker."rule_id" = ${SERVICE_RECORD_LINK_RULE_ID}
                   AND ${serviceRecordScheduleBlockerSql({
                       status: Prisma.sql`blocker."status"`,
                       cancelReason: Prisma.sql`blocker."cancel_reason"`,
                       canceledByUser: Prisma.sql`blocker."canceled_by_user"`,
+                      payload: Prisma.sql`blocker.payload`,
+                      employeeId: params.employeeId,
                   })}
             )
             ON CONFLICT ("dedupe_key") DO UPDATE SET
@@ -1187,13 +1197,6 @@ export class ServiceRecordLinkService {
 
     private formatDate(date: Date): string {
         return date.toISOString().slice(0, 10);
-    }
-
-    private buildDedupeKey(scheduleId: number, isManualSend: boolean): string {
-        const assignmentKey = `${SERVICE_RECORD_LINK_RULE_ID}:schedule:${scheduleId}:primary`;
-        if (!isManualSend) return assignmentKey;
-
-        return `${assignmentKey}:manual:${randomUUID()}`;
     }
 
     private normalizePhone(phone: string): string {

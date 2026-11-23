@@ -50,10 +50,10 @@ describe("shared message recipes for preview and materialization", () => {
         expect(buildClientMessageRecipe(source, { ...client, createdAt: null }, now)).toBeNull();
     });
 
-    it("preserves missing-input and already-sent suppression", () => {
+    it("requires source inputs and leaves stamp proof to the occurrence ledger", () => {
         expect(buildClientMessageRecipe(rule(), { ...client, phone: null }, now)).toBeNull();
         expect(buildClientMessageRecipe(rule(), { ...client, startDate: null }, now)).toBeNull();
-        expect(buildClientMessageRecipe(rule(Template.SERVICE_END_NOTICE), { ...client, serviceEndNoticeSentAt: now }, now)).toBeNull();
+        expect(buildClientMessageRecipe(rule(Template.SERVICE_END_NOTICE), { ...client, serviceEndNoticeSentAt: now }, now)).not.toBeNull();
     });
 
     it("keeps primary and secondary assignment recipients and source fingerprints separate", () => {

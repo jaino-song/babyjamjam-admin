@@ -122,6 +122,7 @@ export interface MessageQuietHeldJob {
 }
 
 export interface IMessageTriggerJobRepository {
+    hasAcceptedOccurrence(job: MessageTriggerJobEntity, transaction?: Prisma.TransactionClient): Promise<boolean>;
     /** Outstanding immutable date work, including leased intents whose retry time is in the future. */
     findOutstandingDateIntents(branchId: string, clientId: number, transaction: Prisma.TransactionClient): Promise<Array<Pick<MessageTriggerJobEntity,
         "dedupeKey" | "employeeScheduleId" | "payload">>>;

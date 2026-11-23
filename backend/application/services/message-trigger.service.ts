@@ -92,7 +92,6 @@ import {
 } from "domain/repositories/message-trigger-rule-branch-override.repository.interface";
 import { isManualMessageTriggerJob, isManualMessageTriggerRule } from "domain/constants/message-trigger-job-ownership";
 import { AGENT_AUTOMATION_JOB_SEAL_PAYLOAD_KEY, isReservedAutomationJob } from "domain/constants/agent-automation-storage";
-import { SERVICE_END_NOTICE_ALREADY_SENT_CANCEL_REASON } from "domain/constants/service-end-notice-message";
 import { SERVICE_RECORD_LINK_ENDED_REASON, SERVICE_RECORD_LINK_PRE_BOOKING_REASON, SERVICE_RECORD_LINK_RULE_ID, getServiceRecordServiceEndedAt } from "domain/constants/service-record-link-message";
 import { getEffectiveClientServiceStatus } from "domain/repositories/client.repository.interface";
 import {
@@ -136,7 +135,6 @@ import {
     MESSAGE_AUTOMATION_PARENT_DISABLED_REASON,
 } from "./message-automation-activation.service";
 import { AdminAuditActor } from "./admin-audit-event.service";
-import { MANUAL_DEDUPE_MARKER } from "domain/constants/service-end-notice-message";
 import {
     MessageAutomationPastTriggerConfig,
 } from "domain/entities/system-setting.entity";
@@ -4466,14 +4464,6 @@ export class MessageTriggerService {
             }
             const parentFence = await this.fenceMessageAutomationParent(job, transaction);
             if (parentFence.kind !== "allow") return parentFence;
-            const serviceEndNoticeFence = await this.fenceServiceEndNoticeBeforeProviderSend(
-                job,
-                transaction,
-            );
-            if (serviceEndNoticeFence.kind !== "allow") {
-                return serviceEndNoticeFence;
-            }
-
             const revisionFence = await this.fenceServiceRecordRevisionBeforeProviderSend(
                 job,
                 transaction,
@@ -4644,11 +4634,9 @@ export class MessageTriggerService {
                 ? sourceFence
                 : revisionFence.kind === "stale"
                     ? revisionFence
-                    : serviceEndNoticeFence.kind === "stale"
-                        ? serviceEndNoticeFence
-                        : linkTokenFence.kind === "stale"
-                            ? linkTokenFence
-                            : null;
+                    : linkTokenFence.kind === "stale"
+                        ? linkTokenFence
+                        : null;
             if (resend && safeguardFence.kind === "stale") {
                 // A resend refused by the safeguard after its claim goes back to
                 // '추가 정보 필요' with its setup reason kept, exactly like a
@@ -4847,36 +4835,6 @@ export class MessageTriggerService {
             }
         }
         return null;
-    }
-
-    private async fenceServiceEndNoticeBeforeProviderSend(
-        job: MessageTriggerJobEntity,
-        transaction: Prisma.TransactionClient,
-    ): Promise<PreProviderSendFenceResult> {
-        if (
-            job.templateKey !== MessageTriggerTemplateKey.SERVICE_END_NOTICE
-            || job.dedupeKey.includes(MANUAL_DEDUPE_MARKER)
-        ) {
-            return { kind: "allow" };
-        }
-        if (!job.branchId || job.clientId === null) {
-            return { kind: "lost" };
-        }
-
-        const rows = await transaction.$queryRaw<Array<{
-            service_end_notice_sent_at: Date | null;
-        }>>(Prisma.sql`
-            SELECT service_end_notice_sent_at
-            FROM "client"
-            WHERE id = ${job.clientId}
-              AND branch_id = ${job.branchId}::uuid
-            FOR UPDATE
-        `);
-        const client = rows[0];
-        if (!client) return { kind: "lost" };
-        return client.service_end_notice_sent_at === null
-            ? { kind: "allow" }
-            : { kind: "stale", reason: SERVICE_END_NOTICE_ALREADY_SENT_CANCEL_REASON };
     }
 
     /**
@@ -5109,8 +5067,6 @@ export class MessageTriggerService {
                 if (!clientDates || job.employeeScheduleId !== null || job.recipientType !== MessageTriggerRecipientType.CLIENT) return { kind: "allow" };
                 const client = await this.readClientAutomationSource(job.branchId, job.clientId, tx);
                 if (!client) return { kind: "lost" };
-                // The existing already-sent notice fence owns this cancellation.
-                if (job.templateKey === MessageTriggerTemplateKey.SERVICE_END_NOTICE && client.serviceEndNoticeSentAt) return { kind: "allow" };
                 current = this.buildClientJob(rule, client);
             }
             const originalScheduledFor = job.payload.catchUp?.originalScheduledFor ?? job.scheduledFor.toISOString();

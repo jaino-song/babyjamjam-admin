@@ -21,7 +21,7 @@ import type { MessageLogRecord } from "@/features/message-triggers/types";
 import { serviceRecordsApi } from "@/features/service-records/api/service-records.api";
 import { useToast } from "@/hooks/use-toast";
 import { eformsignApi, messageDeliveryApi } from "@/services/api";
-import type { MessageDeliverySmsDuplicateCheckResponse, SendMessageDeliverySmsRequest, SendMessageDeliverySmsQueueResponse } from "@babyjamjam/shared/types/message";
+import type { MessageDeliverySmsTemplateRef, MessageDeliverySmsDuplicateCheckResponse, SendMessageDeliverySmsRequest, SendMessageDeliverySmsQueueResponse } from "@babyjamjam/shared/types/message";
 import type { Client } from "@/lib/client/types";
 import {
   formatKoreanPhoneNumber,
@@ -101,6 +101,7 @@ type SubmissionGuard = "idle" | "checking" | "awaiting-confirm" | "sending";
 
 interface TemplateSendFormProps {
   templateId: string;
+  templateRef?: MessageDeliverySmsTemplateRef;
   templateName: string;
   message: string;
   requiresRecipientName?: boolean;
@@ -294,6 +295,7 @@ function recipientsMatch(left: RecipientQueueItem[], right: RecipientQueueItem[]
 
 export function TemplateSendForm({
   templateId,
+  templateRef,
   templateName,
   message,
   requiresRecipientName = false,
@@ -977,6 +979,7 @@ export function TemplateSendForm({
         message: recipient.message,
         msgType: "AUTO",
         triggerType: "immediate",
+        ...(templateRef ? { templateRef } : {}),
         ...(recipient.clientId !== null ? { clientId: recipient.clientId } : {}),
         ...(requiresRecipientName && recipient.name ? { recipientName: recipient.name } : {}),
         ...(getTextByteLength(recipient.message) > SMS_BYTE_LIMIT ? { title: getLmsTitle(templateName) } : {}),
@@ -989,7 +992,7 @@ export function TemplateSendForm({
       }
       return { ...payload, idempotencyKey: entry.key };
     }),
-  }), [capturedBranchId, clientId, deliveryMode, message, name, phone, requiresRecipientName, selectedClientId, templateId, templateName]);
+  }), [capturedBranchId, clientId, deliveryMode, message, name, phone, requiresRecipientName, selectedClientId, templateId, templateName, templateRef]);
 
   const isSmsSubmissionSnapshotCurrent = useCallback((snapshot: SmsSubmissionSnapshot) => {
     const latest = latestSmsSnapshotRef.current;

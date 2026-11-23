@@ -162,8 +162,12 @@ describeReal("SMS duplicate dispatch prevention (real PostgreSQL)", () => {
             claimToken: `si-03-dispatch-${Date.now()}`,
             scheduledFor: new Date(Date.now() - 60 * 1000),
         });
-        const jobA = payloadMessageJob(created);
-        const jobB = payloadMessageJob(created);
+        const persistedPayload = payloadMessageJob(created).payload;
+        const stored = await handle.raw.message_trigger_job.update({
+            where: { id: created.id, branchId }, data: { payload: JSON.parse(JSON.stringify(persistedPayload)) },
+        });
+        const jobA = toLiveEntity(stored);
+        const jobB = toLiveEntity(stored);
 
         let releaseFirstSend: ((result: unknown) => void) | undefined;
         const firstSendResult = new Promise((resolve) => { releaseFirstSend = resolve; });

@@ -43,6 +43,16 @@ import { mapHttpProblem } from "infrastructure/filters/problem-response";
 
 const PHONE = "01000000011";
 const NIGHT = "2026-11-03T13:00:00.000Z";
+function matchesJobFence(job: MessageTriggerJobEntity, where: {
+    updatedAt?: Date; processingDeadlineAt?: Date | { equals: Date; gt: Date } | null;
+}) {
+    if (where.updatedAt && job.updatedAt.getTime() !== where.updatedAt.getTime()) return false;
+    const deadline = where.processingDeadlineAt;
+    if (deadline === undefined) return true;
+    if (deadline === null) return job.processingDeadlineAt === null;
+    if ("getTime" in deadline) return job.processingDeadlineAt?.getTime() === deadline.getTime();
+    return job.processingDeadlineAt?.getTime() === deadline.equals.getTime() && job.processingDeadlineAt > deadline.gt;
+}
 function boundaryFixture() {
     let active = false;
     const policy = defaultMessageAutomationPolicy();
@@ -89,8 +99,8 @@ function boundaryFixture() {
             }),
             findUnique: jest.fn(async () => stored ? { ...structuredClone(stored), rule: { id: "rule-auto" } } : null),
             findFirst: jest.fn(async () => stored ? structuredClone(stored) : null),
-            updateMany: jest.fn(async ({ data }: { data: Partial<MessageTriggerJobEntity> }) => {
-                if (!stored) return { count: 0 };
+            updateMany: jest.fn(async ({ where, data }: { where: Parameters<typeof matchesJobFence>[1]; data: Partial<MessageTriggerJobEntity> }) => {
+                if (!stored || !matchesJobFence(stored, where)) return { count: 0 };
                 Object.assign(stored, structuredClone(data)); return { count: 1 };
             }),
         },
@@ -168,7 +178,8 @@ function manualJob(kind: "agent" | "admin" | "automatic") {
         dedupeKey: kind === "admin" ? "system:service_record_link:schedule:91:primary:manual:55000000-0000-4000-8000-000000000001" : "test-dedupe",
         payload: { clientId: 7, memberId: "7", recipientName: "합성 고객", recipientPhone: PHONE, messageBody: "합성 본문",
             templateVariables: { triggerType: "agent_scheduled" } } });
-    Object.assign(job, { id: "55000000-0000-4000-8000-000000000099", status: "dispatching", claimToken: "claim-a" }); return job;
+    Object.assign(job, { id: "55000000-0000-4000-8000-000000000099", status: "dispatching", claimToken: "claim-a",
+        processingDeadlineAt: new Date(Date.now() + 600_000), updatedAt: new Date(Date.now()) }); return job;
 }
 function triggerService(f: ReturnType<typeof boundaryFixture>, withGuard = true) {
     const gate = new AgentAutomationDeliveryGateService(f.db as never, f.lock, {} as never);
@@ -346,8 +357,8 @@ async function automaticFixture(event: "START" | "END" = "START", role = 0, dist
             findFirst: jest.fn(async ({ where }: { where: { id?: string; status?: string; claimToken?: string } }) =>
                 (!where.id || where.id === stored.id) && (!where.status || where.status === stored.status)
                     && (!where.claimToken || where.claimToken === stored.claimToken) ? structuredClone(stored) : null),
-            updateMany: jest.fn(async ({ where, data }: { where: { status?: string; claimToken?: string }; data: Partial<typeof stored> }) => {
-                if (where.status && where.status !== stored.status || where.claimToken && where.claimToken !== stored.claimToken) return { count: 0 };
+            updateMany: jest.fn(async ({ where, data }: { where: Parameters<typeof matchesJobFence>[1] & { status?: string; claimToken?: string }; data: Partial<typeof stored> }) => {
+                if (!matchesJobFence(stored, where) || where.status && where.status !== stored.status || where.claimToken && where.claimToken !== stored.claimToken) return { count: 0 };
                 Object.assign(stored, structuredClone(data)); return { count: 1 };
             }),
         },
@@ -370,11 +381,21 @@ async function automaticFixture(event: "START" | "END" = "START", role = 0, dist
     Object.assign(quietPolicy.quietHours, { enabled: true, action: "CANCEL" });
     const settings = new SystemSettingService({ execute: async () => JSON.stringify(quietPolicy) } as never, {} as never);
     const quiet = new MessageQuietHoursService(settings, logs as never, lock);
-    const service = new SmsTriggerDeliveryService(aligo as never, {} as never, logs as never, undefined, undefined, gate, undefined,
+    const acceptance = new SmsProviderAcceptanceService({
+        ...logs,
+        prepareProviderAttempt: logs.save,
+        claimProviderAttempt: async (log: MessageLogEntity) => { log.markProviderCallStarted(); return log; },
+    } as never);
+    const service = new SmsTriggerDeliveryService(aligo as never, {} as never, logs as never, acceptance, undefined, gate, undefined,
         settings, f.templates, quiet);
     const render = (candidate: MessageTriggerJobEntity, transaction: Parameters<typeof service.resolveCanonicalDeliverySnapshot>[1]) => service.resolveCanonicalDeliverySnapshot(candidate, transaction);
     const store = () => { stored = structuredClone(job); };
-    const start = async () => { job.markProcessing("claim-caregiver"); store(); return gate.authorizePreparation(job, render as never, async () => ({ kind: "allow" })); };
+    const start = async () => {
+        job.markProcessing("claim-caregiver");
+        job.processingDeadlineAt = new Date(Date.now() + 600_000);
+        store();
+        return gate.authorizePreparation(job, render as never, async () => ({ kind: "allow" }));
+    };
     const dispatch = async () => {
         const preparation = await service.prepareJob(job);
         if (!preparation) return false;
@@ -542,7 +563,8 @@ function cancellationPersistenceFixture() {
     });
     const updateJob = jest.fn(async ({ where, data }: { where: Record<string, unknown>; data: object }) => {
         const current = await f.db.message_trigger_job.findFirst();
-        if (!current || !matches(current, where)) return { count: 0 };
+        const { updatedAt, processingDeadlineAt, ...rest } = where as Parameters<typeof matchesJobFence>[1] & Record<string, unknown>;
+        if (!current || !matchesJobFence(current, { updatedAt, processingDeadlineAt }) || !matches(current, rest)) return { count: 0 };
         f.store(Object.assign(current, structuredClone(data))); return { count: 1 };
     });
     Object.assign(f.db.message_trigger_job, { updateMany: updateJob });
@@ -758,7 +780,7 @@ describeReal("C1 quiet cancellation atomic SQL (real PostgreSQL)", () => {
         Object.assign(job, { id: id.job, branchId: id.branch, ruleId, clientId: id.client, claimToken: "claim-quiet-c1", dedupeKey: `quiet-c1:${id.job}` });
         job.payload = { ...job.payload, clientId: id.client };
         await createMessageTriggerJob(handle.raw, tracker, { ruleId }, { id: job.id, branchId: id.branch, clientId: id.client,
-            status: "dispatching", claimToken: job.claimToken, processingDeadlineAt: null, scheduledFor: job.scheduledFor,
+            status: "dispatching", claimToken: job.claimToken, processingDeadlineAt: job.processingDeadlineAt, scheduledFor: job.scheduledFor,
             recipientType: job.recipientType, recipientPhone: PHONE, templateKey: job.templateKey, dedupeKey: job.dedupeKey,
             payload: job.payload as unknown as Prisma.InputJsonValue });
         const repository = new SbMessageLogRepository(handle.service);
