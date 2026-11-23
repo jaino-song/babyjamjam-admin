@@ -432,50 +432,83 @@ rasterTest('malformed, truncated and password-required input stays unpublished',
     await assert.rejects(lstat(outputPath), { code: 'ENOENT' });
 });
 
-function flatPdf(specifications) {
+function flatPdf(specifications, { openAction = false, unusedObject = false } = {}) {
     const pdf = pdfObjects();
     const catalog = pdf.add();
     const tree = pdf.add();
-    const kids = specifications.map(({ width = 100, height = 100, media = '24 24', draw = true, bytes } = {}) => {
+    const kids = specifications.map(({
+        width = 100, height = 100, media = [24, 24], draw = true, bytes,
+        colorSpace = '/DeviceRGB', bitsPerComponent = 8, asciiHexImage = false, linkAnnotation = false,
+    }) => {
         const pixels = Buffer.alloc(bytes ?? width * height * 3, 255);
-        const image = pdf.add(pdfStream(`/Subtype /Image /ColorSpace /DeviceRGB /BitsPerComponent 8
-            /Width ${width} /Height ${height} /Filter /FlateDecode`, deflateSync(pixels)));
-        const contents = pdf.add(pdfStream('/Filter /FlateDecode', deflateSync(
-            draw ? '24 0 0 24 0 0 cm\n/Im1 Do' : '0 0 m 24 24 l S',
-        )));
-        return pdf.add(`<< /Type /Page /Parent ${tree} /MediaBox [0 0 ${media}]
-            /Resources << /XObject << /Im1 ${image} >> >> /Contents ${contents} >>`);
+        const filter = asciiHexImage ? '/ASCIIHexDecode' : '/FlateDecode';
+        const encodedPixels = asciiHexImage ? `${pixels.toString('hex')}>` : deflateSync(pixels);
+        const image = pdf.add(pdfStream(`/Subtype /Image /ColorSpace ${colorSpace} /BitsPerComponent ${bitsPerComponent}
+            /Width ${width} /Height ${height} /Filter ${filter}`, encodedPixels));
+        const [pageWidth, pageHeight] = media;
+        const painting = draw ? `${pageWidth} 0 0 ${pageHeight} 0 0 cm\n/Im1 Do` : '0 0 m 24 24 l S';
+        const contents = pdf.add(pdfStream('/Filter /FlateDecode', deflateSync(painting)));
+        const page = pdf.add();
+        // A local destination needs no separate annotation object or executable action.
+        const annots = linkAnnotation
+            ? ` /Annots [<< /Type /Annot /Subtype /Link /Rect [0 0 12 12] /Dest [${page} /Fit] >>]` : '';
+        pdf.set(page, `<< /Type /Page /Parent ${tree} /MediaBox [0 0 ${pageWidth} ${pageHeight}]
+            /Resources << /XObject << /Im1 ${image} >> >> /Contents ${contents}${annots} >>`);
+        return page;
     });
-    pdf.set(catalog, `<< /Type /Catalog /Pages ${tree} >>`);
+    const action = openAction ? ` /OpenAction [${kids[0]} /Fit]` : '';
+    pdf.set(catalog, `<< /Type /Catalog /Pages ${tree}${action} >>`);
     pdf.set(tree, `<< /Type /Pages /Count ${kids.length} /Kids [${kids.join(' ')}] >>`);
+    if (unusedObject) pdf.add('<< /Fixture (Unreferenced object) >>');
     return pdf.output();
 }
 
-rasterTest('rejects qpdf-readable output with the wrong geometry, page count, painting or RGB data', async (t) => {
+rasterTest('validates image-only output before publication and cleans up rejected fixtures', async (t) => {
     const dir = await temp(t);
     const sourcePath = join(dir, 'source.pdf');
-    const outputPath = join(dir, 'unpublished.pdf');
+    const outputPath = join(dir, 'result.pdf');
     const mockPath = join(dir, 'mock.pdf');
     const log = join(dir, 'gs.log');
     await writeFile(sourcePath, simpleSource(['0 0 24 24', '0 0 24 24']));
-    for (const [name, specs] of [
+    const gsBin = await recordingTool(dir, 'mock-gs', log, `
+        import { copyFileSync } from 'node:fs';
+        copyFileSync(${JSON.stringify(mockPath)}, rendered);
+    `);
+    const expectedFiles = ['source.pdf', 'mock.pdf', 'gs.log', 'mock-gs'];
+    async function renderFixture(specs, options) {
+        await writeFile(mockPath, flatPdf(specs, options));
+        await exec('qpdf', ['--check', mockPath]);
+        await renderRasterPdf({ sourcePath, outputPath, gsBin });
+    }
+
+    for (const [name, specs, options] of [
         ['image dimensions', [{ width: 101 }, {}]],
-        ['page box', [{ media: '25 24' }, {}]],
+        ['MediaBox differs from raster size even when the paint matrix matches the box', [{ media: [25, 24] }, {}]],
         ['page count', [{}]],
         ['page paints vector without invoking its image', [{}, { draw: false }]],
+        ['catalog has an OpenAction', [{}, {}], { openAction: true }],
+        ['page has a Link annotation', [{ linkAnnotation: true }, {}]],
+        ['unreferenced object', [{}, {}], { unusedObject: true }],
+        ['image uses CalRGB', [{ colorSpace: '[/CalRGB << /WhitePoint [0.9505 1 1.089] >>]' }, {}]],
+        // Keep the decoded byte count fixed so the bit-depth check has to reject it.
+        ['image declares 4 bits per component', [{ bitsPerComponent: 4 }, {}]],
+        ['image uses ASCIIHexDecode', [{ asciiHexImage: true }, {}]],
         ['short RGB stream', [{}, { bytes: 29_999 }]],
         ['oversized RGB stream', [{}, { bytes: 30_001 }]],
     ]) {
         await t.test(name, async () => {
-            const fake = flatPdf(specs);
-            await writeFile(mockPath, fake);
-            await exec('qpdf', ['--check', mockPath]);
-            const gsBin = await recordingTool(dir, 'mock-gs', log,
-                `writeFileSync(rendered, Buffer.from(${JSON.stringify(fake.toString('base64'))}, 'base64'))`);
-            await assert.rejects(renderRasterPdf({ sourcePath, outputPath, gsBin }), { code: 'RASTER_INVALID_OUTPUT' });
-            await assertClean(dir, log, ['source.pdf', 'mock.pdf', 'gs.log', 'mock-gs']);
+            await assert.rejects(renderFixture(specs, options), {
+                code: 'RASTER_INVALID_OUTPUT', message: 'RASTER_INVALID_OUTPUT',
+            });
+            await assertClean(dir, log, expectedFiles);
         });
     }
+
+    await t.test('accepts and publishes the valid control unchanged', async () => {
+        await renderFixture([{}, {}]);
+        assert.deepEqual(await readFile(outputPath), await readFile(mockPath));
+        await assertClean(dir, log, [...expectedFiles, 'result.pdf']);
+    });
 });
 
 rasterTest('pixel, page-count and input file bounds reject before starting Ghostscript', async (t) => {
