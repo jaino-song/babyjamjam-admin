@@ -1,4 +1,7 @@
-import { BadRequestException, ConflictException, ForbiddenException, NotFoundException, UnauthorizedException, type ExecutionContext } from "@nestjs/common";
+import {
+    BadRequestException, ConflictException, ForbiddenException, NotFoundException, UnauthorizedException,
+    type ExecutionContext, type FactoryProvider, type Provider,
+} from "@nestjs/common";
 import { GUARDS_METADATA, MODULE_METADATA } from "@nestjs/common/constants";
 import { JwtModule, JwtService } from "@nestjs/jwt";
 import type { Prisma } from "@prisma/client";
@@ -13,7 +16,9 @@ import { JwtStrategy } from "infrastructure/auth/jwt.strategy";
 import { OwnerGuard } from "infrastructure/auth/owner.guard";
 import { ServiceRecordEditRepository } from "infrastructure/database/repositories/service-record-edit.repository";
 import { TenantContext, TenantGuard } from "infrastructure/tenant";
-import { OwnerRecordJsonBearerGuard, OwnerRecordJsonController } from "interface/controllers/owner-record-json.controller";
+import {
+    OWNER_RECORD_JSON_JWT_DECODER, OwnerRecordJsonBearerGuard, OwnerRecordJsonController,
+} from "interface/controllers/owner-record-json.controller";
 import { parseOwnerRecordJsonRequest, parseOwnerRecordJsonTarget, type OwnerRecordJsonRequest } from "interface/dto/owner-record-json.dto";
 import { ServiceRecordEntryModule } from "module/service-record-entry.module";
 
@@ -356,12 +361,20 @@ describe("owner record JSON contract", () => {
         expect(new OwnerGuard().canActivate(context)).toBe(true);
     });
 
-    it("passes the verified actor and accepts only application/json", async () => {
+    it.each([3, 17])("passes the verified actor with token version %i and accepts only application/json", async (tokenVersion) => {
+        const providers: Provider[] = Reflect.getMetadata(MODULE_METADATA.PROVIDERS, ServiceRecordEntryModule);
+        const decoderProvider = providers.find((provider): provider is FactoryProvider<Pick<JwtService, "decode">> =>
+            typeof provider === "object" && provider.provide === OWNER_RECORD_JSON_JWT_DECODER && "useFactory" in provider,
+        );
+        if (!decoderProvider) {
+            throw new Error("ServiceRecordEntryModule must register the owner record JSON decoder factory");
+        }
         const fakeEditor = { confirmOwnerRecordJson: jest.fn() };
-        const jwt = new JwtService({ secret: "fixture" });
-        const controller = new OwnerRecordJsonController(fakeEditor as never, jwt);
+        const signer = new JwtService({ secret: "fixture" });
+        const decoder = await decoderProvider.useFactory();
+        const controller = new OwnerRecordJsonController(fakeEditor as never, decoder);
         const req = {
-            headers: { authorization: `Bearer ${jwt.sign({ tokenVersion: 3 })}` },
+            headers: { authorization: `Bearer ${signer.sign({ tokenVersion })}` },
             user: { sessionId: SESSION }, is: jest.fn().mockReturnValue(false),
         } as unknown as Request & { user: { sessionId: string } };
         const tenant = { userId: OWNER, branchId: BRANCH, globalRole: "owner", branchRole: "owner" };
@@ -369,7 +382,7 @@ describe("owner record JSON contract", () => {
         expect(() => controller.writeSessions(tenant, req, params, valid)).toThrow(BadRequestException);
         (req.is as jest.Mock).mockReturnValue("application/json");
         await controller.writeSessions(tenant, req, params, valid);
-        expect(fakeEditor.confirmOwnerRecordJson).toHaveBeenCalledWith(principal, target, valid);
+        expect(fakeEditor.confirmOwnerRecordJson).toHaveBeenCalledWith({ ...principal, tokenVersion }, target, valid);
     });
 
     it("verifies the bearer even with a valid cookie and uses the live global role", async () => {
