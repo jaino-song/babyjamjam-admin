@@ -27,6 +27,8 @@ export class ServiceRecordEditConflictError extends Error {
     }
 }
 
+export class ServiceRecordOwnerWriteAccessDeniedError extends Error {}
+
 /** Named alias used by callers that want to distinguish a stale CAS version. */
 export class ServiceRecordEditDraftConflictError extends ServiceRecordEditConflictError {
     readonly code = "SERVICE_RECORD_EDIT_DRAFT_CONFLICT";

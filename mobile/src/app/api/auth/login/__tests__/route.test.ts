@@ -42,7 +42,7 @@ describe("POST /api/auth/login", () => {
         mockPost.mockReset();
         mockCookies.mockReset();
         cookieSet = jest.fn();
-        mockCookies.mockResolvedValue({ set: cookieSet } as never);
+        mockCookies.mockResolvedValue({ set: cookieSet, delete: jest.fn() } as never);
         consoleErrorSpy = jest.spyOn(console, "error").mockImplementation(() => {});
     });
 

@@ -12,6 +12,7 @@ import type {
 } from "@babyjamjam/shared/types/service-record";
 import type { InitialNoProviderDocumentProjection } from "domain/constants/service-record-initial-no-provider-document";
 import type { Prisma } from "@prisma/client";
+import type { HolidayCalendarReadData } from "./holiday-calendar.repository.interface";
 
 /** JSON value shape kept in the domain boundary so this port does not import Prisma. */
 export type ServiceRecordEditJsonValue =
@@ -536,6 +537,31 @@ export interface ServiceRecordEditConfirmInput {
         | Promise<ServiceRecordEditConfirmPlan>;
 }
 
+export interface ServiceRecordOwnerWritePrincipal {
+    branchId: string;
+    userId: string;
+    sessionId: string;
+    tokenVersion: number;
+}
+
+export interface ServiceRecordOwnerJsonConfirmInput {
+    principal: ServiceRecordOwnerWritePrincipal;
+    clientId: number;
+    caseId: string;
+    idempotencyKey: string;
+    requestFingerprint: string;
+    targets: ReadonlyArray<{ op: "edit" | "fill"; sessionIndex: number; serviceDate: string }>;
+    serviceRecordTemplateIds: readonly string[];
+    prepareDraft: (source: ServiceRecordEditSource) => Pick<
+        CreateServiceRecordEditDraftInput, "sourceCaseVersion" | "sourceFingerprint" | "sourceSnapshot" | "changes"
+    >;
+    prepare: (snapshot: ServiceRecordEditConfirmSnapshot, calendar: HolidayCalendarReadData) => {
+        plan: ServiceRecordEditConfirmPlan;
+        /** Required for missing-row fills on a case with a null stored vector. */
+        verifyInsertedProjection?: (sourceAfterInserts: ServiceRecordEditSource) => void;
+    };
+}
+
 export interface ServiceRecordEditTransactionContext {
     readonly tx: Prisma.TransactionClient;
 }
@@ -691,6 +717,10 @@ export interface IServiceRecordEditRepository {
      * order and fresh source reread have completed.
      */
     confirmDraft(input: ServiceRecordEditConfirmInput): Promise<ServiceRecordEditConfirmResponse>;
+    confirmOwnerJson(input: ServiceRecordOwnerJsonConfirmInput): Promise<{
+        confirmed: ServiceRecordEditConfirmResponse;
+        replayed: boolean;
+    }>;
 }
 
 export const SERVICE_RECORD_EDIT_REPOSITORY = "SERVICE_RECORD_EDIT_REPOSITORY";

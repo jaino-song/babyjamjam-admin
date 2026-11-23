@@ -25,18 +25,19 @@ it("rejects missing cookie without a request", async () => {
   expect(await completeAccountOnboarding({})).toEqual({ success: false, error: "로그인 세션이 만료됐어요. 다시 로그인해 주세요." });
   expect(post).not.toHaveBeenCalled();
 });
-it("writes the session and deletes both pending cookies", async () => {
+it("writes the session and deletes the pending cookies and preference", async () => {
   const data = { success: true, accessToken: "a", refreshToken: "r", requiresBranchSelection: true };
   post.mockResolvedValue({ data, status: 201 });
   expect(await completeAccountOnboarding({ phone: "010-1234-5678" })).toEqual({ success: true, requiresBranchSelection: true });
   expect(writeLoginSessionCookies).toHaveBeenCalledWith(data, true);
-  expect(store.delete.mock.calls).toEqual([["pending_account_onboarding"], ["pending_kakao_signup"]]);
+  expect(store.delete.mock.calls).toEqual([["pending_account_onboarding"], ["pending_account_onboarding_auto_login"], ["pending_kakao_signup"]]);
   expect(post).toHaveBeenCalledWith("/auth/onboarding/complete", { phone: "010-1234-5678" }, { headers: { "x-pending-onboarding-token": "pending" } });
 });
 it("expires the pending session on 401", async () => {
   post.mockRejectedValue(failure(401, "AUTH_REQUIRED"));
   expect((await completeAccountOnboarding({})).error).toContain("만료");
   expect(store.delete).toHaveBeenCalledWith("pending_account_onboarding");
+  expect(store.delete).toHaveBeenCalledWith("pending_account_onboarding_auto_login");
 });
 it.each(["PENDING_APPROVAL", "ACCOUNT_REJECTED", "NO_ACCESSIBLE_BRANCH"] as const)("returns 403 %s", async code => {
   post.mockRejectedValue(failure(403, code));
