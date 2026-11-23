@@ -23,6 +23,7 @@ import {
     draftServiceDays,
     normalizeServiceRecordEditChanges,
     resolveResumeReplan,
+    resolveServiceRecordScheduleProjection,
     sameServiceDays,
     ServiceRecordResumeAssignmentError,
     ServiceRecordScheduleValidationError,
@@ -31,6 +32,7 @@ import {
     type ServiceRecordEditResumeReplan,
     type ServiceRecordEditScheduleReplacement,
 } from "application/policies/service-record-edit-preview.policy";
+import { isSupersededAssignment } from "application/policies/service-record-period-ownership.policy";
 import {
     ServiceRecordEditConflictError,
     ServiceRecordEditNotFoundError,
@@ -385,7 +387,7 @@ function ownerJsonSessionUpdates(
             || !assignment || assignment.serviceRecordCaseId !== source.caseId || assignment.branchId !== source.client.branchId
             || (day && (day.ambiguous || day.branchId !== source.client.branchId || day.serviceDate !== serviceDate
                 || day.scheduleId !== assignment.scheduleId || day.employeeId !== assignment.employeeId))) {
-            throw new ServiceRecordEditConflictError("The requested session does not match the stored schedule");
+            throw new ServiceRecordEditConflictError("The requested session does not match the existing schedule");
         }
         if (operation.op === "edit") {
             if (!day || !(hasRecordedDayState(day) || hasMeaningfulContent(day)) || !hasExistingContentDifference(day, patch)) {
@@ -398,11 +400,7 @@ function ownerJsonSessionUpdates(
             || (day ? (
                 hasRecordedDayState(day) || !sameJsonValue(day.answers, {}) || day.etcService !== null || day.notes !== null
                 || day.rawCaseSessionIndex !== sessionIndex || day.rawSessionIndex !== sessionIndex
-            ) : (
-                // A derived legacy date alone is insufficient evidence to create a missing row.
-                source.plannedSessions === null
-                || !plan.newSessions.some((created) => created.sessionIndex === sessionIndex && created.serviceDate === serviceDate)
-            ))
+            ) : !plan.newSessions.some((created) => created.sessionIndex === sessionIndex && created.serviceDate === serviceDate))
         ) {
             throw new ServiceRecordEditConflictError("A fill requires an empty scheduled session and meaningful content");
         }
@@ -412,6 +410,49 @@ function ownerJsonSessionUpdates(
         throw new ServiceRecordEditConflictError("A service-record content change is required");
     }
     return plan.sessions.filter((session) => touchedRows.has(session.sourceRowId));
+}
+
+function prepareProjectedOwnerFill(
+    source: SourceSnapshot,
+    plan: ServiceRecordEditConfirmPlan,
+    calendar: KrBusinessDayCalendar,
+): (sourceAfterInserts: SourceSnapshot) => void {
+    const serviceDays = storedServiceDays(source);
+    const effectiveCalendar = calendar.withServiceDays(serviceDays);
+    const before = resolveServiceRecordScheduleProjection(source, effectiveCalendar);
+    const vector = jsonValue(before.entries);
+    if (before.blockingReasons.length || !sameJsonValue(vector, plan.plannedSessions)) {
+        throw new ServiceRecordEditConflictError("The write plan would change the projected service-record schedule");
+    }
+    for (const created of plan.newSessions) {
+        const slot = before.entries[created.sessionIndex - 1];
+        const candidates = source.assignments.filter((assignment) => assignment.id
+            && (assignment.startDate || assignment.scheduleStartDate) <= created.serviceDate
+            && (assignment.endDate || assignment.scheduleEndDate) >= created.serviceDate);
+        const assignment = candidates[0];
+        if (!slot || slot.sessionIndex !== created.sessionIndex || slot.serviceDate !== created.serviceDate
+            || slot.originalDate !== created.originalDate || slot.assignmentId !== created.assignmentId
+            || slot.scheduleId !== created.scheduleId || slot.employeeId !== created.employeeId
+            || slot.provenanceVersion !== created.provenanceVersion
+            || candidates.length !== 1 || !assignment || assignment.id !== slot.assignmentId
+            || isSupersededAssignment(assignment)) {
+            throw new ServiceRecordEditConflictError("The projected session does not have a unique active assignment");
+        }
+    }
+
+    return (updated) => {
+        // Legacy provenance includes the case version. Compare both observations
+        // at the locked input version, before this confirmation's own increment.
+        const after = resolveServiceRecordScheduleProjection({ ...updated, caseVersion: source.caseVersion }, effectiveCalendar);
+        if (after.source !== before.source || after.blockingReasons.length || !sameJsonValue(vector, jsonValue(after.entries))
+            || !sameServiceDays(serviceDays, storedServiceDays(updated))
+            || plan.newSessions.some((created) => !updated.sessions.some((day) => day.sourceRowId === created.sourceRowId
+                && day.branchId === source.client.branchId && day.rawCaseSessionIndex === created.sessionIndex
+                && day.rawSessionIndex === created.sessionIndex && day.serviceDate === created.serviceDate
+                && day.scheduleId === created.scheduleId && day.employeeId === created.employeeId))) {
+            throw new ServiceRecordEditConflictError("The inserted rows changed the projected service-record schedule");
+        }
+    };
 }
 
 function mergeSparseAnswers(
@@ -964,7 +1005,6 @@ export class AdminServiceRecordEditService {
         const { branchId, userId } = principal;
         const { operations, expectedCaseVersion, expectedSourceFingerprint, idempotencyKey } = request;
         const requestFingerprint = jsonFingerprint(jsonValue({ branchId, userId, ...target, ...request }));
-        const calendar = await this.holidayCalendar.forBranch(branchId, { fresh: true });
         try {
             const { confirmed, replayed } = await this.repository.confirmOwnerJson({
                 principal,
@@ -984,11 +1024,16 @@ export class AdminServiceRecordEditService {
                     })) }, source);
                     return { sourceCaseVersion: source.caseVersion, sourceFingerprint: fingerprint, sourceSnapshot: jsonValue(source), changes };
                 },
-                prepare: ({ draft, source, revisionFactsSource }) => {
+                prepare: ({ draft, source, revisionFactsSource }, calendarData) => {
+                    const calendar = this.holidayCalendar.fromReadData(calendarData);
                     const plan = this.buildConfirmPlan({
                         draft, source, revisionFactsSource, branchId, draftId: draft.id, actorUserId: userId, calendar,
                     });
-                    return { ...plan, sessions: ownerJsonSessionUpdates(source, draft, plan, operations) };
+                    const sessions = ownerJsonSessionUpdates(source, draft, plan, operations);
+                    const verifyInsertedProjection = source.plannedSessions === null && plan.newSessions.length
+                        ? prepareProjectedOwnerFill(source, plan, calendar)
+                        : undefined;
+                    return { plan: { ...plan, sessions }, verifyInsertedProjection };
                 },
             });
             if (!replayed) this.emitCaseChanged(branchId, confirmed);
