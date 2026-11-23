@@ -2771,8 +2771,8 @@ describe("INITIAL chunk terminal outcome", () => {
                     { documentId: rawQueryDocumentId, chunkIndex: 1, chunkCount: 2 },
                     { documentId: options.unlinked ? null : "sibling", chunkIndex: 2, chunkCount: 2 },
                 ])
-                .mockResolvedValueOnce([{ documentId: rawQueryDocumentId, statusType: options.documentStatus ?? "049", voidedAt: options.voidedAt ?? null },
-                    ...(options.siblingTombstone ? [{ documentId: "sibling", statusType: "049", voidedAt: null }] : [])]),
+                .mockResolvedValueOnce([{ documentId: rawQueryDocumentId, statusType: options.documentStatus ?? "049", voidedAt: options.voidedAt ?? null, tombstoneEvaluated: false },
+                    ...(options.siblingTombstone ? [{ documentId: "sibling", statusType: "049", voidedAt: null, tombstoneEvaluated: false }] : [])]),
             $executeRaw: jest.fn().mockImplementation(async (query: { strings: string[]; values: unknown[] }) => {
                 if (options.cas === 0) return 0;
                 if (query.strings.join("").includes("UPDATE service_record_revision_document_state")) {
@@ -2862,6 +2862,16 @@ describe("INITIAL chunk terminal outcome", () => {
             expect(f.tx.$executeRaw).toHaveBeenCalledTimes(1);
             expect(f.tx.$executeRaw.mock.calls[0]![0].strings.join("")).toContain("INITIAL_TOMBSTONE_EVALUATED:");
         }
+    });
+    it.each(["049", "999"])("records unknown deletion without marking the tombstone evaluated for captured status %s", async statusBeforePurge => {
+        const f = setup({ status: "failed", step: "failed", error: "SERVICE_RECORD_REVISION_DOCUMENT_REJECTED" });
+        const expectedCode = "SERVICE_RECORD_INITIAL_DELETED_STATUS_UNKNOWN";
+
+        await expect(evaluate(f, statusBeforePurge)).resolves.toBe(true);
+
+        expect(f.state.lastErrorCode).toBe(expectedCode);
+        expect(codes(f)).toEqual([expectedCode, expectedCode]);
+        expect(f.tx.$executeRaw).toHaveBeenCalledTimes(2);
     });
     it("does not mark an unknown deleted sibling ready when a rejection is evaluated first", async () => {
         const f = setup({ documentStatus: "031", siblingTombstone: true });
