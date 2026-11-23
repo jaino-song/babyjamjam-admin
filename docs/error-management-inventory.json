@@ -75975,6 +75975,168 @@
       "review_task": "staff-login-linking-u7c",
       "spec_mapping_status": "mapped-em-v1",
       "spec_mapping_note": "Phone challenge guards; registered catalog codes with matching 429/400 statuses, internal invariant mapped to INTERNAL_ERROR 500, and verification/consumption outcome boundaries."
+    },
+    {
+      "id": "owner-d5fc9101a704",
+      "path": "backend/interface/controllers/owner-record-json.controller.ts",
+      "root": "backend/interface/",
+      "classification": "migrated",
+      "reason": "Bearer-header and access-token claim checks return AUTH_REQUIRED (401). Unsupported content type returns VALIDATION_FAILED (400).",
+      "seams": [
+        {
+          "line": 2,
+          "kinds": [
+            "raw_http_exception"
+          ]
+        },
+        {
+          "line": 13,
+          "kinds": [
+            "raw_http_exception"
+          ]
+        },
+        {
+          "line": 33,
+          "kinds": [
+            "raw_http_exception",
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 47,
+          "kinds": [
+            "http_endpoint"
+          ]
+        },
+        {
+          "line": 58,
+          "kinds": [
+            "raw_http_exception",
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 65,
+          "kinds": [
+            "raw_http_exception",
+            "throw_or_reject"
+          ]
+        }
+      ],
+      "discovery_task_id": "owner-record-json",
+      "spec_ids": [
+        "EM-CAT-01",
+        "EM-API-01"
+      ],
+      "public_codes": [
+        "AUTH_REQUIRED",
+        "VALIDATION_FAILED"
+      ],
+      "outcome_evidence": "Refuses invalid inputs before invoking the service. The existing JWT, tenant and global owner guards protect entry.",
+      "consumer_paths": [
+        "POST /admin/service-records/clients/:clientId/cases/:caseId/owner-json"
+      ],
+      "test_evidence": [
+        "backend/test/services/owner-record-json.spec.ts"
+      ],
+      "followup_task": null,
+      "review_task": "owner-record-json merge audit",
+      "spec_mapping_status": "mapped-em-v1",
+      "spec_mapping_note": "NestJS exceptions carry registered problem bodies."
+    },
+    {
+      "id": "owner-c8f4b58092ac",
+      "path": "backend/interface/dto/owner-record-json.dto.ts",
+      "root": "backend/interface/",
+      "classification": "migrated",
+      "reason": "Target and payload parsing use the catalog validation problem (400), including duplicate session targets and invalid answers. Unexpected errors are rethrown.",
+      "seams": [
+        {
+          "line": 1,
+          "kinds": [
+            "raw_http_exception"
+          ]
+        },
+        {
+          "line": 44,
+          "kinds": [
+            "raw_http_exception",
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 50,
+          "kinds": [
+            "raw_http_exception",
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 57,
+          "kinds": [
+            "raw_http_exception",
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 71,
+          "kinds": [
+            "raw_http_exception",
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 75,
+          "kinds": [
+            "catch_boundary"
+          ]
+        },
+        {
+          "line": 76,
+          "kinds": [
+            "raw_http_exception"
+          ]
+        },
+        {
+          "line": 77,
+          "kinds": [
+            "raw_http_exception",
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 79,
+          "kinds": [
+            "throw_or_reject"
+          ]
+        },
+        {
+          "line": 84,
+          "kinds": [
+            "raw_http_exception",
+            "throw_or_reject"
+          ]
+        }
+      ],
+      "discovery_task_id": "owner-record-json",
+      "spec_ids": [
+        "EM-CAT-01",
+        "EM-API-01"
+      ],
+      "public_codes": [
+        "VALIDATION_FAILED"
+      ],
+      "outcome_evidence": "Validation completes before draft creation or any session writes.",
+      "consumer_paths": [
+        "POST /admin/service-records/clients/:clientId/cases/:caseId/owner-json"
+      ],
+      "test_evidence": [
+        "backend/test/services/owner-record-json.spec.ts"
+      ],
+      "followup_task": null,
+      "review_task": "owner-record-json merge audit",
+      "spec_mapping_status": "mapped-em-v1",
+      "spec_mapping_note": "NestJS exceptions carry registered problem bodies."
     }
   ]
 }
