@@ -45,7 +45,8 @@ function LiveTab() {
   const query = useClientServiceRecordRevisionHistory(42);
   return <ClientServiceRecordsTab data-component="desktop_clients-detail_panel_service-records"
     clientId={42} isError={false} isLoading={false} revisionHistory={query.data}
-    isRevisionHistoryLoading={query.isPending} onRetryRevisionDocument={jest.fn()} />;
+    isRevisionHistoryLoading={query.isPending} isRevisionHistoryError={query.isError}
+    onRetryRevisionDocument={jest.fn()} />;
 }
 
 function setup(override: Partial<ServiceRecordRevisionDocumentSummary> = {}) {
@@ -137,6 +138,30 @@ it.each([
   get.mockResolvedValue({ data: history(next) });
   await act(() => queryClient.invalidateQueries({ queryKey: serviceRecordKeys.revisionHistory(42) }));
 
+  expect(await within(dialog).findByRole("alert")).toHaveTextContent(copy.unavailable);
+  expect(approve).toBeDisabled();
+  fireEvent.click(approve);
+  expect(post).not.toHaveBeenCalled();
+});
+
+it.each([
+  { label: copy.regenerateLabel, title: copy.regenerateTitle, initial: { ...document, canRetry: true } },
+  { label: copy.confirmLabel, title: copy.confirmTitle, initial: { ...document, noProviderDocumentConfirmable: confirmation } },
+])("blocks $label in the open dialog when refreshing revision history fails", async ({ label, title, initial }) => {
+  const { get, queryClient } = setup(initial);
+  const post = jest.spyOn(api, "post").mockResolvedValue({ data: document });
+
+  fireEvent.click(await screen.findByRole("button", { name: label }));
+  const dialog = await screen.findByRole("dialog", { name: title });
+  const approve = within(dialog).getByRole("button", { name: label });
+  expect(approve).toBeEnabled();
+
+  const queryKey = serviceRecordKeys.revisionHistory(42);
+  const cachedHistory = queryClient.getQueryData(queryKey);
+  get.mockRejectedValue(new Error("Revision history refresh failed"));
+  await act(() => queryClient.invalidateQueries({ queryKey }));
+
+  expect(queryClient.getQueryData(queryKey)).toBe(cachedHistory);
   expect(await within(dialog).findByRole("alert")).toHaveTextContent(copy.unavailable);
   expect(approve).toBeDisabled();
   fireEvent.click(approve);
