@@ -52,6 +52,7 @@ import { ClientAutomationImpactService } from "application/services/client-autom
 import { CaregiverTemplateResolverService } from "application/services/caregiver-template-resolver.service";
 import { MessageTriggerRecipientResolverService, describeCaregiverMessageEffect } from "application/services/message-trigger-recipient-resolver.service";
 import { SmsTriggerDeliveryService } from "application/services/sms-trigger-delivery.service";
+import { buildSmsProviderAcceptanceKey, SmsProviderAcceptanceService } from "application/services/sms-provider-acceptance.service";
 import { MessageAutomationBranchLockService } from "application/services/message-automation-branch-lock.service";
 import { AgentAutomationDeliveryGateService } from "application/services/agent-automation-delivery-gate.service";
 import { AgentAutomationJobAuthorityService } from "application/services/agent-automation-job-authority.service";
@@ -66,6 +67,8 @@ import { MessageTriggerJobEntity } from "domain/entities/message-trigger-job.ent
 import { MessageTriggerRuleEntity } from "domain/entities/message-trigger-rule.entity";
 import { MessageTriggerEventType, MessageTriggerOffsetType, MessageTriggerRecipientType, MessageTriggerTemplateKey } from "domain/constants/message-trigger-catalog";
 import { defaultMessageAutomationPolicy } from "domain/entities/system-setting.entity";
+
+import { createSmsProviderAttemptFixture } from "../fixtures/sms-provider-attempt.fixture";
 
 /** A 2026 branch calendar: the built-in public holidays plus the given branch-added days off. */
 const branchCalendar2026 = (extra: string[]) => createKrBusinessDayCalendar(
@@ -8577,9 +8580,14 @@ describe("ClientService ordinary caregiver authority successors", () => {
         const sender = { read: () => ({ availability: "available", identityDigest: digest }) };
         const authority = new AgentAutomationJobAuthorityService(new AgentAutomationAuthorityService(records), sources, sender as never, undefined, resolver);
         const gate = new AgentAutomationDeliveryGateService(database as never, lock, authority);
-        const provider = { sendSms: jest.fn(async (request: { receiver: string }) => ({ response: { result_code: 1, message: "성공", msg_id: 9876, success_cnt: 1, error_cnt: 0 }, request })) };
-        const delivery = new SmsTriggerDeliveryService(provider as never, {} as never, { save: async (log: unknown) => log } as never,
-            undefined, undefined, gate, undefined, { getMessageAutomationPolicyConfig: async () => ({ configuration: defaultMessageAutomationPolicy() }) } as never, templates);
+        const logs = createSmsProviderAttemptFixture();
+        const provider = { sendSms: jest.fn(async (request: { receiver: string }) => {
+            expect(logs.rows).toEqual([expect.objectContaining({ providerAcceptanceState: "started" })]);
+            return { response: { result_code: 1, message: "성공", msg_id: 9876, success_cnt: 1, error_cnt: 0 }, request };
+        }) };
+        const delivery = new SmsTriggerDeliveryService(provider as never, {} as never, logs,
+            new SmsProviderAcceptanceService(logs), undefined, gate, undefined,
+            { getMessageAutomationPolicyConfig: async () => ({ configuration: defaultMessageAutomationPolicy() }) } as never, templates);
         const impact = new ClientAutomationImpactService(sources, delivery, sender as never,
             { findForClientAutomationReview: async () => rows.filter((row) => row.id === uuid(12)).map((row) => ({ ...row, canceledByUser: false })) } as never, undefined, resolver);
         const resolve = async () => (await resolver.resolve(branchId, 7, [rule], database as never)).recipients[0]!.recipe!;
@@ -8622,7 +8630,7 @@ describe("ClientService ordinary caregiver authority successors", () => {
             undefined as never, undefined as never, database as never, { findByPhone: async () => null } as never, undefined as never, undefined as never, undefined as never,
             { forBranch: async () => branchCalendar2026([]) } as never, undefined, undefined, undefined, undefined, undefined, impact, records, lock);
         const append = jest.spyOn(records, "appendOrdinarySuccessors");
-        return { client, schedule, rows, database, sources, records, authority, gate, delivery, provider, impact, service, job, reference, check, refresh, render, storeJob, append };
+        return { client, schedule, rows, database, sources, records, authority, gate, delivery, provider, logs, impact, service, job, reference, check, refresh, render, storeJob, append };
     }
 
     it.each(["START", "END"] as const)("keeps reviewed %s authority through the real ordinary caller and sends the refreshed literal body once", async (event) => {
@@ -8668,8 +8676,20 @@ describe("ClientService ordinary caregiver authority successors", () => {
         expect(f.provider.sendSms).toHaveBeenCalledWith(expect.objectContaining({ receiver: "01000000011", message: event === "START"
             ? "합성 주 관리사님, 변경 후 고객 고객님의 서비스가 2026-11-10에 시작됩니다. 배정 일정과 근무 안내를 확인해 주세요. - 합성 지점"
             : "합성 주 관리사님, 변경 후 고객 고객님의 서비스가 2026-11-20에 종료됩니다. 마무리 안내를 확인해 주세요. - 합성 지점" }));
+        const acceptedRows = f.logs.rows;
+        expect(acceptedRows).toEqual([expect.objectContaining({
+            branchId,
+            triggerJobId: f.job.id,
+            providerAcceptanceKey: buildSmsProviderAcceptanceKey("automation", `${branchId}:${f.job.id}`),
+            providerAcceptanceFingerprint: expect.stringMatching(/^[a-f0-9]{64}$/),
+            providerAcceptanceState: "accepted",
+            aligoMid: "9876",
+        })]);
+        expect(acceptedRows[0]?.providerCallStartedAt?.getTime()).toBe(Date.now());
         await expect(f.delivery.sendPreparedJob(f.job, preparation!)).rejects.toThrow();
         expect(f.provider.sendSms).toHaveBeenCalledTimes(1);
+        expect(f.logs.startedCount).toBe(1);
+        expect(f.logs.rows).toEqual(acceptedRows);
     });
 
     it.each(["deny", "noSend"] as const)("preserves task %s and rolls back the ordinary name mutation", async (decision) => {

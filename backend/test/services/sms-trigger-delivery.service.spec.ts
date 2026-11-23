@@ -21,6 +21,7 @@ import {
 } from "domain/constants/message-trigger-catalog";
 import { MessageTriggerJobEntity } from "domain/entities/message-trigger-job.entity";
 import { BranchSystemTemplateSnapshotError } from "domain/entities/branch-system-template-snapshot";
+import { AgentAutomationDispatchUncertainError } from "domain/errors/agent-automation-dispatch-uncertain.error";
 import { TriggerJobDeferredError } from "domain/errors/trigger-job-deferred.error";
 import { CARRIER_CHECK_DELAY_MS, MessageLogEntity } from "domain/entities/message-log.entity";
 import { IMessageLogRepository } from "domain/repositories/message-log.repository.interface";
@@ -704,6 +705,27 @@ describe("SmsTriggerDeliveryService", () => {
         expect(error).not.toBeInstanceOf(TriggerJobDeferredError);
         expect(aligoService.sendSms).not.toHaveBeenCalled();
         expect(logRepository.save).toHaveBeenCalledTimes(1);
+    });
+
+    it("refuses to start a prepared SMS when the provider acceptance service is absent", async () => {
+        const aligo = { sendSms: jest.fn() };
+        const templates = {
+            getByKeyForBranch: jest.fn().mockResolvedValue({ content: "{{name}} 산모님 서비스 안내" }),
+        };
+        const logs = { save: jest.fn(async (log: MessageLogEntity) => log) };
+        const settings = new SystemSettingService({ execute: jest.fn().mockResolvedValue(null) } as never, {} as never);
+        const service = new SmsTriggerDeliveryService(
+            aligo as never, templates as never, logs as never, undefined, undefined,
+            createLegacyAutomationDeliveryGate(), undefined, settings,
+        );
+
+        await expect(service.sendJob(createServiceInfoJob())).rejects.toBeInstanceOf(AgentAutomationDispatchUncertainError);
+        expect(logs.save).toHaveBeenCalledTimes(1);
+        expect(logs.save).toHaveBeenCalledWith(expect.objectContaining({
+            providerAcceptanceState: "prepared",
+            providerCallStartedAt: null,
+        }));
+        expect(aligo.sendSms).not.toHaveBeenCalled();
     });
 
     it("keeps the started fence when the provider accepts but result persistence fails", async () => {
