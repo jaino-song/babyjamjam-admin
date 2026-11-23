@@ -200,6 +200,8 @@ export async function migrateProviderContracts(context) {
     const reverse = settings.action === 'rollback';
     let journal = context.migration;
     const pending = ['applying', 'rollingBack'].includes(journal?.phase);
+    // An interrupted apply already has a plan. Its recorded moves govern the retry.
+    const resumeApply = settings.action === 'apply' && journal?.phase === 'applying';
     const local = localFiles(archive, finalPath);
     const stateDir = await fs.realpath(settings.stateDir).catch((error) => {
         if (error.code === 'ENOENT') return resolve(settings.stateDir);
@@ -207,15 +209,17 @@ export async function migrateProviderContracts(context) {
     });
     const stateRelative = relative(archive, stateDir);
     if (stateRelative !== '..' && !stateRelative.startsWith('../') && !isAbsolute(stateRelative)) refuse('journal_inside_archive');
-    if (!reverse && !listingComplete) refuse('incomplete_listing');
+    if (!reverse && !resumeApply && !listingComplete) refuse('incomplete_listing');
     if (journal && (journal.archive !== archive || journal.remote !== (settings.rcloneRemote ?? null))) refuse('migration_settings_changed');
     if ((reverse && journal?.phase === 'applying') || (!reverse && journal?.phase === 'rollingBack')) refuse('resume_previous_action');
     const saveJournal = () => writeJson(journalPath(stateDir), journal);
     const listed = new Map();
-    for (const doc of docs) {
-        const key = `doc:${doc.docId}`;
-        if (listed.has(key)) refuse('duplicate_document');
-        listed.set(key, doc);
+    if (!resumeApply) {
+        for (const doc of docs) {
+            const key = `doc:${doc.docId}`;
+            if (listed.has(key)) refuse('duplicate_document');
+            listed.set(key, doc);
+        }
     }
 
     const moves = reverse || pending ? (journal?.phase === 'rolledBack' ? [] : journal?.moves ?? []) : [];
@@ -257,7 +261,7 @@ export async function migrateProviderContracts(context) {
         const published = pending && isDeepStrictEqual(entry, to);
         if (!published && !isDeepStrictEqual(entry, from)) refuse('allocation_changed');
         verifyUnshared(state, move.key, [...Object.keys(from.files), ...Object.keys(to.files)]);
-        if (!reverse) {
+        if (!reverse && !resumeApply) {
             const doc = listed.get(move.key);
             const current = doc && listingFingerprint(doc);
             if (current?.fingerprint !== move.before.fingerprint || providerBase(doc) !== move.after.providerBase
