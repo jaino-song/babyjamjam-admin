@@ -92,7 +92,7 @@ function harness() {
         }],
         drafts: [] as Row[],
         revisions: [] as Row[],
-        documentOperations: [] as string[],
+        documentStates: [] as Row[],
         employeeDeletedAt: null as Date | null,
         calendarRevision: 1n as bigint | null,
         holidayOverrides: [] as Row[],
@@ -152,13 +152,14 @@ function harness() {
                             if (controls.failDocumentWrite) throw new Error("synthetic document write failure");
                             const [branchId, clientId, serviceRecordCaseId, revisionId, operation, generation, json, inputFingerprint]
                                 = values;
-                            working.documentOperations.push(String(operation));
-                            return [{
+                            const row = {
                                 id: randomUUID(), branchId, clientId, serviceRecordCaseId, revisionId, operation, generation,
                                 immutableInput: JSON.parse(String(json)), inputFingerprint,
                                 workflowScope: null, outputProof: null, step: values.at(-5), status: values.at(-4),
                                 nextAttemptAt: null, version: 1, createdAt: startDate, updatedAt: startDate,
-                            }];
+                            };
+                            working.documentStates.push(row);
+                            return [row];
                         }
                         const table = sql.match(/FROM "?([a-z_]+)"?/)?.[1];
                         if (table && sql.includes("FOR UPDATE")) trace.push(`lock:${table}`);
@@ -408,7 +409,9 @@ describe("owner record JSON confirmation", () => {
         expect(state.days[1]).toMatchObject({ ...original.days[1], notes: "care details" });
         expect(h.db.drafts).toEqual([expect.objectContaining({ status: "CONFIRMED", confirmedByUserId: OWNER })]);
         expect(h.db.revisions).toEqual([expect.objectContaining({ confirmedByUserId: OWNER })]);
-        expect(h.db.documentOperations).toContain("record_snapshot");
+        expect(h.db.documentStates).toContainEqual(expect.objectContaining({
+            operation: "record_snapshot", generation: expect.any(String),
+        }));
 
         const order = ["idempotency-lock", "draft-by-id", "lock:client", "lock:employee", "lock:service_record_case",
             "lock:employee_schedule", "lock:service_record_assignment", "lock:service_record_day",
@@ -579,6 +582,43 @@ describe("owner record JSON confirmation", () => {
         await expect(h.editor.confirmOwnerRecordJson(principal, target, req)).rejects.toBeInstanceOf(ConflictException);
         expect(h.dayInsert).toHaveBeenCalledTimes(2);
         expect(h.db).toEqual(before);
+        expect(h.emit).not.toHaveBeenCalled();
+    });
+
+    it("rolls back a mixed projected write on a post-insert service-day flag mismatch", async () => {
+        const h = harness();
+        h.db.cases[0]!.plannedSessions = null;
+        Object.assign(h.db.clients[0]!, { allowSaturdayService: false });
+        const req = await h.request([edit(), fill()]);
+        const before = structuredClone(h.db);
+        // The fixture runs Tuesday through Friday, so enabling Saturdays preserves every slot.
+        h.controls.afterDayInsert = (state) => {
+            Object.assign(state.clients[0]!, { allowSaturdayService: true });
+        };
+
+        await expect(h.editor.confirmOwnerRecordJson(principal, target, req)).rejects.toBeInstanceOf(ConflictException);
+        expect(h.dayWrite).toHaveBeenCalledTimes(1);
+        expect(h.dayInsert).toHaveBeenCalledTimes(1);
+        expect(h.trace).toEqual(expect.arrayContaining(["create-draft", "write-document", "close-draft"]));
+        expect(structuredClone(h.db)).toStrictEqual(before);
+        expect(h.emit).not.toHaveBeenCalled();
+    });
+
+    it("rolls back a mixed projected write on a post-insert row ID mismatch", async () => {
+        const h = harness();
+        h.db.cases[0]!.plannedSessions = null;
+        const req = await h.request([edit(), fill()]);
+        const before = structuredClone(h.db);
+        h.controls.afterDayInsert = (state, inserted) => {
+            const record = state.cases[0]!;
+            record.days = record.days.map((row) => row === inserted ? { ...row, id: randomUUID() } : row);
+        };
+
+        await expect(h.editor.confirmOwnerRecordJson(principal, target, req)).rejects.toBeInstanceOf(ConflictException);
+        expect(h.dayWrite).toHaveBeenCalledTimes(1);
+        expect(h.dayInsert).toHaveBeenCalledTimes(1);
+        expect(h.trace).toEqual(expect.arrayContaining(["create-draft", "write-document", "close-draft"]));
+        expect(structuredClone(h.db)).toStrictEqual(before);
         expect(h.emit).not.toHaveBeenCalled();
     });
 
