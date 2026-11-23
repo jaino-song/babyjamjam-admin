@@ -67,6 +67,7 @@ import { SystemTemplateKey } from "domain/constants/system-template-registry";
 import { CLIENT_DATE_AUTOMATION_CHANGED_REASON, type ClientDateAutomationScope, EMPLOYEE_ASSIGNMENT_AUTOMATION_CHANGED_CANCEL_REASON,
     getClientAutomationIntentDedupeKey, getScheduleAutomationIntentDedupeKey } from "domain/constants/message-automation-intent";
 import {
+    isSenderApprovalCancellation,
     MESSAGE_SENDER_APPROVAL_REQUIRED_CANCEL_REASON,
     PAST_OCCURRENCE_GRACE_MS,
     TRIGGER_JOB_PROCESSING_RECLAIM_MS,
@@ -122,7 +123,7 @@ import {
     isMessageRecipeWithinMaterializationWindow,
     isSelectedMessageJobExpired,
     shouldSkipClientPreStartCatchUp,
-    buildMessageRecipeDedupeKey, employeeAssignmentScheduleFingerprint, formatMessageRecipeDate, getKstCalendarDate,
+    buildMessageRecipeDedupeKey, clientMessageOriginalSlot, employeeAssignmentScheduleFingerprint, formatMessageRecipeDate, getKstCalendarDate,
     type ClientTriggerSource, type EmployeeAssignmentScheduleSource,
 } from "./message-trigger-recipes";
 import { normalizePhone } from "application/utils/normalize-phone";
@@ -2656,6 +2657,12 @@ export class MessageTriggerService {
                 && agentBindingHash(agentAutomationSourcePayload(a.payload, a.templateKey)) === agentBindingHash(agentAutomationSourcePayload(b.payload, b.templateKey));
             const reconcile = async (rule: MessageTriggerRuleEntity, job: MessageTriggerJobEntity | null,
                 family: MessageTriggerJobReviewSnapshot[], anchorChanged: boolean) => {
+                const originalSlot = job && clientMessageOriginalSlot(job);
+                const terminalOccurrence = job && family.some((row) => isSenderApprovalCancellation(row)
+                    && (row.dedupeKey === job.dedupeKey
+                        || (originalSlot && clientMessageOriginalSlot(row)?.key === originalSlot.key)
+                        || (rule.eventType === MessageTriggerEventType.EMPLOYEE_ASSIGNED && job.employeeScheduleId !== null
+                            && job.payload.employeeId != null && row.payload.employeeId === job.payload.employeeId)));
                 // Repeated intents retain the accepted catch-up slot for this source occurrence.
                 const catchUp = job && family.find((row) => ["pending", "processing"].includes(row.status)
                     && row.payload.catchUp?.originalScheduledFor === job.scheduledFor.toISOString());
@@ -2674,7 +2681,7 @@ export class MessageTriggerService {
                 const affected = anchorChanged || family.some((row) => job && !sameSource(row, job));
                 if (!affected) return;
                 // Logical recipient scope spans historical date keys. Delivery uncertainty is never replayed.
-                const replacementBlocked = family.some((row) => row.canceledByUser || ["sent", "dispatching", "failed"].includes(row.status)
+                const replacementBlocked = terminalOccurrence || family.some((row) => row.canceledByUser || ["sent", "dispatching", "failed"].includes(row.status)
                     || row.payload.taskAutomationReference || isReservedAutomationJob(row)
                     || row.cancelReason === "SERVICE_RECORD_REVISION_SUPERSEDED");
                 const reversible = (row: MessageTriggerJobReviewSnapshot) => ordinary(row) && !row.canceledByUser
@@ -2687,8 +2694,7 @@ export class MessageTriggerService {
                     ? previous.find((row) => row.id !== operatorReservation.id && row.dedupeKey === job.dedupeKey) : undefined;
                 const reclaimableOperatorDestination = operatorDestination && family.includes(operatorDestination)
                     && reversible(operatorDestination) && operatorDestination.status === "canceled"
-                    && (operatorDestination.cancelReason === CLIENT_DATE_AUTOMATION_CHANGED_REASON
-                        || operatorDestination.cancelReason === MESSAGE_SENDER_APPROVAL_REQUIRED_CANCEL_REASON);
+                    && operatorDestination.cancelReason === CLIENT_DATE_AUTOMATION_CHANGED_REASON;
                 if (family.some((row) => reversible(row) && row.status === "processing"
                     && (!job || row.dedupeKey !== job.dedupeKey || !sameSource(row, job)))) {
                     throw new ConflictException("Message date reconciliation is waiting for a processing reservation");
@@ -2710,7 +2716,7 @@ export class MessageTriggerService {
                 reconciliations.push({ job, apply: async () => {
                     // Protected history blocks replacement, but cannot keep obsolete reversible siblings dispatchable.
                     const stale = family.filter((row) => reversible(row) && row.status === "pending"
-                        && (!eligible || row.dedupeKey !== job!.dedupeKey
+                        && (!eligible || terminalOccurrence || row.dedupeKey !== job!.dedupeKey
                             || ((replacementBlocked || operatorMoveBlocked)
                                 && (!sameSource(row, job!) || row.scheduledFor.getTime() !== job!.scheduledFor.getTime()))));
                     if (stale.length) {
@@ -2721,7 +2727,7 @@ export class MessageTriggerService {
                         });
                     }
                     if (operatorReservation) {
-                        if (!job || operatorMoveBlocked) return;
+                        if (!job || operatorMoveBlocked || terminalOccurrence) return;
                         if (operatorReservation.dedupeKey === job.dedupeKey && sameSource(operatorReservation, job)
                             && operatorReservation.scheduledFor.getTime() === job.scheduledFor.getTime()) return;
                         if (operatorDestination && reclaimableOperatorDestination) {
@@ -2754,10 +2760,10 @@ export class MessageTriggerService {
                     }
                     if (replacementBlocked || !eligible || currentEquivalent) return;
                     // A protected task-owned slot is kept separate even if its reviewed source has drifted.
-                    const protectedSlot = previous.some((row) => row.dedupeKey === job!.dedupeKey && !ordinary(row));
+                    const protectedSlot = previous.some((row) => row.dedupeKey === job!.dedupeKey
+                        && (!ordinary(row) || isSenderApprovalCancellation(row)));
                     if (protectedSlot) return;
-                    if (current?.status === "canceled" && current.cancelReason !== CLIENT_DATE_AUTOMATION_CHANGED_REASON
-                        && current.cancelReason !== MESSAGE_SENDER_APPROVAL_REQUIRED_CANCEL_REASON) return;
+                    if (current?.status === "canceled" && current.cancelReason !== CLIENT_DATE_AUTOMATION_CHANGED_REASON) return;
                     if (!(await this.persistPendingJob(job, rule, includePast || existingOccurrence === true, rule.jobsStale, false, tx,
                         undefined, existingOccurrence && current.status === "pending" ? current : undefined))) {
                         throw new ConflictException("Message rule changed while reconciling dates");
@@ -3398,7 +3404,7 @@ export class MessageTriggerService {
                 baseScheduledFor.getTime() + (index * config.sendIntervalMinutes * MS_PER_MINUTE),
             );
             job.scheduledFor = scheduledFor;
-            if (job.clientId !== null && !isCaregiverTriggerTemplate(job.templateKey)) {
+            if (job.clientId !== null && job.employeeScheduleId === null && !isCaregiverTriggerTemplate(job.templateKey)) {
                 job.dedupeKey = buildMessageRecipeDedupeKey(
                     rule.id,
                     `client:${job.clientId}`,

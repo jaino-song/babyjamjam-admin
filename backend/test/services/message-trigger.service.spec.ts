@@ -9333,31 +9333,154 @@ describe("service-record date reconciliation", () => {
         expect(f.jobs.claimPendingWithRuleFence).not.toHaveBeenCalled();
     });
 
-    it.each([CLIENT_DATE_AUTOMATION_CHANGED_REASON, MESSAGE_SENDER_APPROVAL_REQUIRED_CANCEL_REASON])(
-        "moves an operator reservation into %s history without suppressing an independent rule for the same date", async (cancelReason) => {
-            const f = dispatchFixture();
-            const operator = f.seed(f.endRule, { status: "needs_setup", cancelReason: "QA-setup" });
-            f.client.endDate = new Date("2026-11-25Z");
-            const destination = f.seed(f.endRule, { status: "canceled", cancelReason });
-            f.client.endDate = new Date("2026-11-20Z");
-            const independent = f.rule("independent"); f.activeRules.push(independent);
-            await f.confirm();
+    it("moves an operator reservation into date-change history without suppressing an independent rule", async () => {
+        const f = dispatchFixture();
+        const operator = f.seed(f.endRule, { status: "needs_setup", cancelReason: "QA-setup" });
+        f.client.endDate = new Date("2026-11-25Z");
+        const destination = f.seed(f.endRule, { status: "canceled", cancelReason: CLIENT_DATE_AUTOMATION_CHANGED_REASON });
+        f.client.endDate = new Date("2026-11-20Z");
+        const independent = f.rule("independent"); f.activeRules.push(independent);
+        await f.confirm();
+        await f.service.reconcileServiceRecordDateRules(branchId, 7, scope);
+        expect(operator).toMatchObject({ status: "needs_setup", cancelReason: "QA-setup", attempts: 0 });
+        expect(f.rows.filter((row) => row.ruleId === "end")).toEqual([operator, destination]);
+        expect(destination.status).toBe("canceled");
+        expect(destination.dedupeKey).not.toBe(operator.dedupeKey);
+        const automatic = f.rows.find((row) => row.ruleId === independent.id)!;
+        expect(automatic.status).toBe("pending");
+        jest.setSystemTime(automatic.scheduledFor);
+        // Only the independent rule is eligible for the automatic claim.
+        const prepared = (await f.prepare(automatic))!;
+        expect(await f.authorize(prepared)).toBe(true);
+        await f.delivery.sendPreparedJob(prepared.job, prepared.preparation);
+        expect(f.provider).toHaveBeenCalledTimes(1);
+        expect(operator.status).toBe("needs_setup");
+    });
+
+    it("protects an approval-canceled date destination from an operator reservation move", async () => {
+        const f = dispatchFixture();
+        const operator = f.seed(f.endRule, { status: "needs_setup", cancelReason: "QA-setup" });
+        f.client.endDate = new Date("2026-11-25Z");
+        const canceled = f.seed(f.endRule, { status: "canceled", cancelReason: MESSAGE_SENDER_APPROVAL_REQUIRED_CANCEL_REASON });
+        const before = structuredClone(f.rows);
+        const persist = jest.spyOn(f.service as unknown as { persistPendingJob: () => Promise<boolean> }, "persistPendingJob");
+
+        for (let attempt = 0; attempt < 2; attempt++) {
             await f.service.reconcileServiceRecordDateRules(branchId, 7, scope);
-            expect(operator).toMatchObject({ status: "needs_setup", cancelReason: "QA-setup", attempts: 0 });
-            expect(f.rows.filter((row) => row.ruleId === "end")).toEqual([operator, destination]);
-            expect(destination.status).toBe("canceled");
-            expect(destination.dedupeKey).not.toBe(operator.dedupeKey);
-            const automatic = f.rows.find((row) => row.ruleId === independent.id)!;
-            expect(automatic.status).toBe("pending");
-            jest.setSystemTime(automatic.scheduledFor);
-            // Only the independent rule is eligible for the automatic claim.
-            const prepared = (await f.prepare(automatic))!;
-            expect(await f.authorize(prepared)).toBe(true);
-            await f.delivery.sendPreparedJob(prepared.job, prepared.preparation);
-            expect(f.provider).toHaveBeenCalledTimes(1);
-            expect(operator.status).toBe("needs_setup");
-        },
-    );
+        }
+        expect(persist).not.toHaveBeenCalled();
+        expect(f.rows).toEqual(before);
+        expect(f.rows).toEqual([operator, canceled]);
+        expect(f.rows.filter((row) => row.status === "pending")).toHaveLength(0);
+        await expect(f.service.dispatchPendingJobNow(canceled.id, { expectedBranchId: branchId })).resolves.toMatchObject({ status: "canceled" });
+        expect(f.provider).not.toHaveBeenCalled();
+    });
+
+    it.each([false, true])("keeps an ordinary date destination canceled (previous catch-up key=%s)", async (catchUp) => {
+        const f = dispatchFixture();
+        const canceled = f.seed(f.endRule, { status: "canceled", cancelReason: MESSAGE_SENDER_APPROVAL_REQUIRED_CANCEL_REASON });
+        if (catchUp) {
+            const originalScheduledFor = canceled.scheduledFor.toISOString();
+            canceled.scheduledFor = new Date("2026-11-21T01:30:00Z");
+            canceled.dedupeKey = buildMessageRecipeDedupeKey(canceled.ruleId, "client:7", canceled.scheduledFor, canceled.recipientType);
+            canceled.payload.catchUp = { originalScheduledFor, batchId: "prior", sequence: 1, intervalMinutes: 3, predecessorDedupeKey: null };
+        }
+        const before = structuredClone(canceled);
+        const persist = jest.spyOn(f.service as unknown as { persistPendingJob: () => Promise<boolean> }, "persistPendingJob");
+        for (let attempt = 0; attempt < 2; attempt++) {
+            await f.service.reconcileServiceRecordDateRules(branchId, 7, scope);
+        }
+        expect(persist).not.toHaveBeenCalled();
+        expect(f.rows).toEqual([before]);
+        expect(f.rows.filter((row) => row.status === "pending")).toHaveLength(0);
+        await expect(f.service.dispatchPendingJobNow(canceled.id, { expectedBranchId: branchId })).resolves.toMatchObject({ status: "canceled" });
+        expect(f.provider).not.toHaveBeenCalled();
+    });
+
+    it("keeps the old occurrence canceled after approval and two catch-up re-keys, then sends a distinct future occurrence", async () => {
+        const f = dispatchFixture();
+        f.activeRules.splice(1);
+        const old = f.seed();
+        const originalScheduledFor = old.scheduledFor.toISOString();
+        old.scheduledFor = new Date("2026-11-20T04:30:00Z");
+        old.dedupeKey = buildMessageRecipeDedupeKey(old.ruleId, "client:7", old.scheduledFor, old.recipientType);
+        old.payload.catchUp = { originalScheduledFor, batchId: "old-batch", sequence: 1, intervalMinutes: 3, predecessorDedupeKey: null };
+        old.cancel(MESSAGE_SENDER_APPROVAL_REQUIRED_CANCEL_REASON);
+        const before = structuredClone(old);
+
+        const isApproved = jest.fn().mockResolvedValue(false);
+        Object.assign(f.service["messageSenderApprovalService"], { isApproved });
+        Object.assign(f.service["ruleRepository"], { findActiveByEventTypes: async () => f.activeRules });
+        f.sources.getMessagePolicyEnabled.mockResolvedValue(true);
+        const lookup = jest.spyOn(f.db.message_trigger_job as unknown as {
+            findFirst: (query: { where: Prisma.message_trigger_jobWhereInput }) => Promise<unknown>;
+        }, "findFirst");
+        const read = lookup.getMockImplementation()!;
+        lookup.mockImplementation(async (query) => {
+            const { where } = query;
+            if (where.status !== "canceled") return read(query);
+            const clauses = where.OR!;
+            expect(where).toMatchObject({ status: "canceled", branchId, clientId: 7, ruleId: old.ruleId, employeeScheduleId: null,
+                recipientType: old.recipientType, cancelReason: old.cancelReason, dedupeKey: { not: expect.any(String) } });
+            expect(where.dedupeKey).not.toEqual({ not: old.dedupeKey });
+            return clauses.some((clause) => clause.payload && "equals" in clause.payload
+                && clause.payload.equals === old.payload.catchUp?.originalScheduledFor) ? old : null;
+        });
+        const queryRaw = f.db.$queryRaw as unknown as jest.Mock<Promise<unknown[]>, [Prisma.Sql]>;
+        const raw = queryRaw.getMockImplementation()!;
+        const insert = jest.fn();
+        queryRaw.mockImplementation(async (sql) => {
+            if (sql.sql.includes("SELECT id, branch_id, jobs_stale")) {
+                return [{ id: f.endRule.id, branch_id: branchId, jobs_stale: false, updated_at: f.endRule.updatedAt }];
+            }
+            if (sql.sql.includes('INSERT INTO "message_trigger_job"')) {
+                insert();
+                const job = f.rows.find((row) => row.status === "pending") ?? f.seed();
+                return [{ id: job.id, status: job.status, branch_id: job.branchId, client_id: job.clientId, rule_id: job.ruleId,
+                    recipient_type: job.recipientType, template_key: job.templateKey, payload: job.payload, dedupe_key: job.dedupeKey,
+                    scheduled_for: job.scheduledFor, created_at: job.createdAt, updated_at: job.updatedAt, recipient_phone: job.recipientPhone,
+                    employee_schedule_id: null, sent_at: null, canceled_at: null, cancel_reason: null, attempts: 0, next_attempt_at: null,
+                    claim_token: null, processing_deadline_at: null }];
+            }
+            return raw(sql);
+        });
+        const repo = new SbMessageTriggerJobRepository(f.db as never);
+        f.jobs.upsertPendingForRuleGeneration.mockImplementation(repo.upsertPendingForRuleGeneration.bind(repo) as never);
+
+        jest.setSystemTime(new Date("2026-11-21T01:30:00Z"));
+        const sync = (preserveExisting: boolean) => f.service.syncClientRulesForClient(branchId, 7, true, false,
+            { preserveExisting, stableBatchAt: new Date() });
+        await sync(true);
+        expect(f.jobs.upsertPendingForRuleGeneration).not.toHaveBeenCalled();
+        isApproved.mockResolvedValue(true);
+        await sync(true);
+        jest.setSystemTime(new Date("2026-11-21T01:31:00Z"));
+        await sync(true);
+        const attempted = f.jobs.upsertPendingForRuleGeneration.mock.calls.map(([job]) => job);
+        expect(attempted).toHaveLength(2);
+        expect(new Set(attempted.map((job) => job.dedupeKey)).size).toBe(2);
+        for (const job of attempted) {
+            expect(job.dedupeKey).not.toBe(old.dedupeKey);
+            expect(job.payload.catchUp?.originalScheduledFor).toBe(originalScheduledFor);
+        }
+        expect(insert).not.toHaveBeenCalled();
+        expect(f.rows).toEqual([before]);
+        await expect(f.service.dispatchPendingJobNow(old.id, { expectedBranchId: branchId })).resolves.toMatchObject({ status: "canceled" });
+        expect(f.provider).not.toHaveBeenCalled();
+
+        f.client.endDate = new Date("2026-11-25Z");
+        await sync(true);
+        expect(insert).toHaveBeenCalledTimes(1);
+        const pending = f.rows.filter((row) => row.status === "pending");
+        expect(pending).toHaveLength(1);
+        const next = pending[0]!;
+        jest.setSystemTime(next.scheduledFor);
+        const prepared = (await f.prepare(next))!;
+        expect(await f.authorize(prepared)).toBe(true);
+        await f.delivery.sendPreparedJob(prepared.job, prepared.preparation);
+        expect(f.provider).toHaveBeenCalledTimes(1);
+        expect(old).toEqual(before);
+    });
 
     it("refreshes only the exact operator row alongside protected history without creating automatic work", async () => {
         const f = fixture();
