@@ -1,6 +1,7 @@
 "use server"
 
 import { cookies } from "next/headers";
+import { clearPendingOnboarding, replacePendingAccountOnboarding } from "@/lib/auth/pending-onboarding-cookies";
 import { serverAPIClient } from "@/lib/api/server";
 import axios, { AxiosError } from "axios";
 import { clearAuthSessionCookies, setAuthSessionCookies } from "@/lib/auth/session-cookies";
@@ -44,8 +45,6 @@ type LoginResponsePayload = LoginSuccessResponse | LoginOnboardingResponse | {
     code?: string;
 };
 
-const PENDING_ACCOUNT_ONBOARDING_COOKIE = "pending_account_onboarding";
-const PENDING_KAKAO_SIGNUP_COOKIE = "pending_kakao_signup";
 const NETWORK_ERROR_CODES = new Set([
     "ECONNABORTED",
     "ECONNREFUSED",
@@ -116,15 +115,10 @@ export async function loginWithEmail(email: string, password: string, autoLogin 
         const isSecureCookie = process.env.NODE_ENV === "production" || process.env.VERCEL_ENV === "preview";
 
         if (isLoginOnboardingResponse(data)) {
-            cookieStore.set(PENDING_ACCOUNT_ONBOARDING_COOKIE, data.pendingAccountOnboardingToken, {
-                httpOnly: true,
+            replacePendingAccountOnboarding(cookieStore, data.pendingAccountOnboardingToken, {
                 secure: isSecureCookie,
-                sameSite: "lax",
-                path: "/",
-                maxAge: 30 * 60,
+                autoLogin,
             });
-
-            cookieStore.delete(PENDING_KAKAO_SIGNUP_COOKIE);
             clearAuthSessionCookies(cookieStore);
 
             return {
@@ -142,8 +136,7 @@ export async function loginWithEmail(email: string, password: string, autoLogin 
             autoLogin,
         });
 
-        cookieStore.delete(PENDING_ACCOUNT_ONBOARDING_COOKIE);
-        cookieStore.delete(PENDING_KAKAO_SIGNUP_COOKIE);
+        clearPendingOnboarding(cookieStore);
 
         return {
             success: true,

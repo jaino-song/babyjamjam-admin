@@ -4,7 +4,7 @@ import { writeLoginSessionCookies } from "@/lib/auth/login-session-cookies";
 import { serverAPIClient } from "@/lib/api/server";
 jest.mock("@/lib/auth/login-session-cookies", () => ({ writeLoginSessionCookies: jest.fn() }));
 jest.mock("@/lib/api/server", () => ({ serverAPIClient: { post: jest.fn() } }));
-jest.mock("next/headers", () => ({ cookies: async () => ({}) }));
+jest.mock("next/headers", () => ({ cookies: async () => ({ delete: jest.fn() }) }));
 it("delegates email login tokens and chosen auto-login value", async () => {
  const data = { success: true, accessToken: "access", refreshToken: "refresh" };
  jest.mocked(serverAPIClient.post).mockResolvedValue({ data, status: 201 });
