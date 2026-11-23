@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { constants } from 'node:fs';
 import * as fs from 'node:fs/promises';
-import { dirname, join, normalize } from 'node:path';
+import { basename, dirname, join, normalize } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 
 export const MAX_FILE = 2 ** 32;
@@ -15,6 +15,7 @@ const badSegment = /[\\:\x00-\x1f\x7f]|\p{Cs}/u;
 export class MirrorError extends Error {
     constructor(reason) {
         super('raster_archive_' + reason);
+        this.code = this.message;
     }
 }
 
@@ -163,6 +164,8 @@ export async function openDirectory(path) {
 }
 
 export const fdPath = (handle) => '/proc/self/fd/' + handle.fd;
+export const openChildDirectory = (parent, name) => fs.open(join(fdPath(parent), name), directoryFlags);
+export const openStagePayload = (path) => fs.open(path, constants.O_RDWR | constants.O_NOFOLLOW | constants.O_NONBLOCK);
 
 export async function hashChunks(chunks, { output, limit = MAX_FILE } = {}) {
     const hash = createHash('sha256');
@@ -214,7 +217,7 @@ export async function inspectFile(path, { output, privateFile = false, allowLoos
     }
 }
 
-export async function scanLocal(root, { privateTree = false } = {}) {
+export async function scanLocal(root, { privateTree = false, skipName = () => false } = {}) {
     const names = new Map();
     if (!await checkRoot(root)) return names;
     const rootMeta = await stat(root);
@@ -226,6 +229,7 @@ export async function scanLocal(root, { privateTree = false } = {}) {
         if (privateTree) checkPrivate(info, 0o700, false, covered);
         for (const rawName of await fs.readdir(parent, { encoding: 'buffer' })) {
             const name = utf8.decode(rawName);
+            if (skipName(name)) continue;
             const path = relative ? relative + '/' + name : name;
             segments(path);
             const full = join(root, path);
@@ -281,28 +285,32 @@ export async function exclusiveFile(parent, prefix, write) {
     }
 }
 
-export async function saveJson(path, value) {
+export async function saveJson(path, value, { scratch = dirname(path), parentHandle } = {}) {
     const text = JSON.stringify(value) + '\n';
     if (Buffer.byteLength(text) > MAX_JSON) refuse('state_size');
     const parent = dirname(path);
-    const staged = await exclusiveFile(parent, '.journal-', (handle) => handle.writeFile(text));
+    const staged = await exclusiveFile(scratch, '.journal-', (handle) => handle.writeFile(text));
+    let renamed = false;
     try {
-        await fs.rename(staged.path, path);
-        await syncDir(parent);
+        await fs.rename(staged.path, parentHandle ? join(fdPath(parentHandle), basename(path)) : path);
+        renamed = true;
+        if (parentHandle) await parentHandle.sync();
+        else await syncDir(parent);
+        if (scratch !== parent) await syncDir(scratch);
     } finally {
-        await fs.unlink(staged.path).catch((error) => { if (error.code !== 'ENOENT') throw error; });
+        if (!renamed) await fs.unlink(staged.path).catch((error) => { if (error.code !== 'ENOENT') throw error; });
     }
 }
 
-export async function checkPrivateState(path, isUnfinishedOutput) {
+export async function checkPrivateState(path, skip) {
+    if (skip(path)) return;
     const info = await stat(path);
     if (!info) return;
     if (info.isDirectory()) {
         checkPrivate(info, 0o700);
-        for (const name of await fs.readdir(path)) await checkPrivateState(join(path, name), isUnfinishedOutput);
+        for (const name of await fs.readdir(path)) await checkPrivateState(join(path, name), skip);
     } else {
         checkFile(info);
-        const unfinished = isUnfinishedOutput(path);
-        checkPrivate(info, 0o600, !unfinished, unfinished);
+        checkPrivate(info, 0o600);
     }
 }

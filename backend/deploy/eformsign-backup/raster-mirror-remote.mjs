@@ -53,6 +53,22 @@ async function collect(stream, limit) {
 const idOk = (value) => typeof value === 'string' && value.length <= 1024 && !/[\x00-\x1f\x7f]/.test(value);
 export const validRemoteId = (value) => value === null || (idOk(value) && value !== '');
 
+function listingMd5(hashes) {
+    if (hashes === undefined) return null;
+    if (!hashes || typeof hashes !== 'object' || Array.isArray(hashes)) refuse('unsafe_remote_listing');
+    // rclone 1.60.1 reports "md5" even when the requested hash is "MD5".
+    let digest = null;
+    for (const key of ['md5', 'MD5']) {
+        if (!Object.hasOwn(hashes, key)) continue;
+        const alias = hashes[key];
+        if (typeof alias !== 'string' || !/^[a-f0-9]{32}$/i.test(alias)) refuse('unsafe_remote_listing');
+        const normalized = alias.toLowerCase();
+        if (digest !== null && digest !== normalized) refuse('unsafe_remote_listing');
+        digest = normalized;
+    }
+    return digest;
+}
+
 function entryMeta(value) {
     if (!value || typeof value.IsDir !== 'boolean' || (value.ID !== undefined && !idOk(value.ID))
         || (value.OrigID && value.OrigID !== value.ID) || value.IsBucket === true
@@ -60,15 +76,14 @@ function entryMeta(value) {
         refuse('unsafe_remote_listing');
     }
     const { IsDir: isDir, Size: size, ID, Hashes, ModTime, MimeType } = value;
-    const md5 = Hashes?.MD5?.toLowerCase();
-    if (md5 && !/^[a-f0-9]{32}$/.test(md5)) refuse('unsafe_remote_listing');
+    const md5 = listingMd5(Hashes);
     if (!isDir && (!Number.isSafeInteger(size) || size < 0 || MimeType?.startsWith('application/vnd.google-apps.'))) {
         // Native Drive files are exports rather than byte-addressable PDFs.
         // Ignore native non-PDF entries unless an exact path relies on them.
         if (isPdf(value.Path ?? value.Name)) refuse('unsafe_remote_file');
     }
     const time = Date.parse(ModTime);
-    return { isDir, size, id: ID || null, md5: md5 || null, mtime: Number.isFinite(time) ? time / 1000 : null };
+    return { isDir, size, id: ID || null, md5, mtime: Number.isFinite(time) ? time / 1000 : null };
 }
 
 function parseList(text, recursive, selected) {

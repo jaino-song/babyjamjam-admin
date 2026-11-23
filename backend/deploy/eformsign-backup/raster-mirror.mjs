@@ -2,22 +2,28 @@
 // must be a dedicated backup tree. Fresh listings and strong byte proofs guard
 // exact-file operations; rclone does not provide compare-and-swap against
 // independent remote writers between a proof and its mutation.
+// Local stages use private directories and exact file identities. The flock
+// covers cooperating writers. These checks cannot fence concurrent same-UID
+// changes between a pathname check and a filesystem mutation.
 import { randomUUID } from 'node:crypto';
 import { fstatSync } from 'node:fs';
 import * as fs from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
 import {
-    atName, checkDirectory, checkPrivate, checkPrivateState, checkRoot, directory, exclusiveFile, fdPath, identity,
-    inspectFile, isPdf, keyOf, MirrorError, openDirectory, readJson, refuse, rootInfo, rootPath, same, sameBytes,
+    atName, checkPrivate, checkPrivateState, checkRoot, directory, exclusiveFile, fdPath, identity,
+    inspectFile, isPdf, keyOf, MirrorError, openChildDirectory, openDirectory, openStagePayload, readJson, refuse, rootInfo, rootPath, same, sameBytes,
     saveJson, scanLocal, segments, shaName, stat, syncDir, validBytes, validIdentity,
 } from './raster-mirror-io.mjs';
 import { remoteTransport, validRemoteId } from './raster-mirror-remote.mjs';
 
 const modes = ['active', 'rolling-back', 'paused'];
 const stagePrefix = '.raster-mirror-';
-const renderStage = /^\.render-[a-zA-Z0-9]{6}$/;
+const renderStage = /^\.render-(?:[a-zA-Z0-9]{6}|[a-f0-9-]{36})$/;
 const stageName = /^\.raster-mirror-[a-f0-9-]{36}$/;
-const pdfName = (path) => { segments(path); if (!isPdf(path)) refuse('unsafe_pdf_path'); return path; };
+const pdfName = (path) => {
+    if (segments(path).some((part) => stageName.test(part)) || !isPdf(path)) refuse('unsafe_pdf_path');
+    return path;
+};
 const snapshot = (file) => file ? { id: file.id, bytes: file.bytes } : null;
 const localMatches = (actual, expected) => actual && expected
     ? same(actual.id, expected.id) && sameBytes(actual.bytes, expected.bytes) : actual === expected;
@@ -28,6 +34,9 @@ const validLocal = (item) => item === null || (validIdentity(item?.id) && validB
 const validRemote = (item) => item === null || (item && validRemoteId(item.id) && validBytes(item.bytes)
     && validChain(item.chain) && (item.checksum === null || item.checksum === item.bytes.md5));
 const relativeParent = (root, path) => dirname(join(root, path));
+const validStage = (stage, pattern) => typeof stage?.directory === 'string' && pattern.test(stage.directory)
+    && validIdentity(stage.parentId) && validIdentity(stage.directoryId) && validIdentity(stage.fileId);
+const stageReady = (op) => op.stage && op.stage.ready !== false; // Legacy intents only saved fully copied stages.
 
 function validateVersion(entry) {
     if (!validBytes(entry?.raw) || !(entry.raster === null || validBytes(entry.raster))
@@ -54,8 +63,12 @@ function readRecords(state) {
         if (!['publish', 'rollback', 'move'].includes(op.kind) || !validBytes(op.raw) || !validBytes(op.target)
             || !validLocal(op.before?.local) || !validRemote(op.before?.remote) || !validRemote(op.remoteAfter)
             || !validChain(op.remoteChain) || typeof op.remoteStarted !== 'boolean') refuse('invalid_manifest');
-        if (op.stage !== null && (!stageName.test(op.stage?.directory) || !validIdentity(op.stage.parentId)
-            || !validIdentity(op.stage.directoryId) || !validIdentity(op.stage.fileId))) refuse('invalid_manifest');
+        if (op.stage !== null && (!validStage(op.stage, stageName)
+            || (op.stage.ready !== undefined && typeof op.stage.ready !== 'boolean'))) refuse('invalid_manifest');
+        if (op.stage?.ready === false && op.remoteStarted) refuse('invalid_manifest');
+        if (op.discarding !== undefined && (op.discarding !== true || op.kind !== 'publish' || state.phase !== 'rolling-back')) {
+            refuse('invalid_manifest');
+        }
         if (op.kind === 'move') {
             const from = pdfName(op.from);
             const source = atName(records, from);
@@ -63,7 +76,14 @@ function readRecords(state) {
                 || typeof op.deletingRemote !== 'boolean') refuse('invalid_manifest');
         }
         if ((op.kind === 'rollback') !== (state.phase === 'rolling-back')
-            && !(state.phase === 'rolling-back' && op.kind === 'move')) refuse('invalid_manifest');
+            && !(state.phase === 'rolling-back' && (op.kind === 'move' || op.discarding))) refuse('invalid_manifest');
+    }
+    const render = state.renderStage;
+    if (render !== undefined && (!validStage(render, renderStage) || !validIdentity(render.homeId)
+        || !validBytes(render.raw) || !['prepared', 'ready', 'cleaning'].includes(render.phase)
+        || (render.phase === 'ready' ? (!validBytes(render.output) || sameBytes(render.output, render.raw))
+            : render.output !== undefined))) {
+        refuse('invalid_manifest');
     }
     return records;
 }
@@ -131,8 +151,7 @@ async function openArchive(settings, options) {
     const rasterDir = join(home, 'rendered');
     const remote = remoteTransport(settings, lockFd);
     const target = remote?.target ?? null;
-    await checkPrivateState(home, (path) => basename(path) === 'output.pdf'
-        && dirname(dirname(path)) === rasterDir && renderStage.test(basename(dirname(path))));
+    await checkPrivateState(home, (path) => path === rasterDir);
     const state = await readJson(manifest);
     if (state && (!same(state.binding?.roots, roots) || !same(state.binding.rootIds, rootIds)
         || state.binding.target !== target || (remote ? !validChain(state.binding.remoteRoot) : state.binding.remoteRoot !== null))) {
@@ -143,7 +162,10 @@ async function openArchive(settings, options) {
         && (state.phase !== 'paused' || options.explicitRepublish !== true)) refuse('publication_paused');
     const records = state ? readRecords(state) : new Map();
     const inventories = await Promise.allSettled([
-        scanLocal(archiveDir), scanLocal(originalArchiveDir, { privateTree: true }),
+        // Scratch is never part of the PDF corpus. Only journalled allocations
+        // may be opened or reclaimed, even when the stage name looks familiar.
+        scanLocal(archiveDir, { skipName: (name) => stageName.test(name) }),
+        scanLocal(originalArchiveDir, { privateTree: true }),
         remote ? remote.inventory(state?.binding.remoteRoot) : null,
     ]);
     for (const result of inventories) if (result.status === 'rejected') throw result.reason;
@@ -163,6 +185,7 @@ async function openArchive(settings, options) {
     const ctx = {
         archiveDir, originalArchiveDir, stateDir, home, manifest, remote, visible, originals, names, records,
         remoteNames: remoteInventory?.names, dryRun: Boolean(options.dryRun), lockFd, report,
+        gsBin: options.gsBin ?? settings.gsBin, qpdfBin: options.qpdfBin ?? settings.qpdfBin,
         rawDir: join(home, 'original-blobs'), rasterDir,
         state: state ?? {
             version: 1, binding: { roots, rootIds, target, remoteRoot: remoteInventory?.root ?? null },
@@ -198,19 +221,50 @@ async function initialize(ctx) {
 async function readCache(ctx) {
     const cache = new Map();
     const stagedRenders = new Map();
-    if (!await directory(ctx.rasterDir, { privateFrom: ctx.home })) return { cache, stagedRenders };
+    const available = await directory(ctx.rasterDir, { privateFrom: ctx.home });
+    const owned = ctx.state.renderStage;
+    if (owned) {
+        await withRenderStage(ctx, owned, async ({ committed }) => {
+            if (owned.phase === 'ready' && !committed) {
+                stagedRenders.set(owned.raw.sha256, { bytes: owned.output });
+            }
+        });
+    }
+    if (!available) return { cache, stagedRenders };
     for (const name of await fs.readdir(ctx.rasterDir)) {
+        if (name === owned?.directory) continue;
         const path = join(ctx.rasterDir, name);
         const pending = renderStage.test(name);
         if (!pending && !shaName(name)) refuse('invalid_cache');
         await directory(path, { privateFrom: ctx.home });
+        const members = (await fs.readdir(path)).sort();
+        const output = join(path, 'output.pdf');
+        const outputInfo = await stat(output);
+        if (pending && !members.includes('receipt.json')) {
+            // A crash before recording ownership can leave an empty allocation.
+            // Leave it alone. Unknown payloads (including legacy scratch) stop recovery.
+            if (members.length && (!same(members, ['output.pdf']) || !outputInfo?.isFile()
+                || outputInfo.nlink !== 1n || outputInfo.size !== 0n)) refuse('unowned_render_stage');
+            if (outputInfo) checkPrivate(outputInfo, 0o600);
+            continue;
+        }
+        if (!same(members, ['output.pdf', 'receipt.json']) || !outputInfo?.isFile() || outputInfo.nlink !== 1n) {
+            refuse('invalid_cache');
+        }
+        checkPrivate(outputInfo, 0o600);
         const receipt = await readJson(join(path, 'receipt.json'));
-        if (pending && !receipt) continue;
         if (!shaName(receipt?.raw) || (!pending && receipt.raw !== name)
             || !validBytes(receipt.output) || receipt.raw === receipt.output.sha256) refuse('invalid_cache');
         if (pending) {
+            const raw = await inspectFile(join(ctx.rawDir, receipt.raw + '.pdf'), { privateFile: true });
+            if (!raw || raw.bytes.sha256 !== receipt.raw) refuse('protected_bytes_changed');
+            const rendered = await inspectFile(output, { privateFile: true });
+            if (!rendered || !same(rendered.bytes, receipt.output)) refuse('protected_bytes_changed');
             if (stagedRenders.has(receipt.raw)) refuse('ambiguous_cache');
-            stagedRenders.set(receipt.raw, { path, bytes: receipt.output });
+            stagedRenders.set(receipt.raw, {
+                bytes: receipt.output, directory: name, parentId: await checkRoot(ctx.rasterDir),
+                directoryId: await checkRoot(path), fileId: rendered.id,
+            });
         } else {
             cache.set(receipt.raw, receipt.output);
         }
@@ -250,6 +304,192 @@ async function unlinkIfPresent(path) {
     await fs.unlink(path).catch((error) => { if (error.code !== 'ENOENT') throw error; });
 }
 
+async function allocateStage(parent, directory, filename) {
+    await fs.mkdir(join(fdPath(parent), directory), { mode: 0o700 });
+    const dir = await openChildDirectory(parent, directory);
+    let handle;
+    try {
+        const directoryInfo = await dir.stat({ bigint: true });
+        checkPrivate(directoryInfo, 0o700);
+        handle = await fs.open(join(fdPath(dir), filename), 'wx+', 0o600);
+        const file = await handle.stat({ bigint: true });
+        checkPrivate(file, 0o600);
+        await handle.sync();
+        await dir.sync();
+        await parent.sync();
+        return {
+            handle,
+            stage: {
+                directory, directoryId: identity(directoryInfo),
+                parentId: identity(await parent.stat({ bigint: true })), fileId: identity(file),
+            },
+        };
+    } catch (error) {
+        await handle?.close();
+        throw error;
+    } finally {
+        await dir.close();
+    }
+}
+
+async function checkStageDirectory(parent, stage, name = stage.directory) {
+    if (!same(identity(await parent.stat({ bigint: true })), stage.parentId)) refuse('directory_changed');
+    const entry = await stat(join(fdPath(parent), name));
+    if (!entry) return null;
+    if (!entry.isDirectory() || !same(identity(entry), stage.directoryId)) refuse('staging_identity_changed');
+    checkPrivate(entry, 0o700);
+    const dir = await openChildDirectory(parent, name);
+    try {
+        const opened = await dir.stat({ bigint: true });
+        if (!same(identity(opened), stage.directoryId)) refuse('staging_identity_changed');
+        checkPrivate(opened, 0o700);
+        return dir;
+    } catch (error) {
+        await dir.close();
+        throw error;
+    }
+}
+
+async function checkStageMembers(dir, allowed) {
+    const members = await fs.readdir(fdPath(dir));
+    if (members.some((name) => !allowed.includes(name))) refuse('staging_identity_changed');
+}
+
+async function checkStagePayload(dir, filename, stage, handle) {
+    const info = await stat(join(fdPath(dir), filename));
+    if (!info && !handle) return null;
+    if (!info?.isFile() || info.nlink !== 1n || !same(identity(info), stage.fileId)) refuse('staging_identity_changed');
+    checkPrivate(info, 0o600);
+    if (handle) {
+        const opened = handle.fd < 0 ? null : await handle.stat({ bigint: true });
+        if (!opened || opened.nlink !== 1n || !same(identity(opened), stage.fileId)) refuse('staging_identity_changed');
+        checkPrivate(opened, 0o600);
+    }
+    return info;
+}
+
+async function removeOwnedStage(parent, dir, stage, filename) {
+    if (dir) {
+        const path = join(fdPath(parent), stage.directory);
+        async function verifyDirectory() {
+            const current = await stat(path);
+            if (!current?.isDirectory() || !same(identity(current), stage.directoryId)) refuse('staging_identity_changed');
+        }
+        await verifyDirectory();
+        await checkStageMembers(dir, [filename]);
+        if (await checkStagePayload(dir, filename, stage)) await fs.unlink(join(fdPath(dir), filename));
+        await dir.sync();
+        await verifyDirectory();
+        await fs.rmdir(path);
+    }
+    await parent.sync();
+}
+
+async function withRenderStage(ctx, stage, action) {
+    if (!same(await checkRoot(ctx.home), stage.homeId) || !same(await checkRoot(ctx.rasterDir), stage.parentId)) {
+        refuse('binding_changed');
+    }
+    const parent = await openDirectory(ctx.rasterDir);
+    let dir;
+    try {
+        checkPrivate(await parent.stat({ bigint: true }), 0o700);
+        dir = await checkStageDirectory(parent, stage);
+        const finalName = stage.raw.sha256;
+        const final = join(fdPath(parent), finalName);
+        const committed = Boolean(await stat(final));
+        if (committed) {
+            if (dir || stage.phase !== 'ready') refuse('staging_identity_changed');
+            dir = await checkStageDirectory(parent, stage, finalName);
+        }
+        if (!dir) {
+            if (stage.phase !== 'cleaning') refuse('staging_missing');
+            return await action({ parent });
+        }
+        const prepared = stage.phase !== 'ready';
+        await checkStageMembers(dir, prepared ? ['output.pdf'] : ['output.pdf', 'receipt.json']);
+        const payload = await checkStagePayload(dir, 'output.pdf', stage);
+        if (!payload && stage.phase !== 'cleaning') refuse('staging_missing');
+        const receipt = prepared ? null : await readJson(join(fdPath(dir), 'receipt.json'));
+        if (!prepared) {
+            if ((committed && !receipt) || (receipt && !same(receipt, { raw: finalName, output: stage.output }))) {
+                refuse('invalid_cache');
+            }
+            const rendered = await inspectFile(join(fdPath(dir), 'output.pdf'), { privateFile: true });
+            if (!same(rendered?.id, stage.fileId) || !same(rendered?.bytes, stage.output)) refuse('protected_bytes_changed');
+        }
+        return await action({ parent, dir, receipt, committed });
+    } finally {
+        await dir?.close();
+        await parent.close();
+    }
+}
+
+async function settleRender(ctx) {
+    const stage = ctx.state.renderStage;
+    if (!stage) return;
+    await withRenderStage(ctx, stage, async ({ parent, dir, receipt, committed }) => {
+        if (stage.phase === 'ready') {
+            await protectedRaw(ctx, stage.raw, null, { required: true });
+            if (!committed) {
+                const temp = join(ctx.rasterDir, stage.directory);
+                if (!same(await checkRoot(temp), stage.directoryId)) refuse('staging_identity_changed');
+                if (!receipt) {
+                    await saveJson(join(temp, 'receipt.json'), { raw: stage.raw.sha256, output: stage.output }, {
+                        scratch: ctx.home, parentHandle: dir,
+                    });
+                }
+                if (await stat(join(fdPath(parent), stage.raw.sha256))
+                    || !same(await checkRoot(temp), stage.directoryId)) refuse('staging_identity_changed');
+                await checkStageMembers(dir, ['output.pdf', 'receipt.json']);
+                await checkStagePayload(dir, 'output.pdf', stage);
+                await fs.rename(join(fdPath(parent), stage.directory), join(fdPath(parent), stage.raw.sha256));
+            }
+            await parent.sync();
+            ctx.stagedRenders.delete(stage.raw.sha256);
+            ctx.cache.set(stage.raw.sha256, stage.output);
+        } else {
+            if (stage.phase !== 'cleaning') {
+                // Only a durable cleanup transition permits a missing owned
+                // payload or directory on the next invocation.
+                stage.phase = 'cleaning';
+                await save(ctx);
+            }
+            await removeOwnedStage(parent, dir, stage, 'output.pdf');
+        }
+    });
+    delete ctx.state.renderStage;
+    await save(ctx);
+}
+
+async function promoteLegacyRender(ctx, raw, stage) {
+    await protectedRaw(ctx, raw, null, { required: true });
+    const parent = await openDirectory(ctx.rasterDir);
+    let dir;
+    try {
+        dir = await checkStageDirectory(parent, stage);
+        if (!dir) refuse('staging_missing');
+        await checkStageMembers(dir, ['output.pdf', 'receipt.json']);
+        await checkStagePayload(dir, 'output.pdf', stage);
+        const receipt = await readJson(join(fdPath(dir), 'receipt.json'));
+        const file = await inspectFile(join(fdPath(dir), 'output.pdf'), { privateFile: true });
+        if (receipt?.raw !== raw.sha256 || !same(receipt.output, stage.bytes)
+            || !same(file?.bytes, stage.bytes) || !same(file?.id, stage.fileId)) refuse('protected_bytes_changed');
+        const committed = join(fdPath(parent), raw.sha256);
+        if (await stat(committed)) refuse('cache_collision');
+        const temp = join(fdPath(parent), stage.directory);
+        const current = await stat(temp);
+        if (!current?.isDirectory() || !same(identity(current), stage.directoryId)) refuse('staging_identity_changed');
+        await fs.rename(temp, committed);
+        await parent.sync();
+    } finally {
+        await dir?.close();
+        await parent.close();
+    }
+    ctx.stagedRenders.delete(raw.sha256);
+    ctx.cache.set(raw.sha256, stage.bytes);
+    return stage.bytes;
+}
+
 async function ensureRender(ctx, raw, override) {
     const cached = ctx.cache.get(raw.sha256);
     if (cached) {
@@ -257,44 +497,60 @@ async function ensureRender(ctx, raw, override) {
         return cached;
     }
     const recovered = ctx.stagedRenders.get(raw.sha256);
-    if (recovered) {
-        await verifyPrivate(ctx, join(recovered.path, 'output.pdf'), recovered.bytes);
-        const committed = dirname(renderPath(ctx, raw));
-        if (await stat(committed)) refuse('cache_collision');
-        await fs.rename(recovered.path, committed);
-        await syncDir(ctx.rasterDir);
-        ctx.stagedRenders.delete(raw.sha256);
-        ctx.cache.set(raw.sha256, recovered.bytes);
-        return recovered.bytes;
-    }
+    if (recovered) return promoteLegacyRender(ctx, raw, recovered);
     for (const record of ctx.records.values()) {
         if (record.history.some((entry) => sameBytes(entry.raw, raw) && entry.raster)) refuse('protected_render_missing');
     }
     const renderer = override ?? (await import('./raster-render.mjs')).renderRasterPdf;
     if (typeof renderer !== 'function') refuse('renderer_unavailable');
     const sourcePath = await protectedRaw(ctx, raw, null, { required: true });
-    const temp = await fs.mkdtemp(join(ctx.rasterDir, '.render-'));
-    const outputPath = join(temp, 'output.pdf');
+    const homeId = await checkRoot(ctx.home);
+    const parent = await openDirectory(ctx.rasterDir);
+    let allocation;
     try {
-        try {
-            await renderer({ sourcePath, outputPath, lockFd: ctx.lockFd });
-        } catch {
-            refuse('renderer_failed');
-        }
-        if (!same(await fs.readdir(temp), ['output.pdf'])) refuse('invalid_render');
-        const file = await inspectFile(outputPath, { privateFile: true, tighten: true, covered: true, sync: true });
-        if (!file || sameBytes(file.bytes, raw)) refuse('invalid_render');
-        await protectedRaw(ctx, raw, null, { required: true });
-        await saveJson(join(temp, 'receipt.json'), { raw: raw.sha256, output: file.bytes });
-        const committed = dirname(renderPath(ctx, raw));
-        if (await stat(committed)) refuse('cache_collision');
-        await fs.rename(temp, committed);
-        await syncDir(ctx.rasterDir);
-        ctx.cache.set(raw.sha256, file.bytes);
-        ctx.report.rendered++;
-        return file.bytes;
+        allocation = await allocateStage(parent, '.render-' + randomUUID(), 'output.pdf');
     } finally {
-        await fs.rm(temp, { recursive: true, force: true });
+        await parent.close();
+    }
+    const { stage, handle: outputHandle } = allocation;
+    try {
+        Object.assign(stage, { homeId, raw, phase: 'prepared' });
+        ctx.state.renderStage = stage;
+        // A writer never sees the descriptor until both its inode and the
+        // bound stage directory are durably recorded.
+        await save(ctx);
+        const outputPath = join(ctx.rasterDir, stage.directory, 'output.pdf');
+        await withRenderStage(ctx, stage, async ({ dir }) => {
+            const empty = await checkStagePayload(dir, 'output.pdf', stage, outputHandle);
+            if (empty.size !== 0n) refuse('staging_identity_changed');
+        });
+        let rendererFailed = false;
+        try {
+            await renderer({ sourcePath, outputPath, outputHandle, lockFd: ctx.lockFd, gsBin: ctx.gsBin, qpdfBin: ctx.qpdfBin });
+        } catch {
+            rendererFailed = true;
+        }
+        const output = await withRenderStage(ctx, stage, async ({ dir }) => {
+            const info = await checkStagePayload(dir, 'output.pdf', stage, outputHandle);
+            if (rendererFailed || !info.size) return null;
+            await outputHandle.sync();
+            const file = await inspectFile(join(fdPath(dir), 'output.pdf'), { privateFile: true });
+            if (!same(file?.id, stage.fileId)) refuse('staging_identity_changed');
+            return file.bytes;
+        });
+        if (!output || sameBytes(output, raw)) {
+            await settleRender(ctx);
+            refuse(rendererFailed ? 'renderer_failed' : 'invalid_render');
+        }
+        await protectedRaw(ctx, raw, null, { required: true });
+        stage.phase = 'ready';
+        stage.output = output;
+        await save(ctx);
+        await settleRender(ctx);
+        ctx.report.rendered++;
+        return output;
+    } finally {
+        await outputHandle.close();
     }
 }
 
@@ -323,7 +579,7 @@ async function observedRemote(ctx, path, observed, candidates = [], strong = fal
 }
 
 function localAllowed(actual, op) {
-    const staged = op.stage && actual && same(actual.id, op.stage.fileId) && sameBytes(actual.bytes, op.target);
+    const staged = stageReady(op) && actual && same(actual.id, op.stage.fileId) && sameBytes(actual.bytes, op.target);
     if (op.remoteStarted && !sameBytes(op.before.local?.bytes, op.target)) return staged;
     return staged || localMatches(actual, op.before.local);
 }
@@ -354,9 +610,17 @@ async function guardRecord(ctx, entry, { strong = false } = {}) {
 }
 
 async function guardRecords(ctx, options) {
+    const op = ctx.state.intent;
     for (const entry of ctx.records.values()) await guardRecord(ctx, entry, options);
-    if (ctx.state.intent && !atName(ctx.records, ctx.state.intent.path)) {
-        await guardRecord(ctx, { path: ctx.state.intent.path, local: null, remote: null }, options);
+    if (op && !atName(ctx.records, op.path)) {
+        await guardRecord(ctx, { path: op.path, local: null, remote: null }, options);
+    }
+    if (op?.stage) {
+        const local = snapshot(atName(ctx.visible, op.path));
+        const transferred = stageReady(op) && same(local?.id, op.stage.fileId) && sameBytes(local?.bytes, op.target);
+        await withLocalStage(ctx, op, async ({ payload }) => {
+            if ((!payload && !transferred && !op.discarding) || (payload && transferred)) refuse('staging_identity_changed');
+        });
     }
 }
 
@@ -368,6 +632,7 @@ async function planCapture(ctx, moves, { privateOnly = false } = {}) {
         && !atName(ctx.originals, path)).map(({ raw }) => raw.sha256));
     for (const { path } of ctx.names.values()) {
         if (!isPdf(path) || atName(ctx.records, path) || held.has(keyOf(path))) continue;
+        pdfName(path);
         const local = atName(ctx.visible, path);
         const original = atName(ctx.originals, path);
         const observed = remoteAt(ctx, path);
@@ -513,67 +778,56 @@ async function guardPublicRoot(ctx) {
     if (!same(await checkRoot(ctx.archiveDir), ctx.state.binding.rootIds[0])) refuse('binding_changed');
 }
 
-async function stageLocal(ctx, op, parent, source) {
-    const stage = stagePrefix + randomUUID();
-    const dir = join(fdPath(parent), stage);
-    await fs.mkdir(dir, { mode: 0o700 });
-    const directoryId = identity(await stat(dir));
-    const payload = join(dir, 'payload.tmp');
-    let saved = false;
+async function withLocalStage(ctx, op, action) {
+    await guardPublicRoot(ctx);
+    const path = relativeParent(ctx.archiveDir, op.path);
+    const parent = await openDirectory(path);
+    let dir;
     try {
-        const handle = await fs.open(payload, 'wx', 0o600);
-        try {
-            const file = await inspectFile(source, { output: handle, privateFile: true });
-            if (!same(file?.bytes, op.target)) refuse('protected_bytes_changed');
-            await handle.sync();
-        } finally {
-            await handle.close();
-        }
-        const info = await stat(payload);
-        await syncDir(dir);
-        await parent.sync();
-        op.stage = {
-            directory: stage, directoryId, parentId: identity(await parent.stat({ bigint: true })), fileId: identity(info),
-        };
-        // If committing the intent fails after rename, leave its stage intact.
-        saved = true;
-        await save(ctx);
+        dir = await checkStageDirectory(parent, op.stage);
+        if (dir) await checkStageMembers(dir, ['payload.tmp']);
+        const payload = dir && await checkStagePayload(dir, 'payload.tmp', op.stage);
+        return await action({ parent, dir, payload });
     } finally {
-        if (!saved) {
-            await unlinkIfPresent(payload);
-            await fs.rmdir(dir);
-            await parent.sync();
-        }
+        await dir?.close();
+        await parent.close();
     }
 }
 
-async function checkLocalStage(parent, stage) {
-    if (!same(identity(await parent.stat({ bigint: true })), stage.parentId)) refuse('directory_changed');
-    const path = join(fdPath(parent), stage.directory);
-    const info = await stat(path);
-    if (!info) return null;
-    checkDirectory(info);
-    checkPrivate(info, 0o700);
-    if (!same(identity(info), stage.directoryId)) refuse('staging_identity_changed');
-    return path;
+async function prepareLocalStage(ctx, op, parent) {
+    const { stage, handle } = await allocateStage(parent, stagePrefix + randomUUID(), 'payload.tmp');
+    await handle.close();
+    op.stage = { ...stage, ready: false };
+    await save(ctx);
+}
+
+async function copyLocalStage(ctx, op, dir, path, source) {
+    const handle = await openStagePayload(path);
+    try {
+        await checkStagePayload(dir, 'payload.tmp', op.stage, handle);
+        // An interrupted copy may contain any prefix of the protected source.
+        // Only this inode is ours to reset, and it cannot be published yet.
+        await handle.truncate(0);
+        const file = await inspectFile(source, { output: handle, privateFile: true });
+        if (!same(file?.bytes, op.target)) refuse('protected_bytes_changed');
+        await handle.sync();
+        await checkStagePayload(dir, 'payload.tmp', op.stage, handle);
+        await verifyLocalStage(op, path);
+        op.stage.ready = true;
+        await save(ctx);
+    } finally {
+        await handle.close();
+    }
+}
+
+async function verifyLocalStage(op, path) {
+    const staged = await inspectFile(path, { privateFile: true });
+    if (!same(staged?.id, op.stage.fileId) || !same(staged?.bytes, op.target)) refuse('staging_identity_changed');
 }
 
 async function cleanStage(ctx, op) {
     if (!op.stage) return;
-    await guardPublicRoot(ctx);
-    const parent = await openDirectory(relativeParent(ctx.archiveDir, op.path));
-    try {
-        const dir = await checkLocalStage(parent, op.stage);
-        if (!dir) return;
-        const payload = join(dir, 'payload.tmp');
-        const file = await stat(payload);
-        if (file) {
-            if (!file.isFile() || !same(identity(file), op.stage.fileId)) refuse('staging_identity_changed');
-            await fs.unlink(payload);
-        }
-        await fs.rmdir(dir);
-        await parent.sync();
-    } finally { await parent.close(); }
+    await withLocalStage(ctx, op, ({ parent, dir }) => removeOwnedStage(parent, dir, op.stage, 'payload.tmp'));
 }
 
 async function replaceLocal(ctx, op, source) {
@@ -581,31 +835,38 @@ async function replaceLocal(ctx, op, source) {
     const path = join(ctx.archiveDir, op.path);
     await directory(dirname(path), { create: true });
     const parent = await openDirectory(dirname(path));
+    let dir;
     try {
         const endpoint = join(fdPath(parent), basename(path));
         const present = snapshot(await inspectFile(endpoint));
         if (!localAllowed(present, op)) refuse('public_version_conflict');
         if (sameBytes(present?.bytes, op.target)) return present;
-        // A recovery may find the previous endpoint or the inode produced by
-        // the recorded same-device stage. Matching bytes alone never grant
-        // ownership of an independently created local file.
-        if (!op.stage) await stageLocal(ctx, op, parent, source);
-        const dir = await checkLocalStage(parent, op.stage);
+        if (!op.stage) await prepareLocalStage(ctx, op, parent);
+        dir = await checkStageDirectory(parent, op.stage);
         if (!dir) refuse('staging_missing');
-        const payload = join(dir, 'payload.tmp');
-        const staged = await inspectFile(payload, { privateFile: true });
-        if (!same(staged?.id, op.stage.fileId) || !same(staged?.bytes, op.target)) refuse('staging_identity_changed');
+        await checkStageMembers(dir, ['payload.tmp']);
+        if (!await checkStagePayload(dir, 'payload.tmp', op.stage)) refuse('staging_missing');
+        const payload = join(fdPath(dir), 'payload.tmp');
+        if (!stageReady(op)) await copyLocalStage(ctx, op, dir, payload, source);
+        else await verifyLocalStage(op, payload);
         if (!localMatches(snapshot(await inspectFile(endpoint)), present)) refuse('public_version_conflict');
         await guardPublicRoot(ctx);
+        const stagePath = join(fdPath(parent), op.stage.directory);
+        const current = await stat(stagePath);
         if (!same(await checkRoot(dirname(path)), op.stage.parentId)) refuse('directory_changed');
+        if (!current?.isDirectory() || !same(identity(current), op.stage.directoryId)
+            || !await checkStagePayload(dir, 'payload.tmp', op.stage)) refuse('staging_identity_changed');
         await fs.rename(payload, endpoint);
         await parent.sync();
-        await syncDir(dir);
+        await dir.sync();
         const published = snapshot(await inspectFile(endpoint));
         if (!published || !same(published.id, op.stage.fileId) || !same(published.bytes, op.target)) refuse('local_verification_failed');
         ctx.report[op.kind === 'rollback' ? 'localRestored' : 'localPublished']++;
         return published;
-    } finally { await parent.close(); }
+    } finally {
+        await dir?.close();
+        await parent.close();
+    }
 }
 
 async function guardRemoteIntent(ctx, op, verified, strong = false) {
@@ -790,6 +1051,7 @@ async function prepareArchive(settings, options) {
     ctx.report.captured = captures.length;
     if (ctx.dryRun || ctx.state.phase !== 'active') return ctx.report;
     await initialize(ctx);
+    await settleRender(ctx);
     for (const item of captures) await capture(ctx, item);
     if (!ctx.existed || captures.length) await save(ctx);
     return ctx.report;
@@ -811,6 +1073,7 @@ async function publishArchive(settings, options) {
         .filter(({ raw }) => !ctx.cache.has(raw.sha256) && !ctx.stagedRenders.has(raw.sha256)).map(({ raw }) => raw.sha256)).size;
     if (ctx.dryRun) return ctx.report;
     await initialize(ctx);
+    await settleRender(ctx);
     // A move's source must already be owned before any raw ingestion. Protect
     // the destination's raw bytes before publishing either endpoint.
     for (const item of captures) await capture(ctx, item);
@@ -832,12 +1095,16 @@ async function settlePublishForRollback(ctx, op) {
     const record = atName(ctx.records, op.path);
     const { local, remote } = await guardRecord(ctx, record, { strong: true });
     await protectedRaw(ctx, op.raw, null, { required: true });
+    if (!op.discarding) {
+        op.discarding = true;
+        ctx.state.phase = 'rolling-back';
+        await save(ctx);
+    }
+    await cleanStage(ctx, op);
     const proposed = { raw: op.raw, raster: op.target, local, remote };
     ctx.records.set(keyOf(op.path), { ...record, ...proposed, history: [...record.history, proposed] });
     ctx.state.intent = null;
-    ctx.state.phase = 'rolling-back';
     await save(ctx);
-    await cleanStage(ctx, op);
 }
 
 async function rollbackArchive(settings, options) {
@@ -853,6 +1120,7 @@ async function rollbackArchive(settings, options) {
         || (ctx.remote && !sameBytes(remote?.bytes, raw))).length;
     if (ctx.dryRun) return ctx.report;
     await initialize(ctx);
+    await settleRender(ctx);
     if (pending?.kind === 'publish') await settlePublishForRollback(ctx, pending);
     if (ctx.state.phase !== 'rolling-back') {
         ctx.state.phase = 'rolling-back';
