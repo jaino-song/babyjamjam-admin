@@ -7,7 +7,6 @@ import {
     SERVICE_RECORD_LINK_RULE_ID,
     SERVICE_RECORD_LINK_SCHEDULING_RETRY_REASON,
 } from "domain/constants/service-record-link-message";
-import { MESSAGE_SENDER_APPROVAL_REQUIRED_CANCEL_REASON } from "domain/constants/message-automation-policy";
 import {
     isTransientPrismaConnectivityError,
     summarizePrismaError,
@@ -115,7 +114,6 @@ export class ServiceRecordLinkReconciliationService {
                                 in: [
                                     SERVICE_RECORD_LINK_RESCHEDULED_REASON,
                                     SERVICE_RECORD_LINK_ENDED_REASON,
-                                    MESSAGE_SENDER_APPROVAL_REQUIRED_CANCEL_REASON,
                                 ],
                             },
                         },
@@ -156,7 +154,6 @@ export class ServiceRecordLinkReconciliationService {
                                                         notIn: [
                                                             SERVICE_RECORD_LINK_RESCHEDULED_REASON,
                                                             SERVICE_RECORD_LINK_ENDED_REASON,
-                                                            MESSAGE_SENDER_APPROVAL_REQUIRED_CANCEL_REASON,
                                                         ],
                                                     },
                                                 },

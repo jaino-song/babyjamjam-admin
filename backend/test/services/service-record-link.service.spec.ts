@@ -1,3 +1,5 @@
+import { Prisma } from "@prisma/client";
+import { MESSAGE_SENDER_APPROVAL_REQUIRED_CANCEL_REASON } from "domain/constants/message-automation-policy";
 import { BadRequestException, ConflictException, NotFoundException, ServiceUnavailableException } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { ServiceRecordLinkService } from "application/services/service-record-link.service";
@@ -1030,6 +1032,44 @@ describe("ServiceRecordLinkService", () => {
         expect(sql.strings.join("?")).toContain("blocker.\"status\" IN ('pending', 'processing', 'dispatching', 'sent', 'needs_setup')");
         expect(sql.strings.join("?")).toContain('"canceled_by_user" = false');
     });
+
+    it.each([MESSAGE_SENDER_APPROVAL_REQUIRED_CANCEL_REASON, SERVICE_RECORD_LINK_ENDED_REASON])(
+        "honors the base record-link claim and blocker allow-lists for %s while keeping new schedules eligible", async (reason) => {
+            const prisma = createPrisma();
+            const tokens = createTokenService();
+            const jobs = createJobRepository();
+            const service = new ServiceRecordLinkService(
+                prisma as unknown as PrismaService, tokens as never, createConfigService() as unknown as ConfigService, jobs as never,
+                createLogRepository() as never, createOverrideRepository() as never, undefined, undefined,
+                createBranchLock(prisma) as never, createAutomationActivationService() as never,
+            );
+            prisma.employee_schedule.findUnique.mockImplementation(async ({ where }) => createSchedule({ id: where.id }));
+            prisma.$queryRaw.mockImplementation(async (sql: Prisma.Sql) => {
+                const boundValues = (params: string) => [...params.matchAll(/\$(\d+)/g)].map((param) => sql.values[Number(param[1]) - 1]);
+                const blocker = /blocker\."cancel_reason" NOT IN \(([^)]+)\)/.exec(sql.text);
+                const reclaim = /"message_trigger_job"\."cancel_reason" IN \(([^)]+)\)/.exec(sql.text);
+                expect(blocker).not.toBeNull();
+                expect(reclaim).not.toBeNull();
+                const expected = reason === SERVICE_RECORD_LINK_ENDED_REASON;
+                expect(boundValues(blocker![1]!)).toEqual(expect.arrayContaining([SERVICE_RECORD_LINK_ENDED_REASON]));
+                expect(boundValues(reclaim![1]!)).toEqual(expect.arrayContaining([SERVICE_RECORD_LINK_ENDED_REASON]));
+                expect(boundValues(blocker![1]!).includes(reason)).toBe(expected);
+                expect(boundValues(reclaim![1]!).includes(reason)).toBe(expected);
+                const sameSchedule = sql.values.includes("system:service_record_link:schedule:10:primary");
+                if (sameSchedule && (!boundValues(blocker![1]!).includes(reason) || !boundValues(reclaim![1]!).includes(reason))) return [];
+                return [{ id: "claim-1", claim_version: "2026-07-09 00:00:00.123456+00" }];
+            });
+            const reclaimable = reason === SERVICE_RECORD_LINK_ENDED_REASON;
+            await expect(service.scheduleForServiceStart(10)).resolves.toBe(reclaimable);
+            expect(jobs.promoteAutomaticSchedulingClaim).toHaveBeenCalledTimes(reclaimable ? 1 : 0);
+            expect(tokens.issueLink).toHaveBeenCalledTimes(reclaimable ? 1 : 0);
+            jobs.promoteAutomaticSchedulingClaim.mockClear();
+
+            await expect(service.scheduleForServiceStart(11)).resolves.toBe(true);
+            expect(jobs.promoteAutomaticSchedulingClaim).toHaveBeenCalledTimes(1);
+            expect(jobs.promoteAutomaticSchedulingClaim.mock.calls[0]?.[2]).toMatchObject({ employeeScheduleId: 11, status: "pending" });
+        },
+    );
 
     it("promotes the owned automatic marker instead of generic failed-row upsert", async () => {
         const prisma = createPrisma();

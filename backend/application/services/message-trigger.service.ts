@@ -67,6 +67,7 @@ import { SystemTemplateKey } from "domain/constants/system-template-registry";
 import { CLIENT_DATE_AUTOMATION_CHANGED_REASON, type ClientDateAutomationScope, EMPLOYEE_ASSIGNMENT_AUTOMATION_CHANGED_CANCEL_REASON,
     getClientAutomationIntentDedupeKey, getScheduleAutomationIntentDedupeKey } from "domain/constants/message-automation-intent";
 import {
+    isSenderApprovalCancellation,
     MESSAGE_SENDER_APPROVAL_REQUIRED_CANCEL_REASON,
     PAST_OCCURRENCE_GRACE_MS,
     TRIGGER_JOB_PROCESSING_RECLAIM_MS,
@@ -122,7 +123,7 @@ import {
     isMessageRecipeWithinMaterializationWindow,
     isSelectedMessageJobExpired,
     shouldSkipClientPreStartCatchUp,
-    buildMessageRecipeDedupeKey, employeeAssignmentScheduleFingerprint, formatMessageRecipeDate, getKstCalendarDate,
+    buildMessageRecipeDedupeKey, clientMessageOriginalSlot, employeeAssignmentScheduleFingerprint, formatMessageRecipeDate, getKstCalendarDate,
     type ClientTriggerSource, type EmployeeAssignmentScheduleSource,
 } from "./message-trigger-recipes";
 import { normalizePhone } from "application/utils/normalize-phone";
@@ -572,6 +573,8 @@ type ClientRuleJobCandidate = {
     rule: MessageTriggerRuleEntity;
     job: MessageTriggerJobEntity;
 };
+
+type PendingJobPersistence = "handled" | "conflict" | "suppressed";
 
 type PreProviderSendFenceResult =
     | { kind: "allow" }
@@ -2612,8 +2615,8 @@ export class MessageTriggerService {
             await this.retainExistingMixedBatchClientSlots(branchId, jobsToPersist, intentOptions.stableBatchAt);
         }
 
-        for (const { rule, job } of jobsToPersist) {
-            await this.persistPendingJob(
+        await this.persistClientRuleBatch(jobsToPersist, ({ rule, job }) =>
+            this.persistPendingJob(
                 job,
                 rule,
                 includePast,
@@ -2621,8 +2624,8 @@ export class MessageTriggerService {
                 intentOptions?.preserveExisting === true,
                 undefined,
                 intentOptions?.taskOrigin ? intentOptions.taskAutomationReference : undefined,
-            );
-        }
+            ),
+        );
     }
 
     /** Date edits reconcile current sources without invoking the generic client's broad cancellation path. */
@@ -2656,6 +2659,12 @@ export class MessageTriggerService {
                 && agentBindingHash(agentAutomationSourcePayload(a.payload, a.templateKey)) === agentBindingHash(agentAutomationSourcePayload(b.payload, b.templateKey));
             const reconcile = async (rule: MessageTriggerRuleEntity, job: MessageTriggerJobEntity | null,
                 family: MessageTriggerJobReviewSnapshot[], anchorChanged: boolean) => {
+                const originalSlot = job && clientMessageOriginalSlot(job);
+                const terminalOccurrence = job && family.some((row) => isSenderApprovalCancellation(row)
+                    && (row.dedupeKey === job.dedupeKey
+                        || (originalSlot && clientMessageOriginalSlot(row)?.key === originalSlot.key)
+                        || (rule.eventType === MessageTriggerEventType.EMPLOYEE_ASSIGNED && job.employeeScheduleId !== null
+                            && job.payload.employeeId != null && row.payload.employeeId === job.payload.employeeId)));
                 // Repeated intents retain the accepted catch-up slot for this source occurrence.
                 const catchUp = job && family.find((row) => ["pending", "processing"].includes(row.status)
                     && row.payload.catchUp?.originalScheduledFor === job.scheduledFor.toISOString());
@@ -2674,7 +2683,7 @@ export class MessageTriggerService {
                 const affected = anchorChanged || family.some((row) => job && !sameSource(row, job));
                 if (!affected) return;
                 // Logical recipient scope spans historical date keys. Delivery uncertainty is never replayed.
-                const replacementBlocked = family.some((row) => row.canceledByUser || ["sent", "dispatching", "failed"].includes(row.status)
+                const replacementBlocked = terminalOccurrence || family.some((row) => row.canceledByUser || ["sent", "dispatching", "failed"].includes(row.status)
                     || row.payload.taskAutomationReference || isReservedAutomationJob(row)
                     || row.cancelReason === "SERVICE_RECORD_REVISION_SUPERSEDED");
                 const reversible = (row: MessageTriggerJobReviewSnapshot) => ordinary(row) && !row.canceledByUser
@@ -2687,8 +2696,7 @@ export class MessageTriggerService {
                     ? previous.find((row) => row.id !== operatorReservation.id && row.dedupeKey === job.dedupeKey) : undefined;
                 const reclaimableOperatorDestination = operatorDestination && family.includes(operatorDestination)
                     && reversible(operatorDestination) && operatorDestination.status === "canceled"
-                    && (operatorDestination.cancelReason === CLIENT_DATE_AUTOMATION_CHANGED_REASON
-                        || operatorDestination.cancelReason === MESSAGE_SENDER_APPROVAL_REQUIRED_CANCEL_REASON);
+                    && operatorDestination.cancelReason === CLIENT_DATE_AUTOMATION_CHANGED_REASON;
                 if (family.some((row) => reversible(row) && row.status === "processing"
                     && (!job || row.dedupeKey !== job.dedupeKey || !sameSource(row, job)))) {
                     throw new ConflictException("Message date reconciliation is waiting for a processing reservation");
@@ -2710,7 +2718,7 @@ export class MessageTriggerService {
                 reconciliations.push({ job, apply: async () => {
                     // Protected history blocks replacement, but cannot keep obsolete reversible siblings dispatchable.
                     const stale = family.filter((row) => reversible(row) && row.status === "pending"
-                        && (!eligible || row.dedupeKey !== job!.dedupeKey
+                        && (!eligible || terminalOccurrence || row.dedupeKey !== job!.dedupeKey
                             || ((replacementBlocked || operatorMoveBlocked)
                                 && (!sameSource(row, job!) || row.scheduledFor.getTime() !== job!.scheduledFor.getTime()))));
                     if (stale.length) {
@@ -2721,7 +2729,7 @@ export class MessageTriggerService {
                         });
                     }
                     if (operatorReservation) {
-                        if (!job || operatorMoveBlocked) return;
+                        if (!job || operatorMoveBlocked || terminalOccurrence) return;
                         if (operatorReservation.dedupeKey === job.dedupeKey && sameSource(operatorReservation, job)
                             && operatorReservation.scheduledFor.getTime() === job.scheduledFor.getTime()) return;
                         if (operatorDestination && reclaimableOperatorDestination) {
@@ -2754,12 +2762,12 @@ export class MessageTriggerService {
                     }
                     if (replacementBlocked || !eligible || currentEquivalent) return;
                     // A protected task-owned slot is kept separate even if its reviewed source has drifted.
-                    const protectedSlot = previous.some((row) => row.dedupeKey === job!.dedupeKey && !ordinary(row));
+                    const protectedSlot = previous.some((row) => row.dedupeKey === job!.dedupeKey
+                        && (!ordinary(row) || isSenderApprovalCancellation(row)));
                     if (protectedSlot) return;
-                    if (current?.status === "canceled" && current.cancelReason !== CLIENT_DATE_AUTOMATION_CHANGED_REASON
-                        && current.cancelReason !== MESSAGE_SENDER_APPROVAL_REQUIRED_CANCEL_REASON) return;
-                    if (!(await this.persistPendingJob(job, rule, includePast || existingOccurrence === true, rule.jobsStale, false, tx,
-                        undefined, existingOccurrence && current.status === "pending" ? current : undefined))) {
+                    if (current?.status === "canceled" && current.cancelReason !== CLIENT_DATE_AUTOMATION_CHANGED_REASON) return;
+                    if (await this.persistPendingJob(job, rule, includePast || existingOccurrence === true, rule.jobsStale, false, tx,
+                        undefined, existingOccurrence && current.status === "pending" ? current : undefined) === "conflict") {
                         throw new ConflictException("Message rule changed while reconciling dates");
                     }
                 } });
@@ -2913,17 +2921,17 @@ export class MessageTriggerService {
             if (includePast && options?.preserveExisting && options.stableBatchAt) {
                 await this.retainExistingMixedBatchClientSlots(branchId, jobsToPersist, options.stableBatchAt, tx);
             }
-            for (const { rule, job } of jobsToPersist) {
-                if (completedSlots.has(job.dedupeKey)) continue;
+            await this.persistClientRuleBatch(jobsToPersist, async ({ rule, job }) => {
+                if (completedSlots.has(job.dedupeKey)) return "handled";
                 if (conflicts.has(job.dedupeKey)) {
                     const persisted = await this.jobRepository.upsertPendingForRuleGeneration(job, rule.updatedAt, rule.jobsStale, options?.preserveExisting === true, tx);
                     if (persisted?.status === "pending") { persisted.markNeedsSetup("recipient_phone_conflict"); await tx.message_trigger_job.updateMany({ where: { id: persisted.id, branchId, status: "pending", canceledByUser: false },
                         data: { status: "needs_setup", cancelReason: "recipient_phone_conflict", claimToken: null, updatedAt: new Date() } }); }
-                } else {
-                    await this.persistPendingJob(job, rule, includePast, isCaregiverTriggerTemplate(rule.templateKey) ? rule.jobsStale : false,
-                        options?.preserveExisting === true, tx, options?.taskOrigin ? options.taskAutomationReference : undefined);
+                    return "handled";
                 }
-            }
+                return this.persistPendingJob(job, rule, includePast, isCaregiverTriggerTemplate(rule.templateKey) ? rule.jobsStale : false,
+                    options?.preserveExisting === true, tx, options?.taskOrigin ? options.taskAutomationReference : undefined);
+            }, tx);
         }, transaction);
     }
 
@@ -3055,7 +3063,7 @@ export class MessageTriggerService {
                 undefined,
                 intentOptions?.taskOrigin ? intentOptions.taskAutomationReference : undefined,
             );
-            if (!persisted) retryable = true;
+            if (persisted === "conflict") retryable = true;
         }
         return !retryable;
     }
@@ -3295,8 +3303,8 @@ export class MessageTriggerService {
         transaction?: Prisma.TransactionClient,
         taskAutomationReference?: AgentAutomationTaskCommitReference,
         pendingOccurrence?: MessageTriggerJobReviewSnapshot,
-    ): Promise<boolean> {
-        if (!job) return true;
+    ): Promise<PendingJobPersistence> {
+        if (!job) return "handled";
         // The reference is carried only in the materialized job payload. It is
         // digest-only and does not alter the source recipe, so callers without
         // a task-origin intent retain the exact legacy object and expectations.
@@ -3316,7 +3324,7 @@ export class MessageTriggerService {
         ) {
             throw new ServiceUnavailableException("Message automation activation is not configured");
         }
-        if (!isMessageRecipeWithinMaterializationWindow(materializedJob, rule, includePast, new Date())) return true;
+        if (!isMessageRecipeWithinMaterializationWindow(materializedJob, rule, includePast, new Date())) return "handled";
         const persist = async (transaction?: Prisma.TransactionClient): Promise<MessageTriggerJobEntity | null> => {
             if (automaticJob && materializedJob.branchId) {
                 const enabled = await this.messageAutomationActivationService!.getTriggerDispatchEnabled(materializedJob.branchId, transaction);
@@ -3361,7 +3369,46 @@ export class MessageTriggerService {
                 transaction,
             )
             : await persist(transaction);
-        return persisted !== null;
+        if (!persisted) return "conflict";
+        if (persisted.dedupeKey !== materializedJob.dedupeKey && isSenderApprovalCancellation(persisted)) return "suppressed";
+        return "handled";
+    }
+
+    private async persistClientRuleBatch(
+        candidates: ClientRuleJobCandidate[],
+        persist: (candidate: ClientRuleJobCandidate) => Promise<PendingJobPersistence>,
+        transaction?: Prisma.TransactionClient,
+    ): Promise<void> {
+        let suppressed = false;
+        let nextSequence = 1;
+        let predecessorDedupeKey: string | null = null;
+        for (const candidate of candidates) {
+            const { job } = candidate;
+            let slot = job.payload.catchUp;
+            if (slot && suppressed && (slot.sequence !== nextSequence || slot.predecessorDedupeKey !== predecessorDedupeKey)) {
+                // A replay can already have a reservation at the original key. Keep that
+                // identity instead of creating a second job at a compacted key.
+                const existing = await (transaction ?? this.prisma).message_trigger_job.findUnique({
+                    where: { dedupeKey: job.dedupeKey, branchId: job.branchId, clientId: job.clientId, ruleId: job.ruleId },
+                    select: { id: true },
+                });
+                if (!existing) {
+                    const scheduledFor = new Date(job.scheduledFor.getTime()
+                        + (nextSequence - slot.sequence) * slot.intervalMinutes * MS_PER_MINUTE);
+                    slot = { ...slot, sequence: nextSequence, predecessorDedupeKey };
+                    this.setCatchUpSlot(candidate, scheduledFor, slot);
+                }
+            }
+            const result = await persist(candidate);
+            if (!slot) continue;
+            if (result === "suppressed") {
+                // The historical cancellation has a different key from this batch slot.
+                suppressed = true;
+                continue;
+            }
+            nextSequence = slot.sequence + 1;
+            predecessorDedupeKey = job.dedupeKey;
+        }
     }
 
     private async applyRetroactiveSendConfig(
@@ -3392,21 +3439,13 @@ export class MessageTriggerService {
             config.ruleOrder,
         );
 
-        orderedDueCandidates.forEach(({ rule, job }, index) => {
+        orderedDueCandidates.forEach((candidate, index) => {
+            const { job } = candidate;
             const originalScheduledFor = job.scheduledFor.toISOString();
             const scheduledFor = new Date(
                 baseScheduledFor.getTime() + (index * config.sendIntervalMinutes * MS_PER_MINUTE),
             );
-            job.scheduledFor = scheduledFor;
-            if (job.clientId !== null && !isCaregiverTriggerTemplate(job.templateKey)) {
-                job.dedupeKey = buildMessageRecipeDedupeKey(
-                    rule.id,
-                    `client:${job.clientId}`,
-                    scheduledFor,
-                    rule.recipientType,
-                );
-            }
-            job.payload.catchUp = {
+            this.setCatchUpSlot(candidate, scheduledFor, {
                 batchId: `client:${job.clientId ?? "unknown"}:${baseScheduledFor.toISOString()}`,
                 sequence: index + 1,
                 intervalMinutes: config.sendIntervalMinutes,
@@ -3414,10 +3453,22 @@ export class MessageTriggerService {
                 predecessorDedupeKey: index > 0
                     ? orderedDueCandidates[index - 1]?.job.dedupeKey ?? null
                     : null,
-            };
+            });
         });
 
         return [...orderedDueCandidates, ...futureCandidates];
+    }
+
+    private setCatchUpSlot(
+        { rule, job }: ClientRuleJobCandidate,
+        scheduledFor: Date,
+        catchUp: NonNullable<MessageTriggerJobEntity["payload"]["catchUp"]>,
+    ): void {
+        job.scheduledFor = scheduledFor;
+        if (job.clientId !== null && job.employeeScheduleId === null && !isCaregiverTriggerTemplate(job.templateKey)) {
+            job.dedupeKey = buildMessageRecipeDedupeKey(rule.id, `client:${job.clientId}`, scheduledFor, rule.recipientType);
+        }
+        job.payload.catchUp = catchUp;
     }
 
     private async getRetroactiveSendConfig(branchId: string, transaction?: Prisma.TransactionClient): Promise<MessageAutomationPastTriggerConfig> {

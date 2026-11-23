@@ -30,7 +30,6 @@ import {
     MessageTriggerTemplateKey,
 } from "domain/constants/message-trigger-catalog";
 import { findUnsupportedRequiredMessageTriggerVariables } from "domain/constants/message-trigger-variable-sources";
-import { MESSAGE_SENDER_APPROVAL_REQUIRED_CANCEL_REASON } from "domain/constants/message-automation-policy";
 import { SystemTemplateKey } from "domain/constants/system-template-registry";
 import { MessageTriggerJobEntity } from "domain/entities/message-trigger-job.entity";
 import { MessageLogEntity } from "domain/entities/message-log.entity";
@@ -822,8 +821,7 @@ export class ServiceRecordLinkService {
                     ${SERVICE_RECORD_LINK_RESCHEDULED_REASON},
                     ${SERVICE_RECORD_LINK_ENDED_REASON},
                     ${SERVICE_RECORD_LINK_BRANCH_DISABLED_REASON},
-                    ${SERVICE_RECORD_LINK_PRE_BOOKING_REASON},
-                    ${MESSAGE_SENDER_APPROVAL_REQUIRED_CANCEL_REASON}
+                    ${SERVICE_RECORD_LINK_PRE_BOOKING_REASON}
                 )
             )
             RETURNING id, updated_at::text AS claim_version;

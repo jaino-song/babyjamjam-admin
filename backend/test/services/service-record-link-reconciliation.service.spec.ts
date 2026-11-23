@@ -74,7 +74,6 @@ describe("ServiceRecordLinkReconciliationService", () => {
                             in: [
                                 SERVICE_RECORD_LINK_RESCHEDULED_REASON,
                                 SERVICE_RECORD_LINK_ENDED_REASON,
-                                MESSAGE_SENDER_APPROVAL_REQUIRED_CANCEL_REASON,
                             ],
                         },
                     },
@@ -125,7 +124,7 @@ describe("ServiceRecordLinkReconciliationService", () => {
         for (const reasons of [candidateReasons, nonBlockerReasons]) {
             expect(reasons).toContain(SERVICE_RECORD_LINK_ENDED_REASON);
             expect(reasons).toContain(SERVICE_RECORD_LINK_RESCHEDULED_REASON);
-            expect(reasons).toContain(MESSAGE_SENDER_APPROVAL_REQUIRED_CANCEL_REASON);
+            expect(reasons).not.toContain(MESSAGE_SENDER_APPROVAL_REQUIRED_CANCEL_REASON);
             // Left out on purpose: bulk rows that would eat the per-run attempt limit.
             expect(reasons).not.toContain(SERVICE_RECORD_LINK_BRANCH_DISABLED_REASON);
             expect(reasons).not.toContain(SERVICE_RECORD_LINK_PRE_BOOKING_REASON);
@@ -176,7 +175,7 @@ describe("ServiceRecordLinkReconciliationService", () => {
         expect(linkService.scheduleForServiceStart).not.toHaveBeenCalled();
     });
 
-    it("waits for sender approval before repairing an approval-canceled marker", async () => {
+    it("never repairs an approval-canceled marker, including on repeated runs after approval", async () => {
         const prisma = createPrisma();
         prisma.branch.findMany.mockResolvedValue([]);
         const linkService = createLinkService();
@@ -189,6 +188,19 @@ describe("ServiceRecordLinkReconciliationService", () => {
         await expect(service.reconcileMissingJobs()).resolves.toBe(0);
 
         expect(prisma.message_trigger_job.findMany).not.toHaveBeenCalled();
+
+        prisma.branch.findMany.mockResolvedValue([{ id: "branch-1" }]);
+        prisma.message_trigger_job.findMany.mockImplementation(async ({ where }) => {
+            const reason = MESSAGE_SENDER_APPROVAL_REQUIRED_CANCEL_REASON;
+            const reclaimable: string[] = where.OR[1].cancelReason.in;
+            const nonblocking: string[] = where.employeeSchedule.is.messageTriggerJobs.none.OR[2].OR[2].cancelReason.notIn;
+            if (!nonblocking.includes(reason)) return [];
+            return reclaimable.includes(reason) ? [createMarker(10, "01011112222")] : [];
+        });
+        for (let attempt = 0; attempt < 2; attempt++) {
+            await expect(service.reconcileMissingJobs()).resolves.toBe(0);
+        }
+        expect(prisma.message_trigger_job.findMany).toHaveBeenCalledTimes(2);
         expect(linkService.scheduleForServiceStart).not.toHaveBeenCalled();
     });
 
