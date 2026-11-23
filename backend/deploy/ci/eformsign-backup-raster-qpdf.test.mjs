@@ -314,6 +314,7 @@ for (const scenario of [
         const f = await fixture(t);
         const sentinel = join(f.home, 'other-file');
         await put(sentinel, 'untouched', 0o644);
+        await fs.chmod(sentinel, 0o644);
         for (const root of [f.archive, f.drive]) await put(join(root, 'existing.pdf'), 'prior output');
         await f.run({ ...scenario, code: 2 });
         const { status, driveStatus, savedFiles, failedFiles } = f.reports.at(-1);
