@@ -493,6 +493,59 @@ describe("ContractCreationForm — initialClient mode", () => {
     expect(useFormStore.getState().paymentDate).toBe(clientC.startDate);
   });
 
+  it("clears or loads the payment date on client switches and preserves an edit on reselection", () => {
+    // Same-name options allow direct switches without clearing the selection to search.
+    const name = "테스트 고객";
+    const savedA = makeClient({
+      id: 101, name, phone: "010-1111-2222", copaymentReceivedDate: "2026-11-20",
+    });
+    const noDate = makeClient({
+      id: 303, name, phone: "010-5555-6666", copaymentReceivedDate: null, startDate: null,
+    });
+    const savedB = makeClient({
+      id: 202, name, phone: "010-3333-4444", copaymentReceivedDate: "2026-11-21",
+    });
+    mockClients = [savedA, noDate, savedB];
+
+    const queryClient = new QueryClient();
+    const form = (activeStep: number) => (
+      <QueryClientProvider client={queryClient}>
+        <ContractCreationForm activeStep={activeStep} />
+      </QueryClientProvider>
+    );
+    const { rerender } = render(form(0));
+
+    function openSelector() {
+      fireEvent.click(screen.getByRole("combobox", { name: "산모님 성함" }));
+    }
+
+    function selectClient(client: Client) {
+      fireEvent.click(screen.getByRole("option", { name: `${client.name} ${client.phone}` }));
+      expect(useFormStore.getState().clientId).toBe(client.id);
+      rerender(form(CONTRACT_INFO_STEP_INDEX));
+      return screen.getByLabelText("본인부담금 결제일");
+    }
+
+    openSelector();
+    fireEvent.change(screen.getByRole("combobox", { name: "산모님 성함 검색" }), {
+      target: { value: name },
+    });
+    expect(selectClient(savedA)).toHaveValue("2026-11-20");
+
+    rerender(form(0));
+    openSelector();
+    expect(selectClient(noDate)).toHaveValue("");
+    rerender(form(0));
+    openSelector();
+    const payment = selectClient(savedB);
+    expect(payment).toHaveValue("2026-11-21");
+
+    fireEvent.change(payment, { target: { value: "2026-11-22" } });
+    rerender(form(0));
+    openSelector();
+    expect(selectClient(savedB)).toHaveValue("2026-11-22");
+  });
+
   it("re-applies cleanly for a different initialClient after unmount+remount, with no residue from the previous client", () => {
     const { unmount } = renderWithProviders(<ContractCreationForm initialClient={clientA} />);
     expect(useFormStore.getState().birthDate).toBe(clientA.birthDate);

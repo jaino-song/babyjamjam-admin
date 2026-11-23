@@ -41,6 +41,7 @@ const defaultClients = [{
   eDocId: null,
 } as Client];
 let mockClients = defaultClients;
+let mockAreaTemplates: Array<{ areaId: string; templateName: string }> = [];
 
 jest.mock("@/hooks/useBusinessDayCalendar");
 
@@ -59,7 +60,7 @@ jest.mock("@/stores/form-store", () => ({
 jest.mock("@/hooks", () => ({
   useVoucherYears: () => ({ data: [2026] }),
   useVoucherPriceInfos: () => ({ data: [] }),
-  useAreaTemplates: () => ({ data: [] }),
+  useAreaTemplates: () => ({ data: mockAreaTemplates }),
   useAllVoucherPrices: () => ({ data: [] }),
 }));
 
@@ -294,6 +295,7 @@ beforeEach(() => {
   jest.clearAllMocks();
   mockUseFormStore.mockReset();
   mockClients = defaultClients;
+  mockAreaTemplates = [];
   installEventSourceStub();
   installFormState();
   mockCreateClient.mockResolvedValue({ id: 8 });
@@ -617,10 +619,52 @@ describe("contract date validation", () => {
     );
   });
 
-  it("keeps a known reissue payment date prefilled", async () => {
-    installFormState({ paymentDate: "2026-09-15", isContractReissue: true });
-    await renderReadyPage();
-    expect(getDateInput("본인부담금 수령 날짜")).toHaveValue("2026-09-15");
+  it("displays and sends the explicit reissue payment date when the client has a different saved date", async () => {
+    const { useFormStore } = jest.requireActual<typeof import("@/stores/form-store")>("@/stores/form-store");
+    const savedDate = "2026-11-20";
+    const reissueDate = "2026-11-21";
+    const client = { ...defaultClients[0], copaymentReceivedDate: savedDate };
+    mockClients = [client];
+    mockAreaTemplates = [{ areaId: "Namdonggu", templateName: "남동구 산모 계약서" }];
+    useFormStore.getState().resetAll();
+    useFormStore.getState().prefillFromContract({
+      clientId: client.id,
+      name: client.name,
+      phone: client.phone ?? "",
+      birthday: client.birthday ?? "",
+      address: client.address ?? "",
+      employeeId: client.primaryEmployee?.id,
+      employeeName: client.primaryEmployee?.name,
+      employeePhone: "010-9999-8888",
+      startDate: client.startDate ?? "",
+      endDate: client.endDate ?? "",
+      fullPrice: client.fullPrice ?? "",
+      grant: client.grant ?? "",
+      actualPrice: client.actualPrice ?? "",
+      voucherType: client.type ?? "",
+      voucherDuration: String(client.duration),
+      copaymentReceivedDate: savedDate,
+      paymentDate: reissueDate,
+      isContractReissue: true,
+    });
+    mockUseFormStore.mockImplementation(useFormStore);
+    mockDispatchHeadless.mockResolvedValue({ ok: true, documentId: "doc-reissue", durationMs: 1 });
+
+    const submit = await renderReadyPage();
+    expect(getDateInput("본인부담금 수령 날짜")).toHaveValue(reissueDate);
+    fireEvent.click(submit);
+
+    await waitFor(() => expect(mockDispatchHeadless).toHaveBeenCalledTimes(1));
+    expect(mockDispatchHeadless).toHaveBeenCalledWith(
+      expect.objectContaining({
+        copaymentReceivedDate: reissueDate,
+        paymentYear: "26",
+        paymentMonth: "11",
+        paymentDay: "21",
+      }),
+      client.id,
+      expect.any(String),
+    );
   });
 
   it("prefills a late saved date and sends the editable date through the direct route", async () => {
