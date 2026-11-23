@@ -22,7 +22,16 @@ describeReal("canceled automation retry settings (real PostgreSQL)", () => {
     const retired = "QA-canceled-retry-retired";
     const deleted = "QA-canceled-retry-deleted";
     const manual = "agent-sms:QA-canceled-retry-holder";
-    const ids = [local, shared, retired, deleted, manual];
+    const liveGroup = "QA-canceled-retry-live-group";
+    const deletedGroup = "QA-canceled-retry-deleted-group";
+    const foreignGroup = "QA-canceled-retry-foreign-group";
+    const liveGroupMember = "QA-canceled-retry-live-group-member";
+    const deletedMember = "QA-canceled-retry-deleted-member";
+    const deletedGroupMember = "QA-canceled-retry-deleted-group-member";
+    const foreignGroupMember = "QA-canceled-retry-foreign-group-member";
+    const groupIds = [liveGroup, deletedGroup, foreignGroup];
+    const memberIds = [liveGroupMember, deletedMember, deletedGroupMember, foreignGroupMember];
+    const ids = [local, shared, retired, deleted, manual, ...memberIds];
     let database: PrismaClient;
     let handle: IntegrityPrisma;
     let repository: CanceledAutomationRetryRepository;
@@ -36,15 +45,26 @@ describeReal("canceled automation retry settings (real PostgreSQL)", () => {
             { id: branchA, name: "QA-Retry A", slug: `qa-retry-a-${suffix}` },
             { id: branchB, name: "QA-Retry B", slug: `qa-retry-b-${suffix}` },
         ] });
+        await database.message_trigger_rule_group.createMany({
+            data: [
+                { id: liveGroup, branchId: branchA, name: "QA-Live retry group" },
+                { id: deletedGroup, branchId: branchA, name: "QA-Deleted retry group", deletedAt: new Date() },
+                { id: foreignGroup, branchId: branchB, name: "QA-Foreign retry group" },
+            ].map((row) => ({ recipientMode: "CLIENT", ...row })),
+        });
         await database.message_trigger_rule.createMany({
             data: [
-                { id: local, branchId: branchA, templateKey: "INFO" },
-                { id: shared, branchId: null, templateKey: "INFO" },
+                { id: local, branchId: branchA },
+                { id: shared, branchId: null },
                 { id: retired, branchId: branchA, templateKey: "CLIENT_WELCOME" },
-                { id: deleted, branchId: branchA, templateKey: "INFO", deletedAt: new Date() },
-                { id: manual, branchId: branchA, templateKey: "INFO" },
+                { id: deleted, branchId: branchA, deletedAt: new Date() },
+                { id: manual, branchId: branchA },
+                { id: liveGroupMember, branchId: branchA, groupId: liveGroup },
+                { id: deletedMember, branchId: branchA, groupId: liveGroup, recipientType: "PRIMARY_EMPLOYEE", deletedAt: new Date() },
+                { id: deletedGroupMember, branchId: branchA, groupId: deletedGroup },
+                { id: foreignGroupMember, branchId: branchB, groupId: foreignGroup },
             ].map((row) => ({
-                name: row.id, eventType: "SERVICE_END", offsetType: "SAME_DAY", recipientType: "CLIENT",
+                name: row.id, eventType: "SERVICE_END", offsetType: "SAME_DAY", recipientType: "CLIENT", templateKey: "INFO",
                 jobsStale: true, retryOnFailure: false, ...row,
             })),
         });
@@ -59,6 +79,7 @@ describeReal("canceled automation retry settings (real PostgreSQL)", () => {
         if (!database) return;
         try {
             await database.message_trigger_rule.deleteMany({ where: { id: { in: ids } } });
+            await database.message_trigger_rule_group.deleteMany({ where: { id: { in: groupIds } } });
             await database.branch.deleteMany({ where: { id: { in: [branchA, branchB] } } });
         } finally {
             await closeIntegrityPrisma(handle);
@@ -68,6 +89,13 @@ describeReal("canceled automation retry settings (real PostgreSQL)", () => {
     function ruleGeneration(id: string) {
         return database.$queryRaw`
             SELECT updated_at::text, is_active, jobs_stale, retry_on_failure FROM message_trigger_rule WHERE id = ${id}
+        `;
+    }
+
+    // The raw client probes from a separate connection while the repository transaction is open.
+    function tryLockRuleRow(id: string) {
+        return database.$queryRaw<Array<{ id: string }>>`
+            SELECT id FROM message_trigger_rule WHERE id = ${id} FOR UPDATE NOWAIT
         `;
     }
 
@@ -138,6 +166,49 @@ describeReal("canceled automation retry settings (real PostgreSQL)", () => {
         for (const [branch, id] of [[branchB, local], [branchA, deleted], [branchA, retired], [branchA, manual]] as const) {
             await expect(service.update(branch, id, true)).rejects.toMatchObject({ status: 404 });
         }
+    });
+
+    it("lists each branch's live group by its group ID and excludes deleted groups with live members", async () => {
+        const fixtureIds = [...groupIds.map((id) => `group:${id}`), ...memberIds];
+        const [catalogA, catalogB] = await Promise.all([service.list(branchA), service.list(branchB)]);
+        expect(catalogA.filter(({ id }) => fixtureIds.includes(id))).toMatchObject([
+            { id: `group:${liveGroup}`, label: "QA-Live retry group", eligible: true, enabled: false, enabledAt: null },
+        ]);
+        expect(catalogB.filter(({ id }) => fixtureIds.includes(id))).toMatchObject([
+            { id: `group:${foreignGroup}`, label: "QA-Foreign retry group", eligible: true, enabled: false, enabledAt: null },
+        ]);
+    });
+
+    it("rejects a grouped member ID without taking its row lock through lockRule", async () => {
+        await expect(service.update(branchA, liveGroupMember, true)).rejects.toMatchObject({ status: 404 });
+        await lock.runExclusive(branchA, async (transaction) => {
+            expect(await repository.lockRule(branchA, liveGroupMember, transaction)).toBeNull();
+            await expect(tryLockRuleRow(liveGroupMember)).resolves.toEqual([{ id: liveGroupMember }]);
+        });
+    });
+
+    it("locks live members of the requested group in the requested branch", async () => {
+        await lock.runExclusive(branchA, async (transaction) => {
+            const rules = await repository.lockGroupRules(branchA, liveGroup, transaction);
+            expect(rules.map(({ id }) => id)).toEqual([liveGroupMember]);
+            expect(await repository.lockGroupRules(branchA, foreignGroup, transaction)).toEqual([]);
+
+            await expect(tryLockRuleRow(liveGroupMember)).rejects.toMatchObject({ code: "P2010", meta: { code: "55P03" } });
+            for (const id of [deletedMember, deletedGroupMember, foreignGroupMember, local]) {
+                await expect(tryLockRuleRow(id)).resolves.toEqual([{ id }]);
+            }
+        });
+    });
+
+    it("writes and reads retry settings through an owned live group ID", async () => {
+        await expect(service.update(branchB, `group:${liveGroup}`, true)).rejects.toMatchObject({ status: 404 });
+        await expect(service.update(branchA, `group:${deletedGroup}`, true)).rejects.toMatchObject({ status: 404 });
+
+        const id = `group:${liveGroup}`;
+        const enabled = await service.update(branchA, id, true);
+        expect(enabled).toMatchObject({ id, enabled: true, enabledAt: expect.any(String) });
+        expect((await service.list(branchA)).find((routine) => routine.id === id)).toEqual(enabled);
+        expect(await service.update(branchA, id, false)).toMatchObject({ id, enabled: false, enabledAt: null });
     });
 
     // Count actual same-database advisory waiters before releasing the lock so
