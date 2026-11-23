@@ -1,3 +1,5 @@
+import { ServiceRecordInitialNoProviderDocumentService } from "infrastructure/eformsign/service-record-initial-no-provider-document.service";
+import { SERVICE_RECORD_INITIAL_NO_DOC_REASONS as NO_DOC_REASON } from "domain/constants/service-record-initial-no-provider-document";
 import { ServiceRecordInitialProviderRecoveryService } from "infrastructure/eformsign/service-record-initial-provider-recovery.service";
 import { initialProviderRecoveryInput, providerDocumentPage } from "../../../test/utils/service-record-initial-provider-recovery.fixture";
 import { normalizeEformsignDocumentResponse } from "infrastructure/api/eformsign-response.normalizer";
@@ -1931,7 +1933,7 @@ async function bounded<T>(promise: Promise<T>, ms: number): Promise<T> {
         const read = async () => ({ state: await f.readState(), record: await f.readCase(), job: await f.readJob(),
             chunks: await db.service_record_snapshot_chunk.findMany({ where: { serviceRecordCaseId: f.record.id }, orderBy: { chunkIndex: "asc" } }),
             docs: await db.eformsign_doc.findMany({ where: { documentId: { in: documents.slice(0, 2) } }, orderBy: { documentId: "asc" } }) });
-        return { ...f, run, read, listed, snapshots, client };
+        return { ...f, run, read, listed, snapshots, client, credentials };
     }
     it.each([false, true])("U4 real post-dispatch cancellation with sub-ms precision recovers all matched (first already linked: %s)", async linked => {
         const f = await cancelledProviderRuntime(linked);
@@ -2091,7 +2093,7 @@ async function bounded<T>(promise: Promise<T>, ms: number): Promise<T> {
         retainRevision(revision);
         return revision;
     }
-    async function completeInitialSource(f: Awaited<ReturnType<typeof initialChunks>>) {
+    async function completeInitialSource(f: Pick<Awaited<ReturnType<typeof initialChunks>>, "branchId" | "record" | "state">) {
         const serviceDate = new Date("2026-09-01");
         const employee = await db.employee.create({ data: { name: "Synthetic PG provider", phone: data.caretaker1Contact, branchId: f.branchId, workArea: [], grade: "synthetic" } });
         employees.push(employee.id);
@@ -2110,7 +2112,7 @@ async function bounded<T>(promise: Promise<T>, ms: number): Promise<T> {
             formVersion: 3, answers: { checked: true }, paymentConfirmed: true, momApproval: "approved", clientSignature: "synthetic",
             clientSignedAt: serviceDate, submittedAt: serviceDate, locked: true } });
     }
-    function initialFinalizer(f: Awaited<ReturnType<typeof initialChunks>>, connection = db) {
+    function initialFinalizer(f: Pick<Awaited<ReturnType<typeof initialChunks>>, "repo">, connection = db) {
         const jobs = { findByRequestKeyInTransaction: f.repo.findByRequestKeyInTransaction.bind(f.repo),
             enqueueInTransaction: f.repo.enqueueInTransaction.bind(f.repo) } as unknown as EformsignDocumentJobService;
         const calendar = { forBranch: async () => KR_BUILTIN_CALENDAR } as unknown as HolidayCalendarService;
@@ -2140,6 +2142,114 @@ async function bounded<T>(promise: Promise<T>, ms: number): Promise<T> {
         await completeInitialSource(f);
         return { ...f, request: { revisionId: f.revisionId, documentStateId: f.state.id, expectedGeneration: f.state.generation } };
     }
+    function noDocumentRequest(f: Pick<Awaited<ReturnType<typeof initialChunks>>, "state">) {
+        return { branchId: f.state.branchId, revisionId: f.state.revisionId, documentStateId: f.state.id,
+            expectedGeneration: f.state.generation, actorUserId: users[0]! };
+    }
+
+    async function ageCancelledInitial(jobId: string, stateId: string) {
+        await db.$executeRaw`UPDATE service_record_revision_document_state
+            SET updated_at = date_trunc('milliseconds', now() - interval '11 minutes') + interval '321 microseconds'
+            WHERE id = ${stateId}::uuid`;
+        await db.$executeRaw`UPDATE eformsign_document_job
+            SET updated_at = date_trunc('milliseconds', now() - interval '11 minutes') + interval '321 microseconds'
+            WHERE id = ${jobId}::uuid`;
+    }
+
+    it("U4e attests NO_PROVIDER_DOCUMENT for clean unlinked chunks and releases the case key", async () => {
+        const f = await cancelledProviderRuntime(false);
+        f.listed.splice(0);
+        await db.eformsign_doc.update({ where: { documentId: documents[0]! }, data: {
+            revisionId: null, serviceRecordCaseId: null, clientId: null, documentKind: null,
+            snapshotVersion: null, snapshotChunkIndex: null,
+        } });
+        const service = new ServiceRecordInitialNoProviderDocumentService(db as unknown as PrismaService, f.client as never, f.credentials as never);
+        const result = await service.confirmInitialNoProviderDocument(noDocumentRequest(f));
+        expect(result).toMatchObject({ status: "failed", reasonCode: "SERVICE_RECORD_INITIAL_NO_PROVIDER_DOCUMENT",
+            outputProof: { actorUserId: users[0], outcome: "SERVICE_RECORD_INITIAL_NO_PROVIDER_DOCUMENT", unlinkedChunkIndexes: [1, 2] } });
+        expect(await f.readState()).toMatchObject({ outputProof: result.outputProof });
+        expect(await f.readCase()).toMatchObject({ status: "FINALIZATION_FAILED", lastError: "SERVICE_RECORD_INITIAL_NO_PROVIDER_DOCUMENT" });
+        expect(await f.readJob()).toMatchObject({ status: "failed", lastErrorCode: "JOB_CANCELLED_AFTER_DISPATCH", activeKey: null });
+        expect(await readinessOf(f)).toMatchObject({ ready: true });
+    });
+
+    it("U4e attests PARTIAL_DISPATCH but fences the live linked sibling", async () => {
+        const f = await cancelledProviderRuntime();
+        f.listed.splice(0);
+        const linkedId = documents[0]!;
+        const projection = { stateId: f.state.id, revisionId: f.revisionId, generation: f.state.generation,
+            suffix: `[SR-${f.record.id.slice(0, 8)}-r1-v3]`, unlinkedChunkOrdinals: ["(2/2)"] };
+        // A linked mirror is excluded even when its title carries the suffix.
+        await db.eformsign_doc.update({ where: { documentId: linkedId }, data: { documentName: `QA-linked ${projection.suffix}` } });
+        expect((await f.repo.getSummary(f.branchId)).noProviderDocumentConfirmable).toEqual([projection]);
+        expect((await f.repo.listForBranch(f.branchId, new Date(0))).noProviderDocumentConfirmable).toEqual([projection]);
+        const history = await new ServiceRecordEditRepository(db as unknown as PrismaService).listRevisionHistory(f.branchId, f.state.clientId);
+        expect(history?.revisions[0]?.documents[0]?.noProviderDocumentConfirmable).toEqual(projection);
+        const service = new ServiceRecordInitialNoProviderDocumentService(db as unknown as PrismaService, f.client as never, f.credentials as never);
+        await expect(service.confirmInitialNoProviderDocument(noDocumentRequest(f))).resolves.toMatchObject({
+            reasonCode: "SERVICE_RECORD_INITIAL_PARTIAL_DISPATCH", outputProof: { unlinkedChunkIndexes: [2] },
+        });
+        expect(await f.readJob()).toMatchObject({ activeKey: `service-record-initial-finalization:${f.record.id}` });
+        expect(await readinessOf(f)).toMatchObject({ ready: false, reason: "SERVICE_RECORD_INITIAL_SIBLING_IN_PROGRESS" });
+    });
+
+    it("U4e refuses after a provider match without changing persisted rows", async () => {
+        const f = await cancelledProviderRuntime();
+        f.listed.splice(0, 1);
+        const before = await f.read();
+        const service = new ServiceRecordInitialNoProviderDocumentService(db as unknown as PrismaService, f.client as never, f.credentials as never);
+        await expect(service.confirmInitialNoProviderDocument(noDocumentRequest(f))).rejects.toMatchObject({
+            status: 409, response: { reason: NO_DOC_REASON.PROVIDER_DOCUMENT_FOUND },
+        });
+        expect(await f.read()).toEqual(before);
+    });
+
+    it("U4e renderer throw before chunk preparation → cancel → attest → U3b regenerate and replay", async () => {
+        const runtime = await initialRuntime("queued", "PRE_SEND_RETRY_EXHAUSTED", "queued",
+            { plannedSessions: [{ sessionIndex: 1, originalDate: "2026-09-01" }] });
+        const f = { ...runtime, branchId: runtime.state.branchId, revisionId: runtime.state.revisionId };
+        await completeInitialSource(f);
+        const frozen = initialProviderRecoveryInput({ branchId: f.branchId, clientId: f.state.clientId,
+            caseId: f.record.id, revisionId: f.revisionId, stateId: f.state.id, generation: f.state.generation }, 1);
+        await db.service_record_revision_document_state.update({ where: { id: f.state.id }, data: {
+            immutableInput: frozen.immutablePayload as Prisma.InputJsonObject, inputFingerprint: frozen.payloadFingerprint,
+        } });
+        await db.eformsign_document_job.update({ where: { id: f.job.id }, data: {
+            payload: { ...frozen, kind: "service_record_revision", context: { ...frozen } } as unknown as Prisma.InputJsonObject,
+            payloadFingerprint: frozen.payloadFingerprint, activeKey: `service-record-initial-finalization:${f.record.id}`, nextAttemptAt: new Date(0),
+        } });
+        const claim = (await f.repo.claimDue(1)).find(job => job.id === f.job.id)!;
+        expect(await f.repo.authorizeForDispatch({ jobId: claim.id, leaseToken: claim.leaseToken!,
+            expectedContext: claim.payload!["context"] as ServiceRecordRevisionDispatchContext })).toMatchObject({ kind: "allow" });
+        const list = async () => providerDocumentPage([], 100, 0);
+        const vendor = { getInProgressDocumentsPage: list, getCompletedDocumentsPage: list, getRejectedDocumentsPage: list, createDocument: jest.fn() };
+        const credentials = { withCredentials: async (_principal: unknown, _capability: unknown,
+            run: (value: { accessToken: string }) => Promise<unknown>) => run({ accessToken: "synthetic" }) };
+        const failBeforePreparation = { get: () => { throw new Error("SYNTHETIC_RENDERER_FAILURE"); } };
+        const renderer = new CreateAndSendServiceRecordSnapshotUsecase(vendor as never, db as unknown as PrismaService,
+            credentials as never, failBeforePreparation as never);
+        await expect(renderer.executeRevision(frozen, createEformsignWorkerPrincipal(f.branchId))).rejects.toThrow("SYNTHETIC_RENDERER_FAILURE");
+        expect(vendor.createDocument).not.toHaveBeenCalled();
+        expect(await db.service_record_snapshot_chunk.count({ where: { revisionId: f.revisionId } })).toBe(0);
+        expect(await f.repo.markRequiresAttention(claim.id, claim.leaseToken!, "SERVICE_RECORD_REVISION_MANUAL_REVIEW")).toMatchObject({
+            status: "requires_attention", progressStep: "dispatch_authorized", leaseToken: null,
+        });
+        expect(await f.repo.cancel(f.input)).toEqual({ kind: "cancelled" });
+        await ageCancelledInitial(f.job.id, f.state.id);
+        const request = noDocumentRequest(f);
+        expect((await f.repo.getSummary(f.branchId)).noProviderDocumentConfirmable).toEqual([{
+            stateId: request.documentStateId, revisionId: request.revisionId, generation: request.expectedGeneration,
+            suffix: `[SR-${f.record.id.slice(0, 8)}-r1-v3]`, unlinkedChunkOrdinals: [],
+        }]);
+        const service = new ServiceRecordInitialNoProviderDocumentService(db as unknown as PrismaService, vendor as never, credentials as never);
+        const applied = await service.confirmInitialNoProviderDocument(request);
+        expect(applied).toMatchObject({ reasonCode: "SERVICE_RECORD_INITIAL_NO_PROVIDER_DOCUMENT" });
+        const regenerated = await initialFinalizer(f).regenerateInitialFinalization(f.branchId, request);
+        expect(regenerated).toMatchObject({ status: "queued", state: { documentVersion: 4 } });
+        expect(regenerated.state.generation).not.toBe(f.state.generation);
+        expect(await service.confirmInitialNoProviderDocument({ ...request, actorUserId: users[1]! })).toEqual(applied);
+    });
+
     it("U3b gen2 dispatch -> documents_created promotion -> completion reaches DOCUMENTS_CREATED and COMPLETED", async () => {
         const f = await regenerationReady(), finalizer = initialFinalizer(f);
         // Main production dead end: the INITIAL job completed and now has document_id.

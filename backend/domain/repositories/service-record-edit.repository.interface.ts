@@ -7,8 +7,10 @@ import type {
     ServiceRecordRevisionDocumentOperation,
     ServiceRecordRevisionDocumentStatus,
     ServiceRecordRevisionDocumentState as SharedServiceRecordRevisionDocumentState,
-    ServiceRecordRevisionHistoryResponse,
+    ServiceRecordRevisionDocumentSummary as SharedRevisionDocumentSummary,
+    ServiceRecordRevisionHistoryResponse as SharedRevisionHistoryResponse,
 } from "@babyjamjam/shared/types/service-record";
+import type { InitialNoProviderDocumentProjection } from "domain/constants/service-record-initial-no-provider-document";
 import type { Prisma } from "@prisma/client";
 
 /** JSON value shape kept in the domain boundary so this port does not import Prisma. */
@@ -26,6 +28,16 @@ export type ServiceRecordEditJsonObject = {
 
 /** Storage-facing state is shared with adapter workers without importing Prisma. */
 export type ServiceRecordRevisionDocumentState = SharedServiceRecordRevisionDocumentState;
+
+export interface ServiceRecordRevisionDocumentSummary extends SharedRevisionDocumentSummary {
+    noProviderDocumentConfirmable?: InitialNoProviderDocumentProjection;
+}
+
+export interface ServiceRecordRevisionHistoryResponse extends SharedRevisionHistoryResponse {
+    revisions: Array<Omit<SharedRevisionHistoryResponse["revisions"][number], "documents"> & {
+        documents: ServiceRecordRevisionDocumentSummary[];
+    }>;
+}
 
 /** Immutable source rows captured for a draft in one repeatable-read snapshot. */
 export interface ServiceRecordEditSourceDay {

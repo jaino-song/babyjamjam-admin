@@ -1,3 +1,4 @@
+import type { InitialNoProviderDocumentProjection } from "domain/constants/service-record-initial-no-provider-document";
 import type { InitialDocumentRegenerationProjection } from "domain/repositories/eformsign-document-job.repository.interface";
 import { Transform, Type } from "class-transformer";
 import {
@@ -107,20 +108,26 @@ export class EformsignDocumentJobContractDataDto implements ContractDataDto {
     issuerPhone?: string;
 }
 
-/** INITIAL 재생성은 작업 ID 대신 revision의 문서 상태를 대상으로 한다. */
-export class RegenerateInitialDocumentJobDto {
-    @IsUUID()
-    revisionId!: string;
-
-    @IsUUID()
-    documentStateId!: string;
-
+class ExpectedInitialDocumentGenerationDto {
     @IsString()
     @IsNotEmpty()
     @MaxLength(EFORMSIGN_DOCUMENT_JOB_TEXT_MAX_LENGTH)
     @Matches(EFORMSIGN_DOCUMENT_JOB_IDENTIFIER_PATTERN)
     expectedGeneration!: string;
 }
+
+export class ConfirmInitialNoProviderDocumentBodyDto extends ExpectedInitialDocumentGenerationDto {}
+
+/** INITIAL 작업은 작업 ID 대신 revision의 문서 상태를 대상으로 한다. */
+export class RegenerateInitialDocumentJobDto extends ExpectedInitialDocumentGenerationDto {
+    @IsUUID()
+    revisionId!: string;
+
+    @IsUUID()
+    documentStateId!: string;
+}
+
+export class ConfirmInitialNoProviderDocumentJobDto extends RegenerateInitialDocumentJobDto {}
 
 /** Request for durable asynchronous eformsign document creation. */
 export class CreateEformsignDocumentJobDto {
@@ -213,6 +220,7 @@ export interface EformsignDocumentJobResponseDto extends EformsignDocumentJobDis
 
 export interface EformsignDocumentJobSummaryResponseDto {
     initialRegenerations?: InitialDocumentRegenerationProjection[];
+    noProviderDocumentConfirmable?: InitialNoProviderDocumentProjection[];
     activeCount: number;
     requiresAttentionCount: number;
     failedCount: number;
@@ -241,6 +249,7 @@ export interface EnqueueEformsignDocumentJobResponseDto {
 
 export interface EformsignDocumentJobListResponseDto {
     initialRegenerations?: InitialDocumentRegenerationProjection[];
+    noProviderDocumentConfirmable?: InitialNoProviderDocumentProjection[];
     active: EformsignDocumentJobResponseDto[];
     requiresAttention: EformsignDocumentJobResponseDto[];
     recent: EformsignDocumentJobResponseDto[];

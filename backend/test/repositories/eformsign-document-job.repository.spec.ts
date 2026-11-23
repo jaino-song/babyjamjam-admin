@@ -653,6 +653,7 @@ describe("SbEformsignDocumentJobRepository", () => {
             .mockResolvedValueOnce([]);
         await expect(repository.getSummary(row().branch_id)).resolves.toEqual({
             initialRegenerations: [],
+            noProviderDocumentConfirmable: [],
             activeCount: 2,
             requiresAttentionCount: 1,
             failedCount: 0,
@@ -665,7 +666,7 @@ describe("SbEformsignDocumentJobRepository", () => {
         queryRaw.mockResolvedValueOnce([]).mockResolvedValueOnce([]).mockResolvedValueOnce([]);
         queryRaw.mockResolvedValueOnce([]).mockResolvedValueOnce([]);
         await repository.listForBranch(row().branch_id, new Date(), 100);
-        expect(queryRaw).toHaveBeenCalledTimes(6);
+        expect(queryRaw).toHaveBeenCalledTimes(7);
         expect(queryRaw.mock.calls.every((call) => sqlText(call[0]).includes("branch_id = "))).toBe(true);
     });
 
@@ -1113,6 +1114,7 @@ describe("SbEformsignDocumentJobRepository", () => {
 
             await expect(repository.getSummary(branchId)).resolves.toEqual({
                 initialRegenerations: [],
+                noProviderDocumentConfirmable: [],
                 activeCount: 1,
                 requiresAttentionCount: 4,
                 failedCount: 2,

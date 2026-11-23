@@ -227,7 +227,7 @@ describe("staff INITIAL recovery", () => {
         const repo = new SbEformsignDocumentJobRepository({ ...f.prisma, $queryRaw: query } as never);
         expect((await repo.listForBranch(branchId, new Date(0))).requiresAttention[0])
             .toMatchObject({ retryable: false, cancellable: false });
-        expect(query).toHaveBeenCalledTimes(6);
+        expect(query).toHaveBeenCalledTimes(7);
         expect(f.prisma.$transaction).not.toHaveBeenCalled();
     });
     it("summary counts only context-valid actionable INITIAL rows and merges contract ids in time order", async () => {

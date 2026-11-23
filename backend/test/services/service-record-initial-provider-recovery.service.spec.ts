@@ -76,7 +76,7 @@ function harness(linked: number[] = [], scope = defaultScope) {
     const candidate = () => ({ ...job, cursorUpdatedAt: job.updatedAt.toISOString() });
     const readCandidates = jest.fn(async (sql: Prisma.Sql) => {
         const cutoff = sql.values.find(value => value instanceof Date);
-        return cutoff && job.status === "failed" && state.status === "manual_review" && state.updatedAt <= cutoff && job.updatedAt <= cutoff
+        return cutoff && job.status === "failed" && state.status === "manual_review" && job.updatedAt <= cutoff
             ? [candidate()] : [];
     });
     const prisma = { ...db, $queryRaw: readCandidates, $transaction: jest.fn(async (callback: (tx: typeof db) => Promise<unknown>) => {
@@ -293,6 +293,7 @@ describe("cancelled INITIAL provider recovery (presence only)", () => {
         expect(query.sql).toContain("j.lease_token IS NULL");
         expect(query.values).toContainEqual(settled);
         expect(query.values).toContain(cancelled);
+        expect(f.client.getInProgressDocumentsPage).not.toHaveBeenCalled();
         expect(f.client.getDocument).not.toHaveBeenCalled();
     });
 
@@ -315,9 +316,13 @@ describe("cancelled INITIAL provider recovery (presence only)", () => {
         f.db.service_record_snapshot_chunk.findMany.mockImplementation(async ({ where }) => candidates.find(row => row.record.id === where.serviceRecordCaseId)!.chunks.map(chunk => ({ ...chunk })));
 
         expect(await f.run()).toBe(0);
-        expect(f.client.getInProgressDocumentsPage).toHaveBeenCalledTimes(100);
+        for (const list of [f.client.getInProgressDocumentsPage, f.client.getCompletedDocumentsPage, f.client.getRejectedDocumentsPage]) {
+            expect(list).toHaveBeenCalledTimes(1);
+        }
         expect(await f.run()).toBe(1);
-        expect(f.client.getInProgressDocumentsPage).toHaveBeenCalledTimes(102);
+        for (const list of [f.client.getInProgressDocumentsPage, f.client.getCompletedDocumentsPage, f.client.getRejectedDocumentsPage]) {
+            expect(list).toHaveBeenCalledTimes(2);
+        }
         expect(f.job).toMatchObject({ status: "completed", activeKey: null });
         expect(older.every(row => row.job.status === "failed" && row.job.activeKey !== null)).toBe(true);
     });

@@ -47,6 +47,7 @@ import {
     type ServiceRecordEditRevisionFactsReceiptToken,
     type ServiceRecordRevision,
     type ServiceRecordRevisionDocumentState,
+    type ServiceRecordRevisionHistoryResponse,
     type CreateServiceRecordRevisionDocumentStateInput,
     type AdvanceServiceRecordRevisionDocumentStateInput,
     type RetryServiceRecordRevisionDocumentInput,
@@ -56,6 +57,7 @@ import {
     type UpdateServiceRecordEditDraftInput,
 } from "domain/repositories/service-record-edit.repository.interface";
 import { DISPATCH_AUTHORIZED_PROGRESS_STEP } from "domain/entities/eformsign-document-job.entity";
+import { noProviderDocumentConfirmable } from "infrastructure/database/utils/service-record-initial-no-provider-document-projection";
 import { PrismaService } from "infrastructure/database/prisma.service";
 import { initialFinalizationSupersessionMarkerSql } from "infrastructure/database/utils/service-record-initial-recovery-sql";
 import { sha256CanonicalJson } from "application/services/eformsign-document-job.service";
@@ -78,7 +80,6 @@ import type {
     ServiceRecordRevisionDocumentOperation,
     ServiceRecordRevisionDocumentStatus,
     ServiceRecordRevisionOperationJobPayload,
-    ServiceRecordRevisionHistoryResponse,
 } from "@babyjamjam/shared/types/service-record";
 
 type DraftRow = Prisma.service_record_edit_draftGetPayload<Record<string, never>>;
@@ -2647,6 +2648,9 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
             if (readiness.ready) readyInitialStateId = readiness.state.id;
         }
 
+        const confirmable = ownerCase.currentRevisionId && states.some(state => state.status === "manual_review")
+            ? await noProviderDocumentConfirmable(tx, branchId, ownerCase.caseId) : [];
+        const attestableByState = new Map(confirmable.map(projection => [projection.stateId, projection]));
         return {
             caseId: ownerCase.caseId,
             caseVersion: ownerCase.caseVersion,
@@ -2669,6 +2673,7 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
                             && isInitialFinalizationWorkflowScopeForRevision(state.workflowScope, state.revisionId)
                             ? state.id === readyInitialStateId : canRetryRevisionDocumentState(state),
                         reasonCode: state.lastErrorCode,
+                        ...(attestableByState.has(state.id) ? { noProviderDocumentConfirmable: attestableByState.get(state.id) } : {}),
                     })),
             })),
             caregiverEdits: caregiverEdits.map((edit) => ({

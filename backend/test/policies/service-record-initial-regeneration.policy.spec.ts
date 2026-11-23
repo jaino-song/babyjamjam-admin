@@ -59,9 +59,13 @@ describe("INITIAL regeneration readiness", () => {
         const f = fixture({}, [terminal], [{ status: status === "leased" ? "failed" : status, leaseToken: status === "leased" ? "lease" : null }]);
         expect(await initialRegenerationReadiness(f.tx as never, "case", "revision")).toMatchObject({ ready: false, reason: "SERVICE_RECORD_INITIAL_JOB_IN_PROGRESS" });
     });
-    it.each(["SERVICE_RECORD_REVISION_DOCUMENT_REJECTED", "SERVICE_RECORD_INITIAL_NO_PROVIDER_DOCUMENT"])("refuses missing chunk coverage even under %s", async lastErrorCode => {
+    it.each(["SERVICE_RECORD_REVISION_DOCUMENT_REJECTED", "SERVICE_RECORD_INITIAL_PARTIAL_DISPATCH"])("refuses missing chunk coverage under %s", async lastErrorCode => {
         const f = fixture({ lastErrorCode }, []);
         expect(await initialRegenerationReadiness(f.tx as never, "case", "revision")).toMatchObject({ ready: false, reason: "SERVICE_RECORD_INITIAL_SIBLING_IN_PROGRESS" });
+    });
+    it("accepts zero chunk rows with the NO_PROVIDER_DOCUMENT attestation outcome", async () => {
+        const f = fixture({ lastErrorCode: "SERVICE_RECORD_INITIAL_NO_PROVIDER_DOCUMENT" }, []);
+        expect(await initialRegenerationReadiness(f.tx as never, "case", "revision")).toMatchObject({ ready: true });
     });
     it.each(["processing", "manual_review", "completed", "waiting_for_completion", "not_required"])("never treats the newest %s state as terminal-ready", async status => {
         const f = fixture({ status, lastErrorCode: null });

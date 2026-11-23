@@ -1,3 +1,5 @@
+import { ServiceRecordInitialNoProviderDocumentService } from "infrastructure/eformsign/service-record-initial-no-provider-document.service";
+import { SERVICE_RECORD_INITIAL_NO_DOC_REASONS as NO_DOC_REASON } from "domain/constants/service-record-initial-no-provider-document";
 import { ConflictException, NotFoundException } from "@nestjs/common";
 import { ServiceRecordFinalizationService } from "application/services/service-record-finalization.service";
 import { ExecutionContext, INestApplication, ValidationPipe } from "@nestjs/common";
@@ -108,6 +110,7 @@ describe("EformsignDocumentJobController (Integration)", () => {
         retry: jest.Mock;
     };
     let finalization: { regenerateInitialFinalization: jest.Mock };
+    let confirmNoProviderDocument: jest.Mock;
     let supersedeService: { isDocumentVisibleToBranch: jest.Mock } | undefined;
     let dispatchBoundary: { reconcile: jest.Mock; findById?: jest.Mock };
 
@@ -132,6 +135,7 @@ describe("EformsignDocumentJobController (Integration)", () => {
         acceptingEnabled = "true";
         supersedeService = { isDocumentVisibleToBranch: jest.fn().mockResolvedValue(true) };
         finalization = { regenerateInitialFinalization: jest.fn() };
+        confirmNoProviderDocument = jest.fn();
         documentJobService = {
             enqueueCreateDocument: jest.fn(),
             enqueueFinalizeDocument: jest.fn(),
@@ -196,14 +200,46 @@ describe("EformsignDocumentJobController (Integration)", () => {
     it("returns the same state projection in summary and list independently of job buckets", async () => {
         const initialRegenerations = [{ stateId: regenerateBody.documentStateId, revisionId: regenerateBody.revisionId,
             generation: "gen-1", clientId: 7, ready: false, reasonCode: "SERVICE_RECORD_INITIAL_SIBLING_IN_PROGRESS" }];
+        const noProviderDocumentConfirmable = [{ stateId: regenerateBody.documentStateId, revisionId: regenerateBody.revisionId,
+            generation: "gen-1", suffix: "[SR-12345678-r1-v3]", unlinkedChunkOrdinals: ["(2/2)"] }];
         documentJobService.getSummary.mockResolvedValue({ activeCount: 0, requiresAttentionCount: 0, failedCount: 0,
-            unresolvedCount: 0, unresolvedJobIds: [], initialRegenerations });
-        documentJobService.listForBranch.mockResolvedValue({ active: [], requiresAttention: [], recent: [], initialRegenerations });
+            unresolvedCount: 0, unresolvedJobIds: [], initialRegenerations, noProviderDocumentConfirmable });
+        documentJobService.listForBranch.mockResolvedValue({ active: [], requiresAttention: [], recent: [], initialRegenerations, noProviderDocumentConfirmable });
         const summary = await request(app.getHttpServer()).get("/eformsign-docs/jobs/summary").expect(200);
         const list = await request(app.getHttpServer()).get("/eformsign-docs/jobs").expect(200);
         expect(summary.body.initialRegenerations).toEqual(initialRegenerations);
         expect(list.body.initialRegenerations).toEqual(initialRegenerations);
+        expect(summary.body.noProviderDocumentConfirmable).toEqual(noProviderDocumentConfirmable);
+        expect(list.body.noProviderDocumentConfirmable).toEqual(noProviderDocumentConfirmable);
     });
+    const confirmPath = "/eformsign-docs/jobs/confirm-no-provider-document";
+    it("attests for the verified staff actor and branch and keeps the service's 409 reason", async () => {
+        confirmNoProviderDocument.mockResolvedValueOnce({ id: regenerateBody.documentStateId, status: "failed" })
+            .mockRejectedValueOnce(new ConflictException({ code: "REQUEST_CONFLICT", reason: NO_DOC_REASON.VENDOR_CHECK_INCOMPLETE }));
+        await request(app.getHttpServer()).post(confirmPath).send(regenerateBody).expect(200);
+        expect(confirmNoProviderDocument).toHaveBeenCalledWith({ ...regenerateBody, branchId: "branch-a", actorUserId: "user-a" });
+        const conflict = await request(app.getHttpServer()).post(confirmPath).send(regenerateBody).expect(409);
+        expect(conflict.body.reason).toBe(NO_DOC_REASON.VENDOR_CHECK_INCOMPLETE);
+    });
+
+    it("does not accept a caller-supplied branch or actor and returns 404 for another branch", async () => {
+        await request(app.getHttpServer()).post(confirmPath).send({ ...regenerateBody, branchId: "branch-z", actorUserId: "other-user" }).expect(400);
+        expect(confirmNoProviderDocument).not.toHaveBeenCalled();
+        authBranchId = "branch-z";
+        confirmNoProviderDocument.mockRejectedValueOnce(new NotFoundException({ code: "RESOURCE_NOT_FOUND" }));
+        await request(app.getHttpServer()).post(confirmPath).send(regenerateBody).expect(404);
+        expect(confirmNoProviderDocument).toHaveBeenCalledWith({ ...regenerateBody, branchId: "branch-z", actorUserId: "user-a" });
+    });
+
+    it("requires staff dispatch capability and actor identity before starting an attestation", async () => {
+        authRole = "staff";
+        await request(app.getHttpServer()).post(confirmPath).send(regenerateBody).expect(403);
+        authRole = "admin";
+        authUserId = undefined;
+        await request(app.getHttpServer()).post(confirmPath).send(regenerateBody).expect(401);
+        expect(confirmNoProviderDocument).not.toHaveBeenCalled();
+    });
+
     it("regenerates by document state in the authenticated branch and returns safe ids", async () => {
         finalization.regenerateInitialFinalization.mockResolvedValue({ state: { id: "state-2", revisionId: regenerateBody.revisionId,
             generation: "gen-2", immutableInput: { private: "hidden" } }, jobId: "job-2", status: "queued" });
@@ -292,6 +328,8 @@ describe("EformsignDocumentJobController (Integration)", () => {
                 },
                 { provide: EformsignDocumentJobService, useValue: documentJobService },
                 { provide: ServiceRecordFinalizationService, useValue: finalization },
+                { provide: ServiceRecordInitialNoProviderDocumentService,
+                    useValue: { confirmInitialNoProviderDocument: confirmNoProviderDocument } },
                 { provide: EformsignDispatchBoundaryService, useValue: dispatchBoundary },
                 ...(supersedeService
                     ? [{ provide: ContractSupersedeService, useValue: supersedeService }]
@@ -515,6 +553,7 @@ describe("EformsignDocumentJobController (Integration)", () => {
         expect(summary.status).toBe(200);
         expect(summary.body).toEqual({
             initialRegenerations: [],
+            noProviderDocumentConfirmable: [],
             activeCount: 2,
             requiresAttentionCount: 1,
             failedCount: 3,

@@ -1015,6 +1015,13 @@ function normalizeRevisionDocumentSummary(value: unknown): ServiceRecordRevision
         "lastErrorCode",
         "last_error_code",
     ]));
+    const projection = asObject(row["noProviderDocumentConfirmable"]);
+    const revisionId = readStringField(projection ?? {}, ["revisionId"]);
+    const suffix = readStringField(projection ?? {}, ["suffix"]);
+    const ordinals = projection?.["unlinkedChunkOrdinals"];
+    const noProviderDocumentConfirmable = projection?.["stateId"] === id && projection["generation"] === generation
+        && revisionId && suffix && Array.isArray(ordinals) && ordinals.every((ordinal): ordinal is string => typeof ordinal === "string")
+        ? { stateId: id, generation, revisionId, suffix, unlinkedChunkOrdinals: ordinals } : undefined;
     return {
         id,
         operation,
@@ -1023,6 +1030,7 @@ function normalizeRevisionDocumentSummary(value: unknown): ServiceRecordRevision
         documentVersion: readPositiveIntegerField(row, ["documentVersion", "document_version"]),
         canRetry: directCanRetry === true,
         reasonCode,
+        ...(noProviderDocumentConfirmable ? { noProviderDocumentConfirmable } : {}),
     };
 }
 

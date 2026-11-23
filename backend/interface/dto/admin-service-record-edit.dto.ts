@@ -234,9 +234,11 @@ export interface AdminServiceRecordEditStateDto {
 export type {
     ServiceRecordRevisionDocumentOperation,
     ServiceRecordRevisionDocumentStatus,
+} from "@babyjamjam/shared/types/service-record";
+export type {
     ServiceRecordRevisionDocumentSummary,
     ServiceRecordRevisionHistoryResponse,
-} from "@babyjamjam/shared/types/service-record";
+} from "domain/repositories/service-record-edit.repository.interface";
 
 /** Exact retry body. Branch and actor authority are always server-derived. */
 export class RetryServiceRecordDocumentDto {

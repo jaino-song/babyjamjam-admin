@@ -1,3 +1,4 @@
+import { noProviderDocumentConfirmable } from "infrastructure/database/utils/service-record-initial-no-provider-document-projection";
 import { initialRegenerationProjections } from "application/policies/service-record-initial-regeneration-projection.policy";
 import { BadRequestException, ConflictException, Injectable, Logger } from "@nestjs/common";
 import { createHash, randomUUID } from "node:crypto";
@@ -1407,6 +1408,7 @@ export class SbEformsignDocumentJobRepository implements IEformsignDocumentJobRe
         ]);
         return {
             initialRegenerations: await this.regenerationProjections(branchId),
+            noProviderDocumentConfirmable: await noProviderDocumentConfirmable(this.prisma, branchId),
             activeCount: Number(rows[0]?.active_count ?? 0),
             requiresAttentionCount: Number(rows[0]?.attention_count ?? 0),
             failedCount: Number(rows[0]?.failed_count ?? 0),
@@ -1502,6 +1504,7 @@ export class SbEformsignDocumentJobRepository implements IEformsignDocumentJobRe
             row.retryable = verified.kind === "allow";
         }
         return { initialRegenerations: await this.regenerationProjections(branchId),
+            noProviderDocumentConfirmable: await noProviderDocumentConfirmable(this.prisma, branchId),
             active: active.map(this.toDomain), requiresAttention: requiresAttention.map(this.toDomain), recent: recent.map(this.toDomain) };
     }
 

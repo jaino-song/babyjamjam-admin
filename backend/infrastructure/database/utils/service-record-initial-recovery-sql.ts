@@ -1,6 +1,6 @@
 import { Prisma } from "@prisma/client";
 
-import { newestInitialFinalizationStateSql } from "application/policies/service-record-initial-finalization.policy";
+import { INITIAL_FINALIZATION_REQUEST_PREFIX, initialFinalizationStateSql, newestInitialFinalizationStateSql } from "application/policies/service-record-initial-finalization.policy";
 
 /** INITIAL starts capability_unverified/pending and dispatch authorization advances it to processing. */
 export const INITIAL_FINALIZATION_CANCELLABLE_STATE_STATUSES: readonly string[] = [
@@ -97,4 +97,49 @@ export function historicalInitialFinalizationJobSql(alias = "eformsign_document_
           AND s.operation = 'record_snapshot' AND s.workflow_scope->>'generationKind' = 'INITIAL_FINALIZATION'
           AND (owner_case.current_revision_id IS DISTINCT FROM s.revision_id OR NOT ${newestInitialFinalizationStateSql("s")})
     ))`;
+}
+
+export const INITIAL_PROVIDER_SETTLE_MS = 10 * 60 * 1000;
+export const INITIAL_DISPATCH_CANCELLED = "JOB_CANCELLED_AFTER_DISPATCH";
+
+/** Shared local eligibility. Callers apply the settle cutoff and their target scope. */
+export function cancelledInitialCandidateSql(): Prisma.Sql {
+    return Prisma.sql`
+            FROM eformsign_document_job j
+            JOIN service_record_revision_document_state s ON s.id::text = lower(j.payload->>'documentStateId')
+                AND s.branch_id = j.branch_id AND s.client_id = j.client_id
+            JOIN service_record_case c ON c.id = s.service_record_case_id
+                AND c.branch_id = s.branch_id AND c.client_id = s.client_id
+            WHERE ${initialFinalizationJobSql("j")}
+                AND j.status = 'failed' AND j.last_error_code = ${INITIAL_DISPATCH_CANCELLED} AND j.lease_token IS NULL
+                AND j.active_key = ${INITIAL_FINALIZATION_REQUEST_PREFIX} || c.id::text
+                AND c.current_revision_id = s.revision_id AND c.status IN ('READY_TO_FINALIZE', 'FINALIZATION_FAILED')
+                AND s.status = 'manual_review' AND s.last_error_code = ${INITIAL_DISPATCH_CANCELLED}
+                AND ${initialFinalizationStateSql("s")} AND ${newestInitialFinalizationStateSql("s")}
+                AND s.workflow_scope->'requestKey' = to_jsonb(j.request_key)
+                AND j.payload->'context'->'branchId' = to_jsonb(j.branch_id::text)
+                AND j.payload->'context'->'clientId' = to_jsonb(j.client_id)
+                AND j.payload->'context'->'serviceRecordCaseId' = to_jsonb(c.id::text)
+                AND j.payload->'revisionId' = to_jsonb(s.revision_id::text)
+                AND j.payload->'context'->'revisionNumber' = j.payload->'revisionNumber'
+                AND j.payload->'generation' = to_jsonb(s.generation)
+                AND j.payload->'documentVersion' = to_jsonb(s.document_version)
+                AND j.payload->'payloadFingerprint' = to_jsonb(j.payload_fingerprint::text)
+                AND s.input_fingerprint = j.payload_fingerprint
+                AND s.immutable_input = j.payload->'immutablePayload'
+    `;
+}
+
+export function cancelledInitialCandidatesSettledSql(settledAt: Date): Prisma.Sql {
+    return Prisma.sql`j.updated_at <= ${settledAt} AND s.updated_at <= ${settledAt}`;
+}
+
+/** A scan-only attestation must derive its suffix from the bound revision and a real document version. */
+export function cancelledInitialSuffixScopeSql(): Prisma.Sql {
+    return Prisma.sql`s.document_version > 0 AND EXISTS (
+        SELECT 1 FROM service_record_revision revision
+        WHERE revision.id = s.revision_id AND revision.branch_id = s.branch_id
+          AND revision.service_record_case_id = s.service_record_case_id
+          AND j.payload->'revisionNumber' = to_jsonb(revision.revision_number)
+    )`;
 }

@@ -1,5 +1,6 @@
+import { ServiceRecordInitialNoProviderDocumentService } from "infrastructure/eformsign/service-record-initial-no-provider-document.service";
 import { ServiceRecordFinalizationService } from "application/services/service-record-finalization.service";
-import { RegenerateInitialDocumentJobDto } from "interface/dto/eformsign-document-job.dto";
+import { ConfirmInitialNoProviderDocumentJobDto, RegenerateInitialDocumentJobDto } from "interface/dto/eformsign-document-job.dto";
 import {
     BadRequestException,
     Body,
@@ -110,6 +111,7 @@ export class EformsignDocController {
         @Optional() private readonly contractSupersedeService?: ContractSupersedeService,
         @Optional() private readonly manualRecovery?: EformsignDocumentJobManualRecoveryService,
         @Optional() private readonly finalizationService?: ServiceRecordFinalizationService,
+        @Optional() private readonly initialNoProviderDocument?: ServiceRecordInitialNoProviderDocumentService,
     ) {}
 
     /**
@@ -628,6 +630,7 @@ export class EformsignDocController {
         const summary = await this.documentJobService.getSummary(tenant.branchId ?? "");
         return {
             initialRegenerations: summary.initialRegenerations ?? [],
+            noProviderDocumentConfirmable: summary.noProviderDocumentConfirmable ?? [],
             activeCount: summary.activeCount,
             requiresAttentionCount: summary.requiresAttentionCount,
             failedCount: summary.failedCount,
@@ -653,6 +656,7 @@ export class EformsignDocController {
         );
         return {
             initialRegenerations: result.initialRegenerations ?? [],
+            noProviderDocumentConfirmable: result.noProviderDocumentConfirmable ?? [],
             active: result.active.map(toEformsignDocumentJobResponse),
             requiresAttention: result.requiresAttention.map(toEformsignDocumentJobResponse),
             recent: result.recent.map(toEformsignDocumentJobResponse),
@@ -749,6 +753,23 @@ export class EformsignDocController {
         const result = await this.finalizationService.regenerateInitialFinalization(tenant.branchId ?? "", body);
         return { stateId: result.state.id, revisionId: result.state.revisionId, generation: result.state.generation,
             jobId: result.jobId, status: result.status };
+    }
+
+    @Post("jobs/confirm-no-provider-document")
+    @HttpCode(HttpStatus.OK)
+    async confirmInitialNoProviderDocument(
+        @CurrentTenant() tenant: EformsignProviderPrincipal,
+        @Req() request: { user?: { userId?: string } },
+        @Body() body: ConfirmInitialNoProviderDocumentJobDto,
+    ) {
+        assertEformsignProviderCapability(tenant, "contract.dispatch");
+        const actorUserId = tenant.userId ?? request.user?.userId;
+        if (!actorUserId) throw new UnauthorizedException(codeOnlyProblemBody("AUTH_REQUIRED"));
+        if (!this.initialNoProviderDocument) throw new ServiceUnavailableException(codeOnlyProblemBody("DEPENDENCY_UNAVAILABLE"));
+        return this.initialNoProviderDocument.confirmInitialNoProviderDocument({
+            branchId: tenant.branchId!, actorUserId, revisionId: body.revisionId,
+            documentStateId: body.documentStateId, expectedGeneration: body.expectedGeneration,
+        });
     }
 
     /** Cancel only a generation whose locked proof rules out provider effects. */

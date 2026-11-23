@@ -68,8 +68,11 @@ export function isInitialFinalizationWorkflowScopeForRevision(scope: unknown, re
         && isInitialFinalizationRequestKeyFor(revisionId, value["requestKey"]);
 }
 
+export const SERVICE_RECORD_INITIAL_NO_PROVIDER_DOCUMENT = "SERVICE_RECORD_INITIAL_NO_PROVIDER_DOCUMENT";
+export const SERVICE_RECORD_INITIAL_PARTIAL_DISPATCH = "SERVICE_RECORD_INITIAL_PARTIAL_DISPATCH";
+
 export const INITIAL_ABSENCE_PROOF_CODES: ReadonlySet<string> = new Set([
-    "SERVICE_RECORD_INITIAL_NO_PROVIDER_DOCUMENT", "SERVICE_RECORD_INITIAL_PARTIAL_DISPATCH",
+    SERVICE_RECORD_INITIAL_NO_PROVIDER_DOCUMENT, SERVICE_RECORD_INITIAL_PARTIAL_DISPATCH,
 ]);
 export const INITIAL_TERMINAL_PROVIDER_FAILURE_CODES: ReadonlySet<string> = new Set([
     "SERVICE_RECORD_REVISION_DOCUMENT_REJECTED", "SERVICE_RECORD_REVISION_DOCUMENT_VOIDED",
@@ -161,7 +164,7 @@ export async function initialRegenerationReadiness(
     if (documents.some(doc => EFORMSIGN_COMPLETED_STATUS_CODES.has(normalizeEformsignStatusCode(doc.statusType)))) {
         return blocked("SERVICE_RECORD_INITIAL_SIBLING_COMPLETED");
     }
-    if (chunks.length === 0
+    if ((chunks.length === 0 && state.lastErrorCode !== SERVICE_RECORD_INITIAL_NO_PROVIDER_DOCUMENT)
         || chunks.some((chunk, index) => chunk.chunkCount !== chunks.length || chunk.chunkIndex !== index + 1)) {
         return blocked("SERVICE_RECORD_INITIAL_SIBLING_IN_PROGRESS");
     }

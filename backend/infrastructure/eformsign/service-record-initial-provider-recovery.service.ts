@@ -1,19 +1,22 @@
 import { Inject, Injectable, Logger } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 
+import { cancelledInitialSuffix } from "domain/constants/service-record-initial-no-provider-document";
 import type { IInitialProviderRecovery } from "domain/repositories/service-record-initial-provider-recovery.interface";
 import { PrismaService } from "infrastructure/database/prisma.service";
 import { EFORMSIGN_CLIENT_REPOSITORY, type IEformsignClientRepository, type EformsignApiDocumentResponse, type EformsignApiListResponse } from "domain/repositories/eformsign.client.interface";
 import { SERVICE_RECORD_EDIT_REPOSITORY, type IServiceRecordEditRepository } from "domain/repositories/service-record-edit.repository.interface";
 import type { ServiceRecordRevisionGenerationInput } from "domain/entities/eformsign-document-job.entity";
-import { INITIAL_FINALIZATION_REQUEST_PREFIX, initialFinalizationStateSql, isInitialFinalizationWorkflowScope, newestInitialFinalizationStateSql } from "application/policies/service-record-initial-finalization.policy";
+import { isInitialFinalizationWorkflowScope } from "application/policies/service-record-initial-finalization.policy";
 import { sha256CanonicalJson } from "application/services/eformsign-document-job.service";
 import { EformsignCredentialBoundary, createEformsignWorkerPrincipal } from "application/services/eformsign-credential-boundary.service";
 import { CreateAndSendServiceRecordSnapshotUsecase } from "application/usecases/eformsign-doc/create-and-send-service-record-snapshot.usecase";
-import { initialFinalizationJobSql } from "infrastructure/database/utils/service-record-initial-recovery-sql";
+import {
+    cancelledInitialCandidateSql, cancelledInitialCandidatesSettledSql, cancelledInitialSuffixScopeSql,
+    INITIAL_DISPATCH_CANCELLED as CANCELLED, INITIAL_PROVIDER_SETTLE_MS,
+} from "infrastructure/database/utils/service-record-initial-recovery-sql";
 
-const CANCELLED = "JOB_CANCELLED_AFTER_DISPATCH";
-export const INITIAL_PROVIDER_SETTLE_MS = 10 * 60 * 1000;
+export { INITIAL_PROVIDER_SETTLE_MS };
 const JOB_BATCH_SIZE = 100;
 const PAGE_SIZE = 100;
 const MAX_PAGES = 1000;
@@ -21,12 +24,198 @@ class RecoveryPreconditionMiss extends Error {}
 type RecoveryJob = Pick<Prisma.eformsign_document_jobGetPayload<Prisma.eformsign_document_jobDefaultArgs>,
     "id" | "branchId" | "clientId" | "requestKey" | "activeKey" | "payload" | "payloadFingerprint"
     | "progressStep" | "progressDetail" | "attempts" | "updatedAt">;
+type CancelledInitialJob = RecoveryJob & {
+    status: string; lastErrorCode: string; leaseToken: string | null; documentId: string | null;
+    stateVersion: number; settled: boolean;
+};
 type Candidate = RecoveryJob & { cursorUpdatedAt: string };
 type CandidateCursor = Pick<Candidate, "id" | "cursorUpdatedAt">;
 type RecoveryChunk = Prisma.service_record_snapshot_chunkGetPayload<Prisma.service_record_snapshot_chunkDefaultArgs>;
 
 function object(value: unknown): Record<string, unknown> | null {
     return value !== null && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null;
+}
+
+function recoveryInput(job: RecoveryJob): ServiceRecordRevisionGenerationInput | null {
+    const payload = object(job.payload), context = object(payload?.["context"]);
+    if (!payload || !context || payload["kind"] !== "service_record_revision"
+        || payload["generationKind"] !== "INITIAL_FINALIZATION"
+        || context["branchId"] !== job.branchId || context["clientId"] !== job.clientId
+        || context["revisionId"] !== payload["revisionId"]
+        || context["revisionNumber"] !== payload["revisionNumber"]
+        || payload["snapshotReference"] !== job.requestKey
+        || payload["payloadFingerprint"] !== job.payloadFingerprint) return null;
+    return { ...context, documentSyncStatus: "pending", generationKind: "INITIAL_FINALIZATION",
+        documentStateId: payload["documentStateId"], documentVersion: payload["documentVersion"],
+        snapshotReference: payload["snapshotReference"], generation: payload["generation"],
+        immutablePayload: payload["immutablePayload"], payloadFingerprint: payload["payloadFingerprint"],
+        completeness: payload["completeness"],
+    } as ServiceRecordRevisionGenerationInput;
+}
+
+export function cancelledInitialChunkWhere(input: ServiceRecordRevisionGenerationInput) {
+    return { branchId: input.branchId, serviceRecordCaseId: input.serviceRecordCaseId,
+        revisionId: input.revisionId!, snapshotVersion: input.documentVersion };
+}
+
+type CandidateTarget = { stateId: string; now: Date };
+type SweepCandidate = { state: { version: number; updatedAt: Date }; chunks: RecoveryChunk[]; settled: true };
+export type CancelledInitialCandidate = { job: CancelledInitialJob; input: ServiceRecordRevisionGenerationInput; settled: boolean };
+export function loadCancelledInitialCandidate(
+    db: Prisma.TransactionClient, options: CandidateTarget & { selectedJob: RecoveryJob },
+): Promise<SweepCandidate | null>;
+export function loadCancelledInitialCandidate(
+    db: Prisma.TransactionClient, options: CandidateTarget & { branchId: string; revisionId: string; lockJob?: boolean },
+): Promise<CancelledInitialCandidate | null>;
+export async function loadCancelledInitialCandidate(
+    db: Prisma.TransactionClient,
+    options: CandidateTarget & { branchId?: string; revisionId?: string; selectedJob?: RecoveryJob; lockJob?: boolean },
+): Promise<SweepCandidate | CancelledInitialCandidate | null> {
+    const { stateId, branchId, revisionId, now, selectedJob } = options;
+    const settledAt = new Date(now.getTime() - INITIAL_PROVIDER_SETTLE_MS);
+    // U4 has already selected eligible jobs in its bounded keyset query.
+    if (selectedJob) {
+        const input = recoveryInput(selectedJob);
+        if (!input) return null;
+        const state = await db.service_record_revision_document_state.findUnique({ where: { id: stateId } });
+        if (!state || state.status !== "manual_review" || state.lastErrorCode !== CANCELLED
+            || state.updatedAt.getTime() > settledAt.getTime()) return null;
+        const chunks = await db.service_record_snapshot_chunk.findMany({
+            where: cancelledInitialChunkWhere(input), orderBy: { chunkIndex: "asc" },
+        });
+        return { state, chunks, settled: true as const };
+    }
+
+    const [job] = await db.$queryRaw<CancelledInitialJob[]>(Prisma.sql`
+        SELECT j.id, j.branch_id AS "branchId", j.client_id AS "clientId", j.request_key AS "requestKey",
+            j.active_key AS "activeKey", j.payload, j.payload_fingerprint AS "payloadFingerprint",
+            j.progress_step AS "progressStep", j.progress_detail AS "progressDetail", j.attempts,
+            j.updated_at AS "updatedAt", j.status, j.last_error_code AS "lastErrorCode",
+            j.lease_token AS "leaseToken", j.document_id AS "documentId", s.version AS "stateVersion",
+            (${cancelledInitialCandidatesSettledSql(settledAt)}) AS settled
+        ${cancelledInitialCandidateSql()}
+            AND s.id = ${stateId}::uuid AND s.branch_id = ${branchId}::uuid AND s.revision_id = ${revisionId}::uuid
+            AND ${cancelledInitialSuffixScopeSql()}
+        ${options.lockJob ? Prisma.sql`FOR UPDATE OF j` : Prisma.empty}
+    `);
+    const input = job && recoveryInput(job);
+    if (!job || !input) return null;
+    return { job, input, settled: job.settled };
+}
+
+type VendorDeadline = { expiresAt: number; shouldContinue?: () => boolean };
+export const INITIAL_PROVIDER_LIST_TYPES = ["01", "03", "04"] as const;
+type ProviderListType = (typeof INITIAL_PROVIDER_LIST_TYPES)[number];
+type ProviderListing = Record<ProviderListType, Map<string, string>>;
+type ProviderListingCache = Map<string, Promise<ProviderListing>>;
+type SuffixScanCandidate = {
+    suffix: string; listing: () => Promise<ProviderListing>; requireCompleteTitles?: boolean;
+};
+type RecoveryChunkOrdinal = Pick<RecoveryChunk, "chunkIndex" | "chunkCount" | "eformsignDocumentId">;
+
+function vendorWorkAllowed(deadline: VendorDeadline): boolean {
+    return Date.now() < deadline.expiresAt && (deadline.shouldContinue?.() ?? true);
+}
+
+async function readProviderList(
+    fetchPage: (limit: number, skip: number) => Promise<EformsignApiListResponse>,
+    shouldContinue?: () => boolean,
+): Promise<Map<string, string>> {
+    const titles = new Map<string, string>();
+    let total: number | undefined;
+    for (let skip = 0; ; skip += PAGE_SIZE) {
+        if (shouldContinue && !shouldContinue()) throw new RecoveryPreconditionMiss();
+        const { documents, total_rows: reportedTotal } = await fetchPage(PAGE_SIZE, skip);
+        total ??= reportedTotal;
+        if (!Number.isSafeInteger(total) || total < 0 || reportedTotal !== total
+            || Math.ceil(total / PAGE_SIZE) >= MAX_PAGES || documents.length !== Math.min(PAGE_SIZE, total - skip)) {
+            throw new RecoveryPreconditionMiss();
+        }
+        for (const { id, document_name: title } of documents) {
+            if (!id || typeof title !== "string" || titles.has(id)) throw new RecoveryPreconditionMiss();
+            titles.set(id, title);
+        }
+        if (titles.size === total) return titles;
+    }
+}
+
+export async function readCancelledInitialLists(client: IEformsignClientRepository, accessToken: string, deadline: VendorDeadline): Promise<ProviderListing> {
+    const lists = {
+        "01": client.getInProgressDocumentsPage,
+        "03": client.getCompletedDocumentsPage,
+        "04": client.getRejectedDocumentsPage,
+    };
+    const coverage: ProviderListing = { "01": new Map(), "03": new Map(), "04": new Map() };
+    for (const type of INITIAL_PROVIDER_LIST_TYPES) {
+        const fetchPage = lists[type].bind(client, accessToken);
+        const keepGoing = () => vendorWorkAllowed(deadline);
+        const titles = await readProviderList(fetchPage, keepGoing);
+        // Offset pagination can drift even when its reported total is stable.
+        if (titles.size > PAGE_SIZE) {
+            const verified = await readProviderList(fetchPage, keepGoing);
+            if (titles.size !== verified.size || [...titles].some(([id, title]) => verified.get(id) !== title)) {
+                throw new RecoveryPreconditionMiss();
+            }
+        }
+        coverage[type] = titles;
+    }
+    return coverage;
+}
+
+/** Scan unfiltered pages. The suffix survives a rename and needs no vendor title-search semantics. */
+export async function scanCancelledInitialSuffix(candidate: SuffixScanCandidate, deadline: VendorDeadline) {
+    let lists: ProviderListing;
+    try {
+        if (!vendorWorkAllowed(deadline)) return "INCOMPLETE" as const;
+        lists = await candidate.listing();
+    } catch {
+        return "INCOMPLETE" as const;
+    }
+    if (!vendorWorkAllowed(deadline)) return "INCOMPLETE" as const;
+    const hits = new Map<string, string>();
+    const totals = { "01": 0, "03": 0, "04": 0 };
+    for (const type of INITIAL_PROVIDER_LIST_TYPES) {
+        totals[type] = lists[type].size;
+        for (const [id, title] of lists[type]) {
+            if (candidate.requireCompleteTitles && !title) return "INCOMPLETE" as const;
+            if (!title.includes(candidate.suffix)) continue;
+            const observed = hits.get(id);
+            if (observed !== undefined && observed !== title) return "INCOMPLETE" as const;
+            hits.set(id, title);
+        }
+    }
+    // Conflicting titles matter even if only one observation carries this suffix.
+    if (candidate.requireCompleteTitles && [...hits].some(([id, title]) =>
+        INITIAL_PROVIDER_LIST_TYPES.some(type => lists[type].has(id) && lists[type].get(id) !== title))) {
+        return "INCOMPLETE" as const;
+    }
+    return { hits, totals };
+}
+
+export async function classifyCancelledInitialChunks<Chunk extends RecoveryChunkOrdinal>(
+    candidate: SuffixScanCandidate & { chunks: Chunk[] }, deadline: VendorDeadline,
+) {
+    const scan = await scanCancelledInitialSuffix(candidate, deadline);
+    if (scan === "INCOMPLETE") return scan;
+    const { hits, totals } = scan;
+    const claimed = new Set<string>();
+    let ambiguous = false;
+    const chunks = candidate.chunks.map(chunk => {
+        const chunkSuffix = `(${chunk.chunkIndex}/${chunk.chunkCount}) ${candidate.suffix}`;
+        const candidates = [...hits].filter(([id, title]) => id === chunk.eformsignDocumentId || title.endsWith(chunkSuffix));
+        const matchId = candidates[0]?.[0];
+        if (candidates.length > 1 || (matchId && (claimed.has(matchId)
+            || (chunk.eformsignDocumentId !== null && chunk.eformsignDocumentId !== matchId)))) {
+            ambiguous = true;
+            return { chunk, chunkSuffix, kind: "ambiguous" as const };
+        }
+        if (matchId) claimed.add(matchId);
+        return { chunk, chunkSuffix, matchId,
+            kind: chunk.eformsignDocumentId ? "linked" as const : matchId ? "matched" as const : "unmatched" as const };
+    });
+    // A suffix match which cannot be assigned to a frozen ordinal is inconclusive.
+    ambiguous ||= [...hits.keys()].some(id => !claimed.has(id));
+    return { chunks, ambiguous, totals };
 }
 
 /**
@@ -55,6 +244,7 @@ export class ServiceRecordInitialProviderRecoveryService implements IInitialProv
         if (shouldContinue && !shouldContinue()) return 0;
         const settledAt = new Date(now.getTime() - INITIAL_PROVIDER_SETTLE_MS);
         const jobs = await this.readCandidates(settledAt, branchId, this.candidateCursors.get(branchId));
+        const listings: ProviderListingCache = new Map();
         let recovered = 0;
         for (const job of jobs) {
             if (shouldContinue && !shouldContinue()) return recovered;
@@ -62,7 +252,7 @@ export class ServiceRecordInitialProviderRecoveryService implements IInitialProv
             // unmatched jobs get retried without keeping newer ones out of the batch.
             this.candidateCursors.set(branchId, { id: job.id, cursorUpdatedAt: job.cursorUpdatedAt });
             try {
-                if (await this.reconcileJob(job, now, shouldContinue)) recovered++;
+                if (await this.reconcileJob(job, now, listings, shouldContinue)) recovered++;
             } catch {
                 // Vendor errors can contain titles/payloads. Never log exception text here.
                 this.logger.warn({ message: "INITIAL provider recovery deferred", jobId: job.id, branchId: job.branchId });
@@ -80,29 +270,8 @@ export class ServiceRecordInitialProviderRecoveryService implements IInitialProv
                 j.active_key AS "activeKey", j.payload, j.payload_fingerprint AS "payloadFingerprint",
                 j.progress_step AS "progressStep", j.progress_detail AS "progressDetail", j.attempts,
                 j.updated_at AS "updatedAt", j.updated_at::text AS "cursorUpdatedAt"
-            FROM eformsign_document_job j
-            JOIN service_record_revision_document_state s ON s.id::text = lower(j.payload->>'documentStateId')
-                AND s.branch_id = j.branch_id AND s.client_id = j.client_id
-            JOIN service_record_case c ON c.id = s.service_record_case_id
-                AND c.branch_id = s.branch_id AND c.client_id = s.client_id
-            WHERE ${initialFinalizationJobSql("j")}
-                AND j.status = 'failed' AND j.last_error_code = ${CANCELLED} AND j.lease_token IS NULL
-                AND j.updated_at <= ${settledAt}
-                AND j.active_key = ${INITIAL_FINALIZATION_REQUEST_PREFIX} || c.id::text
-                AND c.current_revision_id = s.revision_id AND c.status IN ('READY_TO_FINALIZE', 'FINALIZATION_FAILED')
-                AND s.status = 'manual_review' AND s.last_error_code = ${CANCELLED} AND s.updated_at <= ${settledAt}
-                AND ${initialFinalizationStateSql("s")} AND ${newestInitialFinalizationStateSql("s")}
-                AND s.workflow_scope->'requestKey' = to_jsonb(j.request_key)
-                AND j.payload->'context'->'branchId' = to_jsonb(j.branch_id::text)
-                AND j.payload->'context'->'clientId' = to_jsonb(j.client_id)
-                AND j.payload->'context'->'serviceRecordCaseId' = to_jsonb(c.id::text)
-                AND j.payload->'revisionId' = to_jsonb(s.revision_id::text)
-                AND j.payload->'context'->'revisionNumber' = j.payload->'revisionNumber'
-                AND j.payload->'generation' = to_jsonb(s.generation)
-                AND j.payload->'documentVersion' = to_jsonb(s.document_version)
-                AND j.payload->'payloadFingerprint' = to_jsonb(j.payload_fingerprint::text)
-                AND s.input_fingerprint = j.payload_fingerprint
-                AND s.immutable_input = j.payload->'immutablePayload'
+            ${cancelledInitialCandidateSql()}
+                AND ${cancelledInitialCandidatesSettledSql(settledAt)}
                 AND EXISTS (SELECT 1 FROM service_record_snapshot_chunk chunk
                     WHERE chunk.branch_id = s.branch_id AND chunk.service_record_case_id = c.id
                         AND chunk.revision_id = s.revision_id AND chunk.snapshot_version = s.document_version)
@@ -113,64 +282,48 @@ export class ServiceRecordInitialProviderRecoveryService implements IInitialProv
         `);
     }
 
-    private async readProviderList(
-        fetchPage: (limit: number, skip: number) => Promise<EformsignApiListResponse>,
-        shouldContinue?: () => boolean,
-    ): Promise<Map<string, string>> {
-        const titles = new Map<string, string>();
-        let total: number | undefined;
-        for (let skip = 0; ; skip += PAGE_SIZE) {
-            if (shouldContinue && !shouldContinue()) throw new RecoveryPreconditionMiss();
-            const { documents, total_rows: reportedTotal } = await fetchPage(PAGE_SIZE, skip);
-            total ??= reportedTotal;
-            if (!Number.isSafeInteger(total) || total < 0 || reportedTotal !== total
-                || Math.ceil(total / PAGE_SIZE) >= MAX_PAGES || documents.length !== Math.min(PAGE_SIZE, total - skip)) {
-                throw new RecoveryPreconditionMiss();
-            }
-            for (const { id, document_name: title } of documents) {
-                if (!id || titles.has(id)) throw new RecoveryPreconditionMiss();
-                titles.set(id, title);
-            }
-            if (titles.size === total) return titles;
-        }
-    }
-
-    private input(job: RecoveryJob): ServiceRecordRevisionGenerationInput | null {
-        const payload = object(job.payload), context = object(payload?.["context"]);
-        if (!payload || !context || payload["kind"] !== "service_record_revision"
-            || payload["generationKind"] !== "INITIAL_FINALIZATION"
-            || context["branchId"] !== job.branchId || context["clientId"] !== job.clientId
-            || context["revisionId"] !== payload["revisionId"]
-            || context["revisionNumber"] !== payload["revisionNumber"]
-            || payload["snapshotReference"] !== job.requestKey
-            || payload["payloadFingerprint"] !== job.payloadFingerprint) return null;
-        return { ...context, documentSyncStatus: "pending", generationKind: "INITIAL_FINALIZATION",
-            documentStateId: payload["documentStateId"], documentVersion: payload["documentVersion"],
-            snapshotReference: payload["snapshotReference"], generation: payload["generation"],
-            immutablePayload: payload["immutablePayload"], payloadFingerprint: payload["payloadFingerprint"],
-            completeness: payload["completeness"],
-        } as ServiceRecordRevisionGenerationInput;
-    }
-
-    private chunkWhere(input: ServiceRecordRevisionGenerationInput) {
-        return { branchId: input.branchId, serviceRecordCaseId: input.serviceRecordCaseId,
-            revisionId: input.revisionId!, snapshotVersion: input.documentVersion };
-    }
-
-    private async reconcileJob(job: RecoveryJob, now: Date, shouldContinue?: () => boolean): Promise<boolean> {
-        const input = this.input(job);
+    private async reconcileJob(
+        job: RecoveryJob, now: Date, listings: ProviderListingCache, shouldContinue?: () => boolean,
+    ): Promise<boolean> {
+        const input = recoveryInput(job);
         if (!input) return false;
-        const initialState = await this.prisma.service_record_revision_document_state.findUnique({ where: { id: input.documentStateId } });
-        if (!initialState || initialState.status !== "manual_review" || initialState.lastErrorCode !== CANCELLED
-            || initialState.updatedAt.getTime() > now.getTime() - INITIAL_PROVIDER_SETTLE_MS) return false;
-        const chunks = await this.prisma.service_record_snapshot_chunk.findMany({ where: this.chunkWhere(input), orderBy: { chunkIndex: "asc" } });
+        const loaded = await loadCancelledInitialCandidate(this.prisma, {
+            stateId: input.documentStateId, now, selectedJob: job,
+        });
+        if (!loaded || !loaded.settled) return false;
+        const { state: initialState, chunks } = loaded;
         const prepared = this.snapshots.prepareCancelledInitialRecovery(input, chunks);
-        // Scan unfiltered pages and apply suffix matching locally. This avoids relying
-        // on undocumented title search semantics and survives a customer rename.
-        const suffix = `[SR-${input.serviceRecordCaseId.slice(0, 8)}-r${input.revisionNumber}-v${input.documentVersion}]`;
+        const suffix = cancelledInitialSuffix(input.serviceRecordCaseId, input.revisionNumber!, input.documentVersion);
+        const deadline = { expiresAt: Infinity, shouldContinue };
         const matches = await this.credentials.withCredentials(createEformsignWorkerPrincipal(job.branchId), "document.read", async ({ accessToken }) => {
             try {
-                return await this.findMatches(accessToken, suffix, chunks, shouldContinue);
+                const listing = () => {
+                    let scan = listings.get(job.branchId);
+                    if (!scan) {
+                        scan = readCancelledInitialLists(this.client, accessToken, deadline);
+                        listings.set(job.branchId, scan);
+                    }
+                    return scan;
+                };
+                const result = await classifyCancelledInitialChunks({ chunks, suffix, listing }, deadline);
+                if (result === "INCOMPLETE" || result.ambiguous) throw new RecoveryPreconditionMiss();
+                if (result.chunks.some(chunk => chunk.kind === "unmatched")) return null;
+                const resolved = new Map<number, EformsignApiDocumentResponse>();
+                const usedIds = new Set<string>();
+                for (const item of result.chunks) {
+                    if (item.chunk.eformsignDocumentId) {
+                        usedIds.add(item.chunk.eformsignDocumentId);
+                        continue;
+                    }
+                    const id = item.matchId!;
+                    const detail = await this.client.getDocument(accessToken, id);
+                    if (detail.id !== id || !detail.document_name.endsWith(item.chunkSuffix)
+                        || !detail.current_status?.status_type || !detail.template?.id || !Number.isSafeInteger(detail.updated_date)
+                        || detail.updated_date <= 0 || usedIds.has(detail.id)) throw new RecoveryPreconditionMiss();
+                    resolved.set(item.chunk.chunkIndex, detail);
+                    usedIds.add(detail.id);
+                }
+                return resolved;
             } catch {
                 // The credential boundary logs operation errors. Keep vendor response text out of its logs.
                 throw new RecoveryPreconditionMiss("INITIAL provider lookup deferred");
@@ -178,53 +331,6 @@ export class ServiceRecordInitialProviderRecoveryService implements IInitialProv
         });
         if (!matches || (shouldContinue && !shouldContinue())) return false;
         return this.commitRecovery(job, input, initialState, chunks, prepared, matches, now, shouldContinue);
-    }
-
-    private async findMatches(accessToken: string, suffix: string, chunks: RecoveryChunk[], shouldContinue?: () => boolean) {
-        const byId = new Map<string, string>();
-        for (const list of [this.client.getInProgressDocumentsPage, this.client.getCompletedDocumentsPage, this.client.getRejectedDocumentsPage]) {
-            const fetchPage = list.bind(this.client, accessToken);
-            const titles = await this.readProviderList(fetchPage, shouldContinue);
-            // Rows can move across offsets even if the total is unchanged.
-            // Require the same IDs and titles in a second multi-page scan.
-            if (titles.size > PAGE_SIZE) {
-                const verified = await this.readProviderList(fetchPage, shouldContinue);
-                if (titles.size !== verified.size || [...titles].some(([id, title]) => verified.get(id) !== title)) {
-                    throw new RecoveryPreconditionMiss();
-                }
-            }
-            for (const [id, title] of titles) {
-                if (!title.includes(suffix)) continue;
-                const observed = byId.get(id);
-                if (observed !== undefined && observed !== title) throw new RecoveryPreconditionMiss();
-                byId.set(id, title);
-            }
-        }
-        const resolved = new Map<number, EformsignApiDocumentResponse>();
-        const usedIds = new Set<string>();
-        for (const chunk of chunks) {
-            // The stable suffix identifies a version; the frozen chunk ordinal
-            // disambiguates its members. Unassignable suffix matches are ambiguous.
-            const chunkSuffix = `(${chunk.chunkIndex}/${chunk.chunkCount}) ${suffix}`;
-            const candidates = [...byId].filter(([id, title]) => id === chunk.eformsignDocumentId || title.endsWith(chunkSuffix));
-            if (candidates.length > 1) throw new RecoveryPreconditionMiss();
-            const foundId = candidates[0]?.[0];
-            if (chunk.eformsignDocumentId) {
-                if (foundId && foundId !== chunk.eformsignDocumentId) throw new RecoveryPreconditionMiss();
-                usedIds.add(chunk.eformsignDocumentId);
-                continue;
-            }
-            // CREATED with no id remains an unknown outcome, as does no match.
-            if (!foundId) return null;
-            const detail = await this.client.getDocument(accessToken, foundId);
-            if (detail.id !== foundId || !detail.document_name.endsWith(chunkSuffix)
-                || !detail.current_status?.status_type || !detail.template?.id || !Number.isSafeInteger(detail.updated_date)
-                || detail.updated_date <= 0 || usedIds.has(detail.id)) throw new RecoveryPreconditionMiss();
-            resolved.set(chunk.chunkIndex, detail);
-            usedIds.add(detail.id);
-        }
-        if ([...byId.keys()].some(id => !usedIds.has(id))) throw new RecoveryPreconditionMiss();
-        return resolved;
     }
 
     private async commitRecovery(
@@ -260,7 +366,7 @@ export class ServiceRecordInitialProviderRecoveryService implements IInitialProv
                     || !isInitialFinalizationWorkflowScope(state.workflowScope, job.requestKey)) return false;
                 await tx.$queryRaw`SELECT id FROM service_record_snapshot_chunk WHERE service_record_case_id = ${input.serviceRecordCaseId}::uuid
                     AND revision_id = ${input.revisionId}::uuid AND snapshot_version = ${input.documentVersion} ORDER BY chunk_index FOR UPDATE`;
-                const currentChunks = await tx.service_record_snapshot_chunk.findMany({ where: this.chunkWhere(input), orderBy: { chunkIndex: "asc" } });
+                const currentChunks = await tx.service_record_snapshot_chunk.findMany({ where: cancelledInitialChunkWhere(input), orderBy: { chunkIndex: "asc" } });
                 if (currentChunks.length !== chunks.length || currentChunks.some((chunk, index) => !this.sameChunk(chunk, chunks[index]!))) return false;
                 const ids = currentChunks.map(chunk => chunk.eformsignDocumentId ?? matches.get(chunk.chunkIndex)?.id);
                 if (ids.some(id => !id) || new Set(ids).size !== ids.length) return false;

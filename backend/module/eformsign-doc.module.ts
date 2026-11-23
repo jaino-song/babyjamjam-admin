@@ -1,3 +1,4 @@
+import { ServiceRecordInitialNoProviderDocumentService } from "infrastructure/eformsign/service-record-initial-no-provider-document.service";
 import { INITIAL_PROVIDER_RECOVERY } from "domain/repositories/service-record-initial-provider-recovery.interface";
 import { ServiceRecordInitialProviderRecoveryService } from "infrastructure/eformsign/service-record-initial-provider-recovery.service";
 import { ServiceRecordFinalizationService } from "application/services/service-record-finalization.service";
@@ -197,6 +198,7 @@ import { HolidayModule } from "./holiday.module";
         EformsignDocumentMirrorService,
         ServiceRecordLifecycleService,
         ServiceRecordFinalizationService,
+        ServiceRecordInitialNoProviderDocumentService,
         EformsignMirrorReadinessService,
         EformsignAgentCapabilitiesProvider,
         ContractExternalAgentCapabilitiesProvider,
@@ -306,6 +308,7 @@ import { HolidayModule } from "./holiday.module";
     ],
     exports: [
         ServiceRecordFinalizationService,
+        ServiceRecordInitialNoProviderDocumentService,
         VoidContractDocumentUsecase,
         EformsignDocService,
         EformsignCredentialBoundary,
