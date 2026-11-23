@@ -41,6 +41,7 @@ import { MessageTriggerRecipientType, MessageTriggerTemplateKey } from "domain/c
 import { OCCURRENCE_ALREADY_ACCEPTED } from "domain/entities/message-occurrence";
 import { defaultMessageAutomationPolicy } from "domain/entities/system-setting.entity";
 import { FileStorageObjectNotFoundError } from "domain/ports/file-storage.port";
+import { SbEformsignDocumentMirrorRepository } from "infrastructure/database/repositories/sb.eformsign-document-mirror.repository";
 import { SbMessageLogRepository } from "infrastructure/database/repositories/sb.message-log.repository";
 import { SbMessageTriggerJobRepository } from "infrastructure/database/repositories/sb.message-trigger-job.repository";
 import { SbMessageTriggerRuleRepository } from "infrastructure/database/repositories/sb.message-trigger-rule.repository";
@@ -64,6 +65,8 @@ const JAN_31 = new Date("2026-01-31T00:00:00Z");
 const OLD_DATE = new Date("2025-12-31T00:00:00Z");
 const NEW_DATE = "2026-01-02";
 const BIRTHDAY = "19940203";
+const LEGACY_BIRTHDAY = "940304";
+const CANONICAL_BIRTHDAY = "19940304";
 const PHONE = "01000004121";
 const issuer = randomUUID();
 const syntheticTemplate = readFileSync(join(__dirname, "../fixtures/standalone-receipt-synthetic.png"));
@@ -243,7 +246,8 @@ describeReal("standalone receipt issuance on PostgreSQL", () => {
         await tracker.cleanup(db.raw);
     });
 
-    it("freezes both snapshots, uses the actual renderer without a contract and sends as manual with automation off", async () => {
+    it("freezes the legacy customer identity, renders without a contract and sends as manual with automation off", async () => {
+        await db.raw.client.update({ where: { id: x.id }, data: { birthday: LEGACY_BIRTHDAY } });
         const route = await startStaffRoute();
         const manager = await route.signedIn(a, "manager");
         const member = await route.signedIn(a, "user");
@@ -275,9 +279,12 @@ describeReal("standalone receipt issuance on PostgreSQL", () => {
             customerName: "QA-가", serviceStartDate: "2025-12-01", endDate: "2025-12-31", receivedDate: NEW_DATE,
             issueDate: "2026-01-01", fullPrice: 100000, grant: 70000, actualPrice: 30000,
         });
-        expect(JSON.stringify(request)).not.toContain(BIRTHDAY);
+        expect(request.expectedBirthdayHash).toBe(fixture.tokenService.hashBirthday(CANONICAL_BIRTHDAY));
+        expect([LEGACY_BIRTHDAY, CANONICAL_BIRTHDAY].some(birthday => JSON.stringify(request).includes(birthday))).toBe(false);
 
-        await db.raw.client.update({ where: { id: x.id }, data: { name: "QA-나", birthday: "19940304", actualPrice: "0" } });
+        await db.raw.client.update({ where: { id: x.id }, data: { name: "QA-나", birthday: BIRTHDAY, actualPrice: "0" } });
+        expect(await submit(original)).toEqual(first);
+        expect(await db.raw.message_trigger_job.count({ where: { branchId: a, standaloneRequestId: original.requestId } })).toBe(1);
         await createEformsignDoc(db.raw, tracker, { branchId: a, clientId: x.id, voidedAt: JAN_1 });
         const second = await submit(input(randomUUID(), x.id, "2026-01-03"));
         expect(await fixture.dispatch(first.jobId)).toMatchObject({ status: "sent" });
@@ -291,8 +298,10 @@ describeReal("standalone receipt issuance on PostgreSQL", () => {
         const links = fixture.provider.sendSms.mock.calls.map(([send]) => send.message.split("\n")[1]!);
         expect(new Set(links).size).toBe(2);
         const firstBearer = new URL(links[0]!).pathname.split("/").at(-1)!;
-        expect(await fixture.tokenService.verifyBirthday(firstBearer, "19940304", JAN_1)).toMatchObject({ ok: false });
-        const verified = await fixture.publicLinks.receiptVerify(firstBearer, { birthday: BIRTHDAY });
+        expect(await fixture.tokenService.verifyBirthday(firstBearer, BIRTHDAY, JAN_1)).toMatchObject({ ok: false, reason: "verification_failed" });
+        expect(await fixture.tokenService.verifyBirthday(firstBearer, "20940304", JAN_1)).toMatchObject({ ok: false, reason: "verification_failed" });
+        expect(await fixture.tokenService.verifyBirthday(firstBearer, LEGACY_BIRTHDAY, JAN_1)).toEqual({ ok: false, reason: "invalid_format" });
+        const verified = await fixture.publicLinks.receiptVerify(firstBearer, { birthday: CANONICAL_BIRTHDAY });
         expect(verified).toMatchObject({ ok: true, clientName: "QA-가", accessToken: expect.any(String) });
         expect(await fixture.publicLinks.receiptAccess(firstBearer, verified.accessToken)).toEqual({ ok: true, clientName: "QA-가" });
         const image = { set: jest.fn(), send: jest.fn() };
@@ -307,7 +316,8 @@ describeReal("standalone receipt issuance on PostgreSQL", () => {
         expect(logRows.every(log => log.messageBody.includes(STANDALONE_RECEIPT_HISTORY_PLACEHOLDER))).toBe(true);
         const persisted = JSON.stringify([await rows(), await tokens(), logRows]);
         expect([firstBearer, links[0]!, "synthetic-signed-storage-url"].some(secret => persisted.includes(secret))).toBe(false);
-        expect([firstBearer, links[0]!, PHONE, BIRTHDAY, "QA-가"].some(secret => diagnostics().includes(secret))).toBe(false);
+        expect([firstBearer, links[0]!, PHONE, LEGACY_BIRTHDAY, CANONICAL_BIRTHDAY, BIRTHDAY, "QA-가"]
+            .some(secret => diagnostics().includes(secret))).toBe(false);
         expect(await submit(original)).toEqual(first);
         expect(await date()).toEqual(new Date("2026-01-03"));
         expect(await rows()).toHaveLength(2);
@@ -316,6 +326,69 @@ describeReal("standalone receipt issuance on PostgreSQL", () => {
         await db.raw.client.update({ where: { id: x.id }, data: { deletedAt: JAN_1 } });
         expect(await fixture.tokenService.getStatus(firstBearer, JAN_1)).toEqual({ ok: false, reason: "not_found" });
         await route.post(original, manager).expect(404);
+    });
+
+    it.each([
+        ["a leap day in 2000", "000229", "20000229"],
+        ["a leap day in the 1900s", "960229", "19960229"],
+    ])("freezes the canonical hash for %s", async (_label, stored, canonical) => {
+        await db.raw.client.update({ where: { id: x.id }, data: { birthday: stored } });
+        const accepted = await fixture.issue.issue(input());
+        const payload = (await row(accepted.jobId)).payload as unknown as MessageTriggerJobPayload;
+        expect(payload.standaloneReceipt?.expectedBirthdayHash).toBe(fixture.tokenService.hashBirthday(canonical));
+        expect(await date()).toEqual(new Date(NEW_DATE));
+        expect(fixture.provider.sendSms).not.toHaveBeenCalled();
+    });
+
+    it.each([
+        ["a non-leap year", "970229"],
+        ["an invalid February day", "940230"],
+        ["a future date", "260102"],
+    ])("refuses a stored legacy birthday with %s before writing", async (_label, stored) => {
+        await db.raw.client.update({ where: { id: x.id }, data: { birthday: stored } });
+        await expect(fixture.issue.issue(input())).rejects.toMatchObject({ status: 400, response: { code: "MISSING_RECEIPT_FIELDS" } });
+        expect(await date()).toEqual(OLD_DATE);
+        expect(await db.raw.message_trigger_job.count({ where: { branchId: a, clientId: x.id } })).toBe(0);
+        expect(fixture.provider.sendSms).not.toHaveBeenCalled();
+    });
+
+    it("purges the unrelated contract and its unsent job while preserving an unlogged standalone receipt", async () => {
+        const accepted = await fixture.issue.issue(input());
+        const doc = await createEformsignDoc(db.raw, tracker, { branchId: a, clientId: x.id, autoRegisteredClient: true });
+        await db.raw.client.update({ where: { id: x.id }, data: { eDocId: doc.documentId } });
+        const rule = await createMessageTriggerRule(db.raw, tracker, {
+            branchId: a, eventType: "SERVICE_END", templateKey: "SERVICE_END_NOTICE",
+        });
+        const ordinary = await fixture.jobs.create(MessageTriggerJobEntity.create({
+            branchId: a, ruleId: rule.id, clientId: x.id, scheduledFor: JAN_1,
+            recipientType: MessageTriggerRecipientType.CLIENT, recipientPhone: PHONE,
+            templateKey: MessageTriggerTemplateKey.SERVICE_END_NOTICE, dedupeKey: randomUUID(),
+            payload: { clientId: x.id, memberId: `client:${x.id}`, recipientPhone: PHONE,
+                recipientName: x.name, templateVariables: { name: x.name } },
+        }));
+        expect(await row(ordinary.id)).toMatchObject({ status: "pending", sentAt: null, standaloneRequestId: null });
+        expect(await row(accepted.jobId)).toMatchObject({ status: "pending", sentAt: null });
+        expect(await db.raw.message_log.count({ where: { branchId: a } })).toBe(0);
+        expect(fixture.provider.sendSms).not.toHaveBeenCalled();
+
+        await new SbEformsignDocumentMirrorRepository(db.service).purgeContent([doc.documentId], JAN_1);
+
+        expect(await db.raw.eformsign_doc.findUnique({ where: { id: doc.id } }))
+            .toMatchObject({ statusType: "049", clientId: null, autoRegisteredClient: false });
+        expect(await db.raw.message_trigger_job.count({ where: { id: ordinary.id } })).toBe(0);
+        expect(await db.raw.client.findUnique({ where: { id: x.id } })).toMatchObject({ eDocId: null, deletedAt: null });
+        expect(await row(accepted.jobId)).toMatchObject({ status: "pending", clientId: x.id });
+        expect(await fixture.dispatch(accepted.jobId)).toMatchObject({ status: "sent" });
+        expect(fixture.provider.sendSms).toHaveBeenCalledTimes(1);
+        const url = fixture.provider.sendSms.mock.calls[0]![0].message.split("\n").at(-1)!;
+        const bearer = new URL(url).pathname.split("/").at(-1)!;
+        const verified = await fixture.publicLinks.receiptVerify(bearer, { birthday: BIRTHDAY });
+        expect(verified.ok).toBe(true);
+        const image = { set: jest.fn(), send: jest.fn() };
+        await fixture.publicLinks.image(bearer, "1", verified.accessToken, undefined, image as unknown as Response);
+        const [token] = await tokens();
+        expect(token).toMatchObject({ jobId: accepted.jobId });
+        expect(image.send).toHaveBeenCalledWith(fixture.objects.get(token!.storagePath));
     });
 
     it("sends a standalone link for a signed client without changing the contract token, then suppresses automatic enrollment", async () => {

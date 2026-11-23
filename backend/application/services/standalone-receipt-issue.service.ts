@@ -1,3 +1,4 @@
+import { normalizeBirthdayIsoDate } from "@babyjamjam/shared/utils/birthday";
 import { BadRequestException, ConflictException, ForbiddenException, Inject, Injectable, NotFoundException } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import { randomBytes, randomUUID } from "node:crypto";
@@ -66,14 +67,17 @@ function snapshot(client: ReceiptClient, receivedDate: string, at: Date): Standa
     }
 }
 
-function receiptBirthday(value: string | null): string | null {
+function receiptBirthday(value: string | null, at: Date): string | null {
     const normalized = normalizeBirthdayInput(value ?? "");
     if (!normalized) return null;
     const full = normalized.length === 6 ? `20${normalized}` : normalized;
     const formatted = `${full.slice(0, 4)}-${full.slice(4, 6)}-${full.slice(6)}`;
     const date = new Date(`${formatted}T00:00:00Z`);
-    return !formatted.startsWith("0000-") && Number.isFinite(date.getTime())
-        && date.toISOString().slice(0, 10) === formatted ? normalized : null;
+    if (formatted.startsWith("0000-") || !Number.isFinite(date.getTime()) || date.toISOString().slice(0, 10) !== formatted) {
+        return null;
+    }
+    if (normalized.length === 8) return normalized;
+    return normalizeBirthdayIsoDate(value, at)?.replace(/-/g, "") ?? null;
 }
 
 function accepted(jobId: string): { jobId: string; queued: true } {
@@ -149,13 +153,13 @@ export class StandaloneReceiptIssueService {
 
             const client = await tx.client.findFirst({ where: clientWhere, select: clientFields });
             if (!client) throw notFound();
-            const birthday = receiptBirthday(client.birthday);
+            const at = new Date();
+            const birthday = receiptBirthday(client.birthday, at);
             const phone = normalizePhone(client.phone);
             if (!birthday || !phone || !PhoneNumber.create(phone) || !issuer.name.trim() || client.serviceStatus === "terminated") {
                 throw missingFields();
             }
 
-            const at = new Date();
             const receipt = snapshot(client, copaymentReceivedDate, at);
             const jobId = randomUUID();
             const request: StandaloneReceiptRequest = {

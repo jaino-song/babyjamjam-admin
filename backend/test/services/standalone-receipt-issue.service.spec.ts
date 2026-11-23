@@ -30,11 +30,33 @@ function arrange() {
     const jobs = { findFirst: jest.fn().mockResolvedValue(null) };
     const transaction = jest.fn();
     const approval = { ensureApproved: jest.fn().mockResolvedValue(undefined) };
+    const hashBirthday = jest.fn().mockReturnValue("synthetic-birthday-hash");
+    const loader = new StandaloneReceiptTemplateLoader(storage);
     const service = new StandaloneReceiptIssueService(
         { branch, client, message_trigger_job: jobs, $transaction: transaction } as never,
-        approval as never, new StandaloneReceiptTemplateLoader(storage), {} as never, {} as never,
+        approval as never, loader, { hashBirthday } as never,
+        { ensureSystemRule: jest.fn() } as never,
     );
-    return { service, stored, storage, transaction, approval, client, jobs, provider, render };
+    return { service, stored, storage, transaction, approval, client, jobs, provider, render, hashBirthday, loader };
+}
+
+function arrangeLockedClient(birthday: string) {
+    const f = arrange();
+    jest.spyOn(f.loader, "load").mockResolvedValue(fixture);
+    f.client.findFirst.mockResolvedValueOnce({ id: input.clientId }).mockResolvedValueOnce({
+        id: input.clientId, name: "QA-고객", phone: "01000004121", birthday,
+        startDate: new Date("2025-12-01T00:00:00Z"), endDate: new Date("2025-12-31T00:00:00Z"),
+        fullPrice: "100000", grant: "70000", actualPrice: "30000", serviceStatus: "completed",
+    });
+    const insert = jest.fn().mockResolvedValue(1);
+    const tx = {
+        client: f.client,
+        message_trigger_job: f.jobs,
+        $queryRaw: jest.fn().mockResolvedValueOnce([{ name: "QA-지점" }]).mockResolvedValueOnce([{ id: input.clientId }]),
+        $executeRaw: insert,
+    };
+    f.transaction.mockImplementation((callback: (transaction: typeof tx) => Promise<unknown>) => callback(tx));
+    return { ...f, insert, freshInput: { ...input, requestId: randomUUID() } };
 }
 
 describe("StandaloneReceiptIssueService fresh-key admission", () => {
@@ -79,5 +101,39 @@ describe("StandaloneReceiptIssueService fresh-key admission", () => {
         expect(f.jobs.findFirst).not.toHaveBeenCalled();
         expect(f.storage.download).not.toHaveBeenCalled();
         expect(f.transaction).not.toHaveBeenCalled();
+    });
+
+    it.each([
+        ["legacy customer", "940304", "19940304"],
+        ["legacy leap day", "280229", "19280229"],
+        ["explicit full year", "19940304", "19940304"],
+    ])("hashes the canonical birthday for a %s on fresh issuance", async (_case, stored, canonical) => {
+        jest.setSystemTime(new Date("2026-11-24T03:00:00Z"));
+        const f = arrangeLockedClient(stored);
+
+        await expect(f.service.issue(f.freshInput)).resolves.toMatchObject({ queued: true });
+
+        expect(f.hashBirthday).toHaveBeenCalledTimes(1);
+        expect(f.hashBirthday).toHaveBeenCalledWith(canonical);
+        expect(f.insert).toHaveBeenCalledTimes(1);
+        expect(f.client.update).toHaveBeenCalledTimes(1);
+    });
+
+    it.each([
+        ["future day this year", "261125", "2026-11-24T03:00:00Z"],
+        ["invalid calendar date", "940230", "2026-11-24T03:00:00Z"],
+        ["invalid raw spacing", "9403 04", "2026-11-24T03:00:00Z"],
+        ["future leap day after the century pivot changes", "280229", "2028-01-15T03:00:00Z"],
+    ])("refuses a %s before hashing or writing", async (_case, stored, now) => {
+        jest.setSystemTime(new Date(now));
+        const f = arrangeLockedClient(stored);
+
+        await expect(f.service.issue(f.freshInput)).rejects.toMatchObject({
+            status: 400, response: { code: "MISSING_RECEIPT_FIELDS" },
+        });
+
+        expect(f.hashBirthday).not.toHaveBeenCalled();
+        expect(f.insert).not.toHaveBeenCalled();
+        expect(f.client.update).not.toHaveBeenCalled();
     });
 });
