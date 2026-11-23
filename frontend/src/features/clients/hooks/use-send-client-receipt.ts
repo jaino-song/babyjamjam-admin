@@ -1,57 +1,103 @@
-'use client';
+"use client";
 
-import { useRef, useState } from 'react';
-import { useQueryClient } from '@tanstack/react-query';
-import { getUserErrorMessage } from '@babyjamjam/shared';
+import { useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
+import {
+  isCopaymentReceivedDate,
+  RECEIPT_SEND_SUCCESS,
+  requestStandaloneReceipt,
+} from "@babyjamjam/shared";
+import { formatIsoDateInput } from "@babyjamjam/shared/utils/date-input";
 
-import { messageTriggerKeys } from '@/features/message-triggers/hooks/keys';
-import { useToast } from '@/hooks/use-toast';
-import { describeReceiptLinkError } from '@/lib/receipt-link';
-import { eformsignApi } from '@/services/api';
+import { messageTriggerKeys } from "@/features/message-triggers/hooks/keys";
+import { useToast } from "@/hooks/use-toast";
+import { clientKeys } from "@/features/clients/hooks/keys";
+import { isBranchContextAligned } from "@/features/system-templates/branch-context";
 
-export function useSendClientReceipt(): {
-  isSending: boolean;
-  sendReceipt: (clientId: number) => Promise<void>;
-} {
+interface ReceiptDraft {
+  scope: { branchId: string | null; clientId: number | null };
+  editedDate: string | null;
+  error: string | null;
+  isPending: boolean;
+}
+
+export function useSendClientReceipt(branchId: string | null, clientId: number | null, savedDate?: string | null) {
   const { toast } = useToast();
   const queryClient = useQueryClient();
-  const [isSending, setIsSending] = useState(false);
-  const sendingRef = useRef(false);
+  const scope = useMemo(() => ({ branchId, clientId }), [branchId, clientId]);
+  const activeScope = useRef<typeof scope | null>(null);
+  const pendingScope = useRef<typeof scope | null>(null);
+  const [draft, setDraft] = useState<ReceiptDraft | null>(null);
 
-  const sendReceipt = async (clientId: number): Promise<void> => {
-    if (sendingRef.current) return;
-    sendingRef.current = true;
-    setIsSending(true);
+  useLayoutEffect(() => {
+    activeScope.current = scope;
+    return () => { activeScope.current = null; };
+  }, [scope]);
 
-    try {
-      // 클릭한 고객을 고정하고 서버가 준비한 문서와 수신자를 함께 검증한다.
-      const prepared = await eformsignApi.prepareReceiptLink(clientId);
-      if (prepared.clientId !== clientId || !prepared.documentId || !prepared.recipientPhone) {
-        throw new Error('Receipt preparation identity mismatch');
+  if (draft && draft.scope !== scope) setDraft(null);
+  const activeDraft = draft?.scope === scope ? draft : null;
+  const date = activeDraft?.editedDate ?? savedDate ?? "";
+  const canSubmit = Boolean(branchId && clientId && isCopaymentReceivedDate(date));
+
+  const open = () => {
+    if (!clientId || !isBranchContextAligned(branchId) || activeScope.current !== scope || activeDraft) return;
+    setDraft({ scope, editedDate: null, error: null, isPending: false });
+  };
+
+  const dismiss = () => {
+    if (activeScope.current !== scope || pendingScope.current === scope) return;
+    setDraft(null);
+  };
+
+  const editDate = (value: string) => {
+    if (!activeDraft || activeDraft.isPending || activeScope.current !== scope || pendingScope.current === scope) return;
+    setDraft({ ...activeDraft, editedDate: formatIsoDateInput(value), error: null });
+  };
+
+  const submit = async (): Promise<void> => {
+    if (!activeDraft || activeDraft.isPending || !canSubmit || !branchId || !clientId || !isBranchContextAligned(branchId)
+      || activeScope.current !== scope || pendingScope.current === scope) return;
+
+    pendingScope.current = scope;
+    setDraft({ ...activeDraft, isPending: true, error: null });
+
+    const outcome = await requestStandaloneReceipt(branchId, clientId, date);
+    if (pendingScope.current === scope) pendingScope.current = null;
+    const sameBranch = isBranchContextAligned(branchId);
+
+    if (outcome.accepted) {
+      const refetchType = sameBranch ? "active" : "none";
+      void queryClient.invalidateQueries({ queryKey: clientKeys.detail(clientId, branchId), exact: true, refetchType });
+      void queryClient.invalidateQueries({ queryKey: clientKeys.allClients(branchId), exact: true, refetchType });
+      if (sameBranch) {
+        void queryClient.invalidateQueries({ queryKey: messageTriggerKeys.upcoming() });
+        void queryClient.invalidateQueries({ queryKey: messageTriggerKeys.clientHistory(clientId) });
       }
-      const result = await eformsignApi.sendReceiptLink(prepared.documentId, {
-        clientId,
-        recipientPhone: prepared.recipientPhone,
-      });
-      // 서버가 방금 만든 대기 job이 30초 폴링을 기다리지 않고 알림 발송 목록에 바로 보이게 한다.
-      void queryClient.invalidateQueries({ queryKey: messageTriggerKeys.upcoming() });
-      void queryClient.invalidateQueries({ queryKey: messageTriggerKeys.clientHistory(clientId) });
-      toast({
-        variant: 'success',
-        title: '본인부담금 영수증 발송 예약',
-        description: `${result.clientName} 산모님께 서비스 종료 안내가 1분 내 발송됩니다.`,
-      });
-    } catch (error) {
-      toast({
-        variant: 'destructive',
-        title: '본인부담금 영수증 발송 실패',
-        description: getUserErrorMessage(describeReceiptLinkError(error)),
-      });
-    } finally {
-      sendingRef.current = false;
-      setIsSending(false);
+    }
+
+    if (activeScope.current !== scope) return;
+    if (!sameBranch) {
+      setDraft(null);
+      return;
+    }
+    if (outcome.accepted) {
+      setDraft(null);
+      toast({ variant: "success", title: RECEIPT_SEND_SUCCESS });
+    } else {
+      setDraft({ ...activeDraft, editedDate: date, isPending: false, error: outcome.message });
     }
   };
 
-  return { isSending, sendReceipt };
+  return {
+    open,
+    dialog: activeDraft ? {
+      date,
+      canSubmit,
+      error: activeDraft.error,
+      isPending: activeDraft.isPending,
+      editDate,
+      dismiss,
+      submit,
+    } : null,
+  };
 }

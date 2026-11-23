@@ -29,7 +29,7 @@ import { useConfirmBooking } from "@/features/clients";
 import { canEditServiceRecordSchedule } from "@/features/clients/types";
 import { eformsignApi, type EformsignLinkConfirmation } from "@/services/api";
 import { LoadingState } from "@/components/app/ui/LoadingState";
-import { Button, ButtonLoadingContent } from "@/components/ui/button";
+import { Button } from "@/components/ui/button";
 import { toast } from "@/hooks/use-toast";
 import { canManageBranchFromAuthQuery } from "@/lib/auth/branch-role-policy";
 import { formatDateForDisplay } from "@/lib/date/format-date-for-display";
@@ -77,6 +77,7 @@ import { scheduleText } from "@/components/app/service-record/service-record-sch
 import { useLocale } from "@/providers/LocaleProvider";
 import type { ContractReissueOptions } from "@/hooks/useIssueContract";
 import { useSendClientReceipt } from "@/hooks/use-send-client-receipt";
+import { SendClientReceiptDialog } from "./SendClientReceiptDialog";
 import { useGetAuthUser } from "@/hooks/useGetAuthUser";
 import { useResendMessageTriggerJob, useRetryMessageHistory } from "@/features/message-triggers/hooks/use-message-triggers";
 import { canRetryFailedHistory, getResendableJobId, retryMessageHistory } from "@/features/message-triggers/retry-history";
@@ -817,8 +818,7 @@ export function ClientDetailContent({
   const locale = useLocale();
   const [resetServiceRecordUrl, setResetServiceRecordUrl] = useState<string | null>(null);
   const [isResettingLink, setIsResettingLink] = useState(false);
-  const [receiptSendConfirmOpen, setReceiptSendConfirmOpen] = useState(false);
-  const { isSending: isSendingReceipt, sendReceipt } = useSendClientReceipt();
+  const receipt = useSendClientReceipt(client.id);
   const confirmBookingMutation = useConfirmBooking();
   const confirmBookingInFlightRef = useRef(false);
   const [confirmBookingOpen, setConfirmBookingOpen] = useState(false);
@@ -874,11 +874,6 @@ export function ClientDetailContent({
         variant: "destructive",
       });
     }
-  };
-
-  const handleConfirmReceiptSend = async () => {
-    await sendReceipt(client.id);
-    setReceiptSendConfirmOpen(false);
   };
 
   // 고객-04: the client stays 예약 전 until an admin presses [예약 확정]. The open detail renders from
@@ -1195,17 +1190,12 @@ export function ClientDetailContent({
                 수정
               </DropdownMenuItem>
               <DropdownMenuItem
-                disabled={isSendingReceipt}
-                aria-busy={isSendingReceipt || undefined}
-                data-loading={isSendingReceipt ? "" : undefined}
-                onClick={() => setReceiptSendConfirmOpen(true)}
-                className="relative min-h-[44px] gap-2 rounded-md px-3 py-2 text-[0.82rem] leading-none"
+                onClick={receipt.open}
+                className="min-h-[44px] gap-2 rounded-md px-3 py-2 text-[0.82rem] leading-none"
                 data-component={`${dataComponent}_header_menu_send-copayment-receipt`}
               >
-                <ButtonLoadingContent loading={isSendingReceipt} loadingLabel="영수증 발송 중">
-                  <Send className="size-[15px]" strokeWidth={2} />
-                  본인부담금 영수증 발송
-                </ButtonLoadingContent>
+                <Send className="size-[15px]" strokeWidth={2} />
+                본인부담금 영수증 발송
               </DropdownMenuItem>
               {canManageBranchFeatures && canEditServiceRecordSchedule(client) ? (
                 <DropdownMenuItem
@@ -1316,22 +1306,12 @@ export function ClientDetailContent({
         onApprove={() => void handleResetServiceRecordLink()}
       />
 
-      <ApprovalTwoButtonModal
-        open={receiptSendConfirmOpen}
-        onOpenChange={(open) => {
-          if (!open && !isSendingReceipt) {
-            setReceiptSendConfirmOpen(false);
-          }
-        }}
-        data-component={`${dataComponent}_receipt-send-approval-modal`}
-        title="본인부담금 영수증 전송"
-        description={`${client.name} 산모님께 본인부담금 영수증 안내 메시지를 보낼까요?`}
-        isDescriptionVisuallyHidden={false}
-        approvalLabel="발송하기"
-        pendingLabel="발송 중"
-        isPending={isSendingReceipt}
-        onApprove={() => void handleConfirmReceiptSend()}
-      />
+      {receipt.dialog ? (
+        <SendClientReceiptDialog
+          data-component={`${dataComponent}_receipt-send-dialog`}
+          dialog={receipt.dialog}
+        />
+      ) : null}
 
       {recordScheduleSheetOpen ? (
         <ServiceRecordScheduleSheet
