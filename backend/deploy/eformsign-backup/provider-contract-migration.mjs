@@ -107,6 +107,20 @@ export async function preserveMigration(stateDir, journal, kind, detach = true) 
     }
 }
 
+export async function restorePreRasterMigration(stateDir, expected, { checkOnly = false } = {}) {
+    const active = journalPath(stateDir);
+    const record = await recordsPath(stateDir, 'pre-raster', expected);
+    const saved = await readPreRasterMigration(stateDir, expected);
+    if (!isDeepStrictEqual(saved, expected)) refuse('invalid_journal_record');
+    const present = await readMigration(stateDir);
+    if (!present && !checkOnly) await fs.link(record, active);
+    const [from, to] = await Promise.all([probe(record), probe(active)]);
+    if (!from?.isFile() || !to?.isFile() || from.dev !== to.dev || from.ino !== to.ino) {
+        refuse('migration_record_collision');
+    }
+    if (!checkOnly) await syncDirectory(dirname(active));
+}
+
 function localFiles(archive, finalPath) {
     async function inspect(path, createParents = false) {
         const final = finalPath(path);
@@ -213,10 +227,12 @@ function driveFiles(settings, timeout, lockFd) {
     };
 }
 
-function verifyUnshared(state, key, paths) {
+function verifyUnshared(state, key, paths, raster = false) {
+    const allocationKey = raster ? (path) => path.normalize('NFC') : (path) => path;
+    const endpoints = new Set(paths.map(allocationKey));
     for (const [other, entry] of Object.entries(state.units)) {
-        if (other !== key && paths.some((path) => Object.hasOwn(entry.files, path)
-            || entry.reservedPaths?.includes(path))) refuse('shared_archive_path');
+        if (other !== key && [...Object.keys(entry.files), ...(entry.reservedPaths ?? [])]
+            .some((path) => endpoints.has(allocationKey(path)))) refuse('shared_archive_path');
     }
 }
 
@@ -272,19 +288,61 @@ export async function replayRasterMigration({ settings, archive, state, finalPat
         for (const file of move.files) {
             const [source, target] = reverse ? [file.new, file.old] : [file.old, file.new];
             const progress = file[direction];
-            verifyUnshared(state, move.key, [source, target]);
+            verifyUnshared(state, move.key, [source, target], true);
             if (!progress?.removeLocal || !progress.localReady || await local.inspect(source)) refuse('unverified_raw_removal');
             await verifyOwnedTarget(archive, local, journal, file, target, progress, reverse);
         }
     }
-    await mirror.prepare({ moves });
-    await mirror.publish({ moves });
+    await mirror.prepare({ moves, movesOnly: true });
+    await mirror.publish({ moves, movesOnly: true });
     journal.raster.pending = false;
     await writeJson(journalPath(settings.stateDir), journal);
 }
 
+async function readRasterBatches(stateDir, journal, settings) {
+    const records = resolve(journalDir(stateDir), 'records');
+    const info = await probe(records);
+    const journals = journal ? [journal] : [];
+    if (info) {
+        if (!info.isDirectory() || !ownedPrivate(info)) refuse('unsafe_journal_records');
+        for (const name of (await fs.readdir(records)).sort()) {
+            const match = /^(raster-batch|post-raster)-[a-f\d-]{36}-(?:applied|rolledBack)\.json$/.exec(name);
+            if (!match) continue;
+            const recorded = await readJournal(resolve(records, name));
+            if (!recorded || name !== `${match[1]}-${recorded.id}-${recorded.phase}.json`) refuse('invalid_journal_record');
+            assertRasterMigration(recorded, settings);
+            journals.push(recorded);
+        }
+    }
+    return journals;
+}
+
+// Only a completed inverse batch can authorize reusing its retired forward destinations.
+function retiredReclaims(journals, key, before, base, retired) {
+    let authorized = null;
+    for (const saved of journals) {
+        if (saved.phase !== 'rolledBack' || saved.raster.pending) continue;
+        for (const move of saved.moves) {
+            if (move.key !== key || !isDeepStrictEqual(move.before, before)
+                || move.after.providerBase.normalize('NFC') !== base.normalize('NFC')) continue;
+            const destinations = move.files.map(({ new: path }) => path);
+            if (!destinations.every((path) => retired.has(path.normalize('NFC')))) continue;
+            const normalized = new Set(destinations.map((path) => path.normalize('NFC')));
+            const endpoints = ({ files }) => files.map(({ old, new: path, hash, bytes }) => ({ old, path, hash, bytes }));
+            const foreignClaim = ({ moves }) => moves.some((claim) =>
+                claim.files.some((file) => normalized.has(file.new.normalize('NFC')))
+                && (claim.key !== key || !isDeepStrictEqual(claim.before, before)
+                    || !isDeepStrictEqual(endpoints(claim), endpoints(move))));
+            if (journals.some(foreignClaim)) continue;
+            if (authorized && !isDeepStrictEqual(authorized.paths, destinations)) refuse('ambiguous_retired_paths');
+            authorized = { paths: destinations, base: move.after.providerBase };
+        }
+    }
+    return authorized;
+}
+
 export async function migrateProviderContracts(context) {
-    const { settings, archive, statePath, state, reserved, saveState, docs, listingComplete, finalPath, timeout, lockFd, log, mirror } = context;
+    const { settings, archive, statePath, state, reserved, retired, saveState, docs, listingComplete, finalPath, timeout, lockFd, log, mirror } = context;
     const dryRun = settings.action === 'dry-run';
     const reverse = settings.action === 'rollback';
     let journal = context.migration;
@@ -315,6 +373,8 @@ export async function migrateProviderContracts(context) {
     const moves = reverse || pending ? (journal?.phase === 'rolledBack' ? [] : journal?.moves ?? []) : [];
     let skipped = 0;
     if (!reverse && !pending) {
+        const batches = mirror && retired.size ? await readRasterBatches(stateDir, journal, settings) : [];
+        const allocationKey = mirror ? (path) => path.normalize('NFC') : (path) => path;
         for (const [key, doc] of listed) {
             const before = state.units[key];
             const base = providerBase(doc);
@@ -325,19 +385,25 @@ export async function migrateProviderContracts(context) {
             if (!current || before.fingerprint !== current.fingerprint
                 || old.some((path, i) => before.files[path] !== current.files[i].byteSize)) { skipped += 1; continue; }
 
+            const reclaims = retiredReclaims(batches, key, before, base, retired);
             let destinations;
-            for (let n = 1; ; n += 1) {
-                destinations = pairPaths(providerFolder, base, n);
-                if (destinations.every((path) => !reserved.has(path))) break;
+            if (reclaims && reclaims.paths.every((path) => !reserved.has(allocationKey(path)))) {
+                destinations = reclaims.paths;
+            } else {
+                for (let n = 1; ; n += 1) {
+                    destinations = pairPaths(providerFolder, base, n);
+                    if (destinations.every((path) => !reserved.has(allocationKey(path)) && !retired?.has(allocationKey(path)))) break;
+                }
             }
             const files = old.map((path, index) => ({
                 old: path, new: destinations[index], hash: current.files[index].sha256.toLowerCase(),
                 bytes: before.files[path], forward: {}, reverse: {},
             }));
-            const after = { ...before, providerBase: base, files: Object.fromEntries(files.map((file) => [file.new, file.bytes])),
-                reservedPaths: [...new Set([...(before.reservedPaths ?? []), ...old])] };
+            const allocatedBase = destinations === reclaims?.paths ? reclaims.base : base;
+            const after = { ...before, providerBase: allocatedBase,
+                files: Object.fromEntries(files.map((file) => [file.new, file.bytes])), reservedPaths: [...new Set([...(before.reservedPaths ?? []), ...old])] };
             moves.push({ key, before, after, files });
-            destinations.forEach((path) => reserved.add(path));
+            destinations.forEach((path) => reserved.add(allocationKey(path)));
         }
     }
     if (moves.length === 0) { log({ migration: settings.action, pairs: 0, skipped }); return; }
@@ -350,11 +416,13 @@ export async function migrateProviderContracts(context) {
         const [from, to] = reverse ? [move.after, move.before] : [move.before, move.after];
         const published = pending && isDeepStrictEqual(entry, to);
         if (!published && !isDeepStrictEqual(entry, from)) refuse('allocation_changed');
-        verifyUnshared(state, move.key, [...Object.keys(from.files), ...Object.keys(to.files)]);
+        verifyUnshared(state, move.key, [...Object.keys(from.files), ...Object.keys(to.files)], Boolean(mirror));
         if (!reverse && !resumeApply) {
             const doc = listed.get(move.key);
             const current = doc && listingFingerprint(doc);
-            if (current?.fingerprint !== move.before.fingerprint || providerBase(doc) !== move.after.providerBase
+            if (current?.fingerprint !== move.before.fingerprint || (mirror
+                ? providerBase(doc)?.normalize('NFC') !== move.after.providerBase.normalize('NFC')
+                : providerBase(doc) !== move.after.providerBase)
                 || current.files.some((file, index) => file.byteSize !== move.files[index].bytes)) refuse('listing_changed');
         }
 
@@ -385,21 +453,16 @@ export async function migrateProviderContracts(context) {
             } else if (published || progress.destination) refuse('missing_drive_target');
         }
     }
+    if (mirror && !pending) {
+        const options = { dryRun: true, moves: rasterMoves(moves, reverse ? 'reverse' : 'forward'), movesOnly: true, preMove: true };
+        await mirror.prepare(options);
+        await mirror.publish(options);
+    }
     if (dryRun) {
-        if (mirror) {
-            await mirror.prepare({ dryRun: true });
-            await mirror.publish({ dryRun: true, moves: rasterMoves(moves, 'forward') });
-        }
         log({ migration: settings.action, pairs: moves.length, skipped });
         return;
     }
     if (!pending) {
-        if (mirror) {
-            // Verify a baseline derivative before changing any private name.
-            await mirror.prepare();
-            await mirror.publish();
-            await mirror.publish({ dryRun: true, moves: rasterMoves(moves, reverse ? 'reverse' : 'forward') });
-        }
         if (reverse) {
             journal.phase = 'rollingBack';
         } else {
@@ -452,7 +515,7 @@ export async function migrateProviderContracts(context) {
 
         for (const file of move.files) {
             const [source, target, progress] = sides(file);
-            verifyUnshared(state, move.key, [source]);
+            verifyUnshared(state, move.key, [source], Boolean(mirror));
             if (Object.hasOwn(state.units[move.key].files, source)) refuse('active_archive_path');
             await verifyOwnedTarget(archive, local, journal, file, target, progress, reverse);
             if (drive) {

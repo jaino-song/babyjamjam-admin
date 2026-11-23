@@ -107,7 +107,13 @@ process.exit(child.status ?? 1);
 const mirror = String.raw`
 import * as fs from 'node:fs/promises';
 import { join, dirname } from 'node:path';
-export async function prepareRasterArchive() {}
+export async function inspectRasterArchive({ stateDir }) {
+    const manifestPresent = await fs.stat(join(stateDir, 'fixture-mirror')).then(() => true, () => false);
+    return { manifestPresent, unpublished: !manifestPresent, retiredPaths: [], phase: manifestPresent ? 'active' : null };
+}
+export async function prepareRasterArchive({ stateDir }, { dryRun }) {
+    if (!dryRun) await fs.writeFile(join(stateDir, 'fixture-mirror'), '');
+}
 export async function publishRasterArchive({ originalArchiveDir, archiveDir }, { dryRun }) {
     if (dryRun) return;
     const paths = await fs.readdir(originalArchiveDir, { recursive: true });

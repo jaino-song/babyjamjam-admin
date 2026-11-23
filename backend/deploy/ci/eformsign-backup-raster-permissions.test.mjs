@@ -345,6 +345,7 @@ function check({ archiveDir, stateDir }, { dryRun, lockFd }) {
     assert.equal(statSync(stateDir + '/state.json').mode & 0o7777, 0o600);
     assert.equal(fstatSync(lockFd).mode & 0o7777, 0o600);
 }
+export const inspectRasterArchive = () => ({ manifestPresent: false, unpublished: true, retiredPaths: [], phase: null });
 export const prepareRasterArchive = check;
 export const publishRasterArchive = check;
 export const rollbackRasterArchive = () => { throw Error('unexpected rollback'); };
