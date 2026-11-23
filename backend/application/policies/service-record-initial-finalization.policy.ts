@@ -93,10 +93,12 @@ export function eformsignStatusMatchesSql(status: Prisma.Sql, codes: ReadonlySet
         (${Prisma.join(eformsignStatusStorageValues(codes))})`;
 }
 
-// The chunk survives a scrubbed document. Bind the evaluator record to this exact tombstone,
-// so a write for one chunk (or for an earlier purge of the same chunk) cannot clear another.
+// Chunk last_error stores ordinary errors before linking and evaluator evidence after a 049 purge.
+// Other writers must preserve the evidence while the tombstone is linked. Only a new link may reset it.
+// Match the exact tombstone timestamp so a second purge needs its own evaluation.
+export const INITIAL_TOMBSTONE_EVALUATION_PREFIX = "INITIAL_TOMBSTONE_EVALUATED:";
 export const initialTombstoneEvaluationRecordSql =
-    Prisma.sql`'INITIAL_TOMBSTONE_EVALUATED:' || EXTRACT(EPOCH FROM doc.updated_date)::text`;
+    Prisma.sql`${INITIAL_TOMBSTONE_EVALUATION_PREFIX}::text || EXTRACT(EPOCH FROM doc.updated_date)::text`;
 export const initialTombstoneEvaluatedSql =
     Prisma.sql`COALESCE(chunk.last_error = ${initialTombstoneEvaluationRecordSql}, false)`;
 

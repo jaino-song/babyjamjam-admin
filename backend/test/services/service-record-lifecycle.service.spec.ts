@@ -4,11 +4,13 @@ import {
     SERVICE_RECORD_CASE_STATUS,
     ServiceRecordLifecycleService,
 } from "application/services/service-record-lifecycle.service";
+import { INITIAL_TOMBSTONE_EVALUATION_PREFIX } from "application/policies/service-record-initial-finalization.policy";
 import {
     getServiceRecordFinalizationDueAt,
 } from "domain/constants/service-record-link-message";
 import { PrismaService } from "infrastructure/database/prisma.service";
 import { HolidayCalendarService } from "application/services/holiday-calendar.service";
+import { INITIAL_PROVIDER_SETTLE_MS } from "infrastructure/database/utils/service-record-initial-recovery-sql";
 import { KOREAN_HOLIDAY_CALENDAR, KR_BUILTIN_CALENDAR, createKrBusinessDayCalendar } from "domain/utils/business-days";
 import { createHolidayCalendarStub } from "../utils/holiday-calendar.stub";
 
@@ -2756,6 +2758,7 @@ describe("INITIAL chunk terminal outcome", () => {
     function setup(options: {
         status?: string; step?: string; error?: string | null; documentStatus?: string;
         voidedAt?: Date | null; unlinked?: boolean; cas?: number; scope?: unknown; siblingTombstone?: boolean; superseded?: boolean;
+        tombstoneSettled?: boolean;
     } = {}) {
         const state = {
             id: "state-1", generation: "generation-1", version: 2,
@@ -2771,8 +2774,10 @@ describe("INITIAL chunk terminal outcome", () => {
                     { documentId: rawQueryDocumentId, chunkIndex: 1, chunkCount: 2 },
                     { documentId: options.unlinked ? null : "sibling", chunkIndex: 2, chunkCount: 2 },
                 ])
-                .mockResolvedValueOnce([{ documentId: rawQueryDocumentId, statusType: options.documentStatus ?? "049", voidedAt: options.voidedAt ?? null, tombstoneEvaluated: false },
-                    ...(options.siblingTombstone ? [{ documentId: "sibling", statusType: "049", voidedAt: null, tombstoneEvaluated: false }] : [])]),
+                .mockResolvedValueOnce([{ documentId: rawQueryDocumentId, statusType: options.documentStatus ?? "049", voidedAt: options.voidedAt ?? null,
+                    tombstoneEvaluated: false, tombstoneSettled: options.tombstoneSettled ?? true },
+                    ...(options.siblingTombstone ? [{ documentId: "sibling", statusType: "049", voidedAt: null,
+                        tombstoneEvaluated: false, tombstoneSettled: options.tombstoneSettled ?? true }] : [])]),
             $executeRaw: jest.fn().mockImplementation(async (query: { strings: string[]; values: unknown[] }) => {
                 if (options.cas === 0) return 0;
                 if (query.strings.join("").includes("UPDATE service_record_revision_document_state")) {
@@ -2790,7 +2795,7 @@ describe("INITIAL chunk terminal outcome", () => {
         deletedDocuments: deletedStatusBeforePurge === undefined ? undefined : [{ documentId: rawQueryDocumentId, statusType: deletedStatusBeforePurge }],
     });
     const codes = (f: ReturnType<typeof setup>) => f.tx.$executeRaw.mock.calls.flatMap(([query]) =>
-        query.strings.join("").includes("INITIAL_TOMBSTONE_EVALUATED:") ? [] : [query.values[0]]);
+        query.values.includes(INITIAL_TOMBSTONE_EVALUATION_PREFIX) ? [] : [query.values[0]]);
 
     it("leaves a superseded INITIAL version untouched", async () => {
         const f = setup({ superseded: true });
@@ -2812,7 +2817,7 @@ describe("INITIAL chunk terminal outcome", () => {
         expect(documentSql).toContain("doc.branch_id = chunk.branch_id");
         expect(documentSql).toContain("doc.revision_id = chunk.revision_id");
         expect(documentSql).toContain("doc.revision_id IS NULL AND lower(btrim(doc.status_type");
-        expect(f.tx.$executeRaw.mock.calls[2]![0].strings.join("")).toContain("INITIAL_TOMBSTONE_EVALUATED:");
+        expect(f.tx.$executeRaw.mock.calls[2]![0].values).toContain(INITIAL_TOMBSTONE_EVALUATION_PREFIX);
     });
     it.each(["dispatch_authorized", "creating"])("defers a purged in-progress chunk while the state step is %s", async step => {
         const f = setup({ step });
@@ -2860,7 +2865,7 @@ describe("INITIAL chunk terminal outcome", () => {
         expect(f.state.lastErrorCode).toBe(expectedCode);
         if (expectedCode === originalCode) {
             expect(f.tx.$executeRaw).toHaveBeenCalledTimes(1);
-            expect(f.tx.$executeRaw.mock.calls[0]![0].strings.join("")).toContain("INITIAL_TOMBSTONE_EVALUATED:");
+            expect(f.tx.$executeRaw.mock.calls[0]![0].values).toContain(INITIAL_TOMBSTONE_EVALUATION_PREFIX);
         }
     });
     it.each(["049", "999"])("records unknown deletion without marking the tombstone evaluated for captured status %s", async statusBeforePurge => {
@@ -2932,13 +2937,39 @@ describe("INITIAL chunk terminal outcome", () => {
         const evaluate = jest.spyOn(service, "evaluateInitialSnapshotTerminalOutcome").mockResolvedValue(true);
         const shouldContinue = jest.fn().mockReturnValueOnce(true).mockReturnValueOnce(false);
         await expect(service.healInitialSnapshotTerminalOutcomes({ branchId: rawQueryBranchId, shouldContinue })).resolves.toBe(1);
-        expect(evaluate.mock.calls).toEqual([[{ branchId: rawQueryBranchId, documentId: "old-tombstone" }]]);
+        expect(evaluate.mock.calls).toEqual([[{ branchId: rawQueryBranchId, documentId: "old-tombstone", fromSweep: true }]]);
         const query = prisma.$queryRaw.mock.calls[0]![0] as { strings: string[]; values: unknown[] };
+        expect(query.strings.join("?")).toContain("doc.updated_date <= now() - (?::int * interval '1 millisecond')");
+        expect(query.values).toContain(INITIAL_PROVIDER_SETTLE_MS);
         expect(query.strings.join(" ")).toContain("state.status IN ('processing', 'manual_review')");
         expect(query.strings.join(" ")).toContain("state.status = 'failed' AND state.last_error_code IN");
-        expect(query.strings.join(" ")).toContain("chunk.last_error = 'INITIAL_TOMBSTONE_EVALUATED:'");
+        expect(query.strings.join(" ")).toContain("chunk.last_error = ");
+        expect(query.values).toContain(INITIAL_TOMBSTONE_EVALUATION_PREFIX);
         expect(query.values).toEqual(expect.arrayContaining(["049", "49", "doc_delete", "doc_reject_outsider"]));
         expect(query.strings.join(" ")).toContain("owner.current_revision_id = chunk.revision_id");
+    });
+    it.each([
+        { status: "processing", settled: false, expectedHealed: false },
+        { status: "processing", settled: true, expectedHealed: true },
+        { status: "failed", settled: false, expectedHealed: false },
+        { status: "failed", settled: true, expectedHealed: true },
+    ])("rechecks a tombstone discovered by the sweep with $status and settled=$settled", async ({ status, settled, expectedHealed }) => {
+        const f = setup({
+            status, tombstoneSettled: settled,
+            error: status === "failed" ? "SERVICE_RECORD_REVISION_DOCUMENT_REJECTED" : undefined,
+        });
+        const healed = await f.service.evaluateInitialSnapshotTerminalOutcome({
+            branchId: rawQueryBranchId, documentId: rawQueryDocumentId, fromSweep: true,
+        });
+        expect(healed).toBe(expectedHealed);
+        expect(f.tx.$executeRaw).toHaveBeenCalledTimes(expectedHealed ? 2 : 0);
+    });
+    it("defers a terminal sibling while a young tombstone awaits the post-commit evaluator", async () => {
+        const f = setup({ documentStatus: "031", siblingTombstone: true, tombstoneSettled: false });
+        await expect(f.service.evaluateInitialSnapshotTerminalOutcome({
+            branchId: rawQueryBranchId, documentId: rawQueryDocumentId, fromSweep: true,
+        })).resolves.toBe(false);
+        expect(f.tx.$executeRaw).not.toHaveBeenCalled();
     });
 });
 

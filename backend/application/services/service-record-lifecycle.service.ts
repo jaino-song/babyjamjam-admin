@@ -32,6 +32,7 @@ import { withClientServiceDays } from "domain/utils/client-service-days";
 import { serviceRecordSessionCount } from "domain/utils/service-record-session-count";
 import { codeOnlyProblemBody } from "application/utils/problem-bodies";
 import { PrismaService } from "infrastructure/database/prisma.service";
+import { INITIAL_PROVIDER_SETTLE_MS } from "infrastructure/database/utils/service-record-initial-recovery-sql";
 import {
     lockServiceRecordCaseForWrite,
     lockServiceRecordWriteSet,
@@ -70,7 +71,10 @@ type InitialSnapshotTerminalOutcomeInput = {
     documentId: string;
     /** Captured before purge by staff delete or its vendor retry. */
     deletedDocuments?: ReadonlyArray<{ documentId: string; statusType: string }>;
+    fromSweep?: boolean;
 };
+
+const initialTombstoneSettledSql = Prisma.sql`doc.updated_date <= now() - (${INITIAL_PROVIDER_SETTLE_MS}::int * interval '1 millisecond')`;
 type ServiceRecordCaseRecord = Prisma.service_record_caseGetPayload<Prisma.service_record_caseDefaultArgs>;
 
 type LockedServiceRecordSnapshot = {
@@ -1120,10 +1124,11 @@ export class ServiceRecordLifecycleService {
         `);
         if (!chunks.some(chunk => chunk.documentId === params.documentId)) return false;
         const documents = await tx.$queryRaw<Array<{
-            documentId: string; statusType: string; voidedAt: Date | null; tombstoneEvaluated: boolean;
+            documentId: string; statusType: string; voidedAt: Date | null; tombstoneEvaluated: boolean; tombstoneSettled: boolean;
         }>>(Prisma.sql`
             SELECT doc.document_id AS "documentId", doc.status_type AS "statusType", doc.voided_at AS "voidedAt",
-                ${initialTombstoneEvaluatedSql} AS "tombstoneEvaluated"
+                ${initialTombstoneEvaluatedSql} AS "tombstoneEvaluated",
+                ${params.fromSweep ? initialTombstoneSettledSql : Prisma.sql`true`} AS "tombstoneSettled"
             FROM service_record_snapshot_chunk AS chunk
             JOIN eformsign_doc AS doc ON doc.document_id = chunk.document_id
             WHERE chunk.branch_id = ${params.branchId}::uuid AND chunk.service_record_case_id = ${owner.id}::uuid
@@ -1155,6 +1160,9 @@ export class ServiceRecordLifecycleService {
         // N9-1: 완료 chunk 삭제 증거는 미연결 chunk나 이전 부재 판정보다 우선한다.
         if (state.lastErrorCode === SERVICE_RECORD_INITIAL_COMPLETED_DOCUMENT_DELETED) return false;
         const wasFailed = state.status === "failed";
+        // A sibling can be purged after candidate discovery. Check again with the document rows locked.
+        if (params.fromSweep && tombstones.some(doc => !doc.tombstoneSettled
+            && (doc === document || (!wasFailed && unknownDeletion(doc))))) return false;
         if (!completedDeletion) {
             if (wasFailed) {
                 if (!deleted || !INITIAL_TERMINAL_PROVIDER_FAILURE_CODES.has(state.lastErrorCode ?? "")) return false;
@@ -1212,6 +1220,7 @@ export class ServiceRecordLifecycleService {
     }
 
     async healInitialSnapshotTerminalOutcomes(options: { branchId?: string; shouldContinue?: () => boolean } = {}): Promise<number> {
+        const tombstoneSql = eformsignStatusMatchesSql(Prisma.sql`doc.status_type`, EFORMSIGN_TOMBSTONE_STATUSES);
         const candidates = await this.prisma.$queryRaw<Array<{ branchId: string; documentId: string }>>(Prisma.sql`
             SELECT DISTINCT chunk.branch_id AS "branchId", chunk.document_id AS "documentId"
             FROM service_record_snapshot_chunk AS chunk
@@ -1224,11 +1233,12 @@ export class ServiceRecordLifecycleService {
             WHERE state.operation = 'record_snapshot'
               AND state.workflow_scope->>'generationKind' = 'INITIAL_FINALIZATION'
               AND ${newestInitialFinalizationStateSql("state")}
+              AND (NOT ${tombstoneSql} OR ${initialTombstoneSettledSql})
               AND (
                 (state.status IN ('processing', 'manual_review') AND
                   (${eformsignStatusMatchesSql(Prisma.sql`doc.status_type`, EFORMSIGN_REJECTED_STATUS_CODES)} OR doc.voided_at IS NOT NULL))
                 OR (state.status = 'failed' AND state.last_error_code IN (${Prisma.join([...INITIAL_TERMINAL_PROVIDER_FAILURE_CODES])})
-                  AND ${eformsignStatusMatchesSql(Prisma.sql`doc.status_type`, EFORMSIGN_TOMBSTONE_STATUSES)}
+                  AND ${tombstoneSql}
                   AND NOT ${initialTombstoneEvaluatedSql})
               )
               ${options.branchId ? Prisma.sql`AND chunk.branch_id = ${options.branchId}::uuid` : Prisma.empty}
@@ -1237,7 +1247,7 @@ export class ServiceRecordLifecycleService {
         let healed = 0;
         for (const candidate of candidates) {
             if (options.shouldContinue && !options.shouldContinue()) break;
-            if (await this.evaluateInitialSnapshotTerminalOutcome(candidate)) healed += 1;
+            if (await this.evaluateInitialSnapshotTerminalOutcome({ ...candidate, fromSweep: true })) healed += 1;
         }
         return healed;
     }

@@ -22,7 +22,7 @@ import { ServiceRecordLifecycleService } from "application/services/service-reco
 import type { HolidayCalendarService } from "application/services/holiday-calendar.service";
 import { SbEformsignDocumentMirrorRepository } from "../repositories/sb.eformsign-document-mirror.repository";
 import { sha256CanonicalJson } from "application/services/eformsign-document-job.service";
-import { initialFinalizationJobSql, initialFinalizationRetryCandidateSql } from "./service-record-initial-recovery-sql";
+import { INITIAL_PROVIDER_SETTLE_MS, initialFinalizationJobSql, initialFinalizationRetryCandidateSql } from "./service-record-initial-recovery-sql";
 import { createHash, randomUUID } from "node:crypto";
 import { lstatSync, readFileSync, realpathSync } from "node:fs";
 import { Prisma, PrismaClient } from "@prisma/client";
@@ -1708,6 +1708,10 @@ async function bounded<T>(promise: Promise<T>, ms: number): Promise<T> {
             FROM eformsign_doc WHERE document_id = ${documentId}
         `).toEqual([{ valid: true }]);
         expect(await db.service_record_snapshot_chunk.findUniqueOrThrow({ where: { id: chunk.id } })).toEqual(chunk);
+        expect(await initialLifecycle().healInitialSnapshotTerminalOutcomes({ branchId: f.branchId })).toBe(0);
+        await db.eformsign_doc.update({ where: { documentId }, data: {
+            updatedDate: new Date(Date.now() - INITIAL_PROVIDER_SETTLE_MS - 1000),
+        } });
         expect(await initialLifecycle().healInitialSnapshotTerminalOutcomes({ branchId: f.branchId })).toBe(1);
         expect(await f.readState()).toMatchObject({ status: "failed", lastErrorCode: "SERVICE_RECORD_INITIAL_DELETED_STATUS_UNKNOWN" });
     });
@@ -1733,6 +1737,9 @@ async function bounded<T>(promise: Promise<T>, ms: number): Promise<T> {
         })).toBe(false);
         expect(await f.readState()).toEqual(stateBeforeCompletion);
         expect(await f.readCase()).toEqual(caseBeforeCompletion);
+        await db.eformsign_doc.update({ where: { documentId: deletedDocumentId }, data: {
+            updatedDate: new Date(Date.now() - INITIAL_PROVIDER_SETTLE_MS - 1000),
+        } });
         expect(await initialLifecycle().healInitialSnapshotTerminalOutcomes({ branchId: f.branchId })).toBe(1);
         expect(await f.readState()).toMatchObject({ status: "failed", lastErrorCode: "SERVICE_RECORD_INITIAL_DELETED_STATUS_UNKNOWN" });
         expect(await f.readCase()).toMatchObject({ status: "FINALIZATION_FAILED", currentUsableRevisionId: null });
@@ -1791,6 +1798,9 @@ async function bounded<T>(promise: Promise<T>, ms: number): Promise<T> {
     it("U1 sweep heals a pre-existing purged row with unknown status conservatively and idempotently", async () => {
         const f = await initialChunks();
         await f.purge(1, false);
+        await db.eformsign_doc.update({ where: { documentId: documents[0]! }, data: {
+            updatedDate: new Date(Date.now() - INITIAL_PROVIDER_SETTLE_MS - 1000),
+        } });
         expect(await initialLifecycle().healInitialSnapshotTerminalOutcomes({ branchId: f.branchId })).toBe(1);
         expect(await f.readState()).toMatchObject({ status: "failed", lastErrorCode: "SERVICE_RECORD_INITIAL_DELETED_STATUS_UNKNOWN" });
         expect(await f.readCase()).toMatchObject({ status: "FINALIZATION_FAILED", lastError: "SERVICE_RECORD_INITIAL_DELETED_STATUS_UNKNOWN" });
@@ -2131,6 +2141,11 @@ async function bounded<T>(promise: Promise<T>, ms: number): Promise<T> {
         await f.purge(1, false);
         await db.eformsign_doc.update({ where: { documentId: documents[0]! }, data: { statusType: " Doc_Delete " } });
         expect(await f.readState()).toMatchObject({ lastErrorCode: "SERVICE_RECORD_REVISION_DOCUMENT_REJECTED" });
+        expect(await initialLifecycle().healInitialSnapshotTerminalOutcomes({ branchId: f.branchId })).toBe(0);
+        expect(await f.readState()).toMatchObject({ lastErrorCode: "SERVICE_RECORD_REVISION_DOCUMENT_REJECTED" });
+        await db.eformsign_doc.update({ where: { documentId: documents[0]! }, data: {
+            updatedDate: new Date(Date.now() - INITIAL_PROVIDER_SETTLE_MS - 1000),
+        } });
         expect(await initialLifecycle().healInitialSnapshotTerminalOutcomes({ branchId: f.branchId })).toBe(1);
         expect(await f.readState()).toMatchObject({ lastErrorCode: "SERVICE_RECORD_INITIAL_DELETED_STATUS_UNKNOWN" });
         expect(await initialLifecycle().healInitialSnapshotTerminalOutcomes({ branchId: f.branchId })).toBe(0);

@@ -77,6 +77,17 @@ export function initialRegenerationBlockedCopy(reason: unknown): string | null {
   return parsed.success ? copy[parsed.data] ?? null : null;
 }
 
+export function strictestInitialRegenerationBlockedCopy(...reasons: unknown[]): string | null {
+  const requiresAdmin = reasons.find(reason =>
+    reason === INITIAL_DOCUMENT_STATE_CODES.siblingCompleted
+    || reason === INITIAL_DOCUMENT_STATE_CODES.completedDocumentDeleted
+    || reason === INITIAL_DOCUMENT_STATE_CODES.deletedStatusUnknown);
+  if (requiresAdmin) return initialRegenerationBlockedCopy(requiresAdmin);
+  return reasons.includes(INITIAL_DOCUMENT_STATE_CODES.siblingInProgress)
+    ? REGENERATION_BLOCKED_COPY[INITIAL_DOCUMENT_STATE_CODES.siblingInProgress]
+    : reasons.map(initialRegenerationBlockedCopy).find(copy => copy !== null) ?? null;
+}
+
 const REGENERATION_STALE_COPY = "대상 문서가 바뀌었어요. 목록에서 최신 문서 상태를 확인해 주세요.";
 const REGENERATION_STATE_COPY = "현재 문서는 재생성할 수 없어요. 최신 문서 상태를 확인해 주세요.";
 const REGENERATION_CONFLICT_COPY: Record<InitialRegenerationConflict, string> = {

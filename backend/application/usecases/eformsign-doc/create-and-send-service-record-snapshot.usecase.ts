@@ -1018,10 +1018,7 @@ export class CreateAndSendServiceRecordSnapshotUsecase {
                 serviceRecordCaseId: input.serviceRecordCaseId,
                 revisionId: input.revisionId,
                 snapshotVersion: documentVersion,
-                OR: [
-                    { status: { not: "CREATED" } },
-                    { status: "CREATED", eformsignDocumentId: null },
-                ],
+                eformsignDocumentId: null,
             },
             data: {
                 status: "CREATED",
@@ -1336,31 +1333,17 @@ export class CreateAndSendServiceRecordSnapshotUsecase {
         });
     }
 
-    private revisionChunkWhere(params: {
+    // Creation and reconciliation may write lastError only before the FK is set.
+    private unlinkedChunkWhere(params: {
         chunkId: string;
         revisionId?: string;
         snapshotVersion?: number;
     }): Prisma.service_record_snapshot_chunkWhereUniqueInput {
-        if (!params.revisionId) return { id: params.chunkId };
         return {
             id: params.chunkId,
-            revisionId: params.revisionId,
-            snapshotVersion: params.snapshotVersion,
+            AND: { eformsignDocumentId: null },
+            ...(params.revisionId ? { revisionId: params.revisionId, snapshotVersion: params.snapshotVersion } : {}),
         };
-    }
-
-    private revisionChunkFilter(params: {
-        chunkId: string;
-        revisionId?: string;
-        snapshotVersion?: number;
-    }): Prisma.service_record_snapshot_chunkWhereInput {
-        return params.revisionId
-            ? {
-                id: params.chunkId,
-                revisionId: params.revisionId,
-                snapshotVersion: params.snapshotVersion,
-            }
-            : { id: params.chunkId };
     }
 
     private async processChunk(params: {
@@ -1391,7 +1374,7 @@ export class CreateAndSendServiceRecordSnapshotUsecase {
             && params.chunkClaimedAt.getTime() <= Date.now() - CHUNK_CLAIM_STALE_MS
         ) {
             await this.prisma.service_record_snapshot_chunk.update({
-                where: this.revisionChunkWhere(params),
+                where: this.unlinkedChunkWhere(params),
                 data: { status: "FAILED", nextAttemptAt: new Date(), lastError: "Stale pre-create claim recovered" },
             });
             status = "FAILED";
@@ -1411,7 +1394,7 @@ export class CreateAndSendServiceRecordSnapshotUsecase {
         const now = new Date();
         const claim = await this.prisma.service_record_snapshot_chunk.updateMany({
             where: {
-                ...this.revisionChunkFilter(params),
+                ...this.unlinkedChunkWhere(params),
                 status: { in: ["PENDING", "FAILED"] },
                 OR: [{ nextAttemptAt: null }, { nextAttemptAt: { lte: now } }],
             },
@@ -1429,7 +1412,7 @@ export class CreateAndSendServiceRecordSnapshotUsecase {
         }
 
         await this.prisma.service_record_snapshot_chunk.update({
-            where: this.revisionChunkWhere(params),
+            where: this.unlinkedChunkWhere(params),
             data: { status: "CREATE_REQUESTED", createAttemptedAt: new Date() },
         });
 
@@ -1462,7 +1445,7 @@ export class CreateAndSendServiceRecordSnapshotUsecase {
                 ? (attempts >= MAX_DEFINITIVE_CREATE_ATTEMPTS ? "MANUAL_REVIEW" : "FAILED")
                 : "RECONCILING";
             await this.prisma.service_record_snapshot_chunk.update({
-                where: this.revisionChunkWhere(params),
+                where: this.unlinkedChunkWhere(params),
                 data: {
                     status: statusAfterFailure,
                     nextAttemptAt: statusAfterFailure === "MANUAL_REVIEW"
@@ -1510,7 +1493,7 @@ export class CreateAndSendServiceRecordSnapshotUsecase {
                 .filter((document) => document.document_name === params.chunk.documentName);
         if (documents.length > 1) {
             await this.prisma.service_record_snapshot_chunk.update({
-                where: this.revisionChunkWhere(params),
+                where: this.unlinkedChunkWhere(params),
                 data: {
                     status: "MANUAL_REVIEW",
                     nextAttemptAt: null,
@@ -1532,7 +1515,7 @@ export class CreateAndSendServiceRecordSnapshotUsecase {
         const attempts = params.chunkAttempts + 1;
         const manualReview = attempts >= MAX_RECONCILIATION_ATTEMPTS;
         await this.prisma.service_record_snapshot_chunk.update({
-            where: this.revisionChunkWhere(params),
+            where: this.unlinkedChunkWhere(params),
             data: {
                 status: manualReview ? "MANUAL_REVIEW" : "RECONCILING",
                 attempts: { increment: 1 },
@@ -1736,7 +1719,7 @@ export class CreateAndSendServiceRecordSnapshotUsecase {
                     select: { id: true },
                 });
                 await tx.service_record_snapshot_chunk.update({
-                    where: this.revisionChunkWhere(params),
+                    where: this.unlinkedChunkWhere(params),
                     data: {
                         status: "CREATED",
                         eformsignDocumentId: params.documentId,
@@ -1769,7 +1752,7 @@ export class CreateAndSendServiceRecordSnapshotUsecase {
 
     private async markChunkCreated(chunkId: string, documentId: string): Promise<void> {
         await this.prisma.service_record_snapshot_chunk.updateMany({
-            where: { id: chunkId, status: { not: "CREATED" } },
+            where: { id: chunkId, status: { not: "CREATED" }, eformsignDocumentId: null },
             data: {
                 status: "CREATED",
                 eformsignDocumentId: documentId,

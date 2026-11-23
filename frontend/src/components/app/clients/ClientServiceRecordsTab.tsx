@@ -36,8 +36,8 @@ import { InitialDocumentRecoveryDialog } from "@/features/document-jobs/InitialD
 import { initialDocumentStateLabel } from "@/features/document-jobs/failure-popup-copy";
 import {
     INITIAL_DOCUMENT_RECOVERY_COPY,
-    initialRegenerationBlockedCopy,
     isInitialRegenerationState,
+    strictestInitialRegenerationBlockedCopy,
 } from "@/features/document-jobs/service-record-recovery-copy";
 import { useActiveBranchId } from "@/features/system-templates/branch-context";
 import {
@@ -1019,12 +1019,12 @@ function RevisionDocumentRow({
     const statusMeta = REVISION_DOCUMENT_STATUS_META[document.status];
     const reasonLabel = getRevisionDocumentReasonLabel(document.reasonCode);
     const target = { stateId: document.id, revisionId, generation: document.generation };
-    const readiness = initialRegenerationBlockedCopy(document.regenerationBlockedReason)
-        ?? initialRegenerationBlockedCopy(regeneration?.reasonCode)
-        ?? initialRegenerationBlockedCopy(document.reasonCode);
+    const readiness = strictestInitialRegenerationBlockedCopy(
+        document.regenerationBlockedReason, regeneration?.reasonCode, document.reasonCode,
+    );
     const documentKey = `${revisionId}:${document.id}`;
     const isRetrying = retryingDocumentKey === documentKey;
-    const retryable = document.canRetry && document.generation !== "unknown" && Boolean(onRetry);
+    const retryable = document.canRetry && !readiness && document.generation !== "unknown" && Boolean(onRetry);
     const initial = document.operation === "record_snapshot"
         && (regeneration !== undefined || isInitialRegenerationState(document.reasonCode));
     const projection = document.noProviderDocumentConfirmable;
@@ -1064,7 +1064,7 @@ function RevisionDocumentRow({
                         {reasonLabel}
                     </div>
                 )}
-                {!document.canRetry && readiness && (
+                {readiness && (
                     <p data-component={`${base}_readiness`} data-slot="initial-document-readiness" className="mt-0.5 text-xs text-v3-text-muted">
                         {readiness}
                     </p>

@@ -208,6 +208,29 @@ it("renders 관리자 문의 from revision history if the jobs summary is unavai
   expect(screen.queryByRole("button", { name: copy.regenerateLabel })).not.toBeInTheDocument();
 });
 
+it.each([
+  [state.siblingInProgress, state.siblingCompleted],
+  [state.siblingCompleted, state.siblingInProgress],
+])("shows 관리자 문의 when history reports %s and the matching jobs summary reports %s", async (historyReason, summaryReason) => {
+  mockSummary = makeSummary({
+    initialRegenerations: [{ ...confirmation, clientId: 42, ready: false, reasonCode: summaryReason }],
+  });
+  setup({ reasonCode: state.partialDispatch, regenerationBlockedReason: historyReason });
+
+  expect(await screen.findByText("일부 문서가 이미 완료됨 · 관리자 문의")).toBeVisible();
+  expect(screen.queryByText(/아직 진행 중|삭제해 주세요/)).not.toBeInTheDocument();
+});
+
+it("shows the matching jobs blocker even when cached history allows regeneration", async () => {
+  mockSummary = makeSummary({
+    initialRegenerations: [{ ...confirmation, clientId: 42, ready: false, reasonCode: state.siblingInProgress }],
+  });
+  setup({ reasonCode: state.partialDispatch, canRetry: true });
+
+  expect(await screen.findByText(/일부 문서가 아직 진행 중/)).toBeVisible();
+  expect(screen.queryByRole("button", { name: copy.regenerateLabel })).not.toBeInTheDocument();
+});
+
 it("ignores a confirm projection for a different revision", async () => {
   setup({ noProviderDocumentConfirmable: { ...confirmation, revisionId: confirmation.stateId } });
   await screen.findByText("이폼사인에 보낸 문서가 없음을 확인했어요.");
