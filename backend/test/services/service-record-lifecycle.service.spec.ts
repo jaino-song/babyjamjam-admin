@@ -1,5 +1,6 @@
 import type { StartDateChangeMode } from "@babyjamjam/shared/types/start-date-change";
 import { ConflictException, Logger } from "@nestjs/common";
+import type { Prisma } from "@prisma/client";
 import {
     SERVICE_RECORD_CASE_STATUS,
     ServiceRecordLifecycleService,
@@ -2766,7 +2767,7 @@ describe("INITIAL chunk terminal outcome", () => {
             status: options.status ?? "processing", step: options.step ?? "documents_created", lastErrorCode: options.error ?? null,
         };
         const tx = {
-            $queryRaw: jest.fn()
+            $queryRaw: jest.fn<Promise<unknown[]>, [Prisma.Sql]>()
                 .mockResolvedValueOnce([{ caseId: rawQueryCaseId, revisionId, snapshotVersion: 3 }])
                 .mockResolvedValueOnce([{ id: rawQueryCaseId, clientId: 7, version: 4, currentRevisionId: revisionId }])
                 .mockResolvedValueOnce(options.superseded ? [] : [state])
@@ -2961,8 +2962,24 @@ describe("INITIAL chunk terminal outcome", () => {
         const healed = await f.service.evaluateInitialSnapshotTerminalOutcome({
             branchId: rawQueryBranchId, documentId: rawQueryDocumentId, fromSweep: true,
         });
+
+        const [query] = f.tx.$queryRaw.mock.calls[4]!;
+        expect(query.sql).toMatch(/doc\.updated_date <= now\(\) - \(\?::int \* interval '1 millisecond'\)\s+AS "tombstoneSettled"/);
+        expect(query.values).toContain(INITIAL_PROVIDER_SETTLE_MS);
         expect(healed).toBe(expectedHealed);
         expect(f.tx.$executeRaw).toHaveBeenCalledTimes(expectedHealed ? 2 : 0);
+    });
+    it("evaluates a just-deleted INITIAL tombstone immediately after the controller commits", async () => {
+        const f = setup({ tombstoneSettled: false });
+
+        await expect(evaluate(f, "070")).resolves.toBe(true);
+
+        const [query] = f.tx.$queryRaw.mock.calls[4]!;
+        expect(query.sql).toMatch(/\btrue\s+AS "tombstoneSettled"/);
+        expect(query.sql).not.toMatch(/doc\.updated_date\s*<=\s*now\(\)/);
+        expect(query.values).not.toContain(INITIAL_PROVIDER_SETTLE_MS);
+        expect(f.state.lastErrorCode).toBe("SERVICE_RECORD_REVISION_DOCUMENT_REJECTED");
+        expect(f.tx.$executeRaw).toHaveBeenCalledTimes(3);
     });
     it("defers a terminal sibling while a young tombstone awaits the post-commit evaluator", async () => {
         const f = setup({ documentStatus: "031", siblingTombstone: true, tombstoneSettled: false });
