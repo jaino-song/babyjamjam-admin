@@ -1,5 +1,5 @@
 import { ServiceRecordInitialNoProviderDocumentService } from "infrastructure/eformsign/service-record-initial-no-provider-document.service";
-import { ServiceRecordFinalizationService } from "application/services/service-record-finalization.service";
+import { initialFinalizationConflict, ServiceRecordFinalizationService } from "application/services/service-record-finalization.service";
 import { ConfirmInitialNoProviderDocumentJobDto, RegenerateInitialDocumentJobDto } from "interface/dto/eformsign-document-job.dto";
 import {
     BadRequestException,
@@ -82,7 +82,7 @@ import {
     type EformsignProviderPrincipal,
 } from "application/services/eformsign-credential-boundary.service";
 import { sanitizeEformsignErrorMessage } from "application/utils/eformsign-error-message";
-import { codeOnlyProblemBody } from "application/utils/problem-bodies";
+import { codeOnlyProblemBody, codeOnlyProblemException } from "application/utils/problem-bodies";
 import { normalizeEformsignStatusCode } from "domain/utils/eformsign-status-code";
 
 type RecoveryRejection = Exclude<
@@ -748,8 +748,8 @@ export class EformsignDocController {
     ): Promise<{ stateId: string; revisionId: string; generation: string; jobId: string; status: string }> {
         assertEformsignProviderCapability(tenant, "contract.dispatch");
         this.assertDocumentJobsAccepting();
-        if (!(tenant.userId ?? request.user?.userId)) throw new UnauthorizedException(codeOnlyProblemBody("AUTH_REQUIRED"));
-        if (!this.finalizationService) throw new ConflictException({ code: "SERVICE_RECORD_REVISION_GENERATION_UNAVAILABLE" });
+        if (!(tenant.userId ?? request.user?.userId)) throw codeOnlyProblemException("AUTH_REQUIRED");
+        if (!this.finalizationService) throw initialFinalizationConflict("SERVICE_RECORD_REVISION_GENERATION_UNAVAILABLE");
         const result = await this.finalizationService.regenerateInitialFinalization(tenant.branchId ?? "", body);
         return { stateId: result.state.id, revisionId: result.state.revisionId, generation: result.state.generation,
             jobId: result.jobId, status: result.status };
@@ -764,8 +764,8 @@ export class EformsignDocController {
     ) {
         assertEformsignProviderCapability(tenant, "contract.dispatch");
         const actorUserId = tenant.userId ?? request.user?.userId;
-        if (!actorUserId) throw new UnauthorizedException(codeOnlyProblemBody("AUTH_REQUIRED"));
-        if (!this.initialNoProviderDocument) throw new ServiceUnavailableException(codeOnlyProblemBody("DEPENDENCY_UNAVAILABLE"));
+        if (!actorUserId) throw codeOnlyProblemException("AUTH_REQUIRED");
+        if (!this.initialNoProviderDocument) throw codeOnlyProblemException("DEPENDENCY_UNAVAILABLE");
         return this.initialNoProviderDocument.confirmInitialNoProviderDocument({
             branchId: tenant.branchId!, actorUserId, revisionId: body.revisionId,
             documentStateId: body.documentStateId, expectedGeneration: body.expectedGeneration,

@@ -418,6 +418,11 @@ function hasCompleteRevisionOriginalDates(
     return seen.size === expectedIndexes.size;
 }
 
+/** The INITIAL regeneration API exposes its readiness reason as the sole conflict code. */
+export function initialFinalizationConflict(code: string): ConflictException {
+    return new ConflictException({ code });
+}
+
 @Injectable()
 export class ServiceRecordFinalizationService {
     private readonly logger = new Logger(ServiceRecordFinalizationService.name);
@@ -855,14 +860,14 @@ export class ServiceRecordFinalizationService {
         input: { revisionId: string; documentStateId: string; expectedGeneration: string },
     ): Promise<{ state: ServiceRecordRevisionDocumentState; jobId: string; status: string }> {
         if (!this.editRepository || !this.documentJobService) {
-            throw new ConflictException({ code: "SERVICE_RECORD_REVISION_GENERATION_UNAVAILABLE" });
+            throw initialFinalizationConflict("SERVICE_RECORD_REVISION_GENERATION_UNAVAILABLE");
         }
         const target = await this.editRepository.findRevisionDocumentStateForBranch(
             branchId, input.revisionId, input.documentStateId,
         );
         if (!target) throw new NotFoundException({ code: "RESOURCE_NOT_FOUND" });
         if (target.operation !== "record_snapshot" || !isInitialFinalizationWorkflowScopeForRevision(target.workflowScope, input.revisionId)) {
-            throw new ConflictException({ code: "SERVICE_RECORD_INITIAL_STATE_NOT_READY" });
+            throw initialFinalizationConflict("SERVICE_RECORD_INITIAL_STATE_NOT_READY");
         }
         const calendar = await this.holidayCalendar.forBranch(branchId, { fresh: true });
         return this.prisma.$transaction(async tx => {
@@ -870,7 +875,7 @@ export class ServiceRecordFinalizationService {
             const source = await this.readFinalizationCase(tx, target.serviceRecordCaseId);
             if (!source || source.branchId !== branchId || source.clientId !== target.clientId
                 || source.currentRevisionId !== input.revisionId || target.generation !== input.expectedGeneration) {
-                throw new ConflictException({ code: "SERVICE_RECORD_INITIAL_REVISION_CHANGED" });
+                throw initialFinalizationConflict("SERVICE_RECORD_INITIAL_REVISION_CHANGED");
             }
             const newest = await tx.service_record_revision_document_state.findFirst({
                 where: { branchId, clientId: target.clientId, serviceRecordCaseId: source.id,
@@ -884,30 +889,30 @@ export class ServiceRecordFinalizationService {
                 && target.operation === "record_snapshot") {
                 const key = scope["requestKey"];
                 if (!isInitialFinalizationRequestKeyFor(input.revisionId, key)) {
-                    throw new ConflictException({ code: "SERVICE_RECORD_REVISION_GENERATION_SCOPE_CHANGED" });
+                    throw initialFinalizationConflict("SERVICE_RECORD_REVISION_GENERATION_SCOPE_CHANGED");
                 }
                 const job = await this.documentJobService!.findByRequestKeyInTransaction(tx, key);
                 if (!job || job.payload?.["generation"] !== newest.generation
                     || job.payload?.["documentStateId"] !== newest.id) {
-                    throw new ConflictException({ code: "SERVICE_RECORD_REVISION_GENERATION_SCOPE_CHANGED" });
+                    throw initialFinalizationConflict("SERVICE_RECORD_REVISION_GENERATION_SCOPE_CHANGED");
                 }
                 this.assertFrozenGenerationJob(job, source, input.revisionId, job.requestKey);
                 const state = await this.editRepository!.findRevisionDocumentStateForBranch(branchId, input.revisionId, newest.id, { tx });
-                if (!state) throw new ConflictException({ code: "SERVICE_RECORD_INITIAL_STATE_NOT_FOUND" });
+                if (!state) throw initialFinalizationConflict("SERVICE_RECORD_INITIAL_STATE_NOT_FOUND");
                 return { state, jobId: job.id, status: job.status };
             }
             if (!newest || newest.id !== input.documentStateId || newest.generation !== input.expectedGeneration) {
-                throw new ConflictException({ code: "SERVICE_RECORD_INITIAL_GENERATION_CHANGED" });
+                throw initialFinalizationConflict("SERVICE_RECORD_INITIAL_GENERATION_CHANGED");
             }
             const readiness = await releaseTerminalInitialFinalizationKey(tx, source.id, input.revisionId);
-            if (!readiness.ready) throw new ConflictException({ code: readiness.reason });
+            if (!readiness.ready) throw initialFinalizationConflict(readiness.reason);
             const result = await this.freezeInitialFinalizationGeneration(tx, source, calendar, input.expectedGeneration);
-            if (!result) throw new ConflictException({ code: "SERVICE_RECORD_REVISION_GENERATION_UNAVAILABLE" });
+            if (!result) throw initialFinalizationConflict("SERVICE_RECORD_REVISION_GENERATION_UNAVAILABLE");
             const changed = await tx.service_record_case.updateMany({
                 where: { id: source.id, branchId, currentRevisionId: input.revisionId },
                 data: { status: SERVICE_RECORD_CASE_STATUS.FINALIZATION_FAILED, nextAttemptAt: null, version: { increment: 1 } },
             });
-            if (changed.count !== 1) throw new ConflictException({ code: "SERVICE_RECORD_INITIAL_REVISION_CHANGED" });
+            if (changed.count !== 1) throw initialFinalizationConflict("SERVICE_RECORD_INITIAL_REVISION_CHANGED");
             return result;
         });
     }
@@ -1108,19 +1113,19 @@ export class ServiceRecordFinalizationService {
         } catch (error) {
             if (regeneratedFromGeneration !== undefined && error instanceof Error
                 && ["EFORMSIGN_DOCUMENT_JOB_KEY_CONFLICT", "EFORMSIGN_DOCUMENT_JOB_IDEMPOTENCY_MISMATCH"].includes(error.message)) {
-                throw new ConflictException({ code: "SERVICE_RECORD_INITIAL_ACTIVE_KEY_CONFLICT" });
+                throw initialFinalizationConflict("SERVICE_RECORD_INITIAL_ACTIVE_KEY_CONFLICT");
             }
             throw error;
         }
         if (result.existing) {
             if (regeneratedFromGeneration !== undefined) {
-                throw new ConflictException({ code: "SERVICE_RECORD_INITIAL_ACTIVE_KEY_CONFLICT" });
+                throw initialFinalizationConflict("SERVICE_RECORD_INITIAL_ACTIVE_KEY_CONFLICT");
             }
             this.assertFrozenGenerationJob(result.job, source, revisionId, generationRequestKey);
         }
         if (regeneratedFromGeneration !== undefined) {
             const state = await this.editRepository.findRevisionDocumentStateForBranch(source.branchId, revisionId, documentState.id, { tx });
-            if (!state) throw new ConflictException({ code: "SERVICE_RECORD_INITIAL_STATE_NOT_FOUND" });
+            if (!state) throw initialFinalizationConflict("SERVICE_RECORD_INITIAL_STATE_NOT_FOUND");
             return { state, jobId: result.job.id, status: result.job.status };
         }
         return { state: { ...documentState, documentVersion }, jobId: result.job.id, status: result.job.status };

@@ -1,5 +1,5 @@
 import { isDeepStrictEqual } from "node:util";
-import { ConflictException, Inject, Injectable, Logger, NotFoundException } from "@nestjs/common";
+import { Inject, Injectable, Logger } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 
 import {
@@ -10,7 +10,7 @@ import {
 } from "application/policies/service-record-initial-finalization.policy";
 import { lockServiceRecordWriteSet } from "application/policies/service-record-write-lock.policy";
 import { EformsignCredentialBoundary, createEformsignWorkerPrincipal } from "application/services/eformsign-credential-boundary.service";
-import { codeOnlyProblemBody } from "application/utils/problem-bodies";
+import { codeOnlyProblemException, isConflictException } from "application/utils/problem-bodies";
 import { EFORMSIGN_COMPLETED_STATUS_CODES, EFORMSIGN_REJECTED_STATUS_CODES } from "domain/constants/eformsign-doc-status.constants";
 import {
     cancelledInitialSuffix, SERVICE_RECORD_INITIAL_NO_DOC_REASONS as REASON,
@@ -54,8 +54,8 @@ type ChunkSnapshot = RowSnapshot<ChunkData>;
 type DocumentSnapshot = RowSnapshot<DocumentData>;
 type VendorCheck = { listTypes: readonly string[]; totals: Record<string, number>; checkedAt: string };
 
-function conflict(reason: InitialNoProviderDocumentReason): ConflictException {
-    return new ConflictException({ ...codeOnlyProblemBody("REQUEST_CONFLICT"), reason });
+function conflict(reason: InitialNoProviderDocumentReason) {
+    return codeOnlyProblemException("REQUEST_CONFLICT", { reason });
 }
 
 function stateResponse(state: State) {
@@ -110,7 +110,7 @@ export class ServiceRecordInitialNoProviderDocumentService {
 
     async confirmInitialNoProviderDocument(request: ConfirmInput): Promise<ReturnType<typeof stateResponse>> {
         const state = await this.readState(this.prisma, request);
-        if (!state) throw new NotFoundException(codeOnlyProblemBody("RESOURCE_NOT_FOUND"));
+        if (!state) throw codeOnlyProblemException("RESOURCE_NOT_FOUND");
         if (isReplay(state, request.expectedGeneration)) return stateResponse(state);
         if (state.generation !== request.expectedGeneration) throw conflict(REASON.GENERATION_CHANGED);
         const candidate = await loadCancelledInitialCandidate(this.prisma, {
@@ -250,7 +250,7 @@ export class ServiceRecordInitialNoProviderDocumentService {
             try {
                 await lockServiceRecordWriteSet(tx, { branchId, clientId, caseId });
             } catch (error) {
-                if (!(error instanceof ConflictException)) throw error;
+                if (!isConflictException(error)) throw error;
                 throw conflict(REASON.STATE_CHANGED);
             }
             await tx.$queryRaw`SELECT id FROM service_record_revision_document_state

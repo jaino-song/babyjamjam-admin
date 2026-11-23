@@ -1,10 +1,12 @@
 import { Logger } from "@nestjs/common";
 import type { Prisma } from "@prisma/client";
+import type { Request, Response } from "express";
 
 import { initialRegenerationReadiness } from "application/policies/service-record-initial-finalization.policy";
 import { SERVICE_RECORD_INITIAL_NO_DOC_REASONS as REASON } from "domain/constants/service-record-initial-no-provider-document";
 import { noProviderDocumentConfirmable } from "infrastructure/database/utils/service-record-initial-no-provider-document-projection";
 import { ServiceRecordInitialNoProviderDocumentService } from "infrastructure/eformsign/service-record-initial-no-provider-document.service";
+import { mapHttpProblem } from "infrastructure/filters/problem-response";
 import { initialProviderRecoveryInput } from "../utils/service-record-initial-provider-recovery.fixture";
 
 const scope = {
@@ -132,6 +134,19 @@ function fixture() {
 describe("INITIAL no-provider-document attestation", () => {
     beforeEach(() => { jest.spyOn(Logger.prototype, "log").mockImplementation(() => undefined); });
     afterEach(() => { jest.useRealTimers(); jest.restoreAllMocks(); });
+
+    it("keeps the machine reason at the top level through the HTTP problem boundary", async () => {
+        const error: unknown = await fixture().confirm({ expectedGeneration: "old" }).catch((rejection: unknown) => rejection);
+        expect(error).toEqual(expect.objectContaining({
+            status: 409,
+            response: {
+                code: "REQUEST_CONFLICT", reason: REASON.GENERATION_CHANGED, params: {},
+                outcome: "NOT_APPLIED", recovery: { action: "NONE", retry: { mode: "NEVER" } },
+            },
+        }));
+        const problem = mapHttpProblem(error, { method: "POST" } as Request, { locals: {} } as Response);
+        expect(problem).toMatchObject({ status: 409, code: "REQUEST_CONFLICT", reason: REASON.GENERATION_CHANGED });
+    });
 
     it("projects zero rows, scans 01/03/04, records the proof, and makes U3b ready", async () => {
         const f = fixture();

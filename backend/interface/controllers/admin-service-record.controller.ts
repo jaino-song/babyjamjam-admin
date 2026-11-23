@@ -14,7 +14,6 @@ import {
     PipeTransform,
     Post,
     Query,
-    ServiceUnavailableException,
     Sse,
     UseGuards,
 } from "@nestjs/common";
@@ -30,7 +29,7 @@ import { ServiceRecordCaseEventBus } from "application/services/service-record-c
 import { JwtGuard } from "infrastructure/auth/jwt.guard";
 import { BranchManagerGuard } from "infrastructure/auth/branch-manager.guard";
 import { CurrentTenant, TenantGuard, VerifiedTenantPrincipal } from "infrastructure/tenant";
-import { codeOnlyProblemBody, problemBody } from "application/utils/problem-bodies";
+import { codeOnlyProblemException, problemBody } from "application/utils/problem-bodies";
 import {
     KeepServiceRecordPeriodMismatchDto,
     FitServiceRecordPeriodMismatchDto,
@@ -224,7 +223,7 @@ export class AdminServiceRecordController {
         @Query(new AdminServiceRecordNoQueryPipe()) _query?: Record<string, never>,
     ) {
         void _query;
-        if (!this.initialNoProviderDocument) throw new ServiceUnavailableException(codeOnlyProblemBody("DEPENDENCY_UNAVAILABLE"));
+        if (!this.initialNoProviderDocument) throw codeOnlyProblemException("DEPENDENCY_UNAVAILABLE");
         return this.initialNoProviderDocument.confirmInitialNoProviderDocument({
             branchId: tenant.branchId, actorUserId: tenant.userId, revisionId, documentStateId,
             expectedGeneration: body.expectedGeneration,
