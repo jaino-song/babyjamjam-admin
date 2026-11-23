@@ -164,7 +164,7 @@ test('1. two contracts and single record: exact paths, times, state, Drive argv'
     }
     assert.equal(env.api.listRequests.length, 3);
     await assertReport(env, { status: 'success', driveStatus: 'ok', totalDocs: 3, savedFiles: 6, skippedFiles: 0, failedFiles: 0, limited: false, failures: [] });
-    assert.deepEqual(JSON.parse(await readFile(env.rcloneLog, 'utf8')), ['copy', '--checksum', env.archiveDir, 'fake:archive']);
+    assert.deepEqual(JSON.parse(await readFile(env.rcloneLog, 'utf8')), ['copy', '--checksum', env.archiveDir, 'fake:archive', '--include', '*.pdf']);
 });
 
 test('2. second run skips all six files without any file request', async (t) => {

@@ -4,6 +4,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { resolve, relative, dirname, isAbsolute } from 'node:path';
 import { migrateProviderContracts, readMigration, withTimerLock } from './provider-contract-migration.mjs';
+import { providerPublication } from './provider-contract-publication.mjs';
 import { pairPaths, providerBase, providerFolder, matchesProviderPair, sanitize, syncDirectory, writeJson } from './provider-contract-paths.mjs';
 
 let token = '';
@@ -106,7 +107,7 @@ async function run(settings, lockFd) {
             return info.size;
         } catch (error) { if (error.code === 'ENOENT') return null; throw error; }
     };
-    const prepare = async (path) => {
+    const prepare = async (path, durable = false) => {
         const final = finalPath(path);
         // Check each parent before creating the next one: a preexisting symlink
         // must not cause mkdir or a temporary write outside the archive.
@@ -120,6 +121,7 @@ async function run(settings, lockFd) {
                 await fs.mkdir(parent, { recursive: true });
             }
             inside(resolve(await fs.realpath(parent), 'placeholder'));
+            if (durable) await syncDirectory(dirname(parent));
         }
         return final;
     };
@@ -164,8 +166,12 @@ async function run(settings, lockFd) {
         }
     }
     const migration = await readMigration(settings.stateDir);
+    const publication = providerPublication({ archive, statePath, state, saveState, prepare, fetchInto });
     if (!settings.migration) {
         if (['applying', 'rollingBack'].includes(migration?.phase)) throw new Error('제공인력 계약서 이동 재시도 필요');
+        // Scheduled and manual backup runs already hold the timer's flock. Recover
+        // before allocating from a new listing or copying any files to Drive.
+        report.savedFiles += await publication.resume();
         await saveState();
     }
 
@@ -262,9 +268,9 @@ async function run(settings, lockFd) {
         // Completed content is never overwritten: changed content takes a fresh pair of paths (the old
         // entry is archived under another key when the new files are recorded). Review-stage content
         // is rewritten in place.
-        unit.reallocate = entry !== null && !entry.completed && unit.desiredProviderBase
+        const reallocate = entry !== null && !entry.completed && unit.desiredProviderBase
             && !matchesProviderPair(entry.files, unit.desiredProviderBase);
-        unit.fork = entry !== null && (unit.reallocate || entry.completed && entry.fingerprint !== unit.fingerprint);
+        unit.fork = entry !== null && (reallocate || entry.completed && entry.fingerprint !== unit.fingerprint);
         if (entry !== null && !unit.fork) { unit.files = { ...entry.files }; return; }
         for (let n = 1; ; n += 1) {
             const paths = pairPaths(unit.folder, unit.base, n);
@@ -280,25 +286,28 @@ async function run(settings, lockFd) {
         try { await allocate(unit); }
         catch (error) { unit.broken = true; failure(unit.docId, error); }
     }
+    async function fetchInto(file, handle) {
+        const response = await request(`/internal/eformsign-backup/files/${encodeURIComponent(file.fileId)}`);
+        if (response.status !== 200) { await response.body?.cancel(); throw new Error(`파일 HTTP ${response.status}`); }
+        const hash = createHash('sha256');
+        let bytes = 0;
+        for await (const chunk of response.body) {
+            hash.update(chunk);
+            bytes += chunk.length;
+            await handle.writeFile(chunk);
+        }
+        if (bytes !== file.byteSize || hash.digest('hex') !== file.sha256.toLowerCase()) throw new Error('파일 크기 또는 sha256 불일치');
+    }
     // A file is written beside its final path first, so a failed download never touches an existing file.
     const fetchTemp = async (file, path, createdAt) => {
         const final = await prepare(path);
         const tmp = tempPath(final);
         try {
-            const response = await request(`/internal/eformsign-backup/files/${encodeURIComponent(file.fileId)}`);
-            if (response.status !== 200) { await response.body?.cancel(); throw new Error(`파일 HTTP ${response.status}`); }
-            const hash = createHash('sha256');
-            let bytes = 0;
             const handle = await fs.open(tmp, 'wx', 0o600);
             try {
-                for await (const chunk of response.body) {
-                    hash.update(chunk);
-                    bytes += chunk.length;
-                    await handle.writeFile(chunk);
-                }
+                await fetchInto(file, handle);
                 if (path.startsWith(`${providerFolder}/`)) await handle.sync();
             } finally { await handle.close(); }
-            if (bytes !== file.byteSize || hash.digest('hex') !== file.sha256.toLowerCase()) throw new Error('파일 크기 또는 sha256 불일치');
             await fs.utimes(tmp, new Date(createdAt), new Date(createdAt));
             return { tmp, final };
         } catch (error) { await fs.rm(tmp, { force: true }); throw error; }
@@ -322,19 +331,24 @@ async function run(settings, lockFd) {
     const isCompleted = (unit) => unit.chunks
         ? unit.chunks.every((chunk) => chunk.completed) && unit.files[Object.keys(unit.files)[1]] !== null
         : unit.completed;
-    const record = async (unit) => {
-        const old = state.units[unit.key];
+    const recordedUnit = (unit, old) => {
         // Recording to the same paths can only tighten the flag; a fork is a new entry with its own flag.
         const completed = isCompleted(unit) || (!unit.fork && old?.completed === true);
-        let archived;
-        if (unit.fork) {
-            archived = `${unit.key}@${old.fingerprint}`;
-            for (let n = 2; Object.hasOwn(state.units, archived); n += 1) archived = `${unit.key}@${old.fingerprint}@${n}`;
-            state.units[archived] = old;
-        }
         const provider = unit.providerBase && matchesProviderPair(unit.files, unit.providerBase)
             ? { providerBase: unit.providerBase } : {};
-        state.units[unit.key] = { ...old, files: unit.files, fingerprint: unit.fingerprint, completed, ...provider };
+        return { ...old, files: unit.files, fingerprint: unit.fingerprint, completed, ...provider };
+    };
+    const historicalKey = (unit, old) => {
+        const prefix = `${unit.key}@${old.fingerprint}`;
+        let key = prefix;
+        for (let n = 2; Object.hasOwn(state.units, key); n += 1) key = `${prefix}@${n}`;
+        return key;
+    };
+    const record = async (unit) => {
+        const old = state.units[unit.key];
+        const archived = unit.fork ? historicalKey(unit, old) : null;
+        if (archived) state.units[archived] = old;
+        state.units[unit.key] = recordedUnit(unit, old);
         try { await saveState(); }
         catch (error) {
             if (!error.statePublished) {
@@ -367,7 +381,14 @@ async function run(settings, lockFd) {
                 await tighten(unit);
                 continue;
             }
-            if (replace || unit.fork) {
+            if (unit.fork && unit.providerBase) {
+                const before = state.units[unit.key];
+                report.savedFiles += await publication.publish({
+                    key: unit.key, before, history: historicalKey(unit, before), next: recordedUnit(unit, before),
+                    inputs: unit.inputs, createdAt: unit.createdAt,
+                });
+                unit.fork = false;
+            } else if (replace || unit.fork) {
                 const temps = [];
                 const renamed = [];
                 try {
@@ -381,11 +402,7 @@ async function run(settings, lockFd) {
                         unit.files[paths[i]] = unit.inputs[i].byteSize;
                         report.savedFiles += 1;
                     }
-                    if (unit.reallocate) {
-                        for (const { final } of temps) await syncDirectory(dirname(final));
-                        await record(unit);
-                    }
-                    changed = !unit.reallocate;
+                    changed = true;
                 } catch (error) {
                     // A fork writes only fresh, never-recorded paths: undo them so the next run retries cleanly.
                     if (unit.fork && !error.statePublished) {
@@ -411,7 +428,10 @@ async function run(settings, lockFd) {
                 try { await record(unit); } catch (error) { unit.ready = false; unitError ??= error; }
             }
         }
-        if (unitError) failure(unit.docId, unitError);
+        if (unitError) {
+            if (publication.pending) throw unitError;
+            failure(unit.docId, unitError);
+        }
     }
     // Prepare both merged outputs before publishing either final path. The merged audit trail exists
     // only once every chunk has one.
@@ -467,7 +487,7 @@ async function run(settings, lockFd) {
         if (unitError) failure(unit.docId, unitError);
     }
     if (settings.rcloneRemote) {
-        try { await execute(settings.rcloneBin, ['copy', '--checksum', settings.archiveDir, settings.rcloneRemote]); report.driveStatus = 'ok'; }
+        try { await execute(settings.rcloneBin, ['copy', '--checksum', settings.archiveDir, settings.rcloneRemote, '--include', '*.pdf']); report.driveStatus = 'ok'; }
         catch (error) { report.driveStatus = 'failed'; log({ reason: `Drive: ${cleanReason(error)}` }); }
     }
     report.status = listingFailed ? 'failed' : !listingComplete || report.failures.length || report.driveStatus !== 'ok' ? 'partial' : 'success';

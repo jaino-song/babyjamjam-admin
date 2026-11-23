@@ -4,7 +4,7 @@ Node.js 20 이상에서 매일 한국 시간 03시에 검토 단계(제공인력
 
 설치 (서버의 실행 사용자 계정 기준):
 
-1. `backup.mjs`, `provider-contract-paths.mjs`, `provider-contract-migration.mjs`를 함께 `~/eformsign-backup/`에, service와 timer를 `~/.config/systemd/user/`에 복사합니다. `mkdir -p ~/.config/eformsign-backup ~/.local/state/eformsign-backup`을 실행하고, `settings.example.json`을 `~/.config/eformsign-backup/settings.json`으로 복사해 URL·경로·원격 저장소를 수정합니다. 경로는 절대 경로를 사용합니다.
+1. `backup.mjs`, `provider-contract-paths.mjs`, `provider-contract-migration.mjs`, `provider-contract-publication.mjs`를 함께 `~/eformsign-backup/`에, service와 timer를 `~/.config/systemd/user/`에 복사합니다. `mkdir -p ~/.config/eformsign-backup ~/.local/state/eformsign-backup`을 실행하고, `settings.example.json`을 `~/.config/eformsign-backup/settings.json`으로 복사해 URL·경로·원격 저장소를 수정합니다. 경로는 절대 경로를 사용합니다.
 2. `sudo apt install rclone qpdf`로 도구를 설치합니다.
 3. `rclone config`에서 Google Drive 원격 저장소를 만들고 사용자가 최초 한 번 Google에 로그인합니다.
 4. 서버에 설정된 백업 전용 bearer 토큰을 `tokenFile` 경로의 파일에 저장하고 `chmod 600 ~/.config/eformsign-backup/token`을 실행합니다. 토큰을 명령 인자에 넣지 않습니다. 같은 값이 운영 API의 `EFORMSIGN_BACKUP_TOKEN`(LightNode `/opt/babyjamjam-fallback-server/backend.env`)에 있어야 하며, 운영 API는 이 값을 다음 배포 때 읽습니다. 그 전까지 백업 API는 404를 돌려줍니다.
@@ -38,7 +38,9 @@ eformsign 템플릿 이름이 정확히 `제공인력 계약서`이고 `제공�
 
 검토 중인 제공인력 계약서의 이름이 처음 확정되거나 바뀌면 새 경로의 파일을 검증한 뒤 현재 상태를 갱신합니다. 이전 경로와 파일은 로컬과 Drive에 남습니다. 기존 이름이 계속 유효한 검토 문서는 내용이 달라지면 같은 경로를 갱신하고, 감사추적은 처음부터 예약한 경로에 추가합니다. 완료 상태로 저장한 파일의 내용이 이후 바뀌면 새 경로를 배정하고 이전 기록을 `state.json`의 `<키>@<지문>`에 남깁니다. 목록에서 사라진 문서의 파일도 보존합니다. 분할 제공기록지는 모든 청크가 모이면 날짜 순서로 병합하고, 병합 감사추적은 모든 청크에 감사추적이 생기면 생성합니다.
 
-`stateDir/state.json`(version 2)은 문서별 경로·크기·내용 지문을 기록합니다. version 1은 첫 정상 실행에서 version 2로 변환하며, 기존 항목을 완료 상태로 간주합니다. 예약 실행은 `rclone copy --checksum`으로 복사합니다. `rcloneRemote`가 없으면 Drive 복사를 건너뛰고 부분 완료로 보고합니다.
+`stateDir/state.json`(version 2)은 문서별 경로·크기·내용 지문을 기록합니다. version 1은 첫 정상 실행에서 version 2로 변환하며, 기존 항목을 완료 상태로 간주합니다. 예약 실행은 `rclone copy --checksum`과 `--include '*.pdf'`로 PDF만 복사합니다. `rcloneRemote`가 없으면 Drive 복사를 건너뛰고 부분 완료로 보고합니다.
+
+제공인력 계약서의 새 경로 확정 도중 작업이 중단되면 다음 예약 실행이 `stateDir/provider-contract-publication.json`의 경로를 이어서 사용합니다. 복구가 경로 충돌이나 파일 검증 실패로 중단되면 종료 코드 `1`을 반환하고 Drive 복사를 건너뜁니다. 원인을 확인하는 동안 저널과 `archiveDir/.provider-publication-*`에 남은 임시 데이터를 보존합니다.
 
 복원은 필요한 PDF를 그대로 열면 됩니다. 병합된 기록의 서명 원본은 `제공기록지/원본/`에 있습니다.
 
@@ -47,7 +49,7 @@ eformsign 템플릿 이름이 정확히 `제공인력 계약서`이고 `제공�
 
 ## 완료된 기존 제공인력 계약서 이동
 
-1. 메타데이터를 제공하는 API를 먼저 배포하고, 서버 실행 계정에 새 워커 파일 세 개를 함께 설치합니다. 기존 타이머와 동일한 `~/.local/state/eformsign-backup/run.lock`이 있어야 합니다. 새 설치에서 잠금 파일이 아직 없으면 설치 절차의 수동 백업을 먼저 실행합니다. `stateDir`은 `archiveDir` 밖에 둡니다.
+1. 메타데이터를 제공하는 API를 먼저 배포하고, 위 설치 절차의 워커 파일을 함께 설치합니다. 기존 타이머와 동일한 `~/.local/state/eformsign-backup/run.lock`이 있어야 합니다. 새 설치에서 잠금 파일이 아직 없으면 설치 절차의 수동 백업을 먼저 실행합니다. `stateDir`은 `archiveDir` 밖에 둡니다.
 2. 실행 계정으로 dry-run을 수행합니다. 출력에는 이동 가능한 쌍의 수와 건너뛴 수가 표시됩니다. 기존 `기타` 쌍은 현재 완료 문서의 지문과 로컬·Drive의 두 파일 SHA-256이 모두 일치해야 합니다. 실패 사유가 나오면 해당 경로를 운영자만 열람할 수 있는 환경에서 조사합니다.
 
    ```sh
