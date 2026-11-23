@@ -7,6 +7,7 @@ export interface CanceledRetryRule {
     isActive: boolean;
     templateKey: string;
     recipientType: string;
+    group: { id: string; name: string; recipientMode: string } | null;
     canceledRetryEnabledAt: Date | null;
     branchOverrides: Array<{ isActive: boolean; canceledRetryEnabledAt: Date | null }>;
 }
@@ -14,6 +15,7 @@ export interface CanceledRetryRule {
 export interface ICanceledAutomationRetryRepository {
     list(branchId: string): Promise<CanceledRetryRule[]>;
     lockRule(branchId: string, id: string, transaction: Prisma.TransactionClient): Promise<CanceledRetryRule | null>;
+    lockGroupRules(branchId: string, groupId: string, transaction: Prisma.TransactionClient): Promise<CanceledRetryRule[]>;
     updateEpoch(transaction: Prisma.TransactionClient, branchId: string, rule: CanceledRetryRule, enabled: boolean): Promise<Date | null>;
 }
 

@@ -13,12 +13,19 @@ const ruleFields = {
     isActive: true,
     templateKey: true,
     recipientType: true,
+    group: { select: { id: true, name: true, recipientMode: true } },
     canceledRetryEnabledAt: true,
 } satisfies Prisma.message_trigger_ruleSelect;
 
 function ruleQuery(branchId: string) {
     return {
-        where: { deletedAt: null, OR: [{ branchId }, { branchId: null }] },
+        where: {
+            deletedAt: null,
+            OR: [
+                { branchId: null, groupId: null },
+                { branchId, OR: [{ groupId: null }, { group: { branchId, deletedAt: null } }] },
+            ],
+        },
         select: {
             ...ruleFields,
             branchOverrides: {
@@ -26,6 +33,7 @@ function ruleQuery(branchId: string) {
                 select: { isActive: true, canceledRetryEnabledAt: true },
             },
         },
+        orderBy: [{ name: "asc" }, { id: "asc" }],
     } satisfies Prisma.message_trigger_ruleFindManyArgs;
 }
 
@@ -43,10 +51,7 @@ export class CanceledAutomationRetryRepository implements ICanceledAutomationRet
     ) {}
 
     list(branchId: string): Promise<CanceledRetryRule[]> {
-        return this.database.message_trigger_rule.findMany({
-            ...ruleQuery(branchId),
-            orderBy: [{ name: "asc" }, { id: "asc" }],
-        });
+        return this.database.message_trigger_rule.findMany(ruleQuery(branchId));
     }
 
     async lockRule(branchId: string, id: string, transaction: Prisma.TransactionClient): Promise<CanceledRetryRule | null> {
@@ -54,7 +59,7 @@ export class CanceledAutomationRetryRepository implements ICanceledAutomationRet
         // lock also fences edits to the shared rule made by another branch.
         const locked = await transaction.$queryRaw<Array<{ id: string }>>(Prisma.sql`
             SELECT id FROM message_trigger_rule
-            WHERE id = ${id} AND deleted_at IS NULL
+            WHERE id = ${id} AND deleted_at IS NULL AND group_id IS NULL
               AND (branch_id = ${branchId}::uuid OR branch_id IS NULL)
             FOR UPDATE
         `);
@@ -62,7 +67,22 @@ export class CanceledAutomationRetryRepository implements ICanceledAutomationRet
         const query = ruleQuery(branchId);
         return transaction.message_trigger_rule.findFirst({
             ...query,
-            where: { ...query.where, id },
+            where: { ...query.where, id, groupId: null },
+        });
+    }
+
+    async lockGroupRules(branchId: string, groupId: string, transaction: Prisma.TransactionClient): Promise<CanceledRetryRule[]> {
+        // Group edits take the same branch lock before changing the parent or its rules.
+        const locked = await transaction.$queryRaw<Array<{ id: string }>>(Prisma.sql`
+            SELECT id FROM message_trigger_rule
+            WHERE branch_id = ${branchId}::uuid AND group_id = ${groupId} AND deleted_at IS NULL
+            ORDER BY id FOR UPDATE
+        `);
+        if (!locked.length) return [];
+        const query = ruleQuery(branchId);
+        return transaction.message_trigger_rule.findMany({
+            ...query,
+            where: { ...query.where, branchId, groupId, id: { in: locked.map(({ id }) => id) } },
         });
     }
 
