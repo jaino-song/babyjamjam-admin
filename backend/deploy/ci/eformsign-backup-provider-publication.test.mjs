@@ -43,6 +43,7 @@ fs.link = async (source, target) => {
         await writeFile(stagedSource, source);
         if (interrupt === 'before first link') crash();
     }
+    if (count === 2 && interrupt === 'fail second link') throw new Error('synthetic second link failure');
     await link(source, target);
     if ((count === 1 && interrupt === 'between links') ||
         (count === 2 && interrupt === 'after both links')) crash();
@@ -129,6 +130,7 @@ async function fixture(t) {
         archive, drive, run, stateBytes, stagedSource: () => fs.readFile(stagedSource, 'utf8'),
         journalBytes: () => fs.readFile(join(stateDir, 'provider-contract-publication.json')),
         state: async () => JSON.parse(await stateBytes()),
+        writeState: (state) => fs.writeFile(statePath, JSON.stringify(state)),
         copies: async () => (await fs.readFile(copyLog, 'utf8')).trim().split('\n').filter(Boolean).map(JSON.parse),
         async seedScratch() {
             const path = join(archive, sentinel);
@@ -199,6 +201,64 @@ for (const [transition, previous, priorPaths, expected] of [
             await expectArchive(f, [[priorPaths, previous], [expected, current]]);
         });
     }
+}
+
+test('a second link failure in the same run blocks Drive until the pair is recovered', async (t) => {
+    const f = await fixture(t);
+    const previous = document(1, { named: false, completed: false });
+    const current = document(2);
+    const paths = providerPair();
+    await f.run(previous);
+    await f.seedScratch();
+    const state = await f.stateBytes();
+    const copies = await f.copies();
+
+    const result = await f.run(current, { interrupt: 'fail second link', code: 1 });
+    assert.equal(result[0].reason, 'synthetic second link failure');
+    assert.deepEqual(await f.copies(), copies);
+    assert.deepEqual(await f.stateBytes(), state);
+    assert.deepEqual(Object.keys(JSON.parse(await f.journalBytes()).next.files), paths);
+    assert.equal(await fs.readFile(join(f.archive, paths[0]), 'utf8'), current.files[0].fileId);
+    await assert.rejects(fs.stat(join(f.archive, paths[1])), { code: 'ENOENT' });
+    for (const path of paths) await assert.rejects(fs.stat(join(f.drive, path)), { code: 'ENOENT' });
+
+    await f.run(current);
+    await assert.rejects(f.journalBytes(), { code: 'ENOENT' });
+    await expectArchive(f, [[legacyPair, previous], [paths, current]]);
+});
+
+for (const [reason, changeState] of [
+    ['state_changed', (state, intent) => { state.units[intent.key].completed = true; }],
+    ['shared_archive_path', (state, intent) => { state.units['doc:other'] = intent.next; }],
+]) {
+    test(`resume refuses ${reason} and preserves the pending pair without uploading`, async (t) => {
+        const f = await fixture(t);
+        const previous = document(1, { named: false, completed: false });
+        const current = document(2);
+        await f.run(previous);
+        await f.run(current, { interrupt: 'between links', code: 137 });
+        const journal = await f.journalBytes();
+        const state = await f.state();
+        changeState(state, JSON.parse(journal));
+        await f.writeState(state);
+        const stateBytes = await f.stateBytes();
+        const copies = await f.copies();
+        const paths = providerPair();
+        const first = join(f.archive, paths[0]);
+        const { ino, nlink } = await fs.stat(first);
+
+        const result = await f.run(current, { code: 1 });
+        assert.equal(result[0].reason, `provider_publication_${reason}`);
+        assert.deepEqual(await f.stateBytes(), stateBytes);
+        assert.deepEqual(await f.journalBytes(), journal);
+        assert.deepEqual(await f.copies(), copies);
+        const after = await fs.stat(first);
+        assert.equal(after.ino, ino);
+        assert.equal(after.nlink, nlink);
+        assert.equal(await fs.readFile(first, 'utf8'), current.files[0].fileId);
+        await assert.rejects(fs.stat(join(f.archive, paths[1])), { code: 'ENOENT' });
+        for (const path of paths) await assert.rejects(fs.stat(join(f.drive, path)), { code: 'ENOENT' });
+    });
 }
 
 for (const occupied of ['destination', 'staged file']) {
