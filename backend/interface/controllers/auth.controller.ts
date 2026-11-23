@@ -42,6 +42,7 @@ import { runSystemScope } from "infrastructure/tenant/run-system-scope";
 
 @Controller("auth")
 export class AuthController {
+    private static readonly ACCOUNT_LINK_VERSION_HEADER = "x-account-link-version";
     private static readonly PENDING_SIGNUP_TOKEN_HEADER = "x-pending-signup-token";
     private static readonly PENDING_ONBOARDING_TOKEN_HEADER = "x-pending-onboarding-token";
     private static readonly OAUTH_NONCE_COOKIE = "kakao_oauth_nonce";
@@ -253,6 +254,7 @@ export class AuthController {
         @Headers(AuthController.PENDING_SIGNUP_TOKEN_HEADER) headerToken: string | undefined,
         @Query("token") queryToken: string | undefined,
         @Body() body: CompleteKakaoOnboardingDto,
+        @Headers(AuthController.ACCOUNT_LINK_VERSION_HEADER) accountLinkVersion?: string | string[],
     ) {
         const token = headerToken ?? queryToken;
         if (!token) {
@@ -269,6 +271,7 @@ export class AuthController {
             body.phone,
             body.birthDate,
             body.role,
+            accountLinkVersion === "1",
         );
     }
 
@@ -342,13 +345,18 @@ export class AuthController {
 
     @Post("register")
     @UseGuards(RateLimitGuard)
-    async register(@Body() body: RegisterDto, @Ip() ip: string) {
+    async register(
+        @Body() body: RegisterDto,
+        @Ip() ip: string,
+        @Headers(AuthController.ACCOUNT_LINK_VERSION_HEADER) accountLinkVersion?: string | string[],
+    ) {
         const result = await this.authService.registerWithEmail(
             body.email,
             body.password,
             body.name,
             body.phone,
             body.birthDate,
+            accountLinkVersion === "1",
         );
 
         // Reset rate limit on successful registration

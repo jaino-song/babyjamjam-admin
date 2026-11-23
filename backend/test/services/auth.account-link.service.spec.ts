@@ -89,8 +89,49 @@ describe("SMS account linking", () => {
         jest.spyOn(service, "hashPassword").mockResolvedValue("new-hash");
     });
     afterEach(() => jest.restoreAllMocks());
-    const startKakao = (s: AuthService) => s.completeKakaoOnboarding("pending-token", phone, birthDate, "user");
-    const startEmail = (s: AuthService) => s.registerWithEmail("New@example.invalid", "Password1!", "New", phone, birthDate);
+    const startKakao = (s: AuthService) => s.completeKakaoOnboarding("pending-token", phone, birthDate, "user", true);
+    const startEmail = (s: AuthService) => s.registerWithEmail("New@example.invalid", "Password1!", "New", phone, birthDate, true);
+
+    describe.each(["kakao", "email"])("legacy %s registration", method => {
+        it.each(["approved", "pending", "birthdateMismatch", "ambiguous"])(
+            "refuses the %s link case without side effects", async scenario => {
+                if (method === "email") {
+                    user.kakaoId = "existing-kakao";
+                    user.passwordHash = null;
+                    if (scenario === "pending") {
+                        user.email = "new@example.invalid";
+                        prisma.user.findUnique.mockResolvedValue(user);
+                    }
+                }
+                if (scenario === "pending") user.approvalStatus = "pending";
+                if (scenario === "birthdateMismatch") user.birthDate = "1991-01-01";
+                const holders = scenario === "ambiguous" ? [user, { ...user, id: "second" }] : [user];
+                (method === "kakao" ? tx.user.findMany : prisma.user.findMany).mockResolvedValue(holders);
+                const before = { ...user };
+
+                const result = method === "kakao"
+                    ? service.completeKakaoOnboarding("pending-token", phone, birthDate, "user")
+                    : service.registerWithEmail("New@example.invalid", "Password1!", "New", phone, birthDate);
+
+                await expect(result).rejects.toMatchObject({
+                    status: 400, response: { code: "VALIDATION_FAILED", errors: [{ pointer: "/phone", code: "INVALID_VALUE" }] },
+                });
+                expect(challenge.issue).not.toHaveBeenCalled();
+                expect(challenge.consume).not.toHaveBeenCalled();
+                expect(service.hashPassword).not.toHaveBeenCalled();
+                expect(stored.consumedAt).toBeNull();
+                expect(user).toEqual(before);
+                for (const client of [tx, prisma]) {
+                    expect(client.auth_flow_state.updateMany).not.toHaveBeenCalled();
+                    expect(client.user.create).not.toHaveBeenCalled();
+                    expect(client.user.update).not.toHaveBeenCalled();
+                    expect(client.user.updateMany).not.toHaveBeenCalled();
+                    expect(client.auth_token.create).not.toHaveBeenCalled();
+                    expect(client.auth_email_outbox.create).not.toHaveBeenCalled();
+                }
+            },
+        );
+    });
 
     function expectTransactionOnlyAccountAccess() {
         for (const method of Object.values(prisma.user)) expect(method).not.toHaveBeenCalled();
@@ -99,8 +140,8 @@ describe("SMS account linking", () => {
         expect(prisma.auth_flow_state.updateMany).not.toHaveBeenCalled();
     }
 
-    it("creates a Kakao account and consumes the token when there is no holder", async () => {
-        await expect(startKakao(service)).resolves.toMatchObject({ userId: "created" });
+    it.each([undefined, true])("creates an ordinary Kakao account with capability %s", async supportsAccountLink => {
+        await expect(service.completeKakaoOnboarding("pending-token", phone, birthDate, "user", supportsAccountLink)).resolves.toMatchObject({ userId: "created" });
         expect(tx.auth_flow_state.updateMany).toHaveBeenCalledTimes(1);
         expect(tx.user.create).toHaveBeenCalledTimes(1);
         expect(challenge.issue).not.toHaveBeenCalled();
@@ -146,8 +187,8 @@ describe("SMS account linking", () => {
             lookup.mockImplementation(async ({ where }) => where.phone.in.includes(user.phone) ? [user] : []);
 
             const result = method === "kakao"
-                ? await service.completeKakaoOnboarding("pending-token", canonicalPhone, birthDate, "user")
-                : await service.registerWithEmail("New@example.invalid", "Password1!", "New", canonicalPhone, birthDate);
+                ? await service.completeKakaoOnboarding("pending-token", canonicalPhone, birthDate, "user", true)
+                : await service.registerWithEmail("New@example.invalid", "Password1!", "New", canonicalPhone, birthDate, true);
 
             expect(result).toMatchObject({ linkVerificationRequired: true });
             expect(challenge.issue).toHaveBeenCalledWith(expect.objectContaining({
@@ -163,8 +204,8 @@ describe("SMS account linking", () => {
             lookup.mockImplementation(async ({ where }) => where.phone.in.includes(user.phone) ? [user] : []);
 
             const result = method === "kakao"
-                ? service.completeKakaoOnboarding("pending-token", canonicalPhone, birthDate, "user")
-                : service.registerWithEmail("New@example.invalid", "Password1!", "New", canonicalPhone, birthDate);
+                ? service.completeKakaoOnboarding("pending-token", canonicalPhone, birthDate, "user", true)
+                : service.registerWithEmail("New@example.invalid", "Password1!", "New", canonicalPhone, birthDate, true);
 
             await expect(result).rejects.toMatchObject({
                 status: 400, response: { errors: [{ pointer: "/phone", code: "INVALID_VALUE" }] },
@@ -186,8 +227,8 @@ describe("SMS account linking", () => {
             lookup.mockImplementation(async ({ where }) => holders.filter(holder => where.phone.in.includes(holder.phone)));
 
             const result = method === "kakao"
-                ? service.completeKakaoOnboarding("pending-token", canonicalPhone, birthDate, "user")
-                : service.registerWithEmail("New@example.invalid", "Password1!", "New", canonicalPhone, birthDate);
+                ? service.completeKakaoOnboarding("pending-token", canonicalPhone, birthDate, "user", true)
+                : service.registerWithEmail("New@example.invalid", "Password1!", "New", canonicalPhone, birthDate, true);
 
             await expect(result).rejects.toMatchObject({
                 status: 400, response: { errors: [{ pointer: "/phone", code: "INVALID_VALUE" }] },
@@ -243,8 +284,8 @@ describe("SMS account linking", () => {
         (method === "kakao" ? tx.user.findMany : prisma.user.findMany).mockResolvedValue([user]);
 
         await expect(method === "kakao"
-            ? service.completeKakaoOnboarding("pending-token", "010-1234-5678", birthDate, "user")
-            : service.registerWithEmail("New@example.invalid", "Password1!", "New", "010-1234-5678", birthDate))
+            ? service.completeKakaoOnboarding("pending-token", "010-1234-5678", birthDate, "user", true)
+            : service.registerWithEmail("New@example.invalid", "Password1!", "New", "010-1234-5678", birthDate, true))
             .rejects.toMatchObject({ status: 403, response: { code: "PENDING_APPROVAL" } });
         expect(challenge.issue).toHaveBeenCalledTimes(1);
         expect(challenge.issue).toHaveBeenCalledWith({
@@ -447,8 +488,8 @@ describe("SMS account linking", () => {
         expect(prisma.user.create).not.toHaveBeenCalled();
         expect(tx.user.create).not.toHaveBeenCalled();
     });
-    it("creates email account as before when no holder", async () => {
-        await expect(startEmail(service)).resolves.toMatchObject({ userId: "created" });
+    it.each([undefined, true])("creates email account as before when no holder", async supportsAccountLink => {
+        await expect(service.registerWithEmail("New@example.invalid", "Password1!", "New", phone, birthDate, supportsAccountLink)).resolves.toMatchObject({ userId: "created" });
         expect(tx.user.create).toHaveBeenCalledTimes(1);
         expect(tx.auth_token.create).toHaveBeenCalledTimes(1);
         expect(tx.auth_email_outbox.create).toHaveBeenCalledTimes(1);
@@ -465,8 +506,8 @@ describe("SMS account linking", () => {
         const lookup = method === "kakao" ? tx.user.findMany : prisma.user.findMany;
         lookup.mockResolvedValue([user]);
         const result = method === "kakao"
-            ? await service.completeKakaoOnboarding("pending-token", "010-1234-5678", birthDate, "user")
-            : await service.registerWithEmail("New@example.invalid", "Password1!", "New", "010-1234-5678", birthDate);
+            ? await service.completeKakaoOnboarding("pending-token", "010-1234-5678", birthDate, "user", true)
+            : await service.registerWithEmail("New@example.invalid", "Password1!", "New", "010-1234-5678", birthDate, true);
         expect(result).toEqual({ success: true, linkVerificationRequired: true, linkChallengeToken: token,
             message: "입력하신 정보와 일치하는 기존 계정이 있으면 문자로 인증번호를 보내드려요." });
         expect(lookup).toHaveBeenCalledWith(expect.objectContaining({ where: { phone: { in: lookupForms } } }));

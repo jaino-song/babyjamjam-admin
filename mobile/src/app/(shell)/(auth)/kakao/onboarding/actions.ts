@@ -4,7 +4,7 @@ import { cookies } from "next/headers";
 import axios from "axios";
 
 import { serverAPIClient } from "@/lib/api/server";
-import { normalizeApiError } from "@babyjamjam/shared";
+import { ACCOUNT_LINK_VERSION, ACCOUNT_LINK_VERSION_HEADER, normalizeApiError } from "@babyjamjam/shared";
 
 interface OnboardingInput {
   phone: string;
@@ -32,17 +32,26 @@ function kakaoSignupFailure(status: number, data: unknown): { error: string; fie
   return { error: KAKAO_SIGNUP_FAILURE_COPY };
 }
 
-export async function completeKakaoOnboarding(input: OnboardingInput): Promise<{ success: boolean; code?: "LINK_PENDING_APPROVAL"; error?: string; field?: "phone" | "birthDate"; linkVerificationRequired?: boolean; linkChallengeToken?: string }> {
+export async function completeKakaoOnboarding(
+  input: OnboardingInput,
+  accountLinkVersion?: string,
+): Promise<{ success: boolean; code?: "LINK_PENDING_APPROVAL"; error?: string; field?: "phone" | "birthDate"; linkVerificationRequired?: boolean; linkChallengeToken?: string }> {
   const cookieStore = await cookies();
   const pendingToken = cookieStore.get("pending_kakao_signup")?.value;
   if (!pendingToken) return { success: false, error: "카카오 가입 세션이 만료됐어요. 다시 로그인해 주세요." };
 
+  const supportsAccountLink = accountLinkVersion === ACCOUNT_LINK_VERSION;
   try {
     const { data } = await serverAPIClient.post("/auth/kakao/complete-signup", input, {
-      headers: { "x-pending-signup-token": pendingToken },
+      headers: {
+        "x-pending-signup-token": pendingToken,
+        ...(supportsAccountLink ? { [ACCOUNT_LINK_VERSION_HEADER]: ACCOUNT_LINK_VERSION } : {}),
+      },
     });
-    if (data.linkVerificationRequired === true && typeof data.linkChallengeToken === "string") {
-      return { success: true, linkVerificationRequired: true, linkChallengeToken: data.linkChallengeToken };
+    if (data.linkVerificationRequired === true) {
+      return supportsAccountLink && typeof data.linkChallengeToken === "string" && data.linkChallengeToken
+        ? { success: true, linkVerificationRequired: true, linkChallengeToken: data.linkChallengeToken }
+        : { success: false, error: KAKAO_SIGNUP_FAILURE_COPY };
     }
     cookieStore.delete("pending_kakao_signup");
     return { success: data.success === true };

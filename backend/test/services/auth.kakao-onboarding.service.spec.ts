@@ -320,6 +320,7 @@ describe("AuthService Kakao onboarding", () => {
                 "010-1234-5678",
                 "1990-01-01",
                 "user",
+                true,
             );
         if (hasKakao) await expect(result).rejects.toThrow(BadRequestException);
         else await expect(result).resolves.toMatchObject({ success: true, linkVerificationRequired: true, linkChallengeToken: "a".repeat(64) });

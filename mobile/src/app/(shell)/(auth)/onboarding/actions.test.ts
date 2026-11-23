@@ -49,7 +49,10 @@ it.each(["phone", "birthDate"] as const)("maps the %s pointer to authored field 
 });
 it("retains Kakao pending cookie for a link challenge", async () => {
   post.mockResolvedValue({ data: { success: true, linkVerificationRequired: true, linkChallengeToken: "challenge" } });
-  expect(await completeKakaoOnboarding({ phone: "010-1234-5678", birthDate: "1990-01-01", role: "user" })).toMatchObject({ linkVerificationRequired: true, linkChallengeToken: "challenge" });
+  expect(await completeKakaoOnboarding({ phone: "010-1234-5678", birthDate: "1990-01-01", role: "user" }, "1")).toMatchObject({ linkVerificationRequired: true, linkChallengeToken: "challenge" });
+  expect(serverAPIClient.post).toHaveBeenCalledWith("/auth/kakao/complete-signup", expect.objectContaining({ role: "user" }), {
+    headers: { "x-pending-signup-token": "pending", "x-account-link-version": "1" },
+  });
   expect(store.delete).not.toHaveBeenCalled();
 });
 it.each([
@@ -140,4 +143,61 @@ it.each([
   expect(await completeAccountOnboarding({ phone: "010-1234-5678" })).toEqual({ success: false, error });
   expect(store.delete).not.toHaveBeenCalled();
   expect(writeLoginSessionCookies).not.toHaveBeenCalled();
+});
+
+it.each([
+  [400, "ACCOUNT_PROFILE_INCOMPLETE"],
+  [403, "ACCOUNT_PROFILE_INCOMPLETE_EXTRA"],
+  [403, "ACCESS_DENIED"],
+] as const)("keeps the generic completion failure for %s %s", async (status, code) => {
+  post.mockRejectedValueOnce(new AxiosError("synthetic error", undefined, undefined, undefined, {
+    status, data: { code },
+  } as never));
+  expect(await completeAccountOnboarding({})).toEqual({ success: false, error: "계정 정보를 저장하지 못했습니다." });
+  expect(store.delete).not.toHaveBeenCalled();
+  expect(writeLoginSessionCookies).not.toHaveBeenCalled();
+});
+
+describe("Kakao signup capability across releases", () => {
+  const input = { phone: "010-1234-5678", birthDate: "1990-01-01", role: "user" };
+  const signupPost = jest.mocked(serverAPIClient.post);
+  const legacyHeaders = { "x-pending-signup-token": "pending" };
+  const optedInHeaders = { ...legacyHeaders, "x-account-link-version": "1" };
+
+  it.each([undefined, "", "2", "1, 1", " 1"])("treats action argument %p as legacy", async value => {
+    signupPost.mockResolvedValueOnce({ data: { success: true, linkVerificationRequired: true, linkChallengeToken: "challenge" } });
+
+    await expect(completeKakaoOnboarding(input, value)).resolves.toEqual({
+      success: false, error: "카카오 가입을 완료하지 못했습니다. 다시 시도해 주세요.",
+    });
+    expect(signupPost).toHaveBeenCalledWith("/auth/kakao/complete-signup", input, { headers: legacyHeaders });
+    expect(store.delete).not.toHaveBeenCalled();
+  });
+
+  it.each([undefined, "1"])("shows a phone refusal and keeps the pending signup for capability %p", async value => {
+    const data = createProblemDetails({
+      code: "VALIDATION_FAILED", requestId: "historical-phone-refusal",
+      errors: [{ pointer: "/phone", code: "INVALID_VALUE", detail: "Invalid value" }],
+    });
+    signupPost.mockRejectedValueOnce(new AxiosError("synthetic refusal", undefined, undefined, undefined, { status: 400, data } as never));
+
+    const result = value === undefined ? await completeKakaoOnboarding(input) : await completeKakaoOnboarding(input, value);
+    expect(result).toEqual({
+      success: false, field: "phone", error: "이미 등록된 전화번호예요. 다른 전화번호로 다시 시도해 주세요.",
+    });
+    expect(signupPost).toHaveBeenCalledWith("/auth/kakao/complete-signup", input, {
+      headers: value === "1" ? optedInHeaders : legacyHeaders,
+    });
+    expect(store.delete).not.toHaveBeenCalled();
+  });
+
+  it.each([undefined, "1"])("completes an ordinary signup for capability %p", async value => {
+    signupPost.mockResolvedValueOnce({ data: { success: true, userId: "synthetic-user" } });
+
+    await expect(completeKakaoOnboarding(input, value)).resolves.toEqual({ success: true });
+    expect(signupPost).toHaveBeenCalledWith("/auth/kakao/complete-signup", input, {
+      headers: value === "1" ? optedInHeaders : legacyHeaders,
+    });
+    expect(store.delete).toHaveBeenCalledWith("pending_kakao_signup");
+  });
 });

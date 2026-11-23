@@ -1,4 +1,4 @@
-import type { AxiosAdapter } from "axios";
+import { AxiosHeaders, type AxiosAdapter } from "axios";
 
 import { api } from "@/lib/api/client";
 import { authApi } from "./auth";
@@ -7,9 +7,10 @@ const originalAdapter = api.defaults.adapter;
 afterEach(() => { api.defaults.adapter = originalAdapter; });
 
 function stubTransport(body: unknown) {
-  const requests: Array<{ method: string | undefined; uri: string; data: unknown }> = [];
+  const requests: Array<{ method: string | undefined; uri: string; data: unknown; version?: string }> = [];
   const adapter: AxiosAdapter = async (config) => {
-    requests.push({ method: config.method, uri: api.getUri(config), data: config.data });
+    const version = AxiosHeaders.from(config.headers).get("x-account-link-version");
+    requests.push({ method: config.method, uri: api.getUri(config), data: config.data, ...(typeof version === "string" ? { version } : {}) });
     return { status: 200, statusText: "OK", data: body, headers: {}, config };
   };
   api.defaults.adapter = adapter;
@@ -41,4 +42,13 @@ it.each([
     uri: "/api/auth/check-email?email=qa%40example.test",
     data: undefined,
   }]);
+});
+
+it("offers account linking only on the email registration request", async () => {
+  const body = { email: "qa@example.test", password: "Password1!", name: "QA", phone: "01012345678", birthDate: "1990-01-01" };
+  const result = { success: true, linkVerificationRequired: true, linkChallengeToken: "challenge" };
+  const requests = stubTransport(result);
+
+  await expect(authApi.register(body)).resolves.toEqual(result);
+  expect(requests).toEqual([{ method: "post", uri: "/api/auth/register", data: JSON.stringify(body), version: "1" }]);
 });
