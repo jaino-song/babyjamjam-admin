@@ -149,12 +149,6 @@ export async function loginWithEmail(email: string, password: string, autoLogin 
 
         if (axios.isAxiosError<APIErrorResponse>(error)) {
             const axiosError = error;
-            console.error("[Server Action] Axios Error:", {
-                message: axiosError.message,
-                code: axiosError.code,
-                status: axiosError.response?.status,
-            });
-
             if (isBackendConnectionError(axiosError)) {
                 return { success: false, error: "로그인 서버에 연결할 수 없어요. 백엔드 서버를 확인해 주세요." };
             }

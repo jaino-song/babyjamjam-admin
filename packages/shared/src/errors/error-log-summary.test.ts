@@ -40,29 +40,38 @@ describe("summarizeErrorForLog", () => {
     });
   });
 
-  it.each([{}, "A".repeat(65), "lower_case", "", "UPPER-WITH-DASH", "CODE\n"])(
-    "omits a problem code that is not a short uppercase code: %p", (code) => {
+  it.each([{}, "A".repeat(64), "lower_case", "", "FORGED_UPPERCASE_SENTINEL", "constructor", "__proto__"])(
+    "omits a code outside the problem catalog: %p", (code) => {
       const error = axiosShapedError();
       const summary = summarizeErrorForLog({ ...error, response: { status: 403, data: { code } } });
       expect(summary).toEqual({ name: "AxiosError", code: "ERR_BAD_REQUEST", status: 403 });
     },
   );
 
-  it("accepts a code at the 64 character limit", () => {
-    const summary = summarizeErrorForLog({ isAxiosError: true, response: { data: { code: "A".repeat(64) } } });
-    expect(summary).toEqual({ name: "AxiosError", problemCode: "A".repeat(64) });
+  it("drops forged names and codes even when they resemble enums", () => {
+    const name = "FORGED_ERROR_NAME";
+    const code = "FORGED_TRANSPORT_CODE";
+    const problemCode = "FORGED_PROBLEM_CODE";
+    expect(summarizeErrorForLog(Object.assign(new Error("message-sentinel"), { name, code, problemCode })))
+      .toEqual({ name: "Error" });
+    expect(summarizeErrorForLog({ ...axiosShapedError(), name, code, response: { data: { code: problemCode } } }))
+      .toEqual({ name: "AxiosError" });
   });
 
-  it("returns only an Error name and message truncated to 200 characters", () => {
-    expect(summarizeErrorForLog(new TypeError("x".repeat(201)))).toEqual({
-      name: "TypeError", message: "x".repeat(200),
-    });
+  it.each([99, 600, 403.5, Infinity, NaN, "403", null])("drops invalid HTTP status %p", status => {
+    expect(summarizeErrorForLog({ isAxiosError: true, response: { status } })).toEqual({ name: "AxiosError" });
   });
 
-  it("does not copy an Error's cause or enumerable request and response properties", () => {
+  it.each([100, 599])("keeps valid boundary HTTP status %p", status => {
+    expect(summarizeErrorForLog({ isAxiosError: true, response: { status } })).toEqual({ name: "AxiosError", status });
+  });
+
+  it("does not copy an Error's message, stack, cause, request or response", () => {
     const cause = axiosShapedError();
-    const error = Object.assign(new Error("m", { cause }), { config: cause.config, response: cause.response });
-    expect(summarizeErrorForLog(error)).toEqual({ name: "Error", message: "m" });
+    const error = Object.assign(new TypeError("arbitrary-message-sentinel", { cause }), {
+      request: cause.request, config: cause.config, response: cause.response,
+    });
+    expect(summarizeErrorForLog(error)).toEqual({ name: "TypeError" });
   });
 
   it("omits SyntaxError messages because they may quote the parsed input", () => {
@@ -73,7 +82,7 @@ describe("summarizeErrorForLog", () => {
     expect(summarizeErrorForLog(value)).toEqual({ name: "NonError" });
   });
 
-  it("keeps safe Axios fields even when a response getter throws", () => {
+  it("returns the fallback when an Axios metadata getter throws", () => {
     const error = {
       isAxiosError: true,
       name: "AxiosError",
@@ -81,7 +90,7 @@ describe("summarizeErrorForLog", () => {
       get response() { throw new Error("getter-secret"); },
     };
     expect(() => summarizeErrorForLog(error)).not.toThrow();
-    expect(summarizeErrorForLog(error)).toEqual({ name: "AxiosError", code: "ECONNABORTED" });
+    expect(summarizeErrorForLog(error)).toEqual({ name: "NonError" });
   });
 
   it("does not throw for hostile proxies or frozen errors", () => {
@@ -91,7 +100,17 @@ describe("summarizeErrorForLog", () => {
     });
     expect(() => summarizeErrorForLog(proxy)).not.toThrow();
     expect(summarizeErrorForLog(proxy)).toEqual({ name: "NonError" });
-    expect(summarizeErrorForLog(Object.freeze(new Error("f")))).toEqual({ name: "Error", message: "f" });
+    expect(summarizeErrorForLog(Object.freeze(new Error("f")))).toEqual({ name: "Error" });
+  });
+
+  it("never reads a message or stack accessor", () => {
+    const getter = jest.fn(() => { throw new Error("getter-sentinel"); });
+    const error = Object.defineProperties(new Error(), {
+      message: { get: getter },
+      stack: { get: getter },
+    });
+    expect(summarizeErrorForLog(error)).toEqual({ name: "Error" });
+    expect(getter).not.toHaveBeenCalled();
   });
 
   it("does not return non-primitive field values or invoke their serialization", () => {
@@ -103,6 +122,6 @@ describe("summarizeErrorForLog", () => {
       message: { get() { throw new Error("message-secret"); } },
     });
     expect(() => summarizeErrorForLog(error)).not.toThrow();
-    expect(summarizeErrorForLog(error)).toEqual({ name: "Error" });
+    expect(summarizeErrorForLog(error)).toEqual({ name: "NonError" });
   });
 });

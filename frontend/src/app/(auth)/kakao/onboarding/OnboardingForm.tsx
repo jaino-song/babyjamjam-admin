@@ -5,6 +5,7 @@ import { useEffect, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { ChevronRight } from "lucide-react";
 import { formatIsoDateInput } from "@babyjamjam/shared/utils/date-input";
+import { ACCOUNT_LINK_VERSION } from "@babyjamjam/shared";
 import {
     resolveFieldMessage,
     type FieldInputState,
@@ -168,7 +169,7 @@ export function OnboardingForm({
         }
 
         startTransition(async () => {
-            const response = await completeKakaoOnboarding(result.data);
+            const response = await completeKakaoOnboarding(result.data, ACCOUNT_LINK_VERSION);
             if (response.code) {
                 router.replace(appendSafeReturnPath(`/login?authError=${response.code}`, returnPath));
                 return;

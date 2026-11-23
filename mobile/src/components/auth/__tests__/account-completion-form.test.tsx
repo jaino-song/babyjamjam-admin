@@ -1,3 +1,8 @@
+import { createProblemDetails } from "@babyjamjam/shared";
+import { AxiosError } from "axios";
+import { serverAPIClient } from "@/lib/api/server";
+import { writeLoginSessionCookies } from "@/lib/auth/login-session-cookies";
+import { LoginAuthErrorModal } from "../login-auth-error-modal";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { completeAccountOnboarding } from "@/app/(shell)/(auth)/onboarding/actions";
 import { resetAuthorityState } from "@/lib/auth/authority-state";
@@ -5,7 +10,14 @@ import { AccountCompletionForm } from "../account-completion-form";
 const replace = jest.fn();
 const locationReplace = jest.fn();
 const originalLocation = window.location;
-jest.mock("next/navigation", () => ({ useRouter: () => ({ replace }) }));
+const pendingCookies = { get: jest.fn(), delete: jest.fn() };
+jest.mock("next/navigation", () => ({
+  useRouter: () => ({ replace }),
+  useSearchParams: () => new URLSearchParams(replace.mock.lastCall?.[0].split("?")[1]),
+}));
+jest.mock("next/headers", () => ({ cookies: async () => pendingCookies }));
+jest.mock("@/lib/api/server", () => ({ serverAPIClient: { post: jest.fn() } }));
+jest.mock("@/lib/auth/login-session-cookies", () => ({ writeLoginSessionCookies: jest.fn() }));
 jest.mock("@/app/(shell)/(auth)/onboarding/actions", () => ({ completeAccountOnboarding: jest.fn() }));
 jest.mock("@/lib/auth/authority-state", () => ({ resetAuthorityState: jest.fn() }));
 beforeEach(() => {
@@ -62,4 +74,30 @@ it("sends denied accounts back to the login notice", async () => {
   await waitFor(() => expect(replace).toHaveBeenCalledWith("/login?authError=PENDING_APPROVAL"));
   expect(resetAuthorityState).not.toHaveBeenCalled();
   expect(locationReplace).not.toHaveBeenCalled();
+});
+
+it.each([
+  { code: "ACCOUNT_PROFILE_INCOMPLETE" },
+  createProblemDetails({ code: "ACCOUNT_PROFILE_INCOMPLETE", requestId: "legacy-completion" }),
+])("shows the owner-contact notice when a historical backend refuses completion (%j)", async data => {
+  const actual = jest.requireActual<typeof import("@/app/(shell)/(auth)/onboarding/actions")>("@/app/(shell)/(auth)/onboarding/actions");
+  jest.mocked(completeAccountOnboarding).mockImplementationOnce(actual.completeAccountOnboarding);
+  pendingCookies.get.mockReturnValue({ value: "pending" });
+  jest.mocked(serverAPIClient.post).mockRejectedValueOnce(
+    new AxiosError("synthetic legacy error", undefined, undefined, undefined, { status: 403, data } as never),
+  );
+  render(<AccountCompletionForm birthDate="1990-01-01" />);
+  fireEvent.change(screen.getByLabelText("전화번호"), { target: { value: "01012345678" } });
+  fireEvent.click(screen.getByText("저장하고 시작하기"));
+
+  await waitFor(() => expect(replace).toHaveBeenCalledWith("/login?authError=ACCOUNT_PROFILE_INCOMPLETE"));
+  expect(serverAPIClient.post).toHaveBeenCalledWith(
+    "/auth/onboarding/complete", { phone: "010-1234-5678" },
+    { headers: { "x-pending-onboarding-token": "pending" } },
+  );
+  expect(writeLoginSessionCookies).not.toHaveBeenCalled();
+  expect(pendingCookies.delete).not.toHaveBeenCalled();
+
+  render(<LoginAuthErrorModal />);
+  expect(await screen.findByText("오너에게 계정 정보 확인을 요청해 주세요.")).toBeVisible();
 });

@@ -1,5 +1,5 @@
 import { NextResponse, NextRequest } from "next/server";
-import { registerRequestSchema } from "@babyjamjam/shared";
+import { ACCOUNT_LINK_VERSION, ACCOUNT_LINK_VERSION_HEADER, registerRequestSchema } from "@babyjamjam/shared";
 import { serverAPIClient } from "@/lib/api/server";
 import { errorResponse, parseBody } from "@/lib/api/route-utils";
 
@@ -8,7 +8,10 @@ export async function POST(request: NextRequest) {
     if (response) return response;
 
     try {
-        const { data: responseData, status } = await serverAPIClient.post("/auth/register", data);
+        const capability = request.headers.get(ACCOUNT_LINK_VERSION_HEADER) === ACCOUNT_LINK_VERSION
+            ? { headers: { [ACCOUNT_LINK_VERSION_HEADER]: ACCOUNT_LINK_VERSION } }
+            : undefined;
+        const { data: responseData, status } = await serverAPIClient.post("/auth/register", data, capability);
 
         return NextResponse.json(responseData, { status });
     } catch (error) {

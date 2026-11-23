@@ -84,3 +84,16 @@ it.each(["PENDING_APPROVAL", "ACCOUNT_REJECTED", "NO_ACCESSIBLE_BRANCH"])("retur
   fail(403, code as ProblemCode);
   expect(await completeAccountOnboarding({})).toEqual({ success: false, code });
 });
+
+it.each([
+  [400, "ACCOUNT_PROFILE_INCOMPLETE"],
+  [403, "ACCOUNT_PROFILE_INCOMPLETE_EXTRA"],
+  [403, "ACCESS_DENIED"],
+] as const)("keeps the generic completion failure for %s %s", async (status, code) => {
+  post.mockRejectedValueOnce(new AxiosError("synthetic error", undefined, undefined, undefined, {
+    status, data: { code },
+  } as never));
+  expect(await completeAccountOnboarding({})).toEqual({ success: false, error: "계정 정보를 저장하지 못했습니다." });
+  expect(store.delete).not.toHaveBeenCalled();
+  expect(setAuthSessionCookies).not.toHaveBeenCalled();
+});

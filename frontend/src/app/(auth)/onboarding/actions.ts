@@ -41,11 +41,15 @@ export async function completeAccountOnboarding(input: { phone?: string; birthDa
     clearPendingOnboarding(store);
     return { success: true, requiresBranchSelection: Boolean(data.requiresBranchSelection) };
   } catch (error) {
-    const status = error instanceof AxiosError ? error.response?.status : undefined;
+    const response = error instanceof AxiosError ? error.response : undefined;
+    const status = response?.status;
     const normalized = normalizeApiError(error, { locale: "ko-KR", operation: "mutation" });
     if (status === 401) {
       clearPendingAccountOnboarding(store);
       return { success: false, error: EXPIRED };
+    }
+    if (status === 403 && response?.data?.code === "ACCOUNT_PROFILE_INCOMPLETE") {
+      return { success: false, code: "ACCOUNT_PROFILE_INCOMPLETE" };
     }
     const problem = normalized.problem;
     if (status === 403 && problem && ["PENDING_APPROVAL", "ACCOUNT_REJECTED", "NO_ACCESSIBLE_BRANCH"].includes(problem.code)) {

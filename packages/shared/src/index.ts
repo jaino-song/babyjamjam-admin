@@ -21,3 +21,4 @@ export * from "./errors/problem-details";
 
 export * from "./errors/problem-presentation";
 export { summarizeErrorForLog, type ErrorLogSummary } from "./errors/error-log-summary";
+export { ACCOUNT_LINK_VERSION, ACCOUNT_LINK_VERSION_HEADER } from "./constants/account-link-capability";
