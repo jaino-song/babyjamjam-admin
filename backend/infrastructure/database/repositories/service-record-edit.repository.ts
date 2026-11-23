@@ -52,6 +52,7 @@ import {
 } from "domain/repositories/service-record-edit.repository.interface";
 import { DISPATCH_AUTHORIZED_PROGRESS_STEP } from "domain/entities/eformsign-document-job.entity";
 import { PrismaService } from "infrastructure/database/prisma.service";
+import { readHolidayCalendarRows } from "./sb.holiday-calendar.repository";
 import { sha256CanonicalJson } from "application/services/eformsign-document-job.service";
 import { selectCurrentContractDocument } from "application/utils/current-contract-document";
 import {
@@ -3505,7 +3506,9 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
                 if (await this.findActiveDraftWithClient(tx, branchId, caseId)) {
                     throw new ServiceRecordEditDraftConflictError("The service-record case has an active draft");
                 }
-                await this.assertOwnerJsonDayScope(tx, source, principal, input.targets);
+                const activeEmployeeIds = await this.assertOwnerJsonDayScope(tx, source, principal, input.targets);
+                const projectedFill = source.plannedSessions === null && input.targets.some(({ op, sessionIndex }) =>
+                    op === "fill" && !source.sessions.some((day) => day.sessionIndex === sessionIndex));
                 const draft = input.prepareDraft(source);
                 await tx.service_record_edit_draft.create({
                     data: {
@@ -3522,6 +3525,7 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
                         status: "ACTIVE",
                     },
                 });
+                const projectionCheck: { run?: () => Promise<void> } = {};
                 const confirmed = await this.confirmDraftWithClient(tx, {
                     branchId,
                     draftId,
@@ -3530,8 +3534,42 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
                     requestFingerprint,
                     actorUserId: userId,
                     serviceRecordTemplateIds: input.serviceRecordTemplateIds,
-                    prepare: input.prepare,
+                    prepare: async (snapshot) => {
+                        const revisionQuery = { where: { id: 1 }, select: { revision: true } } as const;
+                        const revision = (await tx.holiday_calendar_revision.findUnique(revisionQuery))?.revision ?? null;
+                        if (projectedFill && revision === null) {
+                            throw new ServiceRecordEditConflictError("The holiday calendar revision is unavailable");
+                        }
+                        const rows = await readHolidayCalendarRows(tx, branchId);
+                        if (!projectedFill) {
+                            const current = (await tx.holiday_calendar_revision.findUnique(revisionQuery))?.revision ?? null;
+                            if (current !== revision) {
+                                throw new ServiceRecordEditConflictError("The holiday calendar changed while being read");
+                            }
+                        }
+                        const { plan, verifyInsertedProjection } = input.prepare(snapshot, { ...rows, revision: Number(revision ?? 0n) });
+                        if (projectedFill) {
+                            if (!verifyInsertedProjection || plan.newSessions.some((session) => !activeEmployeeIds.has(session.employeeId))) {
+                                throw new ServiceRecordEditConflictError("The projected fill could not be verified");
+                            }
+                            projectionCheck.run = async () => {
+                                const updated = await this.loadSourceWithClient(tx, branchId, target);
+                                if (!updated) throw new ServiceRecordEditConflictError("The service-record source changed");
+                                verifyInsertedProjection(updated);
+                                // The existing revision row fences calendar writers through commit.
+                                // NOWAIT keeps the editor's lock order free of new wait edges.
+                                const current = await tx.$queryRaw<Array<{ revision: bigint }>>(Prisma.sql`
+                                    SELECT revision FROM "holiday_calendar_revision" WHERE id = 1 FOR SHARE NOWAIT
+                                `);
+                                if (current[0]?.revision !== revision) {
+                                    throw new ServiceRecordEditConflictError("The holiday calendar changed during the projected fill");
+                                }
+                            };
+                        }
+                        return plan;
+                    },
                 }, source);
+                await projectionCheck.run?.();
                 // The shared row locks fence mutable auth state through commit.
                 // Check the time-dependent session expiry again after the writes.
                 await this.lockOwnerJsonPrincipal(tx, principal);
@@ -3570,13 +3608,13 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
         source: ServiceRecordEditSource,
         { branchId }: ServiceRecordOwnerWritePrincipal,
         targets: ServiceRecordOwnerJsonConfirmInput["targets"],
-    ): Promise<void> {
+    ): Promise<ReadonlySet<number>> {
         const scheduleIds = confirmScheduleIds(source);
         const employeeIds = confirmEmployeeIds(source);
         if (!scheduleIds.length || !employeeIds.length) throw new ServiceRecordEditConflictError();
         const employees = await tx.employee.findMany({
             where: { branchId, id: { in: employeeIds } },
-            select: { id: true },
+            select: { id: true, deletedAt: true },
         });
         if (employees.length !== employeeIds.length) throw new ServiceRecordEditConflictError();
 
@@ -3595,6 +3633,7 @@ export class ServiceRecordEditRepository implements IServiceRecordEditRepository
             LIMIT 1
         `);
         if (collisions.length) throw new ServiceRecordEditConflictError("A legacy service-record row conflicts with a target");
+        return new Set(employees.filter((employee) => employee.deletedAt === null).map((employee) => employee.id));
     }
 
     private async confirmDraftWithClient(

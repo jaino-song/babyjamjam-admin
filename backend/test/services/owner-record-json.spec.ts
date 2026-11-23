@@ -5,6 +5,7 @@ import type { Prisma } from "@prisma/client";
 import type { Request } from "express";
 import { randomUUID } from "node:crypto";
 import { AdminServiceRecordEditService } from "application/services/admin-service-record-edit.service";
+import { HolidayCalendarService } from "application/services/holiday-calendar.service";
 import { ServiceRecordCaseEventBus } from "application/services/service-record-case-event-bus.service";
 import { JwtGuard } from "infrastructure/auth/jwt.guard";
 import * as jwtSecret from "infrastructure/auth/jwt-secret";
@@ -14,7 +15,6 @@ import { ServiceRecordEditRepository } from "infrastructure/database/repositorie
 import { TenantContext, TenantGuard } from "infrastructure/tenant";
 import { OwnerRecordJsonBearerGuard, OwnerRecordJsonController } from "interface/controllers/owner-record-json.controller";
 import { parseOwnerRecordJsonRequest, parseOwnerRecordJsonTarget, type OwnerRecordJsonRequest } from "interface/dto/owner-record-json.dto";
-import { createHolidayCalendarStub } from "../utils/holiday-calendar.stub";
 
 const BRANCH = "11111111-1111-4111-8111-111111111111";
 const OTHER_BRANCH = "12121212-1212-4212-8212-121212121212";
@@ -93,12 +93,18 @@ function harness() {
         drafts: [] as Row[],
         revisions: [] as Row[],
         documentOperations: [] as string[],
+        employeeDeletedAt: null as Date | null,
+        calendarRevision: 1n as bigint | null,
+        holidayOverrides: [] as Row[],
     };
     type State = typeof db;
     const controls = {
         authorized: true, legacyCollision: false, failDocumentWrite: false, blockDocument: false,
         expireDuringWrite: false,
         whileWaitingForCaseLock: undefined as ((state: State) => void) | undefined,
+        afterDayInsert: undefined as ((state: State, row: Row) => void) | undefined,
+        afterHolidayOverridesRead: undefined as ((state: State) => void) | undefined,
+        beforeCalendarValidation: undefined as (() => void) | undefined,
     };
     const trace: string[] = [];
     const caseWrite = jest.fn();
@@ -124,6 +130,12 @@ function harness() {
                         return 1;
                     }),
                     $queryRaw: jest.fn(async ({ sql, values }: Prisma.Sql) => {
+                        if (sql.includes('FROM "holiday_calendar_revision"')) {
+                            expect(sql).toContain("FOR SHARE NOWAIT");
+                            trace.push("calendar-commit-check");
+                            controls.beforeCalendarValidation?.();
+                            return db.calendarRevision === null ? [] : [{ revision: db.calendarRevision }];
+                        }
                         if (sql.includes('FROM "auth_session"')) {
                             trace.push("owner-recheck");
                             const expired = controls.expireDuringWrite && trace.includes("close-draft");
@@ -165,7 +177,25 @@ function harness() {
                         findFirst: jest.fn(async ({ where }) => working.clients.find((row) => matches(row, where)) ?? null),
                         updateMany: periodWrite,
                     },
-                    employee: { findMany: jest.fn(async ({ where }) => (where.branchId === BRANCH ? [{ id: EMPLOYEE }] : [])) },
+                    holiday_calendar_revision: {
+                        findUnique: jest.fn(async () => {
+                            trace.push("calendar-read");
+                            return db.calendarRevision === null ? null : { revision: db.calendarRevision };
+                        }),
+                    },
+                    holiday_year_snapshot: { findMany: jest.fn(async () => []) },
+                    public_holiday: { findMany: jest.fn(async () => []) },
+                    branch_holiday_override: {
+                        findMany: jest.fn(async ({ where }) => {
+                            const rows = db.holidayOverrides.filter((row) => matches(row, where));
+                            controls.afterHolidayOverridesRead?.(db);
+                            return rows;
+                        }),
+                    },
+                    employee: {
+                        findMany: jest.fn(async ({ where }) => (where.branchId === BRANCH
+                            ? [{ id: EMPLOYEE, deletedAt: working.employeeDeletedAt }] : [])),
+                    },
                     employee_schedule: {
                         findMany: jest.fn(async ({ where }) => working.schedules.filter((row) => matches(row, where))),
                         updateMany: periodWrite,
@@ -190,6 +220,7 @@ function harness() {
                         create: jest.fn(async ({ data }) => {
                             dayInsert(data);
                             working.cases.find((item) => item.id === data.serviceRecordCaseId)!.days.push(data);
+                            controls.afterDayInsert?.(working, data);
                             return data;
                         }),
                     },
@@ -234,7 +265,10 @@ function harness() {
     const repository = new ServiceRecordEditRepository(prisma as never);
     const bus = new ServiceRecordCaseEventBus();
     const emit = jest.spyOn(bus, "emit").mockImplementation(() => { trace.push("emit"); });
-    const editor = new AdminServiceRecordEditService(repository, createHolidayCalendarStub(), bus);
+    const editor = new AdminServiceRecordEditService(repository, new HolidayCalendarService({
+        readRevision: async () => db.calendarRevision === null ? 0 : Number(db.calendarRevision),
+        readCalendar: async () => ({ revision: Number(db.calendarRevision), snapshots: [], holidays: [], overrides: [] }),
+    } as never), bus);
     async function request(operations: Operation[], idempotencyKey = KEY): Promise<OwnerRecordJsonRequest> {
         const { sourceCaseVersion, sourceFingerprint } = await editor.getDraft(BRANCH, CLIENT);
         trace.length = 0;
@@ -453,14 +487,166 @@ describe("owner record JSON confirmation", () => {
         },
     );
 
-    it("allows a legacy edit with authoritative existing dates and rejects creating an inferred slot", async () => {
+    it("first fills a newly scheduled null-vector case and then atomically edits and fills it again", async () => {
+        const h = harness();
+        const record = h.db.cases[0]!;
+        Object.assign(record, { plannedSessions: null, days: [], status: "SCHEDULED" });
+        const original = structuredClone(h.db);
+        const first = await h.request([fill(1)]);
+        await expect(h.editor.confirmOwnerRecordJson(principal, target, first))
+            .resolves.toMatchObject({ caseVersion: 8, revisionNumber: 1 });
+        expect(h.db.cases[0]!.days).toEqual([expect.objectContaining({
+            caseSessionIndex: 1, serviceDate: startDate, scheduleId: SCHEDULE, employeeId: EMPLOYEE,
+            notes: "care details", submittedAt: null, clientSignature: null, locked: false,
+        })]);
+        expect(h.db.revisions[0]?.["plannedSessions"]).toEqual(DATES.map((serviceDate, index) =>
+            expect.objectContaining({ sessionIndex: index + 1, serviceDate, assignmentId: ASSIGNMENT })));
+        expect(h.trace.indexOf("calendar-read")).toBeGreaterThan(h.trace.indexOf("lock:service_record_case"));
+        expect(h.trace.indexOf("calendar-commit-check")).toBeGreaterThan(h.trace.indexOf("close-draft"));
+
+        const next = await h.request([edit(), fill(2), fill(3)], OTHER_KEY);
+        const receipt = await h.editor.confirmOwnerRecordJson(principal, target, next);
+        expect(receipt).toMatchObject({ caseVersion: 9, revisionNumber: 2 });
+        await expect(h.editor.confirmOwnerRecordJson(principal, target, next)).resolves.toEqual(receipt);
+        expect(h.db.cases[0]!).toMatchObject({
+            plannedSessions: null, startDate, endDate, requiredSessionCount: DATES.length, status: "SCHEDULED",
+            days: [
+                expect.objectContaining({ caseSessionIndex: 1, notes: "corrected" }),
+                expect.objectContaining({ caseSessionIndex: 2, serviceDate: new Date(DATES[1]!) }),
+                expect.objectContaining({ caseSessionIndex: 3, serviceDate: new Date(DATES[2]!) }),
+            ],
+        });
+        expect(h.db.clients).toEqual(original.clients);
+        expect(h.db.schedules).toEqual(original.schedules);
+        expect(h.db.revisions).toHaveLength(2);
+        expect(h.dayInsert).toHaveBeenCalledTimes(3);
+        expect(h.periodWrite).not.toHaveBeenCalled();
+    });
+
+    it.each([
+        [{ ...fill(), serviceDate: DATES[2]! }, ConflictException],
+        [{ ...fill(), sessionIndex: 3 }, ConflictException],
+        [fill(5), BadRequestException],
+        [fill(1), ConflictException],
+    ] as const)("rejects an invalid null-vector fill %#", async (operation, error) => {
         const h = harness();
         h.db.cases[0]!.plannedSessions = null;
+        await expect(h.editor.confirmOwnerRecordJson(principal, target, await h.request([operation])))
+            .rejects.toBeInstanceOf(error);
+        expect(h.dayInsert).not.toHaveBeenCalled();
+    });
+
+    it.each(["duplicate rows", "overlapping assignments", "replaced schedule", "terminated schedule", "deleted employee", "case end"])(
+        "rejects projected fills with %s",
+        async (kind) => {
+            const h = harness();
+            const record = h.db.cases[0]!;
+            record.plannedSessions = null;
+            const schedule = h.db.schedules[0]!;
+            if (kind === "duplicate rows") record.days.push(day(3));
+            if (kind === "overlapping assignments") {
+                h.db.schedules.push({
+                    ...schedule, id: SCHEDULE + 1, replaced: true,
+                    serviceRecordAssignment: { ...schedule.serviceRecordAssignment, id: randomUUID(), scheduleId: SCHEDULE + 1 },
+                });
+            }
+            if (kind === "replaced schedule") schedule.replaced = true;
+            if (kind === "terminated schedule") Object.assign(schedule, { terminatedAt: startDate });
+            if (kind === "deleted employee") h.db.employeeDeletedAt = startDate;
+            if (kind === "case end") record.endDate = new Date(DATES[2]!);
+            await expect(h.editor.confirmOwnerRecordJson(principal, target, await h.request([fill()])))
+                .rejects.toBeInstanceOf(ConflictException);
+            expect(h.dayInsert).not.toHaveBeenCalled();
+        },
+    );
+
+    it.each([DATES[2]!, DATES[1]!])("rolls back when the post-insert projection sees an untouched slot on %s", async (movedDate) => {
+        const h = harness();
+        const finalDate = "2026-09-07";
+        const finalDay = new Date(finalDate);
+        const record = h.db.cases[0]!;
+        Object.assign(record, { plannedSessions: null, endDate: finalDay });
+        record.days[1]!.serviceDate = new Date(DATES[3]!);
+        h.db.clients[0]!.endDate = finalDay;
+        const schedule = h.db.schedules[0]!;
+        schedule.endDate = finalDay;
+        schedule.serviceRecordAssignment.endDate = finalDay;
+        const req = await h.request([edit(), fill(2), { ...fill(4), serviceDate: finalDate }]);
+        const before = structuredClone(h.db);
+        h.controls.afterDayInsert = (state, row) => {
+            if (row["caseSessionIndex"] === 4) state.cases[0]!.days[1]!.serviceDate = new Date(movedDate);
+        };
+        await expect(h.editor.confirmOwnerRecordJson(principal, target, req)).rejects.toBeInstanceOf(ConflictException);
+        expect(h.dayInsert).toHaveBeenCalledTimes(2);
+        expect(h.db).toEqual(before);
+        expect(h.emit).not.toHaveBeenCalled();
+    });
+
+    it("projects missing rows with the locked client's service-day settings", async () => {
+        const h = harness();
+        const thursday = new Date("2026-09-03");
+        const monday = new Date("2026-09-07");
+        Object.assign(h.db.cases[0]!, { plannedSessions: null, days: [], startDate: thursday, endDate: monday });
+        Object.assign(h.db.clients[0]!, { startDate: thursday, endDate: monday, allowSaturdayService: true });
+        const schedule = h.db.schedules[0]!;
+        Object.assign(schedule, { startDate: thursday, endDate: monday });
+        Object.assign(schedule.serviceRecordAssignment, { startDate: thursday, endDate: monday });
+        const saturday = { ...fill(3), serviceDate: "2026-09-05" };
+        await expect(h.editor.confirmOwnerRecordJson(principal, target, await h.request([saturday])))
+            .resolves.toMatchObject({ caseVersion: 8 });
+        expect(h.db.cases[0]!.days[0]).toMatchObject({ caseSessionIndex: 3, serviceDate: new Date(saturday.serviceDate) });
+        expect(h.db.clients[0]).toMatchObject({ allowSaturdayService: true });
+    });
+
+    it("reads the changed calendar after waiting for the case lock", async () => {
+        const h = harness();
+        Object.assign(h.db.cases[0]!, { plannedSessions: null, days: [] });
+        const req = await h.request([fill()]);
+        h.controls.whileWaitingForCaseLock = (state) => {
+            state.calendarRevision = 2n;
+            state.holidayOverrides.push({
+                id: randomUUID(), branchId: BRANCH, date: new Date(DATES[1]!), kind: "add",
+                name: "Calendar edit", createdBy: OWNER, createdAt: startDate,
+            });
+        };
+        await expect(h.editor.confirmOwnerRecordJson(principal, target, req)).rejects.toBeInstanceOf(ConflictException);
+        expect(h.trace.indexOf("calendar-read")).toBeGreaterThan(h.trace.indexOf("lock:service_record_case"));
+        expect(h.dayInsert).not.toHaveBeenCalled();
+    });
+
+    it("rejects a mixed write with stored sessions when the calendar revision changes during the read", async () => {
+        const h = harness();
+        const req = await h.request([edit(), fill()]);
+        const before = structuredClone(h.db);
+        h.controls.afterHolidayOverridesRead = (state) => { state.calendarRevision = 2n; };
+
+        await expect(h.editor.confirmOwnerRecordJson(principal, target, req)).rejects.toBeInstanceOf(ConflictException);
+        expect(h.db).toEqual({ ...before, calendarRevision: 2n });
+        expect(h.dayWrite).not.toHaveBeenCalled();
+        expect(h.dayInsert).not.toHaveBeenCalled();
+        expect(h.emit).not.toHaveBeenCalled();
+    });
+
+    it.each([2n, null])("rolls back a mixed projected write when the commit-time calendar revision is %s", async (revision) => {
+        const h = harness();
+        h.db.cases[0]!.plannedSessions = null;
+        const req = await h.request([edit(), fill()]);
+        const before = structuredClone(h.db);
+        h.controls.beforeCalendarValidation = () => { h.db.calendarRevision = revision; };
+        await expect(h.editor.confirmOwnerRecordJson(principal, target, req)).rejects.toBeInstanceOf(ConflictException);
+        expect(h.trace).toContain("close-draft");
+        expect(h.dayInsert).toHaveBeenCalledTimes(1);
+        expect(h.db).toEqual({ ...before, calendarRevision: revision });
+        expect(h.emit).not.toHaveBeenCalled();
+    });
+
+    it("fails closed when a projected fill has no initial calendar revision", async () => {
+        const h = harness();
+        h.db.cases[0]!.plannedSessions = null;
+        h.db.calendarRevision = null;
         await expect(h.editor.confirmOwnerRecordJson(principal, target, await h.request([fill()])))
             .rejects.toBeInstanceOf(ConflictException);
-        await expect(h.editor.confirmOwnerRecordJson(principal, target, await h.request([edit()])))
-            .resolves.toMatchObject({ caseVersion: 8 });
-        expect(h.db.cases[0]!.plannedSessions).toBeNull();
+        expect(h.dayInsert).not.toHaveBeenCalled();
     });
 
     it.each(["case end", "client end", "assignment", "stored vector"])("rejects %s schedule drift", async (kind) => {
@@ -490,18 +676,21 @@ describe("owner record JSON confirmation", () => {
         expect(h.trace).not.toContain("create-draft");
     });
 
-    it.each([true, false])("rereads version and occupancy after waiting for the case lock %#", async (versionChange) => {
-        const h = harness();
-        const req = await h.request([fill()]);
-        h.controls.whileWaitingForCaseLock = (state) => {
-            const record = state.cases[0]!;
-            if (versionChange) record.version++;
-            else record.days.push(day(2, { notes: "concurrent caregiver save" }));
-        };
-        await expect(h.editor.confirmOwnerRecordJson(principal, target, req)).rejects.toBeInstanceOf(ConflictException);
-        expect(h.db.drafts).toHaveLength(0);
-        expect(h.dayInsert).not.toHaveBeenCalled();
-    });
+    it.each([[true, false], [false, false], [true, true], [false, true]])(
+        "rereads version and occupancy after waiting for the case lock %#", async (versionChange, projected) => {
+            const h = harness();
+            if (projected) h.db.cases[0]!.plannedSessions = null;
+            const req = await h.request([fill()]);
+            h.controls.whileWaitingForCaseLock = (state) => {
+                const record = state.cases[0]!;
+                if (versionChange) record.version++;
+                else record.days.push(day(2, { notes: "concurrent caregiver save" }));
+            };
+            await expect(h.editor.confirmOwnerRecordJson(principal, target, req)).rejects.toBeInstanceOf(ConflictException);
+            expect(h.db.drafts).toHaveLength(0);
+            expect(h.dayInsert).not.toHaveBeenCalled();
+        },
+    );
 
     it("returns a single same-key receipt and binds its entire request", async () => {
         const h = harness();

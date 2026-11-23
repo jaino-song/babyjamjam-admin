@@ -36,10 +36,12 @@
 Each operation addresses a 1-based session index and its existing `YYYY-MM-DD` date. The date is a precondition. The batch accepts 1–100 operations and up to 64 KiB of JSON data. An index or a date may appear only once.
 
 - `edit` requires an existing record with recorded content or submission evidence. Each operation must change at least one field.
-- `fill` requires an unoccupied scheduled date within the case's existing count and assigned period. A missing row requires a valid persisted schedule entry. A materialized placeholder must match the stored session and assignment, with default empty answers and text and no evidence of payment confirmation, approval, submission, signatures, or lock. The fill must supply meaningful content. A filled row remains unsubmitted. Fills are allowed only when the case status is `SCHEDULED`, `IN_PROGRESS`, `WAITING_FOR_END`, or `AWAITING_COMPLETION`.
+- `fill` requires an unoccupied scheduled date within the case's existing count and assigned period. For a missing row, use the session index and date shown by the editor. A materialized placeholder must match the existing session and assignment, with default empty answers and text and no evidence of payment confirmation, approval, submission, signatures, or lock. The fill must supply meaningful content. A filled row remains unsubmitted. Fills are allowed only when the case status is `SCHEDULED`, `IN_PROGRESS`, `WAITING_FOR_END`, or `AWAITING_COMPLETION`.
 - `changes` accepts only `answers`, `etcService`, and `notes`. Answers use the existing daily form's keys and value types. Supplied answer keys replace those keys, and omitted keys retain their values. The existing limits are 40 characters for `etcService` and 80 for `notes`. An empty string clears either text field on an edit. Whitespace alone cannot fill a slot.
 
-All operations succeed together or roll back together. The write preserves the case's scheduled dates, count, assignment periods, and existing signature and submission evidence. It records a revision through the existing editor confirmation path.
+When filling a missing row on a case with no stored schedule vector, the server projects the dates using the current calendar and service-day settings. The slot must resolve to one active assignment and employee in the branch, and the full projection must agree before and after inserting the rows.
+
+All operations succeed together or roll back together. The write preserves the case's scheduled dates, count, schedule vector (including null), assignment periods, and existing signature and submission evidence. It records a revision through the existing editor confirmation path.
 
 ## Response and retry
 
@@ -66,5 +68,5 @@ HTTP 200 returns the committed identifiers and document state.
 | 401 | Missing or invalid bearer access token. |
 | 403 | The caller lacks the global owner role or the selected branch or session is no longer authorized. |
 | 404 | The client and case could not be resolved together in the selected branch. |
-| 409 | The preconditions are stale, the key conflicts, an active draft or document operation blocks the write, the schedule has drifted, or a requested operation cannot change its target. Read the case again before preparing a different batch. |
+| 409 | The preconditions are stale, the key conflicts, an active draft or document operation blocks the write, the schedule or calendar has changed, or a requested operation cannot change its target. A concurrent calendar edit can invalidate a previously displayed date. Read the case and its schedule again before retrying with updated targets. |
 | 413 | The server's HTTP body limit was exceeded. |

@@ -28,9 +28,8 @@ export interface BranchHolidayOverrideRecord {
 }
 
 /**
- * One consistent read of everything a branch calendar is built from. All of it
- * comes from a single repeatable-read transaction, so `revision` is the
- * revision the rest of the data was read at.
+ * Everything a branch calendar is built from. A caller reading this data at
+ * read committed must verify that the revision has held across all its reads.
  */
 export interface HolidayCalendarReadData {
     revision: number;

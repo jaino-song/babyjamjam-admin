@@ -10,6 +10,7 @@ import type {
     ServiceRecordRevisionHistoryResponse,
 } from "@babyjamjam/shared/types/service-record";
 import type { Prisma } from "@prisma/client";
+import type { HolidayCalendarReadData } from "./holiday-calendar.repository.interface";
 
 /** JSON value shape kept in the domain boundary so this port does not import Prisma. */
 export type ServiceRecordEditJsonValue =
@@ -542,7 +543,11 @@ export interface ServiceRecordOwnerJsonConfirmInput {
     prepareDraft: (source: ServiceRecordEditSource) => Pick<
         CreateServiceRecordEditDraftInput, "sourceCaseVersion" | "sourceFingerprint" | "sourceSnapshot" | "changes"
     >;
-    prepare: ServiceRecordEditConfirmInput["prepare"];
+    prepare: (snapshot: ServiceRecordEditConfirmSnapshot, calendar: HolidayCalendarReadData) => {
+        plan: ServiceRecordEditConfirmPlan;
+        /** Required for missing-row fills on a case with a null stored vector. */
+        verifyInsertedProjection?: (sourceAfterInserts: ServiceRecordEditSource) => void;
+    };
 }
 
 export interface ServiceRecordEditTransactionContext {
