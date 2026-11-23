@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { test } from 'node:test';
 import { inspect } from 'node:util';
-import { prepareRasterArchive, publishRasterArchive, rollbackRasterArchive } from '../eformsign-backup/raster-mirror.mjs';
+import { describeRasterArchiveError, inspectRasterArchive, prepareRasterArchive, publishRasterArchive, rollbackRasterArchive } from '../eformsign-backup/raster-mirror.mjs';
 
 const raw = (name) => Buffer.from('%PDF-1.7\nsynthetic signed ' + name);
 const image = (source) => Buffer.concat([Buffer.from('%PDF-1.7\nimage\0\xff', 'latin1'), Buffer.from(sha(source), 'hex')]);
@@ -45,7 +45,7 @@ const operands = args.slice(at + 1);
 const flags = args.slice(0, at);
 const common = [
     '--retries', '1', '--low-level-retries', '2', '--contimeout', '10s', '--timeout', '45s',
-    '--log-level', 'ERROR', '--log-file=', '--drive-skip-shortcuts=false', '--drive-skip-dangling-shortcuts=false',
+    '--log-level', 'ERROR', '--log-file=',
     '--drive-use-trash=true', '--local-unicode-normalization=false', '--links=true', '--copy-links=false',
 ];
 const expected = {
@@ -54,8 +54,18 @@ const expected = {
     copyto: [['--ignore-times']],
     deletefile: [[]],
 };
+const metadata = flags.filter((flag) => flag === '--original' || flag.startsWith('--drive-skip-'));
+const ordinary = flags.filter((flag) => !metadata.includes(flag));
 const valid = Object.hasOwn(expected, command) && expected[command].some((specific) =>
-    JSON.stringify(flags) === JSON.stringify(specific.concat(common)));
+    JSON.stringify(ordinary) === JSON.stringify(specific.concat(common)))
+    && new Set(metadata.map((flag) => flag.split('=')[0])).size === metadata.length
+    && metadata.every((flag) => flag === '--drive-skip-dangling-shortcuts=false'
+        || flag === '--drive-skip-shortcuts=true'
+        || (command === 'lsjson' && (flag === '--drive-skip-shortcuts=false' || flag === '--original'))
+        // The isolated baseline transport supplies this global flag on every command.
+        || (flag === '--drive-skip-shortcuts=false' && !metadata.includes('--original')
+            && flags.indexOf(flag) === flags.indexOf('--log-file=') + 1
+            && flags[flags.indexOf(flag) + 1] === '--drive-skip-dangling-shortcuts=false'));
 if (at < 0 || !valid || operands.length !== (command === 'copyto' ? 2 : 1)) stop();
 function getKey(operand) {
     if (!operand.startsWith('fake:')) stop();
@@ -77,7 +87,7 @@ function info(key, relative) {
     const md5 = flags.includes('--hash-type') && !isDir && !control.noHashes && hash(fs.readFileSync(full), 'md5');
     return {
         Name: path.basename(relative), Path: relative, IsDir: isDir, Size: isDir ? -1 : stat.size,
-        ModTime: stat.mtime.toISOString(),
+        ...(control.noMtime ? {} : { ModTime: stat.mtime.toISOString() }),
         ...(control.noIds ? {} : { ID: control.ids?.[key] ?? 'id:' + key }),
         ...(md5
             ? { Hashes: control.hashes === undefined ? { md5 } : JSON.parse(control.hashes.replaceAll('DIGEST', md5)) } : {}),
@@ -108,6 +118,8 @@ if (command === 'lsjson') {
     if (command === 'copyto') {
         fs.mkdirSync(path.dirname(file), { recursive: true });
         fs.writeFileSync(file, input);
+        const source = fs.statSync(operands[0]);
+        if (!control.resetMtimeOnCopy) fs.utimesSync(file, source.atime, source.mtime);
         if (control.changeIdOnCopy) {
             control.ids = { ...control.ids, [key]: 'replacement-id' };
             fs.writeFileSync(controlPath, JSON.stringify(control));
@@ -478,14 +490,15 @@ test('private rename before prepare, move recovery, reversed replay, and retirem
     const source = raw('audit');
     await seed(f, old, source);
     await f.publish();
+    const moves = [{ from: old, to: next }];
     await movePrivate(f, old, next);
-    assert.equal((await prepareRasterArchive(f.settings)).captured, 0);
+    await assert.rejects(prepareRasterArchive(f.settings), { message: 'raster_archive_active_original_missing' });
+    assert.equal((await prepareRasterArchive(f.settings, { moves })).captured, 0);
     await absent(join(f.original, old));
-    await assert.rejects(f.publish(), { message: 'raster_archive_move_intent_missing' });
+    await assert.rejects(f.publish(), { message: 'raster_archive_active_original_missing' });
     await f.control({ failAfter: 'deletefile' });
     const lock = await fs.open(await put(f.root, 'lock', ''), 'r');
     t.after(() => lock.close());
-    const moves = [{ from: old, to: next }];
     await assert.rejects(f.publish({ moves, lockFd: lock.fd }), { message: 'raster_archive_remote_deletefile_failed' });
     assert.deepEqual(await fs.readFile(join(f.remote, next)), image(source));
     await absent(join(f.settings.archiveDir, old));
@@ -521,7 +534,7 @@ test('bootstrapped raw move guards source, destination and an interrupted deleti
     await movePrivate(f, old, next);
     const moves = [{ from: old, to: next }];
     const outsider = await put(f.remote, next, source);
-    await assert.rejects(prepareRasterArchive(f.settings), { message: 'raster_archive_move_intent_missing' });
+    await assert.rejects(prepareRasterArchive(f.settings), { message: 'raster_archive_active_original_missing' });
     await assert.rejects(f.publish({ moves }), { message: 'raster_archive_move_collision' });
     assert.deepEqual(await fs.readFile(outsider), source);
     await fs.unlink(outsider);
@@ -1442,4 +1455,518 @@ test('raw prepare and rollback propagate the backup lock to listing, cat and upl
     assert.ok(calls.some(({ command }) => command === 'copyto'));
     assert.ok(calls.every(({ locked }) => locked));
     await assertEndpoints(f, name, source, source, source);
+});
+
+const typedRefusal = (reason = 'RASTER_INVALID_SOURCE') => Object.assign(new Error('synthetic confidential detail'), { code: reason });
+
+async function isolatedReport(run) {
+    let failure;
+    await assert.rejects(run, (error) => {
+        assert.equal(error.code, 'raster_archive_documents_failed');
+        const described = describeRasterArchiveError(error);
+        assert.equal(described.code, error.code);
+        assert.deepEqual(described.report, error.report);
+        assert.deepEqual(Object.keys(error).sort(), ['code', 'report']);
+        assert.doesNotMatch(JSON.stringify(described), /synthetic confidential|\.pdf|QA-private/);
+        failure = described.report;
+        return true;
+    });
+    return failure;
+}
+
+function rejectSource(f, rejected, reason) {
+    return async (options) => {
+        if ((await fs.readFile(options.sourcePath)).equals(rejected)) throw typedRefusal(reason);
+        return f.renderRasterPdf(options);
+    };
+}
+
+test('a revised document refusal preserves its display while later and future documents publish', async (t) => {
+    const f = await fixture(t);
+    const failed = 'QA-private.pdf';
+    const first = raw('first');
+    const revised = raw('unrenderable revision');
+    const sentinel = raw('idle sentinel');
+    await put(f.settings.archiveDir, failed, first);
+    await seed(f, 'sentinel.pdf', sentinel);
+    await f.publish();
+    const before = new Map((await readManifest(f)).records).get(failed);
+    const initialUploads = (await mutations(f)).length;
+    await put(f.original, failed, revised);
+    await put(f.original, 'later.pdf', raw('later'));
+    const publish = () => f.publish({ renderRasterPdf: rejectSource(f, revised) });
+    for (let repeat = 0; repeat < 3; repeat++) {
+        if (repeat === 2) await put(f.original, 'future.pdf', raw('future'));
+        const failure = await isolatedReport(publish);
+        assert.equal(failure.failedCount, 1);
+        assert.deepEqual(failure.failures, [{ id: sha(revised).slice(0, 16), reason: 'RASTER_INVALID_SOURCE' }]);
+        assert.equal(failure.rendered, repeat === 1 ? 0 : 1);
+        await assertEndpoints(f, failed, image(first), image(first), revised);
+        await assertEndpoints(f, 'sentinel.pdf', image(sentinel), image(sentinel), sentinel);
+        await assertEndpoints(f, 'later.pdf', image(raw('later')), image(raw('later')), raw('later'));
+        if (repeat === 2) await assertEndpoints(f, 'future.pdf', image(raw('future')), image(raw('future')), raw('future'));
+        const state = await readManifest(f);
+        assert.deepEqual(new Map(state.records).get(failed), before);
+        assert.equal(state.intent, null);
+        assert.equal(state.renderStage, undefined);
+        assert.ok((await fs.readdir(renderRoot(f))).every((name) => /^[a-f0-9]{64}$/.test(name)));
+    }
+    assert.deepEqual((await mutations(f)).slice(initialUploads).map(({ sha }) => sha),
+        [sha(image(raw('later'))), sha(image(raw('future')))]);
+    const correction = raw('corrected');
+    await put(f.original, failed, correction);
+    assert.equal((await publish()).rendered, 1);
+    await assertEndpoints(f, failed, image(correction), image(correction), correction);
+    assert.deepEqual(await fs.readFile(blobPath(f, revised)), revised);
+});
+
+test('initial refusals count identical sources individually and cap only diagnostics', async (t) => {
+    const f = await fixture(t, { localOnly: true });
+    const bad = raw('same original');
+    for (let index = 0; index < 13; index++) {
+        await put(f.settings.archiveDir, `bad-${index}.pdf`, bad);
+    }
+    await prepareRasterArchive(f.settings);
+    await put(f.original, 'z-last.pdf', raw('last'));
+    const report = await isolatedReport(() => f.publish({ renderRasterPdf: rejectSource(f, bad, 'RASTER_LIMIT') }));
+    assert.equal(report.failedCount, 13);
+    assert.deepEqual(report.failures, Array(10).fill({ id: sha(bad).slice(0, 16), reason: 'RASTER_LIMIT' }));
+    assert.equal(report.localPublished, 1);
+    const records = new Map((await readManifest(f)).records);
+    for (let index = 0; index < 13; index++) {
+        const path = `bad-${index}.pdf`;
+        assert.deepEqual(await fs.readFile(join(f.settings.archiveDir, path)), bad);
+        assert.deepEqual(await fs.readFile(join(f.original, path)), bad);
+        assert.equal(records.get(path).raster, null);
+    }
+    assert.deepEqual(await fs.readFile(join(f.settings.archiveDir, 'z-last.pdf')), image(raw('last')));
+});
+
+test('a typed refusal cannot hide descriptor tampering, and error descriptions require the internal brand', async (t) => {
+    const f = await fixture(t, { localOnly: true });
+    await prepareRasterArchive(f.settings);
+    for (const name of ['a-first', 'b-tampered', 'z-later']) await put(f.original, name + '.pdf', raw(name));
+    let fatal;
+    await assert.rejects(f.publish({ async renderRasterPdf({ sourcePath, outputHandle }) {
+        if ((await fs.readFile(sourcePath)).equals(raw('b-tampered'))) await outputHandle.close();
+        throw typedRefusal();
+    } }), (error) => {
+        fatal = error;
+        assert.deepEqual(describeRasterArchiveError(error), { code: 'raster_archive_staging_identity_changed' });
+        assert.equal(error.report, undefined);
+        return true;
+    });
+    const fake = Object.assign(new Error('QA-private.pdf'), { code: fatal.code, report: { path: 'QA-private.pdf' } });
+    assert.equal(describeRasterArchiveError(fake), null);
+    assert.equal(describeRasterArchiveError(Object.create(fatal)), null);
+    assert.equal(describeRasterArchiveError({ code: fatal.code, message: 'QA-private.pdf' }), null);
+    await absent(join(f.settings.archiveDir, 'z-later.pdf'));
+    assert.equal((await readManifest(f)).intent, null);
+});
+
+test('spawn ENOENT and EACCES map to fatal renderer I/O errors', async (t) => {
+    const { renderRasterPdf } = await import('../eformsign-backup/raster-render.mjs');
+    const f = await fixture(t, { localOnly: true });
+    const name = 'a-source.pdf';
+    const original = await put(f.settings.archiveDir, name, '%PDF-1.7\n%%EOF\n');
+    const denied = await put(f.root, 'non-executable-tool', 'placeholder');
+    await prepareRasterArchive(f.settings);
+    await put(f.original, 'z-later.pdf', raw('later'));
+    for (const tool of [join(f.root, 'missing-tool'), denied]) {
+        await assert.rejects(renderRasterPdf({ sourcePath: original, outputPath: join(f.root, 'output.pdf'), qpdfBin: tool }),
+            { code: 'RASTER_IO_ERROR' });
+        await assert.rejects(publishRasterArchive({ ...f.settings, qpdfBin: tool }), (error) => {
+            assert.deepEqual(describeRasterArchiveError(error), { code: 'raster_archive_renderer_failed' });
+            return true;
+        });
+        await absent(join(f.settings.archiveDir, 'z-later.pdf'));
+    }
+});
+
+test('paused explicit republish remains paused until all document refusals resolve', async (t) => {
+    const f = await fixture(t, { localOnly: true });
+    await put(f.settings.archiveDir, 'old.pdf', raw('old'));
+    await prepareRasterArchive(f.settings);
+    await f.publish();
+    await rollbackRasterArchive(f.settings);
+    const bad = raw('unrenderable');
+    await put(f.original, 'old.pdf', bad);
+    await put(f.original, 'later.pdf', raw('later'));
+    const explicitRepublish = true;
+    await isolatedReport(() => f.publish({ explicitRepublish, renderRasterPdf: rejectSource(f, bad) }));
+    assert.equal((await readManifest(f)).phase, 'paused');
+    assert.deepEqual(await fs.readFile(join(f.settings.archiveDir, 'old.pdf')), raw('old'));
+    assert.deepEqual(await fs.readFile(join(f.settings.archiveDir, 'later.pdf')), image(raw('later')));
+    await assert.rejects(f.publish(), { code: 'raster_archive_publication_paused' });
+    await put(f.original, 'old.pdf', raw('fixed'));
+    assert.equal((await f.publish({ explicitRepublish })).rendered, 1);
+    assert.equal((await readManifest(f)).phase, 'active');
+});
+
+test('a document refusal during an ordinary move retains old endpoints and publishes independent work', async (t) => {
+    const f = await fixture(t);
+    const source = raw('move without prior rendition');
+    await seed(f, 'old.pdf', source);
+    await movePrivate(f, 'old.pdf', 'new.pdf');
+    await put(f.original, 'independent.pdf', raw('independent'));
+    const moves = [{ from: 'old.pdf', to: 'new.pdf' }];
+    const report = await isolatedReport(() => f.publish({ moves, renderRasterPdf: rejectSource(f, source, 'RASTER_INVALID_OUTPUT') }));
+    assert.equal(report.failedCount, 1);
+    assert.equal(report.moved, 0);
+    for (const root of [f.settings.archiveDir, f.remote]) {
+        assert.deepEqual(await fs.readFile(join(root, 'old.pdf')), source);
+        await absent(join(root, 'new.pdf'));
+        assert.deepEqual(await fs.readFile(join(root, 'independent.pdf')), image(raw('independent')));
+    }
+    assert.deepEqual(await fs.readFile(join(f.original, 'new.pdf')), source);
+    assert.equal((await readManifest(f)).intent, null);
+    assert.equal((await f.publish({ moves })).moved, 1);
+});
+
+const dateA = Date.parse('2004-02-04T12:34:56.789Z');
+const dateB = Date.parse('2026-11-23T01:02:03.456Z');
+const dateC = Date.parse('2015-03-05T17:29:28.133Z');
+
+async function datedFile(root, path, bytes, mtimeMs) {
+    const file = await put(root, path, bytes);
+    await fs.utimes(file, new Date(mtimeMs), new Date(mtimeMs));
+    return file;
+}
+
+async function assertDate(path, expected) {
+    const { mtimeMs } = await fs.stat(path);
+    assert.ok(Math.abs(mtimeMs - expected) <= 1, `expected date ${expected}, got ${mtimeMs}`);
+}
+
+async function assertDatedEndpoints(f, name, bytes, mtimeMs) {
+    for (const root of [f.settings.archiveDir, f.remote]) {
+        const path = join(root, name);
+        assert.deepEqual(await fs.readFile(path), bytes);
+        await assertDate(path, mtimeMs);
+    }
+}
+
+test('installed rclone preserves per-path signed dates for shared content across rollback and republish', {
+    skip: spawnSync(systemRclone, ['version'], { stdio: 'ignore' }).status !== 0,
+}, async (t) => {
+    const f = await fixture(t);
+    await useLocalRclone(f);
+    const source = raw('identical signed content');
+    await datedFile(f.settings.archiveDir, 'local.pdf', source, dateA);
+    await datedFile(f.remote, 'remote.pdf', source, dateB);
+    await prepareRasterArchive(f.settings);
+    await datedFile(f.original, 'api.pdf', source, dateC);
+    const docs = [['local.pdf', dateA], ['remote.pdf', dateB], ['api.pdf', dateC]];
+    assert.equal((await f.publish()).rendered, 1);
+    for (const [path, date] of docs) {
+        await assertDate(join(f.original, path), date);
+        await assertDatedEndpoints(f, path, image(source), date);
+    }
+    const cache = join(renderRoot(f), sha(source), 'output.pdf');
+    const protectedDates = await Promise.all([cache, blobPath(f, source)].map(async (path) => (await fs.stat(path)).mtimeMs));
+    await assertIdle(f);
+    await rollbackRasterArchive(f.settings);
+    for (const [path, date] of docs) await assertDatedEndpoints(f, path, source, date);
+    await f.publish({ explicitRepublish: true });
+    for (const [path, date] of docs) await assertDatedEndpoints(f, path, image(source), date);
+    assert.deepEqual(await Promise.all([cache, blobPath(f, source)].map(async (path) => (await fs.stat(path)).mtimeMs)), protectedDates);
+});
+
+test('retry repairs mismatching copied date and supports v1 journal and record dates absent', async (t) => {
+    const f = await fixture(t);
+    const name = 'older.pdf';
+    const source = raw('older');
+    await datedFile(f.settings.archiveDir, name, source, dateA);
+    await prepareRasterArchive(f.settings);
+    await f.control({ resetMtimeOnCopy: true });
+    await assert.rejects(f.publish(), { code: 'raster_archive_remote_verification_failed' });
+    await assertDate(join(f.settings.archiveDir, name), dateA);
+    const interrupted = await readManifest(f);
+    assert.equal(interrupted.intent.mtimeMs, dateA);
+    assert.ok(interrupted.intent.uploadStage);
+    delete interrupted.intent.mtimeMs;
+    for (const [, entry] of interrupted.records) {
+        delete entry.mtimeMs;
+        for (const version of entry.history) delete version.mtimeMs;
+    }
+    await fs.writeFile(manifestPath(f), JSON.stringify(interrupted));
+    await f.control({});
+    const resumed = await f.publish();
+    assert.deepEqual([resumed.rendered, resumed.localPublished, resumed.remotePublished], [0, 0, 1]);
+    await assertDatedEndpoints(f, name, image(source), dateA);
+    const legacy = await readManifest(f);
+    for (const [, entry] of legacy.records) {
+        delete entry.mtimeMs;
+        for (const version of entry.history) delete version.mtimeMs;
+    }
+    await fs.writeFile(manifestPath(f), JSON.stringify(legacy));
+    for (const root of [f.settings.archiveDir, f.remote]) await datedFile(root, name, image(source), dateB);
+    assert.equal((await f.publish()).rendered, 0);
+    await assertDatedEndpoints(f, name, image(source), dateA);
+    await assertIdle(f);
+});
+
+test('configured remote without a provable mtime refuses before archive mutation', async (t) => {
+    const f = await fixture(t);
+    const name = 'remote-only.pdf';
+    await put(f.remote, name, raw('signed'));
+    await f.control({ noMtime: true });
+    await assert.rejects(prepareRasterArchive(f.settings), { code: 'raster_archive_remote_mtime_unavailable' });
+    await absent(f.original);
+    await absent(f.settings.stateDir);
+    await absent(join(f.settings.archiveDir, name));
+    assert.deepEqual(await mutations(f), []);
+});
+
+test('installed rclone rollback protects and restores the newest private revisions plus private-only paths', {
+    skip: spawnSync(systemRclone, ['version'], { stdio: 'ignore' }).status !== 0,
+}, async (t) => {
+    const f = await fixture(t);
+    await useLocalRclone(f);
+    const doc = 'provider/doc.pdf';
+    const audit = 'provider/doc_audit.pdf';
+    const extra = 'new/download.pdf';
+    for (const path of [doc, audit]) await datedFile(f.settings.archiveDir, path, raw(path), dateA);
+    await prepareRasterArchive(f.settings);
+    await f.publish();
+    const latest = raw('new signed revision');
+    const auditLatest = raw('new audit');
+    await datedFile(f.original, doc, latest, dateB);
+    await isolatedReport(() => f.publish({ renderRasterPdf: rejectSource(f, latest) }));
+    // These completed downloads were never seen by a mirror publication.
+    await datedFile(f.original, audit, auditLatest, dateC);
+    await datedFile(f.original, extra, raw('private only'), dateB);
+    const expected = [[doc, latest, dateB], [audit, auditLatest, dateC], [extra, raw('private only'), dateB]];
+    await datedFile(f.remote, audit, raw('foreign public file'), dateB);
+    const before = await fs.readFile(manifestPath(f));
+    await assert.rejects(rollbackRasterArchive(f.settings), { code: 'raster_archive_public_version_conflict' });
+    assert.deepEqual(await fs.readFile(manifestPath(f)), before);
+    await absent(blobPath(f, auditLatest));
+    await assertDatedEndpoints(f, doc, image(raw(doc)), dateA);
+    await datedFile(f.remote, audit, image(raw(audit)), dateA);
+    assert.equal((await rollbackRasterArchive(f.settings)).remoteRestored, 3);
+    const offset = (await mutations(f)).length;
+    for (const [path, bytes, date] of expected) {
+        await assertDatedEndpoints(f, path, bytes, date);
+        assert.deepEqual(await fs.readFile(blobPath(f, bytes)), bytes);
+    }
+    assert.equal((await rollbackRasterArchive(f.settings)).remoteRestored, 0);
+    assert.equal((await mutations(f)).length, offset);
+    await f.publish({ explicitRepublish: true });
+    for (const [path, bytes, date] of expected) await assertDatedEndpoints(f, path, image(bytes), date);
+});
+
+test('missing current private authority refuses every active and paused phase before mutation', async (t) => {
+    const f = await fixture(t);
+    const source = raw('signed original');
+    const name = 'active.pdf';
+    await seed(f, name, source);
+    await put(f.original, 'active_audit.pdf', raw('matching audit'));
+    await f.publish();
+    const active = join(f.original, name);
+    await fs.unlink(active);
+    for (const run of [() => prepareRasterArchive(f.settings), () => f.publish(), () => rollbackRasterArchive(f.settings)]) {
+        const before = await fs.readFile(manifestPath(f));
+        await assert.rejects(run(), { code: 'raster_archive_active_original_missing' });
+        assert.deepEqual(await fs.readFile(manifestPath(f)), before);
+    }
+    await put(f.original, name, source);
+    await rollbackRasterArchive(f.settings);
+    await fs.unlink(active);
+    const before = await Promise.all([f.settings.archiveDir, f.remote, f.settings.stateDir].map(treeSnapshot));
+    for (const dryRun of [true, false]) {
+        const options = { explicitRepublish: true, dryRun };
+        for (const run of [() => prepareRasterArchive(f.settings, options), () => f.publish(options),
+            () => rollbackRasterArchive(f.settings, { dryRun })]) {
+            await assert.rejects(run(), { code: 'raster_archive_active_original_missing' });
+        }
+    }
+    assert.deepEqual(await Promise.all([f.settings.archiveDir, f.remote, f.settings.stateDir].map(treeSnapshot)), before);
+    assert.deepEqual(await fs.readFile(active.replace(f.original, f.settings.archiveDir)), source);
+    assert.deepEqual(await fs.readFile(join(f.remote, 'active_audit.pdf')), raw('matching audit'));
+    assert.equal((await readManifest(f)).phase, 'paused');
+    assert.deepEqual(await fs.readFile(blobPath(f, source)), source);
+});
+
+test('scoped provider moves preflight both dated renditions, replay, reserve old names and ignore independent render refusals', async (t) => {
+    const f = await fixture(t);
+    const moves = [{ from: 'legacy/doc.pdf', to: 'current/doc.pdf' }, { from: 'legacy/doc_audit.pdf', to: 'current/doc_audit.pdf' }];
+    for (const [index, { from }] of moves.entries()) {
+        await datedFile(f.settings.archiveDir, from, raw(from), index === 0 ? dateA : dateB);
+    }
+    await prepareRasterArchive(f.settings);
+    const preflight = (pairs) => f.publish({ moves: pairs, preMove: true, movesOnly: true, dryRun: true });
+    await assert.rejects(preflight(moves), { code: 'raster_archive_move_raster_unproven' });
+    await f.publish();
+    const bad = raw('independently unrenderable');
+    await put(f.original, 'a-unrelated.pdf', bad);
+    await assert.rejects(f.publish({ moves, preMove: true, movesOnly: true }), { code: 'raster_archive_invalid_move_scope' });
+    await assert.rejects(f.publish({ movesOnly: true }), { code: 'raster_archive_invalid_move_scope' });
+    const [doc, audit] = moves;
+    const before = await fs.readFile(manifestPath(f));
+    assert.equal((await preflight(moves)).wouldMove, 2);
+    assert.deepEqual(await fs.readFile(manifestPath(f)), before);
+    await movePrivate(f, doc.from, doc.to);
+    await assert.rejects(f.publish({ moves, movesOnly: true }), { code: 'raster_archive_move_original_conflict' });
+    assert.deepEqual(await fs.readFile(manifestPath(f)), before);
+    await movePrivate(f, audit.from, audit.to);
+    await f.control({ failAfter: 'copyto' });
+    await assert.rejects(f.publish({ moves, movesOnly: true }), { code: 'raster_archive_remote_copyto_failed' });
+    for (const { from } of moves) {
+        assert.deepEqual(await fs.readFile(join(f.settings.archiveDir, from)), image(raw(from)));
+        assert.deepEqual(await fs.readFile(join(f.remote, from)), image(raw(from)));
+    }
+    await f.control({});
+    assert.equal((await f.publish({ moves, movesOnly: true })).moved, 2);
+    assert.equal((await f.publish({ moves, movesOnly: true })).moved, 0);
+    const callCount = (await f.calls()).length;
+    assert.deepEqual(await inspectRasterArchive(f.settings), {
+        manifestPresent: true, unpublished: false, retiredPaths: moves.map(({ from }) => from),
+    });
+    assert.equal((await f.calls()).length, callCount);
+    for (const [index, { from, to }] of moves.entries()) {
+        await assertDatedEndpoints(f, to, image(raw(from)), index === 0 ? dateA : dateB);
+        await absent(join(f.settings.archiveDir, from));
+        await absent(join(f.remote, from));
+    }
+    await absent(join(f.settings.archiveDir, 'a-unrelated.pdf'));
+    assert.equal(new Map((await readManifest(f)).records).has('a-unrelated.pdf'), false);
+    const unrelated = [{ from: doc.to, to: audit.from }];
+    await assert.rejects(preflight(unrelated), { code: 'raster_archive_move_collision' });
+    const inverse = moves.map(({ from, to }) => ({ from: to, to: from }));
+    assert.equal((await preflight(inverse)).wouldMove, 2);
+    for (const { from, to } of inverse) await movePrivate(f, from, to);
+    assert.equal((await f.publish({ moves: inverse, movesOnly: true })).moved, 2);
+    assert.equal((await f.publish({ moves: inverse, movesOnly: true })).moved, 0);
+    await put(f.original, 'z-new.pdf', raw('new later'));
+    const report = await isolatedReport(() => f.publish({ renderRasterPdf: rejectSource(f, bad) }));
+    assert.equal(report.failedCount, 1);
+    assert.equal(report.remotePublished, 1);
+    assert.deepEqual(await fs.readFile(join(f.remote, 'z-new.pdf')), image(raw('new later')));
+});
+
+test('paused legacy handoff requires authenticated per-path bytes and retains earlier private versions', async (t) => {
+    for (const localOnly of [false, true]) {
+        await t.test(localOnly ? 'local only' : 'Drive', async (t) => {
+            const f = await fixture(t, { localOnly });
+            const path = 'provider/reissued.pdf';
+            const first = raw('original signed');
+            const later = raw('legacy reissue');
+            const foreign = raw('unrelated private revision');
+            await datedFile(f.settings.archiveDir, path, first, dateA);
+            await prepareRasterArchive(f.settings);
+            await f.publish();
+            await rollbackRasterArchive(f.settings);
+            const replacePublic = async (root, bytes) => {
+                const staged = await datedFile(root, path + '.replacement', bytes, dateB);
+                await fs.rename(staged, join(root, path));
+            };
+            await replacePublic(f.settings.archiveDir, later);
+            if (!localOnly) {
+                await replacePublic(f.remote, raw('remote disagrees'));
+                await f.control({ ids: { ['archive/' + path]: 'legacy-replacement-id' } });
+            }
+            const proof = { path, sha256: sha(later), size: later.length };
+            const opts = { explicitRepublish: true, legacyProofs: [proof] };
+            if (!localOnly) {
+                await assert.rejects(prepareRasterArchive(f.settings, opts), { code: 'raster_archive_public_version_conflict' });
+                await replacePublic(f.remote, later);
+            }
+            const before = await fs.readFile(manifestPath(f));
+            for (const legacyProofs of [[], [{ ...proof, sha256: sha(foreign) }]]) {
+                const opts = { explicitRepublish: true, legacyProofs };
+                await assert.rejects(prepareRasterArchive(f.settings, opts), { code: 'raster_archive_legacy_proof_required' });
+                await assert.rejects(f.publish({ ...opts, dryRun: true }), { code: 'raster_archive_legacy_proof_required' });
+            }
+            await datedFile(f.original, path, foreign, dateC);
+            await assert.rejects(prepareRasterArchive(f.settings, opts), { code: 'raster_archive_original_authority_conflict' });
+            assert.deepEqual(await fs.readFile(join(f.original, path)), foreign);
+            await datedFile(f.original, path, first, dateA);
+            await prepareRasterArchive(f.settings, { ...opts, dryRun: true });
+            assert.equal((await f.publish({ ...opts, dryRun: true })).wouldRender, 1);
+            assert.deepEqual(await fs.readFile(manifestPath(f)), before);
+            assert.deepEqual(await fs.readFile(join(f.original, path)), first);
+            await assertDate(join(f.original, path), dateA);
+            await prepareRasterArchive(f.settings, opts);
+            await prepareRasterArchive(f.settings, opts);
+            assert.equal((await readManifest(f)).phase, 'paused');
+            assert.equal((await f.publish(opts)).rendered, 1);
+            assert.equal((await f.publish(opts)).rendered, 0);
+            for (const root of [f.settings.archiveDir, ...(localOnly ? [] : [f.remote])]) {
+                assert.deepEqual(await fs.readFile(join(root, path)), image(later));
+                await assertDate(join(root, path), dateB);
+            }
+            assert.deepEqual(await fs.readFile(blobPath(f, first)), first);
+            assert.deepEqual(await fs.readFile(blobPath(f, later)), later);
+            const versions = new Map((await readManifest(f)).records).get(path).history;
+            assert.ok(versions.some(({ raw, mtimeMs }) => raw.sha256 === sha(first) && mtimeMs === dateA));
+            assert.ok(versions.some(({ raw, mtimeMs }) => raw.sha256 === sha(later) && mtimeMs === dateB));
+        });
+    }
+});
+
+test('manifest inspection is metadata-only and fails closed on ambiguous absence or an invalid binding', async (t) => {
+    const f = await fixture(t);
+    const noState = { manifestPresent: false, unpublished: true, retiredPaths: [] };
+    assert.deepEqual(await inspectRasterArchive(f.settings), noState);
+    assert.deepEqual(await f.calls(), []);
+    const path = 'known.pdf';
+    const bytes = raw('known original');
+    await put(f.settings.archiveDir, path, bytes);
+    await put(f.remote, path, raw('conflict'));
+    await assert.rejects(prepareRasterArchive(f.settings), { code: 'raster_archive_original_authority_conflict' });
+    assert.deepEqual(await inspectRasterArchive(f.settings), noState);
+    const home = dirname(manifestPath(f));
+    const scaffold = join(home, 'rendered');
+    await fs.mkdir(scaffold, { recursive: true, mode: 0o700 });
+    assert.deepEqual(await inspectRasterArchive(f.settings), noState);
+    const unowned = await put(scaffold, 'foreign.receipt', 'synthetic receipt');
+    await assert.rejects(inspectRasterArchive(f.settings), { code: 'raster_archive_unproven_manifest_absence' });
+    await fs.unlink(unowned);
+    await put(f.remote, path, bytes);
+    await prepareRasterArchive(f.settings);
+    await f.publish();
+    const before = (await f.calls()).length;
+    await fs.link(join(f.original, path), join(f.original, '.provider-recovery-stage.tmp'));
+    assert.deepEqual(await inspectRasterArchive(f.settings), { manifestPresent: true, unpublished: false, retiredPaths: [] });
+    assert.equal((await f.calls()).length, before);
+    await assert.rejects(prepareRasterArchive(f.settings), { code: 'raster_archive_unsafe_file' });
+    await fs.unlink(join(f.original, '.provider-recovery-stage.tmp'));
+    await prepareRasterArchive(f.settings);
+    await assert.rejects(inspectRasterArchive({ ...f.settings, rcloneRemote: 'fake:foreign' }), { code: 'raster_archive_binding_changed' });
+    const manifest = await fs.readFile(manifestPath(f));
+    await fs.writeFile(manifestPath(f), 'malformed');
+    await assert.rejects(inspectRasterArchive(f.settings), { code: 'raster_archive_invalid_manifest' });
+    await fs.writeFile(manifestPath(f), manifest);
+    await rollbackRasterArchive(f.settings);
+    assert.deepEqual(await inspectRasterArchive(f.settings), { manifestPresent: true, unpublished: false, retiredPaths: [] });
+    await fs.unlink(manifestPath(f));
+    await assert.rejects(inspectRasterArchive(f.settings), { code: 'raster_archive_unproven_manifest_absence' });
+});
+
+test('rollback resumes its older issued journal and then restores the latest proven private version', async (t) => {
+    const f = await fixture(t);
+    const name = 'during-rollback.pdf';
+    const first = raw('first signed version');
+    const second = raw('second signed version');
+    const third = raw('download finished during interrupted rollback');
+    await datedFile(f.settings.archiveDir, name, first, dateA);
+    await prepareRasterArchive(f.settings);
+    await f.publish();
+    await datedFile(f.original, name, second, dateB);
+    await f.control({ failBefore: 'copyto' });
+    await assert.rejects(rollbackRasterArchive(f.settings), { code: 'raster_archive_remote_copyto_failed' });
+    const partial = await readManifest(f);
+    assert.equal(partial.phase, 'rolling-back');
+    assert.equal(partial.intent.raw.sha256, sha(second));
+    assert.equal(partial.intent.mtimeMs, dateB);
+    assert.ok(new Map(partial.records).get(name).history.some(({ raw, mtimeMs }) => raw.sha256 === sha(second) && mtimeMs === dateB));
+    await datedFile(f.original, name, third, dateC);
+    const offset = (await mutations(f)).length;
+    await f.control({});
+    assert.equal((await rollbackRasterArchive(f.settings)).remoteRestored, 2);
+    assert.deepEqual((await mutations(f)).slice(offset).map(({ sha: digest }) => digest), [sha(second), sha(third)]);
+    await assertDatedEndpoints(f, name, third, dateC);
+    assert.equal((await readManifest(f)).phase, 'paused');
+    assert.equal((await rollbackRasterArchive(f.settings)).remoteRestored, 0);
 });

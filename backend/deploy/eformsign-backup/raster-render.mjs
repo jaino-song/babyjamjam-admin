@@ -92,7 +92,7 @@ function runTool(bin, args, {
             stderrBytes += chunk.length;
             if (stderrBytes > MAX_DIAGNOSTIC_BYTES) stop('RASTER_LIMIT');
         });
-        child.once('error', () => stop(failure));
+        child.once('error', () => stop('RASTER_IO_ERROR'));
         child.once('close', (code) => {
             closed = true;
             clearTimeout(timer);
