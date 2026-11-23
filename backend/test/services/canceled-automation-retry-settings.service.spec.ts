@@ -9,7 +9,7 @@ const fixedEpoch = new Date("2026-11-23T01:02:03.123Z");
 
 function rule(id: string, fields: Partial<CanceledRetryRule> = {}): CanceledRetryRule {
     return {
-        id, name: id, branchId: branch, templateKey: "INFO", recipientType: "CLIENT",
+        id, name: id, branchId: branch, templateKey: "SERVICE_END_NOTICE", recipientType: "CLIENT",
         group: null, isActive: true, canceledRetryEnabledAt: null, branchOverrides: [], ...fields,
     };
 }
@@ -51,7 +51,7 @@ describe("canceled automation retry catalog and settings", () => {
         const normal = [
             rule("local-info"),
             rule("shared-info", { branchId: null, canceledRetryEnabledAt: fixedEpoch }),
-            rule("configured-custom", { templateKey: "SURVEY", name: "고객 만족도 확인", canceledRetryEnabledAt: fixedEpoch }),
+            rule("configured-custom", { templateKey: "SERVICE_END_NOTICE", name: "고객 만족도 확인", canceledRetryEnabledAt: fixedEpoch }),
             disabled,
             rule("disabled-shared", { branchId: null, branchOverrides: [{ isActive: false, canceledRetryEnabledAt: null }] }),
             unsupported,
@@ -130,6 +130,19 @@ describe("canceled automation retry catalog and settings", () => {
         expect(repository.updateEpoch).toHaveBeenCalledWith(transaction, branch, client, true);
     });
 
+    it("shares the representative epoch with the supported member only", async () => {
+        const group = { id: "mixed", name: "고객 안내", recipientMode: "CLIENT" };
+        const owner = rule("a-thanks", { group, templateKey: "THANKS", canceledRetryEnabledAt: fixedEpoch });
+        const receipt = rule("b-receipt", { group });
+        repository.list.mockResolvedValue([owner, receipt]);
+        expect(await service.list(branch)).toEqual([expect.objectContaining({
+            id: "group:mixed", enabledAt: fixedEpoch.toISOString(), eligible: true,
+            recoverableReasons: ["live_unsigned_contract", "missing_birthday", "missing_current_contract", "current_contract_pdf_pending"],
+        })]);
+        expect(await service.readMemberEpoch(branch, receipt.id, "missing_birthday", transaction)).toEqual(fixedEpoch);
+        expect(await service.readMemberEpoch(branch, owner.id, "missing_birthday", transaction)).toBeNull();
+    });
+
     it("rejects a group with no visible rules in the current branch", async () => {
         repository.lockGroupRules.mockResolvedValueOnce([]);
         await expect(service.update(branch, "group:foreign-or-deleted", true)).rejects.toMatchObject({ status: 404 });
@@ -137,14 +150,14 @@ describe("canceled automation retry catalog and settings", () => {
     });
 
     it.each([
-        ["CLIENT_GREETING", ["target_client_status_not_met"]],
-        ["PRICE_INFO", ["target_client_status_not_met"]],
-        ["SERVICE_INFO", ["target_client_status_not_met"]],
-        ["REMINDER", ["target_client_status_not_met"]],
-        ["THANKS", ["target_client_status_not_met"]],
-        ["SURVEY", ["target_client_status_not_met"]],
-        ["INFO", ["target_client_status_not_met"]],
-        ["SERVICE_END_NOTICE", ["target_client_status_not_met", "live_unsigned_contract", "missing_birthday", "missing_current_contract", "current_contract_pdf_pending"]],
+        ["CLIENT_GREETING", []],
+        ["PRICE_INFO", []],
+        ["SERVICE_INFO", []],
+        ["REMINDER", []],
+        ["THANKS", []],
+        ["SURVEY", []],
+        ["INFO", []],
+        ["SERVICE_END_NOTICE", ["live_unsigned_contract", "missing_birthday", "missing_current_contract", "current_contract_pdf_pending"]],
         ["SERVICE_RECORD_LINK", ["pre_booking"]],
         ["CAREGIVER_SERVICE_START_NOTICE", []],
         ["CAREGIVER_SERVICE_END_NOTICE", []],
@@ -161,7 +174,7 @@ describe("canceled automation retry catalog and settings", () => {
         })]);
     });
 
-    it("requires a supported client-targeted generic rule and branch dispatch", async () => {
+    it("requires a supported client-targeted receipt rule and branch dispatch", async () => {
         repository.list.mockResolvedValueOnce([rule("employee-info", { recipientType: "PRIMARY_EMPLOYEE" }), rule("targeted-info")]);
         getTriggerDispatchEnabled.mockResolvedValueOnce(false);
         expect(await service.list(branch)).toEqual([

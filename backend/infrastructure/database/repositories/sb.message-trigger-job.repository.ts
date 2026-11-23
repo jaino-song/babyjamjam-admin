@@ -1,5 +1,7 @@
+import { RECEIPT_RECOVERY_REASONS, RECEIPT_RECOVERY_REFUSED } from "domain/constants/receipt-job-recovery";
 import { OCCURRENCE_ALREADY_ACCEPTED, SMS_OCCURRENCE_HOLD_FIELD } from "domain/entities/message-occurrence";
 import { hasAcceptedJobOccurrence } from "./message-occurrence-ledger";
+import { protectedReceiptOriginalSql, receiptRecoveryChildSql } from "./receipt-job-recovery.repository";
 import { fenceRecordLinkAttempt } from "./record-link-recovery.repository";
 import { isManualMessageTriggerJob } from "domain/constants/message-trigger-job-ownership";
 import { agentBindingHash } from "domain/repositories/agent-linked-action.types";
@@ -640,6 +642,42 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
             take: 100,
         });
         return rows.map(row => this.toDomain(row));
+    }
+
+    async findReceiptRecoveryCandidates(now: Date, client?: { branchId: string; clientId: number }) {
+        // A bounded index range per reason preserves next-check ordering even
+        // when one reason has a large backlog of due rows.
+        const bounds = client
+            ? Prisma.sql`branch_id = ${client.branchId}::uuid AND client_id = ${client.clientId}`
+            : Prisma.sql`next_check_at <= ${now}`;
+        const scans = RECEIPT_RECOVERY_REASONS.map(reason => Prisma.sql`
+            (SELECT id, branch_id AS "branchId", next_check_at
+             FROM message_trigger_job
+             WHERE recovery_reason = ${reason} AND recovery_state = 'eligible'
+                AND recovery_epoch IS NOT NULL AND next_check_at IS NOT NULL AND ${bounds}
+             ORDER BY next_check_at, id LIMIT 100)
+        `);
+        return this.prisma.$queryRaw<Array<{ id: string; branchId: string }>>(Prisma.sql`
+            SELECT id, "branchId" FROM (${Prisma.join(scans, " UNION ALL ")}) AS recovery
+            ORDER BY next_check_at, id LIMIT 100
+        `);
+    }
+
+    async cancelDueReceiptJobsForDeniedSender(branchId: string, now: Date, transaction: Prisma.TransactionClient,
+        jobId?: string): Promise<void> {
+        const ownership = { ruleId: Prisma.sql`rule_id`, dedupeKey: Prisma.sql`dedupe_key`, templateKey: Prisma.sql`template_key`,
+            payload: Prisma.sql`payload` };
+        await transaction.$executeRaw(Prisma.sql`
+            UPDATE message_trigger_job SET status = 'canceled', canceled_at = ${now},
+                cancel_reason = ${MESSAGE_SENDER_APPROVAL_REQUIRED_CANCEL_REASON}, next_attempt_at = NULL,
+                updated_at = date_trunc('milliseconds', clock_timestamp())
+            WHERE branch_id = ${branchId}::uuid AND status = 'pending' AND scheduled_for <= ${now}
+              AND (next_attempt_at IS NULL OR next_attempt_at <= ${now})
+              AND template_key = 'SERVICE_END_NOTICE' AND recipient_type = 'CLIENT'
+              AND rule_id <> 'system:service_end_notice' AND NOT canceled_by_user
+              AND ${ordinaryAutomationJobSql(ownership)} AND NOT ${manualMessageTriggerJobPredicate(ownership)}
+              ${jobId ? Prisma.sql`AND id = ${jobId}` : Prisma.empty}
+        `);
     }
 
     private quietReleaseSql(): Prisma.Sql {
@@ -1658,6 +1696,7 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
                     templateKey: Prisma.sql`template_key`, ruleId: Prisma.sql`rule_id`, dedupeKey: Prisma.sql`dedupe_key`,
                 })}`,
             ];
+            if (scope.preserveReceiptRecoveryChild) predicates.push(Prisma.sql`NOT ${receiptRecoveryChildSql()}`);
             if (scope.clientId !== undefined) {
                 predicates.push(Prisma.sql`client_id = ${scope.clientId}`);
             }
@@ -1746,6 +1785,8 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
                     if (options.automaticOnly) return { kind: "protected" };
                     throw new Error(`Message trigger rule not found: ${ruleId}`);
                 }
+                if (await this.findProtectedReceiptPredecessor(transaction, replacement)) return { kind: "protected" };
+
                 if (options.automaticOnly) {
                     if (!replacement.branchId || ruleId !== SERVICE_RECORD_LINK_RULE_ID
                         || (replacement.dedupeKey !== serviceRecordAutomaticJobKey(employeeScheduleId)
@@ -2107,6 +2148,8 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
             }
 
             if (pendingOccurrence) {
+                const protectedReceipt = await this.findProtectedReceiptPredecessor(transactionClient, job);
+                if (protectedReceipt) return protectedReceipt;
                 const old = pendingOccurrence;
                 if (!transaction || preserveExisting || old.status !== "pending" || old.canceledByUser
                     || old.claimToken !== null || old.processingDeadlineAt !== null
@@ -2128,6 +2171,7 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
                       AND job.employee_schedule_id IS NOT DISTINCT FROM ${job.employeeScheduleId}
                       AND job.recipient_type = ${job.recipientType} AND job.template_key = ${job.templateKey}
                       AND job.dedupe_key = ${job.dedupeKey} AND job.scheduled_for = ${job.scheduledFor}
+                      AND NOT ${receiptRecoveryChildSql("job")}
                       AND job.status = 'pending' AND job.canceled_by_user = false
                       AND job.claim_token IS NULL AND job.processing_deadline_at IS NULL
                       AND job.updated_at = ${old.updatedAt} AND job.payload = ${JSON.stringify(old.payload)}::jsonb
@@ -2148,18 +2192,22 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
         preserveExisting = false,
     ): Promise<MessageTriggerJobEntity> {
         this.assertOrdinaryJob(job);
+        const protectedReceipt = await this.findProtectedReceiptPredecessor(client, job);
+        if (protectedReceipt) return protectedReceipt;
+        const accepted = job.status === "pending" && await this.hasAcceptedOccurrence(job, client);
         const ordinaryConflict = ordinaryAutomationJobSql({ ruleId: Prisma.sql`"message_trigger_job"."rule_id"`,
             dedupeKey: Prisma.sql`"message_trigger_job"."dedupe_key"`, payload: Prisma.sql`"message_trigger_job"."payload"` });
         const terminalCancellation = senderApprovalCancellationSql(Prisma.sql`"message_trigger_job"."status"`, Prisma.sql`"message_trigger_job"."cancel_reason"`);
-        const accepted = job.status === "pending" && await this.hasAcceptedOccurrence(job, client);
+        const protectedConflict = Prisma.sql`NOT ${protectedReceiptOriginalSql('"message_trigger_job"')}
+            AND NOT ${receiptRecoveryChildSql('"message_trigger_job"')}`;
         const conflictAction = accepted
             ? Prisma.sql`DO UPDATE SET status = 'canceled', canceled_at = EXCLUDED.canceled_at,
                 cancel_reason = EXCLUDED.cancel_reason, next_attempt_at = NULL,
                 updated_at = date_trunc('milliseconds', clock_timestamp())
-              WHERE ${ordinaryConflict} AND "message_trigger_job"."status" = 'pending'
+              WHERE ${ordinaryConflict} AND ${protectedConflict} AND "message_trigger_job"."status" = 'pending'
                 AND "message_trigger_job"."claim_token" IS NULL`
             : preserveExisting
-                ? Prisma.sql`DO NOTHING`
+            ? Prisma.sql`DO NOTHING`
             : Prisma.sql`DO UPDATE SET
                 status = 'pending',
                 scheduled_for = EXCLUDED.scheduled_for,
@@ -2184,7 +2232,7 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
                 next_attempt_at = NULL,
                 claim_token = NULL,
                 updated_at = date_trunc('milliseconds', clock_timestamp())
-            WHERE ${ordinaryConflict} AND "message_trigger_job"."status" IN ('pending', 'canceled')
+            WHERE ${ordinaryConflict} AND ${protectedConflict} AND "message_trigger_job"."status" IN ('pending', 'canceled')
               AND NOT ("message_trigger_job"."status" = 'canceled' AND "message_trigger_job"."canceled_by_user" = true)
               AND NOT ${terminalCancellation}
               AND NOT ("message_trigger_job"."rule_id" = ${SERVICE_RECORD_LINK_RULE_ID}
@@ -2254,6 +2302,48 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
         const tx = transaction ?? this.prisma;
         if (!tx.message_occurrence_claim) return false;
         return hasAcceptedJobOccurrence(tx, { ...job, payload: job.payload as unknown as Prisma.JsonValue });
+    }
+
+    async fenceOrdinaryReceiptPending(transaction: Prisma.TransactionClient, job: MessageTriggerJobEntity, now: Date): Promise<boolean> {
+        const current = await transaction.message_trigger_job.findFirst({
+            where: { id: job.id, branchId: job.branchId, clientId: job.clientId, status: "pending",
+                originalJobId: null, canceledByUser: false, scheduledFor: { lte: now },
+                OR: [{ nextAttemptAt: null }, { nextAttemptAt: { lte: now } }] },
+            select: { updatedAt: true, scheduledFor: true },
+        });
+        if (!current || current.scheduledFor.getTime() !== job.scheduledFor.getTime()) return false;
+        const previous = await this.findProtectedReceiptPredecessor(transaction, job);
+        if (!previous) return true;
+        await transaction.message_trigger_job.updateMany({
+            where: { id: job.id, branchId: job.branchId, status: "pending", updatedAt: current.updatedAt, canceledByUser: false },
+            data: { status: "canceled", canceledAt: now, cancelReason: RECEIPT_RECOVERY_REFUSED, nextAttemptAt: null },
+        });
+        return false;
+    }
+
+    private async findProtectedReceiptPredecessor(
+        transaction: Prisma.TransactionClient, job: MessageTriggerJobEntity,
+    ): Promise<MessageTriggerJobEntity | null> {
+        if (job.templateKey !== MessageTriggerTemplateKey.SERVICE_END_NOTICE
+            || job.recipientType !== MessageTriggerRecipientType.CLIENT || !job.branchId || job.clientId === null
+            || job.ruleId === "system:service_end_notice" || isManualMessageTriggerJob(job) || isReservedAutomationJob(job)) return null;
+        const [row] = await transaction.$queryRaw<Array<{ id: string }>>(Prisma.sql`
+            SELECT predecessor.id
+            FROM message_trigger_job AS predecessor
+            JOIN message_trigger_rule AS previous_rule ON previous_rule.id = predecessor.rule_id
+            JOIN message_trigger_rule AS next_rule ON next_rule.id = ${job.ruleId}
+            WHERE predecessor.branch_id = ${job.branchId}::uuid AND predecessor.client_id = ${job.clientId}
+              AND predecessor.employee_schedule_id IS NOT DISTINCT FROM ${job.employeeScheduleId}
+              AND ${protectedReceiptOriginalSql("predecessor")}
+              AND COALESCE(predecessor.payload->'receiptRecovery'->>'event', previous_rule.event_type) = next_rule.event_type
+              AND COALESCE(predecessor.payload->'receiptRecovery'->>'slot',
+                  CASE WHEN previous_rule.group_id IS NULL THEN 'rule:' || previous_rule.id ELSE 'group:' || previous_rule.group_id::text END)
+                = CASE WHEN next_rule.group_id IS NULL THEN 'rule:' || next_rule.id ELSE 'group:' || next_rule.group_id::text END
+            ORDER BY predecessor.canceled_at, predecessor.id
+            LIMIT 1
+            FOR UPDATE OF predecessor
+        `);
+        return row ? this.findByIdInBranch(job.branchId, row.id, transaction) : null;
     }
 
     private async findPermissionDeniedPredecessor(
@@ -2422,6 +2512,7 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
               AND branch_id = ${branchId}::uuid
               AND status = 'pending'
               AND scheduled_for > clock_timestamp() + interval '1 minute'
+              AND NOT ${receiptRecoveryChildSql()}
               AND ${ordinaryAutomationJobSql({ ruleId: Prisma.sql`rule_id`, dedupeKey: Prisma.sql`dedupe_key`, payload: Prisma.sql`payload` })}
               AND NOT (payload ? ${AGENT_AUTOMATION_JOB_SEAL_PAYLOAD_KEY})
               AND NOT ${manualMessageTriggerJobPredicate({

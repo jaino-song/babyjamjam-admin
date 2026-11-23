@@ -1,3 +1,5 @@
+import type { Prisma } from "@prisma/client";
+
 export const RECEIPT_LINK_TOKEN_REPOSITORY = "RECEIPT_LINK_TOKEN_REPOSITORY";
 
 /**
@@ -199,6 +201,11 @@ export interface IReceiptLinkTokenRepository extends IReceiptLinkTokenIssuanceRe
     /** The token this hash belongs to, with its branch and client display names, or null if no
      *  such token was ever issued. */
     findByLinkTokenHash(linkTokenHash: string): Promise<ReceiptLinkTokenRecord | null>;
+    /** Read the active contract link within the delivery's tenant, without restoring revoked links. */
+    findActiveContractForDelivery?(
+        scope: { branchId: string; clientId: number; linkTokenHash: string; now: Date },
+        transaction?: Prisma.TransactionClient,
+    ): Promise<{ eformsignDocId: number | null; storagePath: string } | null>;
     /** Applies a partial state change (verification outcome, post-lock-window reset, ...) to
      *  one token. */
     update(id: string, data: UpdateReceiptLinkTokenData): Promise<ReceiptLinkTokenRecord>;

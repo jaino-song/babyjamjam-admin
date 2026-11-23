@@ -123,6 +123,7 @@ export class SmsRetryService {
         private readonly systemSettingService?: SystemSettingService,
         private readonly quietHours?: MessageQuietHoursService,
         private readonly defaultSender?: AligoDefaultSenderPolicyService,
+        @Optional() private readonly messageTriggers?: MessageTriggerService,
     ) {}
 
     async getRetryDelayMs(branchId: string | null): Promise<number> {
@@ -309,7 +310,7 @@ export class SmsRetryService {
                         return { kind: "terminal", log: sourceLog };
                     }
 
-                    const retryAuthority = await this.verifyAutomaticRetryAuthority(transaction, sourceLog);
+                    const retryAuthority = await this.verifyAutomaticRetryAuthority(transaction, sourceLog, true);
                     const retryDelayMs = await this.getRetryDelayMs(sourceLog.branchId);
                     const retryDraft = this.createRetryAttempt(sourceLog, retryDelayMs);
                     if (retryAuthority.kind === "valid") {
@@ -589,7 +590,7 @@ export class SmsRetryService {
             }
             const safeguard = !explicitManual ? await this.supersedeForSmsSafeguard(current, tx) : null;
             if (safeguard) return null;
-            const authority = await this.verifyAutomaticRetryAuthority(tx, source);
+            const authority = await this.verifyAutomaticRetryAuthority(tx, source, !explicitManual);
             if (authority.kind === "invalid") return null;
             if (current.triggerJobId) {
                 const job = this.jobRepository && await this.jobRepository.findByIdInBranch(current.branchId!, current.triggerJobId, tx);
@@ -831,6 +832,7 @@ export class SmsRetryService {
     private async verifyAutomaticRetryAuthority(
         transaction: Prisma.TransactionClient,
         sourceLog: MessageLogEntity,
+        automatic: boolean,
     ): Promise<AutomaticRetryAuthorityState> {
         if (!sourceLog.branchId || !sourceLog.triggerJobId) return { kind: "legacy" };
         try {
@@ -865,6 +867,10 @@ export class SmsRetryService {
                 row.nextAttemptAt,
                 row.claimToken,
             );
+            if (automatic && row.dedupeKey.startsWith(RECEIPT_RECOVERY_PREFIX)
+                && !await this.messageTriggers?.permitsReceiptTransportRetry(transaction, row, job)) {
+                return { kind: "invalid", reason: "receipt recovery is no longer authorized" };
+            }
             const seal = readAutomationRetrySeal(job, sourceLog.variables);
             if (seal.kind !== "valid") return seal;
             if (!this.automationAuthority || !this.smsTriggerDeliveryService) {

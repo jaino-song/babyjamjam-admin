@@ -34,10 +34,13 @@ export interface SmsTriggerPayloadEnricher {
     validateStagedSnapshot?(job: MessageTriggerJobEntity): Promise<void>;
 }
 
+export type ReceiptReadiness = { kind: "ready"; documentId: number } | { kind: "waiting" | "terminal" };
+
 export class SmsTriggerDeliverySkipError extends Error {
     constructor(
         readonly reason: string,
         message?: string,
+        readonly receiptRecoveryProof?: ReceiptRecoveryProof,
     ) {
         super(message ?? reason);
         this.name = "SmsTriggerDeliverySkipError";

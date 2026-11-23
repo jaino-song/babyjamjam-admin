@@ -1927,6 +1927,9 @@ export class ClientService {
                     );
                     if (result === "updated") {
                         this.logger.debug(`Updated client ${id} service status to ${newStatus}`);
+                        await this.triggerService?.wakeReceiptRecovery?.(branchid, id).catch(() => {
+                            this.logger.warn(`Receipt recovery wake will be retried for client ${id}`);
+                        });
                     } else {
                         this.logger.debug(`Skipped stale client ${id} service status update`);
                     }

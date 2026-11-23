@@ -124,6 +124,26 @@ class MissingSmsTemplateVariablesError extends Error {
 export class SmsTriggerDeliveryService {
     private readonly logger = new Logger(SmsTriggerDeliveryService.name);
 
+    private readonly receiptRefusals = new WeakMap<MessageTriggerJobEntity, ReceiptRecoveryProof | null>();
+    private readonly receiptProviderFences = new WeakMap<MessageTriggerJobEntity,
+        (transaction: Prisma.TransactionClient) => Promise<"allow" | "canceled" | "released" | "lost">>();
+
+    receiptRefusal(job: MessageTriggerJobEntity): ReceiptRecoveryProof | null | undefined {
+        return this.receiptRefusals.get(job);
+    }
+
+    checkReceiptRecovery(branchId: string, clientId: number, documentId: number | null,
+        transaction: Prisma.TransactionClient, preparedJob?: MessageTriggerJobEntity): Promise<ReceiptReadiness> {
+        return this.enricherRegistry?.get(MessageTriggerTemplateKey.SERVICE_END_NOTICE)?.checkRecovery?.(
+            branchId, clientId, documentId, transaction, preparedJob,
+        ) ?? Promise.resolve({ kind: "terminal" });
+    }
+
+    setReceiptProviderFence(job: MessageTriggerJobEntity,
+        fence: (transaction: Prisma.TransactionClient) => Promise<"allow" | "canceled" | "released" | "lost">): void {
+        this.receiptProviderFences.set(job, fence);
+    }
+
     constructor(
         private readonly aligoService: AligoService,
         private readonly systemTemplateService: SystemTemplateService,
@@ -461,7 +481,7 @@ export class SmsTriggerDeliveryService {
         this.assertDeliveryJob(job);
         if (!this.automationDeliveryGate || !await this.automationDeliveryGate.permitsDirectManualJob(job)) {
             if (job.status === "dispatching") throw new AgentAutomationDispatchUncertainError();
-            job.cancel("문자 동의 또는 발송 대상 확인이 필요합니다");
+            job.cancel(AUTOMATION_CONSENT_CANCEL_REASON);
             return false;
         }
         if (!job.branchId) {
@@ -538,7 +558,7 @@ export class SmsTriggerDeliveryService {
     async prepareJob(job: MessageTriggerJobEntity): Promise<SmsTriggerDeliveryPreparation | null> {
         this.assertDeliveryJob(job);
         if (!this.automationDeliveryGate || !await this.automationDeliveryGate.consumePreparation(job)) {
-            job.cancel("문자 동의 또는 발송 대상 확인이 필요합니다");
+            job.cancel(AUTOMATION_CONSENT_CANCEL_REASON);
             return null;
         }
         if (!job.branchId) {
@@ -577,9 +597,12 @@ export class SmsTriggerDeliveryService {
             }
 
             const snapshot = await this.resolveDeliverySnapshot(job);
+            const receiptGeneration = enricher?.receiptSnapshotProof?.(job);
             const serializedSnapshot = hasStagedSnapshot
                 ? job.payload.templateVariables[SMS_DELIVERY_SNAPSHOT_VARIABLE]
-                : this.serializeSnapshot(snapshot);
+                : receiptGeneration
+                    ? JSON.stringify({ ...JSON.parse(this.serializeSnapshot(snapshot)), receiptGeneration })
+                    : this.serializeSnapshot(snapshot);
             if (!serializedSnapshot) {
                 throw new Error("SMS delivery snapshot could not be serialized");
             }
@@ -750,6 +773,7 @@ export class SmsTriggerDeliveryService {
 
         const admission = await runSmsQuietHoursAdmission(this.quietHours, this.systemSettingService, job.branchId, snapshot.receiver,
             async (decision, transaction): Promise<
+                | { kind: "receipt-fenced"; result: "canceled" | "released" }
                 | { kind: "ready"; attempt: MessageLogEntity }
                 | { kind: "held"; hold: MessageQuietHold }
                 | { kind: "standalone-denied"; reason: string }
@@ -758,6 +782,27 @@ export class SmsTriggerDeliveryService {
                 | { kind: "source-canceled"; cancellation: ManualSourceCancellation }
                 | { kind: "refused"; decision: { action: "CANCEL"; reevaluateAt: null }; canceledAt: Date | null; durableCancellation?: true }
             > => {
+                const receiptFence = this.receiptProviderFences.get(job);
+                if (!receiptFence && job.dedupeKey.startsWith(RECEIPT_RECOVERY_PREFIX)) throw new AgentAutomationDispatchUncertainError();
+                if (receiptFence) {
+                    if (!transaction) throw new AgentAutomationDispatchUncertainError();
+                    const result = await receiptFence(transaction);
+                    if (result === "lost") throw new AgentAutomationDispatchUncertainError();
+                    if (result === "canceled") {
+                        const canceled = await transaction.message_trigger_job.findFirst({
+                            where: { id: job.id, branchId: job.branchId, status: "canceled" }, select: { cancelReason: true },
+                        });
+                        const draft = await transaction.message_log.updateMany({
+                            where: { id: persistedAttempt.id, branchId: job.branchId, triggerJobId: job.id,
+                                providerAcceptanceKey: persistedAttempt.providerAcceptanceKey,
+                                providerAcceptanceFingerprint: persistedAttempt.providerAcceptanceFingerprint,
+                                providerAcceptanceState: "prepared", providerCallStartedAt: null },
+                            data: { status: "failed", errorMessage: canceled?.cancelReason, nextRetryAt: null },
+                        });
+                        if (!canceled || draft.count !== 1) throw new AgentAutomationDispatchUncertainError();
+                    }
+                    if (result !== "allow") return { kind: "receipt-fenced", result };
+                }
                 if (!transaction) {
                     if (snapshot.standaloneLink) throw new AgentAutomationDispatchUncertainError();
                     // Only the explicit schema-valid OFF direct-builder compatibility path.
@@ -919,6 +964,13 @@ export class SmsTriggerDeliveryService {
                 // transaction so its actual clock is sampled immediately before CAS.
                 return runSmsQuietHoursAdmission(this.quietHours, this.systemSettingService, job.branchId, snapshot.receiver, finish, transaction, currentHold?.releaseAt);
             });
+        if (admission.kind === "receipt-fenced") {
+            // The source/epoch transaction already persisted the disposition.
+            job.status = admission.result === "released" ? "pending" : "canceled";
+            job.claimToken = null;
+            job.processingDeadlineAt = null;
+            return false;
+        }
         if (admission.kind === "occurrence") {
             if (admission.disposition === "accepted") {
                 job.cancel(OCCURRENCE_ALREADY_ACCEPTED);

@@ -427,7 +427,7 @@ describe("SmsRetryService", () => {
             sourceLog.triggerJobId = "job-link";
             // No seal: legacy authority permits retry; activation really runs the callback.
             const findUnique = jest.fn().mockResolvedValue({
-                id: sourceLog.triggerJobId, branchId: sourceLog.branchId, payload: {},
+                id: sourceLog.triggerJobId, branchId: sourceLog.branchId, dedupeKey: "job-link", payload: {},
             });
             const transaction = { message_trigger_job: { findUnique } };
             const activation = {
@@ -1468,7 +1468,7 @@ describe("SmsRetryService", () => {
             const clientFindFirst = jest.fn().mockResolvedValue(clientFacts);
             const transaction = {
                 message_trigger_job: { findUnique: jest.fn().mockResolvedValue({
-                    id: source.triggerJobId, branchId: source.branchId, payload: {},
+                    id: source.triggerJobId, branchId: source.branchId, dedupeKey: "job-rule-policy", payload: {},
                 }) },
                 client: { findFirst: clientFindFirst },
             };
@@ -1985,7 +1985,9 @@ describe("TIME-2 branch SMS retry timing", () => {
         });
     it("uses configured timing inside the automatic activation transaction", async () => {
         const h = retryHarness(policy(1));
-        const transaction = { message_trigger_job: { findUnique: jest.fn().mockResolvedValue({ id: h.source.triggerJobId, branchId, payload: {} }) } };
+        const transaction = { message_trigger_job: { findUnique: jest.fn().mockResolvedValue({
+            id: h.source.triggerJobId, branchId, dedupeKey: "time-2", payload: {},
+        }) } };
         h.activation.runAutomaticRetryIfEnabled.mockImplementation(async (_branch, _job, work) => ({
             applies: true, allowed: true, value: await work(transaction),
         }));
@@ -1999,7 +2001,9 @@ describe("TIME-2 branch SMS retry timing", () => {
     it.each(["occurrence held", "lease lost"] as const)("defers an automatic retry without spending an attempt when %s", async reason => {
         const h = retryHarness();
         const transaction = {
-            message_trigger_job: { findUnique: jest.fn().mockResolvedValue({ id: h.source.triggerJobId, branchId, payload: {} }) },
+            message_trigger_job: { findUnique: jest.fn().mockResolvedValue({
+                id: h.source.triggerJobId, branchId, dedupeKey: "time-2", payload: {},
+            }) },
             message_log: { delete: jest.fn(), update: jest.fn() },
         };
         h.activation.runAutomaticRetryIfEnabled.mockImplementation(async (_branch, _job, work) => ({
@@ -2030,7 +2034,9 @@ describe("TIME-2 branch SMS retry timing", () => {
     });
     it("does not consume admission when policy lookup fails inside the activation transaction", async () => {
         const h = retryHarness(policy("unavailable"));
-        const transaction = { message_trigger_job: { findUnique: jest.fn().mockResolvedValue({ id: h.source.triggerJobId, branchId, payload: {} }) } };
+        const transaction = { message_trigger_job: { findUnique: jest.fn().mockResolvedValue({
+            id: h.source.triggerJobId, branchId, dedupeKey: "time-2", payload: {},
+        }) } };
         h.activation.runAutomaticRetryIfEnabled.mockImplementation(async (_branch, _job, work) => ({
             applies: true, allowed: true, value: await work(transaction),
         }));
