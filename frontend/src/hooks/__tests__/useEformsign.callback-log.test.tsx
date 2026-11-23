@@ -5,6 +5,12 @@ import type { EformSignDocument, EformsignDocumentOption } from "@/lib/eformsign
 
 import { useEformsign } from "../useEformsign";
 
+const consoleMethods = [
+  "assert", "clear", "count", "countReset", "debug", "dir", "dirxml", "error",
+  "group", "groupCollapsed", "groupEnd", "info", "log", "profile", "profileEnd",
+  "table", "time", "timeEnd", "timeLog", "timeStamp", "trace", "warn",
+] as const;
+
 describe("useEformsign SDK callbacks", () => {
   const originalSdk = Object.getOwnPropertyDescriptor(window, "EformSignDocument");
 
@@ -39,8 +45,12 @@ describe("useEformsign SDK callbacks", () => {
     expect(sdkIframeId).toBe(iframeId);
     if (!success || !error || !action) throw new Error("Expected all three SDK callbacks");
 
-    const consoleSpies = (["log", "error", "warn", "info", "debug", "dir", "table", "trace"] as const)
-      .map((level) => jest.spyOn(console, level).mockImplementation(() => {}));
+    const consoleSpies = consoleMethods
+      .filter((method) => typeof console[method] === "function")
+      .map((method) => ({
+        method,
+        spy: jest.spyOn(console, method).mockImplementation(() => {}),
+      }));
     const extra = { nested: { value: "synthetic-sdk-unknown-field" } };
     const accepted = { code: "-1", field_values: { field: "synthetic-sdk-success-payload" }, extra };
     const rejected = { code: "synthetic-sdk-rejected-code", document_id: "synthetic-sdk-rejected-document", extra };
@@ -64,9 +74,15 @@ describe("useEformsign SDK callbacks", () => {
       accepted.code, accepted.field_values.field, rejected.code, rejected.document_id,
       failure.code, failure.message, event.type, event.data.nested, extra.nested.value,
     ];
-    for (const spy of consoleSpies) {
+    for (const { method, spy } of consoleSpies) {
       for (const args of spy.mock.calls) {
-        const logged = inspect(args, { depth: null });
+        const inspected = inspect(args, {
+          depth: null,
+          maxArrayLength: null,
+          maxStringLength: null,
+          customInspect: false,
+        });
+        const logged = `console.${method}(${inspected})`;
         for (const sentinel of sentinels) expect(logged).not.toContain(sentinel);
       }
     }
