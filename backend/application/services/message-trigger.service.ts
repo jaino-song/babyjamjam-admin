@@ -1,5 +1,13 @@
-import { hasStandaloneReceipt } from "domain/entities/standalone-receipt-request";
-import { publicMessageVariables } from "domain/message-policy-evaluator";
+import type { message_trigger_job } from "@prisma/client";
+import { lockClientForScheduleWrite } from "application/policies/employee-schedule-invariants.policy";
+import {
+    RECEIPT_RECOVERY_PREFIX, RECEIPT_RECOVERY_REASONS, RECEIPT_RECOVERY_RECHECK_MS, RECEIPT_RECOVERY_REFUSED,
+    isReceiptRecoveryReason, readReceiptObservation, receiptRuleSlot, type ReceiptObservation,
+    type ReceiptRecoveryProof, type ReceiptRecoveryReason,
+} from "domain/constants/receipt-job-recovery";
+import { CanceledAutomationRetrySettingsService } from "./canceled-automation-retry-settings.service";
+import { isStandaloneReceiptJob } from "domain/entities/standalone-receipt-request";
+import { parseMessageQuietHold, publicMessageVariables } from "domain/message-policy-evaluator";
 import { MANUAL_SMS_TEMPLATE_KEY, MANUAL_SMS_RULE_PREFIX } from "domain/constants/message-trigger-catalog";
 import { agentAutomationCoverageScope } from "application/agent/agent-automation-coverage";
 import { parseAgentAutomationTaskCommitReference } from "application/agent/agent-automation-storage.schema";
@@ -4875,7 +4883,7 @@ export class MessageTriggerService {
             if (error instanceof TriggerJobDeferredError) {
                 await this.deferOrReturnToNeedsSetup(job, error, resend);
             } else {
-                const failure = hasStandaloneReceipt(job) ? new Error("Standalone receipt preparation failed") : error;
+                const failure = isStandaloneReceiptJob(job) ? new Error("Standalone receipt preparation failed") : error;
                 job.markFailed(failure instanceof Error ? failure.message : String(failure));
                 try {
                     captureBackendError(failure instanceof Error ? failure : new Error("Message delivery prepare failed"), {
@@ -4901,7 +4909,7 @@ export class MessageTriggerService {
             await this.jobRepository.update(job);
             return true;
         } catch (error) {
-            const failure = hasStandaloneReceipt(job) ? new Error("Standalone receipt preparation could not be persisted") : error;
+            const failure = isStandaloneReceiptJob(job) ? new Error("Standalone receipt preparation could not be persisted") : error;
             job.markFailed(failure instanceof Error ? failure.message : String(failure));
             try {
                 captureBackendError(failure instanceof Error ? failure : new Error("Message delivery persist prepared failed"), {
@@ -5516,7 +5524,7 @@ export class MessageTriggerService {
             if (error instanceof TriggerJobDeferredError) {
                 await this.deferOrReturnToNeedsSetup(job, error, resend);
             } else {
-                const failure = hasStandaloneReceipt(job) ? new Error("Standalone receipt delivery failed") : error;
+                const failure = isStandaloneReceiptJob(job) ? new Error("Standalone receipt delivery failed") : error;
                 job.markFailed(failure instanceof Error ? failure.message : String(failure));
                 try {
                     captureBackendError(failure instanceof Error ? failure : new Error("Message delivery send failed"), {

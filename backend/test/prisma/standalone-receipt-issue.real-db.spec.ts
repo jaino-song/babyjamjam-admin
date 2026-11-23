@@ -1,4 +1,15 @@
-import { Logger } from "@nestjs/common";
+import { Logger, ValidationPipe, type INestApplication } from "@nestjs/common";
+import { JwtService } from "@nestjs/jwt";
+import { Test } from "@nestjs/testing";
+import request from "supertest";
+import { JwtStrategy } from "infrastructure/auth/jwt.strategy";
+import { getJwtSecret } from "infrastructure/auth/jwt-secret";
+import { TenantContext } from "infrastructure/tenant";
+import { PrismaService } from "infrastructure/database/prisma.service";
+import { ReceiptLinkAdminController } from "interface/controllers/receipt-link-admin.controller";
+import { ReceiptLinkManualSendService } from "application/services/receipt-link-manual-send.service";
+import { CanceledAutomationRetrySettingsService } from "application/services/canceled-automation-retry-settings.service";
+import { CanceledAutomationRetryRepository } from "infrastructure/database/repositories/canceled-automation-retry.repository";
 import { ConfigService } from "@nestjs/config";
 import type { client, Prisma, PrismaClient } from "@prisma/client";
 import { createHash, randomUUID } from "node:crypto";
@@ -36,7 +47,7 @@ import { SbMessageTriggerRuleRepository } from "infrastructure/database/reposito
 import { SbReceiptLinkTokenRepository } from "infrastructure/database/repositories/sb.receipt-link-token.repository";
 import { StandaloneReceiptRenderer } from "infrastructure/pdf/standalone-receipt-renderer";
 import { StandaloneReceiptTemplateLoader, StandaloneReceiptTemplateUnavailableError } from "infrastructure/pdf/standalone-receipt-template.loader";
-import { createBranch, createClient, createEformsignDoc, createMessageTriggerRule } from "../integrity/helpers/factories";
+import { createAuthSession, createBranch, createClient, createEformsignDoc, createMessageTriggerRule, createUser } from "../integrity/helpers/factories";
 import { closeIntegrityPrisma, createIntegrityPrisma, type IntegrityPrisma } from "../integrity/helpers/real-db";
 import { RowTracker } from "../integrity/helpers/tracker";
 
@@ -44,6 +55,8 @@ jest.mock("infrastructure/observability/service-record-sentry", () => ({
     ...jest.requireActual("infrastructure/observability/service-record-sentry"),
     captureBackendError: jest.fn(),
 }));
+
+jest.mock("infrastructure/auth/jwt-secret", () => ({ getJwtSecret: () => "synthetic-receipt-route-test-key" }));
 
 const describeReal = process.env["STANDALONE_RECEIPT_REAL_DB"] === "1" ? describe : describe.skip;
 const JAN_1 = new Date("2026-01-01T00:00:00Z");
@@ -75,6 +88,7 @@ describeReal("standalone receipt issuance on PostgreSQL", () => {
     let y: client;
     let foreign: client;
     let fixture: ReturnType<typeof worker>;
+    let app: INestApplication | undefined;
     let diagnosticLogs: jest.SpyInstance[];
 
     function diagnostics(): string {
@@ -100,6 +114,7 @@ describeReal("standalone receipt issuance on PostgreSQL", () => {
             }),
         };
         const loader = new StandaloneReceiptTemplateLoader(storage);
+        const loadPrivateTemplate = loader.load.bind(loader);
         const load = jest.spyOn(loader, "load").mockResolvedValue(syntheticTemplate);
         const renderer = new StandaloneReceiptRenderer();
         const render = jest.spyOn(renderer, "render");
@@ -117,7 +132,7 @@ describeReal("standalone receipt issuance on PostgreSQL", () => {
             issue: jest.fn(), assertDocumentSyncReady: jest.fn(),
             buildReceiptUrl: (bearer: string) => `https://receipts.invalid/receipt/${bearer}`,
         };
-        new ReceiptLinkDeliveryEnricher(registry, contracts as never, tokenService, storage as never, preparation).onModuleInit();
+        new ReceiptLinkDeliveryEnricher(registry, contracts as never, tokenService, storage as never, tokens, preparation).onModuleInit();
         const configuration = defaultMessageAutomationPolicy();
         const settings = {
             getMessageAutomationPolicyConfig: async () => ({ configuration, version: "fixture" }),
@@ -126,10 +141,11 @@ describeReal("standalone receipt issuance on PostgreSQL", () => {
         const templates = { getByKeyForBranch: async () => ({ id: "fixture", content: "{{name}}\n{{receiptUrl}}", updatedAt: JAN_1 }) };
         const lock = new MessageAutomationBranchLockService(database);
         const activation = new MessageAutomationActivationService(database, lock, {} as never);
+        const recoverySettings = new CanceledAutomationRetrySettingsService(new CanceledAutomationRetryRepository(database), lock, activation);
         const gate = new AgentAutomationDeliveryGateService(database, lock, { checkAutomaticJob: async () => ({ status: "legacy" }) } as never);
         const quiet = new MessageQuietHoursService(settings as never, logs, lock);
         const provider = {
-            sendSms: jest.fn(async (request: { receiver: string; message: string }) => ({
+            sendSms: jest.fn(async (request: { receiver: string; message: string; confidential?: boolean }) => ({
                 request,
                 response: { result_code: 1, success_cnt: 1, error_cnt: 0, msg_id: 123, message: "accepted" },
             })),
@@ -139,11 +155,12 @@ describeReal("standalone receipt issuance on PostgreSQL", () => {
         const delivery = buildDelivery();
         const core = new MessageTriggerService(database, new MessageTriggerDeliveryService(delivery), approval,
             rules, jobs, logs, templates as never, {} as never, settings as never, undefined, activation, lock,
-            undefined, gate, undefined, new SmsAutomationSafeguardService(database, activation));
+            undefined, gate, undefined, new SmsAutomationSafeguardService(database, activation), undefined, undefined, delivery,
+            recoverySettings);
         const retry = () => new SmsRetryService(logs, provider as never, approval, acceptance, activation, undefined,
             buildDelivery(), jobs, undefined, settings as never, quiet);
         return {
-            issue, preparation, contracts, storage, objects, load, render, provider, jobs, logs, gate, tokenService,
+            issue, preparation, contracts, storage, objects, load, loadPrivateTemplate, render, provider, jobs, logs, gate, tokenService, recoverySettings,
             retry, core, publicLinks: new ReceiptLinkController(tokenService, storage as never), dispatch: (jobId: string) => core.dispatchPendingJobNow(jobId, { expectedBranchId: a }),
         };
     }
@@ -155,6 +172,36 @@ describeReal("standalone receipt issuance on PostgreSQL", () => {
     const date = async (id = x.id) => (await db.raw.client.findUniqueOrThrow({ where: { id } })).copaymentReceivedDate;
     const row = (id: string) => db.raw.message_trigger_job.findUniqueOrThrow({ where: { id } });
     const job = (id: string) => fixture.jobs.findByIdInBranch(a, id).then(value => value!);
+
+    async function startStaffRoute() {
+        const module = await Test.createTestingModule({
+            controllers: [ReceiptLinkAdminController],
+            providers: [
+                TenantContext, JwtStrategy,
+                { provide: PrismaService, useValue: db.raw },
+                { provide: ReceiptLinkManualSendService, useValue: {} },
+                { provide: StandaloneReceiptIssueService, useValue: fixture.issue },
+            ],
+        }).compile();
+        app = module.createNestApplication({ logger: false });
+        app.useGlobalPipes(new ValidationPipe({ transform: true, whitelist: true, forbidNonWhitelisted: true }));
+        await app.listen(0, "127.0.0.1");
+        const server = app.getHttpServer();
+        const jwt = new JwtService({ secret: getJwtSecret() });
+        async function signedIn(branchId: string, role: "manager" | "user") {
+            const user = await createUser(db.raw, tracker, {}, { membership: { branchId, role } });
+            const { session } = await createAuthSession(db.raw, tracker, { userId: user.id }, { selectedBranchId: branchId });
+            return jwt.sign({ sub: user.id, sid: session.id, type: "access", branchId, tokenVersion: user.tokenVersion },
+                { expiresIn: "5m" });
+        }
+        const post = (body: ReturnType<typeof input>, token: string | null, expectedBranch = body.branchId) => {
+            const submission = request(server).post("/receipt-links/standalone")
+                .set("x-expected-branch-id", expectedBranch)
+                .send({ clientId: body.clientId, requestId: body.requestId, copaymentReceivedDate: body.copaymentReceivedDate });
+            return token ? submission.set("Authorization", `Bearer ${token}`) : submission;
+        };
+        return { post, signedIn };
+    }
 
     beforeAll(async () => { db = await createIntegrityPrisma(); });
     afterAll(async () => { if (db) await closeIntegrityPrisma(db); });
@@ -181,6 +228,8 @@ describeReal("standalone receipt issuance on PostgreSQL", () => {
         fixture = worker();
     });
     afterEach(async () => {
+        await app?.close();
+        app = undefined;
         jest.useRealTimers();
         diagnosticLogs?.forEach(log => log.mockRestore());
         if (!tracker) return;
@@ -190,12 +239,31 @@ describeReal("standalone receipt issuance on PostgreSQL", () => {
         await db.raw.receipt_link_token.deleteMany({ where });
         await db.raw.message_log.deleteMany({ where });
         await db.raw.message_trigger_job.deleteMany({ where });
+        await db.raw.system_setting.deleteMany({ where: { key: { startsWith: `branch:${a}:` } } });
         await tracker.cleanup(db.raw);
     });
 
     it("freezes both snapshots, uses the actual renderer without a contract and sends as manual with automation off", async () => {
+        const route = await startStaffRoute();
+        const manager = await route.signedIn(a, "manager");
+        const member = await route.signedIn(a, "user");
+        const otherManager = await route.signedIn(b, "manager");
         const original = input();
-        const first = await fixture.issue.issue(original);
+        await route.post(original, null).expect(401);
+        await route.post(original, member).expect(403);
+        await route.post(original, manager, b).expect(403);
+        await route.post(input(randomUUID(), x.id, NEW_DATE, b), otherManager).expect(404);
+        fixture.load.mockImplementation(branch => branch === a ? Promise.resolve(syntheticTemplate) : fixture.loadPrivateTemplate(branch));
+        const templateDigest = "ab20ef494186f1bc3d480dcb96facc67c753de72d6d03dc3a7b7fc85f639548f";
+        fixture.objects.set(`standalone-receipt-templates/${a}/${templateDigest}.png`, syntheticTemplate);
+        await route.post(input(randomUUID(), foreign.id, NEW_DATE, b), otherManager).expect(403);
+        expect(fixture.storage.download).toHaveBeenCalledWith(`standalone-receipt-templates/${b}/${templateDigest}.png`);
+        expect(await rows()).toHaveLength(0);
+        expect(await tokens()).toHaveLength(0);
+        expect(await date()).toEqual(OLD_DATE);
+        const submit = async (body: ReturnType<typeof input>) =>
+            (await route.post(body, manager).expect(200)).body as { jobId: string; queued: boolean };
+        const first = await submit(original);
         expect(first).toEqual({ jobId: expect.any(String), queued: true });
         expect(await date()).toEqual(new Date(NEW_DATE));
         expect(await tokens()).toHaveLength(0);
@@ -211,7 +279,7 @@ describeReal("standalone receipt issuance on PostgreSQL", () => {
 
         await db.raw.client.update({ where: { id: x.id }, data: { name: "QA-나", birthday: "19940304", actualPrice: "0" } });
         await createEformsignDoc(db.raw, tracker, { branchId: a, clientId: x.id, voidedAt: JAN_1 });
-        const second = await fixture.issue.issue(input(randomUUID(), x.id, "2026-01-03"));
+        const second = await submit(input(randomUUID(), x.id, "2026-01-03"));
         expect(await fixture.dispatch(first.jobId)).toMatchObject({ status: "sent" });
         expect(await fixture.dispatch(second.jobId)).toMatchObject({ status: "sent" });
         expect(fixture.render.mock.calls.map(([, frozen]) => frozen)).toEqual([
@@ -240,12 +308,14 @@ describeReal("standalone receipt issuance on PostgreSQL", () => {
         const persisted = JSON.stringify([await rows(), await tokens(), logRows]);
         expect([firstBearer, links[0]!, "synthetic-signed-storage-url"].some(secret => persisted.includes(secret))).toBe(false);
         expect([firstBearer, links[0]!, PHONE, BIRTHDAY, "QA-가"].some(secret => diagnostics().includes(secret))).toBe(false);
-        expect(await fixture.issue.issue(original)).toEqual(first);
+        expect(await submit(original)).toEqual(first);
         expect(await date()).toEqual(new Date("2026-01-03"));
+        expect(await rows()).toHaveLength(2);
+        expect(fixture.provider.sendSms).toHaveBeenCalledTimes(2);
 
         await db.raw.client.update({ where: { id: x.id }, data: { deletedAt: JAN_1 } });
         expect(await fixture.tokenService.getStatus(firstBearer, JAN_1)).toEqual({ ok: false, reason: "not_found" });
-        await expect(fixture.issue.issue(original)).rejects.toMatchObject({ status: 404 });
+        await route.post(original, manager).expect(404);
     });
 
     it("sends a standalone link for a signed client without changing the contract token, then suppresses automatic enrollment", async () => {
@@ -295,6 +365,8 @@ describeReal("standalone receipt issuance on PostgreSQL", () => {
         const retry = fixture.retry();
         await expect(retry.retryById(a, first.id)).resolves.toMatchObject({ status: "sent" });
         expect(fixture.provider.sendSms).toHaveBeenCalledTimes(2);
+        expect(fixture.provider.sendSms).toHaveBeenNthCalledWith(1, expect.objectContaining({ confidential: true }));
+        expect(fixture.provider.sendSms).toHaveBeenNthCalledWith(2, expect.objectContaining({ confidential: true }));
         const firstMessage = fixture.provider.sendSms.mock.calls[0]![0].message;
         const retriedMessage = fixture.provider.sendSms.mock.calls[1]![0].message;
         expect(retriedMessage === firstMessage).toBe(true);
@@ -478,9 +550,23 @@ describeReal("standalone receipt issuance on PostgreSQL", () => {
 
     it("admits an unsigned client and fails rendering before upload or provider admission", async () => {
         await createEformsignDoc(db.raw, tracker, { branchId: a, clientId: x.id, statusType: "020" });
+        const rule = await createMessageTriggerRule(db.raw, tracker, {
+            branchId: a, eventType: "SERVICE_END", templateKey: "SERVICE_END_NOTICE", isActive: true,
+        });
+        expect(await fixture.recoverySettings.update(a, rule.id, true)).toMatchObject({ enabled: true, enabledAt: expect.any(String) });
         const accepted = await fixture.issue.issue(input());
         fixture.render.mockRejectedValueOnce(new Error("Synthetic renderer failure"));
         expect(await fixture.dispatch(accepted.jobId)).toMatchObject({ status: "canceled", cancelReason: "standalone_receipt_render_failed" });
+        expect(await row(accepted.jobId)).toMatchObject({
+            status: "canceled", cancelReason: "standalone_receipt_render_failed", recoveryReason: null,
+            firstBlockedAt: null, recoveryEpoch: null, recoveryState: null, nextCheckAt: null,
+        });
+        const scanned = jest.spyOn(fixture.jobs, "findReceiptRecoveryCandidates");
+        await fixture.core.sweepReceiptRecovery(JAN_31);
+        expect(scanned).toHaveBeenCalledWith(JAN_31, undefined);
+        expect(await db.raw.message_trigger_job.count({ where: {
+            OR: [{ originalJobId: accepted.jobId }, { dedupeKey: `receipt-retry:${accepted.jobId}` }],
+        } })).toBe(0);
         expect(await date()).toEqual(new Date(NEW_DATE));
         expect(await tokens()).toHaveLength(0);
         expect(fixture.storage.createPrivateObject).not.toHaveBeenCalled();

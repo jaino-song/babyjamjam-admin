@@ -1,3 +1,4 @@
+import type { ReceiptRecoveryProof } from "domain/constants/receipt-job-recovery";
 import type { Prisma } from "@prisma/client";
 import { Injectable } from "@nestjs/common";
 import { MessageTriggerTemplateKey } from "domain/constants/message-trigger-catalog";
@@ -28,6 +29,9 @@ import { MessageTriggerJobEntity } from "domain/entities/message-trigger-job.ent
  */
 export interface SmsTriggerPayloadEnricher {
     enrich(job: MessageTriggerJobEntity): Promise<void>;
+    receiptSnapshotProof?(job: MessageTriggerJobEntity): { documentId: number; sourceUpdatedDate: string; sha256: string } | undefined;
+    checkRecovery?(branchId: string, clientId: number, documentId: number | null,
+        transaction: Prisma.TransactionClient, preparedJob?: MessageTriggerJobEntity): Promise<ReceiptReadiness>;
     resolveStandaloneReceiptUrl?(job: MessageTriggerJobEntity): Promise<string>;
     validateStandaloneHandoff?(job: MessageTriggerJobEntity, url: string, tx: Prisma.TransactionClient): Promise<void>;
     /** Validate an already-approved staged payload without mutating its contents. */

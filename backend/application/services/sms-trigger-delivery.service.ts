@@ -1,10 +1,12 @@
+import { RECEIPT_RECOVERY_PREFIX, type ReceiptRecoveryProof } from "domain/constants/receipt-job-recovery";
+import type { ReceiptReadiness } from "./sms-trigger-payload-enricher.registry";
 import {
-    hasStandaloneReceipt, standaloneReceiptReference, STANDALONE_RECEIPT_HISTORY_PLACEHOLDER, STANDALONE_RECEIPT_LOG_REFERENCE,
+    isStandaloneReceiptJob, standaloneReceiptReference, STANDALONE_RECEIPT_HISTORY_PLACEHOLDER, STANDALONE_RECEIPT_LOG_REFERENCE,
 } from "domain/entities/standalone-receipt-request";
 import {
     SERVICE_END_NOTICE_RECEIPT_URL_TEMPLATE_VARIABLE, SERVICE_END_NOTICE_SMS_LOG_TEMPLATE_KEY,
 } from "domain/constants/service-end-notice-message";
-import { MESSAGE_SENDER_APPROVAL_REQUIRED_CANCEL_REASON } from "domain/constants/message-automation-policy";
+import { AUTOMATION_CONSENT_CANCEL_REASON, MESSAGE_SENDER_APPROVAL_REQUIRED_CANCEL_REASON } from "domain/constants/message-automation-policy";
 import { SMS_TEMPLATE_DELIVERY, type SmsTemplateDeliveryConfig } from "domain/constants/sms-template-delivery";
 import { OCCURRENCE_ALREADY_ACCEPTED, SMS_OCCURRENCE_HOLD_FIELD } from "domain/entities/message-occurrence";
 import { AligoDefaultSenderPolicyService } from "./aligo-default-sender-policy.service";
@@ -231,7 +233,7 @@ export class SmsTriggerDeliveryService {
             throw new Error(`SMS trigger template ${job.templateKey} is not supported`);
         }
 
-        if (hasStandaloneReceipt(job)) {
+        if (isStandaloneReceiptJob(job)) {
             const link = await this.resolveStandaloneLink(job);
             const staged = this.readStagedSnapshot(job, {
                 receiver: job.payload.recipientPhone,
@@ -505,7 +507,7 @@ export class SmsTriggerDeliveryService {
             // to validate that an approved external capability is still usable.
             const hasStagedSnapshot = this.hasStagedDeliverySnapshot(job);
             const enricher = job.templateKey === MANUAL_SMS_TEMPLATE_KEY ? null : this.enricherRegistry?.get(job.templateKey) ?? null;
-            if (hasStagedSnapshot && (hasStandaloneReceipt(job) || job.templateKey === MessageTriggerTemplateKey.SERVICE_END_NOTICE)) {
+            if (hasStagedSnapshot && (isStandaloneReceiptJob(job) || job.templateKey === MessageTriggerTemplateKey.SERVICE_END_NOTICE)) {
                 if (!enricher?.validateStagedSnapshot) {
                     throw new SmsTriggerDeliverySkipError(
                         "receipt_link_validation_unavailable",
@@ -516,7 +518,7 @@ export class SmsTriggerDeliveryService {
             } else if (!hasStagedSnapshot && enricher) {
                 await enricher.enrich(job);
             }
-            if (hasStandaloneReceipt(job)) {
+            if (isStandaloneReceiptJob(job)) {
                 const snapshot = await this.resolveDeliverySnapshot(job);
                 if (!hasStagedSnapshot) job.payload.templateVariables[SMS_DELIVERY_SNAPSHOT_VARIABLE] = this.serializeSnapshot(snapshot);
                 return await this.sendSmsJob(job, config, snapshot);
@@ -524,7 +526,7 @@ export class SmsTriggerDeliveryService {
             return await this.sendSmsJob(job, config);
         } catch (error) {
             if (error instanceof SmsTriggerDeliverySkipError) {
-                job.cancel(hasStandaloneReceipt(job) ? error.reason : `메시지 발송 건너뜀: ${error.message}`);
+                job.cancel(isStandaloneReceiptJob(job) ? error.reason : `메시지 발송 건너뜀: ${error.message}`);
                 this.logger.warn(`[SMS Automation] ${job.templateKey} skipped for job ${job.id}: ${error.reason}`);
                 return false;
             }
@@ -584,7 +586,7 @@ export class SmsTriggerDeliveryService {
             // values against the current recipient/template contract.
             const hasStagedSnapshot = this.hasStagedDeliverySnapshot(job);
             const enricher = job.templateKey === MANUAL_SMS_TEMPLATE_KEY ? null : this.enricherRegistry?.get(job.templateKey) ?? null;
-            if (hasStagedSnapshot && (hasStandaloneReceipt(job) || job.templateKey === MessageTriggerTemplateKey.SERVICE_END_NOTICE)) {
+            if (hasStagedSnapshot && (isStandaloneReceiptJob(job) || job.templateKey === MessageTriggerTemplateKey.SERVICE_END_NOTICE)) {
                 if (!enricher?.validateStagedSnapshot) {
                     throw new SmsTriggerDeliverySkipError(
                         "receipt_link_validation_unavailable",
@@ -621,7 +623,11 @@ export class SmsTriggerDeliveryService {
             job.payload.buttonUrl = previousButtonUrl;
 
             if (error instanceof SmsTriggerDeliverySkipError) {
-                job.cancel(hasStandaloneReceipt(job) ? error.reason : `메시지 발송 건너뜀: ${error.message}`);
+                const standalone = isStandaloneReceiptJob(job);
+                if (!standalone && job.templateKey === MessageTriggerTemplateKey.SERVICE_END_NOTICE) {
+                    this.receiptRefusals.set(job, error.receiptRecoveryProof ?? null);
+                }
+                job.cancel(standalone ? error.reason : `메시지 발송 건너뜀: ${error.message}`);
                 this.logger.warn(`[SMS Automation] ${job.templateKey} skipped for job ${job.id}: ${error.reason}`);
                 return null;
             }
@@ -666,7 +672,7 @@ export class SmsTriggerDeliveryService {
         if (job.payload.templateVariables[SMS_DELIVERY_SNAPSHOT_VARIABLE] !== preparation.serializedSnapshot) {
             throw new AgentAutomationDispatchUncertainError();
         }
-        if (hasStandaloneReceipt(job)) {
+        if (isStandaloneReceiptJob(job)) {
             try {
                 const snapshot = await this.resolveDeliverySnapshot(job);
                 if (snapshot.snapshotHash !== preparation.snapshot.snapshotHash) throw new AgentAutomationDispatchUncertainError();
@@ -681,7 +687,7 @@ export class SmsTriggerDeliveryService {
     }
 
     private assertDeliveryJob(job: MessageTriggerJobEntity): void {
-        if (hasStandaloneReceipt(job) && job.templateKey !== MessageTriggerTemplateKey.SERVICE_END_NOTICE) {
+        if (isStandaloneReceiptJob(job) && job.templateKey !== MessageTriggerTemplateKey.SERVICE_END_NOTICE) {
             throw new SmsTriggerDeliverySkipError("standalone_receipt_unusable");
         }
         if (job.templateKey === MANUAL_SMS_TEMPLATE_KEY || job.ruleId.startsWith(MANUAL_SMS_RULE_PREFIX)) {

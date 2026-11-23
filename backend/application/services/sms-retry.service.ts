@@ -1,5 +1,7 @@
+import { RECEIPT_RECOVERY_PREFIX } from "domain/constants/receipt-job-recovery";
+import { MessageTriggerService } from "./message-trigger.service";
 import { SmsTriggerDeliverySkipError } from "./sms-trigger-payload-enricher.registry";
-import { hasStandaloneReceipt, STANDALONE_RECEIPT_LOG_REFERENCE } from "domain/entities/standalone-receipt-request";
+import { isStandaloneReceiptJob, STANDALONE_RECEIPT_LOG_REFERENCE } from "domain/entities/standalone-receipt-request";
 import { SERVICE_END_NOTICE_SMS_LOG_TEMPLATE_KEY } from "domain/constants/service-end-notice-message";
 import { OCCURRENCE_ALREADY_ACCEPTED } from "domain/entities/message-occurrence";
 import { normalizePhone } from "application/utils/normalize-phone";
@@ -205,8 +207,8 @@ export class SmsRetryService {
         if (!marked && log.templateKey !== SERVICE_END_NOTICE_SMS_LOG_TEMPLATE_KEY) return undefined;
         const job = log.branchId && log.triggerJobId && this.jobRepository
             ? await this.jobRepository.findByIdInBranch(log.branchId, log.triggerJobId, transaction) : null;
-        if (!marked && (!job || !hasStandaloneReceipt(job))) return undefined;
-        if (!job || !hasStandaloneReceipt(job) || job.status === "canceled" || !this.smsTriggerDeliveryService) {
+        if (!marked && (!job || !isStandaloneReceiptJob(job))) return undefined;
+        if (!job || !isStandaloneReceiptJob(job) || job.status === "canceled" || !this.smsTriggerDeliveryService) {
             throw new SmsTriggerDeliverySkipError("standalone_receipt_retry_unusable");
         }
         const snapshot = await this.smsTriggerDeliveryService.resolveStandaloneLogRetry(job, log, verified);

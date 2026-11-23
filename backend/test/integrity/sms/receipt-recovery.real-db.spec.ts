@@ -9,6 +9,11 @@ import { MirrorUnassignedEformsignDocUsecase } from "application/usecases/eforms
 import { manualTemplateVariables } from "infrastructure/database/repositories/message-occurrence-ledger";
 import { MessageLogMapper } from "infrastructure/database/mapper/message-log.mapper";
 import { ConfigService } from "@nestjs/config";
+import { Test } from "@nestjs/testing";
+import request from "supertest";
+import { EformsignWebhookEventWriter } from "application/services/eformsign-webhook-event.service";
+import { EformsignWebhookService } from "application/services/eformsign-webhook.service";
+import { EformsignWebhookController } from "interface/controllers/eformsign-webhook.controller";
 import { Prisma, PrismaClient, type message_trigger_job } from "@prisma/client";
 import { spawnSync } from "node:child_process";
 import { readdirSync, readFileSync } from "node:fs";
@@ -41,6 +46,10 @@ import { SmsAutomationSafeguardService } from "application/services/sms-automati
 import { SmsProviderAcceptanceService } from "application/services/sms-provider-acceptance.service";
 import { SmsTriggerDeliveryService } from "application/services/sms-trigger-delivery.service";
 import { SmsTriggerPayloadEnricherRegistry } from "application/services/sms-trigger-payload-enricher.registry";
+import { StandaloneReceiptIssueService } from "application/services/standalone-receipt-issue.service";
+import { StandaloneReceiptPreparationService } from "application/services/standalone-receipt-preparation.service";
+import { StandaloneReceiptRenderer } from "infrastructure/pdf/standalone-receipt-renderer";
+import { StandaloneReceiptTemplateLoader } from "infrastructure/pdf/standalone-receipt-template.loader";
 import { SystemSettingService } from "application/services/system-setting.service";
 import { FindClientByIdUsecase } from "application/usecases/client/find-client-by-id.usecase";
 import { DeleteClientUsecase } from "application/usecases/client/delete-client.usecase";
@@ -48,6 +57,7 @@ import { UpdateClientUsecase } from "application/usecases/client/update-client.u
 import { GetSettingUsecase, UpdateSettingUsecase } from "application/usecases/system-setting";
 import { MESSAGE_SENDER_APPROVAL_REQUIRED_CANCEL_REASON } from "domain/constants/message-automation-policy";
 import { MessageTriggerRecipientType } from "domain/constants/message-trigger-catalog";
+import { OCCURRENCE_ALREADY_ACCEPTED } from "domain/entities/message-occurrence";
 import { SYSTEM_TEMPLATE_REGISTRY, type SystemTemplateKey } from "domain/constants/system-template-registry";
 import { KR_BUILTIN_CALENDAR } from "domain/utils/business-days";
 import { CanceledAutomationRetryRepository } from "infrastructure/database/repositories/canceled-automation-retry.repository";
@@ -142,12 +152,28 @@ describeReal("automatic receipt eligibility recovery on PostgreSQL", () => {
         const mirror = new SbEformsignDocumentMirrorRepository(database);
         const tokenRepo = new SbReceiptLinkTokenRepository(database);
         const tokens = new ReceiptLinkTokenService(tokenRepo, config);
-        const storage = { upload: jest.fn(async () => {}), createSignedUrl: jest.fn(async () => "https://example.test/file") };
+        const privateObjects = new Map<string, Buffer>();
+        const storage = {
+            upload: jest.fn(async () => {}),
+            createSignedUrl: jest.fn(async () => "https://example.test/file"),
+            createPrivateObject: async (bytes: Buffer, path: string) => { privateObjects.set(path, bytes); },
+            download: async (path: string) => {
+                const bytes = privateObjects.get(path);
+                if (!bytes) throw new Error("Synthetic private object missing");
+                return bytes;
+            },
+        };
+        const loader = new StandaloneReceiptTemplateLoader(storage);
+        jest.spyOn(loader, "load").mockImplementation(async () =>
+            readFileSync(resolve(__dirname, "../../fixtures/standalone-receipt-synthetic.png")));
+        const standalone = new StandaloneReceiptPreparationService(database, tokenRepo, tokens, loader,
+            new StandaloneReceiptRenderer(), storage);
+        const standaloneIssue = new StandaloneReceiptIssueService(database, approval, loader, tokens, rules);
         const vendor = { syncDocument: jest.fn(async (): Promise<void> => { throw new Error("synthetic vendor read failure"); }) };
         const issue = new ReceiptLinkIssueService(clientRepo, docRepo, mirror, vendor as never, config,
             { renderPageToPng: async () => Buffer.from("synthetic PNG") } as never, tokens, storage as never);
         const registry = new SmsTriggerPayloadEnricherRegistry();
-        const enricher = new ReceiptLinkDeliveryEnricher(registry, issue, tokens, storage as never, tokenRepo);
+        const enricher = new ReceiptLinkDeliveryEnricher(registry, issue, tokens, storage as never, tokenRepo, standalone);
         enricher.onModuleInit();
         const sources = new ClientAutomationSourceReader(database, rules, overrides, approval, settings, activation);
         const sender = new AligoDefaultSenderPolicyService({ getDefaultSenderPolicy: () => ({ availability: "unavailable" }) } as never);
@@ -170,7 +196,7 @@ describeReal("automatic receipt eligibility recovery on PostgreSQL", () => {
             new UpdateClientUsecase(clientRepo, calendar), new DeleteClientUsecase(clientRepo), database, clientRepo, settings,
             { invalidate: async () => {} } as never, intents, calendar, trigger,
             undefined, undefined, config, undefined, undefined, undefined, lock);
-        return { retry, trigger, clients, delivery, issue, vendor, mirror, acceptance, lock, docRepo, transport, settings, intents, jobs, storage };
+        return { retry, trigger, clients, delivery, issue, vendor, mirror, acceptance, lock, docRepo, transport, settings, intents, jobs, storage, standalone, standaloneIssue };
     }
 
     async function fixture(birthday: string | null = "19940510") {
@@ -224,9 +250,16 @@ describeReal("automatic receipt eligibility recovery on PostgreSQL", () => {
         return children[0];
     }
 
-    async function firstAttempt(f: Awaited<ReturnType<typeof fixture>>, at = originalDue) {
+    async function firstAttempt(f: Awaited<ReturnType<typeof fixture>>, at = originalDue, forgeStandalone = false) {
         await f.trigger.syncClientRulesForClient(branchId, f.client.id, false);
-        expect(await getOriginal(f.rule.id)).toMatchObject({ status: "pending", scheduledFor: originalDue });
+        const pending = await getOriginal(f.rule.id);
+        expect(pending).toMatchObject({ status: "pending", scheduledFor: originalDue, standaloneRequestId: null });
+        if (forgeStandalone) {
+            await db.raw.message_trigger_job.update({
+                where: { id: pending.id },
+                data: { payload: { ...pending.payload as Prisma.JsonObject, standaloneReceipt: { version: 1 } } },
+            });
+        }
         jest.setSystemTime(at);
         await f.trigger.dispatchDueJobs();
         return getOriginal(f.rule.id);
@@ -264,10 +297,14 @@ describeReal("automatic receipt eligibility recovery on PostgreSQL", () => {
     const skip = (reason: keyof typeof RECEIPT_LINK_SKIP_MESSAGES) => `메시지 발송 건너뜀: ${RECEIPT_LINK_SKIP_MESSAGES[reason]}`;
     const paired = <T>(cases: readonly T[]) => [false, true].flatMap(enabled => cases.map(testCase => [enabled, testCase] as const));
 
-    it.each(paired([...receiptReasons, "pdf disappears at boundary"] as const))(
+    it.each([
+        ...paired([...receiptReasons, "pdf disappears at boundary"] as const),
+        [true, "live_unsigned_contract with forged standalone marker"] as const,
+    ])(
         "toggle %s captures %s and only continuous ON recovers after committed evidence", async (enabled, scenario) => {
         const atBoundary = scenario === "pdf disappears at boundary";
-        const reason = atBoundary ? "current_contract_pdf_pending" : scenario;
+        const forged = scenario === "live_unsigned_contract with forged standalone marker";
+        const reason = forged ? "live_unsigned_contract" : atBoundary ? "current_contract_pdf_pending" : scenario;
         const f = await fixture(reason === "missing_birthday" ? null : undefined);
         let document = reason === "missing_current_contract" ? null : await makeContract(f.client.id);
         if (document) await syncGeneration(document, reason === "live_unsigned_contract" ? "unsigned" : "signed",
@@ -281,7 +318,9 @@ describeReal("automatic receipt eligibility recovery on PostgreSQL", () => {
             });
         }
         const setting = await f.retry.update(branchId, f.rule.id, enabled);
-        const original = await firstAttempt(f);
+        const standalonePreparation = jest.spyOn(f.standalone, "resolve");
+        const original = await firstAttempt(f, originalDue, forged);
+        expect(standalonePreparation).not.toHaveBeenCalled();
         const skipCode = {
             live_unsigned_contract: "contract_not_signed", missing_birthday: "missing_birthday",
             missing_current_contract: "no_contract_document", current_contract_pdf_pending: "pdf_unavailable",
@@ -299,10 +338,55 @@ describeReal("automatic receipt eligibility recovery on PostgreSQL", () => {
             await f.clients.update(branchId, f.client.id, { birthday: "19940510" });
         } else {
             document ??= await makeContract(f.client.id);
-            await syncGeneration(document, "signed", true);
+            if (!enabled || reason !== "live_unsigned_contract") await syncGeneration(document, "signed", true);
         }
         const secondWorker = worker(independent);
-        if (enabled && reason === "live_unsigned_contract") {
+        if (enabled && reason === "live_unsigned_contract" && document) {
+            const detail = mirrorDetail({ documentId: document.documentId, statusType: "070", updatedDate: nineDaysLater,
+                stepType: "06", stepName: "제공기관 확인" });
+            const credentials = { withCredentials: (_owner: unknown, _scope: unknown,
+                callback: (credential: { accessToken: string }) => unknown) => callback({ accessToken: "synthetic" }) };
+            const owner = new MirrorUnassignedEformsignDocUsecase(credentials as never, {} as never, secondWorker.docRepo);
+            const mirrorService = new EformsignDocumentMirrorService({ getDocument: async () => detail } as never,
+                credentials as never, secondWorker.mirror, owner, { execute: async () => "already_linked" } as never, {
+                    downloadDocumentFile: async () => ({ status: 200, body: pdf, contentType: "application/pdf", contentDisposition: null }),
+                } as never, undefined, undefined, undefined, secondWorker.trigger);
+            let haveCommitted!: () => void;
+            let wake!: () => void;
+            const committed = new Promise<void>(resolve => { haveCommitted = resolve; });
+            const wakeGate = new Promise<void>(resolve => { wake = resolve; });
+            const wakeForDocument = secondWorker.trigger.wakeReceiptRecoveryForDocument.bind(secondWorker.trigger);
+            jest.spyOn(secondWorker.trigger, "wakeReceiptRecoveryForDocument").mockImplementationOnce(async (...args) => {
+                haveCommitted();
+                await wakeGate;
+                await wakeForDocument(...args);
+            });
+            const processWebhook = jest.fn();
+            const webhookKey = "synthetic-webhook-key";
+            const companyId = "synthetic-company";
+            const module = await Test.createTestingModule({
+                controllers: [EformsignWebhookController],
+                providers: [
+                    { provide: ConfigService, useValue: new ConfigService({
+                        EFORMSIGN_WEBHOOK_SECRET: webhookKey, EFORMSIGN_WEBHOOK_ALLOWED_COMPANY_IDS: companyId,
+                    }) },
+                    { provide: EformsignDocumentMirrorService, useValue: mirrorService },
+                    { provide: EformsignWebhookService, useValue: { processWebhook } },
+                    { provide: EformsignWebhookEventWriter, useValue: { append: jest.fn() } },
+                ],
+            }).compile();
+            const app = module.createNestApplication({ logger: false });
+            await app.listen(0, "127.0.0.1");
+            const syncing = request(app.getHttpServer()).post("/webhooks/eformsign")
+                .set("Authorization", `Bearer ${webhookKey}`)
+                .send({ webhook_id: "synthetic-review", company_id: companyId, event_type: "document",
+                    document: { id: document.documentId, status: "doc_sign", updated_date: nineDaysLater.getTime() } })
+                .expect(200).then(response => {
+                    expect(response.body).toEqual({ success: true });
+                    expect(processWebhook).toHaveBeenCalledWith(expect.any(Object), {
+                        mirroredDocument: expect.objectContaining({ current_status: expect.objectContaining({ status_type: "070" }) }),
+                    });
+                });
             const read = f.mirror.findFile.bind(f.mirror);
             let resume!: () => void;
             let haveLock!: () => void;
@@ -323,18 +407,28 @@ describeReal("automatic receipt eligibility recovery on PostgreSQL", () => {
                 if (++competingReads === 2) bothSelected();
                 return result;
             });
-            const sweeper = f.trigger.sweepReceiptRecovery();
-            let competitors: Promise<unknown> | undefined;
+            let sweeper: Promise<void> | undefined;
+            let competingCron: Promise<void> | undefined;
             try {
+                await Promise.race([committed, syncing.then(() => { throw new Error("Mirror finished without waking recovery"); })]);
+                expect(await secondWorker.mirror.findState(document.documentId)).toMatchObject({
+                    syncStatus: "ready", detailSourceUpdatedDate: nineDaysLater,
+                });
+                sweeper = f.trigger.sweepReceiptRecovery();
                 await Promise.race([locked, sweeper.then(() => { throw new Error("Sweep finished before admission barrier"); })]);
-                competitors = Promise.all([
-                    secondWorker.trigger.sweepReceiptRecovery(), secondWorker.trigger.wakeReceiptRecovery(branchId, f.client.id),
-                ]);
+                competingCron = secondWorker.trigger.sweepReceiptRecovery();
+                wake();
+                const competitors = Promise.all([syncing, competingCron]);
                 await Promise.race([selected, competitors.then(() => { throw new Error("Competitors finished before selecting the parent"); })]);
             } finally {
+                wake();
                 resume();
-                await Promise.all([sweeper, competitors]);
-                jest.restoreAllMocks();
+                try {
+                    await Promise.all([sweeper, syncing, competingCron]);
+                } finally {
+                    await app.close();
+                    jest.restoreAllMocks();
+                }
             }
         } else {
             await Promise.all([
@@ -378,6 +472,32 @@ describeReal("automatic receipt eligibility recovery on PostgreSQL", () => {
             await outcomes(original, { children: 0, accepted: 0, calls: 0 });
         },
     );
+
+    it.each([false, true])("does not send an automatic receipt after a standalone acceptance (service-date edit: %s)", async edited => {
+        const f = await fixture();
+        await db.raw.client.update({ where: { id: f.client.id }, data: { fullPrice: "100000", grant: "70000", actualPrice: "30000" } });
+        const { id: userId } = await createUser(db.raw, tracker);
+        const manual = await f.standaloneIssue.issue({
+            branchId, userId, clientId: f.client.id, copaymentReceivedDate: "2026-11-24", requestId: randomUUID(),
+        });
+        await expect(f.trigger.dispatchPendingJobNow(manual.jobId, { expectedBranchId: branchId }))
+            .resolves.toMatchObject({ status: "sent" });
+        expect(sendSms).toHaveBeenCalledTimes(1);
+
+        const document = await makeContract(f.client.id);
+        await syncGeneration(document, "signed", true);
+        if (edited) await f.clients.update(branchId, f.client.id, { endDate: "2026-11-25", allowBusinessDayMismatch: true });
+        await f.trigger.syncClientRulesForClient(branchId, f.client.id, false);
+        const due = edited ? new Date("2026-11-25T01:00:00.000Z") : originalDue;
+        expect(await getOriginal(f.rule.id)).toMatchObject({
+            dedupeKey: receiptKey(f.rule.id, f.client.id, due), status: "canceled",
+            cancelReason: OCCURRENCE_ALREADY_ACCEPTED,
+        });
+        jest.setSystemTime(due);
+        await Promise.all([f.trigger.wakeReceiptRecoveryForDocument(branchId, document.documentId), f.trigger.dispatchDueJobs()]);
+        expect(sendSms).toHaveBeenCalledTimes(1);
+        expect(await db.raw.message_log.count({ where: { branchId, providerCallStartedAt: { not: null } } })).toBe(1);
+    });
 
     it("keeps a signed-before-due normal trigger scheduled until due", async () => {
         const f = await fixture();
@@ -433,14 +553,15 @@ describeReal("automatic receipt eligibility recovery on PostgreSQL", () => {
     }
 
     function pauseAfterPreparation(workerUnderTest: ReturnType<typeof worker>) {
-        let markPrepared!: () => void;
+        type Preparation = Awaited<ReturnType<SmsTriggerDeliveryService["prepareJob"]>>;
+        let markPrepared!: (result: Preparation) => void;
         let resume!: () => void;
-        const prepared = new Promise<void>(resolve => { markPrepared = resolve; });
+        const prepared = new Promise<Preparation>(resolve => { markPrepared = resolve; });
         const paused = new Promise<void>(resolve => { resume = resolve; });
         const prepare = workerUnderTest.delivery.prepareJob.bind(workerUnderTest.delivery);
         jest.spyOn(workerUnderTest.delivery, "prepareJob").mockImplementationOnce(async job => {
             const result = await prepare(job);
-            markPrepared();
+            markPrepared(result);
             await paused;
             return result;
         });
@@ -791,7 +912,7 @@ describeReal("automatic receipt eligibility recovery on PostgreSQL", () => {
         await outcomes(original!, { children: 1, accepted: 1, calls: 1 });
     });
 
-    it.each(paired(["foreign selection", "foreign mirror branch", "different mirror id", "terminal stale review", "void", "purge"] as const))(
+    it.each(paired(["foreign selection", "foreign mirror branch", "different mirror id", "terminal stale review", "expired", "void", "purge"] as const))(
         "toggle %s protects the current contract with %s even with an older signed contract", async (enabled, scenario) => {
             const terminalWithNoBirthday = scenario === "terminal stale review";
             const f = await fixture(terminalWithNoBirthday ? null : undefined);
@@ -815,6 +936,8 @@ describeReal("automatic receipt eligibility recovery on PostgreSQL", () => {
                     statusType: "090", detailPayload: mirrorDetail({ documentId: current.documentId, statusType: "090",
                         updatedDate: beforeDue, stepType: "06", stepName: "제공기관 확인" }) as unknown as Prisma.InputJsonObject,
                 } });
+            } else if (scenario === "expired") {
+                await db.raw.eformsign_doc.update({ where: { id: current.id }, data: { expired: true } });
             } else {
                 refusal = scenario === "void" ? "contract_voided" : "no_contract_document";
                 await db.raw.eformsign_doc.update({ where: { id: current.id },
@@ -825,7 +948,7 @@ describeReal("automatic receipt eligibility recovery on PostgreSQL", () => {
             expect(original).toMatchObject({ ...terminal, cancelReason: skip(refusal) });
             await outcomes(original, noDelivery);
             advance(originalDue, 2);
-            await db.raw.eformsign_doc.update({ where: { id: current.id }, data: { branchId, voidedAt: null, permanentPurgeRequestedAt: null } });
+            await db.raw.eformsign_doc.update({ where: { id: current.id }, data: { branchId, expired: false, voidedAt: null, permanentPurgeRequestedAt: null } });
             await syncGeneration(current, "signed", true);
             if (terminalWithNoBirthday) await f.clients.update(branchId, f.client.id, { birthday: "19940510" });
             await f.trigger.wakeReceiptRecovery(branchId, f.client.id);
@@ -930,6 +1053,43 @@ describeReal("automatic receipt eligibility recovery on PostgreSQL", () => {
             }
         },
     );
+
+    it.each(["active", "revoked"] as const)("rechecks a generation-bound contract token at the provider (token %s)", async tokenState => {
+        const f = await fixture();
+        const document = await makeContract(f.client.id);
+        await syncGeneration(document, "signed", true);
+        await f.trigger.syncClientRulesForClient(branchId, f.client.id, false);
+        jest.setSystemTime(originalDue);
+        const pause = pauseAfterPreparation(f);
+        const dispatching = f.trigger.dispatchDueJobs();
+        try {
+            const snapshot = await Promise.race([pause.prepared, dispatching.then(() => {
+                throw new Error("Dispatch completed without preparation");
+            })]);
+            expect(snapshot).not.toBeNull();
+            expect(JSON.parse(snapshot!.serializedSnapshot).receiptGeneration)
+                .toMatchObject({ documentId: document.id, sha256: pdfDigest });
+            const token = await independent.raw.receipt_link_token.findFirstOrThrow({
+                where: { branchId, eformsignDocId: document.id, active: true },
+            });
+            if (tokenState === "revoked") {
+                await independent.raw.receipt_link_token.update({
+                    where: { id: token.id }, data: { active: false, revokedAt: originalDue },
+                });
+            }
+            expect(sendSms).not.toHaveBeenCalled();
+        } finally {
+            pause.resume();
+            await dispatching;
+        }
+        const job = await getOriginal(f.rule.id);
+        if (tokenState === "active") await expectOrdinarySent(job);
+        else {
+            expect(job).toMatchObject({ ...noRecovery, canceledAt: originalDue, status: "canceled",
+                cancelReason: "receipt_recovery_not_proven", attempts: 0 });
+            await outcomes(job, noDelivery);
+        }
+    });
 
     it("refuses the ordinary legacy fallback for a quiet-held recovered child", async () => {
         const { f, original, child } = await admittedChild();
@@ -1507,7 +1667,9 @@ describeReal("automatic receipt eligibility recovery on PostgreSQL", () => {
             const record = { branchId: branch.id, ruleId: recordRule.id, templateKey: "SERVICE_RECORD_LINK",
                 recipientType: "PRIMARY_EMPLOYEE", scheduledFor: originalDue, recoveryReason: "record_link_pre_booking", recoveryEpoch: beforeDue };
             const receipt = { ...ordinary, recoveryReason: "live_unsigned_contract", recoveryEpoch: beforeDue };
-            const create = (data: Prisma.message_trigger_jobUncheckedCreateInput) => upgrade.message_trigger_job.create({ data });
+            // The upgrade starts before the standalone-issuance columns exist.
+            const omit = { standaloneRequestId: true, standaloneIssuedTokenId: true } as const;
+            const create = (data: Prisma.message_trigger_jobUncheckedCreateInput) => upgrade.message_trigger_job.create({ data, omit });
             const original = await create({ ...ordinary, dedupeKey: "ordinary" });
             const recordParent = await create({ ...record, dedupeKey: "record-parent", status: "canceled",
                 firstBlockedAt: originalDue, recoveryState: "admitted", recoveryTransitionStatus: "active" });
@@ -1523,7 +1685,9 @@ describeReal("automatic receipt eligibility recovery on PostgreSQL", () => {
                     ${originalDue}, ${originalDue}, ${originalDue}, 'live_unsigned_contract', ${beforeDue}, 'admitted')`,
                     "23514", checkName);
             });
-            const rows = () => upgrade.message_trigger_job.findMany({ where: { branchId: branch.id }, orderBy: { id: "asc" } });
+            const rows = () => upgrade.message_trigger_job.findMany({
+                where: { branchId: branch.id }, orderBy: { id: "asc" }, omit,
+            });
             const before = await rows();
             expect(before).toHaveLength(3);
             expect(before).toEqual(expect.arrayContaining([original, recordParent, recordChild]));

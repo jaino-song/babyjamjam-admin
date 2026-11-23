@@ -17,7 +17,8 @@ import { ReceiptLinkController } from "interface/controllers/receipt-link.contro
 
 // Opt in explicitly against the disposable loopback DB used by the Prisma CI gate.
 const describeReal = process.env["STANDALONE_RECEIPT_REAL_DB"] === "1" ? describe : describe.skip;
-const THROWAWAY_URL = /^postgresql:\/\/[A-Za-z0-9_.-]+@(localhost|127\.0\.0\.1):\d+\/throwaway_[A-Za-z0-9_]+$/;
+// Permit the direct harness prefix and the repository runner's exact disposable database name.
+const THROWAWAY_URL = /^postgresql:\/\/[A-Za-z0-9_.-]+@(localhost|127\.0\.0\.1):\d+\/(?:throwaway_[A-Za-z0-9_]+|bjj_state_integrity_throwaway)$/;
 const ROLLBACK = new Error("Rollback synthetic receipt fixtures");
 const SALT = "synthetic-receipt-test";
 const sha256 = (value: string) => createHash("sha256").update(value).digest("hex");

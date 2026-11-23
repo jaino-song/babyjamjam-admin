@@ -38,6 +38,7 @@ import { SbMessageLogRepository } from "infrastructure/database/repositories/sb.
 import { SbMessageTriggerRuleBranchOverrideRepository } from "infrastructure/database/repositories/sb.message-trigger-rule-branch-override.repository";
 import { SbSystemSettingRepository } from "infrastructure/database/repositories/sb.system-setting.repository";
 import type { PrismaService } from "infrastructure/database/prisma.service";
+import * as telemetry from "infrastructure/observability/service-record-sentry";
 import { createBranch, createClient, createEformsignDoc, createEmployee, createEmployeeSchedule } from "../helpers/factories";
 import { closeIntegrityPrisma, createIntegrityPrisma, describeReal, type IntegrityPrisma } from "../helpers/real-db";
 import { RowTracker } from "../helpers/tracker";
@@ -194,6 +195,34 @@ describeReal("service-record-link recovery through customer writes (PostgreSQL)"
         expect(await link.sweepRecovery()).toBe(0);
         expect(await db.raw.message_trigger_job.count({ where: { originalJobId: original.id } })).toBe(0);
         expect(await db.raw.message_log.count({ where: { branchId } })).toBe(0);
+    });
+
+    it("reports missing occurrence lookup and leaves the original recoverable without a successor", async () => {
+        const { branchId, create, clients, toggle, link, trigger } = await fixture();
+        await toggle(true);
+        const { client, schedule } = await create();
+        await clients.confirmBooking(branchId, client.id);
+        const original = await db.raw.message_trigger_job.findFirstOrThrow({ where: { employeeScheduleId: schedule.id } });
+        expect(original).toMatchObject({ recoveryState: "eligible", scheduledFor: due });
+        const capture = jest.spyOn(telemetry, "captureServiceRecordError").mockImplementation(() => undefined);
+        const repo = trigger.jobRepository;
+        // Simulate the old in-process repository shape without the now-required method.
+        Object.defineProperty(repo, "hasAcceptedOccurrence", { value: undefined, configurable: true });
+        jest.setSystemTime(due);
+        try {
+            expect(await link.sweepRecovery()).toBe(0);
+            expect(capture).toHaveBeenCalledWith(
+                expect.objectContaining({ message: expect.stringContaining("hasAcceptedOccurrence") }),
+                { operation: "link-schedule", handled: true },
+            );
+            expect(await db.raw.message_trigger_job.count({ where: { originalJobId: original.id } })).toBe(0);
+            expect(await acceptedFor(branchId)).toHaveLength(0);
+            const retained = await db.raw.message_trigger_job.findUniqueOrThrow({ where: { id: original.id } });
+            expect(retained).toMatchObject({ recoveryState: "eligible", recoveryEpoch: original.recoveryEpoch });
+            expect(retained.nextCheckAt!.getTime()).toBeGreaterThan(due.getTime());
+        } finally {
+            Reflect.deleteProperty(repo, "hasAcceptedOccurrence");
+        }
     });
 
     it.each(["waiting", "active"])("records %s before a worker crash and admits and sends exactly once", async status => {

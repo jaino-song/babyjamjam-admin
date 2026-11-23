@@ -1,4 +1,8 @@
 import type { Prisma } from "@prisma/client";
+import { isManualMessageTriggerJob, isManualMessageTriggerRule } from "domain/constants/message-trigger-job-ownership";
+import { RECEIPT_RECOVERY_PREFIX } from "domain/constants/receipt-job-recovery";
+import { isReservedAutomationJob } from "domain/constants/agent-automation-storage";
+import { SMS_DELIVERY_SNAPSHOT_VARIABLE } from "domain/constants/sms-delivery-snapshot";
 import { Inject, Injectable, OnModuleInit, Optional } from "@nestjs/common";
 import { createHash } from "node:crypto";
 import { MessageTriggerRecipientType, MessageTriggerTemplateKey } from "domain/constants/message-trigger-catalog";
@@ -15,7 +19,7 @@ import {
     ReceiptLinkSkipError,
     receiptLinkUnusableError,
 } from "./receipt-link-issue.service";
-import { hasStandaloneReceipt, standaloneReceiptReference } from "domain/entities/standalone-receipt-request";
+import { isStandaloneReceiptJob, standaloneReceiptReference } from "domain/entities/standalone-receipt-request";
 import { StandaloneReceiptPreparationService } from "./standalone-receipt-preparation.service";
 import { ReceiptLinkTokenService } from "./receipt-link-token.service";
 import {
@@ -45,6 +49,9 @@ export class ReceiptLinkDeliveryEnricher implements SmsTriggerPayloadEnricher, O
         @Inject(FILE_STORAGE_PORT)
         private readonly storage?: FileStoragePort,
         @Optional()
+        @Inject(RECEIPT_LINK_TOKEN_REPOSITORY)
+        private readonly tokenRepository?: IReceiptLinkTokenRepository,
+        @Optional()
         private readonly standalone?: StandaloneReceiptPreparationService,
     ) {}
 
@@ -53,7 +60,7 @@ export class ReceiptLinkDeliveryEnricher implements SmsTriggerPayloadEnricher, O
     }
 
     async enrich(job: MessageTriggerJobEntity): Promise<void> {
-        if (hasStandaloneReceipt(job)) {
+        if (isStandaloneReceiptJob(job)) {
             if (!this.standalone) throw receiptLinkUnusableError();
             await this.standalone.resolve(job, true);
             const reference = standaloneReceiptReference(job.id);
@@ -83,7 +90,7 @@ export class ReceiptLinkDeliveryEnricher implements SmsTriggerPayloadEnricher, O
 
     async resolveStandaloneReceiptUrl(job: MessageTriggerJobEntity): Promise<string> {
         const reference = standaloneReceiptReference(job.id);
-        if (!this.standalone || !hasStandaloneReceipt(job)
+        if (!this.standalone || !isStandaloneReceiptJob(job)
             || job.payload.templateVariables[SERVICE_END_NOTICE_RECEIPT_URL_TEMPLATE_VARIABLE] !== reference
             || job.payload[SERVICE_END_NOTICE_BUTTON_URL_PAYLOAD_KEY] !== reference) {
             throw receiptLinkUnusableError();
@@ -97,13 +104,21 @@ export class ReceiptLinkDeliveryEnricher implements SmsTriggerPayloadEnricher, O
         }
     }
 
-    async validateStagedSnapshot(job: MessageTriggerJobEntity): Promise<void> {
-        if (hasStandaloneReceipt(job)) {
-            await this.resolveStandaloneReceiptUrl(job);
-            return;
-        }
-        const receiptUrl = job.payload.templateVariables[SERVICE_END_NOTICE_RECEIPT_URL_TEMPLATE_VARIABLE];
-        let linkToken: string | undefined;
+    private isAutomaticReceipt(job: MessageTriggerJobEntity): boolean {
+        return job.recipientType === MessageTriggerRecipientType.CLIENT
+            && job.employeeScheduleId === null
+            && !isManualMessageTriggerJob(job)
+            && !isManualMessageTriggerRule({ id: job.ruleId, templateKey: job.templateKey })
+            && !isReservedAutomationJob(job)
+            && typeof job.payload.receiptEformsignDocId !== "number";
+    }
+
+    receiptSnapshotProof(job: MessageTriggerJobEntity) {
+        const generation = this.prepared.get(job);
+        return generation ? { ...generation, sourceUpdatedDate: generation.sourceUpdatedDate.toISOString() } : undefined;
+    }
+
+    private readPersistedGeneration(job: MessageTriggerJobEntity): ReceiptDocumentGeneration | "legacy" | undefined {
         try {
             const snapshot = JSON.parse(job.payload.templateVariables[SMS_DELIVERY_SNAPSHOT_VARIABLE] ?? "null");
             if (!snapshot || typeof snapshot !== "object" || Array.isArray(snapshot)) return;
@@ -167,6 +182,10 @@ export class ReceiptLinkDeliveryEnricher implements SmsTriggerPayloadEnricher, O
     }
 
     async validateStagedSnapshot(job: MessageTriggerJobEntity): Promise<void> {
+        if (isStandaloneReceiptJob(job)) {
+            await this.resolveStandaloneReceiptUrl(job);
+            return;
+        }
         const branchId = job.branchId;
         const clientId = job.clientId;
         if (!branchId || clientId === null) throw receiptLinkUnusableError();

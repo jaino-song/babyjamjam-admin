@@ -1,3 +1,7 @@
+import { MessageTriggerTemplateKey } from "domain/constants/message-trigger-catalog";
+import { isManualMessageTriggerJob } from "domain/constants/message-trigger-job-ownership";
+import { SERVICE_END_NOTICE_RULE_ID } from "domain/constants/service-end-notice-message";
+
 export interface StandaloneReceiptSnapshot {
     readonly customerName: string;
     readonly serviceStartDate: string;
@@ -32,6 +36,18 @@ export function standaloneReceiptReference(jobId: string): string {
     return `standalone-receipt:v1:${jobId}`;
 }
 
-export function hasStandaloneReceipt(job: { standaloneRequestId?: string | null; payload: object }): boolean {
-    return job.standaloneRequestId != null || Object.prototype.hasOwnProperty.call(job.payload, "standaloneReceipt");
+export function isStandaloneReceiptJob(job: {
+    standaloneRequestId?: string | null;
+    payload: object;
+    ruleId: string;
+    templateKey: string;
+    dedupeKey: string;
+}): boolean {
+    // The persisted binding is authoritative for routing. A marker on the
+    // dedicated manual route without that binding must also fail preparation.
+    return job.standaloneRequestId != null
+        || (job.ruleId === SERVICE_END_NOTICE_RULE_ID
+            && job.templateKey === MessageTriggerTemplateKey.SERVICE_END_NOTICE
+            && isManualMessageTriggerJob(job)
+            && Object.prototype.hasOwnProperty.call(job.payload, "standaloneReceipt"));
 }

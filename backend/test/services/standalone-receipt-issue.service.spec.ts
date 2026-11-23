@@ -14,7 +14,7 @@ const fixture = readFileSync(join(__dirname, "../fixtures/standalone-receipt-syn
 const input = { branchId, userId: randomUUID(), clientId: 41, requestId: randomUUID(), copaymentReceivedDate: "2026-01-02" };
 
 function arrange() {
-    const stored = { date: "2025-12-31", jobs: [], tokens: [], objects: new Map<string, Buffer>() };
+    const stored = { objects: new Map<string, Buffer>() };
     const storage = {
         download: jest.fn(async (path: string) => {
             const object = stored.objects.get(path);
@@ -55,9 +55,6 @@ describe("StandaloneReceiptIssueService fresh-key admission", () => {
         expect(f.storage.download.mock.calls).toEqual([[key(branchId)]]);
         expect(f.transaction).not.toHaveBeenCalled();
         expect(f.client.update).not.toHaveBeenCalled();
-        expect(f.stored.date).toBe("2025-12-31");
-        expect(f.stored.jobs).toHaveLength(0);
-        expect(f.stored.tokens).toHaveLength(0);
         expect([...f.stored.objects]).toEqual(before);
         expect(f.render).not.toHaveBeenCalled();
         expect(f.storage.createPrivateObject).not.toHaveBeenCalled();

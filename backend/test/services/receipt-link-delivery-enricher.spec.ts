@@ -35,8 +35,8 @@ describe("ReceiptLinkDeliveryEnricher", () => {
         const issue = { issue: jest.fn(), assertDocumentSyncReady: jest.fn() };
         const preparation = { resolve: jest.fn().mockRejectedValue(new ReceiptLinkSkipError("no_contract_document")) };
         const enricher = new ReceiptLinkDeliveryEnricher(new SmsTriggerPayloadEnricherRegistry(), issue as never,
-            undefined, undefined, preparation as never);
-        const job = makeJob("standalone-marker").withPayloadOverride({ standaloneReceipt: undefined });
+            undefined, undefined, undefined, preparation as never);
+        const job = makeJob("system:service_end_notice:client:7:manual:11111111-1111-4111-8111-111111111111").withPayloadOverride({ standaloneReceipt: undefined });
         await expect(enricher.enrich(job)).rejects.toBeInstanceOf(ReceiptLinkSkipError);
         await expect(enricher.validateStagedSnapshot(job)).rejects.toMatchObject({ reason: "receipt_link_unusable" });
         expect(issue.issue).not.toHaveBeenCalled();
