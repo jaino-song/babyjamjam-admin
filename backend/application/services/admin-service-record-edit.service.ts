@@ -1,4 +1,4 @@
-import { BadRequestException, ConflictException, Inject, Injectable, Logger, NotFoundException, Optional } from "@nestjs/common";
+import { BadRequestException, ConflictException, ForbiddenException, Inject, Injectable, Logger, NotFoundException, Optional } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { createHash, randomUUID } from "node:crypto";
 import {
@@ -8,7 +8,7 @@ import {
 import { isValidBirthdayIsoDate, normalizeContractBirthday } from "@babyjamjam/shared/utils/birthday";
 import { getServiceRecordHeaderFieldError } from "@babyjamjam/shared/utils/service-record-input";
 
-import { IMMUTABLE_FINALIZATION_STATUSES } from "application/services/service-record-lifecycle.service";
+import { IMMUTABLE_FINALIZATION_STATUSES, SERVICE_RECORD_CASE_STATUS } from "application/services/service-record-lifecycle.service";
 import { codeOnlyProblemBody, problemBody } from "application/utils/problem-bodies";
 import { configuredServiceRecordTemplateIds } from "application/utils/eformsign-document-kind";
 import { serviceRecordSignatureFingerprint } from "application/utils/service-record-signature-fingerprint";
@@ -34,6 +34,7 @@ import {
 import {
     ServiceRecordEditConflictError,
     ServiceRecordEditNotFoundError,
+    ServiceRecordOwnerWriteAccessDeniedError,
     ServiceRecordRevisionOperationUnresolvedError,
     SERVICE_RECORD_CONTRACT_FACTS_UNAVAILABLE,
     SERVICE_RECORD_RECEIPT_FACTS_UNAVAILABLE,
@@ -60,6 +61,7 @@ import {
     type ServiceRecordEditSource,
     type ServiceRecordEditSourceDay,
     type ServiceRecordEditRevisionFactsSource,
+    type ServiceRecordOwnerWritePrincipal,
 } from "domain/repositories/service-record-edit.repository.interface";
 import type {
     ServiceRecordEditConfirmDocumentStatus,
@@ -75,6 +77,7 @@ import type {
     PreviewServiceRecordEditDraftDto,
     UpdateServiceRecordEditDraftDto,
 } from "interface/dto/admin-service-record-edit.dto";
+import type { OwnerRecordJsonRequest, OwnerRecordJsonTarget } from "interface/dto/owner-record-json.dto";
 import { HolidayCalendarService } from "application/services/holiday-calendar.service";
 import { ServiceRecordCaseEventBus } from "application/services/service-record-case-event-bus.service";
 import { getServiceRecordFinalizationDueAt } from "domain/constants/service-record-link-message";
@@ -301,6 +304,114 @@ function hasExistingContentDifference(
         || patch.notes !== undefined && !sameJsonValue(patch.notes, source.notes)
         || patch.paymentConfirmed !== undefined && !sameJsonValue(patch.paymentConfirmed, source.paymentConfirmed)
     );
+}
+
+const FILLABLE_CASE_STATUSES = new Set<string>([
+    SERVICE_RECORD_CASE_STATUS.SCHEDULED,
+    SERVICE_RECORD_CASE_STATUS.IN_PROGRESS,
+    SERVICE_RECORD_CASE_STATUS.WAITING_FOR_END,
+    SERVICE_RECORD_CASE_STATUS.AWAITING_COMPLETION,
+]);
+
+function hasRecordedDayState(day: ServiceRecordEditSourceDay): boolean {
+    return day.paymentConfirmed || day.locked || day.momApproval !== null
+        || day.clientSignature !== null || day.clientSignedAt !== null || day.submittedAt !== null;
+}
+
+function hasMeaningfulContent(content: {
+    answers?: ServiceRecordEditJsonValue;
+    etcService?: string | null;
+    notes?: string | null;
+}): boolean {
+    const answers = Object.values(asJsonRecord(content.answers) ?? {}).flat();
+    return Boolean(content.etcService?.trim() || content.notes?.trim() || answers.some((value) => (
+        typeof value === "boolean" || typeof value === "number" && Number.isFinite(value)
+        || typeof value === "string" && value.trim().length > 0
+    )));
+}
+
+function assertOwnerJsonSchedule(source: SourceSnapshot, plan: ServiceRecordEditConfirmPlan): void {
+    if (
+        plan.startDate !== source.startDate || plan.endDate !== source.endDate
+        || !plan.startDate || !plan.endDate
+        || plan.startDate !== source.client.startDate || plan.endDate !== source.client.endDate
+        || plan.requiredSessionCount !== source.requiredSessionCount
+        || plan.assignments.some((assignment) => assignment.datesChanged !== false)
+        || source.sessions.some((day) => day.ambiguous || day.branchId !== source.client.branchId
+            || day.sessionIndex < 1 || day.sessionIndex > (source.requiredSessionCount ?? 0))
+        || plan.sessions.some((session) => source.sessions.find((day) => day.sourceRowId === session.sourceRowId)?.serviceDate !== session.serviceDate)
+    ) {
+        throw new ServiceRecordEditConflictError("Confirmation would repair service-record schedule drift");
+    }
+    if (source.plannedSessions === null) return;
+    const stored = asJsonRecord(source.plannedSessions);
+    const vectors = [source.plannedSessions, stored?.["sessions"], stored?.["entries"], stored?.["plannedSessions"]]
+        .filter(Array.isArray);
+    const entries = vectors.length === 1 ? vectors[0] : undefined;
+    const projected = Array.isArray(plan.plannedSessions) ? plan.plannedSessions.map(asJsonRecord) : [];
+    if (!entries || entries.length !== projected.length || entries.some((value) => {
+        const entry = asJsonRecord(value);
+        const slot = projected.find((item) => item?.["sessionIndex"] === entry?.["sessionIndex"]);
+        const provenance = asJsonRecord(entry?.["provenance"]);
+        return !slot || !entry
+            || slot["serviceDate"] !== entry["serviceDate"] || slot["originalDate"] !== entry["originalDate"]
+            || slot["assignmentId"] !== entry["assignmentId"]
+            || slot["scheduleId"] !== (entry["scheduleId"] ?? provenance?.["scheduleId"])
+            || slot["employeeId"] !== (entry["employeeId"] ?? provenance?.["employeeId"])
+            || slot["provenanceVersion"] !== String(entry["provenanceVersion"] ?? provenance?.["version"] ?? entry["version"]);
+    })) {
+        throw new ServiceRecordEditConflictError("Confirmation would change the stored service-record schedule");
+    }
+}
+
+function ownerJsonSessionUpdates(
+    source: SourceSnapshot,
+    draft: ServiceRecordEditDraft,
+    plan: ServiceRecordEditConfirmPlan,
+    operations: OwnerRecordJsonRequest["operations"],
+): ServiceRecordEditConfirmSessionUpdate[] {
+    assertOwnerJsonSchedule(source, plan);
+    const expected = source.requiredSessionCount ?? 0;
+    const patches = sessionChangeMap(asJsonRecord(draft.changes)?.["sessions"]);
+    const slots = (Array.isArray(plan.plannedSessions) ? plan.plannedSessions : []).map(asJsonRecord);
+    const touchedRows = new Set<string>();
+    for (const operation of operations) {
+        const { sessionIndex, serviceDate } = operation;
+        const slot = slots[sessionIndex - 1];
+        const assignment = source.assignments.find((candidate) => candidate.id === slot?.["assignmentId"]);
+        const day = source.sessions.find((candidate) => candidate.sessionIndex === sessionIndex);
+        const patch = patches.get(sessionIndex);
+        if (!patch || sessionIndex > expected || slot?.["sessionIndex"] !== sessionIndex || slot["serviceDate"] !== serviceDate
+            || !assignment || assignment.serviceRecordCaseId !== source.caseId || assignment.branchId !== source.client.branchId
+            || (day && (day.ambiguous || day.branchId !== source.client.branchId || day.serviceDate !== serviceDate
+                || day.scheduleId !== assignment.scheduleId || day.employeeId !== assignment.employeeId))) {
+            throw new ServiceRecordEditConflictError("The requested session does not match the stored schedule");
+        }
+        if (operation.op === "edit") {
+            if (!day || !(hasRecordedDayState(day) || hasMeaningfulContent(day)) || !hasExistingContentDifference(day, patch)) {
+                throw new ServiceRecordEditConflictError("An edit must change an existing service record");
+            }
+        } else if (
+            !FILLABLE_CASE_STATUSES.has(source.caseLifecycle.status) || !hasMeaningfulContent(patch)
+            || serviceDate < assignment.startDate || serviceDate > assignment.endDate
+            || serviceDate < assignment.scheduleStartDate || serviceDate > assignment.scheduleEndDate
+            || (day ? (
+                hasRecordedDayState(day) || !sameJsonValue(day.answers, {}) || day.etcService !== null || day.notes !== null
+                || day.rawCaseSessionIndex !== sessionIndex || day.rawSessionIndex !== sessionIndex
+            ) : (
+                // A derived legacy date alone is insufficient evidence to create a missing row.
+                source.plannedSessions === null
+                || !plan.newSessions.some((created) => created.sessionIndex === sessionIndex && created.serviceDate === serviceDate)
+            ))
+        ) {
+            throw new ServiceRecordEditConflictError("A fill requires an empty scheduled session and meaningful content");
+        }
+        if (day) touchedRows.add(day.sourceRowId);
+    }
+    if (plan.status !== "confirmed" || !plan.revision) {
+        throw new ServiceRecordEditConflictError("A service-record content change is required");
+    }
+    return plan.sessions.filter((session) => touchedRows.has(session.sourceRowId));
 }
 
 function mergeSparseAnswers(
@@ -845,6 +956,56 @@ export class AdminServiceRecordEditService {
         return confirmed;
     }
 
+    async confirmOwnerRecordJson(
+        principal: ServiceRecordOwnerWritePrincipal,
+        target: OwnerRecordJsonTarget,
+        request: OwnerRecordJsonRequest,
+    ) {
+        const { branchId, userId } = principal;
+        const { operations, expectedCaseVersion, expectedSourceFingerprint, idempotencyKey } = request;
+        const requestFingerprint = jsonFingerprint(jsonValue({ branchId, userId, ...target, ...request }));
+        const calendar = await this.holidayCalendar.forBranch(branchId, { fresh: true });
+        try {
+            const { confirmed, replayed } = await this.repository.confirmOwnerJson({
+                principal,
+                ...target,
+                idempotencyKey,
+                requestFingerprint,
+                targets: operations.map(({ op, sessionIndex, serviceDate }) => ({ op, sessionIndex, serviceDate })),
+                serviceRecordTemplateIds: [...configuredServiceRecordTemplateIds(this.configService)],
+                prepareDraft: (source) => {
+                    const fingerprint = sourceFingerprint(source);
+                    if (source.caseVersion !== expectedCaseVersion || fingerprint !== expectedSourceFingerprint) {
+                        throw new ServiceRecordEditConflictError("The case version or source fingerprint is stale");
+                    }
+                    const changes = this.validateChanges({ sessions: operations.map(({ sessionIndex, changes }) => ({
+                        sessionIndex,
+                        ...changes,
+                    })) }, source);
+                    return { sourceCaseVersion: source.caseVersion, sourceFingerprint: fingerprint, sourceSnapshot: jsonValue(source), changes };
+                },
+                prepare: ({ draft, source, revisionFactsSource }) => {
+                    const plan = this.buildConfirmPlan({
+                        draft, source, revisionFactsSource, branchId, draftId: draft.id, actorUserId: userId, calendar,
+                    });
+                    return { ...plan, sessions: ownerJsonSessionUpdates(source, draft, plan, operations) };
+                },
+            });
+            if (!replayed) this.emitCaseChanged(branchId, confirmed);
+            const { status, caseId, clientId, caseVersion, revisionId, revisionNumber, documentStatus, confirmedAt } = confirmed;
+            return { status, caseId, clientId, caseVersion, revisionId, revisionNumber, documentStatus, confirmedAt };
+        } catch (error) {
+            if (error instanceof ServiceRecordOwnerWriteAccessDeniedError) {
+                throw new ForbiddenException(codeOnlyProblemBody("ACCESS_DENIED"));
+            }
+            if (error instanceof ServiceRecordEditNotFoundError) this.throwRepositoryNotFound(error);
+            if (error instanceof ServiceRecordEditConflictError || error instanceof ConflictException) {
+                throw new ConflictException(codeOnlyProblemBody("SERVICE_RECORD_WRITE_TARGET_CHANGED"));
+            }
+            throw error;
+        }
+    }
+
     /**
      * Read-only dry run of the confirm: the plan `confirmDraft` would build for this draft and
      * preview right now, from the same `buildConfirmPlan` with the same inputs (draft, source,
@@ -920,7 +1081,7 @@ export class AdminServiceRecordEditService {
         branchId: string;
         draftId: string;
         actorUserId: string;
-        previewId: string;
+        previewId?: string;
         calendar: KrBusinessDayCalendar;
     }): ServiceRecordEditConfirmPlan {
         const { draft, source, revisionFactsSource, branchId, draftId, actorUserId, previewId, calendar } = args;
@@ -973,7 +1134,7 @@ export class AdminServiceRecordEditService {
         const computedPreviewId = `srp_${createHash("sha256")
             .update(stableStringify(jsonValue(previewValues)))
             .digest("hex")}`;
-        if (computedPreviewId !== previewId) {
+        if (previewId !== undefined && computedPreviewId !== previewId) {
             // 제출된 미리보기가 현재 원본/변경 내용과 어긋난 요청이라 등록된
             // 요청-만료 코드로 응답해요(EM-CAT-03: 기존 REQUEST_STALE 재사용).
             throw new ConflictException({
