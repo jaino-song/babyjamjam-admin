@@ -31,7 +31,12 @@ fs.appendFileSync(MOCK_COMMANDS, JSON.stringify(args) + '\\n');
 const relative = (remote) => remote.slice(remote.indexOf(':') + 1);
 const target = (remote) => join(MOCK_DRIVE, relative(remote));
 const fail = () => process.exit(9);
-const place = (from, to) => { fs.mkdirSync(dirname(to), { recursive: true }); fs.copyFileSync(from, to); };
+const place = (from, to) => {
+    const { atime, mtime } = fs.statSync(from);
+    fs.mkdirSync(dirname(to), { recursive: true });
+    fs.copyFileSync(from, to);
+    fs.utimesSync(to, atime, mtime);
+};
 if (op === 'copy') {
     if (control.failCopy) fail();
     fs.cpSync(operands[0], target(operands[1]), { recursive: true });
@@ -131,6 +136,11 @@ async function fixture(t) {
     };
     const expectMissing = (path, remote = false) => assert.rejects(fs.stat(filePath(path, remote)), { code: 'ENOENT' });
     const expectPair = (paths, document, remote = false) => Promise.all(paths.map((path, i) => expectFile(path, document.files[i], remote)));
+    const expectPairMtime = async (paths, createdAt, remote = false) => {
+        for (const path of paths) {
+            assert.equal((await fs.stat(filePath(path, remote))).mtimeMs, Date.parse(createdAt));
+        }
+    };
     const write = async (path, bytes, remote = false) => {
         const dest = filePath(path, remote);
         await fs.mkdir(dirname(dest), { recursive: true });
@@ -148,7 +158,7 @@ async function fixture(t) {
         return current;
     };
     return { archive, drive, controls, state, statePath, journal, journalDir, lock, listing, doc, run, expectPair,
-        expectFile, expectMissing, filePath, write, commands, legacy };
+        expectFile, expectMissing, expectPairMtime, filePath, write, commands, legacy };
 }
 
 test('allocates paired provider paths and a stable suffix, with old API and unsafe values using legacy paths', async (t) => {
@@ -250,6 +260,7 @@ test('explicit migration is read-only by default, moves both verified copies, pr
     assert.equal(f.listing.requests.filter(([method]) => method === 'POST').length, reports);
     await assert.rejects(fs.stat(f.journalDir), { code: 'ENOENT' });
     await f.expectPair(legacyPair, current);
+    await f.expectPairMtime(legacyPair, current.createdAt);
     await f.expectPair(legacyPair, current, true);
     await f.expectMissing(providerPair()[0]);
 
@@ -267,6 +278,7 @@ test('explicit migration is read-only by default, moves both verified copies, pr
     assert.deepEqual(await fs.readFile(backup), prior);
     for (const remote of [false, true]) {
         await f.expectPair(providerPair(), current, remote);
+        await f.expectPairMtime(providerPair(), current.createdAt, remote);
         for (const old of legacyPair) await f.expectMissing(old, remote);
     }
     const countAfterApply = (await f.commands()).length;
@@ -284,6 +296,7 @@ test('explicit migration is read-only by default, moves both verified copies, pr
     assert.equal((await f.journal()).phase, 'rolledBack');
     for (const remote of [false, true]) {
         await f.expectPair(legacyPair, current, remote);
+        await f.expectPairMtime(legacyPair, current.createdAt, remote);
         await f.expectPair(unrelatedAllocation, unrelated, remote);
         for (const path of providerPair()) await f.expectMissing(path, remote);
     }
@@ -310,6 +323,8 @@ test('resumes after an uploaded file or deleted legacy Drive path was not acknow
     await f.run([], 1); // Timer waits for the operator to finish the journal.
     await f.controls({});
     await f.run([...migrationArgs, '--apply']);
+    await f.expectPairMtime(providerPair(), current.createdAt);
+    await f.expectPairMtime(providerPair(), current.createdAt, true);
     for (const old of legacyPair) {
         await f.expectMissing(old);
         await f.expectMissing(old, true);

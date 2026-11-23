@@ -408,11 +408,15 @@ async function stageLocal({ archive, file, target, source, progress, local, fina
         }
         // The private, journal-specific stage can contain a partial copy after interruption.
         if (await local.inspect(relative(archive, temp))) await fs.unlink(temp);
-        if (!await local.verify(source, file)) refuse('missing_local_source');
+        const sourceInfo = await local.verify(source, file);
+        if (!sourceInfo) refuse('missing_local_source');
         await fs.copyFile(finalPath(source), temp, constants.COPYFILE_EXCL);
         await fs.chmod(temp, 0o600);
         const handle = await fs.open(temp, constants.O_RDONLY | constants.O_NOFOLLOW);
-        try { await handle.sync(); }
+        try {
+            await handle.utimes(sourceInfo.atimeMs / 1000, sourceInfo.mtimeMs / 1000);
+            await handle.sync();
+        }
         finally { await handle.close(); }
         if (!await local.verify(relative(archive, temp), file)) refuse('missing_staged_file');
         await syncDirectory(dir);
