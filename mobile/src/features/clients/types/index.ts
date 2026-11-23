@@ -50,6 +50,7 @@ export interface Client {
     fullPrice: string | null;
     grant: string | null;
     actualPrice: string | null;
+    readonly copaymentReceivedDate?: string | null;
     startDate: string | null;
     endDate: string | null;
     careCenter: boolean;

@@ -193,6 +193,7 @@ export interface ClientWithEmployees {
     fullPrice: string | null;
     grant: string | null;
     actualPrice: string | null;
+    readonly copaymentReceivedDate: string | null;
     startDate: Date | null;
     endDate: Date | null;
     careCenter: boolean | null;
@@ -1854,6 +1855,7 @@ export class ClientService {
                     fullPrice: client.fullPrice,
                     grant: client.grant,
                     actualPrice: client.actualPrice,
+                    copaymentReceivedDate: client.copaymentReceivedDate,
                     startDate: client.startDate,
                     endDate: client.endDate,
                     careCenter: client.careCenter,

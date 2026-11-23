@@ -33,7 +33,7 @@ export interface IEformsignContractRecoveryRepository {
     claimCreation(input: PrepareEformsignDispatchIntentInput, worker: ContractWorkerContext, effect: { contractData: unknown; force?: boolean; workflow?: unknown }): Promise<{
         intent: EformsignDispatchIntentEntity; disposition: "claimed" | "already_accepted" | "uncertain";
     }>;
-    claimLegacyCreation(input: PrepareEformsignDispatchIntentInput): Promise<{ intent: EformsignDispatchIntentEntity; disposition: "claimed" | "already_accepted" | "uncertain" }>;
+    claimLegacyCreation(input: PrepareEformsignDispatchIntentInput, copaymentReceivedDate?: Date): Promise<{ intent: EformsignDispatchIntentEntity; disposition: "claimed" | "already_accepted" | "uncertain" }>;
     claimProvider(input: PrepareEformsignDispatchIntentInput): Promise<{ intent: EformsignDispatchIntentEntity; disposition: "claimed" | "already_accepted" | "uncertain" }>;
     readWorker(worker: ContractWorkerContext): Promise<ContractRecoveryState>;
     completeAutomatic(worker: ContractWorkerContext, evidence: ContractDocumentEvidence): Promise<void>;

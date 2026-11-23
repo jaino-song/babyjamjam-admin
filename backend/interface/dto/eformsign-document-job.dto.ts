@@ -9,6 +9,7 @@ import {
     Matches,
     MaxLength,
     Min,
+    ValidateIf,
     ValidateNested,
 } from "class-validator";
 import { ContractDataDto } from "application/dto/contract.dto";
@@ -88,6 +89,10 @@ export class EformsignDocumentJobContractDataDto implements ContractDataDto {
     paymentMonth!: string;
     @IsString() @IsNotEmpty() @MaxLength(EFORMSIGN_DOCUMENT_JOB_TEXT_MAX_LENGTH)
     paymentDay!: string;
+    @ValidateIf((_data, value) => value !== undefined)
+    @IsString()
+    @Matches(/^\d{4}-\d{2}-\d{2}$/)
+    copaymentReceivedDate?: string;
     @IsString() @IsNotEmpty() @MaxLength(EFORMSIGN_DOCUMENT_JOB_TEXT_MAX_LENGTH)
     @Transform(trimKoreanWonInput)
     @Matches(KOREAN_WON_INPUT_PATTERN, { message: KOREAN_WON_VALIDATION_MESSAGE })

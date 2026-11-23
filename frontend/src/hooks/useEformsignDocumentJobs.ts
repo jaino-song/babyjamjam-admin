@@ -152,8 +152,13 @@ export function useEnqueueEformsignDocumentCreation() {
         CreateEformsignDocumentJobRequest
     >({
         mutationFn: (params) => eformsignApi.enqueueDocumentCreation(params),
-        onSuccess: async (_response, params) => {
-            await invalidateDocumentJobQueries(queryClient, undefined, params.clientId);
+        onSuccess: async (response, params) => {
+            await Promise.all([
+                invalidateDocumentJobQueries(queryClient, undefined, params.clientId),
+                ...(params.contractData.copaymentReceivedDate && !response.existing
+                    ? [queryClient.invalidateQueries({ queryKey: clientKeys.all })]
+                    : []),
+            ]);
         },
     });
 }
