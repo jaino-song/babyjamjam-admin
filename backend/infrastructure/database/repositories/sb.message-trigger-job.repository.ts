@@ -1,3 +1,5 @@
+import { OCCURRENCE_ALREADY_ACCEPTED } from "domain/entities/message-occurrence";
+import { hasAcceptedJobOccurrence } from "./message-occurrence-ledger";
 import { isManualMessageTriggerJob } from "domain/constants/message-trigger-job-ownership";
 import { agentBindingHash } from "domain/repositories/agent-linked-action.types";
 import { agentAutomationSourcePayload } from "application/services/agent-automation-job-binding";
@@ -50,6 +52,7 @@ import {
     SERVICE_RECORD_LINK_ENDED_REASON,
     SERVICE_RECORD_LINK_PRE_BOOKING_REASON,
     SERVICE_RECORD_LINK_RULE_ID,
+    serviceRecordAutomaticJobKey,
     SERVICE_RECORD_LINK_SCHEDULING_RETRY_REASON,
 } from "domain/constants/service-record-link-message";
 import { manualMessageTriggerJobPredicate } from "application/utils/message-trigger-job-ownership-sql";
@@ -173,8 +176,14 @@ export function serviceRecordScheduleBlockerSql(columns: {
     status: Prisma.Sql;
     cancelReason: Prisma.Sql;
     canceledByUser: Prisma.Sql;
+    payload?: Prisma.Sql;
+    employeeId?: number | null;
 }): Prisma.Sql {
-    return Prisma.sql`(
+    const sameRecipient = columns.payload && columns.employeeId != null
+        ? Prisma.sql`AND (jsonb_typeof(${columns.payload}->'employeeId') IS DISTINCT FROM 'number'
+            OR ${columns.payload}->>'employeeId' = ${String(columns.employeeId)})`
+        : Prisma.empty;
+    return Prisma.sql`((
         ${columns.status} IN ('pending', 'processing', 'dispatching', 'sent', 'needs_setup')
         OR (
             ${columns.status} = 'failed'
@@ -194,7 +203,7 @@ export function serviceRecordScheduleBlockerSql(columns: {
                 )
             )
         )
-    )`;
+    ) ${sameRecipient})`;
 }
 
 function stableJson(value: unknown): string {
@@ -409,6 +418,8 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
 
     async create(job: MessageTriggerJobEntity): Promise<MessageTriggerJobEntity> {
         this.assertOrdinaryJob(job);
+        const accepted = await this.creationOccurrenceAccepted(this.prisma, job);
+        if (accepted) job.cancel(OCCURRENCE_ALREADY_ACCEPTED);
         const row = await this.prisma.message_trigger_job.create({
             data: this.toCreate(job),
         });
@@ -1701,7 +1712,9 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
                 }
                 if (options.automaticOnly) {
                     if (!replacement.branchId || ruleId !== SERVICE_RECORD_LINK_RULE_ID
-                        || replacement.dedupeKey !== `${SERVICE_RECORD_LINK_RULE_ID}:schedule:${employeeScheduleId}:primary`) {
+                        || (replacement.dedupeKey !== serviceRecordAutomaticJobKey(employeeScheduleId)
+                            && (!replacement.payload.employeeId
+                                || replacement.dedupeKey !== serviceRecordAutomaticJobKey(employeeScheduleId, replacement.payload.employeeId)))) {
                         throw new Error("Automatic replacement requires the canonical service-record link key");
                     }
                     const rows = await transaction.$queryRaw<Array<{ id: string; status: string; canceled_by_user: boolean; cancel_reason: string | null; payload: unknown; scheduled_for: Date; recipient_phone: string | null;
@@ -1737,6 +1750,7 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
                                   status: Prisma.sql`blocker."status"`,
                                   cancelReason: Prisma.sql`blocker."cancel_reason"`,
                                   canceledByUser: Prisma.sql`blocker."canceled_by_user"`,
+                                  payload: Prisma.sql`blocker.payload`, employeeId: replacement.payload.employeeId,
                               })}
                             ORDER BY blocker.id
                             FOR UPDATE
@@ -1948,12 +1962,14 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
                 SELECT blocker.id
                 FROM "message_trigger_job" AS blocker
                 WHERE blocker.rule_id = ${ruleId}
+                  AND blocker.branch_id = ${branchId}::uuid
                   AND blocker.employee_schedule_id = ${employeeScheduleId}
                   AND blocker.id <> ${markerId}
                   AND ${serviceRecordScheduleBlockerSql({
                       status: Prisma.sql`blocker."status"`,
                       cancelReason: Prisma.sql`blocker."cancel_reason"`,
                       canceledByUser: Prisma.sql`blocker."canceled_by_user"`,
+                      payload: Prisma.sql`blocker.payload`, employeeId: job.payload.employeeId,
                   })}
                 ORDER BY blocker.id
                 FOR UPDATE
@@ -2093,7 +2109,14 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
         this.assertOrdinaryJob(job);
         const ordinaryConflict = ordinaryAutomationJobSql({ ruleId: Prisma.sql`"message_trigger_job"."rule_id"`,
             dedupeKey: Prisma.sql`"message_trigger_job"."dedupe_key"`, payload: Prisma.sql`"message_trigger_job"."payload"` });
-        const conflictAction = preserveExisting
+        const accepted = await this.creationOccurrenceAccepted(client, job);
+        const conflictAction = accepted
+            ? Prisma.sql`DO UPDATE SET status = 'canceled', canceled_at = EXCLUDED.canceled_at,
+                cancel_reason = EXCLUDED.cancel_reason, next_attempt_at = NULL,
+                updated_at = date_trunc('milliseconds', clock_timestamp())
+              WHERE ${ordinaryConflict} AND "message_trigger_job"."status" = 'pending'
+                AND "message_trigger_job"."claim_token" IS NULL`
+            : preserveExisting
             ? Prisma.sql`DO UPDATE SET
                 status = 'pending',
                 scheduled_for = EXCLUDED.scheduled_for,
@@ -2171,11 +2194,11 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
             VALUES (
                 ${job.branchId}::uuid,
                 ${job.ruleId},
-                'pending',
+                ${accepted ? Prisma.sql`'canceled'` : Prisma.sql`'pending'`},
                 ${job.scheduledFor},
                 NULL,
-                NULL,
-                NULL,
+                ${accepted ? Prisma.sql`clock_timestamp()` : Prisma.sql`NULL`},
+                ${accepted ? Prisma.sql`${OCCURRENCE_ALREADY_ACCEPTED}` : Prisma.sql`NULL`},
                 ${job.clientId},
                 ${job.employeeScheduleId},
                 ${job.recipientType},
@@ -2205,6 +2228,11 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
         }
 
         return this.toDomain(existing);
+    }
+
+    private async creationOccurrenceAccepted(tx: Prisma.TransactionClient, job: MessageTriggerJobEntity): Promise<boolean> {
+        if (!tx.message_occurrence_claim || job.status !== "pending") return false;
+        return hasAcceptedJobOccurrence(tx, { ...job, payload: job.payload as unknown as Prisma.JsonValue });
     }
 
     async claimProviderRejectedForRetry(

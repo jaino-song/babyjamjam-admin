@@ -1,4 +1,4 @@
-import { buildSmsProviderAcceptanceKey } from "application/services/sms-provider-acceptance.service";
+import { buildSmsProviderAcceptanceKey, SmsProviderAcceptanceService } from "application/services/sms-provider-acceptance.service";
 import { messageQuietHoldVariables } from "domain/message-policy-evaluator";
 import { SystemSettingService } from "application/services/system-setting.service";
 import { createLegacyAutomationDeliveryGate } from "../fixtures/legacy-automation-delivery-gate";
@@ -26,6 +26,16 @@ import { CARRIER_CHECK_DELAY_MS, MessageLogEntity } from "domain/entities/messag
 import { IMessageLogRepository } from "domain/repositories/message-log.repository.interface";
 import { MESSAGE_AUTOMATION_INTENT_RULE_ID } from "domain/constants/message-automation-intent";
 import { AGENT_AUTOMATION_RECORD_DEDUPE_PREFIX, AGENT_AUTOMATION_RECORD_PAYLOAD_KEY } from "domain/constants/agent-automation-storage";
+
+function providerBoundary(repository: Pick<IMessageLogRepository, "save">): SmsProviderAcceptanceService {
+    return {
+        prepare: (log: MessageLogEntity) => repository.save(log),
+        beginProviderCall: async (log: MessageLogEntity) => {
+            log.markProviderCallStarted();
+            return log;
+        },
+    } as SmsProviderAcceptanceService;
+}
 
 describe("SmsTriggerDeliveryService", () => {
     // F7: adding a new template key to the catalog cannot change an existing key's configHash —
@@ -210,7 +220,7 @@ describe("SmsTriggerDeliveryService", () => {
             aligoService as unknown as AligoService,
             systemTemplateService as unknown as SystemTemplateService,
             logRepository as unknown as IMessageLogRepository,
-        undefined, undefined, createLegacyAutomationDeliveryGate(), undefined, new SystemSettingService({ execute: jest.fn().mockResolvedValue(null) } as never, {} as never));
+        providerBoundary(logRepository), undefined, createLegacyAutomationDeliveryGate(), undefined, new SystemSettingService({ execute: jest.fn().mockResolvedValue(null) } as never, {} as never));
 
         await expect(service.sendJob(createServiceInfoJob())).resolves.toBe(true);
 
@@ -259,7 +269,7 @@ describe("SmsTriggerDeliveryService", () => {
             aligoService as unknown as AligoService,
             systemTemplateService as unknown as SystemTemplateService,
             logRepository as unknown as IMessageLogRepository,
-        undefined, undefined, createLegacyAutomationDeliveryGate(), undefined, new SystemSettingService({ execute: jest.fn().mockResolvedValue(null) } as never, {} as never));
+        providerBoundary(logRepository), undefined, createLegacyAutomationDeliveryGate(), undefined, new SystemSettingService({ execute: jest.fn().mockResolvedValue(null) } as never, {} as never));
 
         const job = createServiceInfoJob();
         const snapshot = await service.resolveDeliverySnapshot(job);
@@ -297,7 +307,7 @@ describe("SmsTriggerDeliveryService", () => {
             aligoService as unknown as AligoService,
             systemTemplateService as unknown as SystemTemplateService,
             logRepository as unknown as IMessageLogRepository,
-        undefined, undefined, createLegacyAutomationDeliveryGate(), undefined, new SystemSettingService({ execute: jest.fn().mockResolvedValue(null) } as never, {} as never));
+        providerBoundary(logRepository), undefined, createLegacyAutomationDeliveryGate(), undefined, new SystemSettingService({ execute: jest.fn().mockResolvedValue(null) } as never, {} as never));
         const job = createServiceInfoJob();
         const snapshot = await service.resolveDeliverySnapshot(job);
         job.payload.templateVariables["retrySafety"] = "pending-agent-retry";
@@ -336,7 +346,7 @@ describe("SmsTriggerDeliveryService", () => {
             aligoService as unknown as AligoService,
             systemTemplateService as unknown as SystemTemplateService,
             logRepository as unknown as IMessageLogRepository,
-        undefined, undefined, createLegacyAutomationDeliveryGate(), undefined, new SystemSettingService({ execute: jest.fn().mockResolvedValue(null) } as never, {} as never));
+        providerBoundary(logRepository), undefined, createLegacyAutomationDeliveryGate(), undefined, new SystemSettingService({ execute: jest.fn().mockResolvedValue(null) } as never, {} as never));
         const job = createServiceInfoJob();
         const snapshot = await service.resolveDeliverySnapshot(job);
         const staged = JSON.parse(service.serializeSnapshot(snapshot)) as Record<string, unknown>;
@@ -362,7 +372,7 @@ describe("SmsTriggerDeliveryService", () => {
             aligoService as unknown as AligoService,
             systemTemplateService as unknown as SystemTemplateService,
             logRepository as unknown as IMessageLogRepository,
-        undefined, undefined, createLegacyAutomationDeliveryGate(), undefined, new SystemSettingService({ execute: jest.fn().mockResolvedValue(null) } as never, {} as never));
+        providerBoundary(logRepository), undefined, createLegacyAutomationDeliveryGate(), undefined, new SystemSettingService({ execute: jest.fn().mockResolvedValue(null) } as never, {} as never));
         const job = createServiceInfoJob();
         const snapshot = await service.resolveDeliverySnapshot(job);
         job.payload.templateVariables["retrySafety"] = "pending-agent-retry";
@@ -451,7 +461,7 @@ describe("SmsTriggerDeliveryService", () => {
             aligoService as unknown as AligoService,
             systemTemplateService as unknown as SystemTemplateService,
             logRepository as unknown as IMessageLogRepository,
-        undefined, undefined, createLegacyAutomationDeliveryGate(), undefined, new SystemSettingService({ execute: jest.fn().mockResolvedValue(null) } as never, {} as never));
+        providerBoundary(logRepository), undefined, createLegacyAutomationDeliveryGate(), undefined, new SystemSettingService({ execute: jest.fn().mockResolvedValue(null) } as never, {} as never));
 
         await expect(service.sendJob(greetingJob)).resolves.toBe(true);
 
@@ -491,7 +501,7 @@ describe("SmsTriggerDeliveryService", () => {
             aligoService as unknown as AligoService,
             systemTemplateService as unknown as SystemTemplateService,
             logRepository as unknown as IMessageLogRepository,
-        undefined, undefined, createLegacyAutomationDeliveryGate(), undefined, new SystemSettingService({ execute: jest.fn().mockResolvedValue(null) } as never, {} as never));
+        providerBoundary(logRepository), undefined, createLegacyAutomationDeliveryGate(), undefined, new SystemSettingService({ execute: jest.fn().mockResolvedValue(null) } as never, {} as never));
         const job = createServiceInfoJob();
         job.branchId = null;
 
@@ -522,7 +532,7 @@ describe("SmsTriggerDeliveryService", () => {
             aligoService as unknown as AligoService,
             systemTemplateService as unknown as SystemTemplateService,
             logRepository as unknown as IMessageLogRepository,
-        undefined, undefined, createLegacyAutomationDeliveryGate(), undefined, new SystemSettingService({ execute: jest.fn().mockResolvedValue(null) } as never, {} as never));
+        providerBoundary(logRepository), undefined, createLegacyAutomationDeliveryGate(), undefined, new SystemSettingService({ execute: jest.fn().mockResolvedValue(null) } as never, {} as never));
 
         const job = createServiceInfoJob();
         await expect(service.sendJob(job)).resolves.toBe(false);
@@ -548,7 +558,7 @@ describe("SmsTriggerDeliveryService", () => {
             aligoService as unknown as AligoService,
             systemTemplateService as unknown as SystemTemplateService,
             logRepository as unknown as IMessageLogRepository,
-        undefined, undefined, createLegacyAutomationDeliveryGate(), undefined, new SystemSettingService({ execute: jest.fn().mockResolvedValue(null) } as never, {} as never));
+        providerBoundary(logRepository), undefined, createLegacyAutomationDeliveryGate(), undefined, new SystemSettingService({ execute: jest.fn().mockResolvedValue(null) } as never, {} as never));
 
         await expect(service.sendJob(createServiceInfoJob())).rejects.toBe(readError);
         expect(aligoService.sendSms).not.toHaveBeenCalled();
@@ -566,7 +576,7 @@ describe("SmsTriggerDeliveryService", () => {
             aligoService as unknown as AligoService,
             systemTemplateService as unknown as SystemTemplateService,
             logRepository as unknown as IMessageLogRepository,
-        undefined, undefined, createLegacyAutomationDeliveryGate(), undefined, new SystemSettingService({ execute: jest.fn().mockResolvedValue(null) } as never, {} as never));
+        providerBoundary(logRepository), undefined, createLegacyAutomationDeliveryGate(), undefined, new SystemSettingService({ execute: jest.fn().mockResolvedValue(null) } as never, {} as never));
 
         const error = await captureError(service.sendJob(createServiceInfoJob()));
 
@@ -609,7 +619,7 @@ describe("SmsTriggerDeliveryService", () => {
             aligoService as unknown as AligoService,
             systemTemplateService as unknown as SystemTemplateService,
             logRepository as unknown as IMessageLogRepository,
-        undefined, undefined, createLegacyAutomationDeliveryGate(), undefined, new SystemSettingService({ execute: jest.fn().mockResolvedValue(null) } as never, {} as never));
+        providerBoundary(logRepository), undefined, createLegacyAutomationDeliveryGate(), undefined, new SystemSettingService({ execute: jest.fn().mockResolvedValue(null) } as never, {} as never));
 
         const error = await captureError(service.sendJob(createServiceInfoJob()));
 
@@ -655,7 +665,7 @@ describe("SmsTriggerDeliveryService", () => {
             aligoService as unknown as AligoService,
             systemTemplateService as unknown as SystemTemplateService,
             logRepository as unknown as IMessageLogRepository,
-        undefined, undefined, createLegacyAutomationDeliveryGate(), undefined, new SystemSettingService({ execute: jest.fn().mockResolvedValue(null) } as never, {} as never));
+        providerBoundary(logRepository), undefined, createLegacyAutomationDeliveryGate(), undefined, new SystemSettingService({ execute: jest.fn().mockResolvedValue(null) } as never, {} as never));
 
         await expect(service.sendJob(createServiceInfoJob())).rejects.toThrow("database unavailable");
 
@@ -694,7 +704,7 @@ describe("SmsTriggerDeliveryService", () => {
                 aligoService as unknown as AligoService,
                 systemTemplateService as unknown as SystemTemplateService,
                 logRepository as unknown as IMessageLogRepository,
-            undefined, undefined, createLegacyAutomationDeliveryGate(), undefined, new SystemSettingService({ execute: jest.fn().mockResolvedValue(null) } as never, {} as never));
+            providerBoundary(logRepository), undefined, createLegacyAutomationDeliveryGate(), undefined, new SystemSettingService({ execute: jest.fn().mockResolvedValue(null) } as never, {} as never));
             await service.sendJob(createServiceInfoJob());
             return { attempt: attempt!, logRepository };
         };
@@ -746,7 +756,7 @@ describe("SmsTriggerDeliveryService", () => {
             aligoService as unknown as AligoService,
             systemTemplateService as unknown as SystemTemplateService,
             logRepository as unknown as IMessageLogRepository,
-        undefined, undefined, createLegacyAutomationDeliveryGate(), undefined, new SystemSettingService({ execute: jest.fn().mockResolvedValue(null) } as never, {} as never));
+        providerBoundary(logRepository), undefined, createLegacyAutomationDeliveryGate(), undefined, new SystemSettingService({ execute: jest.fn().mockResolvedValue(null) } as never, {} as never));
 
         await expect(service.sendJob(createServiceInfoJob())).rejects.toBe(providerError);
 
@@ -807,7 +817,7 @@ describe("SmsTriggerDeliveryService", () => {
             aligoService as unknown as AligoService,
             systemTemplateService as unknown as SystemTemplateService,
             logRepository as unknown as IMessageLogRepository,
-            undefined,
+            providerBoundary(logRepository),
             undefined,
             createLegacyAutomationDeliveryGate(),undefined, new SystemSettingService({ execute: jest.fn().mockResolvedValue(null) } as never, {} as never),
         );
@@ -865,7 +875,7 @@ https://mobile.test/service-record/efl_token`;
             overrides.aligoService as unknown as AligoService,
             (overrides.systemTemplateService ?? { getByKeyForBranch: jest.fn() }) as unknown as SystemTemplateService,
             overrides.logRepository as unknown as IMessageLogRepository,
-        undefined, undefined, createLegacyAutomationDeliveryGate(), overrides.ruleRepository as never, new SystemSettingService({ execute: jest.fn().mockResolvedValue(null) } as never, {} as never));
+        providerBoundary(overrides.logRepository as Pick<IMessageLogRepository, "save">), undefined, createLegacyAutomationDeliveryGate(), overrides.ruleRepository as never, new SystemSettingService({ execute: jest.fn().mockResolvedValue(null) } as never, {} as never));
 
     const createServiceRecordJob = () =>
         MessageTriggerJobEntity.reconstitute(
@@ -1333,7 +1343,7 @@ describe("SMS system-template variable coverage", () => {
             aligoService as unknown as AligoService,
             systemTemplateService as unknown as SystemTemplateService,
             logRepository as unknown as IMessageLogRepository,
-        undefined, undefined, createLegacyAutomationDeliveryGate(), undefined, new SystemSettingService({ execute: jest.fn().mockResolvedValue(null) } as never, {} as never));
+        providerBoundary(logRepository), undefined, createLegacyAutomationDeliveryGate(), undefined, new SystemSettingService({ execute: jest.fn().mockResolvedValue(null) } as never, {} as never));
         return { aligoService, logRepository, service };
     };
 
@@ -1561,7 +1571,7 @@ describe("PRICE_INFO data guard", () => {
                 getByKeyForBranch: jest.fn().mockResolvedValue({ content: "총 금액 {{fullPrice}}원 / {{bankName}} {{accNum}}" }),
             }) as unknown as SystemTemplateService,
             overrides.logRepository as unknown as IMessageLogRepository,
-        undefined, undefined, createLegacyAutomationDeliveryGate(), undefined, new SystemSettingService({ execute: jest.fn().mockResolvedValue(null) } as never, {} as never));
+        providerBoundary(overrides.logRepository as Pick<IMessageLogRepository, "save">), undefined, createLegacyAutomationDeliveryGate(), undefined, new SystemSettingService({ execute: jest.fn().mockResolvedValue(null) } as never, {} as never));
 
     it("cancels a PRICE_INFO job and does not send when price/bank data is missing", async () => {
         const aligoService = { sendSms: jest.fn() };

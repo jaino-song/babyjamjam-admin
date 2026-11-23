@@ -1,3 +1,5 @@
+import { SMS_TEMPLATE_DELIVERY, type SmsTemplateDeliveryConfig } from "domain/constants/sms-template-delivery";
+import { OCCURRENCE_ALREADY_ACCEPTED } from "domain/entities/message-occurrence";
 import { AligoDefaultSenderPolicyService } from "./aligo-default-sender-policy.service";
 import { normalizePhone } from "application/utils/normalize-phone";
 import { MANUAL_SMS_TEMPLATE_KEY, MANUAL_SMS_RULE_PREFIX, type MessageTriggerJobTemplateKey } from "domain/constants/message-trigger-catalog";
@@ -22,18 +24,6 @@ import {
 } from "application/dto/aligo/send-sms.dto";
 import { SYSTEM_TEMPLATE_REGISTRY, SystemTemplateKey } from "domain/constants/system-template-registry";
 import { MessageTriggerTemplateKey } from "domain/constants/message-trigger-catalog";
-import {
-    SERVICE_RECORD_LINK_SMS_AUTOMATION_KEY,
-    SERVICE_RECORD_LINK_SMS_LOG_TEMPLATE_KEY,
-    SERVICE_RECORD_LINK_SMS_TITLE,
-    SERVICE_RECORD_LINK_SMS_TRIGGER_TYPE,
-} from "domain/constants/service-record-link-message";
-import {
-    SERVICE_END_NOTICE_SMS_AUTOMATION_KEY,
-    SERVICE_END_NOTICE_SMS_LOG_TEMPLATE_KEY,
-    SERVICE_END_NOTICE_SMS_TITLE,
-    SERVICE_END_NOTICE_SMS_TRIGGER_TYPE,
-} from "domain/constants/service-end-notice-message";
 import { MessageTriggerJobEntity } from "domain/entities/message-trigger-job.entity";
 import { BranchSystemTemplateSnapshotError } from "domain/entities/branch-system-template-snapshot";
 import { SMS_DELIVERY_SNAPSHOT_VARIABLE } from "domain/constants/sms-delivery-snapshot";
@@ -60,6 +50,7 @@ import {
     buildSmsProviderAcceptanceFingerprint,
     buildSmsProviderAcceptanceKey,
     SmsProviderAcceptanceService,
+    SmsOccurrenceBlockedError,
 } from "./sms-provider-acceptance.service";
 import { SmsTriggerDeliverySkipError, SmsTriggerPayloadEnricherRegistry } from "./sms-trigger-payload-enricher.registry";
 import { buildAutomationRetrySealVariables } from "./automation-retry-seal";
@@ -68,22 +59,14 @@ import { classifySmsProviderOutcome, classifySmsProviderRejection, countSmsRecip
 type ManualSourceCancellation = { valid: false; reason: "Manual sender changed" | "Manual recipient changed"; canceledAt: Date };
 type ManualSourceValidation = { valid: true } | ManualSourceCancellation;
 
-export interface SmsTemplateDeliveryConfig {
-    smsLogTemplateKey: string;
-    automationKey: string;
-    triggerType: string;
-    title: string;
-    systemTemplateKey?: SystemTemplateKey;
-    usePayloadMessage?: boolean;
-}
-
 /**
  * Bump this whenever the catalog-to-provider mapping changes. The value is
  * included in the approval fingerprint so an approved retry cannot silently
  * adopt a different title, template key, or provider routing rule.
  */
 export const SMS_DELIVERY_CONFIG_VERSION = "sms-template-delivery-v1";
-export { SMS_DELIVERY_SNAPSHOT_VARIABLE };
+export { SMS_DELIVERY_SNAPSHOT_VARIABLE, SMS_TEMPLATE_DELIVERY };
+export type { SmsTemplateDeliveryConfig };
 
 export interface SmsTriggerDeliverySnapshot {
     readonly templateKey: MessageTriggerJobTemplateKey;
@@ -128,94 +111,6 @@ class MissingSmsTemplateVariablesError extends Error {
         this.name = "MissingSmsTemplateVariablesError";
     }
 }
-
-/**
- * `title` here is NOT the in-app template label. It is sent to Aligo and shown
- * to the recipient as the LMS subject line, so it is outgoing message content.
- *
- * Ten of these match the in-app label; THANKS ("예약 완료" vs "예약 완료(입금 확인)")
- * and INFO ("정보 안내" vs "정보 요청") deliberately do not. They were reviewed and
- * left alone on 2026-08-12: "정보 요청" in a recipient's inbox reads as a request
- * *for* their information, which is not what the message does. Do not "fix" these
- * to match the label map — the divergence is the decision.
- *
- * Editing any title also invalidates every persisted approval snapshot (the value
- * feeds configHash and snapshotHash), so a change needs SMS_DELIVERY_CONFIG_VERSION
- * bumped and every pending approval re-approved.
- */
-export const SMS_TEMPLATE_DELIVERY: Partial<Record<MessageTriggerTemplateKey, SmsTemplateDeliveryConfig>> = {
-    [MessageTriggerTemplateKey.CAREGIVER_SERVICE_START_NOTICE]: {
-        smsLogTemplateKey: "caregiver_service_start_notice_sms", automationKey: "CAREGIVER_SERVICE_START_NOTICE_SMS",
-        triggerType: "caregiver_service_start", title: "제공인력 서비스 시작 안내", systemTemplateKey: SystemTemplateKey.CAREGIVER_SERVICE_START_NOTICE,
-    },
-    [MessageTriggerTemplateKey.CAREGIVER_SERVICE_END_NOTICE]: {
-        smsLogTemplateKey: "caregiver_service_end_notice_sms", automationKey: "CAREGIVER_SERVICE_END_NOTICE_SMS",
-        triggerType: "caregiver_service_end", title: "제공인력 서비스 종료 안내", systemTemplateKey: SystemTemplateKey.CAREGIVER_SERVICE_END_NOTICE,
-    },
-    [MessageTriggerTemplateKey.SERVICE_INFO]: {
-        smsLogTemplateKey: "service_info_sms",
-        automationKey: "SERVICE_INFO_SMS",
-        triggerType: "service_start_before_7_days",
-        title: "서비스 안내",
-        systemTemplateKey: SystemTemplateKey.SERVICE_INFO,
-    },
-    [MessageTriggerTemplateKey.CLIENT_GREETING]: {
-        smsLogTemplateKey: "client_greeting_sms",
-        automationKey: "CLIENT_GREETING_SMS",
-        triggerType: "client_created",
-        title: "인사 메시지",
-        systemTemplateKey: SystemTemplateKey.GREETING,
-    },
-    [MessageTriggerTemplateKey.PRICE_INFO]: {
-        smsLogTemplateKey: "price_info_sms",
-        automationKey: "PRICE_INFO_SMS",
-        triggerType: "price_info",
-        title: "비용 안내",
-        systemTemplateKey: SystemTemplateKey.PRICE_INFO,
-    },
-    [MessageTriggerTemplateKey.REMINDER]: {
-        smsLogTemplateKey: "reminder_sms",
-        automationKey: "REMINDER_SMS",
-        triggerType: "reminder",
-        title: "리마인드",
-        systemTemplateKey: SystemTemplateKey.REMINDER,
-    },
-    [MessageTriggerTemplateKey.THANKS]: {
-        smsLogTemplateKey: "thanks_sms",
-        automationKey: "THANKS_SMS",
-        triggerType: "thanks",
-        title: "예약 완료",
-        systemTemplateKey: SystemTemplateKey.THANKS,
-    },
-    [MessageTriggerTemplateKey.SURVEY]: {
-        smsLogTemplateKey: "survey_sms",
-        automationKey: "SURVEY_SMS",
-        triggerType: "survey",
-        title: "모니터링 설문",
-        systemTemplateKey: SystemTemplateKey.SURVEY,
-    },
-    [MessageTriggerTemplateKey.INFO]: {
-        smsLogTemplateKey: "info_sms",
-        automationKey: "INFO_SMS",
-        triggerType: "info",
-        title: "정보 안내",
-        systemTemplateKey: SystemTemplateKey.INFO,
-    },
-    [MessageTriggerTemplateKey.SERVICE_RECORD_LINK]: {
-        smsLogTemplateKey: SERVICE_RECORD_LINK_SMS_LOG_TEMPLATE_KEY,
-        automationKey: SERVICE_RECORD_LINK_SMS_AUTOMATION_KEY,
-        triggerType: SERVICE_RECORD_LINK_SMS_TRIGGER_TYPE,
-        title: SERVICE_RECORD_LINK_SMS_TITLE,
-        systemTemplateKey: SystemTemplateKey.SERVICE_RECORD_LINK,
-    },
-    [MessageTriggerTemplateKey.SERVICE_END_NOTICE]: {
-        smsLogTemplateKey: SERVICE_END_NOTICE_SMS_LOG_TEMPLATE_KEY,
-        automationKey: SERVICE_END_NOTICE_SMS_AUTOMATION_KEY,
-        triggerType: SERVICE_END_NOTICE_SMS_TRIGGER_TYPE,
-        title: SERVICE_END_NOTICE_SMS_TITLE,
-        systemTemplateKey: SystemTemplateKey.SERVICE_END_NOTICE,
-    },
-};
 
 @Injectable()
 export class SmsTriggerDeliveryService {
@@ -763,6 +658,7 @@ export class SmsTriggerDeliveryService {
                 | { kind: "ready"; attempt: MessageLogEntity }
                 | { kind: "held"; hold: MessageQuietHold }
                 | { kind: "duplicate" }
+                | { kind: "occurrence"; disposition: "accepted" | "held"; at: Date }
                 | { kind: "source-canceled"; cancellation: ManualSourceCancellation }
                 | { kind: "refused"; decision: { action: "CANCEL"; reevaluateAt: null }; canceledAt: Date | null; durableCancellation?: true }
             > => {
@@ -771,7 +667,7 @@ export class SmsTriggerDeliveryService {
                     if (isQuietHoursCanceled(persistedAttempt)) return { kind: "refused", decision: { action: "CANCEL", reevaluateAt: null }, canceledAt: null };
                     return { kind: "ready", attempt: (this.acceptanceService
                         ? await this.acceptanceService.beginProviderCall(persistedAttempt)
-                        : this.beginProviderCallWithoutBoundary(persistedAttempt)) ?? persistedAttempt };
+                        : this.beginProviderCallWithoutBoundary()) ?? persistedAttempt };
                 }
                 if (!persistedAttempt.providerAcceptanceKey || !persistedAttempt.providerAcceptanceFingerprint) throw new AgentAutomationDispatchUncertainError();
                 const current = await transaction.message_log.findUnique({ where: {
@@ -835,9 +731,32 @@ export class SmsTriggerDeliveryService {
                         if (!hold) throw new AgentAutomationDispatchUncertainError();
                         return { kind: "held" as const, hold };
                     }
-                    return { kind: "ready" as const, attempt: (this.acceptanceService
-                        ? await this.acceptanceService.beginProviderCall(persistedAttempt, transaction)
-                        : this.beginProviderCallWithoutBoundary(persistedAttempt)) ?? persistedAttempt };
+                    if (!job.claimToken || !job.processingDeadlineAt) throw new AgentAutomationDispatchUncertainError();
+                    const fence = await transaction.message_trigger_job.updateMany({
+                        where: { id: job.id, branchId: job.branchId, status: "dispatching", claimToken: job.claimToken,
+                            processingDeadlineAt: { equals: job.processingDeadlineAt, gt: new Date() },
+                            updatedAt: currentJob.updatedAt },
+                        data: { updatedAt: currentJob.updatedAt },
+                    });
+                    if (fence.count !== 1) throw new AgentAutomationDispatchUncertainError();
+                    try {
+                        const attempt = this.acceptanceService
+                            ? await this.acceptanceService.beginProviderCall(persistedAttempt, transaction)
+                            : this.beginProviderCallWithoutBoundary();
+                        if (job.processingDeadlineAt <= new Date()) throw new AgentAutomationDispatchUncertainError();
+                        return { kind: "ready" as const, attempt: attempt ?? persistedAttempt };
+                    } catch (error) {
+                        if (!(error instanceof SmsOccurrenceBlockedError)) throw error;
+                        const done = error.disposition === "accepted";
+                        const at = new Date(Date.now() + (done ? 0 : 60_000));
+                        await transaction.message_trigger_job.update({
+                            where: { id: job.id, branchId: job.branchId, status: "dispatching", claimToken: job.claimToken },
+                            data: { status: done ? "canceled" : "pending", claimToken: null, processingDeadlineAt: null,
+                                cancelReason: done ? OCCURRENCE_ALREADY_ACCEPTED : null,
+                                canceledAt: done ? at : null, nextAttemptAt: done ? null : at },
+                        });
+                        return { kind: "occurrence" as const, disposition: error.disposition, at };
+                    }
                 };
                 if (job.templateKey === MANUAL_SMS_TEMPLATE_KEY) {
                     const validation = await this.validateManualInlineSource(job, transaction);
@@ -871,6 +790,19 @@ export class SmsTriggerDeliveryService {
                 // transaction so its actual clock is sampled immediately before CAS.
                 return runSmsQuietHoursAdmission(this.quietHours, this.systemSettingService, job.branchId, snapshot.receiver, finish, transaction, currentHold?.releaseAt);
             });
+        if (admission.kind === "occurrence") {
+            if (admission.disposition === "accepted") {
+                job.cancel(OCCURRENCE_ALREADY_ACCEPTED);
+                job.canceledAt = admission.at;
+                job.nextAttemptAt = null;
+            } else {
+                job.status = "pending";
+                job.nextAttemptAt = admission.at;
+            }
+            job.claimToken = null;
+            job.processingDeadlineAt = null;
+            return false;
+        }
         if (admission.kind === "source-canceled") {
             this.applyManualSourceCancellation(job, admission.cancellation);
             return false;
@@ -976,13 +908,8 @@ export class SmsTriggerDeliveryService {
         } catch { return false; }
     }
 
-    private beginProviderCallWithoutBoundary(log: MessageLogEntity): MessageLogEntity {
-        if (log.providerAcceptanceState !== "prepared") {
-            throw new Error(`SMS provider attempt cannot start from ${log.providerAcceptanceState}`);
-        }
-        log.providerAcceptanceState = "started";
-        log.providerCallStartedAt = new Date(Date.now());
-        return log;
+    private beginProviderCallWithoutBoundary(): never {
+        throw new AgentAutomationDispatchUncertainError();
     }
 
     private async persistAttempt(log: MessageLogEntity): Promise<void> {
@@ -1115,6 +1042,8 @@ export class SmsTriggerDeliveryService {
             || fingerprint["title"] !== (job.payload.templateVariables["title"]?.trim() || null)
             || fingerprint["msgType"] !== (job.payload.templateVariables["msgType"] ?? "AUTO")
             || fingerprint["testMode"] !== (job.payload.templateVariables["testMode"] === "true")
+            || (fingerprint["templateRef"] === undefined ? v["verifiedSmsTemplateRef"] !== undefined
+                : JSON.stringify(fingerprint["templateRef"]) !== v["verifiedSmsTemplateRef"])
             || buildSmsProviderAcceptanceFingerprint(fingerprint) !== log.providerAcceptanceFingerprint
             || log.recipientPhone !== job.recipientPhone || log.receiver !== job.recipientPhone
             || log.messageBody !== job.payload.messageBody || log.clientId !== job.clientId) throw new AgentAutomationDispatchUncertainError();

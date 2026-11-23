@@ -1,3 +1,4 @@
+import { SmsProviderAcceptanceService } from "application/services/sms-provider-acceptance.service";
 import { OPTIONAL_DEPS_METADATA } from "@nestjs/common/constants";
 import { SCHEDULE_CRON_OPTIONS } from "@nestjs/schedule/dist/schedule.constants";
 import { SystemSettingService } from "application/services/system-setting.service";
@@ -88,6 +89,9 @@ describe("SmsRetryService", () => {
             draft.updatedAt,
             draft.recipientName,
             draft.recipientPhone,
+            draft.providerAcceptanceKey,
+            draft.providerAcceptanceFingerprint,
+            draft.providerAcceptanceState,
         ),
     });
 
@@ -96,6 +100,11 @@ describe("SmsRetryService", () => {
     let aligoService: ReturnType<typeof createMockAligoService>;
     let messageSenderApprovalService: ReturnType<typeof createMockMessageSenderApprovalService>;
     let nowSpy: jest.SpyInstance<number, []>;
+    const acceptance = { beginProviderCall: async (log: MessageLogEntity, tx?: never) => {
+        log.markProviderCallStarted(new Date(Date.now()));
+        if (tx) await logRepository.update(log, tx);
+        return log;
+    } } as unknown as SmsProviderAcceptanceService;
 
     beforeEach(() => {
         logRepository = createMockLogRepository();
@@ -105,7 +114,7 @@ describe("SmsRetryService", () => {
         service = new SmsRetryService(
             logRepository as unknown as IMessageLogRepository,
             aligoService as unknown as AligoService,
-            messageSenderApprovalService as unknown as MessageSenderApprovalService,undefined, undefined, undefined, undefined, undefined, undefined, new SystemSettingService({ execute: jest.fn().mockResolvedValue(null) } as never, {} as never),
+            messageSenderApprovalService as unknown as MessageSenderApprovalService,acceptance, undefined, undefined, undefined, undefined, undefined, new SystemSettingService({ execute: jest.fn().mockResolvedValue(null) } as never, {} as never),
         );
         nowSpy = jest.spyOn(Date, "now");
         nowSpy.mockReturnValue(0);
@@ -354,7 +363,7 @@ describe("SmsRetryService", () => {
                 logRepository as unknown as IMessageLogRepository,
                 aligoService as unknown as AligoService,
                 messageSenderApprovalService as unknown as MessageSenderApprovalService,
-                undefined,
+                acceptance,
                 activation as never,
                 undefined,
                 undefined,
@@ -1147,7 +1156,7 @@ describe("SmsRetryService", () => {
             logRepository as unknown as IMessageLogRepository,
             aligoService as unknown as AligoService,
             messageSenderApprovalService as unknown as MessageSenderApprovalService,
-            undefined,
+            acceptance,
             activationService as never,undefined, undefined, undefined, undefined, new SystemSettingService({ execute: jest.fn().mockResolvedValue(null) } as never, {} as never),
         );
 
@@ -1176,7 +1185,7 @@ describe("SmsRetryService", () => {
             logRepository as unknown as IMessageLogRepository,
             aligoService as unknown as AligoService,
             messageSenderApprovalService as unknown as MessageSenderApprovalService,
-            undefined,
+            acceptance,
             activationService as never,undefined, undefined, undefined, undefined, new SystemSettingService({ execute: jest.fn().mockResolvedValue(null) } as never, {} as never),
         );
 
@@ -1286,7 +1295,7 @@ describe("SmsRetryService", () => {
             logRepository as unknown as IMessageLogRepository,
             aligoService as unknown as AligoService,
             messageSenderApprovalService as unknown as MessageSenderApprovalService,
-            undefined,
+            acceptance,
             activationService as never,
             authorityService as never,
             deliveryService as never,undefined, undefined, new SystemSettingService({ execute: jest.fn().mockResolvedValue(null) } as never, {} as never),
@@ -1359,7 +1368,7 @@ describe("SmsRetryService", () => {
             logRepository as unknown as IMessageLogRepository,
             aligoService as unknown as AligoService,
             messageSenderApprovalService as unknown as MessageSenderApprovalService,
-            undefined,
+            acceptance,
             activationService as never,
             { checkAutomaticJob: jest.fn() } as never,
             { resolveCanonicalDeliverySnapshot: jest.fn() } as never,undefined, undefined, new SystemSettingService({ execute: jest.fn().mockResolvedValue(null) } as never, {} as never),
@@ -1398,7 +1407,7 @@ describe("SmsRetryService", () => {
                 logRepository as unknown as IMessageLogRepository,
                 aligoService as unknown as AligoService,
                 messageSenderApprovalService as unknown as MessageSenderApprovalService,
-                undefined,
+                acceptance,
                 activation as never,undefined, undefined, undefined, undefined, new SystemSettingService({ execute: jest.fn().mockResolvedValue(null) } as never, {} as never),
             );
             return { source, transaction, clientFindFirst, activation };
@@ -1608,7 +1617,7 @@ describe("SmsRetryService", () => {
                 logRepository as unknown as IMessageLogRepository,
                 aligoService as unknown as AligoService,
                 messageSenderApprovalService as unknown as MessageSenderApprovalService,
-                undefined, activation as never, undefined, undefined, undefined, safeguard,new SystemSettingService({ execute: jest.fn().mockResolvedValue(null) } as never, {} as never),
+                acceptance, activation as never, undefined, undefined, undefined, safeguard,new SystemSettingService({ execute: jest.fn().mockResolvedValue(null) } as never, {} as never),
             );
             const source = createSmsRetryLog();
             source.triggerJobId = row.id;
@@ -1710,6 +1719,10 @@ describe("TIME-2 branch SMS retry timing", () => {
         jest.spyOn(settings, "getMessageSettingsPolicyEnabled").mockResolvedValue(true);
         return settings;
     };
+    const begin = async (log: MessageLogEntity) => {
+        log.markProviderCallStarted(new Date(Date.now()));
+        return log;
+    };
     const retryHarness = (settings = policy(1), bound = true) => {
         const source = MessageLogEntity.create({ branchId, provider: "aligo_sms", templateKey: "client_greeting_sms",
             ...(bound ? { triggerJobId: "job-time-2" } : {}), receiver: "01012345678", messageBody: "timing fixture",
@@ -1730,7 +1743,7 @@ describe("TIME-2 branch SMS retry timing", () => {
         const aligo = { sendSms: jest.fn().mockResolvedValue(rejection) };
         const activation = { runAutomaticRetryIfEnabled: jest.fn().mockResolvedValue({ applies: false, allowed: true }),
             readJobRuleRetryPermission: jest.fn().mockResolvedValue("on") };
-        const retry: SmsRetryService = Reflect.construct(SmsRetryService, [logs, aligo, { ensureApproved: jest.fn() }, undefined,
+        const retry: SmsRetryService = Reflect.construct(SmsRetryService, [logs, aligo, { ensureApproved: jest.fn() }, { beginProviderCall: begin },
             activation, undefined, undefined, undefined, { checkJobById: jest.fn().mockResolvedValue({ allowed: true }) }, settings]);
         const scheduler = () => new MessageRetrySchedulerService(logs as never, retry, { holdsLease: () => true } as never, settings);
         return { source, logs, aligo, retry, checkpoints, scheduler, activation };
@@ -1746,7 +1759,8 @@ describe("TIME-2 branch SMS retry timing", () => {
         const aligo = { sendSms: jest.fn().mockResolvedValue(rejection) };
         const delivery: SmsTriggerDeliveryService = Reflect.construct(SmsTriggerDeliveryService, [aligo,
             { getByKeyForBranch: jest.fn().mockResolvedValue({ content: "{{name}} fixture" }) }, logs,
-            undefined, undefined, createLegacyAutomationDeliveryGate(), undefined, settings]);
+            { prepare: (log: MessageLogEntity) => logs.save(log), beginProviderCall: begin },
+            undefined, createLegacyAutomationDeliveryGate(), undefined, settings]);
         return { job, logs, aligo, delivery };
     };
     beforeEach(() => {

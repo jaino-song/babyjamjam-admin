@@ -2921,27 +2921,6 @@ describe("MessageTriggerService", () => {
         });
     });
 
-    it("cancels a queued automatic service-end notice when the client was already notified", async () => {
-        const dispatcher = createDispatchService();
-        const job = createJob({
-            clientId: 7,
-            templateKey: MessageTriggerTemplateKey.SERVICE_END_NOTICE,
-            dedupeKey: "rule-service-end-notice:client:7:CLIENT:2026-09-16T03:00:00.000Z",
-        });
-        dispatcher.jobRepository.consumeDispatchSlotsAndFindDueJobs.mockResolvedValue([job]);
-        dispatcher.claimedJobRead.mockResolvedValue(job);
-        dispatcher.transaction.$queryRaw
-            .mockResolvedValueOnce([{ service_end_notice_sent_at: new Date("2026-09-15T03:00:00.000Z") }])
-            .mockResolvedValueOnce([{ payload: { templateVariables: { [SMS_DELIVERY_SNAPSHOT_VARIABLE]: "synthetic-trigger-prepared" } }, status: "processing", claim_token: "claim-a" }])
-            .mockResolvedValueOnce([{ id: job.id }]);
-
-        await dispatcher.service.dispatchDueJobs();
-
-        expect(dispatcher.deliveryService.sendJob).not.toHaveBeenCalled();
-        expect(job.status).toBe("canceled");
-        expect(job.cancelReason).toBe("서비스 종료 안내가 이미 발송됨");
-    });
-
     it("still allows an explicitly requested manual service-end notice", async () => {
         const dispatcher = createDispatchService();
         const job = createJob({
@@ -2956,30 +2935,6 @@ describe("MessageTriggerService", () => {
 
         expect(dispatcher.deliveryService.sendJob).toHaveBeenCalledWith(job);
         expect(job.status).toBe("sent");
-    });
-
-    it("blocks an already-sent automatic service-end notice before receipt-link preparation", async () => {
-        const dispatcher = createDispatchService();
-        const job = createJob({
-            clientId: 7,
-            templateKey: MessageTriggerTemplateKey.SERVICE_END_NOTICE,
-            dedupeKey: "rule-service-end-notice:client:7:CLIENT:2026-09-16T03:00:00.000Z",
-        });
-        const prepareJob = jest.fn();
-        const sendPreparedJob = jest.fn();
-        Object.assign(dispatcher.deliveryService, { prepareJob, sendPreparedJob });
-        dispatcher.jobRepository.consumeDispatchSlotsAndFindDueJobs.mockResolvedValue([job]);
-        dispatcher.claimedJobRead.mockResolvedValue(job);
-        dispatcher.transaction.$queryRaw.mockResolvedValueOnce([{
-            service_end_notice_sent_at: new Date("2026-09-15T03:00:00.000Z"),
-        }]);
-
-        await dispatcher.service.dispatchDueJobs();
-
-        expect(prepareJob).not.toHaveBeenCalled();
-        expect(sendPreparedJob).not.toHaveBeenCalled();
-        expect(job.status).toBe("canceled");
-        expect(job.cancelReason).toBe("서비스 종료 안내가 이미 발송됨");
     });
 
     it("leaves initial pending jobs untouched while branch dispatch is disabled", async () => {
@@ -6923,7 +6878,7 @@ describe("MessageTriggerService", () => {
         expect(persistedJob?.dedupeKey).toContain(":client:42:");
     });
 
-    it("does not enqueue an automatic service-end notice after one was already sent", async () => {
+    it("passes a service-end notice candidate to the occurrence-aware repository even with a legacy stamp", async () => {
         const serviceEndNoticeRule = createRule({
             id: "rule-service-end-notice",
             eventType: MessageTriggerEventType.SERVICE_END,
@@ -6939,7 +6894,7 @@ describe("MessageTriggerService", () => {
 
         await sync.service.syncClientRulesForClient(branchId, 1, true);
 
-        expect(sync.jobRepository.upsertPending).not.toHaveBeenCalled();
+        expect(sync.jobRepository.upsertPending).toHaveBeenCalledWith(expect.objectContaining({ templateKey: MessageTriggerTemplateKey.SERVICE_END_NOTICE }));
     });
 
     it("stamps a task commit reference on every materialized task-origin client job", async () => {
@@ -8659,7 +8614,10 @@ async function deferredCaregiverIntentFixture(clientFuture = false, coverageOnly
     const gate = new AgentAutomationDeliveryGateService(db as never, lock, authority);
     const aligo = { sendSms: jest.fn(async (request: unknown) => ({ response: { result_code: 1, message: "성공", msg_id: 9876, success_cnt: 1, error_cnt: 0 }, request })) };
     const delivery = new SmsTriggerDeliveryService(aligo as never, { getByKeyForBranch: async () => ({ id: "synthetic-info", content: "{{clientName}} 안내", requiredVariables: [], customVariables: [], updatedAt: new Date("2026-10-01T00:00:00Z") }) } as never,
-        { save: async (log: unknown) => log } as never, undefined, undefined, gate, undefined, { getMessageAutomationPolicyConfig: async () => ({ configuration: defaultMessageAutomationPolicy() }) } as never, templates);
+        { save: async (log: unknown) => log } as never, {
+            prepare: async (log: MessageLogEntity) => log,
+            beginProviderCall: async (log: MessageLogEntity) => { log.markProviderCallStarted(); return log; },
+        } as SmsProviderAcceptanceService, undefined, gate, undefined, { getMessageAutomationPolicyConfig: async () => ({ configuration: defaultMessageAutomationPolicy() }) } as never, templates);
     const core = new MessageTriggerService(db as never, delivery as never, approval as never, rules as never, jobs as never, {} as never, {} as never, {} as never,
         undefined, undefined, activation as never, lock, sources, gate, undefined, undefined, recipients, templates);
     const impact = new ClientAutomationImpactService(sources, delivery, sender as never, jobs as never, undefined, recipients);
@@ -10106,8 +10064,19 @@ describe("service-record date reconciliation", () => {
             ...defaultMessageAutomationPolicy(), pastExpiryHours: 24,
             quietHours: { timezone: "Asia/Seoul", enabled: quietEnabled, start: "21:00", end: "09:00", action: "DEFER", recipientGroups: ["CAREGIVER"] },
         } }) };
-        Object.assign(logRepository, { resolvePolicyRecipientGroups: async () => [{ recipientPhone: job.recipientPhone,
-            recipientGroups: ["CAREGIVER"], dueAt: job.scheduledFor }] });
+        Object.assign(logRepository, {
+            resolvePolicyRecipientGroups: async () => [{ recipientPhone: job.recipientPhone,
+                recipientGroups: ["CAREGIVER"], dueAt: job.scheduledFor }],
+            claimProviderAttempt: async (log: MessageLogEntity) => {
+                const selector = { id: log.id, branchId: log.branchId, providerAcceptanceState: "prepared" };
+                const started = await logModel.updateMany({ where: selector, data: {
+                    providerAcceptanceState: "started", providerCallStartedAt: new Date(),
+                } });
+                if (started.count !== 1) return null;
+                log.markProviderCallStarted();
+                return log;
+            },
+        });
         const lock = { runExclusive: async (_branchId: string, work: (tx: Prisma.TransactionClient) => Promise<unknown>) => work(tx as never) };
         const quiet = new MessageQuietHoursService(settings as never, logRepository, lock as never);
         const provider = jest.fn(async () => ({ request: { receiver: job.recipientPhone, msgType: "LMS" },
@@ -10120,7 +10089,7 @@ describe("service-record date reconciliation", () => {
             deliveryRules as never, settings as never, templates as never, quiet, repository);
         Object.assign(f.service, { smsDelivery: sms, deliveryService: sms });
         const send = async () => {
-            job.markProcessing("quiet-claim");
+            job.markProcessing("quiet-claim", new Date(Date.now() + 60_000));
             const prepared = await sms.prepareJob(job); if (!prepared) throw new Error("Missing preparation");
             job.markDispatchAuthorized();
             return sms.sendPreparedJob(job, prepared);

@@ -728,6 +728,8 @@ model branch {
   holidayChangeEvents           holiday_change_event[]
   endDateReviewItems            end_date_review_item[]
 
+  messageOccurrenceClaims message_occurrence_claim[]
+
   @@index([isActive], map: "idx_branch_is_active")
   @@index([adminId], map: "idx_branch_admin")
   @@index([region], map: "idx_branch_region")
@@ -1156,6 +1158,10 @@ model message_log {
   client         client?              @relation(fields: [clientId], references: [id], onDelete: SetNull, onUpdate: NoAction)
   triggerJob     message_trigger_job? @relation(fields: [triggerJobId], references: [id], onDelete: SetNull, onUpdate: NoAction)
 
+  occurrenceClaimsHeld     message_occurrence_claim[] @relation("OccurrenceHolder")
+  occurrenceClaimsAccepted message_occurrence_claim[] @relation("OccurrenceAcceptance")
+  occurrenceManualAttempts message_occurrence_manual_attempt[]
+
   @@index([branchId], map: "idx_message_log_branch")
   @@index([triggerJobId], map: "idx_message_log_trigger_job_id")
   @@index([status], map: "idx_message_log_status")
@@ -1164,6 +1170,47 @@ model message_log {
   @@index([createdAt], map: "idx_message_log_created_at")
   @@index([nextRetryAt], map: "idx_message_log_next_retry_at")
   @@index([providerAcceptanceState, nextRetryAt], map: "idx_message_log_provider_acceptance_state_retry")
+}
+
+model message_occurrence_claim {
+  branchId       String @map("branch_id") @db.Uuid
+  occurrenceKey  String @map("occurrence_key") @db.Char(64)
+  templateKey    String @map("template_key")
+  eventType      String? @map("event_type")
+  lifecycleId    Int @map("lifecycle_id")
+  recipientKind  String @map("recipient_kind")
+  recipientId    Int @map("recipient_id")
+  slot           String?
+  state          String @default("released")
+  holderLogId    Int? @map("holder_log_id")
+  acceptedVia    String? @map("accepted_via")
+  acceptedLogId  Int? @map("accepted_log_id")
+  proofSource    String? @map("proof_source")
+  epoch          Int @default(0)
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime @default(now()) @map("updated_at") @db.Timestamptz(6)
+  branch         branch @relation(fields: [branchId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  holder         message_log? @relation("OccurrenceHolder", fields: [holderLogId], references: [id], onDelete: SetNull, onUpdate: NoAction)
+  acceptance     message_log? @relation("OccurrenceAcceptance", fields: [acceptedLogId], references: [id], onDelete: SetNull, onUpdate: NoAction)
+  manualAttempts message_occurrence_manual_attempt[]
+
+  @@id([branchId, occurrenceKey])
+  @@index([holderLogId], map: "message_occurrence_claim_holder_idx")
+  @@index([acceptedLogId], map: "message_occurrence_claim_accepted_idx")
+}
+
+model message_occurrence_manual_attempt {
+  branchId      String @map("branch_id") @db.Uuid
+  occurrenceKey String @map("occurrence_key") @db.Char(64)
+  logId         Int @map("log_id")
+  state         String
+  createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt     DateTime @default(now()) @map("updated_at") @db.Timestamptz(6)
+  claim         message_occurrence_claim @relation(fields: [branchId, occurrenceKey], references: [branchId, occurrenceKey], onDelete: Restrict, onUpdate: NoAction)
+  log           message_log @relation(fields: [logId], references: [id], onDelete: Restrict, onUpdate: NoAction)
+
+  @@id([branchId, occurrenceKey, logId])
+  @@index([logId], map: "message_occurrence_manual_attempt_log_idx")
 }
 
 /// Database note: partial unique index `uniq_message_trigger_rule_default` on

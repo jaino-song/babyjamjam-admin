@@ -73,7 +73,7 @@ describe("MessageRetrySchedulerService", () => {
 
         await scheduler.retryFailedMessages();
 
-        expect(smsRetryService.retry).toHaveBeenCalledWith(smsLog, "automatic");
+        expect(smsRetryService.retry).toHaveBeenCalledWith(smsLog, "automatic", expect.any(Function));
         expect(alimtalkLog.status).toBe("failed");
         expect(alimtalkLog.nextRetryAt).toBeNull();
         expect(logRepository.update).toHaveBeenCalledWith(alimtalkLog);
@@ -128,7 +128,7 @@ describe("MessageRetrySchedulerService", () => {
 
         await scheduler.retryFailedMessages();
 
-        expect(smsRetryService.retry).toHaveBeenCalledWith(providerRejectedLog, "automatic");
+        expect(smsRetryService.retry).toHaveBeenCalledWith(providerRejectedLog, "automatic", expect.any(Function));
         expect(logRepository.update).not.toHaveBeenCalled();
     });
 
@@ -228,6 +228,6 @@ describe("MessageRetrySchedulerService", () => {
         await scheduler.retryFailedMessages();
 
         expect(smsRetryService.retry).toHaveBeenCalledTimes(1);
-        expect(smsRetryService.retry).toHaveBeenCalledWith(firstLog, "automatic");
+        expect(smsRetryService.retry).toHaveBeenCalledWith(firstLog, "automatic", expect.any(Function));
     });
 });

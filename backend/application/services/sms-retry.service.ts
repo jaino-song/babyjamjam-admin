@@ -1,3 +1,4 @@
+import { OCCURRENCE_ALREADY_ACCEPTED } from "domain/entities/message-occurrence";
 import { normalizePhone } from "application/utils/normalize-phone";
 import { AligoDefaultSenderPolicyService } from "./aligo-default-sender-policy.service";
 import { parseMessageQuietHold, publicMessageVariables, type MessageQuietHold } from "domain/message-policy-evaluator";
@@ -35,6 +36,7 @@ import {
     buildSmsProviderAcceptanceFingerprint,
     buildSmsProviderAcceptanceKey,
     SmsProviderAcceptanceService,
+    SmsOccurrenceBlockedError,
     SmsProviderReconciliationInput,
 } from "./sms-provider-acceptance.service";
 import {
@@ -193,13 +195,15 @@ export class SmsRetryService {
     async retry(
         sourceLog: MessageLogEntity,
         invocation: MessageRetryInvocation = "manual",
+        leaseHeld?: () => boolean,
     ): Promise<MessageLogEntity | null> {
+        if (leaseHeld && !leaseHeld()) return sourceLog;
         if (isQuietHoursCanceled(sourceLog)) return sourceLog;
         if (sourceLog.variables["quietHoursDisposition"] === "DEFER") {
             if (sourceLog.status === "pending" && sourceLog.providerAcceptanceState === "prepared"
                 && sourceLog.providerCallStartedAt === null && sourceLog.providerAcceptedAt === null && sourceLog.aligoMid === null
                 && ["manual", "automatic"].includes(sourceLog.variables["retryInvocation"] ?? "")) {
-                return this.resumeQuietRetry(sourceLog, invocation);
+                return this.resumeQuietRetry(sourceLog, invocation, leaseHeld);
             }
             // 실제 거절 이후에는 안정된 quiet 이력을 보존한 채 기존 재시도 경로를 따른다.
             // 그 외 pending/시작됨/불확실/수락됨 상태를 새 시도로 되살리지 않는다.
@@ -307,11 +311,8 @@ export class SmsRetryService {
                         return { kind: "terminal", log: retryLog };
                     }
 
-                    const providerAttempt = await this.admitRetry(sourceLog, retryLog, transaction, invocation);
+                    const providerAttempt = await this.admitRetry(sourceLog, retryLog, transaction, invocation, leaseHeld);
                     if (!providerAttempt) return { kind: "terminal", log: retryLog };
-                    if (!this.acceptanceService) {
-                        await this.logRepository.update(providerAttempt, transaction);
-                    }
                     return {
                         kind: "ready",
                         schedule,
@@ -401,13 +402,14 @@ export class SmsRetryService {
             }
         }
 
-        const providerAttempt = await this.admitRetry(sourceLog, retryLog, undefined, invocation);
+        const providerAttempt = await this.admitRetry(sourceLog, retryLog, undefined, invocation, leaseHeld);
         if (!providerAttempt) return this.quietDeferredLogs.has(retryLog) ? this.logRepository.findByIdInBranch(retryLog.branchId!, retryLog.id) : retryLog;
 
         return this.sendRetryAttempt(sourceLog, schedule, retryLog, providerAttempt, invocation, retryDelayMs);
     }
 
-    private async admitRetry(source: MessageLogEntity, retry: MessageLogEntity, transaction?: Prisma.TransactionClient, invocation: MessageRetryInvocation = "automatic"): Promise<MessageLogEntity | null> {
+    private async admitRetry(source: MessageLogEntity, retry: MessageLogEntity, transaction: Prisma.TransactionClient | undefined,
+        invocation: MessageRetryInvocation, leaseHeld?: () => boolean): Promise<MessageLogEntity | null> {
         return runSmsQuietHoursAdmission(this.quietHours, this.systemSettingService, retry.branchId, retry.receiver,
             async (decision, tx, revision) => {
                 if (decision.action === "DEFER") {
@@ -444,14 +446,30 @@ export class SmsRetryService {
                     await this.logRepository.update(source, tx);
                     return null;
                 }
-                return this.acceptanceService
-                    ? this.acceptanceService.beginProviderCall(retry, tx)
-                    : this.beginProviderCallWithoutBoundary(retry);
+                try {
+                    if (leaseHeld && !leaseHeld()) throw new SmsOccurrenceBlockedError("held");
+                    return await this.beginProviderCall(retry, tx);
+                } catch (error) {
+                    if (!(error instanceof SmsOccurrenceBlockedError) || !tx) throw error;
+                    if (error.disposition === "held") {
+                        // This child has never been admitted. Keep the existing
+                        // source due and avoid consuming a retry while it waits.
+                        await tx.message_log.delete({ where: { id: retry.id, branchId: retry.branchId, providerAcceptanceState: "prepared" } });
+                        source.nextRetryAt = new Date(Date.now() + 60_000);
+                        await tx.message_log.update({
+                            where: { id: source.id, branchId: source.branchId, nextRetryAt: null },
+                            data: { nextRetryAt: source.nextRetryAt },
+                        });
+                    } else {
+                        retry.markRetrySuperseded(OCCURRENCE_ALREADY_ACCEPTED);
+                    }
+                    return null;
+                }
             }, transaction);
     }
 
     /** Resume the same prepared acceptance; never create another retry attempt for quiet waiting. */
-    private async resumeQuietRetry(retry: MessageLogEntity, invocation: MessageRetryInvocation): Promise<MessageLogEntity | null> {
+    private async resumeQuietRetry(retry: MessageLogEntity, invocation: MessageRetryInvocation, leaseHeld?: () => boolean): Promise<MessageLogEntity | null> {
         const hold = parseMessageQuietHold(retry.variables);
         const sourceId = Number(retry.variables["retryOfLogId"]);
         if (!hold || !retry.branchId || !this.quietHours || !Number.isSafeInteger(sourceId) || sourceId <= 0) throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
@@ -562,8 +580,20 @@ export class SmsRetryService {
                             decision.action === "CANCEL", finalTx);
                         return null;
                     }
-                    const providerAttempt = this.acceptanceService ? await this.acceptanceService.beginProviderCall(current, finalTx) : this.beginProviderCallWithoutBoundary(current);
-                    return { source, current, providerAttempt, explicitManual, ...(authority.kind === "valid" ? { snapshot: authority.snapshot } : {}) };
+                    if (leaseHeld && !leaseHeld()) return null;
+                    try {
+                        const providerAttempt = await this.beginProviderCall(current, finalTx);
+                        return { source, current, providerAttempt, explicitManual, ...(authority.kind === "valid" ? { snapshot: authority.snapshot } : {}) };
+                    } catch (error) {
+                        if (!(error instanceof SmsOccurrenceBlockedError)) throw error;
+                        if (error.disposition === "held") {
+                            await finalTx.message_log.update({
+                                where: { id: current.id, branchId: current.branchId, providerAcceptanceState: "prepared" },
+                                data: { nextRetryAt: new Date(Date.now() + 60_000) },
+                            });
+                        }
+                        return null;
+                    }
                 }, tx, currentHold.releaseAt);
             return result;
         }, transaction);
@@ -1159,13 +1189,9 @@ export class SmsRetryService {
             : log.providerAcceptanceState;
     }
 
-    private beginProviderCallWithoutBoundary(log: MessageLogEntity): MessageLogEntity {
-        if (log.providerAcceptanceState !== "prepared" && log.providerAcceptanceState !== "legacy") {
-            throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
-        }
-        log.providerAcceptanceState = "started";
-        log.providerCallStartedAt = new Date(Date.now());
-        return log;
+    private beginProviderCall(log: MessageLogEntity, transaction?: Prisma.TransactionClient): Promise<MessageLogEntity> {
+        if (!this.acceptanceService) throw new ConflictException(codeOnlyProblemBody("REQUEST_CONFLICT"));
+        return this.acceptanceService.beginProviderCall(log, transaction);
     }
 
     private providerResponseMessage(result: unknown): string {

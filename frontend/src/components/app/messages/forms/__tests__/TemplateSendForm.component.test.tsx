@@ -1569,6 +1569,21 @@ describe("Phase2a SMS outcome state machine", () => {
 
 
 describe("D4 server preflight, draft keys, and queue outcomes", () => {
+  it.each([
+    { kind: "system", key: "INFO" },
+    { kind: "branch", id: "info-copy" },
+    undefined,
+  ] as const)("carries the exact selected reference through preflight and send (%p)", async templateRef => {
+    mockedSendSms.mockResolvedValue(buildSendSuccess());
+    render(<TemplateSendForm templateId="builtin:info" templateName="안내" message="동일한 본문" templateRef={templateRef} />);
+    await queueRecipient("01011111111");
+    fireEvent.click(screen.getByRole("button", { name: /즉시 발송/ }));
+    await waitFor(() => expect(mockedSendSms).toHaveBeenCalledTimes(1));
+    const [preflightPayload, branch] = mockedCheckDuplicate.mock.calls[0]!;
+    expect(mockedSendSms).toHaveBeenCalledWith(preflightPayload, branch);
+    expect(preflightPayload.templateRef).toEqual(templateRef);
+  });
+
   it("carries the exact server acknowledgement only after explicit approval", async () => {
     const preflight = duplicatePreflight([501, 502]);
     mockedCheckDuplicate.mockResolvedValue(preflight);

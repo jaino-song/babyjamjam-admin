@@ -126,13 +126,12 @@ describe("read-only client message effect recipe", () => {
         expect(enrichers.enrich).not.toHaveBeenCalled();
     });
 
-    it("does not invent a job when optional dates are absent or a one-shot message was already sent", async () => {
+    it("does not invent a job when the event date is absent", async () => {
         const { input, templates } = setup();
         input.rule.eventType = MessageTriggerEventType.SERVICE_END;
         input.rule.offsetType = MessageTriggerOffsetType.AFTER_DAYS;
         input.rule.templateKey = MessageTriggerTemplateKey.SERVICE_END_NOTICE;
         expect(await describeClientMessageEffect({ ...input, client: { ...client, endDate: null } })).toEqual({ status: "none" });
-        expect(await describeClientMessageEffect({ ...input, client: { ...client, serviceEndNoticeSentAt: now } })).toEqual({ status: "none" });
         expect(templates.getByKeyForBranch).not.toHaveBeenCalled();
     });
 });

@@ -1,3 +1,8 @@
+import { SystemTemplateService } from "application/services/system-template.service";
+import { resolveSystemTemplateDeliveryMode, systemTemplateKeySchema } from "@babyjamjam/shared/types/system-template";
+import {
+    admitOccurrence, manualTemplateVariables, occurrenceVariables, resolveLogOccurrence, settleOccurrence,
+} from "infrastructure/database/repositories/message-occurrence-ledger";
 import { AligoDefaultSenderPolicyService } from "application/services/aligo-default-sender-policy.service";
 import { MESSAGE_TRIGGER_JOB_REPOSITORY, type IMessageTriggerJobRepository } from "domain/repositories/message-trigger-job.repository.interface";
 import { MessageTriggerJobEntity } from "domain/entities/message-trigger-job.entity";
@@ -17,6 +22,7 @@ import {
     Logger,
     NotFoundException,
     Post,
+    Optional,
     Query,
     ServiceUnavailableException,
     UseGuards,
@@ -65,6 +71,8 @@ interface SmsMessageLogRecord {
     providerAcceptanceState?: string | null;
     providerCallStartedAt?: Date | null;
     status?: string | null;
+    receiver?: string;
+    aligoMid?: string | null;
     variables?: Prisma.JsonValue | null;
 }
 
@@ -99,6 +107,7 @@ export class MessageDeliveryController {
         private readonly quietHours?: MessageQuietHoursService,
         @Inject(MESSAGE_TRIGGER_JOB_REPOSITORY) private readonly jobs?: IMessageTriggerJobRepository,
         private readonly defaultSender?: AligoDefaultSenderPolicyService,
+        @Optional() private readonly systemTemplates?: SystemTemplateService,
     ) {}
 
     @Post("sms/duplicate-check")
@@ -130,14 +139,19 @@ export class MessageDeliveryController {
     }
 
     private smsFingerprint(branchId: string, dto: SendSmsMessageDto, triggerType: string, scheduledDate?: string, scheduledTime?: string): string {
-        return buildSmsProviderAcceptanceFingerprint({
+        return buildSmsProviderAcceptanceFingerprint(this.smsFingerprintInput(branchId, dto, triggerType, scheduledDate, scheduledTime));
+    }
+
+    private smsFingerprintInput(branchId: string, dto: SendSmsMessageDto, triggerType: string, scheduledDate?: string, scheduledTime?: string) {
+        return {
             branchId, receiver: dto.receiver, message: dto.message,
             recipientName: dto.recipientName ?? null, title: dto.title?.trim() || null,
             clientId: dto.clientId ?? null, employeeId: dto.employeeId ?? null,
             msgType: dto.msgType ?? "AUTO", triggerType,
             scheduledDate: scheduledDate ?? null, scheduledTime: scheduledTime ?? null,
             testMode: dto.testMode === true,
-        });
+            ...(dto.templateRef ? { templateRef: dto.templateRef } : {}),
+        };
     }
 
     @Post("sms")
@@ -200,6 +214,24 @@ export class MessageDeliveryController {
 
         if (!pendingLog.created) {
             const state = String(pendingLog.row.providerAcceptanceState ?? "legacy");
+            if (resolvedDto.templateRef && (state === "accepted" || state === "reconciled_delivered")) {
+                const variables = this.smsRecordVariables(pendingLog.row);
+                const msgType = variables["msgType"] === "LMS" ? "LMS" as const : "SMS" as const;
+                const msgId = this.smsInteger(pendingLog.row.aligoMid);
+                return {
+                    provider: "aligo_sms", triggerType,
+                    request: {
+                        receiver: pendingLog.row.receiver ?? resolvedDto.receiver, msgType,
+                        testMode: resolvedDto.testMode === true,
+                        ...(scheduledDate && scheduledTime ? { scheduledAt: `${scheduledDate}${scheduledTime}` } : {}),
+                    },
+                    result: {
+                        resultCode: 1, message: "이미 접수된 문자입니다.",
+                        ...(msgId !== undefined ? { msgId } : {}),
+                        successCount: 1, errorCount: 0, msgType,
+                    },
+                };
+            }
             if (state === "accepted" || state === "reconciled_delivered" || pendingLog.row.status === "sent") {
                 throw new ConflictException(
                     this.smsProblemBody(
@@ -228,7 +260,7 @@ export class MessageDeliveryController {
                         effectiveRequestKey, immediateScheduledFor ?? new Date(Date.now()), transaction, pendingLog.row);
                     return { kind: "queued" as const, response };
                 }
-                await this.markProviderCallStarted(pendingLog.row, transaction);
+                await this.markProviderCallStarted(pendingLog.row, resolvedDto.templateRef ? branchId : undefined, transaction);
                 return { kind: "provider" as const };
             });
         } catch (error) {
@@ -276,7 +308,7 @@ export class MessageDeliveryController {
                     ...this.smsRecordVariables(pendingLog.row),
                     retrySafety: "uncertain",
                 },
-            }).catch((logError) => {
+            }, resolvedDto.templateRef ? branchId : undefined).catch((logError) => {
                 this.logger.error(
                     `[SMS] Provider request failed and delivery record update also failed: logId=${pendingLog.id}, error=${this.formatErrorMessage(logError)}`,
                 );
@@ -309,6 +341,7 @@ export class MessageDeliveryController {
             triggerType,
             expectedRecipientCount,
             pendingLog.row.variables,
+            resolvedDto.templateRef ? branchId : undefined,
         ).catch((error) => {
             this.logger.error(
                 `[SMS] Provider result received but delivery record update failed: logId=${pendingLog.id}, error=${this.formatErrorMessage(error)}`,
@@ -502,10 +535,8 @@ export class MessageDeliveryController {
                 const variables = { ...originalVariables, ...(preparedRoot && ordinal === 0 ? { recipientName: recipient.recipientName ?? null } : {}), origin: "ADMIN_DIRECT", manualQueueMode: "internal", manualQueueCount: String(recipients.length),
                     manualQueueOrdinal: String(ordinal), manualQueueStatus: status, manualQueueScheduledAt: due.toISOString(),
                     manualQueueRequestKey: requestKey, manualQueueSenderIdentity: sender.identityDigest,
-                    manualQueueFingerprintInput: JSON.stringify({ branchId, receiver: dto.receiver, message: dto.message,
-                        recipientName: dto.recipientName ?? null, title: dto.title?.trim() || null, clientId: dto.clientId ?? null,
-                        employeeId: dto.employeeId ?? null, msgType: dto.msgType ?? "AUTO", triggerType,
-                        scheduledDate: scheduledDate ?? null, scheduledTime: scheduledTime ?? null, testMode: dto.testMode === true }),
+                    manualQueueFingerprintInput: JSON.stringify(this.smsFingerprintInput(branchId, dto, triggerType, scheduledDate, scheduledTime)),
+                    ...manualTemplateVariables(dto.templateRef),
                     manualRecipientBindings: JSON.stringify(recipient.manualRecipientBindings),
                     title: dto.title ?? "", employeeId: recipient.employeeId ?? null,
                     triggerType, msgType: dto.msgType ?? "AUTO", testMode: dto.testMode ? "true" : "false",
@@ -610,6 +641,7 @@ export class MessageDeliveryController {
                 recipientPhone: dto.receiver,
                 messageBody: dto.message,
                 variables: {
+                    ...manualTemplateVariables(dto.templateRef),
                     manualRecipientBindings: JSON.stringify(dto.manualRecipientBindings),
                     recipientName: dto.recipientName ?? null,
                     title: dto.title ?? null,
@@ -656,7 +688,8 @@ export class MessageDeliveryController {
         }
     }
 
-    private async markProviderCallStarted(row: SmsMessageLogRecord, transaction?: Prisma.TransactionClient): Promise<void> {
+    private async markProviderCallStarted(row: SmsMessageLogRecord, occurrenceBranchId?: string, transaction?: Prisma.TransactionClient): Promise<void> {
+        if (occurrenceBranchId && !transaction) throw new MessageQuietHoursUnavailableError();
         const startedAt = new Date(Date.now());
         const messageLogModel = (transaction ?? this.prisma).message_log as typeof this.prisma.message_log & {
             updateMany?: (args: { where: Record<string, unknown>; data: Record<string, unknown> }) => Promise<{ count: number }>;
@@ -672,6 +705,7 @@ export class MessageDeliveryController {
         const claimed = await messageLogModel.updateMany({
             where: {
                 id: row.id,
+                ...(occurrenceBranchId ? { branchId: occurrenceBranchId } : {}),
                 providerAcceptanceKey: row.providerAcceptanceKey,
                 providerAcceptanceFingerprint: row.providerAcceptanceFingerprint,
                 providerAcceptanceState: "prepared",
@@ -690,8 +724,41 @@ export class MessageDeliveryController {
                 ),
             );
         }
+        if (occurrenceBranchId && transaction) {
+            const started = await transaction.message_log.findUniqueOrThrow({ where: { id: row.id, branchId: occurrenceBranchId } });
+            const target = await resolveLogOccurrence(transaction, started);
+            if (target) {
+                await admitOccurrence(transaction, row.id, target);
+                const variables = { ...this.smsRecordVariables(started), ...occurrenceVariables(target) };
+                await transaction.message_log.update({
+                    where: { id: row.id, branchId: occurrenceBranchId }, data: { variables: variables as Prisma.InputJsonObject },
+                });
+                row.variables = variables as Prisma.JsonObject;
+            }
+        }
         row.providerAcceptanceState = "started";
         row.providerCallStartedAt = startedAt;
+    }
+
+    private async resolveTemplateRef(branchId: string, reference: unknown, transaction?: Prisma.TransactionClient) {
+        if (reference === undefined) return undefined;
+        const invalid = () => new BadRequestException(this.smsProblemBody("REQUEST_INVALID", "NOT_APPLIED"));
+        if (!this.isRecord(reference) || Object.keys(reference).length !== 2) throw invalid();
+        if (reference["kind"] === "system") {
+            const result = systemTemplateKeySchema.safeParse(reference["key"]);
+            if (!result.success || resolveSystemTemplateDeliveryMode(result.data) !== "sms") throw invalid();
+            if (!this.systemTemplates) throw new MessageQuietHoursUnavailableError();
+            const template = await this.systemTemplates.getByKeyForBranch(branchId, result.data, transaction);
+            if (!template.content.trim()) throw invalid();
+            return { kind: "system" as const, key: result.data };
+        }
+        if (reference["kind"] !== "branch" || typeof reference["id"] !== "string"
+            || !reference["id"].trim() || reference["id"].length > 200) throw invalid();
+        const template = await (transaction ?? this.prisma).message_template.findFirst({
+            where: { branchId, id: reference["id"] }, select: { id: true, content: true },
+        });
+        if (!template || !template.content.trim()) throw invalid();
+        return { kind: "branch" as const, id: template.id };
     }
 
     private async resolveSmsRecipients(
@@ -710,6 +777,10 @@ export class MessageDeliveryController {
             .split(",")
             .map((value) => value.trim())
             .filter(Boolean);
+        if (dto.templateRef !== undefined && rawReceivers.length !== 1) {
+            throw new BadRequestException(this.smsProblemBody("REQUEST_INVALID", "NOT_APPLIED"));
+        }
+        const templateRef = await this.resolveTemplateRef(branchId, dto.templateRef, transaction);
         const normalizedRawReceivers = rawReceivers.map((value) => normalizePhone(value));
         if (normalizedRawReceivers.length === 0 || normalizedRawReceivers.some((value) => !value)) {
             throw new BadRequestException(this.smsProblemBody("REQUEST_INVALID", "NOT_APPLIED"));
@@ -775,6 +846,7 @@ export class MessageDeliveryController {
         const employeeId = recipients.length === 1 && recipients[0]?.kind === "employee" ? recipients[0].id : null;
         return {
             ...dto,
+            ...(templateRef ? { templateRef } : {}),
             receiver: recipients.map((recipient) => recipient.phone).join(","),
             recipientName: canonicalName,
             clientId,
@@ -827,6 +899,7 @@ export class MessageDeliveryController {
         triggerType: string,
         expectedRecipientCount?: number,
         existingVariables?: Prisma.JsonValue | null,
+        occurrenceBranchId?: string,
     ): Promise<void> {
         const recipientCount = expectedRecipientCount ?? this.smsRecipientCountFromResult(result);
         const providerOutcome = classifySmsProviderOutcome(result, recipientCount);
@@ -905,7 +978,7 @@ export class MessageDeliveryController {
             updateData["recipientPhone"] = receiver;
         }
 
-        await this.updateSmsLog(logId, updateData);
+        await this.updateSmsLog(logId, updateData, occurrenceBranchId);
     }
 
     /** Reserved send time from Aligo's YYYYMMDD + HHmm request fields (Asia/Seoul), or null. */
@@ -921,7 +994,17 @@ export class MessageDeliveryController {
     private async updateSmsLog(
         logId: number,
         data: Record<string, unknown>,
+        occurrenceBranchId?: string,
     ): Promise<void> {
+        if (occurrenceBranchId) {
+            await this.prisma.$transaction(async tx => {
+                const row = await tx.message_log.update({
+                    where: { id: logId, branchId: occurrenceBranchId, providerAcceptanceState: "started" }, data,
+                });
+                await settleOccurrence(tx, row);
+            });
+            return;
+        }
         await this.prisma.message_log.update({
             where: { id: logId },
             data,
