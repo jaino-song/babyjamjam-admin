@@ -9397,7 +9397,7 @@ describe("service-record date reconciliation", () => {
         expect(f.provider).not.toHaveBeenCalled();
     });
 
-    it("keeps the old occurrence canceled after approval and two catch-up re-keys, then sends a distinct future occurrence", async () => {
+    it.each(["future", "catch-up"])("keeps the old occurrence canceled after approval and two catch-up re-keys, then sends a distinct %s occurrence", async (kind) => {
         const f = dispatchFixture();
         f.activeRules.splice(1);
         const old = f.seed();
@@ -9419,6 +9419,7 @@ describe("service-record date reconciliation", () => {
         lookup.mockImplementation(async (query) => {
             const { where } = query;
             if (where.status !== "canceled") return read(query);
+            if (where.ruleId !== old.ruleId) return null;
             const clauses = where.OR!;
             expect(where).toMatchObject({ status: "canceled", branchId, clientId: 7, ruleId: old.ruleId, employeeScheduleId: null,
                 recipientType: old.recipientType, cancelReason: old.cancelReason, dedupeKey: { not: expect.any(String) } });
@@ -9426,16 +9427,29 @@ describe("service-record date reconciliation", () => {
             return clauses.some((clause) => clause.payload && "equals" in clause.payload
                 && clause.payload.equals === old.payload.catchUp?.originalScheduledFor) ? old : null;
         });
+        const findUnique = jest.spyOn(f.db.message_trigger_job as unknown as {
+            findUnique: (query: { where: Prisma.message_trigger_jobWhereUniqueInput }) => Promise<unknown>;
+        }, "findUnique");
+        const readUnique = findUnique.getMockImplementation()!;
+        findUnique.mockImplementation(async (query) => {
+            const { dedupeKey } = query.where;
+            if (typeof dedupeKey !== "string") return readUnique(query);
+            return structuredClone(f.rows.find((row) => row.dedupeKey === dedupeKey) ?? null);
+        });
         const queryRaw = f.db.$queryRaw as unknown as jest.Mock<Promise<unknown[]>, [Prisma.Sql]>;
         const raw = queryRaw.getMockImplementation()!;
         const insert = jest.fn();
         queryRaw.mockImplementation(async (sql) => {
             if (sql.sql.includes("SELECT id, branch_id, jobs_stale")) {
-                return [{ id: f.endRule.id, branch_id: branchId, jobs_stale: false, updated_at: f.endRule.updatedAt }];
+                const rule = f.activeRules.find((rule) => sql.values.includes(rule.id))!;
+                return [{ id: rule.id, branch_id: branchId, jobs_stale: false, updated_at: rule.updatedAt }];
             }
             if (sql.sql.includes('INSERT INTO "message_trigger_job"')) {
-                insert();
-                const job = f.rows.find((row) => row.status === "pending") ?? f.seed();
+                const [, ruleId, scheduledFor, , , , , , dedupeKey, payload] = sql.values;
+                if (f.rows.some((row) => row.dedupeKey === dedupeKey)) return [];
+                insert(ruleId);
+                const rule = f.activeRules.find((rule) => rule.id === ruleId)!;
+                const job = f.seed(rule, { scheduledFor: scheduledFor as Date, dedupeKey: String(dedupeKey), payload: JSON.parse(String(payload)) });
                 return [{ id: job.id, status: job.status, branch_id: job.branchId, client_id: job.clientId, rule_id: job.ruleId,
                     recipient_type: job.recipientType, template_key: job.templateKey, payload: job.payload, dedupe_key: job.dedupeKey,
                     scheduled_for: job.scheduledFor, created_at: job.createdAt, updated_at: job.updatedAt, recipient_phone: job.recipientPhone,
@@ -9468,17 +9482,20 @@ describe("service-record date reconciliation", () => {
         await expect(f.service.dispatchPendingJobNow(old.id, { expectedBranchId: branchId })).resolves.toMatchObject({ status: "canceled" });
         expect(f.provider).not.toHaveBeenCalled();
 
-        f.client.endDate = new Date("2026-11-25Z");
+        const independent = kind === "catch-up" ? f.rule("independent") : f.endRule;
+        if (kind === "catch-up") f.activeRules.push(independent);
+        else f.client.endDate = new Date("2026-11-25Z");
+        await sync(true);
         await sync(true);
         expect(insert).toHaveBeenCalledTimes(1);
+        expect(insert).toHaveBeenCalledWith(independent.id);
         const pending = f.rows.filter((row) => row.status === "pending");
         expect(pending).toHaveLength(1);
         const next = pending[0]!;
         jest.setSystemTime(next.scheduledFor);
-        const prepared = (await f.prepare(next))!;
-        expect(await f.authorize(prepared)).toBe(true);
-        await f.delivery.sendPreparedJob(prepared.job, prepared.preparation);
+        await expect(f.service.dispatchPendingJobNow(next.id, { expectedBranchId: branchId })).resolves.toMatchObject({ status: "sent" });
         expect(f.provider).toHaveBeenCalledTimes(1);
+        if (kind === "catch-up") expect(next.payload.catchUp).toMatchObject({ sequence: 1, predecessorDedupeKey: null });
         expect(old).toEqual(before);
     });
 
