@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process';
 import { constants } from 'node:fs';
-import { link, lstat, mkdtemp, open, readdir, realpath, rm } from 'node:fs/promises';
+import { link, lstat, mkdtemp, open, readFile, readdir, realpath, rm } from 'node:fs/promises';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 
 const PIXELS_PER_POINT = 300 / 72;
@@ -99,33 +99,56 @@ function runTool(bin, args, {
     });
 }
 
-async function copyPdf(sourcePath, targetPath, invalid, { durable = false } = {}) {
-    const source = await open(sourcePath, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK)
+function openPdf(path, invalid) {
+    return open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK)
         .catch(() => { throw new RasterError(invalid); });
+}
+
+function sameInode(a, b) {
+    return a.dev === b.dev && a.ino === b.ino;
+}
+
+function samePdfSnapshot(a, b) {
+    return sameInode(a, b) && a.size === b.size && a.mtimeNs === b.mtimeNs && a.ctimeNs === b.ctimeNs;
+}
+
+async function copyPdfBytes(source, target, before, invalid) {
+    // A concurrent append cannot extend this copy beyond the size checked by the caller.
+    const size = Number(before.size);
+    const buffer = Buffer.allocUnsafe(Math.min(1024 ** 2, size));
+    let offset = 0;
+    while (offset < size) {
+        const { bytesRead } = await source.read(buffer, 0, Math.min(buffer.length, size - offset), offset);
+        requireRaster(bytesRead > 0, invalid);
+        let written = 0;
+        while (written < bytesRead) {
+            const { bytesWritten } = await target.write(buffer, written, bytesRead - written, offset + written);
+            requireRaster(bytesWritten > 0 && bytesWritten <= bytesRead - written, 'RASTER_IO_ERROR');
+            written += bytesWritten;
+        }
+        offset += bytesRead;
+    }
+    requireRaster(samePdfSnapshot(before, await source.stat({ bigint: true })), invalid);
+}
+
+async function copyPdf(sourcePath, targetPath, invalid, { durable = false, preflight } = {}) {
+    const source = await openPdf(sourcePath, invalid);
     try {
-        const before = await source.stat();
-        requireRaster(before.isFile() && before.size > 0, invalid);
-        requireRaster(before.size <= MAX_PDF_BYTES, 'RASTER_LIMIT');
+        const before = await source.stat({ bigint: true });
+        // Node does not export the FileHandle class. Use the one returned by open().
+        const checked = preflight && await preflight(source.constructor, before);
+        requireRaster(before.isFile() && before.size > 0n, invalid);
+        requireRaster(before.size <= BigInt(MAX_PDF_BYTES), 'RASTER_LIMIT');
 
         const target = await open(targetPath, 'wx', 0o600);
         try {
-            // A concurrent append cannot extend this copy beyond the size checked above.
-            const buffer = Buffer.allocUnsafe(Math.min(1024 ** 2, before.size));
-            let offset = 0;
-            while (offset < before.size) {
-                const { bytesRead } = await source.read(buffer, 0, Math.min(buffer.length, before.size - offset), offset);
-                requireRaster(bytesRead > 0, invalid);
-                await target.writeFile(buffer.subarray(0, bytesRead));
-                offset += bytesRead;
-            }
-            const after = await source.stat();
-            const copied = await target.stat();
-            requireRaster(copied.size === before.size && after.size === before.size &&
-                before.mtimeMs === after.mtimeMs && before.ctimeMs === after.ctimeMs, invalid);
+            await copyPdfBytes(source, target, before, invalid);
+            requireRaster((await target.stat({ bigint: true })).size === before.size, invalid);
             if (durable) await target.sync();
         } finally {
             await target.close();
         }
+        return checked;
     } finally {
         await source.close();
     }
@@ -359,22 +382,84 @@ async function publishExclusive(staging, outputPath) {
     }
 }
 
+async function ownedOutputStats({ path, handle, FileHandle, source, expected }, size = 0n) {
+    const invalid = 'RASTER_INVALID_ARGUMENT';
+    requireRaster(process.platform === 'linux' && handle instanceof FileHandle, invalid);
+    const fd = Object.getOwnPropertyDescriptor(FileHandle.prototype, 'fd').get.call(handle);
+    requireRaster(Number.isInteger(fd) && fd >= 0 && handle.fd === fd, invalid);
+
+    let descriptor;
+    let entry;
+    try {
+        // Linux reports descriptor flags in octal. O_ACCMODE is the low two bits.
+        const info = await readFile(`/proc/self/fdinfo/${fd}`, 'utf8');
+        const flags = Number.parseInt(/^flags:\s*([0-7]+)$/m.exec(info)?.[1], 8);
+        const access = flags & (constants.O_WRONLY | constants.O_RDWR);
+        requireRaster((access === constants.O_WRONLY || access === constants.O_RDWR) &&
+            !(flags & constants.O_APPEND), invalid);
+        descriptor = await FileHandle.prototype.stat.call(handle, { bigint: true });
+        entry = await lstat(path, { bigint: true });
+    } catch {
+        throw new RasterError(invalid);
+    }
+    requireRaster(handle.fd === fd && descriptor.isFile() && entry.isFile() &&
+        sameInode(descriptor, entry) && (!expected || sameInode(descriptor, expected)) &&
+        descriptor.uid === BigInt(process.geteuid()) && entry.uid === descriptor.uid &&
+        (descriptor.mode & 0o7777n) === 0o600n && entry.mode === descriptor.mode &&
+        !sameInode(descriptor, source), invalid);
+    requireRaster(descriptor.nlink === 1n && entry.nlink === 1n, 'RASTER_OUTPUT_EXISTS');
+    requireRaster(descriptor.size === size && entry.size === size,
+        size === 0n ? 'RASTER_OUTPUT_EXISTS' : 'RASTER_IO_ERROR');
+    return descriptor;
+}
+
+async function writeOwnedOutput(rendered, result, output) {
+    const invalid = 'RASTER_INVALID_OUTPUT';
+    const raster = await openPdf(rendered, invalid);
+    try {
+        const before = await raster.stat({ bigint: true });
+        requireRaster(samePdfSnapshot(before, result), invalid);
+        await ownedOutputStats(output);
+        await copyPdfBytes(raster, output.handle, before, invalid);
+        await output.handle.sync();
+    } finally {
+        await raster.close();
+    }
+}
+
+/**
+ * On Linux, outputHandle may be an open writable, non-append fs/promises FileHandle.
+ * outputPath must name that empty, single-link, effective-uid-owned 0600 regular
+ * file directly, with a private caller-controlled parent and an inode distinct
+ * from the source. The caller keeps the handle open and exclusive for this call,
+ * syncs the journal and reserved directory entry, and recovers any bytes left
+ * on failure. Undefined selects legacy publication.
+ */
 export async function renderRasterPdf(options) {
     let scratch;
     let destinationScratch;
     try {
-        const { sourcePath, outputPath, gsBin = 'gs', qpdfBin = 'qpdf' } = options ?? {};
+        const { sourcePath, outputPath, gsBin = 'gs', qpdfBin = 'qpdf', outputHandle } = options ?? {};
         requireRaster([sourcePath, outputPath].every((path) => typeof path === 'string' &&
             isAbsolute(path) && !path.includes('\0')) &&
             [gsBin, qpdfBin].every((bin) => typeof bin === 'string' && bin && !bin.includes('\0')),
             'RASTER_INVALID_ARGUMENT');
-        await assertOutputAbsent(outputPath);
-        const outputDirectory = await realpath(dirname(outputPath));
+        let outputDirectory;
+        let preflight;
+        if (outputHandle === undefined) {
+            await assertOutputAbsent(outputPath);
+            outputDirectory = await realpath(dirname(outputPath));
+        } else {
+            preflight = async (FileHandle, source) => {
+                const output = { path: outputPath, handle: outputHandle, FileHandle, source };
+                return { ...output, expected: await ownedOutputStats(output) };
+            };
+        }
 
         scratch = await mkdtemp('/tmp/bjj-raster-');
         const source = join(scratch, 'source.pdf');
         const rendered = join(scratch, 'rendered.pdf');
-        await copyPdf(sourcePath, source, 'RASTER_INVALID_SOURCE');
+        const ownedOutput = await copyPdf(sourcePath, source, 'RASTER_INVALID_SOURCE', { preflight });
         await checkPdfEnvelope(source, 'RASTER_INVALID_SOURCE');
         const sizes = sourcePixelSizes(await inspectPdf(qpdfBin, source, scratch, 'RASTER_INVALID_SOURCE'));
         await runTool(qpdfBin, ['--suppress-recovery', '--check', source], {
@@ -389,11 +474,19 @@ export async function renderRasterPdf(options) {
             timeout: Math.min(600_000, 30_000 + 5_000 * sizes.length),
         });
 
-        const result = await lstat(rendered).catch(() => { throw new RasterError('RASTER_INVALID_OUTPUT'); });
-        requireRaster(result.isFile() && result.nlink === 1 && result.size > 0, 'RASTER_INVALID_OUTPUT');
-        requireRaster(result.size <= MAX_PDF_BYTES, 'RASTER_LIMIT');
+        const result = await lstat(rendered, { bigint: true }).catch(() => { throw new RasterError('RASTER_INVALID_OUTPUT'); });
+        requireRaster(result.isFile() && result.nlink === 1n && result.size > 0n, 'RASTER_INVALID_OUTPUT');
+        requireRaster(result.size <= BigInt(MAX_PDF_BYTES), 'RASTER_LIMIT');
         await checkPdfEnvelope(rendered, 'RASTER_INVALID_OUTPUT');
         await verifyOutput(qpdfBin, rendered, scratch, sizes);
+
+        if (ownedOutput) {
+            await writeOwnedOutput(rendered, result, ownedOutput);
+            await rm(scratch, { recursive: true, force: true });
+            scratch = undefined;
+            await ownedOutputStats(ownedOutput, result.size);
+            return;
+        }
 
         // Sync the final inode on the destination filesystem before linking it
         // into the requested name. Sync the directory before reporting success.

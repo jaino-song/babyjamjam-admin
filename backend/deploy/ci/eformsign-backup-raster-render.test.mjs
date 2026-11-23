@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { execFile, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { link, lstat, mkdir, mkdtemp, readFile, readdir, rm, stat, symlink, truncate, writeFile } from 'node:fs/promises';
+import { link, lstat, mkdir, mkdtemp, open, readFile, readdir, rename, rm, stat, symlink, truncate, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { promisify } from 'node:util';
@@ -409,6 +409,403 @@ rasterTest('publishes the validated result to a destination on a separate filesy
     const [image] = pages[0].images;
     checkPixel(await readImage(result, image), image.width, 20, 50, red, 'cross-filesystem publication');
 });
+
+async function ownedFixture(t, flags = 'wx+') {
+    const dir = await temp(t);
+    const stage = join(dir, 'stage');
+    const sourcePath = join(dir, 'synthetic-original.pdf');
+    const outputPath = join(stage, 'journal-target.pdf');
+    const original = simpleSource(['0 0 24 24']);
+    await mkdir(stage, { mode: 0o700 });
+    await writeFile(sourcePath, original, { mode: 0o600 });
+    const source = await lstat(sourcePath, { bigint: true });
+    const outputHandle = await open(outputPath, flags, 0o600);
+    t.after(() => outputHandle.close());
+    const owned = await outputHandle.stat({ bigint: true });
+    return { dir, stage, sourcePath, outputPath, outputHandle, original, source, owned };
+}
+
+function inode({ dev, ino }) {
+    return { dev, ino };
+}
+
+async function assertOwnedPath(path, owned) {
+    const entry = await lstat(path, { bigint: true });
+    assert.ok(entry.isFile());
+    assert.deepEqual(inode(entry), inode(owned));
+    assert.equal(entry.nlink, 1n);
+    assert.equal(entry.mode, owned.mode);
+    assert.equal(entry.uid, owned.uid);
+    return entry;
+}
+
+async function assertOriginal({ sourcePath, source, original }) {
+    const entry = await assertOwnedPath(sourcePath, source);
+    assert.equal(entry.mtimeNs, source.mtimeNs);
+    assert.equal(entry.ctimeNs, source.ctimeNs);
+    assert.deepEqual(await readFile(sourcePath), original);
+}
+
+async function assertSimpleRaster(path) {
+    const { stdout } = await exec('qpdf', ['--check', path]);
+    assert.match(stdout, /No syntax or stream encoding errors found/);
+    const { pages } = await pdfJson(path);
+    assert.equal(pages.length, 1);
+    assert.equal(pages[0].images.length, 1);
+    const [image] = pages[0].images;
+    assert.deepEqual([image.width, image.height, image.bitspercomponent, image.colorspace], [100, 100, 8, '/DeviceRGB']);
+    const pixels = await readImage(path, image);
+    checkPixel(pixels, image.width, 20, 50, red, 'painted side');
+    checkPixel(pixels, image.width, 80, 50, white, 'unpainted side');
+}
+
+async function renderAndCheckOwned(t, fixture, options = {}) {
+    const { stage, sourcePath, outputPath, outputHandle, owned } = fixture;
+    const write = outputHandle.write.bind(outputHandle);
+    const sync = outputHandle.sync.bind(outputHandle);
+    const events = [];
+    let end = 0;
+    t.mock.method(outputHandle, 'write', async (buffer, offset, length, position) => {
+        assert.equal(position, end, 'writes are positional and contiguous');
+        const result = await write(buffer, offset, Math.min(length, 113), position);
+        end += result.bytesWritten;
+        events.push('write');
+        return result;
+    });
+    t.mock.method(outputHandle, 'sync', async () => {
+        assert.equal((await outputHandle.stat()).size, end);
+        await sync();
+        events.push('sync');
+    });
+
+    assert.equal(await renderRasterPdf({ sourcePath, outputPath, outputHandle, ...options }), undefined);
+    assert.ok(events.length > 2, 'fixture exercises short writes');
+    assert.ok(events.slice(0, -1).every((event) => event === 'write'));
+    assert.equal(events.at(-1), 'sync');
+    assert.equal((await outputHandle.stat()).size, end, 'caller still owns the open handle');
+    await outputHandle.close();
+    const entry = await assertOwnedPath(outputPath, owned);
+    assert.equal(entry.mode & 0o7777n, 0o600n);
+    assert.equal(entry.size, BigInt(end));
+    assert.deepEqual(await readdir(stage), ['journal-target.pdf']);
+    await assertSimpleRaster(outputPath);
+    await assertOriginal(fixture);
+}
+
+rasterTest('caller-owned write-only descriptor receives a complete raster on the same inode', async (t) => {
+    const fixture = await ownedFixture(t, 'wx');
+    const log = join(fixture.dir, 'gs.log');
+    const gsBin = await recordingTool(fixture.dir, 'record-gs', log, `
+        import { readdirSync } from 'node:fs';
+        assert.deepEqual(readdirSync(${JSON.stringify(fixture.stage)}), ['journal-target.pdf']);
+        process.exit(spawnSync('gs', args, { stdio: 'inherit' }).status ?? 1);
+    `);
+    await renderAndCheckOwned(t, fixture, { gsBin });
+    await assertClean(fixture.dir, log, ['synthetic-original.pdf', 'stage', 'gs.log', 'record-gs']);
+});
+
+rasterTest('descriptor preflight rejects unsafe handles and paths before invoking either tool', async (t) => {
+    const fixture = await ownedFixture(t);
+    const { dir, stage, sourcePath, outputPath, outputHandle } = fixture;
+    const marker = join(dir, 'tool-invoked');
+    const tool = await shim(dir, 'unexpected-tool', `
+        import { writeFileSync } from 'node:fs';
+        writeFileSync(${JSON.stringify(marker)}, 'invoked');
+    `);
+    const symlinkPath = join(stage, 'symlink');
+    const otherPath = join(stage, 'other.pdf');
+    const linkedPath = join(stage, 'additional-link.pdf');
+    const nonemptyPath = join(stage, 'nonempty.pdf');
+    const widePath = join(stage, 'wide.pdf');
+    const aliasPath = join(stage, 'source-alias.pdf');
+    await symlink(outputPath, symlinkPath);
+    await link(sourcePath, aliasPath);
+
+    async function manage(path, flags, mode) {
+        const handle = await open(path, flags, mode);
+        t.after(() => handle.close());
+        return handle;
+    }
+
+    const other = await manage(otherPath, 'wx+', 0o600);
+    const readOnly = await manage(outputPath, 'r');
+    const append = await manage(outputPath, 'a+');
+    const nonempty = await manage(nonemptyPath, 'wx+', 0o600);
+    await nonempty.writeFile('keep these bytes');
+    const wide = await manage(widePath, 'wx+', 0o600);
+    await wide.chmod(0o640);
+    const alias = await manage(aliasPath, 'r+');
+    const directory = await manage(stage, 'r');
+    const closed = await open(outputPath, 'r+');
+    await closed.close();
+
+    const invalid = 'RASTER_INVALID_ARGUMENT';
+    const exists = 'RASTER_OUTPUT_EXISTS';
+    const noWrite = t.mock.method(outputHandle, 'write', () => assert.fail('unexpected write'));
+    const noSync = t.mock.method(outputHandle, 'sync', () => assert.fail('unexpected sync'));
+    const lookalike = { fd: outputHandle.fd, stat: outputHandle.stat.bind(outputHandle), write: outputHandle.write };
+
+    async function reject(handle, path, code) {
+        await assert.rejects(renderRasterPdf({
+            sourcePath, outputPath: path, outputHandle: handle, gsBin: tool, qpdfBin: tool,
+        }), { code, message: code });
+        await assert.rejects(lstat(marker), { code: 'ENOENT' });
+    }
+
+    async function metadata(path) {
+        const { dev, ino, uid, mode, nlink, size, mtimeNs, ctimeNs } = await lstat(path, { bigint: true });
+        return { dev, ino, uid, mode, nlink, size, mtimeNs, ctimeNs };
+    }
+
+    const paths = [outputPath, sourcePath, otherPath, symlinkPath, aliasPath, nonemptyPath, widePath];
+    const before = await Promise.all(paths.map(metadata));
+    const entries = (await readdir(stage)).sort();
+    for (const [handle, path, code] of [
+        [undefined, outputPath, exists], [null, outputPath, invalid], [outputHandle.fd, outputPath, invalid],
+        [lookalike, outputPath, invalid], [closed, outputPath, invalid], [readOnly, outputPath, invalid],
+        [append, outputPath, invalid], [other, outputPath, invalid], [directory, stage, invalid],
+        [outputHandle, stage, invalid],
+        [outputHandle, symlinkPath, invalid], [outputHandle, join(stage, 'missing'), invalid],
+        [outputHandle, 'relative.pdf', invalid], [outputHandle, outputPath + '\0suffix', invalid],
+        [nonempty, nonemptyPath, exists], [wide, widePath, invalid],
+        [alias, aliasPath, invalid], [alias, sourcePath, invalid],
+    ]) await reject(handle, path, code);
+
+    Object.defineProperty(other, 'fd', { configurable: true, value: outputHandle.fd });
+    try {
+        await reject(other, outputPath, invalid);
+    } finally {
+        delete other.fd;
+    }
+    const uid = process.geteuid();
+    const owner = t.mock.method(process, 'geteuid', () => uid + 1);
+    try {
+        await reject(outputHandle, outputPath, invalid);
+    } finally {
+        owner.mock.restore();
+    }
+    assert.deepEqual(await Promise.all(paths.map(metadata)), before);
+    assert.deepEqual((await readdir(stage)).sort(), entries);
+    assert.deepEqual(await readFile(sourcePath), fixture.original);
+    assert.deepEqual(await readFile(aliasPath), fixture.original);
+    assert.equal(await readFile(nonemptyPath, 'utf8'), 'keep these bytes');
+    assert.equal(noWrite.mock.callCount(), 0);
+    assert.equal(noSync.mock.callCount(), 0);
+    for (const handle of [outputHandle, readOnly, append, other, nonempty, wide, alias, directory]) {
+        await handle.stat();
+    }
+
+    await link(outputPath, linkedPath);
+    const linked = await metadata(outputPath);
+    await reject(outputHandle, outputPath, exists);
+    assert.deepEqual(await metadata(outputPath), linked);
+    assert.deepEqual(await metadata(linkedPath), linked);
+    assert.equal((await outputHandle.stat()).size, 0);
+});
+
+rasterTest('descriptor output stays empty until the entire source and raster pass validation', async (t) => {
+    const fixture = await ownedFixture(t);
+    const { dir, stage, sourcePath, outputPath, outputHandle, owned } = fixture;
+    const write = t.mock.method(outputHandle, 'write', () => assert.fail('unexpected write'));
+    const sync = t.mock.method(outputHandle, 'sync', () => assert.fail('unexpected sync'));
+    const log = join(dir, 'gs.log');
+    const gsBin = await recordingTool(dir, 'record-gs', log, "writeFileSync(rendered, '%PDF-incomplete')");
+    const invalidSource = join(dir, 'truncated.pdf');
+    await writeFile(invalidSource, fixture.original.subarray(0, -7));
+    await assert.rejects(renderRasterPdf({ sourcePath: invalidSource, outputPath, outputHandle, gsBin }), {
+        code: 'RASTER_INVALID_SOURCE', message: 'RASTER_INVALID_SOURCE',
+    });
+    await assert.rejects(lstat(log), { code: 'ENOENT' });
+    await assert.rejects(renderRasterPdf({ sourcePath, outputPath, outputHandle, gsBin }), {
+        code: 'RASTER_INVALID_OUTPUT', message: 'RASTER_INVALID_OUTPUT',
+    });
+    assert.equal((await assertOwnedPath(outputPath, owned)).size, 0n);
+    assert.equal((await outputHandle.stat()).size, 0);
+    assert.equal(write.mock.callCount(), 0);
+    assert.equal(sync.mock.callCount(), 0);
+    assert.deepEqual(await readdir(stage), ['journal-target.pdf']);
+    await assertClean(dir, log, ['synthetic-original.pdf', 'stage', 'truncated.pdf', 'gs.log', 'record-gs']);
+    await assertOriginal(fixture);
+});
+
+rasterTest('descriptor copy rejects a scratch raster changed after stream validation', async (t) => {
+    const fixture = await ownedFixture(t);
+    const { dir, stage, sourcePath, outputPath, outputHandle, owned } = fixture;
+    const log = join(dir, 'qpdf.log');
+    const changed = join(dir, 'scratch-changed');
+    const qpdfBin = await recordingTool(dir, 'record-qpdf', log, `
+        const result = spawnSync('qpdf', args);
+        if (result.status !== 0) process.exit(result.status ?? 1);
+        if (args.includes('--filtered-stream-data') && result.stdout.length === 30_000) {
+            appendFileSync(rendered, ' ');
+            writeFileSync(${JSON.stringify(changed)}, 'appended after reading RGB');
+        }
+        process.stdout.write(result.stdout);
+    `);
+    const write = t.mock.method(outputHandle, 'write', () => assert.fail('unexpected write'));
+    const invalid = 'RASTER_INVALID_OUTPUT';
+    await assert.rejects(renderRasterPdf({ sourcePath, outputPath, outputHandle, qpdfBin }), {
+        code: invalid, message: invalid,
+    });
+    assert.equal(await readFile(changed, 'utf8'), 'appended after reading RGB');
+    assert.equal(write.mock.callCount(), 0);
+    assert.equal((await outputHandle.stat()).size, 0);
+    assert.equal((await assertOwnedPath(outputPath, owned)).size, 0n);
+    assert.deepEqual(await readdir(stage), ['journal-target.pdf']);
+    await assertClean(dir, log, ['synthetic-original.pdf', 'stage', 'qpdf.log', 'record-qpdf', 'scratch-changed']);
+    await assertOriginal(fixture);
+});
+
+for (const phase of ['before the first write', 'during the first write']) {
+    rasterTest(`descriptor mode fails closed on pathname substitution ${phase}`, async (t) => {
+        const fixture = await ownedFixture(t);
+        const { dir, stage, sourcePath, outputPath, outputHandle, owned } = fixture;
+        const moved = join(stage, 'moved.pdf');
+        const replacement = 'replacement sentinel';
+        const write = outputHandle.write.bind(outputHandle);
+        let gsBin;
+        if (phase === 'before the first write') {
+            const log = join(dir, 'gs.log');
+            gsBin = await recordingTool(dir, 'record-gs', log, `
+                import { renameSync } from 'node:fs';
+                const result = spawnSync('gs', args, { stdio: 'inherit' });
+                if (result.status !== 0) process.exit(result.status ?? 1);
+                renameSync(${JSON.stringify(outputPath)}, ${JSON.stringify(moved)});
+                writeFileSync(${JSON.stringify(outputPath)}, ${JSON.stringify(replacement)}, { flag: 'wx', mode: 0o600 });
+            `);
+            t.mock.method(outputHandle, 'write', () => assert.fail('write after pre-write identity failure'));
+        } else {
+            t.mock.method(outputHandle, 'write', async (buffer, offset, length, position) => {
+                if (position === 0) {
+                    await rename(outputPath, moved);
+                    await writeFile(outputPath, replacement, { flag: 'wx', mode: 0o600 });
+                }
+                return write(buffer, offset, length, position);
+            });
+        }
+
+        const invalid = 'RASTER_INVALID_ARGUMENT';
+        await assert.rejects(renderRasterPdf({ sourcePath, outputPath, outputHandle, gsBin }), {
+            code: invalid, message: invalid,
+        });
+        assert.deepEqual(inode(await outputHandle.stat({ bigint: true })), inode(owned));
+        assert.equal(await readFile(outputPath, 'utf8'), replacement);
+        assert.deepEqual((await readdir(stage)).sort(), ['journal-target.pdf', 'moved.pdf']);
+        const entry = await assertOwnedPath(moved, owned);
+        if (phase === 'before the first write') {
+            assert.equal(entry.size, 0n);
+            await assertClean(dir, join(dir, 'gs.log'), ['synthetic-original.pdf', 'stage', 'gs.log', 'record-gs']);
+        } else {
+            await assertSimpleRaster(moved);
+        }
+        await assertOriginal(fixture);
+    });
+}
+
+for (const milestone of ['first-write', 'after-sync']) {
+    rasterTest(`SIGKILL at ${milestone} leaves one recoverable caller-owned inode`, async (t) => {
+        const fixture = await ownedFixture(t);
+        const { dir, stage, sourcePath, outputPath, outputHandle, owned } = fixture;
+        const log = join(dir, 'gs.log');
+        const evidence = join(dir, 'scratch-identity.json');
+        const gsBin = await recordingTool(dir, 'record-gs', log, `
+            const entry = statSync(scratch, { bigint: true });
+            writeFileSync(${JSON.stringify(evidence)}, JSON.stringify({
+                scratch, dev: String(entry.dev), ino: String(entry.ino),
+            }), { flag: 'wx', mode: 0o600 });
+            process.exit(spawnSync('gs', args, { stdio: 'inherit' }).status ?? 1);
+        `);
+        const child = join(dir, 'interrupt-render.mjs');
+        const renderer = new URL('../eformsign-backup/raster-render.mjs', import.meta.url).href;
+        await writeFile(child, `
+            import assert from 'node:assert/strict';
+            import { writeSync } from 'node:fs';
+            import { open } from 'node:fs/promises';
+            import { renderRasterPdf } from ${JSON.stringify(renderer)};
+
+            const [milestone, sourcePath, outputPath, gsBin] = process.argv.slice(2);
+            const outputHandle = await open(outputPath, 'r+');
+            const write = outputHandle.write.bind(outputHandle);
+            const sync = outputHandle.sync.bind(outputHandle);
+            let end = 0;
+            function interrupt() {
+                writeSync(1, milestone + '\\n');
+                process.kill(process.pid, 'SIGKILL');
+            }
+            outputHandle.write = async (buffer, offset, length, position) => {
+                assert.equal(position, end);
+                const result = await write(buffer, offset, milestone === 'first-write' ? Math.min(length, 17) : length, position);
+                end += result.bytesWritten;
+                if (milestone === 'first-write') {
+                    assert.equal(end, 17);
+                    interrupt();
+                }
+                return result;
+            };
+            outputHandle.sync = async () => {
+                assert.ok(end > 0);
+                assert.equal((await outputHandle.stat()).size, end);
+                await sync();
+                if (milestone === 'after-sync') interrupt();
+            };
+            await renderRasterPdf({ sourcePath, outputPath, outputHandle, gsBin });
+            assert.fail('renderer returned without hitting the kill milestone');
+        `, { mode: 0o600 });
+
+        const interrupted = spawnSync(process.execPath, [child, milestone, sourcePath, outputPath, gsBin], {
+            encoding: 'utf8', timeout: 30_000,
+        });
+        // This GS shim ran inside the child's scratch. Check its recorded identity
+        // before reading or removing anything outside the test's own directory.
+        const scratchIdentity = await readFile(evidence, 'utf8').then(JSON.parse, (error) => {
+            if (error.code !== 'ENOENT') throw error;
+            return undefined;
+        });
+        let scratch;
+        if (scratchIdentity) {
+            const { scratch: recorded, dev, ino } = scratchIdentity;
+            assert.match(recorded, /^\/tmp\/bjj-raster-[a-zA-Z0-9]{6}$/);
+            const entry = await lstat(recorded, { bigint: true });
+            assert.ok(entry.isDirectory());
+            assert.equal(entry.uid, BigInt(process.geteuid()));
+            assert.equal(entry.mode & 0o7777n, 0o700n);
+            assert.deepEqual(inode(entry), { dev: BigInt(dev), ino: BigInt(ino) });
+            scratch = recorded;
+        }
+        try {
+            assert.equal(interrupted.error, undefined);
+            assert.equal(interrupted.status, null, interrupted.stderr);
+            assert.equal(interrupted.signal, 'SIGKILL', interrupted.stderr);
+            assert.equal(interrupted.stdout.trim(), milestone);
+            const entry = await assertOwnedPath(outputPath, owned);
+            const descriptor = await outputHandle.stat({ bigint: true });
+            assert.deepEqual(inode(descriptor), inode(owned));
+            assert.equal(descriptor.nlink, 1n);
+            assert.equal(descriptor.size, entry.size);
+            assert.deepEqual(await readdir(stage), ['journal-target.pdf']);
+            const rendered = await readFile(join(scratch, 'rendered.pdf'));
+            assert.ok(rendered.length > 17);
+            const bytes = await readFile(outputPath);
+            if (milestone === 'first-write') {
+                assert.deepEqual(bytes, rendered.subarray(0, 17));
+            } else {
+                assert.deepEqual(bytes, rendered);
+                await assertSimpleRaster(outputPath);
+            }
+            await assertOriginal(fixture);
+
+            // Simulate journal recovery of the proven inode before retrying.
+            await outputHandle.truncate(0);
+            assert.equal((await assertOwnedPath(outputPath, owned)).size, 0n);
+            await renderAndCheckOwned(t, fixture);
+        } finally {
+            if (scratch) await rm(scratch, { force: true, recursive: true });
+        }
+        await assertClean(dir, log, [
+            'synthetic-original.pdf', 'stage', 'gs.log', 'record-gs', 'scratch-identity.json', 'interrupt-render.mjs',
+        ]);
+    });
+}
 
 rasterTest('malformed, truncated and password-required input stays unpublished', async (t) => {
     const dir = await temp(t);
