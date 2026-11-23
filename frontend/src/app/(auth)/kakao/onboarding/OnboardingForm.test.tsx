@@ -114,7 +114,7 @@ describe("OnboardingForm field messages", () => {
         phone: "010-1234-5678",
         birthDate: "1990-01-01",
         role: "user",
-      });
+      }, "1");
     });
   });
 });

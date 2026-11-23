@@ -1,6 +1,6 @@
 import { api } from "@/lib/api/client";
 
-import type { RegisterRequest } from "@babyjamjam/shared";
+import { ACCOUNT_LINK_VERSION, ACCOUNT_LINK_VERSION_HEADER, type RegisterRequest } from "@babyjamjam/shared";
 
 // Auth API response types
 export interface AuthResponse {
@@ -28,7 +28,9 @@ export const authApi = {
 
     // Email authentication
     register: async (params: RegisterRequest): Promise<AuthResponse> => {
-        const { data } = await api.post('/auth/register', params);
+        const { data } = await api.post('/auth/register', params, {
+            headers: { [ACCOUNT_LINK_VERSION_HEADER]: ACCOUNT_LINK_VERSION },
+        });
         return data;
     },
 

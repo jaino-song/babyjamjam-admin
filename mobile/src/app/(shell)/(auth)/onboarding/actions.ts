@@ -39,7 +39,7 @@ export async function completeAccountOnboarding(input: { phone?: string; birthDa
         clearPendingAccountOnboarding(store);
         return { success: false, error: EXPIRED };
       }
-      if (status === 403 && ["PENDING_APPROVAL", "ACCOUNT_REJECTED", "NO_ACCESSIBLE_BRANCH"].includes(problem?.code)) {
+      if (status === 403 && ["PENDING_APPROVAL", "ACCOUNT_REJECTED", "NO_ACCESSIBLE_BRANCH", "ACCOUNT_PROFILE_INCOMPLETE"].includes(problem?.code)) {
         return { success: false, authErrorCode: String(problem.code) };
       }
       if (status === 400 && problem?.code === "VALIDATION_FAILED") {

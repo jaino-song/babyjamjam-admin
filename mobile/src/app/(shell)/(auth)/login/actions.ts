@@ -140,12 +140,6 @@ export async function loginWithEmail(email: string, password: string, autoLogin 
 
         if (error instanceof AxiosError) {
             const axiosError = error as AxiosError<APIErrorResponse>;
-            console.error("[Server Action] Axios Error:", {
-                message: axiosError.message,
-                code: axiosError.code,
-                status: axiosError.response?.status,
-            });
-
             if (isTransportFailure(axiosError)) {
                 return { success: false, error: "서버에 연결할 수 없어요. 다시 시도해 주세요." };
             }
