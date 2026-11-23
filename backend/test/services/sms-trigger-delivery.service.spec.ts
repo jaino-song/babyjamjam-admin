@@ -1,5 +1,5 @@
 import { buildSmsProviderAcceptanceKey, SmsProviderAcceptanceService } from "application/services/sms-provider-acceptance.service";
-import { messageQuietHoldVariables } from "domain/message-policy-evaluator";
+import { messageQuietHoldVariables, parseMessageQuietHold } from "domain/message-policy-evaluator";
 import { SystemSettingService } from "application/services/system-setting.service";
 import { createLegacyAutomationDeliveryGate } from "../fixtures/legacy-automation-delivery-gate";
 import { Prisma } from "@prisma/client";
@@ -26,6 +26,9 @@ import { CARRIER_CHECK_DELAY_MS, MessageLogEntity } from "domain/entities/messag
 import { IMessageLogRepository } from "domain/repositories/message-log.repository.interface";
 import { MESSAGE_AUTOMATION_INTENT_RULE_ID } from "domain/constants/message-automation-intent";
 import { AGENT_AUTOMATION_RECORD_DEDUPE_PREFIX, AGENT_AUTOMATION_RECORD_PAYLOAD_KEY } from "domain/constants/agent-automation-storage";
+import { OCCURRENCE_ALREADY_ACCEPTED, SMS_OCCURRENCE_HOLD_FIELD } from "domain/entities/message-occurrence";
+import { manualTemplateVariables } from "infrastructure/database/repositories/message-occurrence-ledger";
+import { memoryQueue } from "../fixtures/message-quiet-queue.fixture";
 
 function providerBoundary(repository: Pick<IMessageLogRepository, "save">): SmsProviderAcceptanceService {
     return {
@@ -36,6 +39,80 @@ function providerBoundary(repository: Pick<IMessageLogRepository, "save">): SmsP
         },
     } as SmsProviderAcceptanceService;
 }
+
+describe("dispatch through a prepared occurrence hold", () => {
+    const night = new Date("2026-11-03T13:00:00.000Z");
+    const release = new Date("2026-11-03T23:00:00.000Z");
+    beforeEach(() => jest.useFakeTimers({ now: night }));
+    afterEach(() => jest.useRealTimers());
+
+    async function setup(quietEnabled = false) {
+        const f = memoryQueue("합성 안내");
+        f.configuration.quietHours.enabled = quietEnabled;
+        f.configuration.pastExpiryHours = 1;
+        f.configure(f.configuration);
+        f.tables["message_trigger_rule"]!.push({ id: "rule-occurrence", branchId: f.branchId,
+            isActive: true, deletedAt: null, templateKey: "CLIENT_GREETING", eventType: "CLIENT_CREATED", retryOnFailure: true });
+        const automatic = await f.jobs.create(MessageTriggerJobEntity.create({
+            branchId: f.branchId, ruleId: "rule-occurrence", clientId: 7, scheduledFor: night,
+            templateKey: MessageTriggerTemplateKey.CLIENT_GREETING, dedupeKey: "fixture-occurrence",
+            recipientPhone: "01000000011", recipientType: MessageTriggerRecipientType.CLIENT,
+            payload: { clientId: 7, memberId: "7", recipientPhone: "01000000011", recipientName: "synthetic",
+                templateVariables: { name: "synthetic" } },
+        }));
+        const manual = MessageLogEntity.create({
+            branchId: f.branchId, provider: "aligo_sms", templateKey: "manual_sms", clientId: 7, receiver: "01000000011",
+            messageBody: "수동 안내", variables: manualTemplateVariables({ kind: "system", key: "GREETING" }),
+            providerAcceptanceState: "prepared", providerAcceptanceKey: "manual-fixture", providerAcceptanceFingerprint: "manual-fixture",
+        });
+        const startManual = async () => f.acceptance.beginProviderCall(await f.acceptance.prepare(manual));
+        const dispatch = () => f.core.dispatchPendingJobNow(automatic.id, { expectedBranchId: f.branchId });
+        const autoLog = () => f.tables["message_log"]!.find(row => row["triggerJobId"] === automatic.id)!;
+        return { ...f, dispatch, automatic, startManual, autoLog };
+    }
+
+    it.each(["delivered", "not-delivered"] as const)("rechecks a held job after manual reconciliation as %s", async outcome => {
+        const f = await setup();
+        const manual = await f.startManual();
+        expect(await f.dispatch()).toMatchObject({ status: "pending", attempts: 0, nextAttemptAt: new Date(night.getTime() + 60_000) });
+        expect(f.aligo.sendSms).not.toHaveBeenCalled();
+        expect(f.autoLog()).toMatchObject({ attempts: 0, providerAcceptanceState: "prepared", providerCallStartedAt: null,
+            variables: { [SMS_OCCURRENCE_HOLD_FIELD]: expect.stringMatching(/^[a-f0-9]{64}$/) } });
+
+        manual.markProviderOutcomeUncertain("supplier result lost");
+        await f.acceptance.persist(manual);
+        await f.acceptance.reconcile({ branchId: f.branchId, logId: manual.id, actor: "fixture", reason: "provider history", outcome });
+        jest.setSystemTime(new Date(night.getTime() + 60_000));
+        expect(await f.dispatch()).toMatchObject(outcome === "delivered"
+            ? { status: "canceled", cancelReason: OCCURRENCE_ALREADY_ACCEPTED, attempts: 0 }
+            : { status: "sent" });
+        expect(f.aligo.sendSms).toHaveBeenCalledTimes(outcome === "delivered" ? 0 : 1);
+        expect(f.autoLog()["variables"]).not.toHaveProperty(SMS_OCCURRENCE_HOLD_FIELD);
+    });
+
+    it("rejects absent quiet metadata after removing an occurrence hold marker", async () => {
+        const f = await setup();
+        await f.startManual();
+        await f.dispatch();
+        const variables = f.autoLog()["variables"] as Record<string, unknown>;
+        delete variables[SMS_OCCURRENCE_HOLD_FIELD];
+        await expect(f.dispatch()).rejects.toThrow("Quiet hold metadata is missing");
+        expect(f.aligo.sendSms).not.toHaveBeenCalled();
+    });
+
+    it("keeps quiet expiry anchored to the quiet release when occurrence admission is held", async () => {
+        const f = await setup(true);
+        expect(await f.dispatch()).toMatchObject({ status: "pending", nextAttemptAt: release, attempts: 0 });
+        await f.startManual();
+        jest.setSystemTime(release);
+        expect(await f.dispatch()).toMatchObject({ status: "pending", nextAttemptAt: new Date(release.getTime() + 60_000), attempts: 0 });
+        expect(f.autoLog()["variables"]).toHaveProperty(SMS_OCCURRENCE_HOLD_FIELD);
+        expect(parseMessageQuietHold(f.autoLog()["variables"])?.releaseAt).toEqual(release);
+        jest.setSystemTime(new Date(release.getTime() + 3_600_001));
+        expect(await f.dispatch()).toMatchObject({ status: "canceled", cancelReason: "expired_after_quiet", attempts: 0 });
+        expect(f.aligo.sendSms).not.toHaveBeenCalled();
+    });
+});
 
 describe("SmsTriggerDeliveryService", () => {
     // F7: adding a new template key to the catalog cannot change an existing key's configHash —

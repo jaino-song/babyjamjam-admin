@@ -1,4 +1,4 @@
-import { SmsProviderAcceptanceService } from "application/services/sms-provider-acceptance.service";
+import { SmsOccurrenceBlockedError, SmsProviderAcceptanceService } from "application/services/sms-provider-acceptance.service";
 import { OPTIONAL_DEPS_METADATA } from "@nestjs/common/constants";
 import { SCHEDULE_CRON_OPTIONS } from "@nestjs/schedule/dist/schedule.constants";
 import { SystemSettingService } from "application/services/system-setting.service";
@@ -1743,10 +1743,11 @@ describe("TIME-2 branch SMS retry timing", () => {
         const aligo = { sendSms: jest.fn().mockResolvedValue(rejection) };
         const activation = { runAutomaticRetryIfEnabled: jest.fn().mockResolvedValue({ applies: false, allowed: true }),
             readJobRuleRetryPermission: jest.fn().mockResolvedValue("on") };
-        const retry: SmsRetryService = Reflect.construct(SmsRetryService, [logs, aligo, { ensureApproved: jest.fn() }, { beginProviderCall: begin },
+        const beginProviderCall = jest.fn(begin);
+        const retry: SmsRetryService = Reflect.construct(SmsRetryService, [logs, aligo, { ensureApproved: jest.fn() }, { beginProviderCall },
             activation, undefined, undefined, undefined, { checkJobById: jest.fn().mockResolvedValue({ allowed: true }) }, settings]);
         const scheduler = () => new MessageRetrySchedulerService(logs as never, retry, { holdsLease: () => true } as never, settings);
-        return { source, logs, aligo, retry, checkpoints, scheduler, activation };
+        return { source, logs, aligo, retry, checkpoints, scheduler, activation, beginProviderCall };
     };
     const deliveryHarness = (settings = policy(1), manualOwned = false) => {
         const job = MessageTriggerJobEntity.create({ branchId, ruleId: manualOwned ? "agent-sms:timing" : "rule-time-2",
@@ -1917,6 +1918,39 @@ describe("TIME-2 branch SMS retry timing", () => {
         expect(result?.nextRetryAt).toEqual(new Date("2026-11-03T21:01:00+09:00"));
         expect(h.logs.startRetryAttempt).toHaveBeenCalledWith(h.source, expect.any(MessageLogEntity), "automatic", transaction);
         expect(h.aligo.sendSms).toHaveBeenCalledTimes(1);
+    });
+
+    it.each(["occurrence held", "lease lost"] as const)("defers an automatic retry without spending an attempt when %s", async reason => {
+        const h = retryHarness();
+        const transaction = {
+            message_trigger_job: { findUnique: jest.fn().mockResolvedValue({ id: h.source.triggerJobId, branchId, payload: {} }) },
+            message_log: { delete: jest.fn(), update: jest.fn() },
+        };
+        h.activation.runAutomaticRetryIfEnabled.mockImplementation(async (_branch, _job, work) => ({
+            applies: true, allowed: true, value: await work(transaction),
+        }));
+        const leaseHeld = jest.fn().mockReturnValue(true);
+        if (reason === "lease lost") {
+            const prepare = h.logs.startRetryAttempt.getMockImplementation()!;
+            h.logs.startRetryAttempt.mockImplementation(async (source, draft) => {
+                const result = await prepare(source, draft);
+                leaseHeld.mockReturnValue(false);
+                return result;
+            });
+        } else {
+            h.beginProviderCall.mockRejectedValueOnce(new SmsOccurrenceBlockedError("held"));
+        }
+        await h.retry.retry(h.source, "automatic", leaseHeld);
+        expect(h.beginProviderCall).toHaveBeenCalledTimes(reason === "lease lost" ? 0 : 1);
+        expect(h.aligo.sendSms).not.toHaveBeenCalled();
+        expect(transaction.message_log.delete).toHaveBeenCalledWith({
+            where: { id: 78, branchId, providerAcceptanceState: "prepared" },
+        });
+        expect(transaction.message_log.update).toHaveBeenCalledWith({
+            where: { id: h.source.id, branchId, nextRetryAt: null },
+            data: { nextRetryAt: new Date(Date.now() + 60_000) },
+        });
+        expect(h.source.attempts).toBe(1);
     });
     it("does not consume admission when policy lookup fails inside the activation transaction", async () => {
         const h = retryHarness(policy("unavailable"));

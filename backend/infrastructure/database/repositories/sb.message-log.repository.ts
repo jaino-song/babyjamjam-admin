@@ -1,6 +1,7 @@
 import {
     admitOccurrence, occurrenceVariables, resolveLogOccurrence, settleOccurrence, storedOccurrence, transferReleasedOccurrenceHolder,
 } from "./message-occurrence-ledger";
+import { OCCURRENCE_ALREADY_ACCEPTED, occurrenceLevels, SMS_OCCURRENCE_HOLD_FIELD } from "domain/entities/message-occurrence";
 import { parseMessageQuietHold, messageQuietHoldVariables, type MessageQuietHold, type MessagePolicyPreviewCandidate } from "domain/message-policy-evaluator";
 import type { MessagePolicyRecipientGroup } from "domain/entities/system-setting.entity";
 import { Injectable, Logger } from "@nestjs/common";
@@ -68,13 +69,15 @@ export class SbMessageLogRepository implements IMessageLogRepository {
             || current.attempts !== log.attempts || !current.providerAcceptanceKey || !current.providerAcceptanceFingerprint
             || variables["retryOfLogId"] !== log.variables["retryOfLogId"]
             || (variables["quietHoursDisposition"] === "DEFER" && !parseMessageQuietHold(variables))) throw new Error("Quiet retry acceptance changed");
+        const quietVariables = { ...variables };
+        delete quietVariables[SMS_OCCURRENCE_HOLD_FIELD];
         const changed = await transaction.message_log.updateMany({ where: { id: current.id, branchId: current.branchId,
             triggerJobId: current.triggerJobId, providerAcceptanceKey: current.providerAcceptanceKey,
             providerAcceptanceFingerprint: current.providerAcceptanceFingerprint, providerAcceptanceState: "prepared", providerCallStartedAt: null,
             updatedAt: current.updatedAt, variables: { equals: current.variables as Prisma.InputJsonValue }, attempts: current.attempts },
             data: { status: cancel ? "failed" : "pending", nextRetryAt: cancel ? null : hold.releaseAt,
                 errorMessage: cancel ? reason ?? "message_quiet_hours:CANCEL" : null,
-                variables: { ...current.variables as Prisma.InputJsonObject, ...messageQuietHoldVariables(hold), quietHoursDisposition: cancel ? "CANCEL" : "DEFER",
+                variables: { ...quietVariables, ...messageQuietHoldVariables(hold), quietHoursDisposition: cancel ? "CANCEL" : "DEFER",
                     // This CAS proves the provider has never started. A quiet
                     // wait is safe to resume, unlike an uncertain submission.
                     ...(!cancel ? { retrySafety: "quiet-deferred" } : {}),
@@ -316,19 +319,28 @@ export class SbMessageLogRepository implements IMessageLogRepository {
             const row = await client.message_log.findUnique({ where });
             if (!row) throw new Error("Claimed SMS log was not found");
             const target = await resolveLogOccurrence(client, row);
-            if (!target) return MessageLogMapper.toDomain(row);
+            const started = MessageLogMapper.toDomain(row);
+            const hadHold = SMS_OCCURRENCE_HOLD_FIELD in started.variables;
+            delete started.variables[SMS_OCCURRENCE_HOLD_FIELD];
+            if (!target) {
+                if (!hadHold) return started;
+                return MessageLogMapper.toDomain(await client.message_log.update({ where, data: { variables: started.variables } }));
+            }
             const admission = await admitOccurrence(client, row.id, target, row.templateKey);
             if (admission !== "admitted") {
+                if (admission === "held") {
+                    started.variables[SMS_OCCURRENCE_HOLD_FIELD] = occurrenceLevels(target.occurrence).at(-1)!.occurrenceKey;
+                }
                 await client.message_log.update({
                     where,
                     data: {
                         providerAcceptanceState: "prepared", providerCallStartedAt: null,
-                        ...(admission === "accepted" ? { status: "failed", errorMessage: "OCCURRENCE_ALREADY_ACCEPTED", nextRetryAt: null } : {}),
+                        variables: started.variables,
+                        ...(admission === "accepted" ? { status: "failed", errorMessage: OCCURRENCE_ALREADY_ACCEPTED, nextRetryAt: null } : {}),
                     },
                 });
                 return admission;
             }
-            const started = MessageLogMapper.toDomain(row);
             started.variables = { ...started.variables, ...occurrenceVariables(target) };
             const persisted = await client.message_log.update({ where, data: { variables: started.variables } });
             return MessageLogMapper.toDomain(persisted);

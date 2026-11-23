@@ -450,6 +450,40 @@ describe("NewMessagePage", () => {
     expect(await screen.findByText("3건의 발송 요청이 접수되었습니다.")).toBeInTheDocument();
   });
 
+  it.each([
+    ["MESSAGE_SEND_UNCONFIRMED", "UNKNOWN"],
+    ["MESSAGE_SEND_PARTIAL", "PARTIALLY_APPLIED"],
+  ] as const)("locks edits after %s and retries only unconfirmed recipients", async (code, outcome) => {
+    const phones = ["010-1234-5678", "010-9999-0000", "010-9999-0011"];
+    mockApiPost.mockResolvedValueOnce(validSmsResponse(phones[0]))
+      .mockRejectedValueOnce(smsProblem(code, outcome))
+      .mockRejectedValueOnce(smsProblem("MESSAGE_SEND_NOT_STARTED", "NOT_APPLIED"))
+      .mockResolvedValueOnce(validSmsResponse(phones[1]))
+      .mockResolvedValueOnce(validSmsResponse(phones[2]));
+    renderPage();
+    await addManualRecipient(phones.join(","));
+    const sendButton = screen.getByRole("button", { name: "즉시 발송" });
+    const body = screen.getByLabelText<HTMLTextAreaElement>("메시지 본문");
+    const originalBody = body.value;
+    fireEvent.click(sendButton);
+    await waitFor(() => {
+      expect(mockApiPost).toHaveBeenCalledTimes(3);
+      expect(sendButton).toBeEnabled();
+    });
+    const original = mockApiPost.mock.calls.map(([, payload]) => payload);
+    fireEvent.change(body, { target: { value: "다시 작성한 메시지" } });
+    expect(sendButton).toBeDisabled();
+    fireEvent.submit(body.closest("form")!);
+    expect(mockApiPost).toHaveBeenCalledTimes(3);
+    expect(mockDuplicateCheck).toHaveBeenCalledTimes(3);
+    fireEvent.change(body, { target: { value: originalBody } });
+    expect(sendButton).toBeEnabled();
+    fireEvent.click(sendButton);
+    expect(await screen.findByText("3건의 발송 요청이 접수되었습니다.")).toBeInTheDocument();
+    expect(mockApiPost.mock.calls.slice(3).map(([, payload]) => payload)).toEqual(original.slice(1));
+    expect(mockDuplicateCheck.mock.calls.slice(3).map(([, payload]) => payload)).toEqual(original.slice(1));
+  });
+
   it("cancels server-confirmed duplicates without posting a send", async () => {
     mockDuplicateCheck.mockResolvedValue({ data: {
       checkedAt: "2026-11-06T00:00:00.000Z", matchIds: [91],

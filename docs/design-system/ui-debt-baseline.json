@@ -873,11 +873,11 @@
     },
     "mobile/src/app/(shell)/messages/new/page.tsx": {
       "ui-architecture/no-page-local-components": [
-        "905:10-905:24|pageLocalComponent"
+        "907:10-907:24|pageLocalComponent"
       ],
       "ui-architecture/no-raw-ui-in-pages": [
-        "2345:27-2351:28|rawUiElement",
-        "2628:23-2633:24|rawUiElement"
+        "2355:27-2361:28|rawUiElement",
+        "2638:23-2643:24|rawUiElement"
       ]
     },
     "mobile/src/app/(shell)/messages/system-templates/[templateKey]/page.tsx": {

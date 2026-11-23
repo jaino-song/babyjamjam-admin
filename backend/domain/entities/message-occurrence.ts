@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 
 export const OCCURRENCE_ALREADY_ACCEPTED = "OCCURRENCE_ALREADY_ACCEPTED";
 export const OCCURRENCE_ON_HOLD = "OCCURRENCE_ON_HOLD";
+export const SMS_OCCURRENCE_HOLD_FIELD = "smsOccurrenceHold";
 
 export type SmsTemplateReference = { kind: "system"; key: string } | { kind: "branch"; id: string };
 

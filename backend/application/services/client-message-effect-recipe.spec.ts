@@ -134,4 +134,18 @@ describe("read-only client message effect recipe", () => {
         expect(await describeClientMessageEffect({ ...input, client: { ...client, endDate: null } })).toEqual({ status: "none" });
         expect(templates.getByKeyForBranch).not.toHaveBeenCalled();
     });
+
+    it("omits a stamped client's end notice when read-only occurrence proof confirms it", async () => {
+        const { input, templates } = setup();
+        input.rule.eventType = MessageTriggerEventType.SERVICE_END;
+        input.rule.offsetType = MessageTriggerOffsetType.AFTER_DAYS;
+        input.rule.templateKey = MessageTriggerTemplateKey.SERVICE_END_NOTICE;
+        const acceptance = jest.spyOn(input.delivery, "hasAcceptedOccurrence").mockResolvedValue(true);
+        expect(await describeClientMessageEffect({ ...input,
+            client: { ...client, id: 7, serviceEndNoticeSentAt: now },
+            subject: { kind: "client", clientId: 7, clientIdentity: "c".repeat(64) },
+        })).toEqual({ status: "none" });
+        expect(acceptance).toHaveBeenCalledWith(expect.objectContaining({ branchId, clientId: 7, templateKey: input.rule.templateKey }), undefined);
+        expect(templates.getByKeyForBranch).not.toHaveBeenCalled();
+    });
 });

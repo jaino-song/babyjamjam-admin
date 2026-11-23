@@ -21,7 +21,7 @@ function record(value: Prisma.JsonValue) {
     return value && typeof value === "object" && !Array.isArray(value) ? value : {};
 }
 
-export function manualTemplateVariables(template: SmsTemplateReference | undefined) {
+export function manualTemplateVariables(template: SmsTemplateReference | undefined): Record<string, string> {
     return template ? { [manualRefField]: JSON.stringify(template) } : {};
 }
 
@@ -145,18 +145,18 @@ export async function resolveLogOccurrence(tx: Tx, log: message_log): Promise<Oc
 async function lockLevels(tx: Tx, levels: Level[]) {
     const rows: Array<{ occurrence_key: string; state: string; holder_log_id: number | null }> = [];
     for (const level of levels) {
-        await tx.$executeRaw`
+        await tx.$executeRaw(Prisma.sql`
             INSERT INTO message_occurrence_claim
                 (branch_id, occurrence_key, template_key, event_type, lifecycle_id, recipient_kind, recipient_id, slot)
             VALUES (${level.branchId}::uuid, ${level.occurrenceKey}, ${level.templateKey}, ${level.eventType},
                 ${level.lifecycleId}, ${level.recipientKind}, ${level.recipientId}, ${level.slot})
             ON CONFLICT (branch_id, occurrence_key) DO NOTHING
-        `;
-        const [row] = await tx.$queryRaw<typeof rows>`
+        `);
+        const [row] = await tx.$queryRaw<typeof rows>(Prisma.sql`
             SELECT occurrence_key, state, holder_log_id FROM message_occurrence_claim
             WHERE branch_id = ${level.branchId}::uuid AND occurrence_key = ${level.occurrenceKey}
             FOR UPDATE
-        `;
+        `);
         if (!row) throw new Error("Missing locked message occurrence");
         rows.push(row);
     }

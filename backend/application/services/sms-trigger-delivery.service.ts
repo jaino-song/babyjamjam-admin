@@ -1,5 +1,5 @@
 import { SMS_TEMPLATE_DELIVERY, type SmsTemplateDeliveryConfig } from "domain/constants/sms-template-delivery";
-import { OCCURRENCE_ALREADY_ACCEPTED } from "domain/entities/message-occurrence";
+import { OCCURRENCE_ALREADY_ACCEPTED, SMS_OCCURRENCE_HOLD_FIELD } from "domain/entities/message-occurrence";
 import { AligoDefaultSenderPolicyService } from "./aligo-default-sender-policy.service";
 import { normalizePhone } from "application/utils/normalize-phone";
 import { MANUAL_SMS_TEMPLATE_KEY, MANUAL_SMS_RULE_PREFIX, type MessageTriggerJobTemplateKey } from "domain/constants/message-trigger-catalog";
@@ -274,6 +274,10 @@ export class SmsTriggerDeliveryService {
         });
         if (changed.count !== 1) return refuse();
         job.quietHold = hold;
+    }
+
+    async hasAcceptedOccurrence(job: MessageTriggerJobEntity, transaction?: Prisma.TransactionClient): Promise<boolean> {
+        return await this.jobRepository?.hasAcceptedOccurrence?.(job, transaction) ?? false;
     }
 
     /** Resolve the current provider-bound target without trusting staged data. */
@@ -712,12 +716,14 @@ export class SmsTriggerDeliveryService {
                                 nextAttemptAt: null, claimToken: null, processingDeadlineAt: null },
                         });
                         if (canceledJob.count !== 1) throw new AgentAutomationDispatchUncertainError();
+                        const canceledVariables = { ...variables };
+                        delete canceledVariables[SMS_OCCURRENCE_HOLD_FIELD];
                         const refused = await transaction.message_log.updateMany({
                             where: { id: current.id, branchId: job.branchId, providerAcceptanceState: "prepared",
                                 providerAcceptanceKey: current.providerAcceptanceKey, providerAcceptanceFingerprint: current.providerAcceptanceFingerprint,
                                 updatedAt: current.updatedAt, variables: { equals: current.variables as Prisma.InputJsonValue } },
                             data: { status: "failed", nextRetryAt: null, errorMessage: QUIET_HOURS_CANCEL_REASON,
-                                variables: { ...variables, quietHoursDisposition: "CANCEL",
+                                variables: { ...canceledVariables, quietHoursDisposition: "CANCEL",
                                     ...(job.templateKey === MANUAL_SMS_TEMPLATE_KEY
                                         ? { manualQueueStatus: "canceled", manualQueueReason: QUIET_HOURS_CANCEL_REASON } : {}) } },
                         });
@@ -734,7 +740,7 @@ export class SmsTriggerDeliveryService {
                     if (!job.claimToken || !job.processingDeadlineAt) throw new AgentAutomationDispatchUncertainError();
                     const fence = await transaction.message_trigger_job.updateMany({
                         where: { id: job.id, branchId: job.branchId, status: "dispatching", claimToken: job.claimToken,
-                            processingDeadlineAt: { equals: job.processingDeadlineAt, gt: new Date() },
+                            processingDeadlineAt: { equals: job.processingDeadlineAt, gt: new Date(Date.now()) },
                             updatedAt: currentJob.updatedAt },
                         data: { updatedAt: currentJob.updatedAt },
                     });
@@ -743,10 +749,11 @@ export class SmsTriggerDeliveryService {
                         const attempt = this.acceptanceService
                             ? await this.acceptanceService.beginProviderCall(persistedAttempt, transaction)
                             : this.beginProviderCallWithoutBoundary();
-                        if (job.processingDeadlineAt <= new Date()) throw new AgentAutomationDispatchUncertainError();
+                        if (job.processingDeadlineAt.getTime() <= Date.now()) throw new AgentAutomationDispatchUncertainError();
                         return { kind: "ready" as const, attempt: attempt ?? persistedAttempt };
                     } catch (error) {
                         if (!(error instanceof SmsOccurrenceBlockedError)) throw error;
+                        if (job.processingDeadlineAt.getTime() <= Date.now()) throw new AgentAutomationDispatchUncertainError();
                         const done = error.disposition === "accepted";
                         const at = new Date(Date.now() + (done ? 0 : 60_000));
                         await transaction.message_trigger_job.update({

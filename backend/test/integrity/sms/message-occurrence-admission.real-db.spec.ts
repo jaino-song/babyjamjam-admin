@@ -4,6 +4,12 @@ import { SmsRetryService } from "application/services/sms-retry.service";
 import { MessageDeliveryController } from "interface/controllers/message-delivery.controller";
 import { MessageQuietHoursService } from "application/services/message-quiet-hours.service";
 import { MessageAutomationBranchLockService } from "application/services/message-automation-branch-lock.service";
+import { MessageAutomationActivationService } from "application/services/message-automation-activation.service";
+import { AgentAutomationDeliveryGateService } from "application/services/agent-automation-delivery-gate.service";
+import { SmsAutomationSafeguardService } from "application/services/sms-automation-safeguard.service";
+import { MessageTriggerDeliveryService } from "application/services/message-trigger-delivery.service";
+import { MessageTriggerService } from "application/services/message-trigger.service";
+import { describeClientMessageEffect } from "application/services/client-message-effect-recipe";
 import { SmsTriggerDeliveryService } from "application/services/sms-trigger-delivery.service";
 import { defaultMessageAutomationPolicy } from "domain/entities/system-setting.entity";
 import type { SendSmsMessageDto } from "interface/dto/message-delivery.dto";
@@ -17,18 +23,20 @@ import {
 import { MessageTriggerJobEntity } from "domain/entities/message-trigger-job.entity";
 import type { MessageLogEntity } from "domain/entities/message-log.entity";
 import {
-    MessageTriggerEventType, MessageTriggerRecipientType, MessageTriggerTemplateKey,
+    MessageTriggerEventType, MessageTriggerOffsetType, MessageTriggerRecipientType, MessageTriggerTemplateKey,
 } from "domain/constants/message-trigger-catalog";
 import { SERVICE_RECORD_LINK_RULE_ID } from "domain/constants/service-record-link-message";
-import { OCCURRENCE_ALREADY_ACCEPTED } from "domain/entities/message-occurrence";
+import { OCCURRENCE_ALREADY_ACCEPTED, SMS_OCCURRENCE_HOLD_FIELD } from "domain/entities/message-occurrence";
+import { parseMessageQuietHold } from "domain/message-policy-evaluator";
 import { MessageLogMapper } from "infrastructure/database/mapper/message-log.mapper";
 import { manualTemplateVariables } from "infrastructure/database/repositories/message-occurrence-ledger";
 import { SbMessageLogRepository } from "infrastructure/database/repositories/sb.message-log.repository";
 import { SbMessageTriggerJobRepository } from "infrastructure/database/repositories/sb.message-trigger-job.repository";
+import { SbMessageTriggerRuleRepository } from "infrastructure/database/repositories/sb.message-trigger-rule.repository";
 import { createBranch, createClient, createEmployee, createEmployeeSchedule, createEformsignDoc, createMessageLog, createMessageTriggerJob, createMessageTriggerRule } from "../helpers/factories";
 import { assertThrowawayTarget, closeIntegrityPrisma, createIntegrityPrisma, describeReal, type IntegrityPrisma } from "../helpers/real-db";
 import { RowTracker } from "../helpers/tracker";
-import { waitUntilBlocked, withDeadline } from "./sms-wiring.local";
+import { noopApprovalStub, waitUntilBlocked, withDeadline } from "./sms-wiring.local";
 
 type Result = "accepted" | "rejected" | "uncertain";
 const { CLIENT, PRIMARY_EMPLOYEE, SECONDARY_EMPLOYEE } = MessageTriggerRecipientType;
@@ -113,6 +121,34 @@ describeReal("message occurrence provider admission (PostgreSQL)", () => {
         const retry = new SmsRetryService(logs, providerMock() as never, { ensureApproved: async () => {} } as never,
             boundary, activation as never, undefined, undefined, undefined, undefined, settings as never, quietHours());
         return new MessageRetrySchedulerService(logs, retry, { holdsLease: () => true } as never, settings as never);
+    }
+
+    function worker(configuration = defaultMessageAutomationPolicy()) {
+        const lock = new MessageAutomationBranchLockService(db.service);
+        const jobs = new SbMessageTriggerJobRepository(db.service);
+        const rules = new SbMessageTriggerRuleRepository(db.service);
+        const settings = { getMessageAutomationPolicyConfig: async () => ({ configuration, version: "occurrence-test" }) };
+        const activation = new MessageAutomationActivationService(db.service, lock, {} as never);
+        const gate = new AgentAutomationDeliveryGateService(db.service, lock,
+            { checkAutomaticJob: async () => ({ status: "legacy" }) } as never);
+        const templates = { getByKeyForBranch: async () => ({ id: "fixture", content: "비용 안내", updatedAt: new Date(0) }) };
+        const delivery = new SmsTriggerDeliveryService(providerMock() as never, templates as never, logs, boundary, undefined, gate, rules,
+            settings as never, undefined, new MessageQuietHoursService(settings as never, logs, lock), jobs);
+        const core = new MessageTriggerService(db.service, new MessageTriggerDeliveryService(delivery), noopApprovalStub() as never,
+            rules, jobs, logs, templates as never, {} as never, settings as never, undefined,
+            activation, lock, undefined, gate, undefined, new SmsAutomationSafeguardService(db.service, activation));
+        return { delivery, dispatch: (id: string) => core.dispatchPendingJobNow(id, { expectedBranchId: branchId }) };
+    }
+
+    function scheduledPriceInfo(at: Date) {
+        return job(rule, customer, {
+            scheduledFor: at,
+            payload: {
+                clientId: customer.id, memberId: String(customer.id), recipientName: customer.name!, recipientPhone: customer.phone!,
+                templateVariables: { name: customer.name!, weeks: "2", duration: "10", type: "A", fullPrice: "1000",
+                    grant: "800", actualPrice: "200", bankName: "은행", accNum: "123" },
+            },
+        });
     }
 
     function composeRequest(recipient = customer): SendSmsMessageDto {
@@ -308,6 +344,38 @@ describeReal("message occurrence provider admission (PostgreSQL)", () => {
             .toMatchObject({ nextRetryAt: null, providerAcceptanceState: "rejected", variables: expect.objectContaining({ retrySafety: "permanent-provider-rejected" }) });
     });
 
+    it("holds a due automatic retry without retaining a child attempt while a manual attempt is in flight", async () => {
+        const original = await prepared(await job());
+        send.mockResolvedValueOnce("rejected");
+        expect(await attempt(original)).toBe("rejected");
+        const before = await db.raw.message_log.findUniqueOrThrow({ where: { id: original.id } });
+        const manual = await prepared();
+        const manualAttempt = await boundary.beginProviderCall(MessageLogMapper.toDomain(manual));
+        send.mockClear();
+        const at = Date.now();
+        jest.useFakeTimers({ now: at, doNotFake: [
+            "setTimeout", "clearTimeout", "setInterval", "clearInterval", "setImmediate", "clearImmediate", "nextTick", "queueMicrotask",
+        ] });
+        try {
+            await scheduler().retryFailedMessages();
+            expect(send).not.toHaveBeenCalled();
+            expect(await db.raw.message_log.count({ where: { triggerJobId: original.triggerJobId } })).toBe(1);
+            expect(await db.raw.message_log.findUniqueOrThrow({ where: { id: original.id } })).toMatchObject({
+                attempts: before.attempts, nextRetryAt: new Date(at + 60_000), providerAcceptanceState: "rejected",
+            });
+            send.mockResolvedValueOnce("uncertain");
+            await sendAdmitted(manualAttempt);
+            await reconcile(manual, "not-delivered");
+            send.mockClear();
+            jest.setSystemTime(at + 60_001);
+            await scheduler().retryFailedMessages();
+            expect(send).toHaveBeenCalledTimes(1);
+            expect(await db.raw.message_log.count({ where: { triggerJobId: original.triggerJobId, providerAcceptanceState: "accepted" } })).toBe(1);
+        } finally {
+            jest.useRealTimers();
+        }
+    });
+
     it("T8 admits once after duplicate contract completion and concurrent automatic retry claims", async () => {
         const harness = buildWebhookHarness(db);
         const initialAt = new Date("2026-10-01");
@@ -413,6 +481,51 @@ describeReal("message occurrence provider admission (PostgreSQL)", () => {
         expect(send).toHaveBeenCalledTimes(1);
     });
 
+    it("previews only unaccepted end-notice slots without writing occurrence claims", async () => {
+        const d3 = await ruleInGroup(SERVICE_END_NOTICE, SERVICE_END);
+        const d1 = await ruleInGroup(SERVICE_END_NOTICE, SERVICE_END);
+        await db.raw.message_trigger_rule.updateMany({ where: { id: { in: [d3.id, d1.id] } }, data: {
+            isActive: true, offsetType: MessageTriggerOffsetType.BEFORE_DAYS, offsetDays: 3,
+        } });
+        await db.raw.message_trigger_rule.update({ where: { id: d1.id }, data: { offsetDays: 1 } });
+        const rules = new SbMessageTriggerRuleRepository(db.service);
+        const { delivery } = worker();
+        const at = new Date("2026-11-03T12:00:00.000Z");
+        const stamp = new Date("2026-11-01T12:00:00.000Z");
+        const preview = async (id: string) => (await describeClientMessageEffect({
+            branchId, delivery, rule: (await rules.findByIdIncludingGlobal(branchId, id))!,
+            client: { ...customer, name: customer.name!, endDate: new Date("2026-11-10") },
+            subject: { kind: "client", clientId: customer.id, clientIdentity: "c".repeat(64) },
+            policy: { dispatchEnabled: true, senderApproved: true, senderIdentityDigest: "a".repeat(64),
+                senderApprovedAt: null, pastTriggerEnabled: true, pastTriggerConfig: { sendIntervalMinutes: 1, ruleOrder: [] } },
+            now: at, change: "create",
+        })).status;
+        const claimCount = () => db.raw.message_occurrence_claim.count({ where: { branchId } });
+        await db.raw.client.update({ where: { id: customer.id }, data: { serviceEndNoticeSentAt: stamp } });
+        expect(await preview(d3.id)).toBe("none");
+        expect(await preview(d1.id)).toBe("none");
+        expect(await claimCount()).toBe(0);
+
+        const historical = await job(d3, customer, { status: "sent" });
+        await createMessageLog(db.raw, tracker, {
+            branchId, clientId: customer.id, templateKey: "service_end_notice_sms", triggerJobId: historical.id,
+            providerAcceptanceState: "accepted", providerAcceptedAt: stamp, status: "sent",
+        });
+        expect(await preview(d3.id)).toBe("none");
+        expect(await preview(d1.id)).toBe("effect");
+        expect(await claimCount()).toBe(0);
+
+        const next = await job(d1);
+        send.mockResolvedValueOnce("rejected");
+        expect(await attempt(await prepared(next))).toBe("rejected");
+        const count = await claimCount();
+        expect(count).toBe(3);
+        expect(await preview(d1.id)).toBe("effect");
+        expect(await attempt(await prepared(next))).toBe("accepted");
+        expect(await preview(d1.id)).toBe("none");
+        expect(await claimCount()).toBe(count);
+    });
+
     it("T12/T22 durably defers automatic work while a manual provider call is running", async () => {
         let release!: () => void;
         let entered!: () => void;
@@ -437,6 +550,86 @@ describeReal("message occurrence provider admission (PostgreSQL)", () => {
         expect(send).toHaveBeenCalledTimes(1);
         expect(await db.raw.message_log.findUnique({ where: { id: automatic.id } }))
             .toMatchObject({ errorMessage: OCCURRENCE_ALREADY_ACCEPTED, attempts: 0 });
+    });
+
+    it.each(["delivered", "not-delivered"] as const)(
+        "T2/T12 records an occurrence hold through dispatch and resumes after manual %s", async outcome => {
+            const clock = jest.spyOn(Date, "now");
+            const at = new Date("2026-11-03T12:00:00.000Z");
+            clock.mockReturnValue(at.getTime());
+            try {
+                const source = await scheduledPriceInfo(at);
+                const manual = await prepared();
+                const admitted = await boundary.beginProviderCall(MessageLogMapper.toDomain(manual));
+                const { dispatch } = worker();
+
+                expect(await dispatch(source.id)).toMatchObject({
+                    status: "pending", attempts: 0, nextAttemptAt: new Date(at.getTime() + 60_000), claimToken: null,
+                });
+                expect(send).not.toHaveBeenCalled();
+                const log = () => db.raw.message_log.findFirstOrThrow({ where: { branchId, triggerJobId: source.id } });
+                expect(await log()).toMatchObject({
+                    providerAcceptanceState: "prepared", providerCallStartedAt: null,
+                    variables: { [SMS_OCCURRENCE_HOLD_FIELD]: expect.stringMatching(/^[a-f0-9]{64}$/) },
+                });
+                send.mockResolvedValueOnce(outcome === "delivered" ? "accepted" : "uncertain");
+                await sendAdmitted(admitted);
+                if (outcome === "not-delivered") await reconcile(manual, "not-delivered");
+                send.mockClear();
+                clock.mockReturnValue(at.getTime() + 60_000);
+                expect(await dispatch(source.id)).toMatchObject(outcome === "delivered"
+                    ? { status: "canceled", cancelReason: OCCURRENCE_ALREADY_ACCEPTED, attempts: 0 }
+                    : { status: "sent" });
+                expect(send).toHaveBeenCalledTimes(outcome === "delivered" ? 0 : 1);
+                const finalLog = await log();
+                expect(finalLog.attempts).toBe(outcome === "delivered" ? 0 : 1);
+                expect(finalLog.variables).not.toHaveProperty(SMS_OCCURRENCE_HOLD_FIELD);
+            } finally {
+                clock.mockRestore();
+            }
+        },
+    );
+
+    it.each([{}, { [SMS_OCCURRENCE_HOLD_FIELD]: "malformed" }, {
+        [SMS_OCCURRENCE_HOLD_FIELD]: "a".repeat(64), quietHoursDisposition: "DEFER", quietHoursReleaseAt: "bad-time",
+    }])("fails closed when a deferred job has no valid hold metadata (%j)", async variables => {
+        const at = new Date();
+        const automatic = await scheduledPriceInfo(at);
+        await db.raw.message_trigger_job.update({ where: { id: automatic.id }, data: { nextAttemptAt: at } });
+        await prepared(automatic, { variables });
+        await expect(worker().dispatch(automatic.id)).rejects.toThrow(
+            "quietHoursDisposition" in variables ? "Invalid quiet hold association" : "Quiet hold metadata is missing",
+        );
+        expect(send).not.toHaveBeenCalled();
+    });
+
+    it("retains the original quiet release time through a subsequent occurrence hold and expiry", async () => {
+        const clock = jest.spyOn(Date, "now");
+        const night = new Date("2026-11-03T13:00:00.000Z");
+        clock.mockReturnValue(night.getTime());
+        try {
+            const configuration = defaultMessageAutomationPolicy();
+            configuration.pastExpiryHours = 1;
+            configuration.quietHours.enabled = true;
+            const { dispatch } = worker(configuration);
+            const automatic = await scheduledPriceInfo(night);
+            const log = () => db.raw.message_log.findFirstOrThrow({ where: { branchId, triggerJobId: automatic.id } });
+            const release = new Date("2026-11-03T23:00:00.000Z");
+            expect(await dispatch(automatic.id)).toMatchObject({ status: "pending", nextAttemptAt: release, attempts: 0 });
+            const manual = await prepared();
+            await boundary.beginProviderCall(MessageLogMapper.toDomain(manual));
+            clock.mockReturnValue(release.getTime());
+            expect(await dispatch(automatic.id)).toMatchObject({ status: "pending", nextAttemptAt: new Date(release.getTime() + 60_000), attempts: 0 });
+            const held = await log();
+            expect(held.variables).toHaveProperty(SMS_OCCURRENCE_HOLD_FIELD);
+            expect(parseMessageQuietHold(held.variables)?.releaseAt).toEqual(release);
+            clock.mockReturnValue(release.getTime() + 3_600_001);
+            expect(await dispatch(automatic.id)).toMatchObject({ status: "canceled", cancelReason: "expired_after_quiet", attempts: 0 });
+            expect((await log()).variables).not.toHaveProperty(SMS_OCCURRENCE_HOLD_FIELD);
+            expect(send).not.toHaveBeenCalled();
+        } finally {
+            clock.mockRestore();
+        }
     });
 
     it("T13 leaves automatic uncertainty intact after an explicit manual rejection", async () => {

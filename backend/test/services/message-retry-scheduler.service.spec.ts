@@ -132,6 +132,25 @@ describe("MessageRetrySchedulerService", () => {
         expect(logRepository.update).not.toHaveBeenCalled();
     });
 
+    it("passes a live lease predicate to an SMS retry already in progress", async () => {
+        const log = createLog("aligo_sms", "provider-rejected");
+        const lease = createSchedulerLeaseMock();
+        const holdsLease = jest.spyOn(lease, "holdsLease").mockReturnValue(true);
+        logRepository.findPendingRetriesSystemScope.mockResolvedValue([log]);
+        const observedLease: boolean[] = [];
+        smsRetryService.retry.mockImplementation(async (_log, _invocation, leaseHeld: () => boolean) => {
+            observedLease.push(leaseHeld());
+            holdsLease.mockReturnValue(false);
+            observedLease.push(leaseHeld());
+        });
+        const guarded = new MessageRetrySchedulerService(logRepository as never, smsRetryService as never, lease, systemSettingService as never);
+
+        await guarded.retryFailedMessages();
+
+        expect(observedLease).toEqual([true, false]);
+        expect(smsRetryService.retry).toHaveBeenCalledTimes(1);
+    });
+
     it("does not resend a manually rejected explicit retry even if it is selected", async () => {
         const manuallyRejectedLog = createLog("aligo_sms", "manual-provider-rejected", null);
         logRepository.findPendingRetriesSystemScope.mockResolvedValue([manuallyRejectedLog]);

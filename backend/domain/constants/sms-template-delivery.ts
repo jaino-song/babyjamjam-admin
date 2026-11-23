@@ -109,4 +109,3 @@ export const SMS_TEMPLATE_DELIVERY: Partial<Record<MessageTriggerTemplateKey, Sm
         systemTemplateKey: SystemTemplateKey.SERVICE_END_NOTICE,
     },
 };
-

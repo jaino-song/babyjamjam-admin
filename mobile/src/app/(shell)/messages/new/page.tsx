@@ -210,17 +210,14 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+function isAmbiguousOutcome(normalized: NormalizedApiError): boolean {
+  return normalized.outcome === "UNKNOWN"
+    || normalized.outcome === "PARTIALLY_APPLIED"
+    || normalized.recovery?.action === "CHECK_STATUS";
+}
+
 function hasExplicitAmbiguousOutcome(error: unknown, normalized: NormalizedApiError): boolean {
-  if (
-    normalized.verified
-    && (
-      normalized.outcome === "UNKNOWN"
-      || normalized.outcome === "PARTIALLY_APPLIED"
-      || normalized.recovery?.action === "CHECK_STATUS"
-    )
-  ) {
-    return true;
-  }
+  if (normalized.verified && isAmbiguousOutcome(normalized)) return true;
 
   if (!isRecord(error) || !isRecord(error.response) || !isRecord(error.response.data)) {
     return false;
@@ -230,6 +227,11 @@ function hasExplicitAmbiguousOutcome(error: unknown, normalized: NormalizedApiEr
   return data.outcome === "UNKNOWN"
     || data.outcome === "PARTIALLY_APPLIED"
     || (isRecord(data.recovery) && data.recovery.action === "CHECK_STATUS");
+}
+
+function needsDuplicateRecheck(error: unknown, normalized: NormalizedApiError): boolean {
+  return isRecord(error) && isRecord(error.response) && error.response.status === 409
+    && !hasExplicitAmbiguousOutcome(error, normalized);
 }
 
 function isReceiptLinkPreflightFailure(
@@ -945,6 +947,7 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId, initi
   const [submitAttempted, setSubmitAttempted] = useState(false);
   const [sendError, setSendError] = useState<NormalizedApiError | null>(null);
   const [sendRetryFingerprint, setSendRetryFingerprint] = useState<string | null>(null);
+  const [batchReplayFingerprint, setBatchReplayFingerprint] = useState<string | null>(null);
   const [sendOutcomeLocked, setSendOutcomeLocked] = useState(false);
 
   const seededClientIdsRef = useRef<Set<number>>(new Set());
@@ -1492,7 +1495,6 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId, initi
   currentDraftRef.current = sendPayloadFingerprint;
   useEffect(() => {
     setDuplicateConfirmation(null);
-    if (submissionRef.current?.fingerprint !== sendPayloadFingerprint) submissionRef.current = null;
   }, [sendPayloadFingerprint]);
 
   const showVariableHint = useMemo(() => hasUnreplacedVariables(body), [body]);
@@ -1678,7 +1680,11 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId, initi
         submission.accepted.set(key, data);
         return data;
       }));
-      const failure = results.find(result => result.status === "rejected");
+      const failure = results.find(result => {
+        if (result.status !== "rejected") return false;
+        const normalized = normalizeApiError(result.reason, { operation: "mutation", locale: "ko-KR" });
+        return isAmbiguousOutcome(normalized) && !needsDuplicateRecheck(result.reason, normalized);
+      }) ?? results.find(result => result.status === "rejected");
       if (failure?.status === "rejected") throw failure.reason;
       const first = results[0];
       if (first?.status !== "fulfilled") throw new Error(INVALID_SMS_RESPONSE_MESSAGE);
@@ -1689,6 +1695,7 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId, initi
       setErrorMessage(null);
       setSendError(null);
       setSendRetryFingerprint(null);
+      setBatchReplayFingerprint(null);
       setSendOutcomeLocked(false);
       setSuccessMessage(
         submission === null
@@ -1708,15 +1715,20 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId, initi
       setReceiptLinkPreparation(null);
     },
     onError: async (err, submission) => {
-      if (submission && isRecord(err) && isRecord(err.response) && err.response.status === 409
-        && !hasExplicitAmbiguousOutcome(err, normalizeApiError(err, { operation: "mutation", locale: "ko-KR" }))) {
+      const normalized = normalizeApiError(err, { operation: "mutation", locale: "ko-KR" });
+      const canReplayBatch = submission !== null && submission.requests.length > 1;
+      const recheckDuplicates = submission !== null && needsDuplicateRecheck(err, normalized);
+      const isAmbiguous = isAmbiguousOutcome(normalized);
+      if (canReplayBatch && (submission.accepted.size > 0 || (isAmbiguous && !recheckDuplicates))) {
+        setBatchReplayFingerprint(submission.fingerprint);
+      }
+      if (recheckDuplicates) {
         setDuplicateConfirmation(null);
         if (currentDraftRef.current === submission.fingerprint) {
           await checkDuplicates(submission, true);
         }
         return;
       }
-      const normalized = normalizeApiError(err, { operation: "mutation", locale: "ko-KR" });
       setSuccessMessage(null);
       setErrorMessage(null);
       setSendError(
@@ -1725,12 +1737,8 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId, initi
           : normalized,
       );
 
-      const isAmbiguous = normalized.outcome === "UNKNOWN"
-        || normalized.outcome === "PARTIALLY_APPLIED"
-        || normalized.recovery?.action === "CHECK_STATUS";
       const canRetryReceiptLink = submission === null
         && isReceiptLinkPreflightFailure(err, normalized);
-      const canReplayBatch = submission !== null && submission.requests.length > 1;
       setSendOutcomeLocked(submission === null ? !canRetryReceiptLink : isAmbiguous && !canReplayBatch);
       setSendRetryFingerprint(submission === null || canReplayBatch || normalized.outcome === "NOT_APPLIED" ? null : submission.fingerprint);
     },
@@ -2047,7 +2055,8 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId, initi
       return;
     }
 
-    if (inFlightRef.current || sendMutation.isPending || sendOutcomeLocked) {
+    if (inFlightRef.current || sendMutation.isPending || sendOutcomeLocked
+      || (batchReplayFingerprint !== null && batchReplayFingerprint !== sendPayloadFingerprint)) {
 
       return;
     }
@@ -2116,6 +2125,7 @@ function NewMessageForm({ initialBody, initialTemplateId, initialClientId, initi
     isSenderApprovalLoading ||
     needsSenderApproval ||
     sendOutcomeLocked ||
+    (batchReplayFingerprint !== null && batchReplayFingerprint !== sendPayloadFingerprint) ||
     (!isServiceEndNoticeSelected && sendRetryFingerprint === sendPayloadFingerprint);
 
   return (

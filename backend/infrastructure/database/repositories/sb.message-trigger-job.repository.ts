@@ -1,4 +1,4 @@
-import { OCCURRENCE_ALREADY_ACCEPTED } from "domain/entities/message-occurrence";
+import { OCCURRENCE_ALREADY_ACCEPTED, SMS_OCCURRENCE_HOLD_FIELD } from "domain/entities/message-occurrence";
 import { hasAcceptedJobOccurrence } from "./message-occurrence-ledger";
 import { isManualMessageTriggerJob } from "domain/constants/message-trigger-job-ownership";
 import { agentBindingHash } from "domain/repositories/agent-linked-action.types";
@@ -322,6 +322,8 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
             const variables = log.variables && typeof log.variables === "object" && !Array.isArray(log.variables) ? log.variables : {};
             const hasHold = Object.keys(variables).some(key => key.startsWith("quietHours"));
             if (!hasHold) {
+                const occurrenceHold = variables[SMS_OCCURRENCE_HOLD_FIELD];
+                if (typeof occurrenceHold === "string" && /^[a-f0-9]{64}$/.test(occurrenceHold)) continue;
                 if (job.attempts === 0 && job.nextAttemptAt !== null && log.providerAcceptanceState === "prepared" && log.providerCallStartedAt === null) throw new Error("Quiet hold metadata is missing");
                 continue;
             }
@@ -380,11 +382,12 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
             || (current.status === "pending" && (current.claimToken !== null || current.processingDeadlineAt !== null))) {
             throw new Error("Quiet hold claim changed");
         }
-        const variables = log.variables && typeof log.variables === "object" && !Array.isArray(log.variables) ? log.variables : {};
+        const variables = log.variables && typeof log.variables === "object" && !Array.isArray(log.variables) ? { ...log.variables } : {};
         const oldHold = parseMessageQuietHold(variables);
         if (variables["quietHoursDisposition"] === "CANCEL"
             || (variables["quietHoursDisposition"] === "DEFER" && !oldHold)
             || (oldHold && oldHold.originalScheduledFor.getTime() !== job.scheduledFor.getTime())) throw new Error("Quiet hold metadata changed");
+        delete variables[SMS_OCCURRENCE_HOLD_FIELD];
         const hold: MessageQuietHold | null = decision.action === "DEFER" ? {
             releaseAt: new Date(Math.max(oldHold?.releaseAt.getTime() ?? 0, decision.reevaluateAt.getTime(), job.scheduledFor.getTime())),
             originalScheduledFor: oldHold?.originalScheduledFor ?? job.scheduledFor,
@@ -418,7 +421,7 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
 
     async create(job: MessageTriggerJobEntity): Promise<MessageTriggerJobEntity> {
         this.assertOrdinaryJob(job);
-        const accepted = await this.creationOccurrenceAccepted(this.prisma, job);
+        const accepted = job.status === "pending" && await this.hasAcceptedOccurrence(job);
         if (accepted) job.cancel(OCCURRENCE_ALREADY_ACCEPTED);
         const row = await this.prisma.message_trigger_job.create({
             data: this.toCreate(job),
@@ -2109,7 +2112,7 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
         this.assertOrdinaryJob(job);
         const ordinaryConflict = ordinaryAutomationJobSql({ ruleId: Prisma.sql`"message_trigger_job"."rule_id"`,
             dedupeKey: Prisma.sql`"message_trigger_job"."dedupe_key"`, payload: Prisma.sql`"message_trigger_job"."payload"` });
-        const accepted = await this.creationOccurrenceAccepted(client, job);
+        const accepted = job.status === "pending" && await this.hasAcceptedOccurrence(job, client);
         const conflictAction = accepted
             ? Prisma.sql`DO UPDATE SET status = 'canceled', canceled_at = EXCLUDED.canceled_at,
                 cancel_reason = EXCLUDED.cancel_reason, next_attempt_at = NULL,
@@ -2230,8 +2233,9 @@ export class SbMessageTriggerJobRepository implements IMessageTriggerJobReposito
         return this.toDomain(existing);
     }
 
-    private async creationOccurrenceAccepted(tx: Prisma.TransactionClient, job: MessageTriggerJobEntity): Promise<boolean> {
-        if (!tx.message_occurrence_claim || job.status !== "pending") return false;
+    async hasAcceptedOccurrence(job: MessageTriggerJobEntity, transaction?: Prisma.TransactionClient): Promise<boolean> {
+        const tx = transaction ?? this.prisma;
+        if (!tx.message_occurrence_claim) return false;
         return hasAcceptedJobOccurrence(tx, { ...job, payload: job.payload as unknown as Prisma.JsonValue });
     }
 
