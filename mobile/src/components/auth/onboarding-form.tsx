@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { ChevronDown } from "lucide-react";
-import { authBirthDateSchema, authPhoneSchema, REGISTERABLE_ROLE_OPTIONS } from "@babyjamjam/shared";
+import { ACCOUNT_LINK_VERSION, authBirthDateSchema, authPhoneSchema, REGISTERABLE_ROLE_OPTIONS } from "@babyjamjam/shared";
 import { formatIsoDateInput } from "@babyjamjam/shared/utils/date-input";
 import { z } from "zod";
 
@@ -122,7 +122,7 @@ export function OnboardingForm(props: OnboardingFormProps) {
     }
 
     setIsLoading(true);
-    const response = await completeKakaoOnboarding(result.data);
+    const response = await completeKakaoOnboarding(result.data, ACCOUNT_LINK_VERSION);
     setIsLoading(false);
     if (response.code) {
       router.replace(`/login?authError=${response.code}`);

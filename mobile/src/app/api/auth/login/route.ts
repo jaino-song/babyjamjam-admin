@@ -5,6 +5,7 @@ import { z } from "zod";
 
 import { errorResponse, parseBody } from "@/lib/api/route-utils";
 import { upstreamBodyErrorResponse } from "@/lib/api/problem-responses";
+import { clearPendingOnboarding } from "@/lib/auth/pending-onboarding-cookies";
 import { serverAPIClient } from "@/lib/api/server";
 import { getServerRuntimeConfig } from "@/lib/env";
 import {
@@ -82,6 +83,8 @@ export async function POST(request: NextRequest) {
             cookieStore.set("refresh_token", data.refreshToken, baseCookieOptions);
             cookieStore.set("auto_login", "0", baseCookieOptions);
         }
+
+        clearPendingOnboarding(cookieStore);
 
         return NextResponse.json({
             success: true,

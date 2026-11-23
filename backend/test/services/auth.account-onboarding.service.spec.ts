@@ -19,6 +19,7 @@ const account = {
 };
 const token = `pending-onboarding-token.${account.tokenVersion}`;
 const phone = "010-1234-5678";
+const lookupForms = ["01012345678", phone, "010-12345678", "0101234-5678"];
 const birthDate = "1990-01-01";
 const tokens = { accessToken: "access", refreshToken: "refresh" };
 const kakaoData = { kakaoId: account.kakaoId };
@@ -158,7 +159,7 @@ describe("AuthService account completion", () => {
             });
             expect(tx.user.findUnique).toHaveBeenCalledWith({ where: { id: account.id } });
             expect(tx.user.findFirst).toHaveBeenCalledWith({
-                where: { phone: { in: ["01012345678", phone] }, id: { not: account.id } },
+                where: { phone: { in: lookupForms }, id: { not: account.id } },
             });
             expect(tx.user.update).toHaveBeenCalledWith({ where: { id: account.id, tokenVersion: account.tokenVersion }, data: { phone, birthDate } });
             expectTransactionOnlyAccountAccess();
@@ -213,7 +214,11 @@ describe("AuthService account completion", () => {
             expectTransactionOnlyAccountAccess();
         });
 
-        it.each(["01012345678", "010-1234-5678"])("rejects another account's %s inside the transaction and allows retry", async (heldPhone) => {
+        const tenDigitForms = ["0111234567", "011-123-4567", "011-1234567", "011123-4567"];
+        it.each([
+            ...lookupForms.map(heldPhone => ({ heldPhone, inputPhone: phone, forms: lookupForms })),
+            ...tenDigitForms.slice(2).map(heldPhone => ({ heldPhone, inputPhone: tenDigitForms[1], forms: tenDigitForms })),
+        ])("rejects another account's $heldPhone inside the transaction and allows retry", async ({ heldPhone, inputPhone, forms }) => {
             tx.user.findFirst.mockImplementation(async ({ where }) => where.phone.in.includes(heldPhone)
                 ? { id: "other-user", phone: heldPhone } : null);
             const refusal = {
@@ -222,13 +227,13 @@ describe("AuthService account completion", () => {
                     pointer: "/phone", code: "INVALID_VALUE", detail: "이미 등록된 전화번호예요. 오너에게 문의해 주세요.",
                 }),
             };
-            const result = service.completeAccountOnboarding(token, phone, birthDate);
+            const result = service.completeAccountOnboarding(token, inputPhone, birthDate);
             await expect(result).rejects.toMatchObject(refusal);
             await expect(transactionPromise).rejects.toMatchObject(refusal);
             expect(tx.auth_flow_state.updateMany).toHaveBeenCalledTimes(1);
             expect(tx.user.findUnique).toHaveBeenCalledWith({ where: { id: account.id } });
             expect(tx.user.findFirst).toHaveBeenCalledWith({
-                where: { phone: { in: ["01012345678", phone] }, id: { not: account.id } },
+                where: { phone: { in: forms }, id: { not: account.id } },
             });
             expect(tx.user.update).not.toHaveBeenCalled();
             expectTransactionOnlyAccountAccess();

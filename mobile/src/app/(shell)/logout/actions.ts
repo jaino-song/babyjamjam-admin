@@ -1,6 +1,7 @@
 "use server";
 
 import { cookies } from "next/headers";
+import { clearPendingOnboarding } from "@/lib/auth/pending-onboarding-cookies";
 import { serverAPIClient } from "@/lib/api/server";
 import { summarizeErrorForLog, normalizeApiError } from "@babyjamjam/shared";
 
@@ -44,6 +45,7 @@ export async function logout(pushEndpoint?: string): Promise<{ success: boolean;
     cookieStore.delete("auth_token");
     cookieStore.delete("refresh_token");
     cookieStore.delete("auto_login");
+    clearPendingOnboarding(cookieStore);
     cookieStore.delete("selected_branch_id");
 
     return serverLogoutError

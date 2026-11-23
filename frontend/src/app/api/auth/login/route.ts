@@ -1,5 +1,6 @@
 import { cookies } from "next/headers";
 import { NextResponse, NextRequest } from "next/server";
+import { clearPendingOnboarding } from "@/lib/auth/pending-onboarding-cookies";
 import { serverAPIClient } from "@/lib/api/server";
 import { errorResponse } from "@/lib/api/route-utils";
 import { setAuthSessionCookies } from "@/lib/auth/session-cookies";
@@ -30,6 +31,8 @@ export async function POST(request: NextRequest) {
             refreshToken: data.refreshToken,
             autoLogin,
         });
+
+        clearPendingOnboarding(cookieStore);
 
         return NextResponse.json({
             success: true,

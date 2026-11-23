@@ -3,7 +3,7 @@
 import { cookies } from "next/headers";
 import { serverAPIClient } from "@/lib/api/server";
 import { AxiosError } from "axios";
-import { normalizeApiError } from "@babyjamjam/shared";
+import { ACCOUNT_LINK_VERSION, ACCOUNT_LINK_VERSION_HEADER, normalizeApiError } from "@babyjamjam/shared";
 import { getFieldMessageText } from "@/lib/forms/field-message-text";
 
 interface CompleteKakaoOnboardingInput {
@@ -28,6 +28,7 @@ const KAKAO_SIGNUP_FAILURE_COPY = "카카오 가입을 완료하지 못했습니
 
 export async function completeKakaoOnboarding(
     input: CompleteKakaoOnboardingInput,
+    accountLinkVersion?: string,
 ): Promise<{ success: boolean; code?: "LINK_PENDING_APPROVAL"; error?: string; field?: "phone" | "birthDate"; linkVerificationRequired?: boolean; linkChallengeToken?: string }> {
     const cookieStore = await cookies();
     const pendingSignupToken = cookieStore.get(PENDING_KAKAO_SIGNUP_COOKIE)?.value;
@@ -39,6 +40,7 @@ export async function completeKakaoOnboarding(
         };
     }
 
+    const supportsAccountLink = accountLinkVersion === ACCOUNT_LINK_VERSION;
     try {
         const response = await serverAPIClient.post<CompleteKakaoOnboardingSuccessResponse>(
             "/auth/kakao/complete-signup",
@@ -46,12 +48,15 @@ export async function completeKakaoOnboarding(
             {
                 headers: {
                     [PENDING_KAKAO_SIGNUP_TOKEN_HEADER]: pendingSignupToken,
+                    ...(supportsAccountLink ? { [ACCOUNT_LINK_VERSION_HEADER]: ACCOUNT_LINK_VERSION } : {}),
                 },
             },
         );
 
-        if (response.data.linkVerificationRequired) {
-            return { success: true, linkVerificationRequired: true, linkChallengeToken: response.data.linkChallengeToken };
+        if (response.data.linkVerificationRequired === true) {
+            return supportsAccountLink && typeof response.data.linkChallengeToken === "string" && response.data.linkChallengeToken
+                ? { success: true, linkVerificationRequired: true, linkChallengeToken: response.data.linkChallengeToken }
+                : { success: false, error: KAKAO_SIGNUP_FAILURE_COPY };
         }
         cookieStore.delete(PENDING_KAKAO_SIGNUP_COOKIE);
 

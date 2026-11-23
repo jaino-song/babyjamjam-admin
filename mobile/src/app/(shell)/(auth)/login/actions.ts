@@ -4,6 +4,7 @@ import { cookies } from "next/headers";
 import { AxiosError } from "axios";
 import { writeLoginSessionCookies } from "@/lib/auth/login-session-cookies";
 
+import { clearPendingOnboarding, replacePendingAccountOnboarding } from "@/lib/auth/pending-onboarding-cookies";
 import { serverAPIClient } from "@/lib/api/server";
 import { getServerRuntimeConfig } from "@/lib/env";
 import { summarizeErrorForLog, normalizeApiError, type NormalizedApiError } from "@babyjamjam/shared";
@@ -111,14 +112,10 @@ export async function loginWithEmail(email: string, password: string, autoLogin 
         const isSecureCookie = getServerRuntimeConfig().isSecureCookieEnv;
 
         if (isLoginOnboardingResponse(data)) {
-            cookieStore.set("pending_account_onboarding", data.pendingAccountOnboardingToken, {
-                httpOnly: true,
+            replacePendingAccountOnboarding(cookieStore, data.pendingAccountOnboardingToken, {
                 secure: isSecureCookie,
-                sameSite: "lax",
-                path: "/",
-                maxAge: 30 * 60,
+                autoLogin,
             });
-            cookieStore.delete("pending_kakao_signup");
             cookieStore.delete("auth_token");
             cookieStore.delete("refresh_token");
             cookieStore.delete("auto_login");
@@ -131,6 +128,7 @@ export async function loginWithEmail(email: string, password: string, autoLogin 
         }
 
         await writeLoginSessionCookies(data, autoLogin);
+        clearPendingOnboarding(cookieStore);
 
         console.log("[Server Action] Email login successful");
         console.log("[Server Action] requiresBranchSelection:", data.requiresBranchSelection);
@@ -142,12 +140,6 @@ export async function loginWithEmail(email: string, password: string, autoLogin 
 
         if (error instanceof AxiosError) {
             const axiosError = error as AxiosError<APIErrorResponse>;
-            console.error("[Server Action] Axios Error:", {
-                message: axiosError.message,
-                code: axiosError.code,
-                status: axiosError.response?.status,
-            });
-
             if (isTransportFailure(axiosError)) {
                 return { success: false, error: "서버에 연결할 수 없어요. 다시 시도해 주세요." };
             }

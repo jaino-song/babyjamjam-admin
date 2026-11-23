@@ -6,6 +6,7 @@ import { z } from "zod";
 
 import { errorResponse, logUpstreamError, parseBody } from "@/lib/api/route-utils";
 import { dependencyUnavailableProblemResponse } from "@/lib/api/problem-responses";
+import { clearPendingOnboarding } from "@/lib/auth/pending-onboarding-cookies";
 import { serverAPIClient } from "@/lib/api/server";
 import { getServerRuntimeConfig } from "@/lib/env";
 import {
@@ -68,6 +69,9 @@ export async function POST(request: NextRequest) {
             path: "/",
             maxAge: getRefreshSessionMaxAgeSeconds(role),
         })
+        if (data.accessToken && data.refreshToken) {
+            clearPendingOnboarding(cookieStore);
+        }
         return NextResponse.json({ message: "Success" }, { status: 200 });
     } catch (error) {
         // Network failure before the exchange completed: the registered

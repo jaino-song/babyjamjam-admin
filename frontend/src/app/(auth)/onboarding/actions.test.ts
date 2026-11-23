@@ -20,17 +20,18 @@ it("requires a cookie", async () => {
   expect(await completeAccountOnboarding({})).toEqual({ success: false, error: "로그인 세션이 만료됐어요. 다시 로그인해 주세요." });
   expect(post).not.toHaveBeenCalled();
 });
-it("sets session cookies without exposing tokens and deletes both pending cookies", async () => {
+it("sets session cookies without exposing tokens and deletes the pending cookies and preference", async () => {
   post.mockResolvedValue({ status: 201, data: { accessToken: "access", refreshToken: "refresh", requiresBranchSelection: true } });
   expect(await completeAccountOnboarding({ phone: "01012345678" })).toEqual({ success: true, requiresBranchSelection: true });
   expect(post).toHaveBeenCalledWith("/auth/onboarding/complete", { phone: "01012345678" }, { headers: { "x-pending-onboarding-token": "pending" } });
-  expect(setAuthSessionCookies).toHaveBeenCalledWith(store, { accessToken: "access", refreshToken: "refresh" });
-  expect(store.delete.mock.calls).toEqual([["pending_account_onboarding"], ["pending_kakao_signup"]]);
+  expect(setAuthSessionCookies).toHaveBeenCalledWith(store, { accessToken: "access", refreshToken: "refresh", autoLogin: true });
+  expect(store.delete.mock.calls).toEqual([["pending_account_onboarding"], ["pending_account_onboarding_auto_login"], ["pending_kakao_signup"]]);
 });
 it("clears an expired cookie", async () => {
   fail(401, "AUTH_REQUIRED");
   expect((await completeAccountOnboarding({})).error).toContain("만료");
   expect(store.delete).toHaveBeenCalledWith("pending_account_onboarding");
+  expect(store.delete).toHaveBeenCalledWith("pending_account_onboarding_auto_login");
 });
 it("maps /phone INVALID_VALUE to the owner-contact message", async () => {
   fail(400, "VALIDATION_FAILED", [{ pointer: "/phone", code: "INVALID_VALUE", detail: "Invalid value" }]);
@@ -82,4 +83,17 @@ it("keeps generic failure copy for unrelated failures", async () => {
 it.each(["PENDING_APPROVAL", "ACCOUNT_REJECTED", "NO_ACCESSIBLE_BRANCH"])("returns %s", async (code) => {
   fail(403, code as ProblemCode);
   expect(await completeAccountOnboarding({})).toEqual({ success: false, code });
+});
+
+it.each([
+  [400, "ACCOUNT_PROFILE_INCOMPLETE"],
+  [403, "ACCOUNT_PROFILE_INCOMPLETE_EXTRA"],
+  [403, "ACCESS_DENIED"],
+] as const)("keeps the generic completion failure for %s %s", async (status, code) => {
+  post.mockRejectedValueOnce(new AxiosError("synthetic error", undefined, undefined, undefined, {
+    status, data: { code },
+  } as never));
+  expect(await completeAccountOnboarding({})).toEqual({ success: false, error: "계정 정보를 저장하지 못했습니다." });
+  expect(store.delete).not.toHaveBeenCalled();
+  expect(setAuthSessionCookies).not.toHaveBeenCalled();
 });

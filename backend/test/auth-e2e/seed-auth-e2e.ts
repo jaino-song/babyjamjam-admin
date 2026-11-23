@@ -1,7 +1,11 @@
 import { PrismaClient } from "@prisma/client";
 import bcrypt from "bcrypt";
 
-const prisma = new PrismaClient();
+import { resolveLocalSeedDatabaseUrl } from "../utils/seed-database-guard";
+
+const prisma = new PrismaClient({
+    datasources: { db: { url: resolveLocalSeedDatabaseUrl({ label: "auth-e2e seed" }) } },
+});
 
 const PASSWORD = "Password1!";
 
